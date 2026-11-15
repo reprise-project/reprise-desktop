@@ -296,6 +296,7 @@ fn every_sheet_is_a_live_alert_naming_its_parts() {
         actions: &acts,
         opens: false,
         urgent: false,
+        answer_key: None,
     };
     let mut tree = Tree::window("", (lay.width, lay.height));
     let alert = access_sheet(1, &lay, (0, 0), &says, None, &t, 12, &mut tree, ROOT);

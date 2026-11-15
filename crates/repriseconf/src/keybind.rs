@@ -101,6 +101,7 @@ pub const DEFAULTS: &[(&str, &str)] = &[
     ("Super+p", "display-switcher"),
     ("Super+t", "focus-taskbar"),
     ("Super+b", "focus-tray"),
+    ("Super+Shift+n", "notifications"),
     ("Shift+Alt_L", "next-layout"),
     ("Super+grave", "tab-next"),
     ("Super+Page_Down", "tab-next"),
@@ -391,6 +392,7 @@ pub const ACTION_NAMES: &[(&str, &str, &str)] = &[
     ("turnoff", SYSTEM, "Turn off"),
     ("exit", SYSTEM, "Quit Reprise"),
     ("do-not-disturb", SYSTEM, "Do not disturb"),
+    ("notifications", SYSTEM, "Answer the newest notification"),
     ("night-light", SYSTEM, "Night light"),
     (
         "display-switcher",

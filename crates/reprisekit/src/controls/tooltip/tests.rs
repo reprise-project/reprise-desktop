@@ -1087,6 +1087,7 @@ fn the_balloon_is_a_live_alert_naming_its_parts() {
         actions: &acts,
         opens: true,
         urgent: false,
+        answer_key: None,
     };
     let mut tree = crate::access::Tree::window("", (lay.width, lay.height));
     let px = theme.fonts.size_px;
@@ -1135,6 +1136,7 @@ fn an_urgent_balloon_is_assertive_and_follows_the_bubble() {
         actions: &[],
         opens: false,
         urgent: true,
+        answer_key: None,
     };
     let mut tree = crate::access::Tree::window("", (lay.width, lay.height));
     let alert = access_notify(1, &lay, &says, None, &t, 11, &mut tree, ROOT);
@@ -1155,6 +1157,11 @@ fn an_urgent_balloon_is_assertive_and_follows_the_bubble() {
         ..says
     };
     assert_eq!(only_app.spoken(), "Mail");
+    let answers = NotifySays {
+        answer_key: Some("Super+Shift+N"),
+        ..only_app
+    };
+    assert_eq!(answers.spoken(), "Mail. Answer with Super+Shift+N");
 }
 
 #[test]
@@ -1169,6 +1176,7 @@ fn the_reply_row_reads_as_a_field_and_send() {
         actions: &["Reply"],
         opens: false,
         urgent: false,
+        answer_key: None,
     };
     let px = theme.fonts.size_px;
     let mut field = ReplyField::default();

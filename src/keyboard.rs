@@ -806,6 +806,7 @@ impl State {
                 let on = !self.notify.log.dnd;
                 crate::notifyview::set_dnd(self, on);
             }
+            Action::Notifications => crate::notifycenter::toggle_answering(self),
             Action::NightLight => crate::nightlight::toggle_pause(self),
             Action::Snap(dir) => self.key_snap(*dir),
             Action::Desktop(step) => self.step_desktop(*step, false),

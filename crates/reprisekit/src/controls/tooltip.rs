@@ -1078,7 +1078,8 @@ pub fn place_notify(usable: Rect, lay: &NotifyLayout, scale: i32, edge: Edge) ->
 }
 
 /// What a balloon says to a screen reader, in full where the drawing wraps or cuts it. `opens`:
-/// a click on the body runs something; `urgent`: the alert interrupts.
+/// a click on the body runs something; `urgent`: the alert interrupts; `answer_key`: the chord
+/// that opens the history on it, said last.
 #[derive(Clone, Copy, Debug)]
 pub struct NotifySays<'a> {
     pub app: &'a str,
@@ -1087,10 +1088,12 @@ pub struct NotifySays<'a> {
     pub actions: &'a [&'a str],
     pub opens: bool,
     pub urgent: bool,
+    pub answer_key: Option<&'a str>,
 }
 
 impl NotifySays<'_> {
-    /// The alert's name, announced when it appears or changes: "App: title. body".
+    /// The alert's name, announced when it appears or changes: "App: title. body", then "Answer
+    /// with" `answer_key`.
     pub fn spoken(&self) -> String {
         let text: Vec<&str> = [self.title, self.body]
             .into_iter()
@@ -1098,10 +1101,14 @@ impl NotifySays<'_> {
             .filter(|t| !t.is_empty())
             .collect();
         let text = text.join(". ");
-        match (self.app.is_empty(), text.is_empty()) {
+        let said = match (self.app.is_empty(), text.is_empty()) {
             (true, _) => text,
             (false, true) => self.app.to_string(),
             (false, false) => format!("{}: {text}", self.app),
+        };
+        match self.answer_key {
+            Some(key) => format!("{said}. Answer with {key}"),
+            None => said,
         }
     }
 }

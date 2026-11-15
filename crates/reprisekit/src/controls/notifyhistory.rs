@@ -402,18 +402,31 @@ impl History {
     /// scrolled so the header shows above it: where a click on its "new
     /// from" balloon lands.
     pub fn reveal(&mut self, key: &str) {
+        self.reveal_row(key, |h, i| h.note_at(i).is_some());
+    }
+
+    /// Open notification `id`'s group and select it, scrolled so the header shows above it when
+    /// both fit: where the notifications key lands.
+    pub fn reveal_note(&mut self, id: u32) {
+        let Some(key) = (self.entries.iter().find(|e| e.id == id)).map(|e| e.key.clone()) else {
+            return;
+        };
+        self.reveal_row(&key, |h, i| h.note_at(i) == Some(id));
+    }
+
+    /// Opens `key`'s group and selects its first row `pick` takes, else its header.
+    fn reveal_row(&mut self, key: &str, pick: impl Fn(&History, usize) -> bool) {
         self.folded.remove(key);
         self.rebuild();
-        let header = self.header_row(key);
-        if let Some(h) = header {
-            let first = if self.note_at(h + 1).is_some() {
-                h + 1
-            } else {
-                h
-            };
-            self.list.top = h.min(self.list.rows.len().saturating_sub(ROWS as usize));
-            self.list.select(first, ROWS as usize);
-        }
+        let Some(h) = self.header_row(key) else {
+            return;
+        };
+        let row = (h + 1..self.meta.len())
+            .take_while(|&i| self.group_at(i).is_none())
+            .find(|&i| pick(self, i))
+            .unwrap_or(h);
+        self.list.top = h.min(self.list.rows.len().saturating_sub(ROWS as usize));
+        self.list.select(row, ROWS as usize);
     }
 
     pub fn key(&mut self, key: Key) -> Event {
@@ -919,6 +932,21 @@ mod tests {
         assert_eq!(dead.list.selected, Some(6));
         assert_eq!(dead.key(Key::Enter), Event::None, "not live");
         assert_eq!(dead.key(Key::Escape), Event::Close);
+    }
+
+    #[test]
+    fn revealing_a_note_opens_its_folded_group_and_selects_it_under_its_header() {
+        let mut h = sample();
+        h.press(Hit::List(grouplist::Hit::Row(0)));
+        assert_eq!(labels(&h).len(), 4, "Mail folded");
+        h.reveal_note(2);
+        assert_eq!(labels(&h)[2], "Lunch on Friday?");
+        assert_eq!((h.list.selected, h.list.top), (Some(2), 0));
+        h.reveal_note(1);
+        assert_eq!(labels(&h)[6], "Stand-up in 5 minutes", "Calendar opens");
+        assert_eq!(h.list.selected, Some(6));
+        h.reveal_note(u32::MAX);
+        assert_eq!(h.list.selected, Some(6), "an id it lacks moves nothing");
     }
 
     #[test]

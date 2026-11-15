@@ -55,6 +55,7 @@ pub fn access(state: &State) -> reprisekit::access::Tree {
         .unwrap_or_default();
     let mut tree = crate::access::root(Role::Window, NAME, rect);
     let px = theme.fonts.size_px;
+    let answer_key = answer_key(state);
     let mut focus = None;
     for (b, (drawn, r)) in v.stack.iter().zip(&laid) {
         let off = (r.x - rect.x, r.y - rect.y);
@@ -70,6 +71,7 @@ pub fn access(state: &State) -> reprisekit::access::Tree {
                     actions: &labels,
                     opens: n.has_action(DEFAULT_ACTION),
                     urgent: n.urgency == Urgency::Critical,
+                    answer_key: answer_key.as_deref().filter(|_| !n.actions.is_empty()),
                 }
             }
             Item::Burst(burst) => {
@@ -84,6 +86,7 @@ pub fn access(state: &State) -> reprisekit::access::Tree {
                     actions: &[],
                     opens: true,
                     urgent: false,
+                    answer_key: None,
                 }
             }
         };
@@ -126,4 +129,11 @@ pub fn access(state: &State) -> reprisekit::access::Tree {
     }
     tree.set_focus(focus.unwrap_or(ROOT));
     tree
+}
+
+/// The first chord bound to the notifications key, as the key sheet writes it.
+fn answer_key(state: &State) -> Option<String> {
+    (state.config.keybinds.iter())
+        .find(|b| b.action == crate::config::Action::Notifications && !b.is_chord())
+        .map(|b| crate::keysheetview::chord_text(b.mods, b.keysym))
 }

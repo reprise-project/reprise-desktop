@@ -149,6 +149,7 @@ fn action_names_round_trip() {
         "tab-next",
         "tab-prev",
         "do-not-disturb",
+        "notifications",
         "night-light",
         "desktop-prev",
         "desktop-next",
