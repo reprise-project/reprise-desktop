@@ -28,7 +28,6 @@ impl State {
     pub(super) fn browse_run(&mut self) {
         let start = (self.wm.file_dialog.folder.clone())
             .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
-            .filter(|p| p.is_dir())
             .unwrap_or_else(|| std::path::PathBuf::from("/"));
         let pos = self.pointer_location();
         let out = self.output_at(pos.x, pos.y);
@@ -102,9 +101,18 @@ impl State {
         }
     }
 
-    /// Runs every Browse dialog's queued folder reads off the loop, and fetches the thumbnails
-    /// of the pictures it lists in Thumbnails or Tiles; replies find dialogs by id.
+    /// Runs every Browse dialog's queued folder reads and watch adds off the loop, and fetches
+    /// the thumbnails of the pictures it lists in Thumbnails or Tiles; replies find dialogs by id.
     pub(super) fn run_picker_requests(&mut self) {
+        let adds: Vec<_> = (self.dialogs.views.iter_mut())
+            .filter_map(|v| v.dialog.picker_mut()?.take_watch())
+            .collect();
+        for add in adds {
+            self.spawn_fs_job(move || {
+                add.run();
+                Box::new(|_| {})
+            });
+        }
         let jobs: Vec<(u64, crate::filepick::Request)> = self
             .dialogs
             .views

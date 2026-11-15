@@ -67,6 +67,9 @@ fn settle_with(p: &mut FilePicker, icons: &mut IconCache) -> Outcome {
             Outcome::Nothing => {}
             o => out = o,
         }
+        if let Some(add) = p.take_watch() {
+            add.run();
+        }
     }
     out
 }
@@ -443,6 +446,62 @@ fn a_folder_made_in_the_folder_shown_lists_and_the_folder_follows_its_rename() {
     std::fs::rename(dir.join("Pictures"), dir.join("Photos")).unwrap();
     let inside = p.folders.id(&dir.join("Photos"));
     until_watched(&mut p, |p| p.dlg.folder() == Some(inside));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The watch walks the folder's path, which blocks on a mount that stopped answering, so the
+/// add waits for the folder's listing and goes to the host to run off the loop.
+#[test]
+fn a_folder_entered_is_watched_once_its_listing_lands() {
+    let dir = sandbox("watch-after-reply");
+    let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+    p.watch_with(reprisefs::folderwatch::Watch::new(|| {}).unwrap());
+    assert!(p.take_watch().is_none(), "no add before the first listing");
+    settle(&mut p);
+    let pictures = p.folders.id(&dir.join("Pictures"));
+    p.event(Event::NeedListing(pictures));
+    assert!(
+        p.take_watch().is_none(),
+        "no add while the folder is being read"
+    );
+    assert_eq!(p.watched, None, "the folder left is no longer watched");
+    let reads = p.take_requests();
+    assert_eq!(reads.len(), 1);
+    for r in reads {
+        p.reply(r.run(), &mut cache(), 1);
+    }
+    assert!(p.take_watch().is_some(), "the add once the listing landed");
+    assert_eq!(p.watched.as_deref(), Some(dir.join("Pictures").as_path()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The folder shown was deleted: the nearest folder above it that is still there is found off
+/// the loop and listed.
+#[test]
+fn a_folder_gone_from_under_the_dialog_lists_the_nearest_one_left() {
+    let dir = sandbox("watch-gone");
+    let deep = dir.join("Pictures").join("deep");
+    std::fs::create_dir_all(&deep).unwrap();
+    let mut p = FilePicker::run_command(&deep, Icons::default(), true);
+    p.watch_with(reprisefs::folderwatch::Watch::new(|| {}).unwrap());
+    settle(&mut p);
+    std::fs::remove_dir_all(dir.join("Pictures")).unwrap();
+    let mut climbed = false;
+    for _ in 0..1000 {
+        if p.watch_due() {
+            let reqs = p.take_requests();
+            climbed |= reqs.iter().any(|r| r.id.is_none() && r.climb);
+            for r in reqs {
+                p.reply(r.run(), &mut cache(), 1);
+            }
+        }
+        if p.current() == Some(dir.as_path()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(p.current(), Some(dir.as_path()));
+    assert!(climbed, "the climb runs as a request, off the loop");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

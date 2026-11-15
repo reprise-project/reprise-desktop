@@ -106,8 +106,8 @@ pub struct FilePicker {
     view_file: Option<PathBuf>,
     /// The stored view is still to come with the first listing, and no view was picked yet.
     view_awaited: bool,
-    /// Watches the folder shown, so entries made, deleted or renamed there list without an F5
-    /// ([`FilePicker::watch_due`]); `watched` is the folder it is on.
+    /// Watches the folder shown once its listing lands, so entries made, deleted or renamed
+    /// there list without an F5 ([`FilePicker::watch_due`]); `watched` is the folder it is on.
     watch: FolderWatch,
     watched: Option<PathBuf>,
     /// New Folder, renames and Deletes asked for since the host last took them ([`Op::run`]).
@@ -147,14 +147,17 @@ pub enum OpDone {
     Nothing,
 }
 
-/// A picker's folder watch. Not dialog state: a clone watches nothing, it compares equal and
-/// debug-prints as nothing.
+/// A picker's folder watch and the add it waits on the host to run. Not dialog state: a clone
+/// watches nothing, it compares equal and debug-prints as nothing.
 #[derive(Default)]
-struct FolderWatch(Option<reprisefs::folderwatch::Watch>);
+struct FolderWatch {
+    watch: Option<reprisefs::folderwatch::Watch>,
+    add: Option<reprisefs::folderwatch::Adder>,
+}
 
 impl Clone for FolderWatch {
     fn clone(&self) -> FolderWatch {
-        FolderWatch(None)
+        FolderWatch::default()
     }
 }
 
@@ -199,6 +202,8 @@ pub struct Request {
     /// The lookup is a typed pattern's folder part: a folder is entered
     /// and the dialog takes `pattern`; anything else is no pick.
     folder_only: bool,
+    /// The lookup lists the nearest folder at or above `path` that is still there.
+    climb: bool,
     /// The dialog's draw scale, at which icon files the listing names are decoded.
     scale: i32,
     /// List and Details' icon size ([`shellview::list_icon_px`]).

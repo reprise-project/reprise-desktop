@@ -22,17 +22,28 @@ impl FilePicker {
         path: PathBuf,
         typed: Option<&str>,
     ) -> u64 {
-        let mut req = Request {
+        let req = self.work(id, path, typed);
+        self.ask(req)
+    }
+
+    /// [`FilePicker::request`]'s request, unnumbered.
+    fn work(&self, id: Option<FolderId>, path: PathBuf, typed: Option<&str>) -> Request {
+        Request {
             seq: 0,
             id,
             path,
             exts: self.purpose.exts(self.filter),
             pattern: typed.or(self.dlg.wildcard()).map(str::to_string),
             folder_only: typed.is_some(),
+            climb: false,
             scale: self.icons.scale,
             list: self.list_px(),
             view_file: None,
-        };
+        }
+    }
+
+    /// Queues `req` under the next number, or takes the number of the same work still pending.
+    fn ask(&mut self, mut req: Request) -> u64 {
         if let Some(same) = self.pending.iter().find(|p| p.same_work(&req)) {
             return same.seq;
         }
@@ -70,17 +81,15 @@ impl FilePicker {
             }
             return Outcome::Redraw;
         }
-        if r.id.is_some() {
-            if self.listing != Some(r.seq) {
-                return Outcome::Nothing;
-            }
+        let typed = if self.listing == Some(r.seq) {
             self.listing = None;
-        } else {
-            if self.opening != Some(r.seq) {
-                return Outcome::Nothing;
-            }
+            false
+        } else if self.opening == Some(r.seq) {
             self.opening = None;
-        }
+            true
+        } else {
+            return Outcome::Nothing;
+        };
         match r.found {
             Found::Folder(rows) => {
                 // A typed folder is newer than any listing still pending.
@@ -95,16 +104,17 @@ impl FilePicker {
                 };
                 let (entries, pictures) = self.entries(rows, cache, r.scale, r.list);
                 self.show(id, &r.path, entries);
+                self.watch_shown(&r.path);
                 if r.scale != self.icons.scale || r.list != self.list_px() {
                     self.restyling = Some(self.request(Some(id), r.path.clone(), None));
                 }
                 self.pictures.paths = pictures;
                 self.pictures.scale = scale.max(1);
-                match (&r.pattern, r.id) {
+                match (&r.pattern, typed) {
                     (Some(p), _) => self.dlg.apply_wildcard(p),
                     // The field empties once the folder is entered.
-                    (None, None) => self.dlg.set_file_name(""),
-                    (None, Some(_)) => {}
+                    (None, true) => self.dlg.set_file_name(""),
+                    (None, false) => {}
                 }
                 Outcome::Redraw
             }
@@ -271,29 +281,47 @@ impl FilePicker {
         true
     }
 
-    /// Watches the folder shown from now on with `w`, whose wake leads the host to
+    /// Watches each folder listed from now on with `w`, whose wake leads the host to
     /// [`FilePicker::watch_due`].
-    pub fn watch_with(&mut self, mut w: reprisefs::folderwatch::Watch) {
-        if let Some(dir) = self.current() {
-            w.watch(dir);
+    pub fn watch_with(&mut self, w: reprisefs::folderwatch::Watch) {
+        self.watch = FolderWatch {
+            watch: Some(w),
+            add: None,
+        };
+        self.watched = None;
+        if self.listing.is_none()
+            && let Some(dir) = self.current().map(Path::to_path_buf)
+        {
+            self.watch_shown(&dir);
+        }
+    }
+
+    /// Watches `dir`, just listed, unless the watch is on it already.
+    fn watch_shown(&mut self, dir: &Path) {
+        if let Some(w) = &mut self.watch.watch
+            && self.watched.as_deref() != Some(dir)
+        {
+            self.watch.add = Some(w.watch(dir));
             self.watched = Some(dir.to_path_buf());
         }
-        self.watch = FolderWatch(Some(w));
+    }
+
+    /// The watch's add for the folder last listed, for the host to run off the loop: it walks
+    /// the folder's path, which blocks on a mount that stopped answering.
+    pub fn take_watch(&mut self) -> Option<reprisefs::folderwatch::Adder> {
+        self.watch.add.take()
     }
 
     /// Lists the folder shown again once the watch saw an entry in it change, or the folder where
     /// it went once it or one above it was renamed or moved (the nearest folder still there above
     /// it once deleted); true when that queued a request.
     pub fn watch_due(&mut self) -> bool {
-        let Some(w) = &mut self.watch.0 else {
+        let Some(w) = &mut self.watch.watch else {
             return false;
         };
         let changed = w.take_changed();
-        if let Some(gone) = w.take_gone()
-            && let Some(dir) = gone.ancestors().find(|p| p.is_dir())
-        {
-            let id = self.folders.id(dir);
-            self.list(id);
+        if let Some(gone) = w.take_gone() {
+            self.climb_to(&gone);
             return true;
         }
         match self.watched.clone() {
@@ -341,6 +369,19 @@ impl FilePicker {
         }
         let taken = self.dlg.entries().iter().map(|e| e.name.clone()).collect();
         self.ops.push(Op { dir, taken, work });
+    }
+
+    /// Lists the nearest folder at or above `path` that is still there, found off the loop; the
+    /// dialog shows `path` empty until then.
+    fn climb_to(&mut self, path: &Path) {
+        let id = self.folders.id(path);
+        self.show(id, path, Vec::new());
+        let req = Request {
+            climb: true,
+            ..self.work(None, path.to_path_buf(), None)
+        };
+        self.listing = Some(self.ask(req));
+        self.opening = None;
     }
 
     /// Enters `id`'s folder, empty until its listing arrives.
@@ -418,11 +459,12 @@ impl FilePicker {
     /// still to come.
     fn show(&mut self, id: FolderId, path: &Path, entries: Vec<Entry>) {
         self.restyling = None;
-        if let Some(w) = &mut self.watch.0
+        if let Some(w) = &mut self.watch.watch
             && self.watched.as_deref() != Some(path)
         {
-            w.watch(path);
-            self.watched = Some(path.to_path_buf());
+            w.clear();
+            self.watch.add = None;
+            self.watched = None;
         }
         let generation = self.pictures.generation + 1;
         self.pictures = Pictures {

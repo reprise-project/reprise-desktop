@@ -1585,6 +1585,30 @@ fn until(h: &mut Host, dlg: &mut FileDlg, icons: &mut IconCache, done: impl Fn(&
     panic!("the dialog never caught up with the folder");
 }
 
+/// Waits for the folder watch's add, which runs on a listing thread, to watch `dir`: whether an
+/// inotify instance in this process watches it is read from its fdinfo.
+fn until_watched(dir: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(dir).unwrap();
+    // fdinfo prints the kernel's dev_t: major in the bits above 20.
+    let sdev = (u64::from(libc::major(meta.dev())) << 20) | u64::from(libc::minor(meta.dev()));
+    let entry = format!(" ino:{:x} sdev:{sdev:x} ", meta.ino());
+    let watched = || {
+        std::fs::read_dir("/proc/self/fdinfo")
+            .unwrap()
+            .flatten()
+            .any(|fd| std::fs::read_to_string(fd.path()).is_ok_and(|s| s.contains(&entry)))
+    };
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !watched() {
+        assert!(
+            std::time::Instant::now() < until,
+            "the folder was never watched"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 fn has(dlg: &FileDlg, name: &str) -> bool {
     dlg.entries().iter().any(|e| e.name == name)
 }
@@ -1599,6 +1623,7 @@ fn a_folder_made_or_removed_in_the_folder_shown_lists_without_a_refresh() {
     let mut dlg = open_dlg(&mut h);
     h.thumbs_on(&crate::Waker::noop());
     h.ensure_listed(&mut dlg, &mut icons, &|_: &Item| true);
+    until_watched(t.path());
     assert!(dlg.select_named("sub"));
 
     std::fs::create_dir(t.path().join("made")).unwrap();
@@ -1624,6 +1649,8 @@ fn the_folder_shown_renamed_lists_under_its_new_name() {
     let mut dlg = open_dlg(&mut h);
     h.thumbs_on(&crate::Waker::noop());
     h.ensure_listed(&mut dlg, &mut icons, &|_: &Item| true);
+    until_watched(&dir);
+    until_watched(t.path());
 
     let old = dlg.folder();
     let new = t.path().join("new");
