@@ -163,10 +163,9 @@ pub(super) async fn build(
                 None => None,
             }
         };
-        let (link, ip4, stats, ap_paths) = futures_util::join!(
+        let (link, ip4, ap_paths) = futures_util::join!(
             get_all(conn, &path, link_iface),
             read_if(ip4_path, IP4_IFACE),
-            get_all(conn, &path, STATS_IFACE),
             async {
                 if wifi {
                     paths(conn, &path, WIRELESS_IFACE, "GetAllAccessPoints").await
@@ -190,7 +189,6 @@ pub(super) async fn build(
             wired: (!wifi).then(|| link.clone().unwrap_or_default()),
             wireless: wifi.then(|| link.clone().unwrap_or_default()),
             ip4,
-            stats,
             aps,
             known_ssids: known_ssids.clone(),
             active_ap,

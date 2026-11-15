@@ -85,8 +85,6 @@ impl Status {
         g.set_text("status", status_word(d));
         g.set_text("duration", &duration_text(d.connected_since));
         g.set_text("speed", &speed_text(d.speed_mbit));
-        g.set_text("sent", &thousands(d.tx_bytes));
-        g.set_text("received", &thousands(d.rx_bytes));
         if self.wifi {
             // A radio hosting a hotspot has no signal of its own: its row names the hotspot.
             match d.hotspot_summary() {
@@ -120,9 +118,12 @@ impl Status {
         p.set_lines("note", &note(d));
     }
 
-    /// The device's counters read at `now`: from the second reading on, the Per second row
-    /// shows how fast they grew.
+    /// The device's counters read at `now` fill the Bytes row; from the second reading on, the
+    /// Per second row shows how fast they grew.
     pub fn counters(&mut self, now: Instant, c: Counters) {
+        let g = &mut self.sheet.pages[TAB_GENERAL];
+        g.set_text("sent", &thousands(c.tx));
+        g.set_text("received", &thousands(c.rx));
         let Some(rate) = self.meter.sample(now, &[(String::new(), c)]) else {
             return;
         };
@@ -349,8 +350,6 @@ mod tests {
                 dns: vec!["192.168.1.1".into()],
                 dhcp: true,
             }),
-            rx_bytes: 1234,
-            tx_bytes: 394_394,
             wifi: None,
             hotspot: None,
             hotspot_clients: None,
@@ -578,8 +577,6 @@ mod tests {
         let g = &s.sheet.pages[TAB_GENERAL];
         assert_eq!(text(g, "status"), "Connected");
         assert_eq!(text(g, "speed"), "100.0 Mbps");
-        assert_eq!(text(g, "received"), "1,234");
-        assert_eq!(text(g, "sent"), "394,394");
         let p = &s.sheet.pages[TAB_SUPPORT];
         assert_eq!(text(p, "address_type"), "Assigned by DHCP");
         assert_eq!(text(p, "ip"), "192.168.1.241");
@@ -591,7 +588,6 @@ mod tests {
         );
 
         let mut d = wired();
-        d.rx_bytes = 7;
         d.state = nm::State::Disconnected;
         d.speed_mbit = 0;
         d.connected_since = None;
@@ -601,13 +597,36 @@ mod tests {
         assert_eq!(text(g, "status"), "Not connected");
         assert_eq!(text(g, "duration"), "");
         assert_eq!(text(g, "speed"), "");
-        assert_eq!(text(g, "received"), "7");
         let p = &s.sheet.pages[TAB_SUPPORT];
         assert_eq!(text(p, "address_type"), "");
         assert_eq!(text(p, "ip"), "");
         assert_eq!(text(p, "mask"), "");
         assert_eq!(text(p, "gateway"), "");
         assert_eq!(note_lines(p)[0], "Not connected");
+    }
+
+    #[test]
+    fn the_bytes_row_shows_the_interface_counters() {
+        let mut s = Status::new(&wired());
+        let g = &s.sheet.pages[TAB_GENERAL];
+        assert_eq!(text(g, "received"), "", "nothing read yet");
+        s.counters(
+            Instant::now(),
+            Counters {
+                rx: 1234,
+                tx: 394_394,
+            },
+        );
+        let g = &s.sheet.pages[TAB_GENERAL];
+        assert_eq!(text(g, "received"), "1,234");
+        assert_eq!(text(g, "sent"), "394,394");
+        s.refresh(&wired());
+        let g = &s.sheet.pages[TAB_GENERAL];
+        assert_eq!(
+            text(g, "received"),
+            "1,234",
+            "a snapshot leaves the counters"
+        );
     }
 
     #[test]

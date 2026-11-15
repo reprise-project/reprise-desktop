@@ -165,54 +165,26 @@ impl NetApp {
         }
     }
 
-    /// The Status sheet for `path`, replacing whatever was open. The
-    /// packet counters are off until a window asks for them.
+    /// The Status sheet for `path`, replacing whatever was open, with its interface counters read
+    /// while it stays open.
     fn open_status(&mut self, path: &str) {
         if self.status.as_ref().is_some_and(|s| s.device_path == path) {
             return;
         }
-        let Some(next) = self
-            .snapshot
-            .devices
-            .iter()
-            .find(|d| d.path == path)
-            .map(status::Status::new)
-        else {
+        let Some(d) = self.snapshot.devices.iter().find(|d| d.path == path) else {
             return;
         };
+        let (next, iface) = (status::Status::new(d), d.iface.clone());
         self.close_status();
         self.status = Some(next);
-        let iface = (self.snapshot.devices.iter())
-            .find(|d| d.path == path)
-            .map(|d| d.iface.clone());
-        if let (Some(iface), Some(w)) = (iface, self.waker.clone()) {
+        if let Some(w) = self.waker.clone() {
             self.speed = Some(speed::start(iface, move || w.wake()));
         }
-        self.send(nm::Cmd::Stats {
-            device: path.into(),
-            on: true,
-        });
     }
 
-    /// Drop the Status sheet and turn its device's counters back off. A
-    /// device that has gone away takes its statistics interface with it,
-    /// so there is nothing left to write to.
     fn close_status(&mut self) {
         self.speed = None;
-        let Some(s) = self.status.take() else {
-            return;
-        };
-        if self
-            .snapshot
-            .devices
-            .iter()
-            .any(|d| d.path == s.device_path)
-        {
-            self.send(nm::Cmd::Stats {
-                device: s.device_path,
-                on: false,
-            });
-        }
+        self.status = None;
     }
 
     fn open_chooser(&mut self, path: &str) {
@@ -629,10 +601,7 @@ impl NetApp {
         }
     }
 
-    /// Stop the program once the thread has turned an open Status sheet's
-    /// counters back off.
     fn quit(&mut self) -> Reply {
-        self.close_status();
         if let Some(h) = &self.nm {
             h.quit();
         }

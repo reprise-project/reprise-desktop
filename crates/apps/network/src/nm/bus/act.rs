@@ -359,11 +359,6 @@ pub(super) async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
                 .map(|_| ())
                 .map_err(clean)
         }
-        Cmd::Stats { device, on } => proxy(conn, device, STATS_IFACE)
-            .await?
-            .set_property("RefreshRateMs", if *on { STATS_MS } else { 0 })
-            .await
-            .map_err(clean),
         Cmd::LoadVpn(_) => unreachable!("`command` answers LoadVpn itself"),
         Cmd::Airplane(on) => reprisebus::airplane::set(conn, *on)
             .await
