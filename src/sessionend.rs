@@ -1,7 +1,8 @@
 //! Ending the session: Log Off, Turn Off and Restart close programs first so nothing unsaved is lost without a word.
 //! `begin` asks every window to close, then the session ends once no window or inhibitor holds it; after `PROMPT_AFTER`
 //! the session-end prompt lists what is left. A critical battery kills the remainder after `PROMPT_AFTER` without a prompt.
-//! Turn Off and Restart ask logind first, and a refusal before or after the programs close shows a message box.
+//! Turn Off and Restart ask logind first, and a refusal before or after the programs close shows a message box;
+//! one that needs a password runs before the fade, so polkit's prompt shows over the desktop.
 //! Stand By and Hibernate close nothing; a refusal shows the same message box.
 
 use std::sync::{Arc, Mutex};
@@ -57,6 +58,7 @@ pub struct Ending {
     timer: Option<RegistrationToken>,
     reports: Option<RegistrationToken>,
     mode: Mode,
+    password: Password,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,25 +118,33 @@ pub fn begin_critical(state: &mut State, cmd: String) {
 fn check(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool, origin: Origin) {
     let verb = cmd.as_deref().and_then(logind_verb);
     let Some(verb) = verb.filter(|_| state.ending.is_none()) else {
-        start(state, goal, cmd, critical, origin);
+        start(state, goal, cmd, critical, origin, Password::No);
         return;
     };
     state.spawn_job(move || {
-        let refused = zbus::block_on(can(verb));
-        Box::new(move |state: &mut State| match refused {
-            None => start(state, goal, cmd, critical, origin),
-            Some(why) => refuse(state, Act::of(goal), &why),
+        let answer = zbus::block_on(can(verb));
+        Box::new(move |state: &mut State| match answer {
+            Ok(password) => start(state, goal, cmd, critical, origin, password),
+            Err(why) => refuse(state, Act::of(goal), &why),
         })
     });
 }
 
-fn start(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool, origin: Origin) {
+fn start(
+    state: &mut State,
+    goal: Goal,
+    cmd: Option<String>,
+    critical: bool,
+    origin: Origin,
+    password: Password,
+) {
     if let Some(e) = state.ending.as_mut() {
         let (mode, step) = e.mode.again(critical);
         if e.mode != Mode::Critical {
             log::info!("session end: now {goal:?}");
             e.goal = goal;
             e.cmd = cmd;
+            e.password = password;
         }
         e.mode = mode;
         run_step(state, step);
@@ -149,7 +159,7 @@ fn start(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool, ori
     state.session.kept = true;
     if state.locked_for(origin) {
         log::info!("session end: locked, nobody to ask");
-        go_on(state, goal, cmd, false);
+        go_on(state, goal, cmd, false, password);
         return;
     }
     let (tx, rx) = channel::channel::<Vec<Holder>>();
@@ -189,6 +199,7 @@ fn start(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool, ori
         timer,
         reports,
         mode: Mode::new(critical),
+        password,
     });
     // The compositor's own dialogs (Run, a Properties sheet) go first.
     // The windows are asked once the end is under way, so a program
@@ -281,7 +292,7 @@ fn finish(state: &mut State, override_inhibitors: bool) {
     {
         let _ = stop.try_send(());
     }
-    go_on(state, e.goal, e.cmd, override_inhibitors);
+    go_on(state, e.goal, e.cmd, override_inhibitors, e.password);
 }
 
 /// Whether a committed end moves the portal's monitors back to running: a command (Turn Off,
@@ -295,12 +306,39 @@ fn resets_portal(
 }
 
 /// Wait for screenshot files under way, [`SAVE_SHOTS`] at most, fade the screen out, then end: stop
-/// the compositor for Log Off, else run `cmd`. Remote clients hear the session logged off; the end
-/// waits for the server's answer, [`TELL_CLIENTS`] at most.
-fn go_on(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: bool) {
+/// the compositor for Log Off, else run `cmd`. A `cmd` that asks for a password runs before the
+/// fade, its prompt over the desktop, and the session winds down once the action is under way.
+fn go_on(
+    state: &mut State,
+    goal: Goal,
+    cmd: Option<String>,
+    override_inhibitors: bool,
+    password: Password,
+) {
     crate::crash::ending();
+    match cmd {
+        Some(cmd) if password.asked(override_inhibitors) && prompts(state) => {
+            log::info!("session end: {goal:?} runs {cmd:?} before the fade, for its password");
+            crate::screenshot::when_saved(
+                state,
+                SAVE_SHOTS,
+                Box::new(move |state| {
+                    attempt(state, Act::of(goal), cmd, override_inhibitors, Some(goal));
+                }),
+            );
+        }
+        cmd => wind_down(
+            state,
+            goal,
+            Box::new(move |state| act(state, goal, cmd, override_inhibitors)),
+        ),
+    }
+}
+
+/// Fade the screen out, then run `end`. Remote clients hear the session logged off; `end` waits
+/// for the server's answer, [`TELL_CLIENTS`] at most.
+fn wind_down(state: &mut State, goal: Goal, end: OnLoop) {
     let powers_off = goal != Goal::LogOff;
-    let end: OnLoop = Box::new(move |state| act(state, goal, cmd, override_inhibitors));
     // A deferring session's Turn Off also ends the other session's clients.
     let server_ours = state.standby.rdp_on() || (powers_off && state.env.defers_user_units);
     let tells = crate::console::remote_side(state) || server_ours;
@@ -393,7 +431,7 @@ fn act(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: 
         return;
     };
     log::info!("session end: {goal:?} runs {cmd:?}");
-    attempt(state, Act::of(goal), cmd, override_inhibitors);
+    attempt(state, Act::of(goal), cmd, override_inhibitors, None);
 }
 
 /// Put the computer to sleep with a `[power]` standby or hibernate `cmd`, closing nothing.
@@ -402,24 +440,43 @@ pub fn sleep(state: &mut State, act: Act, cmd: String) {
         return;
     }
     log::info!("power: {act:?} runs {cmd:?}");
-    attempt(state, act, cmd, false);
+    attempt(state, act, cmd, false, None);
 }
 
-/// Run `cmd` off the loop, on logind when it names a logind action; a refusal shows a message box.
-fn attempt(state: &mut State, act: Act, cmd: String, override_inhibitors: bool) {
+/// Run `cmd` off the loop, on logind when it names a logind action, then [`answered`].
+fn attempt(
+    state: &mut State,
+    act: Act,
+    cmd: String,
+    override_inhibitors: bool,
+    wind_down_for: Option<Goal>,
+) {
     let env = state.env.clone();
     let interactive = prompts(state);
     state.spawn_job(move || {
         let failed = match logind_verb(&cmd) {
             Some(verb) => zbus::block_on(call(verb, override_inhibitors, interactive)),
-            None => run(&cmd, &env),
+            None => run(&cmd, &env).map(Failed::Refused),
         };
-        Box::new(move |state: &mut State| {
-            if let Some(why) = failed {
-                refuse(state, act, &why);
-            }
-        })
+        Box::new(move |state: &mut State| answered(state, act, failed, wind_down_for))
     });
+}
+
+/// A refusal shows a message box; a dismissed password prompt brings the session back without
+/// one. An action under way winds the session down for `wind_down_for`.
+fn answered(state: &mut State, act: Act, failed: Option<Failed>, wind_down_for: Option<Goal>) {
+    match failed {
+        None => {
+            if let Some(goal) = wind_down_for {
+                wind_down(state, goal, Box::new(|_| {}));
+            }
+        }
+        Some(Failed::Dismissed) => {
+            log::info!("session end: {act:?} password prompt dismissed");
+            resume(state, act);
+        }
+        Some(Failed::Refused(why)) => refuse(state, act, &why),
+    }
 }
 
 /// Whether polkit may ask for a password: not while the session is locked, where its prompt
@@ -465,6 +522,13 @@ impl Act {
     }
 }
 
+/// How a power action did not happen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Failed {
+    Dismissed,
+    Refused(Refused),
+}
+
 /// Why the computer stayed up.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Refused {
@@ -474,12 +538,18 @@ enum Refused {
     Failed(String),
 }
 
-fn refuse(state: &mut State, act: Act, why: &Refused) {
-    log::warn!("session end: {act:?} refused: {why:?}");
+/// The session goes on after a power action that did not happen.
+fn resume(state: &mut State, act: Act) {
     if matches!(act, Act::TurnOff | Act::Restart) {
         crate::crash::not_ending();
+        state.session.kept = false;
     }
     crate::sessionfade::restore(state);
+}
+
+fn refuse(state: &mut State, act: Act, why: &Refused) {
+    log::warn!("session end: {act:?} refused: {why:?}");
+    resume(state, act);
     // Anyone at the computer reads the lock: it names no program and quotes no command's error.
     let unnamed = match why {
         Refused::Held(_) => Refused::Held(Vec::new()),
@@ -584,13 +654,34 @@ fn logind_verb(cmd: &str) -> Option<Verb> {
     }
 }
 
-/// logind's `Can*` answer as a refusal. `challenge` goes ahead, as polkit
-/// asks for a password; so does `inhibited`, whose holders the prompt lists.
-fn refused_by(answer: &str) -> Option<Refused> {
+/// Whether polkit asks for a password before a logind action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Password {
+    No,
+    Yes,
+    /// Only to ignore the inhibitors, as End Now does.
+    OverInhibitors,
+}
+
+impl Password {
+    fn asked(self, override_inhibitors: bool) -> bool {
+        match self {
+            Password::No => false,
+            Password::Yes => true,
+            Password::OverInhibitors => override_inhibitors,
+        }
+    }
+}
+
+/// logind's `Can*` answer: a refusal, else whether a password is asked. `inhibited` goes ahead,
+/// its holders listed by the prompt.
+fn can_answer(answer: &str) -> Result<Password, Refused> {
     match answer {
-        "yes" | "challenge" | "inhibited" => None,
-        "na" => Some(Refused::Unsupported),
-        _ => Some(Refused::NotAllowed),
+        "yes" => Ok(Password::No),
+        "challenge" => Ok(Password::Yes),
+        "inhibited" => Ok(Password::OverInhibitors),
+        "na" => Err(Refused::Unsupported),
+        _ => Err(Refused::NotAllowed),
     }
 }
 
@@ -608,8 +699,10 @@ async fn with_holders(conn: &zbus::Connection, verb: Verb, why: Refused) -> Refu
 }
 
 /// Unreachable logind lets the end go ahead: the action itself reports.
-async fn can(verb: Verb) -> Option<Refused> {
-    let conn = connect(true).await?;
+async fn can(verb: Verb) -> Result<Password, Refused> {
+    let Some(conn) = connect(true).await else {
+        return Ok(Password::No);
+    };
     let reply = conn
         .call_method(
             Some(LOGIND),
@@ -623,11 +716,14 @@ async fn can(verb: Verb) -> Option<Refused> {
     match reply {
         Ok(answer) => {
             log::info!("session end: {} says {answer:?}", verb.can());
-            Some(with_holders(&conn, verb, refused_by(&answer)?).await)
+            match can_answer(&answer) {
+                Ok(password) => Ok(password),
+                Err(why) => Err(with_holders(&conn, verb, why).await),
+            }
         }
         Err(e) => {
             log::warn!("session end: {}: {e}", verb.can());
-            None
+            Ok(Password::No)
         }
     }
 }
@@ -653,11 +749,11 @@ fn too_old_for_flags(e: &zbus::Error) -> bool {
     )
 }
 
-async fn call(verb: Verb, override_inhibitors: bool, interactive: bool) -> Option<Refused> {
+async fn call(verb: Verb, override_inhibitors: bool, interactive: bool) -> Option<Failed> {
     // No method timeout: a password prompt stays up as long as polkit lets it.
     let conn = match zbus::Connection::system().await {
         Ok(c) => c,
-        Err(e) => return Some(Refused::Failed(e.to_string())),
+        Err(e) => return Some(Failed::Refused(Refused::Failed(e.to_string()))),
     };
     let reply = async {
         let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
@@ -688,7 +784,10 @@ async fn call(verb: Verb, override_inhibitors: bool, interactive: bool) -> Optio
     .await;
     let e = reply.err()?;
     let dismissed = || interactive && reprisebus::polkit::dismissed();
-    Some(with_holders(&conn, verb, failure(&e, dismissed)?).await)
+    let Some(why) = failure(&e, dismissed) else {
+        return Some(Failed::Dismissed);
+    };
+    Some(Failed::Refused(with_holders(&conn, verb, why).await))
 }
 
 /// A failed logind call as a refusal; a dismissed password prompt is none.
@@ -1149,6 +1248,7 @@ mod tests {
             timer: None,
             reports: None,
             mode: Mode::Prompted,
+            password: Password::No,
         });
         sync_prompt(&mut h.state);
         h
@@ -1293,6 +1393,7 @@ mod tests {
             timer: None,
             reports: None,
             mode: Mode::Prompted,
+            password: Password::No,
         });
         tick(&mut h.state);
         assert!(h.state.ending.is_some(), "held");
@@ -1326,7 +1427,7 @@ mod tests {
     #[test]
     fn a_committed_log_off_with_a_client_tells_it_the_session_logged_off() {
         let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
-        go_on(&mut h.state, Goal::LogOff, None, false);
+        go_on(&mut h.state, Goal::LogOff, None, false, Password::No);
         assert_eq!(
             h.state.ended_clients,
             [crate::console::ClientsEnd::LoggedOff]
@@ -1334,7 +1435,7 @@ mod tests {
 
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
-        go_on(&mut h.state, Goal::LogOff, None, false);
+        go_on(&mut h.state, Goal::LogOff, None, false, Password::No);
         assert!(h.state.ended_clients.is_empty(), "no client to tell");
         assert!(h.state.session_fade.fading_out(), "the fade runs");
     }
@@ -1345,7 +1446,7 @@ mod tests {
         h.output("TEST-1", 1024, 768);
         crate::standby::rdp_changed(&mut h.state, true);
         assert!(!h.state.remote_controlled());
-        go_on(&mut h.state, Goal::LogOff, None, false);
+        go_on(&mut h.state, Goal::LogOff, None, false, Password::No);
         assert_eq!(
             h.state.ended_clients,
             [crate::console::ClientsEnd::LoggedOff]
@@ -1362,7 +1463,7 @@ mod tests {
             !h.state.standby.rdp_on(),
             "the server is the other session's"
         );
-        go_on(&mut h.state, Goal::LogOff, None, false);
+        go_on(&mut h.state, Goal::LogOff, None, false, Password::No);
         assert!(h.state.ended_clients.is_empty(), "its clients stay");
     }
 
@@ -1406,6 +1507,7 @@ mod tests {
             timer: None,
             reports: None,
             mode: Mode::Waiting,
+            password: Password::No,
         };
         let asked = ending(Goal::LogOff, None, true);
         assert!(
@@ -1431,7 +1533,13 @@ mod tests {
         h.output("TEST-1", 1024, 768);
         h.state.env.defers_user_units = true;
         crate::standby::rdp_changed(&mut h.state, true);
-        go_on(&mut h.state, Goal::TurnOff, Some("true".into()), false);
+        go_on(
+            &mut h.state,
+            Goal::TurnOff,
+            Some("true".into()),
+            false,
+            Password::No,
+        );
         assert_eq!(
             h.state.ended_clients,
             [crate::console::ClientsEnd::PoweredOff]
@@ -1504,8 +1612,10 @@ mod tests {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
         crate::crash::ending();
+        h.state.session.kept = true;
         refuse(&mut h.state, Act::TurnOff, &Refused::NotAllowed);
         assert!(!crate::crash::is_ending());
+        assert!(!h.state.session.kept, "the session saves resume");
     }
 
     fn locked() -> crate::harness::Harness {
@@ -1609,12 +1719,87 @@ mod tests {
 
     #[test]
     fn only_no_and_na_keep_the_programs_open() {
-        assert_eq!(refused_by("yes"), None);
-        assert_eq!(refused_by("challenge"), None);
-        assert_eq!(refused_by("no"), Some(Refused::NotAllowed));
-        assert_eq!(refused_by("na"), Some(Refused::Unsupported));
-        assert_eq!(refused_by("inhibited"), None);
-        assert_eq!(refused_by("maybe"), Some(Refused::NotAllowed));
+        assert_eq!(can_answer("yes"), Ok(Password::No));
+        assert_eq!(can_answer("challenge"), Ok(Password::Yes));
+        assert_eq!(can_answer("no"), Err(Refused::NotAllowed));
+        assert_eq!(can_answer("na"), Err(Refused::Unsupported));
+        assert_eq!(can_answer("inhibited"), Ok(Password::OverInhibitors));
+        assert_eq!(can_answer("maybe"), Err(Refused::NotAllowed));
+    }
+
+    #[test]
+    fn only_end_now_asks_for_the_password_to_ignore_the_inhibitors() {
+        assert!(Password::OverInhibitors.asked(true));
+        assert!(!Password::OverInhibitors.asked(false));
+        assert!(Password::Yes.asked(false));
+        assert!(!Password::No.asked(true));
+    }
+
+    fn fading() -> crate::harness::Harness {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.config.effects.session_fade = true;
+        h.state.config.effects.session_fade_out_ms = 400;
+        h
+    }
+
+    #[test]
+    fn a_turn_off_that_asks_for_a_password_fades_only_once_it_is_under_way() {
+        let mut h = fading();
+        let off = |h: &mut crate::harness::Harness, cmd: &str, password| {
+            go_on(
+                &mut h.state,
+                Goal::TurnOff,
+                Some(cmd.into()),
+                false,
+                password,
+            );
+        };
+        off(&mut h, "false", Password::Yes);
+        assert!(
+            !h.state.session_fade.fading_out(),
+            "no fade before the answer"
+        );
+        assert!(!crate::crash::is_ending(), "the session goes on");
+        assert_eq!(h.state.dialogs.views.len(), 1, "the refusal's message box");
+        off(&mut h, "true", Password::Yes);
+        assert!(h.state.session_fade.fading_out(), "under way, it fades");
+
+        let mut h = fading();
+        off(&mut h, "false", Password::No);
+        assert!(
+            h.state.session_fade.fading_out(),
+            "without a password the fade goes first"
+        );
+    }
+
+    #[test]
+    fn a_locked_turn_off_fades_before_it_asks_logind() {
+        let mut h = locked();
+        h.state.config.effects.session_fade = true;
+        h.state.config.effects.session_fade_out_ms = 400;
+        go_on(
+            &mut h.state,
+            Goal::TurnOff,
+            Some("false".into()),
+            false,
+            Password::Yes,
+        );
+        assert!(h.state.session_fade.fading_out());
+    }
+
+    #[test]
+    fn a_dismissed_password_prompt_brings_the_desktop_back_without_a_message() {
+        let mut h = fading();
+        crate::crash::ending();
+        h.state.session.kept = true;
+        crate::sessionfade::out(&mut h.state, Box::new(|_| {}));
+        assert!(h.state.session_fade.fading_out());
+        answered(&mut h.state, Act::TurnOff, Some(Failed::Dismissed), None);
+        assert!(!h.state.session_fade.fading_out(), "the desktop shows");
+        assert!(!crate::crash::is_ending(), "the session goes on");
+        assert!(!h.state.session.kept, "the session saves resume");
+        assert!(h.state.dialogs.views.is_empty(), "no message box");
     }
 
     #[test]
