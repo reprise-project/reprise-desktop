@@ -1537,10 +1537,11 @@ stop the share first.
   Notification, tray and player text loses its control, bidi and
   zero-width characters, so it can't reorder or hide what it shows. A
   player's title, artist and name show 256 characters at most. A
-  notification's `image-path` picture is read only from a regular file of
-  32 MiB or less, opened without blocking, and decoded on the tray icons'
-  two threads below, 4 at a time per sender; one that takes over 2 s,
-  counting its wait for a thread, is left out.
+  notification's `image-path` picture and an app icon it names by path are
+  read only from a regular file of 32 MiB or less, opened without blocking,
+  and read and decoded on the tray icons' two threads below, never on the
+  bus thread, 4 at a time per sender; past 2 s for them all, counting the
+  wait for a thread, the notification shows without them.
 - **Content search.** Off by default (`[launcher] contents`): until it is
   turned on, the launcher and the Start menu's search never call
   localsearch, so the bus never starts the indexer for them. The Search

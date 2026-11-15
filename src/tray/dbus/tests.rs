@@ -230,6 +230,7 @@ fn a_picture_does_not_replace_the_app_icon() {
     };
     let (app, image) = zbus::block_on(notification_icons(
         &hicolor(),
+        &decoders(2, 8, 4, CEILING),
         "",
         &hints,
         blue_svg("both"),
@@ -247,6 +248,7 @@ fn image_path_is_the_picture_and_an_unresolved_app_icon_stays_empty() {
     };
     let (app, image) = zbus::block_on(notification_icons(
         &hicolor(),
+        &decoders(2, 8, 4, CEILING),
         "",
         &hints,
         String::new(),
@@ -270,6 +272,7 @@ fn a_jpeg_image_path_is_the_picture() {
     };
     let (_, image) = zbus::block_on(notification_icons(
         &hicolor(),
+        &decoders(2, 8, 4, CEILING),
         "",
         &hints,
         String::new(),
@@ -302,6 +305,7 @@ fn the_desktop_entry_icon_stands_in_for_a_missing_app_icon() {
     let hints = notify::Hints::default();
     let (app, image) = zbus::block_on(notification_icons(
         &hicolor(),
+        &decoders(2, 8, 4, CEILING),
         "",
         &hints,
         String::new(),
@@ -1868,7 +1872,8 @@ fn a_burst_of_notification_pictures_waits_for_the_decoders_and_each_arrives() {
     let burst = (0..8).map(|i| {
         let (done, file, decoders) = (done.clone(), file.clone(), &decoders);
         async move {
-            let image = picture_file(decoders, &format!(":1.{i}"), file).await;
+            let until = Instant::now() + CEILING;
+            let image = picture_file(decoders, &format!(":1.{i}"), file, until).await;
             done.fetch_add(1, SeqCst);
             image
         }
@@ -1889,6 +1894,70 @@ fn a_burst_of_notification_pictures_waits_for_the_decoders_and_each_arrives() {
         let mid = big.pixels[(big.height / 2 * big.width + big.width / 2) as usize];
         assert_eq!(mid, 0xFF20_4080, "the picture's blue, opaque");
     }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_notifications_files_are_read_on_the_decoders_and_left_out_when_none_is_free() {
+    let dir = std::env::temp_dir().join(format!("reprise-notify-held-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("cover.png");
+    image::RgbaImage::from_pixel(48, 48, image::Rgba([0x20, 0x40, 0x80, 0xFF]))
+        .save(&file)
+        .unwrap();
+    let decoders = decoders(1, 8, 4, Duration::from_millis(50));
+    let (release, gate) = async_channel::bounded::<()>(1);
+    let held = decoders.run("tray", move || {
+        let _ = gate.recv_blocking();
+    });
+    let hints = notify::Hints {
+        image_path: Some(file.display().to_string()),
+        ..Default::default()
+    };
+    let asked = async {
+        let start = Instant::now();
+        let icons = notification_icons(
+            &hicolor(),
+            &decoders,
+            ":1.1",
+            &hints,
+            blue_svg("held"),
+            None,
+        )
+        .await;
+        drop(release);
+        (icons, start.elapsed())
+    };
+    let (_, ((app, image), took)) = zbus::block_on(async { futures_util::join!(held, asked) });
+    assert!(app.is_empty(), "the app icon file waits for a thread");
+    assert!(image.is_empty(), "the picture file waits for a thread");
+    assert!(took < Duration::from_secs(1), "the handler waited {took:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn an_svg_app_icon_and_a_png_picture_by_path_decode_at_every_size() {
+    let dir = std::env::temp_dir().join(format!("reprise-notify-paths-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("cover.png");
+    image::RgbaImage::from_pixel(60, 30, image::Rgba([0x20, 0x40, 0x80, 0xFF]))
+        .save(&file)
+        .unwrap();
+    let hints = notify::Hints {
+        image_path: Some(file.display().to_string()),
+        ..Default::default()
+    };
+    let (app, image) = zbus::block_on(notification_icons(
+        &hicolor(),
+        &decoders(2, 8, 4, CEILING),
+        ":1.1",
+        &hints,
+        blue_svg("paths"),
+        None,
+    ));
+    let sides = |s: &[IconSource]| s.iter().map(|s| s.width as i32).collect::<Vec<_>>();
+    assert_eq!(sides(&app), NOTIFY_SIZES);
+    assert_eq!(sides(&image), NOTIFY_SIZES);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

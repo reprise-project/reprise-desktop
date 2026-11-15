@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use zbus::Connection;
 use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
@@ -161,8 +161,15 @@ impl Notifications {
         });
         let sound = hints.balloon_sound();
         let entry = hints.desktop_entry.as_deref().and_then(desktop_entry);
-        let (app_icon, image) =
-            notification_icons(&self.icons, &sender, &hints, app_icon, entry.as_ref()).await;
+        let (app_icon, image) = notification_icons(
+            &self.icons,
+            &DECODERS,
+            &sender,
+            &hints,
+            app_icon,
+            entry.as_ref(),
+        )
+        .await;
         let key = clip(
             notify::program_key(hints.desktop_entry.as_deref(), &app_name),
             notify::KEY_CHARS,
@@ -309,65 +316,68 @@ pub(super) fn desktop_entry(hint: &str) -> Option<reprisefs::apps::AppEntry> {
     reprisefs::apps::parse_desktop(&text, &id)
 }
 
-/// How long a picture file gets to be read and decoded; past it the notification shows without it.
+/// How long a notification's files get to be read and decoded; past it the notification shows
+/// without them.
 const PICTURE_WITHIN: Duration = Duration::from_secs(2);
 
-/// [`notify::picture_file_sources`] on the shared [`DECODERS`] as `sender`'s, so the bus thread
-/// waits at most [`PICTURE_WITHIN`], counting the wait for a thread.
+/// [`notify::picture_file_sources`] on `decoders` as `sender`'s, so the bus thread waits until
+/// `until` at most, counting the wait for a thread.
 pub(super) async fn picture_file(
     decoders: &Decoders,
     sender: &str,
     path: PathBuf,
+    until: Instant,
 ) -> Vec<IconSource> {
     let decode = move || notify::picture_file_sources(&path);
     let decoded = async { decoders.run(sender, decode).await.unwrap_or_default() };
     let late = async {
-        async_io::Timer::after(PICTURE_WITHIN).await;
+        async_io::Timer::at(until).await;
         Vec::new()
     };
     futures_lite::future::or(decoded, late).await
 }
 
-/// `(app_icon, image)`: the app icon name, else the desktop entry's icon;
-/// the `image-data` hint, else `image-path`. Each is the first that resolves. A picture file is
-/// decoded as `sender`'s.
+/// `(app_icon, image)`: the app icon, else the desktop entry's icon; the `image-data` hint, else
+/// `image-path`. Each is the first that resolves. A theme name is looked up here; a file is read
+/// on `decoders` as `sender`'s, all of them within [`PICTURE_WITHIN`].
 pub(super) async fn notification_icons(
     icons: &Icons,
+    decoders: &Decoders,
     sender: &str,
     hints: &notify::Hints<'_>,
     app_icon: String,
     entry: Option<&reprisefs::apps::AppEntry>,
 ) -> (Vec<IconSource>, Vec<IconSource>) {
-    let named = |name: Option<String>| {
-        icon_ref(name)
-            .map(|name| decode_named_at(&mut lock(icons), &name, &[], &NOTIFY_SIZES))
-            .unwrap_or_default()
-    };
-    let mut image = (hints.image.as_ref())
-        .map(notify::image_sources)
-        .unwrap_or_default();
-    if image.is_empty() {
-        let path = hints
-            .image_path
-            .as_deref()
-            .map(|p| match p.strip_prefix("file://") {
-                Some(rest) => {
-                    String::from_utf8_lossy(&reprisefs::trash::percent_decode(rest)).into_owned()
-                }
-                None => p.to_string(),
-            });
-        let file = path.clone().filter(|p| p.starts_with('/'));
-        image = named(path);
-        if image.is_empty()
-            && let Some(file) = file
-        {
-            image = picture_file(&DECODERS, sender, PathBuf::from(file)).await;
+    let until = Instant::now() + PICTURE_WITHIN;
+    let source = async |name: Option<String>| match icon_ref(name) {
+        Some(name) if name.starts_with('/') => {
+            picture_file(decoders, sender, PathBuf::from(name), until).await
         }
-    }
-    let app = [Some(app_icon), entry.and_then(|e| e.icon.clone())]
-        .into_iter()
-        .map(named)
-        .find(|sources| !sources.is_empty())
-        .unwrap_or_default();
-    (app, image)
+        Some(name) => {
+            let mut icons = lock(icons);
+            decode_named_at(&mut icons, &name, &[], &NOTIFY_SIZES)
+        }
+        None => Vec::new(),
+    };
+    let image = async {
+        let data = (hints.image.as_ref()).map(notify::image_sources);
+        if let Some(data) = data.filter(|d| !d.is_empty()) {
+            return data;
+        }
+        let path = (hints.image_path.as_deref()).map(|p| match p.strip_prefix("file://") {
+            Some(rest) => String::from_utf8_lossy(&reprisefs::trash::percent_decode(rest)).into(),
+            None => p.to_string(),
+        });
+        source(path).await
+    };
+    let app = async {
+        for name in [Some(app_icon), entry.and_then(|e| e.icon.clone())] {
+            let sources = source(name).await;
+            if !sources.is_empty() {
+                return sources;
+            }
+        }
+        Vec::new()
+    };
+    futures_lite::future::zip(app, image).await
 }

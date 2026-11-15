@@ -337,10 +337,25 @@ fn fitted(img: &ImageData) -> Vec<IconSource> {
 /// Bytes read of a picture file.
 const MAX_PICTURE_BYTES: u64 = 32 << 20;
 
-/// A picture file the icon loader leaves alone, a JPEG cover say, as [`image_sources`] gives. Only
-/// a regular file is read, so a FIFO or device a sender names can't hold the caller.
+/// A picture or icon file a notification names by path, read once: a PNG, JPEG or SVG as the icon
+/// loader draws it at each of [`super::NOTIFY_SIZES`], any other picture (a WebP cover say) as
+/// [`image_sources`] gives. Only a regular file is read, so a FIFO or device a sender names can't
+/// hold the caller.
 pub fn picture_file_sources(path: &Path) -> Vec<IconSource> {
-    let Ok(img) = decode_picture(path) else {
+    let Ok(bytes) = reprisefs::ops::read_regular(path, MAX_PICTURE_BYTES) else {
+        return Vec::new();
+    };
+    use reprisekit::icontheme::{MAX_ICON_BYTES, decode_bytes, is_icon_file};
+    if is_icon_file(path) && bytes.len() as u64 <= MAX_ICON_BYTES {
+        let icon: Vec<IconSource> = (super::NOTIFY_SIZES.iter())
+            .filter_map(|&px| decode_bytes(path, &bytes, px as u32, true))
+            .map(IconSource::from)
+            .collect();
+        if !icon.is_empty() {
+            return icon;
+        }
+    }
+    let Ok(img) = decode_picture(bytes) else {
         return Vec::new();
     };
     let rgba = img.into_rgba8();
@@ -356,11 +371,7 @@ pub fn picture_file_sources(path: &Path) -> Vec<IconSource> {
     })
 }
 
-fn decode_picture(path: &Path) -> image::ImageResult<image::DynamicImage> {
-    if !std::fs::metadata(path)?.is_file() {
-        return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput).into());
-    }
-    let bytes = reprisefs::ops::read_regular(path, MAX_PICTURE_BYTES)?;
+fn decode_picture(bytes: Vec<u8>) -> image::ImageResult<image::DynamicImage> {
     let reader = image::ImageReader::new(std::io::Cursor::new(bytes));
     crate::wallpaper::limited(reader, MAX_PICTURE_SIDE, Some(MAX_PICTURE_ALLOC))
 }
@@ -500,10 +511,7 @@ mod tests {
 
     #[test]
     fn a_picture_file_past_the_side_cap_is_refused_from_its_header() {
-        let path = std::env::temp_dir().join(format!("reprise-notify-{}.png", std::process::id()));
-        std::fs::write(&path, png_header(4097, 4097)).unwrap();
-        let got = decode_picture(&path);
-        std::fs::remove_file(&path).unwrap();
+        let got = decode_picture(png_header(4097, 4097));
         assert!(
             matches!(got, Err(image::ImageError::Limits(_))),
             "refused for its size: {got:?}"
