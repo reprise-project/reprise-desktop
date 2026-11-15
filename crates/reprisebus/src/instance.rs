@@ -6,11 +6,13 @@
 //! them.
 
 use crate::mutex::lock;
+use crate::peer::HostOnly;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
-use zbus::{OwnedVariant, Variant};
+use zbus::message::Header;
+use zbus::{Connection, OwnedVariant, Variant};
 
 const INTERFACE: &str = "org.freedesktop.Application";
 const TOKEN: &str = "activation-token";
@@ -132,6 +134,7 @@ pub fn claim(name: &str, action: Option<(String, Vec<String>)>) -> Claim {
     let app = Application {
         tx,
         wake: wake.clone(),
+        host_only: HostOnly::default(),
     };
     if let Err(e) = crate::wait(conn.object_server().at(path.as_str(), app)) {
         log::warn!("could not serve {INTERFACE}: {e}");
@@ -184,6 +187,7 @@ fn path(name: &str) -> String {
 struct Application {
     tx: Sender<Request>,
     wake: Wake,
+    host_only: HostOnly,
 }
 
 impl Application {
@@ -199,27 +203,46 @@ impl Application {
 
 #[zbus::interface(name = "org.freedesktop.Application")]
 impl Application {
-    fn activate(&self, platform_data: HashMap<String, OwnedVariant>) {
+    async fn activate(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] header: Header<'_>,
+        platform_data: HashMap<String, OwnedVariant>,
+    ) -> zbus::fdo::Result<()> {
+        self.host_only.check(conn, &header).await?;
         self.send(None, &platform_data);
+        Ok(())
     }
 
     /// Files are not something a Reprise program opens this way; the
     /// window is raised.
-    fn open(&self, _uris: Vec<String>, platform_data: HashMap<String, OwnedVariant>) {
+    async fn open(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] header: Header<'_>,
+        _uris: Vec<String>,
+        platform_data: HashMap<String, OwnedVariant>,
+    ) -> zbus::fdo::Result<()> {
+        self.host_only.check(conn, &header).await?;
         self.send(None, &platform_data);
+        Ok(())
     }
 
-    fn activate_action(
+    async fn activate_action(
         &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] header: Header<'_>,
         action_name: String,
         parameter: Vec<OwnedVariant>,
         platform_data: HashMap<String, OwnedVariant>,
-    ) {
+    ) -> zbus::fdo::Result<()> {
+        self.host_only.check(conn, &header).await?;
         let params = parameter
             .iter()
             .filter_map(|v| <&str>::try_from(&**v).ok().map(str::to_string))
             .collect();
         self.send(Some((action_name, params)), &platform_data);
+        Ok(())
     }
 }
 
@@ -284,5 +307,75 @@ mod tests {
         assert!(!pointer.platform_data().contains_key(BY_KEY));
         assert_eq!(received(&pointer), pointer);
         assert_eq!(received(&Handoff::default()), Handoff::default());
+    }
+
+    async fn call(
+        conn: &Connection,
+        (to, path, member): (&str, &str, &str),
+        body: &(impl serde::Serialize + zbus::DynamicType),
+    ) -> zbus::Result<()> {
+        conn.call_method(Some(to), path, Some(INTERFACE), member, body)
+            .await
+            .map(drop)
+    }
+
+    /// What a call of `member` from another peer on `bus` leaves: its reply and the requests an
+    /// [`Application`] reading processes under `proc` received.
+    fn activated(
+        bus: &crate::peer::tests::Bus,
+        proc: &std::path::Path,
+        member: &str,
+    ) -> (zbus::Result<()>, Vec<Request>) {
+        let connect =
+            || zbus::block_on(zbus::connection::Builder::address(bus.1.as_str()).build()).unwrap();
+        let (server, caller) = (connect(), connect());
+        let (tx, rx) = channel();
+        let app = Application {
+            tx,
+            wake: Wake::default(),
+            host_only: HostOnly::under(proc),
+        };
+        let path = path("org.example.App");
+        let server_name = server.unique_name().unwrap().to_string();
+        let data = Handoff::default().platform_data();
+        let reply = zbus::block_on(async {
+            server.object_server().at(path.as_str(), app).await.unwrap();
+            let to = (server_name.as_str(), path.as_str(), member);
+            match member {
+                "ActivateAction" => {
+                    let params: Vec<Variant> = vec![Variant::from("x")];
+                    call(&caller, to, &("new", params, data)).await
+                }
+                "Open" => call(&caller, to, &(Vec::<String>::new(), data)).await,
+                _ => call(&caller, to, &(data,)).await,
+            }
+        });
+        (reply, rx.try_iter().collect())
+    }
+
+    #[test]
+    fn a_sandboxed_peer_is_refused_every_application_method() {
+        let Some(bus) = crate::peer::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let sandboxed = crate::peer::tests::sandboxed_proc();
+        for member in ["Activate", "Open", "ActivateAction"] {
+            let (reply, requests) = activated(&bus, sandboxed.path(), member);
+            let refusal = reply.as_ref().err().and_then(crate::error::name);
+            assert_eq!(
+                refusal.as_deref(),
+                Some("org.freedesktop.DBus.Error.AccessDenied"),
+                "{member} answers AccessDenied"
+            );
+            assert_eq!(requests, [], "{member} hands nothing on");
+            let (reply, requests) = activated(&bus, std::path::Path::new("/proc"), member);
+            assert!(reply.is_ok(), "{member} from the host: {reply:?}");
+            assert_eq!(
+                requests.len(),
+                1,
+                "{member} from the host hands one request on"
+            );
+        }
     }
 }
