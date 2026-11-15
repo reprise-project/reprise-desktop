@@ -390,6 +390,10 @@ fn thumbnail(
     let made = match (&make.external, &thumbnailer) {
         (Some(x), Some(t)) => match x.runner.run(t, path, edge) {
             Err(RunError::Busy) => return None,
+            Err(RunError::TimedOut) => {
+                log::debug!("thumbnail {}: none within the deadline", path.display());
+                return None;
+            }
             Err(RunError::NoJail(why)) => {
                 no_jail(&why);
                 return None;
@@ -1074,6 +1078,29 @@ mod tests {
         std::fs::write(&doc, b"%PDF, saved again").unwrap();
         assert!(thumbnail(&mut make, 128, Some(&mut cache), &doc, &fs()).is_none());
         assert_eq!(runs(dir.path()), 2);
+    }
+
+    #[test]
+    fn a_thumbnailer_stopped_at_the_deadline_is_tried_again_on_the_next_ask() {
+        let dir = tempfile::tempdir().unwrap();
+        let decoders = Decoders::default_set();
+        let mut make = with_thumbnailer(&decoders, dir.path(), "exec sleep 5");
+        make.external.as_mut().unwrap().runner.deadline = Duration::from_millis(300);
+        let doc = dir.path().join("film.pdf");
+        std::fs::write(&doc, b"%PDF").unwrap();
+        let mut cache = Thumbnails::at(dir.path().join("cache"), PROGRAM, 1 << 20);
+        let ask = |make: &mut Make, cache: &mut Thumbnails| {
+            // The runs file is written once the script starts, which idle priority can delay.
+            let before = runs(dir.path());
+            let end = std::time::Instant::now() + Duration::from_secs(20);
+            while runs(dir.path()) == before && std::time::Instant::now() < end {
+                assert!(thumbnail(make, 128, Some(cache), &doc, &fs()).is_none());
+            }
+        };
+        ask(&mut make, &mut cache);
+        assert!(!cache.failed(&doc, &std::fs::metadata(&doc).unwrap()));
+        ask(&mut make, &mut cache);
+        assert!(runs(dir.path()) >= 2, "asked again, it runs again");
     }
 
     #[test]

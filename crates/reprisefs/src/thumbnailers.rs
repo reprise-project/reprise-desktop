@@ -6,7 +6,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 /// Thumbnailers running at once, counted across every Reprise process.
@@ -217,8 +217,10 @@ pub enum RunError {
     /// The jail does not start here, or not around this file: nothing ran, so the file is not
     /// marked failed.
     NoJail(String),
-    /// It ran and left no usable PNG, or was killed at the deadline.
+    /// It ran and left no usable PNG.
     Failed(String),
+    /// Killed at the deadline, which a busy disk or machine can cause: try again later.
+    TimedOut,
 }
 
 /// How a thumbnailer is confined.
@@ -318,8 +320,8 @@ pub struct Runner {
     pub scratch: PathBuf,
     pub deadline: Duration,
     pub jail: Jail,
-    /// Whether the jail ran `true`, tried at the first run.
-    starts: OnceLock<Result<(), String>>,
+    /// Whether the jail ran `true`, tried at the first run and again after one that timed out.
+    starts: Mutex<Option<Result<(), String>>>,
 }
 
 impl Runner {
@@ -330,7 +332,7 @@ impl Runner {
             scratch: dir.to_path_buf(),
             deadline,
             jail,
-            starts: OnceLock::new(),
+            starts: Mutex::new(None),
         }
     }
 
@@ -350,22 +352,15 @@ impl Runner {
     pub fn run(&self, t: &Thumbnailer, input: &Path, size: u32) -> Result<Vec<u8>, RunError> {
         let _slot = self.slot().ok_or(RunError::Busy)?;
         let scratch = Scratch::new(&self.scratch).map_err(|e| fail("no scratch folder", e))?;
-        if let Err(why) = self
-            .starts
-            .get_or_init(|| self.jail_runs_true(&scratch.0, &scratch.0))
-        {
-            return Err(RunError::NoJail(why.clone()));
-        }
+        self.jail_starts(&scratch.0)?;
         let output = scratch.0.join("thumbnail.png");
         let argv = (self.jail)
             .wrap(t.argv(input, &output, size), input, &scratch.0)
             .ok_or_else(|| RunError::Failed(format!("{}: no program to run", t.id)))?;
-        let status = self.wait(&argv, &scratch.0).map_err(|e| fail(&t.id, e))?;
+        let status = self.wait(&argv, &scratch.0).map_err(|e| e.of(&t.id))?;
         if !status.success() {
             // bubblewrap's own setup (a bind it cannot make) fails before the thumbnailer runs.
-            if let Err(why) = self.jail_runs_true(input, &scratch.0) {
-                return Err(RunError::NoJail(why));
-            }
+            self.jail_runs_true(input, &scratch.0)?;
             return Err(RunError::Failed(format!("{}: {status}", t.id)));
         }
         // The jail wrote this folder, so a symlink it left there is not followed out of it.
@@ -385,24 +380,44 @@ impl Runner {
         Ok(png)
     }
 
-    /// Whether the jail starts `true` around `input` and `scratch`; why not when it does not.
-    fn jail_runs_true(&self, input: &Path, scratch: &Path) -> Result<(), String> {
+    /// [`Runner::jail_runs_true`] in `scratch`, kept for the process unless it timed out.
+    fn jail_starts(&self, scratch: &Path) -> Result<(), RunError> {
+        let mut known = reprisebus::mutex::lock(&self.starts);
+        if let Some(known) = known.as_ref() {
+            return known.clone().map_err(RunError::NoJail);
+        }
+        let probe = self.jail_runs_true(scratch, scratch);
+        match &probe {
+            Ok(()) => *known = Some(Ok(())),
+            Err(RunError::NoJail(why)) => *known = Some(Err(why.clone())),
+            Err(_) => {}
+        }
+        probe
+    }
+
+    /// Whether the jail starts `true` around `input` and `scratch`: `NoJail` with why not when it
+    /// does not, `TimedOut` when it did not answer in time.
+    fn jail_runs_true(&self, input: &Path, scratch: &Path) -> Result<(), RunError> {
         if self.jail == Jail::Bare {
             return Ok(());
         }
+        let no = |why: String| RunError::NoJail(why);
         let argv = (self.jail)
             .wrap(vec![os("true")], input, scratch)
-            .ok_or("no true to run")?;
+            .ok_or_else(|| no("no true to run".into()))?;
         match self.wait(&argv, scratch) {
             Ok(status) if status.success() => Ok(()),
-            Ok(status) => Err(format!("bubblewrap or systemd-run: {status}")),
-            Err(e) => Err(e),
+            Ok(status) => Err(no(format!("bubblewrap or systemd-run: {status}"))),
+            Err(Waited::TimedOut) => Err(RunError::TimedOut),
+            Err(Waited::Failed(e)) => Err(no(e)),
         }
     }
 
     /// Run `argv` in `dir` at idle priority through [`crate::subprocess::run`].
-    fn wait(&self, argv: &[OsString], dir: &Path) -> Result<std::process::ExitStatus, String> {
-        let (program, args) = argv.split_first().ok_or("no Exec")?;
+    fn wait(&self, argv: &[OsString], dir: &Path) -> Result<std::process::ExitStatus, Waited> {
+        let (program, args) = argv
+            .split_first()
+            .ok_or_else(|| Waited::Failed("no Exec".into()))?;
         let mut cmd = Command::new(program);
         cmd.args(args)
             .current_dir(dir)
@@ -420,10 +435,8 @@ impl Runner {
         }
         match crate::subprocess::run(&mut cmd, self.deadline) {
             Ok(ran) => Ok(ran.status),
-            Err(crate::subprocess::Error::Timeout) => {
-                Err(format!("no thumbnail within {:?}", self.deadline))
-            }
-            Err(e) => Err(e.to_string()),
+            Err(crate::subprocess::Error::Timeout) => Err(Waited::TimedOut),
+            Err(e) => Err(Waited::Failed(e.to_string())),
         }
     }
 
@@ -462,6 +475,21 @@ const POLL: Duration = Duration::from_millis(25);
 const IOPRIO_WHO_PROCESS: libc::c_int = 1;
 /// `IOPRIO_CLASS_IDLE` in the class bits.
 const IOPRIO_IDLE: libc::c_int = 3 << 13;
+
+/// Why [`Runner::wait`] has no exit status.
+enum Waited {
+    TimedOut,
+    Failed(String),
+}
+
+impl Waited {
+    fn of(self, id: &str) -> RunError {
+        match self {
+            Waited::TimedOut => RunError::TimedOut,
+            Waited::Failed(e) => fail(id, e),
+        }
+    }
+}
 
 fn fail(what: &str, e: impl std::fmt::Display) -> RunError {
     RunError::Failed(format!("{what}: {e}"))
