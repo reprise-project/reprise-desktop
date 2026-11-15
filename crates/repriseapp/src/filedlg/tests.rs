@@ -2161,3 +2161,31 @@ fn pinned_folders_tile_after_the_built_in_places() {
     assert!(read().has(&t.join("a.txt")));
     let _ = std::fs::remove_dir_all(&t);
 }
+
+#[test]
+fn accept_on_a_typed_folder_lists_it_and_empties_the_name() {
+    let t = tmp("accept-folder");
+    std::fs::write(t.join("sub/inner.txt"), "").unwrap();
+    let mut h = host_in(&t);
+    let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+    let mut dlg = h.icons.dialog(open_fields());
+    let keep = type_keep(&dlg);
+    h.ensure_listed(&mut dlg, &mut icons, &keep);
+    dlg.set_file_name("sub");
+    assert_eq!(
+        h.accept(&mut dlg, "sub", &mut icons),
+        Driven::Reply(Box::new(crate::Reply::redraw()))
+    );
+    let names: Vec<&str> = dlg.entries().iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["inner.txt"]);
+    assert_eq!(dlg.file_name(), "", "the name field is emptied");
+    assert_eq!(
+        h.accept(&mut dlg, "new.txt", &mut icons),
+        Driven::Picked(t.join("sub/new.txt"))
+    );
+    assert!(matches!(
+        h.accept(&mut dlg, "nowhere/x.txt", &mut icons),
+        Driven::Failed(_)
+    ));
+    std::fs::remove_dir_all(&t).ok();
+}

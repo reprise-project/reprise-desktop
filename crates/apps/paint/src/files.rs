@@ -3,11 +3,10 @@
 
 use super::*;
 use crate::file::Kind;
-use repriseapp::filedlg::{Resolved, Step, taken, type_keep};
+use repriseapp::filedlg::{Driven, taken};
 use reprisekit::controls::combo::{self, Combo};
-use reprisekit::controls::filedlg::{self, DlgMode, Event as FileEvent, Fields};
+use reprisekit::controls::filedlg::{self, DlgMode, Fields};
 use reprisekit::controls::form::{Control, Item};
-use reprisekit::icontheme::IconCache;
 use std::path::Path;
 
 const QUALITY: &str = "quality";
@@ -240,61 +239,14 @@ impl Paint {
         let Some(dlg) = self.open.as_mut() else {
             return Reply::none();
         };
-        self.host
-            .ensure_listed(dlg, &mut ctx.icons, &type_keep(dlg));
-        let step = self.host.event(
-            dlg,
-            &ev,
-            &self.dialog_text,
-            &self.forms,
-            ctx.size,
-            &ctx.theme.metrics,
-        );
-        match step {
-            Step::Closed => {
+        let path = match (self.host).drive(dlg, &ev, &self.dialog_text, &self.forms, ctx) {
+            Driven::Reply(r) => return *r,
+            Driven::Picked(path) => path,
+            Driven::Cancelled => {
                 self.open = None;
-                Reply::redraw_all()
+                return Reply::redraw_all();
             }
-            Step::Redraw => Reply::redraw(),
-            Step::Resize => Reply::resize(),
-            Step::None => Reply::none(),
-            Step::Out(FileEvent::NeedListing(id)) => {
-                self.host.list(dlg, id, &mut ctx.icons, &type_keep(dlg));
-                Reply::redraw()
-            }
-            Step::Out(FileEvent::FilterChanged(_)) => {
-                if let Some(id) = self.host.folder {
-                    self.host.list(dlg, id, &mut ctx.icons, &type_keep(dlg));
-                }
-                Reply::redraw()
-            }
-            Step::Out(FileEvent::Accept(names)) => match names.first() {
-                Some(name) => {
-                    let name = name.clone();
-                    self.open_accept(&name, ctx)
-                }
-                None => Reply::none(),
-            },
-            Step::Out(FileEvent::Cancel) => {
-                self.open = None;
-                Reply::redraw_all()
-            }
-            Step::Out(FileEvent::Redraw) => Reply::redraw(),
-            Step::Out(_) => Reply::none(),
-        }
-    }
-
-    fn open_accept(&mut self, name: &str, ctx: &mut Ctx) -> Reply {
-        let path = match self.host.resolve(name) {
-            Ok(Resolved::Folder(id, _)) => {
-                if let Some(dlg) = self.open.as_mut() {
-                    self.host.list(dlg, id, &mut ctx.icons, &type_keep(dlg));
-                    dlg.clear_file_name();
-                }
-                return Reply::redraw();
-            }
-            Ok(Resolved::File(path)) => path,
-            Err(msg) => {
+            Driven::Failed(msg) => {
                 self.error(msg);
                 return Reply::redraw_all();
             }
@@ -324,57 +276,15 @@ impl Paint {
         let Some(dlg) = self.saveas.as_mut() else {
             return Reply::none();
         };
-        self.host
-            .ensure_listed(dlg, &mut ctx.icons, &type_keep(dlg));
-        let step = self.host.event(
-            dlg,
-            &ev,
-            &self.dialog_text,
-            &self.forms,
-            ctx.size,
-            &ctx.theme.metrics,
-        );
-        match step {
-            Step::Closed | Step::Out(FileEvent::Cancel) => {
+        let path = match (self.host).drive(dlg, &ev, &self.dialog_text, &self.forms, ctx) {
+            Driven::Reply(r) => return *r,
+            Driven::Picked(path) => path,
+            Driven::Cancelled => {
                 self.saveas = None;
                 self.after_save = None;
-                Reply::redraw_all()
+                return Reply::redraw_all();
             }
-            Step::Redraw | Step::Out(FileEvent::Redraw) => Reply::redraw(),
-            Step::Resize => Reply::resize(),
-            Step::None => Reply::none(),
-            Step::Out(FileEvent::NeedListing(id)) => {
-                self.host.list(dlg, id, &mut ctx.icons, &type_keep(dlg));
-                Reply::redraw()
-            }
-            Step::Out(FileEvent::FilterChanged(_)) => {
-                if let Some(id) = self.host.folder {
-                    self.host.list(dlg, id, &mut ctx.icons, &type_keep(dlg));
-                }
-                Reply::redraw()
-            }
-            Step::Out(FileEvent::Accept(names)) => match names.first() {
-                Some(name) => {
-                    let name = name.clone();
-                    self.saveas_accept(&name, &mut ctx.icons)
-                }
-                None => Reply::none(),
-            },
-            Step::Out(_) => Reply::none(),
-        }
-    }
-
-    fn saveas_accept(&mut self, name: &str, icons: &mut IconCache) -> Reply {
-        let path = match self.host.resolve(name) {
-            Ok(Resolved::Folder(id, _)) => {
-                if let Some(dlg) = self.saveas.as_mut() {
-                    self.host.list(dlg, id, icons, &type_keep(dlg));
-                    dlg.clear_file_name();
-                }
-                return Reply::redraw();
-            }
-            Ok(Resolved::File(path)) => path,
-            Err(msg) => {
+            Driven::Failed(msg) => {
                 self.error(msg);
                 return Reply::redraw_all();
             }
