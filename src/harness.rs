@@ -12,9 +12,9 @@ use smithay::{
 use wayland_client::{
     self as wc, Connection, EventQueue, QueueHandle,
     protocol::{
-        wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_data_device, wl_data_device_manager,
-        wl_data_offer, wl_data_source, wl_keyboard, wl_output::WlOutput, wl_pointer, wl_registry,
-        wl_seat, wl_shm, wl_shm_pool, wl_surface::WlSurface,
+        wl_buffer::WlBuffer, wl_callback, wl_compositor::WlCompositor, wl_data_device,
+        wl_data_device_manager, wl_data_offer, wl_data_source, wl_keyboard, wl_output::WlOutput,
+        wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface::WlSurface,
     },
 };
 use wayland_protocols::{
@@ -983,6 +983,13 @@ impl TestClient {
         heard
     }
 
+    /// Ask for a frame callback on `surface`'s next commit; the flag is set once it is done.
+    pub fn frame(&self, surface: &WlSurface) -> FrameDone {
+        let done = FrameDone::default();
+        surface.frame(&self.qh(), done.clone());
+        done
+    }
+
     /// Bind the wlr foreign-toplevel manager, as a bar or dock does.
     pub fn watch_toplevels(&self) -> ZwlrForeignToplevelManagerV1 {
         let (name, version) = (self.side.globals.iter())
@@ -1882,6 +1889,23 @@ pub enum Presented {
 }
 
 pub type Feedback = Arc<std::sync::Mutex<Option<Presented>>>;
+
+pub type FrameDone = Arc<std::sync::atomic::AtomicBool>;
+
+impl wc::Dispatch<wl_callback::WlCallback, FrameDone> for ClientSide {
+    fn event(
+        _: &mut Self,
+        _: &wl_callback::WlCallback,
+        ev: wl_callback::Event,
+        done: &FrameDone,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = ev {
+            done.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
 
 impl wc::Dispatch<wp_presentation_feedback::WpPresentationFeedback, Feedback> for ClientSide {
     fn event(
