@@ -333,6 +333,9 @@ pub const KB_LAYOUTS: &str = "kb_layouts";
 pub const KB_ADD: &str = "kb_add";
 pub const KB_REMOVE: &str = "kb_remove";
 pub const KB_UP: &str = "kb_up";
+/// The Compose key and Caps Lock drop-downs, each editing its part of `[keyboard] options`.
+pub const KB_COMPOSE: &str = "kb_compose";
+pub const KB_CAPS: &str = "kb_caps";
 /// The note under the Layouts list naming the keys that switch layouts ([`show_keys`]).
 pub const KB_SWITCH_NOTE: &str = "kb_switch_note";
 

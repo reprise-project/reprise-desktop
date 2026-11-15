@@ -239,6 +239,8 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("kb_remove", "Remove"),
             ("kb_up", "Move Up"),
             ("layout_per_window", "Remember a layout for each window"),
+            ("kb_compose", "Compose key:"),
+            ("kb_caps", "Caps Lock:"),
             ("kb_model", "Model:"),
             ("kb_options", "Options:"),
             ("repeat_rate", "Repeat rate:"),

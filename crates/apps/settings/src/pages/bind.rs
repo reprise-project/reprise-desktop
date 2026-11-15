@@ -18,9 +18,10 @@ use super::system::{
 };
 use super::{
     BOUNCE_DELAY, CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN,
-    DOUBLE_CLICK, GTK_FIXED_ROWS, KB_ADD, KB_LAYOUTS, KB_REMOVE, KB_SWITCH_NOTE, KB_UP, KELVIN_MAX,
-    KELVIN_MIN, KELVIN_STEP, MK_ACCEL, MK_SPEED, PRIVACY_LOCATION, SCROLL_SPEED, SPEED_STEPS,
-    Steps, THUMBNAILERS, THUMBS, THUMBS_MB, THUMBS_SIZE, TRAY_CUSTOMIZE, WATER, WATER_STYLE,
+    DOUBLE_CLICK, GTK_FIXED_ROWS, KB_ADD, KB_CAPS, KB_COMPOSE, KB_LAYOUTS, KB_REMOVE,
+    KB_SWITCH_NOTE, KB_UP, KELVIN_MAX, KELVIN_MIN, KELVIN_STEP, MK_ACCEL, MK_SPEED,
+    PRIVACY_LOCATION, SCROLL_SPEED, SPEED_STEPS, Steps, THUMBNAILERS, THUMBS, THUMBS_MB,
+    THUMBS_SIZE, TRAY_CUSTOMIZE, WATER, WATER_STYLE,
 };
 use crate::capturepage as cap;
 use crate::notifypage::{AUTO_DND, QUIET, QUIET_DEFAULT, QUIET_TIMES};
@@ -36,12 +37,12 @@ use reprisekit::textedit::TextEdit;
 use reprisekit::theme::Color;
 
 use crate::model::{
-    AUDIO_CODECS, CLICK_METHODS, CURSOR_SIZES, Choices, DESKTOPS_DEFAULT, ENCODERS,
-    FONT_SMOOTHINGS, FRAME_RATES, HOT_CORNERS, INTERFACES, LOCK_GRACES, MENU_ANIMATIONS,
+    AUDIO_CODECS, CAPS_LOCK, CLICK_METHODS, COMPOSE_KEY, CURSOR_SIZES, Choices, DESKTOPS_DEFAULT,
+    ENCODERS, FONT_SMOOTHINGS, FRAME_RATES, HOT_CORNERS, INTERFACES, LOCK_GRACES, MENU_ANIMATIONS,
     PAGER_MARKS, PNG_COMPRESSIONS, POSITIONS, QT_PLATFORM_THEMES, RATE_MODES, RECORD_FRAME_RATES,
     REMOTE_ENCODERS, REMOTE_QUALITIES, SHOT_FORMATS, STARTMENU_STYLES, SWITCH_ANIMATIONS,
     SWITCHER_SIZES, SWITCHER_STYLES, Settings, Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS,
-    TEXT_SIZES, TITLE_DOUBLE_CLICKS, VIDEO_CODECS, VISUAL_BELLS, WATER_STYLES, keys_for,
+    TEXT_SIZES, TITLE_DOUBLE_CLICKS, VIDEO_CODECS, VISUAL_BELLS, WATER_STYLES, XkbPick, keys_for,
     remote_quality_row,
 };
 
@@ -51,6 +52,8 @@ pub(super) enum Bind {
     Flag(&'static str, Lens<Settings, bool>),
     Choice(&'static str, Lens<Settings, String>),
     Named(&'static str, Lens<Settings, String>, &'static Choices),
+    /// A drop-down owning part of an xkb options field: its row's id replaces the others it owns.
+    XkbOption(&'static str, Lens<Settings, String>, &'static XkbPick),
     /// A [`Bind::Choice`] whose first rows are the labels of `Choices` standing for their values (`CURSOR_DEFAULT_ROW` for "").
     ChoiceOrDefault(&'static str, Lens<Settings, String>, &'static Choices),
     NamedNum(
@@ -324,6 +327,8 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Steps("double_click_ms", lens!(double_click_ms), DOUBLE_CLICK),
         Bind::Text("kb_model", lens!(kb_model)),
         Bind::Text("kb_options", lens!(kb_options)),
+        Bind::XkbOption(KB_COMPOSE, lens!(kb_options), &COMPOSE_KEY),
+        Bind::XkbOption(KB_CAPS, lens!(kb_options), &CAPS_LOCK),
         Bind::Num("repeat_rate", lens!(repeat_rate)),
         Bind::Num("repeat_delay", lens!(repeat_delay)),
         Bind::Flag("shortcut_overlay", lens!(shortcut_overlay)),
@@ -440,6 +445,19 @@ fn percent(tenths: i64) -> String {
     format!("{}%", tenths * 10)
 }
 
+/// Select the row of `pick` that `options` holds; an id of its family it lacks shows as itself after its rows.
+fn show_xkb_option(c: &mut combo::Combo, pick: &XkbPick, options: &str) {
+    let want = pick.get(options);
+    c.items.truncate(pick.rows.len());
+    c.selected = match pick.rows.iter().position(|(v, _)| *v == want) {
+        Some(i) => i,
+        None => {
+            c.items.push(combo::ListItem::new(want.to_string()));
+            pick.rows.len()
+        }
+    };
+}
+
 fn kelvin_pos(k: i64) -> usize {
     ((k.clamp(KELVIN_MIN, KELVIN_MAX) - KELVIN_MIN + KELVIN_STEP / 2) / KELVIN_STEP) as usize
 }
@@ -452,6 +470,7 @@ impl Bind {
             | Bind::Flag(id, _)
             | Bind::Choice(id, _)
             | Bind::Named(id, _, _)
+            | Bind::XkbOption(id, _, _)
             | Bind::ChoiceOrDefault(id, ..)
             | Bind::NamedNum(id, _, _)
             | Bind::UseDesktops(id, _)
@@ -484,6 +503,7 @@ impl Bind {
             Bind::Text(_, at)
             | Bind::Choice(_, at)
             | Bind::Named(_, at, _)
+            | Bind::XkbOption(_, at, _)
             | Bind::ChoiceOrDefault(_, at, _)
             | Bind::Water(_, at)
             | Bind::WaterStyle(_, at)
@@ -665,6 +685,9 @@ pub fn write_form(form: &mut Form, s: &Settings) {
                     }
                 };
             }
+            (Bind::XkbOption(_, at, pick), Control::Combo(c)) => {
+                show_xkb_option(c, pick, at.get(s))
+            }
             (Bind::UseDesktops(_, at), Control::Check { checked, .. }) => *checked = *at.get(s) > 1,
             (Bind::Water(_, at), Control::Check { checked, .. }) => *checked = at.get(s) != "off",
             (Bind::WaterStyle(_, at), Control::Combo(c)) => {
@@ -779,6 +802,20 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         nl.set_enabled(id, s.nl_enabled && s.nl_schedule == "fixed");
     }
     nl.set_text("nl_temp_value", &format!("{} K", s.nl_temperature));
+    let kb = &mut sheet.pages[Page::Keyboard.index()];
+    for (id, pick) in [(KB_COMPOSE, &COMPOSE_KEY), (KB_CAPS, &CAPS_LOCK)] {
+        if let Some(Control::Combo(c)) = kb.item_mut(id).map(|i| &mut i.control) {
+            show_xkb_option(c, pick, &s.kb_options);
+        }
+    }
+    // A drop-down's pick rewrites the options the edit shows; typing there leaves them equal.
+    if let Some(Control::Edit { edit, first, .. }) =
+        kb.item_mut("kb_options").map(|i| &mut i.control)
+        && edit.text != s.kb_options
+    {
+        *edit = TextEdit::new(s.kb_options.clone(), false);
+        first.set(0);
+    }
     let mouse = &mut sheet.pages[Page::Mouse.index()];
     mouse.set_text("double_click_value", &format!("{} ms", s.double_click_ms));
     mouse.set_text("mouse_scroll_value", &percent(s.mouse_scroll_speed));
@@ -1011,6 +1048,15 @@ pub fn read_one(sheet: &PropSheet, id: &str, s: &mut Settings) {
                     };
                     if let Some(v) = value {
                         *at.get_mut(s) = v;
+                    }
+                }
+                (Bind::XkbOption(_, at, pick), Control::Combo(c)) => {
+                    let id = match pick.rows.get(c.selected) {
+                        Some((v, _)) => Some(v.to_string()),
+                        None => c.items.get(c.selected).map(|i| i.text.clone()),
+                    };
+                    if let Some(id) = id {
+                        *at.get_mut(s) = pick.set(at.get(s), &id);
                     }
                 }
                 (Bind::UseDesktops(_, at), Control::Check { checked, .. }) => {

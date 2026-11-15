@@ -2,11 +2,11 @@
 
 use super::{
     Area, BOUNCE_DELAY, CURSOR_DEFAULT_ROW, CURSOR_PREVIEW, DELAY_STEPS, DOUBLE_CLICK, GX, KB_ADD,
-    KB_LAYOUTS, KB_REMOVE, KB_SWITCH_NOTE, KB_UP, MK_ACCEL, MK_SPEED, SC_ADD, SC_EDIT, SC_REMOVE,
-    SCROLL_SPEED, SPEED_STEPS, X, button, choice, combo, edit, ends_track, group, shortcuts, spin,
-    updown,
+    KB_CAPS, KB_COMPOSE, KB_LAYOUTS, KB_REMOVE, KB_SWITCH_NOTE, KB_UP, MK_ACCEL, MK_SPEED, SC_ADD,
+    SC_EDIT, SC_REMOVE, SCROLL_SPEED, SPEED_STEPS, X, button, choice, combo, edit, ends_track,
+    group, shortcuts, spin, updown,
 };
-use crate::model::{CLICK_METHODS, CURSOR_SIZES, TEXT_SIZES, VISUAL_BELLS};
+use crate::model::{CAPS_LOCK, CLICK_METHODS, COMPOSE_KEY, CURSOR_SIZES, TEXT_SIZES, VISUAL_BELLS};
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listbox::ListBox;
@@ -26,14 +26,7 @@ fn layouts(a: Area) -> Rect {
 }
 
 pub fn keyboard(a: Area) -> Form {
-    let gw = a.gw();
     let mut items = vec![group(a, "keyboard_group", 44, 210, "Keyboard")];
-    let row = |label_id, id, y, text| {
-        [
-            Item::label_at(label_id, GX, y, 80, text),
-            edit(id, GX + 84, y - 4, gw - 84),
-        ]
-    };
     // The layouts in switching order, an empty list showing the system default greyed; each button 4 px under the last, beside the list.
     items.push(Item::label_at(
         "layouts_label",
@@ -69,8 +62,23 @@ pub fn keyboard(a: Area) -> Form {
         146,
         "Remember a layout for each &window",
     ));
-    items.extend(row("model_label", "kb_model", 170, "&Model:"));
-    items.extend(row("options_label", "kb_options", 196, "&Options:"));
+    // Two columns, sharing the extra width: the Compose and Caps Lock drop-downs over the model and
+    // the other options.
+    let (x1, x2) = (GX + 84, GX + 182 + a.dw() / 2);
+    items.push(Item::label_at(
+        "compose_label",
+        GX,
+        170,
+        80,
+        "Compose &key:",
+    ));
+    items.push(choice(KB_COMPOSE, x1, 166, 90, COMPOSE_KEY.rows));
+    items.push(Item::label_at("caps_label", x2, 170, 56, "Ca&ps Lock:"));
+    items.push(choice(KB_CAPS, x2 + 60, 166, 92, CAPS_LOCK.rows));
+    items.push(Item::label_at("model_label", GX, 196, 80, "&Model:"));
+    items.push(edit("kb_model", x1, 192, 90 + a.dw() / 2));
+    items.push(Item::label_at("options_label", x2, 196, 56, "&Options:"));
+    items.push(edit("kb_options", x2 + 60, 192, a.gright() - x2 - 60));
     items.extend(spin(
         "rate_label",
         "repeat_rate",
