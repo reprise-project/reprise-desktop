@@ -804,6 +804,51 @@ fn each_change_boltd_signals_shows_the_newest() {
     assert!(a.thunderbolt.follow.is_none());
 }
 
+fn label(f: &form::Form, id: &str) -> String {
+    match &f.item(id).unwrap().control {
+        form::Control::Label { text, .. } => text.clone(),
+        c => panic!("{id} is a label, not {c:?}"),
+    }
+}
+
+#[test]
+fn a_first_read_without_boltd_or_a_radio_reaches_the_page() {
+    let mut a = app("no-bolt");
+    let (tx, rx) = std::sync::mpsc::channel();
+    a.thunderbolt.follow = Some(rx);
+    tx.send(None).unwrap();
+    assert!(
+        a.thunderbolt_done(),
+        "the first read shows, whatever it says"
+    );
+    let page = &a.sheet.pages[Page::Thunderbolt.index()];
+    assert_eq!(
+        label(page, "thunderbolt_status"),
+        "The bolt service isn't available, so no device can be listed."
+    );
+    match &page.item(pages::TB_LIST).unwrap().control {
+        form::Control::ListBox { list, .. } => assert!(list.items.is_empty(), "no Loading... row"),
+        c => panic!("the devices are a list box, not {c:?}"),
+    }
+    tx.send(None).unwrap();
+    assert!(!a.thunderbolt_done(), "the same read again changes nothing");
+
+    airplane_read(&mut a, None, None);
+    let page = &a.sheet.pages[Page::Network.index()];
+    assert_eq!(
+        label(page, "airplane_status"),
+        "This computer has no radio to turn off."
+    );
+    assert!(!lit(&a));
+    assert!(
+        matches!(
+            page.item("airplane_note").unwrap().control,
+            form::Control::Label { enabled: false, .. }
+        ),
+        "the note greys"
+    );
+}
+
 #[test]
 fn a_follow_that_ended_starts_again_only_when_the_page_opens_again() {
     let mut a = app("thunderbolt");
