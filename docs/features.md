@@ -1051,8 +1051,9 @@ dialogs. [More in programs.md](programs.md#explorer).
   as theirs, and later listings show it at once until the mount answers.
   A file dialog lists such a link whatever its type filter, since it may
   open as a folder. When it answers, the folder lists again with the link
-  followed. Run's Browse moves into and out of such a mount's folders,
-  showing them empty.
+  followed. A file dialog whose last folder is on such a mount opens on its
+  default folder after 0.3 s, and Run's Browse moves into and out of such a
+  mount's folders, showing them empty.
 - **Programs stuck on a dead mount** lose their windows once killed, without
   End Program (see [End Program](#windows)).
 

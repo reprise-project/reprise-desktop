@@ -525,8 +525,9 @@ pub struct Host {
     watched: Option<PathBuf>,
     relist: Option<reprisefs::listing::Relist>,
     gvfs: Option<reprisefs::gvfsmeta::Changes>,
-    /// A typed path whose folders did not answer within [`RESOLVE_WAIT`]; the next resolve of
-    /// the same path waits on it again instead of starting another probe.
+    /// A typed path whose folders did not answer within [`RESOLVE_WAIT`], or a last folder that
+    /// did not within [`LIST_WAIT`]; the next resolve or open of the same path takes its answer
+    /// instead of starting another probe.
     probing: Option<(PathBuf, Job<(bool, bool)>)>,
     /// Delete's work under way off the loop; [`Host::take_thumbs`] takes each step.
     deleting: Option<Job<Deleting>>,
@@ -597,9 +598,13 @@ impl Host {
                 )
             })
             .unwrap_or_default();
-        let last = repriseconf::filedialog::folder(&kept).filter(|d| d.is_dir());
-        let dir = dir.or(last.as_deref()).unwrap_or(fallback);
-        self.folder = Some(self.folders.id(dir));
+        let dir = match dir {
+            Some(dir) => dir.to_path_buf(),
+            None => (repriseconf::filedialog::folder(&kept))
+                .and_then(|last| self.last_folder(last))
+                .unwrap_or_else(|| fallback.to_path_buf()),
+        };
+        self.folder = Some(self.folders.id(&dir));
         self.watched = None;
         self.ask = None;
         self.deleting = None;
@@ -617,6 +622,26 @@ impl Host {
         self.remembered = Remembered::parse(&kept);
         dlg.restore(self.remembered);
         dlg
+    }
+
+    /// `last` when it is still a folder, checked on a listing thread for [`LIST_WAIT`]. A check
+    /// that does not answer is kept, and the next open takes its answer without waiting again.
+    fn last_folder(&mut self, last: PathBuf) -> Option<PathBuf> {
+        let found = match self.probing.take() {
+            Some((p, job)) if p == last => job.take().ok_or(job),
+            _ => {
+                let job = probe_folders(&last);
+                job.wait(LIST_WAIT).ok_or(job)
+            }
+        };
+        match found {
+            Ok((is_dir, _)) => is_dir.then_some(last),
+            Err(job) => {
+                log::warn!("file dialog: {} is not responding", last.display());
+                self.probing = Some((last, job));
+                None
+            }
+        }
     }
 
     /// Starts reading the pinned folders, waiting [`PINS_WAIT`] for the first read; later opens
