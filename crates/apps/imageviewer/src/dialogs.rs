@@ -1,11 +1,11 @@
 //! The delete prompt, the error box and the Open dialog.
 
 use super::*;
-use repriseapp::filedlg::{Resolved, Step as DlgStep, type_keep};
+use repriseapp::filedlg::Driven;
 use repriseapp::oneshot::Outcome;
 use reprisefs::bincap::{ConfirmKind, DeleteMode, delete_prompt};
 use reprisekit::controls::dlgtemplate::{self, Template};
-use reprisekit::controls::filedlg::{DlgMode, Event as FileEvent, Fields};
+use reprisekit::controls::filedlg::{DlgMode, Fields};
 use reprisekit::controls::msgbox;
 
 /// The Open dialog's Files of type rows: the pictures the viewer decodes, then everything.
@@ -150,68 +150,24 @@ impl Viewer {
         });
     }
 
+    /// A typed folder opens in the dialog; a file shows, with its folder's pictures around it.
     pub(crate) fn open_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         let Some(dlg) = self.open.as_mut() else {
             return Reply::none();
         };
-        self.host
-            .ensure_listed(dlg, &mut ctx.icons, &type_keep(dlg));
-        let step = self.host.event(
-            dlg,
-            &ev,
-            &self.dialog_text,
-            &self.forms,
-            ctx.size,
-            &ctx.theme.metrics,
-        );
-        let out = match step {
-            DlgStep::Closed => FileEvent::Cancel,
-            DlgStep::Redraw => return Reply::redraw(),
-            DlgStep::Resize => return Reply::resize(),
-            DlgStep::None => return Reply::none(),
-            DlgStep::Out(FileEvent::NeedListing(id)) => {
-                self.host.list(dlg, id, &mut ctx.icons, &type_keep(dlg));
-                return Reply::redraw();
-            }
-            DlgStep::Out(FileEvent::FilterChanged(_)) => {
-                if let Some(id) = self.host.folder {
-                    self.host.list(dlg, id, &mut ctx.icons, &type_keep(dlg));
-                }
-                return Reply::redraw();
-            }
-            DlgStep::Out(out) => out,
-        };
-        match out {
-            FileEvent::Redraw => Reply::redraw(),
-            FileEvent::Accept(names) => match names.first() {
-                Some(name) => self.open_accept(&name.clone(), ctx),
-                None => Reply::none(),
-            },
-            FileEvent::Cancel => {
-                self.open = None;
-                Reply::redraw_all()
-            }
-            _ => Reply::none(),
-        }
-    }
-
-    /// A typed folder opens in the dialog; a file shows, with its folder's pictures around it.
-    fn open_accept(&mut self, name: &str, ctx: &mut Ctx) -> Reply {
-        match self.host.resolve(name) {
-            Ok(Resolved::Folder(id, _)) => {
-                if let Some(dlg) = self.open.as_mut() {
-                    self.host.list(dlg, id, &mut ctx.icons, &type_keep(dlg));
-                    dlg.clear_file_name();
-                }
-                Reply::redraw()
-            }
-            Ok(Resolved::File(path)) => {
+        match (self.host).drive(dlg, &ev, &self.dialog_text, &self.forms, ctx) {
+            Driven::Reply(r) => *r,
+            Driven::Picked(path) => {
                 self.open = None;
                 self.slide_due = None;
                 self.show(path);
                 Reply::redraw_all()
             }
-            Err(msg) => {
+            Driven::Cancelled => {
+                self.open = None;
+                Reply::redraw_all()
+            }
+            Driven::Failed(msg) => {
                 self.error = Some(self.error_box(&msg));
                 Reply::redraw_all()
             }

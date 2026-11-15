@@ -91,76 +91,23 @@ impl Notepad {
         let Some(dlg) = self.open.as_mut() else {
             return Reply::none();
         };
-        self.host
-            .ensure_listed(dlg, &mut ctx.icons, &type_keep(dlg));
-        match self.host.event(
-            dlg,
-            &ev,
-            &self.dialog_text,
-            &self.forms,
-            ctx.size,
-            &ctx.theme.metrics,
-        ) {
-            Step::Closed => self.open_outcome(FileEvent::Cancel, &mut ctx.icons),
-            Step::Redraw => Reply::redraw(),
-            Step::Resize => Reply::resize(),
-            Step::None => Reply::none(),
-            Step::Out(FileEvent::NeedListing(id)) => {
-                self.host.list(dlg, id, &mut ctx.icons, &type_keep(dlg));
-                Reply::redraw()
-            }
-            Step::Out(FileEvent::FilterChanged(_)) => {
-                if let Some(id) = self.host.folder {
-                    self.host.list(dlg, id, &mut ctx.icons, &type_keep(dlg));
-                }
-                Reply::redraw()
-            }
-            Step::Out(out) => self.open_outcome(out, &mut ctx.icons),
-        }
+        let driven = (self.host).drive(dlg, &ev, &self.dialog_text, &self.forms, ctx);
+        self.open_driven(driven)
     }
 
-    /// `Accept` reads the file and replaces the buffer. `Cancel` leaves `pending` alone: any action has run by the time Open is up.
-    pub(crate) fn open_outcome(&mut self, out: FileEvent, icons: &mut IconCache) -> Reply {
-        match out {
-            FileEvent::None => Reply::none(),
-            FileEvent::Redraw => Reply::redraw(),
-            FileEvent::Accept(names) => match names.first() {
-                Some(name) => self.open_accept(name, icons),
-                None => Reply::none(),
-            },
-            FileEvent::Cancel => {
+    /// A picked file is read into the buffer; a name whose folder does not exist says so in a
+    /// box and leaves the dialog up. Cancel leaves `pending` alone: any action has run by the
+    /// time Open is up.
+    pub(crate) fn open_driven(&mut self, driven: Driven) -> Reply {
+        let path = match driven {
+            Driven::Reply(r) => return *r,
+            Driven::Picked(path) => path,
+            Driven::Cancelled => {
                 self.open = None;
-                Reply::redraw_all()
+                return Reply::redraw_all();
             }
-            FileEvent::NeedListing(_)
-            | FileEvent::FilterChanged(_)
-            | FileEvent::Wildcard { .. }
-            | FileEvent::NeedPlace(_)
-            | FileEvent::PinEntry { .. }
-            | FileEvent::UnpinPlace(_)
-            | FileEvent::ShiftPlace { .. }
-            | FileEvent::CreateFolder(_)
-            | FileEvent::Refresh
-            | FileEvent::Rename { .. }
-            | FileEvent::Delete { .. }
-            | FileEvent::Resize => Reply::none(),
-        }
-    }
-
-    /// A typed folder opens in the dialog; a file is read into the buffer. A name whose folder does not
-    /// exist says so in a box and leaves the dialog up.
-    pub(crate) fn open_accept(&mut self, name: &str, icons: &mut IconCache) -> Reply {
-        let path = match self.host.resolve(name) {
-            Ok(Resolved::Folder(id, _)) => {
-                if let Some(dlg) = self.open.as_mut() {
-                    self.host.list(dlg, id, icons, &type_keep(dlg));
-                    dlg.clear_file_name();
-                }
-                return Reply::redraw();
-            }
-            Ok(Resolved::File(path)) => path,
-            Err(msg) => {
-                log::warn!("open {name}: {msg}");
+            Driven::Failed(msg) => {
+                log::warn!("open: {msg}");
                 self.error = Some(self.error_box(&msg));
                 return Reply::redraw_all();
             }
@@ -188,76 +135,23 @@ impl Notepad {
         let Some(dlg) = self.saveas.as_mut() else {
             return Reply::none();
         };
-        self.host
-            .ensure_listed(dlg, &mut ctx.icons, &type_keep(dlg));
-        match self.host.event(
-            dlg,
-            &ev,
-            &self.dialog_text,
-            &self.forms,
-            ctx.size,
-            &ctx.theme.metrics,
-        ) {
-            Step::Closed => self.saveas_outcome(FileEvent::Cancel, &mut ctx.icons),
-            Step::Redraw => Reply::redraw(),
-            Step::Resize => Reply::resize(),
-            Step::None => Reply::none(),
-            Step::Out(FileEvent::NeedListing(id)) => {
-                self.host.list(dlg, id, &mut ctx.icons, &type_keep(dlg));
-                Reply::redraw()
-            }
-            Step::Out(FileEvent::FilterChanged(_)) => {
-                if let Some(id) = self.host.folder {
-                    self.host.list(dlg, id, &mut ctx.icons, &type_keep(dlg));
-                }
-                Reply::redraw()
-            }
-            Step::Out(out) => self.saveas_outcome(out, &mut ctx.icons),
-        }
+        let driven = (self.host).drive(dlg, &ev, &self.dialog_text, &self.forms, ctx);
+        self.saveas_driven(driven)
     }
 
-    /// `Accept` writes the file. `Cancel` drops any pending action: Save As is where an Untitled document's Yes on the save prompt waits.
-    pub(crate) fn saveas_outcome(&mut self, out: FileEvent, icons: &mut IconCache) -> Reply {
-        match out {
-            FileEvent::None => Reply::none(),
-            FileEvent::Redraw => Reply::redraw(),
-            FileEvent::Accept(names) => match names.first() {
-                Some(name) => self.saveas_accept(name, icons),
-                None => Reply::none(),
-            },
-            FileEvent::Cancel => {
+    /// A picked name is written, after the replace prompt when another file has it. Cancel drops
+    /// any pending action: Save As is where an Untitled document's Yes on the save prompt waits.
+    pub(crate) fn saveas_driven(&mut self, driven: Driven) -> Reply {
+        let path = match driven {
+            Driven::Reply(r) => return *r,
+            Driven::Picked(path) => path,
+            Driven::Cancelled => {
                 self.saveas = None;
                 self.pending.cancelled();
-                Reply::redraw_all()
+                return Reply::redraw_all();
             }
-            FileEvent::NeedListing(_)
-            | FileEvent::FilterChanged(_)
-            | FileEvent::Wildcard { .. }
-            | FileEvent::NeedPlace(_)
-            | FileEvent::PinEntry { .. }
-            | FileEvent::UnpinPlace(_)
-            | FileEvent::ShiftPlace { .. }
-            | FileEvent::CreateFolder(_)
-            | FileEvent::Refresh
-            | FileEvent::Rename { .. }
-            | FileEvent::Delete { .. }
-            | FileEvent::Resize => Reply::none(),
-        }
-    }
-
-    /// A typed folder opens in the dialog; a file name is written, after the replace prompt when another file has it.
-    pub(crate) fn saveas_accept(&mut self, name: &str, icons: &mut IconCache) -> Reply {
-        let path = match self.host.resolve(name) {
-            Ok(Resolved::Folder(id, _)) => {
-                if let Some(dlg) = self.saveas.as_mut() {
-                    self.host.list(dlg, id, icons, &type_keep(dlg));
-                    dlg.clear_file_name();
-                }
-                return Reply::redraw();
-            }
-            Ok(Resolved::File(path)) => path,
-            Err(msg) => {
-                log::warn!("save as {name}: {msg}");
+            Driven::Failed(msg) => {
+                log::warn!("save as: {msg}");
                 self.error = Some(self.error_box(&msg));
                 return Reply::redraw_all();
             }

@@ -1,5 +1,7 @@
 use super::*;
 use crate::menu::{row, title};
+use reprisekit::controls::filedlg::Event as FileEvent;
+use reprisekit::icontheme::IconCache;
 use reprisekit::theme::FontConfig;
 
 #[test]
@@ -1126,6 +1128,33 @@ fn a_typed_path_into_a_missing_folder_shows_a_box_and_keeps_the_dialog() {
 
 fn test_icons() -> IconCache {
     IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]))
+}
+
+/// The dialogs' hosts past `FileDlg`'s own step, driven with what the dialog gave out.
+impl Notepad {
+    fn open_outcome(&mut self, out: FileEvent, icons: &mut IconCache) -> Reply {
+        let Some(dlg) = self.open.as_mut() else {
+            return Reply::none();
+        };
+        let driven = self.host.handle(dlg, out, icons);
+        self.open_driven(driven)
+    }
+
+    fn saveas_outcome(&mut self, out: FileEvent, icons: &mut IconCache) -> Reply {
+        let Some(dlg) = self.saveas.as_mut() else {
+            return Reply::none();
+        };
+        let driven = self.host.handle(dlg, out, icons);
+        self.saveas_driven(driven)
+    }
+
+    fn open_accept(&mut self, name: &str, icons: &mut IconCache) -> Reply {
+        self.open_outcome(FileEvent::Accept(vec![name.into()]), icons)
+    }
+
+    fn saveas_accept(&mut self, name: &str, icons: &mut IconCache) -> Reply {
+        self.saveas_outcome(FileEvent::Accept(vec![name.into()]), icons)
+    }
 }
 
 /// A `FileDlg` in the state `open_outcome`/`saveas_outcome` expect to find one in mid-flow:

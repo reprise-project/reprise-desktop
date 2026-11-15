@@ -441,6 +441,19 @@ pub enum Resolved {
     File(PathBuf),
 }
 
+/// What [`Host::drive`] leaves to the program once the dialog has done its own part.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Driven {
+    /// The dialog's own redraw, resize or nothing, for the program to return.
+    Reply(Box<crate::Reply>),
+    /// Accept on a file name, in a folder that exists.
+    Picked(PathBuf),
+    /// Cancel, Escape or the close box.
+    Cancelled,
+    /// Accept on a name that leads nowhere: the text of the program's error box.
+    Failed(String),
+}
+
 /// Where dialogs keep their folder, view and sort, and the app id they keep them under.
 #[derive(Clone, Debug)]
 pub struct Memory {
@@ -1576,6 +1589,68 @@ impl Host {
 
     pub fn alias(&mut self, shown: String, raw: OsString) {
         self.aliases.insert(shown, raw);
+    }
+
+    /// Runs `ev` through `dlg`: lists its folder, lists again for a filter change, a typed
+    /// pattern or a typed folder name, and leaves the program a picked file or a cancel.
+    pub fn drive(
+        &mut self,
+        dlg: &mut FileDlg,
+        ev: &Event,
+        text: &TextRenderer,
+        forms: &Theme,
+        ctx: &mut crate::Ctx,
+    ) -> Driven {
+        self.ensure_listed(dlg, &mut ctx.icons, &type_keep(dlg));
+        match self.event(dlg, ev, text, forms, ctx.size, &ctx.theme.metrics) {
+            Step::Closed => Driven::Cancelled,
+            Step::Redraw => Driven::Reply(Box::new(crate::Reply::redraw())),
+            Step::Resize => Driven::Reply(Box::new(crate::Reply::resize())),
+            Step::None => Driven::Reply(Box::new(crate::Reply::none())),
+            Step::Out(out) => self.handle(dlg, out, &mut ctx.icons),
+        }
+    }
+
+    /// The part of [`Host::drive`] after the dialog gave out `out`.
+    pub fn handle(
+        &mut self,
+        dlg: &mut FileDlg,
+        out: reprisekit::controls::filedlg::Event,
+        icons: &mut IconCache,
+    ) -> Driven {
+        use reprisekit::controls::filedlg::Event as E;
+        match out {
+            E::NeedListing(id) => {
+                self.list(dlg, id, icons, &type_keep(dlg));
+                Driven::Reply(Box::new(crate::Reply::redraw()))
+            }
+            E::FilterChanged(_) => {
+                if let Some(id) = self.folder {
+                    self.list(dlg, id, icons, &type_keep(dlg));
+                }
+                Driven::Reply(Box::new(crate::Reply::redraw()))
+            }
+            E::Accept(names) => match names.first() {
+                Some(name) => self.accept(dlg, name, icons),
+                None => Driven::Reply(Box::new(crate::Reply::none())),
+            },
+            E::Cancel => Driven::Cancelled,
+            E::Redraw => Driven::Reply(Box::new(crate::Reply::redraw())),
+            _ => Driven::Reply(Box::new(crate::Reply::none())),
+        }
+    }
+
+    /// Accept on `name`: a folder opens in `dlg` with the name field emptied, a file is picked.
+    pub fn accept(&mut self, dlg: &mut FileDlg, name: &str, icons: &mut IconCache) -> Driven {
+        match self.resolve(name) {
+            Ok(Resolved::Folder(id, _)) => {
+                self.list(dlg, id, icons, &type_keep(dlg));
+                dlg.clear_file_name();
+                Driven::Reply(Box::new(crate::Reply::redraw()))
+            }
+            Ok(Resolved::File(path)) => Driven::Picked(path),
+            Err(msg) => Driven::Failed(msg),
+        }
     }
 
     pub fn resolve(&mut self, name: &str) -> Result<Resolved, String> {
