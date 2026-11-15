@@ -588,10 +588,12 @@ fn disk_name(basename: &str) -> String {
 
 /// True for a device or file system Computer does not show: loopback,
 /// ramdisk, zram and network-block devices, and squashfs, overlay, tmpfs and fuse mounts.
+/// `fuseblk` is a disk driven through FUSE (ntfs-3g, exfat-fuse) and is shown.
 fn is_pseudo(basename: &str, fs: &str) -> bool {
     const VIRTUAL_PREFIXES: [&str; 4] = ["loop", "ram", "zram", "nbd"];
     let virtual_device = VIRTUAL_PREFIXES.iter().any(|p| basename.starts_with(p));
-    let virtual_fs = matches!(fs, "squashfs" | "overlay" | "tmpfs") || fs.starts_with("fuse");
+    let virtual_fs =
+        matches!(fs, "squashfs" | "overlay" | "tmpfs" | "fuse") || fs.starts_with("fuse.");
     virtual_device || virtual_fs
 }
 
@@ -892,6 +894,26 @@ sshfs#u@h:/ /media/ssh fuse.sshfs rw 0 0
         let ds = drives_from(mounts, &|_| false, &|_| None, &|_| (0, 0));
         assert_eq!(ds.len(), 1);
         assert_eq!(ds[0].mount, PathBuf::from("/"));
+    }
+
+    #[test]
+    fn drives_from_lists_a_fuseblk_disk_and_leaves_other_fuse_mounts_out() {
+        let mounts = "/dev/sda1 / ext4 rw 0 0\n\
+             /dev/sdb1 /run/media/u/WIN fuseblk rw 0 0\n\
+             /dev/sdc1 /mnt/share fuse.sshfs rw 0 0\n\
+             /dev/sdd1 /mnt/raw fuse rw 0 0\n";
+        let ds = drives_from(mounts, &|d| d == "sdb1", &|_| None, &|_| (0, 0));
+        let listed: Vec<_> = ds
+            .iter()
+            .map(|d| (d.mount.as_path(), d.removable))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (Path::new("/"), false),
+                (Path::new("/run/media/u/WIN"), true)
+            ]
+        );
     }
 
     /// A root that is not a block device (a ZFS pool, an NFS server, a
