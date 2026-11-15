@@ -685,10 +685,12 @@ impl XWaylandShellHandler for State {
         let csd = !or && !decorated(&x.motif_hints());
         let id = x.window_id();
         let untyped = x.window_type().is_none();
+        let pid = client_pid(&x);
         let w = self.add_window(Kind::X11(Box::new(x)), wl);
         if let Some(win) = self.win_mut(w) {
             win.override_redirect = or;
             win.csd = csd;
+            win.x11_pid = pid;
         }
         self.xwayland.send(helper::Req::Icon(id));
         if or && untyped {
@@ -702,6 +704,18 @@ impl XWaylandShellHandler for State {
         }
         // The tie can come after the surface already has its buffer.
         self.handle_commit(w);
+    }
+}
+
+/// The host pid of the X client that created `x`, as Xwayland recorded it at the connection
+/// (X-Resource `LOCAL_CLIENT_PID`).
+fn client_pid(x: &X11Surface) -> Option<i32> {
+    match x.get_client_pid() {
+        Ok(pid) => i32::try_from(pid).ok().filter(|&p| p > 0),
+        Err(e) => {
+            log::info!("x11 window {:#x}: no X-Resource pid: {e}", x.window_id());
+            None
+        }
     }
 }
 

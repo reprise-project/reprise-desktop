@@ -130,6 +130,7 @@ impl State {
             tab_group: None,
             tab_pulled_out: false,
             tab_leader: None,
+            x11_pid: None,
         });
         id
     }

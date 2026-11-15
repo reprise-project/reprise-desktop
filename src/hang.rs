@@ -762,7 +762,11 @@ impl State {
             return;
         };
         log::info!("window {w:?} ({app_id:?}, pid {pid}) is not responding");
-        let name = program_name(pid).unwrap_or(title);
+        let name = self
+            .signalled(pid)
+            .then(|| program_name(pid))
+            .flatten()
+            .unwrap_or(title);
         self.open_dialog(Dialog::end_program(&name, pid));
     }
 
@@ -817,10 +821,8 @@ impl State {
         }
     }
 
-    /// End Program's End Now: SIGKILL `pid`, as long as a window still belongs to it. The program
-    /// may have gone and its pid been reused while the dialog waited; a window holding the pid
-    /// means it is still the one that stopped responding. Its Wayland connections are dropped too:
-    /// a thread of it blocked on a dead mount outlives the kill and keeps their sockets open.
+    /// End Program's End Now: [`State::end_process`] `pid` while a window still holds it, so a pid
+    /// reused since the dialog opened is spared.
     pub fn end_program(&mut self, pid: i32) {
         let owns = self
             .windows
@@ -830,34 +832,78 @@ impl State {
             log::info!("end program: pid {pid} has no window left");
             return;
         }
-        log::info!("end program: killing pid {pid}");
+        log::info!("end program: ending pid {pid}");
         self.arm_dying_check();
-        // SAFETY: plain syscall on a pid, no pointers.
-        if unsafe { libc::kill(pid, libc::SIGKILL) } != 0 {
-            log::warn!(
-                "end program: kill {pid}: {}",
-                std::io::Error::last_os_error()
-            );
+        self.end_process(pid);
+    }
+
+    /// SIGKILL `pid` unless it forwards X11 windows ([`signalled`]), then disconnect its windows'
+    /// clients, which a thread stuck on a dead mount keeps open. Never the compositor or Xwayland.
+    pub fn end_process(&mut self, pid: i32) {
+        if !self.may_end(pid) {
+            return;
+        }
+        if self.signalled(pid) {
+            // SAFETY: plain syscall on a pid, no pointers.
+            if unsafe { libc::kill(pid, libc::SIGKILL) } != 0 {
+                log::warn!("kill {pid}: {}", std::io::Error::last_os_error());
+            }
+        } else {
+            log::info!("pid {pid} forwards X11 windows: disconnecting them, no signal");
         }
         self.drop_clients_of(pid);
     }
 
-    /// Disconnects the Wayland clients behind `pid`'s xdg windows; X11 windows share Xwayland's.
+    /// Whether End Now signals `pid` ([`signalled`]), by the `_NET_WM_PID` its X11 windows set.
+    fn signalled(&self, pid: i32) -> bool {
+        let claims = self
+            .windows
+            .iter()
+            .filter(|w| self.client_pid(w.id) == Some(pid))
+            .map(|w| match &w.kind {
+                Kind::Xdg(_) => Some(pid),
+                Kind::X11(_) => w.claimed_pid(),
+            });
+        let inner = crate::streamwindow::read_proc(pid).and_then(|p| p.nspid.last().copied());
+        signalled(pid, inner, claims)
+    }
+
+    /// Disconnects the clients behind `pid`'s windows: each xdg window's Wayland client, and each
+    /// X11 window's X client while X-Resource still names `pid` as it.
     fn drop_clients_of(&mut self, pid: i32) {
         let mut clients = Vec::new();
+        let mut x11 = Vec::new();
         for w in self.windows.iter() {
-            if let Kind::Xdg(t) = &w.kind
-                && self.client_pid(w.id) == Some(pid)
-                && let Some(c) = t.wl_surface().client()
-                && !clients.contains(&c.id())
-            {
-                clients.push(c.id());
+            if self.client_pid(w.id) != Some(pid) {
+                continue;
+            }
+            match &w.kind {
+                Kind::Xdg(t) => {
+                    if let Some(c) = t.wl_surface().client()
+                        && !clients.contains(&c.id())
+                    {
+                        clients.push(c.id());
+                    }
+                }
+                Kind::X11(x) => x11.push(x.window_id()),
             }
         }
         for id in clients {
             self.drop_client(id);
         }
+        for window in x11 {
+            self.xwayland.kill_owner(window, pid as u32);
+        }
     }
+}
+
+/// Whether End Now signals `pid` (`inner` in its innermost pid namespace) by its windows' claimed
+/// pids: a window claiming another process is forwarded (`ssh -X`), and `pid` is the forwarder.
+fn signalled(pid: i32, inner: Option<i32>, claims: impl IntoIterator<Item = Option<i32>>) -> bool {
+    claims
+        .into_iter()
+        .flatten()
+        .all(|c| c == pid || Some(c) == inner)
 }
 
 #[cfg(test)]
@@ -1295,6 +1341,20 @@ mod tests {
         assert!(!may_end(100, 100, 200), "never the compositor");
         assert!(!may_end(200, 100, 200), "never the Xwayland server");
         assert!(may_end(200, 100, 0), "no Xwayland spares no pid");
+    }
+
+    #[test]
+    fn end_now_signals_an_x_client_only_when_its_windows_claim_it() {
+        assert!(signalled(4321, None, [Some(4321)]), "its own pid");
+        assert!(signalled(4321, None, [None]), "no claim");
+        assert!(
+            signalled(4321, Some(2), [Some(2), Some(4321)]),
+            "its pid inside its sandbox"
+        );
+        assert!(
+            !signalled(4321, None, [Some(4321), Some(2)]),
+            "a forwarded window claims a pid on another host"
+        );
     }
 
     #[test]

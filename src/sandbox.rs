@@ -365,15 +365,13 @@ pub fn window_context_app(win: &crate::window::Window) -> Option<String> {
         .context_flatpak_app()
 }
 
-/// The Flatpak app id of the sandbox `win`'s client runs in; an X11
-/// window's is its X client's, by the host pid the X server reports
-/// (XRes), since `_NET_WM_PID` is the pid inside the sandbox. Err when the
-/// XRes query fails.
+/// The Flatpak app id of the sandbox `win`'s client runs in; an X11 window's is its X client's,
+/// by [`crate::window::Window::x11_pid`]. Err when that has no pid.
 pub fn window_app(win: &crate::window::Window) -> Result<Option<String>, ()> {
     match win.x11() {
-        Some(x) => {
-            let pid = x.get_client_pid().ok().filter(|&p| p > 0).ok_or(())?;
-            Ok(reprisefs::flatpak::app_of_pid(pid))
+        Some(_) => {
+            let pid = win.x11_pid.ok_or(())?;
+            Ok(reprisefs::flatpak::app_of_pid(pid as u32))
         }
         None => Ok(win
             .wl_client()
