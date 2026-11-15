@@ -1364,7 +1364,9 @@ What a consent prompt remembers, and where:
   Return, Tab, BackSpace, Delete, Escape, an arrow, Home, End, Page Up or
   Page Down); otherwise it is kept with no key until you set one in
   Settings. So an allowed app's later binds, which add shortcuts without
-  asking, can't take keys from the window you type in.
+  asking, can't take keys from the window you type in. An app keeps at most
+  64 shortcuts, each id and description at most 256 bytes with no control
+  characters.
 - **Access** (camera, background): answers go to xdg-desktop-portal's
   permission store.
 - **Location:** Reprise's geoclue agent keeps its own answers.
