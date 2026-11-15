@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::COMPOSE_KEY;
 
 #[test]
 fn the_text_and_keys_page_geometry() {
@@ -330,12 +331,20 @@ fn the_keyboard_page_geometry() {
         "the check sits under the Layouts list"
     );
     assert_eq!(
+        rect(&s, Page::Keyboard, KB_COMPOSE),
+        Rect::new(116, 166, 90, 21)
+    );
+    assert_eq!(
+        rect(&s, Page::Keyboard, KB_CAPS),
+        Rect::new(274, 166, 92, 21)
+    );
+    assert_eq!(
         rect(&s, Page::Keyboard, "kb_model"),
-        Rect::new(116, 166, 250, 20)
+        Rect::new(116, 192, 90, 20)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "kb_options"),
-        Rect::new(116, 192, 250, 20)
+        Rect::new(274, 192, 92, 20)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "repeat_rate"),
@@ -564,6 +573,59 @@ fn program_rows_follow_the_binds() {
     let n = s.shortcuts.len();
     assert_eq!(l.rows[n].cells, ["None", "Taltos: Hold to talk"]);
     assert_eq!(l.rows[n + 1].cells, ["", "n: not allowed"]);
+}
+
+#[test]
+fn the_compose_and_caps_lock_drop_downs_edit_the_options_field() {
+    let want = Settings {
+        kb_options: "grp:alt_shift_toggle,compose:lwin-altgr".into(),
+        ..Settings::default()
+    };
+    let mut s = with(&want);
+    let p = Page::Keyboard;
+    let (shown, at) = rows(&s, p, KB_COMPOSE);
+    assert_eq!(shown.len(), COMPOSE_KEY.rows.len() + 1);
+    assert_eq!(
+        (shown[at].as_str(), at),
+        ("compose:lwin-altgr", COMPOSE_KEY.rows.len()),
+        "a compose id the list lacks shows as itself"
+    );
+    assert_eq!(s.pages[p.index()].combo_selected(KB_CAPS), Some(0));
+    let mut got = want.clone();
+    pick(&mut s, &mut got, p, KB_COMPOSE, 1);
+    assert_eq!(got.kb_options, "grp:alt_shift_toggle,compose:ralt");
+    pick(&mut s, &mut got, p, KB_CAPS, 1);
+    assert_eq!(
+        got.kb_options,
+        "grp:alt_shift_toggle,compose:ralt,ctrl:nocaps"
+    );
+    assert_eq!(
+        rows(&s, p, KB_COMPOSE).0.len(),
+        COMPOSE_KEY.rows.len(),
+        "the id's own row goes once it is replaced"
+    );
+    let edit = |s: &PropSheet| match &s.pages[p.index()].item("kb_options").unwrap().control {
+        Control::Edit { edit, .. } => edit.text.clone(),
+        _ => panic!("kb_options is an edit"),
+    };
+    assert_eq!(
+        edit(&s),
+        got.kb_options,
+        "the Options field follows the picks"
+    );
+    if let Some(Control::Edit { edit, .. }) = s.pages[p.index()]
+        .item_mut("kb_options")
+        .map(|i| &mut i.control)
+    {
+        *edit = reprisekit::textedit::TextEdit::new("caps:escape", false);
+    }
+    read_one(&s, "kb_options", &mut got);
+    follow(&mut s, &got);
+    assert_eq!(s.pages[p.index()].combo_selected(KB_COMPOSE), Some(0));
+    assert_eq!(s.pages[p.index()].combo_selected(KB_CAPS), Some(2));
+    let mut back = Settings::default();
+    read_all(&s, &mut back);
+    assert_eq!(back.kb_options, "caps:escape");
 }
 
 #[test]

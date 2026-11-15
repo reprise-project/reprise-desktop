@@ -402,7 +402,8 @@ matched control focused.
     hours, and the programs that sent notifications this session or are
     held back, each with Show balloons and Play sounds.
 - **Devices**
-  - **Keyboard:** layouts, a layout per window, the model and options,
+  - **Keyboard:** layouts, a layout per window, the Compose key, what Caps
+    Lock does, the model and the other options,
     repeat, every shortcut, programs' global shortcuts included, whether
     Caps Lock and Num Lock show on screen, and the sheet holding Super shows.
   - **Mouse:** pointer speed, Enhance pointer precision, double-click

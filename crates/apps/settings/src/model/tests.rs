@@ -72,6 +72,37 @@ fn the_first_layout_added_keeps_the_system_default_before_it() {
 }
 
 #[test]
+fn a_compose_key_pick_adds_its_option_once_and_keeps_the_others() {
+    let opts = "grp:alt_shift_toggle,ctrl:nocaps";
+    let with = COMPOSE_KEY.set(opts, "compose:ralt");
+    assert_eq!(with, "grp:alt_shift_toggle,ctrl:nocaps,compose:ralt");
+    assert_eq!(COMPOSE_KEY.set(&with, "compose:ralt"), with);
+    assert_eq!(
+        COMPOSE_KEY.set(&with, "compose:menu"),
+        "grp:alt_shift_toggle,ctrl:nocaps,compose:menu"
+    );
+    assert_eq!(COMPOSE_KEY.set(&with, ""), opts);
+    assert_eq!(COMPOSE_KEY.set("", "compose:ralt"), "compose:ralt");
+    assert_eq!(CAPS_LOCK.get(&with), "ctrl:nocaps");
+    assert_eq!(COMPOSE_KEY.get(&with), "compose:ralt");
+}
+
+#[test]
+fn a_compose_option_the_list_lacks_is_the_compose_keys_and_other_options_are_not() {
+    let opts = "compose:lwin-altgr, caps:shift";
+    assert_eq!(COMPOSE_KEY.get(opts), "compose:lwin-altgr");
+    assert_eq!(
+        COMPOSE_KEY.set(opts, "compose:ralt"),
+        "caps:shift,compose:ralt"
+    );
+    assert_eq!(CAPS_LOCK.get(opts), "", "caps:shift is no Caps Lock row");
+    assert_eq!(
+        CAPS_LOCK.set(opts, "caps:escape"),
+        "compose:lwin-altgr,caps:shift,caps:escape"
+    );
+}
+
+#[test]
 fn banner_default_matches_the_compositor() {
     assert_eq!(Settings::default().startmenu_banner, "Reprise Desktop");
 }

@@ -41,6 +41,72 @@ pub const CLICK_METHODS: &Choices = &[
     ("clickfinger", "Finger count"),
 ];
 
+/// A drop-down that edits part of `[keyboard] options`: each row an xkb option id ("" for none),
+/// and an id prefix whose other ids it shows as themselves and replaces when a row is picked.
+pub struct XkbPick {
+    pub rows: &'static Choices,
+    pub family: Option<&'static str>,
+}
+
+impl XkbPick {
+    fn owns(&self, id: &str) -> bool {
+        !id.is_empty()
+            && (self.rows.iter().any(|(v, _)| *v == id)
+                || self.family.is_some_and(|f| id.starts_with(f)))
+    }
+
+    /// The id of this drop-down `options` holds, "" for none.
+    pub fn get<'a>(&self, options: &'a str) -> &'a str {
+        (options.split(',').map(str::trim))
+            .find(|id| self.owns(id))
+            .unwrap_or("")
+    }
+
+    /// `options` holding `id` in place of this drop-down's ids; every other id stays as it was.
+    pub fn set(&self, options: &str, id: &str) -> String {
+        if self.get(options) == id {
+            return options.to_string();
+        }
+        let mut ids: Vec<&str> = (options.split(',').map(str::trim))
+            .filter(|o| !o.is_empty() && !self.owns(o))
+            .collect();
+        if !id.is_empty() {
+            ids.push(id);
+        }
+        ids.join(",")
+    }
+}
+
+/// Settings > Keyboard's Compose key.
+pub const COMPOSE_KEY: XkbPick = XkbPick {
+    rows: &[
+        ("", "None"),
+        ("compose:ralt", "Right Alt"),
+        ("compose:rwin", "Right Win"),
+        ("compose:menu", "Menu"),
+        ("compose:rctrl", "Right Ctrl"),
+        ("compose:caps", "Caps Lock"),
+        ("compose:lwin", "Left Win"),
+        ("compose:prsc", "Print Screen"),
+        ("compose:sclk", "Scroll Lock"),
+        ("compose:paus", "Pause"),
+        ("compose:ins", "Insert"),
+    ],
+    family: Some("compose:"),
+};
+
+/// Settings > Keyboard's Caps Lock key.
+pub const CAPS_LOCK: XkbPick = XkbPick {
+    rows: &[
+        ("", "Caps Lock"),
+        ("ctrl:nocaps", "Ctrl"),
+        ("caps:escape", "Escape"),
+        ("caps:backspace", "Backspace"),
+        ("caps:none", "Off"),
+    ],
+    family: None,
+};
+
 /// What flashes on the bell. Mirrors `VisualBell::parse` in `repriseconf::config`.
 pub const VISUAL_BELLS: &Choices = &[
     ("none", "Nothing"),
