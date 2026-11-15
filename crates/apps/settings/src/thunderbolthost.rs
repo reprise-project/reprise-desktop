@@ -17,6 +17,8 @@ pub(crate) struct Reading {
 #[derive(Default)]
 pub(crate) struct Thunderbolt {
     pub(crate) found: Option<Found>,
+    /// The page shows a read; until then it shows its builder's Loading... row.
+    pub(crate) shown: bool,
     /// A change and the read after it.
     pub(crate) job: Option<Receiver<Reading>>,
     /// What boltd knows after each change it signals, for the rest of the run.
@@ -143,9 +145,11 @@ impl SettingsApp {
         changed
     }
 
-    /// Show `found` when it differs from the list, or when a change just ended (`acted`).
+    /// Show `found` when it differs from the list, when it is the first read, or when a change
+    /// just ended (`acted`).
     fn thunderbolt_found(&mut self, found: Option<Found>, acted: bool) -> bool {
-        let changed = acted || found != self.thunderbolt.found;
+        let first = !std::mem::replace(&mut self.thunderbolt.shown, true);
+        let changed = acted || first || found != self.thunderbolt.found;
         let shown = std::mem::replace(&mut self.thunderbolt.found, found);
         if changed {
             self.show_thunderbolt(shown.as_ref());

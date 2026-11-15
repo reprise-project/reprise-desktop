@@ -18,6 +18,8 @@ pub(crate) struct Reading {
 #[derive(Default)]
 pub(crate) struct Airplane {
     pub(crate) state: Option<Mode>,
+    /// The page shows a read; until then it shows its builder's look.
+    pub(crate) shown: bool,
     pub(crate) job: Option<std::sync::mpsc::Receiver<Reading>>,
     pub(crate) acting: bool,
 }
@@ -90,7 +92,8 @@ impl SettingsApp {
         if let Some(why) = &done.failed {
             self.fail(why);
         }
-        let changed = acted || done.state != self.airplane.state;
+        let first = !std::mem::replace(&mut self.airplane.shown, true);
+        let changed = acted || first || done.state != self.airplane.state;
         self.airplane.state = done.state;
         if changed {
             let page = &mut self.sheet.pages[Page::Network.index()];
