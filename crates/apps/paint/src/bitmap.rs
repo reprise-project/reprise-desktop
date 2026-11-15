@@ -1,7 +1,7 @@
 //! The picture: opaque 0xFFRRGGBB pixels in rows, and the whole-picture operations of the Image
 //! menu.
 
-use reprisekit::raster::Rect;
+use reprisekit::raster::{Canvas, Rect};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bitmap {
@@ -238,20 +238,20 @@ impl Bitmap {
     }
 
     /// Flattened onto white from straight-alpha RGBA bytes.
-    pub fn from_rgba(w: u32, h: u32, rgba: &[u8]) -> Bitmap {
-        let px = rgba
-            .as_chunks::<4>()
-            .0
+    /// `c`'s premultiplied pixels flattened onto white.
+    pub fn from_canvas(c: &Canvas) -> Bitmap {
+        let px = c
+            .pixels
             .iter()
-            .map(|p| {
-                let a = p[3] as u32;
-                let ch = |v: u8| (v as u32 * a + 255 * (255 - a) + 127) / 255;
-                0xFF00_0000 | ch(p[0]) << 16 | ch(p[1]) << 8 | ch(p[2])
+            .map(|&p| {
+                let a = p >> 24;
+                let ch = |shift: u32| (((p >> shift) & 0xFF) + 255 - a).min(255) << shift;
+                0xFF00_0000 | ch(16) | ch(8) | ch(0)
             })
             .collect();
         Bitmap {
-            w: w as i32,
-            h: h as i32,
+            w: c.width as i32,
+            h: c.height as i32,
             px,
         }
     }
@@ -365,8 +365,11 @@ mod tests {
 
     #[test]
     fn alpha_flattens_onto_white() {
-        let b = Bitmap::from_rgba(2, 1, &[255, 0, 0, 255, 0, 0, 0, 0]);
-        assert_eq!(b.px, [R, WHITE]);
-        assert_eq!(Bitmap::from_rgba(1, 1, &[0, 0, 0, 128]).px, [0xFF7F_7F7F]);
+        let mut c = Canvas::new(2, 1);
+        c.pixels = vec![0xFFFF_0000, 0];
+        assert_eq!(Bitmap::from_canvas(&c).px, [R, WHITE]);
+        let mut c = Canvas::new(1, 1);
+        c.pixels = vec![0x8000_0000];
+        assert_eq!(Bitmap::from_canvas(&c).px, [0xFF7F_7F7F]);
     }
 }
