@@ -280,10 +280,40 @@ impl State {
     }
 
     pub fn set_minimized(&mut self, w: WindowId, on: bool) {
-        self.redraw_changed(|s| s.hold_taskbars(|s| s.minimize(w, on)));
+        self.redraw_changed(|s| s.hold_taskbars(|s| s.minimize(w, on, true)));
     }
 
-    fn minimize(&mut self, w: WindowId, on: bool) {
+    /// `w`'s client restores it (X11 `WM_CHANGE_STATE`): focused as `takes_focus_on_restore`
+    /// allows, else behind the focused window with its task button flagged.
+    pub fn restore_on_request(&mut self, w: WindowId) {
+        if !self.win(w).is_some_and(|x| x.minimized) {
+            return;
+        }
+        let window = self
+            .focused
+            .filter(|&f| self.win(f).is_some_and(|f| f.mapped && !f.hidden()))
+            .map(|f| crate::mapfocus::Holder {
+                pid: self.client_pid(f),
+                ..Default::default()
+            });
+        let reprise = self.dialogs.active || self.bar_shared.keys.is_some();
+        let takes = crate::mapfocus::takes_focus_on_restore(
+            self.desktop_locked(),
+            self.on_current_desktop(w),
+            self.client_pid(w),
+            crate::mapfocus::holder(reprise, window),
+        );
+        if takes {
+            self.set_minimized(w, false);
+            return;
+        }
+        log::info!("window {w:?} restores itself behind the focused one");
+        self.redraw_changed(|s| s.hold_taskbars(|s| s.minimize(w, false, false)));
+        self.ask_attention(w);
+    }
+
+    /// `focus`: a restored `w` takes the focus, else it goes behind the focused window.
+    fn minimize(&mut self, w: WindowId, on: bool, focus: bool) {
         let w = if on { self.tabs.groups.shown_of(w) } else { w };
         let shown = self.ripple_frame(w);
         self.toplevels.dirty = true;
@@ -315,8 +345,10 @@ impl State {
                 self.toplevels.dirty = true;
                 self.focus_top();
             }
-        } else {
+        } else if focus {
             self.focus_window(w);
+        } else {
+            self.place_behind_focus(w);
         }
         self.redraw_taskbars();
     }

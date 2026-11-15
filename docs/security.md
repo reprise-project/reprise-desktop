@@ -1285,7 +1285,10 @@ A new window takes the keyboard when it maps if any of these holds:
 - no window has focus
 
 Any other window opens behind the one you're typing in and flags its task
-button. While the taskbar has the keyboard, it opens on top with its button
+button. An X11 program restoring its own minimized window (`WM_CHANGE_STATE`)
+takes the keyboard only when no window has it or the focused window is its
+own process's, and only on the desktop shown; otherwise the window comes back
+behind the focused one, its task button flagged and its desktop not shown. While the taskbar has the keyboard, it opens on top with its button
 flagged and the keyboard stays on the taskbar. Under the lock no new window
 takes the keyboard.
 

@@ -112,6 +112,20 @@ pub fn holder(reprise: bool, window: Option<Holder>) -> Option<Holder> {
     }
 }
 
+/// Whether a minimized window its client restores takes the keyboard: outside the lock, on the
+/// shown desktop (`here`), from no holder or a window of its own process `pid`.
+pub fn takes_focus_on_restore(
+    locked: bool,
+    here: bool,
+    pid: Option<i32>,
+    focused: Option<Holder>,
+) -> bool {
+    if locked || !here {
+        return false;
+    }
+    focused.is_none_or(|f| pid.is_some() && f.pid == pid)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OnMap {
     /// Under the lock: placed but not focused; `unlock` hands the keyboard
@@ -348,6 +362,39 @@ mod tests {
             ..Arrival::default()
         };
         assert!(!takes_focus(&stranger, focused), "expected no focus");
+    }
+
+    #[test]
+    fn a_window_restoring_itself_takes_the_keyboard_only_from_nobody_or_its_own_process() {
+        let held = |pid| {
+            Some(Holder {
+                pid,
+                ..Holder::default()
+            })
+        };
+        let restores = |pid, focused| takes_focus_on_restore(false, true, pid, focused);
+        assert!(restores(Some(700), None), "no window has the keyboard");
+        assert!(
+            restores(Some(700), held(Some(700))),
+            "its own process has it"
+        );
+        assert!(
+            !restores(Some(700), held(Some(500))),
+            "another program has it"
+        );
+        assert!(
+            !restores(None, held(None)),
+            "a Reprise dialog or the taskbar has it"
+        );
+        assert!(!restores(None, held(Some(500))), "no pid matches none");
+        assert!(
+            !takes_focus_on_restore(false, false, Some(700), None),
+            "on another desktop, which is not shown"
+        );
+        assert!(
+            !takes_focus_on_restore(true, true, Some(700), None),
+            "under the lock"
+        );
     }
 
     #[test]
