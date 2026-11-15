@@ -193,7 +193,7 @@ impl SettingsApp {
             }
             layoutdlg::Outcome::Accept(layout, variant) => {
                 self.add_layout = None;
-                if self.want.add_layout(&layout, &variant) {
+                if self.want.add_layout(&layout, &variant, &self.system_layout) {
                     let last = self.want.layouts().len() - 1;
                     self.layouts_changed(Some(last));
                 }
