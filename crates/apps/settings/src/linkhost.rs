@@ -21,6 +21,7 @@ pub(crate) fn launch(entry: &AppEntry, terminal: &str) -> Reply {
         Ok(argv) => Reply {
             spawn: vec![argv],
             spawn_app: Some(entry.id.clone()),
+            spawn_dir: entry.path.clone(),
             ..Reply::redraw()
         },
         Err(refused) => {
@@ -39,7 +40,7 @@ pub(crate) fn start(id: &str) -> bool {
     let Ok(argv) = launch_argv(&e, &repriseconf::terminal()) else {
         return false;
     };
-    match repriseapp::spawn_in(&argv, None, Some(&e.id)) {
+    match repriseapp::spawn_in(&argv, e.path.as_deref(), Some(&e.id)) {
         Ok(()) => true,
         Err(err) => {
             log::warn!("start {id}: {err}");

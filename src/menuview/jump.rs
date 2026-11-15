@@ -45,6 +45,7 @@ impl State {
             (None, Some(e)) => Some(Action::Exec {
                 argv: reprisefs::apps::launch_argv(e, terminal),
                 app: e.id.clone(),
+                dir: e.path.clone(),
             }),
             (None, None) => None,
         };

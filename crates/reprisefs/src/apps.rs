@@ -24,6 +24,22 @@ pub struct AppEntry {
     /// stays out of the menus, launcher and Open With lists (unless it is
     /// the type's default or [`AppEntry::is_browsed`]).
     pub shown: bool,
+    /// `Path=`: the folder its program starts in.
+    pub path: Option<PathBuf>,
+}
+
+/// `dir` when it is a folder, else None with a warning, so a launch whose `Path=` is gone starts
+/// in the caller's own folder.
+pub fn start_dir(dir: Option<&Path>) -> Option<&Path> {
+    let dir = dir?;
+    if dir.is_dir() {
+        return Some(dir);
+    }
+    log::warn!(
+        "{} is not a folder; starting in the default one",
+        dir.display()
+    );
+    None
 }
 
 impl AppEntry {
@@ -322,6 +338,7 @@ pub fn parse_desktop_any(text: &str, id: &str) -> Option<AppEntry> {
         categories: split_list(get("Categories")),
         mime_types: split_list(get("MimeType")),
         shown: get("NoDisplay") != Some("true"),
+        path: get("Path").filter(|s| !s.is_empty()).map(PathBuf::from),
     })
 }
 

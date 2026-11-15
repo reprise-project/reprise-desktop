@@ -991,13 +991,11 @@ pub fn open_file(
     terminal: &str,
 ) -> Result<Opening, apps::ExecRefused> {
     Ok(match default {
-        Some(app) => Opening {
-            argv: apps::open_argv(app, terminal, path)?,
-            app: Some(app.id.clone()),
-        },
+        Some(app) => Opening::of(app, apps::open_argv(app, terminal, path)?),
         None => Opening {
             argv: vec!["xdg-open".into(), path.into()],
             app: None,
+            dir: None,
         },
     })
 }
@@ -1008,6 +1006,19 @@ pub fn open_file(
 pub struct Opening {
     pub argv: Vec<std::ffi::OsString>,
     pub app: Option<String>,
+    /// The entry's `Path=`, the folder the program starts in.
+    pub dir: Option<PathBuf>,
+}
+
+impl Opening {
+    /// `argv` built from desktop entry `app`, run as it and in its folder.
+    pub fn of(app: &AppEntry, argv: Vec<std::ffi::OsString>) -> Opening {
+        Opening {
+            argv,
+            app: Some(app.id.clone()),
+            dir: app.path.clone(),
+        }
+    }
 }
 
 /// How `path` opens, with its default program looked up from `globs` and `apps`. Everything that
@@ -1021,13 +1032,11 @@ pub fn open_in(
     let mime = apps::mime_of_in(globs, path);
     let default = mime.as_deref().and_then(|m| default_app_entry(m, apps));
     Ok(match default.filter(|_| !path.is_dir()) {
-        Some(app) => Opening {
-            argv: apps::open_argv(app, terminal, path)?,
-            app: Some(app.id.clone()),
-        },
+        Some(app) => Opening::of(app, apps::open_argv(app, terminal, path)?),
         None => Opening {
             argv: apps::open_argv_for(path),
             app: None,
+            dir: None,
         },
     })
 }

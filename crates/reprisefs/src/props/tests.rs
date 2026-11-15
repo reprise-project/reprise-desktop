@@ -243,6 +243,7 @@ fn open_file_asks_the_file_system_nothing() {
         Opening {
             argv: vec!["viewer".into(), dir.path().as_os_str().to_owned()],
             app: Some("viewer.desktop".into()),
+            dir: None,
         },
         "in the program's app scope"
     );
@@ -258,6 +259,7 @@ fn open_in_looks_up_the_types_default_program_and_runs_as_it() {
     let db = apps::MimeDb::parse(["50:application/x-reprise-test:*.rtest\n"]);
     let player = AppEntry {
         exec_line: "player %f".into(),
+        path: Some("/srv/music".into()),
         ..app("player.desktop", &["application/x-reprise-test"])
     };
     let open = |p: &Path| open_in(p, &db, std::slice::from_ref(&player), "foot").unwrap();
@@ -266,13 +268,16 @@ fn open_in_looks_up_the_types_default_program_and_runs_as_it() {
         Opening {
             argv: vec!["player".into(), song.clone().into_os_string()],
             app: Some("player.desktop".into()),
-        }
+            dir: Some("/srv/music".into()),
+        },
+        "in the program's Path= folder"
     );
     assert_eq!(
         open(&other),
         Opening {
             argv: vec!["xdg-open".into(), other.into_os_string()],
             app: None,
+            dir: None,
         }
     );
     let folder = open(dir.path());
@@ -291,6 +296,7 @@ fn app(id: &str, mimes: &[&str]) -> AppEntry {
         categories: Vec::new(),
         mime_types: mimes.iter().map(|m| m.to_string()).collect(),
         shown: true,
+        path: None,
     }
 }
 
@@ -574,6 +580,7 @@ fn glance_in_types_the_file_from_the_given_tables() {
         categories: Vec::new(),
         mime_types: vec!["application/x-reprise-test".into()],
         shown: true,
+        path: None,
     };
     let f = glance_in(&file, "song", &[player], &db).unwrap();
     assert_eq!(f.opens_with.as_deref(), Some("Player"));
@@ -597,6 +604,7 @@ fn a_symlink_to_a_document_shows_what_opens_its_target() {
         categories: Vec::new(),
         mime_types: vec!["application/x-reprise-test".into()],
         shown: true,
+        path: None,
     };
     let f = glance_in(&link, "Song", &[player], &db).unwrap();
     assert_eq!(f.type_name, "Shortcut");
@@ -630,6 +638,7 @@ fn an_executable_script_opens_with_nothing_and_is_described_by_its_name() {
         categories: Vec::new(),
         mime_types: vec!["application/x-shellscript".into()],
         shown: true,
+        path: None,
     };
     let apps = [editor];
     std::fs::set_permissions(&f, PermissionsExt::from_mode(0o644)).unwrap();

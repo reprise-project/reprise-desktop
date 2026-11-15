@@ -867,6 +867,7 @@ impl SettingsApp {
                 redraw: true,
                 spawn: vec![open.argv],
                 spawn_app: open.app,
+                spawn_dir: open.dir,
                 ..Default::default()
             },
             Err(refused) => {

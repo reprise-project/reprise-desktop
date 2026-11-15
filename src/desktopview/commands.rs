@@ -390,7 +390,7 @@ impl State {
         };
         for path in &paths {
             match apps::open_argv(&app, &self.config.terminal, path) {
-                Ok(argv) => self.spawn_app_activated(&argv, &app.id),
+                Ok(argv) => self.spawn_app_activated(&argv, &app.id, app.path.as_deref()),
                 Err(refused) => return self.exec_refused(&refused),
             }
         }
@@ -406,6 +406,7 @@ impl State {
                 reprisefs::props::Opening {
                     argv: vec!["lp".into(), path.into_os_string()],
                     app: None,
+                    dir: None,
                 }
             } else {
                 match reprisefs::props::open_file(&path, editor.as_ref(), &self.config.terminal) {

@@ -269,6 +269,7 @@ mod tests {
             categories: Vec::new(),
             mime_types: Vec::new(),
             shown,
+            path: None,
         }
     }
 

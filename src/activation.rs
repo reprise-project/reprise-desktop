@@ -267,25 +267,27 @@ impl State {
     /// Open a path as `open` says, in its program's app scope when it has one.
     pub fn spawn_opening_activated(&mut self, open: &reprisefs::props::Opening) {
         match &open.app {
-            Some(app) => self.spawn_app_activated(&open.argv, app),
+            Some(app) => self.spawn_app_activated(&open.argv, app, open.dir.as_deref()),
             None => self.spawn_argv_activated(&open.argv),
         }
     }
 
-    /// `spawn_argv_activated` for a command built from the desktop entry `app`.
+    /// `spawn_argv_activated` for a command built from the desktop entry `app`, in its `Path=`
+    /// folder `dir`.
     pub fn spawn_app_activated<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
         &mut self,
         argv: &[S],
         app: &str,
+        dir: Option<&std::path::Path>,
     ) {
         let launch = self.new_launch();
-        crate::spawn::spawn_argv_in(argv, Some(app), None, &self.env, Some(&launch))
+        crate::spawn::spawn_argv_in(argv, Some(app), dir, &self.env, Some(&launch))
     }
 
     /// Start the desktop entry `app` with no file, in its app scope.
     pub fn launch_entry(&mut self, app: &reprisefs::apps::AppEntry) {
         match reprisefs::apps::launch_argv(app, &self.config.terminal) {
-            Ok(argv) => self.spawn_app_activated(&argv, &app.id),
+            Ok(argv) => self.spawn_app_activated(&argv, &app.id, app.path.as_deref()),
             Err(refused) => self.exec_refused(&refused),
         }
     }
@@ -299,11 +301,20 @@ impl State {
     /// `spawn_app_activated` for launcher `app`. One that runs `xdg-open <file>` (a Quick Launch
     /// document shortcut) on a regular file opens it as the file's desktop icon does
     /// ([`State::open_document`]). The file is checked off the loop on a [`State::spawn_job`].
-    pub fn spawn_launcher_activated(&mut self, argv: &[std::ffi::OsString], app: &str) {
+    pub fn spawn_launcher_activated(
+        &mut self,
+        argv: &[std::ffi::OsString],
+        app: &str,
+        dir: Option<&std::path::Path>,
+    ) {
         if crate::spawn::xdg_open_file(argv).is_none() {
-            return self.spawn_app_activated(argv, app);
+            return self.spawn_app_activated(argv, app, dir);
         }
-        let (argv, app) = (argv.to_vec(), app.to_string());
+        let (argv, app, dir) = (
+            argv.to_vec(),
+            app.to_string(),
+            dir.map(std::path::Path::to_path_buf),
+        );
         self.spawn_job(move || {
             let doc = crate::spawn::xdg_open_document(&argv);
             Box::new(move |state: &mut State| match doc {
@@ -311,7 +322,7 @@ impl State {
                     let how = reprisefs::program::Confirm::on_open(state.config.confirm_scripts);
                     state.open_document(&file, None, how, false)
                 }
-                None => state.spawn_app_activated(&argv, &app),
+                None => state.spawn_app_activated(&argv, &app, dir.as_deref()),
             })
         });
     }

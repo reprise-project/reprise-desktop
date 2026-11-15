@@ -119,8 +119,8 @@ impl State {
                 }
                 match reprisefs::apps::open_argv(entry, &self.config.terminal, path) {
                     Ok(argv) => {
-                        let app = entry.id.clone();
-                        self.spawn_app_activated(&argv, &app);
+                        let (app, dir) = (entry.id.clone(), entry.path.clone());
+                        self.spawn_app_activated(&argv, &app, dir.as_deref());
                     }
                     Err(refused) => self.exec_refused(&refused),
                 }

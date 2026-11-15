@@ -881,6 +881,7 @@ fn a_symlink_to_a_document_shows_opens_with() {
         categories: Vec::new(),
         mime_types: vec!["application/x-reprise-test".into()],
         shown: true,
+        path: None,
     };
     let info = reprisefs::props::glance_in(&link, "Song", &[player], &db).unwrap();
     let mut d = Dialog::properties(&info, "text-x-generic", (0, 0));
@@ -920,6 +921,7 @@ fn a_symlinks_apply_shows_where_it_points_now() {
         categories: Vec::new(),
         mime_types: vec!["application/x-reprise-test".into()],
         shown: true,
+        path: None,
     }];
     let info = reprisefs::props::glance_in(&link, "Docs", &apps, &db).unwrap();
     let mut d = Dialog::properties(&info, "folder", (0, 0));

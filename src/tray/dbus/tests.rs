@@ -301,6 +301,7 @@ fn the_desktop_entry_icon_stands_in_for_a_missing_app_icon() {
         categories: Vec::new(),
         mime_types: Vec::new(),
         shown: true,
+        path: None,
     };
     let hints = notify::Hints::default();
     let (app, image) = zbus::block_on(notification_icons(

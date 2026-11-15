@@ -652,6 +652,7 @@ mod tests {
             categories: Vec::new(),
             mime_types: Vec::new(),
             shown: true,
+            path: None,
         }];
         let (reply, rx) = async_channel::bounded(1);
         let desktop_id = id.to_string();

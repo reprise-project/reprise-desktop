@@ -30,14 +30,15 @@ use smithay_client_toolkit::{
     },
 };
 use std::ffi::OsString;
+use std::path::PathBuf;
 use wayland_client::{Connection, QueueHandle, protocol::wl_output};
 
 /// What an xdg-activation token is asked for; `new_token` carries it out.
 pub(crate) enum TokenFor {
     /// Present it for this window ([`Host::raise`]).
     Raise(WinId),
-    /// Start this command line with it ([`Host::start`]); `true` after a key.
-    Start(Vec<OsString>, bool),
+    /// Start this command line with it in this folder ([`Host::start`]); `true` after a key.
+    Start(Vec<OsString>, Option<PathBuf>, bool),
 }
 
 impl Host {
@@ -49,15 +50,15 @@ impl Host {
 
     /// Run `argv` with a token asked for as [`Host::raise`] does for window `win`, so its window
     /// may take the focus; tokenless at once without xdg-activation or while this program quits.
-    pub(crate) fn start(&self, win: WinId, argv: Vec<OsString>) {
+    pub(crate) fn start(&self, win: WinId, argv: Vec<OsString>, dir: Option<PathBuf>) {
         if self.activation.is_some() && self.seat.is_some() && !self.exit {
-            self.request_token(win, TokenFor::Start(argv, self.key_last));
+            self.request_token(win, TokenFor::Start(argv, dir, self.key_last));
         } else {
             let handoff = Handoff {
                 token: None,
                 by_key: self.key_last,
             };
-            spawn_handing(&argv, &handoff);
+            spawn_handing(&argv, dir.as_deref(), &handoff);
         }
     }
 
@@ -741,12 +742,12 @@ impl ActivationHandler for Host {
                     activation.activate::<Host>(surface, token);
                 }
             }
-            TokenFor::Start(argv, by_key) => {
+            TokenFor::Start(argv, dir, by_key) => {
                 let handoff = Handoff {
                     token: Some(token),
                     by_key: *by_key,
                 };
-                spawn_handing(argv, &handoff);
+                spawn_handing(argv, dir.as_deref(), &handoff);
             }
         }
     }

@@ -1425,8 +1425,8 @@ impl Explorer {
         }
     }
 
-    /// Takes the openings ([`Explorer::open_file`]) that answered late. Their spawns carry their
-    /// own app scopes, as one reply holds them all.
+    /// Takes the openings ([`Explorer::open_file`]) that answered late, their spawns joined as
+    /// [`Reply::and`] joins them.
     pub(crate) fn take_opened(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let mut done = Vec::new();
         self.opening.retain(|(path, job)| match job.take() {
@@ -1442,13 +1442,13 @@ impl Explorer {
         let mut reply = Reply::redraw();
         for (path, opened) in done {
             let r = self.opened(&path, opened, ctx);
-            let app = r.spawn_app.as_deref();
-            reply.spawn.extend(
-                r.spawn
-                    .iter()
-                    .map(|argv| reprisefs::scope::in_scope(argv, app)),
-            );
             reply.redraw_all |= r.redraw_all;
+            reply = reply.and(Reply {
+                spawn: r.spawn,
+                spawn_app: r.spawn_app,
+                spawn_dir: r.spawn_dir,
+                ..Reply::none()
+            });
         }
         Some(reply)
     }
@@ -1459,6 +1459,7 @@ impl Explorer {
                 redraw: true,
                 spawn: vec![open.argv],
                 spawn_app: open.app,
+                spawn_dir: open.dir,
                 ..Default::default()
             },
             Opened::Open(Err(refused)) => self.exec_refused(&refused, ctx),

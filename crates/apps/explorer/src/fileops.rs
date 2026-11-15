@@ -238,6 +238,7 @@ impl Explorer {
                 return match spawn {
                     Ok(spawn) => Reply {
                         spawn,
+                        spawn_dir: app.path,
                         spawn_app: Some(app.id),
                         ..Default::default()
                     },
@@ -1080,13 +1081,13 @@ impl Explorer {
     pub fn open_for(&self, it: &Item) -> Result<reprisefs::props::Opening, apps::ExecRefused> {
         use reprisefs::props::Opening;
         Ok(match it.shortcut.as_deref() {
-            Some(apps::Shortcut::App(app)) => Opening {
-                argv: apps::launch_argv(app, &repriseconf::terminal())?,
-                app: Some(app.id.clone()),
-            },
+            Some(apps::Shortcut::App(app)) => {
+                Opening::of(app, apps::launch_argv(app, &repriseconf::terminal())?)
+            }
             Some(apps::Shortcut::Link(link)) => Opening {
                 argv: vec!["xdg-open".into(), link.url.clone().into()],
                 app: None,
+                dir: None,
             },
             None => reprisefs::props::open_in(
                 &it.path,
@@ -1163,6 +1164,7 @@ impl Explorer {
                 redraw: true,
                 spawn: vec![argv],
                 spawn_app: Some(app.id.clone()),
+                spawn_dir: app.path.clone(),
                 ..Default::default()
             },
             Err(refused) => self.exec_refused(&refused, ctx),
@@ -1285,6 +1287,7 @@ impl Explorer {
             Ok(argv) => Reply {
                 redraw_all: true,
                 spawn: vec![argv],
+                spawn_dir: app.path,
                 spawn_app: Some(app.id),
                 ..Default::default()
             },

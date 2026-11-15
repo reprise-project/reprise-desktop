@@ -171,6 +171,7 @@ impl WelcomeApp {
             Ok(argv) => Reply {
                 spawn: vec![argv],
                 spawn_app: Some(e.id.clone()),
+                spawn_dir: e.path.clone(),
                 ..Reply::redraw()
             },
             Err(refused) => {
