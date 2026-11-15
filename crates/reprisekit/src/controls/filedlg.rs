@@ -285,7 +285,8 @@ pub enum Event {
     /// New Folder: the host makes a folder of this name, numbered past the names taken, and
     /// hands it to [`FileDlg::expect`] to be renamed.
     CreateFolder(String),
-    /// F5, Ctrl+R or the menu's Refresh: the host lists the folder again.
+    /// F5, Ctrl+R, the menu's Refresh, or Hidden Items moved ([`FileDlg::show_hidden`]): the host
+    /// lists the folder again.
     Refresh,
     /// Pin to Places (`pin`) or Unpin from Places on the shown folder's entry `name`.
     PinEntry {
@@ -425,6 +426,9 @@ pub struct FileDlg {
     pending: Option<Nav>,
     focus: Focus,
     views_open: bool,
+    /// The background menu's View > Hidden Items, or Ctrl+H: the host lists dot names and those
+    /// a folder's `.hidden` lists.
+    show_hidden: bool,
     /// The Views menu's corner where a host showing it on a popup put it.
     views_at: Option<(i32, i32)>,
     /// A host shows the Look in and Files of type lists and the Views menu on popups
@@ -570,6 +574,7 @@ impl FileDlg {
             pending: None,
             focus: Focus::FileName,
             views_open: false,
+            show_hidden: false,
             views_at: None,
             hosted: false,
             extra: None,
@@ -1080,6 +1085,17 @@ impl FileDlg {
         self.shell.mode
     }
 
+    /// Whether the host lists hidden entries ([`Event::Refresh`] follows a change).
+    pub fn show_hidden(&self) -> bool {
+        self.show_hidden
+    }
+
+    /// View > Hidden Items moves: the host lists the folder again.
+    pub(super) fn toggle_hidden(&mut self) -> Event {
+        self.show_hidden = !self.show_hidden;
+        Event::Refresh
+    }
+
     /// The view and sort to hand the next dialog. A view with no sort column reads as Name.
     pub fn remembered(&self) -> Remembered {
         let (col, ascending) = self.shell.sort.unwrap_or((0, true));
@@ -1088,9 +1104,11 @@ impl FileDlg {
                 mode: self.shell.mode,
                 sort,
                 ascending,
+                hidden: self.show_hidden,
             },
             None => Remembered {
                 mode: self.shell.mode,
+                hidden: self.show_hidden,
                 ..Remembered::default()
             },
         }
@@ -1100,6 +1118,7 @@ impl FileDlg {
     /// ascending.
     pub fn restore(&mut self, r: Remembered) {
         self.shell.set_mode(r.mode);
+        self.show_hidden = r.hidden;
         self.shell.sort = Some(match self.shell.fields.iter().position(|&f| f == r.sort) {
             Some(col) => (col, r.ascending),
             None => (0, true),

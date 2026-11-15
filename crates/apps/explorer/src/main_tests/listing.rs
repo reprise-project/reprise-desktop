@@ -363,3 +363,41 @@ fn a_folder_above_the_shown_one_renamed_is_followed_and_moved_away_is_left_for_t
     assert_eq!(ex.place, Place::Folder(top.path().to_path_buf()));
     assert!(!ex.history.can_back());
 }
+
+#[test]
+fn ctrl_h_lists_hidden_entries_faded_and_keeps_the_setting() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    for name in ["a.txt", ".x"] {
+        std::fs::write(dir.path().join(name), "x").expect("write");
+    }
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let names = |ex: &Explorer| {
+        ex.items
+            .iter()
+            .map(|it| it.name.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&ex), ["a.txt"]);
+    let sym = u32::from(b'h');
+    let ctrl_h = || repriseapp::KeyInput {
+        sym,
+        utf8: None,
+        mods: repriseapp::Mods {
+            ctrl: true,
+            ..Default::default()
+        },
+        edit: reprisekit::textedit::key_for(sym, true, false, None),
+    };
+
+    ex.key(ctrl_h(), &mut ctx);
+    assert_eq!(names(&ex), [".x", "a.txt"]);
+    let faded: Vec<bool> = ex.sv.entries.iter().map(|e| e.hidden).collect();
+    assert_eq!(faded, [true, false], "the dot name draws faded");
+    assert!(ex.settings.show_hidden && ex.settings_dirty, "saved");
+    assert!(ex.menu_state().hidden, "View > Hidden Items is ticked");
+
+    ex.key(ctrl_h(), &mut ctx);
+    assert_eq!(names(&ex), ["a.txt"]);
+    assert!(!ex.settings.show_hidden);
+}

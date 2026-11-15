@@ -154,6 +154,36 @@ fn browse_opens_in_the_view_its_own_table_keeps() {
 }
 
 #[test]
+fn browse_lists_hidden_entries_as_its_table_keeps_and_ctrl_h_hides_them() {
+    let dir = sandbox("hidden");
+    let file = dir.join("state").join("filedialog.toml");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "[reprise]\nhidden = true\n").unwrap();
+    let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+    p.remember_in(file.clone());
+    settle(&mut p);
+    assert!(p.dlg.show_hidden());
+    assert!(names(&p).contains(&".hidden"), "{:?}", names(&p));
+    assert!(
+        p.dlg
+            .entries()
+            .iter()
+            .any(|e| e.name == ".hidden" && e.hidden)
+    );
+
+    p.shortcut(R, u32::from(b'h'), true, false, false);
+    settle(&mut p);
+    assert!(!names(&p).contains(&".hidden"), "{:?}", names(&p));
+    crate::state::flush();
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        repriseconf::filedialog::section(&text, OWN_APP).contains("hidden = false\n"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn pinned_folders_follow_the_built_in_tiles() {
     let dir = sandbox("pins");
     let mut p = FilePicker::run_command(&dir, Icons::default(), true);
@@ -293,7 +323,7 @@ fn a_recent_file_picks_its_own_path() {
             id: Some(recent),
             path: PathBuf::from(reprisefs::places::RECENT),
             pattern: None,
-            found: Found::Folder(read_folder(&dir, Some(&[]), None)),
+            found: Found::Folder(read_folder(&dir, false, Some(&[]), None)),
             art: Vec::new(),
             view: None,
         },

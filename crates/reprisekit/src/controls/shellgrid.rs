@@ -191,7 +191,7 @@ fn cell_theme(p: &Paint, px: u32) -> Theme {
     theme
 }
 
-/// The icon `mode` draws for `e`, faded to half (a copy) when the entry is cut. Thumbnails fall back to the 32 px icon.
+/// The icon `mode` draws for `e`, faded to half (a copy) when the entry is cut or hidden. Thumbnails fall back to the 32 px icon.
 pub(crate) fn entry_icon(e: &Entry, mode: Mode) -> Option<Cow<'_, Canvas>> {
     let icon = match mode {
         Mode::Tiles => e.icon48.as_deref(),
@@ -202,10 +202,10 @@ pub(crate) fn entry_icon(e: &Entry, mode: Mode) -> Option<Cow<'_, Canvas>> {
     faded(e, icon)
 }
 
-/// `icon`, faded to half (a copy) when `e` is cut.
+/// `icon`, faded to half (a copy) when `e` is cut or hidden.
 pub(crate) fn faded<'a>(e: &Entry, icon: Option<&'a Canvas>) -> Option<Cow<'a, Canvas>> {
     let icon = icon?;
-    if !e.cut {
+    if !e.cut && !e.hidden {
         return Some(Cow::Borrowed(icon));
     }
     let mut icon = icon.clone();
@@ -779,9 +779,10 @@ mod tests {
     }
 
     #[test]
-    fn a_cut_entry_draws_its_icon_faded() {
-        let mut sv = iconed(2, Mode::Tiles);
+    fn a_cut_or_hidden_entry_draws_its_icon_faded() {
+        let mut sv = iconed(3, Mode::Tiles);
         sv.entries[1].cut = true;
+        sv.entries[2].hidden = true;
         let (c, lay, _) = render(&sv, Rect::new(0, 0, 400, 300));
         let at = |cell: Rect| {
             c.get(
@@ -790,12 +791,14 @@ mod tests {
             )
         };
         assert_eq!(at(lay.cells[0]), Color::rgb(255, 0, 0).argb(), "solid red");
-        let faded = at(lay.cells[1]);
-        assert_ne!(faded, Color::rgb(255, 0, 0).argb());
-        assert!(
-            faded & 0xFF > 0x40,
-            "half the icon's alpha lets the white through: {faded:08x}"
-        );
+        for i in [1, 2] {
+            let faded = at(lay.cells[i]);
+            assert_ne!(faded, Color::rgb(255, 0, 0).argb());
+            assert!(
+                faded & 0xFF > 0x40,
+                "half the icon's alpha lets the white through: {faded:08x}"
+            );
+        }
     }
 
     #[test]

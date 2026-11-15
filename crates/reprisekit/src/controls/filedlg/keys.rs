@@ -358,7 +358,7 @@ impl FileDlg {
     }
 
     /// The file-dialog key `sym` with its modifiers, read before [`FileDlg::key`]: F5 and Ctrl+R
-    /// refresh, Alt+Left and Alt+Right go back and forward, Alt+Up goes up and Ctrl+Shift+N
+    /// refresh, Ctrl+H shows or hides hidden entries, Alt+Left and Alt+Right go back and forward, Alt+Up goes up and Ctrl+Shift+N
     /// makes a folder wherever the focus is. In the list, F2 renames the selected entry, Delete
     /// deletes the selection (Shift+Delete for good), Shift+F10 and the Menu key open the context menu, and Ctrl+A
     /// selects every entry of a dialog that picks several. `None` leaves the key to `key`, so
@@ -386,6 +386,7 @@ impl FileDlg {
         match sym {
             keysym::F5 if !ctrl && !alt => return Some(Event::Refresh),
             _ if ctrl && !shift && !alt && letter('r') => return Some(Event::Refresh),
+            _ if ctrl && !shift && !alt && letter('h') => return Some(self.toggle_hidden()),
             keysym::LEFT | keysym::KP_LEFT if alt && !ctrl => return Some(self.nav(Nav::Back)),
             keysym::RIGHT | keysym::KP_RIGHT if alt && !ctrl => {
                 return Some(self.nav(Nav::Forward));

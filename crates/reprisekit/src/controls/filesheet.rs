@@ -86,6 +86,8 @@ pub const NAME: &str = "name";
 pub const NAME_FIELD: &str = "Name";
 pub const READ_ONLY: &str = "readonly";
 pub const HIDDEN: &str = "hidden";
+/// The line under the attribute boxes saying where hidden items show again.
+pub const HIDDEN_NOTE: &str = "n_hidden";
 pub const EXECUTABLE: &str = "executable";
 pub const ADVANCED: &str = "advanced";
 pub const CHANGE: &str = "change";

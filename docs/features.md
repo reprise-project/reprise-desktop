@@ -348,7 +348,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **File dialogs remember their folder, view and place, per app.** Every
   Open and Save As dialog, in Reprise's programs, Run's Browse and the
   portal's, opens in the folder that app's last dialog was confirmed in, in
-  its view and Details sort, and at the size and place it was left at
+  its view, Details sort and Hidden Items, and at the size and place it was left at
   (`$XDG_STATE_HOME/reprise/filedialog.toml`, a table per app id; a portal
   dialog counts as the app that asked for it and takes its app id, grouping
   with it on the taskbar under its icon, Run's Browse as `reprise`, and
@@ -364,7 +364,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   shown, renamed or moved, is followed; deleted, the dialog moves to the
   nearest folder above it.
 - **File dialog keys and menu.** In an Open or Save As dialog F5 and Ctrl+R
-  list the folder again, Alt+Left and Alt+Right go back and forward, Alt+Up
+  list the folder again, Ctrl+H shows or hides hidden items (dot names and
+  those a folder's `.hidden` lists, their icons faded), Alt+Left and Alt+Right go back and forward, Alt+Up
   goes up a folder and Ctrl+Shift+N makes a new folder, named in place. In
   the list F2 renames the selected entry in place, Delete deletes the
   selection as Explorer's Delete does (asking first as the Recycle Bin's
@@ -373,7 +374,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   deletes it for good once asked, Ctrl+A selects every file where several
   can be picked, and a right click, Shift+F10 or the Menu key opens the
   entry's menu (Select, Pin to Places for a folder, Delete, Rename) or the
-  background's (View, Refresh, New > Folder). A refused rename or a failed
+  background's (View with Hidden Items, Refresh, New > Folder). A refused rename or a failed
   delete says why in a box.
   File name keeps its editing keys.
 - **Pinned folders.** Pin to Places on a folder's right-click menu (in

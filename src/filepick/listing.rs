@@ -38,6 +38,7 @@ impl FilePicker {
             climb: false,
             scale: self.icons.scale,
             list: self.list_px(),
+            hidden: self.dlg.show_hidden(),
             view_file: None,
         }
     }
@@ -441,6 +442,7 @@ impl FilePicker {
                     name: it.name,
                     is_dir: it.is_dir,
                     link: it.is_link,
+                    hidden: it.hidden,
                     size: it.size,
                     kind: it.kind,
                     modified: r.modified,

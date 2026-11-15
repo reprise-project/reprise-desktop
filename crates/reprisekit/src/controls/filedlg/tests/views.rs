@@ -335,7 +335,9 @@ fn a_restored_view_opens_in_its_mode_and_sort() {
         mode: Mode::Details,
         sort: Field::Size,
         ascending: false,
+        hidden: true,
     });
+    assert!(d.show_hidden());
     d.set_listing(folder(
         2,
         None,
@@ -353,6 +355,7 @@ fn a_sort_column_the_dialog_does_not_show_restores_as_name_ascending() {
         mode: Mode::Thumbnails,
         sort: Field::Deleted,
         ascending: false,
+        hidden: false,
     });
     assert_eq!(d.view(), Mode::Thumbnails);
     assert_eq!(d.shell.sort, Some((0, true)));
@@ -377,6 +380,7 @@ fn a_views_pick_and_a_column_click_change_what_is_remembered() {
             mode: Mode::Details,
             sort: Field::Modified,
             ascending: false,
+            hidden: false,
         }
     );
 }
@@ -387,11 +391,12 @@ fn remembered_text_round_trips_and_bad_values_keep_defaults() {
         mode: Mode::Tiles,
         sort: Field::Kind,
         ascending: false,
+        hidden: true,
     };
     assert_eq!(Remembered::parse(&r.text()), r);
     assert_eq!(Remembered::parse(""), Remembered::default());
     assert_eq!(
-        Remembered::parse("view = \"huge\"\nsort = 7\nascending = maybe\n\u{0}"),
+        Remembered::parse("view = \"huge\"\nsort = 7\nascending = maybe\nhidden = 1\n\u{0}"),
         Remembered::default()
     );
     assert_eq!(

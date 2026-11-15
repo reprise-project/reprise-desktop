@@ -208,6 +208,8 @@ pub struct Request {
     scale: i32,
     /// List and Details' icon size ([`shellview::list_icon_px`]).
     list: i32,
+    /// The dialog's Hidden Items; the view file's, when the read takes one.
+    hidden: bool,
     /// The view file ([`FilePicker::remember_in`]) the first listing reads along with its
     /// folder, so a dead `$XDG_STATE_HOME` never stalls the loop.
     view_file: Option<PathBuf>,

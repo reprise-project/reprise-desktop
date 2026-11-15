@@ -221,7 +221,15 @@ fn the_background_menu_switches_the_view_refreshes_and_makes_a_folder() {
     );
     assert_eq!(
         labels(&d, 1),
-        ["Thumbnails", "Tiles", "Icons", "List", "Details"]
+        [
+            "Thumbnails",
+            "Tiles",
+            "Icons",
+            "List",
+            "Details",
+            "-",
+            "Hidden Items"
+        ]
     );
     let levels = d.context_levels(&text, 11, R, TextUnits::ONE);
     assert!(
@@ -262,6 +270,40 @@ fn the_background_menu_switches_the_view_refreshes_and_makes_a_folder() {
         "a press elsewhere closes it and does nothing else"
     );
     assert!(d.places.selected.is_none());
+}
+
+#[test]
+fn hidden_items_and_ctrl_h_toggle_hidden_entries_and_ask_for_a_relist() {
+    let mut d = multi(DlgMode::Open, false);
+    assert!(!d.show_hidden());
+    let checked = |d: &FileDlg| {
+        let c = d.context.as_ref().expect("the menu is open");
+        matches!(
+            d.context_items(c)[1].0.last(),
+            Some(crate::controls::menu::MenuItem::Entry { checked: true, .. })
+        )
+    };
+    d.right_click(R, Some(Hit::Shell(shellview::Hit::Background)), (400, 300));
+    menu_key(&mut d, form::Key::Char('v'));
+    assert!(!checked(&d), "Hidden Items starts unticked");
+    assert!(matches!(
+        menu_key(&mut d, form::Key::Char('m')),
+        Event::Refresh
+    ));
+    assert!(d.show_hidden());
+    assert!(d.remembered().hidden, "the next dialog opens with it");
+    d.right_click(R, Some(Hit::Shell(shellview::Hit::Background)), (400, 300));
+    menu_key(&mut d, form::Key::Char('v'));
+    assert!(checked(&d), "and is ticked once on");
+    menu_key(&mut d, form::Key::Escape);
+    menu_key(&mut d, form::Key::Escape);
+
+    d.focus = Focus::FileName;
+    assert!(matches!(
+        d.shortcut(R, u32::from(b'h'), true, false, false),
+        Some(Event::Refresh)
+    ));
+    assert!(!d.show_hidden(), "Ctrl+H turns it off from any part");
 }
 
 #[test]

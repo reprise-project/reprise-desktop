@@ -94,6 +94,9 @@ pub struct Entry {
     /// shortcut to a folder lists as a file ([`Entry::is_folder`]).
     pub link: bool,
     pub cut: bool,
+    /// A dot name or one its folder's `.hidden` lists, listed with hidden items shown: its icon
+    /// draws faded, as a cut entry's does.
+    pub hidden: bool,
     pub size: u64,
     pub kind: String,
     pub modified: String,
@@ -392,6 +395,7 @@ pub fn sample(mode: Mode, grouped: bool) -> ShellView {
                 is_dir: *is_dir,
                 link: i == 5,
                 cut: i == 4,
+                hidden: false,
                 size: 1024 * (i as u64 + 1),
                 kind: (*kind).into(),
                 modified: "14/09/2026 21:40".into(),

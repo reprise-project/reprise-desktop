@@ -49,6 +49,21 @@ fn the_summary_labels_fit_in_a_wider_face() {
 }
 
 #[test]
+fn the_hidden_note_sits_under_the_last_attribute_box() {
+    for (rows, last) in [
+        (rows(&facts(false)), EXECUTABLE),
+        (rows(&facts(true)), EXECUTABLE),
+        (set_rows(&set_facts(true)), HIDDEN),
+    ] {
+        let (page, h) = general_page(&rows, "a", None, None);
+        let note = page.rect(HIDDEN_NOTE).expect("the note");
+        let above = page.rect(last).expect("the last box");
+        assert_eq!((note.x, note.y), (LABEL_X, above.y + CHECK_PITCH));
+        assert!(note.bottom() < h, "{note:?} inside a page {h} high");
+    }
+}
+
+#[test]
 fn a_long_date_wraps_inside_its_row() {
     let family = "DejaVu Sans";
     let text = TextRenderer::load(&FontConfig {

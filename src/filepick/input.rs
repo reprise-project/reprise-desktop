@@ -198,6 +198,12 @@ impl FilePicker {
                 Outcome::Redraw
             }
             Event::Refresh => {
+                // Hidden Items moved while a listing is under way: it lists the old entries.
+                let hidden = self.dlg.show_hidden();
+                if (self.pending.iter()).any(|p| Some(p.seq) == self.listing && p.hidden != hidden)
+                {
+                    self.listing = None;
+                }
                 self.refresh();
                 Outcome::Redraw
             }
