@@ -144,6 +144,21 @@ fn functions_apply_to_the_shown_value() {
     assert_eq!(shows(Mode::Scientific, "1000l"), "3");
     assert_eq!(shows(Mode::Scientific, "en"), "1");
     assert_eq!(shows(Mode::Scientific, "p"), "3.14159265359");
+    assert_eq!(shows(Mode::Scientific, "(1+2)q="), "9");
+    assert_eq!(shows(Mode::Scientific, "2*(1+2)!+1="), "13");
+    let mut calc = after(Mode::Scientific, "(2+3)");
+    calc.input(Input::Func(Func::Negate));
+    typed(&mut calc, "=");
+    assert_eq!(
+        calc.display(),
+        "-5",
+        "the group is replaced by its negation"
+    );
+    assert_eq!(
+        shows(Mode::Scientific, "(2+3)4="),
+        "20",
+        "a number typed after a group multiplies it"
+    );
 }
 
 #[test]
