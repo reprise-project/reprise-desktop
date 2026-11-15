@@ -388,7 +388,7 @@ impl Paint {
         let r = l.status?;
         let pos = self
             .hover
-            .map(|(x, y)| tr!("status-position", x = x, y = y))
+            .map(|(x, y)| tr!("status-position", x = x.to_string(), y = y.to_string()))
             .unwrap_or_default();
         let size = self
             .doc
@@ -397,7 +397,13 @@ impl Paint {
             .map(|s| s.rect)
             .or(self.doc.dragged_box())
             .or(self.doc.text_box)
-            .map(|r| tr!("status-size", w = r.width, h = r.height))
+            .map(|r| {
+                tr!(
+                    "status-size",
+                    w = r.width.to_string(),
+                    h = r.height.to_string()
+                )
+            })
             .unwrap_or_default();
         let panel = |text: String, width: i32| Panel {
             text,
