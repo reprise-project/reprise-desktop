@@ -4,9 +4,9 @@
 //!
 //! A thread keeps inotify watches on every `/dev/video*` node (and on `/dev`, for a camera
 //! plugged in later) and, after `SETTLE`, scans `/proc/*/fd` for holders and reports each with
-//! its parent chain, so the compositor can name it by a window. PipeWire and WirePlumber are
-//! left out; the PipeWire monitor names their consumers. A v4l2loopback node (a virtual camera)
-//! counts only once a second process holds it: its feeder alone films nothing.
+//! its parent chain, so the compositor can name it by a window. The PipeWire and WirePlumber
+//! daemons are left out; the PipeWire monitor names their consumers. A v4l2loopback node (a
+//! virtual camera) counts only once a second process holds it: its feeder alone films nothing.
 
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
@@ -20,7 +20,9 @@ use smithay::reexports::calloop::channel::Sender;
 /// a program probing a device opens and closes it a few times in a row.
 const SETTLE: Duration = Duration::from_millis(250);
 const CHAIN: usize = 8;
-const SKIPPED: [&str; 2] = ["pipewire", "wireplumber"];
+/// The user units of the daemons left out. A process picks its own name, but can't leave a
+/// Flatpak's scope for another cgroup.
+const SKIPPED_UNITS: [&str; 2] = ["pipewire.service", "wireplumber.service"];
 
 /// A process holding a camera device open: its pid and its parents'
 /// (nearest first), and its program's file name.
@@ -95,7 +97,7 @@ fn watch(tx: &Sender<Vec<Holder>>) -> std::io::Result<()> {
 }
 
 /// The processes under `proc` (a procfs root) holding a `/dev/video*`
-/// node open, by pid, PipeWire's own left out; a loopback node (per `sys`, a
+/// node open, by pid, PipeWire's daemons left out; a loopback node (per `sys`, a
 /// sysfs root) only while two or more processes hold it. Processes of other
 /// users, whose fds cannot be read, are skipped.
 pub fn scan(proc: &Path, sys: &Path) -> Vec<Holder> {
@@ -122,10 +124,10 @@ pub fn scan(proc: &Path, sys: &Path) -> Vec<Holder> {
     pids.into_iter()
         .filter_map(|pid| {
             let dir = proc.join(pid.to_string());
-            let comm = read_trim(&dir.join("comm"));
-            if SKIPPED.contains(&comm.as_str()) {
+            if runs_in_skipped_unit(&dir) {
                 return None;
             }
+            let comm = read_trim(&dir.join("comm"));
             let exe = std::fs::read_link(dir.join("exe"))
                 .ok()
                 .and_then(|p| Some(p.file_name()?.to_str()?.to_string()))
@@ -136,6 +138,14 @@ pub fn scan(proc: &Path, sys: &Path) -> Vec<Holder> {
             })
         })
         .collect()
+}
+
+/// Whether the process runs in one of [`SKIPPED_UNITS`]: its cgroup v2 path ends in one.
+fn runs_in_skipped_unit(pid_dir: &Path) -> bool {
+    let cgroup = read_trim(&pid_dir.join("cgroup"));
+    let path = cgroup.lines().find_map(|l| l.strip_prefix("0::"));
+    path.and_then(|p| p.rsplit('/').next())
+        .is_some_and(|unit| SKIPPED_UNITS.contains(&unit))
 }
 
 /// The `/dev/video*` nodes a process holds, each once.
@@ -196,11 +206,15 @@ mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
 
-    /// A fake procfs process: its comm, exe, parent and fd targets.
-    fn process(root: &Path, pid: i32, comm: &str, ppid: i32, fds: &[&str]) {
+    const USER: &str = "0::/user.slice/user-1000.slice/user@1000.service";
+
+    /// A fake procfs process: its comm, exe, parent and fd targets, in the cgroup `unit` names
+    /// under the user manager.
+    fn process_in(root: &Path, unit: &str, pid: i32, comm: &str, ppid: i32, fds: &[&str]) {
         let dir = root.join(pid.to_string());
         std::fs::create_dir_all(dir.join("fd")).unwrap();
         std::fs::write(dir.join("comm"), format!("{comm}\n")).unwrap();
+        std::fs::write(dir.join("cgroup"), format!("{USER}/{unit}\n")).unwrap();
         std::fs::write(
             dir.join("stat"),
             format!("{pid} ({comm} x) S {ppid} 1 1 0 -1\n"),
@@ -210,6 +224,12 @@ mod tests {
         for (i, t) in fds.iter().enumerate() {
             symlink(t, dir.join("fd").join(i.to_string())).unwrap();
         }
+    }
+
+    /// [`process_in`] an app scope.
+    fn process(root: &Path, pid: i32, comm: &str, ppid: i32, fds: &[&str]) {
+        let unit = format!("app.slice/app-reprise-{comm}-{pid}.scope");
+        process_in(root, &unit, pid, comm, ppid, fds);
     }
 
     fn root(tag: &str) -> std::path::PathBuf {
@@ -239,7 +259,14 @@ mod tests {
         let r = root.as_path();
         process(r, 100, "firefox", 1, &["/dev/null"]);
         process(r, 120, "Isolated", 100, &["/dev/video0", "/dev/null"]);
-        process(r, 200, "pipewire", 1, &["/dev/video0"]);
+        process_in(
+            r,
+            "session.slice/pipewire.service",
+            200,
+            "pipewire",
+            1,
+            &["/dev/video0"],
+        );
         process(r, 300, "foot", 1, &["/dev/pts/0", "/dev/videos"]);
         std::fs::create_dir_all(r.join("self")).unwrap();
         let found = scan(r, &sysfs(r));
@@ -250,6 +277,24 @@ mod tests {
                 chain: vec![120, 100],
                 exe: "Isolated".into()
             }]
+        );
+    }
+
+    #[test]
+    fn a_process_named_like_a_pipewire_daemon_outside_its_unit_still_holds_the_camera() {
+        let root = root("renamed");
+        let r = root.as_path();
+        let flatpak = "app.slice/app-flatpak-org.example.Cam-4242.scope";
+        process_in(r, flatpak, 100, "pipewire", 1, &["/dev/video0"]);
+        process(r, 110, "wireplumber", 1, &["/dev/video0"]);
+        let daemon = "session.slice/wireplumber.service";
+        process_in(r, daemon, 120, "wireplumber", 1, &["/dev/video0"]);
+        let pids: Vec<i32> = scan(r, &sysfs(r)).into_iter().map(|h| h.chain[0]).collect();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            pids,
+            [100, 110],
+            "only the daemon in wireplumber.service is left out"
         );
     }
 
