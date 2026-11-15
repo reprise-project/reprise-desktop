@@ -798,6 +798,63 @@ fn a_custom_node_reading_nothing_leaves_a_surface_under_an_opaque_rect_below_it_
     );
 }
 
+/// A 100x100 custom node reading nothing beneath it, counting the cover walks that reach it.
+struct Counting(Rc<Cell<usize>>);
+
+impl reprisescene::CustomNode<DummyRenderer> for Counting {
+    fn size(&self) -> smithay::utils::Size<i32, smithay::utils::Logical> {
+        (100, 100).into()
+    }
+
+    fn reads_beneath(&self, _: f64) -> Option<Vec<Rectangle<i32, smithay::utils::Logical>>> {
+        self.0.set(self.0.get() + 1);
+        Some(Vec::new())
+    }
+
+    fn elements(
+        &self,
+        _: &mut DummyRenderer,
+        _: Point<f64, smithay::utils::Physical>,
+        _: smithay::utils::Scale<f64>,
+        _: f32,
+    ) -> Vec<reprisescene::CustomElement<DummyRenderer>> {
+        Vec::new()
+    }
+}
+
+#[test]
+fn a_surface_on_one_output_walks_the_cover_of_that_output_once() {
+    let mut w = World::new();
+    let surface = w.surface();
+    let (left, right) = (w.left.clone(), w.right.clone());
+    let mut scene = Scene::<DummyRenderer>::new();
+    scene.add_output(&left);
+    scene.add_output(&right);
+    let root = scene.root();
+    let s = scene.surface_create(root, surface.clone());
+    scene.set_position(s, 10, 10);
+    let walks = [Rc::new(Cell::new(0)), Rc::new(Cell::new(0))];
+    for (x, n) in [0, 100].into_iter().zip(&walks) {
+        let c = scene.custom_create(root, Box::new(Counting(n.clone())));
+        scene.set_position(c, x, 0);
+        scene.lower_to_bottom(c);
+    }
+    let taken = || walks.each_ref().map(|n| n.replace(0));
+
+    scene.surface_pass(&left);
+    assert_eq!(taken(), [1, 0], "a pass on the left output");
+    scene.surface_pass(&right);
+    assert_eq!(
+        taken(),
+        [0, 0],
+        "a pass on the right output it does not lie on"
+    );
+    assert_eq!(scene.outputs_showing(&surface), Some(vec![left.clone()]));
+    assert_eq!(taken(), [1, 0], "the outputs showing it");
+    assert_eq!(scene.surface_primary_output(&surface), Some(left));
+    assert_eq!(taken(), [1, 0], "its primary output");
+}
+
 #[test]
 fn a_surface_covers_what_lies_under_its_opaque_region_or_its_buffer_without_alpha() {
     use wl_shm::Format::{Argb8888, Xrgb8888};

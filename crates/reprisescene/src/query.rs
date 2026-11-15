@@ -281,14 +281,16 @@ impl<R: Renderer, D> Scene<R, D> {
         &self,
         node: NodeId,
         e: Rectangle<i32, Logical>,
-        covered: &Covered,
+        covered: &Covered<R, D>,
     ) -> Option<Output> {
         let mut best: Option<(i64, &Output)> = None;
-        let drawn = |o: &&Output| !self.hidden_on(node, o) && !covered.on(node, o);
-        for o in self.outputs.iter().filter(drawn) {
+        for o in &self.outputs {
             let Some(i) = output_rect(o).and_then(|r| r.intersection(e)) else {
                 continue;
             };
+            if self.hidden_on(node, o) || covered.on(node, o) {
+                continue;
+            }
             let area = i.size.w as i64 * i.size.h as i64;
             if best.is_none_or(|(a, _)| area > a) {
                 best = Some((area, o));
