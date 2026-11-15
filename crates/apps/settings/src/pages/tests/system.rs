@@ -714,6 +714,7 @@ fn a_startup_list_that_scrolls_draws_only_the_vertical_bar() {
             terminal: false,
             under_systemd: false,
             user: true,
+            stand_in: false,
         })
         .collect();
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {

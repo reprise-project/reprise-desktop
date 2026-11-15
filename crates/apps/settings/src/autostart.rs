@@ -9,8 +9,13 @@ use std::path::{Path, PathBuf};
 /// The id of the session's polkit agent, the only one it starts.
 pub const RUN_AS: &str = "reprise-polkit";
 
+/// A user file standing in for a system entry reads System: it is that entry, unchecked.
 pub fn location(e: &Entry) -> &'static str {
-    if e.user { "User" } else { "System" }
+    if e.user && !e.stand_in {
+        "User"
+    } else {
+        "System"
+    }
 }
 
 pub fn user_dir(config_home: &Path) -> PathBuf {
@@ -122,6 +127,7 @@ pub fn set_reader_at_logon(
         terminal: false,
         under_systemd: false,
         user: true,
+        stand_in: false,
     };
     std::fs::create_dir_all(dir)?;
     repriseconf::write_atomic(
@@ -130,9 +136,9 @@ pub fn set_reader_at_logon(
     )
 }
 
-/// Delete a user entry's file. A system entry has none and can only be unchecked, so that is an error, not a no-op.
+/// Delete a user entry's file. A system entry, or a user file standing in for one, can only be unchecked, so that is an error, not a no-op.
 pub fn remove(dir: &Path, e: &Entry) -> std::io::Result<()> {
-    if !e.user {
+    if !e.user || e.stand_in {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "a system entry has no user file to remove",
@@ -262,6 +268,49 @@ mod tests {
         let shadow = entry("reprise-sound", &text, true);
         set_enabled(&dir, &shadow, true, &here, &etc).expect("remove");
         assert!(!dir.join("reprise-sound.desktop").exists());
+    }
+
+    #[test]
+    fn a_user_file_standing_in_for_a_system_entry_reads_system_and_is_not_removed() {
+        let root = tmp("stand-in");
+        let (etc, home) = (vec![root.join("etc")], root.join("home"));
+        let dir = user_dir(&home);
+        let sys = |name: &str, exec: &str| format!("[Desktop Entry]\nName={name}\nExec={exec}\n");
+        put(
+            &etc[0].join("autostart"),
+            "reprise-sound.desktop",
+            &sys("Volume", "reprise-sound --tray"),
+        );
+        put(
+            &etc[0].join("autostart"),
+            "ssh-agent.desktop",
+            &sys("SSH Key Agent", "ssh-agent"),
+        );
+        put(&dir, "ssh-agent.desktop", "[Desktop Entry]\nHidden=true\n");
+        let here = vec!["reprise".to_string()];
+        let sound = (autostart::scan(&etc, &home).into_iter())
+            .find(|e| e.id == "reprise-sound")
+            .unwrap();
+        set_enabled(&dir, &sound, false, &here, &etc).expect("uncheck");
+
+        for e in autostart::scan(&etc, &home) {
+            assert!(e.user && e.stand_in && !e.runs_on(&here), "{}", e.id);
+            assert_eq!(location(&e), "System", "{}", e.id);
+            assert!(remove(&dir, &e).is_err(), "{}", e.id);
+        }
+        assert!(dir.join("reprise-sound.desktop").exists());
+        assert!(dir.join("ssh-agent.desktop").exists());
+
+        std::fs::remove_file(etc[0].join("autostart/reprise-sound.desktop")).unwrap();
+        let own = (autostart::scan(&etc, &home).into_iter())
+            .find(|e| e.id == "reprise-sound")
+            .unwrap();
+        assert!(
+            !own.stand_in,
+            "an override with nothing behind it is the user's"
+        );
+        assert_eq!(location(&own), "User");
+        remove(&dir, &own).expect("removed");
     }
 
     #[test]

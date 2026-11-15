@@ -250,6 +250,40 @@ fn an_error_box_mid_drag_lets_go_of_the_color_dialogs_field() {
 }
 
 #[test]
+fn remove_greys_on_a_user_file_standing_in_for_a_system_entry() {
+    let mut a = app("stand-in");
+    let parse = |id, text, user| reprisefs::autostart::parse(id, text, user).unwrap();
+    let sys = parse("vol", "[Desktop Entry]\nName=Volume\nExec=vol\n", false);
+    let shadow = parse(
+        "vol",
+        "[Desktop Entry]\nName=Volume\nExec=vol\nHidden=true\nX-Reprise-Override=true\n",
+        true,
+    );
+    let mine = parse("mine", "[Desktop Entry]\nName=Mine\nExec=mine\n", true);
+    a.entries = reprisefs::autostart::merge(vec![sys], vec![shadow, mine]);
+    a.applied_checks = vec![true, false];
+    pages::fill_list(&mut a.list, &a.entries, &[true, false]);
+    let remove_lit = |a: &SettingsApp| match &a.sheet.pages[Page::Startup.index()]
+        .item(pages::REMOVE)
+        .unwrap()
+        .control
+    {
+        form::Control::Button { enabled, .. } => *enabled,
+        c => panic!("Remove is a button, not {c:?}"),
+    };
+    let row = |a: &SettingsApp, id: &str| a.entries.iter().position(|e| e.id == id);
+    a.list.selection.focus = row(&a, "vol");
+    a.sync_apply();
+    assert!(
+        !remove_lit(&a),
+        "the unchecked system entry is unchecked, not removed"
+    );
+    a.list.selection.focus = row(&a, "mine");
+    a.sync_apply();
+    assert!(remove_lit(&a), "the user's own entry");
+}
+
+#[test]
 fn unchecking_run_as_asks_first_and_only_ok_unchecks_it() {
     let mut a = app("runas");
     let mut ctx = test_ctx();

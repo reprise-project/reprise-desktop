@@ -25,6 +25,9 @@ pub struct Entry {
     /// unit for the program, which may or may not start with this session ([`left_to_systemd`]).
     pub under_systemd: bool,
     pub user: bool,
+    /// Listed from a user file that only stands in for the system entry of its id: a bare
+    /// `Hidden=true` file or a marked override ([`override_text`]).
+    pub stand_in: bool,
 }
 
 /// Whether a unit of the session starts `e`'s program, so autostart leaves it out: `e` is marked
@@ -161,6 +164,7 @@ pub fn parse(id: &str, text: &str, user: bool) -> Option<Entry> {
             .iter()
             .any(|k| get(k) == Some("true")),
         user,
+        stand_in: user && get("X-Reprise-Override") == Some("true"),
     })
 }
 
@@ -218,20 +222,23 @@ pub fn scan(config_dirs: &[PathBuf], config_home: &Path) -> Vec<Entry> {
 /// Merge a system and a user entry list by id, the user copy winning,
 /// sorted by name case-insensitively. A user file that only says
 /// `Hidden=true` (no command) hides the system entry it shadows; with none
-/// behind it, it lists nothing.
+/// behind it, it lists nothing. A marked override with no system entry
+/// behind it is the user's own.
 pub fn merge(system: Vec<Entry>, user: Vec<Entry>) -> Vec<Entry> {
     let mut by_id: HashMap<String, Entry> = HashMap::new();
     for e in system {
         by_id.insert(e.id.clone(), e);
     }
-    for e in user {
+    for mut e in user {
         if e.exec.is_empty() {
             if let Some(sys) = by_id.get_mut(&e.id) {
                 sys.hidden = true;
                 sys.user = true;
+                sys.stand_in = true;
             }
             continue;
         }
+        e.stand_in &= by_id.contains_key(&e.id);
         by_id.insert(e.id.clone(), e);
     }
     let mut entries: Vec<Entry> = by_id.into_values().collect();
