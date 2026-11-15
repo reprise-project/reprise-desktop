@@ -63,15 +63,22 @@ pub fn from_keyboard(
         let x = ctx.xkb().lock().unwrap();
         // SAFETY: the state is only read; no reference outlives the lock.
         let state = unsafe { x.state() };
-        let text = KeyText::of_key(state, code);
-        let utf8 = text.as_ref().map(KeyText::as_str);
-        (state.key_get_syms(code).iter())
-            .find_map(|s| key_for(s.raw(), mods.ctrl, mods.shift, utf8))
+        edit_key(state, code, mods.ctrl, mods.shift)
     })
 }
 
+/// The editing key `code` stands for under `state`; a Ctrl chord on a non-Latin letter reads the
+/// Latin keysym another configured layout gives the key.
+pub fn edit_key(state: &xkb::State, code: Keycode, ctrl: bool, shift: bool) -> Option<EditKey> {
+    let text = KeyText::of_key(state, code);
+    let utf8 = text.as_ref().map(KeyText::as_str);
+    let syms: Vec<u32> = state.key_get_syms(code).iter().map(|s| s.raw()).collect();
+    let latin = ctrl.then(|| crate::keys::latin_for(state, code, &syms));
+    (syms.into_iter().chain(latin.flatten())).find_map(|s| key_for(s, ctrl, shift, utf8))
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn xkb_writes(s: &str) -> impl FnOnce(&mut [u8]) -> i32 {
@@ -81,6 +88,29 @@ mod tests {
             buf[n] = 0;
             s.len() as i32
         }
+    }
+
+    /// A "us,ru" keymap with the ru group locked.
+    pub(crate) fn russian() -> xkb::State {
+        let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_names(&ctx, "evdev", "pc105", "us,ru", "", None, 0)
+            .expect("the us,ru keymap compiles");
+        let mut state = xkb::State::new(&keymap);
+        state.update_mask(0, 0, 0, 0, 0, 1);
+        state
+    }
+
+    #[test]
+    fn ctrl_c_on_the_russian_layout_copies_and_c_types_es() {
+        let state = russian();
+        let c = Keycode::new(46 + 8);
+        assert_eq!(edit_key(&state, c, true, false), Some(EditKey::Copy));
+        let z = Keycode::new(44 + 8);
+        assert_eq!(edit_key(&state, z, true, true), Some(EditKey::Redo));
+        assert_eq!(
+            edit_key(&state, c, false, false),
+            Some(EditKey::Insert("с".into()))
+        );
     }
 
     #[test]

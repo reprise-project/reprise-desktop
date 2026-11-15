@@ -792,7 +792,11 @@ the screen takes the interface of the last session used at this computer.
 
 - **Keyboard layouts,** switched with Left Alt+Shift or from the layout
   square in the tray. With `[keyboard] layout_per_window`, each window
-  keeps the layout it last had and a new one starts on the first.
+  keeps the layout it last had and a new one starts on the first. On a
+  Cyrillic, Greek, Hebrew, Arabic or other non-Latin layout, a Ctrl, Alt
+  or Super chord on a letter key reads the letter the first Latin layout
+  in the list puts there, so with "us,ru" on Russian Super+L still locks
+  and Ctrl+C still copies, in Reprise's own fields and its programs.
 - **Shortcut sheet.** Hold Super on its own for a second and a sheet lists
   every shortcut in force, yours and programs' included, grouped as windows,
   desktops, launching, screenshots and so on. Let go and it's gone; press

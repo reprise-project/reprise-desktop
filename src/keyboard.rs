@@ -116,6 +116,23 @@ pub fn key_press(syms: Vec<u32>, mods: u32, pressed: bool) -> KeyPress {
     }
 }
 
+/// Key `code` under `state` before the key updates it, `mods` held: its keysyms plus F13 to F24
+/// for those keys whatever the keymap gives them, and its place, which for a Ctrl, Alt or Super
+/// chord on a non-Latin letter is the Latin keysym another configured layout gives the key.
+pub fn decode(state: &xkb::State, code: Keycode, mods: u32, pressed: bool) -> KeyPress {
+    let mut syms: Vec<u32> = state.key_get_syms(code).iter().map(|s| s.raw()).collect();
+    if let Some(f) = keys::function_key_for(code.raw())
+        && !syms.contains(&f)
+    {
+        syms.push(f);
+    }
+    let chord = mods & (keys::MOD_CTRL | keys::MOD_ALT | keys::MOD_LOGO) != 0;
+    let latin = chord.then(|| keys::latin_for(state, code, &syms)).flatten();
+    let mut k = key_press(syms, mods, pressed);
+    k.place = (latin.or_else(|| keys::place_key_for(code.raw()))).filter(|s| !k.lower.contains(s));
+    k
+}
+
 impl State {
     /// A key event from the backend.
     pub(crate) fn key<B: InputBackend>(&mut self, event: B::KeyboardKeyEvent) {
@@ -154,24 +171,14 @@ impl State {
         };
         self.key_input.last_key_input = true;
         let keycode = code.raw();
-        // The keysyms before this key updates the state, as the route
-        // reads them, plus F13 to F24 for those keys whatever the keymap
-        // gives them.
-        let mut syms: Vec<u32> = keyboard.with_xkb_state(self, |ctx| {
+        let mods_before = keyboard.modifier_state();
+        let k = keyboard.with_xkb_state(self, |ctx| {
             let xkb = ctx.xkb().lock().unwrap();
             // SAFETY: the state is only read here; no reference to it
             // outlives the lock.
             let state = unsafe { xkb.state() };
-            state.key_get_syms(code).iter().map(|s| s.raw()).collect()
+            decode(state, code, keys::mask(&mods_before), pressed)
         });
-        if let Some(f) = keys::function_key_for(keycode)
-            && !syms.contains(&f)
-        {
-            syms.push(f);
-        }
-        let mods_before = keyboard.modifier_state();
-        let mut k = key_press(syms, keys::mask(&mods_before), pressed);
-        k.place = keys::place_key_for(keycode).filter(|s| !k.lower.contains(s));
         if aided && !self.aids_key(keycode, &k) {
             return;
         }
@@ -1279,6 +1286,60 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn route_on(
+        state: &xkb::State,
+        evdev: u32,
+        mods: u32,
+        modes: &crate::keyroute::Modes,
+    ) -> KeyRoute {
+        let k = decode(state, Keycode::new(evdev + 8), mods, true);
+        let binds = crate::config::Config::default().keybinds;
+        crate::keyroute::route(modes, &k, &binds, &[]).route
+    }
+
+    #[test]
+    fn super_and_ctrl_letters_on_the_russian_layout_read_the_us_letters() {
+        use crate::config::Action;
+        let state = crate::editkeys::tests::russian();
+        let modes = crate::keyroute::Modes::default();
+        let (l, r, c) = (38, 19, 46);
+        assert_eq!(
+            route_on(&state, l, keys::MOD_LOGO, &modes),
+            KeyRoute::Binds(vec![Action::Lock])
+        );
+        assert_eq!(
+            route_on(&state, r, keys::MOD_LOGO, &modes),
+            KeyRoute::Binds(vec![Action::Run])
+        );
+        let desktop = crate::keyroute::Modes {
+            desktop_has_keyboard: true,
+            has_icons: true,
+            selected_icon: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(
+            route_on(&state, c, keys::MOD_CTRL, &desktop),
+            KeyRoute::IconCopy(0)
+        );
+    }
+
+    #[test]
+    fn a_bare_russian_letter_and_a_lone_russian_layout_have_no_latin_place() {
+        let state = crate::editkeys::tests::russian();
+        let l = Keycode::new(38 + 8);
+        assert_eq!(decode(&state, l, 0, true).place, None);
+        assert_eq!(decode(&state, l, keys::MOD_SHIFT, true).place, None);
+        assert_eq!(
+            decode(&state, l, keys::MOD_LOGO, true).place,
+            Some(keys::KEY_l)
+        );
+        let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let ru = xkb::Keymap::new_from_names(&ctx, "evdev", "pc105", "ru", "", None, 0)
+            .expect("the ru keymap compiles");
+        let alone = xkb::State::new(&ru);
+        assert_eq!(decode(&alone, l, keys::MOD_LOGO, true).place, None);
+    }
 
     #[test]
     fn a_key_press_masks_caps_and_num_lock_and_lowercases() {
