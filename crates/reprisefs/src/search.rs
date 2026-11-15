@@ -6,6 +6,11 @@
 //! of the file name, ignoring case unless the [`Filter`] asks. With neither
 //! installed a search finds nothing.
 //!
+//! The database is as old as the last `updatedb`, so a plocate hit counts
+//! only while its path still exists, and when plocate answers, `fd` adds the
+//! entries modified since the database was built. A file moved in with an
+//! older modification time stays unfound until the next `updatedb`.
+//!
 //! A [`Filter`] narrows hits by a date range, size, a phrase in the file,
 //! hidden entries and the system's trees. Dates and sizes cost one `stat` per
 //! hit, only when named. A phrase ([`holds`]) reads only regular files, only
@@ -22,10 +27,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const PLOCATE_DB: &str = "/var/lib/plocate/plocate.db";
 const UPDATEDB_CONF: &str = "/etc/updatedb.conf";
+/// How long before its database's mtime `updatedb` may have read a folder, so
+/// the fd pass after plocate reaches back this much further.
+const SCAN_SLACK: Duration = Duration::from_secs(600);
 /// Longest wait for output before the budget and cancel flag are rechecked.
 const SLICE_MS: i32 = 20;
 /// How much of a file a phrase search reads.
@@ -34,7 +42,8 @@ const BLOCK: usize = 64 << 10;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Engine {
-    Plocate(PathBuf),
+    /// `plocate`, and when its database was written.
+    Plocate(PathBuf, SystemTime),
     /// `fd`, or `fdfind` where the distribution renames it.
     Fd(PathBuf),
 }
@@ -180,11 +189,11 @@ fn covered(root: &Path, pruned: &[PathBuf]) -> bool {
 pub fn detect(root: &Path) -> Vec<Engine> {
     let mut engines = Vec::new();
     if let Some(p) = which("plocate")
-        && Path::new(PLOCATE_DB).exists()
+        && let Ok(built) = std::fs::metadata(PLOCATE_DB).and_then(|m| m.modified())
     {
         let conf = std::fs::read_to_string(UPDATEDB_CONF).unwrap_or_default();
         if covered(root, &prune_paths(&conf)) {
-            engines.push(Engine::Plocate(p));
+            engines.push(Engine::Plocate(p, built));
         }
     }
     engines.extend(which("fd").or_else(|| which("fdfind")).map(Engine::Fd));
@@ -196,50 +205,61 @@ pub fn detect(root: &Path) -> Vec<Engine> {
 /// empty); [`keep`] then holds the text to the name and the folder to the
 /// path's start. fd walks the folder itself.
 pub fn argv(engine: &Engine, q: &Query) -> Vec<OsString> {
+    match engine {
+        Engine::Plocate(bin, _) => plocate_argv(bin, q),
+        Engine::Fd(bin) => fd_argv(bin, q, None),
+    }
+}
+
+fn plocate_argv(bin: &Path, q: &Query) -> Vec<OsString> {
+    let mut folder = q.root.as_os_str().to_owned();
+    if !folder.as_encoded_bytes().ends_with(b"/") {
+        folder.push("/");
+    }
+    let mut v: Vec<OsString> = vec![bin.into()];
+    if !q.filter.case_sensitive {
+        v.push("--ignore-case".into());
+    }
+    v.push("--".into());
+    v.push(folder);
+    if !q.text.is_empty() {
+        v.push(q.text.as_str().into());
+    }
+    v
+}
+
+/// fd's arguments; `within` keeps entries modified in the last that many seconds. Ignore files
+/// are not read, so a search inside a git checkout still finds its ignored files.
+fn fd_argv(bin: &Path, q: &Query, within: Option<u64>) -> Vec<OsString> {
     let case = if q.filter.case_sensitive {
         "--case-sensitive"
     } else {
         "--ignore-case"
     };
-    match engine {
-        Engine::Plocate(bin) => {
-            let mut folder = q.root.as_os_str().to_owned();
-            if !folder.as_encoded_bytes().ends_with(b"/") {
-                folder.push("/");
-            }
-            let mut v: Vec<OsString> = vec![bin.into()];
-            if !q.filter.case_sensitive {
-                v.push(case.into());
-            }
-            v.push("--".into());
-            v.push(folder);
-            if !q.text.is_empty() {
-                v.push(q.text.as_str().into());
-            }
-            v
-        }
-        Engine::Fd(bin) => {
-            let mut v: Vec<OsString> = vec![
-                bin.into(),
-                "--fixed-strings".into(),
-                case.into(),
-                "--color".into(),
-                "never".into(),
-                "--absolute-path".into(),
-            ];
-            if q.filter.hidden {
-                v.push("--hidden".into());
-            }
-            if let Some(d) = q.depth {
-                v.push("--max-depth".into());
-                v.push(d.to_string().into());
-            }
-            v.push("--".into());
-            v.push(q.text.as_str().into());
-            v.push(q.root.as_os_str().to_owned());
-            v
-        }
+    let mut v: Vec<OsString> = vec![
+        bin.into(),
+        "--fixed-strings".into(),
+        case.into(),
+        "--color".into(),
+        "never".into(),
+        "--absolute-path".into(),
+        "--no-ignore".into(),
+    ];
+    if q.filter.hidden {
+        v.push("--hidden".into());
     }
+    if let Some(d) = q.depth {
+        v.push("--max-depth".into());
+        v.push(d.to_string().into());
+    }
+    if let Some(secs) = within {
+        v.push("--changed-within".into());
+        v.push(format!("{secs}s").into());
+    }
+    v.push("--".into());
+    v.push(q.text.as_str().into());
+    v.push(q.root.as_os_str().to_owned());
+    v
 }
 
 /// Whether an output line belongs in the answer: the name holds the text, the
@@ -404,7 +424,8 @@ pub fn holds(
 /// in the tool's order, less those a `.hidden` lists unless the filter wants
 /// hidden entries. Stops at `q.limit`, `q.budget` or `cancel`, killing the
 /// tool. A tool that finds nothing hands the remaining budget to the next
-/// [`detect`] lists. Empty text with nothing to narrow it finds nothing.
+/// [`detect`] lists; after plocate's hits, fd adds what changed since its
+/// database. Empty text with nothing to narrow it finds nothing.
 pub fn run(q: &Query, cancel: &AtomicBool) -> Vec<PathBuf> {
     run_where(q, cancel, |_| true)
 }
@@ -415,47 +436,72 @@ pub fn run_where(
     cancel: &AtomicBool,
     admit: impl Fn(&Path) -> bool + Send + Sync + 'static,
 ) -> Vec<PathBuf> {
-    let admit: Admit = Arc::new(admit);
     if q.text.is_empty() && !q.filter.narrows() {
         return Vec::new();
     }
+    run_engines(&detect(&q.root), q, cancel, Arc::new(admit))
+}
+
+/// [`run_where`] over `engines` in order. Each runs on what is left of the budget and the limit;
+/// once one finds something the search ends, except that plocate's hits send fd only after
+/// entries modified since plocate's database was written.
+fn run_engines(engines: &[Engine], q: &Query, cancel: &AtomicBool, admit: Admit) -> Vec<PathBuf> {
     let started = Instant::now();
-    for engine in detect(&q.root) {
+    let mut found = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut within = None;
+    for engine in engines {
         let budget = q.budget.saturating_sub(started.elapsed());
-        if budget.is_zero() || cancel.load(Ordering::Relaxed) {
+        if budget.is_zero() || cancel.load(Ordering::Relaxed) || found.len() >= q.limit {
             break;
         }
-        let argv = argv(&engine, q);
+        let (argv, stale) = match engine {
+            Engine::Plocate(..) => (argv(engine, q), true),
+            Engine::Fd(bin) => (fd_argv(bin, q, within), false),
+        };
         let mut cmd = Command::new(&argv[0]);
         cmd.args(&argv[1..]);
-        let found = collect_where(
-            cmd,
-            &Query {
-                budget,
-                ..q.clone()
-            },
-            cancel,
-            admit.clone(),
-        );
-        if !found.is_empty() {
-            return found;
+        let part = Query {
+            budget,
+            limit: q.limit - found.len(),
+            ..q.clone()
+        };
+        let hits = collect_where(cmd, &part, cancel, admit.clone(), stale);
+        found.extend(hits.into_iter().filter(|p| seen.insert(p.clone())));
+        if found.is_empty() {
+            continue;
+        }
+        match engine {
+            Engine::Plocate(_, built) => {
+                let age = built.elapsed().unwrap_or_default() + SCAN_SLACK;
+                within = Some(age.as_secs() + 1);
+            }
+            _ => break,
         }
     }
-    Vec::new()
+    found
 }
 
 /// [`run`]'s reading half, for any command printing one path per line.
 pub fn collect(cmd: Command, q: &Query, cancel: &AtomicBool) -> Vec<PathBuf> {
-    collect_where(cmd, q, cancel, Arc::new(|_| true))
+    collect_where(cmd, q, cancel, Arc::new(|_| true), false)
 }
 
 type Admit = Arc<dyn Fn(&Path) -> bool + Send + Sync>;
 
-fn collect_where(cmd: Command, q: &Query, cancel: &AtomicBool, admit: Admit) -> Vec<PathBuf> {
+/// `stale` drops paths that no longer exist, for a tool answering from a database.
+fn collect_where(
+    cmd: Command,
+    q: &Query,
+    cancel: &AtomicBool,
+    admit: Admit,
+    stale: bool,
+) -> Vec<PathBuf> {
     let (filter, root) = (q.filter.clone(), q.root.clone());
     let mut lists = std::collections::HashMap::new();
     collect_with(cmd, q, cancel, move |path, stop| {
-        (filter.hidden || !listed_below(&root, path, &mut lists))
+        (!stale || std::fs::symlink_metadata(path).is_ok())
+            && (filter.hidden || !listed_below(&root, path, &mut lists))
             && keep_meta(&filter, path)
             && admit(path)
             && keep_content(&filter, path, stop)
@@ -646,6 +692,7 @@ mod tests {
                 "--color",
                 "never",
                 "--absolute-path",
+                "--no-ignore",
                 "--max-depth",
                 "6",
                 "--",
@@ -658,10 +705,88 @@ mod tests {
         assert!(!v.iter().any(|a| a == "--max-depth"), "no depth, no cap");
     }
 
+    /// An executable `dir/name` running `body`. A child shell writes it: a write handle opened
+    /// here would leak into a child a parallel test forks, failing the exec with ETXTBSY.
+    fn tool(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        let ok = Command::new("sh")
+            .arg("-c")
+            .arg(r#"printf '#!/bin/sh\n%s\n' "$1" > "$2" && chmod 755 "$2""#)
+            .args([OsStr::new("sh"), OsStr::new(body), path.as_os_str()])
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok, "the tool is written");
+        path
+    }
+
+    #[test]
+    fn fd_after_plocate_keeps_entries_changed_since_the_database() {
+        let v = fd_argv(Path::new("fd"), &q("/home/u", None), Some(4201));
+        let at = v
+            .iter()
+            .position(|a| a == "--changed-within")
+            .expect("a time filter");
+        assert_eq!(v[at + 1], "4201s");
+        assert!(
+            at < v.iter().position(|a| a == "--").unwrap(),
+            "before the pattern"
+        );
+    }
+
+    #[test]
+    fn a_plocate_hit_whose_file_is_gone_is_dropped() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        std::fs::write(root.join("note-kept"), "x").unwrap();
+        let body = format!(
+            "printf '%s\\n%s\\n' {} {}",
+            root.join("note-gone").display(),
+            root.join("note-kept").display()
+        );
+        let plocate = Engine::Plocate(tool(root, "plocate", &body), SystemTime::now());
+        let query = q(&root.to_string_lossy(), None);
+        let found = run_engines(
+            &[plocate],
+            &query,
+            &AtomicBool::new(false),
+            Arc::new(|_| true),
+        );
+        assert_eq!(found, [root.join("note-kept")]);
+    }
+
+    #[test]
+    fn a_file_newer_than_the_database_joins_plocate_hits() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        let (old, new) = (root.join("note-old"), root.join("note-new"));
+        std::fs::write(&old, "x").unwrap();
+        std::fs::write(&new, "x").unwrap();
+        let plocate = tool(root, "plocate", &format!("echo {}", old.display()));
+        let fd = format!(
+            r#"case " $* " in *" --changed-within "*) printf '%s\n%s\n' {} {};; *) echo {};; esac"#,
+            new.display(),
+            old.display(),
+            root.join("note-unfiltered").display()
+        );
+        let built = SystemTime::now() - Duration::from_secs(3600);
+        let engines = [
+            Engine::Plocate(plocate, built),
+            Engine::Fd(tool(root, "fd", &fd)),
+        ];
+        let query = q(&root.to_string_lossy(), None);
+        let found = run_engines(
+            &engines,
+            &query,
+            &AtomicBool::new(false),
+            Arc::new(|_| true),
+        );
+        assert_eq!(found, [old, new], "fd adds only the new file, once");
+    }
+
     #[test]
     fn plocate_asks_for_the_folder_and_the_text_in_one_path() {
         let v = argv(
-            &Engine::Plocate("/usr/bin/plocate".into()),
+            &Engine::Plocate("/usr/bin/plocate".into(), SystemTime::now()),
             &q("/home/u", None),
         );
         assert_eq!(
@@ -675,7 +800,10 @@ mod tests {
             ]
             .map(OsString::from)
         );
-        let v = argv(&Engine::Plocate("plocate".into()), &q("/", None));
+        let v = argv(
+            &Engine::Plocate("plocate".into(), SystemTime::now()),
+            &q("/", None),
+        );
         assert_eq!(v[3], "/", "the root keeps its one slash");
     }
 
@@ -838,7 +966,10 @@ mod tests {
         assert!(v.iter().any(|a| a == "--hidden"));
         // Empty text drops the pattern, so the folder alone lists everything.
         query.text.clear();
-        let v = argv(&Engine::Plocate("plocate".into()), &query);
+        let v = argv(
+            &Engine::Plocate("plocate".into(), SystemTime::now()),
+            &query,
+        );
         assert_eq!(v, ["plocate", "--", "/home/u/"].map(OsString::from));
     }
 

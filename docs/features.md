@@ -103,7 +103,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   `mbit` or `mbps` a megabit), pressure, energy and power; the amount can be
   a sum (`2*3 km in m`). File search
   uses plocate's database when it has one and `fd` when it doesn't, so
-  nothing crawls your disk in the background. Turn on "Find files by their
+  nothing crawls your disk in the background. Files deleted since the last
+  `updatedb` are left out, and `fd` adds the ones modified since; a file
+  moved in with an older modification time shows up after the next
+  `updatedb`. Turn on "Find files by their
   contents" in Settings > Search (`[launcher] contents`, off by default) and,
   with localsearch installed, a Contents section under the names lists files
   whose text or metadata holds the words typed ("quarterly tax" finds the PDF
