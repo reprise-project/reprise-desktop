@@ -857,6 +857,44 @@ pub fn write_item(
     first.map_or(Ok(()), Err)
 }
 
+/// The name a Properties sheet's OK gives `path`, its Name field at `typed` (the name shown, `ext`
+/// left off) and Hidden at `hidden`; `listed` when the folder's `.hidden` lists it. Left as shown,
+/// the name keeps every byte and only gains or loses its leading dot; a retyped one goes through
+/// [`crate::names::verdict`], whose refusal text is the error. `None` renames nothing.
+pub fn rename_for(
+    path: &Path,
+    typed: &str,
+    hidden: bool,
+    listed: bool,
+    ext: &str,
+) -> Result<Option<std::ffi::OsString>, String> {
+    let Some(name) = path.file_name() else {
+        return Ok(None);
+    };
+    let dotted = name.as_encoded_bytes().starts_with(b".");
+    let dot = crate::hidden::wants_dot(hidden, dotted, listed);
+    let old = name.to_string_lossy();
+    let stem = old.strip_suffix(ext).unwrap_or(&old);
+    let shown = if dotted {
+        stem.strip_prefix('.').unwrap_or(stem)
+    } else {
+        stem
+    };
+    if typed == shown {
+        let new = hidden_name(name, dot);
+        return Ok((new != name).then_some(new));
+    }
+    if typed.trim().is_empty() {
+        return Ok(None);
+    }
+    let wanted = format!("{}{typed}{ext}", if dot { "." } else { "" });
+    match crate::names::verdict(&old, &wanted, &[]) {
+        crate::names::Verdict::Cancel => Ok(None),
+        crate::names::Verdict::Refuse(text) => Err(text),
+        crate::names::Verdict::Rename(n) => Ok(Some(n.into())),
+    }
+}
+
 pub fn hidden_name(name: &std::ffi::OsStr, dot: bool) -> std::ffi::OsString {
     use std::os::unix::ffi::OsStrExt;
     let bytes = name.as_bytes();

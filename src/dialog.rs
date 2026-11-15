@@ -565,7 +565,7 @@ pub enum Outcome {
     /// whether the attributes and Hidden reach the subfolders and files.
     Properties {
         path: std::path::PathBuf,
-        name: Option<String>,
+        name: Option<std::ffi::OsString>,
         attrs: reprisefs::props::AttrMoves,
         hidden: Option<bool>,
         /// The Summary fields that moved, by index into

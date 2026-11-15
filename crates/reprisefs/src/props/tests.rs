@@ -67,6 +67,57 @@ fn hiding_adds_one_dot_and_showing_takes_it() {
 }
 
 #[test]
+fn a_properties_rename_keeps_a_name_that_is_not_utf8_by_its_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+    let raw = |b: &[u8]| std::ffi::OsStr::from_bytes(b).to_os_string();
+    let plain = Path::new("/d").join(raw(b"caf\xe9.txt"));
+    let dotted = Path::new("/d").join(raw(b".caf\xe9.txt"));
+    assert_eq!(
+        rename_for(&plain, "caf\u{FFFD}", true, false, ".txt"),
+        Ok(Some(raw(b".caf\xe9.txt")))
+    );
+    assert_eq!(
+        rename_for(&dotted, "caf\u{FFFD}", false, false, ".txt"),
+        Ok(Some(raw(b"caf\xe9.txt")))
+    );
+    assert_eq!(
+        rename_for(&dotted, "caf\u{FFFD}", true, false, ".txt"),
+        Ok(None)
+    );
+    assert_eq!(
+        rename_for(&plain, "caf\u{FFFD}.txt", false, false, ""),
+        Ok(None),
+        "an extension shown is part of the name left as shown"
+    );
+}
+
+#[test]
+fn a_properties_rename_runs_the_rename_rules_on_a_retyped_name() {
+    let p = Path::new("/d/notes.txt");
+    assert_eq!(
+        rename_for(p, "plans", false, false, ".txt"),
+        Ok(Some("plans.txt".into()))
+    );
+    assert_eq!(
+        rename_for(p, "plans", true, false, ".txt"),
+        Ok(Some(".plans.txt".into()))
+    );
+    assert_eq!(rename_for(p, "  ", true, false, ".txt"), Ok(None));
+    assert_eq!(
+        rename_for(p, "notes", true, true, ".txt"),
+        Ok(None),
+        "a name the folder's list hides keeps its name"
+    );
+    let refused = rename_for(p, "a/b", false, false, ".txt");
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|t| t.contains("cannot contain")),
+        "a slash is refused with the rename text: {refused:?}"
+    );
+}
+
+#[test]
 fn thousands_groups_by_threes_from_the_right() {
     assert_eq!(thousands(0), "0");
     assert_eq!(thousands(999), "999");

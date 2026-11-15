@@ -399,7 +399,7 @@ struct SetWrite {
 /// What one item's Properties OK or Apply writes: the rename to `name`, and Read-only and Hidden when moved.
 struct Props {
     path: std::path::PathBuf,
-    name: Option<String>,
+    name: Option<std::ffi::OsString>,
     attrs: reprisefs::props::AttrMoves,
     hidden: Option<bool>,
     summary: Vec<(usize, String)>,

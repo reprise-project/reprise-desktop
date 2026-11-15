@@ -157,14 +157,19 @@ impl Props {
         filesheet::typed_name(self.general()).trim().to_string()
     }
 
-    pub fn new_name(&self) -> Option<String> {
+    /// The name OK gives the item ([`reprisefs::props::rename_for`]); the refusal text when the
+    /// rename rules refuse the typed one.
+    pub fn new_name(&self) -> Result<Option<std::ffi::OsString>, String> {
         if self.set.is_some() {
-            return None;
+            return Ok(None);
         }
-        let name = self.name();
-        let wanted = self.wanted_name(&name);
-        let old = self.info.file_name();
-        (!name.is_empty() && wanted != old).then_some(wanted)
+        reprisefs::props::rename_for(
+            &self.info.path,
+            filesheet::typed_name(self.general()),
+            filesheet::hidden(self.general()),
+            self.info.listed,
+            &self.info.hidden_ext,
+        )
     }
 
     pub fn wanted_name(&self, typed: &str) -> String {
@@ -219,7 +224,7 @@ impl Props {
     }
 
     pub fn dirty(&self) -> bool {
-        self.new_name().is_some()
+        self.new_name() != Ok(None)
             || !self.attrs().is_empty()
             || self.hidden().is_some()
             || !self.summary_moves().is_empty()
@@ -328,7 +333,7 @@ impl Props {
 
 pub struct AttrConfirm {
     pub set: Option<Vec<PathBuf>>,
-    pub new_name: Option<String>,
+    pub new_name: Option<std::ffi::OsString>,
     pub attrs: AttrMoves,
     pub hidden: Option<bool>,
     pub close: bool,

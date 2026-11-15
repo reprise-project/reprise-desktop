@@ -406,7 +406,7 @@ fn attribute_boxes_toggle_and_light_apply() {
         FormKind::Properties(b) => props_changes(sheet_form(d), b),
         _ => unreachable!(),
     };
-    assert_eq!(changes(&fd), (None, Default::default(), None));
+    assert_eq!(changes(&fd), (Ok(None), Default::default(), None));
     press_control(&mut fd, READ_ONLY);
     assert_eq!(changes(&fd).1.read_only, Some(false));
     assert!(apply_on(&fd));
@@ -428,6 +428,33 @@ fn sheet_keeps_spaces_around_an_unedited_name() {
     let mut d = Dialog::properties(&file_info(), "text-x-generic", (0, 0));
     set_name(&mut d, "   ");
     assert_eq!(d.key(Key::Enter), Outcome::Close, "a blank name is ignored");
+}
+
+#[test]
+fn sheet_hides_a_name_that_is_not_utf8_by_its_bytes_and_refuses_a_slash() {
+    use reprisekit::controls::{filesheet::HIDDEN, propsheet::OK};
+    use std::os::unix::ffi::OsStrExt;
+    let mut info = file_info();
+    info.path =
+        std::path::Path::new("/home/u/Desktop").join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt"));
+    info.name = "caf\u{FFFD}".into();
+    let mut d = Dialog::properties(&info, "text-x-generic", (0, 0));
+    press_control(&mut d, HIDDEN);
+    match press_control(&mut d, OK) {
+        Outcome::Properties { name, .. } => assert_eq!(
+            name.as_deref(),
+            Some(std::ffi::OsStr::from_bytes(b".caf\xe9.txt")),
+            "only the dot is new"
+        ),
+        other => panic!("OK writes the rename, got {other:?}"),
+    }
+
+    let mut d = Dialog::properties(&file_info(), "text-x-generic", (0, 0));
+    set_name(&mut d, "a/b");
+    assert!(
+        matches!(d.key(Key::Enter), Outcome::Notice(n) if n.title == "Rename"),
+        "a slash is refused in a box"
+    );
 }
 
 #[test]
