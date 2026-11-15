@@ -28,8 +28,9 @@ fn every_default_the_sheet_shows_reads_back_as_the_compositors() {
 fn the_layout_list_adds_moves_and_removes_through_layout_and_variant() {
     let mut s = Settings::default();
     assert!(s.layouts().is_empty(), "the system default");
-    assert!(s.add_layout("us", ""));
-    assert!(s.add_layout("hu", "qwerty"));
+    assert!(s.add_layout("us", "", "us"));
+    assert_eq!(s.kb_layout, "us", "the system default is not added twice");
+    assert!(s.add_layout("hu", "qwerty", "us"));
     assert_eq!(
         (s.kb_layout.as_str(), s.kb_variant.as_str()),
         ("us,hu", ",qwerty")
@@ -42,15 +43,32 @@ fn the_layout_list_adds_moves_and_removes_through_layout_and_variant() {
     );
     s.remove_layout(0);
     assert_eq!((s.kb_layout.as_str(), s.kb_variant.as_str()), ("us", ""));
-    assert!(s.add_layout("de", ""));
-    assert!(s.add_layout("fr", ""));
-    assert!(s.add_layout("it", ""));
-    assert!(!s.add_layout("es", ""), "four at most");
+    assert!(s.add_layout("de", "", "us"));
+    assert!(s.add_layout("fr", "", "us"));
+    assert!(s.add_layout("it", "", "us"));
+    assert!(!s.add_layout("es", "", "us"), "four at most");
     assert_eq!(s.kb_layout, "us,de,fr,it");
     for _ in 0..4 {
         s.remove_layout(0);
     }
     assert_eq!((s.kb_layout.as_str(), s.kb_variant.as_str()), ("", ""));
+}
+
+#[test]
+fn the_first_layout_added_keeps_the_system_default_before_it() {
+    let mut s = Settings::default();
+    assert!(s.add_layout("hu", "", "us"));
+    assert_eq!(
+        s.layouts(),
+        [("us".into(), String::new()), ("hu".into(), String::new())]
+    );
+    let mut s = Settings::default();
+    assert!(s.add_layout("us", "intl", "us"));
+    assert_eq!(
+        (s.kb_layout.as_str(), s.kb_variant.as_str()),
+        ("us,us", ",intl"),
+        "another variant of the system layout is a second layout"
+    );
 }
 
 #[test]

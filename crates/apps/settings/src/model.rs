@@ -773,10 +773,15 @@ impl Settings {
         (self.kb_layout, self.kb_variant) = reprisefs::xkb::join(pairs);
     }
 
-    pub fn add_layout(&mut self, layout: &str, variant: &str) -> bool {
+    /// Add a layout after the others. The first one added to an empty list, which types with
+    /// `system`, keeps `system` in front of it.
+    pub fn add_layout(&mut self, layout: &str, variant: &str, system: &str) -> bool {
         let mut pairs = self.layouts();
         if pairs.len() >= reprisefs::xkb::MAX_LAYOUTS {
             return false;
+        }
+        if pairs.is_empty() && (layout, variant) != (system, "") {
+            pairs.push((system.to_string(), String::new()));
         }
         pairs.push((layout.to_string(), variant.to_string()));
         self.set_layouts(&pairs);
