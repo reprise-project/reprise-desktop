@@ -324,10 +324,13 @@ impl BtApp {
         ));
     }
 
-    /// Drains the bus thread's and tray's channels. Quits only on the tray's Exit.
+    /// Drains the bus thread's and tray's channels, and redraws when either had something. Quits
+    /// only on the tray's Exit.
     fn wake(&mut self, ctx: &mut Ctx) -> Reply {
         let mut latest = None;
+        let mut any = false;
         while let Some(msg) = self.bz_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            any = true;
             match msg {
                 bz::BzMsg::Snapshot(s) => latest = Some(s),
                 bz::BzMsg::Failed { title, body } => self.failed(title, body),
@@ -381,6 +384,7 @@ impl BtApp {
             let Some(msg) = tray::translate(raw, &self.snapshot) else {
                 continue;
             };
+            any = true;
             raised = true;
             match msg {
                 tray::TrayMsg::Exit => return self.quit(),
@@ -426,6 +430,9 @@ impl BtApp {
                     }
                 }
             }
+        }
+        if !any {
+            return Reply::none();
         }
         Reply {
             activate: reprisetray::handoff_for(self.tray.as_ref(), raised, shown),
