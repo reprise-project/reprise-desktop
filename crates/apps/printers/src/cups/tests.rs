@@ -560,6 +560,27 @@ fn a_helper_rename_is_refused_while_jobs_wait_or_print() {
 }
 
 #[test]
+fn a_rename_to_another_case_of_a_printer_name_is_refused() {
+    let named = |name: &str| Printer {
+        name: name.into(),
+        ..Printer::default()
+    };
+    let s = Snapshot {
+        printers: vec![named("laser"), named("Inkjet")],
+        ..Snapshot::default()
+    };
+    assert_eq!(
+        name_clash("laser", "Laser", &s).as_deref(),
+        Some("Laser differs from laser only in case, which printer names ignore.")
+    );
+    assert_eq!(
+        name_clash("Inkjet", "LASER", &s).as_deref(),
+        Some("There is already a printer called laser.")
+    );
+    assert_eq!(name_clash("Inkjet", "Office", &s), None);
+}
+
+#[test]
 fn a_rename_keeps_the_defaults_the_ppd_does_not_hold() {
     let o = Options {
         media: Setting {

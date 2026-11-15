@@ -8,7 +8,8 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::escape_mnemonic;
 use reprisekit::textedit::TextEdit;
 
-use crate::cups::{self, Change, Options, Printer, Setting};
+use crate::cups::{self, Change, Options, Printer, Setting, Snapshot};
+use crate::folder::check_name;
 use crate::ipp::Value;
 
 pub const CLIENT: (i32, i32) = (380, 440);
@@ -65,6 +66,8 @@ pub enum Outcome {
         rename: Option<String>,
         close: bool,
     },
+    /// The typed name is refused, so nothing was applied.
+    BadName(String),
 }
 
 pub struct PropsSheet {
@@ -428,7 +431,7 @@ impl PropsSheet {
         a != b
     }
 
-    fn change(&self) -> (Change, Option<String>) {
+    fn change(&self, s: &Snapshot) -> Result<(Change, Option<String>), String> {
         let (a, p) = (&self.applied, &self.pending);
         let differs = |x: &String, y: &String| (x != y).then(|| y.clone());
         let mut defaults = Vec::new();
@@ -460,18 +463,17 @@ impl PropsSheet {
             shared: (a.shared != p.shared).then_some(p.shared),
             defaults,
         };
-        let rename =
-            Some(p.name.trim().replace(' ', "_")).filter(|n| !n.is_empty() && *n != a.name);
-        (change, rename)
+        let rename = check_name(&a.name, &p.name, s)?;
+        Ok((change, rename))
     }
 
-    fn commit(&mut self) -> (Change, Option<String>) {
-        let c = self.change();
+    fn commit(&mut self, s: &Snapshot) -> Result<(Change, Option<String>), String> {
+        let c = self.change(s)?;
         let name = self.applied.name.clone();
         self.applied = self.pending.clone();
         // A rename shows once cupsd has the new queue.
         self.applied.name = name;
-        c
+        Ok(c)
     }
 
     fn read(&mut self, id: &str) {
@@ -493,7 +495,8 @@ impl PropsSheet {
         self.sheet.set_apply_enabled(dirty);
     }
 
-    pub fn event(&mut self, ev: propsheet::Event) -> Outcome {
+    /// `s` is the latest snapshot, which a new name is checked against.
+    pub fn event(&mut self, ev: propsheet::Event, s: &Snapshot) -> Outcome {
         match ev {
             propsheet::Event::None | propsheet::Event::Link(_) | propsheet::Event::Search => {
                 Outcome::None
@@ -505,31 +508,33 @@ impl PropsSheet {
             }
             propsheet::Event::Page(_, form::Event::Pressed(TEST)) => Outcome::TestPage,
             propsheet::Event::Page(..) => Outcome::Redraw,
-            propsheet::Event::Apply if self.dirty() => {
-                let (change, rename) = self.commit();
-                self.sheet.set_apply_enabled(false);
-                Outcome::Apply {
-                    change,
-                    rename,
-                    close: false,
+            propsheet::Event::Apply if self.dirty() => match self.commit(s) {
+                Ok((change, rename)) => {
+                    self.sheet.set_apply_enabled(false);
+                    Outcome::Apply {
+                        change,
+                        rename,
+                        close: false,
+                    }
                 }
-            }
+                Err(why) => Outcome::BadName(why),
+            },
             propsheet::Event::Apply => Outcome::Redraw,
-            propsheet::Event::Ok if self.dirty() => {
-                let (change, rename) = self.commit();
-                Outcome::Apply {
+            propsheet::Event::Ok if self.dirty() => match self.commit(s) {
+                Ok((change, rename)) => Outcome::Apply {
                     change,
                     rename,
                     close: true,
-                }
-            }
+                },
+                Err(why) => Outcome::BadName(why),
+            },
             propsheet::Event::Ok | propsheet::Event::Cancel => Outcome::Close,
         }
     }
 
-    pub fn paste(&mut self, text: String) -> Outcome {
+    pub fn paste(&mut self, text: String, s: &Snapshot) -> Outcome {
         let ev = self.sheet.paste(text);
-        self.event(ev)
+        self.event(ev, s)
     }
 }
 
@@ -545,6 +550,18 @@ mod tests {
             make_model: "Generic PCL Laser".into(),
             device_uri: "socket://10.0.0.9:9100".into(),
             accepting: true,
+            ..Default::default()
+        }
+    }
+
+    fn snap() -> Snapshot {
+        let inkjet = Printer {
+            name: "Inkjet".into(),
+            ..Default::default()
+        };
+        Snapshot {
+            running: true,
+            printers: vec![laser(), inkjet],
             ..Default::default()
         }
     }
@@ -622,7 +639,7 @@ mod tests {
         p.read(SHARE);
         type_into(&mut p, GENERAL, NAME, "Hall Laser");
         assert!(p.dirty());
-        match p.event(propsheet::Event::Apply) {
+        match p.event(propsheet::Event::Apply, &snap()) {
             Outcome::Apply {
                 change,
                 rename,
@@ -637,6 +654,20 @@ mod tests {
                 assert!(!close);
             }
             other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_name_another_printer_has_in_any_case_applies_nothing() {
+        for typed in ["INKJET", "LASER"] {
+            let mut p = PropsSheet::new(&laser(), None);
+            type_into(&mut p, GENERAL, COMMENT, "Front hall");
+            type_into(&mut p, GENERAL, NAME, typed);
+            assert!(
+                matches!(p.event(propsheet::Event::Ok, &snap()), Outcome::BadName(_)),
+                "{typed} is refused"
+            );
+            assert_eq!(p.applied.comment, "Hall", "{typed}: nothing applied");
         }
     }
 
@@ -659,7 +690,7 @@ mod tests {
         p.read(SIDES);
         p.sheet.pages[DEVICE].set_combo(QUALITY, 2);
         p.read(QUALITY);
-        match p.event(propsheet::Event::Ok) {
+        match p.event(propsheet::Event::Ok, &snap()) {
             Outcome::Apply { change, close, .. } => {
                 assert!(close);
                 assert_eq!(
@@ -692,7 +723,7 @@ mod tests {
         p.set_options(o, &laser());
         p.sheet.pages[DEVICE].set_combo(COLOR, 0);
         p.read(COLOR);
-        match p.event(propsheet::Event::Ok) {
+        match p.event(propsheet::Event::Ok, &snap()) {
             Outcome::Apply { change, .. } => assert_eq!(
                 change.defaults,
                 [
@@ -723,10 +754,13 @@ mod tests {
     fn the_test_page_button_says_so() {
         let mut p = PropsSheet::new(&laser(), None);
         assert_eq!(
-            p.event(propsheet::Event::Page(GENERAL, form::Event::Pressed(TEST))),
+            p.event(
+                propsheet::Event::Page(GENERAL, form::Event::Pressed(TEST)),
+                &snap()
+            ),
             Outcome::TestPage
         );
-        assert_eq!(p.event(propsheet::Event::Cancel), Outcome::Close);
+        assert_eq!(p.event(propsheet::Event::Cancel, &snap()), Outcome::Close);
     }
 
     #[test]

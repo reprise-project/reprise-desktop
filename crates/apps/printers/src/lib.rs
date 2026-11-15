@@ -600,9 +600,9 @@ impl PrintersApp {
                 p.sheet.open_mut().blink(ctx.caret_on);
                 return Reply::redraw();
             }
-            Event::Pasted(t) => p.paste(t),
+            Event::Pasted(t) => p.paste(t, &self.snapshot),
             ev => match sheet_input(&mut p.sheet, &ev, ctx) {
-                Some(e) => p.event(e),
+                Some(e) => p.event(e, &self.snapshot),
                 None => return Reply::none(),
             },
         };
@@ -632,6 +632,10 @@ impl PrintersApp {
                     self.props.close(win);
                     self.sync_watching();
                 }
+                Reply::redraw_all()
+            }
+            props::Outcome::BadName(why) => {
+                self.fail("Rename", why);
                 Reply::redraw_all()
             }
             props::Outcome::Close => {

@@ -12,7 +12,7 @@ use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::{TextEdit, keysym};
 
-use crate::cups::{Printer, PrinterState, Snapshot};
+use crate::cups::{self, Printer, PrinterState, Snapshot};
 use repriseapp::ctxmenu::{Popup, Step, item};
 use repriseapp::detailslist::{List, Press};
 
@@ -235,13 +235,10 @@ pub fn check_name(old: &str, typed: &str, s: &Snapshot) -> Result<Option<String>
     {
         return Err("A printer name cannot contain any of these characters: / \\ # ? ' \"".into());
     }
-    if s.printers
-        .iter()
-        .any(|p| p.name.eq_ignore_ascii_case(&name) && p.name != old)
-    {
-        return Err(format!("There is already a printer called {name}."));
+    match cups::name_clash(old, &name, s) {
+        Some(why) => Err(why),
+        None => Ok(Some(name)),
     }
-    Ok(Some(name))
 }
 
 pub struct Folder {
@@ -957,9 +954,13 @@ mod tests {
             Ok(Some("Big_Office".into()))
         );
         assert!(check_name("Inkjet", "a/b", &s).is_err());
-        assert!(
-            check_name("Inkjet", "laser", &s).is_err(),
-            "taken, in any case"
+        assert_eq!(
+            check_name("Inkjet", "laser", &s),
+            Err("There is already a printer called Laser.".into())
+        );
+        assert_eq!(
+            check_name("Laser", "LASER", &s),
+            Err("LASER differs from Laser only in case, which printer names ignore.".into())
         );
         assert!(check_name("Inkjet", &"x".repeat(128), &s).is_err());
     }
