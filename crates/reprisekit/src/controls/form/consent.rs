@@ -27,7 +27,8 @@ impl Gate {
 impl Form {
     /// Make this a consent form: an access key needs Alt (a bare letter presses nothing), Enter
     /// presses the default (refusing) button wherever the focus is, Space presses no other
-    /// button and arrows don't move between buttons, so only a click or an Alt access key grants.
+    /// button, arrows don't move between buttons, and neither changes a check box or radio, so
+    /// only a click or an Alt access key grants.
     /// Keys and presses count only [`ARM`] after the form gets the keyboard
     /// ([`Form::consent_focused`]). Hosts ask [`Form::consent_key`] and
     /// [`Form::consent_press`] before handing either on.

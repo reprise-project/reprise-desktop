@@ -1452,8 +1452,9 @@ you type must not be answered by your typing. Each of them:
   repeats included.
 - grants only through a click or an Alt access key. Enter presses the
   refusing button (Deny or Cancel) wherever the focus is, Space presses no
-  other button, and the arrow keys don't move between buttons. Tab still
-  moves the focus, to Remember or the list of sources.
+  other button, and the arrow keys don't move between buttons. Neither
+  ticks a check box or picks a radio. Tab still moves the focus, to
+  Remember or the list of sources.
 - stacks above every window kept on top (X11 menus included) and every mini
   view. A sandboxed program isn't offered `reprise_on_top_v1` at all. Only a
   Wayland window from the installed portal, outside any sandbox, counts as a
@@ -1857,9 +1858,13 @@ stop the share first.
   side, or a program calling `Device1.Pair`) opens a box whose Enter
   refuses, and accepting it pairs without trusting the device, so it can't
   connect a service (keyboard input included) until you connect it or tick
-  "Connect to this device automatically". A second request waits for the
-  open box to close, so a click meant for one device's box can't land on
-  another's.
+  "Connect to this device automatically". The box takes the keyboard when it
+  opens, so it takes keys as the [consent prompts](#consent-prompts) do:
+  only a click or Alt with an access key picks Allow or Yes or ticks that
+  box, and keys and clicks count only 500 ms after it gets the keyboard. A
+  PIN or passkey field still takes typed characters. A second request
+  waits for the open box to close, and its wait starts again when it
+  shows, so a click meant for one device's box can't land on another's.
 - **Thunderbolt devices.** A Thunderbolt or USB4 device can reach memory
   once authorized. `reprise-drives` reads devices only from the current
   owner of `org.freedesktop.bolt` and never starts boltd. A device that
@@ -1880,7 +1885,8 @@ stop the share first.
   file (BlueZ doesn't ask for Object Push), so Reprise's OBEX agent is the
   gate. It answers only the owner of `org.bluez.obex`, refuses a device BlueZ
   doesn't list as paired with the adapter it came in on, and asks before
-  every file. obexd writes only inside its own folder (`~/.cache/obexd`), so
+  every file. The Bluetooth File Transfer box is gated like the pairing
+  box: only a click or Alt+A accepts, and Enter declines. obexd writes only inside its own folder (`~/.cache/obexd`), so
   an accepted file goes there under a hidden name and moves into Downloads
   once obexd reports it complete. The offered name loses path separators,
   control characters and leading dots, and the move never replaces

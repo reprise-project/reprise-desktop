@@ -260,7 +260,8 @@ impl BtApp {
         self.pair = Some(pairdlg::PairDialog::new(req, &name, started, &text, &forms));
     }
 
-    /// The next queued request once the box has closed; one BlueZ gave up on is skipped.
+    /// The next queued request once the box has closed; one BlueZ gave up on is skipped. It
+    /// shows in the closed one's window, which gets no new focus, so its consent wait starts now.
     fn next_pair(&mut self) {
         while self.pair.is_none() {
             let Some(req) = self.pair_queue.pop_front() else {
@@ -270,6 +271,9 @@ impl BtApp {
                 continue;
             }
             self.open_pair(req);
+        }
+        if let Some(d) = &mut self.pair {
+            d.form.consent_focused(std::time::Instant::now());
         }
     }
 
@@ -940,7 +944,7 @@ impl BtApp {
         }
     }
 
-    /// The prompt starts on Decline, as a request the user did not start does.
+    /// The prompt starts on Decline and is a consent box, as a request the user did not start is.
     fn open_offer(&mut self, o: bz::Offer, ctx: &mut Ctx) {
         let b = MsgBox::new(
             receive::TITLE,
@@ -953,11 +957,13 @@ impl BtApp {
                 min_w: 0,
                 max_w: repriseapp::dialog_max_w(),
             },
-        );
+        )
+        .consent();
         self.offer = Some((o, b));
     }
 
-    /// The next queued offer once the prompt has closed; one obexd gave up on is skipped.
+    /// The next queued offer once the prompt has closed; one obexd gave up on is skipped. It
+    /// shows in the closed one's window, which gets no new focus, so its consent wait starts now.
     fn next_offer(&mut self, ctx: &mut Ctx) {
         while self.offer.is_none() {
             let Some(o) = self.offer_queue.pop_front() else {
@@ -967,6 +973,9 @@ impl BtApp {
                 continue;
             }
             self.open_offer(o, ctx);
+        }
+        if let Some((_, b)) = &mut self.offer {
+            b.consent_focused(std::time::Instant::now());
         }
     }
 
@@ -1394,6 +1403,10 @@ mod tests {
             Some(Ask::Confirm(1)),
             "the queued one opens next"
         );
+        let now = std::time::Instant::now();
+        let f = &a.pair.as_ref().unwrap().form;
+        assert!(!f.consent_press(now), "in the same window, it waits again");
+        assert!(f.consent_press(now + form::CONSENT_ARM));
     }
 
     #[test]
@@ -1930,13 +1943,70 @@ mod tests {
         let (o, wait) = offer("/t/0");
         a.offer_in(o, &mut ctx);
         assert!(a.children().iter().any(|c| c.id == OFFER));
+        armed_offer(&mut a);
         a.offer_event(key(keysym::RETURN, false), &mut ctx);
         assert_eq!(wait.try_recv(), Ok(false), "Enter declines");
         assert!(a.offer.is_none());
         let (o, wait) = offer("/t/1");
         a.offer_in(o, &mut ctx);
+        armed_offer(&mut a);
         a.offer_event(key(u32::from('a'), true), &mut ctx);
         assert_eq!(wait.try_recv(), Ok(true), "Alt+A accepts");
+    }
+
+    /// The offer box as its window had the keyboard for the consent wait.
+    fn armed_offer(a: &mut BtApp) {
+        let (_, b) = a.offer.as_mut().expect("an offer box");
+        b.consent_focused(std::time::Instant::now() - reprisekit::controls::form::CONSENT_ARM);
+    }
+
+    fn bare(ch: char) -> Event {
+        Event::Key(KeyInput {
+            sym: u32::from(ch),
+            utf8: None,
+            mods: Default::default(),
+            edit: Some(EditKey::Insert(ch.to_string())),
+        })
+    }
+
+    #[test]
+    fn a_bare_letter_or_an_early_key_leaves_the_offer_box_open() {
+        let mut ctx = test_ctx();
+        let mut a = app();
+        let (o, wait) = offer("/t/0");
+        a.offer_in(o, &mut ctx);
+        a.offer_event(Event::Focus(true), &mut ctx);
+        a.offer_event(key(u32::from('a'), true), &mut ctx);
+        assert!(
+            a.offer.is_some(),
+            "Alt+A right after the box took the keyboard"
+        );
+        armed_offer(&mut a);
+        a.offer_event(bare('a'), &mut ctx);
+        assert!(a.offer.is_some(), "a bare a");
+        assert!(wait.try_recv().is_err(), "unanswered");
+    }
+
+    #[test]
+    fn a_queued_offer_waits_again_in_the_same_window() {
+        let mut ctx = test_ctx();
+        let mut a = app();
+        let (first, w1) = offer("/t/0");
+        let (second, w2) = offer("/t/1");
+        a.offer_in(first, &mut ctx);
+        a.offer_in(second, &mut ctx);
+        armed_offer(&mut a);
+        a.offer_event(key(u32::from('d'), true), &mut ctx);
+        assert_eq!(w1.try_recv(), Ok(false), "Alt+D declines the first");
+        a.offer_event(key(u32::from('a'), true), &mut ctx);
+        assert!(w2.try_recv().is_err(), "the second ignores Alt+A at once");
+        let Event::Key(k) = key(u32::from('a'), true) else {
+            unreachable!()
+        };
+        a.offer_event(Event::KeyUp(k), &mut ctx);
+        armed_offer(&mut a);
+        a.offer_event(key(u32::from('a'), true), &mut ctx);
+        assert_eq!(w2.try_recv(), Ok(true), "and takes it after the wait");
     }
 
     #[test]
