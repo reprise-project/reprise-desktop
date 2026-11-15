@@ -477,7 +477,10 @@ pub(super) mod tests {
 
     #[test]
     fn a_file_of_many_full_canvas_layers_is_refused_at_its_deadline() {
-        let (px, alloc) = (1024 * 1024 * 4, crate::decode::JXL_ALLOC_LIMIT);
+        let (px, alloc) = (
+            1024 * 1024 * 4,
+            crate::decode::Budget::THUMBNAIL.jxl_alloc(),
+        );
         let few = layered(1024, 1024, 3);
         assert_eq!(
             first_frame(&few, px, alloc, NO_HURRY).unwrap().px[..4],

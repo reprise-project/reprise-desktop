@@ -179,6 +179,8 @@ WebP, TIFF, ICO, QOI, PNM, HDR, OpenEXR and JPEG XL) and is the default for
 pictures.
 It opens fitted to the window, never past 100%. The decode runs in the
 background, and a large picture is shown from a copy scaled to the window.
+A picture whose pixels or file pass an eighth of the machine's memory, or
+512 MiB (a 170-megapixel photo), says it is too large to show.
 
 - **Walk the folder:** Left and Right (or Page Up and Page Down, or the
   wheel) go to the previous and next picture in the folder, sorted by name

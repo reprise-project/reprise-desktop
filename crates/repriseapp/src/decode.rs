@@ -20,11 +20,20 @@ pub struct Decoded {
     pub height: u32,
 }
 
+/// Why a picture gave nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unread {
+    /// Its pixels, or the memory its decoder asked for, pass the [`Budget`].
+    TooLarge,
+    /// Not a picture any decoder reads, or cut short.
+    Unreadable,
+}
+
 pub trait ImageDecoder: Send + Sync {
     /// Cheap sniff of `bytes`, so [`Decoders::decode`] only spends real
     /// work on a decoder likely to succeed.
     fn probe(&self, bytes: &[u8]) -> bool;
-    fn decode(&self, bytes: &[u8], max: (u32, u32)) -> Option<Decoded>;
+    fn decode(&self, bytes: &[u8], max: (u32, u32), budget: Budget) -> Result<Decoded, Unread>;
 }
 
 pub struct Decoders {
@@ -43,22 +52,71 @@ impl Decoders {
         self.list.push(d);
     }
 
-    pub fn decode(&self, bytes: &[u8], max: (u32, u32)) -> Option<Decoded> {
-        self.list
-            .iter()
-            .filter(|d| d.probe(bytes))
-            .find_map(|d| d.decode(bytes, max))
+    /// The first decoder's picture; [`Unread::TooLarge`] when any decoder that read the header
+    /// found it past `budget`.
+    pub fn decode(&self, bytes: &[u8], max: (u32, u32), budget: Budget) -> Result<Decoded, Unread> {
+        let mut why = Unread::Unreadable;
+        for d in self.list.iter().filter(|d| d.probe(bytes)) {
+            match d.decode(bytes, max, budget) {
+                Ok(p) => return Ok(p),
+                Err(Unread::TooLarge) => why = Unread::TooLarge,
+                Err(Unread::Unreadable) => {}
+            }
+        }
+        Err(why)
     }
 
+    /// The picture in `path` under [`Budget::THUMBNAIL`].
     pub fn decode_file(&self, path: &Path, max: (u32, u32)) -> Option<Decoded> {
-        let bytes = match read_capped(path) {
+        let budget = Budget::THUMBNAIL;
+        let bytes = match read_capped(path, budget.file) {
             Ok(b) => b,
             Err(e) => {
                 log::debug!("decode_file {}: {e}", path.display());
                 return None;
             }
         };
-        self.decode(&bytes, max)
+        self.decode(&bytes, max, budget).ok()
+    }
+}
+
+/// What one decode may cost: the bytes of the file and of its decoded pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Budget {
+    pub file: u64,
+    pub pixels: u64,
+}
+
+impl Budget {
+    /// Pictures read unasked or for a preview: thumbnails, infotips, the portal's previews.
+    pub const THUMBNAIL: Budget = Budget {
+        file: MAX_FILE_BYTES,
+        pixels: MAX_DECODED_BYTES,
+    };
+
+    /// A picture opened to be looked at or edited: [`VIEWER_MAX_BYTES`], or an eighth of the
+    /// machine's memory when that is less, but never below [`Budget::THUMBNAIL`].
+    pub fn viewer() -> Budget {
+        let total = std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|m| reprisefs::sysinfo::mem_total_kb(&m));
+        Budget::viewer_for(total.map(|kb| kb * 1024))
+    }
+
+    /// The decoded picture and its full-size RGBA copy then take under a third of `mem_total`.
+    fn viewer_for(mem_total: Option<u64>) -> Budget {
+        let pixels = mem_total.map_or(VIEWER_MAX_BYTES, |m| {
+            (m / 8).clamp(MAX_DECODED_BYTES, VIEWER_MAX_BYTES)
+        });
+        Budget {
+            file: pixels.max(MAX_FILE_BYTES),
+            pixels,
+        }
+    }
+
+    /// What libjxl may hold at once while decoding one picture.
+    pub(crate) fn jxl_alloc(self) -> usize {
+        usize::try_from(4 * self.pixels).unwrap_or(usize::MAX)
     }
 }
 
@@ -72,19 +130,22 @@ pub const MAX_FILE_BYTES: u64 = 64 << 20;
 /// (72 MiB) or a 24-megapixel RGBA PNG.
 pub const MAX_DECODED_BYTES: u64 = 96 << 20;
 
-fn read_capped(path: &Path) -> std::io::Result<Vec<u8>> {
-    read_capped_from(std::fs::File::open(path)?)
+/// Largest picture a viewer decodes, in bytes of pixels and of file: a 170-megapixel RGB photo.
+pub const VIEWER_MAX_BYTES: u64 = 512 << 20;
+
+fn read_capped(path: &Path, cap: u64) -> std::io::Result<Vec<u8>> {
+    read_capped_from(std::fs::File::open(path)?, cap)
 }
 
-/// The bytes of open file `f`, or `InvalidData` when it holds more than [`MAX_FILE_BYTES`].
-pub fn read_capped_from(f: std::fs::File) -> std::io::Result<Vec<u8>> {
+/// The bytes of open file `f`, or `FileTooLarge` when it holds more than `cap`.
+pub fn read_capped_from(f: std::fs::File, cap: u64) -> std::io::Result<Vec<u8>> {
     use std::io::{Error, ErrorKind, Read};
     let len = f.metadata()?.len();
-    if len > MAX_FILE_BYTES {
-        return Err(Error::new(ErrorKind::InvalidData, "larger than an image"));
+    if len > cap {
+        return Err(Error::new(ErrorKind::FileTooLarge, "larger than an image"));
     }
     let mut bytes = Vec::with_capacity(len as usize);
-    f.take(MAX_FILE_BYTES).read_to_end(&mut bytes)?;
+    f.take(cap).read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
@@ -101,14 +162,14 @@ impl ImageDecoder for ImageCrateDecoder {
         image::guess_format(bytes).is_ok()
     }
 
-    fn decode(&self, bytes: &[u8], max: (u32, u32)) -> Option<Decoded> {
+    fn decode(&self, bytes: &[u8], max: (u32, u32), budget: Budget) -> Result<Decoded, Unread> {
         use image::DynamicImage as D;
         use image::ImageDecoder as _;
-        let mut decoder = open_capped(bytes)?;
+        let mut decoder = open_capped(bytes, budget.pixels)?;
         let orientation = decoder
             .orientation()
             .unwrap_or(image::metadata::Orientation::NoTransforms);
-        let mut img = D::from_decoder(decoder).ok()?;
+        let mut img = D::from_decoder(decoder).map_err(|_| Unread::Unreadable)?;
         img.apply_orientation(orientation);
         let (width, height) = (img.width(), img.height());
         let (fw, fh) = reprisekit::raster::fit_size(width, height, max);
@@ -121,7 +182,7 @@ impl ImageDecoder for ImageCrateDecoder {
             D::ImageLumaA8(i) => fit_buffer(i, fw, fh),
             other => fit_buffer(&other.to_rgba8(), fw, fh),
         };
-        Some(Decoded {
+        Ok(Decoded {
             canvas,
             width,
             height,
@@ -129,16 +190,13 @@ impl ImageDecoder for ImageCrateDecoder {
     }
 }
 
-/// JPEG XL's first frame through libjxl, refused when it states more than
-/// [`MAX_DECODED_BYTES`] of pixels, libjxl would hold more than [`JXL_ALLOC_LIMIT`], or the
-/// decode runs past [`JXL_TIME_LIMIT`].
+/// JPEG XL's first frame through libjxl, refused when it states more pixels than the budget,
+/// libjxl would hold more than four times them, or the decode runs past [`JXL_TIME_LIMIT`].
 pub struct JxlDecoder;
 
-/// What libjxl may hold at once while decoding one picture.
-pub const JXL_ALLOC_LIMIT: usize = 4 * MAX_DECODED_BYTES as usize;
-
-/// How long one JPEG XL may decode: twice a slow core's time for a lossless picture at the pixel
-/// budget (effort 9), where a few bytes a layer can keep libjxl composing layers for hours.
+/// How long one JPEG XL may decode: twice a slow core's time for a lossless picture at
+/// [`MAX_DECODED_BYTES`] (effort 9), where a few bytes a layer can keep libjxl composing layers
+/// for hours.
 pub const JXL_TIME_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl ImageDecoder for JxlDecoder {
@@ -146,11 +204,15 @@ impl ImageDecoder for JxlDecoder {
         bytes.starts_with(&[0xff, 0x0a]) || bytes.starts_with(reprisefs::imagesize::JXL_CONTAINER)
     }
 
-    fn decode(&self, bytes: &[u8], max: (u32, u32)) -> Option<Decoded> {
-        let p = jxl::first_frame(bytes, MAX_DECODED_BYTES, JXL_ALLOC_LIMIT, JXL_TIME_LIMIT).ok()?;
-        let img = image::RgbaImage::from_raw(p.width, p.height, p.px)?;
+    fn decode(&self, bytes: &[u8], max: (u32, u32), budget: Budget) -> Result<Decoded, Unread> {
+        let p = jxl::first_frame(bytes, budget.pixels, budget.jxl_alloc(), JXL_TIME_LIMIT)
+            .map_err(|e| match e {
+                jxl::Refused::Size | jxl::Refused::Memory => Unread::TooLarge,
+                jxl::Refused::Time | jxl::Refused::Broken => Unread::Unreadable,
+            })?;
+        let img = image::RgbaImage::from_raw(p.width, p.height, p.px).ok_or(Unread::Unreadable)?;
         let (fw, fh) = reprisekit::raster::fit_size(p.width, p.height, max);
-        Some(Decoded {
+        Ok(Decoded {
             canvas: fit_buffer(&img, fw, fh),
             width: p.width,
             height: p.height,
@@ -183,27 +245,32 @@ const MIN_DELAY_MS: u32 = 20;
 const SHORT_DELAY_MS: u32 = 100;
 
 /// The frames of an animated GIF, PNG or WebP at full size. `None` for a still picture, another
-/// format, a canvas past [`MAX_DECODED_BYTES`] or frames that together pass it: the caller shows
+/// format, a canvas past `budget`'s pixels or frames that together pass them: the caller shows
 /// the first frame alone from [`Decoders::decode`].
-pub fn frames(bytes: &[u8]) -> Option<Vec<Frame>> {
+pub fn frames(bytes: &[u8], budget: Budget) -> Option<Vec<Frame>> {
     use image::AnimationDecoder as _;
     use image::codecs::{gif::GifDecoder, png::PngDecoder, webp::WebPDecoder};
     let cur = std::io::Cursor::new(bytes);
     let frames = match image::guess_format(bytes).ok()? {
-        image::ImageFormat::Gif => animation_capped(GifDecoder::new(cur).ok()?)?.into_frames(),
+        image::ImageFormat::Gif => {
+            animation_capped(GifDecoder::new(cur).ok()?, budget.pixels)?.into_frames()
+        }
         image::ImageFormat::Png => {
             let d = PngDecoder::new(cur).ok()?;
             if !d.is_apng().ok()? {
                 return None;
             }
-            animation_capped(d)?.apng().ok()?.into_frames()
+            animation_capped(d, budget.pixels)?
+                .apng()
+                .ok()?
+                .into_frames()
         }
         image::ImageFormat::WebP => {
             let d = WebPDecoder::new(cur).ok()?;
             if !d.has_animation() {
                 return None;
             }
-            animation_capped(d)?.into_frames()
+            animation_capped(d, budget.pixels)?.into_frames()
         }
         _ => return None,
     };
@@ -215,7 +282,7 @@ pub fn frames(bytes: &[u8]) -> Option<Vec<Frame>> {
         let ms = n.checked_div(d).unwrap_or(0);
         let buf = f.into_buffer();
         spent += u64::from(buf.width()) * u64::from(buf.height()) * 4;
-        if spent > MAX_DECODED_BYTES {
+        if spent > budget.pixels {
             return None;
         }
         out.push(Frame {
@@ -230,30 +297,33 @@ pub fn frames(bytes: &[u8]) -> Option<Vec<Frame>> {
     (out.len() > 1).then_some(out)
 }
 
-/// `d`, or `None` when one RGBA canvas of its size passes [`MAX_DECODED_BYTES`]. The size is
-/// checked before the frame iterator allocates its canvas; the allocation cap covers the canvas
-/// and one frame alive together.
-fn animation_capped<D: image::ImageDecoder>(mut d: D) -> Option<D> {
+/// `d`, or `None` when one RGBA canvas of its size passes `pixels` bytes. The size is checked
+/// before the frame iterator allocates its canvas; the allocation cap covers the canvas and one
+/// frame alive together.
+fn animation_capped<D: image::ImageDecoder>(mut d: D, pixels: u64) -> Option<D> {
     let (w, h) = d.dimensions();
-    if u64::from(w) * u64::from(h) * 4 > MAX_DECODED_BYTES {
+    if u64::from(w) * u64::from(h) * 4 > pixels {
         return None;
     }
     let mut limits = image::Limits::no_limits();
-    limits.max_alloc = Some(2 * MAX_DECODED_BYTES);
+    limits.max_alloc = Some(2 * pixels);
     d.set_limits(limits).ok()?;
     Some(d)
 }
 
-/// An `image` decoder for `bytes` that has read the header, `None` when the
-/// format is unknown or the decoded pixels would pass [`MAX_DECODED_BYTES`].
-fn open_capped(bytes: &[u8]) -> Option<impl image::ImageDecoder + '_> {
+/// An `image` decoder for `bytes` that has read the header, refused when the
+/// format is unknown or the decoded pixels would pass `pixels` bytes.
+fn open_capped(bytes: &[u8], pixels: u64) -> Result<impl image::ImageDecoder + '_, Unread> {
     use image::ImageDecoder as _;
     let decoder = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
-        .ok()?
-        .into_decoder()
-        .ok()?;
-    (decoder.total_bytes() <= MAX_DECODED_BYTES).then_some(decoder)
+        .ok()
+        .and_then(|r| r.into_decoder().ok())
+        .ok_or(Unread::Unreadable)?;
+    if decoder.total_bytes() > pixels {
+        return Err(Unread::TooLarge);
+    }
+    Ok(decoder)
 }
 
 fn fit_buffer<P>(img: &image::ImageBuffer<P, Vec<u8>>, w: u32, h: u32) -> Canvas
@@ -275,11 +345,39 @@ mod tests {
     #[test]
     fn open_capped_refuses_a_header_past_the_byte_budget() {
         let rows = (MAX_DECODED_BYTES / 4 / 4096) as u32;
-        assert!(open_capped(&png_header(4096, rows)).is_some());
+        assert!(open_capped(&png_header(4096, rows), MAX_DECODED_BYTES).is_ok());
         let past = png_header(4096, rows + 1);
         assert!(ImageCrateDecoder.probe(&past));
-        assert!(open_capped(&past).is_none());
-        assert!(ImageCrateDecoder.decode(&past, (96, 96)).is_none());
+        assert_eq!(
+            open_capped(&past, MAX_DECODED_BYTES).err(),
+            Some(Unread::TooLarge)
+        );
+        assert_eq!(
+            ImageCrateDecoder
+                .decode(&past, (96, 96), Budget::THUMBNAIL)
+                .err(),
+            Some(Unread::TooLarge)
+        );
+        let viewer = Budget {
+            file: MAX_FILE_BYTES,
+            pixels: 2 * MAX_DECODED_BYTES,
+        };
+        assert!(
+            open_capped(&past, viewer.pixels).is_ok(),
+            "a larger budget opens it"
+        );
+    }
+
+    #[test]
+    fn the_viewer_budget_is_an_eighth_of_memory_within_its_bounds() {
+        let gib = 1u64 << 30;
+        let pixels = |mem| Budget::viewer_for(mem).pixels;
+        assert_eq!(pixels(None), VIEWER_MAX_BYTES);
+        assert_eq!(pixels(Some(16 * gib)), VIEWER_MAX_BYTES);
+        assert_eq!(pixels(Some(2 * gib)), 256 << 20);
+        assert_eq!(pixels(Some(gib / 2)), MAX_DECODED_BYTES);
+        assert_eq!(Budget::viewer_for(Some(2 * gib)).file, 256 << 20);
+        assert_eq!(Budget::viewer_for(Some(gib / 2)).file, MAX_DECODED_BYTES);
     }
 
     /// Downscaling averages premultiplied pixels: opaque red beside a fully
@@ -287,7 +385,9 @@ mod tests {
     #[test]
     fn decode_downscales_premultiplied() {
         let bytes = encode_png(2, 1, &[255, 0, 0, 255, 0, 0, 255, 0]);
-        let decoded = ImageCrateDecoder.decode(&bytes, (1, 1)).unwrap();
+        let decoded = ImageCrateDecoder
+            .decode(&bytes, (1, 1), Budget::THUMBNAIL)
+            .unwrap();
         assert_eq!((decoded.width, decoded.height), (2, 1));
         assert_eq!((decoded.canvas.width, decoded.canvas.height), (1, 1));
         assert_eq!(decoded.canvas.get(0, 0), 0x8080_0000);
@@ -359,7 +459,9 @@ mod tests {
         rgba[0..4].copy_from_slice(&[200, 100, 50, 128]);
         let bytes = encode_png(4, 2, &rgba);
 
-        let decoded = Decoders::default_set().decode(&bytes, (96, 96)).unwrap();
+        let decoded = Decoders::default_set()
+            .decode(&bytes, (96, 96), Budget::THUMBNAIL)
+            .unwrap();
 
         assert_eq!(decoded.width, 4);
         assert_eq!(decoded.height, 2);
@@ -387,9 +489,13 @@ mod tests {
     #[test]
     fn decodes_a_jxl_through_the_default_set() {
         let bytes = jxl_of(rgba_gradient(40, 30));
-        let d = Decoders::default_set().decode(&bytes, (20, 20)).unwrap();
+        let d = Decoders::default_set()
+            .decode(&bytes, (20, 20), Budget::THUMBNAIL)
+            .unwrap();
         assert_eq!((d.width, d.height, d.canvas.width), (40, 30, 20));
-        let full = JxlDecoder.decode(&bytes, (96, 96)).unwrap();
+        let full = JxlDecoder
+            .decode(&bytes, (96, 96), Budget::THUMBNAIL)
+            .unwrap();
         assert_eq!(
             full.canvas.get(39, 29),
             0xff00_0000 | (234 << 16) | (232 << 8) | 90
@@ -405,12 +511,16 @@ mod tests {
             Some((20_000, 20_000))
         );
         assert!(JxlDecoder.probe(&big));
-        assert!(JxlDecoder.decode(&big, (96, 96)).is_none());
+        assert_eq!(
+            JxlDecoder.decode(&big, (96, 96), Budget::THUMBNAIL).err(),
+            Some(Unread::TooLarge)
+        );
         let whole = jxl_of(rgba_gradient(40, 30));
         assert!(
             JxlDecoder
-                .decode(&whole[..whole.len() / 2], (96, 96))
-                .is_none()
+                .decode(&whole[..whole.len() / 2], (96, 96), Budget::THUMBNAIL)
+                .err()
+                == Some(Unread::Unreadable)
         );
         assert!(!JxlDecoder.probe(&encode_png(1, 1, &[0, 0, 0, 255])));
     }
@@ -426,7 +536,9 @@ mod tests {
             2,
         )];
         let bytes = jxl::tests::encode_with(w, h, &[(&px, 1)], false, &effort);
-        let d = JxlDecoder.decode(&bytes, (96, 96)).unwrap();
+        let d = JxlDecoder
+            .decode(&bytes, (96, 96), Budget::THUMBNAIL)
+            .unwrap();
         assert_eq!((d.width, d.height), (w, h));
     }
 
@@ -434,7 +546,9 @@ mod tests {
     #[test]
     fn a_premultiplied_jxl_is_multiplied_by_alpha_once() {
         let bytes = jxl::tests::encode(1, 1, &[&[100, 50, 24, 128]], true);
-        let d = JxlDecoder.decode(&bytes, (96, 96)).unwrap();
+        let d = JxlDecoder
+            .decode(&bytes, (96, 96), Budget::THUMBNAIL)
+            .unwrap();
         let [a, r, g, b] = d.canvas.get(0, 0).to_be_bytes();
         assert_eq!(a, 128);
         for (got, want) in [(r, 100), (g, 50), (b, 24)] {
@@ -486,13 +600,13 @@ mod tests {
             frame([255, 0, 0, 255], 250),
             frame([0, 0, 255, 255], 0),
         ]);
-        let got = frames(&two).expect("two frames");
+        let got = frames(&two, Budget::THUMBNAIL).expect("two frames");
         assert_eq!(got.len(), 2);
         assert_eq!((got[0].delay_ms, got[1].delay_ms), (250, 100));
         assert_eq!(got[0].canvas.get(0, 0), 0xFFFF_0000);
         assert_eq!(got[1].canvas.get(1, 1), 0xFF00_00FF);
-        assert!(frames(&gif(vec![frame([0, 255, 0, 255], 100)])).is_none());
-        assert!(frames(&encode_png(1, 1, &[0, 0, 0, 255])).is_none());
+        assert!(frames(&gif(vec![frame([0, 255, 0, 255], 100)]), Budget::THUMBNAIL).is_none());
+        assert!(frames(&encode_png(1, 1, &[0, 0, 0, 255]), Budget::THUMBNAIL).is_none());
     }
 
     /// A GIF of a few dozen bytes whose logical screen is 65535x65535 (16 GiB of RGBA) and an
@@ -512,19 +626,25 @@ mod tests {
         GifEncoder::new(&mut gif)
             .encode_frames(vec![dot([255, 0, 0, 255]), dot([0, 0, 255, 255])])
             .unwrap();
-        assert!(frames(&gif).is_some(), "the 1x1 screen plays");
+        assert!(
+            frames(&gif, Budget::THUMBNAIL).is_some(),
+            "the 1x1 screen plays"
+        );
         gif[6..10].copy_from_slice(&[0xff; 4]);
-        assert!(frames(&gif).is_none());
+        assert!(frames(&gif, Budget::THUMBNAIL).is_none());
         let actl = [0, 0, 0, 2, 0, 0, 0, 0];
         let apng = png_chunks(65535, 65535, &[(b"acTL", &actl)]);
-        assert!(frames(&apng).is_none());
+        assert!(frames(&apng, Budget::THUMBNAIL).is_none());
     }
 
     #[test]
     fn decoders_with_nothing_registered_decode_nothing() {
         let empty = Decoders { list: Vec::new() };
         let bytes = encode_png(1, 1, &[0, 0, 0, 255]);
-        assert!(empty.decode(&bytes, (96, 96)).is_none());
+        assert_eq!(
+            empty.decode(&bytes, (96, 96), Budget::THUMBNAIL).err(),
+            Some(Unread::Unreadable)
+        );
     }
 
     /// The formats turned on beyond PNG, JPEG, BMP and GIF each decode
@@ -545,8 +665,8 @@ mod tests {
             };
             encoded.unwrap_or_else(|e| panic!("{format:?}: {e}"));
             let decoded = Decoders::default_set()
-                .decode(bytes.get_ref(), (96, 96))
-                .unwrap_or_else(|| panic!("{format:?} did not decode"));
+                .decode(bytes.get_ref(), (96, 96), Budget::THUMBNAIL)
+                .unwrap_or_else(|e| panic!("{format:?} did not decode: {e:?}"));
             assert_eq!((decoded.width, decoded.height), (4, 2), "{format:?}");
             assert_eq!(decoded.canvas.get(3, 0), 0xffb4_0000, "{format:?}");
         }
@@ -572,7 +692,9 @@ mod tests {
         enc.set_exif_metadata(exif.to_vec()).unwrap();
         enc.write_image(img.as_raw(), 8, 4, image::ExtendedColorType::Rgb8)
             .unwrap();
-        let decoded = ImageCrateDecoder.decode(&bytes, (96, 96)).unwrap();
+        let decoded = ImageCrateDecoder
+            .decode(&bytes, (96, 96), Budget::THUMBNAIL)
+            .unwrap();
         assert_eq!((decoded.width, decoded.height), (4, 8));
         assert_eq!((decoded.canvas.width, decoded.canvas.height), (4, 8));
         let [_, r, _, b] = decoded.canvas.get(1, 1).to_be_bytes();

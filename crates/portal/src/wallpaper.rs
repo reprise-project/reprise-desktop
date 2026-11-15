@@ -193,7 +193,7 @@ fn read_picture(path: &Path) -> Option<(Vec<u8>, PathBuf)> {
         return None;
     }
     let real = std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd())).ok()?;
-    let bytes = repriseapp::decode::read_capped_from(f).ok()?;
+    let bytes = repriseapp::decode::read_capped_from(f, repriseapp::decode::MAX_FILE_BYTES).ok()?;
     let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
         .with_guessed_format()
         .ok()?
