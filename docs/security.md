@@ -1647,7 +1647,10 @@ stop the share first.
   it, and the launcher or program asks again. Reprise's own rewrites of a
   launcher it trusts mark the new contents. The contents are hashed only
   when a marker is there, and a file over 128 MiB is never trusted, so a
-  large AppImage or installer asks on every open.
+  large AppImage or installer asks on every open. A `.desktop` file
+  dropped on Quick Launch becomes a button that runs it only when it sits in
+  an application folder or carries the attribute; any other one gets a
+  button that opens it, which asks the same way.
 - **Drive Recycle Bins.** A drive's trash is used only as `.Trash-$uid`, a
   real folder of yours, or as `$uid` in a real `.Trash` with the sticky bit,
   as the freedesktop trash spec asks. Listing it, Delete, Empty Recycle Bin,
