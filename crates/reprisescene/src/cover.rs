@@ -1,6 +1,9 @@
 //! Which leaves an output draws none of: those lying wholly under opaque leaves above them.
 
-use std::{cell::Cell, collections::HashSet};
+use std::{
+    cell::{Cell, OnceCell},
+    collections::HashSet,
+};
 
 use smithay::{
     backend::renderer::{Renderer, utils::RendererSurfaceStateUserData},
@@ -28,22 +31,31 @@ pub(crate) struct Shows {
     pub(crate) walked: HashSet<NodeId>,
 }
 
-/// Per output, the surface nodes it draws none of ([`Scene::covered_on`]).
-pub(crate) struct Covered(Vec<(Output, Vec<NodeId>)>);
+/// Per output, the surface nodes it draws none of ([`Scene::covered_on`]), each output walked
+/// when first asked about.
+pub(crate) struct Covered<'s, R: Renderer, D> {
+    scene: &'s Scene<R, D>,
+    /// By the index of the output in `scene.outputs`.
+    nodes: Vec<OnceCell<Vec<NodeId>>>,
+}
 
-impl Covered {
+impl<R: Renderer, D> Covered<'_, R, D> {
     pub(crate) fn on(&self, node: NodeId, output: &Output) -> bool {
-        (self.0.iter()).any(|(o, nodes)| o == output && nodes.contains(&node))
+        let Some(i) = self.scene.outputs.iter().position(|o| o == output) else {
+            return false;
+        };
+        self.nodes[i]
+            .get_or_init(|| self.scene.covered_on(output))
+            .contains(&node)
     }
 }
 
 impl<R: Renderer, D> Scene<R, D> {
-    pub(crate) fn covered(&self) -> Covered {
-        Covered(
-            (self.outputs.iter())
-                .map(|o| (o.clone(), self.covered_on(o)))
-                .collect(),
-        )
+    pub(crate) fn covered(&self) -> Covered<'_, R, D> {
+        Covered {
+            scene: self,
+            nodes: self.outputs.iter().map(|_| OnceCell::new()).collect(),
+        }
     }
 
     /// The surface nodes `output` draws none of ([`Scene::leaves_on`]).
