@@ -3,7 +3,8 @@
 //!
 //! The thread owns the `Inotify`; the view keeps the [`Watches`] handle, so the watch moves with
 //! the view while the thread sits in its read. The thread ends, freeing its inotify instance, once
-//! the [`Watch`] drops.
+//! the [`Watch`] drops. Adding a folder walks its path, which blocks on a dead mount, so
+//! [`Watch::watch`] hands the add to the host as an [`Adder`] to run off its loop.
 
 use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask, Watches};
 use reprisebus::mutex::lock;
@@ -38,10 +39,17 @@ fn mask() -> WatchMask {
         | WatchMask::CLOSE_WRITE
 }
 
-/// What the thread and the view share: the watches that count only events naming one entry (with
-/// that entry), and the folder [`Watch::watch`] shows.
+/// What the thread, the view and its adders share: the watches in place, those that count only
+/// events naming one entry (with that entry), and the folder [`Watch::watch`] shows.
 #[derive(Default)]
 struct Shared {
+    /// Bumped by every [`Watch::clear`]: an [`Adder`] of an earlier one adds nothing more.
+    generation: u64,
+    wds: Vec<WatchDescriptor>,
+    /// Watches an adder made after its generation ended. Removed at the next clear and not
+    /// before, since the kernel hands out one descriptor per folder and the current generation
+    /// may have added the same folder.
+    stale: Vec<WatchDescriptor>,
     only: Vec<(WatchDescriptor, OsString)>,
     shown: Option<Shown>,
     #[cfg(test)]
@@ -113,6 +121,9 @@ impl Shared {
         if e.mask.contains(EventMask::IGNORED) {
             return false;
         }
+        if e.mask.contains(EventMask::Q_OVERFLOW) {
+            return true;
+        }
         #[cfg(test)]
         if self.fence.wd.as_ref() == Some(&e.wd) {
             self.fence.read = true;
@@ -123,16 +134,15 @@ impl Shared {
         {
             return s.note(k, e);
         }
-        self.only
-            .iter()
-            .find(|(wd, _)| *wd == e.wd)
-            .is_none_or(|(_, name)| e.name == Some(name.as_os_str()))
+        match self.only.iter().find(|(wd, _)| *wd == e.wd) {
+            Some((_, name)) => e.name == Some(name.as_os_str()),
+            None => self.wds.contains(&e.wd),
+        }
     }
 }
 
 pub struct Watch {
     watches: Watches,
-    wd: Vec<WatchDescriptor>,
     shared: Arc<Mutex<Shared>>,
     changed: Arc<AtomicBool>,
     wake: Wake,
@@ -198,7 +208,6 @@ impl Watch {
             })?;
         Ok(Watch {
             watches,
-            wd: Vec::new(),
             shared,
             changed,
             wake,
@@ -209,88 +218,61 @@ impl Watch {
         lock(&self.shared)
     }
 
-    /// Watch `dir` instead of whatever was being watched, and notice it or a folder above it
-    /// leaving ([`Watch::take_gone`]); a `dir` already gone (the view deleted it itself) is gone
-    /// at once, on a wake of its own. Each level up costs one inotify watch.
-    pub fn watch(&mut self, dir: &Path) {
+    /// Watch `dir` instead of whatever was being watched, once the returned [`Adder`] runs, and
+    /// notice it or a folder above it leaving ([`Watch::take_gone`]); a `dir` already gone (the
+    /// view deleted it itself) is gone at once, on a wake of its own. Each level up costs one
+    /// inotify watch.
+    pub fn watch(&mut self, dir: &Path) -> Adder {
         self.clear();
-        let wd = match self
-            .watches
-            .add(dir, mask() | WatchMask::MOVE_SELF | WatchMask::DELETE_SELF)
-        {
-            Ok(wd) => wd,
-            Err(e) => {
-                log::info!("cannot watch {}: {e}", dir.display());
-                if e.kind() == io::ErrorKind::NotFound {
-                    self.shared().shown = Some(Shown {
-                        dir: dir.to_path_buf(),
-                        levels: Vec::new(),
-                        leaving: None,
-                        gone: Some(dir.to_path_buf()),
-                    });
-                    (self.wake)();
-                }
-                return;
-            }
-        };
-        self.wd.push(wd.clone());
-        let mut levels = vec![Some(wd)];
-        for up in dir.ancestors().skip(1) {
-            let mask = WatchMask::MOVED_FROM
-                | WatchMask::MOVED_TO
-                | WatchMask::MOVE_SELF
-                | WatchMask::DELETE_SELF;
-            levels.push(match self.watches.add(up, mask) {
-                Ok(wd) => {
-                    self.wd.push(wd.clone());
-                    Some(wd)
-                }
-                Err(e) => {
-                    log::debug!("cannot watch {}: {e}", up.display());
-                    None
-                }
-            });
-        }
-        self.shared().shown = Some(Shown {
+        let mut shared = self.shared();
+        shared.shown = Some(Shown {
             dir: dir.to_path_buf(),
-            levels,
+            levels: Vec::new(),
             leaving: None,
             gone: None,
         });
+        Adder {
+            watches: self.watches.clone(),
+            shared: self.shared.clone(),
+            generation: shared.generation,
+            dir: dir.to_path_buf(),
+            wake: self.wake.clone(),
+        }
     }
 
     /// Watch every one of `dirs` (the Recycle Bin's folders, one per drive, and the folders above
     /// the home trash) instead of whatever was being watched. A folder paired with a name counts
-    /// only events naming that entry.
+    /// only events naming that entry. A folder that cannot be watched is logged and left
+    /// unwatched; F5 still refreshes it.
     pub fn watch_all(&mut self, dirs: &[(PathBuf, Option<OsString>)]) {
         self.clear();
         for (dir, name) in dirs {
-            if let Some(wd) = self.add(dir, mask())
-                && let Some(name) = name
-            {
-                self.shared().only.push((wd, name.clone()));
-            }
-        }
-    }
-
-    /// A folder that cannot be watched is logged and left unwatched; F5 still refreshes it.
-    fn add(&mut self, dir: &Path, mask: WatchMask) -> Option<WatchDescriptor> {
-        match self.watches.add(dir, mask) {
-            Ok(wd) => {
-                self.wd.push(wd.clone());
-                Some(wd)
-            }
-            Err(e) => {
-                log::info!("cannot watch {}: {e}", dir.display());
-                None
+            match self.watches.add(dir, mask()) {
+                Ok(wd) => {
+                    let mut shared = self.shared();
+                    shared.wds.push(wd.clone());
+                    if let Some(name) = name {
+                        shared.only.push((wd, name.clone()));
+                    }
+                }
+                Err(e) => log::info!("cannot watch {}: {e}", dir.display()),
             }
         }
     }
 
     /// Stop watching anything.
     pub fn clear(&mut self) {
-        *self.shared() = Shared::default();
-        for wd in self.wd.drain(..) {
+        let mut shared = self.shared();
+        let generation = shared.generation + 1;
+        let old = std::mem::replace(
+            &mut *shared,
+            Shared {
+                generation,
+                ..Shared::default()
+            },
+        );
+        drop(shared);
+        for wd in old.wds.into_iter().chain(old.stale) {
             let _ = self.watches.remove(wd);
         }
     }
@@ -338,6 +320,73 @@ impl Watch {
     }
 }
 
+/// The inotify adds one [`Watch::watch`] asked for, to run on a thread that may block for as long
+/// as the folder's file system does. A later watch or clear makes it add nothing more.
+#[must_use = "the folder is watched once the adder runs"]
+pub struct Adder {
+    watches: Watches,
+    shared: Arc<Mutex<Shared>>,
+    generation: u64,
+    dir: PathBuf,
+    wake: Wake,
+}
+
+impl Adder {
+    /// Watches the folder, then every folder above it.
+    pub fn run(mut self) {
+        let dir = self.dir.clone();
+        for (k, up) in dir.ancestors().enumerate() {
+            let mask = if k == 0 {
+                mask() | WatchMask::MOVE_SELF | WatchMask::DELETE_SELF
+            } else {
+                WatchMask::MOVED_FROM
+                    | WatchMask::MOVED_TO
+                    | WatchMask::MOVE_SELF
+                    | WatchMask::DELETE_SELF
+            };
+            if !self.current(&lock(&self.shared)) {
+                return;
+            }
+            // MASK_ADD: a stale adder's late add of a folder this generation watches widens its
+            // mask instead of replacing it.
+            let added = self.watches.add(up, mask | WatchMask::MASK_ADD);
+            let mut shared = lock(&self.shared);
+            if !self.current(&shared) {
+                if let Ok(wd) = added {
+                    shared.stale.push(wd);
+                }
+                return;
+            }
+            let Some(shown) = shared.shown.as_mut() else {
+                return;
+            };
+            match added {
+                Ok(wd) => {
+                    shown.levels.push(Some(wd.clone()));
+                    shared.wds.push(wd);
+                }
+                Err(e) if k == 0 => {
+                    log::info!("cannot watch {}: {e}", up.display());
+                    if e.kind() == io::ErrorKind::NotFound {
+                        shown.gone = Some(dir.clone());
+                        drop(shared);
+                        (self.wake)();
+                    }
+                    return;
+                }
+                Err(e) => {
+                    log::debug!("cannot watch {}: {e}", up.display());
+                    shown.levels.push(None);
+                }
+            }
+        }
+    }
+
+    fn current(&self, shared: &Shared) -> bool {
+        shared.generation == self.generation
+    }
+}
+
 impl Drop for Watch {
     fn drop(&mut self) {
         // The thread holds a Weak of the flag. Taking a watch off queues IN_IGNORED, which wakes it
@@ -380,10 +429,10 @@ mod tests {
     fn rewatching_a_folder_is_not_a_change() {
         let mut watch = Watch::new(|| {}).expect("inotify");
         let dir = tempfile::tempdir().expect("tempdir");
-        watch.watch(dir.path());
-        watch.watch(dir.path());
+        watch.watch(dir.path()).run();
+        watch.watch(dir.path()).run();
         watch.clear();
-        watch.watch(dir.path());
+        watch.watch(dir.path()).run();
         watch.sync();
         assert!(
             !watch.take_changed(),
@@ -402,7 +451,7 @@ mod tests {
         use std::io::Write;
         let mut watch = Watch::new(|| {}).expect("inotify");
         let dir = tempfile::tempdir().expect("tempdir");
-        watch.watch(dir.path());
+        watch.watch(dir.path()).run();
         let mut f = std::fs::File::create(dir.path().join("big.bin")).expect("create");
         watch.sync();
         assert!(watch.take_changed(), "the file arriving is a change");
@@ -450,7 +499,7 @@ mod tests {
     fn a_dropped_watch_frees_its_inotify_instance() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut watch = Watch::new(|| {}).expect("inotify");
-        watch.watch(dir.path());
+        watch.watch(dir.path()).run();
         assert!(watched(dir.path()), "the watch holds an instance");
         drop(watch);
         let until = Instant::now() + Duration::from_secs(30);
@@ -463,20 +512,46 @@ mod tests {
         }
     }
 
+    /// The view moved on before the add ran, as when the folder sits on a mount that stopped
+    /// answering: the add watches nothing, and the folder shown now stays watched.
+    #[test]
+    fn an_add_the_view_moved_on_from_watches_nothing() {
+        let mut watch = Watch::new(|| {}).expect("inotify");
+        let (left, shown) = (
+            tempfile::tempdir().expect("tempdir"),
+            tempfile::tempdir().expect("tempdir"),
+        );
+        let late = watch.watch(left.path());
+        watch.watch(shown.path()).run();
+        late.run();
+        assert!(!watched(left.path()), "the folder left is not watched");
+        std::fs::write(left.path().join("a.txt"), "x").expect("write");
+        watch.sync();
+        assert!(!watch.take_changed(), "the folder left is not a change");
+        std::fs::write(shown.path().join("b.txt"), "x").expect("write");
+        watch.sync();
+        assert!(watch.take_changed(), "the folder shown is");
+
+        let late = watch.watch(left.path());
+        watch.clear();
+        late.run();
+        assert!(!watched(left.path()), "nor after a clear");
+    }
+
     #[test]
     fn a_folder_that_is_not_there_is_logged_not_fatal() {
         let mut watch = Watch::new(|| {}).expect("inotify");
-        watch.watch(Path::new("/definitely/not/a/folder"));
-        assert!(watch.wd.is_empty());
+        watch.watch(Path::new("/definitely/not/a/folder")).run();
+        assert!(watch.shared().wds.is_empty());
         let dir = tempfile::tempdir().expect("tempdir");
-        watch.watch(dir.path());
+        watch.watch(dir.path()).run();
         assert_eq!(
-            watch.wd.len(),
+            watch.shared().wds.len(),
             dir.path().ancestors().count(),
             "the folder and every folder above it"
         );
         watch.clear();
-        assert!(watch.wd.is_empty());
+        assert!(watch.shared().wds.is_empty());
     }
 
     #[test]
@@ -485,7 +560,7 @@ mod tests {
         let top = tempfile::tempdir().expect("tempdir");
         let (old, new) = (top.path().join("old"), top.path().join("new"));
         std::fs::create_dir(&old).expect("mkdir");
-        watch.watch(&old);
+        watch.watch(&old).run();
         std::fs::write(top.path().join("other.txt"), "x").expect("write");
         std::fs::rename(top.path().join("other.txt"), top.path().join("moved.txt")).expect("mv");
         watch.sync();
@@ -512,7 +587,7 @@ mod tests {
         let shown = top.path().join("a").join("shown");
         std::fs::create_dir_all(&shown).expect("mkdir");
         std::fs::create_dir(top.path().join("b")).expect("mkdir");
-        watch.watch(&shown);
+        watch.watch(&shown).run();
         std::fs::rename(&shown, top.path().join("b").join("shown")).expect("mv");
         watch.sync();
         assert_eq!(
@@ -522,7 +597,7 @@ mod tests {
         );
 
         std::fs::create_dir(&shown).expect("mkdir");
-        watch.watch(&shown);
+        watch.watch(&shown).run();
         std::fs::remove_dir(&shown).expect("rmdir");
         watch.sync();
         assert_eq!(watch.take_gone(), Some(shown), "deleted");
@@ -533,7 +608,7 @@ mod tests {
         let mut watch = Watch::new(|| {}).expect("inotify");
         let top = tempfile::tempdir().expect("tempdir");
         let shown = top.path().join("shown");
-        watch.watch(&shown);
+        watch.watch(&shown).run();
         assert_eq!(watch.take_gone(), Some(shown));
         assert_eq!(watch.take_gone(), None, "taken once");
     }
@@ -544,7 +619,7 @@ mod tests {
         let shown = top.path().join("a").join("b").join("shown");
         std::fs::create_dir_all(&shown).expect("mkdir");
         let mut watch = Watch::new(|| {}).expect("inotify");
-        watch.watch(&shown);
+        watch.watch(&shown).run();
         (top, watch, shown)
     }
 
@@ -583,7 +658,7 @@ mod tests {
         assert_eq!(watch.take_gone(), Some(shown.clone()), "moved elsewhere");
 
         std::fs::create_dir_all(&shown).expect("mkdir");
-        watch.watch(&shown);
+        watch.watch(&shown).run();
         std::fs::remove_dir_all(top.path().join("a")).expect("rm");
         watch.sync();
         assert_eq!(watch.take_gone(), Some(shown), "deleted");

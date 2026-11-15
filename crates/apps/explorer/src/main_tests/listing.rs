@@ -292,7 +292,8 @@ fn a_refresh_keeps_the_scroll_position() {
     assert_eq!(ex.sv.top, 0);
 }
 
-/// Long enough for the watch's one-second gap between wakes and its coalescing.
+/// Long enough for the watch's add, which runs off the loop, or for its one-second gap between
+/// wakes and its coalescing.
 fn wait_for_watch() {
     std::thread::sleep(std::time::Duration::from_millis(1500));
 }
@@ -305,6 +306,7 @@ fn the_shown_folder_is_followed_when_renamed_and_left_for_its_parent_when_delete
     std::fs::write(old.join("a.txt"), "1").expect("write");
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Folder(old.clone()), &mut ctx);
+    wait_for_watch();
 
     std::fs::rename(&old, &new).expect("rename");
     wait_for_watch();
@@ -335,6 +337,7 @@ fn a_folder_above_the_shown_one_renamed_is_followed_and_moved_away_is_left_for_t
     ex.settings.show_hidden = true;
     ex.build_tree(&mut ctx);
     ex.show(Place::Folder(shown), &mut ctx);
+    wait_for_watch();
 
     std::fs::rename(top.path().join("a"), top.path().join("z")).expect("rename");
     wait_for_watch();

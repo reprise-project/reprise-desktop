@@ -1187,7 +1187,10 @@ impl Explorer {
         if let Some(w) = self.watch.as_mut() {
             match place.path() {
                 Some(_) if place == Place::RecycleBin => w.watch_all(&place::bin_watches()),
-                Some(dir) => w.watch(&dir),
+                Some(dir) => {
+                    let add = w.watch(&dir);
+                    drop(repriseapp::listjob::Job::spawn(None, move || add.run()));
+                }
                 None => w.clear(),
             }
         }

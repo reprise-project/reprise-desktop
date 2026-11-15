@@ -1462,7 +1462,8 @@ impl Host {
         if let Some(w) = &mut self.watch
             && self.watched.as_ref() != Some(&path)
         {
-            w.watch(&path);
+            let add = w.watch(&path);
+            drop(Job::spawn(None, move || add.run()));
             self.watched = Some(path);
         }
         self.aliases.clear();

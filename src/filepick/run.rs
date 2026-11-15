@@ -36,14 +36,24 @@ impl Request {
             && self.exts == o.exts
             && self.pattern == o.pattern
             && self.folder_only == o.folder_only
+            && self.climb == o.climb
     }
 
     /// Reads the folder or looks the name up. Blocks for as long as the
     /// file system does.
-    pub fn run(self) -> Reply {
+    pub fn run(mut self) -> Reply {
         let pattern = self.pattern.as_deref();
         let found = if self.id.is_some() {
             Found::Folder(read_folder(&self.path, self.exts, pattern))
+        } else if self.climb {
+            match self.path.ancestors().find(|p| p.is_dir()) {
+                Some(dir) => {
+                    let rows = read_folder(dir, self.exts, pattern);
+                    self.path = dir.to_path_buf();
+                    Found::Folder(rows)
+                }
+                None => Found::Missing,
+            }
         } else {
             match std::fs::metadata(&self.path) {
                 Ok(m) if m.is_dir() => Found::Folder(read_folder(&self.path, self.exts, pattern)),
