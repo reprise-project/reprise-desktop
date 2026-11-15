@@ -207,8 +207,14 @@ pid reused since then names whatever process holds it now: an X11 program
 whose connecting process exited passes as P while one of P's processes holds
 that pid, with no window of P's named.
 
-An X11 window's process id comes from its own `_NET_WM_PID` property, so
-the focus rules below take an X11 program's word for which program it is.
+An X11 window's process is the one Xwayland recorded when its client
+connected (X-Resource), a pid on this host and outside any sandbox. Its own
+`_NET_WM_PID` property, which a sandboxed program sets to its pid inside the
+sandbox and a program forwarded over `ssh -X` to its pid on the other host,
+names no process here. The focus rules below, End Now and the session end's
+list go by the X-Resource pid. A forwarded program's client is the local
+`ssh`: End Now on its window disconnects the X11 windows `ssh` carries and
+sends no signal, since one would end the connection and every program on it.
 
 ## The clipboard history
 

@@ -3,7 +3,6 @@
 use reprisebus::tray::WindowIcon;
 
 use crate::compositor::State;
-use crate::window::Kind;
 
 /// Deepest ancestry [`lineage`] follows.
 const MAX_LINEAGE: usize = 32;
@@ -70,16 +69,16 @@ pub fn lineage(pid: i32, session: &[i32], read: impl Fn(i32) -> Option<Proc>) ->
     chain
 }
 
-/// A window the lookup may pick: its process (the Wayland client's socket pid, an X11 window's
-/// `_NET_WM_PID`), whether it is an X11 window, and its title.
+/// A window the lookup may pick: its process ([`State::client_pid`]), the pid an X11 window
+/// claims (`_NET_WM_PID`), and its title.
 pub struct Shown<'a> {
     pub pid: Option<i32>,
-    pub x11: bool,
+    pub claimed: Option<i32>,
     pub title: &'a str,
 }
 
 /// The index in `windows` of the stream's window, first hit wins: one whose process is a step
-/// of a lineage (candidates in order, nearest step first); an X11 window whose pid is a step's
+/// of a lineage (candidates in order, nearest step first); an X11 window claiming a step's
 /// innermost pid, as a sandboxed program's `_NET_WM_PID` reads; one titled `title`.
 pub fn pick(lineages: &[Vec<Step>], title: &str, windows: &[Shown]) -> Option<usize> {
     let steps = || lineages.iter().flatten();
@@ -88,7 +87,7 @@ pub fn pick(lineages: &[Vec<Step>], title: &str, windows: &[Shown]) -> Option<us
         .or_else(|| {
             steps().find_map(|s| {
                 let inner = s.inner?;
-                windows.iter().position(|w| w.x11 && w.pid == Some(inner))
+                windows.iter().position(|w| w.claimed == Some(inner))
             })
         })
         .or_else(|| {
@@ -105,13 +104,13 @@ pub fn window_icon(state: &mut State, lineages: &[Vec<Step>], title: &str) -> Op
         .windows
         .iter()
         .filter(|w| w.mapped && !w.is_owned() && (w.minimized || !w.skips_taskbar()))
-        .map(|w| (w.id, w.title(), matches!(w.kind, Kind::X11(_))))
+        .map(|w| (w.id, w.title(), w.claimed_pid()))
         .collect();
     let shown: Vec<Shown> = wins
         .iter()
-        .map(|(id, title, x11)| Shown {
+        .map(|(id, title, claimed)| Shown {
             pid: state.client_pid(*id),
-            x11: *x11,
+            claimed: *claimed,
             title,
         })
         .collect();
@@ -162,7 +161,7 @@ mod tests {
     fn win(pid: i32, x11: bool, title: &str) -> Shown<'_> {
         Shown {
             pid: Some(pid),
-            x11,
+            claimed: x11.then_some(pid),
             title,
         }
     }

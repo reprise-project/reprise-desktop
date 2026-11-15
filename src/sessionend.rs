@@ -249,7 +249,8 @@ fn run_step(state: &mut State, step: Step) {
 fn end_now(state: &mut State, override_inhibitors: bool) {
     let pids: Vec<i32> = programs(state).iter().filter_map(|p| p.pid).collect();
     for pid in pids {
-        end_process(state, pid);
+        log::info!("session end: ending pid {pid}");
+        state.end_process(pid);
     }
     finish(state, override_inhibitors);
 }
@@ -841,22 +842,6 @@ fn command_failure(cmd: &str, status: &std::process::ExitStatus, stderr: &[u8]) 
 fn drop_sources(state: &mut State, e: &mut Ending) {
     for t in [e.timer.take(), e.reports.take()].into_iter().flatten() {
         state.handle.remove(t);
-    }
-}
-
-/// SIGKILL `pid`, as End Program's End Now does: never the compositor or
-/// the Xwayland server.
-fn end_process(state: &State, pid: i32) {
-    if !state.may_end(pid) {
-        return;
-    }
-    log::info!("session end: killing pid {pid}");
-    // SAFETY: plain syscall on a pid, no pointers.
-    if unsafe { libc::kill(pid, libc::SIGKILL) } != 0 {
-        log::warn!(
-            "session end: kill {pid}: {}",
-            std::io::Error::last_os_error()
-        );
     }
 }
 

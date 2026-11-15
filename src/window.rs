@@ -247,6 +247,9 @@ pub struct Window {
     pub tab_pulled_out: bool,
     /// The window of the same client whose tab group it joins at map (reprise-tabs-v1).
     pub tab_leader: Option<WindowId>,
+    /// An X11 window's client process by the host pid Xwayland reports (X-Resource), looked up
+    /// as the window is tied to its surface; None when the query failed. Never `_NET_WM_PID`.
+    pub x11_pid: Option<i32>,
 }
 
 impl Window {
@@ -314,6 +317,12 @@ impl Window {
             Kind::X11(x) => Some(x.as_ref()),
             Kind::Xdg(_) => None,
         }
+    }
+
+    /// The pid an X11 window's client claims (`_NET_WM_PID`): inside its sandbox, or on another
+    /// host when forwarded. Only [`Window::x11_pid`] names its process here.
+    pub fn claimed_pid(&self) -> Option<i32> {
+        i32::try_from(self.x11()?.pid()?).ok()
     }
 
     /// None for an X11 window; its surfaces belong to Xwayland.
@@ -516,12 +525,14 @@ impl State {
         self.windows.iter_mut().find(|w| w.id == id)
     }
 
+    /// The host pid of `w`'s client: the Wayland socket's peer, or an X11 window's
+    /// [`Window::x11_pid`].
     pub fn client_pid(&self, w: WindowId) -> Option<i32> {
-        let pid = match &self.win(w)?.kind {
-            Kind::Xdg(t) => return self.surface_pid(t.wl_surface()),
-            Kind::X11(x) => i32::try_from(x.pid()?).ok()?,
-        };
-        (pid > 0).then_some(pid)
+        let win = self.win(w)?;
+        match &win.kind {
+            Kind::Xdg(t) => self.surface_pid(t.wl_surface()),
+            Kind::X11(_) => win.x11_pid,
+        }
     }
 
     /// The process a window's prompt rights ([`crate::mapfocus::is_prompt`]) are judged by: its
