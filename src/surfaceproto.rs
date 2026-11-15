@@ -24,6 +24,7 @@ use smithay::{
             Interest, RegistrationToken,
             timer::{TimeoutAction, Timer},
         },
+        rustix::time::Timespec,
         wayland_server::{
             Client, DisplayHandle, Resource, Weak, backend::ClientId,
             protocol::wl_surface::WlSurface,
@@ -35,6 +36,7 @@ use smithay::{
         background_effect::BackgroundEffectState,
         commit_timing::{
             CommitTimerBarrierStateUserData, CommitTimerStateUserData, CommitTimingManagerState,
+            Timestamp,
         },
         compositor::{
             Barrier, BufferAssignment, CompositorHandler, SurfaceAttributes, add_blocker,
@@ -227,7 +229,7 @@ fn commit_waits(surface: &WlSurface) -> (Option<Barrier>, Option<Duration>) {
             .flatten();
         let timed = (data.data_map.get::<CommitTimerStateUserData>())
             .and_then(|t| t.borrow().timestamp)
-            .map(|t| Time::<Monotonic>::from(t).into());
+            .and_then(deadline);
         (barrier, timed)
     })
 }
@@ -276,8 +278,10 @@ pub fn hidden_rate_changed(state: &mut State) {
 /// phase with the output's flips: a frame it asked for could start just before the refresh it
 /// meant to follow and show the commit a refresh late.
 fn ask_frame(state: &mut State, output: &Output, at: Duration) {
-    let at = std::time::Instant::now() + at.saturating_sub(state.now());
-    crate::backend::schedule_shows_at(state, output, at);
+    // A time past what an Instant holds asks nothing; before_frame asks again.
+    if let Some(at) = std::time::Instant::now().checked_add(at.saturating_sub(state.now())) {
+        crate::backend::schedule_shows_at(state, output, at);
+    }
 }
 
 /// The fastest output's refresh interval; 60 Hz with no output.
@@ -307,8 +311,19 @@ fn next_timer(surface: &WlSurface) -> Option<Duration> {
     with_states(surface, |data| {
         (data.data_map.get::<CommitTimerBarrierStateUserData>())
             .and_then(|t| t.lock().ok()?.next_deadline())
-            .map(|t| Time::<Monotonic>::from(t).into())
+            .and_then(deadline)
     })
+}
+
+/// A commit timer's time on the monotonic clock; `None` for a timespec out of range (negative,
+/// or 1e9 ns or more), which the client sent as it liked.
+fn deadline(t: Timestamp) -> Option<Duration> {
+    let tp = Timespec::from(Time::<Monotonic>::from(t));
+    let secs = u64::try_from(tp.tv_sec).ok()?;
+    let nanos = u32::try_from(tp.tv_nsec)
+        .ok()
+        .filter(|n| *n < 1_000_000_000)?;
+    Some(Duration::new(secs, nanos))
 }
 
 fn root(surface: &WlSurface) -> WlSurface {
@@ -488,13 +503,63 @@ mod tests {
 
     /// Commit buffer scale 2 timed to show at `at` on the monotonic clock.
     fn commit_timed(h: &mut Harness, c: &mut TestClient, surface: &ClientSurface, at: Duration) {
+        let secs = at.as_secs();
+        commit_timed_raw(
+            h,
+            c,
+            surface,
+            ((secs >> 32) as u32, secs as u32, at.subsec_nanos()),
+        );
+        h.roundtrip(c);
+    }
+
+    /// Commit buffer scale 2 under a commit timer set to `(tv_sec_hi, tv_sec_lo, tv_nsec)`, and
+    /// let the compositor read it.
+    fn commit_timed_raw(
+        h: &mut Harness,
+        c: &mut TestClient,
+        surface: &ClientSurface,
+        (hi, lo, nsec): (u32, u32, u32),
+    ) {
         let manager: WpCommitTimingManagerV1 = c.bind("wp_commit_timing_manager_v1", 1);
         let timer: WpCommitTimerV1 = manager.get_timer(surface, &c.qh(), ());
-        let secs = at.as_secs();
-        timer.set_timestamp((secs >> 32) as u32, secs as u32, at.subsec_nanos());
+        timer.set_timestamp(hi, lo, nsec);
         surface.set_buffer_scale(2);
         surface.commit();
-        h.roundtrip(c);
+        c.queue.flush().expect("client flush");
+        h.dispatch();
+    }
+
+    #[test]
+    fn a_timestamp_out_of_range_leaves_the_compositor_serving_frames() {
+        let timestamps = [
+            (u32::MAX, u32::MAX, u32::MAX),
+            (0x8000_0000, 0, 0),
+            (0x7fff_ffff, u32::MAX, 999_999_999),
+        ];
+        for raw in timestamps {
+            let (mut h, output) = harness();
+            let mut c = h.connect();
+            let t = h.map_toplevel(&mut c, "timed", 200, 150);
+            let surface = c.side.shells[t.shell].surface.clone();
+            commit_timed_raw(&mut h, &mut c, &surface, raw);
+            let now = h.state.now();
+            before_frame(&mut h.state, &output, now);
+            tick(&mut h.state);
+
+            let mut other = h.connect();
+            let o = h.map_toplevel(&mut other, "other", 200, 150);
+            let os = other.side.shells[o.shell].surface.clone();
+            let done = other.frame(&os);
+            os.commit();
+            h.roundtrip(&mut other);
+            crate::backend::send_frame_callbacks(&mut h.state, &output);
+            h.roundtrip(&mut other);
+            assert!(
+                done.load(std::sync::atomic::Ordering::Relaxed),
+                "another client's frame callback is done after {raw:x?}"
+            );
+        }
     }
 
     #[test]
