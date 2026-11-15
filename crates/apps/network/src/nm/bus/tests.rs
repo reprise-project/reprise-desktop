@@ -154,11 +154,45 @@ fn a_bare_scan_stamp_wakes_nothing() {
     let dev = "/org/freedesktop/NetworkManager/Devices/3";
     let stamp = props(vec![("LastScan", Variant::from(5000i64))]);
     assert_eq!(wake_for_change(dev, WIRELESS_IFACE, &stamp), None);
-    let rate = props(vec![
-        ("LastScan", Variant::from(5000i64)),
-        ("Bitrate", Variant::from(54000u32)),
-    ]);
-    assert_eq!(wake_for_change(dev, WIRELESS_IFACE, &rate), Some(Wake::Bus));
+}
+
+#[test]
+fn a_bitrate_update_patches_the_radio_without_a_read() {
+    let dev = "/org/freedesktop/NetworkManager/Devices/3";
+    let rate = |extra: Vec<(&str, Variant<'static>)>| {
+        let mut p = props(vec![("Bitrate", Variant::from(54000u32))]);
+        p.extend(props(extra));
+        wake_for_change(dev, WIRELESS_IFACE, &p)
+    };
+    let patched = Some(Wake::Bitrate {
+        path: dev.into(),
+        kbit: 54000,
+    });
+    assert_eq!(rate(vec![]), patched);
+    assert_eq!(rate(vec![("LastScan", Variant::from(5000i64))]), patched);
+    assert_eq!(
+        rate(vec![(
+            "ActiveAccessPoint",
+            Variant::from(zbus::ObjectPath::from_static_str_unchecked("/ap/1"))
+        )]),
+        Some(Wake::Bus),
+        "a new access point is a real change"
+    );
+    let mut snap = Snapshot {
+        devices: vec![Device {
+            path: dev.into(),
+            kind: Kind::Wifi,
+            speed_mbit: 6,
+            ..Device::default()
+        }],
+        ..Snapshot::default()
+    };
+    assert!(patch_bitrate(&mut snap, dev, 54000));
+    assert_eq!(snap.devices[0].speed_mbit, 54);
+    assert!(
+        !patch_bitrate(&mut snap, "/org/freedesktop/NetworkManager/Devices/9", 1000),
+        "an unknown device wants a read"
+    );
 }
 
 #[test]

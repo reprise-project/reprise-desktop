@@ -88,6 +88,10 @@ enum Wake {
         path: String,
         strength: Option<u8>,
     },
+    Bitrate {
+        path: String,
+        kbit: u32,
+    },
     Ran {
         device: Option<String>,
         error: Option<String>,
@@ -96,11 +100,21 @@ enum Wake {
     Quit,
 }
 
-/// The wake a `PropertiesChanged` on `path` is worth: strength-only access point updates are
-/// patched in place; a bare `LastScan` stamp is none; anything else rebuilds.
+/// The wake a `PropertiesChanged` on `path` is worth: a radio's bitrate and an access point's
+/// strength are patched in place; a bare `LastScan` stamp is none; anything else rebuilds.
 fn wake_for_change(path: &str, iface: &str, changed: &Props) -> Option<Wake> {
-    if iface == WIRELESS_IFACE && !changed.is_empty() && changed.keys().all(|k| k == "LastScan") {
-        return None;
+    if iface == WIRELESS_IFACE
+        && !changed.is_empty()
+        && changed.keys().all(|k| k == "LastScan" || k == "Bitrate")
+    {
+        let rate = changed.get("Bitrate")?;
+        return Some(match u32::try_from(rate.clone()) {
+            Ok(kbit) => Wake::Bitrate {
+                path: path.to_string(),
+                kbit,
+            },
+            Err(_) => Wake::Bus,
+        });
     }
     if iface == AP_IFACE
         && !changed.is_empty()
@@ -137,6 +151,17 @@ fn patch_strength(snapshot: &mut Snapshot, path: &str, strength: Option<u8>) -> 
         }
     }
     sort_aps(&mut wifi.aps);
+    true
+}
+
+/// Patch a radio's new bitrate (kbit/s) into the snapshot; false when no Wi-Fi device has that
+/// path.
+fn patch_bitrate(snapshot: &mut Snapshot, path: &str, kbit: u32) -> bool {
+    let Some(d) = (snapshot.devices.iter_mut()).find(|d| d.path == path && d.kind == Kind::Wifi)
+    else {
+        return false;
+    };
+    d.speed_mbit = kbit / 1000;
     true
 }
 
@@ -208,6 +233,11 @@ async fn run(
                 }
                 Wake::Strength { path, strength } => {
                     if !patch_strength(&mut snapshot, &path, strength) {
+                        rebuild = true;
+                    }
+                }
+                Wake::Bitrate { path, kbit } => {
+                    if !patch_bitrate(&mut snapshot, &path, kbit) {
                         rebuild = true;
                     }
                 }
