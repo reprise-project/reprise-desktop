@@ -1,6 +1,6 @@
 use crate::controls::shellview::{Field, Mode};
 
-/// The Views pick and the Details sort one dialog hands the next: hosts read it with
+/// The Views pick, the Details sort and Hidden Items one dialog hands the next: hosts read it with
 /// [`FileDlg::remembered`], store it as [`Remembered::text`] and open with
 /// [`FileDlg::restore`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -8,6 +8,7 @@ pub struct Remembered {
     pub mode: Mode,
     pub sort: Field,
     pub ascending: bool,
+    pub hidden: bool,
 }
 
 impl Default for Remembered {
@@ -16,6 +17,7 @@ impl Default for Remembered {
             mode: Mode::List,
             sort: Field::Name,
             ascending: true,
+            hidden: false,
         }
     }
 }
@@ -38,16 +40,17 @@ const FIELD_KEYS: [(Field, &str); 6] = [
 ];
 
 impl Remembered {
-    /// `view`, `sort` and `ascending` as TOML lines.
+    /// `view`, `sort`, `ascending` and `hidden` as TOML lines.
     pub fn text(&self) -> String {
         fn key<T: PartialEq>(table: &[(T, &'static str)], v: T) -> &'static str {
             table.iter().find(|(k, _)| *k == v).map_or("", |(_, s)| *s)
         }
         format!(
-            "view = \"{}\"\nsort = \"{}\"\nascending = {}\n",
+            "view = \"{}\"\nsort = \"{}\"\nascending = {}\nhidden = {}\n",
             key(&MODE_KEYS, self.mode),
             key(&FIELD_KEYS, self.sort),
-            self.ascending
+            self.ascending,
+            self.hidden
         )
     }
 
@@ -74,6 +77,11 @@ impl Remembered {
                 "ascending" => {
                     if let Ok(b) = value.parse() {
                         r.ascending = b;
+                    }
+                }
+                "hidden" => {
+                    if let Ok(b) = value.parse() {
+                        r.hidden = b;
                     }
                 }
                 _ => {}

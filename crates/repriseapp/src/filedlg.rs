@@ -214,12 +214,18 @@ struct Read {
     list: i32,
 }
 
-/// Folder `path`'s rows, hidden entries and those `keep` refuses left out, with their icons read
-/// at `scale` and List and Details' at `list` px. Runs on a listing's thread: any of it may sit
-/// on a mount that never answers.
-fn read(path: PathBuf, keep: impl FnMut(&Item) -> bool, scale: i32, list: i32) -> Read {
+/// Folder `path`'s rows, hidden entries (unless `hidden`) and those `keep` refuses left out, with
+/// their icons read at `scale` and List and Details' at `list` px. Runs on a listing's thread: any
+/// of it may sit on a mount that never answers.
+fn read(
+    path: PathBuf,
+    hidden: bool,
+    keep: impl FnMut(&Item) -> bool,
+    scale: i32,
+    list: i32,
+) -> Read {
     let globs = reprisefs::apps::mime_globs();
-    let rows = reprisefs::listing::dialog_rows(&path, &globs, keep);
+    let rows = reprisefs::listing::dialog_rows(&path, &globs, hidden, keep);
     let sizes = icontheme::listing_px(list);
     let icons = ReadIcons::read(rows.iter().map(|r| &r.item), sizes, scale);
     Read {
@@ -238,6 +244,7 @@ struct ReadKey {
     folders_only: bool,
     typed: Option<String>,
     filter: usize,
+    hidden: bool,
     scale: i32,
     list: i32,
 }
@@ -249,6 +256,7 @@ impl ReadKey {
             folders_only: dlg.mode() == DlgMode::Folder,
             typed: dlg.wildcard().map(str::to_string),
             filter: dlg.filter(),
+            hidden: dlg.show_hidden(),
             scale,
             list: shellview::list_icon_px(dlg.text()),
         }
@@ -325,6 +333,7 @@ fn listing(folders: &mut FolderTable, id: FolderId, read: Read, icons: &mut Icon
                 name: it.name,
                 is_dir: it.is_dir,
                 link: it.is_link,
+                hidden: it.hidden,
                 size: it.size,
                 kind: it.kind,
                 modified: r.modified,
@@ -491,7 +500,8 @@ enum Then {
 }
 
 /// Starts a read of a folder with the last [`Host::list`]'s filter and sizes.
-type StartRead = Box<dyn Fn(&Path) -> Job<Read>>;
+/// Starts a read of a folder, listing hidden entries with the `bool`.
+type StartRead = Box<dyn Fn(&Path, bool) -> Job<Read>>;
 
 #[derive(Default)]
 pub struct Host {
@@ -868,8 +878,8 @@ impl Host {
             && !Arc::ptr_eq(had, &theme)
         {
             self.listed_theme = Some(theme);
-            if let Some((_, path, start)) = &self.again {
-                self.restyling = Some(start(path));
+            if let Some((key, path, start)) = &self.again {
+                self.restyling = Some(start(path, key.hidden));
             }
         }
         let list = shellview::list_icon_px(dlg.text());
@@ -932,9 +942,9 @@ impl Host {
         let (listed, broken) = self.list_icons.landed(cache, dlg.entries_mut());
         if broken
             && self.restyling.is_none()
-            && let Some((_, path, start)) = &self.again
+            && let Some((key, path, start)) = &self.again
         {
-            self.restyling = Some(start(path));
+            self.restyling = Some(start(path, key.hidden));
         }
         chrome || listed
     }
@@ -1108,6 +1118,13 @@ impl Host {
         use reprisekit::controls::filedlg::Event as E;
         match out {
             E::Refresh => {
+                // Hidden Items moved: a read under way lists the entries it no longer wants.
+                if let Some((key, ..)) = &mut self.again
+                    && key.hidden != dlg.show_hidden()
+                {
+                    key.hidden = dlg.show_hidden();
+                    self.reading = None;
+                }
                 self.refresh();
                 Step::None
             }
@@ -1418,17 +1435,17 @@ impl Host {
             let (keep, scale, list) = (keep.clone(), key.scale, key.list);
             let (folders_only, typed) = (key.folders_only, key.typed.clone());
             let wake = self.wake.clone();
-            move |path: &Path| {
+            move |path: &Path, hidden: bool| {
                 let (path, keep) = (
                     path.to_path_buf(),
                     picks(folders_only, typed.clone(), keep.clone()),
                 );
-                Job::spawn(wake.as_ref(), move || read(path, keep, scale, list))
+                Job::spawn(wake.as_ref(), move || read(path, hidden, keep, scale, list))
             }
         };
         let job = match self.reading.take() {
             Some((k, job)) if k == key => job,
-            _ => start(&path),
+            _ => start(&path, key.hidden),
         };
         self.again = Some((key.clone(), path, Box::new(start)));
         match job.wait(LIST_WAIT) {
@@ -1457,7 +1474,7 @@ impl Host {
             && let Some((key, path, start)) = &self.again
             && (due.contains(path) || changed.iter().any(|f| f.parent() == Some(path)))
         {
-            self.reading = Some((key.clone(), start(path)));
+            self.reading = Some((key.clone(), start(path, key.hidden)));
         }
     }
 
@@ -1477,7 +1494,7 @@ impl Host {
             id: self.folders.id(&dir),
             ..key
         };
-        self.reading = Some((key.clone(), start(&dir)));
+        self.reading = Some((key.clone(), start(&dir, key.hidden)));
         self.again = Some((key, dir, start));
     }
 

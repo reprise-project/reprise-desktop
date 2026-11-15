@@ -711,6 +711,7 @@ impl Explorer {
             can_undo: self.undo,
             folders: self.settings.folders,
             status_bar: self.settings.status_bar,
+            hidden: self.settings.show_hidden,
             toolbars: [self.settings.toolbars, self.settings.address_bar, false],
             read_only: self.place.read_only(),
             bin: (self.place == Place::RecycleBin).then_some(self.items.len()),
@@ -1104,6 +1105,7 @@ impl Explorer {
                     is_dir: it.is_dir,
                     link: it.is_link || it.shortcut.is_some(),
                     cut: false,
+                    hidden: it.hidden,
                     size: it.size,
                     kind: it.kind.clone(),
                     modified: it

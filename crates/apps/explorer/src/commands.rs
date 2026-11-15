@@ -72,6 +72,8 @@ pub enum Command {
     Sort(usize),
     ToggleFolders,
     ToggleStatusBar,
+    /// View > Hidden Items and Ctrl+H.
+    ToggleHidden,
     /// 0 Standard Buttons, 1 Address Bar, 2 Links.
     ToggleToolbar(usize),
     ToggleNode,
@@ -223,6 +225,7 @@ pub fn command_for_key(sym: u32, ctrl: bool, shift: bool, alt: bool) -> Command 
             Some('f') => Command::SearchFocus,
             Some('t') => Command::NewTab,
             Some('w') => Command::CloseTab,
+            Some('h') => Command::ToggleHidden,
             _ => Command::Nothing,
         },
     }
@@ -423,6 +426,14 @@ impl Explorer {
                 self.settings_dirty = true;
                 self.refresh_chrome(ctx);
                 Reply::redraw()
+            }
+            Command::ToggleHidden => {
+                self.settings.show_hidden = !self.settings.show_hidden;
+                self.settings_dirty = true;
+                // The Folders tree lists hidden folders too: built afresh, it fills again down
+                // to the place shown.
+                self.build_tree(ctx);
+                self.refresh(ctx)
             }
             Command::ToggleToolbar(i) => {
                 match i {

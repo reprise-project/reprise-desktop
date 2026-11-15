@@ -32,6 +32,7 @@ impl Request {
         self.id == o.id
             && self.scale == o.scale
             && self.list == o.list
+            && self.hidden == o.hidden
             && self.path == o.path
             && self.exts == o.exts
             && self.pattern == o.pattern
@@ -42,13 +43,17 @@ impl Request {
     /// Reads the folder or looks the name up. Blocks for as long as the
     /// file system does.
     pub fn run(mut self) -> Reply {
+        let view = (self.view_file.as_deref())
+            .map(repriseconf::filedialog::load_from)
+            .map(|t| filedlg::Remembered::parse(&repriseconf::filedialog::section(&t, OWN_APP)));
+        let hidden = view.map_or(self.hidden, |v| v.hidden);
         let pattern = self.pattern.as_deref();
         let found = if self.id.is_some() {
-            Found::Folder(read_folder(&self.path, self.exts, pattern))
+            Found::Folder(read_folder(&self.path, hidden, self.exts, pattern))
         } else if self.climb {
             match self.path.ancestors().find(|p| p.is_dir()) {
                 Some(dir) => {
-                    let rows = read_folder(dir, self.exts, pattern);
+                    let rows = read_folder(dir, hidden, self.exts, pattern);
                     self.path = dir.to_path_buf();
                     Found::Folder(rows)
                 }
@@ -56,7 +61,9 @@ impl Request {
             }
         } else {
             match std::fs::metadata(&self.path) {
-                Ok(m) if m.is_dir() => Found::Folder(read_folder(&self.path, self.exts, pattern)),
+                Ok(m) if m.is_dir() => {
+                    Found::Folder(read_folder(&self.path, hidden, self.exts, pattern))
+                }
                 Ok(m) if m.is_file() && !self.folder_only => Found::File,
                 _ => Found::Missing,
             }
@@ -65,9 +72,6 @@ impl Request {
             Found::Folder(rows) => icon_files(rows, self.scale, self.list),
             _ => Vec::new(),
         };
-        let view = (self.view_file.as_deref())
-            .map(repriseconf::filedialog::load_from)
-            .map(|t| filedlg::Remembered::parse(&repriseconf::filedialog::section(&t, OWN_APP)));
         Reply {
             view,
             seq: self.seq,
@@ -91,9 +95,14 @@ static GLOBS: std::sync::LazyLock<reprisefs::apps::MimeDb> =
 /// `dir`'s subfolders and its files: those a typed `pattern` keeps,
 /// else those with an extension in `exts`, the executable ones for an
 /// empty `exts`, all of them for `None`, as `listing::dialog_rows` orders
-/// them.
-pub(super) fn read_folder(dir: &Path, exts: Option<&[&str]>, pattern: Option<&str>) -> Vec<Listed> {
-    let rows = reprisefs::listing::dialog_rows(dir, &GLOBS, |i| {
+/// them, hidden ones only with `hidden`.
+pub(super) fn read_folder(
+    dir: &Path,
+    hidden: bool,
+    exts: Option<&[&str]>,
+    pattern: Option<&str>,
+) -> Vec<Listed> {
+    let rows = reprisefs::listing::dialog_rows(dir, &GLOBS, hidden, |i| {
         i.is_dir
             || match (pattern, exts) {
                 (Some(p), _) => filedlg::pattern_keeps(p, &i.name),

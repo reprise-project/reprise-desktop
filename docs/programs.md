@@ -13,6 +13,9 @@ The file manager, and the default for folders.
   size, type or date. A folder tree or a task pane down the side, Back and
   Forward with their history, Up and an address bar (Alt+D). It remembers
   your view and window size.
+- **Hidden items** (View > Hidden Items, Ctrl+H) shows dot names and the
+  names a folder's `.hidden` lists, in the view and the Folders tree, their
+  icons faded. Explorer remembers the choice.
 - **Tabs:** Ctrl+T opens the folder shown in a new tab, Ctrl+W closes one
   (the last closes the window), Ctrl+Tab and Ctrl+Shift+Tab go round them.
   Middle-click a folder, or pick Open in New Tab on its menu, to open it in
@@ -101,8 +104,9 @@ The file manager, and the default for folders.
   item in a drive's Recycle Bin goes back only onto that drive.
   Recycle Bin Properties can empty items older than a number of days, at
   login and then daily.
-- **Properties** (Alt+Enter): size, dates, Read-only, Hidden and
-  Executable, a Summary tab whose title, author and keywords live in the
+- **Properties** (Alt+Enter): size, dates, Read-only, Hidden (a leading
+  dot, or the folder's `.hidden` line for a name it lists; the item then
+  shows only with Hidden Items on) and Executable, a Summary tab whose title, author and keywords live in the
   file's extended attributes, a Checksums tab, a Shortcut tab for launchers
   and a Change Icon for folders. The Checksums tab shows a file's SHA-256
   and MD5 with Copy buttons: a file up to 100 MB is hashed as the tab opens,

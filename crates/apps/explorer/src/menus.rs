@@ -28,6 +28,8 @@ pub struct MenuState {
     pub can_undo: Option<&'static str>,
     pub folders: bool,
     pub status_bar: bool,
+    /// View > Hidden Items: dot names and those a folder's `.hidden` lists are shown.
+    pub hidden: bool,
     pub toolbars: [bool; 3],
     pub read_only: bool,
     /// The Recycle Bin is up, holding this many items: File and the item menu
@@ -62,6 +64,7 @@ impl Default for MenuState {
             can_undo: None,
             folders: true,
             status_bar: true,
+            hidden: false,
             toolbars: [true, true, false],
             read_only: false,
             bin: None,
@@ -95,7 +98,11 @@ fn keyed(label: &str, enabled: bool, shortcut: &str) -> MenuItem {
 }
 
 fn check(label: &str, enabled: bool, on: bool) -> MenuItem {
-    with(row(label, enabled), |e| {
+    checked(row(label, enabled), on)
+}
+
+fn checked(item: MenuItem, on: bool) -> MenuItem {
+    with(item, |e| {
         if let MenuItem::Entry { checked, .. } = e {
             *checked = on;
         }
@@ -195,7 +202,7 @@ fn toolbars_menu(state: &MenuState) -> Menu {
 fn explorer_bar_menu(state: &MenuState) -> Menu {
     let mut m = Menu::default();
     m.row(keyed("&Favorites", false, "Ctrl+I"), Command::Nothing);
-    m.row(keyed("&History", false, "Ctrl+H"), Command::Nothing);
+    m.row(row("&History", false), Command::Nothing);
     m.row(
         check("F&olders", true, state.folders),
         Command::ToggleFolders,
@@ -354,6 +361,10 @@ fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
     }
     view.sep();
     view.sub(row("Arrange &Icons by", true), arrange_menu(state));
+    view.row(
+        checked(keyed("Hidden Ite&ms", true, "Ctrl+H"), state.hidden),
+        Command::ToggleHidden,
+    );
     view.sep();
     view.row(row("C&hoose Details...", false), Command::Nothing);
     view.sub(row("&Go To", true), go_to_menu(state));

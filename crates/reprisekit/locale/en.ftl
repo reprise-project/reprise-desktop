@@ -62,6 +62,7 @@ filedlg-menu-delete = &Delete
 filedlg-menu-rename = Rena&me
 filedlg-menu-view = &View
 filedlg-menu-refresh = R&efresh
+filedlg-menu-hidden = Hidden Ite&ms
 filedlg-menu-new = Ne&w
 filedlg-menu-new-folder = &Folder
 filedlg-menu-open = &Open

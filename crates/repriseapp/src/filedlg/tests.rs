@@ -10,7 +10,13 @@ fn listed(
     keep: impl Fn(&Item) -> bool,
 ) -> Folder {
     let path = folders.path(id).expect("the id resolves").to_path_buf();
-    let r = read(path, picks(folders_only, None, keep), icons.scale(), 16);
+    let r = read(
+        path,
+        false,
+        picks(folders_only, None, keep),
+        icons.scale(),
+        16,
+    );
     listing(folders, id, r, icons).folder
 }
 
@@ -81,6 +87,7 @@ fn the_next_dialog_opens_in_the_view_and_sort_the_last_one_left() {
         mode: Mode::Details,
         sort: shellview::Field::Modified,
         ascending: false,
+        hidden: false,
     };
     assert_eq!(dlg.remembered(), details);
 
@@ -90,6 +97,41 @@ fn the_next_dialog_opens_in_the_view_and_sort_the_last_one_left() {
     std::fs::write(&file, [0xff, 0xfe, 0]).unwrap();
     let dlg = host().open(t.path(), fields(), theme.text);
     assert_eq!(dlg.remembered(), Remembered::default(), "a bad file");
+}
+
+#[test]
+fn ctrl_h_lists_hidden_entries_faded_and_the_next_dialog_opens_with_them() {
+    let t = tempfile::tempdir().unwrap();
+    let file = t.path().join("filedialog.toml");
+    let dir = t.path().join("docs");
+    std::fs::create_dir_all(&dir).unwrap();
+    for n in ["a.txt", ".x"] {
+        std::fs::write(dir.join(n), "").unwrap();
+    }
+    let theme = Theme::default();
+    let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
+    let metrics = Metrics::default();
+    let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+    let mut h = host_of(&file, "test.app");
+    let mut dlg = h.open(&dir, open_fields(), theme.text);
+    let id = h.folder.expect("a folder");
+    h.list(&mut dlg, id, &mut icons, &|_: &Item| true);
+    assert!(has(&dlg, "a.txt") && !has(&dlg, ".x"));
+
+    let ctrl_h = key(u32::from(b'h'), true, None);
+    h.event(&mut dlg, &ctrl_h, &text, &theme, CLIENT, &metrics);
+    until(&mut h, &mut dlg, &mut icons, |d| has(d, ".x"));
+    assert!(
+        dlg.entries().iter().any(|e| e.name == ".x" && e.hidden),
+        "the dot file draws faded"
+    );
+
+    let mut h = host_of(&file, "test.app");
+    let mut dlg = h.open(&dir, open_fields(), theme.text);
+    assert!(dlg.show_hidden(), "the next dialog opens with them");
+    let id = h.folder.expect("a folder");
+    h.list(&mut dlg, id, &mut icons, &|_: &Item| true);
+    assert!(has(&dlg, ".x"));
 }
 
 fn open_fields() -> Fields {
@@ -1411,7 +1453,7 @@ fn a_late_listing_lands_with_the_icons_its_thread_read() {
     let mut h = host_in(&dir);
     let mut dlg = open_dlg(&mut h);
     let id = h.folder.unwrap();
-    let read = read(dir.clone(), |_: &Item| true, icons.scale(), 16);
+    let read = read(dir.clone(), false, |_: &Item| true, icons.scale(), 16);
     std::fs::remove_file(dir.join("sub/.directory")).unwrap();
     std::fs::remove_file(&own).unwrap();
     let (answer, gate) = std::sync::mpsc::channel::<()>();
@@ -1445,7 +1487,7 @@ fn a_relist_of_a_folder_being_read_waits_on_that_read() {
     let mut dlg = open_dlg(&mut h);
     let id = h.folder.unwrap();
     let in_flight = |h: &mut Host, key: ReadKey| {
-        let before = read(t.clone(), |_: &Item| true, 1, 16);
+        let before = read(t.clone(), false, |_: &Item| true, 1, 16);
         h.reading = Some((key, Job::spawn(None, move || before)));
     };
     let names =

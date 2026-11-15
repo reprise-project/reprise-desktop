@@ -185,13 +185,51 @@ fn the_status_bar_row_checks_itself() {
 }
 
 #[test]
+fn hidden_items_is_ticked_with_hidden_items_shown_and_takes_ctrl_h_from_history() {
+    let row = |hidden| {
+        let rows = bar_rows(
+            &MenuState {
+                hidden,
+                ..Default::default()
+            },
+            2,
+        );
+        match &rows[11] {
+            MenuItem::Entry {
+                label,
+                checked,
+                shortcut,
+                ..
+            } => (label.clone(), *checked, shortcut.clone()),
+            MenuItem::Separator => panic!("not an entry"),
+        }
+    };
+    assert_eq!(
+        row(false),
+        ("Hidden Items".into(), false, Some("Ctrl+H".into()))
+    );
+    assert!(row(true).1);
+    let bar = bar_menus(&MenuState::default())[2]
+        .1
+        .at(&[2])
+        .expect("Explorer Bar")
+        .clone();
+    let history = &bar.items()[1];
+    assert!(
+        matches!(history, MenuItem::Entry { label, shortcut: None, .. } if label == "History"),
+        "{history:?}"
+    );
+}
+
+#[test]
 fn command_for_maps_the_menu_rows() {
     let s = MenuState::default();
     assert_eq!(command_for(0, &[7], &s), Command::ConnectToServer);
     assert_eq!(command_for(0, &[9], &s), Command::Close);
     assert_eq!(command_for(2, &[1], &s), Command::ToggleStatusBar);
     assert_eq!(command_for(2, &[6], &s), Command::Mode(Mode::Icons));
-    assert_eq!(command_for(2, &[14], &s), Command::Refresh);
+    assert_eq!(command_for(2, &[11], &s), Command::ToggleHidden);
+    assert_eq!(command_for(2, &[15], &s), Command::Refresh);
     assert_eq!(command_for(5, &[2], &s), Command::About);
     assert_eq!(command_for(0, &[0], &s), Command::Nothing);
     assert_eq!(command_for(0, &[1], &s), Command::Nothing);
@@ -210,17 +248,17 @@ fn the_bars_submenu_rows_dispatch() {
     for i in 0..4 {
         assert_eq!(command_for(2, &[10, i], &s), Command::Sort(i));
     }
-    assert_eq!(command_for(2, &[13, 0], &s), Command::Back);
-    assert_eq!(command_for(2, &[13, 1], &s), Command::Forward);
-    assert_eq!(command_for(2, &[13, 2], &s), Command::Up);
+    assert_eq!(command_for(2, &[14, 0], &s), Command::Back);
+    assert_eq!(command_for(2, &[14, 1], &s), Command::Forward);
+    assert_eq!(command_for(2, &[14, 2], &s), Command::Up);
     assert_eq!(
-        command_for(2, &[13, 6], &s),
+        command_for(2, &[14, 6], &s),
         Command::GoTo(Place::Documents)
     );
-    assert_eq!(command_for(2, &[13, 7], &s), Command::GoTo(Place::Home));
-    assert_eq!(command_for(2, &[13, 8], &s), Command::GoTo(Place::Computer));
+    assert_eq!(command_for(2, &[14, 7], &s), Command::GoTo(Place::Home));
+    assert_eq!(command_for(2, &[14, 8], &s), Command::GoTo(Place::Computer));
     assert_eq!(
-        command_for(2, &[13, 9], &s),
+        command_for(2, &[14, 9], &s),
         Command::GoTo(Place::network())
     );
 }

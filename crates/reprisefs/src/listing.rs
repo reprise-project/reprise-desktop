@@ -522,25 +522,31 @@ pub struct Row {
 }
 
 /// `dir` as a file dialog lists it: [`read_dir`]'s order, hidden entries
-/// dropped, and only the entries `keep` accepts, plus the links listed
+/// dropped unless `hidden`, and only the entries `keep` accepts, plus the links listed
 /// unfollowed, which may yet open as folders. The My Recent Documents
 /// place ([`places::RECENT`]) lists the recently used files instead.
-pub fn dialog_rows(dir: &Path, globs: &MimeDb, keep: impl FnMut(&Item) -> bool) -> Vec<Row> {
-    dialog_rows_with(dir, globs, keep, target_of, LINK_WAIT)
+pub fn dialog_rows(
+    dir: &Path,
+    globs: &MimeDb,
+    hidden: bool,
+    keep: impl FnMut(&Item) -> bool,
+) -> Vec<Row> {
+    dialog_rows_with(dir, globs, hidden, keep, target_of, LINK_WAIT)
 }
 
 fn dialog_rows_with(
     dir: &Path,
     globs: &MimeDb,
+    hidden: bool,
     keep: impl FnMut(&Item) -> bool,
     follow: fn(&Path) -> Target,
     wait: Duration,
 ) -> Vec<Row> {
     if places::is_recent(dir) {
         let files = recent::RecentFiles::new().current(RECENT_LIMIT);
-        return recent_rows(&files, globs, keep);
+        return recent_rows(&files, globs, hidden, keep);
     }
-    rows(entries_with(dir, globs, follow, wait), keep)
+    rows(entries_with(dir, globs, follow, wait), hidden, keep)
 }
 
 const RECENT_LIMIT: usize = 50;
@@ -548,25 +554,32 @@ const RECENT_LIMIT: usize = 50;
 /// `files` (newest first) as My Recent Documents lists them: each row's
 /// `path` is the file's own, and a name already listed (the same name in
 /// another folder) is left out, so a name picks one file.
-fn recent_rows(files: &[PathBuf], globs: &MimeDb, keep: impl FnMut(&Item) -> bool) -> Vec<Row> {
+fn recent_rows(
+    files: &[PathBuf],
+    globs: &MimeDb,
+    hidden: bool,
+    keep: impl FnMut(&Item) -> bool,
+) -> Vec<Row> {
     let mut seen = std::collections::HashSet::new();
     let items = files
         .iter()
         .map(|p| item_at(p, globs))
         .filter(|i| seen.insert(i.name.clone()))
         .map(|i| (i, true));
-    rows(items, keep)
+    rows(items, hidden, keep)
 }
 
-/// `entries` a dialog lists: those not hidden that `keep` accepts or whose target never answered.
+/// `entries` a dialog lists: those not hidden (any, with `hidden`) that `keep` accepts or whose
+/// target never answered.
 fn rows(
     entries: impl IntoIterator<Item = (Item, bool)>,
+    hidden: bool,
     mut keep: impl FnMut(&Item) -> bool,
 ) -> Vec<Row> {
     let is_12h = locale::is_12h();
     entries
         .into_iter()
-        .filter(|(i, followed)| !i.hidden && (!followed || keep(i)))
+        .filter(|(i, followed)| (hidden || !i.hidden) && (!followed || keep(i)))
         .map(|(item, _)| Row {
             modified: item
                 .modified
@@ -920,6 +933,7 @@ mod tests {
         let rows = dialog_rows_with(
             t.path(),
             &MimeDb::empty(),
+            false,
             |i| i.is_dir || i.name.ends_with(".txt"),
             follow,
             Duration::from_millis(100),
@@ -1151,13 +1165,31 @@ mod tests {
         }
         std::fs::write(t.path().join(".hidden"), "listed.txt\n").unwrap();
         std::fs::create_dir(t.path().join("dir")).unwrap();
-        let rows = dialog_rows(t.path(), &MimeDb::empty(), |i| {
+        let rows = dialog_rows(t.path(), &MimeDb::empty(), false, |i| {
             i.is_dir || i.name.ends_with(".txt")
         });
         let names: Vec<&str> = rows.iter().map(|r| r.item.name.as_str()).collect();
         assert_eq!(names, ["dir", "b.txt"]);
         assert_eq!(rows[1].item.path, t.path().join("b.txt"));
         assert!(!rows[1].modified.is_empty(), "a file's date is formatted");
+    }
+    #[test]
+    fn dialog_rows_keep_hidden_entries_flagged_when_asked() {
+        let t = tempfile::tempdir().unwrap();
+        for n in ["b.txt", ".dot.txt", "listed.txt", ".x.png"] {
+            std::fs::write(t.path().join(n), "").unwrap();
+        }
+        std::fs::write(t.path().join(".hidden"), "listed.txt\n").unwrap();
+        let rows = dialog_rows(t.path(), &MimeDb::empty(), true, |i| {
+            i.name.ends_with(".txt")
+        });
+        let named: Vec<(&str, bool)> = (rows.iter())
+            .map(|r| (r.item.name.as_str(), r.item.hidden))
+            .collect();
+        assert_eq!(
+            named,
+            [(".dot.txt", true), ("b.txt", false), ("listed.txt", true)]
+        );
     }
     #[test]
     fn recent_rows_keep_each_files_path_and_the_newest_of_a_name() {
@@ -1171,7 +1203,7 @@ mod tests {
         for p in [&new, &old, &pic] {
             std::fs::write(p, "").unwrap();
         }
-        let rows = recent_rows(&[new.clone(), pic, old], &MimeDb::empty(), |i| {
+        let rows = recent_rows(&[new.clone(), pic, old], &MimeDb::empty(), false, |i| {
             i.name.ends_with(".txt")
         });
         let got: Vec<(&str, &Path)> = rows

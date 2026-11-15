@@ -22,6 +22,7 @@ pub(super) enum Cmd {
     Refresh,
     NewFolder,
     View(Mode),
+    ToggleHidden,
     Pin(bool),
     OpenPlace,
     Unpin,
@@ -31,7 +32,7 @@ pub(super) enum Cmd {
 /// A row: its item, and what it does or the rows of the submenu it opens.
 enum Row {
     Cmd(MenuItem, Cmd),
-    Sub(MenuItem, Vec<(MenuItem, Cmd)>),
+    Sub(MenuItem, Vec<(MenuItem, Option<Cmd>)>),
     Separator,
 }
 
@@ -89,6 +90,7 @@ fn label(key: &str) -> String {
         "rename" => tr!("filedlg-menu-rename"),
         "view" => tr!("filedlg-menu-view"),
         "refresh" => tr!("filedlg-menu-refresh"),
+        "hidden" => tr!("filedlg-menu-hidden"),
         "new" => tr!("filedlg-menu-new"),
         "open" => tr!("filedlg-menu-open"),
         "pin" => tr!("filedlg-menu-pin"),
@@ -145,15 +147,24 @@ impl FileDlg {
             ]);
             return rows;
         }
-        let views = views_items()
+        let mut views: Vec<_> = views_items()
             .into_iter()
             .map(|(name, mode)| {
                 let item = MenuItem::entry(name)
                     .radio(true)
                     .checked(mode == self.shell.mode);
-                (item, Cmd::View(mode))
+                (item, Some(Cmd::View(mode)))
             })
             .collect();
+        views.extend([
+            (MenuItem::Separator, None),
+            (
+                MenuItem::item(&label("hidden"))
+                    .checked(self.show_hidden)
+                    .shortcut(Some("Ctrl+H".into())),
+                Some(Cmd::ToggleHidden),
+            ),
+        ]);
         vec![
             Row::Sub(MenuItem::item(&label("view")).submenu(true), views),
             Row::Separator,
@@ -161,7 +172,7 @@ impl FileDlg {
             Row::Separator,
             Row::Sub(
                 MenuItem::item(&label("new")).submenu(true),
-                vec![(MenuItem::item(&label("folder")), Cmd::NewFolder)],
+                vec![(MenuItem::item(&label("folder")), Some(Cmd::NewFolder))],
             ),
         ]
     }
@@ -181,7 +192,7 @@ impl FileDlg {
         if let Some(Row::Sub(_, sub)) = c.sub.and_then(|i| rows.get(i)) {
             levels.push((
                 sub.iter().map(|(item, _)| item.clone()).collect(),
-                sub.iter().map(|(_, cmd)| Some(*cmd)).collect(),
+                sub.iter().map(|(_, cmd)| *cmd).collect(),
             ));
         }
         levels
@@ -435,6 +446,7 @@ impl FileDlg {
                 self.shell.set_mode(mode);
                 Event::Redraw
             }
+            Cmd::ToggleHidden => self.toggle_hidden(),
             Cmd::Pin(pin) => match self
                 .shell
                 .selection

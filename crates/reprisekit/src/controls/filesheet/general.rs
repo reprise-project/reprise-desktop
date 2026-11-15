@@ -2,10 +2,10 @@
 
 use super::{
     ADVANCED, APP_ICON_X, APP_NAME_X, CHANGE, CHECK_DY, CHECK_PITCH, CHECK_X, COUNT, EXECUTABLE,
-    Executable, FIELD, FIELD_TO_SEP, FILE_ADVANCED_RIGHT, FILE_HIDDEN_X, Facts, HIDDEN, ICON_PX,
-    ICON_Y, LABEL_X, NAME, NAME_FIELD, PAGE_BOTTOM, READ_ONLY, ROW_BUTTON_DY, ROW_BUTTON_RIGHT,
-    ROW_BUTTON_W, ROW_PITCH, Row, SEP_IDS, SEP_RIGHT, SEP_TO_ROW, SET_SHEET_H, SetFacts, Subject,
-    TAIL_INLINE, TAIL_STACKED, button, check, check_enabled, sep, tick,
+    Executable, FIELD, FIELD_TO_SEP, FILE_ADVANCED_RIGHT, FILE_HIDDEN_X, Facts, HIDDEN,
+    HIDDEN_NOTE, ICON_PX, ICON_Y, LABEL_X, NAME, NAME_FIELD, PAGE_BOTTOM, READ_ONLY, ROW_BUTTON_DY,
+    ROW_BUTTON_RIGHT, ROW_BUTTON_W, ROW_PITCH, Row, SEP_IDS, SEP_RIGHT, SEP_TO_ROW, SET_SHEET_H,
+    SetFacts, Subject, TAIL_INLINE, TAIL_STACKED, button, check, check_enabled, sep, tick,
 };
 use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, CheckState};
 use crate::controls::form::{Control, Form, Item};
@@ -257,16 +257,25 @@ pub fn general_page(
                     _ => (CHECK_X, by + CHECK_PITCH),
                 };
                 items.push(check(HIDDEN, hx, hy, "&Hidden", *hidden));
+                let mut last = hy;
                 if let Some(x) = executable {
+                    last += CHECK_PITCH;
                     items.push(check_enabled(
                         EXECUTABLE,
                         CHECK_X,
-                        hy + CHECK_PITCH,
+                        last,
                         "&Executable",
                         tick(x.on),
                         x.enabled,
                     ));
                 }
+                items.push(Item::label_at(
+                    HIDDEN_NOTE,
+                    LABEL_X,
+                    last + CHECK_PITCH,
+                    SEP_RIGHT - LABEL_X,
+                    "Hidden items show with View > Hidden Items.",
+                ));
                 let (right, w) = match subject {
                     Subject::Folder => (ROW_BUTTON_RIGHT, ROW_BUTTON_W),
                     _ => (FILE_ADVANCED_RIGHT, BUTTON_W),
