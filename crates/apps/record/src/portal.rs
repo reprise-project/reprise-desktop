@@ -1,20 +1,16 @@
 //! The ScreenCast portal session the recording reads the screen from. Reprise's portal starts
 //! the recorder's session without a dialog and casts every screen (docs/security.md).
 
-use futures_util::StreamExt;
+use reprisebus::portal::{self, CreateResults, Ignored, Options, PORTAL, PORTAL_PATH};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::os::fd::OwnedFd;
-use std::sync::mpsc;
 use std::time::Duration;
 use zbus::zvariant::{DeserializeDict, DynamicType, Type, Variant};
-use zbus::{Connection, MessageStream, OwnedObjectPath, OwnedVariant};
+use zbus::{Connection, OwnedObjectPath};
 
-const PORTAL: &str = "org.freedesktop.portal.Desktop";
-const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const SCREENCAST: &str = "org.freedesktop.portal.ScreenCast";
-const REQUEST: &str = "org.freedesktop.portal.Request";
 const SESSION: &str = "org.freedesktop.portal.Session";
 
 const MONITOR: u32 = 1;
@@ -43,9 +39,8 @@ impl Cast {
     pub fn start() -> Result<Cast, String> {
         let conn = zbus::block_on(Connection::session());
         let conn = conn.map_err(|e| format!("no session bus: {e}"))?;
-        let owner = portal_owner(&conn)?;
-        let token = "reprise_record_session";
-        let created: CreateResults = request(&conn, &owner, "CreateSession", 0, |mut options| {
+        let token = portal::token();
+        let created: CreateResults = request(&conn, "CreateSession", |mut options| {
             options.insert("session_handle_token", Variant::from(token));
             (options,)
         })?;
@@ -56,15 +51,14 @@ impl Cast {
             session,
             screens: Vec::new(),
         };
-        let _: Ignored = request(&cast.conn, &owner, "SelectSources", 1, |mut options| {
+        let _: Ignored = request(&cast.conn, "SelectSources", |mut options| {
             options.insert("types", Variant::from(MONITOR));
             options.insert("multiple", Variant::from(true));
             options.insert("cursor_mode", Variant::from(CURSOR_EMBEDDED));
             (&cast.session, options)
         })?;
-        let started: StartResults = request(&cast.conn, &owner, "Start", 2, |options| {
-            (&cast.session, "", options)
-        })?;
+        let started: StartResults =
+            request(&cast.conn, "Start", |options| (&cast.session, "", options))?;
         cast.screens = screens(started.streams.unwrap_or_default());
         Ok(cast)
     }
@@ -113,15 +107,6 @@ fn screens(streams: Vec<(u32, StreamProps)>) -> Vec<Screen> {
         .collect()
 }
 
-type Options = HashMap<&'static str, Variant<'static>>;
-type Ignored = HashMap<String, OwnedVariant>;
-
-#[derive(DeserializeDict, Type)]
-#[zvariant(signature = "a{sv}")]
-struct CreateResults {
-    session_handle: Option<String>,
-}
-
 #[derive(DeserializeDict, Type)]
 #[zvariant(signature = "a{sv}")]
 struct StartResults {
@@ -135,102 +120,18 @@ struct StreamProps {
     mapping_id: Option<String>,
 }
 
-/// The request object the portal answers on, derived from our unique name and the handle
-/// token, so the Response can be subscribed before the call.
-fn request_path(unique: &str, token: &str) -> String {
-    let sender = unique.trim_start_matches(':').replace('.', "_");
-    format!("{PORTAL_PATH}/request/{sender}/{token}")
-}
-
-/// The portal's unique name, started if need be: only it may answer a request.
-fn portal_owner(conn: &Connection) -> Result<String, String> {
-    let failed = |e: zbus::fdo::Error| format!("the portal: {e}");
-    zbus::block_on(async {
-        let bus = zbus::fdo::DBusProxy::new(conn)
-            .await
-            .map_err(|e| e.to_string())?;
-        let name = zbus::names::BusName::try_from(PORTAL).map_err(|e| e.to_string())?;
-        let wk = zbus::names::WellKnownName::try_from(PORTAL).map_err(|e| e.to_string())?;
-        bus.start_service_by_name(wk, 0).await.map_err(failed)?;
-        let owner = bus.get_name_owner(name).await.map_err(failed)?;
-        Ok(owner.to_string())
-    })
-}
-
-/// The Response signals `owner` sends on request `path`.
-fn response_rule(path: &str, owner: &str) -> zbus::Result<zbus::MatchRule<'static>> {
-    let rule = zbus::MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        .sender(owner)
-        .interface(REQUEST)
-        .member("Response")
-        .path(path)
-        .build()?;
-    Ok(rule.into_owned())
-}
-
-/// Call ScreenCast's `method` with the body `body` builds around options carrying handle token
-/// `serial`, and wait for the Response portal `owner` sends: the results on success, the method
-/// and code otherwise.
+/// Calls ScreenCast's `method` with the body `body` builds around the request's options, and
+/// waits up to [`ANSWER`] for the portal's Response: the results, or the method and what went
+/// wrong.
 fn request<B, R>(
     conn: &Connection,
-    owner: &str,
     method: &str,
-    serial: u32,
     body: impl FnOnce(Options) -> B,
 ) -> Result<R, String>
 where
     B: Serialize + DynamicType,
-    R: DeserializeOwned + Type + Send + 'static,
+    R: DeserializeOwned + Type,
 {
-    let failed = |e: zbus::Error| format!("{method}: {e}");
-    let token = format!("reprise_record_{serial}");
-    let unique = conn
-        .unique_name()
-        .map(|n| n.to_string())
-        .unwrap_or_default();
-    let path = request_path(&unique, &token);
-    let rule = response_rule(&path, owner).map_err(failed)?;
-    let mut responses =
-        zbus::block_on(MessageStream::for_match_rule(rule, conn, None)).map_err(failed)?;
-    let options = Options::from([("handle_token", Variant::from(token))]);
-    let body = body(options);
-    let call = conn.call_method(Some(PORTAL), PORTAL_PATH, Some(SCREENCAST), method, &body);
-    zbus::block_on(call).map_err(failed)?;
-    let (tx, rx) = mpsc::channel();
-    let name = method.to_string();
-    std::thread::spawn(move || {
-        let answer = match zbus::block_on(responses.next()) {
-            Some(Ok(m)) => (m.body().deserialize::<(u32, R)>()).map_err(|e| format!("{name}: {e}")),
-            Some(Err(e)) => Err(format!("{name}: {e}")),
-            None => Err(format!("{name}: the bus closed")),
-        };
-        let _ = tx.send(answer);
-    });
-    let (code, results) = (rx.recv_timeout(ANSWER))
-        .map_err(|_| format!("{method}: no answer in {} s", ANSWER.as_secs()))??;
-    match code {
-        0 => Ok(results),
-        1 => Err(format!("{method}: refused")),
-        _ => Err(format!("{method}: failed")),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_response_is_awaited_on_the_path_the_token_names() {
-        assert_eq!(
-            request_path(":1.42", "reprise_record_1"),
-            "/org/freedesktop/portal/desktop/request/1_42/reprise_record_1"
-        );
-        let path = request_path(":1.42", "reprise_record_1");
-        let rule = response_rule(&path, ":1.7").unwrap();
-        assert_eq!(rule.sender().map(|s| s.as_str()), Some(":1.7"));
-        assert_eq!(rule.member().map(|m| m.as_str()), Some("Response"));
-        let other = response_rule(&path, ":1.8").unwrap();
-        assert_ne!(rule, other, "another peer's Response does not match");
-    }
+    let asked = portal::request(conn, SCREENCAST, method, Some(ANSWER), body);
+    zbus::block_on(asked).map_err(|e| format!("{method}: {e}"))
 }

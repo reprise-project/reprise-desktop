@@ -34,6 +34,7 @@
 //! [`sensorproxy`] reads iio-sensor-proxy's accelerometer: which way up the machine is held.
 //! [`searchprovider`] asks a program's search provider for results and opens one.
 //! [`error`] reads the name and message of an error reply.
+//! [`portal`] calls a desktop portal method and takes its Response from the portal alone.
 //! [`desklock`] follows the compositor's desktop lock on `org.freedesktop.ScreenSaver`.
 //! [`peer`] tells which process and which app a session bus peer is, and whether it runs in a
 //! Flatpak sandbox.
@@ -71,6 +72,7 @@ pub mod notify;
 pub mod peer;
 pub mod permissions;
 pub mod polkit;
+pub mod portal;
 pub mod remote;
 pub mod rfkill;
 pub mod searchprovider;

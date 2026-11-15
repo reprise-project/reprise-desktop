@@ -1,23 +1,19 @@
 //! A connection's RemoteDesktop portal session (keyboard, pointer, the shared outputs cast onto
 //! it), on a bus connection in its own thread that callers reach through a channel.
 
-use futures_util::StreamExt;
+use reprisebus::portal::{self, CreateResults, Ignored, Options, PORTAL, PORTAL_PATH};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::os::fd::OwnedFd;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
 use zbus::zvariant::{DeserializeDict, DynamicType, Type, Variant};
-use zbus::{Connection, MessageStream, OwnedObjectPath, OwnedVariant};
+use zbus::{Connection, OwnedObjectPath};
 
-const PORTAL: &str = "org.freedesktop.portal.Desktop";
-const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const REMOTE: &str = "org.freedesktop.portal.RemoteDesktop";
 const SCREENCAST: &str = "org.freedesktop.portal.ScreenCast";
-const REQUEST: &str = "org.freedesktop.portal.Request";
 const SESSION: &str = "org.freedesktop.portal.Session";
 
 const KEYBOARD: u32 = 1;
@@ -163,7 +159,7 @@ fn serve(rx: mpsc::Receiver<Command>) {
 }
 
 async fn open_on(conn: &Connection) -> Result<Grant, String> {
-    let token = next_token();
+    let token = portal::token();
     let created: CreateResults = request(conn, REMOTE, "CreateSession", |mut options| {
         options.insert("session_handle_token", Variant::from(token));
         (options,)
@@ -273,15 +269,6 @@ fn already_closed(e: &zbus::Error) -> bool {
     )
 }
 
-type Options = HashMap<&'static str, Variant<'static>>;
-type Ignored = HashMap<String, OwnedVariant>;
-
-#[derive(DeserializeDict, Type)]
-#[zvariant(signature = "a{sv}")]
-struct CreateResults {
-    session_handle: Option<String>,
-}
-
 #[derive(DeserializeDict, Type)]
 #[zvariant(signature = "a{sv}")]
 struct StartResults {
@@ -298,20 +285,8 @@ struct StreamProps {
     source_type: Option<u32>,
 }
 
-fn next_token() -> String {
-    static SERIAL: AtomicU32 = AtomicU32::new(0);
-    format!("reprise_rdp_{}", SERIAL.fetch_add(1, Ordering::Relaxed))
-}
-
-/// The request object the portal answers on, derived from our unique name and the handle
-/// token, so the Response can be subscribed before the call.
-fn request_path(unique: &str, token: &str) -> String {
-    let sender = unique.trim_start_matches(':').replace('.', "_");
-    format!("{PORTAL_PATH}/request/{sender}/{token}")
-}
-
-/// Call `method` with the body `body` builds around the options carrying a fresh handle token,
-/// and wait for its Response: the results on success, the method and code otherwise.
+/// Calls `method` with the body `body` builds around the request's options, and waits up to
+/// [`ANSWER`] for the portal's Response: the results, or the method and what went wrong.
 async fn request<B, R>(
     conn: &Connection,
     iface: &str,
@@ -322,46 +297,8 @@ where
     B: Serialize + DynamicType,
     R: DeserializeOwned + Type,
 {
-    let failed = |e: zbus::Error| format!("{method}: {e}");
-    let token = next_token();
-    let unique = conn
-        .unique_name()
-        .map(|n| n.to_string())
-        .unwrap_or_default();
-    let path = request_path(&unique, &token);
-    let rule = zbus::MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        .interface(REQUEST)
-        .member("Response")
-        .path(path.as_str())
-        .build()
-        .map_err(failed)?;
-    let mut responses = MessageStream::for_match_rule(rule, conn, None)
-        .await
-        .map_err(failed)?;
-    let options = Options::from([("handle_token", Variant::from(token))]);
-    conn.call_method(
-        Some(PORTAL),
-        PORTAL_PATH,
-        Some(iface),
-        method,
-        &body(options),
-    )
-    .await
-    .map_err(failed)?;
-    let runtime = zruntime::SharedRuntime::current().map_err(|e| format!("{method}: {e}"))?;
-    let answer = runtime
-        .timeout(ANSWER, responses.next())
-        .await
-        .map_err(|_| format!("{method}: no answer in {} s", ANSWER.as_secs()))?
-        .ok_or_else(|| format!("{method}: the bus closed"))?
-        .map_err(failed)?;
-    let (code, results): (u32, R) = answer.body().deserialize().map_err(failed)?;
-    match code {
-        0 => Ok(results),
-        1 => Err(format!("{method}: refused")),
-        _ => Err(format!("{method}: failed")),
-    }
+    (portal::request(conn, iface, method, Some(ANSWER), body).await)
+        .map_err(|e| format!("{method}: {e}"))
 }
 
 #[cfg(test)]
@@ -500,7 +437,7 @@ pub(crate) mod tests {
         remotes: std::sync::Arc<std::sync::Mutex<Vec<std::os::unix::net::UnixStream>>>,
     }
 
-    type Asked = HashMap<String, OwnedVariant>;
+    type Asked = HashMap<String, zbus::OwnedVariant>;
 
     async fn answer(
         conn: &Connection,
@@ -509,9 +446,16 @@ pub(crate) mod tests {
         results: HashMap<&str, Variant<'_>>,
     ) -> zbus::fdo::Result<OwnedObjectPath> {
         let token = String::try_from(options["handle_token"].try_clone().unwrap()).unwrap();
-        let path = request_path(hdr.sender().unwrap().as_str(), &token);
+        let path = portal::request_path(hdr.sender().unwrap().as_str(), &token);
         let body = (0u32, results);
-        (conn.emit_signal(None::<&str>, path.as_str(), REQUEST, "Response", &body)).await?;
+        (conn.emit_signal(
+            None::<&str>,
+            path.as_str(),
+            portal::REQUEST,
+            "Response",
+            &body,
+        ))
+        .await?;
         Ok(OwnedObjectPath::try_from(path).unwrap())
     }
 
@@ -656,14 +600,6 @@ pub(crate) mod tests {
         assert!(
             grant.take_pipewire_fds().is_empty(),
             "the fds are handed out once"
-        );
-    }
-
-    #[test]
-    fn the_request_path_follows_the_unique_name_and_token() {
-        assert_eq!(
-            request_path(":1.42", "reprise_rdp_3"),
-            "/org/freedesktop/portal/desktop/request/1_42/reprise_rdp_3"
         );
     }
 }
