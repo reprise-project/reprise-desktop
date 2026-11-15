@@ -67,6 +67,7 @@ fn decide(
             Some(p) => Decision::Done(p),
             None => Decision::Error("These files cannot be saved here.".into()),
         },
+        Kind::Save if paths.len() > 1 => Decision::Error("Type one file name.".into()),
         Kind::Save if paths.len() == 1 && taken(&paths[0]) => Decision::Confirm(paths[0].clone()),
         _ if paths.is_empty() => Decision::Error("Type a file name.".into()),
         _ => Decision::Done(paths),
@@ -491,6 +492,23 @@ mod tests {
         assert_eq!(
             decide(Kind::Save, false, &mut h, &["a.txt".into()], &[]),
             Decision::Confirm(t.join("a.txt"))
+        );
+        std::fs::remove_dir_all(&t).ok();
+    }
+
+    #[test]
+    fn save_takes_one_name() {
+        let t = tmp("save-one");
+        let mut h = host(&t);
+        assert_eq!(
+            decide(
+                Kind::Save,
+                false,
+                &mut h,
+                &["new.txt".into(), "a.txt".into()],
+                &[]
+            ),
+            Decision::Error("Type one file name.".into())
         );
         std::fs::remove_dir_all(&t).ok();
     }
