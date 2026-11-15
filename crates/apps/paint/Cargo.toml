@@ -24,5 +24,7 @@ repriseconf = { path = "../../repriseconf" }
 reprisebus = { path = "../../reprisebus" }
 image.workspace = true
 log.workspace = true
-tempfile.workspace = true
 toml_edit.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

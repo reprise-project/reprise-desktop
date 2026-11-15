@@ -5,7 +5,7 @@ use super::*;
 impl Notepad {
     /// The edit keeps LF, so a CRLF or CR file gets its breaks back here.
     pub(crate) fn write_to(&self, path: &Path, format: Format) -> std::io::Result<()> {
-        write_document(path, self.edit.lines(), format)
+        reprisefs::ops::write_document(path, &encode(self.edit.lines(), format))
     }
 
     /// False when there is nowhere to write yet (the caller opens Save As), when the write failed,
