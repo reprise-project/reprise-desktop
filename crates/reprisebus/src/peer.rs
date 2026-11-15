@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use zbus::Connection;
 use zbus::fdo::ConnectionCredentials;
+use zbus::message::Header;
 
 /// Which app a bus peer is, as its process shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -562,6 +563,42 @@ pub(crate) async fn sandboxed_under(conn: &Connection, peer: &str, proc: &Path) 
     // The pidfd keeps `pid` from being reused while it shows the pid: if it still does after the
     // read, the root read was the peer's.
     shows_flatpak_info(proc, pid) || pid_of(&fd) != Some(pid)
+}
+
+/// Refuses method calls from peers in a Flatpak sandbox with AccessDenied. Flatpak lets an app own
+/// and call any name under its app id, so a service on an `org.reprise.*` name checks each caller.
+/// A sandboxed caller's process, as the bus reports it, is its bus proxy, which runs in the sandbox.
+#[derive(Clone, Debug)]
+pub struct HostOnly {
+    proc: PathBuf,
+}
+
+impl Default for HostOnly {
+    fn default() -> Self {
+        HostOnly::under(Path::new("/proc"))
+    }
+}
+
+impl HostOnly {
+    /// Reads processes under `proc` instead of `/proc`.
+    pub fn under(proc: &Path) -> HostOnly {
+        HostOnly {
+            proc: proc.to_path_buf(),
+        }
+    }
+
+    /// Ok when the call `header` carries came from outside a sandbox, as [`sandboxed`] judges it.
+    pub async fn check(&self, conn: &Connection, header: &Header<'_>) -> zbus::fdo::Result<()> {
+        let refused = || zbus::fdo::Error::AccessDenied("not from a sandbox".into());
+        let sender = header.sender().ok_or_else(refused)?;
+        if !sandboxed_under(conn, sender, &self.proc).await {
+            return Ok(());
+        }
+        let member = header.member().map_or("", |m| m.as_str());
+        let interface = header.interface().map_or("", |i| i.as_str());
+        log::warn!("refused {interface}.{member} from sandboxed peer {sender}");
+        Err(refused())
+    }
 }
 
 /// Whether `peer` on `conn` is the process `pid`; not when the bus gives no process fd for it, and

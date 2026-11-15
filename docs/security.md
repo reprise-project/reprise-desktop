@@ -79,6 +79,15 @@ own under another app id. The full list is `PRIVILEGED_GLOBALS` in
 sharing, screenshots, remote control and input capture through the portal,
 which asks you first.
 
+Flatpak also lets an app own and call the session bus names under its app
+id, so an app could take an `org.reprise.*` id. The compositor's
+`org.reprise.Tray` (Turn Off on a critical battery, Restart, the saved
+monitor layout, window frames) and the `org.freedesktop.Application` each
+Reprise program serves under its own name refuse every method call from a
+process that sees `/.flatpak-info`, or has exited, with AccessDenied, judged
+by the process a pidfd from the bus names. Remote Desktop does the same
+([Remote Desktop](#remote-desktop)).
+
 `[clipboard] trusted_apps` gives the two data control globals back to the
 Flatpak apps it names, and nothing else. The app id is the one Flatpak put
 on the security context, not one the app chose, and only Flatpak's

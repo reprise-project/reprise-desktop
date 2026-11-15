@@ -6,7 +6,7 @@ use super::{TrayCommand, TrayEvent, TrayItem};
 use crate::icontheme::{IconCache, IconTheme};
 use crate::mutex::lock;
 use futures_util::stream::{BoxStream, SelectAll, StreamExt};
-use reprisebus::peer::Identities;
+use reprisebus::peer::{HostOnly, Identities};
 use std::collections::{HashMap, HashSet};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -76,6 +76,7 @@ struct Shell {
     pads: crate::tabletpad::Shared,
     programs: Arc<Mutex<Programs>>,
     responding: Arc<Mutex<Responding>>,
+    host_only: HostOnly,
 }
 
 /// The bus names following `NotRespondingChanged`, and the windows it last named.
@@ -99,39 +100,82 @@ impl Responding {
 
 #[zbus::interface(name = "org.reprise.Tray")]
 impl Shell {
-    async fn customize(&self) {
+    async fn customize(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        self.host_only.check(conn, &hdr).await?;
         emit(&self.events, self.eventfd, TrayEvent::Customize);
+        Ok(())
     }
 
-    async fn critical_turn_off(&self) {
+    async fn critical_turn_off(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        self.host_only.check(conn, &hdr).await?;
         emit(&self.events, self.eventfd, TrayEvent::CriticalTurnOff);
+        Ok(())
     }
 
-    async fn restart(&self) {
+    async fn restart(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        self.host_only.check(conn, &hdr).await?;
         emit(&self.events, self.eventfd, TrayEvent::Restart);
+        Ok(())
     }
 
     /// Asks to empty the Recycle Bin, as its desktop icon's menu does.
-    async fn empty_recycle_bin(&self) {
+    async fn empty_recycle_bin(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        self.host_only.check(conn, &hdr).await?;
         emit(&self.events, self.eventfd, TrayEvent::EmptyRecycleBin);
+        Ok(())
     }
 
-    async fn identify(&self, outputs: Vec<String>) {
+    async fn identify(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+        outputs: Vec<String>,
+    ) -> zbus::fdo::Result<()> {
+        self.host_only.check(conn, &hdr).await?;
         emit(&self.events, self.eventfd, TrayEvent::Identify(outputs));
+        Ok(())
     }
 
     /// Answers once the layout holding the new primary is on disk.
-    async fn set_primary(&self, output: String) -> bool {
+    async fn set_primary(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+        output: String,
+    ) -> zbus::fdo::Result<bool> {
+        self.host_only.check(conn, &hdr).await?;
         let (reply, answer) = async_channel::bounded(1);
         emit(
             &self.events,
             self.eventfd,
             TrayEvent::SetPrimary { output, reply },
         );
-        answer.recv().await.unwrap_or(false)
+        Ok(answer.recv().await.unwrap_or(false))
     }
 
-    async fn preview_screen_saver(&self, name: String) -> zbus::fdo::Result<()> {
+    async fn preview_screen_saver(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+        name: String,
+    ) -> zbus::fdo::Result<()> {
+        self.host_only.check(conn, &hdr).await?;
         let kind = reprisekit::saver::Kind::parse(&name)
             .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("no screen saver {name:?}")))?;
         emit(
@@ -142,16 +186,35 @@ impl Shell {
         Ok(())
     }
 
-    async fn forget_window_frames(&self) {
+    async fn forget_window_frames(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        self.host_only.check(conn, &hdr).await?;
         emit(&self.events, self.eventfd, TrayEvent::ForgetWindowFrames);
+        Ok(())
     }
 
-    async fn reload_remembered(&self) {
+    async fn reload_remembered(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        self.host_only.check(conn, &hdr).await?;
         emit(&self.events, self.eventfd, TrayEvent::ReloadRemembered);
+        Ok(())
     }
 
     /// The icon of the window playing a sound stream; see [`crate::streamwindow`].
-    async fn window_icon(&self, pids: Vec<u32>, title: String) -> reprisebus::tray::WindowIconWire {
+    async fn window_icon(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+        pids: Vec<u32>,
+        title: String,
+    ) -> zbus::fdo::Result<reprisebus::tray::WindowIconWire> {
+        self.host_only.check(conn, &hdr).await?;
         use crate::streamwindow::{lineage, read_proc};
         let own = i32::try_from(std::process::id()).unwrap_or(0);
         let session: Vec<i32> = lineage(own, &[], read_proc)
@@ -173,35 +236,47 @@ impl Shell {
                 reply,
             },
         );
-        answer
+        Ok(answer
             .recv()
             .await
-            .unwrap_or_else(|_| reprisebus::tray::WindowIcon::wire(None))
+            .unwrap_or_else(|_| reprisebus::tray::WindowIcon::wire(None)))
     }
 
-    async fn tablet_pads(&self) -> Vec<reprisebus::tray::PadWire> {
+    async fn tablet_pads(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<Vec<reprisebus::tray::PadWire>> {
+        self.host_only.check(conn, &hdr).await?;
         let pads = lock(&self.pads);
-        pads.iter().map(reprisebus::tray::Pad::wire).collect()
+        Ok(pads.iter().map(reprisebus::tray::Pad::wire).collect())
     }
 
     /// The programs that sent notifications this session, as (key, name).
-    async fn notification_programs(&self) -> Vec<(String, String)> {
-        lock(&self.programs).0.clone()
+    async fn notification_programs(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<Vec<(String, String)>> {
+        self.host_only.check(conn, &hdr).await?;
+        Ok(lock(&self.programs).0.clone())
     }
 
     /// The windows not answering pings now. Until the caller leaves the bus, every window is
     /// pinged now and then and `NotRespondingChanged` follows the list.
     async fn watch_responding(
         &self,
+        #[zbus(connection)] conn: &Connection,
         #[zbus(header)] hdr: Header<'_>,
-    ) -> Vec<reprisebus::tray::Hung> {
+    ) -> zbus::fdo::Result<Vec<reprisebus::tray::Hung>> {
+        self.host_only.check(conn, &hdr).await?;
         let mut r = lock(&self.responding);
         if let Some(sender) = hdr.sender()
             && r.watch(sender)
         {
             emit(&self.events, self.eventfd, TrayEvent::WatchResponding(true));
         }
-        r.hung.clone()
+        Ok(r.hung.clone())
     }
 
     #[zbus(signal)]
@@ -1077,6 +1152,7 @@ async fn setup(kept: &Kept, address: Option<&str>) -> Result<Loop, String> {
                 pads: kept.pads.clone(),
                 programs: kept.programs.clone(),
                 responding: responding.clone(),
+                host_only: HostOnly::default(),
             },
         )
         .await

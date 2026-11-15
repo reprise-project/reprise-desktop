@@ -2479,3 +2479,79 @@ fn an_item_registered_once_comes_back_after_the_tray_connects_again() {
     tray.stop();
     assert_eq!(added, 2, "shown, then shown again on the new connection");
 }
+
+/// The error names `CriticalTurnOff` and `Restart` from another peer on `bus` answer (None for a
+/// reply), and how many tray events they sent, with the tray reading processes under `proc`.
+fn shell_calls(bus: &crate::testbus::Bus, proc: &std::path::Path) -> (Vec<Option<String>>, usize) {
+    let (events, received) = std::sync::mpsc::channel();
+    // SAFETY: eventfd takes no pointers; the result is checked below.
+    let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
+    assert!(fd >= 0, "eventfd failed");
+    // SAFETY: `fd` was just opened and nothing else owns it.
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    let shell = Shell {
+        events,
+        eventfd: fd.as_raw_fd(),
+        pads: Arc::default(),
+        programs: Arc::default(),
+        responding: Arc::default(),
+        host_only: HostOnly::under(proc),
+    };
+    let replies = zbus::block_on(async {
+        let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
+        let (tray, caller) = (connect().await.unwrap(), connect().await.unwrap());
+        (tray.object_server().at(reprisebus::tray::PATH, shell))
+            .await
+            .unwrap();
+        let tray = tray.unique_name().unwrap().to_string();
+        let mut replies = Vec::new();
+        for member in ["CriticalTurnOff", "Restart"] {
+            let reply = caller
+                .call_method(
+                    Some(tray.as_str()),
+                    reprisebus::tray::PATH,
+                    Some(reprisebus::tray::INTERFACE),
+                    member,
+                    &(),
+                )
+                .await;
+            let refusal = reply.err();
+            replies.push(
+                refusal
+                    .as_ref()
+                    .and_then(reprisebus::error::name)
+                    .map(|n| n.to_string()),
+            );
+        }
+        replies
+    });
+    (replies, received.try_iter().count())
+}
+
+#[test]
+fn a_sandboxed_peer_cannot_turn_the_computer_off_or_restart_it() {
+    let Some(bus) = crate::testbus::bus() else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    let proc = std::env::temp_dir().join(format!("reprise-tray-sandbox-{}", std::process::id()));
+    let root = proc.join(std::process::id().to_string()).join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join(".flatpak-info"),
+        "[Application]\nname=org.reprise.Tray\n",
+    )
+    .unwrap();
+    let denied = Some("org.freedesktop.DBus.Error.AccessDenied".to_string());
+    assert_eq!(
+        shell_calls(&bus, &proc),
+        (vec![denied.clone(), denied], 0),
+        "both refused, no event sent"
+    );
+    assert_eq!(
+        shell_calls(&bus, std::path::Path::new("/proc")),
+        (vec![None, None], 2),
+        "a host program is answered"
+    );
+    let _ = std::fs::remove_dir_all(&proc);
+}

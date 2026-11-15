@@ -1,6 +1,7 @@
 //! `org.reprise.RemoteDesktop` on the session bus, on a thread of its own: the server's status
 //! for Settings, and Disconnect, SessionEnding, DisconnectClient and RegenerateCertificate.
 
+use reprisebus::peer::HostOnly;
 use tokio::sync::{mpsc, oneshot, watch};
 use zbus::connection::Builder;
 use zbus::message::Header;
@@ -175,7 +176,7 @@ impl RemoteDesktop {
         #[zbus(header)] header: Option<Header<'_>>,
     ) -> zbus::fdo::Result<Vec<(String, String, u64)>> {
         let header = header.ok_or_else(|| zbus::fdo::Error::AccessDenied("no sender".into()))?;
-        unsandboxed(conn, &header).await?;
+        HostOnly::default().check(conn, &header).await?;
         Ok((self.status.borrow().clients.iter())
             .map(|c| (c.address.clone(), c.user.clone(), c.since))
             .collect())
@@ -209,7 +210,7 @@ impl RemoteDesktop {
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        unsandboxed(conn, &header).await?;
+        HostOnly::default().check(conn, &header).await?;
         let _ = self.disconnect.send(Request::All);
         Ok(())
     }
@@ -221,7 +222,7 @@ impl RemoteDesktop {
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        unsandboxed(conn, &header).await?;
+        HostOnly::default().check(conn, &header).await?;
         from_compositor(conn, &header, self.compositor).await?;
         let _ = self.disconnect.send(Request::SessionEnding);
         Ok(())
@@ -234,7 +235,7 @@ impl RemoteDesktop {
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        unsandboxed(conn, &header).await?;
+        HostOnly::default().check(conn, &header).await?;
         let _ = self.disconnect.send(Request::SessionEnding);
         Ok(())
     }
@@ -246,7 +247,7 @@ impl RemoteDesktop {
         #[zbus(header)] header: Header<'_>,
         address: String,
     ) -> zbus::fdo::Result<()> {
-        unsandboxed(conn, &header).await?;
+        HostOnly::default().check(conn, &header).await?;
         let (tx, rx) = oneshot::channel();
         let none = || zbus::fdo::Error::Failed(format!("no client at {address}"));
         let _ = self.disconnect.send(Request::Client(address.clone(), tx));
@@ -260,7 +261,7 @@ impl RemoteDesktop {
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        unsandboxed(conn, &header).await?;
+        HostOnly::default().check(conn, &header).await?;
         let (tx, rx) = oneshot::channel();
         let gone = || zbus::fdo::Error::Failed("the server is stopping".into());
         let Some(regenerate) = &self.regenerate else {
@@ -300,20 +301,6 @@ async fn from_compositor(
         Err(e) => Err(zbus::fdo::Error::Failed(format!(
             "the process behind {sender}: {e}"
         ))),
-    }
-}
-
-/// Refuses a peer in a Flatpak sandbox: one whose app id is this name's may reach the bus name,
-/// and the process the bus reports is its bus proxy's, which runs in the sandbox too.
-async fn unsandboxed(conn: &zbus::Connection, header: &Header<'_>) -> zbus::fdo::Result<()> {
-    let refused = || zbus::fdo::Error::AccessDenied("not from a sandbox".into());
-    let sender = header.sender().ok_or_else(refused)?;
-    match reprisebus::peer::sandboxed(conn, sender).await {
-        false => Ok(()),
-        true => {
-            log::warn!("{NAME}: refused a call from sandboxed peer {sender}");
-            Err(refused())
-        }
     }
 }
 
