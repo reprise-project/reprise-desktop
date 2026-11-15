@@ -447,6 +447,18 @@ impl Default for Settings {
     }
 }
 
+/// [`Settings::for_interface`], built once per interface for the code that runs on each event.
+pub fn defaults(interface: &str) -> &'static Settings {
+    static BUILT: [std::sync::OnceLock<Settings>; 3] = [const { std::sync::OnceLock::new() }; 3];
+    let i = Interface::parse(interface).unwrap_or(Interface::Classic);
+    let at = match i {
+        Interface::Classic => 0,
+        Interface::Blue => 1,
+        Interface::Glass => 2,
+    };
+    BUILT[at].get_or_init(|| Settings::for_interface(i.as_str()))
+}
+
 /// The value `choices` lists for `v`, as `parse` reads the values.
 fn named<T: PartialEq>(choices: &Choices, parse: impl Fn(&str) -> Option<T>, v: &T) -> String {
     (choices.iter())

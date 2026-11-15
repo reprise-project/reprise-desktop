@@ -33,6 +33,11 @@ pub(crate) fn restore_question(p: Page, keys: &[Key]) -> String {
     text
 }
 
+/// The keys the file or the sheet holds off the defaults, against the file's interface's and
+/// Classic's, worked out once per [`SettingsApp::sync_restore`].
+#[derive(Default)]
+struct Apart([Option<Vec<Key>>; 2]);
+
 impl SettingsApp {
     pub(crate) fn user_autostart(&self) -> PathBuf {
         autostart::user_dir(&reprisefs::autostart::config_home())
@@ -128,36 +133,42 @@ impl SettingsApp {
     /// Restore Defaults on every page whose controls write config keys, greyed where none is
     /// off its default.
     pub(crate) fn sync_restore(&mut self) {
+        let mut apart = Apart::default();
         for p in Page::all() {
             let i = p.index();
-            let shown = !pages::keys_of(&self.sheet.pages[i]).is_empty();
-            self.sheet.set_restore(i, shown);
-            let on = shown && !self.restorable(p).is_empty();
+            let keys = pages::keys_of(&self.sheet.pages[i]);
+            self.sheet.set_restore(i, !keys.is_empty());
+            let on = !self.off_default(keys, &mut apart).is_empty();
             self.sheet.pages[i].set_enabled(propsheet::RESTORE, on);
         }
     }
 
     /// The defaults Restore Defaults puts back for `keys`: the file's interface's, Classic's
     /// when the interface itself is among them.
-    fn defaults_for(&self, keys: &[Key]) -> model::Settings {
+    fn defaults_for(&self, keys: &[Key]) -> &'static model::Settings {
         let interface = match keys.contains(&model::INTERFACE) {
             true => "",
             false => &self.loaded.interface,
         };
-        model::Settings::for_interface(interface)
+        model::defaults(interface)
     }
 
     /// The keys page `p`'s controls write that the file or the sheet holds off their defaults.
     pub(crate) fn restorable(&self, p: Page) -> Vec<Key> {
         let keys = pages::keys_of(&self.sheet.pages[p.index()]);
+        self.off_default(keys, &mut Apart::default())
+    }
+
+    /// Those of `keys` that the file or the sheet holds off [`Self::defaults_for`] them.
+    fn off_default(&self, keys: Vec<Key>, apart: &mut Apart) -> Vec<Key> {
+        let classic = keys.contains(&model::INTERFACE);
         let def = self.defaults_for(&keys);
-        let apart = [
-            model::keys_apart(&self.loaded, &def),
-            model::keys_apart(&self.want, &def),
-        ];
-        (keys.into_iter())
-            .filter(|k| apart.iter().any(|a| a.contains(k)))
-            .collect()
+        let off = apart.0[usize::from(classic)].get_or_insert_with(|| {
+            let mut off = model::keys_apart(&self.loaded, def);
+            off.extend(model::keys_apart(&self.want, def));
+            off
+        });
+        keys.into_iter().filter(|k| off.contains(k)).collect()
     }
 
     /// Restore Defaults on the open page: ask with the keys it takes out of `config.toml`.
@@ -176,7 +187,7 @@ impl SettingsApp {
         let keys = self.restorable(p);
         let def = self.defaults_for(&keys);
         let mut next = self.loaded.clone();
-        model::copy_keys(&keys, &def, &mut next);
+        model::copy_keys(&keys, def, &mut next);
         let saved = repriseconf::edit(&self.path, |text| model::save(text, &next, &self.loaded));
         match saved {
             Ok(Ok(_)) => {}
@@ -192,7 +203,7 @@ impl SettingsApp {
                 return self.fail("config.toml could not be written.");
             }
         }
-        model::copy_keys(&keys, &def, &mut self.want);
+        model::copy_keys(&keys, def, &mut self.want);
         self.config_changed();
         pages::write(&mut self.sheet, &self.want, &self.xkb, &self.system_layout);
         self.fill_wallpapers();

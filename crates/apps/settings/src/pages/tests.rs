@@ -920,6 +920,15 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
     assert!(!keys_on(&s, Page::Appearance).contains(&"glass.material".to_string()));
 }
 
+#[test]
+fn a_page_rebuilt_with_other_controls_reports_its_own_keys() {
+    let mine = keys_of(&remote_desktop(Area::MIN, None, false, None));
+    let managed = keys_of(&remote_desktop(Area::MIN, None, false, Some("")));
+    assert!(!managed.is_empty());
+    assert_ne!(mine, managed, "a managed page has no Allow check box");
+    assert_eq!(keys_of(&remote_desktop(Area::MIN, None, false, None)), mine);
+}
+
 /// Every key the field table reads is on a page under one interface or another, so Restore
 /// Defaults reaches it.
 #[test]
