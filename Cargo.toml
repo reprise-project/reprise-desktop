@@ -100,8 +100,8 @@ serde = "1"
 serde_json = "1"
 # Our fork's `patches` branch: upstream master (far ahead of the last release)
 # plus the fixes and APIs listed in `git log upstream/master..patches` there.
-smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "cf5e2239717aec663d1953fe47f618896a141e0c", default-features = false }
-smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "cf5e2239717aec663d1953fe47f618896a141e0c" }
+smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "4ea5ab6ca057afbeeae1b56f7f76656e74b9f4a8", default-features = false }
+smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "4ea5ab6ca057afbeeae1b56f7f76656e74b9f4a8" }
 tempfile = "3"
 tokio = "1"
 tokio-rustls = "0.26.6"

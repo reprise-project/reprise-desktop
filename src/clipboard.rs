@@ -206,13 +206,18 @@ impl SelectionHandler for State {
         source: Option<SelectionSource>,
         _: Seat<Self>,
     ) {
+        let sandboxed = source.as_ref().is_some_and(|s| match s.client() {
+            Some(c) => crate::sandbox::client_sandboxed(&c),
+            None => self.clip_owner_sandboxed(),
+        });
+        // Smithay offers the selection to clients after this returns, so they see the mark.
+        if let Some(s) = &source {
+            s.edit_mime_types(|m| reprisefs::dropdata::mark_sandboxed(m, sandboxed));
+        }
         let mimes = source.as_ref().map(|s| s.mime_types());
         if ty == SelectionTarget::Clipboard {
             self.clip.offered = mimes.clone().unwrap_or_default();
-            self.clip.sandboxed = source.is_some_and(|s| match s.client() {
-                Some(c) => crate::sandbox::client_sandboxed(&c),
-                None => self.clip_owner_sandboxed(),
-            });
+            self.clip.sandboxed = sandboxed;
         }
         self.wayland_selection_to_x11(ty, mimes);
         if ty == SelectionTarget::Clipboard {
@@ -1026,6 +1031,46 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_sandboxed_programs_selection_reaches_other_programs_marked_its_history_copy_too() {
+        use reprisefs::dropdata::{SANDBOXED, URI_LIST};
+        const UTF8: &str = "text/plain;charset=utf-8";
+        let marked = |mimes: Vec<String>| mimes.iter().any(|m| m == SANDBOXED);
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut app = h.connect_sandboxed();
+        h.map_toplevel(&mut app, "test.app", 300, 200);
+        let list = b"copy\nfile:///home/u/.ssh/id_ed25519";
+        app.copy_each(&[(UTF8, b"id_ed25519"), (GNOME_FILES, list)]);
+        h.roundtrip(&mut app);
+        recorded(&mut h, 1);
+
+        let mut host = h.connect();
+        host.data_device();
+        h.map_toplevel(&mut host, "test.host", 300, 200);
+        h.roundtrip(&mut host);
+        let mimes = host.selection_mimes();
+        assert!(mimes.iter().any(|m| m == GNOME_FILES), "{mimes:?}");
+        assert!(marked(mimes), "the sandboxed program's own selection");
+
+        app.hang_up();
+        h.run_for(50);
+        h.roundtrip(&mut host);
+        let mimes = host.selection_mimes();
+        assert!(mimes.iter().any(|m| m == GNOME_FILES), "{mimes:?}");
+        assert!(marked(mimes), "the history's copy of it");
+
+        host.copy(&[URI_LIST, SANDBOXED], b"file:///home/u/x.png\r\n");
+        h.roundtrip(&mut host);
+        let mut other = h.connect();
+        other.data_device();
+        h.map_toplevel(&mut other, "test.other", 300, 200);
+        h.roundtrip(&mut other);
+        let mimes = other.selection_mimes();
+        assert!(mimes.iter().any(|m| m == URI_LIST), "{mimes:?}");
+        assert!(!marked(mimes), "a host program's forged mark is taken off");
     }
 
     #[test]

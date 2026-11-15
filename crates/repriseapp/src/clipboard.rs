@@ -134,8 +134,9 @@ impl Host {
         let Some(source) = offer.with_mime_types(fileclip::source) else {
             return;
         };
+        let sandboxed = offer.with_mime_types(reprisefs::dropdata::sandboxed);
         if !source.kde_cut {
-            return self.paste_files_as(win, source.files, false);
+            return self.paste_files_as(win, source.files, false, sandboxed);
         }
         let Ok(read_pipe) = offer.receive(fileclip::KDE_CUT.to_string()) else {
             return;
@@ -146,12 +147,12 @@ impl Host {
             reprisefs::pipe::PASTE_TIMEOUT,
             move |host: &mut Host, buf| {
                 let cut = buf.is_some_and(|b| fileclip::is_cut_marker(b.bytes()));
-                host.paste_files_as(win, source.files, cut);
+                host.paste_files_as(win, source.files, cut, sandboxed);
             },
         );
     }
 
-    fn paste_files_as(&mut self, win: WinId, mime: &'static str, kde_cut: bool) {
+    fn paste_files_as(&mut self, win: WinId, mime: &'static str, kde_cut: bool, sandboxed: bool) {
         let Some(offer) = self.selection_offer() else {
             return;
         };
@@ -159,9 +160,7 @@ impl Host {
             return;
         };
         self.read_offer(win, read_pipe, move |buf| {
-            let mut clip = reprisefs::fileclip::decode(mime, buf.bytes());
-            clip.cut |= kde_cut;
-            Event::PastedFiles(clip)
+            Event::PastedFiles(pasted_files(mime, buf.bytes(), kde_cut, sandboxed))
         });
     }
 
@@ -367,9 +366,60 @@ pub fn fake_clipboard_image(on: bool) {
     CLIPBOARD_IMAGE.set(on);
 }
 
+/// The files a paste of `bytes`, read as `mime`, lands. A sandboxed program's
+/// ([`reprisefs::dropdata::SANDBOXED`]) lands none unless
+/// [`reprisefs::fileclip::sandboxed_list_taken`] takes it.
+fn pasted_files(mime: &str, bytes: &[u8], kde_cut: bool, sandboxed: bool) -> FileClip {
+    let mut clip = reprisefs::fileclip::decode(mime, bytes);
+    clip.cut |= kde_cut;
+    if sandboxed && !reprisefs::fileclip::sandboxed_list_taken(&clip) {
+        log::info!("paste: a sandboxed program's file list is refused");
+        return FileClip::default();
+    }
+    clip
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sandboxed_programs_clip_pastes_only_a_copy_of_document_portal_files() {
+        use reprisefs::dropdata::{GNOME_FILES, URI_LIST, document_root};
+        let doc = document_root().join("abc/x.png");
+        let doc_uri = format!("file://{}", doc.display());
+        let key = "file:///home/u/.ssh/id_ed25519";
+        let copy = format!("copy\n{doc_uri}");
+        let got = pasted_files(GNOME_FILES, copy.as_bytes(), false, true);
+        assert_eq!(got.paths, [doc], "a copy of a portal file");
+        assert!(!got.cut);
+        for (mime, body, kde_cut, why) in [
+            (
+                GNOME_FILES,
+                format!("copy\n{key}"),
+                false,
+                "a path in the sandbox",
+            ),
+            (
+                GNOME_FILES,
+                format!("copy\n{doc_uri}\n{key}"),
+                false,
+                "one path outside",
+            ),
+            (GNOME_FILES, format!("cut\n{doc_uri}"), false, "a cut"),
+            (
+                URI_LIST,
+                format!("{doc_uri}\r\n"),
+                true,
+                "a cut marked beside a URI list",
+            ),
+        ] {
+            let got = pasted_files(mime, body.as_bytes(), kde_cut, true);
+            assert_eq!(got, FileClip::default(), "{why}");
+        }
+        let host = pasted_files(GNOME_FILES, format!("cut\n{key}").as_bytes(), false, false);
+        assert!(host.cut && !host.paths.is_empty(), "a host program's cut");
+    }
 
     fn types(t: &[&str]) -> Vec<String> {
         t.iter().map(|s| s.to_string()).collect()
