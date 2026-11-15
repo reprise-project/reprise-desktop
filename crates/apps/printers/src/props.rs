@@ -16,7 +16,7 @@ pub const CLIENT: (i32, i32) = (380, 440);
 const TABS: [&str; 4] = ["General", "Sharing", "Ports", "Device Settings"];
 pub const GENERAL: usize = 0;
 pub const SHARING: usize = 1;
-const PORTS: usize = 2;
+pub const PORTS: usize = 2;
 const DEVICE: usize = 3;
 
 const NAME: &str = "name";
@@ -652,6 +652,20 @@ mod tests {
                 assert!(change.defaults.is_empty());
                 assert_eq!(rename.as_deref(), Some("Hall_Laser"));
                 assert!(!close);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_address_and_a_name_typed_together_go_out_in_one_apply() {
+        let mut p = PropsSheet::new(&laser(), None);
+        type_into(&mut p, PORTS, URI, "smb://u:p@server/q");
+        type_into(&mut p, GENERAL, NAME, "Office");
+        match p.event(propsheet::Event::Ok, &snap()) {
+            Outcome::Apply { change, rename, .. } => {
+                assert_eq!(change.device_uri.as_deref(), Some("smb://u:p@server/q"));
+                assert_eq!(rename.as_deref(), Some("Office"));
             }
             other => panic!("{other:?}"),
         }

@@ -70,6 +70,12 @@ fn note(title: &str, text: String, icon: Option<Canvas>) -> MsgBox {
     )
 }
 
+/// What the confirm box asks before it is sent.
+enum Ask {
+    Delete(String),
+    Rename { old: String, new: String },
+}
+
 #[derive(Default)]
 struct PrintersApp {
     tray: Option<reprisetray::TrayHandle>,
@@ -85,7 +91,7 @@ struct PrintersApp {
     ids: Ids,
     wizard: Option<addwiz::AddWizard>,
     browse: Option<(Host, FileDlg)>,
-    confirm: Option<(String, MsgBox)>,
+    confirm: Option<(Ask, MsgBox)>,
     note: Option<MsgBox>,
     icon16: Option<Canvas>,
     icon32: Option<Canvas>,
@@ -100,6 +106,8 @@ struct PrintersApp {
     announced: HashSet<String>,
     select: Option<String>,
     renaming: HashSet<String>,
+    /// A renamed printer whose Ports tab opens once cupsd has it, to type its password again.
+    ports_after: Option<String>,
     text: Option<Rc<TextRenderer>>,
     /// `Ctx::forms` at the last event, for `children` and `initial_size`, which have no `Ctx`.
     forms: Theme,
@@ -241,6 +249,7 @@ impl PrintersApp {
                 Msg::JobEnded(j) => ended.push(j),
                 Msg::Failed { title, body } => {
                     self.renaming.clear();
+                    self.ports_after = None;
                     self.fail(&title, body)
                 }
                 Msg::Options(name, r) => {
@@ -292,6 +301,11 @@ impl PrintersApp {
         }
         let mut shown = None;
         let mut raised = false;
+        let ports = self
+            .ports_after
+            .take_if(|n| self.snapshot.printer(n).is_some())
+            .and_then(|n| self.open_props(&n, props::PORTS))
+            .and_then(Opened::raise);
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
             let Some(msg) = tray::translate(raw, &self.snapshot, &self.user) else {
                 continue;
@@ -332,6 +346,7 @@ impl PrintersApp {
         self.sync_watching();
         Reply {
             activate: reprisetray::handoff_for(self.tray.as_ref(), raised, shown),
+            raise: ports,
             ..Reply::redraw_all()
         }
     }
@@ -389,14 +404,51 @@ impl PrintersApp {
         }
     }
 
-    fn rename(&mut self, old: String, new: String) {
+    /// Rename `old` to `new`, at `device_uri` when one was typed in the same Apply. Without one,
+    /// an address that may hold a password is asked about first: the new queue cannot copy it.
+    fn start_rename(
+        &mut self,
+        old: String,
+        new: String,
+        device_uri: Option<String>,
+        ctx: &mut Ctx,
+    ) {
+        let hidden = self
+            .snapshot
+            .printer(&old)
+            .is_some_and(|p| cups::may_hide_password(&p.device_uri));
+        if device_uri.is_some() || !hidden {
+            return self.rename(old, new, device_uri);
+        }
+        let b = MsgBox::new(
+            "Rename Printer",
+            Fields {
+                text: format!(
+                    "Renaming {old} to {new} drops the user name and password from its address. Properties then opens on the Ports tab to type the address again.\nDo you want to rename the printer?"
+                ),
+                icon: ctx.icons.get("dialog-question", 32),
+                buttons: vec!["&Yes".into(), "&No".into()],
+                default: 0,
+                min_text_h: None,
+                min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
+            },
+        );
+        self.confirm = Some((Ask::Rename { old, new }, b));
+    }
+
+    fn rename(&mut self, old: String, new: String, device_uri: Option<String>) {
         self.queues.rename(&old, &new);
         self.props.rename(&old, &new);
         if self.folder.selected_name() == Some(old.as_str()) {
             self.select = Some(new.clone());
         }
         self.renaming.insert(new.clone());
-        self.send(Cmd::Rename { old, new });
+        self.send(Cmd::Rename {
+            old,
+            new,
+            device_uri: device_uri.map(cups::DeviceUri),
+        });
     }
 
     fn ask_delete(&mut self, printer: String, ctx: &mut Ctx) {
@@ -414,7 +466,7 @@ impl PrintersApp {
                 max_w: repriseapp::dialog_max_w(),
             },
         );
-        self.confirm = Some((printer, b));
+        self.confirm = Some((Ask::Delete(printer), b));
     }
 
     fn quit(&mut self) -> Reply {
@@ -497,7 +549,7 @@ impl PrintersApp {
                 Reply::redraw_all()
             }
             O::Rename { old, new } => {
-                self.rename(old, new);
+                self.start_rename(old, new, None, ctx);
                 Reply::redraw_all()
             }
             O::BadName(why) => {
@@ -590,7 +642,7 @@ impl PrintersApp {
         }
     }
 
-    fn props_event(&mut self, win: WinId, ev: Event, ctx: &Ctx) -> Reply {
+    fn props_event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         let Some(p) = self.props.get_mut(win) else {
             return Reply::none();
         };
@@ -619,6 +671,7 @@ impl PrintersApp {
                 rename,
                 close,
             } => {
+                let typed_uri = change.device_uri.clone();
                 if !change.is_empty() {
                     self.send(Cmd::Modify {
                         printer: printer.clone(),
@@ -626,7 +679,7 @@ impl PrintersApp {
                     });
                 }
                 if let Some(new) = rename {
-                    self.rename(printer, new);
+                    self.start_rename(printer, new, typed_uri, ctx);
                 }
                 if close {
                     self.props.close(win);
@@ -777,17 +830,23 @@ impl PrintersApp {
     }
 
     fn confirm_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
-        let Some((printer, b)) = &mut self.confirm else {
+        let Some((_, b)) = &mut self.confirm else {
             return Reply::none();
         };
         match b.event(&ev, &ctx.text, &self.forms) {
             oneshot::Outcome::None => Reply::none(),
             oneshot::Outcome::Redraw => Reply::redraw(),
             oneshot::Outcome::Closed(button) => {
-                let printer = printer.clone();
-                self.confirm = None;
-                if button == Some(0) {
-                    self.send(Cmd::Delete(printer));
+                let ask = self.confirm.take().map(|(ask, _)| ask);
+                match ask {
+                    Some(Ask::Delete(printer)) if button == Some(0) => {
+                        self.send(Cmd::Delete(printer))
+                    }
+                    Some(Ask::Rename { old, new }) if button == Some(0) => {
+                        self.ports_after = Some(new.clone());
+                        self.rename(old, new, None);
+                    }
+                    _ => {}
                 }
                 Reply::redraw_all()
             }
@@ -1321,6 +1380,58 @@ mod tests {
         app.event(laser, Event::CloseRequest, &mut ctx);
         assert!(app.queues.get(laser).is_none());
         assert_eq!(app.queues.of("Inkjet"), Some(inkjet));
+    }
+
+    #[test]
+    fn renaming_an_smb_queue_asks_first_then_opens_its_ports_tab() {
+        let mut app = two_printers();
+        app.snapshot.printers[0].device_uri = "smb://server/q".into();
+        let mut ctx = test_ctx(folder::CLIENT);
+        let rename = |old: &str| folder::Outcome::Rename {
+            old: old.into(),
+            new: format!("{old}_2"),
+        };
+        app.folder_outcome(rename("Inkjet"), &mut ctx);
+        assert!(app.confirm.is_none(), "an address without a password");
+        app.folder_outcome(rename("Laser"), &mut ctx);
+        assert!(matches!(app.confirm, Some((Ask::Rename { .. }, _))));
+        assert!(!app.renaming.contains("Laser_2"), "nothing sent yet");
+        let enter = repriseapp::KeyInput {
+            sym: reprisekit::textedit::keysym::RETURN,
+            utf8: None,
+            mods: repriseapp::Mods::default(),
+            edit: None,
+        };
+        app.confirm_event(Event::Key(enter), &ctx);
+        assert!(app.confirm.is_none());
+        assert!(app.renaming.contains("Laser_2"));
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.rx = Some(rx);
+        let mut s = app.snapshot.clone();
+        s.printers[0].name = "Laser_2".into();
+        tx.send(Msg::Snapshot(s)).unwrap();
+        app.wake();
+        let sheet = app
+            .props
+            .by_printer_mut("Laser_2")
+            .expect("Properties opened");
+        assert_eq!(sheet.sheet.tabs.open, props::PORTS);
+        assert_eq!(app.ports_after, None);
+    }
+
+    #[test]
+    fn a_rename_with_its_address_typed_does_not_ask() {
+        let mut app = two_printers();
+        app.snapshot.printers[0].device_uri = "smb://server/q".into();
+        let mut ctx = test_ctx(folder::CLIENT);
+        app.start_rename(
+            "Laser".into(),
+            "Office".into(),
+            Some("smb://u:p@server/q".into()),
+            &mut ctx,
+        );
+        assert!(app.confirm.is_none());
+        assert!(app.renaming.contains("Office"));
     }
 
     #[test]

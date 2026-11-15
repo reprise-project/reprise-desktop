@@ -581,6 +581,38 @@ fn a_rename_to_another_case_of_a_printer_name_is_refused() {
 }
 
 #[test]
+fn a_rename_takes_the_address_typed_in_the_same_apply() {
+    let p = Printer {
+        name: "Share".into(),
+        device_uri: "smb://server/q".into(),
+        ..Printer::default()
+    };
+    let device_uri = |req: &Request| {
+        printer_attrs(req)
+            .into_iter()
+            .find(|(k, _)| k == "device-uri")
+            .map(|(_, v)| v)
+    };
+    let typed = DeviceUri("smb://u:p@server/q".into());
+    assert_eq!(
+        device_uri(&rename_request("Office", &p, Some(&typed), None, &[])),
+        Some(Value::uri("smb://u:p@server/q"))
+    );
+    assert_eq!(
+        device_uri(&rename_request("Office", &p, None, None, &[])),
+        Some(Value::uri("smb://server/q"))
+    );
+    assert_eq!(
+        helper_rename_calls("Share", "Office", Some(&typed), &[]),
+        [
+            Call::PrinterRename("Share".into(), "Office".into()),
+            Call::PrinterSetDevice("Office".into(), "smb://u:p@server/q".into()),
+        ]
+    );
+    assert_eq!(format!("{typed:?}"), "smb://server/q");
+}
+
+#[test]
 fn a_rename_keeps_the_defaults_the_ppd_does_not_hold() {
     let o = Options {
         media: Setting {
