@@ -585,7 +585,10 @@ are.
   still holding things up, with End Now and Cancel. Turn Off and Restart ask
   logind first: when it says no, nothing closes. A refusal before or after
   the programs close (polkit, an inhibitor, a failing `[power]` command)
-  shows a message saying why; a cancelled password prompt shows nothing.
+  shows a message saying why. One that needs a password asks for it over
+  the desktop once the programs have closed, and the screen fades after it
+  is given; a cancelled password prompt leaves the desktop up and shows
+  nothing.
   Stand By and Hibernate close nothing, and say why the same way when the
   computer stays up.
   End Now overrides the inhibitors the list showed, which usually asks for

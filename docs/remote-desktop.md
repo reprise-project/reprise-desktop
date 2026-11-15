@@ -290,8 +290,10 @@ the journal logs each change ([Troubleshooting](#troubleshooting)).
 - **Logging off with a client connected.** Log Off, Turn Off and Restart
   tell every client the session logged off, so it doesn't reconnect. The
   session waits for that while the screen fades, 1 s at most. A Turn Off or
-  Restart that logind refuses after that leaves the session running, its
-  programs closed and no client connected; connecting again lands in it.
+  Restart that needs a password tells them once the password is given, so
+  a client can type it. One that logind refuses after the programs close
+  leaves the session running with its programs closed; connecting again
+  lands in it.
 - **What a client is told.** A client this side ends hears why before the
   connection closes: 0x5, another connection took over, when a newer client
   replaces it (`second_client = "replace"`) and when lock mode ends at this
