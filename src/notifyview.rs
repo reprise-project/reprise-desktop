@@ -45,7 +45,7 @@ use motion::{Motion, destroy, drop_leaving, leave};
 pub(crate) use paint::icons_landed;
 use paint::paint;
 use reply::start_reply;
-use stack::{Item, arrived, display_next, enqueue, fold, foldable, in_burst, slot_of, take_all};
+use stack::{Arrivals, Item, display_next, enqueue, fold, foldable, in_burst, slot_of, take_all};
 
 /// Default and clamp for how long a balloon stays up (ms). A request of 0 ("never") is held to
 /// `MAX_MS`; a critical notification stays until dealt with unless it asks for a time.
@@ -157,7 +157,7 @@ pub struct NotifyView {
     leaving: Vec<Balloon>,
     chip: Option<Chip>,
     queue: VecDeque<Item>,
-    recent: VecDeque<(String, Instant)>,
+    recent: Arrivals,
     /// Text typed into reply rows that collapsed idle, by notification id; Reply brings it back.
     drafts: Vec<(u32, ReplyField)>,
     /// The actions of the compositor's own notice by key; any other notice clears them.
@@ -194,6 +194,13 @@ pub struct NotifyView {
     /// The conditions that turn Do Not Disturb on by themselves, as last checked; the bell shows
     /// them.
     pub quiet: Suppress,
+    /// Open [`hold`] scopes, and the paint and history refresh owed when the outermost ends.
+    held: u32,
+    owed_paint: bool,
+    owed_center: bool,
+    /// Stack paints run, for tests that count them.
+    #[cfg(test)]
+    paints: usize,
 }
 
 /// How many notifications show at once: a stack of sheets, else one balloon.
@@ -363,7 +370,7 @@ pub fn show(state: &mut State, n: Notification) {
     }
     if foldable(&n) {
         let v = &mut state.notify;
-        let due = arrived(&mut v.recent, &n.key, Instant::now());
+        let due = v.recent.arrived(&n.key, Instant::now());
         let open = v.queue.iter().any(|q| q.burst_of(&n.key))
             || v.stack.iter().any(|b| b.item.burst_of(&n.key));
         if due || open {
@@ -429,7 +436,31 @@ fn renew(
 
 fn changed(state: &mut State) {
     state.redraw_taskbars();
-    crate::notifycenter::refresh(state);
+    if state.notify.held > 0 {
+        state.notify.owed_center = true;
+    } else {
+        crate::notifycenter::refresh(state);
+    }
+}
+
+/// Runs `f` with the stack's paint, the bars' redraw and the history's refresh held: each runs
+/// once as the outermost scope ends, however many notifications `f` took in. Code inside reads
+/// the balloons as last painted.
+pub fn hold<T>(state: &mut State, f: impl FnOnce(&mut State) -> T) -> T {
+    state.hold_taskbars(|state| {
+        state.notify.held += 1;
+        let r = f(state);
+        state.notify.held -= 1;
+        if state.notify.held == 0 {
+            if std::mem::take(&mut state.notify.owed_paint) {
+                paint(state);
+            }
+            if std::mem::take(&mut state.notify.owed_center) {
+                crate::notifycenter::refresh(state);
+            }
+        }
+        r
+    })
 }
 
 /// The bus never gives a client's notification this id.

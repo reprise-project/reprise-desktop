@@ -59,8 +59,17 @@ fn disarm_age(state: &mut State) {
 }
 
 /// Lays out, places and draws every balloon and the chip, and arms the clocks and the app line
-/// tick for what is drawn; a stack of sheets at rest then re-checks the still pointer.
+/// tick for what is drawn; a stack of sheets at rest then re-checks the still pointer. Inside
+/// [`super::hold`] it only marks the paint owed.
 pub(super) fn paint(state: &mut State) {
+    if state.notify.held > 0 {
+        state.notify.owed_paint = true;
+        return;
+    }
+    #[cfg(test)]
+    {
+        state.notify.paints += 1;
+    }
     let waits = state.icons.waits();
     paint_stack(state);
     state.note_icon_waits(waits, crate::icon::IconWaiter::Notify);

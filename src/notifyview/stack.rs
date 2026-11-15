@@ -3,7 +3,7 @@
 use reprisekit::controls::notifysheet::{SheetGlass, SheetOpening, has_sheets};
 use reprisekit::icon::IconSource;
 use reprisekit::style::SheetShape;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use crate::compositor::State;
@@ -188,16 +188,49 @@ pub(super) fn in_burst(v: &NotifyView, id: u32) -> bool {
     v.stack.iter().any(|b| b.item.burst_has(id)) || v.queue.iter().any(|q| q.burst_has(id))
 }
 
-/// Program `key` raised a balloon at `at`; true when that makes a burst.
-pub(super) fn arrived(recent: &mut VecDeque<(String, Instant)>, key: &str, at: Instant) -> bool {
-    while recent
-        .front()
-        .is_some_and(|(_, t)| at.duration_since(*t) > BURST_WINDOW)
-    {
-        recent.pop_front();
+/// When each program raised its latest balloons, up to the `BURST_AFTER + 1` a burst needs, so
+/// an arrival costs the same however many came before it.
+#[derive(Debug, Default)]
+pub(super) struct Arrivals {
+    by_key: HashMap<String, VecDeque<Instant>>,
+    /// `by_key` drops programs with none left in the window once it grows to this many.
+    prune_at: usize,
+}
+
+impl Arrivals {
+    /// Program `key` raised a balloon at `at`; true when that makes a burst.
+    pub(super) fn arrived(&mut self, key: &str, at: Instant) -> bool {
+        let fresh = |t: &Instant| at.duration_since(*t) <= BURST_WINDOW;
+        if self.by_key.len() >= self.prune_at {
+            self.by_key
+                .retain(|_, times| times.back().is_some_and(fresh));
+            self.prune_at = (self.by_key.len() * 2).max(16);
+        }
+        if !self.by_key.contains_key(key) {
+            self.by_key.insert(key.to_string(), VecDeque::new());
+        }
+        let Some(times) = self.by_key.get_mut(key) else {
+            return false;
+        };
+        while times.front().is_some_and(|t| !fresh(t)) {
+            times.pop_front();
+        }
+        times.push_back(at);
+        if times.len() > BURST_AFTER + 1 {
+            times.pop_front();
+        }
+        times.len() > BURST_AFTER
     }
-    recent.push_back((key.to_string(), at));
-    recent.iter().filter(|(k, _)| k == key).count() > BURST_AFTER
+
+    #[cfg(test)]
+    pub(super) fn is_empty(&self) -> bool {
+        self.by_key.is_empty()
+    }
+
+    #[cfg(test)]
+    pub(super) fn programs(&self) -> usize {
+        self.by_key.len()
+    }
 }
 
 /// Fold `n` into its program's burst, shown or queued; else a new burst takes the program's notes
