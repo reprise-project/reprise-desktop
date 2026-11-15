@@ -13,7 +13,6 @@ use reprisefs::apps::{self, Launch};
 use reprisefs::bincap::BinLack;
 use reprisefs::deadline::Gate;
 use reprisefs::jobs::{PutEvent, PutItem, PutJob};
-use reprisefs::listing::Item;
 use reprisefs::names;
 use reprisefs::ops::DropOp;
 use reprisefs::replace::{self, Answer, Asker, Clash, Step, Verdict};
@@ -1078,23 +1077,21 @@ impl Explorer {
         self.put_all(&paths, &dir, &|_| Some(op), false, ctx)
     }
 
-    pub fn open_for(&self, it: &Item) -> Result<reprisefs::props::Opening, apps::ExecRefused> {
+    /// How a launcher or web link shortcut opens.
+    pub fn open_for(
+        &self,
+        shortcut: &apps::Shortcut,
+    ) -> Result<reprisefs::props::Opening, apps::ExecRefused> {
         use reprisefs::props::Opening;
-        Ok(match it.shortcut.as_deref() {
-            Some(apps::Shortcut::App(app)) => {
+        Ok(match shortcut {
+            apps::Shortcut::App(app) => {
                 Opening::of(app, apps::launch_argv(app, &repriseconf::terminal())?)
             }
-            Some(apps::Shortcut::Link(link)) => Opening {
+            apps::Shortcut::Link(link) => Opening {
                 argv: vec!["xdg-open".into(), link.url.clone().into()],
                 app: None,
                 dir: None,
             },
-            None => reprisefs::props::open_in(
-                &it.path,
-                &self.globs,
-                &self.app_index,
-                &repriseconf::terminal(),
-            )?,
         })
     }
 

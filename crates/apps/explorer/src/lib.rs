@@ -123,6 +123,8 @@ pub(crate) enum Opened {
     /// [`ScriptOpen`] says once Run is picked.
     Ask(ScriptOpen, reprisefs::program::Asked),
     Open(Result<reprisefs::props::Opening, reprisefs::apps::ExecRefused>),
+    /// A file whose type has no program: Open With asks for one.
+    Choose,
 }
 
 /// How long a listing is waited for before the window goes on. Tests wait as long as it takes.
@@ -1352,8 +1354,8 @@ impl Explorer {
         if let Some(place) = folder_place(&it) {
             return self.go(place, ctx);
         }
-        if it.shortcut.is_some() {
-            return self.opened(&it.path, Opened::Open(self.open_for(&it)), ctx);
+        if let Some(shortcut) = it.shortcut.as_deref() {
+            return self.opened(&it.path, Opened::Open(self.open_for(shortcut)), ctx);
         }
         self.open_file(&it.path, it.exec, open, how, ctx)
     }
@@ -1397,6 +1399,9 @@ impl Explorer {
                     return Opened::Ask(open, reprisefs::program::Asked::Typed);
                 }
                 let open = reprisefs::props::open_in(&path, &globs, &apps, &terminal);
+                let Some(open) = open.transpose() else {
+                    return Opened::Choose;
+                };
                 if let Ok(open) = &open
                     && repriseconf::recent_files()
                 {
@@ -1463,6 +1468,7 @@ impl Explorer {
                 ..Default::default()
             },
             Opened::Open(Err(refused)) => self.exec_refused(&refused, ctx),
+            Opened::Choose => self.choose_program_for(path, false, ctx),
             Opened::Ran(Ok(())) => Reply::redraw(),
             Opened::Ask(open, asked) => self.ask_run(path, open, asked, ctx),
             Opened::Ran(Err(e)) => {

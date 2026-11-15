@@ -237,9 +237,8 @@ fn open_file_asks_the_file_system_nothing() {
         exec_line: "viewer %F".into(),
         ..app("viewer.desktop", &["image/svg+xml"])
     };
-    let open = |d| open_file(dir.path(), d, "foot").unwrap();
     assert_eq!(
-        open(Some(&viewer)),
+        open_file(dir.path(), &viewer, "foot").unwrap(),
         Opening {
             argv: vec!["viewer".into(), dir.path().as_os_str().to_owned()],
             app: Some("viewer.desktop".into()),
@@ -247,8 +246,6 @@ fn open_file_asks_the_file_system_nothing() {
         },
         "in the program's app scope"
     );
-    assert_eq!(open(None).argv[0], "xdg-open");
-    assert_eq!(open(None).app, None);
 }
 
 #[test]
@@ -264,7 +261,7 @@ fn open_in_looks_up_the_types_default_program_and_runs_as_it() {
     };
     let open = |p: &Path| open_in(p, &db, std::slice::from_ref(&player), "foot").unwrap();
     assert_eq!(
-        open(&song),
+        open(&song).unwrap(),
         Opening {
             argv: vec!["player".into(), song.clone().into_os_string()],
             app: Some("player.desktop".into()),
@@ -272,15 +269,10 @@ fn open_in_looks_up_the_types_default_program_and_runs_as_it() {
         },
         "in the program's Path= folder"
     );
-    assert_eq!(
-        open(&other),
-        Opening {
-            argv: vec!["xdg-open".into(), other.into_os_string()],
-            app: None,
-            dir: None,
-        }
-    );
-    let folder = open(dir.path());
+    assert_eq!(open(&other), None, "an unknown type has no program");
+    let none = open_in(&song, &db, &[], "foot").unwrap();
+    assert_eq!(none, None, "a known type no program takes has none either");
+    let folder = open(dir.path()).unwrap();
     assert_eq!(folder.argv[0], "reprise-explorer");
     assert_eq!(folder.app, None);
 }

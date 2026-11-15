@@ -387,7 +387,10 @@ pub fn open_argv(
 ) -> Result<Vec<std::ffi::OsString>, apps::ExecRefused> {
     Ok(match target {
         Target::Launch(app) => apps::launch_argv(app, terminal)?,
-        Target::Open(path) => reprisefs::props::open_in(path, mime, programs, terminal)?.argv,
+        Target::Open(path) => match reprisefs::props::open_in(path, mime, programs, terminal)? {
+            Some(open) => open.argv,
+            None => apps::open_argv_for(path),
+        },
         Target::Run(path, _) => vec![path.into()],
         Target::Uri(uri) => vec!["xdg-open".into(), uri.into()],
     })

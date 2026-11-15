@@ -520,7 +520,7 @@ desktop and stays out of the way when it's missing.
   `antialias = false`
 - A colour emoji font such as Noto Color Emoji, for the emoji picker
 - shared-mime-info, for file types and icons
-- xdg-utils and libarchive, for opening files, zipping and extracting
+- xdg-utils and libarchive, for opening web links, zipping and extracting
   archives in Explorer, opening a network's sign-in page, and attachments
   from a program's Send by Email in mail programs other than Thunderbird and
   Evolution

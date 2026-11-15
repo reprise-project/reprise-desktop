@@ -249,6 +249,7 @@ fn the_arrows_in_the_preview_walk_the_views_order_and_move_its_selection() {
 fn escape_closes_and_enter_opens_the_file_and_closes() {
     let mut ctx = test_ctx();
     let (_dir, mut ex) = explorer_over(&["a.txt"], &mut ctx);
+    ex.app_index = crate::tests::opener_index();
     ex.sv.selection.set_only(Some(0));
     ex.key(press_space(), &mut ctx);
     ex.preview_event(key(keysym::ESCAPE), &mut ctx);
