@@ -1815,3 +1815,41 @@ fn a_decoration_made_again_without_a_mode_hands_the_frame_back_to_reprise() {
     h.roundtrip(&mut c);
     assert!(!csd(&h), "the window wears Reprise's frame again");
 }
+
+#[test]
+fn a_window_restoring_itself_comes_back_behind_another_programs_window() {
+    const EDITOR: i32 = i32::MAX - 821;
+    const OTHER: i32 = i32::MAX - 822;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut editor = h.connect_as(EDITOR);
+    let mut other = h.connect_as(OTHER);
+    let a = h.map_toplevel(&mut editor, "editor", 300, 200);
+    let b = h.map_toplevel(&mut other, "other", 300, 200);
+    h.state.focus_window(a.id);
+    h.state.set_minimized(b.id, true);
+    assert_eq!(h.state.focused, Some(a.id));
+
+    h.state.restore_on_request(b.id);
+    let win = h.state.win(b.id).unwrap();
+    assert!(!win.minimized, "the window is restored");
+    assert!(h.state.scene.enabled(win.tree), "and shown");
+    assert!(win.attention.is_some(), "its task button is flagged");
+    assert_eq!(h.state.focused, Some(a.id), "the editor keeps the keyboard");
+    assert_eq!(
+        h.state.focus_order.last(),
+        Some(&a.id),
+        "the restored window is next in line, behind the editor"
+    );
+
+    let mut second = h.connect_as(EDITOR);
+    let c = h.map_toplevel(&mut second, "second", 300, 200);
+    h.state.focus_window(a.id);
+    h.state.set_minimized(c.id, true);
+    h.state.restore_on_request(c.id);
+    assert_eq!(
+        h.state.focused,
+        Some(c.id),
+        "a window of the focused program's process takes the keyboard"
+    );
+}

@@ -993,7 +993,7 @@ impl XwmHandler for State {
 
     fn unminimize_request(&mut self, _xwm: XwmId, window: X11Surface) {
         if let Some(w) = self.mapped_x11(&window) {
-            self.set_minimized(w, false);
+            self.restore_on_request(w);
         }
     }
 
