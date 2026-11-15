@@ -183,27 +183,27 @@ const MIN_DELAY_MS: u32 = 20;
 const SHORT_DELAY_MS: u32 = 100;
 
 /// The frames of an animated GIF, PNG or WebP at full size. `None` for a still picture, another
-/// format, or frames that together pass [`MAX_DECODED_BYTES`]: the caller shows the first frame
-/// alone from [`Decoders::decode`].
+/// format, a canvas past [`MAX_DECODED_BYTES`] or frames that together pass it: the caller shows
+/// the first frame alone from [`Decoders::decode`].
 pub fn frames(bytes: &[u8]) -> Option<Vec<Frame>> {
     use image::AnimationDecoder as _;
     use image::codecs::{gif::GifDecoder, png::PngDecoder, webp::WebPDecoder};
     let cur = std::io::Cursor::new(bytes);
     let frames = match image::guess_format(bytes).ok()? {
-        image::ImageFormat::Gif => GifDecoder::new(cur).ok()?.into_frames(),
+        image::ImageFormat::Gif => animation_capped(GifDecoder::new(cur).ok()?)?.into_frames(),
         image::ImageFormat::Png => {
             let d = PngDecoder::new(cur).ok()?;
             if !d.is_apng().ok()? {
                 return None;
             }
-            d.apng().ok()?.into_frames()
+            animation_capped(d)?.apng().ok()?.into_frames()
         }
         image::ImageFormat::WebP => {
             let d = WebPDecoder::new(cur).ok()?;
             if !d.has_animation() {
                 return None;
             }
-            d.into_frames()
+            animation_capped(d)?.into_frames()
         }
         _ => return None,
     };
@@ -228,6 +228,20 @@ pub fn frames(bytes: &[u8]) -> Option<Vec<Frame>> {
         });
     }
     (out.len() > 1).then_some(out)
+}
+
+/// `d`, or `None` when one RGBA canvas of its size passes [`MAX_DECODED_BYTES`]. The size is
+/// checked before the frame iterator allocates its canvas; the allocation cap covers the canvas
+/// and one frame alive together.
+fn animation_capped<D: image::ImageDecoder>(mut d: D) -> Option<D> {
+    let (w, h) = d.dimensions();
+    if u64::from(w) * u64::from(h) * 4 > MAX_DECODED_BYTES {
+        return None;
+    }
+    let mut limits = image::Limits::no_limits();
+    limits.max_alloc = Some(2 * MAX_DECODED_BYTES);
+    d.set_limits(limits).ok()?;
+    Some(d)
 }
 
 /// An `image` decoder for `bytes` that has read the header, `None` when the
@@ -281,18 +295,29 @@ mod tests {
 
     /// A PNG signature, IHDR and an empty IDAT: enough to sniff and to size.
     fn png_header(w: u32, h: u32) -> Vec<u8> {
+        png_chunks(w, h, &[])
+    }
+
+    /// [`png_header`] with `chunks` (type and data) between the IHDR and the IDAT.
+    fn png_chunks(w: u32, h: u32, chunks: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
         let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
         let mut ihdr = Vec::new();
-        ihdr.extend_from_slice(b"IHDR");
         ihdr.extend_from_slice(&w.to_be_bytes());
         ihdr.extend_from_slice(&h.to_be_bytes());
         ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
-        png.extend_from_slice(&13u32.to_be_bytes());
-        png.extend_from_slice(&ihdr);
-        png.extend_from_slice(&crc32(&ihdr).to_be_bytes());
-        png.extend_from_slice(&0u32.to_be_bytes());
-        png.extend_from_slice(b"IDAT");
-        png.extend_from_slice(&crc32(b"IDAT").to_be_bytes());
+        let mut chunk = |kind: &[u8; 4], data: &[u8]| {
+            png.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            let start = png.len();
+            png.extend_from_slice(kind);
+            png.extend_from_slice(data);
+            let crc = crc32(&png[start..]);
+            png.extend_from_slice(&crc.to_be_bytes());
+        };
+        chunk(b"IHDR", &ihdr);
+        for (kind, data) in chunks {
+            chunk(kind, data);
+        }
+        chunk(b"IDAT", &[]);
         png
     }
 
@@ -468,6 +493,31 @@ mod tests {
         assert_eq!(got[1].canvas.get(1, 1), 0xFF00_00FF);
         assert!(frames(&gif(vec![frame([0, 255, 0, 255], 100)])).is_none());
         assert!(frames(&encode_png(1, 1, &[0, 0, 0, 255])).is_none());
+    }
+
+    /// A GIF of a few dozen bytes whose logical screen is 65535x65535 (16 GiB of RGBA) and an
+    /// APNG whose IHDR claims as much are refused before their canvas is allocated.
+    #[test]
+    fn an_animation_with_a_canvas_past_the_budget_has_no_frames() {
+        use image::codecs::gif::GifEncoder;
+        let dot = |rgba: [u8; 4]| {
+            image::Frame::from_parts(
+                image::RgbaImage::from_pixel(1, 1, image::Rgba(rgba)),
+                0,
+                0,
+                image::Delay::from_numer_denom_ms(100, 1),
+            )
+        };
+        let mut gif = Vec::new();
+        GifEncoder::new(&mut gif)
+            .encode_frames(vec![dot([255, 0, 0, 255]), dot([0, 0, 255, 255])])
+            .unwrap();
+        assert!(frames(&gif).is_some(), "the 1x1 screen plays");
+        gif[6..10].copy_from_slice(&[0xff; 4]);
+        assert!(frames(&gif).is_none());
+        let actl = [0, 0, 0, 2, 0, 0, 0, 0];
+        let apng = png_chunks(65535, 65535, &[(b"acTL", &actl)]);
+        assert!(frames(&apng).is_none());
     }
 
     #[test]
