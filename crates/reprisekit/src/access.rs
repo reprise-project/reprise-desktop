@@ -606,6 +606,11 @@ pub fn text_runs(
     anchor: usize,
     caret: usize,
 ) {
+    let mut split = Vec::with_capacity(lines.len());
+    for line in lines {
+        split_run(*line, text, px, &mut split);
+    }
+    let lines = &split[..];
     let mut ids = Vec::with_capacity(lines.len());
     // The last run when it ended in a soft wrap.
     let mut soft: Option<NodeId> = None;
@@ -646,11 +651,7 @@ pub fn text_runs(
         n.set_character_lengths(lengths);
         n.set_character_positions(positions);
         n.set_character_widths(widths);
-        // Word starts are u8 character indices; a run too long for them
-        // leaves them out, and a reader then walks it by character.
-        if line.text.chars().count() <= usize::from(u8::MAX) {
-            n.set_word_starts(words);
-        }
+        n.set_word_starts(words);
         if let Some(p) = prev {
             n.set_previous_on_line(p);
         }
@@ -677,6 +678,44 @@ pub fn text_runs(
     if let Some(p) = tree.get_mut(parent) {
         p.set_text_selection(selection);
     }
+}
+
+/// Most characters a run holds: word starts are `u8` character indices.
+const RUN_CHARS: usize = u8::MAX as usize;
+
+/// Push `line` onto `out` as runs of at most [`RUN_CHARS`] characters, each cut after its last
+/// space when it has one. The pieces join by soft wraps; only the last keeps the line's break.
+fn split_run<'a>(line: Line<'a>, text: &TextRenderer, px: u32, out: &mut Vec<Line<'a>>) {
+    let mut rest = line;
+    while let Some((cut, _)) = rest.text.char_indices().nth(RUN_CHARS) {
+        let head = &rest.text[..cut];
+        let at = head
+            .char_indices()
+            .rfind(|(_, c)| c.is_whitespace())
+            .map_or(cut, |(i, c)| i + c.len_utf8());
+        let piece = &rest.text[..at];
+        let w: i32 = piece.chars().map(|c| text.advance(c, false, px)).sum();
+        out.push(Line {
+            text: piece,
+            start: rest.start,
+            rect: Rect {
+                width: w,
+                ..rest.rect
+            },
+            hard_break: false,
+        });
+        rest = Line {
+            text: &rest.text[at..],
+            start: rest.start + at,
+            rect: Rect {
+                x: rest.rect.x + w,
+                width: (rest.rect.width - w).max(0),
+                ..rest.rect
+            },
+            hard_break: rest.hard_break,
+        };
+    }
+    out.push(rest);
 }
 
 pub fn value_run(
@@ -1301,5 +1340,49 @@ mod tests {
         assert_eq!(sel.anchor.node, runs[0]);
         assert_eq!(sel.focus.node, runs[1]);
         assert_eq!(sel.focus.character_index, 0);
+    }
+
+    #[test]
+    fn a_long_line_splits_into_linked_runs_that_keep_word_starts() {
+        let text = TextRenderer::load(&crate::theme::FontConfig::default());
+        let mut t = Tree::window("T", (100, 100));
+        let edit = t.push(
+            ROOT,
+            "e",
+            node(Role::MultilineTextInput, Rect::new(0, 0, 100, 100)),
+        );
+        let value = "word ".repeat(120);
+        let lines = [Line {
+            text: &value,
+            start: 0,
+            rect: Rect::new(2, 2, 5000, 13),
+            hard_break: true,
+        }];
+        text_runs(&mut t, edit, &lines, &text, 11, 300, 300);
+        let runs = t.get(edit).unwrap().children().to_vec();
+        assert_eq!(runs.len(), 3, "600 characters make three runs");
+        let nodes: Vec<_> = runs.iter().map(|&r| t.get(r).unwrap()).collect();
+        let joined: String = nodes.iter().map(|n| n.value().unwrap()).collect();
+        assert_eq!(
+            joined,
+            format!("{value}\n"),
+            "the runs hold the line in order"
+        );
+        assert_eq!(
+            nodes[0].value().unwrap().len(),
+            255,
+            "a run ends after a space"
+        );
+        for (k, n) in nodes.iter().enumerate() {
+            assert!(n.value().unwrap().chars().count() <= 256);
+            assert_eq!(n.word_starts().first(), Some(&0), "run {k} starts a word");
+            assert_eq!(n.word_starts().len(), n.value().unwrap().len() / 5);
+            assert_eq!(n.previous_on_line(), (k > 0).then(|| runs[k - 1]));
+            assert_eq!(n.next_on_line(), runs.get(k + 1).copied());
+        }
+        let (a, b) = (nodes[0].bounds().unwrap(), nodes[1].bounds().unwrap());
+        assert_eq!(b.x0, a.x1, "the second run starts where the first ends");
+        let caret = t.get(edit).unwrap().text_selection().unwrap().focus;
+        assert_eq!((caret.node, caret.character_index), (runs[1], 45));
     }
 }
