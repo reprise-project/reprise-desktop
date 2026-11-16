@@ -7,12 +7,33 @@ pub struct OutputConfig {
     pub name: String,
     pub scale: f32,
     pub mode: Option<OutputMode>,
-    pub adaptive_sync: Option<bool>,
+    pub adaptive_sync: Option<VrrPolicy>,
     pub transform: Transform,
     pub position: Option<(i32, i32)>,
     pub primary: bool,
     /// An ICC profile whose `vcgt` calibration goes into the output's gamma table.
     pub icc_profile: Option<std::path::PathBuf>,
+}
+
+/// `adaptive_sync`: when an output runs at a variable refresh rate. `true` and `false` read as
+/// `On` and `Off`; `"fullscreen"` turns it on while the focused window fills the output.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VrrPolicy {
+    #[default]
+    Off,
+    On,
+    Fullscreen,
+}
+
+impl VrrPolicy {
+    /// The policy a key's word names: only `"fullscreen"`, as on and off are `true` and `false`.
+    pub fn word(w: &str) -> Option<VrrPolicy> {
+        (w == "fullscreen").then_some(VrrPolicy::Fullscreen)
+    }
+
+    pub fn of(on: bool) -> VrrPolicy {
+        if on { VrrPolicy::On } else { VrrPolicy::Off }
+    }
 }
 
 /// A mode request from `mode = "1920x1080"` or `"1920x1080@59.94"`, read as the login screen's

@@ -288,6 +288,9 @@ the screen takes the interface of the last session used at this computer.
   1 and Only 2, also on the Display page.
 - **Fractional scaling** from 1 to 4 in quarter steps, per monitor. Programs
   that support it draw at the exact scale.
+- **Variable refresh rate** per monitor: off, on, or only while the focused
+  window is fullscreen there (`adaptive_sync = "fullscreen"`), so a panel
+  that flickers at low refresh rates stays fixed on the desktop.
 - **Colour profiles.** An ICC profile per monitor loads its calibration
   curves (`[[outputs]] icc_profile`).
 - **Night light** from sunset to sunrise, or on a schedule. The displays

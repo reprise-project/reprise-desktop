@@ -80,8 +80,8 @@ pub use gamma::{gamma_size, set_gamma};
 use links::LINK_GOOD;
 pub(crate) use outputs::retire_global;
 pub use outputs::{
-    HeadState, disable, enable, heads, output_power, retry_mode, set_mode, set_output_power,
-    set_vrr,
+    HeadState, VrrSet, disable, enable, heads, output_power, retry_mode, set_mode,
+    set_output_power, set_vrr, try_vrr, vrr_of,
 };
 use outputs::{Probe, asks_scan, connector_disconnected, scan_connectors};
 pub(crate) use render::{advance, send_frame_callbacks};

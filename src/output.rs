@@ -23,7 +23,7 @@ use smithay::{
 
 use crate::{
     compositor::{DeskScene, State},
-    config::OutputMode,
+    config::{OutputMode, VrrPolicy},
     console::Side,
     raster::{Canvas, Rect},
     window::WindowId,
@@ -320,7 +320,8 @@ pub struct HeadRequest {
     pub position: Option<(i32, i32)>,
     pub transform: Transform,
     pub scale: f64,
-    pub adaptive_sync: bool,
+    /// None keeps the policy the output runs.
+    pub adaptive_sync: Option<VrrPolicy>,
 }
 
 impl State {
@@ -492,9 +493,8 @@ impl State {
                 return false;
             }
         }
-        if self.config.adaptive_sync_for_output_name(&name) {
-            crate::backend::set_vrr(self, output, true);
-        }
+        self.vrr_policy.remove(&name);
+        self.sync_vrr();
         true
     }
 
@@ -510,6 +510,9 @@ impl State {
             }
             return true;
         }
+        if let Some(p) = req.adaptive_sync {
+            self.vrr_policy.insert(name.clone(), p);
+        }
         let scale = Scale::Fractional(f64::from(quarter_scale(req.scale as f32)));
         self.set_transform_scale(output, asked_transform(output, req.transform), scale);
         let at = req.position.or_else(|| self.back_place(output));
@@ -521,7 +524,14 @@ impl State {
                 }
                 self.mode_set(&name);
             }
-            return crate::backend::set_vrr(self, output, req.adaptive_sync) || !req.adaptive_sync;
+            return match req.adaptive_sync {
+                Some(VrrPolicy::On) => crate::backend::set_vrr(self, output, true),
+                Some(_) => {
+                    self.sync_vrr();
+                    true
+                }
+                None => true,
+            };
         }
         let ok = match req.mode {
             Some(i) => crate::backend::enable(self, output, i),
@@ -542,11 +552,9 @@ impl State {
             return false;
         }
         self.mode_set(&name);
-        if req.adaptive_sync {
-            crate::backend::set_vrr(self, output, true);
-        }
         log::info!("output {name}: back in the layout");
         self.output_added(output);
+        self.sync_vrr();
         true
     }
 
@@ -668,10 +676,8 @@ impl State {
                 }
             }
             if change.adaptive_sync {
-                let want = self.config.adaptive_sync_for_output_name(&name);
-                if want != head.vrr_on {
-                    crate::backend::set_vrr(self, &output, want);
-                }
+                self.vrr_policy.remove(&name);
+                self.sync_vrr();
             }
             if change.position {
                 let at = self.config.position_for_output_name(&name);

@@ -71,7 +71,7 @@ pub struct Config {
     /// reports which way up it is held; off is the rotation lock.
     pub auto_rotate: bool,
     pub outputs: Vec<OutputConfig>,
-    pub adaptive_sync: bool,
+    pub adaptive_sync: VrrPolicy,
     pub window_snapping: SnapConfig,
     pub screenshot: ScreenshotConfig,
     pub previews: PreviewsConfig,
@@ -178,7 +178,7 @@ impl Default for Config {
             all_gpus: false,
             auto_rotate: true,
             outputs: Vec::new(),
-            adaptive_sync: false,
+            adaptive_sync: VrrPolicy::Off,
             window_snapping: SnapConfig::default(),
             screenshot: ScreenshotConfig::default(),
             previews: PreviewsConfig::default(),
@@ -270,7 +270,7 @@ impl Config {
         self.output(name).and_then(|o| o.mode)
     }
 
-    pub fn adaptive_sync_for_output_name(&self, name: &str) -> bool {
+    pub fn adaptive_sync_for_output_name(&self, name: &str) -> VrrPolicy {
         self.output(name)
             .and_then(|o| o.adaptive_sync)
             .unwrap_or(self.adaptive_sync)

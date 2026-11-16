@@ -30,6 +30,7 @@ use smithay::{
 
 use crate::{
     compositor::State,
+    config::VrrPolicy,
     output::{HeadRequest, ModeInfo},
 };
 
@@ -280,7 +281,8 @@ pub fn resolve(
                 position: a.position,
                 transform: a.transform,
                 scale: a.scale,
-                adaptive_sync: a.adaptive_sync,
+                adaptive_sync: (a.adaptive_sync != head.adaptive_sync)
+                    .then_some(VrrPolicy::of(a.adaptive_sync)),
             },
         ));
     }
@@ -370,7 +372,7 @@ fn needs_device(heads: &[HeadState], reqs: &[(String, HeadRequest)]) -> bool {
             return true;
         };
         let mode = r.mode.is_some_and(|m| Some(m) != h.current);
-        r.enabled != h.enabled || (r.enabled && (mode || r.adaptive_sync != h.adaptive_sync))
+        r.enabled != h.enabled || (r.enabled && (mode || r.adaptive_sync.is_some()))
     })
 }
 
@@ -864,7 +866,10 @@ mod tests {
             needs_device(&heads, &[("A".into(), r)])
         };
         assert!(changed(|r| r.mode = Some(1)), "another mode");
-        assert!(changed(|r| r.adaptive_sync = true), "adaptive sync on");
+        assert!(
+            changed(|r| r.adaptive_sync = Some(VrrPolicy::On)),
+            "adaptive sync on"
+        );
         assert!(changed(|r| r.enabled = false), "a driven head turned off");
         let parked = resolve(&heads, &[ask(&heads[1])]).unwrap()[0].1.clone();
         assert!(
@@ -993,6 +998,22 @@ mod tests {
         assert!(resolve(&heads, &[(n.clone(), a.clone())]).is_none());
         heads[0].vrr_capable = true;
         assert!(resolve(&heads, &[(n, a)]).is_some());
+    }
+
+    #[test]
+    fn adaptive_sync_as_the_head_reports_it_keeps_the_policy() {
+        let mut heads = [head("A", true)];
+        heads[0].vrr_capable = true;
+        let vrr = |heads: &[HeadState], on| {
+            let (n, mut a) = ask(&heads[0]);
+            a.adaptive_sync = on;
+            resolve(heads, &[(n, a)]).unwrap()[0].1.adaptive_sync
+        };
+        assert_eq!(vrr(&heads, false), None, "off as reported");
+        assert_eq!(vrr(&heads, true), Some(VrrPolicy::On));
+        heads[0].adaptive_sync = true;
+        assert_eq!(vrr(&heads, true), None, "on as reported");
+        assert_eq!(vrr(&heads, false), Some(VrrPolicy::Off));
     }
 
     #[test]

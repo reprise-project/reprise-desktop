@@ -166,7 +166,7 @@ pub struct FileOutput {
     pub name: String,
     pub scale: Option<f64>,
     pub mode: Option<String>,
-    pub adaptive_sync: Option<bool>,
+    pub adaptive_sync: Option<AutoFlag>,
     pub transform: Option<String>,
     /// An output's snap grid, read only to be ignored.
     #[allow(dead_code)]
@@ -402,7 +402,8 @@ pub struct FileWindows {
     pub hidden_frame_rate: Option<i64>,
 }
 
-/// A key that takes true, false or "auto" (the interface's default).
+/// A key that takes true, false or a word: "auto" (the interface's default), or "fullscreen" for
+/// `adaptive_sync`.
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum AutoFlag {
@@ -764,7 +765,7 @@ pub struct FileConfig {
     pub screensaver: Option<FileScreensaver>,
     pub display: Option<FileDisplay>,
     pub outputs: Option<Vec<FileOutput>>,
-    pub adaptive_sync: Option<bool>,
+    pub adaptive_sync: Option<AutoFlag>,
     pub window_snapping: Option<FileSnapping>,
     pub screenshot: Option<FileScreenshot>,
     pub previews: Option<FilePreviews>,

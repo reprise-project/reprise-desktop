@@ -734,45 +734,82 @@ pub fn retry_mode(state: &mut State, output: &Output, index: usize) {
 }
 
 pub fn set_vrr(state: &mut State, output: &Output, on: bool) -> bool {
+    match try_vrr(state, output, on) {
+        VrrSet::Done => true,
+        VrrSet::Busy => {
+            log::warn!(
+                "output {}: display busy, adaptive sync unchanged",
+                output.name()
+            );
+            false
+        }
+        VrrSet::Refused => false,
+    }
+}
+
+/// What [`try_vrr`] did with a VRR change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VrrSet {
+    Done,
+    /// A commit held the display; the same change may take once it is quiet.
+    Busy,
+    Refused,
+}
+
+pub fn try_vrr(state: &mut State, output: &Output, on: bool) -> VrrSet {
     let head = match screen_of(output) {
         Some(Screen::Monitor(head)) => head,
-        Some(Screen::Virtual) | None => return false,
+        #[cfg(test)]
+        None => return super::fake::try_vrr(state, output, on),
+        #[cfg(not(test))]
+        None => return VrrSet::Refused,
+        Some(Screen::Virtual) => return VrrSet::Refused,
     };
     let Some(b) = state.backend.as_mut() else {
-        return false;
+        return VrrSet::Refused;
     };
     let quiet = b.quiet();
     let Some(s) = b.surfaces.get_mut(&head) else {
-        return false;
+        return VrrSet::Refused;
     };
     if s.vrr_on == on {
-        return true;
+        return VrrSet::Done;
     }
     if on && !s.vrr_capable {
         log::warn!(
             "output {}: adaptive sync asked for, not supported",
             output.name()
         );
-        return false;
+        return VrrSet::Refused;
     }
     if !quiet || s.track.busy() {
-        log::warn!(
-            "output {}: display busy, adaptive sync unchanged",
-            output.name()
-        );
-        return false;
+        return VrrSet::Busy;
     }
     let result = lock(&s.compositor).use_vrr(on);
     match result {
         Ok(()) => {
             s.vrr_on = on;
-            true
+            VrrSet::Done
         }
         Err(e) => {
             log::warn!("output {}: adaptive sync: {e:?}", output.name());
-            false
+            VrrSet::Refused
         }
     }
+}
+
+/// Whether driven `output` can run VRR, and whether it does; None for one not driven.
+pub fn vrr_of(state: &State, output: &Output) -> Option<(bool, bool)> {
+    let head = match screen_of(output) {
+        Some(Screen::Monitor(head)) => head,
+        #[cfg(test)]
+        None => return super::fake::vrr_of(state, output),
+        #[cfg(not(test))]
+        None => return None,
+        Some(Screen::Virtual) => return None,
+    };
+    let s = state.backend.as_ref()?.surfaces.get(&head)?;
+    Some((s.vrr_capable, s.vrr_on))
 }
 
 pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {

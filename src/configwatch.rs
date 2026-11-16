@@ -842,7 +842,7 @@ mod tests {
         );
         assert!(!lays_out(&old, &scaled, false), "nothing moved");
         let mut vrr = old.clone();
-        vrr.adaptive_sync = !old.adaptive_sync;
+        vrr.adaptive_sync = crate::config::VrrPolicy::On;
         assert_eq!(redraw(&old, &vrr), Redraw::Layout, "adaptive sync");
         let mut both = scaled.clone();
         both.taskbar.auto_hide = !old.taskbar.auto_hide;
@@ -1126,7 +1126,7 @@ mod tests {
     fn mode_transform_scale_and_adaptive_sync_are_applied_at_once() {
         let old = Config::default();
         let mut new = old.clone();
-        new.adaptive_sync = true;
+        new.adaptive_sync = crate::config::VrrPolicy::Fullscreen;
         let c = diff(&old, &new);
         assert!(c.outputs);
         assert!(!c.workspaces);
@@ -1135,7 +1135,7 @@ mod tests {
             name: "DP-1".into(),
             scale: 1.0,
             mode: None,
-            adaptive_sync: Some(true),
+            adaptive_sync: Some(crate::config::VrrPolicy::On),
             transform: Default::default(),
             position: None,
             primary: false,
