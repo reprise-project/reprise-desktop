@@ -1964,6 +1964,36 @@ fn write_document_refuses_a_read_only_file() {
 }
 
 #[test]
+fn write_document_writes_in_place_in_a_folder_it_cannot_write() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().join("shared");
+    std::fs::create_dir(&dir).expect("mkdir");
+    let doc = dir.join("doc.txt");
+    std::fs::write(&doc, "old").expect("write");
+    let before = std::fs::metadata(&doc).expect("stat").ino();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    // Root writes into any folder, so there is nothing to check.
+    if std::fs::File::create(dir.join("probe")).is_err() {
+        write_document(&doc, b"new").expect("save");
+        assert_eq!(std::fs::read_to_string(&doc).expect("read"), "new");
+        assert_eq!(std::fs::metadata(&doc).expect("stat").ino(), before);
+        let failed = write_in_place(&doc, |mut f| {
+            use std::io::Write;
+            f.write_all(b"half")?;
+            Err(std::io::Error::other("disk full"))
+        });
+        assert!(failed.is_err());
+        assert_eq!(
+            std::fs::read_to_string(&doc).expect("read"),
+            "new",
+            "the old bytes held in memory are put back"
+        );
+    }
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+}
+
+#[test]
 fn a_hard_linked_file_keeps_its_bytes_and_inode_when_the_write_fails_midway() {
     use std::os::unix::fs::MetadataExt;
     let tmp = tempfile::tempdir().expect("tempdir");

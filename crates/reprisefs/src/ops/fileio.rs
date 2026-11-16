@@ -226,7 +226,16 @@ pub fn write_document(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if meta.as_ref().is_some_and(|m| m.is_file()) {
         std::fs::OpenOptions::new().write(true).open(path)?;
     }
-    let (f, tmp) = create_temp_beside(path, meta.as_ref().map(|m| m.permissions()))?;
+    let (f, tmp) = match create_temp_beside(path, meta.as_ref().map(|m| m.permissions())) {
+        // A file the user may write in a folder they may not: no temp file can sit beside it.
+        Err(e)
+            if e.kind() == io::ErrorKind::PermissionDenied
+                && meta.as_ref().is_some_and(|m| m.is_file()) =>
+        {
+            return write_in_place(path, |mut f| f.write_all(bytes));
+        }
+        made => made?,
+    };
     let written = (|| {
         if let Some(m) = &meta {
             // Another user's file keeps its owner only under root; its group
@@ -256,13 +265,19 @@ pub fn write_document(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Rewrites `path` in its own inode. A synced copy of the old bytes waits beside it until the new
-/// ones are synced, and a failed write puts them back.
+/// ones are synced, and a failed write puts them back; in a folder the user cannot write the copy
+/// is held in memory.
 pub(crate) fn write_in_place(
     path: &Path,
     fill: impl FnOnce(&std::fs::File) -> io::Result<()>,
 ) -> io::Result<()> {
     let Some(backup) = (match std::fs::symlink_metadata(path) {
-        Ok(m) if m.is_file() => Some(backup_beside(path, m.permissions())?),
+        Ok(m) if m.is_file() => Some(match backup_beside(path, m.permissions()) {
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                Backup::Held(std::fs::read(path)?)
+            }
+            made => Backup::Beside(made?),
+        }),
         _ => None,
     }) else {
         let f = std::fs::File::create(path)?;
@@ -272,25 +287,40 @@ pub(crate) fn write_in_place(
     let f = match std::fs::File::create(path) {
         Ok(f) => f,
         Err(e) => {
-            let _ = std::fs::remove_file(&backup);
+            backup.discard();
             return Err(e);
         }
     };
     if let Err(e) = fill(&f).and_then(|()| f.sync_all()) {
         match restore(&f, &backup) {
-            Ok(()) => {
-                let _ = std::fs::remove_file(&backup);
-            }
-            Err(r) => log::error!(
-                "restore {} from {}: {r}; the old text stays there",
-                path.display(),
-                backup.display()
-            ),
+            Ok(()) => backup.discard(),
+            Err(r) => match &backup {
+                Backup::Beside(at) => log::error!(
+                    "restore {} from {}: {r}; the old text stays there",
+                    path.display(),
+                    at.display()
+                ),
+                Backup::Held(_) => log::error!("restore {}: {r}", path.display()),
+            },
         }
         return Err(e);
     }
-    let _ = std::fs::remove_file(&backup);
+    backup.discard();
     Ok(())
+}
+
+/// The old bytes [`write_in_place`] puts back after a failed write.
+enum Backup {
+    Beside(PathBuf),
+    Held(Vec<u8>),
+}
+
+impl Backup {
+    fn discard(&self) {
+        if let Backup::Beside(at) = self {
+            let _ = std::fs::remove_file(at);
+        }
+    }
 }
 
 fn backup_beside(path: &Path, mode: std::fs::Permissions) -> io::Result<PathBuf> {
@@ -305,11 +335,16 @@ fn backup_beside(path: &Path, mode: std::fs::Permissions) -> io::Result<PathBuf>
     Ok(at)
 }
 
-fn restore(mut f: &std::fs::File, backup: &Path) -> io::Result<()> {
-    use std::io::Seek;
+fn restore(mut f: &std::fs::File, backup: &Backup) -> io::Result<()> {
+    use std::io::{Seek, Write};
     f.set_len(0)?;
     f.rewind()?;
-    std::io::copy(&mut std::fs::File::open(backup)?, &mut f)?;
+    match backup {
+        Backup::Beside(at) => {
+            std::io::copy(&mut std::fs::File::open(at)?, &mut f)?;
+        }
+        Backup::Held(bytes) => f.write_all(bytes)?,
+    }
     f.sync_all()
 }
 
