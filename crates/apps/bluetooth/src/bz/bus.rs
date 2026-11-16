@@ -422,7 +422,15 @@ async fn command(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
             {
                 log::info!("could not unblock Bluetooth through rfkill: {e}");
             }
-            set(conn, adapter, ADAPTER_IFACE, "Powered", Variant::from(*on)).await
+            // Every adapter follows, so `fold` never shows another adapter that is still on.
+            let mut r = set(conn, adapter, ADAPTER_IFACE, "Powered", Variant::from(*on)).await;
+            for other in adapters(conn).await.iter().filter(|a| *a != adapter) {
+                match set(conn, other, ADAPTER_IFACE, "Powered", Variant::from(*on)).await {
+                    Ok(()) => r = Ok(()),
+                    Err(e) => log::info!("could not switch {other}: {e}"),
+                }
+            }
+            r
         }
         Cmd::SetDiscoverable { adapter, on } => {
             set(
@@ -453,6 +461,30 @@ async fn command(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
         }
         Cmd::Remove { adapter, device } => remove(conn, adapter, device).await,
         Cmd::Pair(_) | Cmd::Connect(_) | Cmd::Receive(_) | Cmd::Airplane(_) | Cmd::Quit => Ok(()),
+    }
+}
+
+/// The paths of every adapter BlueZ lists.
+async fn adapters(conn: &Connection) -> Vec<String> {
+    let objects = conn
+        .call_method(
+            Some(NAME),
+            "/",
+            Some(OBJECT_MANAGER),
+            "GetManagedObjects",
+            &(),
+        )
+        .await
+        .and_then(|m| m.body().deserialize::<Objects>());
+    match objects {
+        Ok(o) => (o.into_iter())
+            .filter(|(_, ifaces)| ifaces.contains_key(ADAPTER_IFACE))
+            .map(|(p, _)| p.to_string())
+            .collect(),
+        Err(e) => {
+            log::info!("cannot list the adapters ({e})");
+            Vec::new()
+        }
     }
 }
 
@@ -712,12 +744,21 @@ mod tests {
 
     struct FakeAdapter {
         calls: std::sync::mpsc::Sender<String>,
+        powered: bool,
     }
 
     #[zbus::interface(name = "org.bluez.Adapter1")]
     impl FakeAdapter {
         fn remove_device(&self, device: zbus::OwnedObjectPath) {
             let _ = self.calls.send(format!("RemoveDevice {}", device.as_str()));
+        }
+        #[zbus(property)]
+        fn powered(&self) -> bool {
+            self.powered
+        }
+        #[zbus(property)]
+        fn set_powered(&mut self, on: bool) {
+            self.powered = on;
         }
     }
 
@@ -734,6 +775,7 @@ mod tests {
             let server = bluez.object_server();
             let adapter = FakeAdapter {
                 calls: calls_tx.clone(),
+                powered: true,
             };
             server.at("/org/bluez/hci0", adapter).await.unwrap();
             for (path, hang) in [(DEVICE, true), (OTHER, false)] {
@@ -783,6 +825,39 @@ mod tests {
             [OTHER],
             "only the pairing left alone reports Paired"
         );
+    }
+
+    #[test]
+    fn the_radio_switch_turns_every_adapter_off_and_on() {
+        let Some(bus) = bus() else {
+            return;
+        };
+        const ADAPTERS: [&str; 2] = ["/org/bluez/hci0", "/org/bluez/hci1"];
+        zbus::block_on(async {
+            let bluez = connect(&bus.1).await;
+            let server = bluez.object_server();
+            server.at("/", zbus::fdo::ObjectManager).await.unwrap();
+            for path in ADAPTERS {
+                let (calls, _) = std::sync::mpsc::channel();
+                let adapter = FakeAdapter {
+                    calls,
+                    powered: true,
+                };
+                server.at(path, adapter).await.unwrap();
+            }
+            bluez.request_name(NAME).await.unwrap();
+            let conn = connect(&bus.1).await;
+            for on in [false, true] {
+                let adapter = ADAPTERS[1].to_string();
+                command(&conn, &Cmd::SetPowered { adapter, on })
+                    .await
+                    .unwrap();
+                for path in ADAPTERS {
+                    let iface = server.interface::<_, FakeAdapter>(path).await.unwrap();
+                    assert_eq!(iface.get().await.powered, on, "{path}");
+                }
+            }
+        });
     }
 
     #[test]
