@@ -30,11 +30,8 @@ use crate::{
     config::{Action, MenuEntry, MenuTarget},
     desktop::IconId,
     desktopview::DesktopCommand,
-    keys,
     raster::{Canvas, Rect},
-    startmenu::{
-        KeyStops, MenuItem, MenuLayout, StartRow, enter_row, relist, rows_for_key, step_selection,
-    },
+    startmenu::{MenuItem, MenuLayout, StartRow, relist},
     taskbar::{JumpRow, QuickCommand, TaskKey, TaskbarCommand, WindowListRow},
     window::WindowId,
     winmenu::WindowMenuRow,
@@ -570,84 +567,6 @@ pub(crate) const RECENT_DOCUMENTS: usize = 15;
 pub enum MenuPending {
     Open { depth: usize, row: usize },
     CloseAbove { depth: usize },
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum KeyAct {
-    Nothing,
-    Select(Option<usize>),
-    SelectAnd(usize, Box<KeyAct>),
-    CloseTopmost,
-    CloseSubmenu,
-    OpenSubmenu(usize),
-    Activate(usize),
-}
-
-fn row_has_submenu(items: &[MenuItem], row: usize) -> bool {
-    matches!(
-        items.get(row),
-        Some(MenuItem::Entry {
-            submenu: true,
-            enabled: true,
-            ..
-        })
-    )
-}
-
-/// What `sym` does to the topmost menu, whose rows are `items` with `current`
-/// highlighted: Up/Down move, Right/Enter open a submenu (Enter runs a plain row
-/// or the bold default), Left/Escape close, a letter jumps to its access key
-/// and runs it when unique. None for a key the menu ignores.
-#[expect(non_upper_case_globals)] // xkb keysym names in patterns
-fn key_act(
-    items: &[MenuItem],
-    current: Option<usize>,
-    sym: u32,
-    stops: KeyStops,
-) -> Option<KeyAct> {
-    use keys::*;
-    let open_or_run = |row: usize| {
-        if row_has_submenu(items, row) {
-            KeyAct::OpenSubmenu(row)
-        } else {
-            KeyAct::Activate(row)
-        }
-    };
-    Some(match sym {
-        KEY_Down | KEY_KP_Down => KeyAct::Select(step_selection(items, current, 1, stops)),
-        KEY_Up | KEY_KP_Up => KeyAct::Select(step_selection(items, current, -1, stops)),
-        KEY_Home | KEY_KP_Home => KeyAct::Select(step_selection(items, None, 1, stops)),
-        KEY_End | KEY_KP_End => KeyAct::Select(step_selection(items, None, -1, stops)),
-        KEY_Escape => KeyAct::CloseTopmost,
-        KEY_Left | KEY_KP_Left => KeyAct::CloseSubmenu,
-        KEY_Right | KEY_KP_Right => match current.filter(|&r| row_has_submenu(items, r)) {
-            Some(row) => KeyAct::OpenSubmenu(row),
-            None => KeyAct::Nothing,
-        },
-        KEY_Return | KEY_KP_Enter | KEY_space => match (current, enter_row(items, current)) {
-            (_, None) => KeyAct::Nothing,
-            (Some(row), _) => open_or_run(row),
-            (None, Some(row)) => KeyAct::SelectAnd(row, Box::new(open_or_run(row))),
-        },
-        _ => {
-            let ch = smithay::input::keyboard::Keysym::new(sym)
-                .key_char()
-                .filter(|c| c.is_alphanumeric())?;
-            let rows: Vec<usize> = rows_for_key(items, ch).collect();
-            match rows.as_slice() {
-                [] => KeyAct::Nothing,
-                [only] => KeyAct::SelectAnd(*only, Box::new(open_or_run(*only))),
-                many => {
-                    let next = many
-                        .iter()
-                        .find(|&&r| Some(r) > current)
-                        .or(many.first())
-                        .copied();
-                    KeyAct::Select(next)
-                }
-            }
-        }
-    })
 }
 
 /// The top-left of a Start menu `size` big hung off Start at `start` on bar `p`

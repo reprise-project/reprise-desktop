@@ -22,7 +22,7 @@ fn wide_metrics() -> Metrics {
     }
 }
 
-fn wide_theme() -> Theme {
+pub(super) fn wide_theme() -> Theme {
     Theme {
         metrics: wide_metrics(),
         ..Theme::default()
@@ -1170,7 +1170,7 @@ fn render_menu_radio() {
     crate::raster::write_preview(&c, "menu-radio-preview.png");
 }
 
-fn nested_tree() -> MenuTree {
+pub(super) fn nested_tree() -> MenuTree {
     let arrange = MenuTree::flat(vec![
         MenuItem::item("&Name"),
         MenuItem::item("Si&ze"),
@@ -1184,7 +1184,7 @@ fn nested_tree() -> MenuTree {
     t
 }
 
-fn nested_ctx<'a>(theme: &'a Theme, text: &'a TextRenderer) -> MenuCtx<'a> {
+pub(super) fn nested_ctx<'a>(theme: &'a Theme, text: &'a TextRenderer) -> MenuCtx<'a> {
     MenuCtx {
         text,
         theme,
@@ -1193,7 +1193,7 @@ fn nested_ctx<'a>(theme: &'a Theme, text: &'a TextRenderer) -> MenuCtx<'a> {
     }
 }
 
-fn row_point(p: &PopupMenu, lvl: usize, i: usize) -> (i32, i32) {
+pub(super) fn row_point(p: &PopupMenu, lvl: usize, i: usize) -> (i32, i32) {
     let level = &p.levels()[lvl];
     let r = level.layout.rows[i];
     (
@@ -1544,29 +1544,6 @@ fn enter_opens_a_bold_submenu_row() {
     assert_eq!(p.depth(), 2);
     assert_eq!(p.levels()[0].hovered, Some(1));
     assert_eq!(p.hovered(), Some(0));
-}
-
-#[test]
-fn hovering_a_submenu_row_opens_it_and_leaving_it_closes_it() {
-    let theme = wide_theme();
-    let text = TextRenderer::load(&FontConfig::default());
-    let cx = nested_ctx(&theme, &text);
-    let t = nested_tree();
-    let mut p = PopupMenu::open(&t, (100, 50), &cx, false);
-    let (x, y) = row_point(&p, 0, 1);
-    assert!(p.motion(&t, x, y, &cx));
-    assert_eq!(p.depth(), 2, "hovering the row opens its child");
-    let (cxp, cyp) = row_point(&p, 1, 2);
-    assert!(p.motion(&t, cxp, cyp, &cx));
-    assert_eq!(p.levels()[0].hovered, Some(1));
-    assert_eq!(p.levels()[1].hovered, Some(2));
-    assert!(!p.motion(&t, cxp, cyp, &cx));
-    assert_eq!(p.depth(), 2);
-    assert_eq!(p.click(&t, cxp, cyp, &cx), MenuAction::Chosen(vec![1, 2]));
-    let (px0, py0) = row_point(&p, 0, 0);
-    assert!(p.motion(&t, px0, py0, &cx));
-    assert_eq!(p.depth(), 1);
-    assert_eq!(p.click(&t, 700, 560, &cx), MenuAction::Close);
 }
 
 #[test]

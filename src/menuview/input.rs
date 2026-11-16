@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
+use reprisekit::controls::menu::{KeyAct, MenuKey, key_act};
+
 use crate::{
     compositor::State,
     startmenu::{KeyStops, step_selection},
@@ -34,18 +36,20 @@ impl State {
         };
         self.schedule_menu_hover(None);
         self.enter_menu_keys();
-        let act = {
-            let menu = &self.menus[depth];
-            key_act(
-                &menu.items,
-                menu.hovered,
-                sym,
-                KeyStops::of(&self.config.theme),
-            )
+        let ch = smithay::input::keyboard::Keysym::new(sym)
+            .key_char()
+            .map(String::from);
+        let Some(key) = MenuKey::from_keysym(sym, ch.as_deref()) else {
+            return;
         };
-        if let Some(act) = act {
-            self.apply_menu_key(depth, act);
-        }
+        let menu = &self.menus[depth];
+        let act = key_act(
+            &menu.items,
+            menu.hovered,
+            key,
+            KeyStops::of(&self.config.theme),
+        );
+        self.apply_menu_key(depth, act);
     }
 
     fn apply_menu_key(&mut self, depth: usize, act: KeyAct) {

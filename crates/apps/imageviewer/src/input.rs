@@ -93,21 +93,7 @@ impl Viewer {
 
     /// The menu bar's keys: F10, Escape and the arrows while it is active, Alt+letter.
     fn bar_key(&mut self, k: &KeyInput, ctx: &Ctx) -> Option<Reply> {
-        let bar_key = match k.sym {
-            keysym::F10 if !k.mods.shift => Key::Activate,
-            keysym::ESCAPE => Key::Escape,
-            keysym::LEFT | keysym::KP_LEFT => Key::Left,
-            keysym::RIGHT | keysym::KP_RIGHT => Key::Right,
-            keysym::UP | keysym::KP_UP => Key::Up,
-            keysym::DOWN | keysym::KP_DOWN => Key::Down,
-            keysym::RETURN | keysym::KP_ENTER => Key::Enter,
-            _ => k
-                .utf8
-                .as_deref()
-                .and_then(|s| s.chars().next())
-                .filter(|c| c.is_alphanumeric())
-                .map(|c| Key::Char(c, k.mods.alt))?,
-        };
+        let bar_key = Key::from_input(k.sym, k.utf8.as_deref(), k.mods.shift, k.mods.alt)?;
         let lay = self.bar_layout(ctx);
         let px = ctx.theme.fonts.size_px;
         match self.bar.key(bar_key, &lay, &ctx.text, &ctx.theme, px) {

@@ -23,7 +23,7 @@ use std::sync::mpsc::Receiver;
 
 use repriseapp::keys::form_clipboard;
 use repriseapp::unlock;
-use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
+use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, PointerInput, Reply, WinId};
 use reprisefs::udisks::{ErrorKind, Snapshot};
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::controls::menu::{
@@ -32,7 +32,6 @@ use reprisekit::controls::menu::{
 };
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::taskbar::Edge;
-use reprisekit::textedit::keysym;
 
 use model::{Act, Arrival, Entry, Target};
 
@@ -622,7 +621,7 @@ impl DrivesApp {
             Event::Pointer(PointerInput::Press { x, y, .. }) if !menu.contains(x, y) => {
                 MenuAction::Close
             }
-            Event::Key(k) => match menu_key(&k) {
+            Event::Key(k) => match MenuKey::from_keysym(k.sym, k.utf8.as_deref()) {
                 Some(key) => menu.key(&f.tree, key, &cx),
                 None => MenuAction::None,
             },
@@ -667,19 +666,6 @@ impl DrivesApp {
             }
         }
     }
-}
-
-fn menu_key(k: &KeyInput) -> Option<MenuKey> {
-    Some(match k.sym {
-        keysym::ESCAPE => MenuKey::Escape,
-        keysym::UP | keysym::KP_UP => MenuKey::Up,
-        keysym::DOWN | keysym::KP_DOWN => MenuKey::Down,
-        keysym::RETURN | keysym::KP_ENTER => MenuKey::Enter,
-        _ => match k.utf8.as_deref().and_then(|s| s.chars().next()) {
-            Some(c) if c.is_alphanumeric() => MenuKey::Char(c),
-            _ => return None,
-        },
-    })
 }
 
 impl App for DrivesApp {

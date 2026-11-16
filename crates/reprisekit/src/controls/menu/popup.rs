@@ -1,13 +1,15 @@
 //! [`MenuTree`] and the open chain of [`PopupMenu`] levels: pointer, keys and placement.
 
 use super::draw::draw_menu_at;
+use super::keys::{KeyAct, MenuKey, key_act};
 use super::layout::{BORDER, INSET, MenuLayout, MenuStyle, place_submenu};
 use super::shadow::menu_look;
-use super::{KeyStops, MenuItem, enter_row, rows_for_key, step_selection};
+use super::{KeyStops, MenuItem, step_selection};
 use crate::controls::hosted::{Anchor, Chain, Spot};
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
 use crate::theme::Theme;
+use std::time::{Duration, Instant};
 
 /// A menu whose rows can open menus of their own: `children[i]` is the submenu row `i` opens.
 /// Build it through [`MenuTree::push`] and [`MenuTree::push_sub`] so the two vectors stay the same length.
@@ -88,17 +90,6 @@ pub struct MenuCtx<'a> {
     pub within: Rect,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MenuKey {
-    Up,
-    Down,
-    Left,
-    Right,
-    Enter,
-    Escape,
-    Char(char),
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuAction {
     /// Not the menu's: the host decides (Left on the root menu of a menu
@@ -149,13 +140,13 @@ impl Level {
     }
 }
 
-///
-/// The host owns the submenu hover delay: [`PopupMenu::motion`] opens a
-/// hovered row's submenu at once, so a host that wants the delay calls it
-/// from its own timer.
+/// The open chain. Hovering a row opens or closes a submenu after `[metrics] menu_hover_ms`:
+/// the host calls [`PopupMenu::settle`] once [`PopupMenu::due`] passes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PopupMenu {
     pub(super) levels: Vec<Level>,
+    /// What the hovered row does once the delay passes.
+    pending: Option<Pending>,
     /// Opened from the keyboard: the chain underlines its access keys
     /// whatever its host's cues say.
     pub(crate) keys: bool,
@@ -163,6 +154,18 @@ pub struct PopupMenu {
     pub(crate) anchor: Anchor,
     /// Shown on popups by a host ([`Hosted`]): [`PopupMenu::draw`] leaves it out.
     hosted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Pending {
+    /// The level whose row the pointer rests on.
+    level: usize,
+    at: Instant,
+    /// The submenu row it rests on; `None` for a plain row, a separator or the border.
+    opens: Option<usize>,
+    /// The submenu to open, laid out when the row was hovered; `None` closes what is open past
+    /// `level`.
+    open: Option<Level>,
 }
 
 /// A level taller than `within` wraps into columns, so every row stays on screen.
@@ -193,6 +196,7 @@ impl PopupMenu {
                 layout,
                 hovered,
             }],
+            pending: None,
             keys: by_keyboard,
             anchor: Anchor::Point(at.0, at.1),
             hosted: false,
@@ -247,22 +251,20 @@ impl PopupMenu {
         self.hit(x, y).is_some()
     }
 
-    fn open_child(
-        &mut self,
+    /// The submenu row `row` of `level` opens, laid out beside its row.
+    fn child_level(
+        &self,
         tree: &MenuTree,
         level: usize,
         row: usize,
         cx: &MenuCtx,
         by_keyboard: bool,
-    ) -> bool {
-        let Some(parent) = self.levels.get(level) else {
-            return false;
-        };
+    ) -> Option<Level> {
+        let parent = self.levels.get(level)?;
         let mut path = parent.path.clone();
         path.push(row);
-        let (Some(child), Some(r)) = (tree.at(&path), parent.layout.rows.get(row).copied()) else {
-            return false;
-        };
+        let child = tree.at(&path)?;
+        let r = parent.layout.rows.get(row).copied()?;
         let items = child.items.clone();
         let layout = level_layout(&items, cx);
         let prect = parent.rect();
@@ -271,14 +273,29 @@ impl PopupMenu {
         let hovered = by_keyboard
             .then(|| step_selection(&items, None, 1, KeyStops::of(cx.theme)))
             .flatten();
-        self.levels.truncate(level + 1);
-        self.levels.push(Level {
+        Some(Level {
             path,
             items,
             origin: (x, y),
             layout,
             hovered,
-        });
+        })
+    }
+
+    fn open_child(
+        &mut self,
+        tree: &MenuTree,
+        level: usize,
+        row: usize,
+        cx: &MenuCtx,
+        by_keyboard: bool,
+    ) -> bool {
+        let Some(child) = self.child_level(tree, level, row, cx, by_keyboard) else {
+            return false;
+        };
+        self.pending = None;
+        self.levels.truncate(level + 1);
+        self.levels.push(child);
         true
     }
 
@@ -289,9 +306,21 @@ impl PopupMenu {
         }
     }
 
-    /// Hovering a submenu row opens it (see the type's doc on the delay),
-    /// and leaving it for another row of the same menu closes it again.
+    /// Hovering a submenu row opens it once the delay passes, and resting on another row of
+    /// the same menu closes it again ([`PopupMenu::settle`]). `true` when the lit rows changed.
     pub fn motion(&mut self, tree: &MenuTree, x: i32, y: i32, cx: &MenuCtx) -> bool {
+        self.motion_at(tree, x, y, cx, Instant::now())
+    }
+
+    /// [`PopupMenu::motion`] at time `now`.
+    pub fn motion_at(
+        &mut self,
+        tree: &MenuTree,
+        x: i32,
+        y: i32,
+        cx: &MenuCtx,
+        now: Instant,
+    ) -> bool {
         let Some((level, row)) = self.hit(x, y) else {
             return false;
         };
@@ -300,75 +329,99 @@ impl PopupMenu {
             self.levels[level].hovered = row;
             dirty = true;
         }
+        // A level the pointer reached keeps the rows that lead to it lit.
+        for i in 0..level {
+            let lead = self.levels[i + 1].path.last().copied();
+            if self.levels[i].hovered != lead {
+                self.levels[i].hovered = lead;
+                dirty = true;
+            }
+        }
         if self.child_open_for(level, row) {
+            self.pending = None;
             return dirty;
         }
-        if self.levels.len() > level + 1 {
-            self.levels.truncate(level + 1);
-            dirty = true;
+        let opens = row.filter(|&r| self.levels[level].opens_submenu(r));
+        let waiting = self
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.level == level && p.opens == opens);
+        if !waiting {
+            let open = opens.and_then(|r| self.child_level(tree, level, r, cx, false));
+            let ms = cx.theme.metrics.menu_hover_ms.max(0) as u64;
+            self.pending = (open.is_some() || self.levels.len() > level + 1).then(|| Pending {
+                level,
+                at: now + Duration::from_millis(ms),
+                opens,
+                open,
+            });
         }
-        if let Some(r) = row
-            && self.levels[level].opens_submenu(r)
-        {
-            dirty |= self.open_child(tree, level, r, cx, false);
+        dirty | self.settle(now)
+    }
+
+    /// When the hovered row's submenu opens or closes; none while nothing waits.
+    pub fn due(&self) -> Option<Instant> {
+        self.pending.as_ref().map(|p| p.at)
+    }
+
+    /// Opens or closes the submenu the pointer rests on once its delay has passed by `now`;
+    /// `true` when the chain changed.
+    pub fn settle(&mut self, now: Instant) -> bool {
+        if self.pending.as_ref().is_none_or(|p| p.at > now) {
+            return false;
         }
-        dirty
+        let Some(p) = self.pending.take() else {
+            return false;
+        };
+        if p.level >= self.levels.len() {
+            return false;
+        }
+        self.levels.truncate(p.level + 1);
+        if let Some(child) = p.open {
+            self.levels.push(child);
+        }
+        true
     }
 
     pub fn key(&mut self, tree: &MenuTree, key: MenuKey, cx: &MenuCtx) -> MenuAction {
+        self.pending = None;
         let last = self.levels.len() - 1;
-        match key {
-            MenuKey::Up | MenuKey::Down => {
-                let step = if key == MenuKey::Down { 1 } else { -1 };
-                let level = &mut self.levels[last];
-                level.hovered =
-                    step_selection(&level.items, level.hovered, step, KeyStops::of(cx.theme));
+        let level = &self.levels[last];
+        match key_act(&level.items, level.hovered, key, KeyStops::of(cx.theme)) {
+            // Enter is the menu's even with no row to run.
+            KeyAct::Nothing if key == MenuKey::Enter => MenuAction::Redraw,
+            act => self.apply_key(tree, last, act, cx),
+        }
+    }
+
+    fn apply_key(&mut self, tree: &MenuTree, last: usize, act: KeyAct, cx: &MenuCtx) -> MenuAction {
+        match act {
+            // Not the menu's: the host decides (Right off a plain row walks to the next title).
+            KeyAct::Nothing => MenuAction::None,
+            KeyAct::Select(row) => {
+                self.levels[last].hovered = row;
                 MenuAction::Redraw
             }
-            MenuKey::Right => match self.levels[last].hovered {
-                Some(r) if self.levels[last].opens_submenu(r) => {
-                    self.open_child(tree, last, r, cx, true);
-                    MenuAction::Redraw
-                }
-                // Not a submenu row: the host's (the next menu bar title).
-                _ => MenuAction::None,
-            },
-            MenuKey::Left => {
-                if last > 0 {
-                    self.levels.truncate(last);
-                    MenuAction::Redraw
-                } else {
-                    MenuAction::None
-                }
+            KeyAct::SelectAnd(row, then) => {
+                self.levels[last].hovered = Some(row);
+                self.apply_key(tree, last, *then, cx)
             }
-            MenuKey::Escape => {
-                if last > 0 {
-                    self.levels.truncate(last);
-                    MenuAction::Redraw
-                } else {
-                    MenuAction::Close
-                }
+            KeyAct::CloseTopmost if last == 0 => MenuAction::Close,
+            KeyAct::CloseSubmenu if last == 0 => MenuAction::None,
+            KeyAct::CloseTopmost | KeyAct::CloseSubmenu => {
+                self.levels.truncate(last);
+                MenuAction::Redraw
             }
-            // With nothing highlighted, Enter takes the bold default row.
-            MenuKey::Enter => {
-                let row = enter_row(&self.levels[last].items, self.levels[last].hovered);
-                self.levels[last].hovered = row;
-                self.pick(tree, last, row, cx)
+            KeyAct::OpenSubmenu(row) => {
+                self.open_child(tree, last, row, cx, true);
+                MenuAction::Redraw
             }
-            MenuKey::Char(c) => {
-                let row = rows_for_key(&self.levels[last].items, c).next();
-                match row {
-                    Some(r) => {
-                        self.levels[last].hovered = Some(r);
-                        self.pick(tree, last, Some(r), cx)
-                    }
-                    None => MenuAction::None,
-                }
-            }
+            KeyAct::Activate(row) => self.pick(tree, last, Some(row), cx),
         }
     }
 
     pub fn click(&mut self, tree: &MenuTree, x: i32, y: i32, cx: &MenuCtx) -> MenuAction {
+        self.pending = None;
         match self.hit(x, y) {
             None => MenuAction::Close,
             Some((level, None)) => {
@@ -517,3 +570,6 @@ impl Chain for PopupMenu {
         self
     }
 }
+
+#[cfg(test)]
+mod tests;

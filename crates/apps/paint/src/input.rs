@@ -101,27 +101,7 @@ impl Paint {
         self.alt_arm.interrupt();
         let lay = self.bar_layout(ctx);
         let px = ctx.theme.fonts.size_px;
-        let bar_key = match k.sym {
-            keysym::F10 => Some(Key::Activate),
-            keysym::ESCAPE if self.bar.open.is_some() => Some(Key::Escape),
-            keysym::LEFT | keysym::RIGHT | keysym::UP | keysym::DOWN | keysym::RETURN
-                if self.bar.open.is_some() =>
-            {
-                Some(match k.sym {
-                    keysym::LEFT => Key::Left,
-                    keysym::RIGHT => Key::Right,
-                    keysym::UP => Key::Up,
-                    keysym::DOWN => Key::Down,
-                    _ => Key::Enter,
-                })
-            }
-            _ => k
-                .utf8
-                .as_deref()
-                .and_then(|s| s.chars().next())
-                .filter(|c| c.is_alphanumeric() && (k.mods.alt || self.bar.open.is_some()))
-                .map(|c| Key::Char(c, k.mods.alt)),
-        };
+        let bar_key = Key::from_input(k.sym, k.utf8.as_deref(), k.mods.shift, k.mods.alt);
         if let Some(bk) = bar_key {
             match self.bar.key(bk, &lay, &ctx.text, &ctx.theme, px) {
                 Action::Chosen { title, row, .. } => return self.command(title, row, ctx),

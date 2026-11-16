@@ -213,20 +213,11 @@ impl Menu {
         self.chain.place(i, origin);
     }
 
-    /// Every key while the menu is open: the arrows, Enter, Escape and access letters work it,
-    /// the rest do nothing.
+    /// Every key while the menu is open: the menu keys ([`MenuKey::from_keysym`]) work it, the
+    /// rest do nothing.
     pub fn key(&mut self, sym: u32, utf8: Option<&str>, cx: &MenuCtx) -> Step {
-        let key = match sym {
-            keysym::ESCAPE => MenuKey::Escape,
-            keysym::UP | keysym::KP_UP => MenuKey::Up,
-            keysym::DOWN | keysym::KP_DOWN => MenuKey::Down,
-            keysym::LEFT | keysym::KP_LEFT => MenuKey::Left,
-            keysym::RIGHT | keysym::KP_RIGHT => MenuKey::Right,
-            keysym::RETURN | keysym::KP_ENTER => MenuKey::Enter,
-            _ => match utf8.and_then(|s| s.chars().next()) {
-                Some(c) if c.is_alphanumeric() => MenuKey::Char(c),
-                _ => return Step::None,
-            },
+        let Some(key) = MenuKey::from_keysym(sym, utf8) else {
+            return Step::None;
         };
         let act = self.chain.key(&self.tree, key, cx);
         self.step(act)

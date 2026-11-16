@@ -1,5 +1,6 @@
 use super::*;
-use crate::keys::{KEY_KP_Enter, KEY_Return};
+use crate::keys;
+use crate::startmenu::KeyStops;
 
 #[test]
 fn the_edit_menu_over_the_start_panel_unrolls_facing_the_press() {
@@ -300,6 +301,7 @@ fn a_window_list_hangs_off_its_button_or_the_more_cell() {
 #[test]
 fn escape_in_a_start_panel_popup_closes_the_popup_only() {
     use crate::keyroute::{KeyPress, KeyRoute, Modes, route};
+    use reprisekit::controls::menu::{KeyAct, MenuKey, key_act};
     let modes = Modes {
         start_panel_open: true,
         menus_open: true,
@@ -321,8 +323,8 @@ fn escape_in_a_start_panel_popup_closes_the_popup_only() {
         reprisekit::powerpanel::Leave::SwitchUser { live: false },
     );
     assert_eq!(
-        key_act(&items, Some(0), keys::KEY_Escape, KeyStops::Enabled),
-        Some(KeyAct::CloseTopmost)
+        key_act(&items, Some(0), MenuKey::Escape, KeyStops::Enabled),
+        KeyAct::CloseTopmost
     );
     let kind = MenuKind::StartPanel { rows };
     assert!(
@@ -471,69 +473,6 @@ fn documents_folders_have_their_infotips() {
     );
     assert_eq!(docs.tip(1), None);
     assert_eq!(docs.tip(2), None);
-}
-
-#[test]
-fn enter_runs_the_default_row_when_nothing_is_highlighted() {
-    let rows = |enabled: bool| {
-        vec![
-            MenuItem::item("&Copy Here"),
-            MenuItem::item("&Move Here").bold(true).enabled(enabled),
-            MenuItem::item("Create &Shortcuts Here"),
-            MenuItem::Separator,
-            MenuItem::item("Cancel"),
-        ]
-    };
-    for sym in [KEY_Return, KEY_KP_Enter] {
-        assert_eq!(
-            key_act(&rows(true), None, sym, KeyStops::Enabled),
-            Some(KeyAct::SelectAnd(1, Box::new(KeyAct::Activate(1))))
-        );
-        assert_eq!(
-            key_act(&rows(true), Some(0), sym, KeyStops::Enabled),
-            Some(KeyAct::Activate(0))
-        );
-        assert_eq!(
-            key_act(&rows(false), None, sym, KeyStops::Enabled),
-            Some(KeyAct::Nothing)
-        );
-    }
-    let plain = [MenuItem::item("&Open"), MenuItem::item("&Delete")];
-    assert_eq!(
-        key_act(&plain, None, KEY_Return, KeyStops::Enabled),
-        Some(KeyAct::Nothing)
-    );
-    let sub = [MenuItem::item("Send &To").bold(true).submenu(true)];
-    assert_eq!(
-        key_act(&sub, None, KEY_Return, KeyStops::Enabled),
-        Some(KeyAct::SelectAnd(0, Box::new(KeyAct::OpenSubmenu(0))))
-    );
-}
-
-#[test]
-fn access_keys_pick_or_cycle_and_escape_closes() {
-    use crate::keys::{KEY_Escape, KEY_d, KEY_o};
-    let items = [
-        MenuItem::item("&Open"),
-        MenuItem::item("&Delete"),
-        MenuItem::item("&Details"),
-    ];
-    assert_eq!(
-        key_act(&items, None, KEY_o, KeyStops::Enabled),
-        Some(KeyAct::SelectAnd(0, Box::new(KeyAct::Activate(0))))
-    );
-    assert_eq!(
-        key_act(&items, None, KEY_d, KeyStops::Enabled),
-        Some(KeyAct::Select(Some(1)))
-    );
-    assert_eq!(
-        key_act(&items, Some(1), KEY_d, KeyStops::Enabled),
-        Some(KeyAct::Select(Some(2)))
-    );
-    assert_eq!(
-        key_act(&items, None, KEY_Escape, KeyStops::Enabled),
-        Some(KeyAct::CloseTopmost)
-    );
 }
 
 #[test]

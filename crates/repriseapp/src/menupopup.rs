@@ -5,9 +5,12 @@
 //! Only the root takes a grab; submenus are plain children of it, so the keyboard stays on the
 //! root.
 
+use std::time::Instant;
+
 use reprisekit::controls::hosted::{Anchor as Opens, Hosted, Spot};
 use reprisekit::raster::{Canvas, Rect};
 use smithay_client_toolkit::compositor::Region;
+use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay_client_toolkit::reexports::protocols::xdg::shell::client::xdg_positioner::{
     Anchor, ConstraintAdjustment, Gravity,
 };
@@ -214,19 +217,17 @@ impl Host {
     /// configured levels are. Before each window draws, so the draw leaves the menu out and
     /// lays it out where it shows.
     pub(crate) fn place_menu(&mut self) -> Option<(WinId, Vec<Spot>)> {
-        let ids: Vec<WinId> = self
-            .slots
-            .iter()
-            .filter(|s| s.mapped && s.configured)
-            .map(|s| s.id)
-            .collect();
-        let (owner, mut h) = hosted(
+        let ids = self.shown_ids();
+        let Some((owner, mut h)) = hosted(
             &mut self.edit_menu,
             &mut *self.app,
             &mut self.ctx,
             &self.slots,
             &ids,
-        )?;
+        ) else {
+            self.arm_menu_hover(None);
+            return None;
+        };
         h.host();
         if let Some(m) = self.menu_popups.as_ref().filter(|m| m.owner == owner) {
             let keep = kept(&m.spots(), &h.spots());
@@ -236,7 +237,64 @@ impl Host {
             }
         }
         let spots = h.spots();
+        let due = h.due();
+        drop(h);
+        self.arm_menu_hover(due);
         Some((owner, spots))
+    }
+
+    fn shown_ids(&self) -> Vec<WinId> {
+        self.slots
+            .iter()
+            .filter(|s| s.mapped && s.configured)
+            .map(|s| s.id)
+            .collect()
+    }
+
+    /// Wakes the loop when the open menu's hovered row opens or closes a submenu
+    /// ([`Hosted::due`]), so a pointer resting on the row needs no further motion.
+    fn arm_menu_hover(&mut self, due: Option<Instant>) {
+        if self.menu_hover.as_ref().map(|(at, _)| *at) == due {
+            return;
+        }
+        if let Some((_, t)) = self.menu_hover.take() {
+            self.loop_handle.remove(t);
+        }
+        let Some(at) = due else {
+            return;
+        };
+        let timer = Timer::from_deadline(at);
+        match self
+            .loop_handle
+            .insert_source(timer, |_, _, host: &mut Host| {
+                host.menu_hover = None;
+                host.settle_menu();
+                TimeoutAction::Drop
+            }) {
+            Ok(t) => self.menu_hover = Some((at, t)),
+            Err(e) => log::warn!("menu hover timer: {}", e.error),
+        }
+    }
+
+    fn settle_menu(&mut self) {
+        let ids = self.shown_ids();
+        let Some((owner, mut h)) = hosted(
+            &mut self.edit_menu,
+            &mut *self.app,
+            &mut self.ctx,
+            &self.slots,
+            &ids,
+        ) else {
+            return;
+        };
+        let changed = h.settle(Instant::now());
+        drop(h);
+        if changed {
+            if let Some(s) = self.slot_mut(owner) {
+                s.dirty = true;
+            }
+            self.menu_changed(owner);
+        }
     }
 
     /// Brings the popups in line with the open menu: a popup per level, each placed and drawn.

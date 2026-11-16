@@ -160,22 +160,7 @@ impl Explorer {
     fn bar_key(&mut self, k: &KeyInput, ctx: &mut Ctx) -> Option<Reply> {
         let lay = self.bar_layout(ctx);
         let (m, px) = (ctx.theme.clone(), ctx.theme.fonts.size_px);
-        let bar_key = match k.sym {
-            // Shift+F10 is the context menu key, not the menu bar's.
-            keysym::F10 if !k.mods.shift => Some(Key::Activate),
-            keysym::ESCAPE => Some(Key::Escape),
-            keysym::LEFT | keysym::KP_LEFT if self.bar.is_active() => Some(Key::Left),
-            keysym::RIGHT | keysym::KP_RIGHT if self.bar.is_active() => Some(Key::Right),
-            keysym::UP | keysym::KP_UP if self.bar.is_active() => Some(Key::Up),
-            keysym::DOWN | keysym::KP_DOWN if self.bar.is_active() => Some(Key::Down),
-            keysym::RETURN | keysym::KP_ENTER if self.bar.is_active() => Some(Key::Enter),
-            _ => k
-                .utf8
-                .as_deref()
-                .and_then(|s| s.chars().next())
-                .filter(|c| c.is_alphanumeric())
-                .map(|c| Key::Char(c, k.mods.alt)),
-        }?;
+        let bar_key = Key::from_input(k.sym, k.utf8.as_deref(), k.mods.shift, k.mods.alt)?;
         match self.bar.key(bar_key, &lay, &ctx.text, &m, px) {
             Action::Chosen { title, path, .. } => {
                 let cmd = menus::command_for(title, &path, &self.menu_state());
@@ -341,19 +326,10 @@ impl Explorer {
         Reply::none()
     }
 
-    /// A key while a context menu or a toolbar drop is open: arrows, Enter and Escape go to the chain, Right opens a submenu row.
+    /// A key while a context menu or a toolbar drop is open: the menu keys go to the chain.
     fn popup_key(&mut self, k: KeyInput, ctx: &mut Ctx) -> Reply {
-        let key = match k.sym {
-            keysym::ESCAPE => MenuKey::Escape,
-            keysym::UP | keysym::KP_UP => MenuKey::Up,
-            keysym::DOWN | keysym::KP_DOWN => MenuKey::Down,
-            keysym::LEFT | keysym::KP_LEFT => MenuKey::Left,
-            keysym::RIGHT | keysym::KP_RIGHT => MenuKey::Right,
-            keysym::RETURN | keysym::KP_ENTER => MenuKey::Enter,
-            _ => match k.utf8.as_deref().and_then(|s| s.chars().next()) {
-                Some(c) if c.is_alphanumeric() => MenuKey::Char(c),
-                _ => return Reply::none(),
-            },
+        let Some(key) = MenuKey::from_keysym(k.sym, k.utf8.as_deref()) else {
+            return Reply::none();
         };
         let Some(p) = self.popup.as_mut() else {
             return Reply::none();

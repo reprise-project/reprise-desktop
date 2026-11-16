@@ -81,7 +81,7 @@ use smithay_client_toolkit::{
         DataDeviceManagerState, data_device::DataDevice, data_source::CopyPasteSource,
     },
     output::OutputState,
-    reexports::calloop::{LoopHandle, channel::Sender},
+    reexports::calloop::{LoopHandle, RegistrationToken, channel::Sender},
     registry::RegistryState,
     seat::{SeatState, keyboard::Modifiers},
     shell::{
@@ -265,6 +265,8 @@ struct Host {
     edit_menu: editmenu::EditMenu,
     /// The edit menu's popups while it is open.
     menu_popups: Option<menupopup::MenuPopups>,
+    /// When the open menu's hovered row opens or closes a submenu, and the timer that wakes for it.
+    menu_hover: Option<(std::time::Instant, RegistrationToken)>,
     asked_drop: Option<Asked>,
     /// The file dialog's box ([`filebox`]) and the window of the dialog it is over.
     file_box: Option<(WinId, Child)>,
