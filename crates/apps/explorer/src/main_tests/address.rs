@@ -75,6 +75,7 @@ fn a_blink_redraws_only_while_the_address_field_has_the_caret() {
             select: Vec::new(),
             sheet: None,
             connect: None,
+            search: false,
         },
         inner: Some(ex),
         units: TextUnits::ONE,

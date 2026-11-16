@@ -871,6 +871,7 @@ impl Explorer {
             select,
             connect,
             sheet: _,
+            search,
         } = start;
         let check = dir.map(|d| Job::spawn(Some(&ctx.wake), move || is_dir(&d)));
         let mut ex = build(place.clone(), ctx);
@@ -898,6 +899,9 @@ impl Explorer {
         ex.select_pending(ctx);
         if let Some(uri) = connect {
             let _ = ex.connect_to(&uri, ctx);
+        }
+        if search {
+            let _ = ex.search_focus();
         }
         ex
     }
@@ -1993,16 +1997,25 @@ struct Start {
     connect: Option<String>,
     /// `--properties`: the path whose sheet is the only window; the process ends with it.
     sheet: Option<PathBuf>,
+    /// `--search`: the keyboard starts in the Search field.
+    search: bool,
 }
 
-/// `reprise-explorer [PLACE]`, `--select PATH...` or `--properties PATH`. PLACE is a folder's
-/// path, "Computer", "Recycle Bin" or "Network", or a server address, which opens Computer and
-/// connects to it; a missing or unknown one is Home. `--select` opens the folder the first
-/// absolute PATH sits in with it and the others there selected, the first scrolled into view
-/// (Find Target's window). `--properties` shows an absolute PATH's Properties sheet alone.
+/// `reprise-explorer [--search] [PLACE]`, `--select PATH...` or `--properties PATH`. PLACE is a
+/// folder's path, "Computer", "Recycle Bin" or "Network", or a server address, which opens
+/// Computer and connects to it; a missing or unknown one is Home. `--search` puts the keyboard in
+/// the Search field. `--select` opens the folder the first absolute PATH sits in with it and the
+/// others there selected, the first scrolled into view (Find Target's window). `--properties`
+/// shows an absolute PATH's Properties sheet alone.
 fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
     let mut args = args.into_iter();
     let first = args.next();
+    if first.as_deref() == Some("--search".as_ref()) {
+        return Start {
+            search: true,
+            ..parse_args(args)
+        };
+    }
     if let Some(addr) = first
         .as_ref()
         .and_then(|a| a.to_str())
@@ -2014,6 +2027,7 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             select: Vec::new(),
             connect: Some(addr.uri()),
             sheet: None,
+            search: false,
         };
     }
     if first.as_deref() == Some("--properties".as_ref())
@@ -2026,6 +2040,7 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             select: Vec::new(),
             connect: None,
             sheet: Some(path),
+            search: false,
         };
     }
     let (place, dir, select) = if first.as_deref() == Some("--select".as_ref()) {
@@ -2059,6 +2074,7 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
         select,
         connect: None,
         sheet: None,
+        search: false,
     }
 }
 
