@@ -27,13 +27,27 @@ use smithay::reexports::gbm::{AsRaw, BufferObject};
 use crate::{compositor::DeskScene, output::upload_scaled, raster::Canvas};
 
 /// Fills dma-bufs off the loop on a GBM device of its own, opened on the render node at first
-/// use. The first failure, in a fill or in the renderer's import, stops further tries (a driver
-/// may refuse linear buffers).
+/// use. The first failure to map, export or import, or to make even a small buffer, stops
+/// further tries (a driver may refuse linear buffers); a size the driver refuses fails for that
+/// picture alone.
 #[derive(Clone)]
 pub struct Uploads {
     node: PathBuf,
     alloc: Arc<OnceLock<Option<Mutex<GbmAllocator<File>>>>>,
     refused: Arc<AtomicBool>,
+}
+
+/// The side of the buffer made when one of a picture's size is refused, to tell a size the driver
+/// refuses from linear buffers it refuses at all.
+const PROBE: u32 = 64;
+
+/// Why a fill failed.
+#[derive(Debug)]
+enum Failed {
+    /// The driver makes linear buffers, but none of the picture's size.
+    Size(String),
+    /// Anything else: no device, no linear buffer at all, the map, the stride or the export.
+    Fill(String),
 }
 
 impl Uploads {
@@ -92,31 +106,48 @@ impl Uploads {
         if w == 0 || h == 0 || self.refused.load(Ordering::Relaxed) {
             return None;
         }
-        self.try_fill(w, h, row)
-            .map_err(|e| refuse(&self.refused, e))
-            .ok()
+        match self.try_fill(w, h, row) {
+            Ok(d) => Some(d),
+            Err(Failed::Size(e)) => {
+                log::debug!("uploads: copied instead: {e}");
+                None
+            }
+            Err(Failed::Fill(e)) => {
+                refuse(&self.refused, e);
+                None
+            }
+        }
     }
 
-    fn try_fill(&self, w: u32, h: u32, fill: impl Fn(usize, &mut [u8])) -> Result<Dmabuf, String> {
+    fn try_fill(&self, w: u32, h: u32, fill: impl Fn(usize, &mut [u8])) -> Result<Dmabuf, Failed> {
         let row = w as usize * 4;
-        let alloc = self.allocator().ok_or("no GBM device")?;
+        let alloc = (self.allocator()).ok_or_else(|| Failed::Fill("no GBM device".into()))?;
         // Held through the map and export: a GBM device is not safe to share between threads.
-        let mut alloc = alloc.lock().map_err(|_| "poisoned")?;
-        let bo = (alloc.create_buffer(w, h, Fourcc::Argb8888, &[Modifier::Linear]))
-            .map_err(|e| format!("no {w}x{h} buffer: {e}"))?;
+        let mut alloc = alloc.lock().map_err(|_| Failed::Fill("poisoned".into()))?;
+        let mut linear = |w, h| alloc.create_buffer(w, h, Fourcc::Argb8888, &[Modifier::Linear]);
+        let bo = linear(w, h).map_err(|e| {
+            let why = format!("no {w}x{h} buffer: {e}");
+            match linear(PROBE, PROBE) {
+                Ok(_) => Failed::Size(why),
+                Err(_) => Failed::Fill(why),
+            }
+        })?;
         // Through gbm_bo_map, not an mmap of the dma-buf: on virtio-gpu only the driver's
         // unmap carries the pixels over to the host's copy the renderer samples.
-        let mut map = WriteMap::new(&bo, w, h).map_err(|e| format!("map failed: {e}"))?;
+        let mut map =
+            WriteMap::new(&bo, w, h).map_err(|e| Failed::Fill(format!("map failed: {e}")))?;
         let stride = map.stride;
         let dst = map.bytes_mut();
         if stride < row || dst.len() < stride * (h as usize - 1) + row {
-            return Err(format!("stride {stride} too short for {w}x{h}"));
+            return Err(Failed::Fill(format!(
+                "stride {stride} too short for {w}x{h}"
+            )));
         }
         for y in 0..h as usize {
             fill(y, &mut dst[y * stride..][..row]);
         }
         drop(map);
-        bo.export().map_err(|e| format!("export failed: {e}"))
+        (bo.export()).map_err(|e| Failed::Fill(format!("export failed: {e}")))
     }
 }
 
@@ -345,6 +376,39 @@ mod tests {
                 .collect();
             assert_eq!(read, expected);
         }
+    }
+
+    #[test]
+    fn a_size_the_driver_refuses_is_copied_and_later_pictures_still_fill() {
+        let Ok(renderer) = reprisefx::headless::renderer() else {
+            reprisekit::pins::skipped("no renderer");
+            return;
+        };
+        let node = EGLDevice::device_for_display(renderer.egl_context().display())
+            .ok()
+            .and_then(|d| d.try_get_render_node().ok().flatten())
+            .and_then(|n| n.dev_path());
+        let Some(node) = node else {
+            eprintln!("skipped: no render node");
+            return;
+        };
+        let uploads = Uploads::new(node);
+        if uploads.fill(&Canvas::new(8, 8)).is_none() {
+            eprintln!("skipped: no linear dma-buf");
+            return;
+        }
+        if uploads.fill(&Canvas::new(1 << 17, 1)).is_some() {
+            eprintln!("skipped: the driver made a buffer 131072 wide");
+            return;
+        }
+        assert!(
+            !uploads.refused.load(Ordering::Relaxed),
+            "one refused size leaves uploads on"
+        );
+        assert!(
+            uploads.fill(&Canvas::new(8, 8)).is_some(),
+            "the next picture fills"
+        );
     }
 
     #[test]
