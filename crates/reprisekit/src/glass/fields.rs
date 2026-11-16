@@ -866,7 +866,7 @@ mod tests {
     fn a_focused_glass_drop_down_list_rings_its_plain_item() {
         let (plain, focused) = (focused_list(false, false), focused_list(true, false));
         assert_eq!(
-            count(&focused, Rect::new(2, 2, 201, 23), 0x2E8CFF),
+            count(&focused, Rect::new(2, 2, 201, 23), 0x1A6EE0),
             0,
             "no highlight"
         );
@@ -1331,8 +1331,8 @@ mod tests {
             (2, 71, 0xF0EFF3, "bottom-left corner"),
             (3, 71, 0xD0D9E4, "bottom line"),
             (280, 71, 0xF0EFF3, "bottom-right corner"),
-            (3, 26, 0x2E8CFF, "the open row's highlight from the frame"),
-            (279, 40, 0x2E8CFF, "the highlight's last pixel, row 15"),
+            (3, 26, 0x1A6EE0, "the open row's highlight from the frame"),
+            (279, 40, 0x1A6EE0, "the highlight's last pixel, row 15"),
             (270, 41, 0xFFFFFF, "the second row"),
             (281, 28, 0xFFFFFF, "no shadow beside the list's top"),
             (281, 29, 0xFDFDFD, "the right shadow's faint start"),

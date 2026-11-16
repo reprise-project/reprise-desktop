@@ -8,5 +8,5 @@ Blue wide 1 ea3c00720ba31884
 Blue wide 2 577f23c555c27888
 Glass narrow 1 230918ed127e7721
 Glass narrow 2 217152abc5ac0706
-Glass wide 1 28d9db2acea6b15c
-Glass wide 2 99b263b33ed1db31
+Glass wide 1 6aed9e7c7f5bf44d
+Glass wide 2 8a88ef1e14d1df25

@@ -692,7 +692,7 @@ pub const DARK_TEXT: Color = Color::rgb(0xEF, 0xEE, 0xEF);
 
 /// Glass's system colours over Reprise Standard's: an EFEEEF dialog face,
 /// 9D9E9E shadows (a greyed static label's grey over its white copy, and
-/// a separator line), and a 2E8CFF selection. The 3D light line and the
+/// a separator line), and a 1A6EE0 selection. The 3D light line and the
 /// menus take the face too, so a raised or sunken edge has no line darker
 /// than the face inside it and a menu bar matches its dropdowns. The rest
 /// stay Standard's, links (`hot_light`) in its 000080 navy among them.
@@ -700,14 +700,14 @@ pub const DARK_TEXT: Color = Color::rgb(0xEF, 0xEE, 0xEF);
 /// The dark ones take their face and window from the light face and white
 /// through the control art's remap, so a control's baked face meets the
 /// painted face without a seam; EFEEEF text, 878787 greyed text, 62A8FF
-/// links, the same 2E8CFF selection.
+/// links, the same 1A6EE0 selection.
 fn colors(mode: Mode) -> ColorScheme {
     let light = ColorScheme {
         button_face: DIALOG_FACE,
         button_light: DIALOG_FACE,
         menu: DIALOG_FACE,
         button_shadow: Color::rgb(0x9D, 0x9E, 0x9E),
-        hilight: Color::rgb(0x2E, 0x8C, 0xFF),
+        hilight: Color::rgb(0x1A, 0x6E, 0xE0),
         ..ColorScheme::default()
     };
     if mode == Mode::Light {
@@ -1098,8 +1098,8 @@ mod tests {
         assert_eq!(cs.window_text, DARK_TEXT);
         assert_eq!(
             cs.hilight,
-            Color::rgb(0x2E, 0x8C, 0xFF),
-            "the selection stays 2E8CFF"
+            Color::rgb(0x1A, 0x6E, 0xE0),
+            "the selection stays 1A6EE0"
         );
     }
 
@@ -1421,8 +1421,8 @@ mod tests {
         );
         assert_eq!(
             cs.hilight,
-            Color::rgb(0x2E, 0x8C, 0xFF),
-            "the selection is 2E8CFF"
+            Color::rgb(0x1A, 0x6E, 0xE0),
+            "the selection is 1A6EE0"
         );
         assert_eq!(
             cs.window,

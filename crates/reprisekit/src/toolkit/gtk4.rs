@@ -17,8 +17,8 @@ pub const MARKER: &str = "/* Written by Reprise for [toolkits] gtk4_colors = tru
 
 const READABLE: f64 = 4.5;
 const READABLE_BACKDROP: f64 = 3.0;
-/// The least contrast a pair the scheme makes itself keeps: Glass's white on
-/// 3399FF (2.9:1) stands.
+/// The least contrast a pair the scheme makes itself keeps, so its own accent
+/// and caption text stand where they read under 4.5:1.
 const OWN_PAIR: f64 = 2.5;
 /// Under this contrast between a card's paper and its face, cards, sheets and
 /// popovers get their own edge; the high-contrast schemes sit at 1:1.
