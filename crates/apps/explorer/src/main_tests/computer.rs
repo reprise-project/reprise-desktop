@@ -572,6 +572,26 @@ fn a_phones_folder_leaves_no_node_under_its_parent_after_a_mount_or_an_unmount()
 }
 
 #[test]
+fn a_mount_landing_above_the_open_folder_moves_the_tree_under_computer() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let at = dir.path().join("mtp:host=Reprise_Test_Phone");
+    let dcim = at.join("Internal shared storage/DCIM");
+    std::fs::create_dir_all(&dcim).expect("the phone's folders");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dcim.clone()), &mut ctx);
+    ex.shares_changed(phone_mount(at.clone()), &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| {
+        ex.tree.selected.is_some() && ex.tree.selected == ex.tree_path_of(&ex.place)
+    });
+    let computer = ex.tree_path_of(&Place::Computer).unwrap();
+    assert_eq!(
+        ex.tree.selected.as_ref().map(|p| p.len()),
+        Some(computer.len() + 3),
+        "DCIM is selected two levels under the phone, Computer's child"
+    );
+}
+
+#[test]
 fn a_mount_landing_under_the_open_folder_moves_the_tree_under_computer() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let at = dir.path().join("mtp:host=Reprise_Test_Phone");
