@@ -1771,3 +1771,32 @@ fn a_sheets_box_covers_the_sheet_and_a_plain_box_the_folder_window() {
     ex.message_box("Explorer", "x".into(), &mut ctx);
     assert_eq!(ex.parent_of(crate::DIALOG), MAIN);
 }
+
+/// A sheet opened over one whose box is up replaces it, and the box leaves with the sheet it
+/// was raised for instead of answering for the new one.
+#[test]
+fn a_sheet_replaced_by_another_takes_its_box_with_it() {
+    use crate::place::Place;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+    std::fs::write(&a, "a").expect("write");
+    std::fs::write(&b, "b").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.open_properties(&a, "a.txt", "a.txt", &mut ctx);
+    ex.finish_puts(&mut ctx);
+    ex.advanced_attributes(FOLDER, None, &mut ctx);
+    assert!(matches!(
+        ex.dialog(),
+        Some(crate::dialogs::Dialog::Advanced { .. })
+    ));
+
+    ex.open_properties(&b, "b.txt", "b.txt", &mut ctx);
+    ex.finish_puts(&mut ctx);
+    let p = ex.props.as_ref().expect("the sheet");
+    assert_eq!(p.title(), "b.txt Properties");
+    assert!(
+        ex.dialogs.is_empty(),
+        "Advanced Attributes left with a.txt's sheet"
+    );
+}

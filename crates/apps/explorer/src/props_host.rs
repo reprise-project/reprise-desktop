@@ -232,13 +232,18 @@ impl Explorer {
             self.props_due = Some((read, waits));
             return Reply::none();
         }
+        // The sheet this one replaces goes the one way a sheet goes, taking its boxes.
+        let reply = match self.props {
+            Some(_) => self.close_props(ctx),
+            None => Reply::redraw_all(),
+        };
         self.props = props;
         match (&read, self.props.as_ref().and_then(|p| p.set.clone())) {
             (SheetRead::Set(..), Some(set)) => self.walk_set_for_props(set, ctx),
             (SheetRead::One(g, _) | SheetRead::Bin(g, _), _) => self.walk_for_props(&g.info, ctx),
             _ => {}
         }
-        Reply::redraw_all()
+        reply
     }
 
     /// A sheet waiting for its icons goes up once they landed.
