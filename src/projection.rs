@@ -193,7 +193,7 @@ mod tests {
             position: Some(at),
             transform: Transform::Normal,
             scale,
-            adaptive_sync: false,
+            adaptive_sync: None,
         };
         assert!(h.state.apply_head(&a, &head((0, 0), 2.0)));
         assert!(h.state.apply_head(&b, &head((0, 540), 1.0)));
