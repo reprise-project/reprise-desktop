@@ -1270,6 +1270,7 @@ async fn serve(
             PATH,
             email::Email {
                 frontend: frontend(),
+                balloons: Default::default(),
             },
         )
         .serve_at(
@@ -1398,7 +1399,7 @@ fn main() {
     let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
     zbus::block_on(async move {
         let notes = notification::Shared::default();
-        let notices = remotenotice::Notices::default();
+        let notices = remotenotice::Notices::kept();
         let (inhibits, idle) = inhibit::shared();
         let frontend = Frontend::default();
         let fail = |e: zbus::Error| -> ! {

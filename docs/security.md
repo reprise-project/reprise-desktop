@@ -1520,7 +1520,10 @@ and the list shows one row per program whatever the number of its tokens.
 Forget removes the program from every token it holds in that table, and
 deletes a token no other program holds, so its next session asks again. Forget doesn't end a session that is running: the
 capture border shows a running share, the program ends it, and a restored
-remote control session's balloon has Stop and forget. A screen share still
+remote control session's balloon has Stop and forget. That button's app
+stays forgotten in `$XDG_STATE_HOME/reprise-portal/remote-forgotten`, across
+portal restarts, until a prompt for it is allowed with Remember, so a token
+xdg-desktop-portal holds only in memory restores nothing. A screen share still
 running when its grant is forgotten stores the grant again when it ends, so
 stop the share first.
 

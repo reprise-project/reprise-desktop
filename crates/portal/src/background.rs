@@ -140,7 +140,8 @@ fn background_result(answer: crate::permit::Answer) -> u32 {
 
 /// Every app id with a window as running, and every other app in
 /// `running` as in the background. `windowed` holds the windows' own app
-/// ids, `sandboxed` the sandbox app ids of the clients with a window.
+/// ids, `sandboxed` the sandbox app ids of the clients with a window. A Flatpak (one in
+/// `running`) runs only by `sandboxed`: any client may give its window that app's id.
 fn app_states(
     running: &[String],
     windowed: &[String],
@@ -151,7 +152,8 @@ fn app_states(
         .filter(|id| !id.is_empty())
         .map(|id| (id.clone(), STATE_BACKGROUND))
         .collect();
-    for id in windowed.iter().chain(sandboxed) {
+    let unsandboxed = windowed.iter().filter(|id| !running.contains(id));
+    for id in unsandboxed.chain(sandboxed) {
         if !id.is_empty() && !crate::HIDDEN_APPS.contains(&id.as_str()) {
             out.insert(id.clone(), STATE_RUNNING);
         }
@@ -197,13 +199,24 @@ mod tests {
     fn an_app_with_a_window_runs_and_one_without_is_in_the_background() {
         let states = app_states(
             &strings(&["org.example.Chat", "org.example.Sync", ""]),
-            &strings(&["org.example.Chat", "foot", "reprise.portal", ""]),
-            &BTreeSet::new(),
+            &strings(&["foot", "reprise.portal", ""]),
+            &BTreeSet::from(["org.example.Chat".to_string()]),
         );
         assert_eq!(states.len(), 3, "{states:?}");
         assert_eq!(states["org.example.Chat"], STATE_RUNNING);
         assert_eq!(states["foot"], STATE_RUNNING);
         assert_eq!(states["org.example.Sync"], STATE_BACKGROUND);
+    }
+
+    #[test]
+    fn a_window_that_takes_a_flatpaks_app_id_does_not_make_it_run() {
+        let states = app_states(
+            &strings(&["org.example.Forbidden", "org.example.Mask"]),
+            &strings(&["org.example.Forbidden"]),
+            &BTreeSet::from(["org.example.Mask".to_string()]),
+        );
+        assert_eq!(states["org.example.Forbidden"], STATE_BACKGROUND);
+        assert_eq!(states["org.example.Mask"], STATE_RUNNING);
     }
 
     #[test]
