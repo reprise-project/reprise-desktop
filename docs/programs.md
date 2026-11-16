@@ -25,6 +25,8 @@ The file manager, and the default for folders.
 - **Places:** Desktop, Documents, Home, Computer, Network and the Recycle Bin.
   Computer lists your drives, locked ones included, the shares gvfs mounted
   and phones or cameras on USB; open one to mount it, Eject to remove it.
+  The address bar writes a folder on a share, phone or camera under its name
+  ("Test Phone/DCIM"), and takes that text typed back.
 - **Disk images** (`.iso`, raw `.img`) open by mounting them read-only, after
   asking Mount / Cancel, and stay in Computer until Eject.
 - **Connect to Server** (File menu, or the address bar) mounts an `smb://`,

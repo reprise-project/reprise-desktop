@@ -70,7 +70,8 @@ impl Explorer {
             // The arrows filled the field with the rows they passed.
             if key == form::Key::Escape && !completing {
                 let icon = address_icon(&mut self.chrome_waits, &mut ctx.icons, &self.place);
-                self.address.set_place(&self.place.address(), icon);
+                self.address
+                    .set_place(&self.place.address_in(&self.shares.shares), icon);
             }
             return self.address_event(ev, ctx);
         }
@@ -112,7 +113,8 @@ impl Explorer {
             // and the focus drops into the view.
             if k.sym == keysym::ESCAPE {
                 let icon = address_icon(&mut self.chrome_waits, &mut ctx.icons, &self.place);
-                self.address.set_place(&self.place.address(), icon);
+                self.address
+                    .set_place(&self.place.address_in(&self.shares.shares), icon);
                 self.focus = Focus::View;
                 return Reply::redraw();
             }
