@@ -1,5 +1,7 @@
-//! Holding Super alone for `[shortcut_overlay] delay_ms` shows the binds in force as a `keysheet`
-//! on the output under the pointer, in `layers.overlay`, never under the lock (docs/features.md).
+//! Holding Super alone for `[shortcut_overlay] delay_ms` shows the binds in force and the
+//! programs' global shortcuts as a `keysheet`, centred on the output under the pointer, in
+//! `layers.overlay`, never under the lock. Another key or a button takes it down and goes on to
+//! act; releasing Super takes it down without opening Start, which only a tap opens.
 
 use std::time::Duration;
 

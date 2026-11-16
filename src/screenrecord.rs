@@ -1,5 +1,9 @@
 //! Screen recordings: `reprise-record` writes an output, or an area of it, to a new MP4 under
-//! Videos/Screencasts while the tray's Recording cell shows (docs/features.md, Screenshots).
+//! Videos/Screencasts while the tray's Recording cell shows. The bind records the output under the
+//! pointer and stops a running recording; the picker's Record mode records an area, clipped to the
+//! output holding most of it. None starts while locked. A stop lets the recorder finish its file;
+//! one idle for `STOP_GRACE`, past `finish_cap` or stopped again is killed and its file kept. An
+//! area recording stops when its output's scale or transform changes.
 
 use std::ffi::OsString;
 use std::io::BufRead;

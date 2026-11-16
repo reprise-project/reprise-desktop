@@ -1,5 +1,5 @@
 //! The standby screen: a virtual output holding the desktop while Remote Desktop is on and no
-//! monitor is in the layout (docs/features.md, Remote Desktop).
+//! monitor is in the layout (docs/remote-desktop.md).
 
 use futures_util::{Stream, StreamExt};
 use smithay::{output::Output, reexports::calloop::channel, utils::Transform};

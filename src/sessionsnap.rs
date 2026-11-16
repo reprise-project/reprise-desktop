@@ -1,5 +1,9 @@
-//! Snap groups across a restart, matched to restored windows as they map (`State::snap_on_map`);
-//! docs/features.md has the matching rule.
+//! Snap groups across a restart, matched to restored windows as they map (`State::snap_on_map`).
+//! Only members of saved apps are kept. Within `session::DESKTOP_WINDOW` of the login, a window in
+//! no tab group takes the free slot saved with its app and title; failing that, unless its title
+//! is one of its app's windows saved outside any group, its app's first free slot. It goes back to
+//! that slot's zone, monitor and desktop, joining the members already back, and stays unsnapped
+//! when the monitor is gone. A closed window's slot stays empty.
 
 use crate::outputset::MonitorId;
 use crate::session::SavedApp;

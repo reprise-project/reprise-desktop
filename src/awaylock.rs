@@ -1,6 +1,7 @@
-//! `[lock] away_device`: the session locks once the paired Bluetooth device, having been
-//! connected, stays disconnected for `away_after_s`. It never unlocks; docs/features.md, Lock
-//! When Away, says what the device must do.
+//! `[lock] away_device`: the session locks once the paired Bluetooth device, having been seen
+//! connected, stays disconnected for `away_after_s`. After that lock only a reconnect arms it
+//! again, and a new device starts over. Idle inhibitors don't hold it off, and it never unlocks.
+//! docs/configuration.md ("Lock when away") says what the device must do.
 
 use std::time::Duration;
 

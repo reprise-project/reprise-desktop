@@ -1,7 +1,10 @@
-//! A panic on the compositor thread starts a new session in place: the hook re-execs this binary
-//! with `--after-crash <crashes>`, a new session on the same seat. Wayland programs do not survive
-//! it and session restore starts them again; autostart skips a program whose app scope still runs
-//! (docs/features.md, "Crash recovery").
+//! A panic on the compositor thread, outside `guarded` work, starts a new session in place: the
+//! hook re-execs this binary with its environment and `--after-crash <crashes>`, adding `--locked`
+//! when the session was locked so the restart locks before its first frame. There is no restart
+//! when the session was ending, a SIGTERM or SIGINT is pending, or the crash comes within
+//! `LOOP_WINDOW` of a restart; a signal such as SIGSEGV never reaches the hook. Wayland programs do
+//! not survive it and session restore starts them again; autostart skips a program whose app
+//! scope still runs, and the `--startup` command is not run again.
 
 use crate::compositor::State;
 use std::cell::Cell;
