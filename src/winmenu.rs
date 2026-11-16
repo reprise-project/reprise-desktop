@@ -240,38 +240,9 @@ pub fn tabs_of_menu(
         .unzip()
 }
 
-pub fn keybind_label(mods: u32, keysym: u32) -> String {
-    use crate::keys::{MOD_ALT, MOD_CTRL, MOD_LOGO, MOD_SHIFT};
-    let mut out = String::new();
-    for (bit, name) in [
-        (MOD_CTRL, "Ctrl"),
-        (MOD_ALT, "Alt"),
-        (MOD_SHIFT, "Shift"),
-        (MOD_LOGO, "Super"),
-    ] {
-        if mods & bit != 0 {
-            out.push_str(name);
-            out.push('+');
-        }
-    }
-    let name = keysym_name(keysym);
-    let mut chars = name.chars();
-    match (chars.next(), chars.next()) {
-        (Some(c), None) => out.extend(c.to_uppercase()),
-        _ => out.push_str(&name),
-    }
-    out
-}
-
-pub fn keysym_name(keysym: u32) -> String {
-    use smithay::input::keyboard::{Keysym, xkb};
-    xkb::keysym_get_name(Keysym::new(keysym))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keys::{KEY_F4, KEY_c, KEY_q, MOD_ALT, MOD_CTRL, MOD_LOGO};
 
     fn row(items: &[MenuItem], i: usize) -> (&str, bool, bool) {
         match &items[i] {
@@ -699,13 +670,6 @@ mod tests {
         let mut c = crate::raster::Canvas::new(layout.width as u32, layout.height as u32);
         draw_menu(&mut c, &theme, &text, &layout, &items, Some(0), "", true);
         crate::raster::write_preview(&c, "winmenu-preview.png");
-    }
-
-    #[test]
-    fn keybind_labels_read_like_accelerators() {
-        assert_eq!(keybind_label(MOD_ALT, KEY_F4), "Alt+F4");
-        assert_eq!(keybind_label(MOD_CTRL, KEY_q), "Ctrl+Q");
-        assert_eq!(keybind_label(MOD_LOGO, KEY_c), "Super+C");
     }
 
     #[test]

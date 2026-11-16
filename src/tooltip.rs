@@ -172,11 +172,11 @@ pub fn hover_notify(state: &mut State, icon: Option<(u32, usize, String)>) {
     });
 }
 
-/// The `snap-layouts` bind's first chord, as an accelerator reads.
+/// The `snap-layouts` bind's first chord, as the key sheet spells it.
 fn snap_layouts_keys(binds: &[crate::config::Keybind]) -> Option<String> {
     (binds.iter())
         .find(|b| b.action == crate::config::Action::SnapLayouts)
-        .map(|b| crate::winmenu::keybind_label(b.mods, b.keysym))
+        .map(|b| crate::keysheetview::chord_text(b.mods, b.keysym))
 }
 
 pub fn hover_menu(state: &mut State, depth: usize, row: Option<usize>) {

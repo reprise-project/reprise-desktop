@@ -643,6 +643,36 @@ fn an_arrow_in_a_keyboard_move_asks_only_the_output_the_window_moves_on() {
     assert_eq!(asked_outputs(), ["TEST-1"], "a lies on TEST-1");
 }
 
+#[test]
+fn the_window_menu_spells_a_rebound_close_as_the_key_sheet_does() {
+    let config = crate::config::Config::parse(
+        "[[keybinds]]\nkeys = \"Alt+F4\"\naction = \"none\"\n\
+         [[keybinds]]\nkeys = \"Super+q\"\naction = \"none\"\n\
+         [[keybinds]]\nkeys = \"Shift+Super+Prior\"\naction = \"close\"\n",
+    )
+    .unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let a = h.map_toplevel(&mut c, "a", 300, 200);
+    h.state.open_window_menu(a.id, (100, 100), false);
+    h.dispatch();
+    let close = (h.state.menus[0].items.iter()).find_map(|i| match i {
+        reprisekit::controls::menu::MenuItem::Entry {
+            label,
+            shortcut: Some(s),
+            ..
+        } if label.replace('&', "") == "Close" => Some(s.clone()),
+        _ => None,
+    });
+    assert_eq!(close.as_deref(), Some("Super+Shift+Page Up"));
+    let sheet = crate::keysheetview::sheet(&h.state.config.keybinds, &[]);
+    assert!(
+        (sheet.groups.iter().flat_map(|g| &g.rows)).any(|r| r.keys == "Super+Shift+Page Up"),
+        "the key sheet lists Super+Shift+Page Up"
+    );
+}
+
 /// Open `w`'s window menu at (`x`, `y`) and press and release the left button on row `label`.
 fn click_window_menu_row(
     h: &mut crate::harness::Harness,
