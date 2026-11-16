@@ -1,4 +1,4 @@
-//! Delete, Shift+Delete, the Recycle Bin's Empty, Delete and Restore on a reprisefs
+//! Delete, Shift+Delete, the Recycle Bin's Empty, Delete and Restore, and Undo, on a reprisefs
 //! [`RemoveJob`], with the progress dialog ([`crate::copydlg`]). One runs at a time; others wait.
 
 use crate::Explorer;
@@ -9,7 +9,7 @@ use repriseapp::{Ctx, Reply};
 use reprisefs::bincap::Plan;
 use reprisefs::removal::{Removal, RemoveEvent, RemoveJob, Removed};
 use reprisefs::trash::Bins;
-use reprisefs::undo::Undoable;
+use reprisefs::undo::{Undo, Undoable};
 use reprisekit::controls::copyprogress::Kind;
 use std::path::PathBuf;
 
@@ -22,6 +22,15 @@ pub(crate) enum Purpose {
     EraseFromBin,
     Restore,
     Empty,
+    /// Undo's steps: what they leave undone goes back on the stack.
+    Undo,
+}
+
+/// The entry an undo removal reverses, the folders it touches and the failure that stopped it.
+pub(crate) struct Undoing {
+    undo: Undo,
+    dirs: Vec<PathBuf>,
+    error: Option<std::io::Error>,
 }
 
 pub(crate) struct PendingRemoval {
@@ -32,6 +41,9 @@ pub(crate) struct PendingRemoval {
     purpose: Purpose,
     kind: Kind,
     from: String,
+    /// Where an undo puts its items back; the other removals name no folder.
+    to: String,
+    undo: Option<Undoing>,
 }
 
 pub(crate) struct Removing {
@@ -44,6 +56,7 @@ pub(crate) struct Removing {
     gone: Vec<PathBuf>,
     done: usize,
     failed: Option<(&'static str, String)>,
+    undo: Option<Undoing>,
 }
 
 impl PendingRemoval {
@@ -61,6 +74,8 @@ impl PendingRemoval {
             purpose: Purpose::Delete,
             kind: if erase { Kind::Erase } else { Kind::Delete },
             from,
+            to: String::new(),
+            undo: None,
         }
     }
 
@@ -89,6 +104,8 @@ impl PendingRemoval {
             },
             kind: if restore { Kind::Restore } else { Kind::Erase },
             from: Place::RecycleBin.title(),
+            to: String::new(),
+            undo: None,
         }
     }
 
@@ -102,6 +119,57 @@ impl PendingRemoval {
             purpose: Purpose::Empty,
             kind: Kind::Empty,
             from: Place::RecycleBin.title(),
+            to: String::new(),
+            undo: None,
+        }
+    }
+
+    /// Undo's steps of `undo`, which touches `dirs`; `erase` removes for good what `bins` refuse.
+    pub(crate) fn undo(undo: Undo, erase: bool, dirs: Vec<PathBuf>, bins: Option<Bins>) -> Self {
+        let (paths, items) = undo
+            .steps()
+            .iter()
+            .map(|step| {
+                let path = match step {
+                    Undoable::Move { to, .. } | Undoable::Rename { to, .. } => to.clone(),
+                    Undoable::Trash(t) => t.files.clone(),
+                    Undoable::Copied(p) | Undoable::New(p) => p.clone(),
+                    Undoable::Batch(_) => PathBuf::new(),
+                };
+                let step = step.clone();
+                (path, Removal::Undo { step, erase })
+            })
+            .unzip();
+        let title = |p: &std::path::Path| p.parent().map(|d| Place::from_path(d).title());
+        let (kind, from, to) = match undo.steps().first() {
+            Some(Undoable::Move { from, to, .. } | Undoable::Rename { from, to }) => {
+                (Kind::Move, title(to), title(from))
+            }
+            Some(Undoable::Trash(t)) => (
+                Kind::Restore,
+                Some(Place::RecycleBin.title()),
+                title(&t.original),
+            ),
+            Some(Undoable::Copied(p) | Undoable::New(p)) => (
+                if erase { Kind::Erase } else { Kind::Delete },
+                title(p),
+                None,
+            ),
+            _ => (Kind::Delete, None, None),
+        };
+        PendingRemoval {
+            items,
+            paths,
+            bins,
+            purpose: Purpose::Undo,
+            kind,
+            from: from.unwrap_or_default(),
+            to: to.unwrap_or_default(),
+            undo: Some(Undoing {
+                undo,
+                dirs,
+                error: None,
+            }),
         }
     }
 }
@@ -117,9 +185,14 @@ impl Explorer {
             return;
         }
         let wake = ctx.wake.clone();
-        let job = RemoveJob::start_asking(p.items, p.bins, move || wake.wake());
+        let wake = move || wake.wake();
+        // Undo stops at its first failure, as the stack keeps what it did not reverse.
+        let job = match p.purpose {
+            Purpose::Undo => RemoveJob::start(p.items, p.bins, wake),
+            _ => RemoveJob::start_asking(p.items, p.bins, wake),
+        };
         crate::fileops::wake_to_show(ctx);
-        let progress = Progress::new(job.meter().clone(), p.kind, p.from, String::new());
+        let progress = Progress::new(job.meter().clone(), p.kind, p.from, p.to);
         self.removing = Some(Removing {
             job,
             paths: p.paths,
@@ -129,6 +202,7 @@ impl Explorer {
             gone: Vec::new(),
             done: 0,
             failed: None,
+            undo: p.undo,
         });
     }
 
@@ -148,6 +222,12 @@ impl Explorer {
                         }
                         Removed::Erased | Removed::Restored(_) => r.gone.push(path),
                         Removed::Emptied(n) => log::info!("explorer: emptied {n} items"),
+                        Removed::Undone { purged } => r.gone.extend(purged),
+                    }
+                }
+                RemoveEvent::Failed { error, .. } if r.purpose == Purpose::Undo => {
+                    if let Some(u) = r.undo.as_mut() {
+                        u.error.get_or_insert(error);
                     }
                 }
                 RemoveEvent::Failed { index, error } => {
@@ -182,18 +262,36 @@ impl Explorer {
         if !finished {
             return Some(Reply::none());
         }
-        let r = self.removing.take()?;
-        r.progress.ended(r.done, r.failed.as_ref());
+        let mut r = self.removing.take()?;
+        let undo_failed = r.undo.as_ref().and_then(|u| u.error.as_ref());
+        let failed = (r.failed.as_ref().cloned())
+            .or_else(|| undo_failed.map(|e| ("Error", format!("Cannot undo: {e}"))));
+        r.progress.ended(r.done, failed.as_ref());
         self.publish_task_progress();
         if r.purpose == Purpose::Empty && r.failed.is_none() && !r.progress.meter.cancelled() {
             self.undos.retain_non_trash();
         }
         self.undos.push_all(r.batch);
+        let undo = r.undo.take();
+        if let Some(u) = &undo {
+            for d in &u.dirs {
+                self.refill_tree_node(&Place::from_path(d), ctx);
+            }
+        }
+        let error = undo.and_then(|u| {
+            if let Some(left) = u.undo.left(r.done, u.error.as_ref()) {
+                self.undos.push(left);
+            }
+            u.error
+        });
         self.undos.forget_gone(&r.gone);
         self.sync_undo();
         let mut reply = self.refresh(ctx);
         if let Some((title, text)) = r.failed {
             reply = self.message_box(title, text, ctx);
+        }
+        if let Some(e) = error {
+            reply = reply.and(self.undo_failed(&e, ctx));
         }
         if let Some(next) = self.remove_queue.pop_front() {
             self.remove(next, ctx);

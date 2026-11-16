@@ -1,4 +1,4 @@
-//! Deletes, Empty Recycle Bin and Restore off the caller's thread, counted like a put
+//! Deletes, Empty Recycle Bin, Restore and Undo off the caller's thread, counted like a put
 //! ([`crate::jobs::PutJob`]): a walk of every item for the totals, then the items in order,
 //! reported one by one. A pause or cancel takes effect between two files; a job stuck for
 //! [`ACTION_DEADLINE`] fails as not responding.
@@ -7,6 +7,7 @@ use crate::bincap::Measured;
 use crate::deadline::ACTION_DEADLINE;
 use crate::progress::{self, Decision, Meter, Phase, Snapshot, Totals};
 use crate::trash::{self, Bins, Trashed};
+use crate::undo::Undoable;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,6 +37,9 @@ pub enum Removal {
     },
     /// Everything in the trash at this root ([`trash::empty_in`]).
     Empty(PathBuf),
+    /// One step of an undo ([`crate::undo::Undo::steps`]); `erase` removes for good what its
+    /// Recycle Bin refuses.
+    Undo { step: Undoable, erase: bool },
 }
 
 /// What became of an item.
@@ -51,6 +55,10 @@ pub enum Removed {
     Restored(PathBuf),
     /// That many entries went.
     Emptied(usize),
+    /// An undo step reversed, with the `files/` paths of what was erased to make room in a bin.
+    Undone {
+        purged: Vec<PathBuf>,
+    },
 }
 
 #[derive(Debug)]
@@ -75,12 +83,27 @@ impl Removal {
         }
     }
 
-    /// The files and links under the item, which the bar counts.
+    /// The files and links under the item, which the bar counts. An undo step that moves within
+    /// one drive is a rename, one item of no bytes.
     fn totals(&self, m: &Meter) -> Option<Totals> {
         let path = match self {
             Removal::Trash { path, .. } | Removal::Erase(path) => path.clone(),
             Removal::EraseTrashed { files, .. } | Removal::Restore { files, .. } => files.clone(),
             Removal::Empty(root) => root.join("files"),
+            Removal::Undo { step, .. } => {
+                let (path, back) = match step {
+                    Undoable::Move { from, to, .. } | Undoable::Rename { from, to } => {
+                        (to, from.parent())
+                    }
+                    Undoable::Trash(t) => (&t.files, t.original.parent()),
+                    Undoable::Copied(p) | Undoable::New(p) => (p, None),
+                    Undoable::Batch(_) => return Some(Totals::default()),
+                };
+                if back.is_some_and(|dir| crate::ops::same_device(path, dir)) {
+                    return Some(Totals { bytes: 0, items: 1 });
+                }
+                path.clone()
+            }
         };
         progress::walk(&path, false, m)
     }
@@ -90,6 +113,12 @@ impl Removal {
             Removal::Trash { path, .. } | Removal::Erase(path) => path,
             Removal::EraseTrashed { files, .. } | Removal::Restore { files, .. } => files,
             Removal::Empty(root) => root,
+            Removal::Undo { step, .. } => match step {
+                Undoable::Move { to, .. } | Undoable::Rename { to, .. } => to,
+                Undoable::Trash(t) => &t.original,
+                Undoable::Copied(p) | Undoable::New(p) => p,
+                Undoable::Batch(_) => return std::ffi::OsStr::new(""),
+            },
         };
         path.file_name().unwrap_or(path.as_os_str())
     }
@@ -111,6 +140,11 @@ impl Removal {
                 trash::restore_free(&t).map(Removed::Restored)
             }
             Removal::Empty(root) => trash::empty_with(root, Some(m)).map(Removed::Emptied),
+            Removal::Undo { step, erase } => {
+                let mut purged = Vec::new();
+                step.reverse(bins, *erase, &mut purged)
+                    .map(|()| Removed::Undone { purged })
+            }
         }
     }
 }
@@ -419,6 +453,58 @@ mod tests {
         );
         assert!(b.exists(), "nothing goes past the stuck call");
         drop(stall);
+    }
+
+    /// An undo of a two-item move runs its steps last item first; once a step fails the rest
+    /// stops, and what is left goes back on the stack in the batch's order.
+    #[test]
+    fn an_undo_batch_reverses_last_first_and_leaves_what_a_failure_stopped() {
+        use crate::undo::{UndoStack, Undoable};
+        let t = tempfile::tempdir().unwrap();
+        let (from, to) = (t.path().join("from"), t.path().join("to"));
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        let moved = |n: &str| Undoable::Move {
+            from: from.join(n),
+            to: to.join(n),
+            listed: false,
+        };
+        for n in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(to.join(n), n).unwrap();
+        }
+        std::fs::write(from.join("b.txt"), "in the way").unwrap();
+        let mut u = UndoStack::default();
+        u.push_all(vec![moved("a.txt"), moved("b.txt"), moved("c.txt")]);
+        let undo = u.take().expect("the batch");
+        let items = (undo.steps().iter().cloned())
+            .map(|step| Removal::Undo { step, erase: false })
+            .collect();
+        let (wtx, woke) = channel();
+        let job = RemoveJob::start(items, None, move || {
+            let _ = wtx.send(());
+        });
+        let got = run(job, woke);
+        let error = match got.as_slice() {
+            [
+                RemoveEvent::Done { index: 0, .. },
+                RemoveEvent::Failed { index: 1, error },
+                RemoveEvent::Finished,
+            ] => error,
+            _ => panic!("c.txt goes back, b.txt fails, a.txt waits: {got:?}"),
+        };
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert!(from.join("c.txt").exists() && !to.join("c.txt").exists());
+
+        u.push(undo.left(1, Some(error)).expect("the rest stays"));
+        assert_eq!(u.undo_dirs(), [from.clone(), to.clone()]);
+        let left = u.take().expect("the rest");
+        let names: Vec<_> = (left.steps().iter())
+            .map(|s| match s {
+                Undoable::Move { to, .. } => to.file_name().unwrap().to_owned(),
+                _ => panic!("a move"),
+            })
+            .collect();
+        assert_eq!(names, ["b.txt", "a.txt"], "the next undo starts at b.txt");
     }
 
     #[test]

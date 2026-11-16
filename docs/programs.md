@@ -85,9 +85,12 @@ The file manager, and the default for folders.
   in use or not valid greys OK. Launchers are left out of it. Copy as Path
   (Ctrl+Shift+C) puts the selected items' full paths on the clipboard as
   text, one per line, in double quotes when a shell would split them.
-  Ctrl+Z undoes the last one, a whole Rename dialog's worth at once;
-  undoing a copy its Recycle Bin can't take (a drive set to remove files
-  immediately, or too big) asks before deleting it permanently.
+  Ctrl+Z undoes the last one, a whole Rename dialog's worth at once, in
+  the background with the same progress dialog, pause and cancel as the
+  operation it reverses; what a cancel or a failure leaves undone stays for
+  the next Ctrl+Z. Undoing a copy its Recycle Bin can't take (a drive set
+  to remove files immediately, or too big) asks before deleting it
+  permanently.
 - **Preview** (Space): a window over Explorer shows the one selected file: a
   picture fitted to the screen, the first 256 KB of a text file, the
   thumbnail another program left in the shared cache (a PDF's, a video's), a

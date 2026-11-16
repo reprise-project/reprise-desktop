@@ -345,6 +345,7 @@ fn make_new_folder_refills_the_folders_pane() {
     }
     assert!(ex.dialog.is_none());
     ex.undo_last(&mut ctx);
+    ex.finish_puts(&mut ctx);
     assert_eq!(labels(&ex), ["sub"], "Undo takes it out of the pane");
 }
 
@@ -379,6 +380,7 @@ fn make_new_folder_keeps_open_subfolders_and_undoes() {
     assert_eq!(sub_open(&ex), Some(true), "sub stays open");
     assert_eq!(ex.undo, Some("New"), "Edit's first row offers the undo");
     ex.undo_last(&mut ctx);
+    ex.finish_puts(&mut ctx);
     assert!(!made.exists(), "Undo takes the new folder back");
 }
 
@@ -413,6 +415,7 @@ fn a_folder_move_refills_the_folders_panes_source_and_target() {
     assert_eq!(labels(&ex, &to), ["moved"], "the target node shows it");
 
     ex.undo_last(&mut ctx);
+    ex.finish_puts(&mut ctx);
     assert!(from.join("moved").is_dir());
     assert_eq!(
         labels(&ex, &from),

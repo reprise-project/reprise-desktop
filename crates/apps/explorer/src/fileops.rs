@@ -1348,47 +1348,42 @@ impl Explorer {
     }
 
     /// Undo, with `erase` removing for good what the Recycle Bin refuses. Without it such an item
-    /// stops the undo and asks first.
+    /// stops the undo and asks first. The top entry leaves the stack and its steps run on a removal
+    /// job with the progress dialog ([`crate::removing::PendingRemoval::undo`]); the Recycle Bins
+    /// are found on a job first, as for a delete.
     pub(crate) fn undo_with(&mut self, erase: bool, ctx: &mut Ctx) -> Reply {
         let dirs = self.undos.undo_dirs();
-        let done = match erase {
-            true => self.undos.undo_erasing(),
-            false => self.undos.undo(),
-        };
-        let Some(done) = done else {
+        let Some(undo) = self.undos.take() else {
             return Reply::none();
         };
         self.sync_undo();
-        for d in dirs {
-            self.refill_tree_node(&Place::from_path(&d), ctx);
-        }
-        let reply = self.refresh(ctx);
-        let Err(e) = done else {
-            return reply;
+        self.spawn_job(ctx, move || {
+            let bins = reprisefs::trash::Bins::system();
+            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
+                let pending = crate::removing::PendingRemoval::undo(undo, erase, dirs, bins);
+                ex.remove(pending, ctx);
+                Reply::redraw()
+            })
+        });
+        Reply::redraw()
+    }
+
+    /// The box after an undo that `e` stopped: the question whether to erase what a Recycle Bin
+    /// refused, else the error.
+    pub(crate) fn undo_failed(&mut self, e: &std::io::Error, ctx: &mut Ctx) -> Reply {
+        let Some(no_bin) = reprisefs::undo::NoBin::of(e) else {
+            return self.message_box("Error", format!("Cannot undo: {e}"), ctx);
         };
-        match reprisefs::undo::NoBin::of(&e) {
-            Some(no_bin) => {
-                let many = self.undos.many();
-                let is_dir = no_bin.path.is_dir() && !no_bin.path.is_symlink();
-                let text = no_bin.question(many);
-                let kind = ConfirmKind::of(if many { 2 } else { 1 }, is_dir);
-                let icon = question_icon(ctx, is_dir);
-                let mut c = self.delete_question(
-                    kind,
-                    "",
-                    Vec::new(),
-                    true,
-                    BinLack::None,
-                    icon,
-                    false,
-                    None,
-                );
-                c.text = text;
-                c.undo_erase = true;
-                reply.and(self.raise(Dialog::Confirm(c)))
-            }
-            None => self.message_box("Error", format!("Cannot undo: {e}"), ctx),
-        }
+        let many = self.undos.many();
+        let is_dir = no_bin.path.is_dir() && !no_bin.path.is_symlink();
+        let text = no_bin.question(many);
+        let kind = ConfirmKind::of(if many { 2 } else { 1 }, is_dir);
+        let icon = question_icon(ctx, is_dir);
+        let mut c =
+            self.delete_question(kind, "", Vec::new(), true, BinLack::None, icon, false, None);
+        c.text = text;
+        c.undo_erase = true;
+        self.raise(Dialog::Confirm(c))
     }
 
     pub(crate) fn sync_undo(&mut self) {

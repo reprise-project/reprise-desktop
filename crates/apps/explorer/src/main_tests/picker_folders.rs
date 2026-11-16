@@ -82,6 +82,7 @@ fn the_pickers_new_folder_is_named_in_place() {
     );
     assert!(ex.dialog.is_some(), "Enter left the picker up");
     ex.undo_last(&mut ctx);
+    ex.finish_puts(&mut ctx);
     assert!(
         made.is_dir() && !photos.exists(),
         "Undo takes the name back"

@@ -1,11 +1,13 @@
-//! The single-level undo behind the Edit > Undo row: reversing the
-//! last move, rename, trash or creation.
+//! The undo behind the Edit > Undo row: reversing the last move, rename, trash or creation. The
+//! host takes the top entry ([`UndoStack::take`]) and reverses its steps on a removal job
+//! ([`crate::removal::Removal::Undo`]).
 
 use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::trash::{self, Trashed};
 
+#[derive(Clone, Debug)]
 pub enum Undoable {
     /// A move into another folder. `listed` when `from`'s folder's
     /// `.hidden` named the item and let go of it with the move
@@ -75,14 +77,12 @@ impl Undoable {
         }
     }
 
-    /// Reverse it, in place. A batch drops each member as it goes and stops
-    /// at its first failure, so what is left is exactly what was not
-    /// reversed, ready to be pushed back and retried. `bins` are where an
-    /// undone copy or new file goes; the `files/` path of each item their cap
-    /// erases to make room joins `purged`. An item its bin refuses ([`NoBin`]) fails the reversal
-    /// unless `erase`, which removes it for good.
-    fn reverse(
-        &mut self,
+    /// Reverse it; a batch last member first, stopping at the first failure. `bins` are where an
+    /// undone copy or new file goes; the `files/` path of each item their cap erases to make room
+    /// joins `purged`. An item its bin refuses ([`NoBin`]) fails the reversal unless `erase`, which
+    /// removes it for good.
+    pub(crate) fn reverse(
+        &self,
         bins: Option<&trash::Bins>,
         erase: bool,
         purged: &mut Vec<PathBuf>,
@@ -123,31 +123,69 @@ impl Undoable {
             // A folder goes only while empty and a file goes to the trash,
             // so nothing the user put there since is lost.
             Undoable::New(path) => {
-                if std::fs::symlink_metadata(&*path)?.is_dir() {
-                    if std::fs::read_dir(&*path)?.next().is_some() {
+                if std::fs::symlink_metadata(path)?.is_dir() {
+                    if std::fs::read_dir(path)?.next().is_some() {
                         return Err(io::Error::new(
                             io::ErrorKind::DirectoryNotEmpty,
                             "the folder is not empty",
                         ));
                     }
-                    std::fs::remove_dir(&*path)
+                    std::fs::remove_dir(path)
                 } else {
                     trash_in(path)
                 }
             }
-            Undoable::Batch(items) => {
-                while let Some(last) = items.last_mut() {
-                    last.reverse(bins, erase, purged)?;
-                    items.pop();
-                }
-                Ok(())
-            }
+            Undoable::Batch(items) => items
+                .iter()
+                .rev()
+                .try_for_each(|i| i.reverse(bins, erase, purged)),
+        }
+    }
+
+    /// The single steps that reverse it, in the order they run: a batch's members last first.
+    fn into_steps(self, out: &mut Vec<Undoable>) {
+        match self {
+            Undoable::Batch(items) => items.into_iter().rev().for_each(|i| i.into_steps(out)),
+            step => out.push(step),
+        }
+    }
+}
+
+/// An entry taken off the [`UndoStack`] to reverse step by step.
+pub struct Undo {
+    steps: Vec<Undoable>,
+    batch: bool,
+}
+
+impl Undo {
+    /// The steps, in the order they are reversed.
+    pub fn steps(&self) -> &[Undoable] {
+        &self.steps
+    }
+
+    /// What goes back on the stack once the first `done` steps were reversed and the next one
+    /// failed with `error`, or a cancel stopped there (`None`). A step its Recycle Bin refused
+    /// ([`NoBin`]) keeps the rest for an Undo that erases, a cancel keeps it to try again, and
+    /// another failure keeps a batch's rest and drops a single step.
+    pub fn left(self, done: usize, error: Option<&io::Error>) -> Option<Undoable> {
+        let keep = match error {
+            Some(e) => NoBin::of(e).is_some() || self.batch,
+            None => true,
+        };
+        let mut rest: Vec<Undoable> = self.steps.into_iter().skip(done).collect();
+        if rest.is_empty() || !keep {
+            return None;
+        }
+        rest.reverse();
+        match self.batch {
+            true => Some(Undoable::Batch(rest)),
+            false => rest.pop(),
         }
     }
 }
 
 /// Why Undo stopped at a copied or new item: its Recycle Bin refuses it (its drive removes files
-/// immediately, or it is too big). The entry stays on the stack for [`UndoStack::undo_erasing`].
+/// immediately, or it is too big). The entry stays on the stack for an Undo that erases.
 #[derive(Debug)]
 pub struct NoBin {
     pub path: PathBuf,
@@ -236,18 +274,15 @@ impl UndoStack {
         out
     }
 
-    /// Reverse the most recent operation. `None` when the stack is empty. A
-    /// failed single operation is dropped; a failed batch goes back on the
-    /// stack holding the members it did not reverse, so Undo again picks up
-    /// where it stopped.
-    /// An entry stopped by [`NoBin`] stays whole for [`UndoStack::undo_erasing`].
-    pub fn undo(&mut self) -> Option<io::Result<()>> {
-        self.undo_in(trash::Bins::system().as_ref(), false)
-    }
-
-    /// [`UndoStack::undo`] removing for good each copied or new item its Recycle Bin refuses.
-    pub fn undo_erasing(&mut self) -> Option<io::Result<()>> {
-        self.undo_in(trash::Bins::system().as_ref(), true)
+    /// The most recent entry, off the stack. What its reversal leaves undone goes back with
+    /// [`UndoStack::push`] of [`Undo::left`], and the bin items it purged with
+    /// [`UndoStack::forget_gone`].
+    pub fn take(&mut self) -> Option<Undo> {
+        let entry = self.0.pop()?;
+        let batch = matches!(entry, Undoable::Batch(_));
+        let mut steps = Vec::new();
+        entry.into_steps(&mut steps);
+        Some(Undo { steps, batch })
     }
 
     /// Whether the entry Undo would reverse next holds more than one item.
@@ -255,20 +290,33 @@ impl UndoStack {
         matches!(self.0.last(), Some(Undoable::Batch(items)) if items.len() > 1)
     }
 
+    /// The most recent entry reversed here, as a removal job reverses it: `None` when the stack is
+    /// empty, else the first failure.
+    #[cfg(test)]
     fn undo_in(&mut self, bins: Option<&trash::Bins>, erase: bool) -> Option<io::Result<()>> {
-        let mut entry = self.0.pop()?;
+        let undo = self.take()?;
         let mut purged = Vec::new();
-        let done = entry.reverse(bins, erase, &mut purged);
-        let keep = match &done {
-            Ok(()) => false,
-            Err(e) if NoBin::of(e).is_some() => true,
-            Err(_) => matches!(&entry, Undoable::Batch(items) if !items.is_empty()),
-        };
-        if keep {
-            self.0.push(entry);
+        let mut done = 0;
+        let mut error = None;
+        for step in undo.steps() {
+            match step.reverse(bins, erase, &mut purged) {
+                Ok(()) => done += 1,
+                Err(e) => {
+                    error = Some(e);
+                    break;
+                }
+            }
+        }
+        if let Some(left) = undo.left(done, error.as_ref()) {
+            self.0.push(left);
         }
         self.forget_gone(&purged);
-        Some(done)
+        Some(error.map_or(Ok(()), Err))
+    }
+
+    #[cfg(test)]
+    fn undo(&mut self) -> Option<io::Result<()>> {
+        self.undo_in(trash::Bins::system().as_ref(), false)
     }
 }
 
@@ -655,6 +703,43 @@ mod tests {
         assert_eq!(fs::read_to_string(t.path().join("a.txt")).unwrap(), "a.txt");
         assert_eq!(fs::read_to_string(t.path().join("b.txt")).unwrap(), "b.txt");
         assert_eq!(u.label(), None, "the batch was one entry");
+    }
+
+    #[test]
+    fn a_cancelled_undo_keeps_what_it_did_not_reverse_and_a_failed_lone_step_goes() {
+        let mut u = UndoStack::default();
+        u.push(Undoable::Copied("/x".into()));
+        let lone = u.take().expect("the copy");
+        let kept = lone.left(0, None);
+        assert!(
+            matches!(kept, Some(Undoable::Copied(_))),
+            "a cancel keeps it"
+        );
+        u.push(kept.unwrap());
+        let failed = io::Error::new(io::ErrorKind::NotFound, "gone");
+        let lone = u.take().expect("the copy");
+        assert!(lone.left(0, Some(&failed)).is_none(), "a failure drops it");
+
+        u.push_all(vec![
+            Undoable::Copied("/a".into()),
+            Undoable::Copied("/b".into()),
+            Undoable::Copied("/c".into()),
+        ]);
+        let batch = u.take().expect("the batch");
+        let paths: Vec<_> = (batch.steps().iter())
+            .map(|s| match s {
+                Undoable::Copied(p) => p.clone(),
+                _ => panic!("a copy"),
+            })
+            .collect();
+        assert_eq!(paths, ["/c", "/b", "/a"].map(PathBuf::from), "last first");
+        match batch.left(1, None) {
+            Some(Undoable::Batch(rest)) => assert!(matches!(
+                rest.as_slice(),
+                [Undoable::Copied(a), Undoable::Copied(b)] if *a == Path::new("/a") && *b == Path::new("/b")
+            )),
+            _ => panic!("the batch keeps /a and /b"),
+        }
     }
 
     #[test]

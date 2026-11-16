@@ -71,6 +71,7 @@ fn undo_reverses_a_rename() {
     assert_eq!(ex.undo, Some("Rename"));
 
     ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
 
     assert!(dir.path().join("a.txt").is_file());
     assert!(!dir.path().join("b.txt").exists());
