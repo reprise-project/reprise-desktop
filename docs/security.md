@@ -771,7 +771,8 @@ ends, so stop the share first.
   under a per-user key of the file's filesystem id, inode and contents, so
   any edit drops it; a file over 128 MiB is never trusted. A `.desktop`
   dropped on Quick Launch runs only from an application folder or with the
-  attribute; otherwise it asks the same way.
+  attribute; otherwise its button opens the file with its default program,
+  as for any other file, and never runs its `Exec`.
 - **Drive Recycle Bins.** A drive's trash is used only as `.Trash-$uid`, a
   real folder of yours, or `$uid` in a real sticky `.Trash`, reached from
   the drive's top without following a link. Restore takes a `.trashinfo`
