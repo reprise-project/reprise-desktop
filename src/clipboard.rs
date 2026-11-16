@@ -119,11 +119,17 @@ enum Files {
     Portal,
 }
 
-/// `x11_app` is the focused X11 window's Flatpak app (`Some(None)` for a host window), `None`
-/// when no X11 window has focus; then `wayland_focus` answers for the keyboard focus's client.
-fn owner_sandboxed(x11_app: Option<Option<String>>, wayland_focus: impl FnOnce() -> bool) -> bool {
+/// `x11_app` is the focused X11 window's Flatpak app (`Some(Ok(None))` for a host window, an
+/// error when its X client has no pid), `None` when no X11 window has focus; then
+/// `wayland_focus` answers for the keyboard focus's client. An X11 owner not told apart counts
+/// as sandboxed, as an X11 drag does.
+fn owner_sandboxed(
+    x11_app: Option<Result<Option<String>, ()>>,
+    wayland_focus: impl FnOnce() -> bool,
+) -> bool {
     match x11_app {
-        Some(app) => app.is_some(),
+        Some(Ok(app)) => app.is_some(),
+        Some(Err(())) => true,
         None => wayland_focus(),
     }
 }
@@ -318,8 +324,7 @@ impl State {
     /// Whether the focused window's program runs sandboxed: the owner of an X11 selection, or
     /// of a Wayland source whose client is gone.
     pub(crate) fn clip_owner_sandboxed(&self) -> bool {
-        let x11_app = self.focused_x11_app().map(|app| app.ok().flatten());
-        owner_sandboxed(x11_app, || {
+        owner_sandboxed(self.focused_x11_app(), || {
             // Smithay takes a data device selection only from the client holding the keyboard.
             let focus = self.seat.get_keyboard().and_then(|k| k.current_focus());
             focus.is_some_and(|f| crate::sandbox::resource_sandboxed(&f))
@@ -834,16 +839,21 @@ mod tests {
 
     #[test]
     fn an_x11_selection_is_sandboxed_by_its_windows_app_whatever_the_wayland_focus() {
-        let flatpak = Some(Some("org.example.App".to_string()));
+        let flatpak = Some(Ok(Some("org.example.App".to_string())));
         assert!(
             owner_sandboxed(flatpak.clone(), || false),
             "Flatpak X11 window"
         );
         assert!(owner_sandboxed(flatpak, || true));
-        assert!(!owner_sandboxed(Some(None), || true), "host X11 window");
-        assert!(!owner_sandboxed(Some(None), || false));
+        assert!(!owner_sandboxed(Some(Ok(None)), || true), "host X11 window");
+        assert!(!owner_sandboxed(Some(Ok(None)), || false));
         assert!(owner_sandboxed(None, || true), "sandboxed Wayland focus");
         assert!(!owner_sandboxed(None, || false), "host Wayland focus");
+    }
+
+    #[test]
+    fn an_x11_selection_whose_window_has_no_pid_counts_as_sandboxed() {
+        assert!(owner_sandboxed(Some(Err(())), || false));
     }
 
     #[test]

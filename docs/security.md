@@ -85,7 +85,8 @@ file lists only through that portal, never as a cut. The compositor marks
 its drags and selections `application/x-reprise-sandboxed` and strips the
 type from any other program's, so Reprise's programs only ever copy its
 files. An X11 drag counts as sandboxed unless a host X11 window has the
-focus.
+focus. An X11 selection goes by the focused window, and counts as sandboxed
+when that window's X client has no process Xwayland can name.
 
 `reprise_input_v1` carries remote control, input capture, global
 shortcuts, the colour picker and lock mode between the compositor and the
