@@ -122,6 +122,11 @@ impl Frontend {
         *lock(&self.owner) = owner;
     }
 
+    /// Whether `name` owns `FRONTEND` as `watch_frontends` last heard.
+    pub(crate) fn owns(&self, name: &str) -> bool {
+        lock(&self.owner).as_deref() == Some(name)
+    }
+
     /// AccessDenied unless the call came from xdg-desktop-portal: app ids,
     /// restore data and handles are taken on its word only. The owner of
     /// `FRONTEND` must also run outside any sandbox, since a sandboxed app
@@ -315,6 +320,28 @@ pub(crate) async fn with_request<T: Send + 'static>(
     Ok(out)
 }
 
+/// Called once a call stored session `key` for `owner`: when `owner` no longer owns `FRONTEND`,
+/// `watch_frontends` may have swept before the session landed, so `owner`'s sessions end here
+/// and `key`'s object goes. True when they did.
+pub(crate) async fn frontend_left(
+    conn: &zbus::Connection,
+    frontend: &Frontend,
+    sessions: &Sessions,
+    owner: &str,
+    key: &str,
+) -> bool {
+    if frontend.owns(owner) {
+        return false;
+    }
+    log::info!("Session {key}: {owner} left the bus while it opened");
+    let gone = take_owned_by(&mut sessions.lock().unwrap(), owner);
+    for (k, data) in gone {
+        end_session(conn, &k, Some(data)).await;
+    }
+    end_session(conn, key, None).await;
+    true
+}
+
 async fn replace_session(sessions: &Sessions, key: String, data: SessionData) {
     let old = sessions.lock().unwrap().insert(key, data);
     if let Some(mut s) = old {
@@ -481,6 +508,7 @@ impl ScreenCast {
         CURSOR_HIDDEN | CURSOR_EMBEDDED | CURSOR_METADATA
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn create_session(
         &self,
         _handle: ObjectPath<'_>,
@@ -489,6 +517,7 @@ impl ScreenCast {
         _options: HashMap<String, Variant<'_>>,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
+        #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, Results)> {
         self.frontend.check(&hdr).await?;
         check_session(&session_handle)?;
@@ -516,6 +545,10 @@ impl ScreenCast {
                 },
             )
             .await?;
+        let (owner, key) = (sender(&hdr), session_handle.as_str());
+        if frontend_left(conn, &self.frontend, &self.sessions, &owner, key).await {
+            return Ok((RESPONSE_OTHER, Results::new()));
+        }
         Ok((RESPONSE_OK, Results::new()))
     }
 
@@ -1755,6 +1788,32 @@ mod tests {
         ) -> zbus::fdo::Result<()> {
             self.0.check(&hdr).await
         }
+    }
+
+    #[test]
+    fn a_session_stored_after_its_frontend_left_ends_with_the_rest_of_its_sessions() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let conn = crate::lockmode::tests::connect(&bus).await;
+            let sessions: Sessions = Arc::default();
+            let session = |owner: &str| {
+                SessionData::new(owner.into(), SessionKind::ScreenCast(CastState::default()))
+            };
+            let key = |n: u32| format!("{SESSION_PREFIX}1_1/s{n}");
+            for (n, owner) in [(1, ":1.5"), (2, ":1.5"), (3, ":1.9")] {
+                sessions.lock().unwrap().insert(key(n), session(owner));
+            }
+            let frontend = Frontend::default();
+            frontend.set(Some(":1.9".into()));
+            assert!(!frontend_left(&conn, &frontend, &sessions, ":1.9", &key(3)).await);
+            assert_eq!(sessions.lock().unwrap().len(), 3);
+            assert!(frontend_left(&conn, &frontend, &sessions, ":1.5", &key(2)).await);
+            let left: Vec<String> = sessions.lock().unwrap().keys().cloned().collect();
+            assert_eq!(left, [key(3)], "only the live frontend's session stays");
+        });
     }
 
     /// Whether a caller owning `FRONTEND` passes [`Frontend::check`] when its process is read from

@@ -230,6 +230,7 @@ impl Inhibit {
         options: HashMap<String, Variant<'_>>,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
+        #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<()> {
         self.frontend.check(&hdr).await?;
         crate::check_handle(&handle, crate::REQUEST_PREFIX)?;
@@ -249,8 +250,9 @@ impl Inhibit {
         if flags & FLAG_SWITCH != 0 {
             log::info!("Inhibit: User Switch is not held");
         }
+        let owner = crate::sender(&hdr);
         let mut held = Held {
-            owner: crate::sender(&hdr),
+            owner: owner.clone(),
             logout: (flags & FLAG_LOGOUT != 0).then(|| (app_id.clone(), reason.clone())),
             ..Held::default()
         };
@@ -285,7 +287,7 @@ impl Inhibit {
             }
             return Err(e.into());
         }
-        Ok(())
+        left(conn, &self.frontend, &self.shared, &owner).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -312,6 +314,7 @@ impl Inhibit {
             shared: self.shared.clone(),
         };
         server.at(session_handle.clone(), monitor).await?;
+        left(conn, &self.frontend, &self.shared, &crate::sender(&hdr)).await?;
         let (conn2, shared) = (conn.clone(), self.shared.clone());
         let path: OwnedObjectPath = session_handle.into();
         zruntime::spawn(async move {
@@ -592,6 +595,21 @@ async fn sleep_inhibit(who: &str, why: &str) -> zbus::Result<OwnedFd> {
 }
 
 /// Release every inhibition and monitor session `owner` made; for a frontend that left the bus.
+/// Called once a call stored an entry for `owner`: when `owner` no longer owns `FRONTEND`,
+/// `watch_frontends` may have released before the entry landed, so `owner`'s entries go here.
+async fn left(
+    conn: &zbus::Connection,
+    frontend: &crate::Frontend,
+    shared: &Shared,
+    owner: &str,
+) -> zbus::fdo::Result<()> {
+    if frontend.owns(owner) {
+        return Ok(());
+    }
+    release_owned_by(conn, shared, owner).await;
+    Err(zbus::fdo::Error::Failed(format!("{owner} left the bus")))
+}
+
 pub async fn release_owned_by(conn: &zbus::Connection, shared: &Shared, owner: &str) {
     let gone: Vec<(String, Held)> = shared
         .held
@@ -792,11 +810,16 @@ mod tests {
 
     struct FakeSaver {
         calls: Arc<Mutex<Vec<String>>>,
+        /// A frontend that leaves the bus while this inhibition is taken.
+        leaving: Option<crate::Frontend>,
     }
 
     #[zbus::interface(name = "org.freedesktop.ScreenSaver")]
     impl FakeSaver {
         fn inhibit(&self, app: String, reason: String) -> u32 {
+            if let Some(f) = &self.leaving {
+                f.set(None);
+            }
             self.calls
                 .lock()
                 .unwrap()
@@ -812,28 +835,106 @@ mod tests {
         }
     }
 
-    /// Needs a bus: `dbus-run-session cargo test -- --ignored`.
     #[test]
-    #[ignore]
-    fn idle_round_trip_on_a_session_bus() {
+    fn an_inhibition_whose_frontend_left_meanwhile_is_let_go() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
         zbus::block_on(async {
             let calls = Arc::new(Mutex::new(Vec::new()));
-            let _saver = zbus::connection::Builder::session()
+            let frontend = crate::Frontend::default();
+            let _saver = zbus::connection::Builder::address(bus.1.as_str())
                 .name(SCREENSAVER)
                 .serve_at(
                     SCREENSAVER_PATH,
                     FakeSaver {
                         calls: calls.clone(),
+                        leaving: Some(frontend.clone()),
                     },
                 )
                 .build()
                 .await
                 .unwrap();
             let (shared, rx) = super::shared();
-            let client = zbus::Connection::session().await.unwrap();
+            let client = crate::lockmode::tests::connect(&bus).await;
+            frontend.set(client.unique_name().map(|n| n.to_string()));
+            let portal = zbus::connection::Builder::address(bus.1.as_str())
+                .serve_at(
+                    crate::PATH,
+                    Inhibit {
+                        shared: shared.clone(),
+                        frontend: frontend.clone(),
+                    },
+                )
+                .build()
+                .await
+                .unwrap();
+            let _ = frontend.conn.set(portal.clone());
+            zruntime::spawn(run_idle(portal.clone(), rx)).detach();
+            let mut options: HashMap<&str, Variant<'_>> = HashMap::new();
+            options.insert("reason", Variant::from("Playing"));
+            let handle = "/org/freedesktop/portal/desktop/request/1_1/a";
+            let call = client
+                .call_method(
+                    Some(portal.unique_name().unwrap().as_str()),
+                    crate::PATH,
+                    Some("org.freedesktop.impl.portal.Inhibit"),
+                    "Inhibit",
+                    &(
+                        ObjectPath::try_from(handle).unwrap(),
+                        "org.example.Player",
+                        "",
+                        FLAG_IDLE,
+                        options,
+                    ),
+                )
+                .await;
+            assert!(call.is_err(), "the call fails once its frontend is gone");
+            assert!(shared.held.lock().unwrap().is_empty());
+            let served = portal
+                .object_server()
+                .interface::<_, InhibitRequest>(handle)
+                .await;
+            assert!(served.is_err(), "no Request object stays behind");
+            for _ in 0..100 {
+                if calls.lock().unwrap().len() == 2 {
+                    break;
+                }
+                async_io::Timer::after(std::time::Duration::from_millis(10)).await;
+            }
+            assert_eq!(
+                *calls.lock().unwrap(),
+                ["inhibit org.example.Player Playing", "uninhibit 7"]
+            );
+        });
+    }
+
+    #[test]
+    fn idle_round_trip_on_a_private_bus() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let _saver = zbus::connection::Builder::address(bus.1.as_str())
+                .name(SCREENSAVER)
+                .serve_at(
+                    SCREENSAVER_PATH,
+                    FakeSaver {
+                        calls: calls.clone(),
+                        leaving: None,
+                    },
+                )
+                .build()
+                .await
+                .unwrap();
+            let (shared, rx) = super::shared();
+            let client = crate::lockmode::tests::connect(&bus).await;
             let frontend = crate::Frontend::default();
             frontend.set(client.unique_name().map(|n| n.to_string()));
-            let portal = zbus::connection::Builder::session()
+            let portal = zbus::connection::Builder::address(bus.1.as_str())
                 .serve_at(
                     crate::PATH,
                     Inhibit {

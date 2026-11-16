@@ -231,6 +231,10 @@ impl GlobalShortcuts {
                 },
             )
             .await?;
+        let (owner, key) = (crate::sender(&hdr), session_handle.as_str());
+        if crate::frontend_left(conn, &self.frontend, &self.sessions, &owner, key).await {
+            return Ok((RESPONSE_OTHER, Results::new()));
+        }
         Ok((RESPONSE_OK, Results::new()))
     }
 

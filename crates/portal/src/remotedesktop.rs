@@ -78,6 +78,7 @@ impl RemoteDesktop {
         DEVICE_KEYBOARD | DEVICE_POINTER
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn create_session(
         &self,
         _handle: ObjectPath<'_>,
@@ -86,6 +87,7 @@ impl RemoteDesktop {
         _options: HashMap<String, Variant<'_>>,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
+        #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         crate::check_session(&session_handle)?;
@@ -118,6 +120,10 @@ impl RemoteDesktop {
                 },
             )
             .await?;
+        let (owner, key) = (crate::sender(&hdr), session_handle.as_str());
+        if crate::frontend_left(conn, &self.frontend, &self.sessions, &owner, key).await {
+            return Ok((RESPONSE_OTHER, HashMap::new()));
+        }
         Ok((RESPONSE_OK, HashMap::new()))
     }
 
