@@ -460,8 +460,6 @@ pub enum Driven {
     Picked(PathBuf),
     /// Cancel, Escape or the close box.
     Cancelled,
-    /// Accept on a name that leads nowhere: the text of the program's error box.
-    Failed(String),
 }
 
 /// Where dialogs keep their folder, view and sort, and the app id they keep them under.
@@ -561,10 +559,12 @@ pub struct Host {
     watched: Option<PathBuf>,
     relist: Option<reprisefs::listing::Relist>,
     gvfs: Option<reprisefs::gvfsmeta::Changes>,
-    /// A typed path whose folders did not answer within [`RESOLVE_WAIT`], or a last folder that
-    /// did not within [`LIST_WAIT`]; the next resolve or open of the same path takes its answer
-    /// instead of starting another probe.
+    /// A typed path whose folders did not answer within [`RESOLVE_WAIT`]; the next resolve of the
+    /// same path takes its answer instead of starting another probe.
     probing: Option<(PathBuf, Job<(bool, bool)>)>,
+    /// A last folder and the search for the nearest folder at or above it that did not answer
+    /// within [`LIST_WAIT`]; the next open on it takes the answer.
+    last_probe: Option<(PathBuf, Job<Option<PathBuf>>)>,
     /// Delete's work under way off the loop; [`Host::take_thumbs`] takes each step.
     deleting: Option<Job<Deleting>>,
     /// The box the dialog shows over itself ([`Host::asking`]).
@@ -662,21 +662,22 @@ impl Host {
         dlg
     }
 
-    /// `last` when it is still a folder, checked on a listing thread for [`LIST_WAIT`]. A check
-    /// that does not answer is kept, and the next open takes its answer without waiting again.
+    /// `last`, or the nearest folder above it once it is gone, checked on a listing thread for
+    /// [`LIST_WAIT`]. A check that does not answer is kept, and the next open takes its answer
+    /// without waiting again.
     fn last_folder(&mut self, last: PathBuf) -> Option<PathBuf> {
-        let found = match self.probing.take() {
+        let found = match self.last_probe.take() {
             Some((p, job)) if p == last => job.take().ok_or(job),
             _ => {
-                let job = probe_folders(&last);
+                let job = nearest_folder(&last);
                 job.wait(LIST_WAIT).ok_or(job)
             }
         };
         match found {
-            Ok((is_dir, _)) => is_dir.then_some(last),
+            Ok(nearest) => nearest,
             Err(job) => {
                 log::warn!("file dialog: {} is not responding", last.display());
-                self.probing = Some((last, job));
+                self.last_probe = Some((last, job));
                 None
             }
         }
@@ -1372,7 +1373,7 @@ impl Host {
 
     /// The box over the dialog, asking before Delete or saying why a rename or a delete failed.
     /// The repriseapp host shows it as a child window of the dialog's ([`crate::filebox`]).
-    pub(crate) fn asking(&self) -> Option<&MsgBox> {
+    pub fn asking(&self) -> Option<&MsgBox> {
         self.ask.as_ref().map(|a| &a.msg)
     }
 
@@ -1673,7 +1674,8 @@ impl Host {
         }
     }
 
-    /// Accept on `name`: a folder opens in `dlg` with the name field emptied, a file is picked.
+    /// Accept on `name`: a folder opens in `dlg` with the name field emptied, a file is picked,
+    /// and a name that leads nowhere says why in a box over the dialog, titled like it.
     pub fn accept(&mut self, dlg: &mut FileDlg, name: &str, icons: &mut IconCache) -> Driven {
         match self.resolve(name) {
             Ok(Resolved::Folder(id, _)) => {
@@ -1682,7 +1684,11 @@ impl Host {
                 Driven::Reply(Box::new(crate::Reply::redraw()))
             }
             Ok(Resolved::File(path)) => Driven::Picked(path),
-            Err(msg) => Driven::Failed(msg),
+            Err(msg) => {
+                log::warn!("file dialog: {msg}");
+                self.ask = Some(error_box(dlg.title(), msg));
+                Driven::Reply(Box::new(crate::Reply::redraw()))
+            }
         }
     }
 
@@ -1759,6 +1765,14 @@ fn probe_folders(path: &Path) -> Job<(bool, bool)> {
     let path = path.to_path_buf();
     Job::spawn(None, move || {
         (path.is_dir(), path.parent().is_some_and(Path::is_dir))
+    })
+}
+
+/// The nearest folder at or above `path`, read on a listing thread.
+fn nearest_folder(path: &Path) -> Job<Option<PathBuf>> {
+    let path = path.to_path_buf();
+    Job::spawn(None, move || {
+        path.ancestors().find(|p| p.is_dir()).map(Path::to_path_buf)
     })
 }
 

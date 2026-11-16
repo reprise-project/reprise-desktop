@@ -1122,7 +1122,12 @@ fn a_typed_path_into_a_missing_folder_shows_a_box_and_keeps_the_dialog() {
             np.open_accept("reprise-no-such-dir/x.txt", &mut test_icons());
             assert!(np.open.is_some(), "Open stays open");
         }
-        assert!(np.error.is_shown(), "a box says the folder is missing");
+        let msg = np
+            .host
+            .asking()
+            .expect("a box over the dialog says the folder is missing");
+        assert_eq!(msg.title, sample_filedlg().title());
+        assert!(!np.error.is_shown(), "not one over the main window");
     }
 }
 
