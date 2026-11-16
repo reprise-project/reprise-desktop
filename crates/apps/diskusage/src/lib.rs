@@ -499,6 +499,9 @@ impl DiskUsage {
             PointerInput::Scroll { x, y, rows } if r.contains(x, y) => {
                 redraw(self.list.wheel(rows, r, ctx))
             }
+            PointerInput::ScrollAcross { x, y, cols } if r.contains(x, y) => {
+                redraw(self.list.wheel_across(cols, r, ctx))
+            }
             PointerInput::Leave => redraw(self.list.leave(ctx)),
             _ => return None,
         })

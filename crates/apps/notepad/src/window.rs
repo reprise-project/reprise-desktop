@@ -8,23 +8,18 @@ pub(crate) fn edit_font() -> TextRenderer {
     TextRenderer::monospace(EDIT_PX)
 }
 
-fn local_stamp(secs: i64) -> String {
-    let tm = reprisefs::locale::localtime(secs);
-    let (h12, ampm) = match tm.tm_hour {
-        0 => (12, "AM"),
-        1..=11 => (tm.tm_hour, "AM"),
-        12 => (12, "PM"),
-        h => (h - 12, "PM"),
+/// Time/Date's stamp: the time as the LC_TIME locale writes it (12- or 24-hour), then its
+/// short date.
+pub(crate) fn local_stamp(secs: i64) -> String {
+    use reprisefs::locale;
+    let tm = locale::localtime(secs);
+    let clock = if locale::is_12h() {
+        c"%l:%M %p"
+    } else {
+        c"%H:%M"
     };
-    format!(
-        "{}:{:02} {} {}/{}/{}",
-        h12,
-        tm.tm_min,
-        ampm,
-        tm.tm_mon + 1,
-        tm.tm_mday,
-        tm.tm_year + 1900
-    )
+    let time = locale::strftime(&tm, clock);
+    format!("{} {}", time.trim(), locale::short_date(&tm))
 }
 
 impl Notepad {

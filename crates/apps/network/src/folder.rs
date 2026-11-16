@@ -378,6 +378,11 @@ impl Folder {
         redraw(self.list.wheel(rows, list_r, ctx))
     }
 
+    pub fn wheel_across(&mut self, cols: i32, ctx: &Ctx) -> Outcome {
+        let (_, list_r) = self.layout(ctx);
+        redraw(self.list.wheel_across(cols, list_r, ctx))
+    }
+
     /// A pointer press. An open menu takes every press; one outside closes it and is eaten. Otherwise the right button selects and opens the row's menu, a double click opens a device's Status window or toggles a VPN, a single click selects.
     pub fn press(&mut self, at: Click, button: u32, s: &nm::Snapshot, ctx: &Ctx) -> Outcome {
         let (x, y) = (at.x, at.y);

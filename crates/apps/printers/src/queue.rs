@@ -345,6 +345,11 @@ impl Queue {
         redraw(self.list.wheel(rows, r, ctx))
     }
 
+    pub fn wheel_across(&mut self, cols: i32, ctx: &Ctx) -> Outcome {
+        let r = self.list_rect(ctx);
+        redraw(self.list.wheel_across(cols, r, ctx))
+    }
+
     pub fn key(&mut self, k: &KeyInput, s: &Snapshot, ctx: &Ctx) -> Outcome {
         if let Some(p) = self.popup.as_mut() {
             let step = p.key(k, ctx);

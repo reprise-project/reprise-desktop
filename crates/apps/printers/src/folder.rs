@@ -558,6 +558,11 @@ impl Folder {
         redraw(self.list.wheel(rows, r, ctx))
     }
 
+    pub fn wheel_across(&mut self, cols: i32, ctx: &Ctx) -> Outcome {
+        let (_, r) = self.layout(ctx);
+        redraw(self.list.wheel_across(cols, r, ctx))
+    }
+
     pub fn key(&mut self, k: &KeyInput, s: &Snapshot, ctx: &Ctx) -> Outcome {
         if let Some(p) = self.popup.as_mut() {
             return match p.key(k, ctx) {
@@ -730,6 +735,16 @@ mod tests {
         let mut f = Folder::new();
         f.refresh(&snap(), icon);
         f
+    }
+
+    #[test]
+    fn a_sideways_scroll_moves_a_list_wider_than_the_window() {
+        let mut f = folder(None);
+        let ctx = crate::tests::test_ctx((CLIENT.0 / 2, CLIENT.1));
+        assert_eq!(f.wheel_across(3, &ctx), Outcome::Redraw);
+        assert!(f.list.view.left > 0);
+        assert_eq!(f.wheel_across(-30, &ctx), Outcome::Redraw);
+        assert_eq!(f.list.view.left, 0);
     }
 
     fn row_point(f: &Folder, ctx: &Ctx, i: usize) -> (i32, i32) {
