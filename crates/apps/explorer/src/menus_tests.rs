@@ -875,3 +875,23 @@ fn a_tree_node_with_a_folder_pins_or_unpins_it() {
     let m = tree_menu(false, true, false, None);
     assert!(!(0..m.items().len()).any(|i| matches!(m.command(&[i]), Command::NodePin(_))));
 }
+
+#[test]
+fn the_recycle_bin_with_nothing_selected_offers_properties() {
+    let bin = MenuState {
+        read_only: true,
+        bin: Some(0),
+        ..MenuState::default()
+    };
+    let live = |m: &Menu| {
+        (0..m.items().len())
+            .any(|i| m.command(&[i]) == Command::Properties && enabled(m.items(), i))
+    };
+    assert!(live(&bar_menus(&bin)[0].1), "File > Properties");
+    assert!(live(&background_menu(&bin)), "the background's Properties");
+    let computer = MenuState {
+        read_only: true,
+        ..MenuState::default()
+    };
+    assert!(!live(&background_menu(&computer)), "Computer has none");
+}

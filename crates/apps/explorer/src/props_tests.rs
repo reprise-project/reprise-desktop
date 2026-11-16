@@ -236,13 +236,10 @@ fn a_places_own_sheet_is_titled_by_its_shell_name_or_refused() {
     for place in [Place::Computer, Place::RecycleBin] {
         ex.place = place.clone();
         assert!(ex.place_sheet().is_none(), "{place:?} has no folder sheet");
-        assert_eq!(
-            ex.properties(&mut ctx),
-            repriseapp::Reply::none(),
-            "{place:?}"
-        );
-        assert!(ex.props.is_none(), "{place:?} opened a sheet anyway");
     }
+    ex.place = Place::Computer;
+    assert_eq!(ex.properties(&mut ctx), repriseapp::Reply::none());
+    assert!(ex.props.is_none(), "Computer opened a sheet anyway");
 }
 
 fn row_value(ex: &crate::Explorer, id: &str) -> String {

@@ -9,7 +9,6 @@ use crate::compositor::{SceneOwner, State};
 use crate::dialog::{self, Dialog, DialogLayout, Placement, Style};
 use crate::glass::Backdrop;
 use crate::input::Interaction;
-use crate::window::keep_inside;
 
 use super::*;
 
@@ -101,7 +100,6 @@ impl State {
                     b.y + (b.height - layout.size.1) / 3,
                 )
             }
-            Placement::At(x, y) => keep_inside((x, y), layout.size, area),
         };
         let welcome = matches!(d.style, Style::Welcome(_));
         let tree = self.scene.tree_create(dialog_layer(&d, &self.layers));

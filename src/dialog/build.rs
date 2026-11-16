@@ -90,7 +90,7 @@ impl Dialog {
 
     pub fn end_session_form(&mut self) -> Option<&mut reprisekit::controls::form::Form> {
         match &mut self.style {
-            Style::Form(f) if f.kind == FormKind::EndSession => f.open_page_mut(),
+            Style::Form(f) if f.kind == FormKind::EndSession => Some(f.open_page_mut()),
             _ => None,
         }
     }

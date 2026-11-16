@@ -41,16 +41,17 @@ impl Drop for WalkStop {
 impl Explorer {
     /// File > Properties, Alt+Enter and the menus' Properties row: the sheet for the single
     /// selected entry, the combined sheet for several, or for the place itself with nothing
-    /// selected.
+    /// selected (the Recycle Bin's is Recycle Bin Properties).
     pub fn properties(&mut self, ctx: &mut Ctx) -> Reply {
         if self.sv.selection.len() > 1 {
             return self.open_set_properties(ctx);
         }
         let chosen = self.sv.selection.single().and_then(|i| self.items.get(i));
-        if self.place == crate::place::Place::RecycleBin
-            && let Some(it) = chosen.cloned()
-        {
-            return self.open_bin_properties(it, ctx);
+        if self.place == crate::place::Place::RecycleBin {
+            return match chosen.cloned() {
+                Some(it) => self.open_bin_item_properties(it, ctx),
+                None => self.open_bin_props(ctx),
+            };
         }
         if let Some(it) = chosen {
             let (path, name) = (it.path.clone(), it.label().to_string());
@@ -176,7 +177,7 @@ impl Explorer {
         }
     }
 
-    fn open_bin_properties(&mut self, it: reprisefs::listing::Item, ctx: &mut Ctx) -> Reply {
+    fn open_bin_item_properties(&mut self, it: reprisefs::listing::Item, ctx: &mut Ctx) -> Reply {
         let (path, name) = (it.path.clone(), it.name.clone());
         let (apps, globs) = (self.app_index.clone(), self.globs.clone());
         let scale = ctx.icons.scale();
@@ -551,10 +552,11 @@ impl Explorer {
         landed
     }
 
-    /// Whether a process started for one box (`--properties`, `--open-with`) is done: its sheet is
-    /// closed and no box or work is left.
+    /// Whether a process started for one box (`--properties`, `--open-with`, `--bin-properties`)
+    /// is done: its sheet is closed and no box or work is left.
     pub(crate) fn sheet_closed(&self) -> bool {
         self.props.is_none()
+            && self.bin_props.is_none()
             && self.props_due.is_none()
             && self.dialog.is_none()
             && self.waiting.is_empty()

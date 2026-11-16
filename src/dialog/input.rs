@@ -3,17 +3,9 @@ use crate::text::{access_key, split_mnemonic};
 use crate::textedit::EditKey;
 use reprisekit::controls::combo;
 use reprisekit::controls::form::{FocusedEdit, Key};
-use reprisekit::controls::propsheet::Event as SheetEvent;
 use reprisekit::pointer::Lit;
 
 impl Dialog {
-    pub fn cycle_page(&mut self, back: bool) -> Outcome {
-        match self.form_mut() {
-            Some(f) => f.cycle_page(back),
-            None => Outcome::Nothing,
-        }
-    }
-
     /// A key. A form takes it first. Otherwise Enter presses the default button,
     /// Escape cancels, text edits the field; without a field Space presses the focused button and a
     /// letter the button with that access key. With Run's drop list open, Up/Down move the
@@ -166,50 +158,20 @@ impl Dialog {
         let Some(f) = self.form_mut() else {
             return Outcome::Nothing;
         };
-        let bar = f.sheet_mut().is_some_and(|s| s.release_bars());
-        let Some(form) = f.open_page_mut() else {
-            return Outcome::Nothing;
-        };
-        let ev = form.release();
-        match f.event(ev) {
-            Outcome::Nothing if bar => Outcome::Redraw,
-            out => out,
-        }
+        let ev = f.form.release();
+        f.event(ev)
     }
 
-    /// Whether a held page arrow repeats, a sheet's or the tray page's: the host sends
-    /// [`Dialog::tick`] until the release.
+    /// Whether a held arrow of the tray page repeats: the host sends [`Dialog::tick`] until the
+    /// release.
     pub fn ticking(&self) -> bool {
-        self.form()
-            .and_then(|f| f.sheet())
-            .is_some_and(|s| s.ticking())
-            || self.tray().is_some_and(|t| t.ticking())
+        self.tray().is_some_and(|t| t.ticking())
     }
 
     /// A host tick at `now`: a held page arrow steps once it repeats. True when the page moved.
     pub fn tick(&mut self, now: std::time::Instant) -> bool {
-        if let Some(s) = self.form_mut().and_then(|f| f.sheet_mut()) {
-            return s.tick(now) != SheetEvent::None;
-        }
         self.tray_mut()
             .is_some_and(|t| t.tick(now) != traycustomize::Event::None)
-    }
-
-    /// Whether the pointer holds a thumb or an arrow of a sheet's page scrollbar.
-    pub fn holding_page_bar(&self) -> bool {
-        self.form()
-            .and_then(|f| f.sheet())
-            .is_some_and(|s| s.holding_bar())
-    }
-
-    /// The pointer at (`x`, `y`) while a sheet's page scrollbar is held: a held thumb drags the
-    /// page, a held arrow lights while the pointer is on it. True when anything moved or lit.
-    pub fn drag_page_bar(&mut self, x: i32, y: i32, text: &TextRenderer, px: u32) -> bool {
-        let Some(s) = self.form_mut().and_then(|f| f.sheet_mut()) else {
-            return false;
-        };
-        let hit = s.hit(x, y, text, px);
-        s.motion(x, y, hit) != SheetEvent::None
     }
 
     /// A left press other than on a button. A form takes it first; on the drop arrow
@@ -283,9 +245,7 @@ impl Dialog {
                 Some(DialogHit::Control(h)) => Some(h),
                 _ => None,
             };
-            let Some(form) = f.open_page_mut() else {
-                return Outcome::Nothing;
-            };
+            let form = &mut f.form;
             let ev = form.double_click(h);
             return f.event(ev);
         }
@@ -298,32 +258,16 @@ impl Dialog {
         (self.field.as_mut()).is_some_and(|f| f.complete.wheel(shown, rows))
     }
 
-    /// The wheel turned `rows` rows (down is positive) over `hit`. A form's page takes it as
-    /// `Form::wheel` does, a page's scroll bar as `PropSheet::wheel` does, Run's open drop list
-    /// scrolls anywhere. Not the tray
-    /// dialog's or the file picker's.
+    /// The wheel turned `rows` rows (down is positive) over `hit`. A form takes it as
+    /// `Form::wheel` does, Run's open drop list scrolls anywhere. Not the tray dialog's or the
+    /// file picker's.
     pub fn wheel(&mut self, hit: Option<DialogHit>, rows: i32) -> Outcome {
         if let Some(f) = self.form_mut() {
             let h = match hit {
                 Some(DialogHit::Control(h)) => Some(h),
-                Some(DialogHit::PageBar(h)) => {
-                    let Some(s) = f.sheet_mut() else {
-                        return Outcome::Nothing;
-                    };
-                    return redraw_if(s.wheel(Some(h), rows) != SheetEvent::None);
-                }
                 _ => None,
             };
-            let Some(form) = f.open_page_mut() else {
-                return Outcome::Nothing;
-            };
-            let ev = form.wheel(h, rows);
-            if ev == reprisekit::controls::form::Event::None
-                && !matches!(hit, Some(DialogHit::Tab(_)))
-                && let Some(s) = f.sheet_mut()
-            {
-                return redraw_if(s.wheel_page(rows) != SheetEvent::None);
-            }
+            let ev = f.form.wheel(h, rows);
             return f.event(ev);
         }
         match self.field.as_mut() {
@@ -351,12 +295,9 @@ impl Dialog {
     /// `false` when no field is there.
     pub fn right_press(&mut self, text: &TextRenderer, px: u32, hit: Option<DialogHit>) -> bool {
         match hit {
-            Some(DialogHit::Control(h)) => self
-                .form_mut()
-                .and_then(|f| f.open_page_mut())
-                .is_some_and(|page| {
-                    page.right_press(Some(h)) != reprisekit::controls::form::Event::None
-                }),
+            Some(DialogHit::Control(h)) => self.form_mut().is_some_and(|f| {
+                f.form.right_press(Some(h)) != reprisekit::controls::form::Event::None
+            }),
             Some(DialogHit::Field(x)) => {
                 let Some(f) = self.field.as_mut().filter(|f| f.combo.open.is_none()) else {
                     return false;
@@ -531,9 +472,7 @@ impl Dialog {
 
     pub fn paste(&mut self, text: &str) -> Outcome {
         if let Some(f) = self.form_mut() {
-            let Some(form) = f.open_page_mut() else {
-                return Outcome::Nothing;
-            };
+            let form = &mut f.form;
             let ev = form.paste(text.to_string());
             return f.event(ev);
         }
@@ -568,15 +507,8 @@ impl Dialog {
             },
             Some(DialogHit::Control(_)) => {
                 if let Some(f) = self.form_mut() {
-                    return redraw_if(match &mut f.body {
-                        FormBody::Sheet(s) => {
-                            s.focus_at(x, y, text, px)
-                                != reprisekit::controls::propsheet::Event::None
-                        }
-                        FormBody::Plain(form) => {
-                            form.focus_at(x, y, text, px) != reprisekit::controls::form::Event::None
-                        }
-                    });
+                    let ev = f.form.focus_at(x, y, text, px);
+                    return redraw_if(ev != reprisekit::controls::form::Event::None);
                 }
                 match (self.copy_mut(), layout.page) {
                     (Some(c), Some(client)) => {
@@ -616,8 +548,8 @@ impl Dialog {
         Outcome::Redraw
     }
 
-    /// A reader asked to see row `row` of the list at dialog point (`x`, `y`): the tray's items, an open drop list, a sheet's page list, or a form
-    /// page's list box or tree, scrolls it in.
+    /// A reader asked to see row `row` of the list at dialog point (`x`, `y`): the tray's items, an
+    /// open drop list, or a form's list box or tree, scrolls it in.
     pub fn reveal(
         &mut self,
         layout: &DialogLayout,
@@ -642,13 +574,7 @@ impl Dialog {
         let Some(f) = self.form_mut() else {
             return Outcome::Nothing;
         };
-        if let FormBody::Sheet(s) = &mut f.body {
-            let ev = s.reveal(x, y, row, text, px);
-            return redraw_if(ev != reprisekit::controls::propsheet::Event::None);
-        }
-        let Some(form) = f.open_page_mut() else {
-            return Outcome::Nothing;
-        };
+        let form = &mut f.form;
         let ev = form.reveal(x, y, row, text, px);
         f.event(ev)
     }
@@ -664,9 +590,7 @@ impl Dialog {
         px: u32,
     ) -> bool {
         if let Some(f) = self.form_mut() {
-            return f
-                .open_page_mut()
-                .is_some_and(|form| form.drag_over(x, y, text, px));
+            return f.form.drag_over(x, y, text, px);
         }
         match (self.field.as_mut(), layout.field) {
             (Some(f), Some(r)) => {
@@ -680,7 +604,7 @@ impl Dialog {
     /// The drag left or ended: `true` when a drop caret was showing.
     pub fn drag_leave(&mut self) -> bool {
         if let Some(f) = self.form_mut() {
-            return f.open_page_mut().is_some_and(|form| form.drag_leave());
+            return f.form.drag_leave();
         }
         self.field.as_mut().is_some_and(|f| f.combo.drag_leave())
     }
@@ -688,9 +612,7 @@ impl Dialog {
     /// A drag resting at a field's edge scrolls it a step; `true` when it moved.
     pub fn drag_tick(&mut self, layout: &DialogLayout, text: &TextRenderer, px: u32) -> bool {
         if let Some(f) = self.form_mut() {
-            return f
-                .open_page_mut()
-                .is_some_and(|form| form.drag_tick(text, px));
+            return f.form.drag_tick(text, px);
         }
         match (self.field.as_mut(), layout.field) {
             (Some(f), Some(r)) => {
@@ -711,9 +633,7 @@ impl Dialog {
         px: u32,
     ) -> Outcome {
         if let Some(f) = self.form_mut() {
-            let Some(form) = f.open_page_mut() else {
-                return Outcome::Nothing;
-            };
+            let form = &mut f.form;
             let ev = form.drop_text(line, text, px);
             return f.event(ev);
         }
@@ -732,7 +652,7 @@ impl Dialog {
     /// memo, else the dialog's own field.
     pub fn focused_edit(&self) -> Option<FocusedEdit<'_>> {
         match self.form() {
-            Some(f) => f.open_page()?.focused_edit(),
+            Some(f) => f.form.focused_edit(),
             None => self
                 .field
                 .as_ref()
@@ -783,12 +703,7 @@ impl Dialog {
             f.thumb.release();
         }
         if let Some(f) = self.form_mut() {
-            if let Some(s) = f.sheet_mut() {
-                s.release_bars();
-            }
-            if let Some(page) = f.open_page_mut() {
-                page.cancel_pointer();
-            }
+            f.form.cancel_pointer();
         }
         Outcome::Redraw
     }
@@ -870,16 +785,12 @@ impl Dialog {
             };
             redraw |= c.cp.form.motion(x, y, on) != reprisekit::controls::form::Event::None;
         }
-        if let Some(s) = self.form_mut().and_then(|f| f.sheet_mut()) {
-            redraw |= s.motion(x, y, sheet_hit(over)) != SheetEvent::None;
-        } else if let Some(f) = self.form_mut() {
+        if let Some(f) = self.form_mut() {
             let control = match over {
                 Some(DialogHit::Control(h)) => Some(h),
                 _ => None,
             };
-            if let Some(page) = f.open_page_mut() {
-                redraw |= page.motion(x, y, control) != reprisekit::controls::form::Event::None;
-            }
+            redraw |= f.form.motion(x, y, control) != reprisekit::controls::form::Event::None;
         }
         redraw
     }
@@ -893,10 +804,8 @@ impl Dialog {
         if let Some(c) = self.copy_mut() {
             redraw |= c.cp.form.leave() != reprisekit::controls::form::Event::None;
         }
-        if let Some(s) = self.form_mut().and_then(|f| f.sheet_mut()) {
-            redraw |= s.leave() != SheetEvent::None;
-        } else if let Some(page) = self.form_mut().and_then(|f| f.open_page_mut()) {
-            redraw |= page.leave() != reprisekit::controls::form::Event::None;
+        if let Some(f) = self.form_mut() {
+            redraw |= f.form.leave() != reprisekit::controls::form::Event::None;
         }
         redraw
     }
@@ -980,17 +889,6 @@ impl Dialog {
 pub(crate) fn tray_part(over: Option<DialogHit>) -> Option<traycustomize::Hit> {
     match over {
         Some(DialogHit::Tray(h)) => Some(h),
-        _ => None,
-    }
-}
-
-/// The sheet's part under the pointer, when it is on a form dialog's sheet.
-fn sheet_hit(over: Option<DialogHit>) -> Option<reprisekit::controls::propsheet::Hit> {
-    use reprisekit::controls::propsheet::Hit;
-    match over? {
-        DialogHit::Tab(i) => Some(Hit::Tab(i)),
-        DialogHit::Control(h) => Some(Hit::Control(h)),
-        DialogHit::PageBar(h) => Some(h),
         _ => None,
     }
 }

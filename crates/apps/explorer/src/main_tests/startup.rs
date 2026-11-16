@@ -221,6 +221,28 @@ fn properties_of_several_paths_shows_the_combined_sheet() {
 }
 
 #[test]
+fn bin_properties_shows_recycle_bin_properties_alone_and_ends_with_it() {
+    let start = parse_args([std::ffi::OsString::from("--bin-properties")]);
+    assert_eq!(start.alone, Some(Alone::BinProperties));
+    assert_eq!(start.place, Place::RecycleBin);
+    let mut app = Lazy {
+        start,
+        inner: None,
+        units: TextUnits::ONE,
+    };
+    assert!(repriseapp::Extended::hidden(&app), "no folder window");
+
+    let mut ctx = test_ctx();
+    let _ = app.event(MAIN, Event::Wake, &mut ctx);
+    let ex = app.inner.as_mut().expect("the explorer");
+    wake_until(ex, &mut ctx, |ex| ex.bin_props.is_some());
+    let ids: Vec<WinId> = app.children().iter().map(|c| c.id).collect();
+    assert_eq!(ids, [crate::bin_props::BIN_PROPS], "the sheet alone");
+    let reply = app.event(crate::bin_props::BIN_PROPS, Event::CloseRequest, &mut ctx);
+    assert!(reply.quit, "closing the sheet ends the process");
+}
+
+#[test]
 fn open_with_shows_the_chooser_alone_and_ends_with_it() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let file = dir.path().join("a.txt");

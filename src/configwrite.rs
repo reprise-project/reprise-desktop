@@ -76,41 +76,27 @@ pub fn save_system_icons(path: &Path, icons: Vec<String>) {
     }));
 }
 
-/// `text` with `[recycle_bin]` set to `policy`; with `replace` off, an existing table is left as is.
-pub fn set_recycle_bin(
-    text: &str,
-    policy: &reprisefs::bincap::Policy,
-    replace: bool,
-) -> Result<String, String> {
+/// `text` with `[recycle_bin]` set to `policy` when it has no such table yet.
+pub fn set_recycle_bin(text: &str, policy: &reprisefs::bincap::Policy) -> Result<String, String> {
     let has = text
         .parse::<DocumentMut>()
         .is_ok_and(|d| d.contains_key("recycle_bin"));
-    match has && !replace {
+    match has {
         true => Ok(text.to_string()),
         false => policy.write(text),
     }
 }
 
-/// Queue `set_recycle_bin` on `path`: Recycle Bin Properties' OK and Apply (`replace`),
-/// and moving an older session's setting out of the state file (not `replace`). A failed write
-/// calls `failed` with the reason, on the writer thread.
-pub fn save_recycle_bin(
-    path: &Path,
-    policy: reprisefs::bincap::Policy,
-    replace: bool,
-    failed: impl FnOnce(String) + Send + 'static,
-) {
+/// Queue `set_recycle_bin` on `path`: an older session's setting moves out of the state file.
+pub fn save_recycle_bin(path: &Path, policy: reprisefs::bincap::Policy) {
     let path = path.to_path_buf();
     queue(Box::new(move || {
-        let saved = repriseconf::edit(&path, |text| set_recycle_bin(text, &policy, replace))
+        let saved = repriseconf::edit(&path, |text| set_recycle_bin(text, &policy))
             .map_err(|e| e.to_string())
             .and_then(|r| r);
         match saved {
             Ok(_) => log::info!("config {}: saved recycle_bin", path.display()),
-            Err(e) => {
-                log::error!("config {}: {e}; recycle_bin not saved", path.display());
-                failed(e);
-            }
+            Err(e) => log::error!("config {}: {e}; recycle_bin not saved", path.display()),
         }
     }));
 }
@@ -226,14 +212,14 @@ mod tests {
         );
     }
 
-    /// The sheet's settings land in `[recycle_bin]`; an older session's setting moves in only while the table is absent.
+    /// An older session's setting moves into `[recycle_bin]` only while the table is absent.
     #[test]
-    fn the_recycle_bin_table_is_written_and_parses() {
+    fn the_recycle_bin_table_is_written_once_and_parses() {
         use reprisefs::bincap::Policy;
         let text = "# mine\nterminal = \"foot\"\n";
         let mut p = Policy::default();
         p.global.max_percent = 1;
-        let out = set_recycle_bin(text, &p, false).unwrap();
+        let out = set_recycle_bin(text, &p).unwrap();
         assert!(out.starts_with(text), "{out}");
         assert_eq!(Policy::parse(&out), p);
         Config::parse(&out).unwrap();
@@ -241,9 +227,7 @@ mod tests {
             confirm: false,
             ..Policy::default()
         };
-        assert_eq!(set_recycle_bin(&out, &other, false).unwrap(), out);
-        let replaced = set_recycle_bin(&out, &other, true).unwrap();
-        assert_eq!(Policy::parse(&replaced), other);
+        assert_eq!(set_recycle_bin(&out, &other).unwrap(), out);
     }
 
     #[test]

@@ -222,6 +222,7 @@ impl Explorer {
             self.take_asking(ctx),
             self.take_drag_art(ctx),
             self.take_due_sheet(ctx),
+            self.take_bin_tabs(ctx),
             self.take_preview(),
             self.take_checksums(),
             self.take_reads(ctx),

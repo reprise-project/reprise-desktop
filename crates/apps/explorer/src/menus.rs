@@ -314,10 +314,13 @@ fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
     file.row(row("&Delete", delete), Command::Delete { erase });
     file.row(row("Rena&me", writable), Command::Rename);
     // With nothing selected, Properties is the place's own sheet, which
-    // Computer and the Recycle Bin do not have
-    // (`props_host::place_sheet`).
+    // Computer does not have (`props_host::place_sheet`); the Recycle Bin's
+    // is Recycle Bin Properties.
     file.row(
-        row("P&roperties", sel || !state.read_only),
+        row(
+            "P&roperties",
+            sel || !state.read_only || state.bin.is_some(),
+        ),
         Command::Properties,
     );
     file.sep();
@@ -568,9 +571,12 @@ pub fn background_menu(state: &MenuState) -> Menu {
     m.sep();
     m.sub(row("Ne&w", writable), new_menu(writable));
     m.sep();
-    // The background's Properties is the place's own sheet; the three
-    // places with no folder behind them have none.
-    m.row(row("P&roperties", writable), Command::Properties);
+    // The background's Properties is the place's own sheet; the places with
+    // no folder behind them have none, but for the Recycle Bin's.
+    m.row(
+        row("P&roperties", writable || state.bin.is_some()),
+        Command::Properties,
+    );
     m
 }
 

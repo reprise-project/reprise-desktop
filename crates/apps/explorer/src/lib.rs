@@ -6,6 +6,7 @@
 reprisebus::test_session!();
 
 mod acting;
+mod bin_props;
 mod browse;
 mod checksums;
 mod chrome;
@@ -269,6 +270,8 @@ pub struct Explorer {
     pub dialog: Option<Dialog>,
     /// The Properties sheet, in its own modeless window: it and a box can be up at once.
     pub props: Option<Props>,
+    /// Recycle Bin Properties, in its own modeless window.
+    pub(crate) bin_props: Option<bin_props::BinProps>,
     /// A sheet read and waiting for its icons to land before it goes up.
     props_due: Option<(props_host::SheetRead, repriseapp::iconjobs::IconWaits)>,
     /// Space's preview of the selected item, in its own modeless window.
@@ -553,6 +556,7 @@ impl Explorer {
             send: sendreads::SendReads::default(),
             dialog: None,
             props: None,
+            bin_props: None,
             props_due: None,
             preview: None,
             main_size: ctx.size,
@@ -1282,8 +1286,8 @@ impl Explorer {
         self.sv.fields == shellview::details_fields()
     }
 
-    /// Rescan the drives when `/proc/mounts` changed: the
-    /// tree and address drop follow the mounts. Returns whether it rescanned. The scan stats every
+    /// Rescan the drives when `/proc/mounts` changed: the tree, address drop and Recycle Bin
+    /// Properties' tabs follow the mounts. Returns whether it rescanned. The scan stats every
     /// mount on a listing thread; one that does not answer (a dead mount) lands through
     /// [`Explorer::take_drives`].
     fn sync_drives(&mut self, ctx: &mut Ctx) -> bool {
@@ -1295,6 +1299,7 @@ impl Explorer {
         if self.scanning.as_ref().is_some_and(|(m, _)| *m == mounts) {
             return false;
         }
+        self.bin_drives_changed(ctx);
         match self.read_job(ctx, reprisefs::places::drives) {
             Ok(drives) => {
                 self.drives_read(mounts, drives, ctx);
@@ -1667,6 +1672,9 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
     if win == PROPS {
         return ex.props_event(ev, ctx);
     }
+    if win == bin_props::BIN_PROPS {
+        return ex.bin_props_event(ev, ctx);
+    }
     if win == preview::PREVIEW {
         return ex.preview_event(ev, ctx);
     }
@@ -1688,6 +1696,7 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
                 && ex.popup.is_none()
                 && ex.dialog.is_none()
                 && ex.props.is_none()
+                && ex.bin_props.is_none()
             {
                 let lay = ex.bar_layout(ctx);
                 let m = ctx.theme.clone();
@@ -1811,6 +1820,7 @@ impl App for Lazy {
                 opened = match &start.alone {
                     Some(Alone::Properties(paths)) => ex.open_paths_properties(paths, ctx),
                     Some(Alone::OpenWith(path)) => ex.choose_program_for(path, false, ctx),
+                    Some(Alone::BinProperties) => ex.open_bin_props(ctx),
                     None => Reply::none(),
                 };
                 ex
@@ -1843,6 +1853,10 @@ impl App for Lazy {
         }
         if win == PROPS {
             ex.draw_props(c, ctx);
+            return;
+        }
+        if win == bin_props::BIN_PROPS {
+            ex.draw_bin_props(c, ctx);
             return;
         }
         if win == preview::PREVIEW {
@@ -1914,6 +1928,14 @@ impl repriseapp::Extended for Lazy {
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
         let form = match win {
             PROPS => self.inner.as_mut()?.props.as_mut()?.sheet.open_mut(),
+            bin_props::BIN_PROPS => self
+                .inner
+                .as_mut()?
+                .bin_props
+                .as_mut()?
+                .sheet
+                .sheet
+                .open_mut(),
             _ => return None,
         };
         Some(DropForm { form, px: None })
@@ -1969,12 +1991,14 @@ impl repriseapp::Extended for Lazy {
             PROGRAM_BROWSE => ex.access_program_browse(tree),
             browse::ERROR => ex.access_browse_error(tree),
             preview::PREVIEW => ex.access_preview(tree, ctx),
-            PROPS => {
-                if let Some(p) = &ex.props {
+            PROPS | bin_props::BIN_PROPS => {
+                let sheet = match win {
+                    PROPS => ex.props.as_ref().map(|p| &p.sheet),
+                    _ => ex.bin_props.as_ref().map(|b| &b.sheet.sheet),
+                };
+                if let Some(sheet) = sheet {
                     let px = ctx.forms().fonts.size_px;
-                    let (_, focus) = p
-                        .sheet
-                        .access(tree, reprisekit::access::ROOT, &ctx.text, px);
+                    let (_, focus) = sheet.access(tree, reprisekit::access::ROOT, &ctx.text, px);
                     if let Some(f) = focus {
                         tree.set_focus(f);
                     }
@@ -2007,16 +2031,19 @@ enum Alone {
     Properties(Vec<PathBuf>),
     /// `--open-with PATH`: the Open With chooser.
     OpenWith(PathBuf),
+    /// `--bin-properties`: Recycle Bin Properties.
+    BinProperties,
 }
 
-/// `reprise-explorer [--search] [PLACE]`, `--select PATH...`, `--properties PATH...` or
-/// `--open-with PATH`. PLACE is a
+/// `reprise-explorer [--search] [PLACE]`, `--select PATH...`, `--properties PATH...`,
+/// `--open-with PATH` or `--bin-properties`. PLACE is a
 /// folder's path, "Computer", "Recycle Bin" or "Network", or a server address, which opens
 /// Computer and connects to it; a missing or unknown one is Home. `--search` puts the keyboard in
 /// the Search field. `--select` opens the folder the first absolute PATH sits in with it and the
 /// others there selected, the first scrolled into view (Find Target's window). `--properties`
 /// shows the Properties sheet of the absolute PATHs alone, combined for two or more;
-/// `--open-with` shows the Open With chooser for PATH alone.
+/// `--open-with` shows the Open With chooser for PATH alone, and `--bin-properties` Recycle Bin
+/// Properties.
 fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
     let mut args = args.into_iter();
     let first = args.next();
@@ -2051,15 +2078,17 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
             .map(Alone::OpenWith),
+        Some("--bin-properties") => Some(Alone::BinProperties),
         _ => None,
     };
     if let Some(alone) = alone {
-        let path = match &alone {
-            Alone::Properties(paths) => &paths[0],
-            Alone::OpenWith(path) => path,
+        let place = match &alone {
+            Alone::Properties(paths) => paths[0].parent().map_or(Place::Home, Place::from_path),
+            Alone::OpenWith(path) => path.parent().map_or(Place::Home, Place::from_path),
+            Alone::BinProperties => Place::RecycleBin,
         };
         return Start {
-            place: path.parent().map_or(Place::Home, Place::from_path),
+            place,
             dir: None,
             select: Vec::new(),
             connect: None,

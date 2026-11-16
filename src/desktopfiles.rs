@@ -1,4 +1,4 @@
-//! The desktop's file work that asks or answers through a dialog: Delete and Shift+Delete with their confirmations, the Recycle Bin's Empty and Properties. The work runs off the loop (`fsjobs`); the dialogs come back on it. An icon's Properties and Open With are Explorer's, in a process of their own ([`State::show_properties`]).
+//! The desktop's file work that asks or answers through a dialog: Delete and Shift+Delete with their confirmations, and Empty Recycle Bin. The work runs off the loop (`fsjobs`); the dialogs come back on it. An icon's Properties and Open With and Recycle Bin Properties are Explorer's, in a process of their own ([`State::show_properties`]).
 
 use std::path::{Path, PathBuf};
 
@@ -7,7 +7,7 @@ use reprisefs::removal::Removal;
 
 use crate::compositor::State;
 use crate::desktop::{self, DesktopEntry};
-use crate::dialog::{Dialog, Style};
+use crate::dialog::Dialog;
 use crate::fsjobs::{Action, OnLoop};
 
 /// What Delete on the set `set` of `entries` covers: the `system_icons` names of its place icons and the paths of its files.
@@ -262,90 +262,9 @@ impl State {
         self.choose_program(&path);
     }
 
-    pub fn open_bin_properties(&mut self, index: usize) {
-        let Some((at, icon)) = self.desktop.as_ref().and_then(|v| {
-            let cell = v.cells.get(index)?;
-            Some(((cell.x, cell.y), v.entries.get(index)?.icon.clone()))
-        }) else {
-            return;
-        };
-        // The drives' tabs come from the last reads and fill in as each drive answers: a drive's
-        // tab looks inside it, which a mount that never answers holds.
-        self.spawn_fs_job(move || {
-            let read = reprisefs::trash::Bins::system().map(|bins| {
-                let home = crate::binprops::home_drive(&bins);
-                (bins, home)
-            });
-            Box::new(move |state: &mut State| {
-                let (Some((bins, home)), Some(view)) = (read, state.desktop.as_ref()) else {
-                    return;
-                };
-                let drives = home.into_iter().chain(view.bins.tabs(view.drives.found()));
-                let sheet = crate::binprops::BinSheet::new(bins.policy.clone(), drives.collect());
-                state.open_dialog(crate::binprops::dialog(sheet, at, &icon));
-                state.read_bin_tabs(&bins);
-            })
-        });
-    }
-
-    /// Reads the tab of each drive the Send To scan found on a file job of its own, one per drive
-    /// at a time, and shows the answers in the open Recycle Bin Properties.
-    fn read_bin_tabs(&mut self, bins: &reprisefs::trash::Bins) {
-        let Some(view) = self.desktop.as_mut() else {
-            return;
-        };
-        let (id, read) = view.bins.start_tab_reads(view.drives.found());
-        for top in read {
-            let bins = bins.clone();
-            self.spawn_fs_job(move || {
-                let tab = crate::binprops::drive_tab(&bins, &top);
-                Box::new(move |state: &mut State| {
-                    let Some(view) = state.desktop.as_mut() else {
-                        return;
-                    };
-                    view.bins.land_tab(top, id, tab);
-                    state.show_bin_tabs();
-                })
-            });
-        }
-    }
-
-    /// Shows the drives' tabs as the reads found them in each open Recycle Bin Properties.
-    fn show_bin_tabs(&mut self) {
-        let Some(view) = self.desktop.as_ref() else {
-            return;
-        };
-        let tabs = view.bins.tabs(view.drives.found());
-        for i in 0..self.dialogs.views.len() {
-            let Style::Form(fd) = &mut self.dialogs.views[i].dialog.style else {
-                continue;
-            };
-            if crate::binprops::show_drives(fd, tabs.clone()) {
-                self.refit_dialog(i);
-                self.redraw_dialog(i);
-            }
-        }
-    }
-
-    /// The Send To drives changed: an open Recycle Bin Properties drops the tab of a drive gone
-    /// and reads the tab of one that answered since it opened.
-    pub(crate) fn drives_changed(&mut self) {
-        let open = (self.dialogs.views.iter()).any(|v| {
-            matches!(&v.dialog.style, Style::Form(fd)
-                if matches!(fd.kind, crate::dialog::Kind::RecycleBin(_)))
-        });
-        if !open {
-            return;
-        }
-        self.show_bin_tabs();
-        self.spawn_fs_job(|| {
-            let bins = reprisefs::trash::Bins::system();
-            Box::new(move |state: &mut State| {
-                if let Some(bins) = bins {
-                    state.read_bin_tabs(&bins);
-                }
-            })
-        });
+    /// Explorer's Recycle Bin Properties.
+    pub fn open_bin_properties(&mut self) {
+        self.explorer_box("--bin-properties", &[]);
     }
 
     /// Empty Recycle Bin: asks to delete what the bins hold, counted in a file action, so a drive

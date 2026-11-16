@@ -633,7 +633,7 @@ mod tests {
     fn picture(h: &crate::harness::Harness) -> Option<crate::raster::Canvas> {
         use reprisekit::controls::form::Control;
         let (i, _) = prompts(&h.state).into_iter().next().expect("the prompt");
-        let page = h.state.dialogs.views[i].dialog.form()?.open_page()?;
+        let page = h.state.dialogs.views[i].dialog.form()?.open_page();
         match &page.item("icon")?.control {
             Control::Picture { canvas, .. } => canvas.clone(),
             _ => None,

@@ -126,18 +126,7 @@ fn the_help_box_lights_hot_and_shows_the_press_until_the_release() {
 fn a_blue_dialog_caption_shows_its_caption_icon_as_given() {
     let blue = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
     let text = TextRenderer::load(&blue.fonts);
-    let d = crate::binprops::dialog(
-        crate::binprops::BinSheet::new(
-            Default::default(),
-            vec![crate::binprops::Drive {
-                key: "home".into(),
-                label: "Local Disk (/home)".into(),
-                size: 21_365_735_424,
-            }],
-        ),
-        (0, 0),
-        "user-trash",
-    );
+    let d = location_prompt(&blue, &text);
     let l = DialogLayout::compute(&blue, &text, &d);
     let mut big = Canvas::new(32, 32);
     big.fill_rect(big.bounds(), Color::rgb(0x00, 0xFF, 0x00));
@@ -168,50 +157,23 @@ fn a_blue_dialog_caption_shows_its_caption_icon_as_given() {
 }
 
 #[test]
-fn a_blue_form_dialog_lights_its_tab_and_control_and_a_leave_clears_them() {
+fn a_blue_form_dialog_lights_its_control_and_a_leave_clears_it() {
     use reprisekit::controls::form::Light;
+    use reprisekit::controls::locationprompt::DENY;
     let blue = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
     let text = TextRenderer::load(&blue.fonts);
     let px = blue.fonts.size_px;
-    let mut d = crate::binprops::dialog(
-        crate::binprops::BinSheet::new(
-            Default::default(),
-            vec![crate::binprops::Drive {
-                key: "home".into(),
-                label: "Local Disk (/home)".into(),
-                size: 21_365_735_424,
-            }],
-        ),
-        (0, 0),
-        "user-trash",
-    );
+    let mut d = location_prompt(&blue, &text);
     let l = DialogLayout::compute(&blue, &text, &d);
-    draw(
-        &blue,
-        &text,
-        &l,
-        None,
-        None,
-        &d,
-        false,
-        None,
-        Cues::NONE,
-        true,
-        None,
-    );
-    assert!(d.hover(Some(DialogHit::Tab(1)), (0, 0), true));
-    let tabs = |d: &Dialog| d.form().unwrap().sheet().unwrap().tabs.hot;
-    assert_eq!(tabs(&d), Some(1));
-    let page = d.form().unwrap().open_page().unwrap();
-    let ok = page.index_of("ok").unwrap();
-    let r = page.rect("ok").unwrap();
+    let page = d.form().unwrap().open_page();
+    let deny = page.index_of(DENY).unwrap();
+    let r = page.rect(DENY).unwrap();
     let (x, y) = (r.x + 5, r.y + 5);
     let over = l.hit(&d, x, y, &text, px);
     assert!(matches!(over, Some(DialogHit::Control(_))));
     assert!(d.hover(over, (x, y), true));
-    let lit = |d: &Dialog| d.form().unwrap().open_page().unwrap().lit(ok, Light::Body);
+    let lit = |d: &Dialog| d.form().unwrap().open_page().lit(deny, Light::Body);
     assert_eq!(lit(&d), Interaction::Hot);
-    assert_eq!(tabs(&d), None, "off the tab");
     assert!(d.leave(true));
     assert_eq!(lit(&d), Interaction::Idle);
 }
@@ -288,7 +250,7 @@ fn an_inactive_glass_form_dialog_draws_its_default_button_plain() {
     let l = DialogLayout::compute(&theme, &text, &d);
     let ok = d
         .form()
-        .and_then(|f| f.open_page())
+        .map(|f| f.open_page())
         .and_then(|form| {
             let it = form
                 .items
@@ -588,7 +550,7 @@ fn a_form_dialog_fits_the_frame_it_is_shown_in() {
     let text = TextRenderer::load(&FontConfig::default());
     let px = classic.fonts.size_px;
     let mut d = location_prompt(&classic, &text);
-    let page = |d: &Dialog| d.form().and_then(|f| f.open_page()).unwrap().rect(DENY);
+    let page = |d: &Dialog| d.form().map(|f| f.open_page()).unwrap().rect(DENY);
     let cl = DialogLayout::compute(&classic, &text, &d);
     let deny = page(&d).unwrap();
     d.fit(&blue, &text);

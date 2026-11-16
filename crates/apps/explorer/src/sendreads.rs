@@ -75,20 +75,26 @@ impl Explorer {
     /// drive stated again, and what answers within the listing wait shown. A drive whose stat is
     /// still out has a greyed row.
     pub(crate) fn send_rows(&mut self, ctx: &mut Ctx) -> Vec<SendToRow> {
-        self.scan_send_drives(ctx);
+        self.rescan_send_drives(ctx);
         if self.send.dirs_read.is_none() {
             let desktop = places::user_dir("DESKTOP", "Desktop").unwrap_or_default();
             let read = self.spawn_read(ctx, move || Dirs::read(&desktop));
             self.send.dirs_read = Some(Out::new(read));
-        }
-        for top in self.send.drives.restat() {
-            self.stat_send_drive(top, ctx);
         }
         let until = Instant::now() + self.list_wait();
         self.land_send_reads(Some(until), ctx);
         let mut rows = self.send.drives.send_to_rows(&self.send.dirs);
         rows.extend(sendto::phone_rows());
         rows
+    }
+
+    /// Reads the mount points again and stats each listed drive again; what answers lands on a
+    /// wake ([`Explorer::take_send_reads`]).
+    pub(crate) fn rescan_send_drives(&mut self, ctx: &Ctx) {
+        self.scan_send_drives(ctx);
+        for top in self.send.drives.restat() {
+            self.stat_send_drive(top, ctx);
+        }
     }
 
     fn scan_send_drives(&mut self, ctx: &Ctx) {

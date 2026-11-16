@@ -27,13 +27,6 @@ pub(crate) struct DriveBins {
     /// The drives whose bins are being read, by the drive list read that started each. A drive
     /// that never answers keeps its read, and no second one starts while it stays listed.
     drive_reads: HashMap<PathBuf, u64>,
-    /// Each drive's Recycle Bin Properties tab as its last read found it, None for no bin.
-    tabs: HashMap<PathBuf, Option<crate::binprops::Drive>>,
-    /// The drives whose tab is being read, by the tab read that started each. A drive that never
-    /// answers keeps its read, and no second one starts while it stays listed.
-    tab_reads: HashMap<PathBuf, u64>,
-    /// The last tab read's id.
-    tab_read: u64,
 }
 
 impl DriveBins {
@@ -90,42 +83,6 @@ impl DriveBins {
         self.wants = wants;
         self.full = full;
         true
-    }
-
-    /// The tabs of `tops` the reads have found so far, in `tops`' order.
-    pub(crate) fn tabs(&self, tops: &[PathBuf]) -> Vec<crate::binprops::Drive> {
-        (tops.iter())
-            .filter_map(|t| self.tabs.get(t).cloned().flatten())
-            .collect()
-    }
-
-    /// A new tab read's id and the drives of `tops` it reads: those with no read out, now counted
-    /// as read by it.
-    pub(crate) fn start_tab_reads(&mut self, tops: &[PathBuf]) -> (u64, Vec<PathBuf>) {
-        self.tab_read += 1;
-        let id = self.tab_read;
-        let read = (tops.iter())
-            .filter(|t| !self.tab_reads.contains_key(*t))
-            .cloned()
-            .collect::<Vec<_>>();
-        (self.tab_reads).extend(read.iter().map(|t| (t.clone(), id)));
-        (id, read)
-    }
-
-    /// Takes drive `top`'s tab from tab read `id`. A read of a drive that left the list meanwhile
-    /// changes nothing.
-    pub(crate) fn land_tab(&mut self, top: PathBuf, id: u64, tab: Option<crate::binprops::Drive>) {
-        if self.tab_reads.get(&top) != Some(&id) {
-            return;
-        }
-        self.tab_reads.remove(&top);
-        self.tabs.insert(top, tab);
-    }
-
-    /// Drops the tabs and tab reads of drives no longer in `tops`, the drives listed now.
-    pub(crate) fn drives_listed(&mut self, tops: &[PathBuf]) {
-        self.tabs.retain(|t, _| tops.contains(t));
-        self.tab_reads.retain(|t, _| tops.contains(t));
     }
 }
 
@@ -199,12 +156,7 @@ impl State {
                 let Some(view) = state.desktop.as_mut() else {
                     return;
                 };
-                let before = view.drives.found().to_vec();
                 let (again, stat) = view.drives.land(scanner, listed);
-                if view.drives.found() != before {
-                    view.bins.drives_listed(view.drives.found());
-                    state.drives_changed();
-                }
                 for top in stat {
                     state.stat_drive(top, |_, _| {});
                 }
@@ -227,7 +179,7 @@ impl State {
     }
 
     /// Stats drive `top` (its stat already counted as out) on a file job, then runs `then` with
-    /// whether it is usable. A change to the drives shows in an open Recycle Bin Properties.
+    /// whether it is usable.
     pub(super) fn stat_drive(
         &mut self,
         top: PathBuf,
@@ -239,9 +191,7 @@ impl State {
                 let Some(view) = state.desktop.as_mut() else {
                     return;
                 };
-                if view.drives.land_stat(top, usable) {
-                    state.drives_changed();
-                }
+                view.drives.land_stat(top, usable);
                 then(state, usable);
             })
         });

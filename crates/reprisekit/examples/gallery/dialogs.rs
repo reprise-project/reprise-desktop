@@ -176,6 +176,73 @@ pub fn render_install_sheet(with_blue: bool) -> Canvas {
     c
 }
 
+/// Recycle Bin Properties on Global, then on a drive's tab with the drives set apart and files
+/// erased there, in each look.
+pub fn render_bin_sheet(with_blue: bool) -> Canvas {
+    use reprisekit::controls::binsheet::{BinSheet, Drive, Rule, Settings};
+    use reprisekit::controls::propsheet;
+    let drives = vec![
+        Drive {
+            key: "home".into(),
+            label: "Local Disk (/home)".into(),
+            size: 21_365_735_424,
+        },
+        Drive {
+            key: "5A1F".into(),
+            label: "STICK".into(),
+            size: 7_999_999_999,
+        },
+    ];
+    let global = Rule {
+        remove_immediately: false,
+        max_percent: 10,
+    };
+    let settings = Settings {
+        confirm: true,
+        independent: false,
+        global,
+        drives: Default::default(),
+        older_than_days: 0,
+    };
+    let mut apart = Settings {
+        independent: true,
+        ..settings.clone()
+    };
+    apart.drives.insert(
+        "5A1F".into(),
+        Rule {
+            remove_immediately: true,
+            ..global
+        },
+    );
+    let mut on_drive = BinSheet::new(apart, drives.clone());
+    on_drive.sheet.open_tab(2);
+    let sheets = [BinSheet::new(settings, drives), on_drive];
+    let mut themes = vec![cued(interfaces::classic())];
+    if with_blue {
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
+    }
+    let (w, h) = sheets[0].sheet.size;
+    let mut c = Canvas::new(
+        (sheets.len() as i32 * (w + 10) + 10) as u32,
+        (themes.len() as i32 * (h + 10) + 10) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (row, theme) in themes.iter().enumerate() {
+        let text = TextRenderer::load(&theme.fonts);
+        let p = theme.paint();
+        for (col, s) in sheets.iter().enumerate() {
+            let mut sheet_c = Canvas::new(w as u32, h as u32);
+            sheet_c.fill_rect(sheet_c.bounds(), p.cs.button_face);
+            propsheet::draw(&mut sheet_c, &text, &p, &s.sheet, true, theme.fonts.size_px);
+            let at = (10 + col as i32 * (w + 10), 10 + row as i32 * (h + 10));
+            c.blit_canvas(at.0, at.1, &sheet_c);
+        }
+    }
+    c
+}
+
 /// The import sheet over GNOME and Plasma settings, the second change unchecked, then done.
 pub fn render_import_sheet(with_blue: bool) -> Canvas {
     use importsheet::{Line, Sheet, Source};

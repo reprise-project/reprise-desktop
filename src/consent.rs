@@ -24,10 +24,7 @@ impl State {
     fn consent_dialog_mut(&mut self) -> Option<&mut Form> {
         let id = self.active_dialog_id()?;
         let v = self.dialogs.views.iter_mut().find(|v| v.id == id)?;
-        v.dialog
-            .form_mut()?
-            .open_page_mut()
-            .filter(|f| f.is_consent())
+        Some(v.dialog.form_mut()?.open_page_mut()).filter(|f| f.is_consent())
     }
 
     /// Whether `route` takes the text being typed, an app's RemoteDesktop session's, to a consent
@@ -70,7 +67,7 @@ impl State {
             Hit::Dialog { index, .. } => {
                 let view = self.dialogs.views.get(index);
                 let form = view
-                    .and_then(|v| v.dialog.form()?.open_page())
+                    .and_then(|v| Some(v.dialog.form()?.open_page()))
                     .filter(|f| f.is_consent());
                 // A press that gives the prompt the keyboard is a focus gain, refused as one.
                 let gains = view.map(|v| v.id) != self.active_dialog_id();

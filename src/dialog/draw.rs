@@ -257,8 +257,8 @@ pub fn access_copy(
 }
 
 /// `d`'s `access` part under the dialog node `ROOT`, in dialog
-/// coordinates: its text, Run's labelled field, a form's tabs and open
-/// page, and the buttons. Returns the node with the focus: the field, the
+/// coordinates: its text, Run's labelled field, a form's controls, and the
+/// buttons. Returns the node with the focus: the field, the
 /// form's focused control, else the default button.
 pub fn access(
     d: &Dialog,
@@ -274,10 +274,7 @@ pub fn access(
     }
     let mut focus = None;
     if let Some(f) = d.form() {
-        focus = match &f.body {
-            FormBody::Sheet(s) => s.access(tree, ROOT, text, px).1,
-            FormBody::Plain(form) => form.access(tree, ROOT, text, px),
-        };
+        focus = f.form.access(tree, ROOT, text, px);
     }
     if let Some((first, _)) = layout.lines.first() {
         let all = layout.lines.iter().fold(*first, |u, (r, _)| u.union(r));
@@ -326,8 +323,7 @@ pub fn access(
     focus.or(default).unwrap_or(ROOT)
 }
 
-/// A form dialog: a sheet through `propsheet::draw`, or the plain form. `p` is the dialog's
-/// paint.
+/// A form dialog's form. `p` is the dialog's paint.
 fn draw_form(
     c: &mut Canvas,
     p: &Paint,
@@ -337,12 +333,7 @@ fn draw_form(
     cues: bool,
 ) {
     let px = theme.fonts.size_px;
-    match &f.body {
-        FormBody::Sheet(sheet) => {
-            reprisekit::controls::propsheet::draw(c, text, p, sheet, cues, px)
-        }
-        FormBody::Plain(form) => reprisekit::controls::form::draw(c, text, p, form, cues, px),
-    }
+    reprisekit::controls::form::draw(c, text, p, &f.form, cues, px);
 }
 
 /// The red exclamation badge on the Confirm Delete icon: a 12 px disc

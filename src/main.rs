@@ -158,7 +158,6 @@ mod arrange;
 mod autohide;
 mod bardrag;
 mod barplace;
-mod binprops;
 mod compose;
 mod config;
 mod configwrite;

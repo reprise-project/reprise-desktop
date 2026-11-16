@@ -89,9 +89,9 @@ mod views;
 #[path = "gallery/windowing.rs"]
 mod windowing;
 use dialogs::{
-    render_about_system, render_copy_progress, render_end_session, render_file_dialog,
-    render_import_sheet, render_install_sheet, render_label_ellipsis, render_location_prompt,
-    render_monitors, render_stats_panel, render_windowed_dialog,
+    render_about_system, render_bin_sheet, render_copy_progress, render_end_session,
+    render_file_dialog, render_import_sheet, render_install_sheet, render_label_ellipsis,
+    render_location_prompt, render_monitors, render_stats_panel, render_windowed_dialog,
 };
 use glass::{render_glass, render_glass_dark, render_glass_scale2};
 use glass_shell::{render_glass_preview, render_glass_switcher};
@@ -418,6 +418,10 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
     write_preview(
         &render_install_sheet(with_blue),
         "reprisekit-gallery-install-sheet.png",
+    );
+    write_preview(
+        &render_bin_sheet(with_blue),
+        "reprisekit-gallery-bin-sheet.png",
     );
     write_preview(
         &render_import_sheet(with_blue),
