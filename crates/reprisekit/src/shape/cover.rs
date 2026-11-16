@@ -128,12 +128,59 @@ fn bounds(pts: &[(f64, f64)], m: f64) -> (f64, f64, f64, f64) {
     )
 }
 
+/// The square of how far (`px`, `py`) lies from the segment from `a` to `b`.
+fn segment_distance2(px: f64, py: f64, a: (f64, f64), b: (f64, f64)) -> f64 {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let len2 = dx * dx + dy * dy;
+    let t = if len2 == 0.0 {
+        0.0
+    } else {
+        (((px - a.0) * dx + (py - a.1) * dy) / len2).clamp(0.0, 1.0)
+    };
+    (px - (a.0 + t * dx)).powi(2) + (py - (a.1 + t * dy)).powi(2)
+}
+
+/// A point this far from a pixel's middle lies outside the pixel: half its diagonal and a margin.
+const CLEAR_OF: f64 = 0.75;
+
 /// How much of the pixel at (`x`, `y`) the polygon through `pts` (closed back to the first point) covers, by the even-odd rule.
 pub fn polygon(x: f64, y: f64, pts: &[(f64, f64)]) -> f64 {
     if pts.len() < 3 || outside(x, y, bounds(pts, 0.0)) {
         return 0.0;
     }
-    grid_share(x, y, |px, py| in_polygon(px, py, pts))
+    let (cx, cy) = (x + 0.5, y + 0.5);
+    let mut edges = pts.iter().zip(pts.iter().cycle().skip(1));
+    if edges.all(|(&a, &b)| segment_distance2(cx, cy, a, b) > CLEAR_OF * CLEAR_OF) {
+        // No edge crosses the pixel, so every grid point is on its middle's side.
+        return if in_polygon(cx, cy, pts) { 1.0 } else { 0.0 };
+    }
+    polygon_share(x, y, pts)
+}
+
+/// [`grid_share`] of [`in_polygon`], each edge's crossing worked out once per row of points.
+fn polygon_share(x: f64, y: f64, pts: &[(f64, f64)]) -> f64 {
+    let n = GRID;
+    let mut crossings = Vec::with_capacity(pts.len());
+    let mut hits = 0;
+    for ky in 0..n {
+        let py = y + (f64::from(ky) + 0.5) / f64::from(n);
+        crossings.clear();
+        let mut j = pts.len() - 1;
+        for i in 0..pts.len() {
+            let ((xi, yi), (xj, yj)) = (pts[i], pts[j]);
+            if (yi > py) != (yj > py) {
+                crossings.push(xi + (py - yi) * (xj - xi) / (yj - yi));
+            }
+            j = i;
+        }
+        hits += (0..n)
+            .filter(|&kx| {
+                let px = x + (f64::from(kx) + 0.5) / f64::from(n);
+                crossings.iter().filter(|&&c| px < c).count() % 2 == 1
+            })
+            .count();
+    }
+    hits as f64 / f64::from(n * n)
 }
 
 /// Whether (`px`, `py`) lies within `half` of the segment from `a` to `b`, its ends cut square.
@@ -154,20 +201,32 @@ fn on_segment(px: f64, py: f64, a: (f64, f64), b: (f64, f64), half: f64) -> bool
 pub(super) type Segment = ((f64, f64), (f64, f64), f64);
 
 /// How much of the pixel at (`x`, `y`) the segments cover, each cut square at its ends, with a disc of `radius` at each `(point, radius)` join.
-pub(super) fn segments(x: f64, y: f64, segs: &[Segment], joins: &[((f64, f64), f64)]) -> f64 {
-    let near = segs.iter().any(|&(a, b, w)| {
+pub(super) fn segments<S, J>(x: f64, y: f64, segs: S, joins: J) -> f64
+where
+    S: Iterator<Item = Segment> + Clone,
+    J: Iterator<Item = ((f64, f64), f64)> + Clone,
+{
+    let near = segs.clone().any(|(a, b, w)| {
         let m = w / 2.0;
         !outside(x, y, bounds(&[a, b], m))
     });
     if !near {
         return 0.0;
     }
+    let (cx, cy) = (x + 0.5, y + 0.5);
+    let clear = (segs.clone())
+        .all(|(a, b, w)| segment_distance2(cx, cy, a, b) > (w / 2.0 + CLEAR_OF).powi(2))
+        && (joins.clone())
+            .all(|((jx, jy), r)| (cx - jx).powi(2) + (cy - jy).powi(2) > (r + CLEAR_OF).powi(2));
+    if clear {
+        return 0.0;
+    }
     grid_share(x, y, |px, py| {
-        segs.iter()
-            .any(|&(a, b, w)| on_segment(px, py, a, b, w / 2.0))
+        segs.clone()
+            .any(|(a, b, w)| on_segment(px, py, a, b, w / 2.0))
             || joins
-                .iter()
-                .any(|&((jx, jy), r)| (px - jx).powi(2) + (py - jy).powi(2) <= r * r)
+                .clone()
+                .any(|((jx, jy), r)| (px - jx).powi(2) + (py - jy).powi(2) <= r * r)
     })
 }
 
@@ -177,12 +236,9 @@ pub fn stroke(x: f64, y: f64, pts: &[(f64, f64)], width: f64) -> f64 {
     if pts.len() < 2 || width <= 0.0 {
         return 0.0;
     }
-    let segs: Vec<_> = pts.windows(2).map(|p| (p[0], p[1], width)).collect();
-    let joins: Vec<_> = pts[1..pts.len() - 1]
-        .iter()
-        .map(|&p| (p, width / 2.0))
-        .collect();
-    segments(x, y, &segs, &joins)
+    let segs = pts.windows(2).map(|p| (p[0], p[1], width));
+    let joins = pts[1..pts.len() - 1].iter().map(|&p| (p, width / 2.0));
+    segments(x, y, segs, joins)
 }
 
 /// A `w` x `h` (design) box painted at `d` pixels per design pixel, corners rounded over `r`, as `n`

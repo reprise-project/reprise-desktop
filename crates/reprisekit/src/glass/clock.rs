@@ -1,13 +1,15 @@
 //! The clock popup's analog clock: a round face in a bezel, minute and hour ticks, hour, minute
 //! and second hands over a soft shadow, and a sheen across the face's top.
 
+use std::cell::RefCell;
 use std::f64::consts::TAU;
+use std::rc::Rc;
 
 use super::Mode;
 use crate::clock::turns;
 use crate::raster::Canvas;
 use crate::shape::{
-    Px, Stops, draw, ellipse, over, polygon, premul, radial, scale, smooth, stroke,
+    Px, Stops, ellipse, over, pack, polygon, premul, radial, scale, smooth, stroke,
 };
 use crate::style::ClockPainter;
 use crate::theme::Color;
@@ -110,83 +112,93 @@ const DROP_FADE: f64 = 2.5;
 
 pub fn painter(mode: Mode) -> ClockPainter {
     match mode {
-        Mode::Light => |t, seconds, side, d| paint(&LIGHT, t, seconds, side, d),
-        Mode::Dark => |t, seconds, side, d| paint(&DARK, t, seconds, side, d),
+        Mode::Light => |t, seconds, side, d| paint(Mode::Light, t, seconds, side, d),
+        Mode::Dark => |t, seconds, side, d| paint(Mode::Dark, t, seconds, side, d),
     }
 }
 
-fn paint(ink: &Inks, time: (u32, u32, u32), seconds: bool, side: i32, d: i32) -> Canvas {
-    let k = f64::from(d);
-    let mid = f64::from(side) * k / 2.0;
-    let outer = mid - MARGIN * k;
-    let face = outer - BEZEL * k;
-    let (hour, minute, second) = turns(time);
-    let way = |t: f64| ((t * TAU).sin(), -(t * TAU).cos());
-    let hand = |h: &Hand, t: f64| {
-        let (ux, uy) = way(t);
-        let (nx, ny) = (-uy, ux);
-        let (back, tip) = (face * h.tail, face * h.reach);
-        let (b, w) = (h.base * k / 2.0, h.tip * k / 2.0);
-        [
-            (mid - ux * back + nx * b, mid - uy * back + ny * b),
-            (mid + ux * tip + nx * w, mid + uy * tip + ny * w),
-            (mid + ux * tip - nx * w, mid + uy * tip - ny * w),
-            (mid - ux * back - nx * b, mid - uy * back - ny * b),
-        ]
-    };
-    let hands = [hand(&HOUR_HAND, hour), hand(&MINUTE_HAND, minute)];
-    let (sx, sy) = way(second);
-    let sweep = [
-        (
-            mid - sx * face * SECOND_HAND.tail,
-            mid - sy * face * SECOND_HAND.tail,
-        ),
-        (
-            mid + sx * face * SECOND_HAND.reach,
-            mid + sy * face * SECOND_HAND.reach,
-        ),
-    ];
-    let c = |col: Color| premul(col, 255);
-    let bezel = [(0.0, c(ink.bezel.0)), (1.0, c(ink.bezel.1))];
-    let face_fill = [
-        (0.0, c(ink.face.0)),
-        (0.6, c(ink.face.0)),
-        (1.0, c(ink.face.1)),
-    ];
-    let sheen_top = mid - face * 0.95;
-    let sheen_h = face * 1.0;
-    draw(side, side, d, |x, y| {
+/// The clock `side` design px across at `d`: its middle and the radii of the bezel and the face,
+/// device px, with the inks.
+struct Round {
+    ink: &'static Inks,
+    k: f64,
+    mid: f64,
+    outer: f64,
+    face: f64,
+    bezel: [(f64, Px); 2],
+    fill: [(f64, Px); 3],
+}
+
+fn opaque(col: Color) -> Px {
+    premul(col, 255)
+}
+
+impl Round {
+    fn new(mode: Mode, side: i32, d: i32) -> Round {
+        let ink = match mode {
+            Mode::Light => &LIGHT,
+            Mode::Dark => &DARK,
+        };
+        let k = f64::from(d);
+        let mid = f64::from(side) * k / 2.0;
+        let outer = mid - MARGIN * k;
+        Round {
+            ink,
+            k,
+            mid,
+            outer,
+            face: outer - BEZEL * k,
+            bezel: [(0.0, opaque(ink.bezel.0)), (1.0, opaque(ink.bezel.1))],
+            fill: [
+                (0.0, opaque(ink.face.0)),
+                (0.6, opaque(ink.face.0)),
+                (1.0, opaque(ink.face.1)),
+            ],
+        }
+    }
+
+    fn disc(&self, x: f64, y: f64, r: f64) -> f64 {
+        ellipse(x, y, self.mid, self.mid, r, r)
+    }
+
+    /// The pixel at (`x`, `y`) under the hands: with the face's coverage when it is on the face.
+    fn under(&self, x: f64, y: f64) -> (Px, f64) {
+        let (ink, k, mid, outer, face) = (self.ink, self.k, self.mid, self.outer, self.face);
         let (cx, cy) = (x + 0.5 - mid, y + 0.5 - mid);
         let lift = (cx * cx + (cy - DROP * k).powi(2)).sqrt();
         let fade = smooth((outer + DROP_FADE * k - lift) / (DROP_FADE * k));
         let mut px = scale(premul(Color::rgb(0, 0, 0), ink.shadow), fade);
-        let disc = |r: f64| ellipse(x, y, mid, mid, r, r);
-        let on_bezel = disc(outer);
+        let on_bezel = self.disc(x, y, outer);
         if on_bezel == 0.0 && fade == 0.0 {
-            return (0.0, [0.0; 3]);
+            return ((0.0, [0.0; 3]), 0.0);
         }
-        px = over(scale(c(ink.rim), on_bezel), px);
+        px = over(scale(opaque(ink.rim), on_bezel), px);
         let down = (cy + outer) / (2.0 * outer);
-        px = over(scale(Stops(&bezel).at(down), disc(outer - k)), px);
-        px = over(scale(c(ink.bezel_inner), disc(face + k)), px);
-        let on_face = disc(face);
+        px = over(
+            scale(Stops(&self.bezel).at(down), self.disc(x, y, outer - k)),
+            px,
+        );
+        px = over(
+            scale(opaque(ink.bezel_inner), self.disc(x, y, face + k)),
+            px,
+        );
+        let on_face = self.disc(x, y, face);
         if on_face == 0.0 {
-            return px;
+            return (px, 0.0);
         }
-        let fill = radial(x, y, mid, mid, face, face, &Stops(&face_fill));
+        let fill = radial(x, y, mid, mid, face, face, &Stops(&self.fill));
         px = over(scale(fill, on_face), px);
-        px = over(tick(ink, x, y, mid, face - TICK_IN * k, k), px);
-        let shade = |pts: &[(f64, f64)]| polygon(x - HAND_SHADOW.0 * k, y - HAND_SHADOW.1 * k, pts);
-        let shadow = shade(&hands[0]).max(shade(&hands[1]));
-        px = over(scale(premul(Color::rgb(0, 0, 0), 0x38), shadow), px);
-        for pts in &hands {
-            px = over(scale(c(ink.hand), polygon(x, y, pts)), px);
-        }
-        if seconds {
-            let red = stroke(x, y, &sweep, SECOND_HAND.base * k).max(disc(HUB * k));
-            px = over(scale(c(ink.second), red), px);
-        }
-        px = over(scale(c(ink.hand), disc(PIN * k)), px);
+        (
+            over(tick(ink, x, y, mid, face - TICK_IN * k, k), px),
+            on_face,
+        )
+    }
+
+    /// The sheen across the face's top over `px`, a face pixel `on_face` covers.
+    fn sheen(&self, x: f64, y: f64, on_face: f64, px: Px) -> Px {
+        let (mid, face) = (self.mid, self.face);
+        let sheen_top = mid - face * 0.95;
+        let sheen_h = face * 1.0;
         let t = (y + 0.5 - sheen_top) / sheen_h;
         let lit = ellipse(
             x,
@@ -196,12 +208,211 @@ fn paint(ink: &Inks, time: (u32, u32, u32), seconds: bool, side: i32, d: i32) ->
             face * 0.86,
             sheen_h / 2.0,
         );
-        let white = premul(Color::rgb(0xFF, 0xFF, 0xFF), ink.sheen);
+        let white = premul(Color::rgb(0xFF, 0xFF, 0xFF), self.ink.sheen);
         over(
             scale(white, lit * on_face * (1.0 - t).clamp(0.0, 1.0).powi(2)),
             px,
         )
+    }
+}
+
+/// The hands at one time, device px.
+struct Hands {
+    hands: [[(f64, f64); 4]; 2],
+    sweep: [(f64, f64); 2],
+    seconds: bool,
+}
+
+impl Hands {
+    fn at(r: &Round, time: (u32, u32, u32), seconds: bool) -> Hands {
+        let (k, mid, face) = (r.k, r.mid, r.face);
+        let (hour, minute, second) = turns(time);
+        let way = |t: f64| ((t * TAU).sin(), -(t * TAU).cos());
+        let hand = |h: &Hand, t: f64| {
+            let (ux, uy) = way(t);
+            let (nx, ny) = (-uy, ux);
+            let (back, tip) = (face * h.tail, face * h.reach);
+            let (b, w) = (h.base * k / 2.0, h.tip * k / 2.0);
+            [
+                (mid - ux * back + nx * b, mid - uy * back + ny * b),
+                (mid + ux * tip + nx * w, mid + uy * tip + ny * w),
+                (mid + ux * tip - nx * w, mid + uy * tip - ny * w),
+                (mid - ux * back - nx * b, mid - uy * back - ny * b),
+            ]
+        };
+        let (sx, sy) = way(second);
+        Hands {
+            hands: [hand(&HOUR_HAND, hour), hand(&MINUTE_HAND, minute)],
+            sweep: [
+                (
+                    mid - sx * face * SECOND_HAND.tail,
+                    mid - sy * face * SECOND_HAND.tail,
+                ),
+                (
+                    mid + sx * face * SECOND_HAND.reach,
+                    mid + sy * face * SECOND_HAND.reach,
+                ),
+            ],
+            seconds,
+        }
+    }
+
+    /// The hands, their shadow, the second hand and the pin over `px` at (`x`, `y`).
+    fn over(&self, r: &Round, x: f64, y: f64, mut px: Px) -> Px {
+        let (ink, k) = (r.ink, r.k);
+        let shade = |pts: &[(f64, f64)]| polygon(x - HAND_SHADOW.0 * k, y - HAND_SHADOW.1 * k, pts);
+        let shadow = shade(&self.hands[0]).max(shade(&self.hands[1]));
+        px = over(scale(premul(Color::rgb(0, 0, 0), 0x38), shadow), px);
+        for pts in &self.hands {
+            px = over(scale(opaque(ink.hand), polygon(x, y, pts)), px);
+        }
+        if self.seconds {
+            let red = stroke(x, y, &self.sweep, SECOND_HAND.base * k).max(r.disc(x, y, HUB * k));
+            px = over(scale(opaque(ink.second), red), px);
+        }
+        over(scale(opaque(ink.hand), r.disc(x, y, PIN * k)), px)
+    }
+
+    /// The column ranges of row `y`, device px, outside which [`Hands::over`] adds nothing, a
+    /// pixel's margin round each part; sorted and apart.
+    fn row(&self, r: &Round, y: i32, out: &mut Vec<(i32, i32)>) {
+        out.clear();
+        let (y0, y1) = (f64::from(y) - 1.0, f64::from(y) + 2.0);
+        let (sx, sy) = (HAND_SHADOW.0 * r.k, HAND_SHADOW.1 * r.k);
+        let mut parts: Vec<(f64, f64)> = Vec::with_capacity(6);
+        for h in &self.hands {
+            parts.extend(across(h, y0, y1));
+            parts.extend(across(&h.map(|(x, y)| (x + sx, y + sy)), y0, y1));
+        }
+        let mut hub = PIN * r.k;
+        if self.seconds {
+            let [a, b] = self.sweep;
+            let half = SECOND_HAND.base * r.k / 2.0;
+            let len = (b.0 - a.0).hypot(b.1 - a.1).max(f64::EPSILON);
+            let (nx, ny) = (-(b.1 - a.1) / len * half, (b.0 - a.0) / len * half);
+            let band = [
+                (a.0 + nx, a.1 + ny),
+                (b.0 + nx, b.1 + ny),
+                (b.0 - nx, b.1 - ny),
+                (a.0 - nx, a.1 - ny),
+            ];
+            parts.extend(across(&band, y0, y1));
+            hub = hub.max(HUB * r.k);
+        }
+        if y1 >= r.mid - hub && y0 <= r.mid + hub {
+            parts.push((r.mid - hub, r.mid + hub));
+        }
+        parts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (a, b) in parts {
+            let (from, to) = (a.floor() as i32 - 1, b.ceil() as i32 + 2);
+            match out.last_mut() {
+                Some(last) if from <= last.1 => last.1 = last.1.max(to),
+                _ => out.push((from, to)),
+            }
+        }
+    }
+}
+
+/// The columns, device px, where the convex polygon through `pts` meets the rows from `y0` to
+/// `y1`.
+fn across(pts: &[(f64, f64)], y0: f64, y1: f64) -> Option<(f64, f64)> {
+    let mut range: Option<(f64, f64)> = None;
+    let mut take = |x: f64| range = Some(range.map_or((x, x), |(a, b)| (a.min(x), b.max(x))));
+    for (i, &a) in pts.iter().enumerate() {
+        let b = pts[(i + 1) % pts.len()];
+        if (y0..=y1).contains(&a.1) {
+            take(a.0);
+        }
+        for edge in [y0, y1] {
+            if (a.1 - edge) * (b.1 - edge) < 0.0 {
+                take(a.0 + (edge - a.1) / (b.1 - a.1) * (b.0 - a.0));
+            }
+        }
+    }
+    range
+}
+
+/// Everything but the hands, for one mode, side and scale: the pixels under the hands unpacked, and
+/// the clock as it shows with no hands.
+struct Dial {
+    under: Vec<Px>,
+    bare: Canvas,
+}
+
+impl Dial {
+    fn new(r: &Round, n: i32) -> Dial {
+        let mut under = vec![(0.0, [0.0; 3]); (n * n) as usize];
+        let mut bare = Canvas::new(n as u32, n as u32);
+        for y in 0..n {
+            for x in 0..n {
+                let (fx, fy) = (f64::from(x), f64::from(y));
+                let (px, on_face) = r.under(fx, fy);
+                let shown = if on_face == 0.0 {
+                    px
+                } else {
+                    r.sheen(fx, fy, on_face, px)
+                };
+                under[(y * n + x) as usize] = px;
+                bare.put_raw(x, y, pack(shown));
+            }
+        }
+        Dial { under, bare }
+    }
+}
+
+/// How many dials [`dial`] keeps: the popup's and a desktop clock's, at two scales.
+const KEPT_DIALS: usize = 4;
+
+type KeptDials = Vec<((Mode, i32, i32), Rc<Dial>)>;
+
+thread_local! {
+    static DIALS: RefCell<KeptDials> = const { RefCell::new(Vec::new()) };
+}
+
+/// The dial for `r`, kept since a clock with a second hand repaints every second.
+fn dial(mode: Mode, side: i32, d: i32, r: &Round) -> Rc<Dial> {
+    let key = (mode, side, d);
+    DIALS.with_borrow_mut(|kept| {
+        if let Some((_, dial)) = kept.iter().find(|(k, _)| *k == key) {
+            return Rc::clone(dial);
+        }
+        if kept.len() == KEPT_DIALS {
+            kept.remove(0);
+        }
+        let dial = Rc::new(Dial::new(r, side * d));
+        kept.push((key, Rc::clone(&dial)));
+        dial
     })
+}
+
+/// Drops the kept dials.
+pub fn forget() {
+    DIALS.take();
+}
+
+/// The kept dial with the hands laid over it only where they can reach, the layers in the same
+/// order as on the whole clock, so the pixels are the same.
+fn paint(mode: Mode, time: (u32, u32, u32), seconds: bool, side: i32, d: i32) -> Canvas {
+    let r = Round::new(mode, side, d);
+    let n = side * d;
+    let dial = dial(mode, side, d, &r);
+    let hands = Hands::at(&r, time, seconds);
+    let mut c = dial.bare.clone();
+    let mut spans = Vec::new();
+    for y in 0..n {
+        let fy = f64::from(y);
+        hands.row(&r, y, &mut spans);
+        for x in spans.iter().flat_map(|&(a, b)| a.max(0)..b.min(n)) {
+            let fx = f64::from(x);
+            let on_face = r.disc(fx, fy, r.face);
+            if on_face == 0.0 {
+                continue;
+            }
+            let px = hands.over(&r, fx, fy, dial.under[(y * n + x) as usize]);
+            c.put_raw(x, y, pack(r.sheen(fx, fy, on_face, px)));
+        }
+    }
+    c
 }
 
 /// The tick nearest pixel (`x`, `y`): every minute, longer each hour, longest each quarter,
@@ -356,6 +567,54 @@ mod tests {
             ],
             "{got:#x?}"
         );
+    }
+
+    /// A paint over a dial kept from another time matches one over a fresh dial, and `forget`
+    /// drops the kept dials.
+    #[test]
+    fn a_kept_dial_paints_what_a_fresh_one_does() {
+        for mode in [Mode::Light, Mode::Dark] {
+            for d in [1, 2] {
+                for seconds in [true, false] {
+                    for (t, before) in [((10, 9, 30), (3, 0, 45)), ((21, 37, 5), (10, 9, 30))] {
+                        forget();
+                        let fresh = painter(mode)(t, seconds, SIDE, d);
+                        forget();
+                        painter(mode)(before, seconds, SIDE, d);
+                        assert_eq!(
+                            painter(mode)(t, seconds, SIDE, d).pixels,
+                            fresh.pixels,
+                            "{mode:?} at {d}, seconds {seconds}, {t:?} after {before:?}"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(DIALS.with_borrow(Vec::len) > 0);
+        forget();
+        assert_eq!(DIALS.with_borrow(Vec::len), 0);
+    }
+
+    /// Prints how long a paint takes at 2 over a fresh dial and over a kept one.
+    #[test]
+    #[ignore]
+    fn bench_glass_clock() {
+        let time = |f: &dyn Fn()| {
+            let start = std::time::Instant::now();
+            for _ in 0..20 {
+                f();
+            }
+            start.elapsed() / 20
+        };
+        let fresh = time(&|| {
+            forget();
+            painter(Mode::Light)((10, 9, 30), true, SIDE, 2);
+        });
+        painter(Mode::Light)((10, 9, 30), true, SIDE, 2);
+        let kept = time(&|| {
+            painter(Mode::Light)((10, 9, 31), true, SIDE, 2);
+        });
+        println!("glass clock at 2: fresh dial {fresh:?}, kept dial {kept:?}");
     }
 
     /// Writes target/glass-clock-preview.png: light and dark at 10:09:30, at 1x and 2x.

@@ -158,7 +158,7 @@ pub fn glyph(g: Glyph, size: i32, d: i32, weight: f64, ink: Px) -> Canvas {
         Solid::Disc(c, r) => Solid::Disc(at(c), r * k),
     });
     super::draw(size, size, d, |x, y| {
-        let lines = segments(x, y, &segs, &joins);
+        let lines = segments(x, y, segs.iter().copied(), joins.iter().copied());
         let solid = match &solid {
             Some(Solid::Polygon(pts)) => polygon(x, y, pts),
             Some(Solid::Disc((cx, cy), r)) => ellipse(x, y, *cx, *cy, *r, *r),

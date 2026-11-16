@@ -23,6 +23,12 @@ pub mod logon;
 mod powerpanel;
 pub use powerpanel::{draw_power_panel, power_panel_variant};
 
+/// Drops the dials the clock faces keep between repaints; a host calls it as its clock popup
+/// closes.
+pub fn forget_clock_faces() {
+    glass::clock::forget();
+}
+
 pub fn default_wallpaper(i: Interface) -> Option<Builtin> {
     match i {
         Interface::Classic => None,

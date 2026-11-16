@@ -6,7 +6,7 @@ mod balloon;
 mod bar;
 mod bars;
 mod buttons;
-mod clock;
+pub(crate) mod clock;
 mod controls;
 mod copygraph;
 pub mod dark;
