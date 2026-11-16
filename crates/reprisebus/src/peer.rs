@@ -548,8 +548,9 @@ async fn owner(conn: &Connection, name: &str) -> Option<String> {
     Some(dbus.get_name_owner(name).await.ok()?.to_string())
 }
 
-/// Whether `peer` on `conn` runs in a Flatpak sandbox. A peer the bus gives no process fd for
-/// (dbus-broker and dbus-daemon 1.15+ do), or that is gone, counts as sandboxed.
+/// Whether `peer` on `conn` runs in a Flatpak sandbox or a strict or devmode snap, as
+/// [`placement`] tells them. A peer the bus gives no process fd for (dbus-broker and dbus-daemon
+/// 1.15+ do), that is gone, or whose root can't be read counts as sandboxed.
 pub async fn sandboxed(conn: &Connection, peer: &str) -> bool {
     sandboxed_under(conn, peer, Path::new("/proc")).await
 }
@@ -561,14 +562,17 @@ pub(crate) async fn sandboxed_under(conn: &Connection, peer: &str, proc: &Path) 
     let Some(pid) = pid_of(&fd) else {
         return true;
     };
+    let host = i32::try_from(pid)
+        .is_ok_and(|pid| matches!(placement(fd.as_fd(), pid, proc), Placement::Host { .. }));
     // The pidfd keeps `pid` from being reused while it shows the pid: if it still does after the
     // read, the root read was the peer's.
-    shows_flatpak_info(proc, pid) || pid_of(&fd) != Some(pid)
+    shows_flatpak_info(proc, pid) || !host || pid_of(&fd) != Some(pid)
 }
 
-/// Refuses method calls from peers in a Flatpak sandbox with AccessDenied. Flatpak lets an app own
-/// and call any name under its app id, so a service on an `org.reprise.*` name checks each caller.
-/// A sandboxed caller's process, as the bus reports it, is its bus proxy, which runs in the sandbox.
+/// Refuses method calls from sandboxed peers ([`sandboxed`]) with AccessDenied. Flatpak lets an
+/// app own and call any name under its app id, and a snap's AppArmor profile is all that keeps it
+/// off a name, so a service on an `org.reprise.*` name checks each caller. A Flatpak caller's
+/// process, as the bus reports it, is its bus proxy, which runs in the sandbox.
 #[derive(Clone, Debug)]
 pub struct HostOnly {
     proc: PathBuf,
@@ -1276,6 +1280,51 @@ pub(crate) mod tests {
             assert!(sandboxed_under(&us, &name, proc.path()).await);
             assert!(sandboxed(&us, ":1.999").await, "no such peer");
         });
+    }
+
+    #[test]
+    fn a_strict_snap_peer_is_sandboxed_and_a_classic_one_is_not() {
+        let Some(bus) = bus() else {
+            return;
+        };
+        let connect =
+            || zbus::block_on(zbus::connection::Builder::address(bus.1.as_str()).build()).unwrap();
+        let (us, peer) = (connect(), connect());
+        let name = peer.unique_name().unwrap().to_string();
+        let scope = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/\
+                     snap.firefox.firefox-0b0c9f3e-6e8a-4c1a-9d0e-2f1f5a7b3c4d.scope\n";
+        let status = ("status", "NSpid:\t4242\n");
+        let cases = [
+            (
+                "strict, by its profile",
+                vec![
+                    ("attr/apparmor/current", "snap.firefox.firefox (enforce)\n"),
+                    ("cgroup", USER),
+                    status,
+                ],
+                true,
+            ),
+            (
+                "strict without AppArmor, by its scope",
+                vec![("cgroup", scope), status],
+                true,
+            ),
+            (
+                "classic, unconfined in a snap scope",
+                vec![
+                    ("attr/apparmor/current", "unconfined\n"),
+                    ("cgroup", scope),
+                    status,
+                ],
+                false,
+            ),
+            ("host", vec![("cgroup", USER), status], false),
+        ];
+        for (case, files, expected) in cases {
+            let proc = proc_showing(&files);
+            let judged = zbus::block_on(sandboxed_under(&us, &name, proc.path()));
+            assert_eq!(judged, expected, "{case}");
+        }
     }
 
     #[test]

@@ -71,8 +71,9 @@ Flatpak lets an app own and call the bus names under its app id, so an app
 could take an `org.reprise.*` id. The compositor's `org.reprise.Tray`, each
 Reprise program's `org.freedesktop.Application`, Explorer's
 `org.freedesktop.FileManager1` and `org.reprise.RemoteDesktop` refuse every
-call from a process that sees `/.flatpak-info`, or has exited, with
-AccessDenied.
+call from a sandboxed program, as above, or one whose root can't be read, with
+AccessDenied. A strict snap's AppArmor profile keeps it off these names where
+the bus enforces AppArmor; without AppArmor nothing else does.
 
 `[clipboard] trusted_apps` gives the two data control globals back to the
 Flatpak apps it names, by the app id Flatpak put on the security context,

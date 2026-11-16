@@ -69,7 +69,8 @@ pub fn from_props(props: &Props) -> Status {
 }
 
 /// The unique name of the server on `conn`: [`NAME`]'s owner, unless nothing owns it (the server
-/// is off) or the owner runs in a Flatpak sandbox, which Flatpak lets own it under its app id.
+/// is off) or the owner is sandboxed ([`crate::peer::sandboxed`]): Flatpak lets an app own it
+/// under its app id, and a snap without AppArmor owns any name.
 pub async fn server(conn: &Connection) -> Result<String, String> {
     server_under(conn, std::path::Path::new("/proc")).await
 }
