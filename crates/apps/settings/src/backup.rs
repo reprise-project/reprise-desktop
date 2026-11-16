@@ -94,8 +94,10 @@ pub struct Roots {
 impl Roots {
     pub fn current() -> Roots {
         Roots {
-            config: repriseconf::xdg_home("XDG_CONFIG_HOME", ".config").join("reprise"),
-            state: repriseconf::xdg_home("XDG_STATE_HOME", ".local/state").join("reprise"),
+            config: reprisexdg::config_home()
+                .unwrap_or_default()
+                .join("reprise"),
+            state: reprisexdg::state_home().unwrap_or_default().join("reprise"),
         }
     }
 

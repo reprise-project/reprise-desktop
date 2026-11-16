@@ -9,7 +9,8 @@ use toml_edit::{Array, DocumentMut, value};
 const WHITE: Color = Color::rgb(0xFF, 0xFF, 0xFF);
 
 pub fn path() -> PathBuf {
-    repriseconf::xdg_home("XDG_STATE_HOME", ".local/state")
+    reprisexdg::state_home()
+        .unwrap_or_default()
         .join("reprise")
         .join("paint.toml")
 }

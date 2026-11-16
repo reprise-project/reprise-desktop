@@ -15,10 +15,7 @@ use std::path::{Path, PathBuf};
 /// adds.
 pub fn installations() -> Vec<PathBuf> {
     let mut out = vec![PathBuf::from("/var/lib/flatpak")];
-    let data_home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-    out.extend(data_home.map(|d| d.join("flatpak")));
+    out.extend(reprisexdg::data_home().map(|d| d.join("flatpak")));
     if let Ok(dir) = std::fs::read_dir("/etc/flatpak/installations.d") {
         let mut confs: Vec<PathBuf> = dir.flatten().map(|e| e.path()).collect();
         confs.sort();

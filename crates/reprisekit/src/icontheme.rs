@@ -181,23 +181,13 @@ impl IconTheme {
     pub fn default_roots() -> Vec<PathBuf> {
         let mut roots = Vec::new();
         let home = std::env::var_os("HOME").map(PathBuf::from);
-        let data_home = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| home.clone().map(|h| h.join(".local/share")));
-        if let Some(d) = data_home {
+        if let Some(d) = reprisexdg::data_home() {
             roots.push(d.join("icons"));
         }
         if let Some(h) = home {
             roots.push(h.join(".icons"));
         }
-        // An empty XDG_DATA_DIRS counts as unset.
-        let data_dirs = std::env::var("XDG_DATA_DIRS")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-        for d in data_dirs.split(':').filter(|s| !s.is_empty()) {
-            roots.push(PathBuf::from(d).join("icons"));
-        }
+        roots.extend(reprisexdg::data_dirs().iter().map(|d| d.join("icons")));
         roots.push(PathBuf::from("/usr/share/pixmaps"));
         roots
     }

@@ -67,8 +67,8 @@ pub fn start(state: &mut State, session_begun: std::thread::JoinHandle<()>, afte
 /// The entries to launch on `desktops`. Blocks on the user manager.
 fn find(desktops: &[String]) -> Vec<Entry> {
     let found = reprisefs::autostart::scan(
-        &reprisefs::autostart::system_dirs(),
-        &reprisefs::autostart::config_home(),
+        &reprisexdg::config_dirs(),
+        &reprisexdg::config_home().unwrap_or_default(),
     );
     let units = reprisebus::units::session_programs();
     runnable(found, desktops, on_path, |e| {

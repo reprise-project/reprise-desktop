@@ -560,10 +560,7 @@ async fn show_encoders(
 
 /// `$XDG_DATA_HOME/reprise/rdp`.
 fn cert_dir() -> PathBuf {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|d| d.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+    reprisexdg::data_home()
         .unwrap_or_default()
         .join("reprise/rdp")
 }

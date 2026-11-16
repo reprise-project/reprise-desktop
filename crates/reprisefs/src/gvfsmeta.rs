@@ -77,10 +77,7 @@ const METADATA: &str = "org.gtk.vfs.Metadata";
 const METADATA_PATH: &str = "/org/gtk/vfs/metadata";
 
 fn db_dir() -> Option<PathBuf> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| home().map(|h| h.join(".local/share")))?;
-    Some(data.join("gvfs-metadata"))
+    Some(reprisexdg::data_home()?.join("gvfs-metadata"))
 }
 
 fn home() -> Option<PathBuf> {

@@ -12,11 +12,7 @@ const HEADER: usize = 12;
 pub const MAX_BYTES: u64 = 256 << 20;
 
 pub fn default_dir() -> Option<PathBuf> {
-    let cache = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
-    Some(cache.join("reprise").join("wallpapers"))
+    Some(reprisexdg::cache_home()?.join("reprise").join("wallpapers"))
 }
 
 /// Entry `name` in `dir` when it holds a `w` x `h` picture, as opaque

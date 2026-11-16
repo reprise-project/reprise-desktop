@@ -467,12 +467,9 @@ async fn set_nm(conn: &Connection, key: &str, on: bool) -> Result<(), String> {
 }
 
 fn memory_path() -> PathBuf {
-    let state = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    state.join("reprise/airplane-mode")
+    reprisexdg::state_home()
+        .unwrap_or_default()
+        .join("reprise/airplane-mode")
 }
 
 /// An exclusive `flock` on the `.lock` file beside the kept radios, held until it drops. A turn

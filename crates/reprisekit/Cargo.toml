@@ -12,6 +12,7 @@ description = "Reprise's widget toolkit: a CPU canvas, text, colour schemes, ico
 workspace = true
 
 [dependencies]
+reprisexdg = { path = "../reprisexdg" }
 # Features only: one reprisekit for every build and test command.
 reprisekit-pins = { path = "../reprisekit-pins" }
 libc.workspace = true

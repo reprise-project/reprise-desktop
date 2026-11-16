@@ -655,11 +655,8 @@ pub fn installations() -> Vec<PathBuf> {
             .map(PathBuf::from)
     };
     let system = var("FLATPAK_SYSTEM_DIR").unwrap_or_else(|| "/var/lib/flatpak".into());
-    let user = var("FLATPAK_USER_DIR").or_else(|| {
-        var("XDG_DATA_HOME")
-            .or_else(|| var("HOME").map(|h| h.join(".local/share")))
-            .map(|d| d.join("flatpak"))
-    });
+    let user =
+        var("FLATPAK_USER_DIR").or_else(|| reprisexdg::data_home().map(|d| d.join("flatpak")));
     std::iter::once(system).chain(user).collect()
 }
 

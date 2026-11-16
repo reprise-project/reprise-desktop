@@ -9,6 +9,7 @@ members = [
     "crates/reprisebus",
     "crates/repriseconf",
     "crates/repriseaudio",
+    "crates/reprisexdg",
     "crates/repriselogin",
     "crates/reprisepam",
     "crates/reprisetls",
@@ -166,6 +167,7 @@ reprisefs = { path = "crates/reprisefs" }
 repriseconf = { path = "crates/repriseconf" }
 reprisebus = { path = "crates/reprisebus" }
 repriseaudio = { path = "crates/repriseaudio" }
+reprisexdg = { path = "crates/reprisexdg" }
 repriselogin = { path = "crates/repriselogin" }
 reprisepam = { path = "crates/reprisepam" }
 accesskit_unix.workspace = true

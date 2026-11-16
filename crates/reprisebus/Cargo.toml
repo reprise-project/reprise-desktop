@@ -12,6 +12,7 @@ description = "Checks that a system bus call or signal came from the current own
 workspace = true
 
 [dependencies]
+reprisexdg = { path = "../reprisexdg" }
 zbus.workspace = true
 zruntime.workspace = true
 futures-lite.workspace = true

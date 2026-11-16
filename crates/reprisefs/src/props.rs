@@ -1045,12 +1045,6 @@ pub fn default_app(mime: &str, apps: &[AppEntry]) -> Option<usize> {
     default_in_lists(&lists, &MimeTree::load(), mime, apps)
 }
 
-fn config_home() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-}
-
 /// Every mime-apps list a default is looked up in, in the spec's order, whether it exists or not.
 pub fn mimeapps_paths() -> Vec<PathBuf> {
     let names: Vec<String> = std::env::var("XDG_CURRENT_DESKTOP")
@@ -1060,7 +1054,7 @@ pub fn mimeapps_paths() -> Vec<PathBuf> {
         .map(|d| format!("{}-mimeapps.list", d.to_lowercase()))
         .chain(std::iter::once("mimeapps.list".to_string()))
         .collect();
-    let dirs: Vec<PathBuf> = config_home()
+    let dirs: Vec<PathBuf> = reprisexdg::config_home()
         .into_iter()
         .chain(apps::default_dirs())
         .collect();
@@ -1071,7 +1065,7 @@ pub fn mimeapps_paths() -> Vec<PathBuf> {
 
 /// The list the user's own choices go in; no other list is ever written.
 pub fn user_mimeapps() -> std::io::Result<PathBuf> {
-    config_home()
+    reprisexdg::config_home()
         .map(|c| c.join("mimeapps.list"))
         .ok_or_else(|| std::io::Error::other("no home directory"))
 }

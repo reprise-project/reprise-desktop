@@ -17,6 +17,7 @@ path = "src/bin/reprise-terminal.rs"
 test = false
 
 [dependencies]
+reprisexdg = { path = "../../reprisexdg" }
 alacritty_terminal = { version = "=0.26.0", default-features = false }
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

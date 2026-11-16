@@ -8,10 +8,7 @@ use std::path::{Path, PathBuf};
 
 /// The freedesktop trash, `$XDG_DATA_HOME/Trash` (or `~/.local/share/Trash`), holding `files/` and `info/`.
 pub fn trash_root() -> Option<PathBuf> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(data.join("Trash"))
+    Some(reprisexdg::data_home()?.join("Trash"))
 }
 
 pub fn trash_dir() -> Option<PathBuf> {
@@ -68,7 +65,9 @@ pub fn trash_contents(files: &Path) -> (usize, Option<String>) {
 
 /// `$XDG_CONFIG_HOME/user-dirs.dirs`, which names the user's folders.
 pub fn user_dirs_file() -> PathBuf {
-    crate::autostart::config_home().join("user-dirs.dirs")
+    reprisexdg::config_home()
+        .unwrap_or_default()
+        .join("user-dirs.dirs")
 }
 
 /// `XDG_<key>_DIR` from `$XDG_CONFIG_HOME/user-dirs.dirs`, else `$HOME/<fallback>`; `None` without a home.

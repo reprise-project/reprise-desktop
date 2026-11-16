@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::config::{OutputConfig, OutputMode, Transform};
 
 pub fn path() -> PathBuf {
-    crate::xdg_home("XDG_STATE_HOME", ".local/state")
+    reprisexdg::state_home()
+        .unwrap_or_default()
         .join("reprise")
         .join("displays.toml")
 }

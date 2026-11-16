@@ -7,11 +7,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 fn path() -> PathBuf {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("state")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("reprise-portal").join("lastpick.toml")
+    reprisexdg::state_home()
+        .unwrap_or_default()
+        .join("reprise-portal")
+        .join("lastpick.toml")
 }
 
 fn read(p: &Path) -> BTreeMap<String, String> {

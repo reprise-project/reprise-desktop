@@ -89,11 +89,7 @@ impl Thumbnails {
     }
 
     pub fn default_dir() -> Option<PathBuf> {
-        let cache = std::env::var_os("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
-        Some(cache.join("thumbnails"))
+        Some(reprisexdg::cache_home()?.join("thumbnails"))
     }
 
     fn named(&self, dir: &Path, path: &Path) -> Option<PathBuf> {

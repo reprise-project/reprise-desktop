@@ -14,7 +14,8 @@ pub struct State {
 
 impl State {
     pub fn path() -> PathBuf {
-        repriseconf::xdg_home("XDG_STATE_HOME", ".local/state")
+        reprisexdg::state_home()
+            .unwrap_or_default()
             .join("reprise")
             .join("volume.toml")
     }

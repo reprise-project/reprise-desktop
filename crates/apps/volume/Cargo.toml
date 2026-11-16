@@ -17,6 +17,7 @@ path = "src/bin/reprise-volume.rs"
 test = false
 
 [dependencies]
+reprisexdg = { path = "../../reprisexdg" }
 repriseapp = { path = "../../repriseapp" }
 repriseaudio = { path = "../../repriseaudio" }
 repriseconf = { path = "../../repriseconf" }

@@ -135,7 +135,9 @@ pub fn rewrite(text: &str, choice: &Choice) -> String {
 
 /// The user's locale.conf.
 pub fn user_conf() -> PathBuf {
-    crate::autostart::config_home().join("locale.conf")
+    reprisexdg::config_home()
+        .unwrap_or_default()
+        .join("locale.conf")
 }
 
 /// Write `choice` into the locale.conf at `path`, keeping its other lines.

@@ -332,10 +332,7 @@ pub fn read_head(path: &Path) -> io::Result<Profile> {
 /// The folders display profiles are kept in: the user's (where colord imports them too), the
 /// system's and colord's own store.
 pub fn dirs() -> Vec<PathBuf> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-    (data.map(|d| d.join("icc")).into_iter())
+    (reprisexdg::data_home().map(|d| d.join("icc")).into_iter())
         .chain([
             PathBuf::from("/usr/share/color/icc"),
             PathBuf::from("/var/lib/colord/icc"),
