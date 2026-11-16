@@ -1,11 +1,10 @@
 use crate::Explorer;
 use crate::dialogs::{Dialog, ProgramBrowse};
 use crate::fileops::ROW_PX;
-use repriseapp::filedlg::{Host, Resolved, Step};
+use repriseapp::filedlg::{Driven, Host};
 use repriseapp::iconjobs::IconWaits;
 use repriseapp::openwith::{PROGRAMS_DIR, browse_fields, program_pick, programs_keep as keep};
 use repriseapp::{Ctx, Event, Reply};
-use reprisekit::controls::filedlg::Event as FileEvent;
 use reprisekit::controls::openwith::{self, OpenWith};
 use reprisekit::icontheme::IconCache;
 use reprisekit::look::Paint;
@@ -91,67 +90,33 @@ impl Explorer {
         let Some(b) = cp.browse.as_mut() else {
             return Reply::none();
         };
-        let k = keep(b.dlg.filter());
-        b.host.ensure_listed(&mut b.dlg, &mut ctx.icons, &k);
-        let step = b.host.event(
-            &mut b.dlg,
-            &ev,
-            &self.dialog_text,
-            &self.forms,
-            ctx.size,
-            &ctx.theme.metrics,
-        );
-        match step {
-            Step::Closed | Step::Out(FileEvent::Cancel) => {
+        let driven =
+            b.host
+                .drive_keeping(&mut b.dlg, &ev, &self.dialog_text, &self.forms, ctx, |d| {
+                    keep(d.filter())
+                });
+        match driven {
+            Driven::Reply(r) => *r,
+            Driven::Cancelled => {
                 cp.browse = None;
                 Reply::redraw_all()
             }
-            Step::Redraw => Reply::redraw(),
-            Step::Resize => Reply::resize(),
-            Step::Out(FileEvent::NeedListing(id)) => {
-                b.host.list(&mut b.dlg, id, &mut ctx.icons, &k);
-                Reply::redraw()
-            }
-            Step::Out(FileEvent::FilterChanged(_)) => {
-                let k = keep(b.dlg.filter());
-                if let Some(id) = b.host.folder {
-                    b.host.list(&mut b.dlg, id, &mut ctx.icons, &k);
+            Driven::Picked(path) if path.is_file() => match program_pick(&path) {
+                Some(p) => {
+                    cp.browse = None;
+                    cp.ow.add_program(p);
+                    cp.wear_icons(&mut ctx.icons);
+                    Reply::redraw_all()
                 }
-                Reply::redraw()
-            }
-            Step::Out(FileEvent::Accept(names)) => {
-                let Some(name) = names.first() else {
-                    return Reply::none();
-                };
-                match b.host.resolve(name) {
-                    Ok(Resolved::Folder(id, _)) => {
-                        b.host.list(&mut b.dlg, id, &mut ctx.icons, &k);
-                        b.dlg.clear_file_name();
-                        Reply::redraw()
-                    }
-                    Ok(Resolved::File(path)) if path.is_file() => match program_pick(&path) {
-                        Some(p) => {
-                            cp.browse = None;
-                            cp.ow.add_program(p);
-                            cp.wear_icons(&mut ctx.icons);
-                            Reply::redraw_all()
-                        }
-                        None => {
-                            log::warn!("explorer: {} is not UTF-8, cannot run it", path.display());
-                            Reply::none()
-                        }
-                    },
-                    Ok(Resolved::File(path)) => {
-                        log::warn!("explorer: {} is not a file", path.display());
-                        Reply::none()
-                    }
-                    Err(msg) => {
-                        log::warn!("explorer: browse {name}: {msg}");
-                        Reply::none()
-                    }
+                None => {
+                    log::warn!("explorer: {} is not UTF-8, cannot run it", path.display());
+                    Reply::none()
                 }
+            },
+            Driven::Picked(path) => {
+                log::warn!("explorer: {} is not a file", path.display());
+                Reply::none()
             }
-            Step::None | Step::Out(_) => Reply::none(),
         }
     }
 

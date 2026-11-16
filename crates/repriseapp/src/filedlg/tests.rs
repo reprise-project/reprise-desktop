@@ -2245,22 +2245,45 @@ fn accept_on_a_typed_folder_lists_it_and_empties_the_name() {
     h.ensure_listed(&mut dlg, &mut icons, &keep);
     dlg.set_file_name("sub");
     assert_eq!(
-        h.accept(&mut dlg, "sub", &mut icons),
+        h.accept(&mut dlg, "sub", &mut icons, &keep),
         Driven::Reply(Box::new(crate::Reply::redraw()))
     );
     let names: Vec<&str> = dlg.entries().iter().map(|e| e.name.as_str()).collect();
     assert_eq!(names, ["inner.txt"]);
     assert_eq!(dlg.file_name(), "", "the name field is emptied");
     assert_eq!(
-        h.accept(&mut dlg, "new.txt", &mut icons),
+        h.accept(&mut dlg, "new.txt", &mut icons, &keep),
         Driven::Picked(t.join("sub/new.txt"))
     );
     assert!(h.asking().is_none());
     assert_eq!(
-        h.accept(&mut dlg, "nowhere/x.txt", &mut icons),
+        h.accept(&mut dlg, "nowhere/x.txt", &mut icons, &keep),
         Driven::Reply(Box::new(crate::Reply::redraw()))
     );
     let msg = h.asking().expect("a box over the dialog");
     assert_eq!(msg.title, open_fields().title, "titled like the dialog");
+    std::fs::remove_dir_all(&t).ok();
+}
+
+#[test]
+fn accept_in_folder_mode_picks_a_folder_and_closes_on_a_file() {
+    let t = tmp("accept-folder-mode");
+    std::fs::create_dir_all(t.join("sub")).unwrap();
+    std::fs::write(t.join("a.txt"), "").unwrap();
+    let mut h = host_in(&t);
+    let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+    let mut dlg = h.icons.dialog(Fields {
+        mode: DlgMode::Folder,
+        ..open_fields()
+    });
+    let keep = type_keep(&dlg);
+    assert_eq!(
+        h.accept(&mut dlg, "sub", &mut icons, &keep),
+        Driven::Picked(t.join("sub"))
+    );
+    assert_eq!(
+        h.accept(&mut dlg, "a.txt", &mut icons, &keep),
+        Driven::Cancelled
+    );
     std::fs::remove_dir_all(&t).ok();
 }

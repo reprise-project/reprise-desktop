@@ -427,7 +427,7 @@ pub(crate) fn marquee_tick(app: &mut dyn crate::App, win: crate::WinId) -> bool 
     })
 }
 
-pub fn type_keep(dlg: &FileDlg) -> impl Fn(&Item) -> bool + Clone + Send + 'static {
+pub fn type_keep(dlg: &FileDlg) -> impl Fn(&Item) -> bool + Clone + Send + 'static + use<> {
     let pattern = dlg.picked_pattern();
     move |i| {
         pattern
@@ -456,7 +456,7 @@ pub enum Resolved {
 pub enum Driven {
     /// The dialog's own redraw, resize or nothing, for the program to return.
     Reply(Box<crate::Reply>),
-    /// Accept on a file name, in a folder that exists.
+    /// Accept on a file name in a folder that exists, or on a folder in folder mode.
     Picked(PathBuf),
     /// Cancel, Escape or the close box.
     Cancelled,
@@ -1626,7 +1626,8 @@ impl Host {
     }
 
     /// Runs `ev` through `dlg`: lists its folder, lists again for a filter change, a typed
-    /// pattern or a typed folder name, and leaves the program a picked file or a cancel.
+    /// pattern or a typed folder name, and leaves the program a picked file (a folder in folder
+    /// mode) or a cancel. Listings keep what [`type_keep`] keeps.
     pub fn drive(
         &mut self,
         dlg: &mut FileDlg,
@@ -1635,13 +1636,30 @@ impl Host {
         forms: &Theme,
         ctx: &mut crate::Ctx,
     ) -> Driven {
-        self.ensure_listed(dlg, &mut ctx.icons, &type_keep(dlg));
+        self.drive_keeping(dlg, ev, text, forms, ctx, type_keep)
+    }
+
+    /// [`Host::drive`] with listings that keep what `keep`, made from the dialog as it is at
+    /// each listing, keeps.
+    pub fn drive_keeping<K>(
+        &mut self,
+        dlg: &mut FileDlg,
+        ev: &Event,
+        text: &TextRenderer,
+        forms: &Theme,
+        ctx: &mut crate::Ctx,
+        keep: impl Fn(&FileDlg) -> K,
+    ) -> Driven
+    where
+        K: Fn(&Item) -> bool + Clone + Send + 'static,
+    {
+        self.ensure_listed(dlg, &mut ctx.icons, &keep(dlg));
         match self.event(dlg, ev, text, forms, ctx.size, &ctx.theme.metrics) {
             Step::Closed => Driven::Cancelled,
             Step::Redraw => Driven::Reply(Box::new(crate::Reply::redraw())),
             Step::Resize => Driven::Reply(Box::new(crate::Reply::resize())),
             Step::None => Driven::Reply(Box::new(crate::Reply::none())),
-            Step::Out(out) => self.handle(dlg, out, &mut ctx.icons),
+            Step::Out(out) => self.handle_keeping(dlg, out, &mut ctx.icons, keep),
         }
     }
 
@@ -1652,20 +1670,33 @@ impl Host {
         out: reprisekit::controls::filedlg::Event,
         icons: &mut IconCache,
     ) -> Driven {
+        self.handle_keeping(dlg, out, icons, type_keep)
+    }
+
+    fn handle_keeping<K>(
+        &mut self,
+        dlg: &mut FileDlg,
+        out: reprisekit::controls::filedlg::Event,
+        icons: &mut IconCache,
+        keep: impl Fn(&FileDlg) -> K,
+    ) -> Driven
+    where
+        K: Fn(&Item) -> bool + Clone + Send + 'static,
+    {
         use reprisekit::controls::filedlg::Event as E;
         match out {
             E::NeedListing(id) => {
-                self.list(dlg, id, icons, &type_keep(dlg));
+                self.list(dlg, id, icons, &keep(dlg));
                 Driven::Reply(Box::new(crate::Reply::redraw()))
             }
             E::FilterChanged(_) => {
                 if let Some(id) = self.folder {
-                    self.list(dlg, id, icons, &type_keep(dlg));
+                    self.list(dlg, id, icons, &keep(dlg));
                 }
                 Driven::Reply(Box::new(crate::Reply::redraw()))
             }
             E::Accept(names) => match names.first() {
-                Some(name) => self.accept(dlg, name, icons),
+                Some(name) => self.accept(dlg, name, icons, &keep(dlg)),
                 None => Driven::Reply(Box::new(crate::Reply::none())),
             },
             E::Cancel => Driven::Cancelled,
@@ -1674,15 +1705,27 @@ impl Host {
         }
     }
 
-    /// Accept on `name`: a folder opens in `dlg` with the name field emptied, a file is picked,
-    /// and a name that leads nowhere says why in a box over the dialog, titled like it.
-    pub fn accept(&mut self, dlg: &mut FileDlg, name: &str, icons: &mut IconCache) -> Driven {
+    /// Accept on `name`: a file is picked, a folder opens in `dlg` with the name field emptied,
+    /// and a name that leads nowhere says why in a box over the dialog, titled like it. In folder
+    /// mode a folder is picked and a typed file's name closes the dialog as Cancel does.
+    fn accept<K>(
+        &mut self,
+        dlg: &mut FileDlg,
+        name: &str,
+        icons: &mut IconCache,
+        keep: &K,
+    ) -> Driven
+    where
+        K: Fn(&Item) -> bool + Clone + Send + 'static,
+    {
         match self.resolve(name) {
+            Ok(Resolved::Folder(_, path)) if dlg.mode() == DlgMode::Folder => Driven::Picked(path),
             Ok(Resolved::Folder(id, _)) => {
-                self.list(dlg, id, icons, &type_keep(dlg));
+                self.list(dlg, id, icons, keep);
                 dlg.clear_file_name();
                 Driven::Reply(Box::new(crate::Reply::redraw()))
             }
+            Ok(Resolved::File(_)) if dlg.mode() == DlgMode::Folder => Driven::Cancelled,
             Ok(Resolved::File(path)) => Driven::Picked(path),
             Err(msg) => {
                 log::warn!("file dialog: {msg}");
