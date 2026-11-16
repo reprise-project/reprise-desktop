@@ -1134,6 +1134,7 @@ impl TestClient {
             size: (0, 0),
             bounds: (0, 0),
             heard: Vec::new(),
+            configures: 0,
         });
         i
     }
@@ -1417,6 +1418,8 @@ pub struct Shell {
     pub bounds: (i32, i32),
     /// Every bounds the toplevel's configures carried, oldest first.
     pub heard: Vec<(i32, i32)>,
+    /// How many `xdg_surface.configure`s it heard.
+    pub configures: usize,
 }
 
 /// A `wl_keyboard` event: a key's evdev code and whether it went down, or the depressed
@@ -1593,6 +1596,7 @@ impl wc::Dispatch<xdg_surface::XdgSurface, ()> for ClientSide {
         let Some(s) = st.shells.iter_mut().find(|s| &s.xdg == xdg) else {
             return;
         };
+        s.configures += 1;
         if s.size == (0, 0) {
             return;
         }
