@@ -339,7 +339,16 @@ impl SettingsApp {
 
     #[cfg(not(test))]
     fn start_set_language(&mut self, job: impl FnOnce() + Send + 'static) {
-        std::thread::spawn(job);
+        self.language_set = Some(self.spawn(job));
+    }
+
+    /// AccountsService's call ended. Some(true) when the sheet waited on it to close.
+    pub(crate) fn language_done(&mut self) -> Option<bool> {
+        if take(self.language_set.as_ref()?) == Ok(None) {
+            return None;
+        }
+        self.language_set = None;
+        Some(std::mem::take(&mut self.quit_after_language))
     }
 
     /// Tests feed `region_read` and `region_set` themselves, so nothing reaches the system bus.
@@ -357,8 +366,13 @@ impl SettingsApp {
         }
     }
 
+    /// Tests take the call as ended at once, without the bus.
     #[cfg(test)]
-    fn start_set_language(&mut self, _: impl FnOnce() + Send + 'static) {}
+    fn start_set_language(&mut self, _: impl FnOnce() + Send + 'static) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = tx.send(());
+        self.language_set = Some(rx);
+    }
 }
 
 #[cfg(test)]

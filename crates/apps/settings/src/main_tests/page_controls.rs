@@ -727,6 +727,28 @@ fn localed_unread_is_read_again_when_the_page_opens_again() {
     assert_eq!(a.region.as_ref().unwrap().system, read);
 }
 
+#[test]
+fn ok_after_a_language_change_closes_once_accountsservice_has_it() {
+    use crate::regionpage::LANGUAGE;
+    let mut a = app("region-ok");
+    a.region_conf = tmp("region-ok-conf").join("locale.conf");
+    let english = reprisefs::region::Choice {
+        language: "en_US.UTF-8".into(),
+        formats: None,
+    };
+    region_ready(&mut a, english, "en_US.UTF-8");
+    let p = Page::RegionLanguage.index();
+    a.sheet.pages[p].set_combo(LANGUAGE, 0);
+    a.sheet_event(propsheet::Event::Page(p, form::Event::Changed(LANGUAGE)));
+    a.sheet_event(propsheet::Event::Ok);
+    let mut ctx = test_ctx();
+    assert!(
+        !a.event(MAIN, Event::Blink, &mut ctx).quit,
+        "OK waits for AccountsService"
+    );
+    assert!(a.wake().quit, "the call ended: the sheet closes");
+}
+
 fn region_set(a: &mut SettingsApp, set: crate::regionhost::Set) {
     let (tx, rx) = std::sync::mpsc::channel();
     tx.send(set).unwrap();
