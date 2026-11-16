@@ -130,6 +130,24 @@ pub fn reload_remembered() -> zbus::Result<()> {
     Ok(())
 }
 
+/// A trusted activation token for a window opened for bus peer `caller` while its process holds
+/// the keyboard. Ask before replying to the caller: the compositor reads it through the bus.
+pub async fn activation_for(conn: &zbus::Connection, caller: &str) -> Option<String> {
+    let reply = conn
+        .call_method(
+            Some(NAME),
+            PATH,
+            Some(INTERFACE),
+            "ActivationFor",
+            &(caller,),
+        )
+        .await
+        .inspect_err(|e| log::info!("no activation for {caller}: {e}"))
+        .ok()?;
+    let token: String = reply.body().deserialize().ok()?;
+    Some(token).filter(|t| !t.is_empty())
+}
+
 /// Ask the windows of the processes `pids` (host pids) to close, as their X button does, and
 /// return how many were asked: Task Manager's End Task. Blocks for at most
 /// [`crate::METHOD_TIMEOUT`].

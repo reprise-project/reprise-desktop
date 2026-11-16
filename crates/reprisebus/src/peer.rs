@@ -614,6 +614,12 @@ pub async fn is_process(conn: &Connection, peer: &str, pid: u32) -> zbus::Result
     Ok(fd.is_some_and(|fd| pid_of(&fd) == Some(pid)))
 }
 
+/// The pid of `peer`'s process, read through the pidfd the bus gives for it; None without one, or
+/// once the process is gone.
+pub async fn pid(conn: &Connection, peer: &str) -> Option<u32> {
+    pid_of(&process_fd(conn, peer).await.ok()??)
+}
+
 /// The pidfd of `peer`'s process, as the bus reports it.
 async fn process_fd(conn: &Connection, peer: &str) -> zbus::Result<Option<zbus::OwnedFd>> {
     let reply = conn

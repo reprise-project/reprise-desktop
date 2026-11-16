@@ -241,6 +241,39 @@ impl Shell {
         self.windows_of(conn, &hdr, pids, false).await
     }
 
+    /// A trusted activation token for the window FileManager1 opens for bus peer `caller` while its
+    /// process holds the keyboard, else empty. Only the installed reprise-explorer may ask.
+    async fn activation_for(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+        caller: String,
+    ) -> zbus::fdo::Result<String> {
+        self.host_only.check(conn, &hdr).await?;
+        let refused = || zbus::fdo::Error::AccessDenied("not the file manager".into());
+        let sender = hdr.sender().ok_or_else(refused)?;
+        let asker = reprisebus::peer::pid(conn, sender).await;
+        let asker = asker
+            .and_then(|p| i32::try_from(p).ok())
+            .ok_or_else(refused)?;
+        if !crate::inputproto::runs_installed(asker, "reprise-explorer") {
+            return Err(refused());
+        }
+        let caller = reprisebus::peer::pid(conn, &caller).await;
+        let Some(caller) = caller.and_then(|p| i32::try_from(p).ok()) else {
+            return Ok(String::new());
+        };
+        let (lineage, session) = crate::mapfocus::lineage(caller);
+        let (reply, answer) = async_channel::bounded(1);
+        let ev = TrayEvent::ActivationFor {
+            lineage,
+            session,
+            reply,
+        };
+        emit(&self.events, self.eventfd, ev);
+        Ok(answer.recv().await.unwrap_or_default())
+    }
+
     /// The icon of the window playing a sound stream; see [`crate::streamwindow`].
     async fn window_icon(
         &self,

@@ -202,6 +202,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
     // The main window itself is `sync_main`'s, so a program that starts
     // hidden never gets a surface for it.
     let ((w, h), _) = opening_size(&*app);
+    let started = reprisebus::instance::Handoff::from_env();
     let look = Look::from_env();
     let theme = look.theme();
     publish_theme(&theme);
@@ -239,7 +240,8 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         input_serial: 0,
         kb_on: None,
         kb_settle: false,
-        key_last: reprisebus::instance::Handoff::from_env().by_key,
+        key_last: started.by_key,
+        start_token: started.token,
         down_syms: Default::default(),
         press_time: 0,
         compositor,

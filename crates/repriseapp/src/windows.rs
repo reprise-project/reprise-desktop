@@ -603,13 +603,21 @@ impl Host {
             return;
         };
         s.maximized = maximized;
-        let changed = (w, h) != s.size || !s.configured;
+        let first = !s.configured;
+        let changed = (w, h) != s.size || first;
         if changed {
             s.size = (w, h);
             s.buffers = [None, None];
             s.pool = None;
         }
         s.configured = true;
+        if first
+            && id == MAIN
+            && let (Some(token), Some(activation)) = (self.start_token.take(), &self.activation)
+            && let Some(s) = self.slots.iter().find(|s| s.id == MAIN)
+        {
+            activation.activate::<Host>(s.window.wl_surface(), token);
+        }
         if changed {
             self.send(id, Event::Resized);
         }

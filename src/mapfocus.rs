@@ -96,10 +96,14 @@ pub fn takes_focus(new: &Arrival, focused: Option<Holder>) -> bool {
         return true;
     };
     let same_client = new.client.is_some() && new.client == f.client;
-    let descends = f
-        .pid
-        .is_some_and(|p| new.lineage.contains(&p) || new.session == Some(p));
+    let descends = holds_focus(new.lineage, new.session, Some(f));
     new.activated || new.launched || new.prompt || same_client || descends || f.owns
+}
+
+/// Whether the process `lineage` and `session` describe is the program `focused` holds the
+/// keyboard for: its process, one descending from it or one in the session it leads.
+pub fn holds_focus(lineage: &[i32], session: Option<i32>, focused: Option<Holder>) -> bool {
+    (focused.and_then(|f| f.pid)).is_some_and(|p| lineage.contains(&p) || session == Some(p))
 }
 
 /// The keyboard's holder: Reprise itself (`reprise`: a dialog or the
@@ -515,6 +519,22 @@ mod tests {
             ..Arrival::default()
         };
         assert!(takes_focus(&new, None), "expected focus");
+    }
+
+    #[test]
+    fn the_focus_holder_is_the_focused_process_or_one_below_it() {
+        assert!(holds_focus(&[500], None, editor_focused()));
+        assert!(holds_focus(&[700, 500], None, editor_focused()), "a child");
+        assert!(
+            holds_focus(&[700], Some(500), editor_focused()),
+            "in its session"
+        );
+        assert!(!holds_focus(STRANGER, Some(800), editor_focused()));
+        assert!(
+            !holds_focus(&[500], None, holder(true, editor_focused())),
+            "a dialog holds it"
+        );
+        assert!(!holds_focus(&[500], None, None), "nothing has focus");
     }
 
     #[test]

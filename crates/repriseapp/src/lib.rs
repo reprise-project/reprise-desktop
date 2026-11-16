@@ -288,6 +288,9 @@ struct Host {
     /// The last input was a key, not a pointer press, counting a start from the keyboard: a window
     /// opened now underlines its access keys.
     key_last: bool,
+    /// The activation token this process was started with, presented once for the main window
+    /// before it maps, so a launch from the focused program opens in front.
+    start_token: Option<String>,
     down_syms: input::DownSyms,
     /// The time the last pointer press carried, real or a reader's
     /// (`access_msg`): a reader's click is stamped a second past the
