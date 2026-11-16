@@ -435,7 +435,7 @@ impl SettingsApp {
             self.focus_permissions(false);
         }
         match ev {
-            Event::Heads(heads) => self.heads_changed(heads),
+            Event::Heads(heads) => self.heads_changed(heads, &mut ctx.heads),
             Event::HeadsApplied { serial, ok } => self.heads_applied(serial, ok, &mut ctx.heads),
             Event::Tick => {
                 let mut r = self.display_tick(&mut ctx.heads);

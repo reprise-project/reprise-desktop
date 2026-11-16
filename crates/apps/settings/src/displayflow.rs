@@ -242,13 +242,19 @@ impl Flow {
         self.cancel(req)
     }
 
-    pub fn heads_changed(&mut self, d: &Display) -> Vec<Effect> {
-        if self
+    /// An output the question asked about going away drops the question, and the outputs
+    /// still there go back to what they ran before.
+    pub fn heads_changed(&mut self, d: &Display, req: &mut HeadRequests) -> Vec<Effect> {
+        if let Some(q) = self
             .question
-            .as_ref()
-            .is_some_and(|q| q.asked.iter().any(|(n, _)| d.head_named(n).is_none()))
+            .take_if(|q| q.asked.iter().any(|(n, _)| d.head_named(n).is_none()))
         {
-            self.question = None;
+            let back: HeadSet = (q.back.into_iter())
+                .filter(|(n, _)| d.head_named(n).is_some())
+                .collect();
+            if !back.is_empty() {
+                self.revert(back, req, false);
+            }
         }
         self.settle()
     }
@@ -511,8 +517,31 @@ mod tests {
         let serial = take(&mut req)[0].0;
         flow.applied(serial, true, &mut d, &mut req);
         d.set_heads(vec![test_head("HDMI-A-1")]);
-        assert_eq!(flow.heads_changed(&d), vec![]);
+        assert_eq!(flow.heads_changed(&d, &mut req), vec![]);
         assert!(flow.question.is_none() && take(&mut req).is_empty());
+    }
+
+    #[test]
+    fn a_question_dropped_by_an_unplug_puts_the_other_outputs_back() {
+        let mut d = Display::with_heads(vec![test_head("DP-1"), test_head("HDMI-A-1")]);
+        for i in 0..2 {
+            d.pick_monitor(i);
+            d.pick_resolution(1);
+        }
+        let mut req = HeadRequests::default();
+        let mut flow = Flow::default();
+        flow.apply(&mut d, &mut req, false);
+        let serial = req.take()[0].0;
+        flow.applied(serial, true, &mut d, &mut req);
+        assert!(flow.question.is_some());
+        d.set_heads(vec![test_head("HDMI-A-1")]);
+        assert_eq!(flow.heads_changed(&d, &mut req), vec![], "nothing written");
+        assert!(flow.question.is_none());
+        assert_eq!(
+            take(&mut req),
+            vec![(2, "HDMI-A-1".into(), test_head("HDMI-A-1").state())],
+            "the output still there gets its old mode back"
+        );
     }
 
     fn cancelled(
