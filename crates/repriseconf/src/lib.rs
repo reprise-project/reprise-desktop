@@ -275,14 +275,13 @@ pub fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     reprisefs::ops::write_atomic(path, text.as_bytes())
 }
 
-/// Read `path` (absent is empty), hand its text to `edit`, write the result atomically, under an
-/// exclusive `flock` on a `.lock` file beside it (the target's inode is replaced by the rename).
-/// `edit`'s error comes back as `Ok(Err)` with nothing written; unchanged text is not written.
+/// `reprisefs::ops::locked_edit` of `path`: read, edited and written atomically under a lock
+/// beside it.
 pub fn edit<E>(
     path: &Path,
     edit: impl FnOnce(&str) -> Result<String, E>,
 ) -> std::io::Result<Result<String, E>> {
-    locked_edit(path, false, edit)
+    reprisefs::ops::locked_edit(path, false, edit)
 }
 
 /// [`edit`] for a file whose text can be rebuilt: one that is not UTF-8 reads as empty and is
@@ -291,48 +290,7 @@ pub fn edit_or_reset<E>(
     path: &Path,
     edit: impl FnOnce(&str) -> Result<String, E>,
 ) -> std::io::Result<Result<String, E>> {
-    locked_edit(path, true, edit)
-}
-
-fn locked_edit<E>(
-    path: &Path,
-    reset: bool,
-    edit: impl FnOnce(&str) -> Result<String, E>,
-) -> std::io::Result<Result<String, E>> {
-    use std::os::fd::AsRawFd;
-    let dir = match path.parent() {
-        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
-        _ => PathBuf::from("."),
-    };
-    std::fs::create_dir_all(&dir)?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "out".into());
-    let lock = std::fs::File::create(dir.join(format!(".{name}.lock")))?;
-    // SAFETY: a valid fd from the open file above; LOCK_EX blocks until
-    // the other editor is done and the lock goes with the fd on drop.
-    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    let mut stale = false;
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) if reset && e.kind() == std::io::ErrorKind::InvalidData => {
-            stale = true;
-            String::new()
-        }
-        Err(e) => return Err(e),
-    };
-    let out = match edit(&text) {
-        Ok(out) => out,
-        Err(e) => return Ok(Err(e)),
-    };
-    if out != text || stale {
-        write_atomic(path, &out)?;
-    }
-    Ok(Ok(out))
+    reprisefs::ops::locked_edit(path, true, edit)
 }
 
 pub fn get<'a>(doc: &'a DocumentMut, key: &Key) -> Option<&'a Item> {
