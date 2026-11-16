@@ -770,7 +770,9 @@ ends, so stop the share first.
   lists the checks), a snap's only beneath its own folders, and an owner
   whose sandbox doesn't check out names no file. Icons are PNG or SVG within
   caps, an SVG priced against a time and memory budget before it is drawn,
-  and a slow or flooding app holds back only its own icons.
+  and a slow or flooding app holds back only its own icons. A read hung on a
+  mount that stopped answering gives up after 2 s and a spare thread takes
+  its place, up to four at once.
 - **Launchers.** A `.desktop` file in a folder runs only when it is
   executable and carries the `user.reprise.trusted` attribute, which Allow
   Launching sets and extraction never restores. The attribute is an HMAC
