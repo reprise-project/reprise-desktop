@@ -744,7 +744,7 @@ impl CopyProgress {
             self.remaining(),
         ];
         for (i, l) in lines.iter().enumerate() {
-            tree.push(ROOT, ("line", i), access::label(all, l, true));
+            tree.push(ROOT, ("line", i), access::static_text(all, l, true));
         }
         let mut bar = access::range(
             Role::ProgressIndicator,
@@ -1070,6 +1070,20 @@ mod tests {
             Outcome::None,
             "no details without the graph"
         );
+    }
+
+    #[test]
+    fn the_lines_read_out_folder_names_with_their_ampersands() {
+        let theme = theme_for(Interface::Classic);
+        let text = TextRenderer::load(&theme.fonts);
+        let mut cp = CopyProgress::new(Kind::Copy, "Tom & Jerry", "KINGSTON", SKY);
+        cp.update(copying(10, 100), 0);
+        let mut tree = Tree::new(access::node(Role::Window, Rect::new(0, 0, 400, 200)));
+        cp.access(&mut tree, &text, &theme.paint(), theme.fonts.size_px);
+        let said = tree
+            .nodes()
+            .find(|(_, n)| n.value() == Some("From Tom & Jerry to KINGSTON"));
+        assert!(said.is_some(), "the & is read out");
     }
 
     #[test]

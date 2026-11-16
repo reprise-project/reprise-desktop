@@ -112,7 +112,7 @@ pub fn access(sb: &StatusBar, r: Rect, u: TextUnits, tree: &mut Tree, parent: No
     let id = tree.push(parent, "status", access::node(Role::Status, r));
     for (i, (p, pr)) in sb.panels.iter().zip(layout(sb, r, u)).enumerate() {
         if !p.text.is_empty() {
-            tree.push(id, i, access::label(pr, &p.text, true));
+            tree.push(id, i, access::static_text(pr, &p.text, true));
         }
     }
     id
@@ -157,6 +157,19 @@ mod tests {
         let lay = layout(&bar(), r, u);
         assert_eq!(lay[1], Rect::new(1432 - 712, 102, 712, 36));
         assert_eq!(lay[0], Rect::new(0, 102, 1432 - 712 - 2, 36));
+    }
+
+    #[test]
+    fn a_panel_reads_out_its_text_as_shown_and_keeps_an_ampersand() {
+        let mut sb = bar();
+        sb.panels[0].text = "Tom & Jerry.mp3".into();
+        let r = Rect::new(0, 746, 1432, HEIGHT);
+        let mut tree = Tree::new(access::node(Role::Window, r));
+        access(&sb, r, TextUnits::ONE, &mut tree, access::ROOT);
+        let said = tree
+            .nodes()
+            .find(|(_, n)| n.value() == Some("Tom & Jerry.mp3"));
+        assert!(said.is_some(), "the & is read out");
     }
 
     #[test]

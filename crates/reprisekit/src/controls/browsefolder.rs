@@ -588,7 +588,7 @@ impl BrowseFolder {
         tree.push(
             root,
             "prompt",
-            access::label(lay.prompt, &self.prompt, true),
+            access::static_text(lay.prompt, &self.prompt, true),
         );
         let tv = treeview::access(&self.tree, &lay.tree, text, px, tree, root, "tree");
         let new_folder = tree.push(

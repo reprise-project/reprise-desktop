@@ -520,7 +520,7 @@ pub fn access(tp: &TaskPane, lay: &Layout, tree: &mut Tree, parent: NodeId) -> O
             Body::Lines(_) => {
                 let lines = lay.lines.get(k).map(Vec::as_slice).unwrap_or_default();
                 let text: Vec<&str> = lines.iter().map(|(l, _)| l.as_str()).collect();
-                tree.push(g, "lines", access::label(body, &text.join(" "), true));
+                tree.push(g, "lines", access::static_text(body, &text.join(" "), true));
             }
         }
     }

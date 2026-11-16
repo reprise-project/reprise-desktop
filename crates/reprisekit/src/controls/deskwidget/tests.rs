@@ -358,4 +358,25 @@ fn the_meter_reads_out_two_ranges_and_the_clock_its_time() {
     );
     let said = tree.nodes().find(|(_, n)| n.value() == Some("9:05"));
     assert!(said.is_some(), "the time read out");
+    let digital = Content::Clock(Clock::new(
+        Face::Digital,
+        false,
+        (9, 5, 0),
+        "9:05",
+        "Mo & Tu",
+    ));
+    access(
+        &digital,
+        Rect::new(0, 0, 129, 129),
+        &cm,
+        &text,
+        11,
+        &mut tree,
+        access::ROOT,
+        "d",
+    );
+    let said = tree
+        .nodes()
+        .find(|(_, n)| n.value() == Some("9:05, Mo & Tu"));
+    assert!(said.is_some(), "the date keeps its &");
 }
