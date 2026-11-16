@@ -155,6 +155,7 @@ pub fn start(state: &mut State, kind: Kind, preview: bool) {
         listen_for_photos(state);
     }
     tick(state);
+    state.widgets_cover_changed();
 }
 
 /// The desktop locked: running Photos turns Blank.
@@ -192,6 +193,7 @@ pub fn stop(state: &mut State) {
         state.scene.destroy(o.tree);
     }
     state.redraw_all();
+    state.widgets_cover_changed();
 }
 
 /// Called before every input is handled: ends the saver, unless it is a Preview still in its grace.

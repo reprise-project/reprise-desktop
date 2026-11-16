@@ -241,3 +241,34 @@ fn the_meter_samples_only_while_its_desktop_shows() {
     h.state.sample_meter();
     assert_eq!(h.state.widgets.meter.memory.len(), 1, "none while locked");
 }
+
+#[test]
+fn a_covered_desktop_ticks_each_minute_and_a_relayout_keeps_the_timer() {
+    let mut h = Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.state.config.desktop_widgets = vec![Kind::Clock, Kind::Meter];
+    h.state.relayout_desktop();
+    let timer = h.state.widgets.timer;
+    assert_eq!(
+        timer.map(|t| t.1),
+        Some(true),
+        "the meter ticks each second"
+    );
+    h.state.relayout_desktop();
+    assert_eq!(h.state.widgets.timer, timer, "a relayout keeps the timer");
+    crate::lockview::lock(&mut h.state);
+    assert_eq!(
+        h.state.widgets.timer.map(|t| t.1),
+        Some(false),
+        "locked, it ticks each minute"
+    );
+    crate::lockview::unlock(&mut h.state);
+    assert_eq!(
+        h.state.widgets.timer.map(|t| t.1),
+        Some(true),
+        "unlocked, each second again"
+    );
+    h.state.config.desktop_widgets.clear();
+    h.state.relayout_desktop();
+    assert!(h.state.widgets.timer.is_none(), "no widget, no timer");
+}
