@@ -117,6 +117,8 @@ confinement holds, every motion goes through as it comes.
   allows, with an optional Remember
 - **Screenshot:** every screen in one picture at its place in the layout, or
   for an interactive call the screen or window picked in the share dialog;
+  the `target` option's Screen lists only screens there and its Window
+  always opens the dialog on windows (Area and Active Window are not offered);
   the files are a hand-over in `$XDG_RUNTIME_DIR/reprise-portal/screenshots`,
   deleted after an hour. PickColor opens the compositor's colour picker
 - **RemoteDesktop:** keyboard and pointer

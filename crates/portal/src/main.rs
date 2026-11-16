@@ -491,11 +491,14 @@ async fn recorder_granted(pid: u32, link: Option<&inputlink::Link>) -> bool {
     }
 }
 
+/// Version 5 adds the streams' `mapping_id`, 6 their `pipewire-serial`.
+const SCREENCAST_VERSION: u32 = 6;
+
 #[zbus::interface(name = "org.freedesktop.impl.portal.ScreenCast")]
 impl ScreenCast {
     #[zbus(property, name = "version")]
     fn version(&self) -> u32 {
-        4
+        SCREENCAST_VERSION
     }
 
     #[zbus(property)]
@@ -1814,6 +1817,26 @@ mod tests {
             let left: Vec<String> = sessions.lock().unwrap().keys().cloned().collect();
             assert_eq!(left, [key(3)], "only the live frontend's session stays");
         });
+    }
+
+    #[test]
+    fn the_screencast_version_is_the_newest_its_stream_keys_need() {
+        let props = StreamProps {
+            position: Some((0, 0)),
+            size: (640, 480),
+            source_type: SOURCE_MONITOR,
+            mapping_id: Some("m".into()),
+            pipewire_serial: 9,
+        };
+        use zbus::wire::{LE, serialized::Context, to_bytes};
+        let data = to_bytes(Context::new(LE, 0), &props).unwrap();
+        let (dict, _): (HashMap<String, OwnedVariant>, _) = data.deserialize().unwrap();
+        let since = [("mapping_id", 5), ("pipewire-serial", 6)];
+        let newest = (since.iter())
+            .filter(|(k, _)| dict.contains_key(*k))
+            .map(|(_, v)| *v)
+            .max();
+        assert_eq!(newest, Some(SCREENCAST_VERSION));
     }
 
     /// Whether a caller owning `FRONTEND` passes [`Frontend::check`] when its process is read from
