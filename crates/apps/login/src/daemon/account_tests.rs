@@ -596,3 +596,22 @@ fn a_status_for_root_says_root_never_logs_on_remotely() {
         status_of(false, RemoteAccess::Root)
     );
 }
+
+#[test]
+fn an_unreadable_store_refuses_every_change_and_rewrite() {
+    let mut run = run();
+    run.d.password_store_unreadable();
+    assert_eq!(
+        run.account(1, "anna", ANNA, set(LOGIN_PW, "new-remote-pw")),
+        refused(1, AccountRefusal::Failed)
+    );
+    assert_eq!(
+        run.account(2, "anna", ANNA, clear(LOGIN_PW)),
+        refused(2, AccountRefusal::Failed)
+    );
+    assert_eq!(
+        run.d.rewrite_passwords(),
+        vec![],
+        "no write replaces the store with only what the daemon holds"
+    );
+}

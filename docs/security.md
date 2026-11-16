@@ -1057,6 +1057,9 @@ characters or more and must differ from the login password.
   clear another user's there. Clearing your own is always allowed, even
   outside the group: it reads no group. A set whose group look-up fails or
   times out is refused as failed, never as outside the group.
+- A store that exists but can't be read (an I/O error, a byte that isn't
+  UTF-8) gives NLA no passwords, and every set or clear is refused as
+  failed until a restart reads it, so no write drops other users' entries.
 - Locking the login password (`passwd -l`) leaves the Remote Desktop
   password working. To stop it, the user removes it in User Accounts, or
   take the user out of `reprise-remote`. An expired account

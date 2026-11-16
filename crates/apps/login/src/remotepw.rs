@@ -10,16 +10,13 @@ use crate::daemon::StoredPassword;
 
 pub const STORE: &str = "/var/lib/reprise-login/remote-passwords";
 
-/// The passwords in `path`; none when it is missing or unreadable. A malformed line is skipped
-/// and logged by its number only, as it may hold a typed password.
-pub fn load(path: &Path) -> Vec<StoredPassword> {
+/// The passwords in `path`; none when it is missing, an error when it can't be read. A
+/// malformed line is skipped and logged by its number only, as it may hold a typed password.
+pub fn load(path: &Path) -> io::Result<Vec<StoredPassword>> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => Zeroizing::new(text),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Vec::new(),
-        Err(e) => {
-            log::warn!("{}: {e}", path.display());
-            return Vec::new();
-        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
     };
     let mut all = Vec::new();
     for (n, line) in text.lines().enumerate() {
@@ -31,7 +28,7 @@ pub fn load(path: &Path) -> Vec<StoredPassword> {
             None => log::warn!("{}: line {} is malformed; skipped", path.display(), n + 1),
         }
     }
-    all
+    Ok(all)
 }
 
 fn parse(line: &str) -> Option<StoredPassword> {
@@ -123,7 +120,7 @@ mod tests {
             stored("bert", 1002, "b"),
         ];
         save(&path, &all).unwrap();
-        assert_eq!(load(&path), all);
+        assert_eq!(load(&path).unwrap(), all);
         assert_eq!(mode(&dir), 0o700, "the directory");
         assert_eq!(mode(&path), 0o600, "the file");
         assert_eq!(
@@ -135,7 +132,7 @@ mod tests {
             )
         );
         save(&path, &all[1..]).unwrap();
-        assert_eq!(load(&path), all[1..]);
+        assert_eq!(load(&path).unwrap(), all[1..]);
         let names: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().file_name())
@@ -166,13 +163,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            load(&path),
+            load(&path).unwrap(),
             vec![
                 stored("anna", 1001, "password"),
                 stored("gina", 1007, "password")
             ]
         );
-        assert_eq!(load(&dir.path().join("missing")), vec![]);
+    }
+
+    #[test]
+    fn a_missing_store_is_empty_and_an_unreadable_one_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(load(&dir.path().join("missing")).unwrap(), vec![]);
+        let path = dir.path().join("remote-passwords");
+        let mut text = format!("anna 1001 {}\n", *nt_hash("password")).into_bytes();
+        text.extend_from_slice(b"b\xe9rt 1002 x\n");
+        std::fs::write(&path, text).unwrap();
+        assert!(load(&path).is_err(), "a non-UTF-8 byte fails the read");
     }
 
     #[test]
@@ -189,7 +196,7 @@ mod tests {
         save(&path, &all).unwrap();
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "victim");
         assert_eq!(mode(&victim), 0o644);
-        assert_eq!(load(&path), all);
+        assert_eq!(load(&path).unwrap(), all);
         assert_eq!(mode(&path), 0o600);
         assert!(std::fs::symlink_metadata(&tmp).is_err(), "no tmp is left");
     }

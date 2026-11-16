@@ -25,6 +25,8 @@ pub(super) struct Accounts {
     storing: Option<Option<u64>>,
     /// The store holds passwords the daemon has dropped since its last write.
     rewrite: bool,
+    /// The store failed to read at start, so any write would lose the passwords it holds.
+    unreadable: bool,
     /// Status links waiting on their group look-up, with the peer's uid and account name.
     statuses: BTreeMap<u64, (u32, String)>,
 }
@@ -83,6 +85,13 @@ impl Daemon {
             }
             AccountRequest::ClearRemotePassword { login_password } => (login_password, None),
         };
+        if self.remote.accounts.unreadable {
+            out.push(Effect::Log(
+                Level::Warn,
+                format!("{user}'s Remote Desktop password change refused: the store is unreadable"),
+            ));
+            return refuse(link, AccountRefusal::Failed, out);
+        }
         let changes = &mut self.remote.accounts.changes;
         if changes.values().any(|c| c.uid == uid) {
             return refuse(link, AccountRefusal::Busy, out);
@@ -320,9 +329,17 @@ impl Daemon {
         out.extend(self.rewrite_passwords());
     }
 
+    /// Refuses every password change and store write: the store exists but failed to read.
+    pub fn password_store_unreadable(&mut self) {
+        self.remote.accounts.unreadable = true;
+    }
+
     /// Writes the store with the passwords the daemon holds, after the write in flight.
     pub fn rewrite_passwords(&mut self) -> Vec<Effect> {
         let mut out = Vec::new();
+        if self.remote.accounts.unreadable {
+            return out;
+        }
         self.remote.accounts.rewrite = true;
         self.store_next(&mut out);
         out
