@@ -3,7 +3,6 @@
 
 use crate::Explorer;
 use crate::icons::IconSlot;
-use repriseapp::decode::Decoders;
 use repriseapp::listjob::Job;
 use repriseapp::{BTN_LEFT, Child, Ctx, Event, MAIN, PointerInput, Reply, WinId};
 use reprisefs::thumbnails::Thumbnails;
@@ -47,15 +46,14 @@ pub(crate) enum Loaded {
 }
 
 /// The file at `path` for its preview, pictures fitted inside `max` device px at `scale`: decoded
-/// by `decoders`, read as text, or else the largest thumbnail `cache` holds (another program's
-/// thumbnailer may have made one for a PDF or a video). Anything but a regular file is never
-/// opened, since the open may never return.
+/// (a JPEG XL and a font's sample by `jailed`), read as text, or else the largest thumbnail
+/// `cache` holds (another program's thumbnailer may have made one for a PDF or a video). Anything
+/// but a regular file is never opened, since the open may never return.
 pub(crate) fn read(
     path: &Path,
     route: Route,
-    decoders: &Decoders,
     cache: Option<&Thumbnails>,
-    fonts: &FontSampler,
+    jailed: &Jailed,
     max: (u32, u32),
     scale: i32,
 ) -> Loaded {
@@ -81,13 +79,12 @@ pub(crate) fn read(
         Some(filepreview::text_of(&head))
     };
     let picture = || {
-        decoders
-            .decode_file(path, max)
-            .map(|d| d.canvas.at_scale(scale))
+        repriseapp::thumbs::picture_in(jailed.runner.as_ref(), &jailed.exe, path, max)
+            .map(|c| c.at_scale(scale))
     };
     let found = match route {
         Route::Picture => picture().map(Loaded::Picture),
-        Route::Font => fonts.sample(path, max, scale).map(Loaded::Picture),
+        Route::Font => jailed.sample(path, max, scale).map(Loaded::Picture),
         Route::Text | Route::Other => read_text().map(Loaded::Text),
     };
     found
@@ -95,18 +92,19 @@ pub(crate) fn read(
         .unwrap_or(Loaded::Nothing)
 }
 
-/// How a font's sample is drawn: by `exe` [`FONT_SAMPLE`] in the thumbnailers' jail, so a font file
-/// is never parsed in Explorer. No runner draws none.
-pub(crate) struct FontSampler {
+/// How a font's sample and a JPEG XL's picture are drawn: by `exe` [`FONT_SAMPLE`] and
+/// [`JXL_FLAG`](repriseapp::thumbs::JXL_FLAG) in the thumbnailers' jail, so neither file is parsed
+/// in Explorer. No runner draws none.
+pub(crate) struct Jailed {
     pub runner: Option<reprisefs::thumbnailers::Runner>,
     pub exe: std::path::PathBuf,
 }
 
-impl FontSampler {
+impl Jailed {
     /// Explorer's own program on `PATH`, which an upgrade replaces under a running Explorer,
     /// jailed as the thumbnailers are; no runner without bubblewrap.
-    pub(crate) fn installed() -> FontSampler {
-        FontSampler {
+    pub(crate) fn installed() -> Jailed {
+        Jailed {
             runner: reprisefs::thumbnailers::Runner::jailed(),
             exe: reprisefs::thumbpipe::PROGRAM.into(),
         }
@@ -226,15 +224,7 @@ impl Explorer {
             let p = it.path.clone();
             Job::spawn(Some(&ctx.wake), move || {
                 let cache = repriseapp::thumbs::cache_for(repriseconf::current().thumbnail_cache);
-                read(
-                    &p,
-                    route,
-                    &Decoders::default_set(),
-                    cache.as_ref(),
-                    &FontSampler::installed(),
-                    max,
-                    scale,
-                )
+                read(&p, route, cache.as_ref(), &Jailed::installed(), max, scale)
             })
         });
         let landed = job.as_ref().and_then(|j| j.wait(self.list_wait()));

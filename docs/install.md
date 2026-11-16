@@ -536,8 +536,8 @@ desktop and stays out of the way when it's missing.
   gnome-font-viewer for fonts, libgsf for OpenDocument and Office files.
   Any package that installs a `.thumbnailer` file works. They run only
   with bubblewrap installed.
-- bubblewrap, for the freedesktop thumbnailers, JPEG XL thumbnails and the
-  font sample in Explorer's Space preview: each runs in a bubblewrap jail
-  with no network and only `/usr`, its input file and its output folder
+- bubblewrap, for the freedesktop thumbnailers, JPEG XL thumbnails and
+  Explorer's Space preview of a font or a JPEG XL: each runs in a bubblewrap
+  jail with no network and only `/usr`, its input file and its output folder
   visible. Without bubblewrap only pictures other than JPEG XL get
-  thumbnails and a font shows no sample.
+  thumbnails or previews, and a font shows no sample.
