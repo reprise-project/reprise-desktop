@@ -840,9 +840,19 @@ enum Wakeup {
     Balloon(BalloonSignal),
     /// Every `TrayHandle` is gone: the applet dropped it, or `start` gave up waiting.
     HandleDropped,
+    /// The bus closed the connection.
+    Closed,
 }
 
-async fn run(conn: Connection, shared: Shared, commands: async_channel::Receiver<Cmd>) {
+/// Why [`run`] returned.
+#[derive(Debug, PartialEq)]
+enum Ended {
+    HandleDropped,
+    Closed,
+}
+
+/// Serves the item on `conn` until every handle is gone or the connection closes.
+async fn run(conn: Connection, shared: Shared, commands: async_channel::Receiver<Cmd>) -> Ended {
     let (config, state) = (shared.config.clone(), shared.state.clone());
     let mut clickable = Clickable::default();
     let mut streams: futures_util::stream::SelectAll<
@@ -872,6 +882,14 @@ async fn run(conn: Connection, shared: Shared, commands: async_channel::Receiver
             .boxed(),
         );
     }
+    let bus = conn.clone();
+    streams.push(
+        futures_util::stream::once(async move {
+            bus.closed().await;
+            Wakeup::Closed
+        })
+        .boxed(),
+    );
     // Subscribing takes bus round trips, which must not hold up the commands or the loop's end.
     let bus = conn.clone();
     streams.push(
@@ -909,7 +927,63 @@ async fn run(conn: Connection, shared: Shared, commands: async_channel::Receiver
                 }
             }
             Wakeup::WatcherUp => register(&conn).await,
-            Wakeup::HandleDropped => break,
+            Wakeup::HandleDropped => return Ended::HandleDropped,
+            Wakeup::Closed => return Ended::Closed,
+        }
+    }
+    Ended::HandleDropped
+}
+
+/// Serves the item, its handoffs and its menu on `conn`, then asks for the program's bus name;
+/// whether it got the name.
+async fn serve_item(conn: &Connection, shared: &Shared) -> zbus::Result<bool> {
+    let server = conn.object_server();
+    server.at(ITEM_PATH, Item(shared.clone())).await?;
+    server.at(ITEM_PATH, Handoffs(shared.token.clone())).await?;
+    server.at(MENU_PATH, Menu(shared.clone())).await?;
+    let owned = conn
+        .request_name_with_flags(shared.config.bus_name, RequestNameFlags::DO_NOT_QUEUE)
+        .await;
+    Ok(matches!(owned, Ok(RequestNameReply::PrimaryOwner)))
+}
+
+/// A new session bus connection with the item served on it and the program's name owned.
+async fn reconnect(shared: &Shared) -> zbus::Result<Connection> {
+    let conn = Connection::session().await?;
+    match serve_item(&conn, shared).await? {
+        true => Ok(conn),
+        false => Err(zbus::Error::NameTaken),
+    }
+}
+
+/// Serves the item on `conn` until every handle is gone, connecting again with
+/// [`reprisebus::reconnect_pause`] between tries each time the connection closes.
+fn serve(conn: Connection, shared: Shared, commands: async_channel::Receiver<Cmd>) {
+    let mut conn = Some(conn);
+    let mut pause = Duration::ZERO;
+    loop {
+        let began = std::time::Instant::now();
+        let id = shared.config.id;
+        match conn
+            .take()
+            .map_or_else(|| zbus::block_on(reconnect(&shared)), Ok)
+        {
+            Ok(c) => {
+                let ended = zbus::block_on(async {
+                    register(&c).await;
+                    run(c, shared.clone(), commands.clone()).await
+                });
+                if ended == Ended::HandleDropped {
+                    return;
+                }
+                log::warn!("{id}: lost the session bus connection");
+            }
+            Err(e) => log::warn!("{id}: could not serve the tray item again: {e}"),
+        }
+        pause = reprisebus::reconnect_pause(pause, began.elapsed());
+        std::thread::sleep(pause);
+        if commands.is_closed() {
+            return;
         }
     }
 }
@@ -954,13 +1028,13 @@ pub fn start(config: Config, initial: Shown, wake: Wake) -> Started {
     let spawned = std::thread::Builder::new()
         .name(format!("{}-dbus", config.id))
         .spawn(move || {
-            zbus::block_on(async move {
+            let up = zbus::block_on(async move {
                 let conn = match Connection::session().await {
                     Ok(c) => c,
                     Err(e) => {
                         log::info!("no session bus, running without a tray icon: {e}");
                         let _ = ready_tx.send(Started::Unavailable);
-                        return;
+                        return None;
                     }
                 };
                 let state = Arc::new(Mutex::new(State {
@@ -970,57 +1044,40 @@ pub fn start(config: Config, initial: Shown, wake: Wake) -> Started {
                 let (msg_tx, msg_rx) = channel::<Msg>();
                 let token = Token::default();
                 let shared = Shared {
-                    state: state.clone(),
+                    state,
                     token: token.clone(),
                     msgs: msg_tx,
                     wake,
                     config: config.clone(),
                 };
-                let served = conn
-                    .object_server()
-                    .at(ITEM_PATH, Item(shared.clone()))
-                    .await
-                    .and(
-                        conn.object_server()
-                            .at(ITEM_PATH, Handoffs(token.clone()))
-                            .await,
-                    )
-                    .and(
-                        conn.object_server()
-                            .at(MENU_PATH, Menu(shared.clone()))
-                            .await,
-                    );
-                if let Err(e) = served {
-                    log::warn!("could not serve the tray item: {e}");
-                    let _ = ready_tx.send(Started::Unavailable);
-                    return;
-                }
-                let owned = conn
-                    .request_name_with_flags(config.bus_name, RequestNameFlags::DO_NOT_QUEUE)
-                    .await;
-                if !matches!(owned, Ok(RequestNameReply::PrimaryOwner)) {
-                    if raises_running(std::env::args_os()) {
-                        activate_existing(&conn, &config).await;
+                match serve_item(&conn, &shared).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        if raises_running(std::env::args_os()) {
+                            activate_existing(&conn, &config).await;
+                        }
+                        let _ = ready_tx.send(Started::AlreadyRunning);
+                        return None;
                     }
-                    let _ = ready_tx.send(Started::AlreadyRunning);
-                    return;
+                    Err(e) => {
+                        log::warn!("could not serve the tray item: {e}");
+                        let _ = ready_tx.send(Started::Unavailable);
+                        return None;
+                    }
                 }
                 let (cmd_tx, cmd_rx) = async_channel::unbounded::<Cmd>();
-                if ready_tx
-                    .send(Started::Running(
-                        TrayHandle {
-                            commands: cmd_tx,
-                            token,
-                        },
-                        msg_rx,
-                    ))
-                    .is_err()
-                {
-                    return;
-                }
-                register(&conn).await;
-                run(conn, shared, cmd_rx).await;
-            })
+                let handle = TrayHandle {
+                    commands: cmd_tx,
+                    token,
+                };
+                ready_tx
+                    .send(Started::Running(handle, msg_rx))
+                    .ok()
+                    .map(|()| (conn, shared, cmd_rx))
+            });
+            if let Some((conn, shared, commands)) = up {
+                serve(conn, shared, commands);
+            }
         });
     if spawned.is_err() {
         return Started::Unavailable;
@@ -1162,14 +1219,40 @@ mod tests {
         );
     }
 
-    /// Once the handle is gone the thread drops its connection, so no item outlives its applet.
-    #[test]
-    fn the_bus_loop_ends_once_the_handle_is_dropped() {
+    fn test_shared() -> Shared {
+        let config = Config {
+            bus_name: "reprise.test",
+            id: "reprise-test",
+            title: "Test",
+            notify_icon: "",
+            raise: Raise::Activate,
+        };
+        let state = Arc::new(Mutex::new(State {
+            shown: Shown {
+                icon: Icon::Name(String::new()),
+                tip: String::new(),
+                active: false,
+                nodes: Vec::new(),
+            },
+            revision: 1,
+        }));
+        Shared {
+            state,
+            token: Token::default(),
+            msgs: channel().0,
+            wake: Arc::new(|| {}),
+            config,
+        }
+    }
+
+    /// How [`run`] ends on a p2p connection: with every handle dropped first, or once the
+    /// client end closes.
+    fn run_ends(drop_handle: bool) -> Option<Ended> {
         let (a, b) = std::os::unix::net::UnixStream::pair().expect("socket pair");
         let (done_tx, done_rx) = channel();
         std::thread::spawn(move || {
             zbus::block_on(async move {
-                let (server, _client) = futures_util::future::join(
+                let (server, client) = futures_util::future::join(
                     zbus::connection::Builder::unix_stream(a)
                         .server(zbus::Guid::generate())
                         .p2p()
@@ -1177,40 +1260,30 @@ mod tests {
                     zbus::connection::Builder::unix_stream(b).p2p().build(),
                 )
                 .await;
-                let config = Config {
-                    bus_name: "reprise.test",
-                    id: "reprise-test",
-                    title: "Test",
-                    notify_icon: "",
-                    raise: Raise::Activate,
-                };
-                let state = Arc::new(Mutex::new(State {
-                    shown: Shown {
-                        icon: Icon::Name(String::new()),
-                        tip: String::new(),
-                        active: false,
-                        nodes: Vec::new(),
-                    },
-                    revision: 1,
-                }));
-                let (msgs, _msg_rx) = channel();
-                let shared = Shared {
-                    state,
-                    token: Token::default(),
-                    msgs,
-                    wake: Arc::new(|| {}),
-                    config,
-                };
                 let (cmd_tx, cmd_rx) = async_channel::unbounded::<Cmd>();
-                drop(cmd_tx);
-                run(server.expect("p2p connection"), shared, cmd_rx).await;
-                let _ = done_tx.send(());
+                let client = client.expect("p2p connection");
+                if drop_handle {
+                    drop(cmd_tx);
+                } else {
+                    client.close().await.expect("closed");
+                    std::mem::forget(cmd_tx);
+                }
+                let ended = run(server.expect("p2p connection"), test_shared(), cmd_rx).await;
+                let _ = done_tx.send(ended);
             })
         });
-        assert!(
-            done_rx.recv_timeout(Duration::from_secs(5)).is_ok(),
-            "run returns once its command channel closes"
-        );
+        done_rx.recv_timeout(Duration::from_secs(5)).ok()
+    }
+
+    /// Once the handle is gone the thread drops its connection, so no item outlives its applet.
+    #[test]
+    fn the_bus_loop_ends_once_the_handle_is_dropped() {
+        assert_eq!(run_ends(true), Some(Ended::HandleDropped));
+    }
+
+    #[test]
+    fn the_bus_loop_ends_once_its_connection_closes_so_it_can_connect_again() {
+        assert_eq!(run_ends(false), Some(Ended::Closed));
     }
 
     fn sent(h: &Handoff) -> HashMap<String, OwnedVariant> {

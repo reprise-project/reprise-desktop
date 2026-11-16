@@ -1239,12 +1239,6 @@ fn push_known_item(streams: &mut SelectAll<BoxStream<'static, Wake>>, bus: Strin
     streams.push(once.boxed());
 }
 
-/// When the tray connects again after losing its connection: at first soon, then backing
-/// off while connections keep dying within [`STEADY`] of being made.
-const RECONNECT_FIRST: Duration = Duration::from_secs(1);
-const RECONNECT_MOST: Duration = Duration::from_secs(30);
-const STEADY: Duration = Duration::from_secs(60);
-
 /// Serve the tray on the session bus, or the bus at `address`, connecting again whenever the
 /// connection is lost, until a shutdown or a first connection that can't be set up.
 async fn serve(kept: &Kept, address: Option<&str>) {
@@ -1272,10 +1266,7 @@ async fn serve(kept: &Kept, address: Option<&str>) {
             }
             Err(e) => log::warn!("tray: could not serve on the session bus again: {e}"),
         }
-        pause = match pause.is_zero() || began.elapsed() >= STEADY {
-            true => RECONNECT_FIRST,
-            false => (pause * 2).min(RECONNECT_MOST),
-        };
+        pause = reprisebus::reconnect_pause(pause, began.elapsed());
         log::warn!("tray: connecting again in {pause:?}");
         async_io::Timer::after(pause).await;
     }

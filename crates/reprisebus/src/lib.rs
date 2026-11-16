@@ -94,28 +94,50 @@ use zbus::{Connection, Message, MessageStream, OwnedMatchRule};
 pub const METHOD_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The program's session bus connection, made by the first call that finds
-/// the bus.
+/// the bus and made again once it closes.
 pub fn session() -> zbus::Result<Connection> {
     static SESSION: Mutex<Option<Connection>> = Mutex::new(None);
-    let mut conn = lock(&SESSION);
-    if let Some(c) = conn.as_ref() {
+    cached(&SESSION, || {
+        connect(zbus::connection::Builder::session().method_timeout(METHOD_TIMEOUT))
+    })
+}
+
+/// The program's system bus connection, made by the first call that finds the bus and made again
+/// once it closes.
+pub fn system() -> zbus::Result<Connection> {
+    static SYSTEM: Mutex<Option<Connection>> = Mutex::new(None);
+    cached(&SYSTEM, || {
+        connect(zbus::connection::Builder::system().method_timeout(METHOD_TIMEOUT))
+    })
+}
+
+/// The connection in `slot`, or one `build` makes when there is none or it closed (the broker
+/// dropped it, or the bus restarted).
+fn cached(
+    slot: &Mutex<Option<Connection>>,
+    build: impl FnOnce() -> zbus::Result<Connection>,
+) -> zbus::Result<Connection> {
+    let mut conn = lock(slot);
+    if let Some(c) = conn.as_ref().filter(|c| !c.is_closed()) {
         return Ok(c.clone());
     }
-    let c = connect(zbus::connection::Builder::session().method_timeout(METHOD_TIMEOUT))?;
+    let c = build()?;
     *conn = Some(c.clone());
     Ok(c)
 }
 
-/// The program's system bus connection, made by the first call that finds the bus.
-pub fn system() -> zbus::Result<Connection> {
-    static SYSTEM: Mutex<Option<Connection>> = Mutex::new(None);
-    let mut conn = lock(&SYSTEM);
-    if let Some(c) = conn.as_ref() {
-        return Ok(c.clone());
+/// The pause before connecting again after losing a connection, or failing to make one, that
+/// was up for `up_for` after a pause of `last`: 1 s at first, doubling up to 30 s while
+/// connections keep dying within a minute of being made.
+pub fn reconnect_pause(last: Duration, up_for: Duration) -> Duration {
+    const FIRST: Duration = Duration::from_secs(1);
+    const MOST: Duration = Duration::from_secs(30);
+    const STEADY: Duration = Duration::from_secs(60);
+    if last.is_zero() || up_for >= STEADY {
+        FIRST
+    } else {
+        (last * 2).min(MOST)
     }
-    let c = connect(zbus::connection::Builder::system().method_timeout(METHOD_TIMEOUT))?;
-    *conn = Some(c.clone());
-    Ok(c)
 }
 
 /// Builds a connection whose I/O runs on a helper thread of its own, so any
@@ -376,5 +398,64 @@ mod tests {
             None,
             "another name"
         );
+    }
+
+    #[test]
+    fn reconnecting_backs_off_while_connections_keep_dying() {
+        let s = Duration::from_secs;
+        assert_eq!(reconnect_pause(Duration::ZERO, s(0)), s(1));
+        assert_eq!(reconnect_pause(s(1), s(2)), s(2));
+        assert_eq!(reconnect_pause(s(16), s(2)), s(30));
+        assert_eq!(reconnect_pause(s(30), s(2)), s(30));
+        assert_eq!(
+            reconnect_pause(s(30), s(60)),
+            s(1),
+            "a connection that held"
+        );
+    }
+
+    /// A p2p client connection, made as [`session`] makes its own, and its server end.
+    pub(crate) fn pair() -> (Connection, Connection) {
+        let (a, b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let server = std::thread::spawn(move || {
+            zbus::block_on(
+                zbus::connection::Builder::unix_stream(a)
+                    .server(zbus::Guid::generate())
+                    .p2p()
+                    .build(),
+            )
+        });
+        let client = connect(zbus::connection::Builder::unix_stream(b).p2p()).unwrap();
+        (client, server.join().unwrap().unwrap())
+    }
+
+    #[test]
+    fn a_cached_connection_is_made_again_once_it_closes() {
+        let slot = Mutex::new(None);
+        let mut server = None;
+        let made = |server: &mut Option<Connection>| {
+            cached(&slot, || {
+                let (client, s) = pair();
+                *server = Some(s);
+                Ok(client)
+            })
+            .unwrap()
+        };
+        let first = made(&mut server);
+        let kept = cached(&slot, || -> zbus::Result<Connection> {
+            panic!("made again while open")
+        })
+        .unwrap();
+        assert_eq!(kept.server_guid(), first.server_guid());
+        let peer = server.take().unwrap();
+        wait(peer.close()).unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while !first.is_closed() && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(first.is_closed(), "the peer's close reaches the client");
+        let next = made(&mut server);
+        assert!(!next.is_closed(), "a new connection");
+        assert_ne!(next.server_guid(), first.server_guid());
     }
 }
