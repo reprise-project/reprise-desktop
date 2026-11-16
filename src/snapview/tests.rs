@@ -1129,3 +1129,35 @@ fn the_snap_bar_thumbnail_asks_for_frames_only_where_it_and_its_window_show() {
     );
     assert_eq!(take_asked_outputs(), ["TEST-1"], "it goes from TEST-1");
 }
+
+#[test]
+fn a_drag_to_the_side_of_an_output_with_no_work_area_left_snaps_nothing() {
+    let mut h = crate::harness::Harness::new();
+    h.add_output("TEST-1", 1024, 768, Some((0, 0)));
+    let two = h.add_output("TEST-2", 1024, 768, Some((0, 768)));
+    h.dispatch();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    h.state.move_to(t.id, 300, 1000);
+    h.pointer_to(500.0, 1100.0);
+    h.map_reserving_panel(&mut c, 768);
+    assert_eq!(
+        h.state.usable_area(Some(&two)).height,
+        0,
+        "the panel reserves all of TEST-2"
+    );
+    let r = h.state.win(t.id).expect("window").frame_rect();
+    h.pointer_to(f64::from(r.x + r.width / 2), f64::from(r.y + 10));
+    h.button(crate::harness::LEFT, true);
+    h.pointer_to(0.0, 1300.0);
+    h.button(crate::harness::LEFT, false);
+    assert_eq!(
+        h.state.interaction,
+        Interaction::Idle,
+        "the drop ends the move"
+    );
+    assert!(
+        h.state.win(t.id).is_some_and(|w| w.snapped.is_none()),
+        "and snaps nothing"
+    );
+}

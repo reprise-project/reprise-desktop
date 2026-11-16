@@ -437,6 +437,9 @@ impl State {
         }
         let out = self.output_exactly_at(cx, cy)?;
         let work = self.usable_area(Some(&out));
+        if work.width <= 0 || work.height <= 0 {
+            return None;
+        }
         let (x, y) = (cx.floor() as i32, cy.floor() as i32);
         let live = self.snap_live();
         let live = |m| live.contains(&m);
