@@ -81,8 +81,8 @@ impl StartPanelView {
     }
 }
 
-fn outlived(on: &Output, outputs: &[Output]) -> bool {
-    !outputs.contains(on)
+pub fn open_on(state: &State) -> Option<Output> {
+    Some(state.start_panel.as_ref()?.output.clone())
 }
 
 impl State {
@@ -205,18 +205,6 @@ impl State {
         }
         self.redraw_start_panel();
         self.redraw_taskbar(bar);
-    }
-
-    /// Close the panel if its output left the scene: it would stay at
-    /// stale coordinates taking every key and the pointer.
-    pub fn close_start_panel_off_scene(&mut self) {
-        if self
-            .start_panel
-            .as_ref()
-            .is_some_and(|v| outlived(&v.output, self.scene.outputs()))
-        {
-            self.close_start_panel();
-        }
     }
 
     pub(crate) fn close_start_panel(&mut self) {

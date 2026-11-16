@@ -319,12 +319,6 @@ pub fn scroll(state: &mut State, cell: usize, horizontal: bool, discrete: i32, c
     crate::tray::scroll_item(state, id, steps, horizontal);
 }
 
-pub fn output_gone(state: &mut State) {
-    if open_on(state).is_some_and(|o| !state.scene.outputs().contains(&o)) {
-        close(state);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

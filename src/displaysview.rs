@@ -337,14 +337,6 @@ fn panel_tree(model: &DisplayPanel, lay: &Layout, at: (i32, i32)) -> Tree {
 }
 
 /// The layout changed: a panel whose output went away goes with it.
-pub fn output_gone(state: &mut State) {
-    let gone = (state.displays_view.view.as_ref())
-        .is_some_and(|v| !state.scene.outputs().contains(&v.output));
-    if gone {
-        close(state);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

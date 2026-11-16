@@ -376,8 +376,6 @@ impl State {
             self.interaction = crate::input::Interaction::Idle;
             self.set_cursor("default");
         }
-        self.close_menus_off_scene();
-        self.close_start_panel_off_scene();
     }
 
     /// Put `output` in the layout with its `[[outputs]]` settings, or take
@@ -760,14 +758,9 @@ impl State {
         self.keep_dialogs_inside();
         crate::tray::forget_output(self);
         crate::tray::sync_icon_sizes(self);
-        crate::trayflyout::output_gone(self);
-        crate::calendarview::output_gone(self);
-        crate::displaysview::output_gone(self);
+        crate::popups::Popup::close_off_scene(self);
         crate::displays::outputs_changed(self);
         crate::screenrecord::outputs_changed(self);
-        crate::taskpreview::output_gone(self);
-        crate::snappickerview::output_gone(self);
-        crate::projectorview::output_gone(self);
         crate::tooltip::output_gone(self);
         self.relayout_desktop();
         // An output's scale can change under a window (wlr-randr --scale).

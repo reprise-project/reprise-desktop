@@ -5,7 +5,7 @@ use reprisekit::controls::switcher::{self, SwitcherLayout, ThumbCell};
 use reprisekit::interfaces;
 use reprisekit::taskpreview::fit;
 use reprisescene::{BufferId, Input, TreeId};
-use smithay::{backend::input::InputTime, utils::Rectangle};
+use smithay::{backend::input::InputTime, output::Output, utils::Rectangle};
 
 use crate::{
     compositor::{SceneOwner, State},
@@ -55,6 +55,15 @@ impl SwitcherView {
     pub fn is_open(&self) -> bool {
         self.panel.is_some() || self.stack.is_some()
     }
+
+    /// The output the Alt+Tab panel or the 3D switcher is on.
+    pub fn open_on(&self) -> Option<Output> {
+        match (&self.panel, &self.stack) {
+            (Some(p), _) => p.output.clone(),
+            (None, Some(s)) => Some(s.output.clone()),
+            (None, None) => None,
+        }
+    }
 }
 
 pub struct Switcher {
@@ -62,6 +71,8 @@ pub struct Switcher {
     pub selected: usize,
     pub mods: u32,
     pub area: Rect,
+    /// The output it opened on, under the pointer.
+    output: Option<Output>,
     pub layout: SwitcherLayout,
     pub tree: TreeId,
     glass_tree: TreeId,
@@ -246,6 +257,7 @@ impl State {
             selected,
             mods,
             area,
+            output: out,
             layout: SwitcherLayout::compute(0, 0, area, false),
             tree,
             glass_tree,
