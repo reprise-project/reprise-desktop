@@ -181,7 +181,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   stays on the screen); a click brings the window up, and a
   double-click or its close box closes it. It keeps following a minimized
   window. Several windows can each have one; Mini View again, or closing the
-  window, closes it. Screenshots and screen sharing show it like anything
+  window, closes it. One left on an unplugged screen moves to the lower right
+  of the screen under the pointer. Screenshots and screen sharing show it like anything
   else on screen.
 - **Window tabs.** Drag a window by its caption onto another window's caption
   and hold it there: the two share one frame, their titles as tabs. A ghost

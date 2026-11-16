@@ -185,6 +185,7 @@ pub(super) fn render(state: &mut State, head: Head) {
     let wanted = crate::glass::wanted(config);
     glass.update_screen_backdrop(&mut b.renderer, scene, &output, clear, wanted);
     magnifier.still = config.effects.reduce_motion;
+    let was_zoomed = magnifier.any_zoomed();
     let mut build = |renderer: &mut GlesRenderer| {
         crate::magnifier::output_elements(
             magnifier,
@@ -208,6 +209,7 @@ pub(super) fn render(state: &mut State, head: Head) {
         glass.update_backdrop(&mut b.renderer, scene, &output, clear, wanted);
         elements = build(&mut b.renderer);
     }
+    let zoom_dropped = was_zoomed && !magnifier.any_zoomed();
     if !border.is_empty() {
         use smithay::backend::renderer::element::Element;
         let below_pointer = elements
@@ -279,6 +281,9 @@ pub(super) fn render(state: &mut State, head: Head) {
     }
     if let Some(wait) = owed {
         state.arm_catch_up(&output, wait);
+    }
+    if zoom_dropped {
+        state.sync_caret_reports();
     }
     if state.magnifier.panning(&output)
         || stepped.fell
