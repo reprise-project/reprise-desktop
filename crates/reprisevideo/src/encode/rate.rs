@@ -1,6 +1,9 @@
 //! How an encoder spends bits: a quality on each codec's CRF or QP scale, or a bitrate, as each
 //! backend's FFmpeg options.
 
+use std::ffi::{CStr, c_char};
+use std::sync::OnceLock;
+
 use super::Codec;
 use super::probe::Backend;
 
@@ -88,7 +91,25 @@ fn software_preset(codec: Codec) -> (&'static str, String) {
     ("preset", preset.into())
 }
 
+/// `rate` as `backend`'s settings for `codec`. A constant rate on an SVT-AV1 whose CBR can
+/// deadlock runs as an average one at the same bitrate.
 pub fn rate(backend: Backend, codec: Codec, rate: RateControl) -> Rate {
+    settings(backend, codec, rate, svt_cbr_holds)
+}
+
+/// [`rate`], asking `svt_cbr` only for a constant rate on SVT-AV1.
+fn settings(
+    backend: Backend,
+    codec: Codec,
+    rate: RateControl,
+    svt_cbr: impl FnOnce() -> bool,
+) -> Rate {
+    let rate = match (backend, codec, rate) {
+        (Backend::Software, Codec::Av1, RateControl::Constant(kbit)) if !svt_cbr() => {
+            RateControl::Average(kbit)
+        }
+        _ => rate,
+    };
     let (kbit, constant) = match rate {
         RateControl::Quality(q) => {
             let qp = quality_qp(codec, q);
@@ -162,6 +183,48 @@ pub fn rate(backend: Backend, codec: Codec, rate: RateControl) -> Rate {
         buffer_size: i32::try_from(buffer).unwrap_or(i32::MAX),
         global_quality: 0,
         options,
+    }
+}
+
+/// Whether the SVT-AV1 this process loaded runs low-delay CBR without the deadlock fixed in
+/// 4.3.0 (SVT-AV1 issue #3527). Logs once when it doesn't.
+fn svt_cbr_holds() -> bool {
+    static HOLDS: OnceLock<bool> = OnceLock::new();
+    *HOLDS.get_or_init(|| {
+        let version = svt_version();
+        let holds = version.as_deref().is_some_and(cbr_holds_on);
+        if !holds {
+            log::warn!(
+                "SVT-AV1 {}: a constant bitrate runs as an average one, as its CBR can deadlock before 4.3.0",
+                version.as_deref().unwrap_or("of unknown version")
+            );
+        }
+        holds
+    })
+}
+
+/// Whether SVT-AV1 `version` ("v4.3.0", "4.3.1-5-gabcdef") is 4.3 or later.
+fn cbr_holds_on(version: &str) -> bool {
+    let mut parts =
+        (version.trim_start_matches('v').split(['.', '-', '+'])).map(|p| p.parse::<u32>().ok());
+    match (parts.next().flatten(), parts.next().flatten()) {
+        (Some(major), Some(minor)) => (major, minor) >= (4, 3),
+        _ => false,
+    }
+}
+
+/// The version string of the SVT-AV1 linked into FFmpeg, if one is loaded.
+fn svt_version() -> Option<String> {
+    // SAFETY: a lookup in the global scope; when found, the symbol is SVT-AV1's
+    // `const char *svt_av1_get_version(void)`, which returns a static string.
+    unsafe {
+        let f = libc::dlsym(libc::RTLD_DEFAULT, c"svt_av1_get_version".as_ptr());
+        if f.is_null() {
+            return None;
+        }
+        let f: extern "C" fn() -> *const c_char = std::mem::transmute(f);
+        let s = f();
+        (!s.is_null()).then(|| CStr::from_ptr(s).to_string_lossy().into_owned())
     }
 }
 
@@ -268,10 +331,59 @@ mod tests {
         assert_eq!(n.options, pairs(&[("rc", "vbr"), ("preset", "p4")]));
         let s = rate(Backend::Software, Codec::Av1, RateControl::Average(2000));
         assert_eq!((s.max_rate, s.buffer_size), (0, 4_000_000));
-        let s = rate(Backend::Software, Codec::Av1, RateControl::Constant(2000));
+        let s = settings(
+            Backend::Software,
+            Codec::Av1,
+            RateControl::Constant(2000),
+            || true,
+        );
         assert!(
             s.options
                 .contains(&("svtav1-params", "pred-struct=1".into()))
         );
+        assert_eq!((s.max_rate, s.buffer_size), (2_000_000, 2_000_000));
+    }
+
+    #[test]
+    fn a_constant_rate_on_an_svt_av1_that_deadlocks_in_cbr_runs_as_an_average_one() {
+        let held = |codec, rate| {
+            settings(Backend::Software, codec, rate, || {
+                panic!("asked about SVT-AV1 for {rate:?}")
+            })
+        };
+        let not_held =
+            |backend, codec| settings(backend, codec, RateControl::Constant(2000), || false);
+        assert_eq!(
+            not_held(Backend::Software, Codec::Av1),
+            held(Codec::Av1, RateControl::Average(2000))
+        );
+        held(Codec::Av1, RateControl::Quality(55));
+        held(Codec::H264, RateControl::Constant(2000));
+        let va = Backend::Vaapi { low_power: false };
+        assert_eq!(
+            not_held(va, Codec::Av1).options[0],
+            ("rc_mode", "CBR".into())
+        );
+    }
+
+    #[test]
+    fn the_svt_av1_behind_ffmpegs_encoder_reports_its_version() {
+        if ::ffmpeg::encoder::find_by_name("libsvtav1").is_some() {
+            let v = svt_version().expect("svt_av1_get_version in the global scope");
+            assert!(
+                v.trim_start_matches('v').starts_with(char::is_numeric),
+                "{v}"
+            );
+        }
+    }
+
+    #[test]
+    fn svt_av1_runs_cbr_from_4_3_on() {
+        for v in ["v4.3.0", "4.3.1-5-gabcdef0", "v5.0.0", "v10.1.0"] {
+            assert!(cbr_holds_on(v), "{v} holds");
+        }
+        for v in ["v4.2.0", "v4.2.9", "v3.1.2", "4", "", "unknown"] {
+            assert!(!cbr_holds_on(v), "{v} deadlocks or is unknown");
+        }
     }
 }

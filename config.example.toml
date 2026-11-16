@@ -344,7 +344,8 @@ suspend_after = 0            # run [power] standby
 # rate = "quality"           # "quality": a constant quality; "average": bitrate on average, peaks up to twice it
 #                            # (SVT-AV1 caps none); "constant": bitrate each second, a frame each slot, a still
 #                            # screen padded to it by x264, x265 and NVENC (SVT-AV1, VA-API and Vulkan can stay
-#                            # under it). Quality and average add a picture only when the screen changes
+#                            # under it; before SVT-AV1 4.3 software AV1 codes it as average). Quality and
+#                            # average add a picture only when the screen changes
 # quality = 55               # 1 to 100, for "quality"; 55 is x264's CRF 23 and the hardware encoders' QP 24,
 #                            # H.265 and AV1 on their own scales
 # bitrate = 8000             # kbit/s, 500 to 100000, for "average" and "constant"
