@@ -409,7 +409,7 @@ impl App for Viewer {
         }
         let reply = match win {
             DELETE => self.delete_event(ev),
-            ErrorBox::WIN => self.error.event(&ev, &self.dialog_text, &self.forms),
+            w if self.error.owns(w) => self.error.event(w, &ev, &self.dialog_text, &self.forms),
             OPEN => self.open_event(ev, ctx),
             _ => self.main_event(ev, ctx),
         };
@@ -424,7 +424,7 @@ impl App for Viewer {
                     b.draw(c, &self.forms, &self.dialog_text);
                 }
             }
-            ErrorBox::WIN => self.error.draw(c, &self.forms, &self.dialog_text),
+            w if self.error.owns(w) => self.error.draw(c, &self.forms, &self.dialog_text),
             OPEN => {
                 if let Some(d) = &self.open {
                     let (w, h) = d.client();
@@ -485,7 +485,7 @@ impl Extended for Viewer {
                     b.access(tree, dt, forms);
                 }
             }
-            ErrorBox::WIN => self.error.access(tree, dt, forms),
+            w if self.error.owns(w) => self.error.access(tree, dt, forms),
             OPEN => {
                 if let Some(d) = &self.open {
                     let (w, h) = d.client();

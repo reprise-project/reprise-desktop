@@ -11,7 +11,7 @@ use repriseconf::Key;
 use reprisekit::controls::propsheet;
 use std::path::PathBuf;
 
-use repriseapp::{Ctx, Event, Reply};
+use repriseapp::{Ctx, Event, Reply, WinId};
 
 pub(crate) const RUN_AS_QUESTION: &str = "Turn off Run As?\nFrom the next log on, programs that need an administrator password (Software Updates, Network Connections, drives) cannot ask for one.";
 
@@ -342,20 +342,18 @@ impl SettingsApp {
         }
     }
 
-    /// Show `reason` in the error box; the first failure wins.
+    /// Show `reason` in an error box, behind the boxes already up or waiting.
     pub(crate) fn fail(&mut self, reason: &str) {
-        if !self.error.is_shown() {
-            // `dialog-error` is the theme's, so it is `None` until the
-            // first event primed it and the box draws without a column.
-            let icon = self.err_icon.clone();
-            self.error
-                .show("Reprise Settings", reason.to_string(), icon);
-        }
+        // `dialog-error` is the theme's, so it is `None` until the
+        // first event primed it and the box draws without a column.
+        let icon = self.err_icon.clone();
+        self.error
+            .show("Reprise Settings", reason.to_string(), icon);
     }
 
-    pub(crate) fn error_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
+    pub(crate) fn error_event(&mut self, win: WinId, ev: Event, ctx: &Ctx) -> Reply {
         let theme = self.dialog_theme(&ctx.theme);
-        self.error.event(&ev, &self.dialog_text, &theme)
+        self.error.event(win, &ev, &self.dialog_text, &theme)
     }
 
     /// Reread `config.toml` after a write from elsewhere: the controls the user has not moved show

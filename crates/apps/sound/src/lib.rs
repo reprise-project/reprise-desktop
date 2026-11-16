@@ -682,7 +682,7 @@ impl App for Sound {
             return;
         }
         let forms = ctx.forms();
-        if win == ErrorBox::WIN {
+        if self.error.owns(win) {
             self.error.draw(c, &forms, &ctx.text);
             return;
         }
@@ -725,7 +725,7 @@ impl repriseapp::Extended for Sound {
         let s = self
             .sheet
             .as_mut()
-            .filter(|_| win != ErrorBox::WIN && win != FLYOUT_WIN)?;
+            .filter(|_| !self.error.owns(win) && win != FLYOUT_WIN)?;
         Some(repriseapp::ReaderForm::Sheet(&mut s.sheet))
     }
 
@@ -750,7 +750,7 @@ impl repriseapp::Extended for Sound {
                     tree.set_focus(focus);
                 }
             }
-            ErrorBox::WIN => self.error.access(tree, &ctx.text, &forms),
+            w if self.error.owns(w) => self.error.access(tree, &ctx.text, &forms),
             _ => {
                 if let Some(s) = &self.sheet {
                     oneshot::access_sheet(&s.sheet, tree, &ctx.text, forms.fonts.size_px);
@@ -765,11 +765,11 @@ impl Sound {
         if matches!(ev, Event::Wake) {
             return self.wake(ctx);
         }
-        if win == ErrorBox::WIN {
+        if self.error.owns(win) {
             let Some(text) = &self.dialog_text else {
                 return Reply::none();
             };
-            return self.error.event(&ev, text, &self.forms);
+            return self.error.event(win, &ev, text, &self.forms);
         }
         if win == FLYOUT_WIN {
             return self.flyout_event(ev, ctx);

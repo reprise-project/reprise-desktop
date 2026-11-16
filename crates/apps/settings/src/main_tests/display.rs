@@ -358,7 +358,7 @@ fn a_refused_vrr_on_ok_says_so_and_keeps_the_sheet() {
     let text = app.error.shown().map(|b| b.fields.text.clone());
     assert_eq!(text.as_deref(), Some(displayflow::VRR_REFUSED));
     assert!(
-        app.children().iter().any(|c| c.id == ErrorBox::WIN),
+        app.children().iter().any(|c| app.error.owns(c.id)),
         "the error box is up"
     );
     assert_eq!(

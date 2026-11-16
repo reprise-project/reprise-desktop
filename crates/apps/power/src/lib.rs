@@ -645,7 +645,7 @@ impl App for PowerApp {
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         self.dialog_text = Some(ctx.text.clone());
         let forms = ctx.forms();
-        if win == ErrorBox::WIN {
+        if self.error.owns(win) {
             self.error.draw(c, &forms, &ctx.text);
             return;
         }
@@ -677,13 +677,13 @@ impl repriseapp::Extended for PowerApp {
     }
 
     fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
-        let s = self.sheet.as_mut().filter(|_| win != ErrorBox::WIN)?;
+        let s = self.sheet.as_mut().filter(|_| !self.error.owns(win))?;
         Some(repriseapp::ReaderForm::Sheet(&mut s.sheet))
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let forms = ctx.forms();
-        if win == ErrorBox::WIN {
+        if self.error.owns(win) {
             self.error.access(tree, &ctx.text, &forms);
         } else if let Some(s) = &self.sheet {
             oneshot::access_sheet(&s.sheet, tree, &ctx.text, forms.fonts.size_px);
@@ -696,11 +696,11 @@ impl PowerApp {
         if matches!(ev, Event::Wake) {
             return self.wake();
         }
-        if win == ErrorBox::WIN {
+        if self.error.owns(win) {
             let Some(text) = &self.dialog_text else {
                 return Reply::none();
             };
-            return self.error.event(&ev, text, &self.forms);
+            return self.error.event(win, &ev, text, &self.forms);
         }
         self.ensure(ctx);
         let Some(s) = &mut self.sheet else {

@@ -538,6 +538,32 @@ fn reader_read(a: &mut SettingsApp, reader: readerhost::Reader, failed: Option<S
     a.reader_done();
 }
 
+#[test]
+fn two_failures_in_one_wake_show_two_boxes_in_turn() {
+    let mut a = app("twofailures");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let failed = Some("Remote Desktop could not be turned on.".into());
+    let remote = remotehost::Remote::default();
+    tx.send(remotehost::Reading { remote, failed }).unwrap();
+    a.remote_job = Some(rx);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let failed = Some("The screen reader could not be started.".into());
+    let reader = readerhost::Reader::default();
+    tx.send(readerhost::Reading { reader, failed }).unwrap();
+    a.reader_job = Some(rx);
+    a.wake();
+    let up = |a: &SettingsApp| a.error.shown().map(|b| b.fields.text.clone());
+    assert_eq!(
+        up(&a).as_deref(),
+        Some("Remote Desktop could not be turned on.")
+    );
+    a.error.close();
+    assert_eq!(
+        up(&a).as_deref(),
+        Some("The screen reader could not be started.")
+    );
+}
+
 /// The screen reader's boxes show what was read, grey with a note while Orca is missing, and
 /// moving one writes nothing to config.toml.
 #[test]

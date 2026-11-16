@@ -141,7 +141,7 @@ fn a_failed_save_is_kept_pending_and_told_once() {
         n.event(win, typed("Buy milk"), &mut ctx);
         assert!(n.save_due(later()), "the failed save still waits");
         assert!(n.error.is_shown(), "the box says the note was not saved");
-        assert_eq!(n.parent(ErrorBox::WIN), Some(win));
+        assert_eq!(n.parent(n.error.win().expect("the box")), Some(win));
         n.error.close();
         assert!(n.save_due(later() + Autosave::DELAY));
         assert!(

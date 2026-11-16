@@ -3,6 +3,7 @@
 //! is the one their forms draw in ([`crate::Ctx::forms`]), whose text size the forms grow with.
 //! The form drawn last stays in a [`Shown`], so a cut label tips its whole text.
 
+use crate::asks::{Answer, Asks};
 use crate::keys::dialog_key;
 use crate::{BTN_LEFT, Child, Event, PointerInput, Reply, WinId};
 use reprisekit::access::{Tree, accesskit::NodeId};
@@ -300,78 +301,104 @@ impl MsgBox {
     }
 }
 
-/// A one-OK error box in a child window of its own, [`ErrorBox::WIN`]: a program's word that
-/// something failed. The program routes that window's events, draw and access here.
-#[derive(Default)]
-pub struct ErrorBox(Option<MsgBox>);
+/// One-OK error boxes in a modal child window: a program's word that something failed. Errors
+/// wait their turn ([`crate::asks`]); the program routes the windows [`ErrorBox::owns`] here.
+pub struct ErrorBox(Asks<()>);
+
+impl Default for ErrorBox {
+    fn default() -> ErrorBox {
+        ErrorBox::new(WinId::named("error"))
+    }
+}
 
 impl ErrorBox {
-    pub const WIN: WinId = WinId::named("error");
+    /// Boxes in `win` and the id [`Asks::new`] derives from it.
+    pub fn new(win: WinId) -> ErrorBox {
+        ErrorBox(Asks::new(win))
+    }
 
-    /// Shows `text` under `title`, with `icon` beside it, in place of any box shown.
+    /// The boxes cover `parent` instead of [`crate::MAIN`].
+    pub fn over(self, parent: WinId) -> ErrorBox {
+        ErrorBox(self.0.over(parent))
+    }
+
+    /// Shows `text` under `title`, with `icon` beside it, once the boxes before it are answered.
+    /// An error equal in title and text to one up or waiting is shown once.
     pub fn show(&mut self, title: &str, text: String, icon: Option<Canvas>) {
-        self.0 = Some(MsgBox::new(
-            title,
-            Fields {
-                text,
-                icon,
-                buttons: vec![reprisekit::kit_tr!("ok")],
-                default: 0,
-                min_text_h: None,
-                min_w: 0,
-                max_w: crate::dialog_max_w(),
-            },
-        ));
+        if (self.0.iter()).any(|(b, _)| b.title == title && b.fields.text == text) {
+            return;
+        }
+        let fields = Fields {
+            text,
+            icon,
+            buttons: vec![reprisekit::kit_tr!("ok")],
+            default: 0,
+            min_text_h: None,
+            min_w: 0,
+            max_w: crate::dialog_max_w(),
+        };
+        self.0.ask(MsgBox::new(title, fields), ());
     }
 
     pub fn is_shown(&self) -> bool {
-        self.0.is_some()
+        !self.0.is_empty()
     }
 
-    /// The box shown.
+    /// The box up.
     pub fn shown(&self) -> Option<&MsgBox> {
-        self.0.as_ref()
+        self.0.up().map(|(b, _)| b)
     }
 
-    /// The box shown, to give it an icon that loaded after it opened.
+    /// The box up, to give it an icon that loaded after it opened.
     pub fn shown_mut(&mut self) -> Option<&mut MsgBox> {
-        self.0.as_mut()
+        self.0.up_mut()
     }
 
+    /// Every box, the one up first.
+    pub fn boxes(&self) -> impl Iterator<Item = &MsgBox> {
+        self.0.iter().map(|(b, _)| b)
+    }
+
+    /// Takes the box up down, and the next is up.
     pub fn close(&mut self) {
-        self.0 = None;
+        self.0.close();
     }
 
-    /// The box's window while it is shown.
+    /// Whether `win` is one of the boxes' windows ([`Asks::owns`]).
+    pub fn owns(&self, win: WinId) -> bool {
+        self.0.owns(win)
+    }
+
+    /// The window of the box up.
+    pub fn win(&self) -> Option<WinId> {
+        self.0.win()
+    }
+
+    /// The window a box window covers ([`Asks::parent`]).
+    pub fn parent(&self, win: WinId) -> Option<WinId> {
+        self.0.parent(win)
+    }
+
+    /// The box's window while one is up.
     pub fn child(&self, text: &TextRenderer, theme: &Theme) -> Option<Child> {
-        Some(self.0.as_ref()?.child(Self::WIN, text, theme))
+        self.0.child(text, theme)
     }
 
-    /// An event for [`ErrorBox::WIN`]; OK and closing take the box down.
-    pub fn event(&mut self, ev: &Event, text: &TextRenderer, theme: &Theme) -> Reply {
-        let Some(b) = &mut self.0 else {
-            return Reply::none();
-        };
-        match b.event(ev, text, theme) {
-            Outcome::Closed(_) => {
-                self.0 = None;
-                Reply::redraw_all()
-            }
-            Outcome::Redraw => Reply::redraw(),
-            Outcome::None => Reply::none(),
+    /// An event for window `win`; OK and closing take the box down.
+    pub fn event(&mut self, win: WinId, ev: &Event, text: &TextRenderer, theme: &Theme) -> Reply {
+        match self.0.event(win, ev, text, theme) {
+            Answer::Closed(..) => Reply::redraw_all(),
+            Answer::Redraw => Reply::redraw(),
+            Answer::None => Reply::none(),
         }
     }
 
     pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer) {
-        if let Some(b) = &self.0 {
-            b.draw(c, theme, text);
-        }
+        self.0.draw(c, theme, text);
     }
 
     pub fn access(&self, tree: &mut Tree, text: &TextRenderer, theme: &Theme) {
-        if let Some(b) = &self.0 {
-            b.access(tree, text, theme);
-        }
+        self.0.access(tree, text, theme);
     }
 }
 
@@ -543,19 +570,67 @@ mod tests {
             e.shown().map(|b| b.fields.text.as_str()),
             Some("The device is gone.")
         );
-        assert_eq!(e.child(&text, &theme).map(|c| c.id), Some(ErrorBox::WIN));
+        assert_eq!(
+            e.child(&text, &theme).map(|c| c.id),
+            Some(WinId::named("error"))
+        );
         assert_eq!(
             e.shown().map(|b| b.fields.buttons.clone()),
             Some(vec!["OK".into()])
         );
-        let key = Event::Key(crate::KeyInput {
+        let win = e.win().unwrap();
+        assert!(e.event(win, &enter(), &text, &theme).redraw_all);
+        assert!(!e.is_shown());
+    }
+
+    fn enter() -> Event {
+        Event::Key(crate::KeyInput {
             sym: keysym::RETURN,
             utf8: None,
             mods: Default::default(),
             edit: None,
-        });
-        assert!(e.event(&key, &text, &theme).redraw_all);
+        })
+    }
+
+    #[test]
+    fn a_second_error_is_up_after_the_first_ones_ok_with_its_own_text() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let mut e = ErrorBox::default();
+        e.show("Image Viewer", "a.png is read-only.".into(), None);
+        e.show("Image Viewer", "b.png is read-only.".into(), None);
+        let text_up = |e: &ErrorBox| e.shown().map(|b| b.fields.text.clone());
+        assert_eq!(text_up(&e).as_deref(), Some("a.png is read-only."));
+        let first = e.win().unwrap();
+        assert!(e.event(first, &enter(), &text, &theme).redraw_all);
+        assert_eq!(text_up(&e).as_deref(), Some("b.png is read-only."));
+        let second = e.child(&text, &theme).expect("the second box").id;
+        assert_ne!(second, first, "a window of its own");
+        assert!(e.owns(second));
+        e.event(second, &enter(), &text, &theme);
         assert!(!e.is_shown());
+    }
+
+    #[test]
+    fn an_error_equal_to_one_up_or_waiting_is_shown_once() {
+        let mut e = ErrorBox::default();
+        e.show("Sounds", "The device is gone.".into(), None);
+        e.show("Sounds", "The mixer is gone.".into(), None);
+        e.show("Sounds", "The device is gone.".into(), None);
+        e.show("Sounds", "The mixer is gone.".into(), None);
+        e.show("Volume", "The device is gone.".into(), None);
+        let shown: Vec<_> = e
+            .boxes()
+            .map(|b| (b.title.as_str(), b.fields.text.as_str()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("Sounds", "The device is gone."),
+                ("Sounds", "The mixer is gone."),
+                ("Volume", "The device is gone.")
+            ]
+        );
     }
 
     #[test]

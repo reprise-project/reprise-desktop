@@ -9,6 +9,7 @@ reprisekit::strings!("repriseapp");
 pub mod about;
 mod access;
 mod app;
+pub mod asks;
 mod clipboard;
 pub mod colordlg;
 mod ctx;
