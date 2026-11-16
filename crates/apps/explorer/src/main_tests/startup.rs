@@ -298,3 +298,57 @@ fn a_start_menu_entrys_file_is_named_and_drawn_as_its_entry() {
     std::fs::write(&elsewhere, "x").expect("write");
     assert!(crate::props_host::menu_entry_in(&elsewhere, &apps, &dirs).is_none());
 }
+
+#[test]
+fn the_file_jobs_read_their_arguments_or_fall_back_to_a_folder_window() {
+    let alone = |args: &[&str]| parse_args(args.iter().map(std::ffi::OsString::from)).alone;
+    assert_eq!(
+        alone(&["--put", "move", "/t", "--", "/a", "/b"]),
+        Some(Alone::Put {
+            op: DropOp::Move,
+            target: PathBuf::from("/t"),
+            sources: vec![PathBuf::from("/a"), PathBuf::from("/b")],
+        })
+    );
+    assert_eq!(
+        alone(&["--put", "link", "/t", "--", "/a"]).map(|a| matches!(
+            a,
+            Alone::Put {
+                op: DropOp::Shortcut,
+                ..
+            }
+        )),
+        Some(true)
+    );
+    for bad in [
+        &["--put", "copy", "t", "--", "/a"][..],
+        &["--put", "copy", "/t", "/a"],
+        &["--put", "copy", "/t", "--"],
+        &["--put", "paste", "/t", "--", "/a"],
+        &["--delete"],
+        &["--zip", "a.txt"],
+    ] {
+        assert_eq!(alone(bad), None, "{bad:?}");
+    }
+    assert_eq!(
+        alone(&["--delete", "--erase", "/d/a.txt"]),
+        Some(Alone::Delete {
+            paths: vec![PathBuf::from("/d/a.txt")],
+            erase: true,
+        })
+    );
+    assert_eq!(
+        alone(&["--delete", "/d/a.txt"]),
+        Some(Alone::Delete {
+            paths: vec![PathBuf::from("/d/a.txt")],
+            erase: false,
+        })
+    );
+    assert_eq!(alone(&["--empty-bin"]), Some(Alone::EmptyBin));
+    assert_eq!(
+        alone(&["--zip", "/d/a.txt"]),
+        Some(Alone::Zip(vec![PathBuf::from("/d/a.txt")]))
+    );
+    let start = parse_args(["--put", "copy", "/t", "--", "/a"].map(std::ffi::OsString::from));
+    assert_eq!(start.place, Place::Folder(PathBuf::from("/t")));
+}

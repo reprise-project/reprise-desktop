@@ -416,14 +416,14 @@ impl Explorer {
         erase: bool,
         no_bin: reprisefs::bincap::BinLack,
         icon: IconSlot,
-        empty_bin: bool,
+        empty_bin: Option<usize>,
         bin: Option<Vec<crate::fileops::BinItem>>,
     ) -> Reply {
         let c = self.delete_question(kind, name, paths, erase, no_bin, icon, empty_bin, bin);
         self.raise(Dialog::Confirm(c))
     }
 
-    /// A delete prompt over `paths` on the template its kind takes (see [`dlgtemplate`]). `no_bin` leads with the drive having no Recycle Bin for some or all of `paths` ([`reprisefs::bincap::delete_prompt`]). `empty_bin` is the Recycle Bin's Empty task, which counts the listed items since it has no paths; `bin` is the picked items of a prompt raised in the Recycle Bin, which Yes deletes for good.
+    /// A delete prompt over `paths` on the template its kind takes (see [`dlgtemplate`]). `no_bin` leads with the drive having no Recycle Bin for some or all of `paths` ([`reprisefs::bincap::delete_prompt`]). `empty_bin` is the Recycle Bin's Empty task over that many items, since it has no paths; `bin` is the picked items of a prompt raised in the Recycle Bin, which Yes deletes for good.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn delete_question(
         &self,
@@ -433,14 +433,10 @@ impl Explorer {
         erase: bool,
         no_bin: reprisefs::bincap::BinLack,
         icon: IconSlot,
-        empty_bin: bool,
+        empty_bin: Option<usize>,
         bin: Option<Vec<crate::fileops::BinItem>>,
     ) -> Confirm {
-        let count = if empty_bin {
-            self.items.len()
-        } else {
-            paths.len()
-        };
+        let count = empty_bin.unwrap_or(paths.len());
         let (title, text) = reprisefs::bincap::delete_prompt(kind, name, count, erase, no_bin);
         let min_text_h = (kind == ConfirmKind::Folder).then_some(FOLDER_TEXT_H);
         Confirm {
@@ -454,7 +450,7 @@ impl Explorer {
             icon,
             paths,
             erase,
-            empty_bin,
+            empty_bin: empty_bin.is_some(),
             bin,
             focus: None,
             too_big: None,

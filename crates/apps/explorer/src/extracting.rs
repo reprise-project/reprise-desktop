@@ -118,6 +118,25 @@ impl Explorer {
         Reply::none()
     }
 
+    /// `--zip`: Send To > Compressed (zipped) Folder on `paths` with no folder window, the zip
+    /// named past what their folder holds, read off the loop.
+    pub(crate) fn zip_paths(&mut self, paths: Vec<PathBuf>, ctx: &mut Ctx) -> Reply {
+        let work = move |_: &reprisefs::deadline::Gate| {
+            let dir = paths.first()?.parent()?;
+            let existing: Vec<String> = (std::fs::read_dir(dir).ok()?.flatten())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            reprisefs::sendto::zip_target(&paths, &existing)
+        };
+        let action = crate::acting::Action::reads(compress::FAILURE_TITLE);
+        self.act(ctx, action, work, |ex, c, ctx| {
+            if let Some(c) = c {
+                ex.queue_archive_job(Batch::Compress(c), ctx);
+            }
+            Reply::none()
+        })
+    }
+
     fn queue_archive_job(&mut self, batch: Batch, ctx: &Ctx) {
         match self.extracting {
             Some(_) => self.extract_queue.push_back(batch),

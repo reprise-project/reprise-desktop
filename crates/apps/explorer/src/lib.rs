@@ -57,6 +57,7 @@ use reprisefs::folderwatch::Watch;
 use reprisefs::history::History;
 use reprisefs::listing::Item;
 use reprisefs::netshare::Address;
+use reprisefs::ops::DropOp;
 use reprisefs::program::{Confirm, ScriptOpen};
 use reprisekit::controls::addressbar::{self, AddressBar};
 use reprisekit::controls::combo::{self, ListItem};
@@ -1821,6 +1822,16 @@ impl App for Lazy {
                     Some(Alone::Properties(paths)) => ex.open_paths_properties(paths, ctx),
                     Some(Alone::OpenWith(path)) => ex.choose_program_for(path, false, ctx),
                     Some(Alone::BinProperties) => ex.open_bin_props(ctx),
+                    Some(Alone::Put {
+                        op,
+                        target,
+                        sources,
+                    }) => ex.put_paths(*op, sources, target, ctx),
+                    Some(Alone::Delete { paths, erase }) => {
+                        ex.confirm_delete_paths(paths.clone(), *erase, ctx)
+                    }
+                    Some(Alone::EmptyBin) => ex.confirm_empty_bins(ctx),
+                    Some(Alone::Zip(paths)) => ex.zip_paths(paths.clone(), ctx),
                     None => Reply::none(),
                 };
                 ex
@@ -2024,7 +2035,7 @@ struct Start {
     search: bool,
 }
 
-/// A start that shows one box without a folder window.
+/// A start that shows one box, or runs one file job, without a folder window.
 #[derive(Clone, Debug, PartialEq)]
 enum Alone {
     /// `--properties PATH...`: the sheet of one path, or the combined sheet of several.
@@ -2033,17 +2044,50 @@ enum Alone {
     OpenWith(PathBuf),
     /// `--bin-properties`: Recycle Bin Properties.
     BinProperties,
+    /// `--put copy|move|link TARGET -- SOURCES...`: the SOURCES pasted into folder TARGET.
+    Put {
+        op: DropOp,
+        target: PathBuf,
+        sources: Vec<PathBuf>,
+    },
+    /// `--delete [--erase] PATHS...`: Delete on the PATHS, Shift+Delete with `--erase`.
+    Delete { paths: Vec<PathBuf>, erase: bool },
+    /// `--empty-bin`: Empty Recycle Bin.
+    EmptyBin,
+    /// `--zip PATHS...`: Send To > Compressed (zipped) Folder on the PATHS.
+    Zip(Vec<PathBuf>),
+}
+
+/// The rest of the command line as paths: None unless there is one and every one is absolute.
+fn absolute_paths(args: impl Iterator<Item = std::ffi::OsString>) -> Option<Vec<PathBuf>> {
+    let paths: Vec<PathBuf> = args.map(PathBuf::from).collect();
+    (!paths.is_empty() && paths.iter().all(|p| p.is_absolute())).then_some(paths)
+}
+
+/// `--put`'s arguments: the op, the absolute TARGET, `--` and the absolute SOURCES.
+fn put_args(mut args: impl Iterator<Item = std::ffi::OsString>) -> Option<Alone> {
+    let op = DropOp::from_arg(args.next()?.to_str()?)?;
+    let target = PathBuf::from(args.next()?);
+    if !target.is_absolute() || args.next()? != "--" {
+        return None;
+    }
+    Some(Alone::Put {
+        op,
+        target,
+        sources: absolute_paths(args)?,
+    })
 }
 
 /// `reprise-explorer [--search] [PLACE]`, `--select PATH...`, `--properties PATH...`,
-/// `--open-with PATH` or `--bin-properties`. PLACE is a
+/// `--open-with PATH`, `--bin-properties` or one of [`Alone`]'s file jobs. PLACE is a
 /// folder's path, "Computer", "Recycle Bin" or "Network", or a server address, which opens
 /// Computer and connects to it; a missing or unknown one is Home. `--search` puts the keyboard in
 /// the Search field. `--select` opens the folder the first absolute PATH sits in with it and the
 /// others there selected, the first scrolled into view (Find Target's window). `--properties`
 /// shows the Properties sheet of the absolute PATHs alone, combined for two or more;
 /// `--open-with` shows the Open With chooser for PATH alone, and `--bin-properties` Recycle Bin
-/// Properties.
+/// Properties. A file job runs with its questions, progress and error boxes, and the process
+/// ends with it.
 fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
     let mut args = args.into_iter();
     let first = args.next();
@@ -2079,13 +2123,25 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             .filter(|p| p.is_absolute())
             .map(Alone::OpenWith),
         Some("--bin-properties") => Some(Alone::BinProperties),
+        Some("--put") => put_args(args.by_ref()),
+        Some("--delete") => {
+            let mut rest = args.by_ref().peekable();
+            let erase = rest.next_if(|a| a == "--erase").is_some();
+            absolute_paths(rest).map(|paths| Alone::Delete { paths, erase })
+        }
+        Some("--empty-bin") => Some(Alone::EmptyBin),
+        Some("--zip") => absolute_paths(args.by_ref()).map(Alone::Zip),
         _ => None,
     };
     if let Some(alone) = alone {
         let place = match &alone {
             Alone::Properties(paths) => paths[0].parent().map_or(Place::Home, Place::from_path),
             Alone::OpenWith(path) => path.parent().map_or(Place::Home, Place::from_path),
-            Alone::BinProperties => Place::RecycleBin,
+            Alone::BinProperties | Alone::EmptyBin => Place::RecycleBin,
+            Alone::Put { target, .. } => Place::from_path(target),
+            Alone::Delete { paths, .. } | Alone::Zip(paths) => {
+                paths[0].parent().map_or(Place::Home, Place::from_path)
+            }
         };
         return Start {
             place,

@@ -313,6 +313,22 @@ impl DropOp {
             DropOp::Shortcut => "Error Creating Shortcut",
         }
     }
+
+    /// The word `reprise-explorer --put` takes for this op.
+    pub fn arg(self) -> &'static str {
+        match self {
+            DropOp::Copy => "copy",
+            DropOp::Move => "move",
+            DropOp::Shortcut => "link",
+        }
+    }
+
+    /// The op [`DropOp::arg`] names.
+    pub fn from_arg(arg: &str) -> Option<DropOp> {
+        [DropOp::Copy, DropOp::Move, DropOp::Shortcut]
+            .into_iter()
+            .find(|op| op.arg() == arg)
+    }
 }
 
 #[cfg(test)]
