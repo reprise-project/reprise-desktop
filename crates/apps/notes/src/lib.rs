@@ -6,7 +6,7 @@ mod store;
 
 reprisekit::strings!("notes");
 
-use repriseapp::oneshot::{MsgBox, Outcome};
+use repriseapp::oneshot::{ErrorBox, MsgBox, Outcome};
 use repriseapp::{App, Caption, Child, Ctx, Event, Extended, MAIN, Reply, WinId};
 use reprisebus::instance::{self, Claim};
 use reprisekit::access::{ROOT, Tree};
@@ -98,6 +98,11 @@ struct Notes {
     menu_win: WinId,
     /// The delete prompt and the note it asks about.
     confirm: Option<(WinId, MsgBox)>,
+    /// Says a note could not be saved, over that note; once until a save goes through.
+    error: ErrorBox,
+    error_on: WinId,
+    /// The last save failed.
+    failing: bool,
     requests: Option<instance::Requests>,
     /// Started by autostart: with no notes kept, end at once.
     restoring: bool,
@@ -121,6 +126,9 @@ impl Notes {
             menu: None,
             menu_win: MAIN,
             confirm: None,
+            error: ErrorBox::default(),
+            error_on: MAIN,
+            failing: false,
             requests: None,
             restoring,
             forms: Theme::default(),
@@ -186,12 +194,26 @@ impl Notes {
         win
     }
 
+    /// Saves note `win`. A failed save stays pending, so it is tried again after the next pause,
+    /// and the first failure since a save went through shows the error box.
     fn write(&mut self, win: WinId) {
         let (Some(dir), Some(n)) = (&self.dir, self.note(win)) else {
             return;
         };
-        if let Err(e) = store::write(dir, &n.saved()) {
-            log::warn!("note {}: could not save: {e}", n.id);
+        match store::write(dir, &n.saved()) {
+            Ok(()) => self.failing = false,
+            Err(e) => {
+                log::warn!("note {}: could not save: {e}", n.id);
+                if let Some(n) = self.note_mut(win) {
+                    n.save.changed(Instant::now());
+                }
+                if !std::mem::replace(&mut self.failing, true) {
+                    let text = tr!("save-failed", error = e.to_string());
+                    let icon = self.warn_icon.clone();
+                    self.error.show(&tr!("name"), text, icon);
+                    self.error_on = win;
+                }
+            }
         }
     }
 
@@ -415,6 +437,7 @@ impl App for Notes {
         if let Some((_, b)) = &self.confirm {
             kids.push(b.child(CONFIRM, &self.dialog_text, &self.forms));
         }
+        kids.extend(self.error.child(&self.dialog_text, &self.forms));
         kids
     }
 
@@ -441,6 +464,7 @@ impl App for Notes {
         let reply = match (win, ev) {
             (_, Event::Wake) => self.requests(),
             (CONFIRM, ev) => self.confirm_event(ev),
+            (ErrorBox::WIN, ev) => self.error.event(&ev, &self.dialog_text, &self.forms),
             (MAIN, Event::CloseRequest) => Reply::redraw(),
             (_, Event::CloseRequest) => {
                 self.save_all();
@@ -467,6 +491,10 @@ impl App for Notes {
             }
             return;
         }
+        if win == ErrorBox::WIN {
+            self.error.draw(c, &self.forms, &self.dialog_text);
+            return;
+        }
         self.draw_note(win, c, ctx);
     }
 }
@@ -479,13 +507,14 @@ impl Extended for Notes {
     fn parent(&self, win: WinId) -> Option<WinId> {
         match win {
             CONFIRM => self.confirm.as_ref().map(|(w, _)| *w),
+            ErrorBox::WIN => self.note(self.error_on).map(|n| n.win),
             _ => None,
         }
     }
 
     fn caption(&self, win: WinId) -> Caption {
         match win {
-            CONFIRM => Caption::Prompt,
+            CONFIRM | ErrorBox::WIN => Caption::Prompt,
             _ => Caption::None,
         }
     }
@@ -519,6 +548,10 @@ impl Extended for Notes {
             if let Some((_, b)) = &self.confirm {
                 b.access(tree, &self.dialog_text, &self.forms);
             }
+            return;
+        }
+        if win == ErrorBox::WIN {
+            self.error.access(tree, &self.dialog_text, &self.forms);
             return;
         }
         self.access_note(win, tree, ctx);

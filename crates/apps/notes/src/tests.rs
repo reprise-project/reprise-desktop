@@ -127,6 +127,37 @@ fn a_login_start_with_no_notes_ends_at_once() {
     assert!(kept(dir.path()).is_empty(), "no note made");
 }
 
+/// A save that fails stays pending and says so once; the next pause tries it again.
+#[test]
+fn a_failed_save_is_kept_pending_and_told_once() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_ctx();
+    let mut n = started(dir.path());
+    let win = n.notes[0].win;
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+    // Root writes into any folder, so there is nothing to check.
+    if std::fs::File::create(dir.path().join("probe")).is_err() {
+        n.event(win, typed("Buy milk"), &mut ctx);
+        assert!(n.save_due(later()), "the failed save still waits");
+        assert!(n.error.is_shown(), "the box says the note was not saved");
+        assert_eq!(n.parent(ErrorBox::WIN), Some(win));
+        n.error.close();
+        assert!(n.save_due(later() + Autosave::DELAY));
+        assert!(
+            !n.error.is_shown(),
+            "a second failure in a row is not told again"
+        );
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            !n.save_due(later() + 2 * Autosave::DELAY),
+            "the retry went through"
+        );
+        assert_eq!(kept(dir.path())[0].text, "Buy milk");
+    }
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
 #[test]
 fn typing_is_written_after_a_pause() {
     let dir = tempfile::tempdir().unwrap();
