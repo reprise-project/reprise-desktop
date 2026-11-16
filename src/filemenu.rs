@@ -77,12 +77,15 @@ impl State {
             Target::Open(dir) if facts.is_dir => Opening {
                 argv: apps::open_folder_argv(dir),
                 app: None,
+                dir: None,
             },
+            Target::Launch(app) => Opening::of(app, apps::launch_argv(app, &self.config.terminal)?),
             target => Opening {
                 argv: self.with_mime(|db| {
                     desktop::open_argv(target, db, &self.app_index, &self.config.terminal)
                 })?,
-                app: target.app().map(str::to_string),
+                app: None,
+                dir: None,
             },
         })
     }

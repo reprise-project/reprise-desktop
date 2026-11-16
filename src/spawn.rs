@@ -932,8 +932,9 @@ pub fn spawn_argv<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     spawn_argv_in(argv, None, None, env, launch);
 }
 
-/// `spawn_argv` in `dir` (else reprise's own) inside `app-reprise-<name>-*.scope`, which gives the
-/// portal its app id: `name` is `app`, the desktop entry id, else the program's name.
+/// `spawn_argv` in `dir` (else, or when it is no folder, reprise's own) inside
+/// `app-reprise-<name>-*.scope`, which gives the portal its app id: `name` is `app`, the desktop
+/// entry id, else the program's name.
 pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
     app: Option<&str>,
@@ -964,7 +965,7 @@ pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     let Some(mut c) = command_argv(&name, &argv[0], &argv[1..], env, launch) else {
         return Ok(None);
     };
-    if let Some(dir) = dir {
+    if let Some(dir) = reprisefs::apps::start_dir(dir) {
         c.current_dir(dir);
     }
     start(c, &what, Some(&name)).map(Some)
@@ -985,7 +986,7 @@ pub fn try_spawn_held<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     let Some(mut c) = command_argv(&name, &argv[0], &argv[1..], env, launch) else {
         return Ok(None);
     };
-    if let Some(dir) = dir {
+    if let Some(dir) = reprisefs::apps::start_dir(dir) {
         c.current_dir(dir);
     }
     reprisefs::scope::hold(&mut c, app)?;

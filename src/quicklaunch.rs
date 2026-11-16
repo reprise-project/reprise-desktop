@@ -157,6 +157,7 @@ pub fn parse(text: &str, id: &str, terminal: &str) -> Option<QuickLaunchEntry> {
             action: Action::Exec {
                 argv: apps::launch_argv(&app, terminal),
                 app: app.id.clone(),
+                dir: app.path.clone(),
             },
             label: app.name,
             icon: app.icon,
@@ -193,6 +194,7 @@ mod tests {
         Action::Exec {
             argv: Ok(argv.iter().map(Into::into).collect()),
             app: app.into(),
+            dir: None,
         }
     }
 

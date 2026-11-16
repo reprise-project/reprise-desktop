@@ -817,13 +817,14 @@ fn restore_now(state: &mut State, autostarted: &[Entry]) {
             (
                 reprisefs::apps::launch_argv(e, &state.config.terminal),
                 e.id.clone(),
+                e.path.clone(),
             )
         })
         .collect();
-    for (s, (argv, id)) in started.iter().zip(&argvs) {
+    for (s, (argv, id, dir)) in started.iter().zip(&argvs) {
         log::info!("session: restoring {} ({id})", s.app_id);
         if let Ok(argv) = argv {
-            crate::spawn::spawn_argv_in(argv, Some(id), None, &state.env, None);
+            crate::spawn::spawn_argv_in(argv, Some(id), dir.as_deref(), &state.env, None);
         }
     }
     await_windows(state, &started, now);
@@ -865,7 +866,7 @@ pub fn settle_restart(state: &mut State, app_id: &str) {
             return TimeoutAction::Drop;
         };
         for _ in 0..n {
-            crate::spawn::spawn_argv_in(&argv, Some(&e.id), None, &state.env, None);
+            crate::spawn::spawn_argv_in(&argv, Some(&e.id), e.path.as_deref(), &state.env, None);
         }
         TimeoutAction::Drop
     });

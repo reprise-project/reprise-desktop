@@ -1616,6 +1616,7 @@ fn a_notification_click_lets_its_program_raise_its_window_without_the_token() {
         categories: Vec::new(),
         mime_types: Vec::new(),
         shown: true,
+        path: None,
     }];
     let (tx, wake, _heard) = crate::tray::headless(&mut h.state);
     let mut c = h.connect();

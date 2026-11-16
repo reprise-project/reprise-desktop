@@ -3,21 +3,21 @@
 use crate::{Accept, DragAction, DragOut, FileClip, WinId};
 use reprisebus::instance::Handoff;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Run `argv` as a process of its own in working directory `dir` (the caller's when `None`), no
-/// shell between, reaped in the background: a [`Reply::spawn`] for a caller that needs the exec's
-/// error, as a program file that will not start reports it. With a `scope` the child waits before
-/// its exec until it is in that app scope ([`reprisefs::scope::hold`]), so this blocks on the
-/// session bus.
+/// Run `argv` as a process of its own in working directory `dir` (the caller's when `None` or not
+/// a folder, [`reprisefs::apps::start_dir`]), no shell between, reaped in the background: a
+/// [`Reply::spawn`] for a caller that needs the exec's error, as a program file that will not
+/// start reports it. With a `scope` the child waits before its exec until it is in that app scope
+/// ([`reprisefs::scope::hold`]), so this blocks on the session bus.
 pub fn spawn_in(argv: &[OsString], dir: Option<&Path>, scope: Option<&str>) -> std::io::Result<()> {
     spawn_then(argv, dir, scope, &Handoff::default(), |_| {})
 }
 
 /// A [`Reply::spawn`]'s process, handed `handoff` ([`Handoff::apply`]); a failure is only logged.
-pub(crate) fn spawn_handing(argv: &[OsString], handoff: &Handoff) {
-    if let Err(e) = spawn_then(argv, None, None, handoff, |_| {}) {
+pub(crate) fn spawn_handing(argv: &[OsString], dir: Option<&Path>, handoff: &Handoff) {
+    if let Err(e) = spawn_then(argv, dir, None, handoff, |_| {}) {
         log::warn!("spawn {argv:?}: {e}");
     }
 }
@@ -43,7 +43,7 @@ pub(crate) fn spawn_then(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     handoff.apply(&mut c);
-    if let Some(dir) = dir {
+    if let Some(dir) = reprisefs::apps::start_dir(dir) {
         c.current_dir(dir);
     }
     if let Some(app) = scope {
@@ -75,6 +75,8 @@ pub struct Reply {
     /// The desktop entry id `spawn` runs as: each process starts in that app's scope
     /// (`reprisefs::scope`).
     pub spawn_app: Option<String>,
+    /// The folder `spawn` runs in, a desktop entry's `Path=`; the program's own when None.
+    pub spawn_dir: Option<PathBuf>,
     pub copy_files: Option<FileClip>,
     /// Arrives as `Event::PastedFiles` on the window this reply is for.
     pub paste_files: bool,
@@ -194,6 +196,7 @@ impl Reply {
             paste_primary,
             spawn,
             spawn_app,
+            spawn_dir,
             copy_files,
             paste_files,
             copy_image,
@@ -211,20 +214,23 @@ impl Reply {
             fullscreen,
             bell,
         } = then;
-        let (spawn, spawn_app) = if spawn.is_empty() {
-            (self.spawn, self.spawn_app)
+        let (spawn, spawn_app, spawn_dir) = if spawn.is_empty() {
+            (self.spawn, self.spawn_app, self.spawn_dir)
         } else if self.spawn.is_empty() {
-            (spawn, spawn_app)
-        } else if self.spawn_app == spawn_app {
-            (self.spawn.into_iter().chain(spawn).collect(), spawn_app)
+            (spawn, spawn_app, spawn_dir)
+        } else if (&self.spawn_app, &self.spawn_dir) == (&spawn_app, &spawn_dir) {
+            let both = self.spawn.into_iter().chain(spawn).collect();
+            (both, spawn_app, spawn_dir)
         } else {
+            // One folder per reply: spawns that asked for different ones start in the default.
             let scoped = |argvs: Vec<Vec<OsString>>, app: Option<String>| {
                 argvs
                     .into_iter()
                     .map(move |argv| reprisefs::scope::in_scope(&argv, app.as_deref()))
             };
             let mine = scoped(self.spawn, self.spawn_app);
-            (mine.chain(scoped(spawn, spawn_app)).collect(), None)
+            let dir = spawn_dir.filter(|d| self.spawn_dir.as_ref() == Some(d));
+            (mine.chain(scoped(spawn, spawn_app)).collect(), None, dir)
         };
         Reply {
             redraw: self.redraw || redraw,
@@ -236,6 +242,7 @@ impl Reply {
             paste_primary: self.paste_primary || paste_primary,
             spawn,
             spawn_app,
+            spawn_dir,
             copy_files: self.copy_files.or(copy_files),
             paste_files: self.paste_files || paste_files,
             copy_image: self.copy_image.or(copy_image),

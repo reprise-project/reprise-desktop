@@ -1283,6 +1283,7 @@ mod tests {
             categories: Vec::new(),
             mime_types: Vec::new(),
             shown: true,
+            path: None,
         };
         let spot = reprisekit::startpanel::Spot::Program(0);
         h.state
@@ -1331,6 +1332,7 @@ mod tests {
             categories: Vec::new(),
             mime_types: Vec::new(),
             shown: true,
+            path: None,
         };
         let spot = reprisekit::startpanel::Spot::Program(0);
         h.state

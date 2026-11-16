@@ -729,6 +729,7 @@ pub(crate) mod tests {
             categories: categories.iter().map(|c| c.to_string()).collect(),
             mime_types: mimes.iter().map(|m| m.to_string()).collect(),
             shown: true,
+            path: None,
         }
     }
 

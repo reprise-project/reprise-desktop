@@ -46,6 +46,21 @@ fn parses_application_and_strips_codes() {
 }
 
 #[test]
+fn path_is_the_folder_an_entry_starts_in_and_a_missing_one_falls_back() {
+    let entry = |path: &str| {
+        let text = format!("[Desktop Entry]\nType=Application\nName=G\nExec=g\n{path}");
+        parse_desktop(&text, "g.desktop").unwrap().path
+    };
+    assert_eq!(entry("Path=/opt/game\n"), Some("/opt/game".into()));
+    assert_eq!(entry("Path=\n"), None);
+    assert_eq!(entry(""), None);
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(start_dir(Some(dir.path())), Some(dir.path()));
+    assert_eq!(start_dir(Some(&dir.path().join("gone"))), None);
+    assert_eq!(start_dir(None), None);
+}
+
+#[test]
 fn exec_argv_follows_the_spec_not_the_shell() {
     assert_eq!(exec_argv("app -a %f --b"), vec!["app", "-a", "--b"]);
     assert_eq!(
@@ -581,6 +596,7 @@ fn group_files_apps_by_first_matching_category() {
         categories: cats.iter().map(|c| c.to_string()).collect(),
         mime_types: Vec::new(),
         shown: true,
+        path: None,
     };
     let apps = [
         app("Zed", &["Development", "Utility"]),
@@ -767,6 +783,7 @@ fn open_with_lists_the_handlers_by_name_and_text_editors_for_text() {
         categories: Vec::new(),
         mime_types: mimes.iter().map(|m| m.to_string()).collect(),
         shown: true,
+        path: None,
     };
     let apps = vec![
         app("Vim", &["text/plain", "text/x-c"]),
@@ -923,6 +940,7 @@ fn chooser_groups_put_the_type_s_programs_and_default_first_and_the_rest_by_name
         categories: Vec::new(),
         mime_types: mimes.iter().map(|m| m.to_string()).collect(),
         shown: true,
+        path: None,
     };
     let apps = vec![
         e("Zed", "zed.desktop", &[]),

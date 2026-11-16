@@ -136,6 +136,49 @@ fn a_spawned_program_is_handed_over_unreaped_as_this_process_s_child() {
     assert_eq!(ppid, Some(std::process::id().to_string()));
 }
 
+#[test]
+fn a_spawn_runs_in_its_folder_and_one_whose_folder_is_gone_still_runs() {
+    let t = tempfile::tempdir().unwrap();
+    let game = t.path().join("game");
+    std::fs::create_dir(&game).unwrap();
+    let run = |dir: &std::path::Path, out: &std::path::Path| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let pwd = format!("pwd -P > '{}'", out.display());
+        let argv = ["sh".into(), "-c".into(), pwd.into()];
+        spawn_then(&argv, Some(dir), None, &Default::default(), move |_| {
+            tx.send(()).unwrap()
+        })
+        .unwrap();
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !std::fs::read_to_string(out).is_ok_and(|s| s.ends_with('\n')) {
+            assert!(std::time::Instant::now() < end, "the program ran");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        std::fs::read_to_string(out).unwrap()
+    };
+    let real = |p: &std::path::Path| format!("{}\n", p.canonicalize().unwrap().display());
+    assert_eq!(run(&game, &t.path().join("a")), real(&game));
+    let here = real(&std::env::current_dir().unwrap());
+    let gone = run(&t.path().join("gone"), &t.path().join("b"));
+    assert_eq!(gone, here, "the default folder");
+}
+
+#[test]
+fn reply_merge_keeps_one_spawn_folder_only_when_both_ask_for_it() {
+    let spawn = |dir: &str| Reply {
+        spawn: vec![vec!["a".into()]],
+        spawn_dir: Some(dir.into()),
+        ..Default::default()
+    };
+    assert_eq!(spawn("/a").and(spawn("/a")).spawn_dir, Some("/a".into()));
+    assert_eq!(
+        spawn("/a").and(Reply::default()).spawn_dir,
+        Some("/a".into())
+    );
+    assert_eq!(spawn("/a").and(spawn("/b")).spawn_dir, None);
+}
+
 struct Picker {
     dlg: reprisekit::controls::filedlg::FileDlg,
     host: filedlg::Host,

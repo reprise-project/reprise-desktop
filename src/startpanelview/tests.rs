@@ -57,6 +57,7 @@ fn app(name: &str, category: &str) -> AppEntry {
         categories: vec![category.into()],
         mime_types: Vec::new(),
         shown: true,
+        path: None,
     }
 }
 
