@@ -777,6 +777,20 @@ fn node_at_finds_the_topmost_leaf_with_local_coordinates() {
 }
 
 #[test]
+fn a_passthrough_tree_lets_the_pointer_through_all_below_it() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let below = s.rect_create(root, (100, 100), RED);
+    let window = s.tree_create(root);
+    let frame = s.rect_create(window, (100, 100), RED);
+    assert_eq!(s.node_at(root, pt(50.0, 50.0)).unwrap().node, frame.node());
+    s.set_input(window, Input::Passthrough);
+    assert_eq!(s.node_at(root, pt(50.0, 50.0)).unwrap().node, below.node());
+    s.set_input(window, Input::All);
+    assert_eq!(s.node_at(root, pt(50.0, 50.0)).unwrap().node, frame.node());
+}
+
+#[test]
 fn node_at_skips_passthrough_and_honours_input_regions() {
     let mut s = TestScene::new();
     let root = s.root();

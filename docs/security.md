@@ -74,10 +74,12 @@ pid namespace of its own, as bubblewrap's are. The client log marks a
 process it could inspect neither way ", not inspected".
 A sandboxed client sees none of the globals above. It also doesn't see
 `wp_security_context_manager_v1` itself, so it can't open a socket of its
-own under another app id. The full list is `PRIVILEGED_GLOBALS` in
-[`src/sandbox.rs`](../src/sandbox.rs). A sandboxed program reaches screen
-sharing, screenshots, remote control and input capture through the portal,
-which asks you first.
+own under another app id. It does see `xdg_toplevel_drag_manager_v1`: that
+moves only the program's own window, and only during a drag the program
+started under a held button, as an interactive move does. The full list is
+`PRIVILEGED_GLOBALS` in [`src/sandbox.rs`](../src/sandbox.rs). A sandboxed
+program reaches screen sharing, screenshots, remote control and input
+capture through the portal, which asks you first.
 
 Flatpak also lets an app own and call the session bus names under its app
 id, so an app could take an `org.reprise.*` id. The compositor's

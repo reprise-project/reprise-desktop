@@ -1523,6 +1523,8 @@ pub struct ClientSide {
     pub key_log: Vec<KeyHeard>,
     /// Each button event the pointer heard: its evdev code and whether it went down.
     pub buttons: Vec<(u32, bool)>,
+    /// The serial of the last button event the pointer heard, for a drag it starts.
+    pub button_serial: u32,
     /// Each `reprise_sandboxed_v1` event heard: an app id for `app`, `None` for `done`.
     pub sandboxed: Vec<Option<String>>,
     /// Each `reprise_on_top_v1.changed` heard: whether its toplevel is on top.
@@ -1752,9 +1754,16 @@ impl wc::Dispatch<wl_pointer::WlPointer, ()> for ClientSide {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let wl_pointer::Event::Button { button, state, .. } = ev {
+        if let wl_pointer::Event::Button {
+            button,
+            state,
+            serial,
+            ..
+        } = ev
+        {
             let down = state == wc::WEnum::Value(wl_pointer::ButtonState::Pressed);
             st.buttons.push((button, down));
+            st.button_serial = serial;
         }
     }
 }
@@ -1913,6 +1922,8 @@ wc::delegate_noop!(ClientSide: ignore wp_commit_timer_v1::WpCommitTimerV1);
 wc::delegate_noop!(ClientSide: ignore wl_data_device_manager::WlDataDeviceManager);
 wc::delegate_noop!(ClientSide: ignore wp_presentation::WpPresentation);
 wc::delegate_noop!(ClientSide: ignore ZxdgDecorationManagerV1);
+wc::delegate_noop!(ClientSide: ignore wayland_protocols::xdg::toplevel_drag::v1::client::xdg_toplevel_drag_manager_v1::XdgToplevelDragManagerV1);
+wc::delegate_noop!(ClientSide: ignore wayland_protocols::xdg::toplevel_drag::v1::client::xdg_toplevel_drag_v1::XdgToplevelDragV1);
 
 impl wc::Dispatch<ZxdgToplevelDecorationV1, ()> for ClientSide {
     fn event(

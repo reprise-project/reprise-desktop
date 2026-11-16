@@ -216,6 +216,8 @@ pub struct State {
     pub dnd: crate::dnd::Dnd,
     /// The desktop's icon drags and the drops' file work (`dragview`).
     pub drags: crate::dragview::Drags,
+    /// The windows client drags carry (`toplevelsdrag`).
+    pub toplevel_drags: crate::toplevelsdrag::ToplevelDrags,
     pub seat_state: SeatState<State>,
     pub seat: Seat<State>,
     pub output_capture_source_state: OutputCaptureSourceState,
@@ -631,6 +633,7 @@ impl State {
         let ime = crate::textinput::Ime::new(&dh, &seat);
         let tabs_global = crate::tabsproto::advertise(&dh, config.window_tabs, None);
         crate::ontopproto::advertise(&dh);
+        crate::toplevelsdrag::advertise(&dh);
         let clip = crate::clipboard::Clip::new(&dh);
 
         Ok(State {
@@ -663,6 +666,7 @@ impl State {
             clip,
             dnd: Default::default(),
             drags: Default::default(),
+            toplevel_drags: Default::default(),
             globals: Globals {
                 xdg_decoration: XdgDecorationState::new::<State>(&dh),
                 output_manager: OutputManagerState::new_with_xdg_output::<State>(&dh),

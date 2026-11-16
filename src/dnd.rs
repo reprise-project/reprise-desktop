@@ -196,6 +196,9 @@ struct Learnt {
     /// Reprise is the target under the pointer: a drop over no client is
     /// its own, so the source is not cancelled.
     reprise: bool,
+    /// The drag carries a window (`toplevelsdrag`): a drop over no target lands the window, so
+    /// the source hears the drop performed rather than cancelled.
+    carries: bool,
     /// The actions an X11 source lists in `XdndActionList`. Smithay's
     /// XDND source tells only Copy and the action the source asks for,
     /// which is a copy unless the user holds Shift.
@@ -285,8 +288,38 @@ impl DragSource {
         self.learnt().reprise = on;
     }
 
+    pub(crate) fn set_carries(&self, on: bool) {
+        self.learnt().carries = on;
+    }
+
+    /// A drop over no target ended a drag that carries a window: the window stays where it was
+    /// dropped, so the source hears the drop performed and finished.
+    fn land_carried(&self) {
+        let l = self.learnt();
+        if l.carries && !l.reprise {
+            drop(l);
+            self.drop_performed();
+            self.finished();
+        }
+    }
+
+    /// A drag that carries a window was cancelled: its source hears it now.
+    fn cancel_carried(&self) {
+        if std::mem::take(&mut self.learnt().carries) {
+            self.cancel();
+        }
+    }
+
     pub(crate) fn reprise_target(&self) -> bool {
         self.learnt().reprise
+    }
+
+    /// The client's own source, for a drag a program started with one.
+    pub(crate) fn data_source(&self) -> Option<&WlDataSource> {
+        match &self.origin {
+            Origin::Client(s) => Some(s),
+            _ => None,
+        }
     }
 
     pub(crate) fn is_x11(&self) -> bool {
@@ -385,10 +418,10 @@ impl Source for DragSource {
         }
     }
 
-    /// Kept from the source while Reprise is the target: Smithay cancels a
-    /// drop over no client, and Reprise reads that drop itself.
+    /// Kept from the source while Reprise is the target or the drag carries a window: Smithay
+    /// cancels a drop over no client, and Reprise reads that drop itself.
     fn cancel(&self) {
-        if self.learnt().reprise {
+        if self.learnt().reprise || self.learnt().carries {
             return;
         }
         match &self.origin {
@@ -529,16 +562,24 @@ impl DndGrabHandler for State {
     fn dropped(
         &mut self,
         _target: Option<DndTarget<'_, Self>>,
-        _validated: bool,
+        validated: bool,
         _seat: Seat<Self>,
         _location: Point<f64, Logical>,
     ) {
+        if let Some(d) = self.dnd.drag.as_ref()
+            && !validated
+        {
+            d.source.land_carried();
+        }
         // A drop over Reprise's own target (the source says `reprise`) is
         // read from an idle (`dnddrop`, `dndsource`).
         self.drag_ended(true);
     }
 
     fn cancelled(&mut self, _seat: Seat<Self>, _location: Point<f64, Logical>) {
+        if let Some(d) = self.dnd.drag.as_ref() {
+            d.source.cancel_carried();
+        }
         self.drag_ended(false);
     }
 }
@@ -705,9 +746,10 @@ impl State {
         {
             self.drag_icon_committed(&surface);
         }
+        self.carry_start();
     }
 
-    fn drag_point(&self) -> Point<f64, Logical> {
+    pub(crate) fn drag_point(&self) -> Point<f64, Logical> {
         match self.dnd.drag.as_ref().and_then(|d| d.touch) {
             Some((_, at)) => at,
             None => self.pointer_location(),
@@ -757,6 +799,7 @@ impl State {
             touch.frame(self);
         }
         self.place_drag_icon(pos);
+        self.carry_to(pos);
         true
     }
 
@@ -832,6 +875,7 @@ impl State {
         };
         self.place_drag_icon(pos);
         self.place_drag_image(pos);
+        self.carry_to(pos);
         self.update_drag_cursor();
     }
 
@@ -1150,6 +1194,9 @@ impl State {
         }
         self.own_drag_ended(own_drop);
         self.drop_drag_ended(&d.source, own_drop);
+        if let Some(source) = d.source.data_source() {
+            self.carry_end(source);
+        }
         if let Some(t) = d.timer {
             self.handle.remove(t);
         }

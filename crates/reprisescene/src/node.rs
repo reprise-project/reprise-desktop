@@ -65,7 +65,8 @@ pub enum NodeType {
     Custom,
 }
 
-/// Which pointer positions a leaf takes. Trees take none of their own.
+/// Which pointer positions a leaf takes. Trees take none of their own, but a tree set to
+/// `Passthrough` lets the pointer through everything below it.
 #[derive(Default)]
 pub enum Input {
     /// The whole node; for a surface tree, its surfaces' input regions.
