@@ -829,6 +829,60 @@ fn ok_after_a_language_change_closes_once_accountsservice_has_it() {
     assert!(a.wake().quit, "the call ended: the sheet closes");
 }
 
+#[test]
+fn a_close_while_localed_sets_the_language_hides_the_sheet_and_quits_once_it_is_told() {
+    const REFUSED: &str = "You are not allowed to make this change.";
+    let english = reprisefs::region::Choice {
+        language: "en_US.UTF-8".into(),
+        formats: None,
+    };
+    for set in [
+        Ok(vec![("LANG".into(), "de_DE.UTF-8".into())]),
+        Err(Some(REFUSED.into())),
+    ] {
+        let refused = set.is_err();
+        let mut a = app("region-close");
+        region_ready(&mut a, english.clone(), "en_US.UTF-8");
+        let (tx, rx) = std::sync::mpsc::channel();
+        a.region_set = Some(rx);
+        let mut ctx = test_ctx();
+        assert!(
+            !a.event(MAIN, Event::CloseRequest, &mut ctx).quit,
+            "refused {refused}: the close waits for localed"
+        );
+        assert!(a.hidden(), "refused {refused}: the sheet is gone meanwhile");
+        tx.send(set).unwrap();
+        let r = a.wake();
+        if !refused {
+            assert!(r.quit, "the language is set: Settings ends");
+            continue;
+        }
+        assert!(!r.quit, "the refusal is read first");
+        let text = a.error.shown().map(|b| b.fields.text.clone());
+        assert_eq!(text.as_deref(), Some(REFUSED));
+        let win = a.error.win().unwrap();
+        assert!(
+            a.event(win, Event::CloseRequest, &mut ctx).quit,
+            "the box closed: Settings ends"
+        );
+    }
+}
+
+#[test]
+fn a_close_while_boltd_authorizes_waits_for_its_answer() {
+    let mut a = app("tb-close");
+    let (tx, rx) = std::sync::mpsc::channel();
+    a.thunderbolt.job = Some(rx);
+    let mut ctx = test_ctx();
+    assert!(!a.event(MAIN, Event::CloseRequest, &mut ctx).quit);
+    tx.send(crate::thunderbolthost::Reading {
+        found: None,
+        failed: None,
+    })
+    .unwrap();
+    assert!(a.wake().quit, "boltd answered: Settings ends");
+}
+
 fn region_set(a: &mut SettingsApp, set: crate::regionhost::Set) {
     let (tx, rx) = std::sync::mpsc::channel();
     tx.send(set).unwrap();
