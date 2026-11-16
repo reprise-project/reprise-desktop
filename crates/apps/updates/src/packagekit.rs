@@ -454,15 +454,37 @@ pub async fn size(conn: &Connection, id: &str) -> Result<Option<u64>, Error> {
     Ok(said.sizes.into_iter().next().filter(|&s| s > 0))
 }
 
-/// The package ids a change would touch, besides `own` (the package itself): the rows a simulation
-/// lists as updating, installing, removing, obsoleting, reinstalling or downgrading.
-fn others(said: Said, own: impl Fn(&str) -> bool) -> Vec<String> {
-    said.packages
-        .into_iter()
-        .filter(|(info, _, _)| matches!(info & 0xffff, 11 | 12 | 13 | 15 | 19 | 20))
-        .map(|(_, id, _)| id)
-        .filter(|id| !own(id))
-        .collect()
+/// The other packages a change touches, besides the package itself, as its dry run lists them.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Touched {
+    /// Package ids it installs, updates, reinstalls or downgrades.
+    pub added: Vec<String>,
+    /// Package ids it removes or obsoletes.
+    pub removed: Vec<String>,
+}
+
+// PackageKit's info values a dry run's rows carry.
+const INFO_UPDATING: u32 = 11;
+const INFO_INSTALLING: u32 = 12;
+const INFO_REMOVING: u32 = 13;
+const INFO_OBSOLETING: u32 = 15;
+const INFO_REINSTALLING: u32 = 19;
+const INFO_DOWNGRADING: u32 = 20;
+
+/// The packages a simulation touches, besides those `own` names.
+fn touched(said: Said, own: impl Fn(&str) -> bool) -> Touched {
+    let mut t = Touched::default();
+    for (info, id, _) in said.packages {
+        let to = match info & 0xffff {
+            INFO_UPDATING | INFO_INSTALLING | INFO_REINSTALLING | INFO_DOWNGRADING => &mut t.added,
+            INFO_REMOVING | INFO_OBSOLETING => &mut t.removed,
+            _ => continue,
+        };
+        if !own(&id) {
+            to.push(id);
+        }
+    }
+    t
 }
 
 /// Remove package `id` and any package that needs it. With `simulate` nothing changes, and the
@@ -480,11 +502,12 @@ pub async fn remove(
     };
     let said = transaction(conn, request, !simulate, progress, Some(watch)).await?;
     let name = split_package_id(id).0;
-    Ok(others(said, |o| split_package_id(o).0 == name))
+    let t = touched(said, |o| split_package_id(o).0 == name);
+    Ok(t.removed.into_iter().chain(t.added).collect())
 }
 
 /// Install the package in `file` with what it needs. With `simulate` nothing changes, and the
-/// answer lists the packages that would come along, without the one named `name`.
+/// answer lists the other packages it would touch, without the one named `name`.
 pub async fn install_file(
     conn: &Connection,
     file: &str,
@@ -492,13 +515,13 @@ pub async fn install_file(
     simulate: bool,
     progress: Progress<'_>,
     watch: Watch<'_>,
-) -> Result<Vec<String>, Error> {
+) -> Result<Touched, Error> {
     let request = Request::InstallFiles {
         files: vec![file.into()],
         simulate,
     };
     let said = transaction(conn, request, !simulate, progress, Some(watch)).await?;
-    Ok(others(said, |o| split_package_id(o).0 == name))
+    Ok(touched(said, |o| split_package_id(o).0 == name))
 }
 
 /// The content types the backend installs files of (`MimeTypes`).
@@ -620,23 +643,32 @@ mod tests {
     }
 
     #[test]
-    fn a_simulation_lists_the_other_packages_it_touches() {
+    fn a_simulation_lists_the_other_packages_it_adds_and_removes_apart() {
+        let row = |info, id: &str| (info, id.to_string(), String::new());
         let said = Said {
             packages: vec![
-                (13, "foot;1.28.0-2;x86_64;installed".into(), String::new()),
-                (
-                    13,
-                    "foot-terminfo;1.28.0-2;x86_64;installed".into(),
-                    String::new(),
-                ),
-                (1, "glibc;2.42-1;x86_64;installed".into(), String::new()),
+                row(INFO_REMOVING, "foot;1.28.0-2;x86_64;installed"),
+                row(INFO_REMOVING, "foot-terminfo;1.28.0-2;x86_64;installed"),
+                row(INFO_INSTALLING, "libfoo;2-1;amd64;local"),
+                row(INFO_UPDATING, "libbar;3-1;amd64;local"),
+                row(INFO_OBSOLETING, "oldbar;1-1;amd64;installed"),
+                row(1, "glibc;2.42-1;x86_64;installed"),
             ],
             ..Said::default()
         };
         let own = |id: &str| split_package_id(id).0 == "foot";
         assert_eq!(
-            others(said, own),
-            ["foot-terminfo;1.28.0-2;x86_64;installed"]
+            touched(said, own),
+            Touched {
+                added: vec![
+                    "libfoo;2-1;amd64;local".into(),
+                    "libbar;3-1;amd64;local".into()
+                ],
+                removed: vec![
+                    "foot-terminfo;1.28.0-2;x86_64;installed".into(),
+                    "oldbar;1-1;amd64;installed".into(),
+                ],
+            }
         );
     }
 

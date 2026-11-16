@@ -1,9 +1,11 @@
-//! The packages an uninstall may not take: Reprise's own, and those the system marks essential
-//! (pacman's HoldPkg and the `base` package with its members, dpkg's essential, protected and
-//! required ones).
+//! The packages an uninstall, or a package file's install, may not remove: Reprise's own, and those
+//! the system marks essential (pacman's HoldPkg and the `base` package with its members, dpkg's
+//! essential, protected and required ones).
 
 use std::collections::BTreeSet;
 use std::path::Path;
+
+use reprisekit::controls::installsheet::Verb;
 
 /// The names Reprise's packages install as: packaging/arch's pkgname and provides, the .deb's
 /// Package.
@@ -44,9 +46,9 @@ pub fn blocks(set: &[&str], essential: &BTreeSet<String>) -> Vec<(Why, String)> 
     out
 }
 
-/// The sheet's note for non-empty `blocks`: "Uninstalling it would remove glibc (needed by the
-/// system) and reprise (part of Reprise)."
-pub fn refusal(blocks: &[(Why, String)]) -> String {
+/// The sheet's note when `verb` would remove non-empty `blocks`: "Uninstalling it would remove
+/// glibc (needed by the system) and reprise (part of Reprise)."
+pub fn refusal(verb: Verb, blocks: &[(Why, String)]) -> String {
     const LISTED: usize = 6;
     let group = |why: Why, reason: &str| {
         let names: Vec<&str> = (blocks.iter())
@@ -69,16 +71,21 @@ pub fn refusal(blocks: &[(Why, String)]) -> String {
     .into_iter()
     .flatten()
     .collect();
-    format!("Uninstalling it would remove {}.", parts.join(" and "))
+    let doing = match verb {
+        Verb::Install => "Installing",
+        Verb::Uninstall => "Uninstalling",
+    };
+    format!("{doing} it would remove {}.", parts.join(" and "))
 }
 
-/// The note for a dry run PackageKit refused because it would remove a package the system holds:
+/// The note for an uninstall's dry run PackageKit refused because it would remove a package the
+/// system holds:
 /// [`refusal`] when its `details` lead with the package's name ("glibc: could not remove HoldPkg"),
 /// else the details.
 pub fn held(details: &str) -> String {
     match details.split_once(": ") {
         Some((name, _)) if !name.is_empty() && !name.contains(char::is_whitespace) => {
-            refusal(&[(Why::System, name.into())])
+            refusal(Verb::Uninstall, &[(Why::System, name.into())])
         }
         _ => details.into(),
     }
@@ -283,7 +290,7 @@ mod tests {
             [(Why::System, "base".into()), (Why::System, "pacman".into())]
         );
         assert_eq!(
-            refusal(&got),
+            refusal(Verb::Uninstall, &got),
             "Uninstalling it would remove base, pacman (needed by the system)."
         );
     }
@@ -293,14 +300,23 @@ mod tests {
         let got = blocks(&["reprise"], &BTreeSet::new());
         assert_eq!(got, [(Why::Reprise, "reprise".into())]);
         assert_eq!(
-            refusal(&got),
+            refusal(Verb::Uninstall, &got),
             "Uninstalling it would remove reprise (part of Reprise)."
         );
         let both = blocks(&["reprise-git", "glibc", "x"], &names(&["glibc"]));
         assert_eq!(
-            refusal(&both),
+            refusal(Verb::Uninstall, &both),
             "Uninstalling it would remove glibc (needed by the system) and reprise-git \
              (part of Reprise)."
+        );
+    }
+
+    #[test]
+    fn an_install_that_would_remove_a_guarded_package_says_installing() {
+        let got = blocks(&["reprise", "libfoo"], &BTreeSet::new());
+        assert_eq!(
+            refusal(Verb::Install, &got),
+            "Installing it would remove reprise (part of Reprise)."
         );
     }
 
@@ -321,7 +337,7 @@ mod tests {
         let set = ["a", "b", "c", "d", "e", "f", "g", "h"];
         let got = blocks(&set, &names(&set));
         assert_eq!(
-            refusal(&got),
+            refusal(Verb::Uninstall, &got),
             "Uninstalling it would remove a, b, c, d, e, f and 2 more (needed by the system)."
         );
     }

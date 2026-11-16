@@ -1941,7 +1941,8 @@ stop the share first.
   and its install scripts
   run as root once it installs: install only packages you trust. A
   `.flatpakref` adds its repository, and the one its `RuntimeRepo` names, as
-  system remotes that stay; the sheet names the second one. The uninstall sheet refuses a removal that would take Reprise's own
+  system remotes that stay; the sheet names the second one. The uninstall sheet, and the install sheet for a Debian
+  package whose dry run removes others, refuse a removal that would take Reprise's own
   packages or one the system marks essential; that guards against a slip,
   not against an administrator, who can still remove them with the package
   manager.
