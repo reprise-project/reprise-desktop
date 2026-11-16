@@ -13,7 +13,8 @@ pub const SVG: u16 = 2;
 pub const PNG: u16 = 4;
 
 pub struct ThemeCache {
-    bytes: Vec<u8>,
+    /// The file mapped, so every program reading it shares the page cache.
+    bytes: Box<dyn AsRef<[u8]> + Send + Sync>,
     hash: usize,
     buckets: u32,
     /// Directory index by path relative to the theme directory.
@@ -24,20 +25,23 @@ pub struct ThemeCache {
 impl ThemeCache {
     /// `theme_dir`'s cache, or None when it is missing, malformed, or older than the directory.
     pub fn open(theme_dir: &Path) -> Option<ThemeCache> {
-        let bytes = std::fs::read(theme_dir.join(FILE)).ok()?;
-        let mtime = std::fs::metadata(theme_dir.join(FILE))
-            .ok()?
-            .modified()
-            .ok()?;
+        let file = std::fs::File::open(theme_dir.join(FILE)).ok()?;
+        let mtime = file.metadata().ok()?.modified().ok()?;
         if std::fs::metadata(theme_dir).ok()?.modified().ok()? > mtime {
             return None;
         }
+        // SAFETY: gtk-update-icon-cache replaces the file by a rename and never rewrites it in
+        // place, so the mapped pages stay the old file's until the theme is reloaded.
+        let bytes = unsafe { memmap2::Mmap::map(&file) }.ok()?;
         ThemeCache::parse(bytes, mtime)
     }
 
-    pub fn parse(bytes: Vec<u8>, mtime: SystemTime) -> Option<ThemeCache> {
+    pub fn parse(
+        bytes: impl AsRef<[u8]> + Send + Sync + 'static,
+        mtime: SystemTime,
+    ) -> Option<ThemeCache> {
         let mut cache = ThemeCache {
-            bytes,
+            bytes: Box::new(bytes),
             hash: 0,
             buckets: 0,
             dirs: HashMap::new(),
@@ -77,7 +81,7 @@ impl ThemeCache {
         let bucket = hash(name) % self.buckets;
         let mut icon = self.u32_at(self.hash + 4 + 4 * bucket as usize)?;
         // A chain longer than the file has icons is a loop.
-        for _ in 0..self.bytes.len() / 12 {
+        for _ in 0..self.data().len() / 12 {
             if icon == u32::MAX {
                 return None;
             }
@@ -97,20 +101,24 @@ impl ThemeCache {
         None
     }
 
+    fn data(&self) -> &[u8] {
+        (*self.bytes).as_ref()
+    }
+
     fn u16_at(&self, at: usize) -> Option<u16> {
         Some(u16::from_be_bytes(
-            self.bytes.get(at..at.checked_add(2)?)?.try_into().ok()?,
+            self.data().get(at..at.checked_add(2)?)?.try_into().ok()?,
         ))
     }
 
     fn u32_at(&self, at: usize) -> Option<u32> {
         Some(u32::from_be_bytes(
-            self.bytes.get(at..at.checked_add(4)?)?.try_into().ok()?,
+            self.data().get(at..at.checked_add(4)?)?.try_into().ok()?,
         ))
     }
 
     fn str_at(&self, at: usize) -> Option<&[u8]> {
-        let tail = self.bytes.get(at..)?;
+        let tail = self.data().get(at..)?;
         Some(&tail[..tail.iter().position(|&b| b == 0)?])
     }
 }

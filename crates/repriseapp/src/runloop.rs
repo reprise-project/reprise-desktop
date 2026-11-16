@@ -301,13 +301,18 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         key_echo: None,
         look,
         icon_watch: None,
+        icons_deferred: false,
         icon_jobs: Default::default(),
         blink_armed: false,
         shm_trouble: Default::default(),
         shm_retry: false,
     };
     // Started before the roundtrip, so the theme warms while the compositor answers.
-    host.watch_icons();
+    if host.app.hidden() {
+        host.icons_deferred = true;
+    } else {
+        host.watch_icons();
+    }
     // Learn the outputs' scales before the program loads an icon or opens
     // a window; a window starts at the largest.
     if let Err(e) = event_queue.roundtrip(&mut host) {
@@ -406,6 +411,9 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
                 host.decode_wanted_icons();
                 // Everything that dirties a slot is a source here, so nothing needs polling.
                 turn(&mut event_loop, host, &conn)?;
+                if host.icons_deferred && !host.slots.is_empty() {
+                    host.watch_icons();
+                }
                 let ready: Vec<WinId> = host
                     .slots
                     .iter()

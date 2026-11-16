@@ -8,7 +8,7 @@
 use super::noise::Rng;
 use super::noise::hash32;
 use super::noise::light::{hash2, unit};
-use super::tone::{C, add, lit, mix, mul, mulc, oklch, quantise_shoulder, smooth};
+use super::tone::{C, add, lit, mix, mul, mulc, oklch, quantise_shoulder_rows, smooth};
 use super::{HUES, SEED, Variant, centred, hue_of, par_rows};
 
 const FOCAL: f32 = 1.7;
@@ -598,78 +598,92 @@ pub(super) fn render(w: usize, h: usize, v: Variant, seed: u32) -> Vec<u32> {
         lobe: (LOBE.0 * lobe_k, LOBE.1 * lobe_k, LOBE.2),
     };
 
-    let mut base = vec![Base::default(); w * h];
-    par_rows(&mut base, w, |y, row| {
-        for (x, o) in row.iter_mut().enumerate() {
-            let (sx, sy) = centred(x, y, w, h);
-            let (c, pc) = scene.pixel(sx, sy, RGB);
-            *o = Base {
-                c,
-                percept: c.map(|v| v.clamp(0.0, LIGHT_MAX).sqrt()),
-                sig: pc.sig,
-                split: pc.split,
-            };
-        }
-    });
-
     let cut_side = if h >= 2000 { CUT_SIDE_4K } else { CUT_SIDE };
-    let mut side = vec![0u8; w * h];
-    par_rows(&mut side, w, |y, row| {
-        for (x, o) in row.iter_mut().enumerate() {
-            let a = &base[y * w + x];
-            let mut level = if a.split { 2 } else { 0 };
-            for (dx, dy) in NEIGHBOURS {
-                let (nx, ny) = (x as isize + dx, y as isize + dy);
-                if level == 2 || nx < 0 || ny < 0 || nx >= w as isize || ny >= h as isize {
-                    continue;
-                }
-                let b = &base[ny as usize * w + nx as usize];
-                if b.sig != a.sig || b.split {
-                    level = 2;
-                } else if (0..3).any(|c| (b.percept[c] - a.percept[c]).abs() > JUMP) {
-                    level = 1;
-                }
-            }
-            *o = [0, STEEP_SIDE, cut_side][level] as u8;
-        }
-    });
-
     let jitter = 0x9a7e ^ seed ^ SEED;
     let px_sz = 1.0 / h as f32;
-    let mut px: Vec<C> = vec![[0.0; 3]; w * h];
-    par_rows(&mut px, w, |y, row| {
-        for (x, o) in row.iter_mut().enumerate() {
-            let i = y * w + x;
-            let side = side[i] as usize;
-            if side == 0 {
-                *o = base[i].c;
-                continue;
+    let mut out = vec![0u32; w * h];
+    // By bands of rows, so the per-pixel scratch stays a band tall at any size; the band's base
+    // reaches a row past each end for the edge test.
+    for (b, out) in out.chunks_mut(BAND_ROWS * w).enumerate() {
+        let (y0, y1) = (b * BAND_ROWS, b * BAND_ROWS + out.len() / w);
+        let (b0, b1) = (y0.saturating_sub(1), (y1 + 1).min(h));
+        let mut base = vec![Base::default(); (b1 - b0) * w];
+        par_rows(&mut base, w, |r, row| {
+            for (x, o) in row.iter_mut().enumerate() {
+                let (sx, sy) = centred(x, b0 + r, w, h);
+                let (c, pc) = scene.pixel(sx, sy, RGB);
+                *o = Base {
+                    c,
+                    percept: c.map(|v| v.clamp(0.0, LIGHT_MAX).sqrt()),
+                    sig: pc.sig,
+                    split: pc.split,
+                };
             }
-            let n = side * side;
-            let (sx, sy) = centred(x, y, w, h);
-            let key = hash2(x as i32, y as i32, jitter);
-            let mut acc = [0.0f32; 3];
-            for k in 0..n {
-                // Multi-jittered: one sample per cell and per row and column, so a near-axis edge sees n coverage levels.
-                let r = hash32(key ^ k as u32);
-                let (col, row) = (k % side, k / side);
-                let fx = (row + (key as usize >> 8) + col * 3) % side;
-                let fy = (col + (key as usize >> 16) + row * 3) % side;
-                let ox = (col as f32 + (fx as f32 + unit(r)) / side as f32) / side as f32 - 0.5;
-                let oy =
-                    (row as f32 + (fy as f32 + unit(hash32(r))) / side as f32) / side as f32 - 0.5;
-                // Wavelengths are stratified as a Latin square over the grid.
-                let lk = ((col + row + (key as usize >> 4)) % side) * side
-                    + (row + (key as usize >> 12)) % side;
-                let u = (lk as f32 + unit(hash32(r ^ 0x51))) / n as f32 - 0.5;
-                let (c, _) = scene.pixel(sx + ox * px_sz, sy + oy * px_sz, RGB.map(|l| l + u));
-                acc = add(acc, c);
+        });
+        let at = |x: usize, y: usize| &base[(y - b0) * w + x];
+
+        let mut side = vec![0u8; out.len()];
+        par_rows(&mut side, w, |r, row| {
+            let y = y0 + r;
+            for (x, o) in row.iter_mut().enumerate() {
+                let a = at(x, y);
+                let mut level = if a.split { 2 } else { 0 };
+                for (dx, dy) in NEIGHBOURS {
+                    let (nx, ny) = (x as isize + dx, y as isize + dy);
+                    if level == 2 || nx < 0 || ny < 0 || nx >= w as isize || ny >= h as isize {
+                        continue;
+                    }
+                    let b = at(nx as usize, ny as usize);
+                    if b.sig != a.sig || b.split {
+                        level = 2;
+                    } else if (0..3).any(|c| (b.percept[c] - a.percept[c]).abs() > JUMP) {
+                        level = 1;
+                    }
+                }
+                *o = [0, STEEP_SIDE, cut_side][level] as u8;
             }
-            *o = mul(acc, 1.0 / n as f32);
-        }
-    });
-    quantise_shoulder(&px, w)
+        });
+
+        let mut px: Vec<C> = vec![[0.0; 3]; out.len()];
+        par_rows(&mut px, w, |r, row| {
+            let y = y0 + r;
+            for (x, o) in row.iter_mut().enumerate() {
+                let side = side[r * w + x] as usize;
+                if side == 0 {
+                    *o = at(x, y).c;
+                    continue;
+                }
+                let n = side * side;
+                let (sx, sy) = centred(x, y, w, h);
+                let key = hash2(x as i32, y as i32, jitter);
+                let mut acc = [0.0f32; 3];
+                for k in 0..n {
+                    // Multi-jittered: one sample per cell and per row and column, so a near-axis edge sees n coverage levels.
+                    let r = hash32(key ^ k as u32);
+                    let (col, row) = (k % side, k / side);
+                    let fx = (row + (key as usize >> 8) + col * 3) % side;
+                    let fy = (col + (key as usize >> 16) + row * 3) % side;
+                    let ox = (col as f32 + (fx as f32 + unit(r)) / side as f32) / side as f32 - 0.5;
+                    let oy = (row as f32 + (fy as f32 + unit(hash32(r))) / side as f32)
+                        / side as f32
+                        - 0.5;
+                    // Wavelengths are stratified as a Latin square over the grid.
+                    let lk = ((col + row + (key as usize >> 4)) % side) * side
+                        + (row + (key as usize >> 12)) % side;
+                    let u = (lk as f32 + unit(hash32(r ^ 0x51))) / n as f32 - 0.5;
+                    let (c, _) = scene.pixel(sx + ox * px_sz, sy + oy * px_sz, RGB.map(|l| l + u));
+                    acc = add(acc, c);
+                }
+                *o = mul(acc, 1.0 / n as f32);
+            }
+        });
+        quantise_shoulder_rows(&px, w, y0 * w, out);
+    }
+    out
 }
+
+/// Rows drawn at a time.
+const BAND_ROWS: usize = 128;
 
 const NEIGHBOURS: [(isize, isize); 8] = [
     (-1, -1),

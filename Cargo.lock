@@ -5062,6 +5062,7 @@ dependencies = [
  "harfrust",
  "libc",
  "log",
+ "memmap2",
  "png",
  "reprisekit-pins",
  "reprisexdg",
