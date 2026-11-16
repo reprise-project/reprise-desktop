@@ -185,8 +185,16 @@ impl Window {
         self.list.select(at, &lay);
     }
 
-    /// Refresh from `phase` and `updates`, wrapping the message as `forms` draws it.
-    pub fn sync(&mut self, phase: &Phase, updates: &[Update], text: &TextRenderer, forms: &Theme) {
+    /// Refresh from `phase` and `updates`, wrapping the message as `forms` draws it. While
+    /// `held`, the list predates the install that just ended, so Install stays greyed.
+    pub fn sync(
+        &mut self,
+        phase: &Phase,
+        updates: &[Update],
+        held: bool,
+        text: &TextRenderer,
+        forms: &Theme,
+    ) {
         if self.rows != updates {
             self.fill(updates, &forms.controls());
         }
@@ -204,7 +212,7 @@ impl Window {
         let busy = phase.busy();
         self.form.set_enabled("check", !busy);
         let restart = matches!(phase, Phase::Installed(Restart::System) | Phase::RestartDue);
-        let install = !busy && picked > 0;
+        let install = !busy && !held && picked > 0;
         let (label, act, enabled) = if restart && !install {
             ("&Restart Now", Outcome::Restart, true)
         } else {
@@ -433,7 +441,7 @@ mod tests {
             }
         }
         fn sync(&self, w: &mut Window, phase: &Phase, ups: &[Update]) {
-            w.sync(phase, ups, &self.text, &self.theme);
+            w.sync(phase, ups, false, &self.text, &self.theme);
         }
     }
 
@@ -494,7 +502,7 @@ mod tests {
             .into_iter()
             .map(|phase| {
                 let mut w = Window::new(None);
-                w.sync(&phase, &ups, text, forms);
+                w.sync(&phase, &ups, false, text, forms);
                 (format!("{phase:?}"), w.form)
             })
             .collect()
@@ -632,6 +640,7 @@ mod tests {
         w.sync(
             &Phase::Ready,
             &[update("a"), update("b")],
+            false,
             &env.text,
             &forms,
         );

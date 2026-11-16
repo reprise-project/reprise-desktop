@@ -40,7 +40,8 @@ struct UpdatesApp {
     phase: Phase,
     updates: Vec<Update>,
     announced: Announced,
-    /// An install just ended: its result stays up through the check that follows it.
+    /// An install just ended: its result stays up, and Install greyed, through the check that
+    /// follows it.
     hold: bool,
     /// The restart or log off an earlier install asked for: a later install, dismissed or failed,
     /// leaves it owed.
@@ -181,7 +182,7 @@ impl UpdatesApp {
             .filter(|u| self.window.wanted(u))
             .cloned()
             .collect();
-        if self.phase.busy() || picked.is_empty() {
+        if self.phase.busy() || self.hold || picked.is_empty() {
             return;
         }
         self.phase = Phase::Installing {
@@ -324,8 +325,13 @@ impl UpdatesApp {
     }
 
     fn sync_window(&mut self, ctx: &Ctx) {
-        self.window
-            .sync(&self.phase, &self.updates, &ctx.text, &ctx.forms());
+        self.window.sync(
+            &self.phase,
+            &self.updates,
+            self.hold,
+            &ctx.text,
+            &ctx.forms(),
+        );
     }
 
     fn list_input(&mut self, ev: &Event, ctx: &Ctx) -> Option<window::Outcome> {
@@ -554,6 +560,25 @@ mod tests {
     }
 
     #[test]
+    fn install_waits_for_the_check_after_an_install() {
+        let mut app = UpdatesApp::new(true);
+        app.worker_msg(found(Ok(vec![update("a")])));
+        app.worker_msg(worker::Msg::Installed(Ok(Restart::None)));
+        let (text, theme) = window_env();
+        let act = |app: &mut UpdatesApp| {
+            app.window
+                .sync(&app.phase, &app.updates, app.hold, &text, &theme);
+            app.window.event(Pressed("act"))
+        };
+        assert_eq!(act(&mut app), window::Outcome::None, "the list is stale");
+        app.install();
+        assert_eq!(app.phase, Phase::Installed(Restart::None));
+        app.worker_msg(worker::Msg::Checking);
+        app.worker_msg(found(Ok(vec![update("a")])));
+        assert_eq!(act(&mut app), window::Outcome::Install);
+    }
+
+    #[test]
     fn a_pending_restart_survives_later_checks() {
         let mut app = UpdatesApp::new(true);
         app.worker_msg(worker::Msg::Installed(Ok(Restart::System)));
@@ -683,7 +708,8 @@ mod tests {
         assert_eq!(app.phase, Phase::RestartDue);
         assert_eq!(app.updates.len(), 1);
         let (text, theme) = window_env();
-        app.window.sync(&app.phase, &app.updates, &text, &theme);
+        app.window
+            .sync(&app.phase, &app.updates, app.hold, &text, &theme);
         assert_eq!(
             app.window.event(Pressed("act")),
             window::Outcome::Install,
