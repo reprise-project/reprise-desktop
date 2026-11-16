@@ -15,7 +15,7 @@ use crate::controls::shellview;
 use crate::controls::toolbar;
 use crate::raster::Rect;
 use crate::text::{TextRenderer, access_key, split_mnemonic};
-use crate::theme::{TextUnits, Theme};
+use crate::theme::{TextUnits, Theme, line_growth};
 use std::borrow::Cow;
 use std::rc::Rc;
 
@@ -62,11 +62,14 @@ impl FileDlg {
         let r = rows(r, cm);
         // 100% lengths at the text size.
         let u = |v: i32| cm.text.len(v);
-        let label_h = px as i32 + 2;
+        // A label's box grows with its line and stays centred where it sat at 100%.
+        let grow = line_growth(px) - line_growth(cm.text.base_px(px));
+        let label_h = px as i32 + 2 + grow;
+        let label_dy = u(LABEL_DY) - grow / 2;
         let lookin_label_w = text.measure(&split_mnemonic(&lookin_label()).0, false, px);
         let lookin_label = Rect::new(
             r.x + u(LOOKIN_LABEL_X),
-            r.y + u(LOOKIN_Y + LABEL_DY) - 1,
+            r.y + u(LOOKIN_Y) + label_dy - 1,
             lookin_label_w,
             label_h,
         );
@@ -126,7 +129,7 @@ impl FileDlg {
         let filename_y = r.y + dy + u(FILENAME_Y);
         let filename_label = Rect::new(
             r.x + u(ROW_LABEL_X),
-            filename_y + u(LABEL_DY),
+            filename_y + label_dy,
             label_w,
             label_h,
         );
@@ -138,7 +141,7 @@ impl FileDlg {
         let filetype_y = r.y + dy + u(FILETYPE_Y);
         let filetype_label = Rect::new(
             r.x + u(ROW_LABEL_X),
-            filetype_y + u(LABEL_DY) - 2,
+            filetype_y + label_dy - 2,
             label_w,
             label_h,
         );

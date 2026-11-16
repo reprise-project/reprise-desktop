@@ -25,11 +25,14 @@ pub(crate) fn line_pitch(theme: &Theme) -> i32 {
 /// Where a box's text goes: how far inside each edge (design px) and the first
 /// line's text box height (device px). A look with its own box
 /// ([`tooltip::insets`]) sets the insets and boxes every line at [`line_pitch`];
-/// Classic's is `pad` inside the 1 px border, the first line `line_h` tall.
+/// Classic's is `pad` inside the 1 px border, the first line `line_h` tall at 100% text and
+/// [`line_pitch`] tall once the text grows.
 fn text_frame(theme: &Theme, pad: i32, line_h: i32) -> (Insets, i32) {
+    let classic = Insets::new(pad + 1, pad + 1, pad + 1, pad + 1);
     match tooltip::insets(&theme.paint()) {
         Some((content, _)) => (content, line_pitch(theme)),
-        None => (Insets::new(pad + 1, pad + 1, pad + 1, pad + 1), line_h),
+        None if theme.text.is_one() => (classic, line_h),
+        None => (classic, line_pitch(theme)),
     }
 }
 

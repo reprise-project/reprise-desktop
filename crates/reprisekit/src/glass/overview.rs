@@ -73,7 +73,7 @@ mod tests {
         let theme = crate::interfaces::theme_for(Interface::Glass);
         let style = theme.look.style().unwrap();
         let text = crate::look::caption_text(style);
-        let l = OverviewLayout::compute(3, Rect::new(0, 0, 1280, 720));
+        let l = OverviewLayout::compute(3, Rect::new(0, 0, 1280, 720), 0);
         let mut icon = Canvas::new(ICON_PX as u32, ICON_PX as u32);
         icon.fill_rect(icon.bounds(), Color::rgb(255, 0, 0));
         let cells = [

@@ -1,7 +1,7 @@
 //! The performance graphs on the window's paper: lines in the selection colour over a faint grid,
 //! shaded below, and a meter as a rounded well filling from the foot.
 
-use crate::perfart::{self, Graph, GraphInk, METER_LABEL_H, PerfLook};
+use crate::perfart::{self, Graph, GraphInk, PerfLook};
 use crate::raster::Canvas;
 use crate::shape::{self, mix, premul};
 use crate::theme::{Color, ColorScheme};
@@ -35,7 +35,7 @@ fn graph(g: &Graph, cs: &ColorScheme, w: i32, h: i32, d: i32) -> Canvas {
     perfart::paint_graph(g, &ink, w, h, d)
 }
 
-fn meter(fraction: f64, cs: &ColorScheme, w: i32, h: i32, d: i32) -> Canvas {
+fn meter(fraction: f64, cs: &ColorScheme, w: i32, h: i32, label_h: i32, d: i32) -> Canvas {
     let (dw, dh) = (w.max(1) * d, h.max(1) * d);
     let k = f64::from(d);
     let paper = premul(cs.window, 255);
@@ -47,7 +47,7 @@ fn meter(fraction: f64, cs: &ColorScheme, w: i32, h: i32, d: i32) -> Canvas {
     let ww = f64::from(WELL_W.min(w - 2 * MARGIN).max(4)) * k;
     let wx = (f64::from(dw) - ww) / 2.0;
     let wy = f64::from(MARGIN) * k;
-    let wh = f64::from(h - METER_LABEL_H - MARGIN).max(4.0) * k - wy;
+    let wh = f64::from(h - label_h - MARGIN).max(4.0) * k - wy;
     let r = WELL_RADIUS * k;
     let top = wy + wh * (1.0 - fraction.clamp(0.0, 1.0));
     let mut c = Canvas::new(dw as u32, dh as u32);
@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn the_meter_well_has_clear_corners_and_soft_edges_at_2() {
         let cs = super::super::colors(Mode::Light);
-        let c = meter(0.6, &cs, 60, 90, 2);
+        let c = meter(0.6, &cs, 60, 90, perfart::METER_LABEL_H, 2);
         let paper = cs.window.argb();
         let wx = (60 - WELL_W) / 2 * 2;
         let wy = MARGIN * 2;
@@ -133,7 +133,7 @@ mod tests {
                 ));
                 for f in [0.0, 0.37, 1.0] {
                     let key = format!("{mode:?} meter {f} @{d}");
-                    got.push((key, fnv(&meter(f, &cs, 60, 90, d))));
+                    got.push((key, fnv(&meter(f, &cs, 60, 90, perfart::METER_LABEL_H, d))));
                 }
             }
         }

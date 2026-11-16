@@ -104,7 +104,7 @@ mod tests {
             ..Theme::default()
         };
         let text = TextRenderer::load(&FontConfig::default());
-        let l = OverviewLayout::compute(3, Rect::new(0, 0, 1280, 720));
+        let l = OverviewLayout::compute(3, Rect::new(0, 0, 1280, 720), 0);
         let mut icon = Canvas::new(ICON_PX as u32, ICON_PX as u32);
         icon.fill_rect(icon.bounds(), Color::rgb(255, 0, 0));
         let cells = [

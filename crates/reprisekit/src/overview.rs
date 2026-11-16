@@ -73,21 +73,35 @@ impl OverviewLayout {
     /// shape, as large as the column count that suits them best allows
     /// (capped at two fifths of the grid's width), `GAP` between cells, the
     /// rows centred and the block of rows centred in the area less
-    /// `MARGIN`.
-    pub fn compute(count: usize, area: Rect) -> OverviewLayout {
-        Self::lay_out(count, area, (area.width, area.height), MAX_FIFTHS)
+    /// `MARGIN`. The title row is `grow` px taller than [`TITLE_H`] ([`Theme::line_growth`]).
+    ///
+    /// [`Theme::line_growth`]: crate::theme::Theme::line_growth
+    pub fn compute(count: usize, area: Rect, grow: i32) -> OverviewLayout {
+        Self::lay_out(
+            count,
+            area,
+            (area.width, area.height),
+            MAX_FIFTHS,
+            TITLE_H + grow,
+        )
     }
 
     /// Lay `count` windows out over `area`, a part of a screen `screen`
     /// big (snap assist's zone): every picture box the screen's shape, as
     /// large as the area allows, with no cap on its width.
     pub fn compute_in(count: usize, area: Rect, screen: (i32, i32)) -> OverviewLayout {
-        Self::lay_out(count, area, screen, 5)
+        Self::lay_out(count, area, screen, 5, TITLE_H)
     }
 
     /// The grid over `area` with picture boxes of `shape`, each at most
     /// `fifths` fifths of the grid's width.
-    fn lay_out(count: usize, area: Rect, shape: (i32, i32), fifths: i32) -> OverviewLayout {
+    fn lay_out(
+        count: usize,
+        area: Rect,
+        shape: (i32, i32),
+        fifths: i32,
+        title_h: i32,
+    ) -> OverviewLayout {
         let inner = Rect::new(
             MARGIN,
             MARGIN,
@@ -95,7 +109,7 @@ impl OverviewLayout {
             (area.height - 2 * MARGIN).max(1),
         );
         let (aw, ah) = (i64::from(shape.0.max(1)), i64::from(shape.1.max(1)));
-        let chrome = (2 * PAD, PAD + TITLE_H + BOTTOM);
+        let chrome = (2 * PAD, PAD + title_h + BOTTOM);
         let (cols, bw, bh) = best_box(
             count,
             inner,
@@ -104,7 +118,7 @@ impl OverviewLayout {
             (aw, ah),
             inner.width * fifths / 5,
         );
-        let (cw, ch) = (bw + 2 * PAD, PAD + bh + TITLE_H + BOTTOM);
+        let (cw, ch) = (bw + 2 * PAD, PAD + bh + title_h + BOTTOM);
         let nrows = count.div_ceil(cols);
         let block_h = nrows as i32 * ch + (nrows as i32 - 1).max(0) * GAP;
         let top = inner.y + (inner.height - block_h) / 2;
@@ -127,7 +141,7 @@ impl OverviewLayout {
             .collect();
         let titles = cells
             .iter()
-            .map(|c| Rect::new(c.x + PAD, c.y + PAD + bh, bw, TITLE_H))
+            .map(|c| Rect::new(c.x + PAD, c.y + PAD + bh, bw, title_h))
             .collect();
         OverviewLayout {
             area,
@@ -804,7 +818,7 @@ mod tests {
         let p = l.pictures[0];
         // 640 - 2 * 48 - 2 * 8 = 528 wide, 528 x 1050 / 1920 = 288 tall.
         assert_eq!((p.width, p.height), (528, 288));
-        let tall = OverviewLayout::compute(2, zone);
+        let tall = OverviewLayout::compute(2, zone, 0);
         assert!(
             tall.pictures[0].height > tall.pictures[0].width,
             "the zone's shape"
@@ -812,8 +826,15 @@ mod tests {
     }
 
     #[test]
+    fn a_grown_title_row_is_taller_by_the_growth_and_still_ends_its_cell() {
+        let grown = OverviewLayout::compute(3, SCREEN, 13);
+        assert_eq!(grown.titles[0].height, TITLE_H + 13);
+        assert_eq!(grown.titles[0].bottom() + BOTTOM, grown.cells[0].bottom());
+    }
+
+    #[test]
     fn one_window_is_two_fifths_of_the_grid_and_centred() {
-        let l = OverviewLayout::compute(1, SCREEN);
+        let l = OverviewLayout::compute(1, SCREEN, 0);
         // The grid is 1824 wide; two fifths is 729, the box 729x398.
         assert_eq!(l.pictures[0], Rect::new(595, 316, 729, 398));
         assert_eq!(l.cells[0], Rect::new(587, 308, 745, 434));
@@ -823,7 +844,7 @@ mod tests {
 
     #[test]
     fn five_windows_take_three_columns_and_centre_the_short_row() {
-        let l = OverviewLayout::compute(5, SCREEN);
+        let l = OverviewLayout::compute(5, SCREEN, 0);
         assert_eq!(l.rows, [0, 3]);
         let (a, d) = (l.cells[0], l.cells[3]);
         assert_eq!(a.width, d.width);
@@ -841,7 +862,7 @@ mod tests {
     #[test]
     fn many_windows_stay_inside_the_margin() {
         for n in [2, 7, 12, 30] {
-            let l = OverviewLayout::compute(n, SCREEN);
+            let l = OverviewLayout::compute(n, SCREEN, 0);
             assert_eq!(l.cells.len(), n);
             for c in &l.cells {
                 assert!(c.x >= MARGIN && c.right() <= 1920 - MARGIN, "{n}: {c:?}");
@@ -852,7 +873,7 @@ mod tests {
 
     #[test]
     fn hit_finds_cells_and_not_the_gaps() {
-        let l = OverviewLayout::compute(3, SCREEN);
+        let l = OverviewLayout::compute(3, SCREEN, 0);
         let c = l.cells[1];
         assert_eq!(hit(&l, c.x + 1, c.y + 1), Some(1));
         assert_eq!(hit(&l, c.x - GAP / 2, c.y + 10), None);
@@ -861,7 +882,7 @@ mod tests {
 
     #[test]
     fn up_and_down_go_to_the_nearest_cell_across() {
-        let l = OverviewLayout::compute(5, SCREEN);
+        let l = OverviewLayout::compute(5, SCREEN, 0);
         let mut o = Overview::new(5);
         o.selected = 1;
         assert_eq!(o.key(std::slice::from_ref(&l), Key::Down), Event::Redraw);
@@ -887,7 +908,7 @@ mod tests {
 
     #[test]
     fn left_right_stop_at_the_ends_and_tab_wraps() {
-        let l = OverviewLayout::compute(3, SCREEN);
+        let l = OverviewLayout::compute(3, SCREEN, 0);
         let mut o = Overview::new(3);
         assert_eq!(o.key(std::slice::from_ref(&l), Key::Left), Event::None);
         o.key(std::slice::from_ref(&l), Key::Right);
@@ -911,7 +932,7 @@ mod tests {
 
     #[test]
     fn a_key_drops_the_hover_and_a_click_off_the_cells_closes() {
-        let l = OverviewLayout::compute(3, SCREEN);
+        let l = OverviewLayout::compute(3, SCREEN, 0);
         let mut o = Overview::new(3);
         assert_eq!(o.hover(Some(2)), Event::Redraw);
         assert_eq!(o.hover(Some(2)), Event::None);
@@ -945,7 +966,7 @@ mod tests {
 
     #[test]
     fn an_empty_overview_closes_on_enter() {
-        let l = OverviewLayout::compute(0, SCREEN);
+        let l = OverviewLayout::compute(0, SCREEN, 0);
         assert!(l.cells.is_empty());
         let mut o = Overview::new(0);
         assert_eq!(o.key(std::slice::from_ref(&l), Key::Right), Event::None);
@@ -987,7 +1008,7 @@ mod tests {
 
     #[test]
     fn scaled_doubles_and_the_well_widens_the_box() {
-        let l = OverviewLayout::compute(2, SCREEN);
+        let l = OverviewLayout::compute(2, SCREEN, 0);
         let s = l.scaled(2);
         assert_eq!(s.cells[1], l.cells[1].scaled(2));
         assert_eq!(s.pictures[1], l.pictures[1].scaled(2));
@@ -998,7 +1019,7 @@ mod tests {
 
     #[test]
     fn the_selected_window_has_the_focus() {
-        let l = OverviewLayout::compute(3, SCREEN);
+        let l = OverviewLayout::compute(3, SCREEN, 0);
         let mut t = Tree::window("", (1920, 1050));
         let titles = ["a", "b", "c"];
         let focus = access(
@@ -1040,8 +1061,8 @@ mod tests {
     /// Three windows on the left output, two on the right one.
     fn two_grids() -> [OverviewLayout; 2] {
         [
-            OverviewLayout::compute(3, SCREEN),
-            OverviewLayout::compute(2, RIGHT),
+            OverviewLayout::compute(3, SCREEN, 0),
+            OverviewLayout::compute(2, RIGHT, 0),
         ]
     }
 
@@ -1099,9 +1120,9 @@ mod tests {
     fn up_and_down_cross_to_an_output_above_or_below() {
         let below = Rect::new(0, 1050, 1920, 1080);
         let g = [
-            OverviewLayout::compute(1, SCREEN),
-            OverviewLayout::compute(0, RIGHT),
-            OverviewLayout::compute(3, below),
+            OverviewLayout::compute(1, SCREEN, 0),
+            OverviewLayout::compute(0, RIGHT, 0),
+            OverviewLayout::compute(3, below, 0),
         ];
         assert_eq!(g[2].rows, [0, 2]);
         let mut o = Overview::new(4);
