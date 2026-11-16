@@ -685,6 +685,8 @@ What a consent prompt remembers, and where:
   key. A shortcut gets the key an app suggests only when nothing else holds
   it and it isn't a key that types or edits text without Ctrl, Alt or
   Super, so an allowed app can't take keys from the window you type in.
+  The compositor gives no shortcut such a key, whoever stored it, and
+  Settings > Keyboard lists one as None and refuses to set it.
 - **Access** (camera, background): answers go to xdg-desktop-portal's
   permission store.
 - **Location:** Reprise's geoclue agent keeps its own answers.

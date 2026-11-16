@@ -73,7 +73,7 @@ pub fn check_keys(keys: &str) -> Result<(), &'static str> {
 
 /// Why a program could not have `keys`, as `Err`: keys that would not
 /// bind, or keys the compositor never gives a program (modifiers alone,
-/// or kept by the desktop). Empty keys are fine: unassigned. `shown`
+/// kept by the desktop, or typing text). Empty keys are fine: unassigned. `shown`
 /// names the keys in the reason.
 pub fn check_program_keys(keys: &str, shown: &str) -> Result<(), String> {
     if keys.is_empty() {
@@ -85,6 +85,9 @@ pub fn check_program_keys(keys: &str, shown: &str) -> Result<(), String> {
     }
     if repriseconf::keybind::reserved(keys) {
         return Err(format!("{shown} is kept by the desktop."));
+    }
+    if repriseconf::keybind::types_text(keys) {
+        return Err(format!("{shown} types text; add Ctrl, Alt or Super."));
     }
     Ok(())
 }
@@ -210,7 +213,10 @@ pub(super) fn read_programs(list: &ArrayOfTables) -> Vec<ProgramShortcut> {
                 app: text(t, "app")?,
                 id: text(t, "id")?,
                 description: text(t, "description").unwrap_or_default(),
-                keys: text(t, "keys").unwrap_or_default(),
+                // The compositor gives a program no key that types text.
+                keys: text(t, "keys")
+                    .filter(|k| !repriseconf::keybind::types_text(k))
+                    .unwrap_or_default(),
             })
         })
         .collect()

@@ -34,6 +34,20 @@ fn a_global_shortcut_with_bad_keys_is_unassigned_and_the_file_still_loads() {
 }
 
 #[test]
+fn a_global_shortcut_on_a_key_that_types_text_takes_no_key() {
+    let cfg = Config::parse(
+        "[[global_shortcuts]]\napp = \"a\"\nid = \"send\"\nkeys = \"Return\"\n\
+         [[global_shortcuts]]\napp = \"a\"\nid = \"x\"\nkeys = \"Shift+a\"\n\
+         [[global_shortcuts]]\napp = \"a\"\nid = \"y\"\nkeys = \"Ctrl+Return\"\n",
+    )
+    .unwrap();
+    let g = &cfg.global_shortcuts;
+    assert_eq!(g[0].chord, None, "a bare Return types text");
+    assert_eq!(g[1].chord, None, "Shift+a types text");
+    assert_eq!(g[2].chord, Some(parse_keybind("Ctrl+Return").unwrap()));
+}
+
+#[test]
 fn a_repeated_global_shortcut_keeps_the_first() {
     let cfg = Config::parse(
         "[[global_shortcuts]]\napp = \"a\"\nid = \"x\"\nkeys = \"F9\"\n\
