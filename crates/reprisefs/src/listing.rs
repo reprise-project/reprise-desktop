@@ -949,7 +949,6 @@ mod tests {
         use std::collections::{HashMap, HashSet};
         use std::path::{Path, PathBuf};
         use std::sync::Mutex;
-        use std::time::{Duration, Instant};
 
         type Entry = (PathBuf, usize);
         static ENTERED: Mutex<Option<HashMap<PathBuf, usize>>> = Mutex::new(None);
@@ -959,14 +958,6 @@ mod tests {
 
         fn has(set: &Mutex<Option<HashSet<Entry>>>, e: &Entry) -> bool {
             set.lock().unwrap().as_ref().is_some_and(|s| s.contains(e))
-        }
-
-        pub fn until(what: &str, mut done: impl FnMut() -> bool) {
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while !done() {
-                assert!(Instant::now() < deadline, "{what} within 10 s");
-                std::thread::sleep(Duration::from_millis(1));
-            }
         }
 
         pub fn follow(p: &Path) -> bool {
@@ -984,18 +975,18 @@ mod tests {
             }
             let e = (p.to_path_buf(), n);
             LAST.with(|l| *l.borrow_mut() = Some(e.clone()));
-            until("the follow is let through", || has(&OPEN, &e));
+            reprisebus::testbus::until("the follow is let through", || has(&OPEN, &e));
             true
         }
 
         pub fn wake() {
             if let Some(e) = LAST.with(|l| l.borrow().clone()) {
-                until("the wake is let through", || has(&WAKE_OPEN, &e));
+                reprisebus::testbus::until("the wake is let through", || has(&WAKE_OPEN, &e));
             }
         }
 
         pub fn entered(p: &Path, n: usize) {
-            until("the follow starts", || {
+            reprisebus::testbus::until("the follow starts", || {
                 let e = ENTERED.lock().unwrap();
                 e.as_ref().and_then(|e| e.get(p)).copied() == Some(n)
             });
@@ -1056,7 +1047,7 @@ mod tests {
         // what counts is that the thread follows it and nothing stays marked.
         assert!(first.join().unwrap()[0], "held is followed");
         gate::entered(&late, 1);
-        gate::until("late is not marked stuck", || {
+        reprisebus::testbus::until("late is not marked stuck", || {
             !stuck().keys.contains_key(&late)
         });
         gate::open(&held, 2);

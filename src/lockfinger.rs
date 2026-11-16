@@ -460,6 +460,7 @@ impl Converse for FingerLines {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use reprisebus::testbus::until;
 
     #[test]
     fn only_the_three_line_kinds_parse() {
@@ -694,14 +695,6 @@ pub(crate) mod tests {
         }
     }
 
-    fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
-        let end = Instant::now() + Duration::from_secs(5);
-        while !f() {
-            assert!(Instant::now() < end, "{what}");
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-
     #[test]
     fn dropping_interrupts_the_child_without_waiting_and_reap_ended_reaps_it() {
         let dir = std::env::temp_dir().join(format!("reprise-finger-{}", std::process::id()));
@@ -714,14 +707,14 @@ pub(crate) mod tests {
             mark = mark.display()
         ));
         let pid = c.pid();
-        wait_until("the child says ready", || !c.read().0.is_empty());
+        until("the child says ready", || !c.read().0.is_empty());
         drop(c);
         assert!(!ended(pid), "drop returns while the child is still ending");
         std::fs::write(&go, "").unwrap();
-        wait_until("the child hears SIGINT", || {
+        until("the child hears SIGINT", || {
             std::fs::read_to_string(&mark).ok().as_deref() == Some("released\n")
         });
-        wait_until("reap_ended reaps it", || {
+        until("reap_ended reaps it", || {
             reap_ended(Instant::now());
             // SAFETY: signal 0 only checks that the pid exists.
             unsafe { libc::kill(pid, 0) == -1 }
@@ -733,14 +726,14 @@ pub(crate) mod tests {
     fn a_child_that_ignores_the_interrupt_is_killed_once_its_grace_is_over() {
         let mut c = sh("trap '' INT; echo 'I ready'; exec sleep 60");
         let pid = c.pid();
-        wait_until("the child says ready", || !c.read().0.is_empty());
+        until("the child says ready", || !c.read().0.is_empty());
         let start = Instant::now();
         drop(c);
         assert!(!ended(pid), "drop returns while the child runs");
         let due = reap_ended(start);
         assert!(due.is_some(), "the child waits out its grace");
         assert!(!ended(pid), "still running within the grace");
-        wait_until("the child is killed", || {
+        until("the child is killed", || {
             reap_ended(Instant::now());
             ended(pid)
         });

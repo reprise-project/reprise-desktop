@@ -422,6 +422,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisebus::testbus::until;
     use std::sync::atomic::AtomicBool;
 
     /// A named pipe in a scratch folder: opening it to read blocks until a writer opens it, as a
@@ -436,14 +437,6 @@ mod tests {
         // SAFETY: `c` is a valid NUL-terminated path for the call's duration.
         assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
         path
-    }
-
-    fn until(what: &str, done: impl Fn() -> bool) {
-        let end = Instant::now() + Duration::from_secs(5);
-        while !done() {
-            assert!(Instant::now() < end, "timed out waiting for {what}");
-            std::thread::sleep(Duration::from_millis(5));
-        }
     }
 
     /// Jobs blocked on a file system that does not answer hold at most [`MAX_THREADS`] threads;

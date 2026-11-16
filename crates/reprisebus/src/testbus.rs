@@ -1,8 +1,22 @@
-//! Test support: a private bus daemon, and [`skipped`], which every test that needs something
-//! this machine may lack reports through.
+//! Test support: a private bus daemon, [`until`] for work on other threads, and [`skipped`],
+//! which every test that needs something this machine may lack reports through.
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// How long [`until`] waits before it fails the test.
+pub const CEILING: Duration = Duration::from_secs(60);
+
+/// Polls `done` every 5 ms until it holds; fails the test naming `what` after [`CEILING`].
+#[track_caller]
+pub fn until(what: &str, mut done: impl FnMut() -> bool) {
+    let end = Instant::now() + CEILING;
+    while !done() {
+        assert!(Instant::now() < end, "{what} within {CEILING:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
 
 /// A `dbus-daemon`, killed on drop, and its address.
 pub struct Bus(Child, pub String);
