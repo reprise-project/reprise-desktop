@@ -978,11 +978,11 @@ pub fn folder_totals_unless(dir: &Path, stop: &AtomicBool) -> Option<FolderTotal
     })
 }
 
-/// The MIME type's description from shared-mime-info (the untranslated `<comment>`).
+/// The MIME type's description from shared-mime-info (the untranslated `<comment>`), from the
+/// first database folder ([`crate::apps::mime_dirs`]) that has it.
 pub(crate) fn mime_description(mime: &str) -> Option<String> {
-    let roots = ["/usr/share/mime", "/usr/local/share/mime"];
-    roots.iter().find_map(|r| {
-        let text = std::fs::read_to_string(Path::new(r).join(format!("{mime}.xml"))).ok()?;
+    crate::apps::mime_dirs().iter().find_map(|r| {
+        let text = std::fs::read_to_string(r.join(format!("{mime}.xml"))).ok()?;
         comment_of(&text)
     })
 }
