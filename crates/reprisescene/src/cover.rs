@@ -193,7 +193,8 @@ impl<R: Renderer, D> Scene<R, D> {
 
     /// The leaves `output` shows part of, each covered when it lies under opaque leaves drawn
     /// above it at full opacity and outside what every custom node the output draws reads
-    /// ([`CustomNode::reads_beneath`](crate::CustomNode::reads_beneath)). A custom node that
+    /// ([`CustomNode::reads_beneath`](crate::CustomNode::reads_beneath)), or where it reads only
+    /// through opaque leaves its backdrop holds over the leaf ([`Veil`]). A custom node that
     /// cannot say reads all of the output beneath it. Ends at the first leaf outside the opaque
     /// leaves above it that `stop` takes.
     fn leaves_on(&self, output: &Output, stop: Option<&dyn Fn(NodeId) -> bool>) -> Leaves {
@@ -205,6 +206,7 @@ impl<R: Renderer, D> Scene<R, D> {
         let mut opaque: Vec<Rectangle<i32, Logical>> = Vec::new();
         let mut shown: Vec<Shown> = Vec::new();
         let mut customs: Vec<Custom> = Vec::new();
+        let mut veils: Vec<Veil> = Vec::new();
         // The opaque rects meeting the leaf: the others subtract nothing.
         let mut near: Vec<Rectangle<i32, Logical>> = Vec::new();
         let mut order = 0;
@@ -221,7 +223,7 @@ impl<R: Renderer, D> Scene<R, D> {
             false,
             pass,
             None,
-            &mut |id, n, pos, alpha, _, clip| {
+            &mut |id, n, pos, alpha, left_out, clip| {
                 let cut = |r: Rectangle<i32, Logical>| clip.map_or(Some(r), |c| r.intersection(c));
                 let Some(rect) = (Self::leaf_rect(n, pos))
                     .and_then(|r| r.intersection(view.area))
@@ -250,6 +252,7 @@ impl<R: Renderer, D> Scene<R, D> {
                         shown: rect,
                         hidden: under,
                         order,
+                        anchor: self.anchor(id),
                         reads: (c.reads_beneath(view.scale.x)).map(|rs| {
                             (rs.into_iter())
                                 .map(|r| Rectangle::new(r.loc + pos, r.size))
@@ -260,25 +263,49 @@ impl<R: Renderer, D> Scene<R, D> {
                 if under || alpha < 1.0 {
                     return;
                 }
+                let from = opaque.len();
                 for r in opaque_parts(n, pos) {
                     let r = cut(r).and_then(|r| shrink(r, inset, view.area));
                     opaque.extend(r.and_then(|r| r.intersection(view.area)));
+                }
+                if !left_out && opaque.len() > from {
+                    veils.push(Veil {
+                        order,
+                        anchor: self.anchor(id),
+                        rects: opaque[from..].to_vec(),
+                    });
                 }
             },
         );
         if stopped.get() {
             return Leaves::Stopped;
         }
-        let (reads, from) = reads(customs);
+        let (reads, from) = reads(customs, &veils);
         Leaves::All(
             (shown.into_iter())
                 .map(|s| Leaf {
                     id: s.id,
                     surface: s.surface,
-                    covered: s.under && s.order < from && !reads.iter().any(|r| r.overlaps(s.rect)),
+                    covered: s.under
+                        && s.order < from
+                        && !reads.iter().any(|r| r.sees(s.rect, s.order, &veils)),
                 })
                 .collect(),
         )
+    }
+
+    /// The child of a child of the root that `id` lies in, as glass finds the window it backs;
+    /// None for the root's own children.
+    fn anchor(&self, id: NodeId) -> Option<NodeId> {
+        let root = self.root().node();
+        let mut id = id;
+        loop {
+            let parent = self.node(id)?.parent?.0;
+            if self.node(parent)?.parent.map(|p| p.0) == Some(root) {
+                return Some(id);
+            }
+            id = parent;
+        }
     }
 }
 
@@ -338,23 +365,60 @@ struct Custom {
     /// Wholly under opaque leaves on the screen.
     hidden: bool,
     order: usize,
+    anchor: Option<NodeId>,
     /// Layout; None for anywhere beneath.
     reads: Option<Vec<Rectangle<i32, Logical>>>,
 }
 
+/// A part a custom node reads beneath it.
+struct Read {
+    rect: Rectangle<i32, Logical>,
+    order: usize,
+    anchor: Option<NodeId>,
+}
+
+/// The opaque parts of a leaf drawn at full opacity and in the output's backdrop (not left out of
+/// it), in walk order: they hide what lies under them from glass reading through them.
+struct Veil {
+    order: usize,
+    anchor: Option<NodeId>,
+    rects: Vec<Rectangle<i32, Logical>>,
+}
+
+impl Read {
+    /// Whether this read reaches part of the leaf at `rect` and `order` past the veils every backdrop
+    /// the glass may draw from holds: those below the glass and outside its anchor, or above both.
+    fn sees(&self, rect: Rectangle<i32, Logical>, order: usize, veils: &[Veil]) -> bool {
+        let Some(part) = self.rect.intersection(rect) else {
+            return false;
+        };
+        let hiding = (veils.iter())
+            .take_while(|v| v.order < order)
+            .filter(|v| order < self.order || v.order > self.order)
+            .filter(|v| self.anchor.is_none() || v.anchor != self.anchor)
+            .flat_map(|v| v.rects.iter().copied())
+            .filter(|r| r.overlaps(part));
+        !part.subtract_rects(hiding).is_empty()
+    }
+}
+
 /// What the custom nodes drawn read: the rectangles glass reads, and the walk order past which
 /// everything is read. Glass reads a backdrop that can hold nodes stacked above it and leave
-/// opaque chrome out, so its reads count at any depth; glass hidden on the screen still draws
-/// into the backdrop of glass reading it.
-fn reads(mut customs: Vec<Custom>) -> (Vec<Rectangle<i32, Logical>>, usize) {
-    let mut reads: Vec<Rectangle<i32, Logical>> = Vec::new();
+/// opaque chrome out, so its reads count at any depth unless `veils` hide the leaf; glass hidden
+/// on the screen still draws into the backdrop of glass reading it.
+fn reads(mut customs: Vec<Custom>, veils: &[Veil]) -> (Vec<Read>, usize) {
+    let mut reads: Vec<Read> = Vec::new();
     let mut from = usize::MAX;
-    while let Some(i) =
-        (customs.iter()).position(|c| !c.hidden || reads.iter().any(|r| r.overlaps(c.shown)))
+    while let Some(i) = (customs.iter())
+        .position(|c| !c.hidden || reads.iter().any(|r| r.sees(c.shown, c.order, veils)))
     {
         let c = customs.swap_remove(i);
         match c.reads {
-            Some(rs) => reads.extend(rs),
+            Some(rs) => reads.extend(rs.into_iter().map(|rect| Read {
+                rect,
+                order: c.order,
+                anchor: c.anchor,
+            })),
             None => from = from.min(c.order),
         }
     }
