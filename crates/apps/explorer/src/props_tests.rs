@@ -334,7 +334,7 @@ fn the_tree_attribute_write_reaches_the_subfolders_and_closes_the_sheet() {
 }
 
 /// A folder's Hidden asks how far it reaches before anything is written.
-/// Cancel writes nothing and clears the box; OK with the tree picked puts the
+/// Its close box writes nothing and clears the box; OK with the tree picked puts the
 /// folder's dot on and lists its contents in `.hidden` files, leaving a `.git`
 /// alone. Unhiding the tree takes the lists off and renames no dotfile.
 #[test]
@@ -368,8 +368,8 @@ fn a_folders_hidden_asks_first_and_lists_its_tree() {
     tick(&mut ex, true, &mut ctx);
     assert_eq!(label(&ex), "hide");
     assert!(full.exists(), "nothing is written before the answer");
-    ex.dialog = None;
-    ex.attrs_cancelled();
+    ex.dialog_event(repriseapp::Event::CloseRequest, &mut ctx);
+    assert!(ex.dialog.is_none(), "the close box closes the question");
     assert!(!filesheet::hidden(ex.props.as_ref().unwrap().sheet.open()));
 
     tick(&mut ex, true, &mut ctx);
@@ -524,6 +524,40 @@ fn the_sheets_rename_refuses_a_taken_name() {
             .as_deref(),
         Some("report")
     );
+}
+
+/// Renaming the shown folder through its own sheet puts the new path in its history slot, so Back
+/// then Forward lands on it.
+#[test]
+fn the_shown_folder_renamed_through_its_sheet_keeps_its_place_in_the_history() {
+    use crate::place::Place;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir(dir.path().join("Reports")).expect("mkdir");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.go(Place::Folder(dir.path().join("Reports")), &mut ctx);
+    ex.properties(&mut ctx);
+    ex.finish_puts(&mut ctx);
+    if let Some(Item {
+        control: Control::Edit { edit, .. },
+        ..
+    }) = ex
+        .props
+        .as_mut()
+        .expect("the sheet")
+        .sheet
+        .open_mut()
+        .item_mut(NAME)
+    {
+        *edit = TextEdit::new("Done", false);
+    }
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Ok, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    let done = Place::Folder(dir.path().join("Done"));
+    assert_eq!(ex.place, done);
+    ex.run(crate::commands::Command::Back, &mut ctx);
+    ex.run(crate::commands::Command::Forward, &mut ctx);
+    assert_eq!(ex.place, done, "Forward lands on the new name");
 }
 
 /// A folder renamed through the sheet's OK relabels its row in the Folders
@@ -1176,6 +1210,40 @@ fn a_files_summary_writes_its_fields() {
         Some("Q".to_string())
     );
     assert!(!ex.props.as_ref().is_some_and(|p| p.dirty()), "written");
+}
+
+/// A Summary field the file can't take (no write permission for its attributes) puts an error
+/// box up over the sheet, which stays open with the edit.
+#[test]
+fn a_summary_the_file_refuses_keeps_the_sheet_and_says_so() {
+    use crate::place::Place;
+    use reprisekit::controls::filesheet::SUMMARY_IDS;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, "a").expect("write");
+    if !reprisefs::meta::supported(&f) {
+        return;
+    }
+    std::fs::set_permissions(&f, PermissionsExt::from_mode(0o444)).expect("chmod");
+    if reprisefs::meta::set_summary(&f, reprisefs::meta::AUTHOR, "x").is_ok() {
+        return;
+    }
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.open_properties(&f, "a.txt", "a.txt", &mut ctx);
+    let p = ex.props.as_mut().expect("the sheet");
+    p.sheet.open_tab(1);
+    let page = p.sheet.open_mut();
+    page.focus_id(SUMMARY_IDS[0]);
+    page.key(reprisekit::controls::form::Key::Char('Q'));
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Ok, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(
+        matches!(&ex.dialog, Some(crate::dialogs::Dialog::Message { text, .. }) if text.starts_with("Cannot change a.txt")),
+        "the error box is up"
+    );
+    assert!(ex.props.is_some(), "the sheet stays open");
 }
 
 /// Ctrl+V asks for the clipboard and lands in the focused Comments memo;

@@ -731,7 +731,9 @@ impl Explorer {
             }
             // The description goes first, while the file is where the sheet found it; the rest
             // may rename it.
-            let _ = reprisefs::meta::write_summary(&at, &summary);
+            if let Err(e) = reprisefs::meta::write_summary(&at, &summary) {
+                return Err(format!("Cannot change {name}: {e}"));
+            }
             if !launcher.is_empty()
                 && let Err(e) = reprisefs::launcher::write_keys(&at, &launcher)
             {
@@ -933,7 +935,9 @@ impl Explorer {
                 if let Some(to) = &renamed {
                     ex.after_rename(&info.path, to, info.is_dir, ctx);
                     if here && *to != info.path {
-                        ex.show(crate::place::Place::from_path(to), ctx);
+                        let place = crate::place::Place::from_path(to);
+                        ex.history.replace(place.clone());
+                        ex.show(place, ctx);
                     }
                 }
                 ex.attrs_written(write, &path, close, ctx)
