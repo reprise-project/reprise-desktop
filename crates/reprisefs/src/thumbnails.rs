@@ -520,7 +520,7 @@ fn text_chunks(bytes: &[u8]) -> Option<Text> {
 
 /// `thumb` as an 8-bit RGBA PNG, as the standard asks, carrying `text`
 /// as `tEXt` chunks ahead of the pixels.
-fn encode(thumb: &Rgba, text: &[(&str, String)]) -> Result<Vec<u8>, png::EncodingError> {
+pub fn encode(thumb: &Rgba, text: &[(&str, String)]) -> Result<Vec<u8>, png::EncodingError> {
     let mut out = Vec::new();
     let mut enc = png::Encoder::new(&mut out, thumb.width, thumb.height);
     enc.set_color(png::ColorType::Rgba);
