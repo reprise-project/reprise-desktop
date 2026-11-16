@@ -252,6 +252,15 @@ impl Dialog {
         !matches!(self, Dialog::Paste(_) | Dialog::Reading(_))
     }
 
+    /// Whether the Properties sheet raised it: it covers the sheet and leaves with it.
+    pub(crate) fn of_sheet(&self) -> bool {
+        match self {
+            Dialog::AttrConfirm(_) | Dialog::Advanced { .. } | Dialog::ChangeIcon { .. } => true,
+            Dialog::ChooseProgram(cp) => cp.set_default,
+            _ => false,
+        }
+    }
+
     fn title(&self) -> String {
         match self {
             Dialog::Message { title, .. } => title.clone(),
@@ -385,6 +394,17 @@ impl Explorer {
     /// that can take a box ends its answer itself.
     pub(crate) fn answer_ends(&mut self) {
         self.answered = false;
+    }
+
+    /// The window `win` covers ([`repriseapp::Extended::parent`]).
+    pub(crate) fn parent_of(&self, win: WinId) -> WinId {
+        match win {
+            crate::browse::ERROR | PROGRAM_BROWSE => DIALOG,
+            DIALOG if self.props.is_some() && self.dialog().is_some_and(Dialog::of_sheet) => {
+                crate::props_dialog::PROPS
+            }
+            _ => repriseapp::MAIN,
+        }
     }
 
     /// The boxes waiting behind the one up.
