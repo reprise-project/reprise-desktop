@@ -87,6 +87,13 @@ pub fn add_prompt_lines(lines: &mut Vec<String>, raw: &str) {
     }
 }
 
+/// Whether a shown PAM prompt asks for the login name: libpam's own is "login:"; modules ask
+/// "Username:".
+pub fn is_login_prompt(text: &str) -> bool {
+    let t = text.trim().to_lowercase();
+    ["login:", "username:", "user name:"].contains(&t.as_str())
+}
+
 /// The account a name typed into a Remote Desktop client names: `DOM\anna`, `anna@host` and
 /// `anna@` are `anna`. The front and the session's server both use it, so they agree on names.
 pub fn account_name(typed: &str) -> &str {

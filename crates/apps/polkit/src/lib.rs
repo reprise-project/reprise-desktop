@@ -88,7 +88,7 @@ impl Active {
         self.reports = None;
         self.prompted = false;
         self.prompts = 0;
-        self.dialog.ask(None);
+        self.dialog.ask(None, false);
         self.notice = None;
         self.held = None;
         let Some(waker) = waker else {
@@ -197,10 +197,10 @@ impl PolkitApp {
                 a.dialog.set_status(&t);
                 a.notice.get_or_insert(t);
             }
-            Report::Prompt(text) => {
+            Report::Prompt { text, echo } => {
                 a.prompts += 1;
-                if a.prompts > 1 {
-                    a.dialog.ask(Some(&text));
+                if a.prompts > 1 || echo {
+                    a.dialog.ask(Some(&text), echo);
                 }
                 a.prompted = true;
                 a.notice = None;
@@ -575,7 +575,10 @@ mod tests {
             app.active.as_ref().unwrap().dialog.status(),
             "Place your finger on the fingerprint reader"
         );
-        app.report(Report::Prompt("Password:".into()));
+        app.report(Report::Prompt {
+            text: "Password:".into(),
+            echo: false,
+        });
         app.report(Report::Done(Verdict::Failed));
         let act = app.active.as_ref().expect("still open");
         assert_eq!(act.dialog.status(), dialog::FAILED);
@@ -589,7 +592,10 @@ mod tests {
         let (a, _a_rx) = request("a");
         app.handle(Msg::Begin(a));
         open(&mut app);
-        app.report(Report::Prompt("Password:".into()));
+        app.report(Report::Prompt {
+            text: "Password:".into(),
+            echo: false,
+        });
         app.report(Report::Done(Verdict::Failed));
         app.report(Report::Info(
             "Place your finger on the fingerprint reader".into(),
@@ -610,7 +616,10 @@ mod tests {
         let (a, _a_rx) = request("a");
         app.handle(Msg::Begin(a));
         open(&mut app);
-        app.report(Report::Prompt("Password:".into()));
+        app.report(Report::Prompt {
+            text: "Password:".into(),
+            echo: false,
+        });
         app.report(Report::Done(Verdict::Failed));
         // The next conversation, now on the reader step.
         let (session, passwords) = helper::Session::detached();
@@ -642,11 +651,17 @@ mod tests {
         open(&mut app);
         let (session, answers) = helper::Session::detached();
         app.active.as_mut().unwrap().session = Some((session, "root".into()));
-        app.report(Report::Prompt("Password:".into()));
+        app.report(Report::Prompt {
+            text: "Password:".into(),
+            echo: false,
+        });
         let label = |app: &PolkitApp| app.active.as_ref().unwrap().dialog.label().to_string();
         assert_eq!(label(&app), "&Password:");
         app.submit("root".into(), zeroize::Zeroizing::new("hunter2".into()));
-        app.report(Report::Prompt("Verification code:".into()));
+        app.report(Report::Prompt {
+            text: "Verification code:".into(),
+            echo: false,
+        });
         assert_eq!(label(&app), "Verification code:");
         let act = app.active.as_mut().unwrap();
         assert_eq!(act.dialog.password(), "");
@@ -660,6 +675,36 @@ mod tests {
         assert_eq!(got, ["hunter2", "123456"]);
         app.report(Report::Done(Verdict::Failed));
         assert_eq!(label(&app), "&Password:", "a retry asks for the password");
+    }
+
+    /// A shown prompt (a one-time code) opens the field as plain text; the retry hides it again.
+    #[test]
+    fn a_shown_prompt_shows_its_answer_as_typed() {
+        let mut app = PolkitApp::default();
+        let (a, _a_rx) = request("a");
+        app.handle(Msg::Begin(a));
+        open(&mut app);
+        let (session, _answers) = helper::Session::detached();
+        app.active.as_mut().unwrap().session = Some((session, "root".into()));
+        let secret = |app: &PolkitApp| {
+            let form = &app.active.as_ref().unwrap().dialog.form;
+            match form.item("password").map(|i| &i.control) {
+                Some(form::Control::Edit { edit, .. }) => edit.is_secret(),
+                other => panic!("the field is {other:?}"),
+            }
+        };
+        app.report(Report::Prompt {
+            text: "Passcode:".into(),
+            echo: true,
+        });
+        assert_eq!(
+            app.active.as_ref().unwrap().dialog.label(),
+            "Passcode:",
+            "a first shown prompt relabels the field"
+        );
+        assert!(!secret(&app));
+        app.report(Report::Done(Verdict::Failed));
+        assert!(secret(&app), "a retry asks for the password");
     }
 
     /// A finger that matches ends the request with no password typed.
