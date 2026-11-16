@@ -16,6 +16,10 @@ use zbus::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
 
 type Shortcuts = Vec<(String, HashMap<String, OwnedVariant>)>;
 
+/// The sessions one app may hold, well under the compositor's `MAX_SHORTCUTS`.
+const MAX_SESSIONS_PER_APP: usize = 4;
+const _: () = assert!(MAX_SESSIONS_PER_APP < MAX_SHORTCUTS);
+
 pub(crate) struct ShortcutsSession {
     app: String,
     ids: Vec<String>,
@@ -117,8 +121,32 @@ fn session_of(sessions: &Sessions, session: &str) -> Option<(String, Vec<String>
     }
 }
 
-fn current(app: &str, ids: &[String]) -> Vec<Entry> {
-    let all = shortcutconf::entries(&shortcutconf::read(), app);
+/// config.toml, read in the blocking pool: the file may sit on a slow home.
+async fn read() -> toml_edit::DocumentMut {
+    blocking::unblock(shortcutconf::read).await
+}
+
+/// [`shortcutconf::update`] in the blocking pool, where waiting on the edit lock stalls no call.
+async fn update<T: Send + 'static>(
+    f: impl FnOnce(&mut toml_edit::DocumentMut) -> T + Send + 'static,
+) -> Result<T, String> {
+    blocking::unblock(move || shortcutconf::update(f)).await
+}
+
+/// Whether `app`, holding `open` sessions, may open one more: not when the user denied it, nor
+/// past its share of the compositor's pool, which one app would otherwise drain for all.
+fn may_open(doc: &toml_edit::DocumentMut, app: &str, open: usize) -> bool {
+    !shortcutconf::is_denied(doc, app) && open < MAX_SESSIONS_PER_APP
+}
+
+fn sessions_of(sessions: &Sessions, app: &str) -> usize {
+    (sessions.lock().unwrap().values())
+        .filter(|s| matches!(&s.kind, SessionKind::GlobalShortcuts(g) if g.app == app))
+        .count()
+}
+
+async fn current(app: &str, ids: &[String]) -> Vec<Entry> {
+    let all = shortcutconf::entries(&read().await, app);
     ids.iter()
         .filter_map(|id| all.iter().find(|e| &e.id == id).cloned())
         .collect()
@@ -148,6 +176,13 @@ impl GlobalShortcuts {
         // to keep them.
         if app_id.is_empty() {
             log::warn!("GlobalShortcuts: refusing a program with no app id");
+            return Ok((RESPONSE_OTHER, Results::new()));
+        }
+        let doc = read().await;
+        if !may_open(&doc, &app_id, sessions_of(&self.sessions, &app_id)) {
+            log::warn!(
+                "GlobalShortcuts: refusing {app_id:?}: it is in shortcuts_denied or holds {MAX_SESSIONS_PER_APP} sessions"
+            );
             return Ok((RESPONSE_OTHER, Results::new()));
         }
         let Some(link) = live(&self.link).filter(|l| l.has_shortcuts()) else {
@@ -226,7 +261,7 @@ impl GlobalShortcuts {
             "GlobalShortcuts.BindShortcuts {key} for {app:?}: {:?}",
             wanted.iter().map(|w| &w.id).collect::<Vec<_>>()
         );
-        let doc = shortcutconf::read();
+        let doc = read().await;
         let first = match step(&doc, &app, &wanted) {
             Step::Refused => return Ok((RESPONSE_CANCELLED, Results::new())),
             Step::Nothing => return Ok((RESPONSE_OK, results(&[]))),
@@ -263,7 +298,8 @@ impl GlobalShortcuts {
                 Answer::Allow { .. } => {}
                 Answer::Deny => {
                     log::info!("GlobalShortcuts.BindShortcuts for {app:?} denied");
-                    if let Err(e) = shortcutconf::update(|d| shortcutconf::deny(d, &app)) {
+                    let denied = app.clone();
+                    if let Err(e) = update(move |d| shortcutconf::deny(d, &denied)).await {
                         log::warn!("GlobalShortcuts: recording the refusal: {e}");
                     }
                     return Ok((RESPONSE_CANCELLED, Results::new()));
@@ -274,7 +310,9 @@ impl GlobalShortcuts {
                 }
             }
         }
-        let entries = match shortcutconf::update(|d| shortcutconf::bind(d, &app, &wanted)) {
+        let ids: Vec<String> = wanted.iter().map(|w| w.id.clone()).collect();
+        let bound = app.clone();
+        let entries = match update(move |d| shortcutconf::bind(d, &bound, &wanted)).await {
             Ok(e) => e,
             Err(e) => {
                 log::warn!("GlobalShortcuts: writing {app}'s shortcuts: {e}");
@@ -284,7 +322,7 @@ impl GlobalShortcuts {
         if let Some(d) = self.sessions.lock().unwrap().get_mut(key)
             && let SessionKind::GlobalShortcuts(g) = &mut d.kind
         {
-            g.ids = wanted.iter().map(|w| w.id.clone()).collect();
+            g.ids = ids;
         }
         Ok((RESPONSE_OK, results(&entries)))
     }
@@ -299,9 +337,9 @@ impl GlobalShortcuts {
         match session_of(&self.sessions, session_handle.as_str()) {
             Some((app, ids)) if ids.is_empty() => Ok((
                 RESPONSE_OK,
-                results(&shortcutconf::entries(&shortcutconf::read(), &app)),
+                results(&shortcutconf::entries(&read().await, &app)),
             )),
-            Some((app, ids)) => Ok((RESPONSE_OK, results(&current(&app, &ids)))),
+            Some((app, ids)) => Ok((RESPONSE_OK, results(&current(&app, &ids).await))),
             None => Ok((RESPONSE_OTHER, Results::new())),
         }
     }
@@ -392,7 +430,7 @@ async fn relay(
                 if ids.is_empty() {
                     continue;
                 }
-                let shortcuts = described(&current(&app, &ids));
+                let shortcuts = described(&current(&app, &ids).await);
                 GlobalShortcuts::shortcuts_changed(&emitter, session.clone(), shortcuts).await
             }
         };
@@ -405,6 +443,18 @@ async fn relay(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_denied_app_or_one_at_its_session_share_opens_no_session() {
+        let doc: toml_edit::DocumentMut = "[portal]\nshortcuts_denied = [\"t\"]\n".parse().unwrap();
+        assert!(may_open(&doc, "o", 0));
+        assert!(may_open(&doc, "o", MAX_SESSIONS_PER_APP - 1));
+        assert!(
+            !may_open(&doc, "o", MAX_SESSIONS_PER_APP),
+            "the share is full"
+        );
+        assert!(!may_open(&doc, "t", 0), "t is denied");
+    }
 
     #[test]
     fn requested_shortcuts_read_their_description_and_trigger() {
