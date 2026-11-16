@@ -259,10 +259,10 @@ pub struct Layout {
     pub height: i32,
 }
 
-/// The panel's width in a look with controls `cm`: [`W`] plus a wider
+/// The panel's width in a look with controls `cm`: [`W`] grown with the text, plus a wider
 /// flyout border's extra on each side.
 pub fn width(cm: &ControlMetrics) -> i32 {
-    W + 2 * (cm.flyout_border - flyout::EDGE)
+    cm.text.len(W) + 2 * (cm.flyout_border - flyout::EDGE)
 }
 
 /// The list box is as tall as the whole history (one row at least, at most
@@ -271,13 +271,13 @@ pub fn width(cm: &ControlMetrics) -> i32 {
 pub fn layout(m: &ClipHistory, cm: &ControlMetrics) -> Layout {
     let pad = PAD + cm.flyout_border - flyout::EDGE;
     let w = width(cm);
-    let field = Rect::new(pad, pad, w - 2 * pad, FIELD_H);
+    let field = Rect::new(pad, pad, w - 2 * pad, cm.text.len(FIELD_H));
     let rows = m.rows.len().clamp(1, VISIBLE) as i32;
     let list = Rect::new(
         pad,
         field.bottom() + PAD,
         w - 2 * pad,
-        rows * listbox::ROW_H + 4,
+        rows * cm.list_row + 4,
     );
     Layout {
         field,
@@ -322,7 +322,7 @@ pub fn draw(
     let p = &theme.paint();
     let (cs, s) = (p.cs, p.s);
     let px = theme.fonts.size_px;
-    let cm = theme.look.controls_at_100();
+    let cm = theme.controls();
     let lay = layout(m, &cm);
     let mut c = Canvas::new((width(&cm) * s) as u32, (lay.height * s) as u32);
     c.set_preedit(preedit.cloned());
@@ -357,7 +357,7 @@ pub fn draw(
     listbox::draw(&mut c, text, p, &m.list, &ll, &m.icons, None, px);
     if m.rows.is_empty() {
         let r = ll.inner.scaled(s);
-        let r = Rect::new(r.x + 3 * s, r.y, r.width - 3 * s, listbox::ROW_H * s);
+        let r = Rect::new(r.x + 3 * s, r.y, r.width - 3 * s, ll.row_h * s);
         text.draw(&mut c, r, EMPTY, false, cs.gray_text, Align::Left, px);
     }
     flyout::shadowed(theme, c)
@@ -387,7 +387,7 @@ pub fn access(
         parent,
     );
     if m.rows.is_empty() {
-        let r = Rect::new(ll.inner.x, ll.inner.y, ll.inner.width, listbox::ROW_H);
+        let r = Rect::new(ll.inner.x, ll.inner.y, ll.inner.width, ll.row_h);
         tree.push(parent, "empty", crate::access::label(r, EMPTY, false));
     }
     focus
@@ -397,6 +397,30 @@ pub fn access(
 mod tests {
     use super::*;
     use crate::theme::FontConfig;
+
+    #[test]
+    fn at_200_percent_text_the_field_rows_and_width_grow_and_the_panel_pins_in_every_look() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let m = ClipHistory::new(rows(&["cargo build --release", "hello world"]));
+        let big = Theme::default().with_text_size(200).controls();
+        let lay = layout(&m, &big);
+        assert_eq!(width(&big), 2 * W);
+        assert_eq!(lay.field.height, 2 * FIELD_H);
+        assert_eq!(lay.list.height, 2 * 2 * listbox::ROW_H + 4);
+        let mut got = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for scale in [1, 2] {
+                let theme = crate::interfaces::theme_for(look)
+                    .with_text_size(200)
+                    .scaled(scale);
+                let text = TextRenderer::load(&theme.fonts);
+                let c = draw(&theme, &text, &m, true, None);
+                got.push((format!("{look:?}@{scale}"), crate::pins::fnv(&c)));
+            }
+        }
+        crate::pins::check("clip_history_text_200", &got);
+    }
 
     #[test]
     fn the_highlight_has_the_focus_and_an_empty_history_says_so() {

@@ -44,8 +44,9 @@ pub struct GroupList<T> {
     pub selected: Option<usize>,
     /// First row in view.
     pub top: usize,
-    /// Per row, how many px at its right end the label stays clear of, for what the host draws
-    /// there (the history's times and its groups' Clear buttons); empty for none.
+    /// Per row, how many px at 100% text at its right end the label stays clear of, for what the
+    /// host draws there (the history's times and its groups' Clear buttons); empty for none. It
+    /// grows with the text as the rows do.
     pub trail: Vec<i32>,
 }
 
@@ -152,6 +153,7 @@ pub struct Layout {
     pub thumb_min: i32,
     /// A row's height, grown with the text.
     pub row_h: i32,
+    pub text: crate::theme::TextUnits,
 }
 
 pub fn layout<T>(list: &GroupList<T>, frame: Rect, cm: &ControlMetrics) -> Layout {
@@ -170,6 +172,7 @@ pub fn layout<T>(list: &GroupList<T>, frame: Rect, cm: &ControlMetrics) -> Layou
         scrollbar,
         thumb_min: cm.thumb_min,
         row_h,
+        text: cm.text,
     }
 }
 
@@ -300,7 +303,7 @@ pub fn draw<T>(
             c.blit_over(frame.x + icon_x * s, y + (rh - ic.height as i32) / 2, ic);
         }
         let tx = frame.x + text_x * s;
-        let trail = list.trail.get(i).copied().unwrap_or(0) * s;
+        let trail = lay.text.len(list.trail.get(i).copied().unwrap_or(0)) * s;
         let tr = Rect::new(tx, y, (inner.right() - trail - tx).max(0), rh);
         let label = text.ellipsize(list.rows[i].label(), tr.width, false, px);
         let fg = if list.selected == Some(i) {

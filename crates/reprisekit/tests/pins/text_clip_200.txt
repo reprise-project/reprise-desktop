@@ -165,22 +165,15 @@ glass-dark.png "14/09/20..." x15
 glass-dark.png "2 KB" x2
 glass-dark.png "28 KB" x3
 glass-dark.png "3 KB" x2
-glass-dark.png "3 new messages" x1
-glass-dark.png "3:58 PM" x1
 glass-dark.png "4 KB" x2
 glass-dark.png "412..." x3
-glass-dark.png "4:12 PM" x1
 glass-dark.png "5 KB" x2
 glass-dark.png "6 KB" x2
 glass-dark.png "Active Window" x1
 glass-dark.png "Application" x3
-glass-dark.png "Calendar (1)" x1
-glass-dark.png "Clear All" x1
-glass-dark.png "Clear" x3
 glass-dark.png "Default" x1
 glass-dark.png "Desktop" x1
 glass-dark.png "Disabled" x3
-glass-dark.png "Do not disturb" x1
 glass-dark.png "Documents" x1
 glass-dark.png "Edit" x3
 glass-dark.png "File Folder" x6
@@ -189,7 +182,6 @@ glass-dark.png "Focused" x1
 glass-dark.png "Greyed radio" x1
 glass-dark.png "Group box" x1
 glass-dark.png "Help" x2
-glass-dark.png "Image, 1920x1080" x1
 glass-dark.png "Inactive Window" x1
 glass-dark.png "Inactive" x1
 glass-dark.png "Item 0" x2
@@ -200,8 +192,6 @@ glass-dark.png "Item 4" x2
 glass-dark.png "Item 5" x2
 glass-dark.png "Item 6" x2
 glass-dark.png "Letters" x1
-glass-dark.png "Lunch on Friday?" x1
-glass-dark.png "Mail (2)" x1
 glass-dark.png "Message Text" x1
 glass-dark.png "Music" x1
 glass-dark.png "My Music" x3
@@ -215,7 +205,6 @@ glass-dark.png "OpenDocu..." x3
 glass-dark.png "Other..." x1
 glass-dark.png "Pictures" x1
 glass-dark.png "Pressed" x1
-glass-dark.png "Replied, 1:05 PM" x1
 glass-dark.png "Reply" x2
 glass-dark.png "Reprise" x1
 glass-dark.png "Second" x1
@@ -224,39 +213,16 @@ glass-dark.png "Size" x5
 glass-dark.png "Sounds good" x1
 glass-dark.png "Text Docu..." x3
 glass-dark.png "Third" x1
-glass-dark.png "Thumbs up" x1
 glass-dark.png "Type" x3
-glass-dark.png "Updates (1)" x1
 glass-dark.png "Updates are r..." x1
-glass-dark.png "Updates are ready" x1
 glass-dark.png "Window Text" x1
 glass-dark.png "before.txt - Notepad" x7
-glass-dark.png "cargo build --release" x1
-glass-dark.png "hello world" x1
 glass-dark.png "hills.j..." x1
 glass-dark.png "notepad" x4
 glass-dark.png "notes.txt" x3
 glass-dark.png "repo..." x1
 glass-dark.png "report.odt" x3
 glass-dark.png "setup.exe" x3
-glass-dark.png "😮\u{200d}💨" x1
-glass-dark.png "😴" x1
-glass-dark.png "😶\u{200d}🌫\u{fe0f}" x1
-glass-dark.png "🙂\u{200d}↔\u{fe0f}" x1
-glass-dark.png "🙂\u{200d}↕\u{fe0f}" x1
-glass-popups.png "100%" x1
-glass-popups.png "40%" x1
-glass-popups.png "45%" x2
-glass-popups.png "60%" x1
-glass-popups.png "Brightne..." x1
-glass-popups.png "Brightness" x1
-glass-popups.png "Built-in di..." x1
-glass-popups.png "DELL U27..." x1
-glass-popups.png "LG 27GL8..." x1
-glass-popups.png "Music Player: N..." x1
-glass-popups.png "Muted" x1
-glass-popups.png "Not adjustable" x1
-glass-popups.png "Volume" x1
 glass-scale2.png "3:45 PM" x2
 glass-scale2.png "Notes" x3
 glass-scale2.png "before.txt - Notepad" x8
@@ -270,24 +236,17 @@ glass.png "14/09/20..." x15
 glass.png "2 KB" x2
 glass.png "28 KB" x3
 glass.png "3 KB" x2
-glass.png "3 new messages" x1
 glass.png "3:45 PM" x1
-glass.png "3:58 PM" x1
 glass.png "4 KB" x2
 glass.png "412..." x3
-glass.png "4:12 PM" x1
 glass.png "5 KB" x2
 glass.png "6 KB" x2
 glass.png "A title too long to sit centred in so narrow a window" x1
 glass.png "Active Window" x1
 glass.png "Application" x3
-glass.png "Calendar (1)" x1
-glass.png "Clear All" x1
-glass.png "Clear" x3
 glass.png "Default" x1
 glass.png "Desktop" x1
 glass.png "Disabled" x3
-glass.png "Do not disturb" x1
 glass.png "Documents" x1
 glass.png "Edit" x3
 glass.png "File Folder" x6
@@ -296,7 +255,6 @@ glass.png "Focused" x1
 glass.png "Greyed radio" x1
 glass.png "Group box" x1
 glass.png "Help" x2
-glass.png "Image, 1920x1080" x1
 glass.png "Inactive Window" x1
 glass.png "Inactive" x1
 glass.png "Item 0" x2
@@ -307,8 +265,6 @@ glass.png "Item 4" x2
 glass.png "Item 5" x2
 glass.png "Item 6" x2
 glass.png "Letters" x1
-glass.png "Lunch on Friday?" x1
-glass.png "Mail (2)" x1
 glass.png "Message Text" x1
 glass.png "Music" x1
 glass.png "My Music" x3
@@ -322,7 +278,6 @@ glass.png "OpenDocu..." x3
 glass.png "Other..." x1
 glass.png "Pictures" x1
 glass.png "Pressed" x1
-glass.png "Replied, 1:05 PM" x1
 glass.png "Reply" x2
 glass.png "Reprise" x1
 glass.png "Second" x1
@@ -331,26 +286,16 @@ glass.png "Size" x5
 glass.png "Sounds good" x1
 glass.png "Text Docu..." x3
 glass.png "Third" x1
-glass.png "Thumbs up" x1
 glass.png "Type" x3
-glass.png "Updates (1)" x1
 glass.png "Updates are r..." x1
-glass.png "Updates are ready" x1
 glass.png "Window Text" x1
 glass.png "before.txt - Notepad" x5
-glass.png "cargo build --release" x1
-glass.png "hello world" x1
 glass.png "hills.j..." x1
 glass.png "notepad" x4
 glass.png "notes.txt" x3
 glass.png "repo..." x1
 glass.png "report.odt" x3
 glass.png "setup.exe" x3
-glass.png "😮\u{200d}💨" x1
-glass.png "😴" x1
-glass.png "😶\u{200d}🌫\u{fe0f}" x1
-glass.png "🙂\u{200d}↔\u{fe0f}" x1
-glass.png "🙂\u{200d}↕\u{fe0f}" x1
 grid-drag.png "JPEG Image" x1
 grid-drag.png "My Music" x1
 grid-drag.png "My Pictures" x2
@@ -387,17 +332,12 @@ reprisekit-gallery.png "21" x1
 reprisekit-gallery.png "24" x2
 reprisekit-gallery.png "28 KB" x1
 reprisekit-gallery.png "3 KB" x1
-reprisekit-gallery.png "3 new messages" x1
 reprisekit-gallery.png "3:45 PM" x1
-reprisekit-gallery.png "3:58 PM" x1
 reprisekit-gallery.png "4 KB" x1
-reprisekit-gallery.png "40%" x1
 reprisekit-gallery.png "41" x1
 reprisekit-gallery.png "412..." x1
-reprisekit-gallery.png "4:12 PM" x1
 reprisekit-gallery.png "5 KB" x1
 reprisekit-gallery.png "6 KB" x1
-reprisekit-gallery.png "60%" x1
 reprisekit-gallery.png ":" x5
 reprisekit-gallery.png "Active Window" x4
 reprisekit-gallery.png "Alt + F4" x1
@@ -405,19 +345,13 @@ reprisekit-gallery.png "Always ask" x1
 reprisekit-gallery.png "Always use the selected program to open this kind of file" x1
 reprisekit-gallery.png "Applicati..." x1
 reprisekit-gallery.png "Application" x1
-reprisekit-gallery.png "Brightness" x1
 reprisekit-gallery.png "Browse..." x3
-reprisekit-gallery.png "Built-in di..." x1
 reprisekit-gallery.png "Button" x1
 reprisekit-gallery.png "Bytes" x1
-reprisekit-gallery.png "Calendar (1)" x1
 reprisekit-gallery.png "Calendar" x1
-reprisekit-gallery.png "Caps Lock On" x1
 reprisekit-gallery.png "Caption ?" x1
 reprisekit-gallery.png "Check Box" x1
 reprisekit-gallery.png "Choose the program you want to use to open this file:" x1
-reprisekit-gallery.png "Clear All" x1
-reprisekit-gallery.png "Clear" x3
 reprisekit-gallery.png "Click here to begin" x1
 reprisekit-gallery.png "Closed" x1
 reprisekit-gallery.png "Collapsed Tasks" x1
@@ -428,12 +362,10 @@ reprisekit-gallery.png "Computer..." x1
 reprisekit-gallery.png "Connected" x1
 reprisekit-gallery.png "Connected, battery 80%" x1
 reprisekit-gallery.png "Ctrl + Alt + " x1
-reprisekit-gallery.png "DELL U27..." x1
 reprisekit-gallery.png "Date Mo..." x1
 reprisekit-gallery.png "Default" x1
 reprisekit-gallery.png "Desktop" x5
 reprisekit-gallery.png "Disabled" x9
-reprisekit-gallery.png "Do not disturb" x1
 reprisekit-gallery.png "Documents" x4
 reprisekit-gallery.png "EN" x1
 reprisekit-gallery.png "Field" x1
@@ -451,26 +383,20 @@ reprisekit-gallery.png "Help" x1
 reprisekit-gallery.png "Hot" x1
 reprisekit-gallery.png "Image Editor" x1
 reprisekit-gallery.png "Image Viewer" x1
-reprisekit-gallery.png "Image, 1920x1080" x1
 reprisekit-gallery.png "Inactive Window" x1
 reprisekit-gallery.png "Input" x1
 reprisekit-gallery.png "JPEG Im..." x1
 reprisekit-gallery.png "JPEG Image" x1
-reprisekit-gallery.png "LG 27GL8..." x1
 reprisekit-gallery.png "Line 2: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Line 3: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Line 4: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Line 5: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Line 6: the quick brown fox jumps over the lazy dog" x1
-reprisekit-gallery.png "Lunch on Friday?" x1
-reprisekit-gallery.png "Mail (2)" x1
 reprisekit-gallery.png "Make New Folder" x1
 reprisekit-gallery.png "Make a new" x1
 reprisekit-gallery.png "Message Box" x2
 reprisekit-gallery.png "Message Text" x2
-reprisekit-gallery.png "Music Player: N..." x1
 reprisekit-gallery.png "Music" x2
-reprisekit-gallery.png "Muted" x1
 reprisekit-gallery.png "My Music" x6
 reprisekit-gallery.png "My Pictures" x5
 reprisekit-gallery.png "My Recent" x1
@@ -480,7 +406,6 @@ reprisekit-gallery.png "New Folder" x2
 reprisekit-gallery.png "New Text Document.txt" x1
 reprisekit-gallery.png "None" x1
 reprisekit-gallery.png "Normal" x4
-reprisekit-gallery.png "Not adjustable" x1
 reprisekit-gallery.png "Not connected" x2
 reprisekit-gallery.png "Notepad" x2
 reprisekit-gallery.png "Nowhere (disable..." x2
@@ -507,7 +432,6 @@ reprisekit-gallery.png "Pushed" x1
 reprisekit-gallery.png "Radio" x1
 reprisekit-gallery.png "Read-only" x1
 reprisekit-gallery.png "Recommended Programs:" x2
-reprisekit-gallery.png "Replied, 1:05 PM" x1
 reprisekit-gallery.png "Reprise Settings" x1
 reprisekit-gallery.png "Reprise" x1
 reprisekit-gallery.png "Reprise..." x3
@@ -519,7 +443,6 @@ reprisekit-gallery.png "Search" x1
 reprisekit-gallery.png "Selected" x4
 reprisekit-gallery.png "Share this" x1
 reprisekit-gallery.png "Size" x2
-reprisekit-gallery.png "Slightly smiling face" x1
 reprisekit-gallery.png "Sounds good" x1
 reprisekit-gallery.png "Speaker" x1
 reprisekit-gallery.png "Spin" x1
@@ -533,15 +456,10 @@ reprisekit-gallery.png "This folder only" x1
 reprisekit-gallery.png "Trackbar" x1
 reprisekit-gallery.png "Type" x2
 reprisekit-gallery.png "Untitled - Notepad" x1
-reprisekit-gallery.png "Updates (1)" x1
-reprisekit-gallery.png "Updates are ready" x1
-reprisekit-gallery.png "Volume" x1
 reprisekit-gallery.png "Web" x1
 reprisekit-gallery.png "Window Text" x4
-reprisekit-gallery.png "cargo build --release" x1
 reprisekit-gallery.png "folder to the" x1
 reprisekit-gallery.png "folder" x2
-reprisekit-gallery.png "hello world" x1
 reprisekit-gallery.png "hills.j..." x1
 reprisekit-gallery.png "hills.jpg" x4
 reprisekit-gallery.png "notepad readme.txt" x1
@@ -555,11 +473,6 @@ reprisekit-gallery.png "say nihao to all" x2
 reprisekit-gallery.png "setup.e..." x1
 reprisekit-gallery.png "setup.exe" x3
 reprisekit-gallery.png "user@repris..." x1
-reprisekit-gallery.png "😮\u{200d}💨" x1
-reprisekit-gallery.png "😴" x1
-reprisekit-gallery.png "😶\u{200d}🌫\u{fe0f}" x1
-reprisekit-gallery.png "🙂\u{200d}↔\u{fe0f}" x1
-reprisekit-gallery.png "🙂\u{200d}↕\u{fe0f}" x1
 snap-layouts.png "1" x12
 snap-layouts.png "2" x12
 snap-layouts.png "Duplic..." x3

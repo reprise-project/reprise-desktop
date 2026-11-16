@@ -31,17 +31,17 @@ use crate::look::widgets::{draw_button, draw_checkbox, draw_disabled_label};
 use crate::pointer::{Interaction, Pointer};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
-use crate::theme::Theme;
+use crate::theme::{TextUnits, Theme};
 
+/// The panel's width at 100% text inside Classic's flyout edge.
 pub const W: i32 = 380;
 const PAD: i32 = 8;
 const CHECK_ROW: i32 = 17;
 const LIST_GAP: i32 = 6;
 pub const ROWS: i32 = 10;
-/// A group's Clear button: 44x16, 2 px in from the row's right end and
-/// 1 px down; the fold arrow's 11 px cell 3 px left of it.
+/// A group's Clear button: 44 px wide at 100% text and 2 px shorter than its row, 2 px in from
+/// the row's right end and 1 px down; the fold arrow's 11 px cell 3 px left of it.
 const GROUP_CLEAR_W: i32 = 44;
-const GROUP_CLEAR_H: i32 = ROW_H - 2;
 const GROUP_CLEAR_INSET: i32 = 2;
 const ARROW_CELL: i32 = 11;
 const ARROW_GAP: i32 = 3;
@@ -137,10 +137,10 @@ pub struct Layout {
     pub height: i32,
 }
 
-/// The panel's width in a look with controls `cm`: [`W`], and as much again as a
-/// wider flyout border takes on each side.
+/// The panel's width in a look with controls `cm`: [`W`] grown with the text, and as much again
+/// as a wider flyout border takes on each side.
 pub fn width(cm: &ControlMetrics) -> i32 {
-    W + 2 * (cm.flyout_border - flyout::EDGE)
+    cm.text.len(W) + 2 * (cm.flyout_border - flyout::EDGE)
 }
 
 /// The panel's parts at control sizes `cm`; inside a wider flyout border
@@ -148,12 +148,15 @@ pub fn width(cm: &ControlMetrics) -> i32 {
 pub fn layout(cm: &ControlMetrics) -> Layout {
     let pad = PAD + cm.flyout_border - flyout::EDGE;
     let w = width(cm);
-    let check = Rect::new(pad, pad + (CHECK_ROW - cm.check) / 2, cm.check, cm.check);
+    let u = cm.text;
+    let check_row = u.len(CHECK_ROW);
+    let check = Rect::new(pad, pad + (check_row - cm.check) / 2, cm.check, cm.check);
     let label_x = check.x + cm.check_label;
-    let label = Rect::new(label_x, pad, 200, CHECK_ROW);
-    let list_h = 2 + ROWS * ROW_H + 2;
-    let list = Rect::new(pad, pad + CHECK_ROW + LIST_GAP, w - 2 * pad, list_h);
-    let clear = Rect::new(w - pad - BUTTON_W, list.bottom() + PAD, BUTTON_W, BUTTON_H);
+    let label = Rect::new(label_x, pad, u.len(200), check_row);
+    let list_h = 2 + ROWS * u.len(ROW_H) + 2;
+    let list = Rect::new(pad, pad + check_row + LIST_GAP, w - 2 * pad, list_h);
+    let (bw, bh) = u.size((BUTTON_W, BUTTON_H));
+    let clear = Rect::new(w - pad - bw, list.bottom() + PAD, bw, bh);
     Layout {
         check,
         label,
@@ -176,14 +179,21 @@ fn time_text(time: &str, replied: bool) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn header_parts(row: Rect) -> (Rect, Rect) {
+/// A header row's Clear button and fold arrow cell, for `row` at text units `u`.
+fn header_parts(row: Rect, u: TextUnits) -> (Rect, Rect) {
+    let w = u.len(GROUP_CLEAR_W);
     let clear = Rect::new(
-        row.right() - GROUP_CLEAR_INSET - GROUP_CLEAR_W,
+        row.right() - GROUP_CLEAR_INSET - w,
         row.y + 1,
-        GROUP_CLEAR_W,
-        GROUP_CLEAR_H,
+        w,
+        row.height - 2,
     );
-    let arrow = Rect::new(clear.x - ARROW_GAP - ARROW_CELL, row.y, ARROW_CELL, ROW_H);
+    let arrow = Rect::new(
+        clear.x - ARROW_GAP - ARROW_CELL,
+        row.y,
+        ARROW_CELL,
+        row.height,
+    );
     (clear, arrow)
 }
 
@@ -623,7 +633,7 @@ pub fn hit(h: &History, x: i32, y: i32, cm: &ControlMetrics) -> Hit {
         lay.check.x,
         lay.label.y,
         lay.label.right() - lay.check.x,
-        CHECK_ROW,
+        lay.label.height,
     );
     if check_row.contains(x, y) {
         return Hit::Dnd;
@@ -636,7 +646,7 @@ pub fn hit(h: &History, x: i32, y: i32, cm: &ControlMetrics) -> Hit {
         Some(grouplist::Hit::Row(i)) => {
             let on_clear = matches!(h.meta.get(i), Some(Meta::Header { .. }))
                 && grouplist::row_rect(&h.list, &ll, i)
-                    .is_some_and(|r| header_parts(r).0.contains(x, y));
+                    .is_some_and(|r| header_parts(r, cm.text).0.contains(x, y));
             if on_clear {
                 Hit::GroupClear(i)
             } else {
@@ -655,7 +665,7 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
     let p = &theme.paint();
     let (cs, s) = (p.cs, p.s);
     let px = theme.fonts.size_px;
-    let cm = theme.look.controls_at_100();
+    let cm = theme.controls();
     let lay = layout(&cm);
     let mut c = Canvas::new((width(&cm) * s) as u32, (lay.height * s) as u32);
     let all = c.bounds();
@@ -688,7 +698,7 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
         };
         match m {
             Meta::Header { open, .. } => {
-                let (clear, arrow) = header_parts(row);
+                let (clear, arrow) = header_parts(row, cm.text);
                 let arrow = arrow.scaled(s);
                 if *open {
                     draw_arrow_v(&mut c, arrow, s, true, cs.button_text);
@@ -709,8 +719,8 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
                 );
             }
             Meta::Note { time, replied, .. } => {
-                let w = time_w(*replied);
-                let r = Rect::new(row.right() - w, row.y, w - TIME_INSET, ROW_H);
+                let w = cm.text.len(time_w(*replied));
+                let r = Rect::new(row.right() - w, row.y, w - TIME_INSET, row.height);
                 text.draw(
                     &mut c,
                     r.scaled(s),
@@ -724,7 +734,7 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
         }
     }
     if h.list.rows.is_empty() {
-        let first = Rect::new(ll.inner.x, ll.inner.y + 4, ll.inner.width, ROW_H);
+        let first = Rect::new(ll.inner.x, ll.inner.y + 4, ll.inner.width, ll.row_h);
         draw_disabled_label(
             &mut c,
             text,
@@ -766,7 +776,7 @@ pub fn access(
         lay.check.x,
         lay.label.y,
         lay.label.right() - lay.check.x,
-        CHECK_ROW,
+        lay.label.height,
     );
     let dnd = access::toggle(
         Role::CheckBox,
@@ -804,12 +814,13 @@ pub fn access(
             }
         }
         if let (Meta::Header { .. }, Some(row)) = (m, shown) {
-            let clear = access::button(header_parts(row).0, GROUP_CLEAR_LABEL, true, false);
+            let clear =
+                access::button(header_parts(row, cm.text).0, GROUP_CLEAR_LABEL, true, false);
             tree.push(id, "clear", clear);
         }
     }
     if h.list.rows.is_empty() {
-        let first = Rect::new(ll.inner.x, ll.inner.y + 4, ll.inner.width, ROW_H);
+        let first = Rect::new(ll.inner.x, ll.inner.y + 4, ll.inner.width, ll.row_h);
         tree.push(list, "empty", access::label(first, EMPTY_LABEL, false));
         focus = list;
     }
@@ -855,6 +866,33 @@ pub fn sample() -> History {
 mod tests {
     use super::*;
     use crate::theme::FontConfig;
+
+    #[test]
+    fn at_200_percent_text_the_rows_button_and_width_grow_and_the_panel_pins_in_every_look() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let big = Theme::default().with_text_size(200).controls();
+        let lay = layout(&big);
+        assert_eq!(width(&big), 2 * W);
+        assert_eq!(lay.label.height, 2 * CHECK_ROW);
+        assert_eq!(lay.list.height, 2 + ROWS * 2 * ROW_H + 2);
+        assert_eq!(
+            (lay.clear.width, lay.clear.height),
+            (2 * BUTTON_W, 2 * BUTTON_H)
+        );
+        let mut got = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for scale in [1, 2] {
+                let theme = crate::interfaces::theme_for(look)
+                    .with_text_size(200)
+                    .scaled(scale);
+                let text = TextRenderer::load(&theme.fonts);
+                let c = draw(&theme, &text, &sample());
+                got.push((format!("{look:?}@{scale}"), crate::pins::fnv(&c)));
+            }
+        }
+        crate::pins::check("notify_history_text_200", &got);
+    }
 
     fn labels(h: &History) -> Vec<&str> {
         h.list.rows.iter().map(Row::label).collect()
@@ -1071,7 +1109,7 @@ mod tests {
         let mut h = sample();
         let ll = h.list_layout(&cm);
         let row = grouplist::row_rect(&h.list, &ll, 3).unwrap();
-        let (clear, _) = header_parts(row);
+        let (clear, _) = header_parts(row, TextUnits::ONE);
         assert_eq!(clear, Rect::new(row.right() - 46, row.y + 1, 44, 16));
         let at = hit(&h, clear.x + 5, clear.y + 5, &cm);
         assert_eq!(at, Hit::GroupClear(3));
@@ -1232,7 +1270,7 @@ mod tests {
         let row = |i| grouplist::row_rect(&h.list, &ll, i).unwrap();
         let ink = cs.button_text.argb();
         // Mail's arrow points down: rows of 7, 5, 3, 1 from 7 px up top.
-        let (clear, arrow) = header_parts(row(0));
+        let (clear, arrow) = header_parts(row(0), TextUnits::ONE);
         let (ax, ay) = (arrow.x + 2, arrow.y + 7);
         assert!(
             (0..7).all(|i| c.get(ax + i, ay) == ink),
@@ -1241,7 +1279,7 @@ mod tests {
         assert_eq!(c.get(ax + 3, ay + 3), ink);
         assert_ne!(c.get(ax, ay + 3), ink);
         // Calendar's, folded, points right: its first column 7 tall.
-        let (_, folded) = header_parts(row(5));
+        let (_, folded) = header_parts(row(5), TextUnits::ONE);
         let fx = folded.x + (ARROW_CELL - 4) / 2;
         let fy = folded.y + (ROW_H - 7) / 2;
         assert!(
@@ -1429,7 +1467,7 @@ mod tests {
         let row = grouplist::row_rect(&h.list, &ll, 0).unwrap();
         assert_eq!(
             clear.bounds(),
-            Some(crate::access::bounds(header_parts(row).0))
+            Some(crate::access::bounds(header_parts(row, TextUnits::ONE).0))
         );
         let calendar = tree.get(rows[5]).unwrap();
         assert_eq!(calendar.is_expanded(), Some(false), "Calendar is folded");

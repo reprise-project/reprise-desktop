@@ -908,6 +908,65 @@ pub fn display_panel(tabs: usize) -> displaypanel::DisplayPanel {
     p
 }
 
+/// The media keys' panel, a lock key's and the displays' lines, then notification history,
+/// clipboard history and the emoji panel, one column per look, at `pct` percent text.
+pub fn render_popups_text_size(pct: u32) -> Canvas {
+    use reprisekit::controls::cliphistory::{self, ClipHistory, Row};
+    use reprisekit::controls::emojipicker;
+    use reprisekit::emoji::{EmojiFont, Entry, catalog};
+    let text = TextRenderer::load(&FontConfig::default());
+    let font = EmojiFont::load();
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let panels: Vec<Vec<Canvas>> = looks
+        .iter()
+        .map(|&look| {
+            let theme = cued(interfaces::theme_for(look)).with_text_size(pct);
+            let volume = osd::Osd {
+                title: "Volume".into(),
+                meter: Some(osd::Meter::new(0.45, true)),
+            };
+            let clips = ["cargo build --release", "Image, 1920x1080", "hello world"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, label)| Row {
+                    id: i as u64,
+                    label: label.into(),
+                    icon: None,
+                })
+                .collect();
+            let recent = ["👍", "🎉"].into_iter().filter_map(Entry::get).collect();
+            let mut picker = emojipicker::EmojiPicker::new(recent, catalog(font.as_ref()));
+            picker.key(emojipicker::Key::Down);
+            vec![
+                osd::draw(&theme, &text, &volume, None),
+                osd::draw_lock_key(&theme, &text, osd::LockKey::Caps, true),
+                osd::draw_lines(&theme, &text, &display_lines()),
+                notifyhistory::draw(&theme, &text, &notifyhistory::sample()),
+                cliphistory::draw(&theme, &text, &ClipHistory::new(clips), true, None),
+                emojipicker::draw(&theme, &text, font.as_ref(), &picker, true, None),
+            ]
+        })
+        .collect();
+    let col_w = panels
+        .iter()
+        .flatten()
+        .map(|p| p.width as i32)
+        .max()
+        .unwrap_or(0)
+        + 20;
+    let col_h = |col: &Vec<Canvas>| col.iter().map(|p| p.height as i32 + 10).sum::<i32>();
+    let h = panels.iter().map(col_h).max().unwrap_or(0) + 10;
+    let mut c = blurred_stripes(col_w * looks.len() as i32 + 10, h);
+    for (i, col) in panels.iter().enumerate() {
+        let mut y = 10;
+        for p in col {
+            c.blit_over(10 + i as i32 * col_w, y, p);
+            y += p.height as i32 + 10;
+        }
+    }
+    c
+}
+
 /// The media keys' panel, the displays flyout and the launcher in Glass over the stripes.
 pub fn render_glass_popups() -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
