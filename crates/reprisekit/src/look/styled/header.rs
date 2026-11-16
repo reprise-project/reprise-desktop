@@ -130,7 +130,7 @@ mod tests {
         }
     }
 
-    fn faces(v: Variant) -> &'static crate::blue::scheme::HeaderItemFaces {
+    fn faces(v: Variant) -> &'static crate::blue::scheme::LitFaces {
         &v.scheme().header_item
     }
 

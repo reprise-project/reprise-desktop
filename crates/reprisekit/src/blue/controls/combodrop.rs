@@ -1,8 +1,8 @@
 //! The combo box drop button's [`Part::ComboDrop`] atlas: Normal, Hot, Pressed and Disabled frames,
-//! drawn from the scheme's [`ComboDropFaces`] at the style's scale.
+//! drawn from the scheme's `combo_drop` faces at the style's scale.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{ComboDropFaces, Face, Grad};
+use crate::blue::scheme::{Face, Grad, LitGreyedFaces};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, Part, PartImage, State};
@@ -67,7 +67,7 @@ pub(super) fn parts(v: Variant, scale: i32) -> Vec<(Part, PartImage)> {
     vec![(Part::ComboDrop, img)]
 }
 
-fn atlas(faces: &ComboDropFaces, c: Cut, d: i32) -> Canvas {
+fn atlas(faces: &LitGreyedFaces, c: Cut, d: i32) -> Canvas {
     let frames = [
         frame(&faces.normal, c, false, d),
         frame(&faces.hot, c, false, d),
