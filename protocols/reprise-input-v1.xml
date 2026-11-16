@@ -4,7 +4,7 @@
     reprise private protocol: input injection and capture for reprise-portal.
   </copyright>
 
-  <interface name="reprise_input_v1" version="12">
+  <interface name="reprise_input_v1" version="13">
     <description summary="EIS sockets and pointer barriers for the portal">
       One global. connect_eis hands the compositor one end of a socketpair
       to run libei's EIS side on; create_capture makes an object that owns
@@ -12,7 +12,8 @@
       create_shortcuts makes an object that receives one program's global
       shortcuts. create_keys makes an object that presses keys and, from
       version 12, drives the pointer for one RemoteDesktop session. watch_sandboxed makes an object that lists
-      the sandboxed apps with a window. pick_color opens the colour picker.
+      the sandboxed apps with a window. pick_color opens the colour picker,
+      pick_area the region select, and active_window names the focused window.
       remote_capture marks a capture connection as the remote desktop
       server's, recorder_capture as the screen recorder's.
       recorder_granted names a recorder the user started. lock_screen starts lock mode for the remote desktop server.
@@ -174,6 +175,24 @@
       </description>
       <arg name="pid" type="uint"/>
     </event>
+
+    <request name="pick_area" since="13">
+      <description summary="let the user drag an area for a screenshot">
+        For the Screenshot portal's Area target: the compositor opens its
+        region select for a screenshot that goes to app, the display name
+        of the app that asked, and answers on the new object.
+      </description>
+      <arg name="id" type="new_id" interface="reprise_area_pick_v1"/>
+      <arg name="app" type="string"/>
+    </request>
+
+    <request name="active_window" since="13">
+      <description summary="name the focused window">
+        For the Screenshot portal's Active Window target: the compositor
+        answers on the new object at once.
+      </description>
+      <arg name="id" type="new_id" interface="reprise_active_window_v1"/>
+    </request>
   </interface>
 
   <interface name="reprise_lock_screen_v1" version="1">
@@ -391,6 +410,37 @@
 
     <event name="changed">
       <description summary="this app's entries changed in the config"/>
+    </event>
+  </interface>
+
+  <interface name="reprise_area_pick_v1" version="1">
+    <description summary="one area pick">
+      Exactly one of picked or cancelled is sent. A region select or
+      colour picker already open, or the lock, cancels this one at once.
+      Destroying the object before the answer closes the region select.
+    </description>
+    <request name="destroy" type="destructor"/>
+    <event name="picked">
+      <description summary="the area, in logical layout coordinates">
+        The dragged rectangle, or the frame of the window or the output
+        the user clicked, clipped to the outputs.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </event>
+    <event name="cancelled"/>
+  </interface>
+
+  <interface name="reprise_active_window_v1" version="1">
+    <description summary="the focused window, once">
+      The compositor sends window once, right after the object is made.
+    </description>
+    <request name="destroy" type="destructor"/>
+    <event name="window">
+      <arg name="identifier" type="string"
+           summary="its ext_foreign_toplevel_handle_v1 identifier; empty with no window focused or the desktop locked"/>
     </event>
   </interface>
 

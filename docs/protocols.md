@@ -105,7 +105,9 @@ confinement holds, every motion goes through as it comes.
   colour picker, the remote desktop server's capture connection, since
   version 9 lock mode (`lock_screen`: virtual screens laid out as the remote
   client's monitors while the session stays locked on the computer's own),
-  and since version 10 the app a libei sender or keys object serves
+  since version 10 the app a libei sender or keys object serves, and since
+  version 13 the Screenshot portal's region select (`pick_area`) and the
+  focused window (`active_window`)
   (`connect_app_sender`, `create_app_keys`), which the screen-sharing dot
   names; from version 10 `create_keys` is the remote desktop server's alone;
   since version 12 a keys object drives the pointer too (NotifyPointer);
@@ -124,9 +126,10 @@ confinement holds, every motion goes through as it comes.
   allows, with an optional Remember
 - **Screenshot:** every screen in one picture at its place in the layout, or
   for an interactive call the screen or window picked in the share dialog;
-  the `target` option's Screen lists only screens there and its Window
-  always opens the dialog on windows (Area and Active Window are not offered);
-  the files are a hand-over in `$XDG_RUNTIME_DIR/reprise-portal/screenshots`,
+  the `target` option's Screen lists only screens there, its Window always
+  opens the dialog on windows, its Area opens the Shift+PrtSc region select
+  naming the app (V does not switch to a recording), and its Active Window
+  takes the focused window; the files are a hand-over in `$XDG_RUNTIME_DIR/reprise-portal/screenshots`,
   deleted after an hour. PickColor opens the compositor's colour picker
 - **RemoteDesktop:** keyboard and pointer
 - **InputCapture**, for Deskflow

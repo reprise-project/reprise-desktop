@@ -88,8 +88,8 @@ files. An X11 drag counts as sandboxed unless a host X11 window has the
 focus.
 
 `reprise_input_v1` carries remote control, input capture, global
-shortcuts, the colour picker and lock mode between the compositor and the
-portal. Reprise offers it only to a client whose process runs
+shortcuts, the colour picker, the screenshot region select, the focused
+window's identifier and lock mode between the compositor and the portal. Reprise offers it only to a client whose process runs
 `reprise-portal` from `/usr/bin` or `/usr/local/bin`. That keeps other
 clients from binding it; it is no boundary against code running as you.
 
@@ -667,8 +667,14 @@ What a consent prompt remembers, and where:
   naming the app, and a critical "<app> is controlling this computer"
   balloon stays in the history, with Stop and forget, until dismissed.
 - **Screenshot:** xdg-desktop-portal asks before an app's first
-  non-interactive screenshot and keeps the answer (table `screenshot`). An
-  interactive screenshot, or one of a window, opens the share picker.
+  non-interactive screenshot and keeps the answer (table `screenshot`); that
+  answer also covers the focused window (the Active Window target). An
+  interactive screenshot, or one of a window, opens the share picker, and
+  one of an area opens the region select, which names the app; the pick or
+  the drag is the consent and nothing is kept. An interactive screenshot of
+  the focused window has nothing to pick and asks in the Access prompt each
+  time. While the desktop is locked, an area is refused and no window counts
+  as focused.
 - **Wallpaper:** an app with `yes` in table `wallpaper` sets a picture it
   can read itself without a prompt; one with `no` is refused. Otherwise
   Reprise's prompt shows the bytes it will install, and Remember keeps an

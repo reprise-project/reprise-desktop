@@ -75,6 +75,11 @@ impl Toplevels {
         }
     }
 
+    /// The identifier of `w`'s ext-foreign-toplevel-list handle; None for a window not listed.
+    pub fn identifier(&self, w: WindowId) -> Option<String> {
+        self.handles.get(&w).map(|h| h.identifier())
+    }
+
     pub fn window_of(&self, handle: &ForeignToplevelHandle) -> Option<WindowId> {
         self.handles
             .iter()
