@@ -1034,6 +1034,10 @@ impl FileDlg {
         self.fields.mode
     }
 
+    pub fn title(&self) -> &str {
+        &self.fields.title
+    }
+
     pub fn folder(&self) -> Option<FolderId> {
         self.folder
     }

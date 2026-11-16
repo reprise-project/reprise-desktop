@@ -144,10 +144,6 @@ impl Viewer {
                 self.open = None;
                 Reply::redraw_all()
             }
-            Driven::Failed(msg) => {
-                self.fail(&msg);
-                Reply::redraw_all()
-            }
         }
     }
 }

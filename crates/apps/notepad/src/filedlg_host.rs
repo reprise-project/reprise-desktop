@@ -95,20 +95,14 @@ impl Notepad {
         self.open_driven(driven)
     }
 
-    /// A picked file is read into the buffer; a name whose folder does not exist says so in a
-    /// box and leaves the dialog up. Cancel leaves `pending` alone: any action has run by the
-    /// time Open is up.
+    /// A picked file is read into the buffer. Cancel leaves `pending` alone: any action has run by
+    /// the time Open is up.
     pub(crate) fn open_driven(&mut self, driven: Driven) -> Reply {
         let path = match driven {
             Driven::Reply(r) => return *r,
             Driven::Picked(path) => path,
             Driven::Cancelled => {
                 self.open = None;
-                return Reply::redraw_all();
-            }
-            Driven::Failed(msg) => {
-                log::warn!("open: {msg}");
-                self.fail(&msg);
                 return Reply::redraw_all();
             }
         };
@@ -148,11 +142,6 @@ impl Notepad {
             Driven::Cancelled => {
                 self.saveas = None;
                 self.pending.cancelled();
-                return Reply::redraw_all();
-            }
-            Driven::Failed(msg) => {
-                log::warn!("save as: {msg}");
-                self.fail(&msg);
                 return Reply::redraw_all();
             }
         };

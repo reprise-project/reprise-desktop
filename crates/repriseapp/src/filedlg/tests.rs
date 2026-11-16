@@ -225,7 +225,11 @@ fn a_start_folder_the_caller_names_wins_over_the_last_one() {
     assert_eq!(shown(&h), docs);
     std::fs::remove_dir(&docs).unwrap();
     h.open_last(&own, open_fields(), u);
-    assert_eq!(shown(&h), own, "a last folder since removed falls back");
+    assert_eq!(
+        shown(&h),
+        t.path(),
+        "a last folder since removed opens on the folder above it"
+    );
 }
 
 /// The last folder sits on a mount that stopped answering: the dialog opens on the fallback and
@@ -242,22 +246,23 @@ fn a_last_folder_that_does_not_answer_opens_on_the_fallback() {
     let mut h = host_of(&file, "test.app");
     h.keep_folder(&docs);
     let (answer, gate) = std::sync::mpsc::channel::<()>();
-    h.probing = Some((
+    let docs_answer = docs.clone();
+    h.last_probe = Some((
         docs.clone(),
         Job::spawn(None, move || {
             gate.recv().ok();
-            (true, true)
+            Some(docs_answer)
         }),
     ));
     let start = std::time::Instant::now();
     h.open_last(&own, open_fields(), u);
     assert_eq!(shown(&h), own, "the fallback");
     assert!(start.elapsed() < std::time::Duration::from_secs(30));
-    assert!(h.probing.is_some(), "the check is kept");
+    assert!(h.last_probe.is_some(), "the check is kept");
 
     h.open(&own, open_fields(), u);
     assert!(
-        h.probing.as_ref().is_some_and(|(p, _)| *p == docs),
+        h.last_probe.as_ref().is_some_and(|(p, _)| *p == docs),
         "a named folder leaves the last one's check alone"
     );
 
@@ -268,14 +273,14 @@ fn a_last_folder_that_does_not_answer_opens_on_the_fallback() {
         if shown(&h) == docs {
             break;
         }
-        assert!(h.probing.is_some(), "the check is kept until it answers");
+        assert!(h.last_probe.is_some(), "the check is kept until it answers");
         assert!(
             std::time::Instant::now() < until,
             "the check never answered"
         );
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    assert!(h.probing.is_none(), "an open takes the check's answer");
+    assert!(h.last_probe.is_none(), "an open takes the check's answer");
 }
 
 #[test]
@@ -2250,9 +2255,12 @@ fn accept_on_a_typed_folder_lists_it_and_empties_the_name() {
         h.accept(&mut dlg, "new.txt", &mut icons),
         Driven::Picked(t.join("sub/new.txt"))
     );
-    assert!(matches!(
+    assert!(h.asking().is_none());
+    assert_eq!(
         h.accept(&mut dlg, "nowhere/x.txt", &mut icons),
-        Driven::Failed(_)
-    ));
+        Driven::Reply(Box::new(crate::Reply::redraw()))
+    );
+    let msg = h.asking().expect("a box over the dialog");
+    assert_eq!(msg.title, open_fields().title, "titled like the dialog");
     std::fs::remove_dir_all(&t).ok();
 }

@@ -260,10 +260,6 @@ impl Paint {
                 self.open = None;
                 return Reply::redraw_all();
             }
-            Driven::Failed(msg) => {
-                self.error(msg);
-                return Reply::redraw_all();
-            }
         };
         match file::load(&path) {
             Ok(img) => {
@@ -296,10 +292,6 @@ impl Paint {
             Driven::Cancelled => {
                 self.saveas = None;
                 self.after_save = None;
-                return Reply::redraw_all();
-            }
-            Driven::Failed(msg) => {
-                self.error(msg);
                 return Reply::redraw_all();
             }
         };
