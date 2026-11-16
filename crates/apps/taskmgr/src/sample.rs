@@ -78,7 +78,9 @@ pub struct Sampler {
     cpu: Option<(CpuTimes, Vec<CpuTimes>)>,
     ticks: HashMap<Key, u64>,
     cmdlines: HashMap<Key, String>,
+    /// The user names seen so far, by uid; a uid missing here is looked up through `lookup`.
     users: HashMap<u32, String>,
+    lookup: fn(u32) -> Option<String>,
     page_kb: u64,
     /// Read `/proc/<pid>/io` too, for the Disk column.
     pub disk: bool,
@@ -101,6 +103,7 @@ impl Sampler {
             ticks: HashMap::new(),
             cmdlines: HashMap::new(),
             users,
+            lookup: |_| None,
             page_kb: (page.max(4096) as u64) / 1024,
             disk: false,
             io: HashMap::new(),
@@ -111,16 +114,14 @@ impl Sampler {
 
     /// The machine's processes, users and scopes as they are.
     pub fn system() -> Sampler {
-        let users = std::fs::read_to_string("/etc/passwd")
-            .map(|s| procfs::parse_passwd(&s))
-            .unwrap_or_default();
         let slice = scopes::own_slice();
         if slice.is_none() {
             log::info!("no user manager cgroup: the Applications page stays empty");
         }
         Sampler {
             devices: Some(devices::Sampler::new(Path::new("/"))),
-            ..Sampler::new(Path::new("/proc"), slice, users)
+            lookup: |uid| reprisefs::sysinfo::account(uid).map(|(login, _)| login),
+            ..Sampler::new(Path::new("/proc"), slice, HashMap::new())
         }
     }
 
@@ -130,6 +131,7 @@ impl Sampler {
 
     /// [`Self::sample`] taken at `now`, which times the disk rates.
     pub fn sample_at(&mut self, now: Instant) -> Snapshot {
+        let lookup = self.lookup;
         let secs = (self.at)
             .map(|t| now.saturating_duration_since(t).as_secs_f64())
             .filter(|s| *s > 0.0);
@@ -175,9 +177,9 @@ impl Sampler {
                 uid: p.uid,
                 user: self
                     .users
-                    .get(&p.uid)
-                    .cloned()
-                    .unwrap_or_else(|| p.uid.to_string()),
+                    .entry(p.uid)
+                    .or_insert_with(|| lookup(p.uid).unwrap_or_else(|| p.uid.to_string()))
+                    .clone(),
                 cpu: prev.map_or(0.0, |t| share(t, p.stat.ticks, machine)),
                 mem_kb: p.stat.rss_pages * self.page_kb,
                 threads: p.stat.threads,
