@@ -1,17 +1,16 @@
 //! The Network Connections folder: a task pane beside a Details list of the adapters and saved VPNs. The client is the list and pane band alone, and all coordinates are in it.
 
-use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, KeyInput};
+use repriseapp::ctxmenu::{Popup, Step};
+use repriseapp::detailslist::{List, Press};
+use repriseapp::{BTN_RIGHT, Ctx, KeyInput};
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::art::neticon::{self, NetIcon};
-use reprisekit::classic::widgets::{Axis, ScrollHit};
-use reprisekit::controls::hosted::Chain;
-use reprisekit::controls::listview::{self, Column, ListView};
-use reprisekit::controls::menu::{MenuAction, MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu};
+use reprisekit::controls::listview::{self, Column};
+use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::taskpane::{self, Body, Section, TaskPane};
 use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
-use reprisekit::selection::Mods;
 use reprisekit::textedit::keysym;
 
 use crate::nm;
@@ -67,22 +66,6 @@ pub enum Outcome {
     Import,
     CreateHotspot(String),
     StopHotspot(String),
-}
-
-/// An open context menu: the tree it walks, the chain reprisekit lays out, and what each row does (`None` for a separator or greyed row). It shows on popups of its own ([`repriseapp::Extended::popup`]).
-pub struct Popup {
-    tree: MenuTree,
-    chain: PopupMenu,
-    actions: Vec<Option<Outcome>>,
-}
-
-impl Chain for Popup {
-    fn chain(&self) -> &PopupMenu {
-        &self.chain
-    }
-    fn chain_mut(&mut self) -> &mut PopupMenu {
-        &mut self.chain
-    }
 }
 
 /// The list's rows, cells and groups from a snapshot: adapters first, saved VPNs under their own heading; empty without NetworkManager. Icons are left to [`Folder::refresh`], which has the icon theme.
@@ -293,9 +276,10 @@ fn folder_lines() -> Vec<(String, bool)> {
 /// The window's model: task pane and list. Nothing here reads the bus; the host owns the snapshot and acts on the [`Outcome`]s.
 pub struct Folder {
     pub pane: TaskPane,
-    pub list: ListView,
+    pub list: List,
     rows: Vec<Row>,
-    pub popup: Option<Popup>,
+    /// The open context menu; it shows on popups of its own ([`repriseapp::Extended::popup`]).
+    pub popup: Option<Popup<Outcome>>,
 }
 
 impl Default for Folder {
@@ -311,24 +295,21 @@ impl Folder {
                 sections: pane_sections(),
                 ..Default::default()
             },
-            list: ListView {
-                columns: vec![
-                    Column::new("Name", NAME_W),
-                    Column::new("Type", TYPE_W),
-                    Column::new("Status", STATUS_W),
-                    Column::new("Device Name", DEVICE_W),
-                ],
-                frame: false,
-                ..Default::default()
-            },
+            list: List::new(vec![
+                Column::new("Name", NAME_W),
+                Column::new("Type", TYPE_W),
+                Column::new("Status", STATUS_W),
+                Column::new("Device Name", DEVICE_W),
+            ]),
             rows: Vec::new(),
             popup: None,
         }
     }
 
+    /// A new snapshot: rows, icons and Details lines. The selection follows its row's path. `vpn_icon` is the theme's "network-vpn" at 16 px; without it a VPN row gets the wired icon's VPN badge.
     pub fn refresh(&mut self, s: &nm::Snapshot, vpn_icon: Option<Canvas>) {
-        let selected = self
-            .list
+        let view = &mut self.list.view;
+        let selected = view
             .selection
             .single()
             .and_then(|i| self.rows.get(i))
@@ -346,34 +327,31 @@ impl Folder {
             }));
         }
         self.rows = rows;
-        self.list.rows = cells;
-        self.list.groups = groups;
+        view.rows = cells;
+        view.groups = groups;
         let keep = selected.and_then(|key| self.rows.iter().position(|r| r.key() == key));
-        self.list.selection.set_only(keep);
-        self.list.top = self.list.top.min(self.list.rows.len().saturating_sub(1));
+        view.selection.set_only(keep);
+        view.top = view.top.min(view.rows.len().saturating_sub(1));
         if let Some(tasks) = self.pane.sections.get_mut(TASKS) {
             tasks.body = Body::Links(task_links(s));
         }
         self.set_details(s);
     }
 
-    /// A new snapshot: rows, icons and Details lines. The selection follows its row's path. `vpn_icon` is the theme's "network-vpn" at 16 px; without it a VPN row gets the wired icon's VPN badge.
+    /// Scroll the kept selection into view; the host calls it after [`Folder::refresh`], which has no [`Ctx`].
     pub fn follow(&mut self, ctx: &Ctx) {
         let (_, list_r) = self.layout(ctx);
-        let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
-        self.list.follow(&lay);
-    }
-
-    /// Scroll the kept selection into view; the host calls it after [`Folder::refresh`], which has no [`Ctx`].
-    pub fn fit_columns(&mut self, ctx: &Ctx) {
-        let (_, list_r) = self.layout(ctx);
-        let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
-        self.list.fill_column(3, lay.body.width, lay.text);
+        self.list.follow(list_r, ctx);
     }
 
     /// Give Device Name what the body has left, so the last column takes the rest. The host calls it on resize.
+    pub fn fit_columns(&mut self, ctx: &Ctx) {
+        let (_, list_r) = self.layout(ctx);
+        self.list.fit_last(list_r, ctx);
+    }
+
     fn set_details(&mut self, s: &nm::Snapshot) {
-        let row = self.list.selection.single().and_then(|i| self.rows.get(i));
+        let row = self.list.selected().and_then(|i| self.rows.get(i));
         let lines = details_lines(row, s);
         if let Some(s) = self.pane.sections.get_mut(DETAILS) {
             s.body = Body::Lines(lines);
@@ -397,85 +375,35 @@ impl Folder {
 
     pub fn wheel(&mut self, rows: i32, ctx: &Ctx) -> Outcome {
         let (_, list_r) = self.layout(ctx);
-        let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
-        redraw(self.list.scroll(rows as i64, &lay))
+        redraw(self.list.wheel(rows, list_r, ctx))
     }
 
+    /// A pointer press. An open menu takes every press; one outside closes it and is eaten. Otherwise the right button selects and opens the row's menu, a double click opens a device's Status window or toggles a VPN, a single click selects.
     pub fn press(&mut self, at: Click, button: u32, s: &nm::Snapshot, ctx: &Ctx) -> Outcome {
         let (x, y) = (at.x, at.y);
-        // A pointer press. An open menu takes every press; one outside closes it and is eaten. Otherwise the right button selects and opens the row's menu, a double click opens a device's Status window or toggles a VPN, a single click selects.
-        let lit = button == BTN_LEFT
-            && {
-                let over = self.bar_at(x, y, ctx);
-                let column = self.column_at(x, y, ctx);
-                self.list.bars.press_bar(over) | self.list.header.press(column, false)
-            }
-            && ctx.styled();
-        match self.press_at(at, button, s, ctx) {
-            Outcome::None if lit => Outcome::Redraw,
-            out => out,
-        }
-    }
-
-    fn bar_at(&self, x: i32, y: i32, ctx: &Ctx) -> Option<(Axis, ScrollHit)> {
-        let (_, list_r) = self.layout(ctx);
-        if self.popup.is_some() || !ctx.styled() || !list_r.contains(x, y) {
-            return None;
-        }
-        let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
-        let on = |r: Option<Rect>| r.is_some_and(|r| r.contains(x, y));
-        if !on(lay.scrollbar) && !on(lay.hscroll) {
-            return None;
-        }
-        self.list.hit(&lay, x, y).bar()
-    }
-
-    fn column_at(&self, x: i32, y: i32, ctx: &Ctx) -> Option<usize> {
-        let (_, list_r) = self.layout(ctx);
-        if self.popup.is_some() || !ctx.styled() || !list_r.contains(x, y) {
-            return None;
-        }
-        let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
-        self.list.hit(&lay, x, y).column()
-    }
-
-    fn press_at(&mut self, at: Click, button: u32, s: &nm::Snapshot, ctx: &Ctx) -> Outcome {
-        let (x, y) = (at.x, at.y);
         if let Some(p) = self.popup.as_mut() {
-            let act = p.chain.click(&p.tree, x, y, &popup_ctx(ctx));
-            return self.popup_action(act);
+            let step = p.press(x, y, ctx);
+            return self.popup_step(step);
         }
         let (pane_r, list_r) = self.layout(ctx);
         if list_r.contains(x, y) {
-            let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
-            let hit = self.list.hit(&lay, x, y);
-            // Only a left press pairs, so a right click between two left ones does not break the pair.
-            let activated = button == BTN_LEFT && self.list.activated(hit, at).is_some();
-            return match hit {
-                listview::Hit::Row(i) => {
-                    self.list.select(Some(i), &lay);
-                    self.set_details(s);
-                    match button {
-                        BTN_RIGHT => {
-                            self.open_popup(i, x, y, s, ctx, false);
-                            Outcome::Redraw
-                        }
-                        _ if activated => self.activate(i, s),
-                        _ => Outcome::Redraw,
-                    }
-                }
-                listview::Hit::Background => {
-                    self.list.select(None, &lay);
-                    self.set_details(s);
+            let press = self.list.press(at, button, list_r, ctx);
+            if matches!(
+                press,
+                Press::Row(_) | Press::Activate(_) | Press::Background
+            ) {
+                self.set_details(s);
+            }
+            return match press {
+                Press::Row(i) if button == BTN_RIGHT => {
+                    self.open_popup(i, x, y, s, ctx, false);
                     Outcome::Redraw
                 }
-                _ if button == BTN_LEFT => {
-                    let at = (self.list.top, self.list.left_in(&lay));
-                    let press = listview::Input::Press(x, y);
-                    self.list.pointer(press, &lay, list_r, false);
-                    redraw((self.list.top, self.list.left_in(&lay)) != at)
+                Press::Activate(i) => self.activate(i, s),
+                Press::Row(_) | Press::Background | Press::Column(_) | Press::Redraw => {
+                    Outcome::Redraw
                 }
-                _ => Outcome::None,
+                Press::None => Outcome::None,
             };
         }
         if pane_r.contains(x, y) {
@@ -502,67 +430,48 @@ impl Folder {
         Outcome::None
     }
 
+    /// Pointer motion: an open menu lights its rows; otherwise the list's held thumb or divider drags and its parts light. Device Name keeps filling the body as a divider moves.
     pub fn motion(&mut self, x: i32, y: i32, ctx: &Ctx) -> Outcome {
-        let over = self.bar_at(x, y, ctx);
-        let column = self.column_at(x, y, ctx);
-        let lit = (self.list.bars.motion(over) | self.list.header.motion(column)) && ctx.styled();
-        match self.drag_or_menu(x, y, ctx) {
-            Outcome::None if lit => Outcome::Redraw,
-            out => out,
+        if let Some(p) = self.popup.as_mut() {
+            return redraw(p.motion(x, y, ctx));
         }
+        let (_, list_r) = self.layout(ctx);
+        let moved = self.list.motion(x, y, list_r, ctx);
+        if moved {
+            self.fit_columns(ctx);
+        }
+        redraw(moved)
     }
 
     pub fn leave(&mut self, ctx: &Ctx) -> Outcome {
-        redraw((self.list.bars.leave() | self.list.header.leave()) && ctx.styled())
-    }
-
-    fn drag_or_menu(&mut self, x: i32, y: i32, ctx: &Ctx) -> Outcome {
-        if self.list.thumb.holding() {
-            let (_, list_r) = self.layout(ctx);
-            let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
-            let drag = listview::Input::Motion(x, y);
-            return redraw(
-                self.list.pointer(drag, &lay, list_r, false) == Some(listview::Took::Moved),
-            );
-        }
-        let Some(p) = self.popup.as_mut() else {
-            return Outcome::None;
-        };
-        redraw(p.chain.motion(&p.tree, x, y, &popup_ctx(ctx)))
+        redraw(self.list.leave(ctx))
     }
 
     pub fn release(&mut self, ctx: &Ctx) -> Outcome {
-        self.list.thumb.release();
-        let column = self.list.header.holding();
-        self.list.header.release();
-        redraw((self.list.bars.release_bar() || column) && ctx.styled())
+        redraw(self.list.release(ctx))
     }
 
-    /// A key. An open menu takes the arrows, Enter and Escape; otherwise Up and Down step the list,
-    /// Enter acts as a double click, and Shift+F10 or the Menu key opens the row's menu.
+    /// A key. An open menu takes the menu keys; otherwise the arrows, Home, End and the page keys
+    /// step the list, Enter acts as a double click, and Shift+F10 or the Menu key opens the row's menu.
     pub fn key(&mut self, k: &KeyInput, s: &nm::Snapshot, ctx: &Ctx) -> Outcome {
         if let Some(p) = self.popup.as_mut() {
-            let Some(mk) = MenuKey::from_keysym(k.sym, k.utf8.as_deref()) else {
-                return Outcome::None;
-            };
-            let act = p.chain.key(&p.tree, mk, &popup_ctx(ctx));
-            return self.popup_action(act);
+            let step = p.key(k, ctx);
+            return self.popup_step(step);
         }
         let (_, list_r) = self.layout(ctx);
-        let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
+        if let Some(moved) = self.list.key(k.sym, list_r, ctx) {
+            self.set_details(s);
+            return redraw(moved);
+        }
         match k.sym {
-            keysym::UP | keysym::KP_UP => self.step(-1, &lay, s),
-            keysym::DOWN | keysym::KP_DOWN => self.step(1, &lay, s),
-            keysym::HOME | keysym::KP_HOME => self.step(i64::MIN / 2, &lay, s),
-            keysym::END | keysym::KP_END => self.step(i64::MAX / 2, &lay, s),
-            keysym::RETURN | keysym::KP_ENTER => match self.list.selection.single() {
+            keysym::RETURN | keysym::KP_ENTER => match self.list.selected() {
                 Some(i) => self.activate(i, s),
                 None => Outcome::None,
             },
-            keysym::MENU => self.keyboard_menu(&lay, s, ctx),
-            keysym::F10 if k.mods.shift => self.keyboard_menu(&lay, s, ctx),
+            keysym::MENU => self.keyboard_menu(list_r, s, ctx),
+            keysym::F10 if k.mods.shift => self.keyboard_menu(list_r, s, ctx),
             keysym::DELETE | keysym::KP_DELETE => {
-                match self.list.selection.single().and_then(|i| self.rows.get(i)) {
+                match self.list.selected().and_then(|i| self.rows.get(i)) {
                     Some(Row::Vpn(conn)) => Outcome::VpnDelete(conn.clone()),
                     _ => Outcome::None,
                 }
@@ -572,21 +481,17 @@ impl Folder {
     }
 
     /// Shift+F10 or the Menu key: the selected row's menu under its name, its first row picked.
-    fn keyboard_menu(&mut self, lay: &listview::Layout, s: &nm::Snapshot, ctx: &Ctx) -> Outcome {
-        let Some(i) = self.list.selection.single() else {
+    fn keyboard_menu(&mut self, list_r: Rect, s: &nm::Snapshot, ctx: &Ctx) -> Outcome {
+        let Some(i) = self.list.selected() else {
             return Outcome::None;
         };
+        let lay = self.list.layout(list_r, ctx);
         let r = self
             .list
-            .name_rect(lay, i, &ctx.text, ctx.theme.fonts.size_px);
+            .view
+            .name_rect(&lay, i, &ctx.text, ctx.theme.fonts.size_px);
         self.open_popup(i, r.x, r.bottom(), s, ctx, true);
         redraw(self.popup.is_some())
-    }
-
-    fn step(&mut self, step: i64, lay: &listview::Layout, s: &nm::Snapshot) -> Outcome {
-        let moved = self.list.step(step, lay, Mods::default());
-        self.set_details(s);
-        redraw(moved)
     }
 
     pub fn draw(&self, c: &mut Canvas, ctx: &Ctx) {
@@ -613,22 +518,9 @@ impl Folder {
                 pane_r.height,
             ),
         );
-        let ll = listview::layout(&self.list, list_r, &ctx.theme.controls());
-        listview::draw(
-            c,
-            &ctx.text,
-            &Paint {
-                s: 1,
-                ..ctx.theme.paint()
-            },
-            &self.list,
-            &ll,
-            self.list.bars.lit(),
-            px,
-        );
+        self.list.draw(c, list_r, ctx);
         if let Some(p) = &self.popup {
-            p.chain
-                .draw(c, &ctx.theme, &ctx.text, ctx.theme.access_keys);
+            p.draw(c, ctx);
         }
     }
 
@@ -637,12 +529,9 @@ impl Folder {
         let px = ctx.theme.fonts.size_px;
         let pl = taskpane::layout(&self.pane, &ctx.text, px, pane_r, &ctx.theme.controls());
         taskpane::access(&self.pane, &pl, tree, ROOT);
-        let ll = listview::layout(&self.list, list_r, &ctx.theme.controls());
-        let row = self.list.access(&ll, tree, ROOT, "connections");
-        let popup = self
-            .popup
-            .as_ref()
-            .map(|p| p.chain.access(tree, ROOT, "popup"));
+        let ll = self.list.layout(list_r, ctx);
+        let row = self.list.view.access(&ll, tree, ROOT, "connections");
+        let popup = self.popup.as_ref().map(|p| p.access(tree, ROOT));
         tree.set_focus(popup.unwrap_or(row));
     }
 
@@ -659,35 +548,22 @@ impl Folder {
             return;
         };
         let (items, actions) = context_menu(row, s);
-        if items.is_empty() {
-            return;
-        }
-        let tree = MenuTree::flat(items);
-        let chain = PopupMenu::open(&tree, (x, y), &popup_ctx(ctx), by_keyboard);
-        self.popup = Some(Popup {
-            tree,
-            chain,
-            actions,
-        });
+        let rows = items.into_iter().zip(actions).collect();
+        self.popup = Popup::open(rows, x, y, ctx, by_keyboard);
     }
 
-    fn popup_action(&mut self, act: MenuAction) -> Outcome {
-        match act {
-            MenuAction::Chosen(path) => {
-                let out = self
-                    .popup
-                    .as_ref()
-                    .and_then(|p| path.first().and_then(|&i| p.actions.get(i).cloned()))
-                    .flatten();
+    fn popup_step(&mut self, step: Step<Outcome>) -> Outcome {
+        match step {
+            Step::Chosen(out) => {
                 self.popup = None;
                 out.unwrap_or(Outcome::Redraw)
             }
-            MenuAction::Close => {
+            Step::Closed => {
                 self.popup = None;
                 Outcome::Redraw
             }
-            MenuAction::Redraw => Outcome::Redraw,
-            MenuAction::None => Outcome::None,
+            Step::Redraw => Outcome::Redraw,
+            Step::None => Outcome::None,
         }
     }
 
@@ -719,19 +595,13 @@ fn redraw(changed: bool) -> Outcome {
     }
 }
 
-fn popup_ctx(ctx: &Ctx) -> MenuCtx<'_> {
-    MenuCtx {
-        text: &ctx.text,
-        theme: &ctx.theme,
-        px: ctx.theme.fonts.size_px,
-        within: ctx.menu_within(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use repriseapp::BTN_LEFT;
     use reprisekit::classic::widgets::scrollbar_parts;
+    use reprisekit::classic::widgets::{Axis, ScrollHit};
+    use reprisekit::controls::hosted::Chain;
     use reprisekit::controls::metrics::ControlMetrics;
 
     /// A press that never completes a double click.
@@ -828,9 +698,9 @@ mod tests {
 
     fn row_point(f: &Folder, ctx: &Ctx, i: usize) -> (i32, i32) {
         let (_, list_r) = f.layout(ctx);
-        let lay = listview::layout(&f.list, list_r, &ctx.theme.look.controls_at_100());
+        let lay = listview::layout(&f.list.view, list_r, &ctx.theme.look.controls_at_100());
         let mut y = lay.body.y + listview::ROW_H / 2;
-        for g in &f.list.groups {
+        for g in &f.list.view.groups {
             if g.first <= i {
                 y += listview::GROUP_H;
             }
@@ -845,18 +715,18 @@ mod tests {
         ctx.theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
         let mut f = folder();
         let (_, list_r) = f.layout(&ctx);
-        let lay = listview::layout(&f.list, list_r, &ctx.theme.look.controls_at_100());
+        let lay = listview::layout(&f.list.view, list_r, &ctx.theme.look.controls_at_100());
         let sb = lay.scrollbar.expect("a short window scrolls the list");
         let (x, y) = (sb.x + 8, sb.y + 2);
         let up = (Axis::Vertical, ScrollHit::Back);
         assert_eq!(f.motion(x, y, &ctx), Outcome::Redraw);
-        assert_eq!(f.list.bars.of(up), Interaction::Hot);
+        assert_eq!(f.list.view.bars.of(up), Interaction::Hot);
         f.press(one(x, y), BTN_LEFT, &snapshot(), &ctx);
-        assert_eq!(f.list.bars.of(up), Interaction::Pressed);
+        assert_eq!(f.list.view.bars.of(up), Interaction::Pressed);
         assert_eq!(f.release(&ctx), Outcome::Redraw);
-        assert_eq!(f.list.bars.of(up), Interaction::Hot);
+        assert_eq!(f.list.view.bars.of(up), Interaction::Hot);
         assert_eq!(f.leave(&ctx), Outcome::Redraw);
-        assert_eq!(f.list.bars.lit(), None);
+        assert_eq!(f.list.view.bars.lit(), None);
     }
 
     #[test]
@@ -873,9 +743,17 @@ mod tests {
         let mut f = Folder::new();
         f.refresh(&s, None);
         let (_, list_r) = f.layout(&ctx);
-        let lay = listview::layout(&f.list, list_r, &ctx.theme.controls());
+        let lay = listview::layout(&f.list.view, list_r, &ctx.theme.controls());
         let sb = lay.scrollbar.expect("the VPNs overflow the list");
-        let p = scrollbar_parts(sb, 1, 0, lay.rows, f.list.slots(), false, lay.thumb_min);
+        let p = scrollbar_parts(
+            sb,
+            1,
+            0,
+            lay.rows,
+            f.list.view.slots(),
+            false,
+            lay.thumb_min,
+        );
         let thumb = p.thumb.expect("a thumb");
         let (x, y) = (thumb.x + 2, thumb.y + 3);
 
@@ -885,7 +763,7 @@ mod tests {
             Outcome::Redraw,
             "off the bar's side it still steers"
         );
-        let end = f.list.top;
+        let end = f.list.view.top;
         assert!(end > lay.rows, "the drag reaches the end");
         assert_eq!(f.wheel(1, &ctx), Outcome::None, "nothing lies past the end");
         f.release(&ctx);
@@ -894,15 +772,19 @@ mod tests {
             Outcome::None,
             "the release lets go"
         );
-        assert_eq!(f.list.top, end);
+        assert_eq!(f.list.view.top, end);
 
         // Scrolled past its group titles, the body fits one more row.
-        let page = listview::layout(&f.list, list_r, &ctx.theme.controls()).rows;
+        let page = listview::layout(&f.list.view, list_r, &ctx.theme.controls()).rows;
         let back = sb.y + ctx.theme.controls().scroll + 2;
         f.press(one(x, back), BTN_LEFT, &s, &ctx);
-        assert_eq!(f.list.top, end - page, "the track pages back");
+        assert_eq!(f.list.view.top, end - page, "the track pages back");
         f.press(one(x, back), BTN_RIGHT, &s, &ctx);
-        assert_eq!(f.list.top, end - page, "only the left button works the bar");
+        assert_eq!(
+            f.list.view.top,
+            end - page,
+            "only the left button works the bar"
+        );
     }
 
     #[test]
@@ -1071,7 +953,7 @@ mod tests {
         assert_eq!(pl.headers[0].y, PANE_HEADER_Y);
         assert_eq!(f.pane.sections.len(), 4);
         // The borderless list puts its header's face, body, group rule and the group's first row on their rows. The header's rect leads with a highlight row, so it starts a px above the face.
-        let ll = listview::layout(&f.list, list_r, &ctx.theme.look.controls_at_100());
+        let ll = listview::layout(&f.list.view, list_r, &ctx.theme.look.controls_at_100());
         assert_eq!(ll.header.y + 1, LIST_HEADER_Y);
         assert_eq!(ll.body.x, BODY_X);
         assert_eq!(ll.body.y, LIST_HEADER_Y + 16, "body y 18");
@@ -1079,11 +961,17 @@ mod tests {
         assert_eq!(rule, GROUP_RULE_Y);
         let first_row = ll.body.y + listview::GROUP_H;
         assert_eq!(first_row, ROW_Y);
-        let titles: Vec<&str> = f.list.columns.iter().map(|c| c.title.as_str()).collect();
+        let titles: Vec<&str> = f
+            .list
+            .view
+            .columns
+            .iter()
+            .map(|c| c.title.as_str())
+            .collect();
         assert_eq!(titles, ["Name", "Type", "Status", "Device Name"]);
         let mut edges = Vec::new();
         let mut x = ll.body.x;
-        for col in &f.list.columns {
+        for col in &f.list.view.columns {
             x += col.width;
             edges.push(x);
         }
@@ -1095,9 +983,9 @@ mod tests {
         let wide = ctx_sized((CLIENT.0 + 100, CLIENT.1));
         let mut f = f;
         f.fit_columns(&wide);
-        assert_eq!(f.list.columns[3].width, DEVICE_W + 100);
+        assert_eq!(f.list.view.columns[3].width, DEVICE_W + 100);
         let (_, list_r) = f.layout(&wide);
-        let ll = listview::layout(&f.list, list_r, &ctx.theme.look.controls_at_100());
+        let ll = listview::layout(&f.list.view, list_r, &ctx.theme.look.controls_at_100());
         assert_eq!(ll.total_w, ll.body.width);
         assert!(ll.hscroll.is_none());
     }
@@ -1110,11 +998,11 @@ mod tests {
         let mut f = Folder::new();
         f.refresh(&snapshot(), None);
         f.fit_columns(&ctx);
-        let widths: Vec<i32> = f.list.columns.iter().map(|c| c.width).collect();
+        let widths: Vec<i32> = f.list.view.columns.iter().map(|c| c.width).collect();
         assert_eq!(widths, [NAME_W, TYPE_W, STATUS_W, DEVICE_W], "kept at 100%");
         let (_, list_r) = f.layout(&ctx);
-        let ll = listview::layout(&f.list, list_r, &ctx.theme.controls());
-        assert_eq!(ll.col_w(&f.list.columns[0]), 2 * NAME_W);
+        let ll = listview::layout(&f.list.view, list_r, &ctx.theme.controls());
+        assert_eq!(ll.col_w(&f.list.view.columns[0]), 2 * NAME_W);
         assert_eq!(ll.total_w, ll.body.width, "the columns fill the body");
         assert!(ll.hscroll.is_none());
     }
@@ -1133,7 +1021,7 @@ mod tests {
                 ("System Folder".to_string(), false)
             ]
         );
-        f.list.selection.set_only(Some(1));
+        f.list.view.selection.set_only(Some(1));
         f.set_details(&snapshot());
         assert_eq!(
             lines(&f),
@@ -1146,18 +1034,18 @@ mod tests {
         let mut s = snapshot();
         s.devices.swap(0, 1);
         f.refresh(&s, None);
-        assert_eq!(f.list.selection.single(), Some(0));
+        assert_eq!(f.list.view.selection.single(), Some(0));
         assert_eq!(f.row(0), Some(&Row::Device("/dev/2".into())));
         let badge = neticon::draw(NetIcon::Wireless(2), true);
         f.refresh(&s, Some(badge.clone()));
-        assert_eq!(f.list.rows[2].icon.as_deref(), Some(&badge));
+        assert_eq!(f.list.view.rows[2].icon.as_deref(), Some(&badge));
         assert_eq!(
-            f.list.rows[0].icon.as_deref(),
+            f.list.view.rows[0].icon.as_deref(),
             Some(&neticon::draw(status::device_icon(&wireless()), false))
         );
         f.refresh(&nm::Snapshot::default(), None);
-        assert_eq!(f.list.selection.single(), None);
-        assert!(f.list.rows.is_empty());
+        assert_eq!(f.list.view.selection.single(), None);
+        assert!(f.list.view.rows.is_empty());
         assert_eq!(
             lines(&f),
             vec![("NetworkManager is not running".to_string(), true)]
@@ -1171,7 +1059,7 @@ mod tests {
         let mut f = folder();
         let (x, y) = row_point(&f, &ctx, 1);
         assert_eq!(f.press(one(x, y), BTN_RIGHT, &s, &ctx), Outcome::Redraw);
-        assert_eq!(f.list.selection.single(), Some(1));
+        assert_eq!(f.list.view.selection.single(), Some(1));
         assert!(f.popup.is_some(), "the menu is open");
         let key = |sym| KeyInput {
             sym,
@@ -1191,7 +1079,11 @@ mod tests {
         f.press(one(x, y), BTN_RIGHT, &s, &ctx);
         assert_eq!(f.press(one(4, 4), BTN_LEFT, &s, &ctx), Outcome::Redraw);
         assert!(f.popup.is_none());
-        assert_eq!(f.list.selection.single(), Some(1), "the click did not land");
+        assert_eq!(
+            f.list.view.selection.single(),
+            Some(1),
+            "the click did not land"
+        );
     }
 
     #[test]
@@ -1208,8 +1100,8 @@ mod tests {
             },
             edit: None,
         };
-        let picked = |f: &Folder| f.popup.as_ref().map(|p| p.chain.levels()[0].hovered);
-        f.list.selection.set_only(None);
+        let picked = |f: &Folder| f.popup.as_ref().map(|p| p.chain().levels()[0].hovered);
+        f.list.view.selection.set_only(None);
         assert_eq!(f.key(&key(keysym::MENU, false), &s, &ctx), Outcome::None);
         assert_eq!(picked(&f), None, "no row, no menu");
         let (x, y) = row_point(&f, &ctx, 1);
@@ -1240,7 +1132,7 @@ mod tests {
         let mut f = folder();
         let (x, y) = row_point(&f, &ctx, 0);
         assert_eq!(f.press(one(x, y), BTN_LEFT, &s, &ctx), Outcome::Redraw);
-        assert_eq!(f.list.selection.single(), Some(0));
+        assert_eq!(f.list.view.selection.single(), Some(0));
         assert_eq!(
             f.press(two(x, y), BTN_LEFT, &s, &ctx),
             Outcome::OpenStatus("/dev/1".into())
@@ -1264,10 +1156,10 @@ mod tests {
             mods: repriseapp::Mods::default(),
             edit: None,
         };
-        f.list.selection.set_only(None);
-        f.list.selection.focus = None;
+        f.list.view.selection.set_only(None);
+        f.list.view.selection.focus = None;
         assert_eq!(f.key(&key(keysym::DOWN), &s, &ctx), Outcome::Redraw);
-        assert_eq!(f.list.selection.single(), Some(0));
+        assert_eq!(f.list.view.selection.single(), Some(0));
         assert_eq!(
             f.key(&key(keysym::RETURN), &s, &ctx),
             Outcome::OpenStatus("/dev/1".into())
@@ -1309,12 +1201,12 @@ mod tests {
             Body::Links(rows) if !rows[TASK_HOTSPOT].enabled
         ));
         assert_eq!(
-            f.list.rows[1].cells[2], "Hotspot: Desk",
+            f.list.view.rows[1].cells[2], "Hotspot: Desk",
             "the radio's Status cell"
         );
         on.devices[1].hotspot_clients = Some(2);
         f.refresh(&on, None);
-        assert_eq!(f.list.rows[1].cells[2], "Hotspot: Desk (2 devices)");
+        assert_eq!(f.list.view.rows[1].cells[2], "Hotspot: Desk (2 devices)");
         let head = lay.headers[0];
         assert_eq!(
             f.press(one(head.x + 2, head.y + 2), BTN_LEFT, &s, &ctx),
@@ -1337,12 +1229,12 @@ mod tests {
         f.refresh(&s, None);
         f.fit_columns(&ctx);
         let (_, list_r) = f.layout(&ctx);
-        let lay = listview::layout(&f.list, list_r, &ctx.theme.look.controls_at_100());
+        let lay = listview::layout(&f.list.view, list_r, &ctx.theme.look.controls_at_100());
         let sb = lay.scrollbar.expect("a vertical bar");
         assert_eq!(f.wheel(3, &ctx), Outcome::Redraw);
-        assert_eq!(f.list.top, 3);
+        assert_eq!(f.list.view.top, 3);
         assert_eq!(f.wheel(-3, &ctx), Outcome::Redraw);
-        assert_eq!(f.list.top, 0);
+        assert_eq!(f.list.view.top, 0);
         assert_eq!(f.wheel(-1, &ctx), Outcome::None, "already at the top");
         assert_eq!(
             f.press(one(sb.x + 2, sb.y + 3), BTN_LEFT, &s, &ctx),
@@ -1353,14 +1245,14 @@ mod tests {
             f.press(one(sb.x + 2, sb.bottom() - 3), BTN_LEFT, &s, &ctx),
             Outcome::Redraw
         );
-        assert_eq!(f.list.top, 1);
-        let below = f.list.top;
+        assert_eq!(f.list.view.top, 1);
+        let below = f.list.view.top;
         assert_eq!(
             f.press(one(sb.x + 2, sb.bottom() - 30), BTN_LEFT, &s, &ctx),
             Outcome::Redraw
         );
-        assert!(f.list.top > below + 1, "the trough paged down");
-        let paged = f.list.top;
+        assert!(f.list.view.top > below + 1, "the trough paged down");
+        let paged = f.list.view.top;
         assert_eq!(
             f.press(
                 one(sb.x + 2, sb.y + ControlMetrics::CLASSIC.scroll + 1),
@@ -1370,7 +1262,7 @@ mod tests {
             ),
             Outcome::Redraw
         );
-        assert!(f.list.top < paged, "and back up above the thumb");
+        assert!(f.list.view.top < paged, "and back up above the thumb");
         assert!(lay.hscroll.is_none());
     }
 
@@ -1384,5 +1276,57 @@ mod tests {
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
         f.draw(&mut c, &ctx);
         reprisekit::raster::write_preview(&c, "netconn-folder.png");
+    }
+
+    #[test]
+    fn dragging_the_name_divider_widens_name_and_device_name_takes_the_rest() {
+        let ctx = ctx();
+        let s = snapshot();
+        let mut f = folder();
+        f.fit_columns(&ctx);
+        let (_, list_r) = f.layout(&ctx);
+        let lay = listview::layout(&f.list.view, list_r, &ctx.theme.controls());
+        let (x, y) = (DIVIDERS[0], lay.header.y + 4);
+        f.press(one(x, y), BTN_LEFT, &s, &ctx);
+        assert_eq!(f.motion(x + 30, y, &ctx), Outcome::Redraw);
+        f.release(&ctx);
+        let widths: Vec<i32> = f.list.view.columns.iter().map(|c| c.width).collect();
+        assert_eq!(widths, [NAME_W + 30, TYPE_W, STATUS_W, DEVICE_W - 30]);
+        let ll = listview::layout(&f.list.view, list_r, &ctx.theme.controls());
+        assert_eq!(ll.total_w, ll.body.width, "the columns still fill the body");
+    }
+
+    #[test]
+    fn page_down_moves_the_selection_a_page_and_writes_its_details() {
+        let ctx = ctx_sized((CLIENT.0, 120));
+        let mut s = snapshot();
+        for i in 0..8 {
+            s.devices.push(nm::Device {
+                path: format!("/dev/x{i}"),
+                shell_name: format!("Connection {i}"),
+                ..wired()
+            });
+        }
+        let mut f = Folder::new();
+        f.refresh(&s, None);
+        f.list.view.selection.set_only(Some(0));
+        let key = |sym| KeyInput {
+            sym,
+            utf8: None,
+            mods: repriseapp::Mods::default(),
+            edit: None,
+        };
+        assert_eq!(f.key(&key(keysym::PAGE_DOWN), &s, &ctx), Outcome::Redraw);
+        let at = f
+            .list
+            .view
+            .selection
+            .single()
+            .expect("a row stays selected");
+        assert!(at > 1, "PageDown moves past the next row, to row {at}");
+        let Body::Lines(lines) = &f.pane.sections[DETAILS].body else {
+            panic!("Details shows lines");
+        };
+        assert_eq!(lines[0].0, s.devices[at].shell_name);
     }
 }
