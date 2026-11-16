@@ -164,14 +164,8 @@ fn login_name() -> String {
     }
     // SAFETY: getuid cannot fail and touches no memory of ours.
     let uid = unsafe { libc::getuid() };
-    std::fs::read_to_string("/etc/passwd")
-        .ok()
-        .and_then(|p| {
-            p.lines().find_map(|l| {
-                let f: Vec<&str> = l.split(':').collect();
-                (f.get(2)?.parse::<u32>().ok()? == uid).then(|| f[0].to_string())
-            })
-        })
+    reprisefs::sysinfo::account(uid)
+        .map(|(login, _)| login)
         .unwrap_or_default()
 }
 
