@@ -370,7 +370,8 @@ impl State {
             .filter_map(|&id| windows.iter().find(|w| w.id == id))
             .map(|w| {
                 let app_id = w.app_id();
-                let app = reprisefs::apps::entry_for_app_id(app_index, &app_id, |_| true)
+                let app = reprisefs::apps::AppId::new(&app_id)
+                    .and_then(|a| reprisefs::apps::entry_for_app_id(app_index, &a, |_| true))
                     .map_or(app_id.clone(), |e| e.name.clone());
                 WindowName {
                     title: w.title(),

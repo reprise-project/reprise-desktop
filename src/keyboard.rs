@@ -692,7 +692,7 @@ impl State {
                 self.spawn_command_activated(cmd);
             }
             Action::Exec { argv, app, dir } => match argv {
-                Ok(argv) => self.spawn_launcher_activated(argv, app.as_str(), dir.as_deref()),
+                Ok(argv) => self.spawn_launcher_activated(argv, &app.app_id(), dir.as_deref()),
                 Err(refused) => self.exec_refused(refused),
             },
             Action::Terminal => {

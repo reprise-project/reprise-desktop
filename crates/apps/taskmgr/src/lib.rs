@@ -31,7 +31,7 @@ use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::tip::Rest;
 use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
 use reprisebus::tray::Hung;
-use reprisefs::apps::AppEntry;
+use reprisefs::apps::{AppEntry, AppId};
 use reprisekit::access::Tree;
 use reprisekit::controls::form::{self, Form};
 use reprisekit::controls::hosted::Hosted;
@@ -110,7 +110,7 @@ impl Page {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppRow {
     pub unit: String,
-    pub app: String,
+    pub app: AppId,
     pub name: String,
     pub icon: Option<String>,
     /// A window of it stopped answering pings.
@@ -1131,7 +1131,7 @@ fn app_row(sc: &scopes::Scope, entries: &[AppEntry]) -> AppRow {
     AppRow {
         unit: sc.unit.clone(),
         app: sc.app.clone(),
-        name: e.map_or_else(|| sc.app.clone(), |e| e.name.clone()),
+        name: e.map_or_else(|| sc.app.to_string(), |e| e.name.clone()),
         icon: e.and_then(|e| e.icon.clone()),
         hung: false,
     }
@@ -1153,12 +1153,13 @@ pub fn not_responding(
     })
 }
 
-/// Whether a window reporting app id `window` belongs to the program started from entry `app`:
-/// the same id, or a window whose own entry is `app`'s.
-pub fn window_of(app: &str, entries: &[AppEntry], window: &str) -> bool {
-    window.eq_ignore_ascii_case(app)
-        || reprisefs::apps::entry_for_app_id(entries, window, |_| true)
-            .is_some_and(|e| e.id.stem() == app)
+/// Whether a window reporting app id `window` belongs to the program started as `app`: the same
+/// id, or a window whose own entry is `app`'s.
+pub fn window_of(app: &AppId, entries: &[AppEntry], window: &str) -> bool {
+    app.is_like(window)
+        || AppId::new(window)
+            .and_then(|w| reprisefs::apps::entry_for_app_id(entries, &w, |_| true))
+            .is_some_and(|e| e.id.matches_app_id(app))
 }
 
 /// A size in KiB as a task manager writes it: "12,345 K".

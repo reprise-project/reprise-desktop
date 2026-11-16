@@ -1430,7 +1430,7 @@ impl Explorer {
         let terminal = repriseconf::current().terminal.clone();
         let app = reprisefs::apps::terminal_app(&terminal, &self.app_index);
         let argv = reprisefs::apps::terminal_argv(&terminal);
-        let argv = reprisefs::scope::in_scope(&argv, app.as_deref());
+        let argv = reprisefs::scope::in_scope(&argv, app.as_ref());
         let dir = dir.to_path_buf();
         drop(self.spawn_read(ctx, move || {
             if let Err(e) = repriseapp::spawn_in(&argv, Some(&dir), None) {
@@ -1486,10 +1486,11 @@ impl Explorer {
             if reprisefs::program::asks_first(&path, how) {
                 return Opened::Ask(open, reprisefs::program::Asked::of(program));
             }
-            let scope = path.file_name().map(|n| n.to_string_lossy());
+            let scope =
+                (path.file_name()).and_then(|n| reprisefs::apps::AppId::new(&n.to_string_lossy()));
             let argv = reprisefs::program::run_argv(&path, open, &terminal, end);
             Opened::Ran(
-                argv.and_then(|argv| repriseapp::spawn_in(&argv, path.parent(), scope.as_deref())),
+                argv.and_then(|argv| repriseapp::spawn_in(&argv, path.parent(), scope.as_ref())),
             )
         };
         match self.read_job(ctx, read) {
@@ -1534,7 +1535,7 @@ impl Explorer {
             Opened::Open(Ok(open)) => Reply {
                 redraw: true,
                 spawn: vec![open.argv],
-                spawn_app: open.app.map(|a| a.to_string()),
+                spawn_app: open.app.map(|a| a.app_id()),
                 spawn_dir: open.dir,
                 ..Default::default()
             },

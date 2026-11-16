@@ -3,6 +3,7 @@
 //! a launch that must report its own exec error is [`hold`]en before the exec instead. A launch
 //! from a session other than the user's display session stays in its session ([`session_kept`]).
 
+use crate::apps::AppId;
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::num::NonZeroUsize;
@@ -48,7 +49,7 @@ fn launch_session_of(v: Option<&str>) -> Option<&str> {
 
 /// `argv` behind the [`scope_argv`] prefix of `app`, or alone without an app, a user manager or
 /// a [`session_kept`] scope.
-pub fn in_scope<S: AsRef<OsStr>>(argv: &[S], app: Option<&str>) -> Vec<OsString> {
+pub fn in_scope<S: AsRef<OsStr>>(argv: &[S], app: Option<&AppId>) -> Vec<OsString> {
     let scope = app.filter(|_| user_manager_running() && session_kept());
     let prefix = scope.map(|app| scope_argv(app, &unit_suffix()));
     (prefix.into_iter().flatten().map(Into::into))
@@ -63,11 +64,11 @@ const HOLD_LIMIT: Duration = Duration::from_secs(5);
 /// `app`, as `systemd-run --scope` does, so the program and whatever it forks run there from their
 /// first instruction and the spawn still returns the exec's own error. The spawn then blocks on
 /// the session bus. Without a user manager or a [`session_kept`] scope the child runs unscoped.
-pub fn hold(c: &mut std::process::Command, app: &str) -> std::io::Result<()> {
+pub fn hold(c: &mut std::process::Command, app: &AppId) -> std::io::Result<()> {
     if !user_manager_running() || !session_kept() {
         return Ok(());
     }
-    let app = app.to_owned();
+    let app = app.clone();
     hold_with(c, HOLD_LIMIT, move |pid| {
         if let Err(e) = adopt(pid, &app) {
             log::warn!("app scope for {app}: {e}");
@@ -139,7 +140,7 @@ fn pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
 
 /// Moves process `pid` into a new app scope named by `app` and waits for the scope's start job, as
 /// `systemd-run --scope` does before its exec. Blocks on the session bus.
-fn adopt(pid: u32, app: &str) -> zbus::Result<()> {
+fn adopt(pid: u32, app: &AppId) -> zbus::Result<()> {
     const MANAGER: &str = "org.freedesktop.systemd1.Manager";
     let conn = reprisebus::session()?;
     let (unit, properties) = transient_scope(app, &unit_suffix(), pid);
@@ -182,7 +183,7 @@ fn adopt(pid: u32, app: &str) -> zbus::Result<()> {
 /// `StartTransientUnit`'s unit name and properties for [`adopt`]: the scope and slice
 /// [`scope_argv`] gives, with `pid` moved in.
 fn transient_scope(
-    app: &str,
+    app: &AppId,
     suffix: &str,
     pid: u32,
 ) -> (String, Vec<(&'static str, zbus::Variant<'static>)>) {
@@ -195,7 +196,7 @@ fn transient_scope(
 }
 
 /// Whether `unit` is one of `app`'s scopes, whatever its suffix.
-pub fn is_app_scope(unit: &str, app: &str) -> bool {
+pub fn is_app_scope(unit: &str, app: &AppId) -> bool {
     unit.strip_prefix(&unit_name(app, ""))
         .and_then(|rest| rest.strip_suffix(".scope"))
         .is_some_and(|suffix| !suffix.is_empty())
@@ -203,13 +204,12 @@ pub fn is_app_scope(unit: &str, app: &str) -> bool {
 
 /// `app-reprise-<app>-<suffix>`; the id is unit-escaped so its dashes stay apart from the
 /// launcher and suffix (systemd's app naming).
-fn unit_name(app: &str, suffix: &str) -> String {
-    let app = crate::apps::DesktopId::stem_of(app);
-    format!("app-reprise-{}-{suffix}", unit_escape(app))
+fn unit_name(app: &AppId, suffix: &str) -> String {
+    format!("app-reprise-{}-{suffix}", unit_escape(app.as_str()))
 }
 
 /// Prefix that execs a command, same pid, in the [`unit_name`] scope.
-fn scope_argv(app: &str, suffix: &str) -> Vec<String> {
+fn scope_argv(app: &AppId, suffix: &str) -> Vec<String> {
     vec![
         "systemd-run".into(),
         "--user".into(),
@@ -295,6 +295,11 @@ fn keeps_session(own: Option<&str>, display: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::apps::DesktopId;
+
+    fn id(s: &str) -> AppId {
+        AppId::new(s).unwrap()
+    }
 
     #[test]
     fn a_held_child_is_settled_before_its_exec() {
@@ -340,7 +345,13 @@ mod tests {
     #[test]
     fn a_desktop_entry_launch_runs_in_an_app_scope_named_by_its_id() {
         assert_eq!(
-            scope_argv("org.deskflow.deskflow.desktop", "1a"),
+            scope_argv(
+                &"org.deskflow.deskflow.desktop"
+                    .parse::<DesktopId>()
+                    .unwrap()
+                    .app_id(),
+                "1a"
+            ),
             [
                 "systemd-run",
                 "--user",
@@ -356,7 +367,7 @@ mod tests {
 
     #[test]
     fn an_adopted_process_gets_the_app_scope_a_launch_would_run_in() {
-        let (unit, properties) = transient_scope("run-me.sh", "1a", 4242);
+        let (unit, properties) = transient_scope(&id("run-me.sh"), "1a", 4242);
         assert_eq!(unit, "app-reprise-run\\x2dme.sh-1a.scope");
         assert_eq!(
             properties,
@@ -381,20 +392,23 @@ mod tests {
     fn an_app_scope_is_told_apart_from_another_apps_with_a_longer_id() {
         assert!(is_app_scope(
             "app-reprise-syncthing-1ax2.scope",
-            "syncthing.desktop"
+            &id("syncthing")
         ));
         assert!(is_app_scope(
             "app-reprise-run\\x2dme.sh-1a.scope",
-            "run-me.sh"
+            &id("run-me.sh")
         ));
         assert!(!is_app_scope(
             "app-reprise-syncthing\\x2dgtk-1ax2.scope",
-            "syncthing"
+            &id("syncthing")
         ));
-        assert!(!is_app_scope("app-reprise-syncthing-.scope", "syncthing"));
+        assert!(!is_app_scope(
+            "app-reprise-syncthing-.scope",
+            &id("syncthing")
+        ));
         assert!(!is_app_scope(
             "app-reprise-syncthing-1ax2.service",
-            "syncthing"
+            &id("syncthing")
         ));
     }
 
@@ -416,8 +430,8 @@ mod tests {
         assert!(run(0x11).all(|s| !first.contains(&s)));
         assert!(run(0x100).all(|s| !first.contains(&s)));
         assert!(monotonic_us() > 0);
-        let unit = format!("{}.scope", unit_name("syncthing", &unit_suffix()));
-        assert!(is_app_scope(&unit, "syncthing"), "{unit}");
+        let unit = format!("{}.scope", unit_name(&id("syncthing"), &unit_suffix()));
+        assert!(is_app_scope(&unit, &id("syncthing")), "{unit}");
     }
 
     /// `systemctl`'s `*` glob, which matches across dashes.
@@ -435,21 +449,27 @@ mod tests {
         assert_eq!(suffix(Some("7"), 0x1a, 0x5, 0x23), "s7x1ax5x23");
         let own = format!(
             "{}.scope",
-            unit_name("foot", &suffix(Some("7"), 0x1a, 0x5, 0))
+            unit_name(&id("foot"), &suffix(Some("7"), 0x1a, 0x5, 0))
         );
-        let escaped = format!("{}.scope", unit_name("a-s7x", &suffix(Some("8"), 1, 2, 3)));
+        let escaped = format!(
+            "{}.scope",
+            unit_name(&id("a-s7x"), &suffix(Some("8"), 1, 2, 3))
+        );
         let other = format!(
             "{}.scope",
-            unit_name("foot", &suffix(Some("71"), 0x1a, 0x5, 0))
+            unit_name(&id("foot"), &suffix(Some("71"), 0x1a, 0x5, 0))
         );
-        let sessionless = format!("{}.scope", unit_name("s7x", &suffix(None, 0x1a, 0x5, 0)));
+        let sessionless = format!(
+            "{}.scope",
+            unit_name(&id("s7x"), &suffix(None, 0x1a, 0x5, 0))
+        );
         let pattern = session_pattern("7");
         assert!(glob(&pattern, &own), "{pattern} {own}");
         assert!(!glob(&pattern, &escaped), "{pattern} {escaped}");
         assert!(!glob(&pattern, &other), "{pattern} {other}");
         assert!(!glob(&pattern, &sessionless), "{pattern} {sessionless}");
         assert!(glob(PATTERN, &own) && glob(PATTERN, &sessionless));
-        assert!(is_app_scope(&own, "foot"));
+        assert!(is_app_scope(&own, &id("foot")));
     }
 
     #[test]
@@ -458,13 +478,13 @@ mod tests {
             format!("0::/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}.scope\n")
         };
         let polkit = cgroup(unit_name(
-            "reprise-polkit.desktop",
+            &id("reprise-polkit"),
             &suffix(Some("7"), 0x1a, 0x5, 0),
         ));
         assert_eq!(launch_session_of_cgroup(&polkit), Some("7"));
-        let escaped = cgroup(unit_name("a-s7x", &suffix(Some("c2"), 1, 2, 3)));
+        let escaped = cgroup(unit_name(&id("a-s7x"), &suffix(Some("c2"), 1, 2, 3)));
         assert_eq!(launch_session_of_cgroup(&escaped), Some("c2"));
-        let sessionless = cgroup(unit_name("s7x", &suffix(None, 0x1a, 0x5, 0)));
+        let sessionless = cgroup(unit_name(&id("s7x"), &suffix(None, 0x1a, 0x5, 0)));
         assert_eq!(launch_session_of_cgroup(&sessionless), None);
         let foreign = cgroup("app-foot-s7x1ax5x0".into());
         assert_eq!(

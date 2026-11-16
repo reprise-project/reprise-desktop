@@ -252,7 +252,7 @@ impl Explorer {
                     Ok(spawn) => Reply {
                         spawn,
                         spawn_dir: app.path,
-                        spawn_app: Some(app.id.to_string()),
+                        spawn_app: Some(app.id.app_id()),
                         ..Default::default()
                     },
                     Err(refused) => self.exec_refused(&refused, ctx),
@@ -1316,7 +1316,7 @@ impl Explorer {
             Ok(argv) => Reply {
                 redraw: true,
                 spawn: vec![argv],
-                spawn_app: Some(app.id.to_string()),
+                spawn_app: Some(app.id.app_id()),
                 spawn_dir: app.path.clone(),
                 ..Default::default()
             },
@@ -1440,7 +1440,7 @@ impl Explorer {
                 redraw_all: true,
                 spawn: vec![argv],
                 spawn_dir: app.path,
-                spawn_app: Some(app.id.to_string()),
+                spawn_app: Some(app.id.app_id()),
                 ..Default::default()
             },
             Err(refused) => self.exec_refused(&refused, ctx),

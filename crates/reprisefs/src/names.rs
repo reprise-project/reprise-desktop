@@ -53,12 +53,11 @@ pub fn copy_name(name: &str, existing: &[String]) -> String {
 
 /// `existing` holds file names, so a label whose `<label>.desktop` is taken counts as taken.
 pub fn shortcut_name(name: &str, existing: &[String]) -> String {
-    let base = name.strip_suffix(".desktop").unwrap_or(name);
-    let taken: Vec<String> = existing
-        .iter()
-        .map(|e| e.strip_suffix(".desktop").unwrap_or(e).to_string())
-        .collect();
-    unique_name(&format!("Shortcut to {base}"), &taken)
+    let label = |n: &str| {
+        crate::apps::DesktopId::from_file_name(n).map_or_else(|| n.to_string(), |d| d.stem().into())
+    };
+    let taken: Vec<String> = existing.iter().map(|e| label(e)).collect();
+    unique_name(&format!("Shortcut to {}", label(name)), &taken)
 }
 
 /// Which extensions desktop labels hide: `desktop_extensions` in config.toml.
