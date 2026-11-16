@@ -106,13 +106,6 @@ impl State {
         let output = v.output.clone();
         let base = self.config.theme.clone();
         let scale = self.draw_scale_at(Some(&output)).max(1);
-        let rescaled = self.dialogs.views[index]
-            .dialog
-            .picker_mut()
-            .is_some_and(|p| p.follow_scale(scale, &mut self.icons));
-        if rescaled {
-            self.run_picker_requests();
-        }
         let theme = base.scaled(scale);
         let wanted = crate::glass::wanted(&self.config);
         let preedit = active
@@ -237,8 +230,7 @@ impl State {
         v.backdrop.set(scene, glass, v.glass_tree, pane);
         let origin = (v.x, v.y);
         let id = v.id;
-        let stand_ins =
-            !v.waiting.is_empty() || v.dialog.picker().is_some_and(|p| p.waits_for_icons());
+        let stand_ins = !v.waiting.is_empty();
         let decode = next_decode(&mut v.decodes, undecoded, std::time::Instant::now());
         if active {
             let spot = canvas.take_spot();
@@ -317,15 +309,11 @@ impl State {
                 .max(1);
         let State { dialogs, icons, .. } = self;
         let v = &mut dialogs.views[i];
-        if let Some(p) = v.dialog.picker_mut() {
-            p.icons_landed(icons);
-        }
         if !v.waiting.is_empty() {
             let waiting = std::mem::take(&mut v.waiting);
             v.waiting = super::properties::change_icon_landed(&mut v.dialog, icons, px, waiting);
         }
         v.icons = None;
-        self.run_picker_requests();
         self.redraw_dialog(i);
     }
 

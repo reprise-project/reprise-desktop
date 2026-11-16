@@ -24,15 +24,6 @@ fn delete_button(label: &str, action: DialogAction, erase: bool) -> DialogButton
 }
 
 impl Dialog {
-    /// Browse for `picker`'s purpose: the file dialog in a sizable frame opening at
-    /// `filedlg::CLIENT`; the host places it (`Center` is the fallback).
-    pub fn browse(picker: crate::filepick::FilePicker) -> Dialog {
-        Dialog {
-            help: true,
-            ..Dialog::new("Browse", Style::Browse(Box::new(picker)), Placement::Center)
-        }
-    }
-
     /// Advanced Attributes: `filesheet::advanced_form` in a dialog frame, boxes at `robots` (None:
     /// greyed, OK closes like Cancel).
     pub fn advanced_attributes(

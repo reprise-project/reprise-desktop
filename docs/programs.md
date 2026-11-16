@@ -139,9 +139,8 @@ The file manager, and the default for folders.
   marked failed. An entry Reprise writes names the UUID of
   the file system its file was on, so a different stick mounted at the same
   path never shows the last one's pictures. The Browse... dialogs of Run and
-  Open With read the same cache and leave the pictures it lacks to Explorer,
-  so the desktop itself never decodes a picture. Folders update by
-  themselves, no F5 needed.
+  Open With are the portal's file dialog, so the desktop itself never decodes
+  a picture. Folders update by themselves, no F5 needed.
 
 ## Notepad
 

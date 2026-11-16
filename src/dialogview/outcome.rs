@@ -6,12 +6,10 @@ use super::*;
 
 impl State {
     pub(crate) fn apply_dialog(&mut self, outcome: Outcome) {
-        self.run_picker_requests();
         match outcome {
             Outcome::Nothing => {}
             Outcome::Redraw => self.redraw_top_dialog(),
             Outcome::Relayout => self.relayout_top_dialog(),
-            Outcome::Size(edges) => self.begin_dialog_size(edges),
             Outcome::Close | Outcome::CopyCancel
                 if self
                     .dialogs
@@ -52,10 +50,6 @@ impl State {
             Outcome::Delete { paths, erase } => {
                 self.close_dialog();
                 self.delete_paths(paths, erase);
-            }
-            Outcome::AskDelete { paths, shift } => {
-                let over = self.dialogs.views.last().map(|v| v.id);
-                self.ask_delete_over(paths, None, shift, over);
             }
             Outcome::EmptyBin => {
                 self.close_dialog();
@@ -127,36 +121,6 @@ impl State {
             }
             Outcome::BrowseRun => self.browse_run(),
             Outcome::BrowseProgram => self.browse_program(),
-            Outcome::ProgramPick(path) => {
-                if !self.close_to_parent() {
-                    return;
-                }
-                let outcome = match self.dialogs.views.last_mut() {
-                    Some(v) => v.dialog.add_program(&path),
-                    None => Outcome::Nothing,
-                };
-                self.apply_dialog(outcome);
-            }
-            Outcome::RunPick(path) => {
-                if !self.close_to_parent() {
-                    return;
-                }
-                if let Some(dir) = path.parent() {
-                    self.wm.file_dialog.keep_folder(dir);
-                }
-                // The field holds text, so a non-UTF-8 name cannot go into it.
-                let Some(picked) = path.to_str() else {
-                    self.open_dialog_over(Dialog::not_utf8_program("Run", &path));
-                    return;
-                };
-                let quoted = reprisefs::ops::shell_quote(picked);
-                let outcome = match self.dialogs.views.last_mut() {
-                    Some(v) => v.dialog.set_field(&quoted),
-                    None => Outcome::Nothing,
-                };
-                self.restart_caret();
-                self.apply_dialog(outcome);
-            }
             Outcome::Properties {
                 path,
                 name,

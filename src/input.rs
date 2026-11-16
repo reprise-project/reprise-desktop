@@ -267,16 +267,6 @@ pub enum Interaction {
     FieldDrag { editor: crate::caret::Editor },
     /// A dialog held by its caption; `dx`/`dy` are the grab offset from its origin.
     DialogMove { index: usize, dx: f64, dy: f64 },
-    /// A sizable dialog (Browse) held by its border or size grip: the
-    /// pointer's travel from (`cx`, `cy`) moves `edges` of the frame that
-    /// stood at `start`, in layout coordinates.
-    DialogResize {
-        index: usize,
-        edges: Edges,
-        start: Rect,
-        cx: f64,
-        cy: f64,
-    },
     /// A dialog's push button held down: it draws pushed while the
     /// pointer is on it and acts on the release over it.
     DialogPress,
@@ -334,7 +324,6 @@ impl Interaction {
             | Interaction::Stir
             | Interaction::FieldDrag { .. }
             | Interaction::DialogMove { .. }
-            | Interaction::DialogResize { .. }
             | Interaction::DialogPress
             | Interaction::NotifyPress
             | Interaction::DisplaysSlide
@@ -592,4 +581,3 @@ mod pointer;
 mod tests;
 
 pub(crate) use button::caption_cancelled;
-pub(crate) use move_resize::resize_rect;

@@ -1,6 +1,6 @@
 use super::*;
 use crate::text::wrap;
-use crate::theme::{Metrics, TextUnits};
+use crate::theme::TextUnits;
 use reprisekit::classic::widgets::{BUTTON_H, BarHit, LINE_H};
 use reprisekit::controls::combo;
 use reprisekit::controls::dlgtemplate;
@@ -34,13 +34,12 @@ pub struct DialogLayout {
     /// rows of the look's `combo_row` inside a 1 px border.
     pub list: Option<Rect>,
     pub buttons: Vec<Rect>,
-    /// A form dialog's tab rects and its page, or the Browse dialog's or
-    /// the Open With chooser's client area.
+    /// A form dialog's tab rects and its page, or the Open With chooser's
+    /// client area.
     pub tabs: Vec<Rect>,
     pub page: Option<Rect>,
     /// The look's control sizes it was laid out with, which `hit`,
-    /// `scrollbar` and `access` lay the Run list, the chooser and the
-    /// Browse dialog out with.
+    /// `scrollbar` and `access` lay the Run list and the chooser out with.
     pub controls: ControlMetrics,
     /// A Blue Welcome panel's own layout, which `buttons` repeats: its cells, then Cancel.
     pub power: Option<reprisekit::powerpanel::Layout>,
@@ -55,9 +54,6 @@ pub enum DialogHit {
     Minimize,
     Help,
     Caption,
-    /// A sizable frame's border (Browse's), by the edges a drag from
-    /// there moves. See [`DialogLayout::sizing_edges`].
-    Resize(reprisekit::frame::Edges),
     /// The text field itself, with the point's x from the text's origin.
     Field(i32),
     /// A row of Run's completion list.
@@ -67,7 +63,6 @@ pub enum DialogHit {
     Row(usize),
     Tab(usize),
     Control(reprisekit::controls::form::Hit),
-    Browse(reprisekit::controls::filedlg::Hit),
     Chooser(openwith::Hit),
     Tray(traycustomize::Hit),
     /// A sheet's page scrollbar, while a sheet cut to its output scrolls its page.
@@ -130,19 +125,12 @@ const EP_BUTTON_W: i32 = 69;
 
 const EP_BUTTON_PITCH: i32 = 78;
 
-fn chrome(resizable: bool) -> Chrome {
-    Chrome {
-        resizable,
-        ..Chrome::DIALOG
-    }
-}
-
 /// How far `theme`'s frame puts a fixed dialog's client area from where
 /// the dialog was built: inside `DIALOG_FRAME` under a `CAPTION_H`
 /// caption. (0, 0) under the default metrics; Blue's taller caption moves
 /// it down.
 pub(super) fn client_shift(theme: &Theme) -> (i32, i32) {
-    let g = FrameGeometry::layout(&theme.metrics, 1, 1, false, chrome(false));
+    let g = FrameGeometry::layout(&theme.metrics, 1, 1, false, Chrome::DIALOG);
     (
         g.client.x - DIALOG_FRAME,
         g.client.y - DIALOG_FRAME - CAPTION_H,
@@ -178,7 +166,6 @@ impl DialogLayout {
                     Chrome::WINDOWED_DIALOG,
                 );
             }
-            Style::Browse(p) => return Self::compute_browse(theme, d.help, p.dlg.client()),
             Style::EndProgram => Self::compute_end_program(theme, text.dialog(d.font()), d),
             Style::Classic {
                 template, text_h, ..
@@ -215,7 +202,7 @@ impl DialogLayout {
     /// inside `theme`'s frame: the body moves by `client_shift` and the
     /// dialog grows around it.
     pub(super) fn framed(self, theme: &Theme, help: bool) -> DialogLayout {
-        self.framed_as(theme, help, chrome(false))
+        self.framed_as(theme, help, Chrome::DIALOG)
     }
 
     /// [`Self::framed`] in a frame with `chrome`'s caption buttons.
@@ -338,18 +325,6 @@ impl DialogLayout {
         }
     }
 
-    /// Browse: the file dialog's `client` size in a resizable frame, so under default metrics
-    /// 563x477 with the client at (4, 22); `page` is the client area.
-    fn compute_browse(theme: &Theme, help: bool, client: (i32, i32)) -> DialogLayout {
-        let (cw, ch) = client;
-        let g = FrameGeometry::layout(&theme.metrics, cw, ch, false, chrome(true));
-        DialogLayout {
-            page: Some(g.client),
-            ..Default::default()
-        }
-        .with_frame(g, help)
-    }
-
     /// A control's client area `client` inside the fixed 3 px frame under
     /// the caption, as `page`: the tray's Customize dialog.
     pub(super) fn compute_client(client: (i32, i32)) -> DialogLayout {
@@ -381,8 +356,8 @@ impl DialogLayout {
         let px = theme.fonts.size_px;
         let (tw, th) = f.grown_size(theme.text);
         let (w, h) =
-            FrameGeometry::client_size_for_total(&theme.metrics, tw, th, false, chrome(false));
-        let g = FrameGeometry::layout(&theme.metrics, w, h, false, chrome(false));
+            FrameGeometry::client_size_for_total(&theme.metrics, tw, th, false, Chrome::DIALOG);
+        let g = FrameGeometry::layout(&theme.metrics, w, h, false, Chrome::DIALOG);
         let (tabs, page) = match f.sheet() {
             Some(s) => {
                 let l = s.layout(text, px);
@@ -424,17 +399,6 @@ impl DialogLayout {
         combo::layout(&f.combo, self.field?, &self.controls).scrollbar
     }
 
-    /// The edges a drag from (`x`, `y`) sizes, when that is on a sizable
-    /// frame's border under the metrics `m` it was laid out with: the
-    /// band and corners a window's frame has. None on a fixed frame.
-    pub fn sizing_edges(&self, x: i32, y: i32, m: &Metrics) -> Option<Edges> {
-        let g = self.frame.filter(|g| g.chrome.resizable)?;
-        match g.hit(x, y, m) {
-            reprisekit::frame::FrameHit::Resize(e) => Some(e),
-            _ => None,
-        }
-    }
-
     /// What the dialog has at (`x`, `y`). The renderer and font size go in
     /// because a hit inside a form's edit field resolves to a byte index
     /// in its value, which takes measuring the text.
@@ -471,10 +435,6 @@ impl DialogLayout {
                 }),
                 FormBody::Plain(form) => form.hit(x, y, text, px).map(DialogHit::Control),
             };
-        }
-        if let (Some(p), Some(client)) = (d.picker(), self.page) {
-            let hit = p.dlg.hit(text, px, client, x, y);
-            return hit.map(DialogHit::Browse);
         }
         if let (Some(c), Some(client)) = (d.chooser(), self.page) {
             let lay = c.ow.layout(text, px, (client.x, client.y), &self.controls);

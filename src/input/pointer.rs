@@ -504,18 +504,6 @@ impl State {
                 self.move_dialog(index, (pos.x - dx) as i32, (pos.y - dy) as i32);
                 return;
             }
-            Interaction::DialogResize {
-                index,
-                edges,
-                start,
-                cx,
-                cy,
-            } => {
-                self.pointer_motion(None, pos, time);
-                let (dx, dy) = ((pos.x - cx) as i32, (pos.y - cy) as i32);
-                self.size_dialog(index, edges, start, dx, dy);
-                return;
-            }
             Interaction::DialogPress => {
                 self.pointer_motion(None, pos, time);
                 self.dialog_drag_button();
@@ -671,7 +659,7 @@ impl State {
             }
             Hit::Dialog { index, button } => {
                 self.pointer_motion(None, pos, time);
-                self.set_cursor(crate::dialogview::cursor_over(button));
+                self.set_cursor("default");
                 let b = match button {
                     Some(crate::dialog::DialogHit::Button(i)) => Some(i),
                     _ => None,

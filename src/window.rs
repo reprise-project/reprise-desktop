@@ -215,12 +215,16 @@ pub struct Window {
     /// under it rather than its app's ([`Window::kept_key`]).
     pub place_tag: Option<String>,
     pub modal: bool,
-    /// Whether a mapped window Reprise manages is up its parent chain ([`State::owner`]).
+    /// Whether a mapped window Reprise manages is up its parent chain ([`State::owner`]), or it
+    /// stands over a dialog (`over_dialog`).
     pub owned: bool,
     pub on_top: bool,
     /// A consent prompt ([`crate::mapfocus::is_consent`]), set at map: stacked in
     /// `layers.prompts`, and input from an app's RemoteDesktop session never reaches it.
     pub consent: bool,
+    /// The dialog this window stands over: a Browse... file dialog child's
+    /// (`dialogview::browse`), stacked over the dialogs and owned by that dialog.
+    pub over_dialog: Option<u64>,
     pub frame_scale: i32,
     /// Capabilities last sent; `None` before the first send.
     pub wm_caps: Option<(bool, bool)>,

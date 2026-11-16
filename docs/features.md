@@ -149,7 +149,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   or a game store's new launcher asks first: a prompt shows the icon, the
   name to edit and a web app's address. Install puts it in All Programs at
   once.
-- **Run...** for when you know exactly what you want. A folder's path (`~/Documents`) opens it in Explorer, a document's opens it in its program, and a program it cannot find gets a notice while the box keeps the line.
+- **Run...** for when you know exactly what you want. A folder's path (`~/Documents`) opens it in Explorer, a document's opens it in its program, and a program it cannot find gets a notice while the box keeps the line. Browse... opens the file dialog on Programs, every file with an execute bit whatever its name, and puts the pick in the box quoted.
 
 ## Windows
 
@@ -1093,8 +1093,7 @@ dialogs. [More in programs.md](programs.md#explorer).
   A file dialog lists such a link whatever its type filter, since it may
   open as a folder. When it answers, the folder lists again with the link
   followed. A file dialog whose last folder is on such a mount opens on its
-  default folder after 0.3 s, and Run's Browse moves into and out of such a
-  mount's folders, showing them empty.
+  default folder after 0.3 s.
 - **Programs stuck on a dead mount** lose their windows once killed, without
   End Program (see [End Program](#windows)).
 - **Show in folder.** Explorer serves `org.freedesktop.FileManager1`: a

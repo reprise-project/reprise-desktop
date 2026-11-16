@@ -16,7 +16,7 @@ use reprisekit::controls::openwith;
 use reprisekit::controls::pathcomplete::{self, PathComplete};
 use reprisekit::controls::scrollbar::ThumbDrag;
 use reprisekit::controls::traycustomize::{self, TrayCustomize};
-use reprisekit::frame::{CaptionButton, Edges};
+use reprisekit::frame::CaptionButton;
 use reprisekit::pointer::Pointer;
 use reprisekit::powerpanel::{Choice, First, Leave, Panel};
 
@@ -178,8 +178,6 @@ pub enum Style {
     /// Form controls at fixed positions, optionally with a tab strip over a page: Properties sheets
     /// and similar.
     Form(Box<FormDialog>),
-    /// The Open file dialog in a resizable frame; `filepick.rs` resolves its folders.
-    Browse(Box<crate::filepick::FilePicker>),
     /// End Program: classic dialog on a fixed 354x243 template (see `EP_PARA_Y`).
     EndProgram,
     /// The `traycustomize` control in a fixed frame.
@@ -232,22 +230,6 @@ pub fn by_start(area: Rect, edge: reprisekit::taskbar::Edge, size: (i32, i32)) -
         Edge::Right => (area.right() - size.0, area.y),
     };
     crate::window::keep_inside(corner, size, area)
-}
-
-/// Where Run's Browse... dialog goes: `by_start`'s corner, 3 px in from the screen edge on Start's
-/// side.
-pub fn browse_by_start(
-    area: Rect,
-    edge: reprisekit::taskbar::Edge,
-    size: (i32, i32),
-) -> (i32, i32) {
-    let (x, y) = by_start(area, edge, size);
-    let inset = if edge == reprisekit::taskbar::Edge::Right {
-        -3
-    } else {
-        3
-    };
-    (x + inset, y)
 }
 
 /// The Open With chooser: the `openwith` control, the file, its type, and whether OK only writes
@@ -349,7 +331,6 @@ impl Dialog {
                 t.fit(text, theme.fonts.size_px);
                 self.title = t.wording.title().into();
             }
-            Style::Browse(p) => p.dlg.set_text(theme.text),
             Style::Copy(c) => {
                 c.cp.follow(&theme.paint());
                 c.units = theme.text;
@@ -463,20 +444,6 @@ impl Dialog {
         }
     }
 
-    pub fn picker(&self) -> Option<&crate::filepick::FilePicker> {
-        match &self.style {
-            Style::Browse(p) => Some(p),
-            _ => None,
-        }
-    }
-
-    pub fn picker_mut(&mut self) -> Option<&mut crate::filepick::FilePicker> {
-        match &mut self.style {
-            Style::Browse(p) => Some(p),
-            _ => None,
-        }
-    }
-
     /// The dialog font the dialog's own text and buttons are set in: End
     /// Program takes the second one. A form's pages pick their own.
     pub fn font(&self) -> DialogFont {
@@ -513,9 +480,6 @@ pub enum Outcome {
     /// Redraw after recomputing the layout: the open tab changed, and a
     /// tab's rect depends on which one is open.
     Relayout,
-    /// A press on Browse's size grip: the pointer sizes the dialog from
-    /// these edges until the release.
-    Size(Edges),
     Close,
     Spawn(String),
     StandBy(String),
@@ -536,12 +500,6 @@ pub enum Outcome {
     SwitchUser,
     Disconnect,
     GreeterPower(repriselogin::greeter::PowerAction),
-    /// Delete (Shift+Delete with `shift`) in Browse's list: asked over the dialog as the desktop
-    /// asks ([`crate::compositor::State::ask_delete`]).
-    AskDelete {
-        paths: Vec<std::path::PathBuf>,
-        shift: bool,
-    },
     Notice(Box<Dialog>),
     /// [`DialogAction::Script`].
     Script {
@@ -636,13 +594,7 @@ pub enum Outcome {
         mime: Option<String>,
     },
     BrowseRun,
-    /// Browse's Open for Run: close it and put `path`, quoted, in the
-    /// Run field under it.
-    RunPick(std::path::PathBuf),
     BrowseProgram,
-    /// Browse's Open for the chooser: close it and add `path` to the
-    /// chooser's list under it.
-    ProgramPick(std::path::PathBuf),
     BinSettings {
         settings: reprisefs::bincap::Policy,
         close: bool,

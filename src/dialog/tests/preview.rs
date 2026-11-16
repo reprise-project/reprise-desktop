@@ -1,46 +1,5 @@
 use super::*;
 
-/// Renders Browse to `target/browse-preview.png` for a look. Run with
-/// `cargo test render_browse_preview -- --ignored`; `REPRISE_PREVIEW_DIR`
-/// names the folder it lists.
-#[test]
-#[ignore]
-fn render_browse_preview() {
-    use crate::icontheme::{IconCache, IconTheme};
-    let theme = Theme::default();
-    let text = TextRenderer::load(&FontConfig::default());
-    let name = std::env::var("REPRISE_PREVIEW_ICONS").unwrap_or_else(|_| "breeze".into());
-    let mut icons = IconCache::new(IconTheme::load(&name, &IconTheme::default_roots()));
-    let dir = std::env::var("REPRISE_PREVIEW_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::env::temp_dir());
-    let mut picker = crate::filepick::FilePicker::run_command(
-        &dir,
-        crate::filepick::icons(&mut icons, 1, reprisekit::theme::TextUnits::ONE),
-        true,
-    );
-    for r in picker.take_requests() {
-        picker.reply(r.run(), &mut icons, 1);
-    }
-    let d = Dialog::browse(picker);
-    let l = DialogLayout::compute(&theme, &text, &d);
-    let c = draw(
-        &theme,
-        &text,
-        &l,
-        None,
-        None,
-        &[],
-        &d,
-        false,
-        None,
-        Cues::NONE,
-        true,
-        None,
-    );
-    reprisekit::raster::write_preview(&c, "browse-preview.png");
-}
-
 /// Renders the key aid prompts to `target/key-aid-preview.png`. Run
 /// with `cargo test key_aid_preview -- --ignored`.
 #[test]

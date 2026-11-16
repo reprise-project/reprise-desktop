@@ -1,5 +1,5 @@
 use super::button::{DesktopLeft, caption_double, desktop_left, press_closes_start_panel};
-use super::move_resize::top_below_top_bar;
+use super::move_resize::{resize_rect, top_below_top_bar};
 use super::*;
 use crate::window::SizeLimits;
 use reprisekit::pointer::DoubleClick;
