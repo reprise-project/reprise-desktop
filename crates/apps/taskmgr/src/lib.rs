@@ -28,6 +28,7 @@ use repriseapp::ctxmenu::{self, Popup};
 use repriseapp::detailslist::{List, Press};
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::tip::Rest;
 use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
 use reprisebus::tray::Hung;
 use reprisefs::apps::AppEntry;
@@ -165,10 +166,9 @@ enum Act {
     OnTop(bool),
 }
 
+/// The pointer resting on a process row, by pid; `shown` once its command line is up.
 struct Tip {
-    pid: i32,
-    at: (i32, i32),
-    since: Instant,
+    rest: Rest<i32>,
     shown: bool,
 }
 
@@ -928,19 +928,13 @@ impl TaskMgr {
                 listview::Hit::Row(i) => self.proc_rows.get(i).map(|p| p.pid),
                 _ => None,
             };
-            match over {
-                Some(pid) if self.tip.as_ref().is_some_and(|t| t.pid == pid && t.shown) => {}
-                Some(pid) => {
-                    self.tip = Some(Tip {
-                        pid,
-                        at: (x, y),
-                        since: Instant::now(),
-                        shown: false,
-                    });
-                    tick = true;
-                }
-                None => self.tip = None,
-            }
+            let rest = self.tip.as_ref().map(|t| t.rest);
+            let rest = Rest::moved(rest, over, (x, y), tip_was, Instant::now());
+            self.tip = rest.map(|rest| Tip {
+                rest,
+                shown: tip_was && self.tip.as_ref().is_some_and(|t| t.rest == rest),
+            });
+            tick = self.tip.as_ref().is_some_and(|t| !t.shown);
         } else {
             self.tip = None;
         }
@@ -1032,7 +1026,7 @@ impl TaskMgr {
         if t.shown {
             return Reply::none();
         }
-        if t.since.elapsed() >= TIP_DELAY {
+        if t.rest.due(Instant::now(), TIP_DELAY) {
             t.shown = true;
             return Reply::redraw();
         }

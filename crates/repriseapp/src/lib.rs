@@ -48,6 +48,7 @@ mod sizing;
 mod tabgroup;
 mod textinput;
 pub mod thumbs;
+pub mod tip;
 pub mod unlock;
 mod windows;
 mod wire;
