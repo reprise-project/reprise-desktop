@@ -55,7 +55,8 @@ pub struct TrayItem {
     pub key: String,
     pub service: String,
     pub path: String,
-    /// `Title`; a sandboxed app's own desktop entry name, else its app id.
+    /// `Title`, else the desktop entry name its `Id` or program names; a sandboxed app's own
+    /// desktop entry name, else its app id.
     pub title: String,
     /// What the taskbar tooltip shows: the `ToolTip` property's title, or
     /// `Title` when the item has none. Empty means no tip.
@@ -93,13 +94,13 @@ pub struct ItemIcon {
 }
 
 impl TrayItem {
-    /// What the item is spoken as: its tooltip, else its title.
+    /// What the item is spoken as: its tooltip, else its title, else its key.
     pub fn name(&self) -> String {
-        if self.tooltip.is_empty() {
-            self.title.clone()
-        } else {
-            self.tooltip.clone()
-        }
+        [&self.tooltip, &self.title, &self.key]
+            .into_iter()
+            .find(|s| !s.trim().is_empty())
+            .cloned()
+            .unwrap_or_default()
     }
 }
 

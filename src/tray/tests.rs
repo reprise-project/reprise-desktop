@@ -888,3 +888,18 @@ fn twenty_touchpad_frames_of_one_and_a_half_px_scroll_an_item_twice() {
         .collect();
     assert_eq!(scrolls, [1, 1], "30 px of upward travel is two steps up");
 }
+
+#[test]
+fn a_tray_item_without_tooltip_or_title_is_named_by_its_key() {
+    let item = super::TrayItem {
+        key: "nm-applet".into(),
+        title: " ".into(),
+        ..Default::default()
+    };
+    assert_eq!(item.name(), "nm-applet");
+    let titled = super::TrayItem {
+        title: "Network".into(),
+        ..item.clone()
+    };
+    assert_eq!(titled.name(), "Network");
+}

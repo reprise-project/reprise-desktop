@@ -218,6 +218,7 @@ async fn read_item(
         AppIdentity::Host { .. } => {
             let program = pid.and_then(program_name);
             let key = item_key(sni_id.as_deref(), program.as_deref(), title.as_deref(), bus);
+            let title = host_title(title, sni_id.as_deref(), program.as_deref());
             (key, title, IconFiles::Host, icon_name.clone())
         }
         AppIdentity::Sandboxed { app_id } => {
@@ -291,6 +292,23 @@ pub(super) fn item_key(
         None => given(program).unwrap_or(bus).to_string(),
     };
     key.chars().take(TIP_CHARS).collect()
+}
+
+/// A host item's `Title`, else the name of the desktop entry its `Id` or program names.
+fn host_title(
+    title: Option<String>,
+    sni_id: Option<&str>,
+    program: Option<&str>,
+) -> Option<String> {
+    if given(title.as_deref()).is_some() {
+        return title;
+    }
+    [sni_id, program]
+        .into_iter()
+        .filter_map(given)
+        .find_map(super::notifications::desktop_entry)
+        .map(|e| e.name)
+        .or(title)
 }
 
 fn given(s: Option<&str>) -> Option<&str> {
