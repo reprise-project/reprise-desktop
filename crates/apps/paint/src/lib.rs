@@ -60,6 +60,8 @@ enum Prompt {
     /// Save changes before `Then`; Yes saves first, No goes ahead, Cancel stays.
     SaveChanges(Then),
     Overwrite(PathBuf, file::Kind),
+    /// A recovery file; Yes opens its picture.
+    Recovered(PathBuf),
 }
 
 /// What runs once the picture is saved or its changes are let go.
@@ -100,6 +102,10 @@ struct Paint {
     custom: [reprisekit::theme::Color; reprisekit::controls::colordlg::CUSTOM],
     /// Where the custom colours are kept; `None` keeps them for this run only.
     state_path: Option<PathBuf>,
+    /// Where `emergency` leaves an unsaved picture and the next start finds it; `None` keeps none.
+    rescue_dir: Option<PathBuf>,
+    /// The recovery file the picture came from, deleted once it is saved or let go.
+    rescued: Option<PathBuf>,
     edit_colors: Option<(ColorDialog, colors::Target)>,
     alt_arm: AltArm,
     /// Shift is held, as the last key events had it.
@@ -159,6 +165,8 @@ impl Paint {
             custom: [reprisekit::theme::Color::rgb(0xFF, 0xFF, 0xFF);
                 reprisekit::controls::colordlg::CUSTOM],
             state_path: None,
+            rescue_dir: None,
+            rescued: None,
             edit_colors: None,
             alt_arm: AltArm::default(),
             shift: false,
@@ -371,6 +379,10 @@ impl App for Paint {
 }
 
 impl Extended for Paint {
+    fn emergency(&mut self) {
+        self.rescue();
+    }
+
     fn cancel_pointer(&mut self, win: WinId) {
         match win {
             MAIN => self.let_go(),
@@ -466,6 +478,8 @@ pub fn main(args: Vec<std::ffi::OsString>) {
     let state = state::path();
     paint.custom = state::custom_colors(&state);
     paint.state_path = Some(state);
+    paint.rescue_dir = reprisefs::recovery::dir("paint");
+    paint.offer_recovered();
     repriseapp::run(Box::new(paint)).unwrap_or_else(|e| e.exit());
 }
 

@@ -139,6 +139,10 @@ formats Reprise reads and saves PNG, JPEG and BMP. A save never leaves the
 file half written. Paint is offered for pictures in Open With without becoming
 their default.
 
+When Paint loses the desktop, crashes or is ended with an unsaved picture, it
+writes the picture as a PNG to `~/.local/state/reprise/paint/` and offers it
+at the next start.
+
 ## Calculator
 
 Standard and Scientific, picked on the View menu. Standard works each

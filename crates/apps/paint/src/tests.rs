@@ -422,6 +422,84 @@ fn save_changes_raised_behind_a_draw_failure_is_up_after_its_ok_and_yes_still_qu
     assert!(dir.path().join("drawing.png").exists());
 }
 
+/// A picture with a stroke and no file, whose `emergency` writes to `dir`.
+fn edited_picture(dir: &Path, ctx: &mut Ctx) -> Paint {
+    let mut p = Paint::new(None);
+    p.rescue_dir = Some(dir.to_path_buf());
+    pick(&mut p, ctx, Tool::Pencil);
+    drag(&mut p, ctx, (1, 1), (6, 4), BTN_LEFT);
+    p
+}
+
+#[test]
+fn emergency_with_an_edited_picture_writes_a_recovery_file_with_its_pixels() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_ctx();
+    let mut p = edited_picture(dir.path(), &mut ctx);
+    p.emergency();
+    let kept = reprisefs::recovery::found(dir.path(), "png");
+    assert_eq!(kept.len(), 1);
+    assert_eq!(file::load(&kept[0]).unwrap(), p.doc.img);
+}
+
+#[test]
+fn emergency_with_a_saved_or_untouched_picture_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.rescue_dir = Some(dir.path().to_path_buf());
+    p.emergency();
+    let mut p = edited_picture(dir.path(), &mut ctx);
+    p.path = Some(dir.path().join("drawing.png"));
+    p.event(MAIN, key(0x73, true), &mut ctx);
+    p.emergency();
+    assert!(reprisefs::recovery::found(dir.path(), "png").is_empty());
+}
+
+#[test]
+fn yes_on_the_recovered_question_opens_the_picture_unsaved_and_a_save_removes_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_ctx();
+    let mut p = edited_picture(dir.path(), &mut ctx);
+    p.emergency();
+    let kept = reprisefs::recovery::found(dir.path(), "png");
+
+    let mut next = Paint::new(None);
+    next.rescue_dir = Some(dir.path().to_path_buf());
+    next.offer_recovered();
+    let (what, win) = prompt_up(&next).expect("the question is up");
+    assert_eq!(what, Prompt::Recovered(kept[0].clone()));
+    next.event(win, key(0xff0d, false), &mut ctx);
+    assert!(next.prompt.is_empty());
+    assert_eq!(next.doc.img, p.doc.img);
+    assert_eq!(next.path, None);
+    assert!(next.doc.dirty);
+    assert!(kept[0].exists(), "kept until the picture is saved");
+
+    next.path = Some(dir.path().join("saved.png"));
+    next.event(MAIN, key(0x73, true), &mut ctx);
+    assert!(!kept[0].exists());
+}
+
+#[test]
+fn no_on_the_recovered_question_removes_the_file_and_leaves_the_picture() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_ctx();
+    edited_picture(dir.path(), &mut ctx).emergency();
+    let kept = reprisefs::recovery::found(dir.path(), "png");
+
+    let mut next = Paint::new(None);
+    next.rescue_dir = Some(dir.path().to_path_buf());
+    next.offer_recovered();
+    next.prompt.up_mut().expect("the question").fields.default = 1;
+    let win = next.prompt.win().unwrap();
+    next.event(win, key(0xff0d, false), &mut ctx);
+    assert!(next.prompt.is_empty());
+    assert!(!kept[0].exists());
+    assert!(!next.doc.dirty);
+    assert_eq!(next.doc.img.get(3, 3), Some(WHITE));
+}
+
 #[test]
 fn save_as_adds_the_types_extension_only_when_missing() {
     use crate::file::Kind;
