@@ -83,7 +83,8 @@ const FREE_FAILURES: u32 = 3;
 const MAX_WAIT: Duration = Duration::from_secs(60);
 const FORGET: Duration = Duration::from_secs(1200);
 
-/// Failed Unlock checks: after the fourth each next check waits, from 2 s doubling up to `MAX_WAIT`,
+/// Failed remote unlock checks (the console's are PAM's to throttle): after the fourth each next
+/// check waits, from 2 s doubling up to `MAX_WAIT`,
 /// until a success or `FORGET` without a failure. A check counts as failed from its start.
 #[derive(Debug, Default)]
 pub struct Backoff {
