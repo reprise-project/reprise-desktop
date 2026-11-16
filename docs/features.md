@@ -198,7 +198,8 @@ shake, the dim, the hidden frame rate and window memory.
 - **Balloons** in the corner by the tray, with the program's buttons. A chat
   program's Reply opens a text field in the balloon.
 - **History.** A bell in the tray keeps the session's notifications, grouped
-  per program. Super+Shift+N opens it from the keyboard.
+  per program. Super+Shift+N opens it from the keyboard, on the monitor with
+  the pointer.
 - **Bursts fold together.** A program that sends more than three balloons in
   ten seconds gets one "5 new from Mail" balloon instead.
 - **Per program.** Don't Show Balloons and No Sounds, on a program's menu in

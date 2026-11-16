@@ -106,12 +106,14 @@ pub fn toggle_answering(state: &mut State) {
     redraw(state);
 }
 
-/// Opens the history over the first output's bell, or its bar's corner without one.
+/// Opens the history over the bell of the output under the pointer, as the launcher picks its
+/// output, or that bar's corner without one.
 fn open_at_bell(state: &mut State) {
     if is_open(state) {
         return;
     }
-    let Some(output) = state.first_output() else {
+    let pos = state.pointer_location();
+    let Some(output) = state.output_at(pos.x, pos.y) else {
         return;
     };
     let cell = crate::tray::bell_cell(state, &output).unwrap_or_else(|| {
@@ -623,6 +625,21 @@ mod tests {
         h.state.close_menu();
         toggle_answering(&mut h.state);
         assert!(!is_open(&h.state), "the key again closes it");
+    }
+
+    #[test]
+    fn the_notifications_key_opens_the_history_on_the_pointers_output() {
+        let mut h = crate::harness::Harness::new();
+        let first = h.output("TEST-1", 1024, 768);
+        let second = h.output("TEST-2", 1280, 1024);
+        crate::notifyview::show(&mut h.state, mail(1));
+        h.pointer_to(1500.0, 400.0);
+        toggle_answering(&mut h.state);
+        assert_eq!(open_on(&h.state), Some(second));
+        toggle_answering(&mut h.state);
+        h.pointer_to(500.0, 400.0);
+        toggle_answering(&mut h.state);
+        assert_eq!(open_on(&h.state), Some(first));
     }
 
     #[test]
