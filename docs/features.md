@@ -140,7 +140,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   or a game store's new launcher asks first: a prompt shows the icon, the
   name to edit and a web app's address. Install puts it in All Programs at
   once.
-- **Run...** for when you know exactly what you want. A folder's path (`~/Documents`) opens it in Explorer.
+- **Run...** for when you know exactly what you want. A folder's path (`~/Documents`) opens it in Explorer, a document's opens it in its program, and a program it cannot find gets a notice while the box keeps the line.
 
 ## Windows
 

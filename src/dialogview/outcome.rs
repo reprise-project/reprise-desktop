@@ -1,5 +1,5 @@
 use crate::compositor::State;
-use crate::dialog::{self, Dialog, Outcome};
+use crate::dialog::{Dialog, Outcome};
 use reprisefs::program::Confirm;
 
 use super::*;
@@ -79,10 +79,8 @@ impl State {
             }
             Outcome::Notice(d) => self.open_dialog_over(*d),
             Outcome::Run(cmd) => {
-                self.close_dialog();
-                dialog::remember(&mut self.dialogs.run_history, &cmd);
-                crate::state::save_dialogs(&self.dialogs.run_history);
-                self.run_line_activated(&cmd);
+                let from = self.dialogs.views.last().map(|v| v.id);
+                self.run_line_activated(&cmd, from);
             }
             Outcome::RenameDesktop(n, name) => {
                 self.close_dialog();
