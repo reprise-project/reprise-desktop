@@ -69,20 +69,29 @@ pub fn crypt(password: &str) -> Result<String, String> {
     }
 }
 
+/// Which password a prompt asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ask {
+    Current,
+    New,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step {
     Wait,
-    /// Type answer `i` (0 the current password, 1 and 2 the new).
-    Answer(usize),
-    /// A prompt past the three answers: `passwd` refused the new password; the text is why.
+    Answer(Ask),
+    /// A prompt out of turn: `passwd` refused the new password, or asked something it is not
+    /// given here; the text is why.
     Refused(String),
 }
 
-/// The talk with `passwd`: three prompts (current, new, new again), each a line ending in a colon.
-/// Other output between prompts is kept for the error box, in buffers wiped when dropped.
+/// The talk with `passwd`, each prompt a line ending in a colon and answered by its text: the
+/// current password (skipped when the account has none and PAM allows that), then the new one
+/// twice. Other output between prompts is kept for the error box, in buffers wiped when dropped.
 #[derive(Default)]
 pub struct Dialogue {
-    answered: usize,
+    asked_current: bool,
+    asked_new: u8,
     pending: Zeroizing<String>,
     said: Zeroizing<Vec<String>>,
 }
@@ -114,13 +123,22 @@ impl Dialogue {
                 .drain(..before_prompt)
                 .filter(|l| !l.trim().is_empty()),
         );
+        let prompt = lines.pop().unwrap_or_default().to_lowercase();
         self.pending.clear();
-        let i = self.answered;
-        self.answered += 1;
-        if i < 3 {
-            Step::Answer(i)
-        } else {
+        let (retype, new) = (prompt.contains("retype"), prompt.contains("new"));
+        if prompt.contains("current") && !self.asked_current && self.asked_new == 0 {
+            self.asked_current = true;
+            Step::Answer(Ask::Current)
+        } else if retype && self.asked_new == 1 {
+            self.asked_new = 2;
+            Step::Answer(Ask::New)
+        } else if new && !retype && self.asked_new == 0 {
+            self.asked_new = 1;
+            Step::Answer(Ask::New)
+        } else if new && self.asked_new > 0 {
             Step::Refused(self.why())
+        } else {
+            Step::Refused("The password cannot be changed here.".into())
         }
     }
 
@@ -200,7 +218,6 @@ fn talk(mut cmd: Command, current: &str, new: &str) -> Result<(), String> {
     // stop the master hanging up when passwd exits.
     drop(cmd);
     drop(slave);
-    let answers = [current, new, new];
     let mut talk = Dialogue::default();
     let mut file = std::fs::File::from(master);
     let mut buf = Zeroizing::new([0u8; 512]);
@@ -230,10 +247,14 @@ fn talk(mut cmd: Command, current: &str, new: &str) -> Result<(), String> {
         let text = Zeroizing::new(String::from_utf8_lossy(&buf[..read]).into_owned());
         match talk.feed(&text) {
             Step::Wait => {}
-            Step::Answer(i) => {
+            Step::Answer(ask) => {
                 wait_echo_off(&file);
-                let mut line = Zeroizing::new(Vec::with_capacity(answers[i].len() + 1));
-                line.extend_from_slice(answers[i].as_bytes());
+                let answer = match ask {
+                    Ask::Current => current,
+                    Ask::New => new,
+                };
+                let mut line = Zeroizing::new(Vec::with_capacity(answer.len() + 1));
+                line.extend_from_slice(answer.as_bytes());
                 line.push(b'\n');
                 if file.write_all(&line).is_err() {
                     break None;
@@ -334,6 +355,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_account_without_a_password_gets_the_new_one_twice() {
+        let mut c = Command::new("sh");
+        c.arg("-c").arg(
+            "printf 'Changing password for jo.\\nNew password: '; read b; \
+             printf 'Retype new password: '; read c; \
+             if [ \"$b\" = 'new pw' ] && [ \"$c\" = 'new pw' ]; then \
+               echo 'passwd: password updated successfully'; \
+             else echo 'passwd: Authentication token manipulation error'; exit 10; fi",
+        );
+        assert_eq!(talk(c, "", "new pw"), Ok(()));
+    }
+
     /// A stand-in for passwd that, like PAM's terminal conversation, throws away input that
     /// came before it turned echo off after each prompt.
     fn slow_echo_passwd() -> Command {
@@ -364,12 +398,42 @@ mod tests {
         let mut d = Dialogue::default();
         assert_eq!(d.feed("Changing password for jo.\r\n"), Step::Wait);
         assert_eq!(d.feed("Current pass"), Step::Wait);
-        assert_eq!(d.feed("word: "), Step::Answer(0));
-        assert_eq!(d.feed("\r\nNew password: "), Step::Answer(1));
-        assert_eq!(d.feed("\r\nRetype new password: "), Step::Answer(2));
+        assert_eq!(d.feed("word: "), Step::Answer(Ask::Current));
+        assert_eq!(d.feed("\r\nNew password: "), Step::Answer(Ask::New));
+        assert_eq!(d.feed("\r\nRetype new password: "), Step::Answer(Ask::New));
         assert_eq!(
             d.feed("\r\npasswd: password updated successfully\r\n"),
             Step::Wait
+        );
+    }
+
+    #[test]
+    fn an_account_without_a_password_is_asked_only_for_the_new_one() {
+        let mut d = Dialogue::default();
+        assert_eq!(
+            d.feed("Changing password for jo.\nNew password: "),
+            Step::Answer(Ask::New)
+        );
+        assert_eq!(d.feed("\nRetype new password: "), Step::Answer(Ask::New));
+        assert_eq!(
+            d.feed("\npasswd: password updated successfully\n"),
+            Step::Wait
+        );
+    }
+
+    #[test]
+    fn a_prompt_for_anything_else_is_refused_unanswered() {
+        let mut d = Dialogue::default();
+        assert_eq!(
+            d.feed("Verification code: "),
+            Step::Refused("The password cannot be changed here.".into())
+        );
+        let mut d = Dialogue::default();
+        d.feed("Current password: ");
+        assert_eq!(
+            d.feed("\nCurrent password: "),
+            Step::Refused("The password cannot be changed here.".into()),
+            "the current password is typed once"
         );
     }
 
@@ -384,6 +448,17 @@ mod tests {
         assert_eq!(
             step,
             Step::Refused("The password is shorter than 8 characters.".into())
+        );
+    }
+
+    #[test]
+    fn a_new_password_asked_again_before_the_retype_is_a_refusal_with_its_reason() {
+        let mut d = Dialogue::default();
+        d.feed("Current password: ");
+        d.feed("\nNew password: ");
+        assert_eq!(
+            d.feed("\nBAD PASSWORD: it is based on a dictionary word\nNew password: "),
+            Step::Refused("It is based on a dictionary word.".into())
         );
     }
 

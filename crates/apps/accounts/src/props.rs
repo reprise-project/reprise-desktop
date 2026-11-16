@@ -1,7 +1,7 @@
 //! An account's Properties: a sheet with four tabs (General, Picture, Password, Fingerprints).
-//! On your own account Password asks for the current password first. Apply and OK hand the host
-//! a list of [`Op`]s for what changed; the sheet is a pure model and the host loads pictures,
-//! opens the file dialog and runs the calls. Password ends with the Remote Desktop password
+//! On your own account Password asks for the current password first, unless it has none. Apply
+//! and OK hand the host a list of [`Op`]s for what changed; the sheet is a pure model and the
+//! host loads pictures, opens the file dialog and runs the calls. Password ends with the Remote Desktop password
 //! section the host hands [`Props::show_remote`], and Fingerprints shows what the host hands
 //! [`Props::show_fingers`].
 
@@ -378,7 +378,10 @@ impl Props {
         let at_login = page.checked(AT_LOGIN) == Some(true);
         if self.password_typed() {
             let (new, confirm) = (page.edit_text(NEW), page.edit_text(CONFIRM));
-            if self.user.you && page.edit_text(CURRENT).is_empty() {
+            if self.user.you
+                && self.user.password_mode != PasswordMode::Empty
+                && page.edit_text(CURRENT).is_empty()
+            {
                 return Err("Type your current password first.".into());
             }
             // The box alone keeps the account's password; it only has to be changed at login.
@@ -1105,6 +1108,22 @@ mod tests {
         p.unapplied();
         assert_eq!(p.sheet.pages[TAB_PASSWORD].edit_text(CURRENT), "");
         assert!(!p.dirty());
+    }
+
+    #[test]
+    fn your_account_without_a_password_needs_no_current_one() {
+        let mut u = user(true, false);
+        u.password_mode = PasswordMode::Empty;
+        let mut p = Props::new(u, None, false, TextUnits::ONE);
+        type_into(&mut p, TAB_PASSWORD, NEW, "newpass1");
+        type_into(&mut p, TAB_PASSWORD, CONFIRM, "newpass1");
+        assert_eq!(
+            p.event(propsheet::Event::Apply, no_file),
+            Outcome::Apply(vec![Op::OwnPassword {
+                current: Zeroizing::new(String::new()),
+                new: Zeroizing::new("newpass1".into())
+            }])
+        );
     }
 
     fn tick_at_login(p: &mut Props) {
