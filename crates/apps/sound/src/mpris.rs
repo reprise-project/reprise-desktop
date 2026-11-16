@@ -2,9 +2,10 @@
 
 use futures_util::stream::{self, StreamExt};
 use reprisebus::bounded::{self, Dict, Value};
+use reprisebus::follow::{Feed, Run, follow};
 use reprisekit::controls::volumepopup::{NowPlaying, Transport};
 use std::collections::{BTreeMap, HashMap};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use zbus::{Connection, MatchRule, Message, MessageStream};
@@ -232,33 +233,6 @@ impl Watch {
     }
 }
 
-/// The thread's end: sends a pick and wakes the app only when it differs from the last.
-struct Feed {
-    tx: Sender<Pick>,
-    waker: repriseapp::Waker,
-    last: Option<Pick>,
-}
-
-impl Feed {
-    fn send(&mut self, p: Pick) -> bool {
-        if self.last.as_ref() == Some(&p) {
-            return true;
-        }
-        if self.tx.send(p.clone()).is_err() {
-            return false;
-        }
-        self.last = Some(p);
-        self.waker.wake();
-        true
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum Run {
-    Ended { delivered: bool },
-    Closed,
-}
-
 async fn read(conn: &Connection, name: &str) -> Option<(Dict, String)> {
     let player = bounded::proxy(conn, name, PATH, PLAYER).await.ok()?;
     let props = bounded::properties_of(&player, WANTED).await.ok()?;
@@ -302,17 +276,13 @@ fn timed(b: zbus::connection::Builder<'_>) -> zbus::connection::Builder<'_> {
     b.method_timeout(REPLY_TIMEOUT)
 }
 
-async fn run(feed: &mut Feed, shared: &Mutex<Option<Connection>>) -> Run {
+async fn run(feed: &mut Feed<Pick>, shared: &Mutex<Option<Connection>>) -> Run {
     let conn = timed(zbus::connection::Builder::session()).build();
     let conn = match conn.await {
         Ok(c) => c,
         Err(e) => {
-            log::info!("no session bus ({e}); no player to show");
-            return if feed.send(None) {
-                Run::Ended { delivered: false }
-            } else {
-                Run::Closed
-            };
+            return feed
+                .unavailable_because(format_args!("no session bus ({e}); no player to show"));
         }
     };
     let rules = [
@@ -417,35 +387,17 @@ async fn run(feed: &mut Feed, shared: &Mutex<Option<Connection>>) -> Run {
     Run::Ended { delivered: true }
 }
 
-const RETRY_MIN: Duration = Duration::from_secs(2);
-const RETRY_MAX: Duration = Duration::from_secs(60);
-
 /// Follow the players on a thread; every new pick arrives on `picks` and wakes the app. While the bus is gone `None` arrives and the thread retries after a backoff.
 pub fn watch(waker: repriseapp::Waker) -> Watch {
     let (tx, rx) = channel();
     let conn = Arc::new(Mutex::new(None));
     let shared = conn.clone();
-    let spawned = std::thread::Builder::new()
-        .name("reprise-sound-mpris".into())
-        .spawn(move || {
-            let mut feed = Feed {
-                tx,
-                waker,
-                last: None,
-            };
-            let mut pause = RETRY_MIN;
-            while let Run::Ended { delivered } = zbus::block_on(run(&mut feed, &shared)) {
-                pause = if delivered {
-                    RETRY_MIN
-                } else {
-                    (pause * 2).min(RETRY_MAX)
-                };
-                std::thread::sleep(pause);
-            }
-        });
-    if let Err(e) = spawned {
-        log::warn!("could not start the MPRIS thread: {e}");
-    }
+    follow(
+        "reprise-sound-mpris",
+        tx,
+        move || waker.wake(),
+        move |feed| zbus::block_on(run(feed, &shared)),
+    );
     Watch { picks: rx, conn }
 }
 

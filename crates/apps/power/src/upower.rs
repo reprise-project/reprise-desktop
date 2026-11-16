@@ -2,9 +2,9 @@
 
 use futures_util::stream::StreamExt;
 use reprisebus::charge::{self, ChargeLimit};
+use reprisebus::follow::{Feed, Run, follow};
 use std::collections::HashMap;
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::time::Duration;
+use std::sync::mpsc::{Receiver, channel};
 use zbus::OwnedVariant;
 use zbus::{Connection, Proxy};
 
@@ -167,62 +167,6 @@ async fn on_battery(upower: &Proxy<'_>) -> Option<bool> {
     upower.get_property::<bool>("OnBattery").await.ok()
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Run {
-    Ended { delivered: bool },
-    Closed,
-}
-
-pub(crate) struct Feed<T> {
-    tx: Sender<T>,
-    waker: repriseapp::Waker,
-    last: Option<T>,
-    /// Unavailable since the last run that delivered; the reason is
-    /// logged once per outage, not on every retry.
-    down: bool,
-}
-
-impl<T: Clone + Default + PartialEq> Feed<T> {
-    pub(crate) fn send(&mut self, p: T) -> bool {
-        if self.last.as_ref() == Some(&p) {
-            return true;
-        }
-        if self.tx.send(p.clone()).is_err() {
-            return false;
-        }
-        self.last = Some(p);
-        self.waker.wake();
-        true
-    }
-
-    /// [`Feed::unavailable`], logging `why` unless the outage was logged.
-    pub(crate) fn unavailable_because(&mut self, why: std::fmt::Arguments) -> Run {
-        if self.outage_starts() {
-            log::info!("{why}");
-        }
-        self.unavailable()
-    }
-
-    fn outage_starts(&mut self) -> bool {
-        !std::mem::replace(&mut self.down, true)
-    }
-
-    /// Note how a run ended: one that delivered ends the outage.
-    fn ended(&mut self, delivered: bool) {
-        if delivered {
-            self.down = false;
-        }
-    }
-
-    pub(crate) fn unavailable(&mut self) -> Run {
-        if self.send(T::default()) {
-            Run::Ended { delivered: false }
-        } else {
-            Run::Closed
-        }
-    }
-}
-
 async fn run(feed: &mut Feed<Power>) -> Run {
     let conn = match Connection::system().await {
         Ok(c) => c,
@@ -334,50 +278,15 @@ async fn run(feed: &mut Feed<Power>) -> Run {
     Run::Ended { delivered: true }
 }
 
-const RETRY_MIN: Duration = Duration::from_secs(2);
-const RETRY_MAX: Duration = Duration::from_secs(60);
-
-fn next_pause(pause: Duration, delivered: bool) -> Duration {
-    if delivered {
-        RETRY_MIN
-    } else {
-        (pause * 2).min(RETRY_MAX)
-    }
-}
-
 pub fn watch(waker: repriseapp::Waker) -> Receiver<Power> {
     let (tx, rx) = channel();
-    follow("reprise-power-upower", tx, waker, |feed| {
-        zbus::block_on(run(feed))
-    });
+    follow(
+        "reprise-power-upower",
+        tx,
+        move || waker.wake(),
+        |feed| zbus::block_on(run(feed)),
+    );
     rx
-}
-
-pub(crate) fn follow<T: Clone + Default + PartialEq + Send + 'static>(
-    name: &str,
-    tx: Sender<T>,
-    waker: repriseapp::Waker,
-    mut run: impl FnMut(&mut Feed<T>) -> Run + Send + 'static,
-) {
-    if let Err(e) = std::thread::Builder::new()
-        .name(name.into())
-        .spawn(move || {
-            let mut feed = Feed {
-                tx,
-                waker,
-                last: None,
-                down: false,
-            };
-            let mut pause = RETRY_MIN;
-            while let Run::Ended { delivered } = run(&mut feed) {
-                feed.ended(delivered);
-                pause = next_pause(pause, delivered);
-                std::thread::sleep(pause);
-            }
-        })
-    {
-        log::warn!("could not start the {name} thread: {e}");
-    }
 }
 
 #[cfg(test)]
@@ -485,26 +394,9 @@ mod tests {
     }
 
     #[test]
-    fn the_retry_pause_doubles_to_a_minute_and_resets_on_a_live_run() {
-        let mut p = RETRY_MIN;
-        let mut seen = Vec::new();
-        for _ in 0..7 {
-            p = next_pause(p, false);
-            seen.push(p.as_secs());
-        }
-        assert_eq!(seen, [4, 8, 16, 32, 60, 60, 60]);
-        assert_eq!(next_pause(p, true), RETRY_MIN);
-    }
-
-    #[test]
     fn the_feed_sends_a_power_only_when_it_changed() {
         let (tx, rx) = channel();
-        let mut feed = Feed {
-            tx,
-            waker: repriseapp::Waker::noop(),
-            last: None,
-            down: false,
-        };
+        let mut feed = Feed::new(tx, || {});
         let on_battery = Power {
             on_battery: true,
             ..Power::default()
@@ -518,22 +410,6 @@ mod tests {
         );
         drop(rx);
         assert!(!feed.send(Power::default()), "the receiver is gone");
-    }
-
-    #[test]
-    fn an_outage_is_logged_once_until_a_run_delivers() {
-        let (tx, _rx) = channel::<Power>();
-        let mut feed = Feed {
-            tx,
-            waker: repriseapp::Waker::noop(),
-            last: None,
-            down: false,
-        };
-        assert!(feed.outage_starts());
-        feed.ended(false);
-        assert!(!feed.outage_starts(), "a retry that fails again is quiet");
-        feed.ended(true);
-        assert!(feed.outage_starts(), "a new outage after a live run");
     }
 
     #[test]
