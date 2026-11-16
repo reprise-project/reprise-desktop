@@ -26,8 +26,8 @@ pub struct Changes {
     /// entry: commit each output's changed keys ([`output_change`]).
     pub outputs: bool,
     pub wallpaper: WallpaperChange,
-    /// `[taskbar] position`, or `side_width` on a side bar: menus and panels
-    /// opened from the bars close, a balloon moves to the new corner, and a
+    /// `[taskbar] position`, or `side_width` on a side bar: every popup
+    /// closes, a balloon moves to the new corner, and a
     /// window whose caption a top bar covers moves down. Layer surfaces and
     /// maximized windows follow in `update_layout`.
     pub bar_moved: bool,
@@ -537,17 +537,12 @@ pub fn reload(state: &mut State, cfg: Config) {
     state.rehover_bars();
 }
 
+/// Every popup sits in the usable area the bar just changed, so all of them close.
 fn close_bar_popups(state: &mut State) {
-    state.close_start_panel();
-    state.close_menu();
-    crate::calendarview::close(state);
-    crate::displaysview::close(state);
-    crate::trayflyout::close(state);
+    for p in crate::popups::Popup::ALL {
+        p.close(state);
+    }
     crate::trayreveal::collapse_all(state);
-    crate::taskpreview::hide(state);
-    crate::snappickerview::hide(state);
-    crate::projectorview::hide(state);
-    crate::notifycenter::close(state);
     crate::tooltip::hide(state);
 }
 

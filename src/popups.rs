@@ -372,6 +372,34 @@ mod tests {
     }
 
     #[test]
+    fn moving_the_taskbar_closes_every_popup() {
+        for p in Popup::ALL {
+            let mut h = crate::harness::Harness::new();
+            h.output("TEST-1", 1024, 768);
+            let two = h.output("TEST-2", 1024, 768);
+            let r = h.state.layout_box(Some(&two));
+            let _tray = crate::tray::headless(&mut h.state);
+            let mut c = h.connect();
+            for app in ["one", "two"] {
+                let w = h.map_toplevel(&mut c, app, 300, 200);
+                h.state.move_to(w.id, r.x + 100, r.y + 100);
+            }
+            h.pointer_to(f64::from(r.x + 700), f64::from(r.y + 400));
+            open_on(&mut h, p, &two);
+            assert!(
+                p.is_open(&h.state) || p.output(&h.state).is_some(),
+                "{p:?} opened"
+            );
+            let mut top = h.state.config.clone();
+            top.taskbar.position = reprisekit::taskbar::Edge::Top;
+            crate::configwatch::reload(&mut h.state, top);
+            h.dispatch();
+            assert!(!p.is_open(&h.state), "{p:?} closed with the bar's move");
+            assert_eq!(p.output(&h.state), None, "{p:?} waits on no output");
+        }
+    }
+
+    #[test]
     fn removing_an_output_closes_every_popup_on_it_and_keys_reach_the_window_again() {
         for p in Popup::ALL {
             let mut h = crate::harness::Harness::new();
