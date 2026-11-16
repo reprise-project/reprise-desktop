@@ -7,17 +7,28 @@ use std::time::{Duration, Instant};
 /// The regular file at `path` (links followed), at most `max` bytes, else `FileTooLarge`; a FIFO
 /// or device is never opened (`InvalidInput`). Small files from a user's folders read here.
 pub fn read_regular(path: &Path, max: u64) -> io::Result<Vec<u8>> {
+    read_opened(&open_regular(path)?, max)
+}
+
+/// The regular file at `path` (links followed) opened to read; a FIFO or device is never opened
+/// (`InvalidInput`), so the open cannot wait for a writer.
+pub fn open_regular(path: &Path) -> io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     let held = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_PATH)
         .open(path)?;
-    read_held(held.into(), max)
+    reopen_held(held.into())
 }
 
-/// [`read_regular`] for a file held `O_PATH`, reopened to read through `/proc/self/fd` only once
-/// it is known to be a regular file.
+/// [`read_regular`] for a file held `O_PATH`.
 pub(crate) fn read_held(held: OwnedFd, max: u64) -> io::Result<Vec<u8>> {
+    read_opened(&reopen_held(held)?, max)
+}
+
+/// A file held `O_PATH`, reopened to read through `/proc/self/fd` only once it is known to be a
+/// regular file.
+fn reopen_held(held: OwnedFd) -> io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     let held = std::fs::File::from(held);
     if !held.metadata()?.is_file() {
@@ -26,11 +37,10 @@ pub(crate) fn read_held(held: OwnedFd, max: u64) -> io::Result<Vec<u8>> {
             "not a regular file",
         ));
     }
-    let file = std::fs::OpenOptions::new()
+    std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
-        .open(format!("/proc/self/fd/{}", held.as_raw_fd()))?;
-    read_opened(&file, max)
+        .open(format!("/proc/self/fd/{}", held.as_raw_fd()))
 }
 
 /// [`read_regular`] for a file opened elsewhere (by a directory fd, or

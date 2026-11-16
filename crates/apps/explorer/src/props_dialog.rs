@@ -119,6 +119,7 @@ pub struct Props {
     pub icon_chosen: Option<Option<String>>,
     pub(crate) picks: crate::props_host::Picks,
     pub(crate) checksums: crate::checksums::Checksums,
+    pub(crate) walk: crate::props_host::WalkStop,
 }
 
 pub fn bin_facts(info: &FileInfo, t: Option<&Trashed>, is_12h: bool) -> filesheet::BinFacts {

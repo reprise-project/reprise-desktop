@@ -223,6 +223,7 @@ impl Explorer {
             self.take_due_sheet(ctx),
             self.take_preview(),
             self.take_checksums(),
+            self.take_reads(ctx),
         ]
         .into_iter()
         .flatten()
@@ -503,7 +504,7 @@ impl Explorer {
         }
         let path = it.path.clone();
         let r#gen = self.generation;
-        self.spawn_job(ctx, move || {
+        self.spawn_read_job(ctx, move || {
             let dims = read_head(&path).and_then(|head| reprisefs::imagesize::dimensions(&head));
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
                 let Some(dims) = dims.filter(|_| ex.generation == r#gen) else {
@@ -586,10 +587,11 @@ fn tip_reads_folder(it: &Item) -> bool {
 }
 
 /// The first [`reprisefs::imagesize::HEAD_BYTES`] of `path`, where an image states its size.
+/// Only a regular file is opened.
 fn read_head(path: &std::path::Path) -> Option<Vec<u8>> {
     use std::io::Read;
     let mut head = Vec::new();
-    std::fs::File::open(path)
+    reprisefs::ops::open_regular(path)
         .ok()?
         .take(reprisefs::imagesize::HEAD_BYTES as u64)
         .read_to_end(&mut head)
@@ -922,6 +924,60 @@ pub(crate) mod tests {
         assert!(
             details.contains(&("Dimensions: 800 x 600".to_string(), false)),
             "{details:?}"
+        );
+    }
+
+    /// Waits up to five seconds for every [`Explorer::spawn_read_job`] read to answer.
+    fn reads_answer(ex: &mut Explorer, ctx: &mut Ctx) -> bool {
+        let until = Instant::now() + std::time::Duration::from_secs(5);
+        while !ex.reads.is_empty() && Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            ex.take_reads(ctx);
+        }
+        ex.reads.is_empty()
+    }
+
+    #[test]
+    fn a_fifo_named_like_an_image_neither_hangs_its_size_read_nor_holds_a_close() {
+        let mut ctx = test_ctx();
+        let (dir, mut ex) = explorer(&mut ctx);
+        let fifo = dir.path().join("x.png");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        assert!(made.is_ok_and(|s| s.success()), "mkfifo x.png");
+        ex.refresh(&mut ctx);
+        ex.sv.set_mode(Mode::List);
+        let i = index_of(&ex, "x.png");
+
+        ex.read_dims(i, &ctx);
+        assert!(!ex.busy(), "a size read is not work a close waits for");
+        let reply = ex.close(&mut ctx);
+        assert!(reply.quit, "the window quits at once");
+        assert!(reads_answer(&mut ex, &mut ctx), "the read answers");
+        assert!(!ex.image_dims.contains_key(&fifo), "a FIFO has no size");
+    }
+
+    #[test]
+    fn closing_the_sheet_stops_its_folder_walk() {
+        let mut ctx = test_ctx();
+        let (dir, mut ex) = explorer(&mut ctx);
+        let sub = dir.path().join("sub");
+        for n in 0..50 {
+            std::fs::write(sub.join(format!("{n}.txt")), "x").expect("write");
+        }
+        let i = index_of(&ex, "sub");
+        ex.sv.selection.clear();
+        ex.sv.selection.set.insert(i);
+        ex.sv.selection.focus = Some(i);
+        ex.properties(&mut ctx);
+        ex.finish_puts(&mut ctx);
+        let p = ex.props.as_ref().expect("the sheet is up");
+        let stop = p.walk.flag();
+        assert!(!stop.load(std::sync::atomic::Ordering::Relaxed));
+
+        ex.props = None;
+        assert!(
+            stop.load(std::sync::atomic::Ordering::Relaxed),
+            "the walk's stop flag is set"
         );
     }
 
