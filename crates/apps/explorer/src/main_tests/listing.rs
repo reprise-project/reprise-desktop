@@ -292,10 +292,15 @@ fn a_refresh_keeps_the_scroll_position() {
     assert_eq!(ex.sv.top, 0);
 }
 
-/// Long enough for the watch's add, which runs off the loop, or for its one-second gap between
-/// wakes and its coalescing.
-fn wait_for_watch() {
-    std::thread::sleep(std::time::Duration::from_millis(1500));
+/// Whether the shown folder's watch, added on a listing thread, is in place.
+fn watched(ex: &Explorer) -> bool {
+    ex.watch.as_ref().is_some_and(|w| w.added())
+}
+
+/// Wakes `ex` until it leaves `from`: the watch thread wakes on its own clock.
+fn left(ex: &mut Explorer, ctx: &mut Ctx, from: &Path) {
+    let from = Place::Folder(from.to_path_buf());
+    wake_until(ex, ctx, |ex| ex.place != from);
 }
 
 #[test]
@@ -306,11 +311,10 @@ fn the_shown_folder_is_followed_when_renamed_and_left_for_its_parent_when_delete
     std::fs::write(old.join("a.txt"), "1").expect("write");
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Folder(old.clone()), &mut ctx);
-    wait_for_watch();
+    wake_until(&mut ex, &mut ctx, watched);
 
     std::fs::rename(&old, &new).expect("rename");
-    wait_for_watch();
-    ex.wake(&mut ctx);
+    left(&mut ex, &mut ctx, &old);
     assert_eq!(ex.place, Place::Folder(new.clone()));
     assert_eq!(ex.items.len(), 1);
     assert!(
@@ -319,8 +323,7 @@ fn the_shown_folder_is_followed_when_renamed_and_left_for_its_parent_when_delete
     );
 
     std::fs::remove_dir_all(&new).expect("rm");
-    wait_for_watch();
-    ex.wake(&mut ctx);
+    left(&mut ex, &mut ctx, &new);
     assert_eq!(ex.place, Place::Folder(top.path().to_path_buf()));
     assert!(!ex.history.can_back());
 }
@@ -336,12 +339,11 @@ fn a_folder_above_the_shown_one_renamed_is_followed_and_moved_away_is_left_for_t
     // `tempdir` names start with a dot, which the tree hides by default.
     ex.settings.show_hidden = true;
     ex.build_tree(&mut ctx);
-    ex.show(Place::Folder(shown), &mut ctx);
-    wait_for_watch();
+    ex.show(Place::Folder(shown.clone()), &mut ctx);
+    wake_until(&mut ex, &mut ctx, watched);
 
     std::fs::rename(top.path().join("a"), top.path().join("z")).expect("rename");
-    wait_for_watch();
-    ex.wake(&mut ctx);
+    left(&mut ex, &mut ctx, &shown);
     let renamed = Place::Folder(top.path().join("z").join("shown"));
     assert_eq!(ex.place, renamed);
     assert_eq!(ex.items.len(), 1);
@@ -357,9 +359,9 @@ fn a_folder_above_the_shown_one_renamed_is_followed_and_moved_away_is_left_for_t
     );
 
     let away = tempfile::tempdir().expect("a temp dir");
+    let moved = top.path().join("z").join("shown");
     std::fs::rename(top.path().join("z"), away.path().join("z")).expect("mv");
-    wait_for_watch();
-    ex.wake(&mut ctx);
+    left(&mut ex, &mut ctx, &moved);
     assert_eq!(ex.place, Place::Folder(top.path().to_path_buf()));
     assert!(!ex.history.can_back());
 }
