@@ -49,6 +49,11 @@ impl FileTransfer {
         Ok(FileTransfer { conn })
     }
 
+    /// Whether its connection closed, so it carries no transfer any more.
+    fn closed(&self) -> bool {
+        self.conn.is_closed()
+    }
+
     /// Register `paths` read-only in a new transfer that ends at its first
     /// retrieval, and return its key. A path that cannot be opened (gone,
     /// a dangling link) or is neither a file nor a folder (a pipe, a
@@ -121,24 +126,27 @@ fn link() -> MutexGuard<'static, Link> {
 
 fn ready() -> Option<FileTransfer> {
     match &*link() {
-        Link::Up(ft) => Some(ft.clone()),
+        Link::Up(ft) if !ft.closed() => Some(ft.clone()),
         _ => None,
     }
 }
 
-/// Whether a connection may be tried now: never tried, or the last try
-/// failed more than `RETRY` before `now`.
+/// Whether a connection may be tried now: never tried, the last try
+/// failed more than `RETRY` before `now`, or the one made closed.
 fn due(link: &Link, now: Instant) -> bool {
     match link {
         Link::Down(failed) => failed.is_none_or(|at| now.duration_since(at) >= RETRY),
-        Link::Connecting | Link::Up(_) => false,
+        Link::Up(ft) => ft.closed(),
+        Link::Connecting => false,
     }
 }
 
 pub fn shared() -> Option<FileTransfer> {
     {
         let mut l = link();
-        if let Link::Up(ft) = &*l {
+        if let Link::Up(ft) = &*l
+            && !ft.closed()
+        {
             return Some(ft.clone());
         }
         if !due(&l, Instant::now()) {
@@ -621,6 +629,19 @@ mod tests {
         assert!(!due(&Link::Down(Some(now)), now));
         assert!(due(&Link::Down(Some(now)), now + RETRY));
         assert!(!due(&Link::Connecting, now));
+    }
+
+    #[test]
+    fn a_link_whose_connection_closed_is_made_again() {
+        let (conn, peer) = crate::tests::pair();
+        let up = Link::Up(FileTransfer { conn: conn.clone() });
+        assert!(!due(&up, Instant::now()), "kept while open");
+        crate::wait(peer.close()).unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        while !conn.is_closed() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(due(&up, Instant::now()));
     }
 
     #[test]
