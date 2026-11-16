@@ -1305,6 +1305,42 @@ mod tests {
     }
 
     #[test]
+    fn every_blue_schemes_links_are_4_5_to_1_on_the_face() {
+        for v in crate::blue::Variant::ALL {
+            let cs = v.scheme().system.colors();
+            let ratio = cs.hot_light.contrast(cs.button_face);
+            assert!(
+                ratio >= 4.5,
+                "{v:?}: hot_light is 4.5:1 on the face, got {ratio:.2}"
+            );
+        }
+    }
+
+    #[test]
+    fn glass_text_and_links_are_4_5_to_1_on_their_fill_light_and_dark() {
+        use crate::glass;
+        for mode in [glass::Mode::Light, glass::Mode::Dark] {
+            let settings = glass::Settings {
+                mode,
+                ..Default::default()
+            };
+            let cs = crate::interfaces::theme_with(
+                crate::interface::Interface::Glass,
+                crate::blue::Variant::Blue,
+                &settings,
+            )
+            .colors;
+            let link = ("hot_light", cs.hot_light.contrast(cs.button_face));
+            for (what, ratio) in text_pairs(&cs).into_iter().chain([link]) {
+                assert!(
+                    ratio >= 4.5,
+                    "Glass {mode:?}: {what} is 4.5:1 on its fill, got {ratio:.2}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn every_schemes_links_are_4_5_to_1_on_the_face() {
         // The high-contrast links are pinned purple by their own test.
         for (name, cs) in SCHEMES
