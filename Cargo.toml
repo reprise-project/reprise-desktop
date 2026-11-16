@@ -63,7 +63,8 @@ accesskit_unix = "0.24"
 async-channel = "2"
 async-trait = "0.1"
 aws-lc-rs = { version = "1.19.0", default-features = false, features = ["aws-lc-sys"] }
-blocking = "1"
+# 1.7.0 never ends an idle pool thread: each one wakes twice a second for the life of the process.
+blocking = ">=1.6, <1.7"
 env_logger = "0.11"
 futures-lite = "2"
 futures-util = "0.3"

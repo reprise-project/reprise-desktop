@@ -411,12 +411,19 @@ fn quiet_step(state: &mut State) {
 /// How often `watch` looks for stalled outputs.
 const WATCH_EVERY: Duration = Duration::from_millis(500);
 
-/// Look for stalled outputs every `WATCH_EVERY` while any output has a job or flip out.
+/// Look for stalled outputs every `WATCH_EVERY` while any output has a job or flip out; the watch
+/// ends as soon as none has, not at its next tick.
 pub(super) fn watch(state: &mut State) {
-    let Some(b) = state.backend.as_ref() else {
+    let Some(b) = state.backend.as_mut() else {
         return;
     };
-    if b.watch.is_some() || b.tracks().all(commit::Track::idle) {
+    if b.tracks().all(commit::Track::idle) {
+        if let Some(t) = b.watch.take() {
+            state.handle.remove(t);
+        }
+        return;
+    }
+    if b.watch.is_some() {
         return;
     }
     let token = state

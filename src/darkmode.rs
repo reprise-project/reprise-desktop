@@ -3,7 +3,10 @@
 //! through `configwatch::reload` as an edit of the file would be, so the look, the programs' look
 //! and the portal's color-scheme change alike.
 
-use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+use smithay::reexports::calloop::{
+    RegistrationToken,
+    timer::{TimeoutAction, Timer},
+};
 
 use crate::compositor::State;
 use crate::config::{Config, DarkSchedule};
@@ -16,6 +19,8 @@ use reprisekit::interface::Interface;
 pub struct DarkMode {
     zone: Zone,
     told_no_place: bool,
+    /// The schedule's tick, armed while there is a schedule.
+    timer: Option<RegistrationToken>,
 }
 
 /// The mode `cfg`'s schedule gives at `now` and the next time that can change; None without a
@@ -76,34 +81,43 @@ pub fn apply(dm: &mut DarkMode, cfg: Config, table: &toml::Table) -> Config {
     }
 }
 
-/// Re-read the schedule at its next edge, and at least each minute so a clock change or a resume
-/// is caught. Runs once the backend drives its outputs.
-pub fn setup(state: &mut State) {
-    let first = tick(state);
+/// While the config has a schedule, re-read it at its next edge, and at least each minute so a
+/// clock change or a resume is caught. Runs once the backend drives its outputs, and on each
+/// reload.
+pub fn config_changed(state: &mut State) {
+    let now = crate::nightlight::now();
+    let dm = &mut state.dark_mode;
+    if dm.timer.is_some() || scheduled(&state.config, dm, now, &Local).is_none() {
+        return;
+    }
     let timer = state
         .handle
-        .insert_source(Timer::from_duration(first), |_, _, state| {
-            TimeoutAction::ToDuration(tick(state))
+        .insert_source(Timer::immediate(), |_, _, state| match tick(state) {
+            Some(wait) => TimeoutAction::ToDuration(wait),
+            None => {
+                state.dark_mode.timer = None;
+                TimeoutAction::Drop
+            }
         });
-    if let Err(e) = timer {
-        log::warn!("dark mode: no timer: {}", e.error);
+    match timer {
+        Ok(t) => state.dark_mode.timer = Some(t),
+        Err(e) => log::warn!("dark mode: no timer: {}", e.error),
     }
 }
 
-/// Put in the mode the schedule gives now if it is not in force; how long until the next look.
-fn tick(state: &mut State) -> std::time::Duration {
+/// Put in the mode the schedule gives now if it is not in force; how long until the next look,
+/// None without a schedule.
+fn tick(state: &mut State) -> Option<std::time::Duration> {
     let now = crate::nightlight::now();
     let minute = (60 - now.rem_euclid(60)).max(1);
-    let Some((mode, next)) = scheduled(&state.config, &mut state.dark_mode, now, &Local) else {
-        return std::time::Duration::from_secs(minute as u64);
-    };
+    let (mode, next) = scheduled(&state.config, &mut state.dark_mode, now, &Local)?;
     if state.config.glass.mode != mode {
         log::info!("dark mode: {} by the schedule", mode.as_str());
         let cfg = with_mode(state.config.clone(), &state.config_file, mode);
         crate::configwatch::reload(state, cfg);
     }
     let wait = next.map_or(minute, |t| (t - now).clamp(1, minute));
-    std::time::Duration::from_secs(wait as u64)
+    Some(std::time::Duration::from_secs(wait as u64))
 }
 
 #[cfg(test)]
@@ -131,6 +145,16 @@ mod tests {
     }
 
     const HOURS: &str = "[appearance]\ninterface = \"glass\"\n[glass]\nmode = \"hours\"\ndark_from = \"22:00\"\ndark_to = \"06:30\"\n";
+
+    #[test]
+    fn only_a_schedule_arms_the_tick() {
+        let mut h = crate::harness::Harness::new();
+        config_changed(&mut h.state);
+        assert!(h.state.dark_mode.timer.is_none(), "no schedule: no tick");
+        h.state.config = read(HOURS).0;
+        config_changed(&mut h.state);
+        assert!(h.state.dark_mode.timer.is_some(), "set hours: a tick");
+    }
 
     #[test]
     fn set_hours_are_dark_across_midnight_and_name_the_next_edge() {

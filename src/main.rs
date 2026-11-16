@@ -471,7 +471,7 @@ fn run(
         spawn::spawn(cmd, &state.env, None);
     }
     state.config_file = config_file;
-    darkmode::setup(&mut state);
+    darkmode::config_changed(&mut state);
     reprisefs::binage::start();
     if let Some(notice) = config_notice {
         event_loop

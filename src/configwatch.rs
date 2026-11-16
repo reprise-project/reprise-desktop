@@ -513,6 +513,7 @@ pub fn reload(state: &mut State, cfg: Config) {
     crate::miniview::restyle(state);
     // The panels follow `[debug]` and are redrawn for the new look.
     crate::debugview::config_changed(state);
+    crate::darkmode::config_changed(state);
     if changes.bar_moved || changes.bar_hide {
         // A window whose caption the bar now covers moves down under it;
         // a maximized or fullscreen one does when it is restored.
