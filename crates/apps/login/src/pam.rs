@@ -1,461 +1,45 @@
-//! libpam through one handle, from `pam_start` to `pam_end`, and its conversation callback.
+//! The account step on reprisepam's handle.
 
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
-use std::fmt;
+use std::ffi::c_int;
 
-use repriselogin::clean_prompt;
-use repriselogin::greeter::AuthKind;
 use reprisepam::ffi;
-use zeroize::{Zeroize, Zeroizing};
+pub use reprisepam::{Converse, PamError};
 
-/// Answers one PAM message. Info and Error return `None`; `None` for a
-/// Visible or Secret prompt ends the conversation.
-pub trait Converse {
-    fn prompt(&mut self, kind: AuthKind, text: &str) -> Option<Zeroizing<String>>;
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PamError {
-    pub code: i32,
-    pub text: String,
-}
-
-impl fmt::Display for PamError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} (PAM code {})", self.text, self.code)
-    }
-}
-
-impl std::error::Error for PamError {}
+/// A transaction whose conversation lives as long as it does.
+pub type Pam = reprisepam::Pam<'static>;
 
 /// The two calls of the account step, so `account_steps` runs without libpam in tests.
 pub trait PamOps {
-    fn acct_mgmt(&mut self) -> c_int;
-    fn chauthtok(&mut self, flags: c_int) -> c_int;
+    fn acct_mgmt(&mut self) -> Result<(), PamError>;
+    fn chauthtok(&mut self, flags: c_int) -> Result<(), PamError>;
 }
 
 /// `pam_acct_mgmt`, then on `PAM_NEW_AUTHTOK_REQD` with `change` `pam_chauthtok` for the expired
-/// password; without, that code is the answer.
-pub fn account_steps(ops: &mut impl PamOps, change: bool) -> c_int {
+/// password; without, that error is the answer.
+pub fn account_steps(ops: &mut impl PamOps, change: bool) -> Result<(), PamError> {
     match ops.acct_mgmt() {
-        ffi::PAM_NEW_AUTHTOK_REQD if change => ops.chauthtok(ffi::PAM_CHANGE_EXPIRED_AUTHTOK),
-        rc => rc,
-    }
-}
-
-/// One PAM transaction. `Drop` ends it with the last call's status.
-pub struct Pam {
-    handle: *mut ffi::pam_handle_t,
-    last: c_int,
-    _conv: Box<ffi::pam_conv>,
-    /// The `appdata_ptr` libpam hands back to `converse`, freed in `Drop` after `pam_end`.
-    converse: *mut Box<dyn Converse>,
-}
-
-impl Pam {
-    pub fn start(service: &str, user: &str, conv: Box<dyn Converse>) -> Result<Pam, PamError> {
-        let cservice = c_string(service, "service name")?;
-        let cuser = c_string(user, "user name")?;
-        let appdata = Box::into_raw(Box::new(conv));
-        let pam_conv = Box::new(ffi::pam_conv {
-            conv: Some(converse),
-            appdata_ptr: appdata.cast(),
-        });
-        let mut handle = std::ptr::null_mut();
-        // SAFETY: the strings are NUL-terminated and `pam_conv` and the
-        // `Converse` it points at are boxed and live as long as the handle.
-        let rc =
-            unsafe { ffi::pam_start(cservice.as_ptr(), cuser.as_ptr(), &*pam_conv, &mut handle) };
-        if rc != ffi::PAM_SUCCESS || handle.is_null() {
-            // SAFETY: `appdata` came from `Box::into_raw` above and libpam holds no handle.
-            drop(unsafe { Box::from_raw(appdata) });
-            return Err(PamError {
-                code: rc,
-                text: format!("cannot start PAM service {service} (code {rc})"),
-            });
+        Err(e) if change && e.code == ffi::PAM_NEW_AUTHTOK_REQD => {
+            ops.chauthtok(ffi::PAM_CHANGE_EXPIRED_AUTHTOK)
         }
-        Ok(Pam {
-            handle,
-            last: rc,
-            _conv: pam_conv,
-            converse: appdata,
-        })
-    }
-
-    pub fn set_tty(&mut self, tty: &str) -> Result<(), PamError> {
-        let tty = c_string(tty, "tty")?;
-        // SAFETY: the handle is live; libpam copies the string.
-        let rc = unsafe { ffi::pam_set_item(self.handle, ffi::PAM_TTY, tty.as_ptr().cast()) };
-        self.check(rc)
-    }
-
-    /// `PAM_RHOST`, the remote client's address; `None` clears it.
-    pub fn set_item_rhost(&mut self, rhost: Option<&str>) -> Result<(), PamError> {
-        let rhost = rhost.map(|r| c_string(r, "remote host")).transpose()?;
-        let item = rhost
-            .as_ref()
-            .map_or(std::ptr::null(), |r| r.as_ptr().cast());
-        // SAFETY: the handle is live; libpam copies the string, and a NULL item clears it.
-        let rc = unsafe { ffi::pam_set_item(self.handle, ffi::PAM_RHOST, item) };
-        self.check(rc)
-    }
-
-    /// `PAM_USER`, which a module may have changed during `authenticate`.
-    pub fn user(&self) -> Option<String> {
-        let mut item: *const c_void = std::ptr::null();
-        // SAFETY: the handle is live and `item` is a local out pointer.
-        let rc = unsafe { ffi::pam_get_item(self.handle, ffi::PAM_USER, &mut item) };
-        if rc != ffi::PAM_SUCCESS || item.is_null() {
-            return None;
-        }
-        // SAFETY: PAM_USER is a NUL-terminated string owned by the handle.
-        let user = unsafe { CStr::from_ptr(item.cast::<c_char>()) };
-        user.to_str().ok().map(str::to_owned)
-    }
-
-    pub fn putenv(&mut self, key: &str, value: &str) -> Result<(), PamError> {
-        let pair = c_string(&format!("{key}={value}"), "environment variable")?;
-        // SAFETY: the handle is live; libpam copies the string.
-        let rc = unsafe { ffi::pam_putenv(self.handle, pair.as_ptr()) };
-        self.check(rc)
-    }
-
-    pub fn authenticate(&mut self) -> Result<(), PamError> {
-        // SAFETY: the handle is live.
-        let rc = unsafe { ffi::pam_authenticate(self.handle, 0) };
-        self.check(rc)
-    }
-
-    /// The account stack; an expired password is changed through the conversation.
-    pub fn account(&mut self, change_expired: bool) -> Result<(), PamError> {
-        let rc = account_steps(self, change_expired);
-        self.check(rc)
-    }
-
-    pub fn establish_cred(&mut self) -> Result<(), PamError> {
-        // SAFETY: the handle is live.
-        let rc = unsafe { ffi::pam_setcred(self.handle, ffi::PAM_ESTABLISH_CRED) };
-        self.check(rc)
-    }
-
-    pub fn open_session(&mut self) -> Result<(), PamError> {
-        // SAFETY: the handle is live.
-        let rc = unsafe { ffi::pam_open_session(self.handle, 0) };
-        self.check(rc)
-    }
-
-    pub fn close_session(&mut self) -> Result<(), PamError> {
-        // SAFETY: the handle is live.
-        let rc = unsafe { ffi::pam_close_session(self.handle, 0) };
-        self.check(rc)
-    }
-
-    pub fn delete_cred(&mut self) -> Result<(), PamError> {
-        // SAFETY: the handle is live.
-        let rc = unsafe { ffi::pam_setcred(self.handle, ffi::PAM_DELETE_CRED) };
-        self.check(rc)
-    }
-
-    /// The PAM environment, in libpam's order.
-    pub fn env(&self) -> Vec<(String, String)> {
-        // SAFETY: the handle is live; the list is ours to free.
-        let list = unsafe { ffi::pam_getenvlist(self.handle) };
-        if list.is_null() {
-            return Vec::new();
-        }
-        let mut env = Vec::new();
-        // SAFETY: `list` is a NULL-terminated array of malloc'd
-        // NUL-terminated strings; each is freed once, then the array.
-        unsafe {
-            let mut i = 0;
-            while !(*list.add(i)).is_null() {
-                let entry = *list.add(i);
-                if let Some((k, v)) = CStr::from_ptr(entry)
-                    .to_str()
-                    .ok()
-                    .and_then(|s| s.split_once('='))
-                {
-                    env.push((k.to_owned(), v.to_owned()));
-                }
-                libc::free(entry.cast());
-                i += 1;
-            }
-            libc::free(list.cast());
-        }
-        env
-    }
-
-    fn check(&mut self, rc: c_int) -> Result<(), PamError> {
-        self.last = rc;
-        if rc == ffi::PAM_SUCCESS {
-            return Ok(());
-        }
-        // SAFETY: the handle is live; pam_strerror returns a static string.
-        let text = unsafe { CStr::from_ptr(ffi::pam_strerror(self.handle, rc)) };
-        Err(PamError {
-            code: rc,
-            text: text.to_string_lossy().into_owned(),
-        })
+        r => r,
     }
 }
 
 impl PamOps for Pam {
-    fn acct_mgmt(&mut self) -> c_int {
-        // SAFETY: the handle is live.
-        unsafe { ffi::pam_acct_mgmt(self.handle, 0) }
+    fn acct_mgmt(&mut self) -> Result<(), PamError> {
+        Pam::acct_mgmt(self)
     }
 
-    fn chauthtok(&mut self, flags: c_int) -> c_int {
-        // SAFETY: the handle is live.
-        unsafe { ffi::pam_chauthtok(self.handle, flags) }
-    }
-}
-
-impl Drop for Pam {
-    fn drop(&mut self) {
-        // SAFETY: the handle is live and not used after this call; `converse` came from
-        // `Box::into_raw` and libpam no longer calls back once `pam_end` returns.
-        unsafe {
-            ffi::pam_end(self.handle, self.last);
-            drop(Box::from_raw(self.converse));
-        }
-    }
-}
-
-/// `s` as a C string. The error names `what` and never echoes `s`, which may be a password
-/// typed into the user name field.
-fn c_string(s: &str, what: &str) -> Result<CString, PamError> {
-    CString::new(s).map_err(|_| PamError {
-        code: ffi::PAM_SYSTEM_ERR,
-        text: format!("the {what} holds a NUL byte"),
-    })
-}
-
-/// libpam's conversation callback.
-///
-/// # Safety
-/// `data` is a live `*mut Box<dyn Converse>`, and `msgs` and `out` are what
-/// libpam passes: `n` message pointers and a result slot.
-pub(crate) unsafe extern "C" fn converse(
-    n: c_int,
-    msgs: *mut *const ffi::pam_message,
-    out: *mut *mut ffi::pam_response,
-    data: *mut c_void,
-) -> c_int {
-    if n <= 0 || n > ffi::PAM_MAX_NUM_MSG || msgs.is_null() || out.is_null() || data.is_null() {
-        return ffi::PAM_CONV_ERR;
-    }
-    // SAFETY: `data` is the `appdata_ptr` `Pam::start` registered, a live boxed `Converse`
-    // that only this call uses while it runs.
-    let conv = unsafe { &mut *(data as *mut Box<dyn Converse>) };
-    let n = n as usize;
-    // SAFETY: plain allocation; the result is null-checked below.
-    let resp = unsafe { libc::calloc(n, std::mem::size_of::<ffi::pam_response>()) }
-        as *mut ffi::pam_response;
-    if resp.is_null() {
-        return ffi::PAM_BUF_ERR;
-    }
-    for i in 0..n {
-        // Linux-PAM hands an array of message pointers.
-        // SAFETY: libpam passes `n` live messages behind `msgs`.
-        let m = unsafe { &**msgs.add(i) };
-        let kind = match m.msg_style {
-            ffi::PAM_PROMPT_ECHO_OFF => AuthKind::Secret,
-            ffi::PAM_PROMPT_ECHO_ON => AuthKind::Visible,
-            ffi::PAM_ERROR_MSG => AuthKind::Error,
-            ffi::PAM_TEXT_INFO => AuthKind::Info,
-            _ => {
-                // SAFETY: the first `i` answers are null or calloc'd by this loop.
-                unsafe { free_answers(resp, i) };
-                return ffi::PAM_CONV_ERR;
-            }
-        };
-        let text = match m.msg.is_null() {
-            true => String::new(),
-            // SAFETY: libpam's message text is a NUL-terminated string.
-            false => clean_prompt(&unsafe { CStr::from_ptr(m.msg) }.to_string_lossy()).join("\n"),
-        };
-        let answer = conv.prompt(kind, &text);
-        if matches!(kind, AuthKind::Info | AuthKind::Error) {
-            continue;
-        }
-        let Some(answer) = answer else {
-            // SAFETY: the first `i` answers are null or calloc'd by this loop.
-            unsafe { free_answers(resp, i) };
-            return ffi::PAM_CONV_ERR;
-        };
-        // SAFETY: plain allocation; the result is null-checked below.
-        let buf = unsafe { libc::calloc(answer.len() + 1, 1) } as *mut u8;
-        if buf.is_null() {
-            // SAFETY: the first `i` answers are null or calloc'd by this loop.
-            unsafe { free_answers(resp, i) };
-            return ffi::PAM_BUF_ERR;
-        }
-        // SAFETY: `buf` holds `answer.len() + 1` bytes and `i < n` is inside `resp`.
-        unsafe {
-            std::ptr::copy_nonoverlapping(answer.as_ptr(), buf, answer.len());
-            (*resp.add(i)).resp = buf.cast();
-        }
-    }
-    // SAFETY: `out` is libpam's non-null result slot; libpam frees the array.
-    unsafe { *out = resp };
-    ffi::PAM_SUCCESS
-}
-
-/// Wipes and frees the first `i` answers, then the array.
-///
-/// # Safety
-/// `resp` is a calloc'd array not yet handed to libpam, and each of its
-/// first `i` answers is null or a calloc'd NUL-terminated buffer.
-unsafe fn free_answers(resp: *mut ffi::pam_response, i: usize) {
-    // SAFETY: the caller's contract.
-    unsafe {
-        for j in 0..i {
-            let r = (*resp.add(j)).resp;
-            if !r.is_null() {
-                std::slice::from_raw_parts_mut(r.cast::<u8>(), libc::strlen(r)).zeroize();
-                libc::free(r.cast());
-            }
-        }
-        libc::free(resp.cast());
+    fn chauthtok(&mut self, flags: c_int) -> Result<(), PamError> {
+        Pam::chauthtok(self, flags)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     const PAM_AUTH_ERR: c_int = 7;
-
-    type Seen = Rc<RefCell<Vec<(AuthKind, String)>>>;
-    type Responses = Vec<Option<String>>;
-
-    /// Records every message and answers prompts from `answers` in order.
-    struct Fake {
-        seen: Seen,
-        answers: Vec<Option<&'static str>>,
-    }
-
-    impl Converse for Fake {
-        fn prompt(&mut self, kind: AuthKind, text: &str) -> Option<Zeroizing<String>> {
-            self.seen.borrow_mut().push((kind, text.to_owned()));
-            match kind {
-                AuthKind::Visible | AuthKind::Secret => {
-                    self.answers.remove(0).map(|a| Zeroizing::new(a.to_owned()))
-                }
-                AuthKind::Info | AuthKind::Error => None,
-            }
-        }
-    }
-
-    /// Runs `converse` over `msgs` with a `Fake`; the responses are read and freed.
-    fn run(
-        msgs: &[(c_int, &str)],
-        answers: Vec<Option<&'static str>>,
-    ) -> (c_int, Option<Responses>, Vec<(AuthKind, String)>) {
-        let seen = Seen::default();
-        let mut conv: Box<dyn Converse> = Box::new(Fake {
-            seen: seen.clone(),
-            answers,
-        });
-        let texts: Vec<CString> = msgs
-            .iter()
-            .map(|(_, t)| CString::new(*t).unwrap())
-            .collect();
-        let messages: Vec<ffi::pam_message> = msgs
-            .iter()
-            .zip(&texts)
-            .map(|((style, _), t)| ffi::pam_message {
-                msg_style: *style,
-                msg: t.as_ptr(),
-            })
-            .collect();
-        let mut ptrs: Vec<*const ffi::pam_message> = messages
-            .iter()
-            .map(|m| m as *const ffi::pam_message)
-            .collect();
-        let mut out: *mut ffi::pam_response = std::ptr::null_mut();
-        // SAFETY: `ptrs` holds `msgs.len()` live messages and `conv` outlives the call.
-        let rc = unsafe {
-            converse(
-                ptrs.len() as c_int,
-                ptrs.as_mut_ptr(),
-                &mut out,
-                &mut conv as *mut Box<dyn Converse> as *mut c_void,
-            )
-        };
-        let responses = (!out.is_null()).then(|| {
-            // SAFETY: on success `out` is a calloc'd array of `msgs.len()`
-            // responses, each null or a NUL-terminated calloc'd string.
-            unsafe {
-                let r = (0..msgs.len())
-                    .map(|i| {
-                        let p = (*out.add(i)).resp;
-                        (!p.is_null()).then(|| CStr::from_ptr(p).to_str().unwrap().to_owned())
-                    })
-                    .collect();
-                free_answers(out, msgs.len());
-                r
-            }
-        });
-        let seen = seen.borrow().clone();
-        (rc, responses, seen)
-    }
-
-    #[test]
-    fn echo_off_prompt_gets_the_answer() {
-        let (rc, responses, seen) = run(
-            &[(ffi::PAM_PROMPT_ECHO_OFF, "Password: ")],
-            vec![Some("pw")],
-        );
-        assert_eq!(rc, ffi::PAM_SUCCESS);
-        assert_eq!(responses, Some(vec![Some("pw".to_string())]));
-        assert_eq!(seen, [(AuthKind::Secret, "Password:".to_string())]);
-    }
-
-    #[test]
-    fn info_and_error_are_relayed_without_an_answer() {
-        let (rc, responses, seen) = run(
-            &[
-                (ffi::PAM_TEXT_INFO, "Place your finger"),
-                (ffi::PAM_ERROR_MSG, "Account\x1b expires\nin 2 days"),
-            ],
-            vec![],
-        );
-        assert_eq!(rc, ffi::PAM_SUCCESS);
-        assert_eq!(responses, Some(vec![None, None]));
-        assert_eq!(
-            seen,
-            [
-                (AuthKind::Info, "Place your finger".to_string()),
-                (AuthKind::Error, "Account  expires\nin 2 days".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_refused_prompt_fails_the_conversation_with_no_responses() {
-        let (rc, responses, seen) = run(
-            &[
-                (ffi::PAM_PROMPT_ECHO_ON, "login:"),
-                (ffi::PAM_PROMPT_ECHO_OFF, "Password:"),
-            ],
-            vec![Some("anna"), None],
-        );
-        assert_eq!(rc, ffi::PAM_CONV_ERR);
-        assert_eq!(responses, None);
-        assert_eq!(seen.len(), 2);
-    }
-
-    #[test]
-    fn an_unknown_message_style_ends_the_conversation() {
-        let (rc, responses, seen) = run(&[(7, "binary")], vec![]);
-        assert_eq!(rc, ffi::PAM_CONV_ERR);
-        assert_eq!(responses, None);
-        assert!(seen.is_empty());
-    }
 
     struct FakeOps {
         acct: Vec<c_int>,
@@ -463,14 +47,24 @@ mod tests {
         chauthtok_rc: c_int,
     }
 
+    fn status(code: c_int) -> Result<(), PamError> {
+        match code {
+            ffi::PAM_SUCCESS => Ok(()),
+            code => Err(PamError {
+                code,
+                text: String::new(),
+            }),
+        }
+    }
+
     impl PamOps for FakeOps {
-        fn acct_mgmt(&mut self) -> c_int {
-            self.acct.remove(0)
+        fn acct_mgmt(&mut self) -> Result<(), PamError> {
+            status(self.acct.remove(0))
         }
 
-        fn chauthtok(&mut self, flags: c_int) -> c_int {
+        fn chauthtok(&mut self, flags: c_int) -> Result<(), PamError> {
             self.chauthtok_flags.push(flags);
-            self.chauthtok_rc
+            status(self.chauthtok_rc)
         }
     }
 
@@ -481,12 +75,12 @@ mod tests {
             chauthtok_flags: vec![],
             chauthtok_rc: ffi::PAM_SUCCESS,
         };
-        assert_eq!(account_steps(&mut ops, true), ffi::PAM_SUCCESS);
+        assert_eq!(account_steps(&mut ops, true), Ok(()));
         assert_eq!(ops.chauthtok_flags, [ffi::PAM_CHANGE_EXPIRED_AUTHTOK]);
 
         ops.acct = vec![ffi::PAM_NEW_AUTHTOK_REQD];
         ops.chauthtok_rc = PAM_AUTH_ERR;
-        assert_eq!(account_steps(&mut ops, true), PAM_AUTH_ERR);
+        assert_eq!(account_steps(&mut ops, true), status(PAM_AUTH_ERR));
     }
 
     #[test]
@@ -496,7 +90,10 @@ mod tests {
             chauthtok_flags: vec![],
             chauthtok_rc: ffi::PAM_SUCCESS,
         };
-        assert_eq!(account_steps(&mut ops, false), ffi::PAM_NEW_AUTHTOK_REQD);
+        assert_eq!(
+            account_steps(&mut ops, false),
+            status(ffi::PAM_NEW_AUTHTOK_REQD)
+        );
         assert!(ops.chauthtok_flags.is_empty());
     }
 
@@ -507,7 +104,7 @@ mod tests {
             chauthtok_flags: vec![],
             chauthtok_rc: ffi::PAM_SUCCESS,
         };
-        assert_eq!(account_steps(&mut ops, true), PAM_AUTH_ERR);
+        assert_eq!(account_steps(&mut ops, true), status(PAM_AUTH_ERR));
         assert!(ops.chauthtok_flags.is_empty());
     }
 }

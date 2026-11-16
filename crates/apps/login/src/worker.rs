@@ -798,7 +798,7 @@ impl LoginPam for Pam {
     }
 
     fn account(&mut self, change_expired: bool) -> Result<(), PamError> {
-        Pam::account(self, change_expired)
+        crate::pam::account_steps(self, change_expired)
     }
 
     fn user(&self) -> Option<String> {

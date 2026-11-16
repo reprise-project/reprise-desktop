@@ -4,9 +4,10 @@
 //! reprise-rdp and lock mode's remote lock screen run it as `--rdp-password-conversation USER`, under the Remote Desktop PAM service.
 
 use crate::lock::{self, Verdict, Verifier};
+use repriselogin::greeter::AuthKind;
 use repriselogin::{add_prompt_lines, clean_prompt};
-use reprisepam::ffi;
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use reprisepam::{Converse, Pam, ffi};
+use std::ffi::c_int;
 use std::io::{Read, Write};
 use std::os::fd::{AsFd, AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
@@ -419,83 +420,41 @@ pub fn child_main(user: &str) -> i32 {
 
 /// `pam_authenticate` on `SERVICE` for `user`; a prompt fails it, as there is no password in this conversation.
 fn authenticate(user: &str) -> c_int {
-    let (Ok(service), Ok(cuser)) = (CString::new(SERVICE), CString::new(user)) else {
-        return ffi::PAM_AUTHINFO_UNAVAIL;
+    let mut pam = match Pam::start(SERVICE, user, Box::new(FingerLines)) {
+        Ok(pam) => pam,
+        Err(e) => {
+            log::error!("pam: cannot start service {SERVICE}: {e}");
+            return match e.code {
+                ffi::PAM_SUCCESS => ffi::PAM_AUTHINFO_UNAVAIL,
+                rc => rc,
+            };
+        }
     };
-    let conv = ffi::pam_conv {
-        conv: Some(converse),
-        appdata_ptr: std::ptr::null_mut(),
-    };
-    let mut handle: *mut ffi::pam_handle_t = std::ptr::null_mut();
-    // SAFETY: every pointer is to a live local or a NUL-terminated CString;
-    // pam_end closes the handle below.
-    let rc = unsafe { ffi::pam_start(service.as_ptr(), cuser.as_ptr(), &conv, &mut handle) };
-    if rc != ffi::PAM_SUCCESS || handle.is_null() {
-        log::error!("pam: cannot start service {SERVICE}: code {rc}");
-        return if rc == ffi::PAM_SUCCESS {
-            ffi::PAM_AUTHINFO_UNAVAIL
-        } else {
-            rc
-        };
-    }
     // A failure is final here (the conversation is not started over), so
     // libpam's delay after one would only hold the lock's SIGINT up.
-    // SAFETY: `handle` is the live handle pam_start just returned, and
-    // `no_delay` has the signature libpam calls PAM_FAIL_DELAY with.
-    unsafe {
-        ffi::pam_set_item(handle, ffi::PAM_FAIL_DELAY, no_delay as *const c_void);
-    }
-    // SAFETY: `handle` is the live handle pam_start just returned.
-    let rc = unsafe { ffi::pam_authenticate(handle, 0) };
-    // SAFETY: `handle` is live and not used after this call.
-    unsafe { ffi::pam_end(handle, rc) };
-    rc
+    let _ = pam.skip_fail_delay();
+    pam.authenticate()
+        .err()
+        .map_or(ffi::PAM_SUCCESS, |e| e.code)
 }
 
-unsafe extern "C" fn no_delay(_retval: c_int, _usec: libc::c_uint, _data: *mut c_void) {}
+/// The child's conversation: text lines go out as `I` or `E` lines; a prompt ends the conversation, since there is nothing to answer it with.
+struct FingerLines;
 
-/// The child's conversation callback: text lines go out as `I` or `E` lines; a prompt ends the conversation, since there is nothing to answer it with.
-unsafe extern "C" fn converse(
-    n: c_int,
-    msgs: *mut *const ffi::pam_message,
-    out: *mut *mut ffi::pam_response,
-    _data: *mut c_void,
-) -> c_int {
-    if n <= 0 || msgs.is_null() || out.is_null() {
-        return ffi::PAM_CONV_ERR;
-    }
-    let mut lines = Vec::new();
-    for i in 0..n as usize {
-        // SAFETY: libpam passes `n` (> 0) live messages behind non-null `msgs`.
-        let m = unsafe { &**msgs.add(i) };
-        let tag = match m.msg_style {
-            ffi::PAM_TEXT_INFO => 'I',
-            ffi::PAM_ERROR_MSG => 'E',
-            _ => return ffi::PAM_CONV_ERR,
+impl Converse for FingerLines {
+    fn prompt(&mut self, kind: AuthKind, text: &str) -> Option<zeroize::Zeroizing<String>> {
+        let tag = match kind {
+            AuthKind::Info => 'I',
+            AuthKind::Error => 'E',
+            AuthKind::Visible | AuthKind::Secret => return None,
         };
-        if m.msg.is_null() {
-            continue;
+        let mut out = std::io::stdout().lock();
+        for l in text.lines() {
+            let _ = writeln!(out, "{tag} {l}");
         }
-        // SAFETY: libpam's message text is a NUL-terminated string.
-        let text = unsafe { CStr::from_ptr(m.msg as *const c_char) }.to_string_lossy();
-        for l in clean_prompt(&text) {
-            lines.push(format!("{tag} {l}\n"));
-        }
+        let _ = out.flush();
+        None
     }
-    let mut stdout = std::io::stdout().lock();
-    for l in lines {
-        let _ = stdout.write_all(l.as_bytes());
-    }
-    let _ = stdout.flush();
-    // SAFETY: plain allocation of an all-null answer array, which libpam frees.
-    let resp = unsafe { libc::calloc(n as usize, std::mem::size_of::<ffi::pam_response>()) }
-        as *mut ffi::pam_response;
-    if resp.is_null() {
-        return ffi::PAM_BUF_ERR;
-    }
-    // SAFETY: `out` is non-null (checked above) and is libpam's result slot.
-    unsafe { *out = resp };
-    ffi::PAM_SUCCESS
 }
 
 #[cfg(test)]

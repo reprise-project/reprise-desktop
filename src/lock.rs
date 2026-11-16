@@ -3,9 +3,8 @@
 
 use reprisekit::logon::Logon;
 use repriselogin::add_prompt_lines;
-use reprisepam::ffi;
-use std::cell::{Cell, RefCell};
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use repriselogin::greeter::AuthKind;
+use reprisepam::{Converse, Pam, PamError, ffi};
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -153,110 +152,98 @@ impl Verifier for PamVerifier {
     fn verify(&self, user: &str, password: &str, ask: &mut Ask<'_>) -> Verdict {
         // The console's unlock runs no account stack: an expired password, /run/nologin or a time
         // rule would fail after the right password and leave the live session behind it unreachable.
-        let service = self.service;
-        let (Ok(cservice), Ok(cuser)) = (CString::new(service), CString::new(user)) else {
-            return Err(Vec::new());
+        let mut creds = Credentials::new(user, password, ask);
+        let checked = match Pam::start(self.service, user, Box::new(&mut creds)) {
+            Ok(mut pam) => {
+                authenticate_then_account(self.account, pam.authenticate(), || pam.acct_mgmt())
+            }
+            Err(e) => {
+                log::error!("pam: cannot start service {}: {e}", self.service);
+                return Err(Vec::new());
+            }
         };
-        let mut creds = Credentials::new(cuser, password, ask);
-        let conv = ffi::pam_conv {
-            conv: Some(converse),
-            appdata_ptr: &mut creds as *mut Credentials<'_> as *mut c_void,
-        };
-        let mut handle: *mut ffi::pam_handle_t = std::ptr::null_mut();
-        // SAFETY: every pointer is to a live local or a NUL-terminated
-        // CString; `creds` outlives the handle, which pam_end closes below.
-        let rc =
-            unsafe { ffi::pam_start(cservice.as_ptr(), creds.user.as_ptr(), &conv, &mut handle) };
-        if rc != ffi::PAM_SUCCESS || handle.is_null() {
-            log::error!(
-                "pam: cannot start service {service}: {}",
-                pam_text(handle, rc)
-            );
-            return Err(Vec::new());
+        if let Err(e) = &checked {
+            log::warn!("pam: refused {user}: {e} {:?}", creds.notices);
         }
-        let checked = authenticate_then_account(
-            self.account,
-            // SAFETY: `handle` is the live handle pam_start just returned.
-            || unsafe { ffi::pam_authenticate(handle, 0) },
-            // SAFETY: as above; pam_authenticate succeeded on it.
-            || unsafe { ffi::pam_acct_mgmt(handle, 0) },
-        );
-        let rc = match checked {
-            Ok(Passed::Current) => ffi::PAM_SUCCESS,
-            Ok(Passed::Expired) => ffi::PAM_NEW_AUTHTOK_REQD,
-            Err(rc) => rc,
-        };
-        if checked.is_err() {
-            log::warn!(
-                "pam: refused {user}: {} {:?}",
-                pam_text(handle, rc),
-                creds.notices.borrow()
-            );
-        }
-        // SAFETY: `handle` is live and not used after this call.
-        unsafe { ffi::pam_end(handle, rc) };
-        checked.map_err(|_| creds.notices.take())
+        checked.map_err(|_| creds.notices)
     }
 }
 
-/// `authenticate`, then with `account` `acct_mgmt`: the first failure's code, or the password's
+/// `authenticated`, then with `account` `acct_mgmt`: the first failure, or the password's
 /// standing.
 fn authenticate_then_account(
     account: bool,
-    authenticate: impl FnOnce() -> c_int,
-    acct_mgmt: impl FnOnce() -> c_int,
-) -> Result<Passed, c_int> {
-    match authenticate() {
-        ffi::PAM_SUCCESS if account => match acct_mgmt() {
-            ffi::PAM_SUCCESS => Ok(Passed::Current),
-            // The password is right and only its age is at fault; the session it unlocks runs.
-            ffi::PAM_NEW_AUTHTOK_REQD => Ok(Passed::Expired),
-            rc => Err(rc),
-        },
-        ffi::PAM_SUCCESS => Ok(Passed::Current),
-        rc => Err(rc),
+    authenticated: Result<(), PamError>,
+    acct_mgmt: impl FnOnce() -> Result<(), PamError>,
+) -> Result<Passed, PamError> {
+    authenticated?;
+    if !account {
+        return Ok(Passed::Current);
+    }
+    match acct_mgmt() {
+        Ok(()) => Ok(Passed::Current),
+        // The password is right and only its age is at fault; the session it unlocks runs.
+        Err(e) if e.code == ffi::PAM_NEW_AUTHTOK_REQD => Ok(Passed::Expired),
+        Err(e) => Err(e),
     }
 }
 
-/// What the conversation answers with, across every `converse` call of
-/// one `pam_authenticate`. The password is zeroed with it. `notices`
-/// collects the error and info text PAM sends for the screen.
+/// What the conversation answers with, across every round of one `pam_authenticate`. The
+/// password is zeroed with it. `notices` collects the error and info text PAM sends for the
+/// screen.
 struct Credentials<'a> {
-    user: CString,
-    password: Zeroizing<Vec<u8>>,
-    notices: RefCell<Vec<String>>,
+    user: String,
+    password: Zeroizing<String>,
+    notices: Vec<String>,
     /// A prompt has been answered.
-    prompted: Cell<bool>,
+    prompted: bool,
     /// The password has been handed out.
-    password_sent: Cell<bool>,
-    ask: RefCell<&'a mut Ask<'a>>,
+    password_sent: bool,
+    ask: &'a mut Ask<'a>,
 }
 
 impl<'a> Credentials<'a> {
-    fn new(user: CString, password: &str, ask: &'a mut Ask<'a>) -> Credentials<'a> {
+    fn new(user: &str, password: &str, ask: &'a mut Ask<'a>) -> Credentials<'a> {
         Credentials {
-            user,
-            password: Zeroizing::new(password.as_bytes().to_vec()),
-            notices: RefCell::new(Vec::new()),
-            prompted: Cell::new(false),
-            password_sent: Cell::new(false),
-            ask: RefCell::new(ask),
+            user: user.to_owned(),
+            password: Zeroizing::new(password.to_owned()),
+            notices: Vec::new(),
+            prompted: false,
+            password_sent: false,
+            ask,
         }
     }
 
     /// The answer to the next prompt: the login name for a login prompt
     /// that comes first, the password for the first blind one, and `ask`'s
     /// answer to any further one (a one-time code, a second password).
-    fn answer(&self, echo: bool, text: &str) -> Option<Zeroizing<Vec<u8>>> {
-        let first = !self.prompted.replace(true);
+    fn answer(&mut self, echo: bool, text: &str) -> Option<Zeroizing<String>> {
+        let first = !std::mem::replace(&mut self.prompted, true);
         if echo && first && is_login_prompt(text) {
-            return Some(Zeroizing::new(self.user.as_bytes().to_vec()));
+            return Some(Zeroizing::new(self.user.clone()));
         }
-        if !echo && !self.password_sent.replace(true) {
+        if !echo && !std::mem::replace(&mut self.password_sent, true) {
             return Some(self.password.clone());
         }
-        let a = (self.ask.borrow_mut())(text, echo)?;
-        Some(Zeroizing::new(a.as_bytes().to_vec()))
+        (self.ask)(text, echo)
+    }
+}
+
+impl Converse for Credentials<'_> {
+    fn prompt(&mut self, kind: AuthKind, text: &str) -> Option<Zeroizing<String>> {
+        let echo = match kind {
+            AuthKind::Visible => true,
+            AuthKind::Secret => false,
+            AuthKind::Info | AuthKind::Error => {
+                add_prompt_lines(&mut self.notices, text);
+                return None;
+            }
+        };
+        let answer = self.answer(echo, text);
+        if answer.is_none() {
+            log::warn!("pam: no answer for a further prompt, ending the conversation");
+        }
+        answer
     }
 }
 
@@ -264,101 +251,6 @@ impl<'a> Credentials<'a> {
 fn is_login_prompt(text: &str) -> bool {
     let t = text.trim().to_lowercase();
     ["login:", "username:", "user name:"].contains(&t.as_str())
-}
-
-fn pam_text(handle: *mut ffi::pam_handle_t, rc: c_int) -> String {
-    if handle.is_null() {
-        return format!("code {rc}");
-    }
-    // SAFETY: pam_strerror returns a static string for any code.
-    unsafe { CStr::from_ptr(ffi::pam_strerror(handle, rc)) }
-        .to_string_lossy()
-        .into_owned()
-}
-
-/// libpam's conversation callback. Each answer is a malloc'd copy libpam
-/// frees itself; the password copy is one more place the secret sits
-/// until then (see the module doc).
-unsafe extern "C" fn converse(
-    n: c_int,
-    msgs: *mut *const ffi::pam_message,
-    out: *mut *mut ffi::pam_response,
-    data: *mut c_void,
-) -> c_int {
-    if n <= 0 || msgs.is_null() || out.is_null() || data.is_null() {
-        return ffi::PAM_CONV_ERR;
-    }
-    // SAFETY: `data` is the `appdata_ptr` from `verify`: a live `Credentials`
-    // that outlives the PAM handle.
-    let creds = unsafe { &*(data as *const Credentials<'_>) };
-    let n = n as usize;
-    // SAFETY: plain allocation; the result is null-checked below.
-    let resp = unsafe { libc::calloc(n, std::mem::size_of::<ffi::pam_response>()) }
-        as *mut ffi::pam_response;
-    if resp.is_null() {
-        return ffi::PAM_BUF_ERR;
-    }
-    for i in 0..n {
-        // Linux-PAM hands an array of messages; `msgs` points at its first.
-        // SAFETY: libpam passes `n` (> 0) live messages behind non-null `msgs`.
-        let m = unsafe { &**msgs.add(i) };
-        let answer = match m.msg_style {
-            style @ (ffi::PAM_PROMPT_ECHO_ON | ffi::PAM_PROMPT_ECHO_OFF) => {
-                let text = match m.msg.is_null() {
-                    true => Default::default(),
-                    // SAFETY: libpam's message text is a NUL-terminated string.
-                    false => unsafe { CStr::from_ptr(m.msg) }.to_string_lossy(),
-                };
-                let Some(a) = creds.answer(style == ffi::PAM_PROMPT_ECHO_ON, &text) else {
-                    log::warn!("pam: no answer for a further prompt, ending the conversation");
-                    // SAFETY: the first `i` answers are null or calloc'd
-                    // buffers from this loop, none handed to libpam.
-                    unsafe { free_answers(resp, i) };
-                    return ffi::PAM_CONV_ERR;
-                };
-                Some(a)
-            }
-            ffi::PAM_ERROR_MSG | ffi::PAM_TEXT_INFO if !m.msg.is_null() => {
-                // SAFETY: libpam's message text is a NUL-terminated string.
-                let text = unsafe { CStr::from_ptr(m.msg) }.to_string_lossy();
-                add_prompt_lines(&mut creds.notices.borrow_mut(), &text);
-                None
-            }
-            _ => None,
-        };
-        if let Some(a) = answer {
-            // SAFETY: plain allocation; the result is null-checked below.
-            let buf = unsafe { libc::calloc(a.len() + 1, 1) } as *mut u8;
-            if buf.is_null() {
-                // SAFETY: the first `i` answers are null or calloc'd
-                // buffers from this loop, none handed to libpam.
-                unsafe { free_answers(resp, i) };
-                return ffi::PAM_BUF_ERR;
-            }
-            // SAFETY: `buf` holds `a.len() + 1` bytes and `i < n` is in bounds
-            // of `resp`.
-            unsafe {
-                std::ptr::copy_nonoverlapping(a.as_ptr(), buf, a.len());
-                (*resp.add(i)).resp = buf as *mut c_char;
-            }
-        }
-    }
-    // SAFETY: `out` is non-null (checked above) and is libpam's result slot.
-    unsafe { *out = resp };
-    ffi::PAM_SUCCESS
-}
-
-/// # Safety
-/// `resp` is the array `converse` calloc'd, not yet handed to libpam, and
-/// each of its first `i` answers is null or a calloc'd buffer.
-unsafe fn free_answers(resp: *mut ffi::pam_response, i: usize) {
-    // SAFETY: the caller's contract.
-    unsafe {
-        for j in 0..i {
-            libc::free((*resp.add(j)).resp as *mut c_void);
-        }
-        libc::free(resp as *mut c_void);
-    }
 }
 
 /// Login name of the user running the compositor: the passwd entry for
@@ -476,6 +368,21 @@ mod tests {
     }
 
     use super::*;
+    use std::ffi::c_int;
+
+    fn status(code: c_int) -> Result<(), PamError> {
+        match code {
+            ffi::PAM_SUCCESS => Ok(()),
+            code => Err(PamError {
+                code,
+                text: String::new(),
+            }),
+        }
+    }
+
+    fn code(r: Result<Passed, PamError>) -> Result<Passed, c_int> {
+        r.map_err(|e| e.code)
+    }
 
     #[test]
     fn the_account_stack_runs_only_when_asked_and_after_a_good_password() {
@@ -484,29 +391,37 @@ mod tests {
             let account_ran = &account_ran;
             move || {
                 account_ran.set(true);
-                rc
+                status(rc)
             }
         };
         const ACCT_EXPIRED: c_int = 13;
-        let ok = || ffi::PAM_SUCCESS;
+        let ok = || status(ffi::PAM_SUCCESS);
         assert_eq!(
-            authenticate_then_account(true, ok, acct(ACCT_EXPIRED)),
+            code(authenticate_then_account(true, ok(), acct(ACCT_EXPIRED))),
             Err(ACCT_EXPIRED)
         );
         assert!(account_ran.take());
         assert_eq!(
-            authenticate_then_account(true, ok, acct(ffi::PAM_SUCCESS)),
+            code(authenticate_then_account(
+                true,
+                ok(),
+                acct(ffi::PAM_SUCCESS)
+            )),
             Ok(Passed::Current)
         );
         assert!(account_ran.take());
-        let wrong = || ffi::PAM_AUTH_ERR;
+        let wrong = || status(ffi::PAM_AUTH_ERR);
         assert_eq!(
-            authenticate_then_account(true, wrong, acct(ffi::PAM_SUCCESS)),
+            code(authenticate_then_account(
+                true,
+                wrong(),
+                acct(ffi::PAM_SUCCESS)
+            )),
             Err(ffi::PAM_AUTH_ERR)
         );
         assert!(!account_ran.take(), "a wrong password ends it");
         assert_eq!(
-            authenticate_then_account(false, ok, acct(ACCT_EXPIRED)),
+            code(authenticate_then_account(false, ok(), acct(ACCT_EXPIRED))),
             Ok(Passed::Current),
             "unlocking ignores the account"
         );
@@ -515,19 +430,23 @@ mod tests {
 
     #[test]
     fn a_right_password_that_must_be_changed_unlocks_and_says_so() {
-        let ok = || ffi::PAM_SUCCESS;
-        let expired = || ffi::PAM_NEW_AUTHTOK_REQD;
+        let ok = || status(ffi::PAM_SUCCESS);
+        let expired = || status(ffi::PAM_NEW_AUTHTOK_REQD);
         assert_eq!(
-            authenticate_then_account(true, ok, expired),
+            code(authenticate_then_account(true, ok(), expired)),
             Ok(Passed::Expired)
         );
         assert_eq!(
-            authenticate_then_account(true, expired, || ffi::PAM_SUCCESS),
+            code(authenticate_then_account(true, expired(), ok)),
             Err(ffi::PAM_NEW_AUTHTOK_REQD),
             "only the account step's word counts"
         );
         assert_eq!(
-            authenticate_then_account(true, || ffi::PAM_AUTH_ERR, expired),
+            code(authenticate_then_account(
+                true,
+                status(ffi::PAM_AUTH_ERR),
+                expired
+            )),
             Err(ffi::PAM_AUTH_ERR)
         );
     }
@@ -624,52 +543,22 @@ mod tests {
     }
 
     fn creds<'a>(ask: &'a mut Ask<'a>) -> Credentials<'a> {
-        Credentials::new(CString::new("someone").unwrap(), "hunter2", ask)
+        Credentials::new("someone", "hunter2", ask)
     }
 
     fn no_answer(_: &str, _: bool) -> Option<Zeroizing<String>> {
         None
     }
 
-    fn msg(msg_style: c_int, text: &CStr) -> ffi::pam_message {
-        ffi::pam_message {
-            msg_style,
-            msg: text.as_ptr(),
+    /// One round of the shared conversation callback over `msgs`: its code and the answers.
+    fn ask(creds: &mut Credentials<'_>, msgs: &[(c_int, &str)]) -> (c_int, Vec<Option<String>>) {
+        match reprisepam::run_conversation(creds, msgs) {
+            Ok(a) => {
+                let a = a.into_iter().map(|a| a.map(|a| a.to_string())).collect();
+                (ffi::PAM_SUCCESS, a)
+            }
+            Err(rc) => (rc, Vec::new()),
         }
-    }
-
-    fn ask(creds: &mut Credentials<'_>, msgs: &[ffi::pam_message]) -> (c_int, Vec<Option<String>>) {
-        let mut ptrs: Vec<*const ffi::pam_message> = msgs.iter().map(|m| m as *const _).collect();
-        let mut out: *mut ffi::pam_response = std::ptr::null_mut();
-        // SAFETY: the arguments are what libpam passes: `ptrs.len()` live
-        // messages, a live result slot and a live `Credentials`.
-        let rc = unsafe {
-            converse(
-                ptrs.len() as c_int,
-                ptrs.as_mut_ptr(),
-                &mut out,
-                creds as *mut Credentials<'_> as *mut c_void,
-            )
-        };
-        if out.is_null() {
-            return (rc, Vec::new());
-        }
-        // SAFETY: a non-null `out` is `converse`'s calloc'd array of
-        // `ptrs.len()` answers, each null or a calloc'd NUL-terminated
-        // string, and this caller owns it as libpam would.
-        let answers = unsafe {
-            let answers = (0..ptrs.len())
-                .map(|i| {
-                    let r = (*out.add(i)).resp;
-                    let a = (!r.is_null()).then(|| CStr::from_ptr(r).to_str().unwrap().to_owned());
-                    libc::free(r as *mut c_void);
-                    a
-                })
-                .collect();
-            libc::free(out as *mut c_void);
-            answers
-        };
-        (rc, answers)
     }
 
     /// The conversation answers an echo prompt with the login, a blind
@@ -679,10 +568,10 @@ mod tests {
         let mut none = no_answer;
         let mut creds = creds(&mut none);
         let msgs = [
-            msg(ffi::PAM_PROMPT_ECHO_ON, c"login:"),
-            msg(ffi::PAM_PROMPT_ECHO_OFF, c"Password:"),
-            msg(ffi::PAM_TEXT_INFO, c"note"),
-            msg(ffi::PAM_ERROR_MSG, c"Account locked."),
+            (ffi::PAM_PROMPT_ECHO_ON, "login:"),
+            (ffi::PAM_PROMPT_ECHO_OFF, "Password:"),
+            (ffi::PAM_TEXT_INFO, "note"),
+            (ffi::PAM_ERROR_MSG, "Account locked."),
         ];
         let (rc, answers) = ask(&mut creds, &msgs);
         assert_eq!(rc, ffi::PAM_SUCCESS);
@@ -690,7 +579,7 @@ mod tests {
             answers,
             [Some("someone".into()), Some("hunter2".into()), None, None]
         );
-        assert_eq!(creds.notices.take(), ["note", "Account locked."]);
+        assert_eq!(creds.notices, ["note", "Account locked."]);
     }
 
     #[test]
@@ -702,14 +591,14 @@ mod tests {
         };
         let mut creds = creds(&mut answer);
         let msgs = [
-            msg(ffi::PAM_PROMPT_ECHO_ON, c"Verification code: "),
-            msg(ffi::PAM_PROMPT_ECHO_OFF, c"Password:"),
+            (ffi::PAM_PROMPT_ECHO_ON, "Verification code: "),
+            (ffi::PAM_PROMPT_ECHO_OFF, "Password:"),
         ];
         let (rc, answers) = ask(&mut creds, &msgs);
         assert_eq!(rc, ffi::PAM_SUCCESS);
         assert_eq!(answers, [Some("123456".into()), Some("hunter2".into())]);
         drop(creds);
-        assert_eq!(asked, [("Verification code: ".to_string(), true)]);
+        assert_eq!(asked, [("Verification code:".to_string(), true)]);
     }
 
     /// A prompt after the password that `ask` has no answer for ends the
@@ -720,10 +609,10 @@ mod tests {
         for second in [ffi::PAM_PROMPT_ECHO_OFF, ffi::PAM_PROMPT_ECHO_ON] {
             let mut none = no_answer;
             let mut creds = creds(&mut none);
-            let (rc, answers) = ask(&mut creds, &[msg(ffi::PAM_PROMPT_ECHO_OFF, c"Password:")]);
+            let (rc, answers) = ask(&mut creds, &[(ffi::PAM_PROMPT_ECHO_OFF, "Password:")]);
             assert_eq!(rc, ffi::PAM_SUCCESS);
             assert_eq!(answers, [Some("hunter2".into())]);
-            let (rc, answers) = ask(&mut creds, &[msg(second, c"One-time code:")]);
+            let (rc, answers) = ask(&mut creds, &[(second, "One-time code:")]);
             assert_eq!(rc, ffi::PAM_CONV_ERR);
             assert_eq!(answers, []);
         }
@@ -731,8 +620,8 @@ mod tests {
         let mut none = no_answer;
         let mut creds = creds(&mut none);
         let msgs = [
-            msg(ffi::PAM_PROMPT_ECHO_ON, c"login:"),
-            msg(ffi::PAM_PROMPT_ECHO_ON, c"Code:"),
+            (ffi::PAM_PROMPT_ECHO_ON, "login:"),
+            (ffi::PAM_PROMPT_ECHO_ON, "Code:"),
         ];
         assert_eq!(ask(&mut creds, &msgs), (ffi::PAM_CONV_ERR, Vec::new()));
     }
@@ -748,13 +637,13 @@ mod tests {
         };
         let mut creds = creds(&mut answer);
         let msgs = [
-            msg(ffi::PAM_PROMPT_ECHO_OFF, c"Password:"),
-            msg(ffi::PAM_PROMPT_ECHO_ON, c"Verification code:"),
+            (ffi::PAM_PROMPT_ECHO_OFF, "Password:"),
+            (ffi::PAM_PROMPT_ECHO_ON, "Verification code:"),
         ];
         let (rc, answers) = ask(&mut creds, &msgs);
         assert_eq!(rc, ffi::PAM_SUCCESS);
         assert_eq!(answers, [Some("hunter2".into()), Some("answer 1".into())]);
-        let (rc, answers) = ask(&mut creds, &[msg(ffi::PAM_PROMPT_ECHO_OFF, c"PIN:")]);
+        let (rc, answers) = ask(&mut creds, &[(ffi::PAM_PROMPT_ECHO_OFF, "PIN:")]);
         assert_eq!(rc, ffi::PAM_SUCCESS);
         assert_eq!(answers, [Some("answer 2".into())]);
         drop(creds);
@@ -784,25 +673,10 @@ mod tests {
 
     #[test]
     fn libpam_starts_a_handle_through_the_declared_bindings() {
-        let service = CString::new(PamVerifier::lock_service()).unwrap();
-        let user = CString::new("nobody").unwrap();
-        let conv = ffi::pam_conv {
-            conv: Some(converse),
-            appdata_ptr: std::ptr::null_mut(),
-        };
-        let mut handle: *mut ffi::pam_handle_t = std::ptr::null_mut();
-        // SAFETY: live CStrings and locals; `handle` is closed below and
-        // never authenticated, so `converse` is not called.
-        let rc = unsafe { ffi::pam_start(service.as_ptr(), user.as_ptr(), &conv, &mut handle) };
-        assert_eq!(rc, ffi::PAM_SUCCESS, "pam_start returns PAM_SUCCESS");
-        assert!(!handle.is_null(), "pam_start fills in a handle");
-        let text = pam_text(handle, ffi::PAM_SUCCESS);
-        assert!(
-            !text.is_empty() && text != "code 0",
-            "pam_strerror names the code"
-        );
-        // SAFETY: `handle` is live and not used after this call.
-        assert_eq!(unsafe { ffi::pam_end(handle, rc) }, ffi::PAM_SUCCESS);
+        let mut none = no_answer;
+        let mut creds = creds(&mut none);
+        let pam = Pam::start(PamVerifier::lock_service(), "nobody", Box::new(&mut creds));
+        assert!(pam.is_ok(), "pam_start returns PAM_SUCCESS and a handle");
     }
 
     #[test]

@@ -1,3 +1,9 @@
+mod conv;
+mod handle;
+
+pub use conv::{Converse, run_conversation};
+pub use handle::{Pam, PamError};
+
 #[allow(non_camel_case_types)]
 pub mod ffi {
     use std::ffi::{c_char, c_int, c_void};
