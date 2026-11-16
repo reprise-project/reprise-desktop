@@ -457,6 +457,9 @@ struct SettingsApp {
     /// AccountsService taking the language Apply wrote; the sheet closes once it ends.
     language_set: Option<Receiver<()>>,
     quit_after_language: bool,
+    /// The sheet closed while localed or boltd waits on a password prompt: the window is gone,
+    /// and Settings ends once they answered and any error they brought is read.
+    closing: bool,
     /// The page showed at the last look, so an opening is told from a stay.
     region_open: bool,
     contents: contentshost::Contents,
@@ -767,6 +770,7 @@ impl SettingsApp {
             region_set: None,
             language_set: None,
             quit_after_language: false,
+            closing: false,
             region_open: false,
             contents: contentshost::Contents::default(),
             events: eventshost::Events::default(),
@@ -1105,6 +1109,7 @@ impl App for SettingsApp {
         reply.redraw |= self.ensure_providers();
         reply.redraw |= self.ensure_away_devices();
         self.prime_icons(ctx);
+        reply.quit |= self.closed();
         if reply.quit && self.hold_quit() {
             reply.quit = false;
         }
@@ -1155,6 +1160,10 @@ impl repriseapp::Extended for SettingsApp {
     /// (`units().px(theme px)`); a theme already at the text size would grow them twice.
     fn text_sized(&self) -> bool {
         false
+    }
+
+    fn hidden(&self) -> bool {
+        self.closing
     }
 
     /// Browse... covers the chooser it came from, and an error the dialog that is up.

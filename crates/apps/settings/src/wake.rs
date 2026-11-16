@@ -48,6 +48,8 @@ impl SettingsApp {
             self.want_preview();
         }
         while let Some(req) = self.requests.as_ref().and_then(instance::Requests::next) {
+            // A start while the sheet waits to end brings it back, and it stays.
+            self.closing = false;
             changed |= self.request(&req);
             activate = Some((repriseapp::MAIN, req.handoff));
         }
@@ -161,6 +163,7 @@ impl SettingsApp {
             changed = true;
             quit |= close;
         }
+        quit |= self.closed();
         if quit && self.hold_quit() {
             quit = false;
         }
@@ -224,7 +227,8 @@ impl SettingsApp {
     }
 
     /// Hand a quit to the first job the sheet waits on before it closes: a login save, the
-    /// proxy's or the language's call. False when none runs.
+    /// proxy's or the language's call, or localed or boltd, which hide the sheet meanwhile.
+    /// False when none runs.
     pub(crate) fn hold_quit(&mut self) -> bool {
         if let Some(s) = &mut self.login_job {
             s.quit = true;
@@ -232,10 +236,20 @@ impl SettingsApp {
             self.proxy.quit = true;
         } else if self.language_set.is_some() {
             self.quit_after_language = true;
+        } else if self.region_set.is_some() || self.thunderbolt.job.is_some() {
+            self.closing = true;
         } else {
             return false;
         }
         true
+    }
+
+    /// A close held for localed or boltd is due: both answered, and no error is left to read.
+    pub(crate) fn closed(&self) -> bool {
+        self.closing
+            && self.region_set.is_none()
+            && self.thunderbolt.job.is_none()
+            && !self.error.is_shown()
     }
 
     pub(crate) fn request(&mut self, req: &instance::Request) -> bool {
