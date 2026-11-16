@@ -204,25 +204,50 @@ impl MachineConfig {
 
     /// [`MachineConfig::parse`], failing with the error when `text` isn't TOML.
     pub fn parse_toml(text: &str) -> Result<(MachineConfig, Vec<String>), String> {
+        Self::read(text, None)
+    }
+
+    /// [`MachineConfig::parse_toml`] for a reread while `last` runs: a `[login]` or
+    /// `[remote_desktop]` key whose value can't be used keeps its value in `last` instead of
+    /// taking its default, and so does such a table that isn't a table.
+    pub fn parse_over(
+        text: &str,
+        last: &MachineConfig,
+    ) -> Result<(MachineConfig, Vec<String>), String> {
+        Self::read(text, Some(last))
+    }
+
+    fn read(
+        text: &str,
+        last: Option<&MachineConfig>,
+    ) -> Result<(MachineConfig, Vec<String>), String> {
         let mut config = MachineConfig::default();
         let mut warnings = Vec::new();
         let table = text
             .parse::<toml::Table>()
             .map_err(|e| one_line(&e.to_string()))?;
-        if let Some(login) = section(&table, "login", &mut warnings) {
-            for (key, value) in login {
-                if let Err(w) = config.login.set(key, value) {
-                    warnings.push(format!("login.{key}: {w}"));
-                }
-            }
-        }
-        if let Some(remote) = section(&table, "remote_desktop", &mut warnings) {
-            for (key, value) in remote {
-                if let Err(w) = config.remote.set(key, value) {
-                    warnings.push(format!("remote_desktop.{key}: {w}"));
-                }
-            }
-        }
+        // `to_toml` writes every value that isn't its default, so a key it leaves out was at its
+        // default in `last`.
+        let base: toml::Table = last
+            .and_then(|l| l.to_toml().parse().ok())
+            .unwrap_or_default();
+        let mut read = Section {
+            table: &table,
+            base: &base,
+            warnings: &mut warnings,
+        };
+        read.apply(
+            "login",
+            &mut config.login,
+            last.map(|l| &l.login),
+            LoginConfig::set,
+        );
+        read.apply(
+            "remote_desktop",
+            &mut config.remote,
+            last.map(|l| &l.remote),
+            MachineRemote::set,
+        );
         if let Some(outputs) = table.get("outputs") {
             config.outputs = outputs::parse(outputs, &mut warnings);
         }
@@ -257,6 +282,48 @@ impl MachineConfig {
         }
         outputs::render(&mut out, &self.outputs);
         out
+    }
+}
+
+/// One read of a file's tables, over `base`, the last settings as [`MachineConfig::to_toml`]
+/// writes them (empty on a first read).
+struct Section<'a> {
+    table: &'a toml::Table,
+    base: &'a toml::Table,
+    warnings: &'a mut Vec<String>,
+}
+
+impl Section<'_> {
+    /// Sets `into` from table `name`'s keys with `set`. A key it can't use takes its value in
+    /// `base`, and a `name` that isn't a table leaves `into` as `last`.
+    fn apply<S: Clone>(
+        &mut self,
+        name: &str,
+        into: &mut S,
+        last: Option<&S>,
+        set: fn(&mut S, &str, &toml::Value) -> Result<(), String>,
+    ) {
+        let Some(keys) = section(self.table, name, self.warnings) else {
+            if let Some(last) = last.filter(|_| self.table.contains_key(name)) {
+                *into = last.clone();
+            }
+            return;
+        };
+        let base = self.base.get(name).and_then(toml::Value::as_table);
+        for (key, value) in keys {
+            let Err(w) = set(into, key, value) else {
+                continue;
+            };
+            let kept = base
+                .and_then(|b| b.get(key))
+                .is_some_and(|v| set(into, key, v).is_ok());
+            let keeps = if kept {
+                "; it keeps its last value"
+            } else {
+                ""
+            };
+            self.warnings.push(format!("{name}.{key}: {w}{keeps}"));
+        }
     }
 }
 
@@ -403,6 +470,43 @@ mod tests {
         assert!(!config.login.show_users, "the other keys still apply");
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("aqua"), "{warnings:?}");
+    }
+
+    #[test]
+    fn a_reread_keeps_the_last_value_of_a_key_it_cannot_use() {
+        let (last, _) = MachineConfig::parse(
+            "[login]\ninterface = \"blue\"\n\
+             [remote_desktop]\nenabled = true\nport = 3390\nmax_sessions = 3\n",
+        );
+        let (config, warnings) = MachineConfig::parse_over(
+            "[login]\ninterface = \"aqua\"\n\
+             [remote_desktop]\nenabled = \"yes\"\nport = 3391\nmax_sessions = 0\n",
+            &last,
+        )
+        .unwrap();
+        assert!(config.remote.enabled, "a typo leaves remote logins on");
+        assert_eq!(config.remote.port, 3391, "a good value applies");
+        assert_eq!(config.remote.max_sessions, 3);
+        assert_eq!(config.login.interface, Some(Interface::Blue));
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .all(|w| w.ends_with("; it keeps its last value")),
+            "{warnings:?}"
+        );
+
+        let (config, _) =
+            MachineConfig::parse_over("[remote_desktop]\nport = 3391\n", &last).unwrap();
+        assert!(
+            !config.remote.enabled,
+            "a key taken out reads at its default"
+        );
+        let (config, _) = MachineConfig::parse_over("remote_desktop = 1\n", &last).unwrap();
+        assert_eq!(
+            config.remote, last.remote,
+            "a table that is no table keeps the last"
+        );
     }
 
     #[test]

@@ -187,8 +187,11 @@ reprise-login starts. `sudo systemctl restart reprise-login` applies
 everything, and running sessions keep running. systemd starts it at most
 twice in 30 s, so a third start within that time leaves a text login on
 tty1 instead ([install.md](install.md#login-manager) says how to recover).
-A missing file gives the defaults. A key with a value it can't use keeps
-its default and an unknown key is skipped. A file that isn't TOML or can't
+A missing file gives the defaults. A key with a value it can't use takes
+its default at start-up and keeps its last value on a reload, so a typo in
+`enabled` doesn't turn remote logins off; `reprise-login-rdp` reads the
+file afresh when it starts, so one started then stays off. An unknown key
+is skipped. A file that isn't TOML or can't
 be read gives every default at start-up, and a reload of it changes nothing:
 the last settings stay. The journal names each (`journalctl -b -u
 reprise-login`).
