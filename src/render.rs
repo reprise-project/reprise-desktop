@@ -61,6 +61,28 @@ pub fn clear_color(colors: &reprisekit::theme::ColorScheme) -> Color32F {
 /// left out unless `with_cursor`.
 pub fn output_elements(
     renderer: &mut GlesRenderer,
+    scene: Parts<'_>,
+    output: &Output,
+    origin: Point<i32, Physical>,
+    with_cursor: bool,
+) -> Vec<OutputElement> {
+    let mut out: Vec<OutputElement> = (crate::nightlight::tint::element(output, origin)
+        .map(OutputElement::Tint))
+    .into_iter()
+    .collect();
+    out.extend(untinted_elements(
+        renderer,
+        scene,
+        output,
+        origin,
+        with_cursor,
+    ));
+    out
+}
+
+/// [`output_elements`] without `output`'s night light pass, for a copy that draws its own.
+pub fn untinted_elements(
+    renderer: &mut GlesRenderer,
     mut scene: Parts<'_>,
     output: &Output,
     origin: Point<i32, Physical>,
@@ -72,7 +94,6 @@ pub fn output_elements(
     let scale = Scale::from(output.current_scale().fractional_scale());
     let at = |p: Point<f64, Logical>| (p - geo.loc.to_f64()).to_physical(scale) - origin.to_f64();
     let mut out = Vec::new();
-    out.extend(crate::nightlight::tint::element(output, origin).map(OutputElement::Tint));
 
     if with_cursor && geo.to_f64().contains(scene.pointer) {
         let pointer = at(scene.pointer);

@@ -134,8 +134,8 @@ impl State {
 }
 
 /// What a copy of a different size shows: `source`'s frame (its scene, and its pointer when
-/// `with_cursor`, drawn into a texture at its own size and scale) fitted onto `target`'s from
-/// `origin`, the bands left to the clear colour.
+/// `with_cursor`, drawn into a texture at its own size and scale without its night light) fitted
+/// onto `target`'s from `origin` under `target`'s night light, the bands left to the clear colour.
 pub fn elements(
     renderer: &mut GlesRenderer,
     frames: &mut CopyFrames,
@@ -166,7 +166,8 @@ pub fn elements(
         },
     };
     let frame = frames.0.entry(name).or_insert(frame);
-    let inner = crate::render::output_elements(renderer, parts, source, (0, 0).into(), with_cursor);
+    let inner =
+        crate::render::untinted_elements(renderer, parts, source, (0, 0).into(), with_cursor);
     match frame.target.render(renderer, &inner) {
         Ok(damage) => frame.damage.add(damage),
         Err(e) => log::warn!("{}: copy of {}: {e}", target.name(), source.name()),
@@ -181,24 +182,27 @@ pub fn elements(
         .into();
     let whole = Rectangle::from_size((size.w, size.h).into());
     let texture = frame.target.texture();
-    vec![OutputElement::Zoom(
-        TextureRenderElement::from_texture_with_damage(
-            frame.id.clone(),
-            renderer.context_id(),
-            (at.loc - origin).to_f64(),
-            texture.clone(),
-            1,
-            Transform::Normal,
-            None,
-            Some(Rectangle::from_size(
-                (f64::from(size.w), f64::from(size.h)).into(),
-            )),
-            Some(shown.to_i32_round()),
-            Some(vec![whole]),
-            frame.damage.snapshot(),
-            Kind::Unspecified,
-        ),
-    )]
+    let tint = crate::nightlight::tint::element(target, origin).map(OutputElement::Tint);
+    tint.into_iter()
+        .chain([OutputElement::Zoom(
+            TextureRenderElement::from_texture_with_damage(
+                frame.id.clone(),
+                renderer.context_id(),
+                (at.loc - origin).to_f64(),
+                texture.clone(),
+                1,
+                Transform::Normal,
+                None,
+                Some(Rectangle::from_size(
+                    (f64::from(size.w), f64::from(size.h)).into(),
+                )),
+                Some(shown.to_i32_round()),
+                Some(vec![whole]),
+                frame.damage.snapshot(),
+                Kind::Unspecified,
+            ),
+        )])
+        .collect()
 }
 
 #[cfg(test)]
@@ -303,6 +307,51 @@ mod tests {
         assert_eq!(clear, Color32F::BLACK, "black bands");
         let (at, _) = shot((0, 100));
         assert_eq!(at, [r(0, 52, 1280, 720)], "a region from 0,100");
+    }
+
+    #[test]
+    fn a_copy_of_another_size_wears_its_own_night_light_not_its_sources() {
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            reprisekit::pins::skipped("no renderer");
+            return;
+        };
+        let (mut h, a, b) = copied((1280, 1024));
+        let mut frame = |h: &mut Harness| {
+            let s = &mut h.state;
+            let parts = Parts {
+                scene: &s.scene,
+                cursor: &s.cursor,
+                cursors: &mut s.cursors,
+                pointer: Point::default(),
+            };
+            let shown = (&a, &b);
+            let elements = super::elements(
+                &mut renderer,
+                &mut s.copy_frames,
+                parts,
+                shown,
+                (0, 0).into(),
+                false,
+            );
+            let ids: Vec<_> = elements.iter().map(|e| e.id().clone()).collect();
+            drop(elements);
+            let f = s.copy_frames.0.get_mut("DP-2").unwrap();
+            let picture = f.target.read(&mut renderer).unwrap();
+            (ids, picture.get(100, 100))
+        };
+        let (_, plain) = frame(&mut h);
+        crate::nightlight::tint::set(&a, Some([1.0, 0.5, 0.25]));
+        let (ids, under_source) = frame(&mut h);
+        assert_eq!(
+            under_source, plain,
+            "the source's night light stays off the copy"
+        );
+        assert_eq!(ids.len(), 1, "the fitted frame alone");
+        crate::nightlight::tint::set(&b, Some([1.0, 0.5, 0.25]));
+        let own = crate::nightlight::tint::element(&b, (0, 0).into()).unwrap();
+        let (ids, _) = frame(&mut h);
+        assert_eq!(ids.len(), 2);
+        assert_eq!(&ids[0], own.id(), "the copy's own night light in front");
     }
 
     #[test]
