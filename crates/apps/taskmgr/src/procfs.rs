@@ -1,7 +1,6 @@
 //! What `/proc` says of the processes, the CPU time counters and memory. The parsers take the
 //! files' text; [`read_process`] and friends read them from a root, `/proc` outside tests.
 
-use std::collections::HashMap;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -121,18 +120,6 @@ pub fn parse_cmdline(b: &[u8]) -> String {
     let s = String::from_utf8_lossy(b);
     let args: Vec<&str> = s.split('\0').filter(|a| !a.is_empty()).collect();
     args.join(" ")
-}
-
-/// `/etc/passwd`'s user names by uid.
-pub fn parse_passwd(s: &str) -> HashMap<u32, String> {
-    s.lines()
-        .filter_map(|l| {
-            let mut f = l.split(':');
-            let name = f.next()?;
-            let uid = f.nth(1)?.parse().ok()?;
-            Some((uid, name.to_string()))
-        })
-        .collect()
 }
 
 /// A process as read: its stat line and its owner.
@@ -257,13 +244,6 @@ mod tests {
                     write_bytes: 8192\ncancelled_write_bytes: 0\n";
         assert_eq!(parse_io(text), Some(12288));
         assert_eq!(parse_io("rchar: 900\n"), None);
-    }
-
-    #[test]
-    fn passwd_names_users_by_uid() {
-        let m = parse_passwd("root:x:0:0::/root:/bin/bash\nu:x:1000:1000:U:/home/u:/bin/fish\n");
-        assert_eq!(m[&1000], "u");
-        assert_eq!(m[&0], "root");
     }
 
     #[test]
