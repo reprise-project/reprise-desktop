@@ -12,14 +12,12 @@ description = "Task Manager: running programs, processes, and CPU and memory his
 workspace = true
 
 [dependencies]
-reprisexdg = { path = "../../reprisexdg" }
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisefs = { path = "../../reprisefs" }
 reprisebus = { path = "../../reprisebus" }
 repriseconf = { path = "../../repriseconf" }
 serde = { workspace = true, features = ["derive"] }
-toml.workspace = true
 libc.workspace = true
 log.workspace = true
 wayland-client.workspace = true

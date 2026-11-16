@@ -12,13 +12,11 @@ description = "Volume Control: the Reprise mixer window"
 workspace = true
 
 [dependencies]
-reprisexdg = { path = "../../reprisexdg" }
 repriseapp = { path = "../../repriseapp" }
 repriseaudio = { path = "../../repriseaudio" }
 repriseconf = { path = "../../repriseconf" }
 reprisekit = { path = "../../reprisekit" }
 serde = { workspace = true, features = ["derive"] }
-toml.workspace = true
 log.workspace = true
 reprisebus = { path = "../../reprisebus" }
 

@@ -565,6 +565,7 @@ pub mod projection;
 pub mod recording;
 pub mod remote;
 pub mod search;
+pub mod statefile;
 pub mod welcome;
 
 pub mod system_icons {

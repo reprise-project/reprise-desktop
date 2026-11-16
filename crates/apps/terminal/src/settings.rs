@@ -120,18 +120,12 @@ pub struct State {
 }
 
 pub fn state_path() -> PathBuf {
-    reprisexdg::state_home()
-        .unwrap_or_default()
-        .join("reprise")
-        .join("terminal.toml")
+    repriseconf::statefile::path("terminal")
 }
 
 impl State {
     pub fn load(path: &Path) -> State {
-        let state: State = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|t| toml::from_str(&t).ok())
-            .unwrap_or_default();
+        let state: State = repriseconf::statefile::load(path);
         State {
             window: state
                 .window
@@ -140,12 +134,7 @@ impl State {
     }
 
     pub fn save(&self, path: &Path) {
-        let written = toml::to_string(self)
-            .map_err(io::Error::other)
-            .and_then(|text| repriseconf::write_atomic(path, &text));
-        if let Err(e) = written {
-            log::warn!("{}: {e}", path.display());
-        }
+        repriseconf::statefile::save(path, self);
     }
 }
 

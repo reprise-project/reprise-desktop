@@ -2,7 +2,6 @@
 //! picks and the Processes columns.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -20,39 +19,6 @@ pub struct State {
     pub widths: BTreeMap<String, i32>,
 }
 
-impl State {
-    pub fn path() -> PathBuf {
-        reprisexdg::state_home()
-            .unwrap_or_default()
-            .join("reprise")
-            .join("taskmgr.toml")
-    }
-
-    pub fn load(path: &Path) -> State {
-        let Ok(text) = std::fs::read_to_string(path) else {
-            return State::default();
-        };
-        toml::from_str(&text).unwrap_or_else(|e| {
-            log::warn!("task manager state: ignoring {}: {e}", path.display());
-            State::default()
-        })
-    }
-
-    pub fn save(&self, path: &Path) {
-        match toml::to_string(self) {
-            Ok(text) => {
-                if let Err(e) = repriseconf::write_atomic(path, &text) {
-                    log::warn!(
-                        "task manager state: could not write {}: {e}",
-                        path.display()
-                    );
-                }
-            }
-            Err(e) => log::warn!("task manager state: could not serialize: {e}"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,7 +27,11 @@ mod tests {
     fn the_state_round_trips_and_a_partial_file_keeps_the_rest() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("reprise").join("taskmgr.toml");
-        assert_eq!(State::load(&path), State::default(), "no file yet");
+        assert_eq!(
+            repriseconf::statefile::load::<State>(&path),
+            State::default(),
+            "no file yet"
+        );
         let s = State {
             on_top: true,
             speed: Speed::Low,
@@ -69,11 +39,11 @@ mod tests {
             columns: Some(vec!["name".into(), "command_line".into()]),
             widths: BTreeMap::from([("name".into(), 150)]),
         };
-        s.save(&path);
-        assert_eq!(State::load(&path), s);
+        repriseconf::statefile::save(&path, &s);
+        assert_eq!(repriseconf::statefile::load::<State>(&path), s);
         std::fs::write(&path, "speed = \"paused\"\n").unwrap();
         assert_eq!(
-            State::load(&path),
+            repriseconf::statefile::load::<State>(&path),
             State {
                 speed: Speed::Paused,
                 ..State::default()
@@ -81,7 +51,7 @@ mod tests {
         );
         std::fs::write(&path, "speed = 3\n").unwrap();
         assert_eq!(
-            State::load(&path),
+            repriseconf::statefile::load::<State>(&path),
             State::default(),
             "a bad file is ignored"
         );

@@ -12,16 +12,15 @@ description = "Explorer: browses the files and folders on your computer"
 workspace = true
 
 [dependencies]
-reprisexdg = { path = "../../reprisexdg" }
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisefs = { path = "../../reprisefs" }
 reprisebus = { path = "../../reprisebus" }
 repriseconf = { path = "../../repriseconf" }
 serde = { workspace = true, features = ["derive"] }
-toml.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+toml.workspace = true
 tempfile.workspace = true
 zbus.workspace = true

@@ -190,7 +190,7 @@ impl Volume {
 
     fn save(&self) {
         if let Some(path) = &self.state_path {
-            self.kept().save(path);
+            repriseconf::statefile::save(path, &self.kept());
         }
     }
 
@@ -835,8 +835,8 @@ pub fn main(args: Vec<std::ffi::OsString>) {
         View::Playback
     };
     let snapshot = repriseaudio::snapshot_now();
-    let path = State::path();
-    let mut app = Volume::new(view, snapshot, State::load(&path));
+    let path = repriseconf::statefile::path("volume");
+    let mut app = Volume::new(view, snapshot, repriseconf::statefile::load(&path));
     app.state_path = Some(path);
     repriseapp::run(Box::new(app)).unwrap_or_else(|e| e.exit());
 }
@@ -975,14 +975,18 @@ mod tests {
             }],
             ..Snapshot::default()
         };
-        let mut v = Volume::new(View::Playback, snap.clone(), State::load(&path));
+        let mut v = Volume::new(
+            View::Playback,
+            snap.clone(),
+            repriseconf::statefile::load(&path),
+        );
         v.state_path = Some(path.clone());
         let mut o = v.opts.clone();
         o.hidden.insert(view::app_key("mpv"));
         v.set_options(o, &test_ctx());
         v.command(title::OPTIONS, row::ADVANCED, &test_ctx());
 
-        let back = Volume::new(View::Playback, snap, State::load(&path));
+        let back = Volume::new(View::Playback, snap, repriseconf::statefile::load(&path));
         assert!(back.opts.advanced, "Advanced Controls stays on");
         let keys: Vec<&str> = back.mixer.columns.iter().map(|c| c.key.as_str()).collect();
         assert_eq!(keys, [view::MASTER], "mpv's column stays hidden");
