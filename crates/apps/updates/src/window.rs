@@ -1,6 +1,6 @@
 //! Software Updates window: a checked list of updates grouped by source
 //! (absent sources have no group), install progress, and Check Now /
-//! Install / Close. Unchecked updates stay unchecked across later checks.
+//! Install / Close, with Restart Now beside Install or in its place while a restart waits. Unchecked updates stay unchecked across later checks.
 //!
 //! The [`ListView`] is hosted beside the form; focus runs from the list
 //! through the form's tab stops and back.
@@ -37,6 +37,7 @@ const CHECK_W: i32 = 90;
 const CLOSE_X: i32 = CLIENT.0 - MARGIN - BUTTON_W;
 const ACT_W: i32 = 90;
 const ACT_X: i32 = CLOSE_X - BUTTON_GAP - ACT_W;
+const RESTART_X: i32 = ACT_X - BUTTON_GAP - ACT_W;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -55,6 +56,8 @@ pub struct Window {
     unchecked: BTreeSet<String>,
     list_focus: bool,
     act: Outcome,
+    /// Restart Now sits beside Install while a restart waits and there are updates to install.
+    restart_beside: bool,
 }
 
 fn button(label: &str, enabled: bool, default: bool) -> Control {
@@ -86,6 +89,11 @@ impl Window {
                 button("&Check Now", true, false),
             ),
             Item::new(
+                "restart",
+                Rect::new(RESTART_X, BTN_Y, ACT_W, BUTTON_H),
+                Control::Blank,
+            ),
+            Item::new(
                 "act",
                 Rect::new(ACT_X, BTN_Y, ACT_W, BUTTON_H),
                 button("&Install", false, true),
@@ -109,6 +117,7 @@ impl Window {
             unchecked: BTreeSet::new(),
             list_focus: true,
             act: Outcome::None,
+            restart_beside: false,
         }
     }
 
@@ -194,18 +203,27 @@ impl Window {
 
         let busy = phase.busy();
         self.form.set_enabled("check", !busy);
-        let (label, act) = match phase {
-            Phase::Installed(Restart::System) | Phase::RestartDue => {
-                ("&Restart Now", Outcome::Restart)
-            }
-            _ => ("&Install", Outcome::Install),
-        };
-        let enabled = match act {
-            Outcome::Restart => true,
-            _ => !busy && picked > 0,
+        let restart = matches!(phase, Phase::Installed(Restart::System) | Phase::RestartDue);
+        let install = !busy && picked > 0;
+        let (label, act, enabled) = if restart && !install {
+            ("&Restart Now", Outcome::Restart, true)
+        } else {
+            ("&Install", Outcome::Install, install)
         };
         if let Some(item) = self.form.item_mut("act") {
             item.control = button(label, enabled, true);
+        }
+        self.restart_beside = restart && install;
+        let beside = if self.restart_beside {
+            button("&Restart Now", true, false)
+        } else {
+            Control::Blank
+        };
+        if let Some(item) = self.form.item_mut("restart") {
+            item.control = beside;
+        }
+        if !self.restart_beside && self.form.focus() == self.form.index_of("restart") {
+            self.focus_list(true);
         }
         self.act = if enabled { act } else { Outcome::None };
     }
@@ -282,6 +300,7 @@ impl Window {
         }
         match ev {
             form::Event::Pressed("check") => Outcome::Check,
+            form::Event::Pressed("restart") if self.restart_beside => Outcome::Restart,
             form::Event::Pressed("act") | form::Event::Default => {
                 std::mem::replace(&mut self.act, Outcome::None)
             }
@@ -523,12 +542,27 @@ mod tests {
     }
 
     #[test]
-    fn a_restart_turns_install_into_restart_now() {
+    fn a_restart_puts_restart_now_beside_install_or_in_its_place_with_nothing_to_install() {
         let env = Env::new();
-        let mut w = Window::new(None);
+        let cm = env.theme.look.controls();
         for phase in [Phase::Installed(Restart::System), Phase::RestartDue] {
+            let mut w = Window::new(None);
+            env.sync(&mut w, &phase, &[update("bash")]);
+            assert_eq!(label(&w, "act"), "&Install");
+            assert_eq!(label(&w, "restart"), "&Restart Now");
+            assert!(enabled(&w, "restart"));
+            assert!(message(&w).contains("1 update selected"), "{}", message(&w));
+            assert_eq!(w.event(form::Event::Default), Outcome::Install);
+            assert_eq!(w.event(form::Event::Pressed("restart")), Outcome::Restart);
+
+            w.list_key(&form::Key::Space, &cm);
             env.sync(&mut w, &phase, &[update("bash")]);
             assert_eq!(label(&w, "act"), "&Restart Now");
+            assert_eq!(
+                w.form.item("restart").map(|i| &i.control),
+                Some(&Control::Blank)
+            );
+            assert_eq!(w.event(form::Event::Pressed("restart")), Outcome::None);
             assert_eq!(w.event(form::Event::Default), Outcome::Restart);
         }
     }

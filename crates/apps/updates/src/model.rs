@@ -232,6 +232,12 @@ pub fn headline(phase: &Phase, updates: &[Update], picked: usize) -> String {
         Phase::Installing { .. } => {
             "Installing updates. You can close this window; the updates keep installing.".into()
         }
+        Phase::Installed(Restart::System) | Phase::RestartDue if picked > 0 => format!(
+            "Your computer needs a restart to finish updating. {} selected: click Install to \
+             install {}, or Restart Now.",
+            count(picked),
+            if picked == 1 { "it" } else { "them" },
+        ),
         Phase::Installed(Restart::System) => {
             "The updates were installed. Restart your computer to finish installing them.".into()
         }
