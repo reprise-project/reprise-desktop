@@ -166,6 +166,26 @@ fn one_selected_shortcut_shows_its_location_in_the_status_bar() {
     );
 }
 
+/// A shortcut's status text, once read, is kept for that shortcut: refreshing the chrome while it
+/// stays selected reads nothing again.
+#[test]
+fn a_shortcuts_status_is_read_once_while_it_stays_selected() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let real = std::fs::canonicalize(dir.path()).expect("canonical");
+    std::os::unix::fs::symlink("/etc", real.join("c etc")).expect("symlink");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(real.clone()), &mut ctx);
+    ex.sv.selection.set_only(Some(0));
+    ex.refresh_chrome(&mut ctx);
+    assert_eq!(ex.status.panels[0].text, "Location: /");
+
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let _closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.refresh_chrome(&mut ctx);
+    assert_eq!(ex.status.panels[0].text, "Location: /", "no second read");
+}
+
 #[test]
 fn a_sort_keeps_the_selection_when_its_index_moves() {
     let dir = tempfile::tempdir().expect("a temp dir");

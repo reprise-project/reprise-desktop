@@ -211,12 +211,9 @@ impl Explorer {
     /// read is out, for any shortcut in the listing, no other starts: a folder of shortcuts on a
     /// dead mount holds one thread. [`Explorer::take_link_status`] takes the answer.
     fn link_status(&mut self, path: PathBuf, ctx: &Ctx) -> Option<String> {
-        match self.link_status.take() {
-            Some((at, Ok(text))) if at == path => return text,
-            Some((at, Err(job))) => {
-                self.link_status = Some((at, Err(job)));
-                return None;
-            }
+        match &self.link_status {
+            Some((at, Ok(text))) if *at == path => return text.clone(),
+            Some((_, Err(_))) => return None,
             _ => {}
         }
         let (at, globs) = (path.clone(), self.globs.clone());
@@ -224,13 +221,9 @@ impl Explorer {
             let l = reprisefs::launcher::Launcher::at(&at, &globs)?;
             window::shortcut_status_text(&l, &at)
         });
-        match read {
-            Ok(text) => text,
-            Err(job) => {
-                self.link_status = Some((path, Err(job)));
-                None
-            }
-        }
+        let text = read.as_ref().ok().cloned().flatten();
+        self.link_status = Some((path, read));
+        text
     }
 
     /// A shortcut's status read that answered late puts its text up; true when it did.
