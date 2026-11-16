@@ -6,7 +6,7 @@ use crate::theme::Color;
 pub const OLIVE: Scheme = Scheme {
     name: "olive",
     system: System {
-        active_title: Color::rgb(0x86, 0x9F, 0x66),
+        active_title: Color::rgb(0x68, 0x7B, 0x4F),
         gradient_active_title: Color::rgb(0xC2, 0xD1, 0x9F),
         inactive_title: Color::rgb(0xD1, 0xD5, 0xB8),
         gradient_inactive_title: Color::rgb(0xD1, 0xD5, 0xB8),
@@ -22,7 +22,7 @@ pub const OLIVE: Scheme = Scheme {
         window: Color::rgb(0xFF, 0xFF, 0xFF),
         window_frame: Color::rgb(0x00, 0x00, 0x00),
         window_text: Color::rgb(0x00, 0x00, 0x00),
-        hilight: Color::rgb(0x8E, 0x9E, 0x6D),
+        hilight: Color::rgb(0x6C, 0x7A, 0x54),
         hilight_text: Color::rgb(0xFF, 0xFF, 0xFF),
         gray_text: Color::rgb(0xAA, 0xA7, 0x96),
         menu: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -30,7 +30,7 @@ pub const OLIVE: Scheme = Scheme {
         desktop_text: Color::rgb(0xFF, 0xFF, 0xFF),
         info_bk: Color::rgb(0xFD, 0xFF, 0xE0),
         info_text: Color::rgb(0x00, 0x00, 0x00),
-        menu_hilight: Color::rgb(0x8E, 0x9E, 0x6D),
+        menu_hilight: Color::rgb(0x6C, 0x7A, 0x54),
         menu_bar: Color::rgb(0xEB, 0xEA, 0xD7),
         hot_light: Color::rgb(0x06, 0x00, 0x7C),
         menu_band: Color::rgb(0x4B, 0x5A, 0x2A),

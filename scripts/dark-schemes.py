@@ -9,6 +9,8 @@ Each scheme maps a well-known editor palette onto the system colours:
   button_hilight / button_shadow / button_dk_shadow  the bevel, a clear
                 step lighter and two steps darker so 3D edges still read
   active_title  the theme's accent, dark end at the left where the text is
+  title_text    the theme's text on the accent if it reads 4.5:1 there, else
+                black or white, whichever reads better
   hilight       the same accent, tying the menu bar to the caption
   gray_text     the theme's comment colour
   background    the theme's darkest surface, for the desktop
@@ -38,6 +40,7 @@ def scheme(name, *, fg, fg_dim, comment, base, surface, lift, shadow, dark,
     """fg: text. base: window. surface: face/menu. lift: bevel highlight.
     shadow/dark: bevel shadows (shadow doubles as the desktop, dark as the frame).
     accent -> accent2: caption gradient and Start band; accent_text on it."""
+    accent_text = readable(accent_text, accent)
     return name, {
         "active_title": accent,
         "gradient_active_title": accent2,
@@ -71,6 +74,28 @@ def scheme(name, *, fg, fg_dim, comment, base, surface, lift, shadow, dark,
         "menu_hilight": accent,
         "menu_bar": surface,
     }
+
+
+
+def rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def contrast(a, b):
+    """The WCAG 2 contrast ratio of two "#rrggbb" colours."""
+    def lum(h):
+        lin = [c / 255 / 12.92 if c / 255 <= 0.04045
+               else ((c / 255 + 0.055) / 1.055) ** 2.4 for c in rgb(h)]
+        return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def readable(text, fill):
+    if contrast(text, fill) >= 4.5:
+        return text
+    return max(("#000000", "#ffffff"), key=lambda c: contrast(c, fill))
 
 
 SCHEMES = [
@@ -135,11 +160,6 @@ SCHEMES = [
            accent="#5e81ac", accent2="#88c0d0", accent_text="#eceff4",
            inactive="#434c5e", inactive2="#4c566a", info="#434c5e"),
 ]
-
-
-def rgb(h):
-    h = h.lstrip("#")
-    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
 
 def entry(name, cols):

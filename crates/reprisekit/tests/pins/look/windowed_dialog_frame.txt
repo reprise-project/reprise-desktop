@@ -18,16 +18,16 @@ blue Blue inactive 2 f2b00e6576eee745
 blue Blue minimize hot 2 4d0700a060773d7b
 blue Blue minimize pressed 2 2397319d041d56a3
 blue Blue close hot 2 0997e7079d811913
-blue Olive rest 1 94bcf7a7000e8b91
-blue Olive inactive 1 0e19e2fb1c10293f
-blue Olive minimize hot 1 7f9ac3cb87e04c51
-blue Olive minimize pressed 1 2eb80bd039cfed4c
-blue Olive close hot 1 c7db44d968891498
-blue Olive rest 2 9520e980fa4075ff
-blue Olive inactive 2 6be0f8622b2554a6
-blue Olive minimize hot 2 c3762a85521bd26e
-blue Olive minimize pressed 2 f7e233aae62d4edf
-blue Olive close hot 2 9a3725b5885770f0
+blue Olive rest 1 09acf490061eaf91
+blue Olive inactive 1 c8fbb885eab60b4f
+blue Olive minimize hot 1 304e55ce9492f311
+blue Olive minimize pressed 1 7a4490131635bf3c
+blue Olive close hot 1 0f4f1a9b89a333f8
+blue Olive rest 2 79da2b35b4120b5f
+blue Olive inactive 2 2c353163b7d53b46
+blue Olive minimize hot 2 66634b1115ff4a6e
+blue Olive minimize pressed 2 b79f9938c34ebe9f
+blue Olive close hot 2 25d391eebf3be810
 blue Silver rest 1 dd6e638ec3e4b0cc
 blue Silver inactive 1 5fc13b687fd885ca
 blue Silver minimize hot 1 e583c4fe7e2eb862
@@ -38,16 +38,16 @@ blue Silver inactive 2 ee712b8f4a826478
 blue Silver minimize hot 2 a12009d7e38496e3
 blue Silver minimize pressed 2 e91f3f2d45580f91
 blue Silver close hot 2 41c77eada2d21c43
-blue Slate rest 1 6fd4ad4f4eac8197
-blue Slate inactive 1 e5e3f2a43e81bc92
-blue Slate minimize hot 1 3ea48513ad01f4f1
-blue Slate minimize pressed 1 49a4389bae9fd973
-blue Slate close hot 1 4146fd800da18aef
-blue Slate rest 2 922072072445e55c
-blue Slate inactive 2 cb8ed4d766d47d59
-blue Slate minimize hot 2 ec6c9d012a4990a5
-blue Slate minimize pressed 2 3abf235631d48229
-blue Slate close hot 2 ae30ee044d506662
+blue Slate rest 1 c5b22d41866cbddf
+blue Slate inactive 1 e8271844329cfaca
+blue Slate minimize hot 1 d25360281ac1d009
+blue Slate minimize pressed 1 f71ba413fce7b4ab
+blue Slate close hot 1 25046f25a1a7a417
+blue Slate rest 2 dfcb31c85902c7dc
+blue Slate inactive 2 f928732bafa91ef9
+blue Slate minimize hot 2 fcec180ec8c37025
+blue Slate minimize pressed 2 65bf2aae3c0045e9
+blue Slate close hot 2 89dac21a8731d562
 blue Sapphire rest 1 9c802f531129e54a
 blue Sapphire inactive 1 b831f6262222fcbd
 blue Sapphire minimize hot 1 8ff99f9470b160a2
@@ -58,16 +58,16 @@ blue Sapphire inactive 2 3c3cb34f68419188
 blue Sapphire minimize hot 2 f27c3750f87a55f5
 blue Sapphire minimize pressed 2 7bfd3b43eb6ecf63
 blue Sapphire close hot 2 692e7a58e78238b8
-blue Obsidian rest 1 fbce9a4b66ff150e
-blue Obsidian inactive 1 07f0aea6dda3a38b
-blue Obsidian minimize hot 1 05ac1cbc37a3d0e9
-blue Obsidian minimize pressed 1 2ab05a66a597f624
-blue Obsidian close hot 1 a14a98f14361f1e6
-blue Obsidian rest 2 dd4494dc0c278a46
-blue Obsidian inactive 2 6ab8a3ea01e22b9f
-blue Obsidian minimize hot 2 83d2327bc8c498aa
-blue Obsidian minimize pressed 2 8793d71871b07d46
-blue Obsidian close hot 2 f236a98c51761059
+blue Obsidian rest 1 cb34c061a0e931ce
+blue Obsidian inactive 1 c1e23e55de4db88b
+blue Obsidian minimize hot 1 5728a392be21c089
+blue Obsidian minimize pressed 1 ed041ea73ff4e0a4
+blue Obsidian close hot 1 06ded1b9b0949726
+blue Obsidian rest 2 916baa28f856fb86
+blue Obsidian inactive 2 8a0043e3877a80df
+blue Obsidian minimize hot 2 de80894d512a632a
+blue Obsidian minimize pressed 2 588c6bcc4d90db46
+blue Obsidian close hot 2 4a83f5fcdb9ee499
 blue Ember rest 1 77cbd3f4039a054b
 blue Ember inactive 1 797839f0b9d0a9de
 blue Ember minimize hot 1 92b4de958b81378e

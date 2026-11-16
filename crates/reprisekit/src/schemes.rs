@@ -188,7 +188,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
     (
         "Eggplant",
         ColorScheme {
-            active_title: Color::rgb(88, 128, 120),
+            active_title: Color::rgb(84, 122, 114),
             gradient_active_title: Color::rgb(131, 75, 131),
             inactive_title: Color::rgb(144, 176, 168),
             gradient_inactive_title: Color::rgb(203, 189, 210),
@@ -204,7 +204,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             window: Color::rgb(255, 255, 255),
             window_frame: Color::rgb(0, 0, 0),
             window_text: Color::rgb(0, 0, 0),
-            hilight: Color::rgb(88, 128, 120),
+            hilight: Color::rgb(84, 122, 114),
             hilight_text: Color::rgb(255, 255, 255),
             gray_text: Color::rgb(88, 128, 120),
             menu: Color::rgb(144, 176, 168),
@@ -217,7 +217,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             info_bk: Color::rgb(255, 255, 225),
             info_text: Color::rgb(0, 0, 0),
             hot_light: Color::rgb(0, 0, 128),
-            menu_hilight: Color::rgb(88, 128, 120),
+            menu_hilight: Color::rgb(84, 122, 114),
             menu_bar: Color::rgb(144, 176, 168),
         },
     ),
@@ -264,7 +264,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             gradient_active_title: Color::rgb(254, 128, 25),
             inactive_title: Color::rgb(80, 73, 69),
             gradient_inactive_title: Color::rgb(102, 92, 84),
-            title_text: Color::rgb(251, 241, 199),
+            title_text: Color::rgb(0, 0, 0),
             inactive_title_text: Color::rgb(168, 153, 132),
             button_face: Color::rgb(60, 56, 54),
             button_hilight: Color::rgb(102, 92, 84),
@@ -277,14 +277,14 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             window_frame: Color::rgb(0, 0, 0),
             window_text: Color::rgb(235, 219, 178),
             hilight: Color::rgb(214, 93, 14),
-            hilight_text: Color::rgb(251, 241, 199),
+            hilight_text: Color::rgb(0, 0, 0),
             gray_text: Color::rgb(146, 131, 116),
             menu: Color::rgb(60, 56, 54),
             menu_text: Color::rgb(235, 219, 178),
             menu_band: Color::rgb(214, 93, 14),
             menu_band_top: Color::rgb(0, 0, 0),
             gradient_menu_band: Color::rgb(254, 128, 25),
-            menu_band_text: Color::rgb(251, 241, 199),
+            menu_band_text: Color::rgb(0, 0, 0),
             desktop_text: Color::rgb(235, 219, 178),
             info_bk: Color::rgb(80, 73, 69),
             info_text: Color::rgb(235, 219, 178),
@@ -336,7 +336,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             gradient_active_title: Color::rgb(0, 255, 255),
             inactive_title: Color::rgb(0, 0, 255),
             gradient_inactive_title: Color::rgb(0, 0, 0),
-            title_text: Color::rgb(255, 255, 255),
+            title_text: Color::rgb(0, 0, 0),
             inactive_title_text: Color::rgb(255, 255, 255),
             button_face: Color::rgb(0, 0, 0),
             button_hilight: Color::rgb(127, 127, 127),
@@ -349,7 +349,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             window_frame: Color::rgb(0, 0, 0),
             window_text: Color::rgb(0, 255, 0),
             hilight: Color::rgb(0, 255, 255),
-            hilight_text: Color::rgb(255, 255, 255),
+            hilight_text: Color::rgb(0, 0, 0),
             gray_text: Color::rgb(128, 128, 128),
             menu: Color::rgb(0, 0, 0),
             menu_text: Color::rgb(0, 255, 0),
@@ -552,7 +552,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             gradient_active_title: Color::rgb(253, 151, 31),
             inactive_title: Color::rgb(62, 61, 50),
             gradient_inactive_title: Color::rgb(73, 72, 62),
-            title_text: Color::rgb(248, 248, 242),
+            title_text: Color::rgb(0, 0, 0),
             inactive_title_text: Color::rgb(144, 144, 138),
             button_face: Color::rgb(39, 40, 34),
             button_hilight: Color::rgb(73, 72, 62),
@@ -565,14 +565,14 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             window_frame: Color::rgb(0, 0, 0),
             window_text: Color::rgb(248, 248, 242),
             hilight: Color::rgb(249, 38, 114),
-            hilight_text: Color::rgb(248, 248, 242),
+            hilight_text: Color::rgb(0, 0, 0),
             gray_text: Color::rgb(117, 113, 94),
             menu: Color::rgb(39, 40, 34),
             menu_text: Color::rgb(248, 248, 242),
             menu_band: Color::rgb(249, 38, 114),
             menu_band_top: Color::rgb(0, 0, 0),
             gradient_menu_band: Color::rgb(253, 151, 31),
-            menu_band_text: Color::rgb(248, 248, 242),
+            menu_band_text: Color::rgb(0, 0, 0),
             desktop_text: Color::rgb(248, 248, 242),
             info_bk: Color::rgb(62, 61, 50),
             info_text: Color::rgb(248, 248, 242),
@@ -624,7 +624,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             gradient_active_title: Color::rgb(136, 192, 208),
             inactive_title: Color::rgb(67, 76, 94),
             gradient_inactive_title: Color::rgb(76, 86, 106),
-            title_text: Color::rgb(236, 239, 244),
+            title_text: Color::rgb(0, 0, 0),
             inactive_title_text: Color::rgb(216, 222, 233),
             button_face: Color::rgb(59, 66, 82),
             button_hilight: Color::rgb(76, 86, 106),
@@ -637,14 +637,14 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             window_frame: Color::rgb(25, 28, 34),
             window_text: Color::rgb(236, 239, 244),
             hilight: Color::rgb(94, 129, 172),
-            hilight_text: Color::rgb(236, 239, 244),
+            hilight_text: Color::rgb(0, 0, 0),
             gray_text: Color::rgb(97, 110, 136),
             menu: Color::rgb(59, 66, 82),
             menu_text: Color::rgb(236, 239, 244),
             menu_band: Color::rgb(94, 129, 172),
             menu_band_top: Color::rgb(25, 28, 34),
             gradient_menu_band: Color::rgb(136, 192, 208),
-            menu_band_text: Color::rgb(236, 239, 244),
+            menu_band_text: Color::rgb(0, 0, 0),
             desktop_text: Color::rgb(236, 239, 244),
             info_bk: Color::rgb(67, 76, 94),
             info_text: Color::rgb(236, 239, 244),
@@ -660,7 +660,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             gradient_active_title: Color::rgb(97, 175, 239),
             inactive_title: Color::rgb(62, 68, 81),
             gradient_inactive_title: Color::rgb(75, 82, 99),
-            title_text: Color::rgb(255, 255, 255),
+            title_text: Color::rgb(0, 0, 0),
             inactive_title_text: Color::rgb(157, 165, 180),
             button_face: Color::rgb(40, 44, 52),
             button_hilight: Color::rgb(62, 68, 81),
@@ -673,14 +673,14 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             window_frame: Color::rgb(16, 18, 21),
             window_text: Color::rgb(171, 178, 191),
             hilight: Color::rgb(82, 139, 255),
-            hilight_text: Color::rgb(255, 255, 255),
+            hilight_text: Color::rgb(0, 0, 0),
             gray_text: Color::rgb(92, 99, 112),
             menu: Color::rgb(40, 44, 52),
             menu_text: Color::rgb(171, 178, 191),
             menu_band: Color::rgb(82, 139, 255),
             menu_band_top: Color::rgb(16, 18, 21),
             gradient_menu_band: Color::rgb(97, 175, 239),
-            menu_band_text: Color::rgb(255, 255, 255),
+            menu_band_text: Color::rgb(0, 0, 0),
             desktop_text: Color::rgb(171, 178, 191),
             info_bk: Color::rgb(44, 49, 58),
             info_text: Color::rgb(171, 178, 191),
@@ -732,7 +732,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             gradient_active_title: Color::rgb(224, 204, 136),
             inactive_title: Color::rgb(160, 160, 164),
             gradient_inactive_title: Color::rgb(208, 204, 144),
-            title_text: Color::rgb(255, 255, 255),
+            title_text: Color::rgb(0, 0, 0),
             inactive_title_text: Color::rgb(245, 234, 207),
             button_face: Color::rgb(236, 213, 157),
             button_hilight: Color::rgb(245, 234, 207),
@@ -872,7 +872,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
     (
         "Slate",
         ColorScheme {
-            active_title: Color::rgb(85, 128, 151),
+            active_title: Color::rgb(80, 120, 142),
             gradient_active_title: Color::rgb(136, 183, 215),
             inactive_title: Color::rgb(128, 128, 128),
             gradient_inactive_title: Color::rgb(159, 188, 200),
@@ -888,7 +888,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             window: Color::rgb(255, 255, 255),
             window_frame: Color::rgb(0, 0, 0),
             window_text: Color::rgb(0, 0, 0),
-            hilight: Color::rgb(85, 128, 151),
+            hilight: Color::rgb(80, 120, 142),
             hilight_text: Color::rgb(255, 255, 255),
             gray_text: Color::rgb(85, 128, 151),
             menu: Color::rgb(157, 185, 200),
@@ -901,14 +901,14 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             info_bk: Color::rgb(255, 255, 225),
             info_text: Color::rgb(0, 0, 0),
             hot_light: Color::rgb(0, 0, 128),
-            menu_hilight: Color::rgb(85, 128, 151),
+            menu_hilight: Color::rgb(80, 120, 142),
             menu_bar: Color::rgb(157, 185, 200),
         },
     ),
     (
         "Spruce",
         ColorScheme {
-            active_title: Color::rgb(89, 151, 100),
+            active_title: Color::rgb(74, 126, 84),
             gradient_active_title: Color::rgb(151, 200, 232),
             inactive_title: Color::rgb(128, 128, 128),
             gradient_inactive_title: Color::rgb(167, 204, 176),
@@ -924,7 +924,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             window: Color::rgb(255, 255, 255),
             window_frame: Color::rgb(0, 0, 0),
             window_text: Color::rgb(0, 0, 0),
-            hilight: Color::rgb(89, 151, 100),
+            hilight: Color::rgb(74, 126, 84),
             hilight_text: Color::rgb(255, 255, 255),
             gray_text: Color::rgb(89, 151, 100),
             menu: Color::rgb(162, 200, 169),
@@ -937,7 +937,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             info_bk: Color::rgb(255, 255, 225),
             info_text: Color::rgb(0, 0, 0),
             hot_light: Color::rgb(0, 0, 128),
-            menu_hilight: Color::rgb(89, 151, 100),
+            menu_hilight: Color::rgb(74, 126, 84),
             menu_bar: Color::rgb(162, 200, 169),
         },
     ),
@@ -1052,7 +1052,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
     (
         "Wheat",
         ColorScheme {
-            active_title: Color::rgb(128, 128, 0),
+            active_title: Color::rgb(120, 120, 0),
             gradient_active_title: Color::rgb(200, 176, 72),
             inactive_title: Color::rgb(188, 188, 65),
             gradient_inactive_title: Color::rgb(184, 184, 128),
@@ -1068,7 +1068,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             window: Color::rgb(255, 255, 255),
             window_frame: Color::rgb(0, 0, 0),
             window_text: Color::rgb(0, 0, 0),
-            hilight: Color::rgb(128, 128, 0),
+            hilight: Color::rgb(120, 120, 0),
             hilight_text: Color::rgb(255, 255, 255),
             gray_text: Color::rgb(188, 188, 65),
             menu: Color::rgb(222, 222, 160),
@@ -1081,7 +1081,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             info_bk: Color::rgb(255, 255, 225),
             info_text: Color::rgb(0, 0, 0),
             hot_light: Color::rgb(0, 0, 128),
-            menu_hilight: Color::rgb(128, 128, 0),
+            menu_hilight: Color::rgb(120, 120, 0),
             menu_bar: Color::rgb(222, 222, 160),
         },
     ),
@@ -1214,11 +1214,11 @@ mod tests {
     }
 
     #[test]
-    fn pumpkin_text_is_black_on_the_tan_face() {
+    fn pumpkin_text_is_black_on_the_gold_caption_and_the_tan_face() {
         assert_eq!(
             text_colours("Pumpkin"),
             [
-                WHITE,
+                BLACK,
                 Color::rgb(245, 234, 207),
                 WHITE,
                 BLACK,
@@ -1263,23 +1263,59 @@ mod tests {
         );
     }
 
+    /// The five text-on-fill pairs, each with its WCAG ratio in `cs`.
+    fn text_pairs(cs: &ColorScheme) -> [(&'static str, f64); 5] {
+        [
+            ("hilight_text", cs.hilight_text.contrast(cs.hilight)),
+            ("menu_text", cs.menu_text.contrast(cs.menu)),
+            ("window_text", cs.window_text.contrast(cs.window)),
+            ("button_text", cs.button_text.contrast(cs.button_face)),
+            ("title_text", cs.title_text.contrast(cs.active_title)),
+        ]
+    }
+
     #[test]
-    fn every_scheme_draws_text_apart_from_its_background() {
-        let apart = |a: Color, b: Color| {
-            let d = |x: u8, y: u8| x.abs_diff(y);
-            d(a.r, b.r).max(d(a.g, b.g)).max(d(a.b, b.b)) >= 96
-        };
+    fn every_schemes_text_is_4_5_to_1_on_its_fill_and_high_contrast_7_to_1() {
         for (name, cs) in SCHEMES {
-            for (what, fg, bg) in [
-                ("title_text", cs.title_text, cs.active_title),
-                ("hilight_text", cs.hilight_text, cs.hilight),
-                ("menu_text", cs.menu_text, cs.menu),
-                ("window_text", cs.window_text, cs.window),
-                ("button_text", cs.button_text, cs.button_face),
-                ("hot_light", cs.hot_light, cs.button_face),
-            ] {
-                assert!(apart(fg, bg), "{name}: {what} stands apart from its fill");
+            let least = if name.starts_with("High Contrast") {
+                7.0
+            } else {
+                4.5
+            };
+            for (what, ratio) in text_pairs(cs) {
+                assert!(
+                    ratio >= least,
+                    "{name}: {what} is {least}:1 on its fill, got {ratio:.2}"
+                );
             }
+        }
+    }
+
+    #[test]
+    fn every_blue_schemes_text_is_4_5_to_1_on_its_fill() {
+        for v in crate::blue::Variant::ALL {
+            let cs = v.scheme().system.colors();
+            for (what, ratio) in text_pairs(&cs) {
+                assert!(
+                    ratio >= 4.5,
+                    "{v:?}: {what} is 4.5:1 on its fill, got {ratio:.2}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_schemes_links_are_4_5_to_1_on_the_face() {
+        // The high-contrast links are pinned purple by their own test.
+        for (name, cs) in SCHEMES
+            .iter()
+            .filter(|(n, _)| !n.starts_with("High Contrast"))
+        {
+            let ratio = cs.hot_light.contrast(cs.button_face);
+            assert!(
+                ratio >= 4.5,
+                "{name}: hot_light is 4.5:1 on the face, got {ratio:.2}"
+            );
         }
     }
 
