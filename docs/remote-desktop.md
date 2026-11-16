@@ -300,7 +300,10 @@ the journal logs each change ([Troubleshooting](#troubleshooting)).
   tell every client the session logged off, so it doesn't reconnect. The
   session waits for that while the screen fades, 1 s at most. A Turn Off or
   Restart that needs a password tells them once the password is given, so
-  a client can type it. One that logind refuses after the programs close
+  a client can type it. The server also tells them of any shutdown or
+  restart logind starts, from another session or `systemctl poweroff`
+  too, and holds it back up to 4 s for that and for the sound output to
+  come back here. One that logind refuses after the programs close
   leaves the session running with its programs closed; connecting again
   lands in it.
 - **Stopping the server.** Turning Remote Desktop off locks the session

@@ -235,6 +235,12 @@ pub type Handlers<D, I> = (
     client::Handler,
 );
 
+/// How long a shutdown waits for the clients told of it to leave and the default sound output to
+/// come back; logind gives every delay lock 5 s unless set otherwise.
+const SHUTDOWN_HOLD: Duration = Duration::from_secs(4);
+/// WirePlumber writes its state file 1 s after a change, the default output included.
+const WIREPLUMBER_SAVES: Duration = Duration::from_millis(1500);
+
 /// Serve clients from `intake` through `logins` and `handlers`, closing one past `max_viewers`
 /// (one more under `"replace"`) or in back-off. `stop` runs [`Leave::stopping`] and ends them all.
 pub async fn serve<D, I, L>(
@@ -357,6 +363,24 @@ fn answer<L>(shared: &Shared<L>, request: Request) {
     match request {
         Request::All => viewers.kick_all(Kick::Asked),
         Request::SessionEnding => viewers.kick_all(Kick::LoggedOff),
+        Request::ShuttingDown(delay) => {
+            let served = !viewers.is_empty();
+            viewers.kick_all(Kick::LoggedOff);
+            let mut status = shared.status.subscribe();
+            tokio::task::spawn_local(async move {
+                let gone = async {
+                    let _ = status.wait_for(|s| s.clients.is_empty()).await;
+                    // The last listener's sound sink gives the default output back on a thread
+                    // of its own, and WirePlumber keeps that a second later.
+                    let _ = tokio::task::spawn_blocking(crate::sink::settle).await;
+                    if served {
+                        tokio::time::sleep(WIREPLUMBER_SAVES).await;
+                    }
+                };
+                let _ = tokio::time::timeout(SHUTDOWN_HOLD, gone).await;
+                drop(delay);
+            });
+        }
         Request::Client(address, reply) => {
             let _ = reply.send(viewers.kick(&address, Kick::Asked));
         }

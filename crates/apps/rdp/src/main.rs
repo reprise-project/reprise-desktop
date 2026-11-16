@@ -23,6 +23,7 @@ mod listen;
 mod lock;
 mod portal;
 mod seat;
+mod shutdown;
 mod sink;
 mod sound;
 use reprisevideo::stream;
@@ -123,6 +124,7 @@ fn main() -> ExitCode {
         ..control::Status::default()
     });
     let (disconnect, disconnect_rx) = mpsc::unbounded_channel();
+    let shutdowns = disconnect.clone();
     let (regenerate, regenerate_rx) = mpsc::unbounded_channel();
     // The portal's lock mode reads the ConsoleLayout of the name's owner, and refuses a hand-over
     // server that does not own it.
@@ -150,6 +152,7 @@ fn main() -> ExitCode {
         }
         return ExitCode::from(NAME_HELD);
     }
+    shutdown::follow(shutdowns);
     let identity = identity.map(watch::channel);
     let (config, config_rx) = watch::channel(cfg);
     let (display, probed) = match hand_over {
