@@ -587,7 +587,7 @@ impl Timer {
 
 fn on_state(stream: &pipewire::stream::Stream, d: &mut Data, new: StreamState) {
     log::debug!("stream state {new:?}");
-    match new {
+    match &new {
         StreamState::Paused => {
             if let Some(tx) = d.reported.take() {
                 let serial = stream_serial(stream);
@@ -605,6 +605,20 @@ fn on_state(stream: &pipewire::stream::Stream, d: &mut Data, new: StreamState) {
             }
         }
         _ => {}
+    }
+    if ends_cast(d.reported.is_none(), &new) {
+        log::info!("stream {new:?}; ending the cast");
+        d.quit();
+    }
+}
+
+/// Whether the stream entering `new` ends the cast: an error, or a disconnect once the node was
+/// reported (a PipeWire restart drops the node, and a consumer must start a new share).
+fn ends_cast(reported: bool, new: &StreamState) -> bool {
+    match new {
+        StreamState::Error(_) => true,
+        StreamState::Unconnected => reported,
+        _ => false,
     }
 }
 
@@ -1850,6 +1864,31 @@ mod tests {
         };
         // SAFETY: one valid pollfd, no wait.
         unsafe { libc::poll(&mut pfd, 1, 0) == 1 }
+    }
+
+    #[test]
+    fn an_error_or_a_disconnect_after_the_report_ends_the_cast() {
+        let error = StreamState::Error("connection error".into());
+        assert!(ends_cast(true, &error), "an error after the report ends it");
+        assert!(
+            ends_cast(false, &error),
+            "an error before the report ends it"
+        );
+        assert!(
+            ends_cast(true, &StreamState::Unconnected),
+            "a disconnect ends it"
+        );
+        assert!(
+            !ends_cast(false, &StreamState::Unconnected),
+            "the unconnected start does not end it"
+        );
+        for live in [
+            StreamState::Connecting,
+            StreamState::Paused,
+            StreamState::Streaming,
+        ] {
+            assert!(!ends_cast(true, &live), "{live:?} keeps the cast");
+        }
     }
 
     #[test]
