@@ -73,6 +73,7 @@ pub mod mutex;
 pub mod notify;
 pub mod peer;
 pub mod permissions;
+pub mod pidfd;
 pub mod polkit;
 pub mod portal;
 pub mod remote;

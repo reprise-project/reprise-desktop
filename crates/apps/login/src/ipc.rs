@@ -406,8 +406,8 @@ async fn accept(l: UnixListener, kind: Listener, s: Rc<Server>) {
 
 /// The pid to look up for `stream`'s peer, with its pidfd when the kernel gives one.
 fn peer_process(stream: &UnixStream) -> Option<(u32, Option<OwnedFd>)> {
-    match pidfd::peer(stream) {
-        Ok(fd) => Some((pidfd::pid_of(&fd).ok()??, Some(fd))),
+    match reprisebus::pidfd::peer(stream) {
+        Ok(fd) => Some((reprisebus::pidfd::pid_of(&fd).ok()??, Some(fd))),
         Err(e) if e.raw_os_error() == Some(libc::ENOPROTOOPT) => {
             let pid = stream.peer_cred().ok()?.pid()?;
             Some((u32::try_from(pid).ok()?, None))

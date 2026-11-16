@@ -2,7 +2,8 @@
 //! its process shows (docs/security.md, "Sandboxed programs").
 
 use reprisebus::peer::{Placement, placement};
-use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
+use reprisebus::pidfd;
+use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, RwLock};
 
@@ -191,42 +192,22 @@ fn inspect(stream: &UnixStream, pid: i32) -> Process {
 /// A pidfd for `stream`'s peer: `SO_PEERPIDFD`, or on a kernel without it `pidfd_open` of the
 /// `SO_PEERCRED` pid, which a pid reused before this call fools. None when the peer is gone.
 fn peer_pidfd(stream: &UnixStream, pid: i32) -> Option<OwnedFd> {
-    let mut fd: libc::c_int = -1;
-    let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
-    // SAFETY: `fd` and `len` are live and sized for the option's int.
-    let r = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERPIDFD,
-            (&raw mut fd).cast(),
-            &mut len,
-        )
-    };
-    if r == 0 && fd >= 0 {
-        // SAFETY: the kernel handed us a fresh pidfd nothing else owns.
-        return Some(unsafe { OwnedFd::from_raw_fd(fd) });
+    match pidfd::peer(stream) {
+        Ok(fd) => Some(fd),
+        Err(e) if e.raw_os_error() == Some(libc::ENOPROTOOPT) => {
+            pidfd::open(u32::try_from(pid).ok()?).ok()
+        }
+        Err(_) => None,
     }
-    if std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOPROTOOPT) {
-        return None;
-    }
-    pidfd_open(pid)
-}
-
-fn pidfd_open(pid: i32) -> Option<OwnedFd> {
-    // SAFETY: pidfd_open takes a pid and flags and returns a new fd or -1.
-    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
-    // SAFETY: a fresh fd nothing else owns.
-    (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd as libc::c_int) })
 }
 
 /// The Flatpak app whose scope process `pid` runs in, by [`reprisebus::peer::scoped_flatpak_app`]
 /// under `proc`. `pid` is the one the X server recorded at connect and the pidfd is taken now,
 /// so a pid reused since names the process holding it now.
 pub fn x11_owner_app(pid: u32, proc: &std::path::Path) -> Option<String> {
-    let pid = i32::try_from(pid).ok().filter(|&p| p > 0)?;
-    let pidfd = pidfd_open(pid)?;
-    reprisebus::peer::scoped_flatpak_app(pidfd.as_fd(), pid, proc)
+    let signed = i32::try_from(pid).ok().filter(|&p| p > 0)?;
+    let pidfd = pidfd::open(pid).ok()?;
+    reprisebus::peer::scoped_flatpak_app(pidfd.as_fd(), signed, proc)
 }
 
 /// A fresh `proc` under the harness scratch where this process runs in the user manager's unit

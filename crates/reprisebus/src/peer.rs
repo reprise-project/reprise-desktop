@@ -254,14 +254,6 @@ fn alive(pidfd: BorrowedFd<'_>) -> bool {
     r == 0
 }
 
-/// A pidfd for process `pid`, as it is now.
-fn pidfd_open(pid: i32) -> Option<OwnedFd> {
-    // SAFETY: pidfd_open takes no pointers; a non-negative result is a fresh fd.
-    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
-    // SAFETY: a fresh fd nothing else owns.
-    (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd as i32) })
-}
-
 /// `name` in the `[Application]` group of a `.flatpak-info` or instance `info` key file.
 pub fn app_of_flatpak_info(info: &str) -> Option<String> {
     key_of_flatpak_info(info, "Application", "name")
@@ -519,9 +511,9 @@ impl Identities {
             .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
             .open(folder);
         let json = read_small_at(&record.ok()?, c"bwrapinfo.json", RECORD_BYTES)?;
-        let child = i32::try_from(json_number(&json, "child-pid")?).ok()?;
+        let child = u32::try_from(json_number(&json, "child-pid")?).ok()?;
         let recorded_ns = json_number(&json, "mnt-namespace")?;
-        let pidfd = pidfd_open(child)?;
+        let pidfd = crate::pidfd::open(child).ok()?;
         let host_ns = ns_at(
             &std::fs::File::open(self.proc.join("self")).ok()?,
             c"ns/mnt",
@@ -624,12 +616,9 @@ async fn process_fd(conn: &Connection, peer: &str) -> zbus::Result<Option<zbus::
     Ok(credentials.into_process_fd())
 }
 
-/// The pid a pidfd refers to, from its fdinfo; None once the process is gone (`Pid: -1`).
+/// The pid a pidfd refers to; None once the process is gone or outside this pid namespace.
 fn pid_of(fd: &impl AsFd) -> Option<u32> {
-    let fd = fd.as_fd().as_raw_fd();
-    let info = std::fs::read_to_string(format!("/proc/self/fdinfo/{fd}")).ok()?;
-    let pid = info.lines().find_map(|l| l.strip_prefix("Pid:"))?;
-    pid.trim().parse().ok()
+    crate::pidfd::pid_of(fd).ok().flatten()
 }
 
 /// Whether process `pid` under `proc` shows a Flatpak sandbox's `/.flatpak-info`; a root that
