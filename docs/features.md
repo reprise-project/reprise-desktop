@@ -72,6 +72,11 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   arrows walk the buttons, Enter presses one, the Menu key opens its menu and
   Esc goes back to your window. A screen reader reads
   every button and can press it.
+- **Super and a digit.** Super+1 to Super+9 act on that task button of the
+  bar under the pointer, pinned programs first: a pinned program with no
+  window starts, a window comes up (or goes down when it has the keyboard)
+  and a group brings up its windows in turn. Super+D shows the desktop and
+  Super+E opens Explorer on the home folder.
 
 ## Start menu and launcher
 
@@ -310,7 +315,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   the launcher.
 - **Virtual desktops.** Four by default, up to sixteen, with a numbered pager
   on the taskbar that lights up when a window there wants you.
-  Super+Ctrl+Left or Right switches; add Shift to take the window along. The
+  Super+Ctrl+Left or Right switches; add Shift to take the window along.
+  The `desktop-1` to `desktop-9` actions go straight to one, and
+  `desktop-carry-1` to `desktop-carry-9` take the window there. The
   wheel over the pager steps to the previous or next desktop, and over the
   desktop too with `[workspaces] wheel_on_desktop = true`. The
   switch can slide, fade, zoom or wipe, and three fingers sideways drag the

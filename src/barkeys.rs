@@ -278,6 +278,59 @@ mod tests {
     }
 
     #[test]
+    fn super_and_a_digit_starts_a_pin_and_brings_up_or_minimizes_its_window() {
+        use crate::config::{Action, QuickLaunchEntry};
+        const KEY_LEFTMETA: u32 = 125;
+        const KEY_1: u32 = 2;
+        const KEY_2: u32 = 3;
+        let mut config = crate::config::Config::default();
+        config.taskbar.pinned = true;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let pin = |file: &str, action| crate::quicklaunch::QuickItem {
+            file: file.into(),
+            entry: QuickLaunchEntry {
+                label: file.into(),
+                icon: None,
+                action,
+            },
+            app: None,
+        };
+        h.state.quicklaunch = vec![
+            pin("launcher.desktop", Action::Launcher),
+            pin("test.app.desktop", Action::Spawn("true".into())),
+        ];
+        let mut c = h.connect();
+        let app = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let other = h.map_toplevel(&mut c, "test.other", 300, 200);
+        h.dispatch();
+        assert_eq!(h.state.focused, Some(other.id));
+        let chord = |h: &mut crate::harness::Harness, code| {
+            h.key(KEY_LEFTMETA, true);
+            h.key(code, true);
+            h.key(code, false);
+            h.key(KEY_LEFTMETA, false);
+            h.dispatch();
+        };
+        chord(&mut h, KEY_2);
+        assert_eq!(h.state.focused, Some(app.id), "the pinned app's window");
+        chord(&mut h, KEY_2);
+        assert!(
+            h.state.win(app.id).is_some_and(|w| w.minimized),
+            "pressed again, it goes down"
+        );
+        chord(&mut h, KEY_2);
+        assert!(h.state.win(app.id).is_some_and(|w| !w.minimized));
+        assert_eq!(h.state.focused, Some(app.id), "and comes back up");
+        assert!(h.state.launcher.is_none());
+        chord(&mut h, KEY_1);
+        assert!(
+            h.state.launcher.is_some(),
+            "the pin without a window starts"
+        );
+    }
+
+    #[test]
     fn enter_on_a_grouped_button_with_pinned_off_opens_its_window_list() {
         const KEY_ENTER: u32 = 28;
         let mut config = crate::config::Config::default();
