@@ -16,6 +16,7 @@ reprisexdg = { path = "../../reprisexdg" }
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisebus = { path = "../../reprisebus" }
+reprisefs = { path = "../../reprisefs" }
 log.workspace = true
 
 [dev-dependencies]

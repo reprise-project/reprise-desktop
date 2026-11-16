@@ -4506,6 +4506,7 @@ dependencies = [
  "log",
  "repriseapp",
  "reprisebus",
+ "reprisefs",
  "reprisekit",
  "reprisexdg",
  "tempfile",
