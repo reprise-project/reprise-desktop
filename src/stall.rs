@@ -5,8 +5,9 @@ use smithay::reexports::calloop::{
     self, EventIterator, EventSource, LoopHandle, Poll, PostAction, Readiness, Token, TokenFactory,
 };
 use std::fmt::Write as _;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock, Weak};
+use std::thread::Thread;
 use std::time::Duration;
 
 /// A turn this long gets its first report.
@@ -15,7 +16,7 @@ pub const FIRST: Duration = Duration::from_secs(2);
 pub const SECOND: Duration = Duration::from_secs(10);
 /// Then one report every this long.
 pub const REPEAT: Duration = Duration::from_secs(30);
-/// How often the watcher reads the beacon.
+/// How often the watcher reads the beacon while the loop turns.
 const POLL: Duration = Duration::from_millis(500);
 
 /// Nanoseconds of CLOCK_MONOTONIC, which stands still in suspend, so a turn that spans a
@@ -30,10 +31,60 @@ fn now() -> u64 {
     t.tv_sec as u64 * 1_000_000_000 + t.tv_nsec as u64
 }
 
-/// The loop's side: a source with no fd that stores `(start << 1) | 1` as a turn begins (the
-/// poll returned) and `end << 1` as it ends (the next poll is about to sleep), so an idle loop
-/// blocked in epoll reads as idle however long it waits.
-pub struct Beacon(Arc<AtomicU64>);
+/// What the loop and the watcher share.
+#[derive(Default)]
+struct Shared {
+    /// `(start << 1) | 1` from a turn's start, `end << 1` from its end, so an idle loop blocked
+    /// in epoll reads as idle however long it waits.
+    turn: AtomicU64,
+    /// The watcher read the loop idle and parks until the next turn begins.
+    parked: AtomicBool,
+    /// The loop is gone.
+    gone: AtomicBool,
+    watcher: OnceLock<Thread>,
+}
+
+impl Shared {
+    fn begin(&self) {
+        self.turn.store((now() << 1) | 1, Ordering::SeqCst);
+        self.wake();
+    }
+
+    fn end(&self) {
+        self.turn.store(now() << 1, Ordering::Relaxed);
+    }
+
+    /// Unpark a parked watcher: one atomic swap per turn, and a syscall only on the first turn
+    /// after an idle spell.
+    fn wake(&self) {
+        if self.parked.swap(false, Ordering::SeqCst)
+            && let Some(t) = self.watcher.get()
+        {
+            t.unpark();
+        }
+    }
+
+    /// Park the watcher unless a turn began or the loop went since it read `turn`. Either side
+    /// stores its flag before reading the other's, so a turn that begins meanwhile finds
+    /// `parked` set and unparks.
+    fn park_after(&self, turn: u64) {
+        self.parked.store(true, Ordering::SeqCst);
+        if self.turn.load(Ordering::SeqCst) == turn && !self.gone.load(Ordering::SeqCst) {
+            std::thread::park();
+        }
+    }
+}
+
+/// The loop's side: a source with no fd that marks a turn's start (the poll returned) and end
+/// (the next poll is about to sleep) in [`Shared::turn`].
+pub struct Beacon(Arc<Shared>);
+
+impl Drop for Beacon {
+    fn drop(&mut self) {
+        self.0.gone.store(true, Ordering::SeqCst);
+        self.0.wake();
+    }
+}
 
 impl EventSource for Beacon {
     type Event = ();
@@ -63,19 +114,19 @@ impl EventSource for Beacon {
     }
 
     fn before_sleep(&mut self) -> calloop::Result<Option<(Readiness, Token)>> {
-        self.0.store(now() << 1, Ordering::Relaxed);
+        self.0.end();
         Ok(None)
     }
 
     fn before_handle_events(&mut self, _: EventIterator<'_>) {
-        self.0.store((now() << 1) | 1, Ordering::Relaxed);
+        self.0.begin();
     }
 }
 
 /// Watch the loop behind `handle`, which must run on this thread. The watcher thread ends with
 /// the loop.
 pub fn start<D>(handle: &LoopHandle<'static, D>) {
-    let beacon = Arc::new(AtomicU64::new(0));
+    let beacon = Arc::new(Shared::default());
     if let Err(e) = handle.insert_source(Beacon(beacon.clone()), |_, _, _| {}) {
         return log::warn!("stall watch: {}", e.error);
     }
@@ -111,13 +162,18 @@ impl Target {
     }
 }
 
-/// Reads the beacon every [`POLL`] and hands each line to `log` until the beacon is gone.
-fn watch(beacon: Weak<AtomicU64>, target: Target, mut log: impl FnMut(log::Level, String)) {
+/// Reads the beacon every [`POLL`] while the loop turns, parked while it sleeps, and hands each
+/// line to `log` until the beacon is gone.
+fn watch(beacon: Weak<Shared>, target: Target, mut log: impl FnMut(log::Level, String)) {
+    let Some(b) = beacon.upgrade() else { return };
+    let _ = b.watcher.set(std::thread::current());
+    drop(b);
     let mut w = Watch::default();
     loop {
         std::thread::sleep(POLL);
         let Some(b) = beacon.upgrade() else { return };
-        let step = w.step(b.load(Ordering::Relaxed), now());
+        let turn = b.turn.load(Ordering::SeqCst);
+        let step = w.step(turn, now());
         drop(b);
         match step {
             Some(Step::Stuck(d)) => log(log::Level::Warn, report(d, target)),
@@ -126,6 +182,11 @@ fn watch(beacon: Weak<AtomicU64>, target: Target, mut log: impl FnMut(log::Level
                 format!("main loop stalled for {:.1} s", d.as_secs_f64()),
             ),
             None => {}
+        }
+        if turn & 1 == 0
+            && let Some(b) = beacon.upgrade()
+        {
+            b.park_after(turn);
         }
     }
 }
@@ -522,7 +583,7 @@ mod tests {
     #[test]
     fn the_beacon_is_busy_only_between_a_poll_returning_and_the_next_sleep() {
         let mut lp: EventLoop<'static, Option<u64>> = EventLoop::try_new().unwrap();
-        let beacon = Arc::new(AtomicU64::new(0));
+        let beacon = Arc::new(Shared::default());
         lp.handle()
             .insert_source(Beacon(beacon.clone()), |_, _, _| {})
             .unwrap();
@@ -531,7 +592,7 @@ mod tests {
             .insert_source(
                 Timer::from_duration(Duration::from_millis(300)),
                 move |_, _, d| {
-                    *d = Some(seen.load(Ordering::Relaxed));
+                    *d = Some(seen.turn.load(Ordering::Relaxed));
                     TimeoutAction::Drop
                 },
             )
@@ -539,7 +600,7 @@ mod tests {
         let reader = beacon.clone();
         let sleeping = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(150));
-            reader.load(Ordering::Relaxed)
+            reader.turn.load(Ordering::Relaxed)
         });
         let mut in_turn = None;
         lp.dispatch(None, &mut in_turn).unwrap();
@@ -550,7 +611,7 @@ mod tests {
         );
         assert_eq!(in_turn.unwrap() & 1, 1, "busy in a callback");
         assert_eq!(
-            beacon.load(Ordering::Relaxed) & 1,
+            beacon.turn.load(Ordering::Relaxed) & 1,
             1,
             "busy until the next sleep"
         );
@@ -568,17 +629,18 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let (done, finished) = mpsc::channel::<()>();
         let main = std::thread::spawn(move || {
-            let beacon = Arc::new(AtomicU64::new(0));
-            let weak = Arc::downgrade(&beacon);
+            let beacon = Beacon(Arc::new(Shared::default()));
+            let weak = Arc::downgrade(&beacon.0);
             let target = Target::this_thread();
             let watcher = std::thread::spawn(move || {
                 watch(weak, target, |level, line| {
                     let _ = tx.send((level, line));
                 })
             });
-            beacon.store((now() << 1) | 1, Ordering::Relaxed);
+            parked(&beacon.0, true);
+            beacon.0.begin();
             hold_the_loop_in_a_test(Duration::from_millis(2500));
-            beacon.store(now() << 1, Ordering::Relaxed);
+            beacon.0.end();
             let _ = finished.recv();
             drop(beacon);
             watcher.join().unwrap();
@@ -609,6 +671,53 @@ mod tests {
         let (level, ended) = &lines[1];
         assert_eq!(*level, log::Level::Info);
         assert!(ended.starts_with("main loop stalled for 2."), "{ended}");
+    }
+
+    /// Waits up to 2 s for the watcher to be parked (`true`) or woken.
+    fn parked(b: &Shared, want: bool) {
+        let until = std::time::Instant::now() + Duration::from_secs(2);
+        while b.parked.load(Ordering::SeqCst) != want {
+            assert!(
+                std::time::Instant::now() < until,
+                "parked {want} within 2 s"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn switches(tid: libc::pid_t) -> u64 {
+        let status = std::fs::read_to_string(format!("/proc/self/task/{tid}/status")).unwrap();
+        let line = status
+            .lines()
+            .find_map(|l| l.strip_prefix("voluntary_ctxt_switches:"));
+        line.unwrap().trim().parse().unwrap()
+    }
+
+    #[test]
+    fn the_watcher_sleeps_while_the_loop_is_idle_and_ends_with_the_beacon() {
+        let beacon = Beacon(Arc::new(Shared::default()));
+        let weak = Arc::downgrade(&beacon.0);
+        let target = Target::this_thread();
+        let (tid_tx, tid) = mpsc::channel();
+        let watcher = std::thread::spawn(move || {
+            // SAFETY: gettid only reads the calling thread's id.
+            let _ = tid_tx.send(unsafe { libc::gettid() });
+            watch(weak, target, |_, line| panic!("no report: {line}"));
+        });
+        let tid = tid.recv().unwrap();
+        for _ in 0..2 {
+            parked(&beacon.0, true);
+            std::thread::sleep(Duration::from_millis(50));
+            let before = switches(tid);
+            std::thread::sleep(POLL * 3);
+            assert_eq!(switches(tid), before, "no wakeup in {:?}", POLL * 3);
+            beacon.0.begin();
+            parked(&beacon.0, false);
+            std::thread::sleep(POLL / 2);
+            beacon.0.end();
+        }
+        drop(beacon);
+        watcher.join().unwrap();
     }
 
     #[test]
