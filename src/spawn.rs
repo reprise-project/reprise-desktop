@@ -1124,7 +1124,9 @@ fn start(mut c: std::process::Command, what: &str, name: Option<&str>) -> std::i
         c.env("JOURNAL_STREAM", stream);
     }
     let out = journal.as_ref().map(|(fd, _)| fd.as_fd());
-    started(what, || spawn_detached(&c, out))
+    started(what, || {
+        spawn_detached(&c, out).inspect(|&pid| crate::fdlimit::restore(pid))
+    })
 }
 
 /// [`start`] for a `c` with a `pre_exec` of its own, which needs a fork.
@@ -1269,19 +1271,24 @@ fn spawn_detached(
 }
 
 /// Make `c` a child of its own: new session with no controlling terminal, stdin on `/dev/null`,
-/// an empty signal mask (the `block_signals` mask survives exec) and SIGINT at its default (an
-/// ignored one survives exec, as when started with `&`).
+/// an empty signal mask (the `block_signals` mask survives exec), SIGINT at its default (an
+/// ignored one survives exec, as when started with `&`) and the open-file limit the compositor
+/// started with.
 pub(crate) fn detach(c: &mut std::process::Command) {
     c.stdin(std::process::Stdio::null());
+    let nofile = crate::fdlimit::original();
     // SAFETY: the closure runs between fork and exec; sigemptyset,
-    // pthread_sigmask, signal and setsid are async-signal-safe and nothing
-    // allocates.
+    // pthread_sigmask, signal, setrlimit and setsid are async-signal-safe and
+    // nothing allocates.
     unsafe {
-        c.pre_exec(|| {
+        c.pre_exec(move || {
             let mut set: libc::sigset_t = std::mem::zeroed();
             libc::sigemptyset(&mut set);
             libc::pthread_sigmask(libc::SIG_SETMASK, &set, std::ptr::null_mut());
             libc::signal(libc::SIGINT, libc::SIG_DFL);
+            if let Some(limit) = &nofile {
+                libc::setrlimit(libc::RLIMIT_NOFILE, limit);
+            }
             // Fails only for a process group leader.
             libc::setsid();
             Ok(())
@@ -2332,6 +2339,66 @@ mod tests {
             mask("SigIgn:") & (1 << (libc::SIGINT - 1)),
             0,
             "SIGINT is not ignored"
+        );
+    }
+
+    #[test]
+    fn a_started_program_gets_the_open_file_limit_the_compositor_started_with() {
+        // The original limit is set once per process and every later child takes it: run alone.
+        const ALONE: &str = "REPRISE_SPAWN_FDLIMIT_TEST_ALONE";
+        if std::env::var_os(ALONE).is_none() {
+            let name = "spawn::tests::a_started_program_gets_the_open_file_limit_the_compositor_started_with";
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--quiet"])
+                .env(ALONE, "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "the test passes in a process of its own");
+            return;
+        }
+        let mut ours = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: `ours` is a valid rlimit for getrlimit to fill.
+        let r = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut ours) };
+        assert_eq!(r, 0);
+        let original = libc::rlimit {
+            rlim_cur: 200.min(ours.rlim_cur),
+            rlim_max: ours.rlim_max,
+        };
+        crate::fdlimit::set_original(original);
+
+        let mut c = std::process::Command::new("sleep");
+        c.arg("30");
+        let pid = start(c, "sleep", None).unwrap() as libc::pid_t;
+        let mut child = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: `child` is a valid out-param; a null new limit only reads.
+        let r = unsafe { libc::prlimit(pid, libc::RLIMIT_NOFILE, std::ptr::null(), &mut child) };
+        // SAFETY: `pid` is this test's own child.
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+            libc::waitpid(pid, std::ptr::null_mut(), 0);
+        }
+        assert_eq!(r, 0);
+        assert_eq!(
+            (child.rlim_cur, child.rlim_max),
+            (original.rlim_cur, original.rlim_max),
+            "a spawned program starts with the original limit"
+        );
+
+        let mut c = std::process::Command::new("sh");
+        c.args(["-c", "ulimit -Sn"])
+            .stdout(std::process::Stdio::piped());
+        detach(&mut c);
+        let out = c.spawn().unwrap().wait_with_output().unwrap();
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap().trim(),
+            original.rlim_cur.to_string(),
+            "a forked helper starts with the original limit"
         );
     }
 
