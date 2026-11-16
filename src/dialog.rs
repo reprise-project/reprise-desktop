@@ -286,17 +286,18 @@ impl Dialog {
         }
     }
 
-    /// What makes this dialog "the same window" as one already open: its title and, for a message
-    /// box, what its first button other than Cancel does. Two questions about hiding different
-    /// place icons both stay up, while Run stays single.
-    pub fn identity(&self) -> (&str, Option<&DialogAction>) {
+    /// What makes this dialog "the same window" as one already open: its title, its text and,
+    /// for a message box, what its first button other than Cancel does. Two questions about
+    /// hiding different place icons both stay up, as do two errors with one title and different
+    /// text, while Run stays single.
+    pub fn identity(&self) -> (&str, &str, Option<&DialogAction>) {
         let acts = match self.style {
             Style::Classic { .. } => (self.buttons.iter())
                 .map(|b| &b.action)
                 .find(|a| **a != DialogAction::Cancel),
             _ => None,
         };
-        (self.title.as_str(), acts)
+        (self.title.as_str(), self.text.as_str(), acts)
     }
 
     /// The pid End Program's End Now would kill; None for any other dialog.

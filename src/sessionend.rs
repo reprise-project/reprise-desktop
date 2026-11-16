@@ -1002,17 +1002,27 @@ fn rows(programs: &[Program], holders: &[Holder], name_of: impl Fn(&str) -> Stri
     rows
 }
 
+fn is_prompt(d: &crate::dialog::Dialog) -> bool {
+    matches!(&d.style, crate::dialog::Style::Form(f) if f.kind == crate::dialog::Kind::EndSession)
+}
+
 fn prompt_index(state: &State) -> Option<usize> {
-    state.dialogs.views.iter().position(|v| {
-        matches!(&v.dialog.style, crate::dialog::Style::Form(f)
-            if f.kind == crate::dialog::Kind::EndSession)
-    })
+    (state.dialogs.views.iter()).position(|v| is_prompt(&v.dialog))
+}
+
+/// Whether the session end waits on its prompt.
+pub(crate) fn prompting(state: &State) -> bool {
+    (state.ending.as_ref()).is_some_and(|e| e.mode == Mode::Prompted)
 }
 
 fn sync_prompt(state: &mut State) {
     let Some(e) = state.ending.as_ref().filter(|e| e.mode == Mode::Prompted) else {
         return;
     };
+    // A prompt waiting under a Welcome panel takes its rows once it opens.
+    if state.dialogs.held.iter().any(is_prompt) {
+        return;
+    }
     let goal = e.goal;
     let holders = holding(e.holders.as_deref().unwrap_or(&[]), goal);
     let programs = programs(state);
@@ -1302,6 +1312,33 @@ mod tests {
             "the prompt took the icon"
         );
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_prompt_waits_once_under_a_welcome_panel_and_opens_after_it() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let leave = reprisekit::powerpanel::Leave::SwitchUser { live: false };
+        h.state.open_dialog(crate::dialog::Dialog::log_off(leave));
+        h.state.ending = Some(Ending {
+            goal: Goal::LogOff,
+            cmd: None,
+            holders: None,
+            stop: None,
+            asked_portal: false,
+            timer: None,
+            reports: None,
+            mode: Mode::Prompted,
+            password: Password::No,
+            unasked: Vec::new(),
+        });
+        sync_prompt(&mut h.state);
+        sync_prompt(&mut h.state);
+        assert_eq!(prompt_index(&h.state), None, "not over the panel");
+        assert!(h.state.dialog_is_modal());
+        assert_eq!(h.state.dialogs.held.len(), 1, "held once");
+        h.state.close_dialog_at(0);
+        assert!(prompt_index(&h.state).is_some(), "up once the panel closes");
     }
 
     #[test]

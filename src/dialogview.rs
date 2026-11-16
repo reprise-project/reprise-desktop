@@ -35,6 +35,8 @@ use crate::window::keep_inside;
 #[derive(Default)]
 pub struct Dialogs {
     pub views: Vec<DialogView>,
+    /// Boxes raised while a Welcome panel was up, oldest first; they open once no panel is.
+    pub held: Vec<Dialog>,
     /// Counts blinks for the top dialog's label tip while the pointer rests on a label.
     tip_timer: Option<RegistrationToken>,
     /// The top dialog has the keyboard until a window takes the focus.

@@ -28,14 +28,22 @@ impl State {
 
     /// Show `d`, placed per `d.placement` on the output under the pointer. A dialog with the same
     /// `identity` is raised instead of reopened, its cues out when a key asked ([`Cues::reopen`]).
-    /// A Welcome panel takes the screen alone and closes the switchers; any other dialog opened
-    /// under the 3D switcher joins its stack (`flip_join`) and stays hidden until its cards land
-    /// (`flip_hide_dialog`).
+    /// A Welcome panel takes the screen alone and closes the switchers; any other dialog waits in
+    /// `held` while one is up, and otherwise opened under the 3D switcher joins its stack
+    /// (`flip_join`) and stays hidden until its cards land (`flip_hide_dialog`).
     pub fn open_dialog(&mut self, d: Dialog) {
         if matches!(d.style, Style::Welcome(_)) {
             self.switcher_cancel();
             self.close_all_dialogs();
             self.open_view(d, None);
+            return;
+        }
+        if self.dialog_is_modal() {
+            let held = &mut self.dialogs.held;
+            match held.iter().position(|h| h.identity() == d.identity()) {
+                Some(i) => held[i] = d,
+                None => held.push(d),
+            }
             return;
         }
         let same = self
@@ -352,6 +360,41 @@ impl State {
         self.destroy_dialog(v, gone);
         self.settle_dialogs();
         self.sync_dialog_tasks(on_taskbar);
+        if gone == Gone::Closed {
+            self.raise_held();
+        }
+    }
+
+    /// Once no Welcome panel is up, open the boxes that waited for it, those still wanted, and
+    /// offer the End Programs a panel cleared away.
+    fn raise_held(&mut self) {
+        if self.dialog_is_modal() {
+            return;
+        }
+        let held = std::mem::take(&mut self.dialogs.held);
+        let opens = !held.is_empty();
+        for d in held {
+            if self.still_wanted(&d) {
+                self.open_dialog(d);
+            }
+        }
+        if opens {
+            crate::location::icons_landed(self);
+            crate::sessionend::icons_landed(self);
+        }
+        self.offer_due_ends();
+    }
+
+    /// Whether a box that waited under a Welcome panel still has someone asking.
+    fn still_wanted(&self, d: &Dialog) -> bool {
+        match &d.style {
+            Style::Form(f) => match &f.kind {
+                FormKind::EndSession => crate::sessionend::prompting(self),
+                FormKind::Location(desktop_id) => crate::location::waiting(self, desktop_id),
+            },
+            Style::EndProgram => d.end_program_pid().is_some_and(|p| self.hangs(p)),
+            Style::Classic { .. } | Style::Welcome(_) | Style::TrayCustomize(_) => true,
+        }
     }
 
     /// After dialogs left the stack: redraw the new top, or return the keyboard to the windows
@@ -492,6 +535,7 @@ impl State {
         if removed {
             self.settle_dialogs();
             self.sync_dialog_tasks(on_taskbar);
+            self.raise_held();
         }
     }
 

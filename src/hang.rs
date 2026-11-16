@@ -808,8 +808,8 @@ impl State {
         self.close_end_programs(|p| !live.contains(&p), "has no window left");
     }
 
-    /// An End Program for `pid` was cleared away unanswered: the next timed-out ping of its windows
-    /// offers it again.
+    /// An End Program for `pid` was cleared away unanswered: it is offered again once no Welcome
+    /// panel is up ([`State::offer_due_ends`]), or at the next timed-out ping of its windows.
     pub(crate) fn end_program_due(&mut self, pid: i32) {
         let ws: Vec<WindowId> = (self.windows.iter())
             .map(|w| w.id)
@@ -817,6 +817,26 @@ impl State {
             .collect();
         for w in ws {
             self.window_hang(w).close_asked = true;
+        }
+    }
+
+    /// Whether a window of `pid` is hung.
+    pub(crate) fn hangs(&self, pid: i32) -> bool {
+        (self.hang.windows.iter())
+            .any(|(&w, h)| h.liveness.is_hung() && self.client_pid(w) == Some(pid))
+    }
+
+    /// Offer End Program for each hung window it is due for; none while a session end lists them.
+    pub(crate) fn offer_due_ends(&mut self) {
+        if self.ending.is_some() {
+            return;
+        }
+        let due: Vec<WindowId> = (self.hang.windows.iter())
+            .filter(|(_, h)| h.close_asked && h.liveness.is_hung())
+            .map(|(&w, _)| w)
+            .collect();
+        for w in due {
+            self.offer_end(w);
         }
     }
 
@@ -1419,7 +1439,7 @@ mod tests {
     }
 
     #[test]
-    fn end_program_a_welcome_panel_cleared_is_due_again() {
+    fn end_program_a_welcome_panel_cleared_is_back_once_it_closes() {
         const PID: i32 = i32::MAX - 813;
         let mut h = crate::harness::Harness::new();
         h.output("o", 800, 600);
@@ -1434,10 +1454,9 @@ mod tests {
         assert!(up(&h), "End Program for the hung window");
         let power = h.state.config.power.clone();
         h.state.open_dialog(Dialog::turn_off(&power, false));
-        h.state.close_dialog_at(0);
         assert!(!up(&h), "the panel cleared it");
-        h.state.ping_timed_out(target);
-        assert!(up(&h), "the next timed-out ping offers it again");
+        h.state.close_dialog_at(0);
+        assert!(up(&h), "back once the panel closes");
     }
 
     #[test]
