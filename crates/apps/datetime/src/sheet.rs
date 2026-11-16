@@ -24,11 +24,14 @@ use reprisekit::controls::updown::UpDown;
 use reprisekit::raster::Rect;
 use reprisekit::text::Align;
 use reprisekit::theme::TextUnits;
+use reprisekit::tr;
 
 /// The sheet's client size: 404x341 outside, less the frame.
 pub const CLIENT: (i32, i32) = (398, 317);
 
-pub const TABS: [&str; 2] = ["Date & Time", "Time Zone"];
+pub fn tabs() -> [String; 2] {
+    [tr!("tab-date"), tr!("tab-zone")]
+}
 pub const TAB_DATE: usize = 0;
 pub const TAB_ZONE: usize = 1;
 
@@ -77,11 +80,11 @@ impl Blocked {
         }
     }
 
-    pub fn note(self) -> &'static str {
+    pub fn note(self) -> String {
         match self {
-            Blocked::NoGeoclue => "Install geoclue, the location service, first.",
-            Blocked::LocationOff => "Turn on Location in Settings > Privacy first.",
-            Blocked::NotAllowed => "Ask an administrator to allow time zone changes.",
+            Blocked::NoGeoclue => tr!("blocked-no-geoclue"),
+            Blocked::LocationOff => tr!("blocked-location-off"),
+            Blocked::NotAllowed => tr!("blocked-not-allowed"),
         }
     }
 }
@@ -157,7 +160,7 @@ impl Sheet {
             zone_page(&zones, system),
         ];
         let mut s = Sheet {
-            sheet: PropSheet::new(&TABS, pages, CLIENT),
+            sheet: PropSheet::new(&tabs().each_ref().map(String::as_str), pages, CLIENT),
             applied: system.clone(),
             zones,
             edited: false,
@@ -402,7 +405,10 @@ impl Sheet {
         let page = &mut self.sheet.pages[TAB_ZONE];
         let auto = page.checked("auto").unwrap_or(false);
         page.set_enabled("auto", blocked.is_none() || self.applied.auto_zone || auto);
-        page.set_text("auto_note", blocked.map_or("", Blocked::note));
+        page.set_text(
+            "auto_note",
+            &blocked.map_or_else(String::new, Blocked::note),
+        );
         page.set_enabled("zone", !auto);
         if auto {
             if let Some(i) = self.zones.iter().position(|z| *z == self.applied.zone) {
@@ -425,7 +431,11 @@ impl Sheet {
 
 fn date_page(now: Local, first_weekday: u32, twelve: bool, system: &System) -> Form {
     let mut items = vec![
-        Item::group("date_group", Rect::new(16, 39, 183, 197), "Date"),
+        Item::group(
+            "date_group",
+            Rect::new(16, 39, 183, 197),
+            &tr!("group-date"),
+        ),
         Item::combo("month", 27, 58, 75, &MONTHS, 12),
         Item::new(
             "year",
@@ -442,7 +452,11 @@ fn date_page(now: Local, first_weekday: u32, twelve: bool, system: &System) -> F
                 first_weekday,
             )),
         ),
-        Item::group("time_group", Rect::new(208, 39, 170, 197), "Time"),
+        Item::group(
+            "time_group",
+            Rect::new(208, 39, 170, 197),
+            &tr!("group-time"),
+        ),
         Item::new(
             "clock",
             Rect::new(225, 71, 132, 100),
@@ -453,13 +467,7 @@ fn date_page(now: Local, first_weekday: u32, twelve: bool, system: &System) -> F
             Rect::new(249, 201, 103, 20),
             Control::Time(TimeField::new(now.h, now.m, now.s, twelve)),
         ),
-        Item::check(
-            "ntp",
-            16,
-            250,
-            "Automatically &synchronize with an Internet time server",
-        )
-        .checked(system.ntp),
+        Item::check("ntp", 16, 250, &tr!("ntp")).checked(system.ntp),
     ];
     if let Some(Item {
         control: Control::Combo(c),
@@ -489,7 +497,7 @@ fn zone_page(zones: &[String], system: &System) -> Form {
     let selected = zones.iter().position(|z| *z == system.zone).unwrap_or(0);
     let mid = PANEL.y + PANEL.height / 2;
     Form::new(vec![
-        Item::check("auto", 18, 37, "Set time &zone automatically").checked(system.auto_zone),
+        Item::check("auto", 18, 37, &tr!("auto-zone")).checked(system.auto_zone),
         Item::label_at("auto_note", 18, 54, 344, "").under_check(),
         Item::new(
             "zone",
@@ -513,14 +521,9 @@ fn zone_page(zones: &[String], system: &System) -> Form {
         .on_window(),
         // Every zone's rules carry their daylight saving changes, and the
         // clock always follows them: there is nothing to turn off.
-        Item::check(
-            "dst",
-            21,
-            257,
-            "Automatically adjust clock for daylight saving changes",
-        )
-        .checked(true)
-        .enabled(false),
+        Item::check("dst", 21, 257, &tr!("dst"))
+            .checked(true)
+            .enabled(false),
     ])
 }
 

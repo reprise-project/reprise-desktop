@@ -4,6 +4,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("import");
+
 use reprise_settings::import::{self, Plan};
 use repriseapp::keys::{dialog_key, form_input};
 use repriseapp::{App, BTN_LEFT, Caption, Ctx, Event, PointerInput, Reply, WinId};
@@ -12,6 +14,7 @@ use reprisekit::controls::importsheet::{self, Outcome, Sheet};
 use reprisekit::controls::listview::Input as ListInput;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
+use reprisekit::tr;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -113,11 +116,14 @@ impl ImportApp {
         let (line, wrote) = match import::write(&self.config, self.quick.as_deref(), &picked) {
             Ok(()) => {
                 log::info!("imported {} {} settings", picked.len(), plan.name);
-                (done_line(picked.len(), plan.name), true)
+                (
+                    tr!("imported", count = picked.len(), desktop = plan.name),
+                    true,
+                )
             }
             Err(e) => {
                 log::warn!("import from {}: {e}", plan.name);
-                (format!("Reprise couldn't import the settings: {e}"), false)
+                (tr!("import-failed", error = e.to_string()), false)
             }
         };
         let forms = ctx.forms();
@@ -125,16 +131,9 @@ impl ImportApp {
     }
 }
 
-fn done_line(n: usize, name: &str) -> String {
-    match n {
-        1 => format!("Imported 1 {name} setting."),
-        n => format!("Imported {n} {name} settings."),
-    }
-}
-
 impl App for ImportApp {
     fn title(&self) -> String {
-        "Import from Another Desktop".into()
+        tr!("title")
     }
 
     fn app_id(&self) -> String {

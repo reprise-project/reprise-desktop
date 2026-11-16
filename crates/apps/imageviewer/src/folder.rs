@@ -1,5 +1,6 @@
 //! The pictures of the open picture's folder, in name order, and which one shows.
 
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 /// Where a step goes.
@@ -76,7 +77,11 @@ impl Folder {
 
     /// "3 of 12".
     pub fn position(&self) -> String {
-        format!("{} of {}", self.at + 1, self.pictures.len())
+        tr!(
+            "position",
+            at = (self.at + 1).to_string(),
+            count = self.pictures.len().to_string()
+        )
     }
 }
 

@@ -3,6 +3,7 @@
 
 use reprisefs::props::{short_size, thousands as count};
 use reprisefs::usage::{Kind, Node, NodeId, Sort, Tree};
+use reprisekit::tr;
 
 /// The columns, by index.
 pub const NAME: usize = 0;
@@ -28,7 +29,7 @@ impl Line {
     pub fn cell(&self, col: usize) -> String {
         match col {
             NAME => self.name.clone(),
-            SIZE if self.kind == Kind::Mount => "Another drive".into(),
+            SIZE if self.kind == Kind::Mount => tr!("another-drive"),
             SIZE => short_size(self.size),
             FILES if self.kind == Kind::Dir => count(self.files),
             _ => String::new(),
@@ -88,13 +89,12 @@ pub fn col_of(sort: Sort) -> usize {
 /// Where the scan stands, said of folder `at`.
 pub fn status(t: &Tree, at: NodeId, answered: bool, waited_out: bool) -> String {
     let n = t.node(at);
-    let noun = if n.files == 1 { "file" } else { "files" };
-    let sized = format!("{} in {} {noun}", short_size(n.size), count(n.files));
+    let sized = tr!("status-sized", count = n.files, size = short_size(n.size));
     match () {
-        _ if !answered && waited_out => "The location is not responding.".into(),
-        _ if n.unreadable => "The folder cannot be read.".into(),
+        _ if !answered && waited_out => tr!("not-responding"),
+        _ if n.unreadable => tr!("unreadable"),
         _ if n.done() => sized,
-        _ => format!("Counting... {sized} so far"),
+        _ => tr!("status-counting", sized = sized),
     }
 }
 

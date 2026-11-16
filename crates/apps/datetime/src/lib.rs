@@ -6,6 +6,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("datetime");
+
 mod sheet;
 mod timedate;
 
@@ -22,10 +24,9 @@ use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
+use reprisekit::tr;
 
 use sheet::{Local, Outcome, Sheet, System};
-
-const TITLE: &str = "Date and Time Properties";
 
 #[derive(Default)]
 struct DateTimeApp {
@@ -135,7 +136,7 @@ impl DateTimeApp {
                         }
                     }
                     if let Some(text) = failure.message() {
-                        self.error.show(TITLE, text, None);
+                        self.error.show(&tr!("title"), text, None);
                     }
                 }
             }
@@ -164,7 +165,7 @@ impl DateTimeApp {
 
 impl App for DateTimeApp {
     fn title(&self) -> String {
-        TITLE.into()
+        tr!("title")
     }
 
     fn app_id(&self) -> String {

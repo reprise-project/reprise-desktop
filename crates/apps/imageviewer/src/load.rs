@@ -5,6 +5,7 @@ use repriseapp::Poster;
 use repriseapp::decode::{Budget, Decoders, Unread, frames, read_capped_from};
 use reprisefs::bincap::Fate;
 use reprisekit::raster::Canvas;
+use reprisekit::tr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -83,19 +84,23 @@ pub enum Msg {
 }
 
 /// The message a picture that does not open shows instead.
-pub const CANNOT_OPEN: &str = "This picture cannot be shown.";
+pub fn cannot_open() -> String {
+    tr!("cannot-open")
+}
 
 /// The message a picture past the viewer's [`Budget`] shows instead.
-pub const TOO_LARGE: &str = "This picture is too large to show.";
+pub fn too_large() -> String {
+    tr!("too-large")
+}
 
 fn open(path: &std::path::Path) -> Result<Picture, String> {
     let budget = Budget::viewer();
     let file = reprisefs::ops::open_regular(path).map_err(|e| match e.kind() {
-        std::io::ErrorKind::InvalidInput => CANNOT_OPEN.to_string(),
+        std::io::ErrorKind::InvalidInput => cannot_open(),
         _ => e.to_string(),
     })?;
     let bytes = read_capped_from(file, budget.file).map_err(|e| match e.kind() {
-        std::io::ErrorKind::FileTooLarge => TOO_LARGE.to_string(),
+        std::io::ErrorKind::FileTooLarge => too_large(),
         _ => e.to_string(),
     })?;
     picture(&bytes, budget)
@@ -113,8 +118,8 @@ fn picture(bytes: &[u8], budget: Budget) -> Result<Picture, String> {
     let d = Decoders::default_set()
         .decode(bytes, (u32::MAX, u32::MAX), budget)
         .map_err(|e| match e {
-            Unread::TooLarge => TOO_LARGE.to_string(),
-            Unread::Unreadable => CANNOT_OPEN.to_string(),
+            Unread::TooLarge => too_large(),
+            Unread::Unreadable => cannot_open(),
         })?;
     Ok(Picture {
         frames: vec![(Arc::new(d.canvas), 0)],
@@ -133,7 +138,7 @@ fn delete(path: &std::path::Path, erase: bool) -> Result<(), String> {
     if erase {
         return std::fs::remove_file(path).map_err(|e| e.to_string());
     }
-    let bins = reprisefs::trash::Bins::system().ok_or("Cannot find the Recycle Bin.")?;
+    let bins = reprisefs::trash::Bins::system().ok_or_else(|| tr!("no-recycle-bin"))?;
     bins.trash(path).map(drop).map_err(|e| e.to_string())
 }
 
@@ -251,7 +256,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("broken.png");
         std::fs::write(&p, b"not a picture").unwrap();
-        assert_eq!(open(&p).err().as_deref(), Some(CANNOT_OPEN));
+        assert_eq!(open(&p).err().as_deref(), Some(cannot_open().as_str()));
         assert!(open(&dir.path().join("gone.png")).is_err());
     }
 
@@ -268,7 +273,7 @@ mod tests {
             opened
                 .expect("the open returns without a writer")
                 .as_deref(),
-            Some(CANNOT_OPEN)
+            Some(cannot_open().as_str())
         );
     }
 
@@ -298,7 +303,7 @@ mod tests {
             "P7\nWIDTH 65535\nHEIGHT 65535\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n";
         assert_eq!(
             picture(huge.as_bytes(), Budget::viewer()).err().as_deref(),
-            Some(TOO_LARGE)
+            Some(too_large().as_str())
         );
     }
 }

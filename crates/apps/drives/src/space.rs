@@ -7,6 +7,8 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use reprisekit::tr;
+
 pub const INTERVAL: Duration = Duration::from_secs(120);
 /// Free space under this is low whatever the share; a tenth of a disk smaller than ten times it.
 pub const FLOOR: u64 = 1 << 30;
@@ -59,27 +61,27 @@ impl Warned {
 /// The warning's text for `r`.
 pub fn balloon(r: &Reading) -> (String, String) {
     (
-        "Low Disk Space".into(),
-        format!(
-            "The disk of {} has only {} free of {}.",
-            r.mount.display(),
-            reprisefs::props::short_size(r.free),
-            reprisefs::props::short_size(r.total),
+        tr!("low-space-title"),
+        tr!(
+            "low-space-body",
+            mount = r.mount.display().to_string(),
+            free = reprisefs::props::short_size(r.free),
+            total = reprisefs::props::short_size(r.total),
         ),
     )
 }
 
-pub const OPEN: &str = "Open";
-pub const SHOW_USAGE: &str = "Show Usage";
-pub const EMPTY_BIN: &str = "Empty Recycle Bin";
+pub const OPEN: usize = 0;
+pub const SHOW_USAGE: usize = 1;
+pub const EMPTY_BIN: usize = 2;
 
 /// The warning's buttons: Open, Show Usage, then Empty Recycle Bin while the bin holds something.
-pub fn buttons(r: &Reading) -> &'static [&'static str] {
+pub fn buttons(r: &Reading) -> Vec<String> {
+    let mut b = vec![tr!("low-space-open"), tr!("show-usage")];
     if r.bin {
-        &[OPEN, SHOW_USAGE, EMPTY_BIN]
-    } else {
-        &[OPEN, SHOW_USAGE]
+        b.push(tr!("empty-bin"));
     }
+    b
 }
 
 fn watched() -> Vec<PathBuf> {
@@ -247,13 +249,14 @@ mod tests {
         let (title, body) = balloon(&r);
         for bin in [false, true] {
             r.bin = bin;
-            let actions = buttons(&r);
+            let owned = buttons(&r);
+            let actions: Vec<&str> = owned.iter().map(String::as_str).collect();
             let c = SheetContent {
                 app: "Drives",
                 when: "now",
                 title: &title,
                 body: &body,
-                actions,
+                actions: &actions,
                 action_icons: &[],
                 reply: None,
                 has_picture: false,

@@ -15,8 +15,8 @@ fn filters() -> Vec<String> {
         .map(|e| format!("*.{e}"))
         .collect();
     vec![
-        format!("All Pictures ({})", globs.join(";")),
-        "All Files (*.*)".into(),
+        tr!("filter-pictures", globs = globs.join(";")),
+        tr!("filter-all"),
     ]
 }
 
@@ -24,7 +24,7 @@ impl Viewer {
     /// Shows `text` in the error box.
     pub(crate) fn fail(&mut self, text: &str) {
         let icon = self.warn_icon.clone();
-        self.error.show(NAME, text.into(), icon);
+        self.error.show(&tr!("name"), text.into(), icon);
     }
 
     /// Delete, or Shift+Delete (`erase`): the drive and the Recycle Bin settings say whether it
@@ -101,7 +101,7 @@ impl Viewer {
             Err(e) => {
                 log::warn!("delete {}: {e}", path.display());
                 let name = reprisefs::bincap::label(path);
-                self.fail(&format!("Cannot delete {name}: {e}"));
+                self.fail(&tr!("delete-failed", name = name, error = e));
             }
         }
     }
@@ -109,8 +109,8 @@ impl Viewer {
     /// File > Open, on the shown picture's folder or where the last Open was confirmed.
     pub(crate) fn open_dialog(&mut self) {
         let fields = Fields {
-            title: "Open".into(),
-            accept_label: "&Open".into(),
+            title: tr!("title-open"),
+            accept_label: tr!("open-button"),
             mode: DlgMode::Open,
             multiple: false,
             filters: filters(),

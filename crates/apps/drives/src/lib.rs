@@ -10,6 +10,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("drives");
+
 mod model;
 mod space;
 mod thunderbolt;
@@ -32,6 +34,7 @@ use reprisekit::controls::menu::{
 };
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::taskbar::Edge;
+use reprisekit::tr;
 
 use model::{Act, Arrival, Entry, Target};
 
@@ -182,7 +185,12 @@ impl DrivesApp {
                 let tag = self.tag();
                 self.asks.insert(tag, a);
                 if let Some(t) = &self.tray {
-                    t.notify_buttons(&b.summary, &b.body, tag, &b.buttons);
+                    t.notify_buttons(
+                        &b.summary,
+                        &b.body,
+                        tag,
+                        &b.buttons.each_ref().map(String::as_str),
+                    );
                 }
             }
             Act::Go { arrival, open } => self.go(arrival, open),
@@ -238,7 +246,9 @@ impl DrivesApp {
             let tag = self.tag();
             self.space_asks.insert(tag, r.clone());
             if let Some(t) = &self.tray {
-                t.notify_buttons(&summary, &body, tag, space::buttons(r));
+                let buttons = space::buttons(r);
+                let buttons: Vec<&str> = buttons.iter().map(String::as_str).collect();
+                t.notify_buttons(&summary, &body, tag, &buttons);
             }
         }
     }
@@ -250,10 +260,10 @@ impl DrivesApp {
             return;
         };
         let mount = r.mount.clone();
-        match space::buttons(r).get(i).copied() {
-            Some(space::OPEN) => self.open_path(&mount),
-            Some(space::SHOW_USAGE) => self.spawn_with_token("reprise-diskusage", [&mount]),
-            Some(space::EMPTY_BIN) => {
+        match i {
+            space::OPEN => self.open_path(&mount),
+            space::SHOW_USAGE => self.spawn_with_token("reprise-diskusage", [&mount]),
+            space::EMPTY_BIN if r.bin => {
                 std::thread::spawn(|| {
                     if let Err(e) = reprisebus::tray::empty_recycle_bin() {
                         log::warn!("could not ask to empty the Recycle Bin: {e}");
@@ -285,7 +295,12 @@ impl DrivesApp {
             let tag = self.tag();
             self.bolt_asks.insert(tag, d);
             if let Some(t) = &self.tray {
-                t.notify_buttons(&summary, &body, tag, &thunderbolt::BUTTONS);
+                t.notify_buttons(
+                    &summary,
+                    &body,
+                    tag,
+                    &thunderbolt::buttons().each_ref().map(String::as_str),
+                );
             }
         }
     }
@@ -344,7 +359,7 @@ impl DrivesApp {
 
     fn mounted(&mut self, volume: &str, result: Result<PathBuf, reprisefs::udisks::Error>) {
         let name = self.snap().volume(volume).map_or_else(
-            || "Removable Disk".into(),
+            || tr!("removable-disk"),
             |v| model::volume_name(self.snap(), v),
         );
         match result {
@@ -363,7 +378,7 @@ impl DrivesApp {
             Err(e) => {
                 self.open_after.remove(volume);
                 log::warn!("mounting {volume}: {e}");
-                self.notify((format!("Could not mount {name}"), e.message));
+                self.notify((tr!("mount-failed", name = name.as_str()), e.message));
             }
         }
     }
@@ -411,7 +426,7 @@ impl DrivesApp {
             }
             Err(e) => {
                 log::warn!("removing {disk}: {e}");
-                self.notify((format!("Problem Ejecting {}", r.disk), e.message));
+                self.notify((tr!("eject-failed", disk = r.disk.as_str()), e.message));
             }
         }
     }
@@ -426,7 +441,7 @@ impl DrivesApp {
             Err(Unmount::Busy) => self.notify(model::busy_balloon(&r.disk, &r.volumes)),
             Err(Unmount::Error(e)) => {
                 log::warn!("unmounting {}: {e}", r.disk);
-                self.notify((format!("Problem Ejecting {}", r.disk), e));
+                self.notify((tr!("eject-failed", disk = r.disk.as_str()), e));
             }
         }
     }
@@ -670,7 +685,7 @@ impl DrivesApp {
 
 impl App for DrivesApp {
     fn title(&self) -> String {
-        tray::TIP.into()
+        tray::tip().into()
     }
 
     fn app_id(&self) -> String {
@@ -765,7 +780,7 @@ impl repriseapp::Extended for DrivesApp {
         self.flyout.as_ref().map(|f| repriseapp::Flyout {
             id: FLYOUT,
             at: f.at,
-            title: tray::TIP,
+            title: tray::tip(),
         })
     }
 
