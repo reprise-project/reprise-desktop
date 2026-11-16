@@ -223,13 +223,15 @@ impl StartPanel {
     }
 
     /// Lays the panel out for `room` (width, height): `text` steps down, never under 100%, until
-    /// the Home panel is no wider than the room; program rows come off until it is no taller.
+    /// the Home panel is no wider than the room (Blue: and its places column fits the height);
+    /// program rows come off until it is no taller.
     pub fn fit(&mut self, text: TextUnits, room: (i32, i32)) {
-        let w = match self.shape {
-            Shape::Glass => layout::W,
-            Shape::Blue => bluelayout::W,
+        self.text = match self.shape {
+            Shape::Glass => text.fitting(layout::W, room.0),
+            Shape::Blue => text
+                .fitting(bluelayout::W, room.0)
+                .fitting(bluelayout::least_height(self), room.1),
         };
-        self.text = text.fitting(w, room.0);
         self.room = Some(room);
     }
 

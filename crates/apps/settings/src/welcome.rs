@@ -88,11 +88,13 @@ pub fn ready_keys(text: &str) -> ReadyKeys {
     }
 }
 
-/// `to`'s picks that differ from `from`, laid over the picks `text` holds now.
+/// `to`'s picks that differ from `from`, laid over the picks `text` holds now. A new interface
+/// takes `to`'s dark wish too, since the file reads light under Blue.
 fn moved(text: &str, from: &Picks, to: &Picks) -> Picks {
     let mut p = read(text);
     if from.interface != to.interface {
         p.interface = to.interface;
+        p.dark = to.dark;
     }
     if from.dark != to.dark {
         p.dark = to.dark;
@@ -187,6 +189,21 @@ mod tests {
             !light.contains("color_scheme"),
             "Light is the default scheme: {light}"
         );
+    }
+
+    #[test]
+    fn dark_comes_back_when_the_pages_leave_blue() {
+        let dark = picks(Interface::Classic, true, 100);
+        let classic = written("", dark);
+        let blue_picks = picks(Interface::Blue, true, 100);
+        let blue = written(&classic, moved(&classic, &dark, &blue_picks));
+        assert_eq!(read(&blue), picks(Interface::Blue, false, 100), "{blue}");
+        let back = written(&blue, moved(&blue, &blue_picks, &dark));
+        assert!(
+            back.contains(&format!("color_scheme = \"{DARK_SCHEME}\"")),
+            "{back}"
+        );
+        assert_eq!(read(&back), dark);
     }
 
     #[test]

@@ -73,6 +73,12 @@ pub fn programs_shown(p: &StartPanel) -> usize {
         .unwrap_or(0)
 }
 
+/// The panel's height at 100% text with every program row taken off: what the places column and
+/// All Programs need.
+pub fn least_height(p: &StartPanel) -> i32 {
+    BAND_H + left_height(p, 0).max(right_height(p)) + FOOT_H
+}
+
 fn body_height(p: &StartPanel) -> i32 {
     left_height(p, programs_shown(p)).max(right_height(p))
 }
@@ -258,6 +264,24 @@ mod tests {
         assert_eq!(layout(&p).panel.height, 440);
         p.room = Some((1920, 100));
         assert_eq!(programs_shown(&p), 0, "every row can go");
+    }
+
+    #[test]
+    fn a_short_screen_steps_the_text_down_until_the_places_fit() {
+        let mut p = blue();
+        let two = TextUnits::new(22, 11);
+        p.fit(two, (1920, 1080));
+        assert_eq!(p.text, two, "room enough");
+        p.fit(two, (1920, 600));
+        assert!(
+            p.text.len(100) < two.len(100),
+            "the text steps down, got {:?}",
+            p.text
+        );
+        let l = layout(&p);
+        assert!(l.panel.height <= 600, "{:?}", l.panel);
+        let last = l.rect(Spot::Place(p.places.len() - 1)).unwrap();
+        assert!(last.bottom() <= l.pane.bottom(), "{last:?} in {:?}", l.pane);
     }
 
     #[test]

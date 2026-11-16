@@ -187,6 +187,20 @@ fn a_held_list_arrow_repeats_on_the_hosts_ticks() {
 
 /// The overflowing list scrolls under the wheel and its bar, and a
 /// page opened from the keys or by the host comes into view.
+/// At 200% the rows are taller than at 100%, and a wheel notch still moves three of them.
+#[test]
+fn the_wheel_over_the_page_list_moves_whole_rows_at_200_percent() {
+    let mut s = long_list_sheet();
+    s.drawn_with(&Paint {
+        text: TextUnits::new(22, 11),
+        ..Theme::default().paint()
+    });
+    let row_h = s.list_layout().unwrap().row_h;
+    assert!(row_h > pagelist::ROW_H, "the rows grow, got {row_h}");
+    assert_eq!(s.wheel(Some(Hit::List), 3), Event::Redraw);
+    assert_eq!(list_top(&s), 3 * row_h);
+}
+
 #[test]
 fn a_long_page_list_scrolls_to_the_open_page() {
     use crate::classic::widgets::BarHit;
