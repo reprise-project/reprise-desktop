@@ -728,7 +728,7 @@ pub struct DmabufFormat {
     pub modifiers: Vec<u64>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Constraints {
     pub width: u32,
     pub height: u32,
