@@ -88,6 +88,9 @@ pub struct Icons {
     text: TextUnits,
     /// One wears a blank stand-in until its icon lands ([`Host::icons_landed`]).
     waiting: bool,
+    /// A stand-in gave way to its icon since the dialog last took them: the program's own
+    /// [`Icons::prime`] may be what fetched it.
+    landed: bool,
 }
 
 /// The drawn Views icon `px` logical px across on a canvas at `scale`, as the cache's are.
@@ -105,11 +108,13 @@ impl Icons {
     /// all of them again when `icons` is at another scale or theme, `u` is another size, or one
     /// wore a stand-in. A cold SVG wears a blank one until it lands ([`crate::iconjobs`]).
     fn prime_at(&mut self, icons: &mut IconCache, u: TextUnits) {
+        let worn = self.waiting.then(|| self.worn());
         if !self.fetched_from(icons, u) || self.waiting {
             *self = Icons {
                 scale: icons.scale(),
                 theme: Some(icons.theme()),
                 text: u,
+                landed: self.landed,
                 ..Icons::default()
             };
         }
@@ -143,6 +148,7 @@ impl Icons {
             self.folder = get(icons, "folder", px);
         }
         self.waiting = waiting;
+        self.landed |= worn.is_some_and(|w| w != self.worn());
     }
 
     fn worn(&self) -> (Vec<Option<Canvas>>, Option<Canvas>) {
@@ -893,9 +899,7 @@ impl Host {
         let rescaled = std::mem::replace(&mut self.icons_scale, scale) != scale;
         if rescaled || !self.icons.fetched_from(icons, dlg.text()) {
             self.icons.prime_at(icons, dlg.text());
-            dlg.set_place_icons(self.icons.place_icons(&self.tiles()));
-            self.icons.set_toolbar(dlg);
-            dlg.set_crumb_icons(vec![self.icons.folder.clone()]);
+            self.wear_chrome(dlg);
         }
         let theme = icons.theme();
         if let Some(had) = &self.listed_theme
@@ -949,19 +953,24 @@ impl Host {
         self.take_listed(dlg, cache) || stepped || pinned || landed
     }
 
+    /// Puts the places, toolbar and Look in folder icons on `dlg`.
+    fn wear_chrome(&mut self, dlg: &mut FileDlg) {
+        dlg.set_place_icons(self.icons.place_icons(&self.tiles()));
+        self.icons.set_toolbar(dlg);
+        dlg.set_crumb_icons(vec![self.icons.folder.clone()]);
+        self.icons.landed = false;
+    }
+
     /// Theme icons that landed in `cache` ([`crate::iconjobs`]): the places, toolbar, Look in
     /// folder and entries wearing a stand-in take theirs, and a listing whose name decodes at no
     /// size is read again for the next name. True when one changed.
     fn icons_landed(&mut self, dlg: &mut FileDlg, cache: &mut IconCache) -> bool {
-        let chrome = self.icons.waiting && {
-            let worn = self.icons.worn();
+        if self.icons.waiting {
             self.icons.prime_at(cache, dlg.text());
-            self.icons.worn() != worn
-        };
+        }
+        let chrome = self.icons.landed;
         if chrome {
-            dlg.set_place_icons(self.icons.place_icons(&self.tiles()));
-            self.icons.set_toolbar(dlg);
-            dlg.set_crumb_icons(vec![self.icons.folder.clone()]);
+            self.wear_chrome(dlg);
         }
         let (listed, broken) = self.list_icons.landed(cache, dlg.entries_mut());
         if broken

@@ -15,7 +15,7 @@ const THEME_JOB: usize = 16;
 
 /// Icon file decodes, bounded as folder listings are: a file on a mount that never answers
 /// holds its thread, and past the bounds later files wait for one to come back.
-static FILES: Pool = Pool::new("icon file", MAX_THREADS, MAX_ALL_THREADS, STUCK);
+pub(crate) static FILES: Pool = Pool::new("icon file", MAX_THREADS, MAX_ALL_THREADS, STUCK);
 
 /// Icon files (and px) decoding or waiting for a thread: one on a mount that never answers holds
 /// one thread however often it is asked for.
