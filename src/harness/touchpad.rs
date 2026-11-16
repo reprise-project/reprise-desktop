@@ -115,6 +115,16 @@ impl InputBackend for Touchpad {
 impl Harness {
     /// A `fingers` swipe through each `(dx, dy)` step, 10 ms apart, then lifted.
     pub fn swipe(&mut self, fingers: u32, steps: &[(f64, f64)]) {
+        self.swipe_with(fingers, steps, |_| {});
+    }
+
+    /// [`Harness::swipe`] running `held` after the last step, before the fingers lift.
+    pub fn swipe_with(
+        &mut self,
+        fingers: u32,
+        steps: &[(f64, f64)],
+        held: impl FnOnce(&mut Harness),
+    ) {
         let at = |i: usize, dx, dy| Swipe {
             ms: 1000 + 10 * i as u32,
             fingers,
@@ -129,6 +139,7 @@ impl Harness {
             self.state
                 .process_input::<Touchpad>(InputEvent::GestureSwipeUpdate { event });
         }
+        held(self);
         let end = at(steps.len() + 1, 0.0, 0.0);
         self.state
             .process_input::<Touchpad>(InputEvent::GestureSwipeEnd { event: end });

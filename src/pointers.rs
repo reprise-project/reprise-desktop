@@ -563,6 +563,7 @@ impl State {
         use crate::desktops::Step;
         use crate::gestures::Axis;
         if self.console_holds_input() {
+            self.drop_kept_swipe();
             return;
         }
         match axis {

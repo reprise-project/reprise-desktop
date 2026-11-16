@@ -598,6 +598,7 @@ pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     cancel_interaction(state);
     state.release_all_buttons(InputTime::now());
     state.cancel_client_gesture();
+    state.drop_kept_swipe();
     state.caption_clicks.reset();
     raise(state);
     crate::saverview::locked(state);
