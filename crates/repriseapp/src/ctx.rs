@@ -12,9 +12,9 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 pub struct Ctx {
-    /// The look's theme. Its text stays at 100% unless the program is
-    /// [`Extended::text_sized`](crate::Extended::text_sized): then it is at the text size, and the program
-    /// lays its lists, menus and bars out with [`Theme::controls`]. Forms draw with [`Ctx::forms`].
+    /// The look's theme at the text size, the program laying its lists, menus and bars out with
+    /// [`Theme::controls`]; at 100% for a program that opts out of
+    /// [`Extended::text_sized`](crate::Extended::text_sized). Forms draw with [`Ctx::forms`].
     pub theme: Theme,
     /// `[accessibility] text_size`, in percent: what a program grows its
     /// forms ([`Ctx::forms`]) and its document's text (the edit control) by.

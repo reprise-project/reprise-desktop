@@ -1067,3 +1067,33 @@ fn a_thumb_held_across_a_page_switch_lets_go_at_the_release() {
         "a motion with no button down drags nothing"
     );
 }
+
+#[test]
+fn at_200_percent_text_the_page_buttons_and_the_performance_heading_land_inside_the_page() {
+    let mut ctx = themed_ctx(Theme::default().with_text_size(200));
+    ctx.size = ctx.theme.text.size(pages::CLIENT);
+    let mut t = mgr();
+    let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+    for page in [Page::Applications, Page::Performance] {
+        t.tabs.open = page as usize;
+        pages::draw(&mut t, &mut c, &ctx);
+        let lay = pages::layout(&t, &ctx);
+        let ids: &[&str] = match page {
+            Page::Applications => &[pages::END_TASK, pages::SWITCH_TO],
+            _ => &["heading"],
+        };
+        for id in ids {
+            let r = t
+                .form
+                .rect(id)
+                .unwrap_or_else(|| panic!("{id} is on the form"));
+            assert!(
+                lay.inner.contains(r.x, r.y)
+                    && r.right() <= lay.inner.right()
+                    && r.bottom() <= lay.inner.bottom(),
+                "{page:?} {id} at {r:?} is inside {:?}",
+                lay.inner
+            );
+        }
+    }
+}

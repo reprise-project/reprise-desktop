@@ -1119,6 +1119,12 @@ impl App for SettingsApp {
 }
 
 impl repriseapp::Extended for SettingsApp {
+    /// The pages are laid out at 100% and grow by their sheet's own units over a 100% theme
+    /// (`units().px(theme px)`); a theme already at the text size would grow them twice.
+    fn text_sized(&self) -> bool {
+        false
+    }
+
     /// Smallest sizes: the sheet's pages at their smallest, the file dialog's opening size.
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
         match &self.add {

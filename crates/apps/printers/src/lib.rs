@@ -1050,10 +1050,6 @@ impl App for PrintersApp {
 }
 
 impl repriseapp::Extended for PrintersApp {
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn hidden(&self) -> bool {
         self.hidden
     }

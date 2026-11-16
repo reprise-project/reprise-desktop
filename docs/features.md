@@ -891,7 +891,8 @@ the screen takes the interface of the last session used at this computer.
   colour blindness. Super+Ctrl+C turns them off and on. Screenshots see the
   real colours.
 - **Larger text** at 125% to 200% without changing the scale. The taskbar,
-  menus, captions, Notepad and your GTK and Qt programs grow with it.
+  menus, captions, the tray's popups, the media keys' panel, Reprise's
+  programs and your GTK and Qt programs grow with it.
 - **Reduce motion** (`[effects] reduce_motion`, on the Effects and Magnifier
   & Filters pages) turns the desktop's animations off: windows, menus,
   fades, slides, the switchers and the lock screen cut straight to their

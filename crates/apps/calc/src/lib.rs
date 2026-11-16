@@ -364,10 +364,6 @@ impl Extended for Calculator {
         true
     }
 
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn popup(&mut self, _win: WinId, _ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
         self.bar
             .open

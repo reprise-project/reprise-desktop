@@ -429,7 +429,7 @@ impl repriseapp::Extended for PolkitApp {
         if win == RUNAS
             && let Some(a) = &self.active
         {
-            let px = a.dialog.form.units().px(ctx.theme.fonts.size_px);
+            let px = a.dialog.form.units().px(ctx.base_px());
             oneshot::access_form(&a.dialog.form, tree, &ctx.text, px);
         }
     }

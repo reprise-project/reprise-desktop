@@ -771,10 +771,6 @@ impl App for DrivesApp {
 }
 
 impl repriseapp::Extended for DrivesApp {
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn hidden(&self) -> bool {
         true
     }

@@ -536,10 +536,6 @@ impl App for Notepad {
 }
 
 impl Extended for Notepad {
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn emergency(&mut self) {
         self.rescue();
     }

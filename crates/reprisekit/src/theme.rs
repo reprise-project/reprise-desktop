@@ -459,6 +459,18 @@ impl TextUnits {
         Rect::new(x, y, self.len(r.right()) - x, self.len(r.bottom()) - y)
     }
 
+    /// The 100% rect that [`TextUnits::rect`] grows to fit inside `r`: where a form laid out at
+    /// 100% puts an item that should land on `r`, a rect of a layout already at the text size.
+    pub fn within_rect(self, r: Rect) -> Rect {
+        let (x, y) = (self.design(r.x), self.design(r.y));
+        Rect::new(
+            x,
+            y,
+            self.within(r.right()) - x,
+            self.within(r.bottom()) - y,
+        )
+    }
+
     /// `r` moved to where its top-left maps, its size kept: a picture or a fixed control.
     pub fn at(self, r: Rect) -> Rect {
         Rect::new(self.len(r.x), self.len(r.y), r.width, r.height)
@@ -668,6 +680,31 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rect_within_grows_back_to_fit_inside_the_rect_it_came_from() {
+        let r = Rect::new(7, 13, 75, 23);
+        assert_eq!(TextUnits::ONE.within_rect(r), r);
+        for u in [
+            TextUnits::new(14, 11),
+            TextUnits::new(17, 11),
+            TextUnits::new(22, 11),
+        ] {
+            let back = u.rect(u.within_rect(r));
+            assert!(
+                back.x >= r.x && back.y >= r.y,
+                "{u:?}: {back:?} starts inside {r:?}"
+            );
+            assert!(
+                back.right() <= r.right() && back.bottom() <= r.bottom(),
+                "{u:?}: {back:?}"
+            );
+        }
+        assert_eq!(
+            TextUnits::new(22, 11).within_rect(Rect::new(20, 40, 150, 46)),
+            Rect::new(10, 20, 75, 23)
+        );
+    }
 
     #[test]
     fn text_units_grow_lengths_and_both_edges_of_a_rect() {

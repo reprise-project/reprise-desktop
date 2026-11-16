@@ -770,10 +770,6 @@ impl repriseapp::Extended for Volume {
         true
     }
 
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
         if win == repriseapp::MAIN {
             return Some(Box::new(&mut self.bar));

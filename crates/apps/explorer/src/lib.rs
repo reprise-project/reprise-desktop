@@ -1769,10 +1769,6 @@ impl App for Lazy {
 }
 
 impl repriseapp::Extended for Lazy {
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn hidden(&self) -> bool {
         self.inner.as_ref().is_some_and(|ex| ex.closing)
     }

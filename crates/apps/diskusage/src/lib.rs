@@ -679,10 +679,6 @@ impl App for DiskUsage {
 }
 
 impl repriseapp::Extended for DiskUsage {
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
         (win == MAIN).then_some((420, 240))
     }

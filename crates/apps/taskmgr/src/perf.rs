@@ -17,6 +17,7 @@ use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::keysym;
+use reprisekit::theme::TextUnits;
 
 use crate::devices::{Source, hwmon};
 use crate::sample::Snapshot;
@@ -543,14 +544,16 @@ pub struct Boxed {
     pub inside: Rect,
 }
 
-fn boxed(group: Rect) -> Boxed {
+/// `group`'s box and what it holds, its title band grown by `u`.
+fn boxed(group: Rect, u: TextUnits) -> Boxed {
+    let top = u.len(GROUP_TOP);
     Boxed {
         group,
         inside: Rect::new(
             group.x + GROUP_EDGE,
-            group.y + GROUP_TOP,
+            group.y + top,
             (group.width - 2 * GROUP_EDGE).max(1),
-            (group.height - GROUP_TOP - GROUP_EDGE).max(1),
+            (group.height - top - GROUP_EDGE).max(1),
         ),
     }
 }
@@ -565,6 +568,8 @@ pub struct GraphRow {
 pub struct Layout {
     pub list: Rect,
     pub pane: Pane,
+    /// How the rows that hold text grew.
+    pub text: TextUnits,
     pub heading: Rect,
     pub rows: Vec<GraphRow>,
     pub figures: Vec<Rect>,
@@ -573,29 +578,30 @@ pub struct Layout {
     pub sensors: Option<Rect>,
 }
 
-/// The page laid out in `inner` (the tab sheet's inside) for `pane`.
-pub fn layout(inner: Rect, pane: Pane) -> Layout {
-    let list_w = (inner.width * 2 / 5).clamp(LIST_MIN_W, LIST_W);
+/// The page laid out in `inner` (the tab sheet's inside) for `pane`, its text rows grown by `u`.
+pub fn layout(inner: Rect, pane: Pane, u: TextUnits) -> Layout {
+    let list_w = (inner.width * 2 / 5).clamp(u.len(LIST_MIN_W), u.len(LIST_W));
     let list = Rect::new(inner.x, inner.y, list_w.min(inner.width / 2), inner.height);
     let px = list.right() + PAD;
     let r = Rect::new(px, inner.y, (inner.right() - px).max(1), inner.height);
     let sp = spec(pane);
-    let heading = Rect::new(r.x, r.y, r.width, LINE_H);
+    let line_h = u.len(LINE_H);
+    let heading = Rect::new(r.x, r.y, r.width, line_h);
     let top = heading.bottom() + 4;
     let (figures, fig_y) = if sp.figures.is_empty() {
         (Vec::new(), r.bottom())
     } else {
         let n = sp.figures.len() as i32;
-        let y = r.bottom() - FIGURES_H;
+        let y = r.bottom() - u.len(FIGURES_H);
         let w = (r.width - (n - 1) * PAD) / n;
         let rects = (0..n)
-            .map(|i| Rect::new(r.x + i * (w + PAD), y, w, FIGURES_H))
+            .map(|i| Rect::new(r.x + i * (w + PAD), y, w, u.len(FIGURES_H)))
             .collect();
         (rects, y)
     };
     let note = sp
         .note
-        .then(|| Rect::new(r.x, fig_y - PAD - LINE_H, r.width, LINE_H));
+        .then(|| Rect::new(r.x, fig_y - PAD - line_h, r.width, line_h));
     let rows_bottom = note.map_or(fig_y, |n| n.y) - PAD;
     let n = sp.rows.len() as i32;
     let rows = (sp.rows.iter().enumerate())
@@ -604,12 +610,12 @@ pub fn layout(inner: Rect, pane: Pane) -> Layout {
             let y = top + i as i32 * (row_h + PAD);
             let meter = rs
                 .meter
-                .map(|_| boxed(Rect::new(r.x, y, METER_GROUP_W, row_h)));
+                .map(|_| boxed(Rect::new(r.x, y, u.len(METER_GROUP_W), row_h), u));
             let gx = meter.map_or(r.x, |m| m.group.right() + PAD);
             let k = rs.graphs.len() as i32;
             let gw = ((r.right() - gx - (k - 1) * PAD) / k.max(1)).max(1);
             let graphs = (0..k)
-                .map(|j| boxed(Rect::new(gx + j * (gw + PAD), y, gw, row_h)))
+                .map(|j| boxed(Rect::new(gx + j * (gw + PAD), y, gw, row_h), u))
                 .collect();
             GraphRow { meter, graphs }
         })
@@ -619,6 +625,7 @@ pub fn layout(inner: Rect, pane: Pane) -> Layout {
     Layout {
         list,
         pane,
+        text: u,
         heading,
         rows,
         figures,
@@ -627,19 +634,22 @@ pub fn layout(inner: Rect, pane: Pane) -> Layout {
     }
 }
 
-/// The form items of `lay`'s pane: heading, group boxes, figure labels and values, note.
-pub fn form_items(lay: &Layout) -> Vec<Item> {
+/// The form items of `lay`'s pane: heading, group boxes, figure labels and values, note. The
+/// form is at 100% and grows by `u`, onto the rects of `lay`, which are at the text size.
+pub fn form_items(lay: &Layout, u: TextUnits) -> Vec<Item> {
     let sp = spec(lay.pane);
-    let mut items = vec![Item::label("heading", lay.heading, "")];
+    let at_100 = |r: Rect| u.within_rect(r);
+    let mut items = vec![Item::label("heading", at_100(lay.heading), "")];
     for (rs, row) in sp.rows.iter().zip(&lay.rows) {
         if let (Some((id, title)), Some(m)) = (rs.meter, row.meter) {
-            items.push(Item::group(id, m.group, title));
+            items.push(Item::group(id, at_100(m.group), title));
         }
         for ((id, title), g) in rs.graphs.iter().zip(&row.graphs) {
-            items.push(Item::group(id, g.group, title));
+            items.push(Item::group(id, at_100(g.group), title));
         }
     }
     for ((id, title, rows), r) in sp.figures.iter().zip(&lay.figures) {
+        let r = &at_100(*r);
         items.push(Item::group(id, *r, title));
         let w = r.width - 2 * GROUP_EDGE;
         let label_w = w * 3 / 5;
@@ -651,7 +661,7 @@ pub fn form_items(lay: &Layout) -> Vec<Item> {
         }
     }
     if let Some(n) = lay.note {
-        items.push(Item::label("note", n, ""));
+        items.push(Item::label("note", at_100(n), ""));
     }
     items
 }

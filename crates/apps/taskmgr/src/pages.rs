@@ -11,6 +11,7 @@ use reprisekit::controls::tabstrip;
 use reprisekit::look::Paint;
 use reprisekit::look::widgets::draw_page;
 use reprisekit::raster::{Canvas, Rect};
+use reprisekit::theme::TextUnits;
 
 use crate::{Page, TaskMgr, perf};
 
@@ -41,6 +42,8 @@ pub struct Layout {
     pub buttons_y: i32,
     pub inner: Rect,
     pub perf: Option<perf::Layout>,
+    /// How the layout's rows grew with the text; the form is placed at 100% and grows by it.
+    pub text: TextUnits,
 }
 
 pub fn layout(t: &TaskMgr, ctx: &Ctx) -> Layout {
@@ -76,7 +79,7 @@ pub fn layout(t: &TaskMgr, ctx: &Ctx) -> Layout {
         (page.width - 2 * PAD).max(1),
         (page.height - 2 * PAD).max(1),
     );
-    let buttons_y = inner.bottom() - BUTTON_H;
+    let buttons_y = inner.bottom() - ctx.theme.text.len(BUTTON_H);
     let list_area = Rect::new(
         inner.x,
         inner.y,
@@ -84,8 +87,8 @@ pub fn layout(t: &TaskMgr, ctx: &Ctx) -> Layout {
         (buttons_y - PAD - inner.y).max(1),
     );
     let list = (t.page() != Page::Performance).then_some(list_area);
-    let perf =
-        (t.page() == Page::Performance).then(|| perf::layout(inner, t.perf.selected().pane()));
+    let perf = (t.page() == Page::Performance)
+        .then(|| perf::layout(inner, t.perf.selected().pane(), ctx.theme.text));
     Layout {
         bar,
         tabs,
@@ -96,12 +99,14 @@ pub fn layout(t: &TaskMgr, ctx: &Ctx) -> Layout {
         buttons_y,
         inner,
         perf,
+        text: ctx.theme.text,
     }
 }
 
 fn build_form(t: &TaskMgr, lay: &Layout) -> Form {
-    let inner = lay.inner;
-    let by = lay.buttons_y;
+    let u = lay.text;
+    let inner = u.within_rect(lay.inner);
+    let by = u.within(lay.buttons_y);
     let items = match t.page() {
         Page::Applications => vec![
             Item::button_at(
@@ -132,7 +137,9 @@ fn build_form(t: &TaskMgr, lay: &Layout) -> Form {
                 true,
             ),
         ],
-        Page::Performance => perf::form_items(lay.perf.as_ref().expect("the Performance layout")),
+        Page::Performance => {
+            perf::form_items(lay.perf.as_ref().expect("the Performance layout"), u)
+        }
     };
     Form::new(items)
 }

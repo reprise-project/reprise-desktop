@@ -1218,10 +1218,6 @@ impl App for AccountsApp {
 }
 
 impl repriseapp::Extended for AccountsApp {
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn fixed(&self) -> bool {
         true
     }
