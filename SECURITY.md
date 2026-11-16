@@ -16,6 +16,8 @@ Anything in this repository, in particular:
 - the lock screen and its PAM authentication
 - the login manager (`reprise-login`): its daemon, PAM workers, sockets and
   login screen
+- the two network listeners: the Remote Desktop server (`reprise-rdp`) and
+  the login manager's remote login front (`reprise-login-rdp`)
 - the xdg-desktop-portal backend (`reprise-portal`): screen sharing,
   screenshots, the access prompts Flatpak apps go through
 - the polkit agent and the bundled programs (Explorer, Notepad, Settings,
@@ -33,9 +35,8 @@ the lock screen, the login manager, focus and the portal's consent prompts.
 A way across one of those boundaries is a vulnerability. What that page
 lists as trusted or as a known gap (an unsandboxed program capturing the
 screen, X11 programs reading each other's keys, code running as you
-tampering with Reprise's processes, a background session taking the screen
-under the login manager) is not, though a proposal to close a gap is welcome
-as an issue.
+tampering with Reprise's processes) is not, though a proposal to close a gap
+is welcome as an issue.
 
 ## What to include
 
