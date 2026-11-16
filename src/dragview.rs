@@ -999,9 +999,6 @@ impl State {
                 .into_iter()
                 .map(|(s, ..)| s.path().to_path_buf())
                 .collect();
-            if op == DropOp::Move {
-                self.cut_moved(&sources);
-            }
             self.put_files(&dir, op, sources, landings);
         }
         if !launchers.is_empty() {
