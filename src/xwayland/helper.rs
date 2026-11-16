@@ -1,4 +1,4 @@
-//! A second X11 connection beside Smithay's window manager, on its own thread so a round trip never holds up the event loop. It moves the X input focus, reads `_NET_WM_ICON`, hears X11 programs' bells (XKB `BellNotify`, on a second thread), and counts X11 programs (X-Resource), saying so once none has been connected for [`IDLE_GRACE`], which stops the server. Xwayland's `-terminate` never fires, since this connection and the window manager's keep it up.
+//! A second X11 connection beside Smithay's window manager, on its own thread so a round trip never holds up the event loop. It moves the X input focus, reads `_NET_WM_ICON`, hears X11 programs' bells (XKB `BellNotify`, on a second thread), and counts X11 programs (X-Resource) as top-level windows go, saying so once none has been connected for [`IDLE_GRACE`], which stops the server. Xwayland's `-terminate` never fires, since this connection and the window manager's keep it up.
 
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
@@ -14,8 +14,8 @@ use x11rb::{
         res::{self, ConnectionExt as _},
         xkb::{self, ConnectionExt as _},
         xproto::{
-            AtomEnum, ClientMessageEvent, ConnectionExt, CreateWindowAux, EventMask, GrabMode,
-            GrabStatus, InputFocus, PropMode, WindowClass,
+            AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, ConnectionExt,
+            CreateWindowAux, EventMask, GrabMode, GrabStatus, InputFocus, PropMode, WindowClass,
         },
     },
     rust_connection::{DefaultStream, RustConnection},
@@ -40,6 +40,8 @@ pub enum Req {
         window: u32,
         pid: u32,
     },
+    /// A child of the root went (the event thread's): count the programs again.
+    Recount,
 }
 
 pub enum Back {
@@ -54,7 +56,13 @@ pub enum Back {
 
 pub const IDLE_GRACE: Duration = Duration::from_secs(10);
 
+/// How often the programs are counted while none is connected, through the grace.
 const COUNT_EVERY: Duration = Duration::from_secs(2);
+/// How often they are counted while one is: a program leaving takes its windows, which asks a
+/// count at once, so only one that never had a window waits this long.
+const COUNT_IDLE_EVERY: Duration = Duration::from_secs(60);
+/// The least time between two counts that windows going asked for.
+const RECOUNT_GAP: Duration = Duration::from_millis(250);
 
 /// Bells closer together than this after a passed-on one are dropped, so a program ringing in a
 /// loop wakes the compositor five times a second at most.
@@ -67,10 +75,11 @@ pub struct Helper {
 impl Helper {
     pub fn spawn(display: u32, cookie: [u8; 16], back: Sender<Back>) -> std::io::Result<Helper> {
         let (tx, rx) = mpsc::channel();
+        let recount = tx.clone();
         std::thread::Builder::new()
             .name("x11-helper".into())
             .spawn(move || {
-                if let Err(e) = run(display, cookie, &rx, &back) {
+                if let Err(e) = run(display, cookie, (&rx, recount), &back) {
                     log::warn!("X11 focus connection: {e}");
                 }
             })?;
@@ -98,17 +107,26 @@ fn connect(display: u32, cookie: [u8; 16]) -> Result<RustConnection, Box<dyn std
 fn run(
     display: u32,
     cookie: [u8; 16],
-    rx: &mpsc::Receiver<Req>,
+    (rx, recount): (&mpsc::Receiver<Req>, mpsc::Sender<Req>),
     back: &Sender<Back>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let conn = Arc::new(connect(display, cookie)?);
     let root = conn.setup().roots[0].root;
     listen_for_bells(&conn);
+    let can_count = conn
+        .extension_information(res::X11_EXTENSION_NAME)?
+        .is_some();
+    if !can_count {
+        log::warn!("Xwayland has no X-Resource; it keeps running once started");
+    } else {
+        let events = ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY);
+        conn.change_window_attributes(root, &events)?.check()?;
+    }
     {
         let (conn, back) = (conn.clone(), back.clone());
         std::thread::Builder::new()
             .name("x11-events".into())
-            .spawn(move || read_events(&conn, root, &back))?;
+            .spawn(move || read_events(&conn, root, &back, &recount))?;
     }
     let atom = |name: &[u8]| -> Result<u32, Box<dyn std::error::Error>> {
         Ok(conn.intern_atom(false, name)?.reply()?.atom)
@@ -148,12 +166,6 @@ fn run(
         .reply()?
         .value32()
         .and_then(|mut v| v.next());
-    let can_count = conn
-        .extension_information(res::X11_EXTENSION_NAME)?
-        .is_some();
-    if !can_count {
-        log::warn!("Xwayland has no X-Resource; it keeps running once started");
-    }
     // Never mapped, so a grab on it never activates: the status says only whether another
     // client holds one, which the server checks first.
     let probe = conn.generate_id()?;
@@ -171,18 +183,26 @@ fn run(
         &CreateWindowAux::new(),
     )?;
     let mut idle = IdleClock::default();
-    let mut counted = Instant::now();
+    let (mut counted, mut every) = (Instant::now(), COUNT_EVERY);
     loop {
-        let req = match rx.recv_timeout(COUNT_EVERY.saturating_sub(counted.elapsed())) {
+        let req = match rx.recv_timeout(every.saturating_sub(counted.elapsed())) {
             Ok(req) => Some(req),
             Err(mpsc::RecvTimeoutError::Timeout) => None,
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         };
-        if can_count && counted.elapsed() >= COUNT_EVERY {
+        if matches!(req, Some(Req::Recount)) {
+            every = every.min(RECOUNT_GAP);
+        }
+        if can_count && counted.elapsed() >= every {
             counted = Instant::now();
             let clients = conn.res_query_clients()?.reply()?.clients;
             let clients = clients.iter().map(|c| (c.resource_base, c.resource_mask));
             let n = programs(clients, conn.setup().resource_id_base, wm_window);
+            every = if n == 0 {
+                COUNT_EVERY
+            } else {
+                COUNT_IDLE_EVERY
+            };
             if idle.note(n, counted) && back.send(Back::Idle).is_err() {
                 return Ok(());
             }
@@ -262,6 +282,7 @@ fn run(
                     return Ok(());
                 }
             }
+            Req::Recount => {}
             Req::KillOwner { window, pid } if !can_count => {
                 log::info!("x11 window {window:#x}: no X-Resource to confirm pid {pid}; kept");
             }
@@ -337,9 +358,10 @@ fn listen_for_bells(conn: &RustConnection) {
 }
 
 /// The connection's events until it closes: each bell goes back as [`Back::Bell`], at most one
-/// per [`BELL_GAP`]. Errors for requests nobody waits on (a focus on a window that just unmapped)
-/// arrive here too and are dropped.
-fn read_events(conn: &RustConnection, root: u32, back: &Sender<Back>) {
+/// per [`BELL_GAP`], and a child of the root destroyed asks a count (`recount`). Errors for
+/// requests nobody waits on (a focus on a window that just unmapped) arrive here too and are
+/// dropped.
+fn read_events(conn: &RustConnection, root: u32, back: &Sender<Back>, recount: &mpsc::Sender<Req>) {
     let mut last = None;
     loop {
         let event = match conn.wait_for_event() {
@@ -349,8 +371,15 @@ fn read_events(conn: &RustConnection, root: u32, back: &Sender<Back>) {
                 return;
             }
         };
-        let Event::XkbBellNotify(bell) = event else {
-            continue;
+        let bell = match event {
+            Event::XkbBellNotify(bell) => bell,
+            Event::DestroyNotify(d) if d.event == root => {
+                if recount.send(Req::Recount).is_err() {
+                    return;
+                }
+                continue;
+            }
+            _ => continue,
         };
         if !rings(&mut last, Instant::now()) {
             continue;
