@@ -49,6 +49,8 @@ pub enum Switched {
     Off,
     /// Orca is not installed, or would not start.
     Missing,
+    /// Orca started but did not show running within [`SETTLE`].
+    Failed,
 }
 
 impl Switched {
@@ -57,6 +59,7 @@ impl Switched {
             Switched::On => "Screen reader on",
             Switched::Off => "Screen reader off",
             Switched::Missing => "No screen reader installed",
+            Switched::Failed => "The screen reader did not start",
         }
     }
 
@@ -65,7 +68,7 @@ impl Switched {
         match self {
             Switched::On => "device-added",
             Switched::Off => "device-removed",
-            Switched::Missing => "dialog-error",
+            Switched::Missing | Switched::Failed => "dialog-error",
         }
     }
 }
@@ -114,10 +117,10 @@ impl State {
                         &env,
                         None,
                     ) {
-                        Ok(Some(_)) => {
-                            screenreader::wait_for(true, SETTLE);
-                            Switched::On
-                        }
+                        Ok(Some(_)) => match screenreader::wait_for(true, SETTLE) {
+                            true => Switched::On,
+                            false => Switched::Failed,
+                        },
                         Ok(None) => Switched::Missing,
                         Err(e) => {
                             log::warn!("screen reader: {e}");

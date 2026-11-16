@@ -463,12 +463,13 @@ mod tests {
     }
 
     #[test]
-    fn the_screen_reader_line_says_on_off_or_missing() {
+    fn the_screen_reader_line_says_on_off_missing_or_not_started() {
         use crate::screenreader::Switched;
         for (switched, title) in [
             (Switched::On, "Screen reader on"),
             (Switched::Off, "Screen reader off"),
             (Switched::Missing, "No screen reader installed"),
+            (Switched::Failed, "The screen reader did not start"),
         ] {
             let (osd, icon) = describe(&Report::ScreenReader(switched), false).unwrap();
             assert_eq!(osd.title, title);
