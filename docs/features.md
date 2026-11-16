@@ -647,8 +647,9 @@ are.
   `LANG` and `LC_*` variables in its environment, drops the inherited ones
   the file doesn't set, and publishes them to the systemd user manager and
   D-Bus activation, so every program starts in that locale. Apply to the
-  System sets the login screen's and new accounts' locale through
-  systemd-localed ([programs.md](programs.md#reprise-settings)).
+  System sets the system locale through systemd-localed, which the login
+  screen and every account without its own file start in
+  ([programs.md](programs.md#reprise-settings)).
 - **Crash recovery.** When Reprise panics it starts again in place: the
   same binary, with the same arguments and environment, runs a new session
   on the same seat and opens a new display socket. Programs with windows
