@@ -164,6 +164,8 @@ every default you haven't set.
 | `[switcher] style` | `icons` | `thumbnails` |
 | `[switcher] desktop`, `peek`, `flip` | off | on |
 | `[effects] window_animation`, `hover_fade`, `taskbar_slide` | off | on |
+| `[windows] shake` | off | on |
+| `[wallpaper] image` | Classic none (the colour alone), Blue `reprise:tarn/blue` | `reprise:flow/glass` |
 
 Most of what Glass turns on, the other looks can have too. Set the key and
 Classic gets pinned programs, jump lists, Peek, a Show desktop strip,

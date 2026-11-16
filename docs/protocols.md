@@ -108,7 +108,13 @@ confinement holds, every motion goes through as it comes.
   and since version 10 the app a libei sender or keys object serves
   (`connect_app_sender`, `create_app_keys`), which the screen-sharing dot
   names; from version 10 `create_keys` is the remote desktop server's alone;
-  since version 12 a keys object drives the pointer too (NotifyPointer)
+  since version 12 a keys object drives the pointer too (NotifyPointer);
+  `reprise_tabs_v1`, for any program: puts a new window of the program's
+  into the caption tab group of another of its windows
+  ([protocols/reprise-tabs-v1.xml](../protocols/reprise-tabs-v1.xml));
+  `reprise_on_top_v1`, hidden from sandboxed programs: keeps one of the
+  program's windows on top, as Always on Top does
+  ([protocols/reprise-on-top-v1.xml](../protocols/reprise-on-top-v1.xml))
 
 ## Portals
 
