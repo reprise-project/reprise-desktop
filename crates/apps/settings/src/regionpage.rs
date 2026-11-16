@@ -257,7 +257,7 @@ pub fn filled(a: Area) -> Form {
     };
     show_choice(&mut p, &locales, &want, 0);
     let widest = [
-        "Donnerstag, 30.09.2026",
+        "Wednesday, September 30, 2026",
         "07:54:40 PM",
         "1 234 567,89",
         "1 234 567,89 USD",

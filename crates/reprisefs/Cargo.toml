@@ -25,6 +25,10 @@ log.workspace = true
 md5 = "0.8"
 png.workspace = true
 reprisebus = { path = "../reprisebus" }
+# `tr!`: Fluent strings, as in the dates this crate writes.
+reprisekit = { path = "../reprisekit" }
+# Features only: the zbus and reprisebus units every program that links reprisekit builds.
+repriseapp-pins = { path = "../repriseapp-pins" }
 rustc-hash = "2"
 serde = { workspace = true, features = ["derive"] }
 # The trust marker, and Properties' Checksums tab.

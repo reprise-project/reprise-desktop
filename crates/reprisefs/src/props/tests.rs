@@ -887,8 +887,12 @@ fn the_read_only_tree_leaves_symlinked_files_and_folders_alone() {
 fn times_name_today_and_carry_seconds() {
     let now = now_secs();
     let today = format_time(now, crate::locale::is_12h());
-    assert!(today.starts_with("Today, "), "{today}");
+    assert!(today.starts_with("Today"), "{today}");
     assert_eq!(today.matches(':').count(), 2, "{today}");
+    if crate::locale::long_date_format().contains("%B") {
+        let month = crate::locale::strftime(&crate::locale::localtime(now), c"%B");
+        assert!(today.contains(&month), "{today} names {month}");
+    }
     let then = now - 10 * 86_400;
     let old = format_time(then, crate::locale::is_12h());
     let long = crate::locale::long_date(&crate::locale::localtime(then));
@@ -927,7 +931,7 @@ fn the_task_panes_date_names_yesterday_and_drops_the_seconds() {
     let now = now_secs();
     let is_12h = crate::locale::is_12h();
     let today = format_pane_time(now, is_12h);
-    assert!(today.starts_with("Today, "), "{today}");
+    assert!(today.starts_with("Today"), "{today}");
     assert_eq!(today.matches(':').count(), 1, "{today}");
     let old = format_pane_time(now - 10 * 86_400, is_12h);
     assert!(
@@ -939,7 +943,7 @@ fn the_task_panes_date_names_yesterday_and_drops_the_seconds() {
     let hour = crate::locale::localtime(now).tm_hour;
     if (1..23).contains(&hour) {
         let yesterday = format_pane_time(now - 86_400, is_12h);
-        assert!(yesterday.starts_with("Yesterday, "), "{yesterday}");
+        assert!(yesterday.starts_with("Yesterday"), "{yesterday}");
     }
 }
 

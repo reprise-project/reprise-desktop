@@ -2,6 +2,7 @@
 
 use crate::apps::{self, AppEntry, MimeDb};
 use crate::mimetree::MimeTree;
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
@@ -1351,7 +1352,7 @@ pub fn format_contains(files: u64, folders: u64) -> String {
     )
 }
 
-/// The Properties sheet's date: "Today, 09/10/2026, 9:32:37 PM" (24-hour when `is_12h` is false).
+/// The Properties sheet's date: "Today, September 10, 2026, 9:32:37 PM" (24-hour when `is_12h` is false).
 pub fn format_time(secs: i64, is_12h: bool) -> String {
     long_date(secs, is_12h, true)
 }
@@ -1377,23 +1378,28 @@ fn civil_day(t: &libc::tm) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// The long date: "Today" or "Yesterday" where they apply, else the weekday, then the LC_TIME locale's short date and the clock ([`crate::locale::long_date`]). `seconds` adds `:%S`.
+/// The long date ([`crate::locale::long_date`]) with "Today" or "Yesterday" for the weekday where
+/// they apply, then the clock. `seconds` adds `:%S`.
 fn long_date(secs: i64, is_12h: bool, seconds: bool) -> String {
     let then = crate::locale::localtime(secs);
     let today = crate::locale::localtime(now_secs());
     // Days apart on the civil calendar rather than by seconds, so a DST shift cannot move a date across midnight.
     let named_day = match civil_day(&today) - civil_day(&then) {
-        0 => "Today",
-        1 => "Yesterday",
-        _ => "%A",
+        0 => Some(tr!("date-today")),
+        1 => Some(tr!("date-yesterday")),
+        _ => None,
     };
+    let mut date = crate::locale::long_date_format();
+    if let Some(day) = named_day {
+        date = date.replace("%A", &day.replace('%', "%%"));
+    }
     let clock = match (is_12h, seconds) {
         (true, true) => "%l:%M:%S %p",
         (true, false) => "%l:%M %p",
         (false, true) => "%H:%M:%S",
         (false, false) => "%H:%M",
     };
-    let fmt = std::ffi::CString::new(format!("{named_day}, %x, {clock}"))
+    let fmt = std::ffi::CString::new(format!("{date}, {clock}").replace('\0', ""))
         .expect("the format holds no NUL");
     crate::locale::strftime(&then, &fmt).replace(",  ", ", ")
 }

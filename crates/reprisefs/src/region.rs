@@ -299,8 +299,9 @@ pub fn sample(locale: &str, secs: i64) -> Option<Sample> {
         | libc::LC_PAPER_MASK;
     let l = Loaded::new(mask, locale)?;
     let tm = crate::locale::localtime(secs);
+    let long = crate::locale::long_format_for(&l.info(libc::D_FMT));
     Some(Sample {
-        date: strftime(&l, &tm, c"%A, %x"),
+        date: strftime(&l, &tm, &CString::new(long).unwrap_or_default()),
         time: strftime(&l, &tm, c"%X"),
         number: grouped(AMOUNT, &l.info(libc::THOUSEP), &l.info(libc::RADIXCHAR)),
         currency: money(&l, AMOUNT),
@@ -530,7 +531,7 @@ mod tests {
         assert_eq!(c.number, "1234567.89");
         assert!(c.metric);
         if let Some(us) = sample("en_US.UTF-8", at) {
-            assert_eq!(us.date, "Friday, 11/13/2026");
+            assert_eq!(us.date, "Friday, November 13, 2026");
             assert_eq!(us.time, "07:54:40 PM");
             assert_eq!(us.number, "1,234,567.89");
             assert_eq!(us.currency, "$1,234,567.89");

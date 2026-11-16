@@ -25,11 +25,14 @@ fn keyed(buttons: &[Vec<u32>], pins: &[Option<usize>], dialogs: &[Option<u64>]) 
 }
 
 #[test]
-fn date_text_is_the_weekday_and_the_locales_own_date() {
+fn date_text_names_the_weekday_and_the_month_where_its_pattern_does() {
     let s = date_text();
-    let (_, date) = s.split_once(", ").expect("weekday");
     let today = reprisefs::locale::localtime(clock_now());
-    assert_eq!(date, reprisefs::locale::short_date(&today));
+    let name = |part| reprisefs::locale::strftime(&today, part);
+    assert!(s.contains(&name(c"%A")), "{s} holds the weekday");
+    if reprisefs::locale::long_date_format().contains("%B") {
+        assert!(s.contains(&name(c"%B")), "{s} holds the month");
+    }
 }
 use reprisekit::taskbar::TASK_GAP;
 
