@@ -295,7 +295,7 @@ fn the_desktop_entry_icon_stands_in_for_a_missing_app_icon() {
         name: "Mail".into(),
         exec_line: "mail".into(),
         terminal: false,
-        id: "mail.desktop".into(),
+        id: "mail.desktop".parse().unwrap(),
         icon: Some(blue_svg("entry")),
         startup_wm_class: None,
         categories: Vec::new(),

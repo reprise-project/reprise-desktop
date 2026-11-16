@@ -256,7 +256,7 @@ fn a_link_row_starts_its_program_in_its_app_scope_and_settings_stays() {
             (p.id == "reprise-network.desktop").then(|| {
                 reprisefs::apps::parse_desktop(
                     "[Desktop Entry]\nType=Application\nName=Network Connections\nExec=reprise-network\n",
-                    p.id,
+                    &p.id.parse().unwrap(),
                 )
                 .unwrap()
             })

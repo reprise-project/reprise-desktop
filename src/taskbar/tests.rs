@@ -420,8 +420,8 @@ fn pin(file: &str, class: Option<&str>) -> QuickItem {
     let text = format!("[Desktop Entry]\nType=Application\nName={file}\nExec=x\n{class}");
     QuickItem {
         file: file.into(),
-        entry: crate::quicklaunch::parse(&text, file, "foot").unwrap(),
-        app: reprisefs::apps::parse_desktop(&text, file),
+        entry: crate::quicklaunch::parse(&text, &file.parse().unwrap(), "foot").unwrap(),
+        app: reprisefs::apps::parse_desktop(&text, &file.parse().unwrap()),
     }
 }
 

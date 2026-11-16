@@ -138,7 +138,7 @@ impl XdgActivationHandler for State {
         };
         let app = (self.win(w)).and_then(|win| {
             reprisefs::apps::entry_for_app_id(&self.app_index, &win.app_id(), |_| true)
-                .and_then(|e| DesktopId::from_file_name(&e.id))
+                .map(|e| e.id.clone())
                 .filter(|id| crate::sandbox::may_take_raise(win, id))
         });
         let trusted = minted_trusted || live && self.raises.take(app.as_ref(), Instant::now());
@@ -284,7 +284,7 @@ impl State {
     /// Open a path as `open` says, in its program's app scope when it has one.
     pub fn spawn_opening_activated(&mut self, open: &reprisefs::props::Opening) {
         match &open.app {
-            Some(app) => self.spawn_app_activated(&open.argv, app, open.dir.as_deref()),
+            Some(app) => self.spawn_app_activated(&open.argv, app.as_str(), open.dir.as_deref()),
             None => self.spawn_argv_activated(&open.argv),
         }
     }
@@ -304,7 +304,7 @@ impl State {
     /// Start the desktop entry `app` with no file, in its app scope.
     pub fn launch_entry(&mut self, app: &reprisefs::apps::AppEntry) {
         match reprisefs::apps::launch_argv(app, &self.config.terminal) {
-            Ok(argv) => self.spawn_app_activated(&argv, &app.id, app.path.as_deref()),
+            Ok(argv) => self.spawn_app_activated(&argv, app.id.as_str(), app.path.as_deref()),
             Err(refused) => self.exec_refused(&refused),
         }
     }

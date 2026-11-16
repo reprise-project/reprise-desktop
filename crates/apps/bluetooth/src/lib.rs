@@ -1020,7 +1020,7 @@ impl BtApp {
     /// Starts `open` in its program's app scope and folder with the tray's activation token, so
     /// its window comes up.
     fn spawn_with_token(&self, open: &reprisefs::props::Opening) {
-        let argv = reprisefs::scope::in_scope(&open.argv, open.app.as_deref());
+        let argv = reprisefs::scope::in_scope(&open.argv, open.app.as_ref().map(|a| a.as_str()));
         let handoff = (self.tray.as_ref())
             .and_then(|t| t.take_handoff())
             .unwrap_or_default();

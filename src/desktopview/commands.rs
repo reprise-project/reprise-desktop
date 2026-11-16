@@ -390,13 +390,13 @@ impl State {
     }
 
     /// Open each of `paths` in program `app` (a desktop-file id).
-    pub(crate) fn open_files_with(&mut self, paths: Vec<PathBuf>, app: &str) {
-        let Some(app) = self.app_index.iter().find(|a| a.id == app).cloned() else {
+    pub(crate) fn open_files_with(&mut self, paths: Vec<PathBuf>, app: &apps::DesktopId) {
+        let Some(app) = self.app_index.iter().find(|a| a.id == *app).cloned() else {
             return;
         };
         for path in &paths {
             match apps::open_argv(&app, &self.config.terminal, path) {
-                Ok(argv) => self.spawn_app_activated(&argv, &app.id, app.path.as_deref()),
+                Ok(argv) => self.spawn_app_activated(&argv, app.id.as_str(), app.path.as_deref()),
                 Err(refused) => return self.exec_refused(&refused),
             }
         }

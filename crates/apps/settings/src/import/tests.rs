@@ -68,18 +68,20 @@ struct Fake {
 fn entry(id: &str, name: &str) -> AppEntry {
     reprisefs::apps::parse_desktop(
         &format!("[Desktop Entry]\nType=Application\nName={name}\nExec={name}\n"),
-        id,
+        &id.parse().unwrap(),
     )
     .unwrap()
 }
 
 impl System for Fake {
-    fn app(&self, id: &str) -> Option<(AppEntry, PathBuf)> {
-        let file = PathBuf::from("/usr/share/applications").join(id);
-        self.apps.get(id).map(|n| (entry(id, n), file))
+    fn app(&self, id: &DesktopId) -> Option<(AppEntry, PathBuf)> {
+        let file = PathBuf::from("/usr/share/applications").join(id.as_str());
+        self.apps
+            .get(id.as_str())
+            .map(|n| (entry(id.as_str(), n), file))
     }
     fn default_app(&self, mime: &str) -> Option<(AppEntry, PathBuf)> {
-        (mime == "x-scheme-handler/http").then(|| self.app("firefox.desktop"))?
+        (mime == "x-scheme-handler/http").then(|| self.app(&"firefox.desktop".parse().unwrap()))?
     }
     fn is_file(&self, path: &Path) -> bool {
         self.files.iter().any(|f| Path::new(f) == path)

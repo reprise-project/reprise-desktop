@@ -18,7 +18,11 @@ pub enum Button {
 }
 
 /// Whether the `.desktop` file `text` (named `id`) is a button, and which: a shown program's entry, else a `Name=` with an [`ACTION_KEY`] naming an action `is_action` knows. The compositor and reprise-settings both go by this.
-pub fn button(text: &str, id: &str, is_action: impl Fn(&str) -> bool) -> Option<Button> {
+pub fn button(
+    text: &str,
+    id: &crate::apps::DesktopId,
+    is_action: impl Fn(&str) -> bool,
+) -> Option<Button> {
     if let Some(app) = crate::apps::parse_desktop(text, id) {
         return Some(Button::App(app));
     }
@@ -49,7 +53,7 @@ pub fn files(dir: &Path) -> Vec<String> {
     let mut out: Vec<String> = rd
         .flatten()
         .filter_map(|d| d.file_name().to_str().map(str::to_string))
-        .filter(|f| f.ends_with(".desktop"))
+        .filter(|f| crate::apps::DesktopId::from_file_name(f).is_some())
         .collect();
     out.sort();
     out
@@ -118,17 +122,25 @@ mod tests {
             format!("[Desktop Entry]\nType=Application\nName=Go\nIcon=\nX-Reprise-Action={a}\n")
         };
         assert_eq!(
-            button(&action("showdesktop"), "a.desktop", known),
+            button(&action("showdesktop"), &"a.desktop".parse().unwrap(), known),
             Some(Button::Action {
                 name: "Go".into(),
                 icon: None,
                 action: "showdesktop".into()
             })
         );
-        assert_eq!(button(&action("bogus"), "a.desktop", known), None);
+        assert_eq!(
+            button(&action("bogus"), &"a.desktop".parse().unwrap(), known),
+            None
+        );
         let app = "[Desktop Entry]\nType=Application\nName=Ed\nExec=ed\n";
-        assert!(matches!(button(app, "ed.desktop", known), Some(Button::App(a)) if a.name == "Ed"));
-        assert_eq!(button("[Desktop Entry]\n", "x.desktop", known), None);
+        assert!(
+            matches!(button(app, &"ed.desktop".parse().unwrap(), known), Some(Button::App(a)) if a.name == "Ed")
+        );
+        assert_eq!(
+            button("[Desktop Entry]\n", &"x.desktop".parse().unwrap(), known),
+            None
+        );
     }
 
     #[test]

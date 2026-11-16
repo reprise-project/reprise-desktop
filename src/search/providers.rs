@@ -66,7 +66,7 @@ pub fn enabled(
         })
         .filter_map(|(p, _)| {
             let e = entry(p)?;
-            let app = reprisefs::apps::DesktopId::from_file_name(&e.id)?;
+            let app = e.id.clone();
             Some(Arc::new(Provider {
                 addr: Address {
                     bus_name: p.bus_name.clone(),
@@ -263,7 +263,7 @@ mod tests {
             name: name.into(),
             exec_line: String::new(),
             terminal: false,
-            id: id.into(),
+            id: id.parse().unwrap(),
             icon: Some(format!("{name}-icon")),
             startup_wm_class: None,
             categories: Vec::new(),

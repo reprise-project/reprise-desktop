@@ -662,7 +662,7 @@ fn the_program_question_offers_run_or_cancel_with_cancel_on_enter() {
     use reprisefs::program::{Program, ScriptOpen};
     let path = std::path::PathBuf::from("/media/u/STICK/setup.exe");
     let mut binary = Dialog::ask_run(path.clone(), ScriptOpen::Run, Program::Binary);
-    let mut typed = Dialog::ask_open(path.clone(), Some("wine.desktop".into()), true);
+    let mut typed = Dialog::ask_open(path.clone(), Some("wine.desktop".parse().unwrap()), true);
     for d in [&mut binary, &mut typed] {
         let labels: Vec<&str> = d.buttons.iter().map(|b| b.label.as_str()).collect();
         assert_eq!(labels, ["&Run", "Cancel"]);
@@ -681,7 +681,7 @@ fn the_program_question_offers_run_or_cancel_with_cancel_on_enter() {
         typed.press(0),
         Outcome::OpenRunnable {
             path,
-            with: Some("wine.desktop".into()),
+            with: Some("wine.desktop".parse().unwrap()),
             recent: true,
         }
     );

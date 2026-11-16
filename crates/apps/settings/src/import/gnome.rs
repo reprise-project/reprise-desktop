@@ -1,6 +1,7 @@
 //! GNOME's settings from `dconf dump /`: the keys a user changed, each a GVariant in text form.
 
 use super::{Device, Launcher, Setting, other};
+use reprisefs::apps::DesktopId;
 use std::collections::HashMap;
 
 /// A GVariant as `dconf dump` prints it, as far as the keys read here need.
@@ -387,7 +388,10 @@ pub(super) fn settings(dump: &str) -> Vec<Setting> {
 
     if let Some(apps) = get("org/gnome/shell", "favorite-apps") {
         for id in apps.list().iter().filter_map(Value::str) {
-            out.push(Setting::Favourite(Launcher::Id(id.to_string())));
+            let Some(id) = DesktopId::from_file_name(id) else {
+                continue;
+            };
+            out.push(Setting::Favourite(Launcher::Id(id)));
         }
     }
     out

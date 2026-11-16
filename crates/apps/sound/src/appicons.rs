@@ -350,7 +350,7 @@ mod tests {
             name: id.into(),
             exec_line: exec.into(),
             terminal: false,
-            id: format!("{id}.desktop"),
+            id: format!("{id}.desktop").parse().unwrap(),
             icon: Some(icon.into()),
             startup_wm_class: class.map(str::to_string),
             categories: Vec::new(),

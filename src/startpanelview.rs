@@ -39,7 +39,7 @@ pub struct StartPanelView {
     /// Leading `model.frequent` rows from launch history; the rest are starters.
     launched: usize,
     jumps: Vec<Vec<PathBuf>>,
-    new_pins: Vec<String>,
+    new_pins: Vec<reprisefs::apps::DesktopId>,
     /// Parallel to `model.tree`; None for a folder.
     tree_apps: Vec<Option<usize>>,
     result_apps: Vec<usize>,

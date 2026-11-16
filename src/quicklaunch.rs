@@ -58,12 +58,10 @@ pub fn scan(dir: &Path, terminal: &str) -> Vec<QuickItem> {
         .filter_map(|d| {
             let path = d.path();
             let file = path.file_name()?.to_str()?.to_string();
-            if !file.ends_with(".desktop") {
-                return None;
-            }
+            let id = apps::DesktopId::from_file_name(&file)?;
             let text = apps::read_desktop_file(&path).ok()?;
-            let entry = parse(&text, &file, terminal)?;
-            let app = apps::parse_desktop(&text, &file);
+            let entry = parse(&text, &id, terminal)?;
+            let app = apps::parse_desktop(&text, &id);
             Some(QuickItem { file, entry, app })
         })
         .collect();
@@ -99,9 +97,10 @@ fn add_from(dir: &Path, src: &Path, app_dirs: &[PathBuf]) -> Option<String> {
         log::warn!("quicklaunch: could not create {}: {e}", dir.display());
         return None;
     }
-    let (file, text) = if name.ends_with(".desktop") && runs_as_is(src, dir, app_dirs) {
+    let as_is = apps::DesktopId::from_file_name(&name).filter(|_| runs_as_is(src, dir, app_dirs));
+    let (file, text) = if let Some(id) = as_is {
         let text = apps::read_desktop_file(src).ok()?;
-        if parse(&text, &name, "").is_none() {
+        if parse(&text, &id, "").is_none() {
             log::warn!("quicklaunch: {name} is not an application or action");
             return None;
         }
@@ -155,7 +154,7 @@ pub fn remove(dir: &Path, file: &str) {
 
 /// One `.desktop` file's button. A compositor action travels as `X-Reprise-Action=`; an application
 /// entry becomes its argument vector, as the Programs menu builds it.
-pub fn parse(text: &str, id: &str, terminal: &str) -> Option<QuickLaunchEntry> {
+pub fn parse(text: &str, id: &apps::DesktopId, terminal: &str) -> Option<QuickLaunchEntry> {
     let is_action = |a: &str| Action::from_parts(a, None).is_ok();
     Some(match reprisefs::quicklaunch::button(text, id, is_action)? {
         Button::App(app) => QuickLaunchEntry {
@@ -198,7 +197,7 @@ mod tests {
     fn exec(argv: &[&str], app: &str) -> Action {
         Action::Exec {
             argv: Ok(argv.iter().map(Into::into).collect()),
-            app: app.into(),
+            app: app.parse().unwrap(),
             dir: None,
         }
     }
@@ -250,19 +249,26 @@ mod tests {
         )
         .unwrap();
         assert!(t.contains("X-Reprise-Action=showdesktop\n"));
-        let p = parse(&t, "a.desktop", "foot").unwrap();
+        let p = parse(&t, &"a.desktop".parse().unwrap(), "foot").unwrap();
         assert_eq!(
             p,
             entry("Show Desktop", Action::ShowDesktop).with_icon("user-desktop")
         );
         let t = apps::launcher_text("Files", None, apps::Launch::Exec("nautilus 100%")).unwrap();
-        let p = parse(&t, "b.desktop", "foot").unwrap();
+        let p = parse(&t, &"b.desktop".parse().unwrap(), "foot").unwrap();
         assert_eq!(p.action, exec(&["nautilus", "100%"], "b.desktop"));
         assert_eq!(p.icon, None);
         let text = "[Desktop Entry]\nType=Application\nName=Top\nExec=htop\nTerminal=true\n";
-        let p = parse(text, "htop.desktop", "foot").unwrap();
+        let p = parse(text, &"htop.desktop".parse().unwrap(), "foot").unwrap();
         assert_eq!(p.action, exec(&["foot", "-e", "htop"], "htop.desktop"));
-        assert!(parse("[Desktop Entry]\nName=Nothing\n", "n.desktop", "foot").is_none());
+        assert!(
+            parse(
+                "[Desktop Entry]\nName=Nothing\n",
+                &"n.desktop".parse().unwrap(),
+                "foot"
+            )
+            .is_none()
+        );
     }
 
     impl QuickLaunchEntry {

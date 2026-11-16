@@ -109,7 +109,10 @@ pub(crate) fn test_explorer(start: Place, ctx: &mut Ctx) -> Explorer {
 pub(crate) fn opener_index() -> AppIndex {
     let text = "[Desktop Entry]\nType=Application\nName=Opener\nExec=opener %f\n\
                 MimeType=text/plain;image/png;application/x-msdownload;\n";
-    vec![reprisefs::apps::parse_desktop(text, "opener.desktop").expect("an entry")].into()
+    vec![
+        reprisefs::apps::parse_desktop(text, &"opener.desktop".parse().unwrap()).expect("an entry"),
+    ]
+    .into()
 }
 
 fn press(ex: &mut Explorer, sym: u32, ctx: &mut Ctx) -> Reply {

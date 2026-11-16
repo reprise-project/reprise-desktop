@@ -294,7 +294,7 @@ impl State {
         &mut self,
         command: DesktopCommand,
         output: &Output,
-        open_with: impl FnOnce(&Self) -> Vec<(String, String)>,
+        open_with: impl FnOnce(&Self) -> Vec<(reprisefs::apps::DesktopId, String)>,
     ) -> Option<(Vec<MenuItem>, Vec<Option<DesktopCommand>>, RowIcons)> {
         let px = self.context_icon_px(output);
         let mut waits = RowIcons::default();

@@ -189,7 +189,11 @@ mod tests {
             "[Desktop Entry]\nType=Application\nName={name}\nExec={exec}\nIcon={}\nTerminal={terminal}\n",
             name.to_lowercase()
         );
-        apps::parse_desktop(&text, &format!("{}.desktop", name.to_lowercase())).unwrap()
+        apps::parse_desktop(
+            &text,
+            &format!("{}.desktop", name.to_lowercase()).parse().unwrap(),
+        )
+        .unwrap()
     }
 
     fn dialog() -> AddItemDialog {
@@ -226,7 +230,7 @@ mod tests {
         let v = d.value().unwrap();
         assert_eq!((v.name.as_str(), v.command.as_str()), ("Editor", "gedit"));
         assert_eq!(v.icon.as_deref(), Some("editor"));
-        assert_eq!(v.app.map(|a| a.id), Some("editor.desktop".into()));
+        assert_eq!(v.app.map(|a| a.id), Some("editor.desktop".parse().unwrap()));
         pick(&mut d, 1);
         assert_eq!(
             d.value().unwrap().command,
@@ -255,7 +259,7 @@ mod tests {
     fn a_nodisplay_entry_is_not_listed() {
         let helper = apps::parse_desktop_any(
             "[Desktop Entry]\nType=Application\nName=Helper\nExec=helper %f\nNoDisplay=true\n",
-            "helper.desktop",
+            &"helper.desktop".parse().unwrap(),
         )
         .unwrap();
         let mut d = AddItemDialog::new(

@@ -822,7 +822,7 @@ mod tests {
             name: name.into(),
             exec_line: name.to_lowercase(),
             terminal: false,
-            id: format!("{name}.desktop"),
+            id: format!("{name}.desktop").parse().unwrap(),
             icon: None,
             startup_wm_class: None,
             categories: Vec::new(),
@@ -845,7 +845,7 @@ mod tests {
 
     fn installed(id: &str, name: &str) -> AppEntry {
         AppEntry {
-            id: id.into(),
+            id: id.parse().unwrap(),
             ..app(name, true)
         }
     }

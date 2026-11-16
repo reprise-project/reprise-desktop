@@ -26,7 +26,7 @@ pub fn group(
     choices: &[String],
     apps: &[AppEntry],
     content_type: Option<&str>,
-    default: Option<&str>,
+    default: Option<&DesktopId>,
 ) -> (Vec<Program>, Vec<Program>) {
     let opens: Vec<usize> = content_type
         .map(|m| reprisefs::apps::open_with(apps, m))
@@ -34,8 +34,7 @@ pub fn group(
     let (mut rec, mut oth) = (Vec::new(), Vec::new());
     for id in choices {
         let full = DesktopId::named(id);
-        let full = full.as_ref().map(DesktopId::as_str);
-        let at = apps.iter().position(|a| Some(a.id.as_str()) == full);
+        let at = apps.iter().position(|a| Some(&a.id) == full.as_ref());
         let p = match at {
             Some(i) => Program {
                 id: id.clone(),
@@ -50,7 +49,7 @@ pub fn group(
         };
         let recommended = content_type.is_none()
             || at.is_some_and(|i| opens.contains(&i))
-            || default.is_some_and(|d| Some(d) == full);
+            || default.is_some_and(|d| Some(d) == full.as_ref());
         if recommended {
             rec.push(p)
         } else {
@@ -65,14 +64,14 @@ pub fn group(
 /// The control for `input`: Browse... greyed (the answer must be one of
 /// the caller's ids), the box greyed without a type, `last_choice`
 /// picked when it is offered, else the type's `default` when offered.
-fn chooser(input: &Input, apps: &[AppEntry], default: Option<&str>) -> OpenWith {
+fn chooser(input: &Input, apps: &[AppEntry], default: Option<&DesktopId>) -> OpenWith {
     let (rec, oth) = group(&input.choices, apps, input.content_type.as_deref(), default);
     let mut ow = OpenWith::new(&input.file, rec, oth);
     if let Some(d) = default
         && let Some(id) = input
             .choices
             .iter()
-            .find(|c| DesktopId::named(c).is_some_and(|f| f.as_str() == d))
+            .find(|c| DesktopId::named(c).as_ref() == Some(d))
     {
         ow.select_id(id);
     }
@@ -91,7 +90,7 @@ struct Choose {
     input: Input,
     apps: Vec<AppEntry>,
     ow: OpenWith,
-    default: Option<String>,
+    default: Option<DesktopId>,
     icon: Option<Canvas>,
     row_icons: Vec<Option<Canvas>>,
     icons: IconCache,
@@ -123,7 +122,7 @@ impl Choose {
                         &u.choices,
                         &self.apps,
                         self.input.content_type.as_deref(),
-                        self.default.as_deref(),
+                        self.default.as_ref(),
                     );
                     self.input.choices = u.choices;
                     self.ow.set_programs(rec, oth);
@@ -140,7 +139,7 @@ impl Choose {
         if always
             && let Some(mime) = &self.input.content_type
             && let Some(full) = DesktopId::named(&id)
-            && let Err(e) = reprisefs::props::set_default_app(mime, full.as_str())
+            && let Err(e) = reprisefs::props::set_default_app(mime, &full)
         {
             log::warn!("appchoose: cannot make {full} the default for {mime}: {e}");
         }
@@ -296,7 +295,7 @@ pub fn run_dialog() {
         .as_deref()
         .and_then(|m| reprisefs::props::default_app(m, &apps))
         .map(|i| apps[i].id.clone());
-    let ow = chooser(&input, &apps, default.as_deref());
+    let ow = chooser(&input, &apps, default.as_ref());
     let out = Arc::new(Mutex::new(Output::default()));
     let mut app = Choose {
         input,
@@ -330,7 +329,7 @@ mod tests {
             name: name.into(),
             exec_line: String::new(),
             terminal: false,
-            id: id.into(),
+            id: id.parse().unwrap(),
             icon: Some(format!("{name}-icon")),
             startup_wm_class: None,
             categories: Vec::new(),
@@ -410,7 +409,7 @@ mod tests {
             choices: vec!["vim".into(), "zed".into()],
             ..Default::default()
         };
-        let ow = chooser(&input, &apps, Some("zed.desktop"));
+        let ow = chooser(&input, &apps, Some(&"zed.desktop".parse().unwrap()));
         let names: Vec<&str> = ow.list.rows.iter().map(|r| r.label()).collect();
         assert_eq!(names, [openwith::RECOMMENDED, "Vim", "Zed"]);
         assert_eq!(ow.chosen().map(|p| p.id.as_str()), Some("zed"));
@@ -420,10 +419,10 @@ mod tests {
                 ..input.clone()
             },
             &apps,
-            Some("zed.desktop"),
+            Some(&"zed.desktop".parse().unwrap()),
         );
         assert_eq!(ow.chosen().map(|p| p.id.as_str()), Some("vim"));
-        let ow = chooser(&input, &apps, Some("ark.desktop"));
+        let ow = chooser(&input, &apps, Some(&"ark.desktop".parse().unwrap()));
         assert_eq!(
             ow.chosen().map(|p| p.id.as_str()),
             Some("vim"),

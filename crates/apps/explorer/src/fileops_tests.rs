@@ -63,7 +63,7 @@ fn app(name: &str, id: &str, mimes: &[&str]) -> AppEntry {
         name: name.into(),
         exec_line: format!("/usr/bin/{id} %f"),
         terminal: false,
-        id: format!("{id}.desktop"),
+        id: format!("{id}.desktop").parse().unwrap(),
         icon: None,
         startup_wm_class: None,
         categories: Vec::new(),

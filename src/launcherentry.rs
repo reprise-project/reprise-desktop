@@ -235,7 +235,7 @@ pub fn app_keys(app_id: &str, desktop_id: Option<&str>, index: &[AppEntry]) -> V
     if !app_id.is_empty()
         && let Some(entry) = reprisefs::apps::entry_for_app_id(index, app_id, |_| true)
     {
-        add(&entry.id);
+        add(entry.id.as_str());
     }
     keys
 }

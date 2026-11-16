@@ -84,7 +84,7 @@ pub enum DialogAction {
     /// entry id), else its default program, into the recent files with `recent`.
     OpenRunnable {
         path: std::path::PathBuf,
-        with: Option<String>,
+        with: Option<reprisefs::apps::DesktopId>,
         recent: bool,
     },
     /// The Mount Disk Image question's Mount for the disk image at this path.
@@ -466,7 +466,7 @@ pub enum Outcome {
     /// [`DialogAction::OpenRunnable`].
     OpenRunnable {
         path: std::path::PathBuf,
-        with: Option<String>,
+        with: Option<reprisefs::apps::DesktopId>,
         recent: bool,
     },
     /// [`DialogAction::MountImage`].

@@ -1472,7 +1472,7 @@ impl Explorer {
                 if let Ok(open) = &open
                     && repriseconf::current().recent_files
                 {
-                    let app = (open.app.as_deref()).and_then(|id| apps.iter().find(|a| a.id == id));
+                    let app = (open.app.as_ref()).and_then(|id| apps.iter().find(|a| a.id == *id));
                     if let Err(e) = reprisefs::recent::record(&[(&path, app, mime.as_deref())]) {
                         log::warn!("recent files: could not record {}: {e}", path.display());
                     }
@@ -1530,7 +1530,7 @@ impl Explorer {
             Opened::Open(Ok(open)) => Reply {
                 redraw: true,
                 spawn: vec![open.argv],
-                spawn_app: open.app,
+                spawn_app: open.app.map(|a| a.to_string()),
                 spawn_dir: open.dir,
                 ..Default::default()
             },

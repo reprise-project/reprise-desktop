@@ -256,7 +256,9 @@ pub fn send_to_menu(
 
 /// The "Open With" submenu: one row per program in `apps` (desktop-file id and
 /// name), then "Choose Program..." after a separator (alone when there are none).
-pub fn open_with_menu(apps: &[(String, String)]) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
+pub fn open_with_menu(
+    apps: &[(apps::DesktopId, String)],
+) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     let mut rows: Rows = apps
         .iter()
         .map(|(id, name)| {
@@ -376,7 +378,7 @@ impl State {
         })
     }
 
-    pub(crate) fn open_with_apps(&self, target: &IconId) -> Vec<(String, String)> {
+    pub(crate) fn open_with_apps(&self, target: &IconId) -> Vec<(apps::DesktopId, String)> {
         let Some(view) = self.desktop.as_ref() else {
             return Vec::new();
         };
@@ -388,7 +390,7 @@ impl State {
 
     /// The programs registered for the type of the file `path` (by its name, with no stat):
     /// desktop-file id and name.
-    pub(crate) fn open_with_apps_for(&self, path: &Path) -> Vec<(String, String)> {
+    pub(crate) fn open_with_apps_for(&self, path: &Path) -> Vec<(apps::DesktopId, String)> {
         let empty;
         let mime = match self.desktop.as_ref() {
             Some(v) => &v.mime,

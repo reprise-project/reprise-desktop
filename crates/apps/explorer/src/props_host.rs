@@ -1275,12 +1275,9 @@ pub(crate) fn menu_entry_in<'a>(
     apps: &'a [reprisefs::apps::AppEntry],
     dirs: &[PathBuf],
 ) -> Option<&'a reprisefs::apps::AppEntry> {
-    let file = path.file_name()?.to_str()?;
-    if !file.ends_with(".desktop") {
-        return None;
-    }
+    let file = reprisefs::apps::DesktopId::from_file_name(path.file_name()?.to_str()?)?;
     (apps.iter())
-        .filter(|e| e.id.ends_with(file))
+        .filter(|e| e.id.as_str().ends_with(file.as_str()))
         .find(|e| reprisefs::apps::find_file_in(dirs, &e.id).as_deref() == Some(path))
 }
 

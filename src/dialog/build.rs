@@ -514,7 +514,11 @@ impl Dialog {
 
     /// The question before `path`, which its type's program runs, opens in `with` (a desktop
     /// entry id) or its default program; Run remembers the pick, Cancel is the default.
-    pub fn ask_open(path: std::path::PathBuf, with: Option<String>, recent: bool) -> Dialog {
+    pub fn ask_open(
+        path: std::path::PathBuf,
+        with: Option<reprisefs::apps::DesktopId>,
+        recent: bool,
+    ) -> Dialog {
         let asked = reprisefs::program::Asked::Typed;
         let labels = asked.buttons();
         let run = DialogAction::OpenRunnable {

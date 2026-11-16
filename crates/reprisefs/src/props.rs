@@ -1023,7 +1023,7 @@ pub fn open_file(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Opening {
     pub argv: Vec<std::ffi::OsString>,
-    pub app: Option<String>,
+    pub app: Option<crate::apps::DesktopId>,
     /// The entry's `Path=`, the folder the program starts in.
     pub dir: Option<PathBuf>,
 }
@@ -1182,7 +1182,7 @@ pub fn has_lp() -> bool {
 }
 
 /// Make `id` the default program for `mime` in the user's `mimeapps.list`, keeping the rest.
-pub fn set_default_app(mime: &str, id: &str) -> std::io::Result<()> {
+pub fn set_default_app(mime: &str, id: &crate::apps::DesktopId) -> std::io::Result<()> {
     edit_defaults(&[(mime.to_string(), Some(id.to_string()))])
 }
 

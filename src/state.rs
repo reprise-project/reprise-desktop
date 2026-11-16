@@ -277,7 +277,9 @@ pub fn save_start(l: &crate::launches::Launches) {
 }
 
 fn start_keys(l: &crate::launches::Launches) -> toml::Table {
-    let list = |v: &[String]| toml::Value::Array(v.iter().map(|s| s.as_str().into()).collect());
+    let list = |v: &[reprisefs::apps::DesktopId]| {
+        toml::Value::Array(v.iter().map(|s| s.as_str().into()).collect())
+    };
     toml::Table::from_iter([
         ("start_pins".to_string(), list(&l.pins)),
         ("launches".to_string(), list(&l.recent)),
@@ -663,8 +665,8 @@ mod tests {
         let path = dir.join("state.toml");
         std::fs::write(&path, "run_history = [\"calc\"]\n").unwrap();
         let l = crate::launches::Launches {
-            pins: vec!["a.desktop".into()],
-            recent: vec!["b.desktop".into(), "a.desktop".into()],
+            pins: vec!["a.desktop".parse().unwrap()],
+            recent: vec!["b.desktop".parse().unwrap(), "a.desktop".parse().unwrap()],
         };
         let p = path.clone();
         run_in_order(move || patch(&p, start_keys(&l)));

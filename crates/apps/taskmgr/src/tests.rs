@@ -38,7 +38,8 @@ fn entry(id: &str, name: &str, wm_class: Option<&str>) -> AppEntry {
     let text = format!(
         "[Desktop Entry]\nType=Application\nName={name}\nExec={id}\nIcon=text-editor\n{class}"
     );
-    reprisefs::apps::parse_desktop(&text, &format!("{id}.desktop")).expect("an entry")
+    reprisefs::apps::parse_desktop(&text, &format!("{id}.desktop").parse().unwrap())
+        .expect("an entry")
 }
 
 fn proc(pid: i32, name: &str, uid: u32, cpu: f64, mem_kb: u64) -> ProcRow {

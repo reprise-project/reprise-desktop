@@ -144,7 +144,7 @@ impl WelcomeApp {
         match reprisefs::apps::launch_argv(e, &repriseconf::current().terminal) {
             Ok(argv) => Reply {
                 spawn: vec![argv],
-                spawn_app: Some(e.id.clone()),
+                spawn_app: Some(e.id.to_string()),
                 spawn_dir: e.path.clone(),
                 ..Reply::redraw()
             },

@@ -9,7 +9,7 @@ pub enum Action {
     /// or the entry's refusal, the desktop entry id it came from and its `Path=` folder.
     Exec {
         argv: Result<Vec<std::ffi::OsString>, reprisefs::apps::ExecRefused>,
-        app: String,
+        app: reprisefs::apps::DesktopId,
         dir: Option<std::path::PathBuf>,
     },
     Terminal,

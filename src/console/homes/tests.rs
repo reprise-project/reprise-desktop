@@ -327,7 +327,7 @@ fn lock_mode_keeps_the_last_session_and_writes_no_open_here_rule() {
     h.state.app_index = vec![
         reprisefs::apps::parse_desktop(
             "[Desktop Entry]\nType=Application\nName=app\nExec=app\n",
-            "app.desktop",
+            &"app.desktop".parse().unwrap(),
         )
         .expect("an entry"),
     ];

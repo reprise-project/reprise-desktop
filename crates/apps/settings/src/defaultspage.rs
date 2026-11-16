@@ -388,7 +388,7 @@ impl Defaults {
             Some(a) => *a = entry,
             None => self.apps.push(entry),
         }
-        Ok(id)
+        Ok(id.to_string())
     }
 
     /// Whether the user's list names a program for `mime`, edits
@@ -484,7 +484,7 @@ impl Defaults {
             .map(|(_, m)| *m)
             .collect();
         for m in types {
-            self.set(m, Some(&id));
+            self.set(m, Some(id.as_str()));
         }
         true
     }
@@ -723,7 +723,7 @@ pub(crate) mod tests {
             name: name.into(),
             exec_line: exec.into(),
             terminal: false,
-            id: id.into(),
+            id: id.parse().unwrap(),
             icon: None,
             startup_wm_class: None,
             categories: categories.iter().map(|c| c.to_string()).collect(),
@@ -803,7 +803,7 @@ pub(crate) mod tests {
     }
 
     fn id_of(d: &Defaults, mime: &str) -> Option<String> {
-        d.current(mime).map(|i| d.apps[i].id.clone())
+        d.current(mime).map(|i| d.apps[i].id.to_string())
     }
 
     #[test]

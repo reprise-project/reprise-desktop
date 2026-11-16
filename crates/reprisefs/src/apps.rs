@@ -14,7 +14,7 @@ pub struct AppEntry {
     /// [`open_argv`] split it with no shell.
     pub exec_line: String,
     pub terminal: bool,
-    pub id: String,
+    pub id: DesktopId,
     /// A theme icon name or an absolute path.
     pub icon: Option<String>,
     pub startup_wm_class: Option<String>,
@@ -48,7 +48,7 @@ impl AppEntry {
     }
 
     pub fn is_browsed(&self) -> bool {
-        self.id.starts_with(BROWSED_PREFIX)
+        self.id.as_str().starts_with(BROWSED_PREFIX)
     }
 }
 
@@ -290,7 +290,7 @@ pub fn subtitle(text: &str) -> Option<String> {
     (Some(line) != get("Name")).then(|| line.to_string())
 }
 
-pub fn parse_desktop(text: &str, id: &str) -> Option<AppEntry> {
+pub fn parse_desktop(text: &str, id: &DesktopId) -> Option<AppEntry> {
     parse_desktop_any(text, id).filter(|e| e.shown)
 }
 
@@ -298,7 +298,7 @@ pub fn parse_desktop(text: &str, id: &str) -> Option<AppEntry> {
 /// index [`scan`] builds holds those too, as programs that open files. An entry
 /// `OnlyShowIn` / `NotShowIn` keeps off every name in `XDG_CURRENT_DESKTOP`, or
 /// whose `TryExec` program is missing, is none.
-pub fn parse_desktop_any(text: &str, id: &str) -> Option<AppEntry> {
+pub fn parse_desktop_any(text: &str, id: &DesktopId) -> Option<AppEntry> {
     let desktops =
         crate::autostart::desktop_names(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref());
     parse_desktop_on(text, id, &desktops, |p| {
@@ -310,7 +310,7 @@ pub fn parse_desktop_any(text: &str, id: &str) -> Option<AppEntry> {
 /// `TryExec` program is there.
 fn parse_desktop_on(
     text: &str,
-    id: &str,
+    id: &DesktopId,
     desktops: &[String],
     installed: impl Fn(&str) -> bool,
 ) -> Option<AppEntry> {
@@ -341,7 +341,7 @@ fn parse_desktop_on(
         name,
         exec_line,
         terminal: get("Terminal") == Some("true"),
-        id: id.to_string(),
+        id: id.clone(),
         icon: get("Icon").filter(|s| !s.is_empty()).map(str::to_string),
         startup_wm_class: get("StartupWMClass")
             .filter(|s| !s.is_empty())
@@ -547,8 +547,8 @@ impl Shortcut {
 pub fn shortcut_at(path: &Path, meta: &std::fs::Metadata) -> Option<Shortcut> {
     use std::os::unix::fs::PermissionsExt;
     let file_name = path.file_name()?.to_string_lossy();
-    if !file_name.ends_with(".desktop")
-        || !meta.is_file()
+    let id = DesktopId::from_file_name(&file_name)?;
+    if !meta.is_file()
         || meta.len() > DESKTOP_FILE_MAX
         || meta.permissions().mode() & 0o111 == 0
         || !is_trusted(path)
@@ -558,7 +558,7 @@ pub fn shortcut_at(path: &Path, meta: &std::fs::Metadata) -> Option<Shortcut> {
     let text = read_desktop_file(path)
         .map_err(|e| log::warn!("{}: {e}", path.display()))
         .ok()?;
-    parse_desktop(&text, &file_name)
+    parse_desktop(&text, &id)
         .map(Shortcut::App)
         .or_else(|| parse_link(&text).map(Shortcut::Link))
 }
@@ -641,9 +641,10 @@ pub fn program_entry_in(
             1 => format!("{BROWSED_PREFIX}{stem}.desktop"),
             n => format!("{BROWSED_PREFIX}{stem}-{n}.desktop"),
         };
+        let id = DesktopId::from_file_name(&id).ok_or_else(|| refuse("a name too long"))?;
         let fresh =
             parse_desktop_any(&text, &id).ok_or_else(|| refuse("an entry that does not parse"))?;
-        let path = dir.join(&id);
+        let path = dir.join(id.as_str());
         match read_desktop_file(&path) {
             Ok(old) => {
                 if let Some(e) =
@@ -1237,7 +1238,10 @@ pub fn terminal_argv(terminal: &str) -> Vec<OsString> {
 pub fn terminal_app(terminal: &str, apps: &[AppEntry]) -> Option<String> {
     let argv = terminal_argv(terminal);
     let name = Path::new(argv.first()?).file_name()?.to_string_lossy();
-    Some(entry_for_app_id(apps, &name, |_| true).map_or_else(|| name.to_string(), |e| e.id.clone()))
+    Some(
+        entry_for_app_id(apps, &name, |_| true)
+            .map_or_else(|| name.to_string(), |e| e.id.to_string()),
+    )
 }
 
 pub fn default_dirs() -> Vec<PathBuf> {
@@ -1258,17 +1262,14 @@ pub fn user_applications_dir() -> Option<PathBuf> {
 const MAX_DEPTH: usize = 8;
 
 /// The file of desktop-file id `id` in [`default_dirs`], as [`find_file_in`].
-pub fn find_file(id: &str) -> Option<PathBuf> {
+pub fn find_file(id: &DesktopId) -> Option<PathBuf> {
     find_file_in(&default_dirs(), id)
 }
 
 /// The file [`scan`] reads for `id` over `dirs`: the first directory holding it wins, and in one
 /// directory `a-b.desktop` comes before `a/b.desktop`.
-pub fn find_file_in(dirs: &[PathBuf], id: &str) -> Option<PathBuf> {
-    if id.contains('/') {
-        return None;
-    }
-    dirs.iter().find_map(|d| resolve(d, id, 0))
+pub fn find_file_in(dirs: &[PathBuf], id: &DesktopId) -> Option<PathBuf> {
+    dirs.iter().find_map(|d| resolve(d, id.as_str(), 0))
 }
 
 fn resolve(dir: &Path, rest: &str, depth: usize) -> Option<PathBuf> {
@@ -1297,7 +1298,7 @@ struct Folder {
     path: PathBuf,
     /// `(id, file)` per `.desktop` file, the id being the path below the applications directory
     /// with `/` as `-` (`wine/Programs/App.desktop` is `wine-Programs-App.desktop`).
-    files: Vec<(String, PathBuf)>,
+    files: Vec<(DesktopId, PathBuf)>,
 }
 
 /// `dir` and the folders below it, each before its subfolders. A folder reached twice (a
@@ -1324,8 +1325,8 @@ fn walk(dir: &Path) -> Vec<Folder> {
                 continue;
             };
             let child = entry.path();
-            if name.ends_with(".desktop") {
-                files.push((format!("{prefix}{name}"), child));
+            if let Some(id) = DesktopId::from_file_name(&format!("{prefix}{name}")) {
+                files.push((id, child));
             } else if depth < MAX_DEPTH && child.is_dir() {
                 subs.push((child, format!("{prefix}{name}-"), depth + 1));
             }
@@ -1342,7 +1343,7 @@ fn walk(dir: &Path) -> Vec<Folder> {
 /// its subfolders'; result sorted by name, case-insensitive. An excluded entry in an earlier
 /// directory still shadows the same id in later directories, per the desktop-entry spec.
 pub fn scan(dirs: &[PathBuf]) -> Vec<AppEntry> {
-    let mut seen: HashMap<String, Option<AppEntry>> = HashMap::new();
+    let mut seen: HashMap<DesktopId, Option<AppEntry>> = HashMap::new();
     for folder in dirs.iter().flat_map(|d| walk(d)) {
         for (id, path) in folder.files {
             if seen.contains_key(&id) {
@@ -1430,7 +1431,7 @@ pub fn entry_for_app_id<'a>(
     let want_id = app_id.to_lowercase();
     let by_id = entries
         .iter()
-        .find(|e| want(e) && DesktopId::stem_of(&e.id).to_lowercase() == want_id);
+        .find(|e| want(e) && e.id.stem().to_lowercase() == want_id);
     by_id.or_else(|| {
         entries.iter().find(|e| {
             want(e)
