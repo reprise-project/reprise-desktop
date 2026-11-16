@@ -32,8 +32,8 @@ fn open_with_runs_the_program_as_its_entry_on_the_entry_the_menu_was_built_for()
         Some(&dir.path().join("b.txt").into_os_string())
     );
     assert_eq!(
-        reply.spawn_app.as_deref(),
-        Some("editor.desktop"),
+        reply.spawn_app.as_ref().map(|a| a.as_str()),
+        Some("editor"),
         "in the program's app scope"
     );
 
@@ -113,7 +113,7 @@ fn chooser_ok_runs_the_program_on_release() {
     let reply = ex.dialog_event(release, &mut ctx);
     let argv = reply.spawn.first().expect("the release runs the program");
     assert_eq!(argv.last(), Some(&path.clone().into_os_string()));
-    assert_eq!(reply.spawn_app.as_deref(), Some("editor.desktop"));
+    assert_eq!(reply.spawn_app.as_ref().map(|a| a.as_str()), Some("editor"));
     assert!(ex.dialog.is_none(), "the chooser closes");
 }
 

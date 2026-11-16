@@ -156,7 +156,8 @@ pub fn tip(state: &State) -> String {
 }
 
 fn app_name(state: &State, desktop_id: &str) -> String {
-    reprisefs::apps::entry_for_app_id(&state.app_index, desktop_id, |_| true)
+    reprisefs::apps::AppId::new(desktop_id)
+        .and_then(|a| reprisefs::apps::entry_for_app_id(&state.app_index, &a, |_| true))
         .map(|e| e.name.clone())
         .unwrap_or_else(|| desktop_id.to_string())
 }
@@ -234,7 +235,8 @@ fn asked(state: &mut State, ask: Ask) {
 /// The prompt's picture for `desktop_id` ([`crate::icon::unread_first`]): the program's icon,
 /// else the question mark.
 fn prompt_icon(state: &mut State, desktop_id: &str) -> Option<crate::raster::Canvas> {
-    let own = reprisefs::apps::entry_for_app_id(&state.app_index, desktop_id, |_| true)
+    let own = reprisefs::apps::AppId::new(desktop_id)
+        .and_then(|a| reprisefs::apps::entry_for_app_id(&state.app_index, &a, |_| true))
         .and_then(|e| e.icon.clone());
     let names = own.iter().map(String::as_str).chain(["dialog-question"]);
     crate::icon::unread_first(&mut state.icons, names, 32).map(Arc::unwrap_or_clone)

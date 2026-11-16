@@ -31,7 +31,7 @@ fn read() -> Reader {
 fn switch(on: bool) -> Reading {
     let failed = if on {
         let argv = [screenreader::PROGRAM.into()];
-        repriseapp::spawn_in(&argv, None, Some(screenreader::PROGRAM))
+        repriseapp::spawn_in(&argv, None, Some(&screenreader::APP))
             .err()
             .map(|e| format!("The screen reader could not be started.\n\n{e}"))
     } else {

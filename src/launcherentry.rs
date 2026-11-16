@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use futures_util::stream::{self, StreamExt};
 use reprisebus::bounded::{self, Dict, Value};
-use reprisefs::apps::AppEntry;
+use reprisefs::apps::{AppEntry, AppId, DesktopId};
 use reprisekit::taskbar::TaskProgress;
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::calloop::channel::{self, Event, Sender};
@@ -75,19 +75,22 @@ pub struct Applied {
     pub urgent: Option<String>,
 }
 
-/// The entries by sender and app key (the desktop file's id without `.desktop`, lower case), so
-/// two processes of one program keep their own.
+/// The entries by sender and app key ([`key`]), so two processes of one program keep their own.
 #[derive(Default)]
 pub struct Entries {
     by_sender: HashMap<(String, String), Entry>,
     clock: u64,
 }
 
+/// An app id as entries are keyed: in lower case, as app ids and file names differ in case.
+fn key(app: &AppId) -> String {
+    app.as_str().to_ascii_lowercase()
+}
+
 /// The app key of `uri` (`application://<id>.desktop`).
 fn app_key(uri: &str) -> Option<String> {
-    let id = uri.strip_prefix("application://")?;
-    let id = reprisefs::apps::DesktopId::stem_of(id);
-    (!id.is_empty() && id.len() <= 255).then(|| id.to_ascii_lowercase())
+    let id = DesktopId::named(uri.strip_prefix("application://")?)?;
+    Some(key(&id.app_id()))
 }
 
 impl Entries {
@@ -200,14 +203,12 @@ impl Entries {
         let shown = || self.by_sender.iter().filter(|(_, e)| e.visible);
         let own = pid.and_then(|p| latest(shown().filter(|(_, e)| e.pid == p)));
         let e = own.or_else(|| {
-            if app_id.is_empty() {
-                return None;
-            }
-            let mut apps = vec![app_id.to_ascii_lowercase()];
+            let app = AppId::new(app_id)?;
+            let mut apps = vec![key(&app)];
             let mut windowless = shown().filter(|(_, e)| !owns_window(e.pid)).peekable();
             windowless.peek()?;
-            if let Some(entry) = reprisefs::apps::entry_for_app_id(index, app_id, |_| true) {
-                apps.extend(app_key(&format!("application://{}", entry.id)));
+            if let Some(entry) = reprisefs::apps::entry_for_app_id(index, &app, |_| true) {
+                apps.push(key(&entry.id.app_id()));
             }
             latest(windowless.filter(|((_, app), _)| apps.contains(app)))
         })?;
@@ -219,23 +220,21 @@ impl Entries {
 }
 
 /// The app keys entries for a window or pin of `app_id` (or the desktop file `desktop_id`) may come
-/// under: the id itself and the desktop file `index` finds for it, lower case.
+/// under: the id itself, the file's app id and that of the desktop file `index` finds for it.
 pub fn app_keys(app_id: &str, desktop_id: Option<&str>, index: &[AppEntry]) -> Vec<String> {
+    let app = AppId::new(app_id);
+    let file = desktop_id.and_then(DesktopId::from_file_name);
+    let found = app
+        .as_ref()
+        .and_then(|a| reprisefs::apps::entry_for_app_id(index, a, |_| true));
     let mut keys = Vec::new();
-    let mut add = |id: &str| {
-        let key = reprisefs::apps::DesktopId::stem_of(id).to_ascii_lowercase();
-        if !key.is_empty() && !keys.contains(&key) {
-            keys.push(key);
+    let ids = (app.iter().cloned())
+        .chain(file.map(|d| d.app_id()))
+        .chain(found.map(|e| e.id.app_id()));
+    for k in ids.map(|a| key(&a)) {
+        if !keys.contains(&k) {
+            keys.push(k);
         }
-    };
-    add(app_id);
-    if let Some(d) = desktop_id {
-        add(d);
-    }
-    if !app_id.is_empty()
-        && let Some(entry) = reprisefs::apps::entry_for_app_id(index, app_id, |_| true)
-    {
-        add(entry.id.as_str());
     }
     keys
 }

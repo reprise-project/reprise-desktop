@@ -4,11 +4,11 @@
 use std::path::{Path, PathBuf};
 
 /// One app scope and its processes.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Scope {
     pub unit: String,
     /// The desktop entry id it was started from, without `.desktop`.
-    pub app: String,
+    pub app: reprisefs::apps::AppId,
     pub pids: Vec<i32>,
 }
 
@@ -37,7 +37,7 @@ pub fn read(slice: &Path) -> Vec<Scope> {
         .filter_map(|e| {
             let e = e.ok()?;
             let unit = e.file_name().into_string().ok()?;
-            let app = app_of(&unit)?;
+            let app = reprisefs::apps::AppId::new(&app_of(&unit)?)?;
             let procs = std::fs::read_to_string(e.path().join("cgroup.procs")).ok()?;
             let pids: Vec<i32> = procs
                 .lines()
@@ -113,12 +113,12 @@ mod tests {
             [
                 Scope {
                     unit: "app-reprise-org.kde.ark-1ax2x3.scope".into(),
-                    app: "org.kde.ark".into(),
+                    app: reprisefs::apps::AppId::from_static("org.kde.ark"),
                     pids: vec![4242, 4250],
                 },
                 Scope {
                     unit: "app-reprise-reprise\\x2dnotepad-2ax2x0.scope".into(),
-                    app: "reprise-notepad".into(),
+                    app: reprisefs::apps::AppId::from_static("reprise-notepad"),
                     pids: vec![77],
                 },
             ]

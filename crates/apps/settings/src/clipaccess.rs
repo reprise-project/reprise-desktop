@@ -45,7 +45,8 @@ pub fn read_installed(installs: &[PathBuf], app_dirs: &[PathBuf]) -> Vec<Install
     };
     ids.into_iter()
         .map(|id| {
-            let entry = reprisefs::apps::entry_for_app_id(&entries, &id, |_| true)
+            let entry = reprisefs::apps::AppId::new(&id)
+                .and_then(|a| reprisefs::apps::entry_for_app_id(&entries, &a, |_| true))
                 .map(|e| (e.name.clone(), e.icon.clone()));
             Installed { id, entry }
         })

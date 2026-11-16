@@ -4,7 +4,7 @@
 
 use crate::raster::Canvas;
 use repriseaudio::sounds::Sound;
-use reprisefs::apps::DesktopId;
+use reprisefs::apps::AppId;
 use reprisefs::names::shown_line;
 use reprisekit::icon::IconSource;
 use serde::de::{self, Deserialize, Deserializer, IgnoredAny, SeqAccess, Visitor};
@@ -380,10 +380,11 @@ fn decode_picture(bytes: Vec<u8>) -> image::ImageResult<image::DynamicImage> {
 /// A [`program_key`]'s limit, as long as a desktop id may be.
 pub const KEY_CHARS: usize = 255;
 
-/// What names the program sending a notification: the `desktop-entry` hint as sent when a desktop
-/// file can be named after it ([`DesktopId::for_app_id`]), else `app_name`.
+/// What names the program sending a notification: the `desktop-entry` hint as sent when it is an
+/// app id a desktop file can be named after ([`AppId::desktop_ids`]), else `app_name`.
 pub fn program_key(hint: Option<&str>, app_name: &str) -> String {
-    match hint.filter(|h| !DesktopId::for_app_id(h).is_empty()) {
+    let named = |h: &&str| AppId::new(h).is_some_and(|a| !a.desktop_ids().is_empty());
+    match hint.filter(named) {
         Some(h) => h.to_string(),
         None => app_name.to_string(),
     }
