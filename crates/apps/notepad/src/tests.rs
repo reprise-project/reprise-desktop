@@ -1938,3 +1938,28 @@ fn word_wrap_folds_long_lines_into_the_box_and_off_draws_as_before() {
     np.draw_main(&mut after, &ctx);
     assert!(before.pixels == after.pixels);
 }
+
+#[test]
+fn only_the_window_with_the_keyboard_draws_and_blinks_its_caret() {
+    let mut ctx = test_ctx();
+    let mut np = Notepad::new(None);
+    let draw = |np: &mut Notepad, ctx: &Ctx| {
+        let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+        np.draw_main(&mut c, ctx);
+        c
+    };
+    assert!(
+        !np.event(MAIN, Event::Blink, &mut ctx).redraw,
+        "a blink without the keyboard redraws nothing"
+    );
+    let unfocused = draw(&mut np, &ctx);
+    np.event(MAIN, Event::Focus(true), &mut ctx);
+    assert!(np.event(MAIN, Event::Blink, &mut ctx).redraw);
+    assert_ne!(
+        draw(&mut np, &ctx).pixels,
+        unfocused.pixels,
+        "the caret shows with the keyboard"
+    );
+    np.event(MAIN, Event::Focus(false), &mut ctx);
+    assert_eq!(draw(&mut np, &ctx).pixels, unfocused.pixels);
+}

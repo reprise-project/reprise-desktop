@@ -334,11 +334,17 @@ impl Notepad {
             }
             Event::CloseRequest => self.confirm_then(PendingAction::Quit),
             Event::Focus(false) => {
+                self.focused = false;
                 self.alt_arm.interrupt();
                 self.context = None;
                 Reply::redraw()
             }
-            Event::Resized | Event::Blink | Event::Focus(_) => Reply::redraw(),
+            Event::Focus(true) => {
+                self.focused = true;
+                Reply::redraw()
+            }
+            Event::Blink if !self.focused => Reply::none(),
+            Event::Resized | Event::Blink => Reply::redraw(),
             Event::DragEnter { .. }
             | Event::DragMotion { .. }
             | Event::DragFiles { .. }

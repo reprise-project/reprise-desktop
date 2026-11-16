@@ -1,7 +1,8 @@
 use super::*;
 use crate::clipboard::{TEXT_MIME, pasted_text, read_capped, text_mime};
 use crate::deliver::{
-    blink_target, input_blocked, modal_over, newly_covered, redraws, root_of, top_modal,
+    blink_target, input_blocked, modal_over, newly_covered, redraws, root_of, takes_blinks,
+    top_modal,
 };
 use crate::draw::{buffer_damage, copy_pixels, next_buffer, surface_damage};
 use crate::reply::spawn_then;
@@ -1016,6 +1017,22 @@ fn the_blink_goes_to_the_keyboard_then_the_pointer_then_nowhere() {
     );
     assert_eq!(blink_target(None, Some(MAIN)), Some(MAIN));
     assert_eq!(blink_target(None, None), None);
+}
+
+#[test]
+fn only_the_keyboards_window_blinks_its_caret_and_a_waiting_tip_blinks_anywhere() {
+    let find = WinId::named("find");
+    assert!(takes_blinks(MAIN, true, false, Some(MAIN)));
+    assert!(
+        !takes_blinks(MAIN, true, false, Some(find)),
+        "a caret in a window without the keyboard"
+    );
+    assert!(
+        !takes_blinks(MAIN, true, false, None),
+        "nothing has the keyboard"
+    );
+    assert!(takes_blinks(MAIN, false, true, None), "a label tip waits");
+    assert!(!takes_blinks(MAIN, false, false, Some(MAIN)));
 }
 
 #[test]

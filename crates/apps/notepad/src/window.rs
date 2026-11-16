@@ -134,7 +134,7 @@ impl Notepad {
             &self.edit,
             self.view,
             &el,
-            reprisekit::textedit::Caret::new(true, ctx.caret_on),
+            reprisekit::textedit::Caret::new(self.focused, ctx.caret_on),
             self.drop_point(ctx),
         );
         if let Some(corner) = el.corner().filter(|_| !ctx.maximized && !self.status_bar) {

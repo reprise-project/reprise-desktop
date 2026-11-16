@@ -79,10 +79,16 @@ fn a_blink_redraws_only_while_the_address_field_has_the_caret() {
         units: TextUnits::ONE,
     };
     let _ = app.event(MAIN, Event::Resized, &mut ctx);
+    let _ = app.event(MAIN, Event::Focus(true), &mut ctx);
     app.inner.as_mut().expect("the window").focus = Focus::View;
     assert!(!app.event(MAIN, Event::Blink, &mut ctx).redraw);
     app.inner.as_mut().expect("the window").focus = Focus::Address;
     assert!(app.event(MAIN, Event::Blink, &mut ctx).redraw);
+    let _ = app.event(MAIN, Event::Focus(false), &mut ctx);
+    assert!(
+        !app.event(MAIN, Event::Blink, &mut ctx).redraw,
+        "nor while the window is without the keyboard"
+    );
 }
 
 #[test]

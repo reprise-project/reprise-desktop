@@ -1,6 +1,5 @@
 //! Connecting to the compositor and running the event loop.
 
-use crate::Slot;
 use crate::deliver::blink_target;
 use crate::look::{Look, publish_theme, sized, text_for};
 use crate::sizing::opening_size;
@@ -57,7 +56,7 @@ const BLINK_MS: u64 = 530;
 impl Host {
     /// Puts the caret blink timer in the loop when a window takes blinks and it is not there.
     pub(crate) fn arm_blink(&mut self) {
-        if self.blink_armed || !self.slots.iter().any(Slot::blinks) {
+        if self.blink_armed || !self.slots.iter().any(|s| s.blinks(self.focus)) {
             return;
         }
         let timer = Timer::from_duration(Duration::from_millis(BLINK_MS));
@@ -73,14 +72,14 @@ impl Host {
     /// One blink: the caret flips and the keyboard's window (else the pointer's) hears it. A
     /// window that was clean redraws at once as a blink-only frame, whose damage is the caret.
     fn blink(&mut self) -> TimeoutAction {
-        if !self.slots.iter().any(Slot::blinks) {
+        if !self.slots.iter().any(|s| s.blinks(self.focus)) {
             self.blink_armed = false;
             return TimeoutAction::Drop;
         }
         self.ctx.caret_on = !self.ctx.caret_on;
         let target = blink_target(self.focus, self.pointer_in)
             .and_then(|win| self.slots.iter().find(|s| s.id == win))
-            .filter(|s| s.blinks())
+            .filter(|s| s.blinks(self.focus))
             .map(|s| (s.id, !s.dirty && !s.frame_pending && s.configured));
         if let Some((win, clean)) = target {
             let quiet = clean && self.menu_popups.is_none();

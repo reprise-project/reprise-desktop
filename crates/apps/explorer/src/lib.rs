@@ -280,6 +280,8 @@ pub struct Explorer {
     /// For the double click that takes a list row as the default button, keyed by the form item.
     dialog_clicks: DoubleClick<Option<usize>>,
     alt_arm: AltArm,
+    /// The main window holds the keyboard, so a focused field's caret shows and blinks.
+    keyboard: bool,
     /// The last input was a key, not a pointer press: a dialog opened now shows keyboard cues from the start.
     keyed: bool,
     dragging: bool,
@@ -544,6 +546,7 @@ impl Explorer {
             rename_drag: false,
             dialog_clicks: DoubleClick::default(),
             alt_arm: AltArm::default(),
+            keyboard: false,
             keyed: false,
             dragging: false,
             marquee_from: None,
@@ -1618,7 +1621,7 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
             ex.flush_settings();
             // The Address and Search fields' carets are the only things in the window that blink.
             Reply {
-                redraw: matches!(ex.focus, Focus::Address | Focus::Search),
+                redraw: ex.keyboard && matches!(ex.focus, Focus::Address | Focus::Search),
                 ..Reply::none()
             }
         }
@@ -1632,13 +1635,18 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
             }
         }
         Event::Focus(false) => {
+            ex.keyboard = false;
             ex.alt_arm.interrupt();
             let closed = ex.close_drop_menu();
             ex.flush_settings();
             Reply {
-                redraw: closed,
+                redraw: closed || matches!(ex.focus, Focus::Address | Focus::Search),
                 ..Reply::none()
             }
+        }
+        Event::Focus(true) => {
+            ex.keyboard = true;
+            Reply::redraw()
         }
         // A maximized window's size is the screen's: a hand size still pending is saved.
         Event::Resized if ctx.maximized => Reply::redraw(),
