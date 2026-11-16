@@ -72,6 +72,17 @@ fn terminal_with(settings: Settings, cmd: &[&str]) -> Terminal {
     t
 }
 
+/// The box up over window `root`: what it asks, and its window.
+fn question(t: &Terminal, root: WinId) -> Option<(Asking, WinId)> {
+    let a = t.asks(root)?;
+    Some((a.up()?.1.clone(), a.win()?))
+}
+
+/// The window of the box up over the main window.
+fn box_win(t: &Terminal) -> WinId {
+    question(t, MAIN).expect("a box is up").1
+}
+
 fn launch(cmd: &[&str]) -> Launch {
     Launch {
         argv: Some(argv(cmd)),
@@ -281,7 +292,7 @@ fn middle_click_closes_tab() {
     let (x, y) = centre(t.chrome_layout(&ctx).strip.tabs[1]);
     t.event(MAIN, press(x, y, 0x112), &mut ctx);
     assert_eq!(pids(&t), keep, "tab 2 closed");
-    assert!(t.confirm.is_none());
+    assert!(question(&t, MAIN).is_none());
 }
 
 #[test]
@@ -295,8 +306,8 @@ fn closing_a_busy_tab_asks_first() {
     let (x, y) = centre(t.chrome_layout(&ctx).strip.tabs[1]);
     t.event(MAIN, press(x, y, 0x112), &mut ctx);
     assert_eq!(t.w.tabs.list.len(), 2, "nothing closes before the answer");
-    assert_eq!(t.children().first().map(|c| c.id), Some(CONFIRM));
-    t.event(CONFIRM, key(keysym::RETURN, false, false), &mut ctx);
+    assert_eq!(t.children().first().map(|c| c.id), Some(box_win(&t)));
+    t.event(box_win(&t), key(keysym::RETURN, false, false), &mut ctx);
     assert_eq!(t.w.tabs.list.len(), 1, "Close closes the tab");
     assert!(t.children().is_empty());
 
@@ -304,9 +315,9 @@ fn closing_a_busy_tab_asks_first() {
     t.w.tabs.list[1].write(b"sleep 30\n".as_slice().into());
     until("sleep holds the foreground", || t.w.tabs.list[1].busy());
     assert!(!t.event(MAIN, Event::CloseRequest, &mut ctx).quit);
-    assert!(t.confirm.is_some(), "closing the window asks too");
-    t.event(CONFIRM, key(keysym::ESCAPE, false, false), &mut ctx);
-    assert!(t.confirm.is_none());
+    assert!(question(&t, MAIN).is_some(), "closing the window asks too");
+    t.event(box_win(&t), key(keysym::ESCAPE, false, false), &mut ctx);
+    assert!(question(&t, MAIN).is_none());
     assert_eq!(t.w.tabs.list.len(), 2, "Cancel keeps every tab");
 }
 
@@ -451,10 +462,11 @@ fn a_second_close_request_keeps_the_first_question() {
     until("sleep holds the foreground", || t.w.tabs.list[1].busy());
     let pid = t.w.tabs.list[1].pid();
     t.event(MAIN, key(0x57, true, true), &mut ctx);
-    assert!(matches!(t.confirm, Some((Asking::Tab(p), _)) if p == pid));
+    assert_eq!(question(&t, MAIN).map(|(w, _)| w), Some(Asking::Tab(pid)));
     t.event(MAIN, Event::CloseRequest, &mut ctx);
-    assert!(
-        matches!(t.confirm, Some((Asking::Tab(p), _)) if p == pid),
+    assert_eq!(
+        question(&t, MAIN).map(|(w, _)| w),
+        Some(Asking::Tab(pid)),
         "the window's close leaves the tab's question up"
     );
 }
@@ -912,7 +924,7 @@ fn a_multi_line_paste_asks_first() {
 
     t.event(MAIN, Event::Pasted("echo a\necho b\n".into()), &mut ctx);
     assert!(written(&t).is_empty(), "nothing goes in before the answer");
-    let Some((Asking::Paste { .. }, b)) = &t.confirm else {
+    let Some((b, Asking::Paste { .. })) = t.asks(MAIN).and_then(|a| a.up()) else {
         panic!("the paste asks");
     };
     assert!(
@@ -920,18 +932,21 @@ fn a_multi_line_paste_asks_first() {
         "{}",
         b.fields.text
     );
-    t.event(CONFIRM, key(keysym::ESCAPE, false, false), &mut ctx);
-    assert!(t.confirm.is_none());
+    t.event(box_win(&t), key(keysym::ESCAPE, false, false), &mut ctx);
+    assert!(question(&t, MAIN).is_none());
     assert!(written(&t).is_empty(), "Cancel drops the paste");
 
     t.event(MAIN, Event::Pasted("echo a\necho b\n".into()), &mut ctx);
-    t.event(CONFIRM, key(keysym::RETURN, false, false), &mut ctx);
+    t.event(box_win(&t), key(keysym::RETURN, false, false), &mut ctx);
     assert_eq!(written(&t), b"echo a\recho b\r", "Paste sends it");
     t.w.tabs.list[0].written.borrow_mut().clear();
 
     t.settings.confirm_multiline_paste = false;
     t.event(MAIN, Event::Pasted("x\ny".into()), &mut ctx);
-    assert!(t.confirm.is_none(), "the setting turns the question off");
+    assert!(
+        question(&t, MAIN).is_none(),
+        "the setting turns the question off"
+    );
     assert_eq!(written(&t), b"x\ry");
 }
 
@@ -971,9 +986,11 @@ fn a_miss_says_so() {
     t.event(MAIN, key(0x46, true, true), &mut ctx);
     t.event(FIND, Event::Pasted("zzqq-not-there".into()), &mut ctx);
     t.event(FIND, key(0xff0d, false, false), &mut ctx);
-    assert!(t.children().iter().any(|c| c.id == NOTFOUND));
-    t.event(NOTFOUND, key(0xff0d, false, false), &mut ctx);
-    assert!(t.children().iter().all(|c| c.id != NOTFOUND));
+    assert_eq!(question(&t, MAIN).map(|(w, _)| w), Some(Asking::NotFound));
+    let notfound = box_win(&t);
+    assert!(t.children().iter().any(|c| c.id == notfound));
+    t.event(notfound, key(0xff0d, false, false), &mut ctx);
+    assert!(t.children().iter().all(|c| c.id != notfound));
 }
 
 #[test]
@@ -1184,7 +1201,7 @@ fn a_reload_from_a_child_window_redraws_the_main_one() {
     let mut t = in_dir(dir.path(), Settings::default());
     let mut ctx = themed_ctx(Theme::default());
     assert!(
-        !t.event(CONFIRM, Event::Focus(true), &mut ctx).redraw_all,
+        !t.event(FIND, Event::Focus(true), &mut ctx).redraw_all,
         "nothing changed"
     );
     let s = Settings {
@@ -1192,7 +1209,7 @@ fn a_reload_from_a_child_window_redraws_the_main_one() {
         ..Settings::default()
     };
     settings::save(&dir.path().join("config.toml"), &s).unwrap();
-    assert!(t.event(CONFIRM, Event::Focus(true), &mut ctx).redraw_all);
+    assert!(t.event(FIND, Event::Focus(true), &mut ctx).redraw_all);
     assert_eq!(t.settings.scheme, "dark");
 }
 
@@ -1515,9 +1532,42 @@ fn a_busy_window_asks_over_itself_before_closing() {
         t.pane(second).unwrap().tabs.list[0].busy()
     });
     t.event(second, Event::CloseRequest, &mut ctx);
-    assert_eq!(t.parent(CONFIRM), Some(second));
-    t.event(CONFIRM, key(keysym::RETURN, false, false), &mut ctx);
+    let (_, asking) = question(&t, second).expect("the close asks");
+    assert_eq!(t.parent(asking), Some(second));
+    t.event(asking, key(keysym::RETURN, false, false), &mut ctx);
     assert_eq!(t.order, [MAIN], "Close closes that window alone");
+}
+
+#[test]
+fn each_window_asks_its_own_question_while_another_is_up() {
+    let mut ctx = test_ctx();
+    let mut t = captioned(&["cat"]);
+    t.event(MAIN, keys(NEW_TAB), &mut ctx);
+    let second = repriseapp::window_id(1);
+    assert!(t.enter(second));
+    t.w.tabs.list[0].write(b"sleep 30\n".as_slice().into());
+    until("sleep holds the foreground", || {
+        t.pane(second).unwrap().tabs.list[0].busy()
+    });
+    let pid = t.pane(second).unwrap().tabs.list[0].pid();
+    t.event(second, keys(CLOSE_TAB), &mut ctx);
+    t.event(MAIN, Event::Pasted("echo a\necho b\n".into()), &mut ctx);
+
+    let (what, paste) = question(&t, MAIN).expect("the paste asks over the first window");
+    assert!(matches!(what, Asking::Paste { .. }), "{what:?}");
+    assert_eq!(t.parent(paste), Some(MAIN));
+    let (what, close) = question(&t, second).expect("the close question stays up");
+    assert_eq!(what, Asking::Tab(pid));
+    assert_eq!(t.parent(close), Some(second));
+    let ids: Vec<WinId> = t.children().iter().map(|c| c.id).collect();
+    assert!(ids.contains(&paste) && ids.contains(&close), "{ids:?}");
+
+    t.event(paste, key(keysym::RETURN, false, false), &mut ctx);
+    let written = t.pane(MAIN).unwrap().tabs.list[0].written.borrow().concat();
+    assert_eq!(written, b"echo a\recho b\r", "Paste sends it");
+    assert_eq!(question(&t, second).map(|(w, _)| w), Some(Asking::Tab(pid)));
+    t.event(close, key(keysym::RETURN, false, false), &mut ctx);
+    assert_eq!(t.order, [MAIN], "Close closes the second window's tab");
 }
 
 #[test]
