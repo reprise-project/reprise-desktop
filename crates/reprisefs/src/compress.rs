@@ -4,13 +4,16 @@
 use crate::extract::{self, ArchiveEvent, ArchiveJob, Failure};
 use crate::ops;
 use crate::progress::{Meter, Phase, Totals};
+use std::cell::Cell;
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 pub const FAILURE_TITLE: &str = "Error Compressing File";
+const SAMPLE_EVERY: Duration = Duration::from_millis(100);
 
 /// Items of one folder going into the zip `zip`, numbered past a name taken by the time it lands.
 #[derive(Clone, Debug)]
@@ -48,7 +51,7 @@ pub fn compress_argv(paths: &[PathBuf], to: &Path) -> Vec<OsString> {
 }
 
 impl ArchiveJob {
-    /// Counts the entries under `c`'s items, then zips them on a thread: one
+    /// Counts the entries and bytes under `c`'s items, then zips them on a thread: one
     /// [`ArchiveEvent::Landed`] with the zip, or [`ArchiveEvent::Failed`]. A cancelled job sends
     /// neither.
     pub fn compress(c: Compress, wake: impl Fn() + Send + 'static) -> ArchiveJob {
@@ -90,14 +93,11 @@ fn run(c: &Compress, m: &Meter, path: Option<&OsStr>, send: &dyn Fn(ArchiveEvent
 fn zip(c: &Compress, m: &Meter, path: Option<&OsStr>) -> Result<PathBuf, Failure> {
     let io_err = |e: io::Error| Failure::Tool(e.to_string());
     m.set_current(c.zip.file_name().unwrap_or_default());
-    let mut total = 0;
+    let mut total = Totals::default();
     for p in &c.paths {
-        total += count(p, m).ok_or(Failure::Cancelled)?;
+        total = total + count(p, m).ok_or(Failure::Cancelled)?;
     }
-    m.add_totals(Totals {
-        bytes: 0,
-        items: total,
-    });
+    m.add_totals(total);
     m.set_phase(Phase::Copying);
     let (file, tmp) = ops::create_temp_beside(&c.zip, None).map_err(io_err)?;
     drop(file);
@@ -112,9 +112,14 @@ fn zip(c: &Compress, m: &Meter, path: Option<&OsStr>) -> Result<PathBuf, Failure
     let err = (child.stderr.take())
         .ok_or_else(extract::no_pipe)
         .map_err(undo)?;
-    let mut n = 0;
+    let pid = child.id();
+    let done = Cell::new(Totals::default());
+    let settle = |t: Totals| {
+        done.set(t);
+        m.settle(t);
+    };
     let mut last = Vec::new();
-    let read = extract::lines(&mut child, err, m, |line| {
+    let each = |line: &[u8]| {
         // An entry bsdtar fails to write ends its `a name` line with the error.
         let (line, said) = match line.windows(8).rposition(|w| w == b"bsdtar: ") {
             Some(at) if at > 0 => line.split_at(at),
@@ -125,11 +130,11 @@ fn zip(c: &Compress, m: &Meter, path: Option<&OsStr>) -> Result<PathBuf, Failure
         }
         match line.strip_prefix(b"a ") {
             Some(entry) => {
-                n += 1;
                 m.set_current(OsStr::from_bytes(entry));
-                m.settle(Totals {
-                    bytes: 0,
-                    items: n.min(total),
+                let d = done.get();
+                settle(Totals {
+                    items: (d.items + 1).min(total.items),
+                    ..d
                 });
             }
             None if !String::from_utf8_lossy(line).contains(extract::DELAYED) => {
@@ -138,7 +143,24 @@ fn zip(c: &Compress, m: &Meter, path: Option<&OsStr>) -> Result<PathBuf, Failure
             None => {}
         }
         true
-    });
+    };
+    // bsdtar ends an entry's line only once its data is written, so the bar follows the bytes it
+    // has read instead.
+    let mut sampled = Instant::now();
+    let tick = || {
+        if sampled.elapsed() < SAMPLE_EVERY {
+            return;
+        }
+        sampled = Instant::now();
+        if let Some(read) = bytes_read(pid) {
+            let d = done.get();
+            settle(Totals {
+                bytes: read.min(total.bytes),
+                ..d
+            });
+        }
+    };
+    let read = extract::lines_ticking(&mut child, err, m, each, tick);
     let ok = extract::finish(child, &read).map_err(undo)?;
     if !ok {
         return Err(undo(Failure::Tool(extract::said(&last, "bsdtar stopped."))));
@@ -146,22 +168,35 @@ fn zip(c: &Compress, m: &Meter, path: Option<&OsStr>) -> Result<PathBuf, Failure
     ops::rename_numbered(&tmp, &c.zip).map_err(|e| undo(io_err(e)))
 }
 
-/// The entries bsdtar writes for `path`: it, and everything under it when a folder. Links are not
-/// followed. `None` once `m` is cancelled.
-fn count(path: &Path, m: &Meter) -> Option<u64> {
+/// The entries bsdtar writes for `path`, it and everything under it when a folder, and their
+/// files' bytes. Links are not followed. `None` once `m` is cancelled.
+fn count(path: &Path, m: &Meter) -> Option<Totals> {
     let Ok(meta) = path.symlink_metadata() else {
-        return Some(0);
+        return Some(Totals::default());
     };
-    let mut n = 1;
+    let mut n = Totals {
+        bytes: if meta.is_file() { meta.len() } else { 0 },
+        items: 1,
+    };
     if meta.is_dir() {
         for entry in std::fs::read_dir(path).into_iter().flatten().flatten() {
             if m.cancelled() {
                 return None;
             }
-            n += count(&entry.path(), m)?;
+            n = n + count(&entry.path(), m)?;
         }
     }
     Some(n)
+}
+
+/// The bytes process `pid` and its reaped children have read, `rchar` in `/proc/<pid>/io`.
+fn bytes_read(pid: u32) -> Option<u64> {
+    let io = std::fs::read_to_string(format!("/proc/{pid}/io")).ok()?;
+    io.lines()
+        .find_map(|l| l.strip_prefix("rchar:"))?
+        .trim()
+        .parse()
+        .ok()
 }
 
 #[cfg(test)]
@@ -267,6 +302,7 @@ mod tests {
         assert_eq!(names_in(d), ["Docs", "Docs (2).zip", "Docs.zip", "a.txt"]);
         let s = m.snapshot();
         assert_eq!((s.items, s.total_items), (4, 4), "Docs, sub, b.txt, a.txt");
+        assert_eq!(s.total_bytes, 2, "the files' bytes");
         let listed = std::process::Command::new("bsdtar")
             .arg("-tf")
             .arg(&zip)
@@ -341,6 +377,44 @@ mod tests {
         assert!(matches!(ev, ArchiveEvent::Finished), "{ev:?}");
         worker.join().unwrap();
         assert_eq!(names_in(&d), ["big"]);
+    }
+
+    #[test]
+    fn the_bar_counts_the_bytes_bsdtar_has_read_before_its_entry_line() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path().to_path_buf();
+        let big = d.join("big");
+        std::fs::write(&big, vec![7u8; 4 << 20]).unwrap();
+        let (_bin, path) = fake_bsdtar(&format!(
+            "{TARGET}\ncat '{}' > \"$f\"\nexec sleep 30",
+            big.display()
+        ));
+        let c = Compress {
+            paths: vec![big],
+            zip: d.join("big.zip"),
+        };
+        let m = Arc::new(Meter::default());
+        let (tx, rx) = mpsc::channel();
+        let m2 = m.clone();
+        let worker = std::thread::spawn(move || {
+            run(&c, &m2, Some(&path), &|ev| tx.send(ev).is_ok());
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while m.snapshot().bytes < 4 << 20 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the bytes read reach 4 MiB, at {:?}",
+                m.snapshot()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let s = m.snapshot();
+        assert_eq!((s.bytes, s.total_bytes), (4 << 20, 4 << 20));
+        assert_eq!((s.items, s.total_items), (0, 1), "no entry line yet");
+        m.cancel();
+        let ev = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+        assert!(matches!(ev, ArchiveEvent::Finished), "{ev:?}");
+        worker.join().unwrap();
     }
 
     #[test]

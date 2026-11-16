@@ -35,9 +35,10 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// Whether the job is measured in items rather than bytes: a delete, Empty or Restore.
+    /// Whether the job is measured in items rather than bytes: a delete, Empty, Restore or
+    /// Extract.
     pub fn by_items(self) -> bool {
-        !matches!(self, Kind::Copy | Kind::Move)
+        !matches!(self, Kind::Copy | Kind::Move | Kind::Compress)
     }
 
     /// Whether the job names where its items go as well as where they come from.
@@ -931,9 +932,25 @@ mod tests {
     }
 
     #[test]
-    fn a_compression_counts_items_and_names_its_zip() {
-        let cp = CopyProgress::new(Kind::Compress, "Documents", "Reports.zip", SKY);
-        assert!(Kind::Compress.by_items());
+    fn a_compression_counts_bytes_and_names_its_zip() {
+        let mut cp = CopyProgress::new(Kind::Compress, "Documents", "Reports.zip", SKY);
+        assert!(!Kind::Compress.by_items());
+        cp.update(
+            Status {
+                phase: Phase::Copying,
+                bytes: 860,
+                total_bytes: 1000,
+                items: 0,
+                total_items: 1,
+                ..Status::default()
+            },
+            0,
+        );
+        assert_eq!(
+            cp.fraction(),
+            0.86,
+            "860 of 1000 bytes, the one item unfinished"
+        );
         assert_eq!(cp.title(), "Compressing...");
         assert_eq!(
             cp.ended_note(1),
