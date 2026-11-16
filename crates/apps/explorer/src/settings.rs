@@ -4,7 +4,6 @@ use reprisekit::controls::{explorerbar, listview};
 use reprisekit::theme::TextUnits;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -62,28 +61,9 @@ impl Settings {
         self.window = (units.within(px.0), units.within(px.1));
     }
 
-    pub fn path() -> Option<PathBuf> {
-        Some(
-            reprisexdg::state_home()?
-                .join("reprise")
-                .join("explorer.toml"),
-        )
-    }
-
     pub fn load() -> Settings {
-        let Some(path) = Self::path() else {
-            return Settings::default();
-        };
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            return Settings::default();
-        };
-        match toml::from_str::<Settings>(&text) {
-            Ok(s) => s.clamped(),
-            Err(e) => {
-                log::warn!("explorer settings: ignoring {}: {e}", path.display());
-                Settings::default()
-            }
-        }
+        repriseconf::statefile::load::<Settings>(&repriseconf::statefile::path("explorer"))
+            .clamped()
     }
 
     fn clamped(mut self) -> Settings {
@@ -99,49 +79,13 @@ impl Settings {
     }
 
     pub fn save(&self) {
-        if let Some(path) = Self::path() {
-            self.save_to(&path);
-        }
-    }
-
-    fn save_to(&self, path: &Path) {
-        match toml::to_string(self) {
-            Ok(text) => {
-                if let Err(e) = repriseconf::write_atomic(path, &text) {
-                    log::warn!("explorer settings: could not write {}: {e}", path.display());
-                }
-            }
-            Err(e) => log::warn!("explorer settings: could not serialize: {e}"),
-        }
+        repriseconf::statefile::save(&repriseconf::statefile::path("explorer"), self);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn save_replaces_the_file_so_an_open_reader_keeps_the_old_text() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("reprise").join("explorer.toml");
-        Settings::default().save_to(&path);
-        let old = std::fs::read_to_string(&path).unwrap();
-        let mut reader = std::fs::File::open(&path).unwrap();
-        let s = Settings {
-            mode: "details".to_string(),
-            ..Settings::default()
-        };
-        s.save_to(&path);
-        let mut seen = String::new();
-        std::io::Read::read_to_string(&mut reader, &mut seen).unwrap();
-        assert_eq!(seen, old, "the open handle still reads the old file");
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(toml::from_str::<Settings>(&text).unwrap(), s);
-        assert_eq!(
-            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
-            1
-        );
-    }
 
     #[test]
     fn load_raises_zero_and_negative_sizes_to_their_minimums() {

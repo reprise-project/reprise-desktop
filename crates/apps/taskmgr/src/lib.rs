@@ -400,7 +400,7 @@ impl TaskMgr {
 
     /// Takes the state kept at `path`: the Options and View menus' picks and the Processes columns.
     pub fn restore(&mut self, path: PathBuf) {
-        let s = State::load(&path);
+        let s: State = repriseconf::statefile::load(&path);
         self.on_top = s.on_top;
         self.speed = s.speed;
         self.per_core = s.per_core;
@@ -433,7 +433,7 @@ impl TaskMgr {
         if let Some((path, saved)) = &mut self.state
             && *saved != now
         {
-            now.save(path);
+            repriseconf::statefile::save(path, &now);
             *saved = now;
         }
     }
@@ -1341,7 +1341,7 @@ pub fn main(_args: Vec<std::ffi::OsString>) {
     // SAFETY: getuid has no failure case and touches no memory.
     let uid = unsafe { libc::getuid() };
     let mut app = TaskMgr::new(Some(sample::Sampler::system()), entries, uid);
-    app.restore(State::path());
+    app.restore(repriseconf::statefile::path("taskmgr"));
     repriseapp::run(Box::new(app)).unwrap_or_else(|e| e.exit());
 }
 
