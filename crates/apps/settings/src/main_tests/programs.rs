@@ -265,7 +265,10 @@ fn a_link_row_starts_its_program_in_its_app_scope_and_settings_stays() {
     a.show_links();
     let r = a.sheet_event(propsheet::Event::Link(net));
     assert_eq!(r.spawn, [vec![OsString::from("reprise-network")]]);
-    assert_eq!(r.spawn_app.as_deref(), Some("reprise-network.desktop"));
+    assert_eq!(
+        r.spawn_app.as_ref().map(|a| a.as_str()),
+        Some("reprise-network")
+    );
     assert_eq!(
         registry::open(&a.sheet),
         Page::Appearance,
@@ -326,7 +329,10 @@ fn open_program_starts_a_shown_entry_and_nothing_for_a_missing_one() {
     a.app_dirs = vec![dir];
     let r = a.open_program("reprise-sound.desktop", &[]);
     assert_eq!(r.spawn, [vec![OsString::from("reprise-sound")]]);
-    assert_eq!(r.spawn_app.as_deref(), Some("reprise-sound.desktop"));
+    assert_eq!(
+        r.spawn_app.as_ref().map(|a| a.as_str()),
+        Some("reprise-sound")
+    );
     let r = a.open_program("reprise-accounts.desktop", &["--remote-password"]);
     assert_eq!(
         r.spawn,

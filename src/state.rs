@@ -669,11 +669,14 @@ mod tests {
             recent: vec!["b.desktop".parse().unwrap(), "a.desktop".parse().unwrap()],
         };
         let p = path.clone();
-        run_in_order(move || patch(&p, start_keys(&l)));
+        let keys = start_keys(&l);
+        run_in_order(move || patch(&p, keys));
         flush();
         let back = load_from(&path);
         assert_eq!(back.start_pins, ["a.desktop"]);
         assert_eq!(back.launches, ["b.desktop", "a.desktop"]);
+        let again = crate::launches::Launches::from_saved(&back.start_pins, &back.launches);
+        assert_eq!(again, l, "the ids load back as saved");
         assert_eq!(back.run_history, ["calc"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }

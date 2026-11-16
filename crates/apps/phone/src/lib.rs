@@ -18,7 +18,8 @@ use tray::TrayMsg;
 
 /// KDE Connect's own window, where pairing and the plugins are set up.
 const SETTINGS_ARGV: &str = "kdeconnect-app";
-const SETTINGS_APP: &str = "org.kde.kdeconnect.app";
+const SETTINGS_APP: reprisefs::apps::AppId =
+    reprisefs::apps::AppId::from_static("org.kde.kdeconnect.app");
 
 #[derive(Default)]
 struct PhoneApp {
@@ -80,7 +81,7 @@ impl PhoneApp {
                 if let Some(t) = token {
                     cmd.env("XDG_ACTIVATION_TOKEN", t);
                 }
-                if let Err(e) = reprisefs::scope::hold(&mut cmd, SETTINGS_APP) {
+                if let Err(e) = reprisefs::scope::hold(&mut cmd, &SETTINGS_APP) {
                     log::warn!("{SETTINGS_ARGV} runs unscoped: {e}");
                 }
                 match cmd.spawn() {

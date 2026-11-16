@@ -82,17 +82,17 @@ pub(crate) fn snapshot() -> Snapshot {
         scopes: vec![
             Scope {
                 unit: "app-reprise-org.kde.ark-1ax2x3.scope".into(),
-                app: "org.kde.ark".into(),
+                app: AppId::from_static("org.kde.ark"),
                 pids: vec![41, 42],
             },
             Scope {
                 unit: "app-reprise-reprise\\x2dnotepad-2ax1x0.scope".into(),
-                app: "reprise-notepad".into(),
+                app: AppId::from_static("reprise-notepad"),
                 pids: vec![40],
             },
             Scope {
                 unit: "app-reprise-mystery-3ax1x0.scope".into(),
-                app: "mystery".into(),
+                app: AppId::from_static("mystery"),
                 pids: vec![50],
             },
         ],
@@ -208,14 +208,22 @@ fn each_app_scope_is_one_program_named_by_its_desktop_entry() {
 fn a_window_belongs_to_the_program_its_entry_or_id_names() {
     let entries = vec![entry("reprise-notepad", "Notepad", Some("reprise.notepad"))];
     assert!(
-        window_of("reprise-notepad", &entries, "reprise.notepad"),
+        window_of(
+            &AppId::from_static("reprise-notepad"),
+            &entries,
+            "reprise.notepad"
+        ),
         "by StartupWMClass"
     );
     assert!(
-        window_of("org.kde.Ark", &entries, "org.kde.ark"),
+        window_of(&AppId::from_static("org.kde.Ark"), &entries, "org.kde.ark"),
         "by id, any case"
     );
-    assert!(!window_of("reprise-notepad", &entries, "firefox"));
+    assert!(!window_of(
+        &AppId::from_static("reprise-notepad"),
+        &entries,
+        "firefox"
+    ));
 }
 
 #[test]

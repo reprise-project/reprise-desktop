@@ -196,7 +196,8 @@ fn app_names(s: &model::Settings) -> HashMap<String, String> {
     let entries = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
     ids.into_iter()
         .filter_map(|id| {
-            let e = reprisefs::apps::entry_for_app_id(&entries, id, |_| true)?;
+            let e = reprisefs::apps::AppId::new(id)
+                .and_then(|a| reprisefs::apps::entry_for_app_id(&entries, &a, |_| true))?;
             Some((id.clone(), e.name.clone()))
         })
         .collect()
@@ -887,7 +888,7 @@ impl SettingsApp {
             Ok(open) => Reply {
                 redraw: true,
                 spawn: vec![open.argv],
-                spawn_app: open.app.map(|a| a.to_string()),
+                spawn_app: open.app.map(|a| a.app_id()),
                 spawn_dir: open.dir,
                 ..Default::default()
             },

@@ -269,9 +269,11 @@ impl State {
                 }) as crate::fsjobs::OnLoop;
             }
             let name = path.file_name().unwrap_or_default().to_string_lossy();
+            let app = reprisefs::apps::AppId::new(&name);
             let started =
                 reprisefs::program::run_argv(&path, open, &terminal, end).and_then(|argv| {
-                    crate::spawn::try_spawn_held(&argv, &name, path.parent(), &env, Some(&launch))
+                    let dir = path.parent();
+                    crate::spawn::try_spawn_held(&argv, app.as_ref(), dir, &env, Some(&launch))
                 });
             Box::new(move |state: &mut State| {
                 // A child that exited before its pid was recorded left a SIGCHLD that found nothing.
@@ -390,7 +392,7 @@ impl State {
         };
         for path in &paths {
             match apps::open_argv(&app, &self.config.terminal, path) {
-                Ok(argv) => self.spawn_app_activated(&argv, app.id.as_str(), app.path.as_deref()),
+                Ok(argv) => self.spawn_app_activated(&argv, &app.id.app_id(), app.path.as_deref()),
                 Err(refused) => return self.exec_refused(&refused),
             }
         }

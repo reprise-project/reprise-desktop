@@ -112,7 +112,7 @@ impl State {
                 Step::Start => {
                     match crate::spawn::try_spawn_argv_in(
                         &[PROGRAM],
-                        Some(PROGRAM),
+                        Some(&screenreader::APP),
                         None,
                         &env,
                         None,

@@ -382,11 +382,13 @@ pub fn program_listed(list: &[String], program: &str) -> bool {
     list.iter().any(|p| same_program(p, program))
 }
 
-/// Whether `listed`, a key from a `[notifications]` list, names `program`, ignoring ASCII case. A
-/// key may lack the `.desktop` its program's `desktop-entry` hint ends in.
+/// Whether `listed`, a key from a `[notifications]` list, names `program`, ignoring ASCII case:
+/// `program` itself or the app id of a file it may have, so a key may lack the `.desktop` its
+/// program's `desktop-entry` hint ends in.
 pub fn same_program(listed: &str, program: &str) -> bool {
+    let files = reprisefs::apps::AppId::new(program).map(|p| p.desktop_ids());
     listed.eq_ignore_ascii_case(program)
-        || listed.eq_ignore_ascii_case(reprisefs::apps::DesktopId::stem_of(program))
+        || (files.iter().flatten()).any(|d| d.app_id().is_like(listed))
 }
 
 /// Add `program` to `list` (`on`) or take every spelling of it out; true when `list` changed.

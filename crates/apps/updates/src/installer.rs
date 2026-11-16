@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use repriseapp::keys::form_input;
 use repriseapp::{App, Caption, Ctx, Event, Reply, WinId};
-use reprisefs::apps::DesktopId;
+use reprisefs::apps::{AppId, DesktopId};
 use reprisefs::software::{Installation, Remover};
 use reprisekit::access::Tree;
 use reprisekit::controls::form::Form;
@@ -269,7 +269,7 @@ fn read_program(file: &Path, conn: Option<&Connection>) -> (Found, Plan) {
         },
         Remover::Launcher => {
             found.facts = launcher_facts(&text, |id| {
-                let id = DesktopId::from_file_name(&format!("{id}.desktop"))?;
+                let id = AppId::new(id)?.desktop_ids().into_iter().next()?;
                 let text = reprisefs::apps::read_desktop_file(&reprisefs::apps::find_file(&id)?);
                 reprisefs::apps::parse_desktop_any(&text.ok()?, &id).map(|e| e.name)
             });

@@ -88,9 +88,13 @@ fn to_launch<'a>(run: &'a [Entry], running: &[String], session: Option<&str>) ->
         |u: &str| session.is_none_or(|s| reprisefs::scope::launch_session_of_scope(u) == Some(s));
     run.iter()
         .filter(|e| {
-            let left = running
-                .iter()
-                .any(|u| reprisefs::scope::is_app_scope(u, &e.id) && own(u));
+            let app = reprisefs::apps::AppId::new(&e.id);
+            let left = running.iter().any(|u| {
+                own(u)
+                    && app
+                        .as_ref()
+                        .is_some_and(|a| reprisefs::scope::is_app_scope(u, a))
+            });
             if left {
                 log::info!("autostart: {} still runs from before the crash", e.id);
             }
@@ -184,7 +188,8 @@ fn output_within(cmd: &mut std::process::Command, limit: Duration) -> Result<Vec
 fn launch(e: &Entry, terminal: &str, env: &crate::spawn::SessionEnv) {
     log::info!("autostart: {}", e.id);
     let argv = e.argv(terminal);
-    crate::spawn::spawn_argv_in(&argv, Some(&e.id), e.path.as_deref(), env, None);
+    let app = reprisefs::apps::AppId::new(&e.id);
+    crate::spawn::spawn_argv_in(&argv, app.as_ref(), e.path.as_deref(), env, None);
 }
 
 #[cfg(test)]
@@ -279,23 +284,19 @@ mod tests {
     #[test]
     fn an_entry_whose_scope_still_runs_is_not_started_again() {
         let sync =
-            reprisefs::autostart::parse("syncthing.desktop", "[Desktop Entry]\nExec=s\n", false)
-                .unwrap();
+            reprisefs::autostart::parse("syncthing", "[Desktop Entry]\nExec=s\n", false).unwrap();
         let run = [sync, entry("[Desktop Entry]\nExec=a\n")];
         let ids = |l: Vec<&Entry>| l.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
-        assert_eq!(ids(to_launch(&run, &[], None)), ["syncthing.desktop", "a"]);
+        assert_eq!(ids(to_launch(&run, &[], None)), ["syncthing", "a"]);
         let running = ["app-reprise-syncthing-1ax2.scope".to_string()];
         assert_eq!(ids(to_launch(&run, &running, None)), ["a"]);
     }
 
     #[test]
     fn after_a_crash_only_this_sessions_scope_of_an_entry_keeps_it_from_starting() {
-        let polkit = reprisefs::autostart::parse(
-            "reprise-polkit.desktop",
-            "[Desktop Entry]\nExec=p\n",
-            false,
-        )
-        .unwrap();
+        let polkit =
+            reprisefs::autostart::parse("reprise-polkit", "[Desktop Entry]\nExec=p\n", false)
+                .unwrap();
         let run = [polkit];
         let display = ["app-reprise-reprise\\x2dpolkit-s3x1ax2x0.scope".to_string()];
         assert_eq!(
@@ -309,8 +310,7 @@ mod tests {
     #[test]
     fn after_a_crash_an_entry_starts_once_its_dying_scope_is_gone() {
         let sync =
-            reprisefs::autostart::parse("syncthing.desktop", "[Desktop Entry]\nExec=s\n", false)
-                .unwrap();
+            reprisefs::autostart::parse("syncthing", "[Desktop Entry]\nExec=s\n", false).unwrap();
         let run = [sync, entry("[Desktop Entry]\nExec=a\n")];
         let scope = "app-reprise-syncthing-1ax2.scope".to_string();
         let launched = |after_crash: bool, listings: Vec<Vec<String>>| {
@@ -329,12 +329,12 @@ mod tests {
         };
         assert_eq!(
             launched(false, vec![]),
-            ["syncthing.desktop", "a"],
+            ["syncthing", "a"],
             "a login lists nothing"
         );
         assert_eq!(
             launched(true, vec![vec![scope.clone()], vec![]]),
-            ["a", "syncthing.desktop"],
+            ["a", "syncthing"],
             "the scope went during the grace"
         );
         assert_eq!(
@@ -344,7 +344,7 @@ mod tests {
         );
         assert_eq!(
             launched(true, vec![vec![]]),
-            ["syncthing.desktop", "a"],
+            ["syncthing", "a"],
             "no scope, no second listing"
         );
     }

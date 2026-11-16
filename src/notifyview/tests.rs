@@ -1702,6 +1702,16 @@ fn a_notification_from_an_app_id_ending_in_desktop_grants_its_own_file_the_raise
 }
 
 #[test]
+fn a_notification_click_grants_the_raise_to_a_file_named_in_another_case() {
+    let raised = raise_without_token(
+        "org.example.Mail.desktop",
+        "org.example.mail",
+        "org.example.mail",
+    );
+    assert_eq!(raised, (true, false), "raised once");
+}
+
+#[test]
 fn a_notification_click_lets_its_senders_next_window_take_focus() {
     use crate::tray::TrayEvent;
     use std::os::fd::AsRawFd;

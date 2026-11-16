@@ -38,7 +38,7 @@ fn desktop_entries() -> BTreeSet<String> {
         .expect("data/apps lists")
         .filter_map(|e| {
             let name = e.expect("data/apps entry").file_name().into_string().ok()?;
-            name.strip_suffix(".desktop").map(str::to_string)
+            reprisefs::apps::DesktopId::from_file_name(&name).map(|d| d.stem().to_string())
         })
         .collect()
 }

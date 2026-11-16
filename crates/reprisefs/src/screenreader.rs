@@ -6,6 +6,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 pub const PROGRAM: &str = "orca";
+/// The app the reader runs as.
+pub const APP: crate::apps::AppId = crate::apps::AppId::from_static(PROGRAM);
 
 pub fn installed() -> bool {
     crate::autostart::find_program(PROGRAM).is_some()

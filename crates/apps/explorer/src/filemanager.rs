@@ -12,7 +12,7 @@ use std::time::Duration;
 pub(crate) const FLAG: &str = "--file-manager";
 const PROGRAM: &str = "reprise-explorer";
 /// The desktop entry whose app scope each window starts in, as a Start menu launch's does.
-const APP: &str = "reprise-explorer";
+const APP: reprisefs::apps::AppId = reprisefs::apps::AppId::from_static("reprise-explorer");
 
 /// Serves until the session bus goes; the process's exit status.
 pub(crate) fn serve() -> i32 {
@@ -39,7 +39,7 @@ pub(crate) fn serve() -> i32 {
 fn start(r: &Request) {
     let mut handoff = r.handoff.clone();
     for argv in argvs(r.show, &r.uris) {
-        if let Err(e) = repriseapp::spawn_handed(&argv, None, Some(APP), &handoff) {
+        if let Err(e) = repriseapp::spawn_handed(&argv, None, Some(&APP), &handoff) {
             log::warn!("file manager: spawn {argv:?}: {e}");
         }
         handoff = Handoff::default();
