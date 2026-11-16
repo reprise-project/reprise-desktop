@@ -1987,9 +1987,8 @@ fn new_folder_rename_and_delete_work_on_the_folder_shown() {
         answer(&mut h, keysym::RETURN),
         Outcome::Closed(Some(0))
     ));
-    settle(&mut h, &mut dlg, &mut icons, |_| {
-        !dir.join("Papers").exists()
-    });
+    settle(&mut h, &mut dlg, &mut icons, |h| h.deleting.is_none());
+    assert!(!dir.join("Papers").exists());
     assert!(
         t.path().join("trash/files/Papers").is_dir(),
         "Yes moves it to the Recycle Bin"
@@ -2055,9 +2054,8 @@ fn shift_delete_asks_then_deletes_for_good_and_a_failure_says_why() {
     send(&mut h, &mut dlg, &shift_delete);
     asked(&mut h, &mut dlg, &mut icons);
     answer_yes(&mut h);
-    settle(&mut h, &mut dlg, &mut icons, |_| {
-        !dir.join("a.txt").exists()
-    });
+    settle(&mut h, &mut dlg, &mut icons, |h| h.deleting.is_none());
+    assert!(!dir.join("a.txt").exists());
     assert!(
         !t.path().join("trash/files/a.txt").exists(),
         "Yes deletes it for good"
@@ -2107,9 +2105,8 @@ fn delete_asks_before_deleting_for_good_what_the_recycle_bin_cannot_take() {
     send(&mut h, &mut dlg, &delete);
     asked(&mut h, &mut dlg, &mut icons);
     answer_yes(&mut h);
-    settle(&mut h, &mut dlg, &mut icons, |_| {
-        !t.path().join("big.iso").exists()
-    });
+    settle(&mut h, &mut dlg, &mut icons, |h| h.deleting.is_none());
+    assert!(!t.path().join("big.iso").exists(), "Yes deletes it");
     assert!(!t.path().join("trash/files/big.iso").exists());
 
     std::fs::write(
