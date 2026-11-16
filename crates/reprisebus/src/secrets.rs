@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use futures_util::StreamExt;
-use zbus::{Connection, MessageStream};
+use zbus::Connection;
 use zbus::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
 use zeroize::Zeroizing;
 
@@ -204,7 +204,7 @@ impl Secrets {
     }
 
     /// Runs the service's prompt at `prompt` ("/" is none) and waits for the person's answer:
-    /// its result, or `None` when it was dismissed.
+    /// its result, or `None` when it was dismissed or the service left the bus meanwhile.
     fn prompt(&self, prompt: &OwnedObjectPath) -> Option<OwnedVariant> {
         if prompt.as_str() == "/" {
             return Some(OwnedVariant::from(true));
@@ -216,15 +216,61 @@ impl Secrets {
             .member("Completed")
             .build()
             .ok()?;
-        let mut stream = crate::wait(MessageStream::for_match_rule(rule, &self.conn, None)).ok()?;
+        // A service may address Completed to the caller alone instead of broadcasting it.
+        let mut stream = crate::wait(crate::owner_signals(&self.conn, NAME, vec![rule.into()]));
         self.call(prompt.as_str(), PROMPT, "Prompt", &("",)).ok()?;
-        let msg = crate::wait(stream.next())?.ok()?;
-        let owner = crate::wait(crate::name_owner(&self.conn, NAME));
-        let sender = msg.header().sender().map(|s| s.to_string());
-        if !crate::sent_by(sender.as_deref(), owner.as_deref()) {
+        let crate::Signal::Message(msg) = crate::wait(stream.next())? else {
+            log::info!("the Secret Service left the bus during its prompt");
             return None;
-        }
+        };
         let (dismissed, result): (bool, OwnedVariant) = msg.body().deserialize().ok()?;
         (!dismissed).then_some(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testbus::bus;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    const PROMPT_PATH: &str = "/org/freedesktop/secrets/prompt/p1";
+
+    /// A prompt that tells `shown` it is up and never completes.
+    struct Silent(mpsc::Sender<()>);
+
+    #[zbus::interface(name = "org.freedesktop.Secret.Prompt")]
+    impl Silent {
+        fn prompt(&self, _window_id: &str) {
+            let _ = self.0.send(());
+        }
+    }
+
+    #[test]
+    fn a_service_leaving_the_bus_during_its_prompt_reads_as_dismissed() {
+        let Some(bus) = bus() else {
+            return;
+        };
+        let connect =
+            |a: &str| crate::wait(zbus::connection::Builder::address(a).build()).expect("connect");
+        let service = connect(&bus.1);
+        let (shown, up) = mpsc::channel();
+        crate::wait(service.object_server().at(PROMPT_PATH, Silent(shown))).unwrap();
+        crate::wait(service.request_name(NAME)).unwrap();
+        let secrets = Secrets {
+            conn: connect(&bus.1),
+            session: OwnedObjectPath::try_from("/").unwrap(),
+        };
+        let (tx, answered) = mpsc::channel();
+        std::thread::spawn(move || {
+            let path = OwnedObjectPath::try_from(PROMPT_PATH).unwrap();
+            let _ = tx.send(secrets.prompt(&path));
+        });
+        up.recv_timeout(Duration::from_secs(5))
+            .expect("the prompt is up");
+        crate::wait(service.release_name(NAME)).unwrap();
+        let answer = answered.recv_timeout(Duration::from_secs(5));
+        assert_eq!(answer.expect("the wait ended"), None);
     }
 }
