@@ -311,7 +311,7 @@ mod tests {
         ex.new_item(true, &mut ctx);
         wake_until(&mut ex, &mut ctx, |ex| ex.acting.is_empty());
         assert_eq!(message(&ex).map(|m| m.0), Some("Rename"));
-        ex.dialog_event(repriseapp::Event::CloseRequest, &mut ctx);
+        ex.event(crate::DIALOG, repriseapp::Event::CloseRequest, &mut ctx);
         assert_eq!(message(&ex).map(|m| m.0), Some("New Folder"));
     }
 

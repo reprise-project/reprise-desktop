@@ -213,8 +213,7 @@ impl Explorer {
             return Reply::none();
         }
         let b = ConnectBox::open(&self.last_server, ctx);
-        self.dialog = Some(Dialog::Connect(Box::new(b)));
-        Reply::redraw_all()
+        self.raise(Dialog::Connect(Box::new(b)))
     }
 
     /// Connects to `text`, an address, showing Connect to Server while it does.
@@ -227,7 +226,7 @@ impl Explorer {
         }
         let mut b = ConnectBox::open(&addr.uri(), ctx);
         self.start_connection(addr, &mut b, ctx);
-        self.dialog = Some(Dialog::Connect(Box::new(b)));
+        self.raise(Dialog::Connect(Box::new(b)));
         // The address bar goes back to the place shown; the address is in the box.
         self.build_address(ctx);
         Reply::redraw_all()
@@ -300,7 +299,7 @@ impl Explorer {
                 Reply::redraw()
             }
             (Some(_), form::Event::Pressed(nc::CANCEL) | form::Event::Cancel) => {
-                self.cancel_connection(ctx)
+                self.cancel_connection()
             }
             (Some(Dialog::Connect(b)), form::Event::Pressed(nc::OK) | form::Event::Default) => {
                 if !nc::enabled(&b.form, nc::OK) {
@@ -322,7 +321,7 @@ impl Explorer {
                     return Reply::none();
                 };
                 self.start_connection(addr, &mut b, ctx);
-                self.dialog = Some(Dialog::Connect(b));
+                self.raise(Dialog::Connect(b));
                 Reply::redraw()
             }
             (Some(Dialog::Login(b)), form::Event::Pressed(nc::OK) | form::Event::Default) => {
@@ -335,7 +334,7 @@ impl Explorer {
                 if let Some(c) = self.connection.as_ref().and_then(|c| c.conn.as_ref()) {
                     c.answer(Answer::Login(creds));
                 }
-                self.show_connect_again(ctx)
+                self.show_connect_again()
             }
             (_, form::Event::None) => Reply::none(),
             _ => Reply::redraw(),
@@ -364,7 +363,7 @@ impl Explorer {
             };
             return Reply {
                 redraw_all: true,
-                ..reply.and(self.show_waiting(ctx))
+                ..reply
             };
         }
         match (choice, &self.connection) {
@@ -372,31 +371,53 @@ impl Explorer {
                 if let Some(conn) = &c.conn {
                     conn.answer(Answer::Choice(i));
                 }
-                self.show_connect_again(ctx)
+                self.show_connect_again()
             }
-            _ => self.cancel_connection(ctx),
+            _ => self.cancel_connection(),
         }
     }
 
     /// Connect to Server, still busy, back up while the connection goes on.
-    fn show_connect_again(&mut self, ctx: &mut Ctx) -> Reply {
-        let kept = self.connection.as_mut().and_then(|c| c.connect.take());
-        self.dialog = kept.map(|b| Dialog::Connect(Box::new(b)));
-        if self.dialog.is_none() {
-            return self.show_waiting(ctx);
+    fn show_connect_again(&mut self) -> Reply {
+        self.dialog = None;
+        match self.connection.as_mut().and_then(|c| c.connect.take()) {
+            Some(b) => self.raise(Dialog::Connect(Box::new(b))),
+            None => Reply::redraw_all(),
         }
-        Reply::redraw_all()
     }
 
-    fn cancel_connection(&mut self, ctx: &mut Ctx) -> Reply {
+    fn cancel_connection(&mut self) -> Reply {
         if let Some(conn) = self.connection.take().and_then(|c| c.conn) {
             conn.cancel();
         }
-        self.dialog = None;
-        Reply {
-            redraw_all: true,
-            ..self.show_waiting(ctx)
+        self.take_connection_boxes();
+        Reply::redraw_all()
+    }
+
+    /// Takes Connect to Server and the connection's password and question boxes, up or waiting;
+    /// the Connect to Server box if there was one.
+    fn take_connection_boxes(&mut self) -> Option<ConnectBox> {
+        let ours = |d: &Dialog| {
+            matches!(
+                d,
+                Dialog::Connect(_)
+                    | Dialog::Login(_)
+                    | Dialog::Question {
+                        about: Asking::Connection,
+                        ..
+                    }
+            )
+        };
+        let up = self.dialog.take_if(|d| ours(d));
+        let mut connect = None;
+        for d in up.into_iter().chain(std::mem::take(&mut self.waiting)) {
+            match d {
+                Dialog::Connect(b) => connect = Some(*b),
+                d if ours(&d) => {}
+                d => self.waiting.push_back(d),
+            }
         }
+        connect
     }
 
     /// The connection's next prompt or its outcome, if one arrived.
@@ -410,62 +431,47 @@ impl Explorer {
             Some(c) => c.addr.host.clone(),
             None => return Reply::none(),
         };
+        // The prompt waits behind any other box up; the busy Connect to Server is kept for after.
         let shelve = |ex: &mut Explorer| {
-            if let Some(Dialog::Connect(b)) = ex.dialog.take()
+            if let Some(b) = ex.take_connection_boxes()
                 && let Some(c) = ex.connection.as_mut()
             {
-                c.connect = Some(*b);
+                c.connect = Some(b);
             }
         };
         match step {
             Step::Login(l) => {
                 shelve(self);
                 let b = LoginBox::open(&l, &host, ctx);
-                self.dialog = Some(Dialog::Login(Box::new(b)));
-                Reply::redraw_all()
+                self.raise(Dialog::Login(Box::new(b)))
             }
             Step::Question(mut q) => {
                 shelve(self);
                 // A message box holds three buttons.
                 q.choices.truncate(3);
-                self.dialog = Some(Dialog::Question {
+                self.raise(Dialog::Question {
                     title: login_title(&host),
                     text: q.message,
                     choices: q.choices,
                     about: Asking::Connection,
-                });
-                Reply::redraw_all()
+                })
             }
             Step::Done(outcome) => {
                 let Some(c) = self.connection.take() else {
                     return Reply::none();
                 };
+                let shown = self.take_connection_boxes();
                 match outcome {
                     Err(Failed::Error(e)) => {
-                        let mut b = match self.dialog.take() {
-                            Some(Dialog::Connect(b)) => *b,
-                            _ => c
-                                .connect
-                                .unwrap_or_else(|| ConnectBox::open(&c.addr.uri(), ctx)),
-                        };
+                        let mut b = (shown.or(c.connect))
+                            .unwrap_or_else(|| ConnectBox::open(&c.addr.uri(), ctx));
                         nc::set_busy(&mut b.form, false, &e);
-                        self.dialog = Some(Dialog::Connect(Box::new(b)));
-                        Reply::redraw_all()
+                        Reply {
+                            redraw_all: true,
+                            ..self.raise(Dialog::Connect(Box::new(b)))
+                        }
                     }
                     done => {
-                        if matches!(
-                            self.dialog,
-                            Some(
-                                Dialog::Connect(_)
-                                    | Dialog::Login(_)
-                                    | Dialog::Question {
-                                        about: Asking::Connection,
-                                        ..
-                                    }
-                            )
-                        ) {
-                            self.dialog = None;
-                        }
                         let reply = match done {
                             Ok(Some(path)) => self.go(Place::Folder(path), ctx),
                             Ok(None) => self.go(Place::Network(c.addr.uri()), ctx),
@@ -500,22 +506,20 @@ impl Explorer {
                 let title = format!("Problem Disconnecting {}", share.name);
                 match done {
                     Ok(()) => Reply::none(),
-                    Err(netshare::Unmount::Busy) if ex.dialog.is_none() => {
+                    Err(netshare::Unmount::Busy) => {
                         let title = format!("Disconnect {}", share.name);
                         let text = format!(
                             "'{}' is in use, or its server is not answering. Disconnect it anyway? \
                              Anything still being copied to or from it stops.",
                             share.name
                         );
-                        ex.dialog = Some(Dialog::Question {
+                        ex.raise(Dialog::Question {
                             title,
                             text,
                             choices: vec!["Disconnect".into(), "Cancel".into()],
                             about: Asking::Disconnect(share),
-                        });
-                        Reply::redraw_all()
+                        })
                     }
-                    Err(netshare::Unmount::Busy) => Reply::none(),
                     Err(netshare::Unmount::Error(e)) => ex.message_box(&title, e, ctx),
                 }
             })
@@ -616,6 +620,28 @@ mod tests {
         };
         assert_eq!(status(&b.form), nc::WRONG);
         assert_eq!(b.form.edit_text(nc::PASSWORD), "", "the field starts empty");
+    }
+
+    /// A box raised at a wake while the password box is up waits behind it, and comes up once the
+    /// password box is answered.
+    #[test]
+    fn a_box_raised_over_the_password_box_waits_for_its_answer() {
+        let mut ctx = test_ctx();
+        let (mut ex, tx) = connecting("smb://nas/private", &mut ctx);
+        tx.send(Step::Login(login(false))).unwrap();
+        ex.poll_connection(&mut ctx);
+        ex.message_box("Error Compressing", "The disk is full.".into(), &mut ctx);
+        assert!(
+            matches!(ex.dialog, Some(Dialog::Login(_))),
+            "the password box stays up"
+        );
+
+        ex.event(crate::DIALOG, Event::CloseRequest, &mut ctx);
+        assert!(ex.connection.is_none(), "the connection is cancelled");
+        assert!(
+            matches!(&ex.dialog, Some(Dialog::Message { text, .. }) if text == "The disk is full."),
+            "the error box comes up after"
+        );
     }
 
     #[test]

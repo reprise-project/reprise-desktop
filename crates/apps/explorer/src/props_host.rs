@@ -437,8 +437,7 @@ impl Explorer {
             list.pick(c);
         }
         let form = filesheet::change_icon_form(&ctx.icons.theme_name(), list, !launcher);
-        self.dialog = Some(crate::dialogs::Dialog::ChangeIcon { form, name, waits });
-        Reply::redraw_all()
+        self.raise(crate::dialogs::Dialog::ChangeIcon { form, name, waits })
     }
 
     pub(crate) fn icon_chosen(&mut self, icon: Option<String>, ctx: &mut Ctx) -> Reply {
@@ -708,15 +707,14 @@ impl Explorer {
                     ex.forms.fonts.size_px,
                     ex.forms.text,
                 );
-                ex.dialog = Some(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
+                ex.raise(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
                     set: None,
                     new_name,
                     attrs,
                     hidden,
                     close,
                     form,
-                }));
-                Reply::redraw_all()
+                }))
             },
         )
     }
@@ -754,15 +752,14 @@ impl Explorer {
                     ex.forms.fonts.size_px,
                     ex.forms.text,
                 );
-                ex.dialog = Some(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
+                ex.raise(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
                     set: Some(paths),
                     new_name: None,
                     attrs,
                     hidden,
                     close,
                     form,
-                }));
-                Reply::redraw_all()
+                }))
             },
         )
     }

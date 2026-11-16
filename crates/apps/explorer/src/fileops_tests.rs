@@ -29,6 +29,19 @@ mod replace;
 #[path = "fileops_tests/send_to.rs"]
 mod send_to;
 
+fn key_event_escape() -> repriseapp::Event {
+    repriseapp::Event::Key(repriseapp::KeyInput {
+        sym: reprisekit::textedit::keysym::ESCAPE,
+        utf8: None,
+        mods: repriseapp::Mods {
+            ctrl: false,
+            shift: false,
+            alt: false,
+        },
+        edit: None,
+    })
+}
+
 /// Alt+`c` as the seat delivers it: the access key `chooser_event` reads off `KeyInput`.
 fn key_event_alt(c: char) -> repriseapp::Event {
     let utf8 = c.to_string();

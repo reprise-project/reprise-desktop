@@ -70,6 +70,7 @@ fn a_chooser_opened_by_key_shows_its_cues() {
     };
     ex.choose_program_for(&path, false, &mut ctx);
     assert_eq!(cues(&ex), Cues::NONE, "opened with the pointer");
+    ex.dialog = None;
     ex.keyed = true;
     ex.choose_program_for(&path, false, &mut ctx);
     assert_eq!(cues(&ex), Cues::ALL, "opened from the keyboard");

@@ -248,6 +248,73 @@ fn closing_the_failure_box_ends_its_paste() {
     assert!(!dir.join("b.txt").exists(), "the paste ended at gone.txt");
 }
 
+/// A failed item's box raised while the Open With chooser is up waits for it, and comes up once
+/// Escape closes the chooser.
+#[test]
+fn a_failure_behind_the_chooser_comes_up_when_it_closes() {
+    let home = tempfile::tempdir().expect("a temp dir");
+    let (from, dir) = (home.path().join("from"), home.path().join("to"));
+    std::fs::create_dir_all(&from).expect("mkdir");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(from.join("b.txt"), "b").expect("write");
+    std::fs::write(dir.join("x.txt"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
+    ex.choose_program_for(&dir.join("x.txt"), false, &mut ctx);
+
+    ex.run(Command::Paste, &mut ctx);
+    ex.pasted(
+        FileClip {
+            cut: false,
+            paths: vec![from.join("gone.txt"), from.join("b.txt")],
+        },
+        &mut ctx,
+    );
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| !ex.waiting.is_empty());
+    assert!(matches!(ex.dialog, Some(Dialog::ChooseProgram(_))));
+
+    ex.event(crate::DIALOG, key_event_escape(), &mut ctx);
+    assert!(ex.holds_a_job(), "the failure box comes up");
+    ex.answer_failed(reprisefs::progress::Decision::Skip, &mut ctx);
+    assert!(dir.join("b.txt").is_file(), "Skip goes on with the paste");
+}
+
+/// A delete question raised while a failed item's box is up waits behind it, and asks once the
+/// failure is answered.
+#[test]
+fn a_delete_question_waits_behind_a_failed_items_box() {
+    let _guard = lock(&TRASH_ENV);
+    let home = tempfile::tempdir().expect("a temp dir");
+    let (from, dir) = (home.path().join("from"), home.path().join("to"));
+    std::fs::create_dir_all(&from).expect("mkdir");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(from.join("b.txt"), "b").expect("write");
+    std::fs::write(dir.join("x.txt"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
+    ex.run(Command::Paste, &mut ctx);
+    ex.pasted(
+        FileClip {
+            cut: false,
+            paths: vec![from.join("gone.txt"), from.join("b.txt")],
+        },
+        &mut ctx,
+    );
+    ex.finish_puts(&mut ctx);
+    assert!(ex.holds_a_job(), "the paste holds on the failure box");
+
+    let x = ex.items.iter().position(|it| it.name == "x.txt");
+    ex.sv.selection.set_only(x);
+    ex.run(Command::Delete { erase: false }, &mut ctx);
+    assert!(ex.holds_a_job(), "the paste's question stays up");
+
+    ex.event(crate::DIALOG, key_event_alt('s'), &mut ctx);
+    match &ex.dialog {
+        Some(Dialog::Confirm(c)) => assert_eq!(c.paths, vec![dir.join("x.txt")]),
+        _ => panic!("the delete asks next"),
+    }
+}
+
 #[test]
 fn a_file_pasted_onto_a_folders_name_lands_numbered() {
     let home = tempfile::tempdir().expect("a temp dir");

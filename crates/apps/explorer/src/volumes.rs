@@ -78,8 +78,7 @@ impl Explorer {
         };
         let name = v.name(self.volumes.disk_of(&v));
         if v.locked() {
-            self.dialog = Some(Dialog::Unlock(Box::new(Unlock::open(v.path, &name, ctx))));
-            return Reply::redraw_all();
+            return self.raise(Dialog::Unlock(Box::new(Unlock::open(v.path, &name, ctx))));
         }
         self.spawn_job(ctx, move || {
             let mounted = udisks.mount(&v.path);
@@ -104,7 +103,7 @@ impl Explorer {
             Outcome::Redraw => Reply::redraw(),
             Outcome::Cancel => {
                 self.dialog = None;
-                self.show_waiting(ctx)
+                Reply::redraw_all()
             }
             Outcome::Submit(pass) => {
                 let volume = u.volume.clone();
@@ -193,12 +192,9 @@ impl Explorer {
         let Some(it) = self.selected_disk_image() else {
             return Reply::none();
         };
-        if self.holds_a_job() {
-            return Reply::none();
-        }
         let path = it.path.clone();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        self.dialog = Some(Dialog::Confirm(crate::dialogs::Confirm {
+        self.raise(Dialog::Confirm(crate::dialogs::Confirm {
             title: reprisefs::udisks::MOUNT_TITLE,
             text: reprisefs::udisks::mount_text(&name),
             min_text_h: None,
@@ -214,8 +210,7 @@ impl Explorer {
             script: None,
             mount: true,
             job: None,
-        }));
-        Reply::redraw_all()
+        }))
     }
 
     /// Mount: the selected disk image set up read-only and mounted, then its folder shown. A

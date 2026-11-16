@@ -1,18 +1,5 @@
 use super::*;
 
-fn key_event_escape() -> repriseapp::Event {
-    repriseapp::Event::Key(repriseapp::KeyInput {
-        sym: reprisekit::textedit::keysym::ESCAPE,
-        utf8: None,
-        mods: repriseapp::Mods {
-            ctrl: false,
-            shift: false,
-            alt: false,
-        },
-        edit: None,
-    })
-}
-
 /// Two files and a folder pasted into `dest` where all three names are taken: the replace prompt comes up before anything is written.
 fn paste_onto_taken_names(
     ctx: &mut repriseapp::Ctx,
@@ -78,7 +65,7 @@ fn a_paste_whose_clash_check_answers_late_asks_on_a_later_wake() {
         asked(&ex),
         Some(("Confirm Folder Replace", "Reports".to_string()))
     );
-    ex.dialog_event(key_event_alt('n'), &mut ctx);
+    ex.event(crate::DIALOG, key_event_alt('n'), &mut ctx);
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.clashing.is_empty());
     assert_eq!(
         asked(&ex),
@@ -181,7 +168,7 @@ fn a_replace_prompt_whose_files_answer_late_comes_up_on_a_later_wake() {
         },
         _ => panic!("the replace prompt is up"),
     }
-    ex.dialog_event(key_event_alt('n'), &mut ctx);
+    ex.event(crate::DIALOG, key_event_alt('n'), &mut ctx);
     assert_eq!(
         asked(&ex),
         Some(("Confirm File Replace", "b.txt".to_string()))
@@ -512,14 +499,14 @@ fn a_box_or_a_second_prompt_waits_for_the_prompt_up() {
         Some(("Confirm File Replace", "a.txt".to_string())),
         "still the first batch's question"
     );
-    ex.dialog_event(key_event_escape(), &mut ctx);
+    ex.event(crate::DIALOG, key_event_escape(), &mut ctx);
     assert_eq!(
         asked(&ex),
         Some(("Confirm File Replace", "a.txt".to_string())),
         "the second batch asks next"
     );
     assert!(matches!(&ex.dialog, Some(Dialog::Replace(r)) if !r.fields.many));
-    ex.dialog_event(key_event_alt('y'), &mut ctx);
+    ex.event(crate::DIALOG, key_event_alt('y'), &mut ctx);
     match &ex.dialog {
         Some(Dialog::Message { text, .. }) => assert_eq!(text, "Cannot copy x"),
         _ => panic!("the waiting box comes last"),
