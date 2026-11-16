@@ -13,7 +13,7 @@ pub const HEIGHT: i32 = 150;
 pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
     let px = theme.fonts.size_px;
     let p = theme.paint();
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let eb = ExplorerBar::new("Folders");
     for (i, ptr) in [Interaction::Idle, Interaction::Hot, Interaction::Pressed]
         .into_iter()

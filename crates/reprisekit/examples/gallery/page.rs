@@ -205,7 +205,12 @@ fn page_dialogs(mut c: Canvas, theme: &Theme, text: &TextRenderer, mono: &TextRe
     draw_scrollbar(
         &mut c,
         &Paint { s, ..theme.paint() },
-        Rect::new(dlg.x + 300, dlg.y + 110, theme.look.controls().scroll, 40),
+        Rect::new(
+            dlg.x + 300,
+            dlg.y + 110,
+            theme.look.controls_at_100().scroll,
+            40,
+        ),
         1,
         3,
         9,
@@ -307,8 +312,8 @@ fn page_dialogs(mut c: Canvas, theme: &Theme, text: &TextRenderer, mono: &TextRe
     c.blit_canvas(730, 262, &indicator::draw_location(16));
 
     let m = multiedit::Metrics {
-        bar: theme.look.controls().scroll,
-        thumb_min: theme.look.controls().thumb_min,
+        bar: theme.look.controls_at_100().scroll,
+        thumb_min: theme.look.controls_at_100().thumb_min,
         ..Default::default()
     };
     let body = (0..12)
@@ -590,7 +595,7 @@ fn page_dialogs(mut c: Canvas, theme: &Theme, text: &TextRenderer, mono: &TextRe
     }
     pinned.selected = Some(5);
     let pinned_r = Rect { x: 800, ..places_r };
-    pinned.scroll(9, pinned_r, &theme.look.controls().grown(theme.text));
+    pinned.scroll(9, pinned_r, &theme.look.controls_at_100().grown(theme.text));
     placesbar::draw(
         &mut c,
         text,
@@ -735,7 +740,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
         big: false,
     };
     let tb_r = Rect::new(10, 1100, 200, toolbar::HEIGHT);
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let tb_rects = toolbar::layout(&tb, text, px, tb_r, &cm);
     toolbar::draw(
         &mut c,
@@ -826,7 +831,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
         let col = (i % 2) as i32;
         let row = (i / 2) as i32;
         let sv_r = Rect::new(10 + col * 440, 1650 + row * 180, 420, 170);
-        let sv_lay = shellview::layout(&sv, sv_r, &theme.look.controls());
+        let sv_lay = shellview::layout(&sv, sv_r, &theme.look.controls_at_100());
         shellview::draw(
             &mut c,
             text,
@@ -840,7 +845,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
 
     let lv = listview::sample();
     let lv_r = Rect::new(570, 1240, 320, 130);
-    let lv_lay = listview::layout(&lv, lv_r, &theme.look.controls());
+    let lv_lay = listview::layout(&lv, lv_r, &theme.look.controls_at_100());
     listview::draw(
         &mut c,
         text,
@@ -1028,7 +1033,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
             ),
         ]),
         70,
-        &theme.look.controls(),
+        &theme.look.controls_at_100(),
     );
     draw_dialog(&mut c, &choices, 8060);
 
@@ -1127,7 +1132,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
         if open {
             ab.combo.toggle();
         }
-        let lay = addressbar::layout(&ab, text, px, band, &theme.look.controls());
+        let lay = addressbar::layout(&ab, text, px, band, &theme.look.controls_at_100());
         addressbar::draw(
             &mut c,
             text,
@@ -1159,7 +1164,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
         };
         let r = Rect::new(10, strip.y + 16 + i as i32 * 40, 204, 30);
         c.fill_rect(Rect::new(r.x, r.y + 22, 200, 8), cs.window);
-        let lay = explorerbar::layout(&eb, r, &theme.look.controls());
+        let lay = explorerbar::layout(&eb, r, &theme.look.controls_at_100());
         explorerbar::draw(&mut c, text, &Paint { s, ..theme.paint() }, &eb, &lay, px);
     }
     let icon = |colour: Color| {
@@ -1195,7 +1200,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
         hot_header: None,
     };
     let pane = Rect::new(240, strip.y + 10, 200, 300);
-    let lay = taskpane::layout(&tp, text, px, pane, &theme.look.controls());
+    let lay = taskpane::layout(&tp, text, px, pane, &theme.look.controls_at_100());
     taskpane::draw(&mut c, text, &Paint { s, ..theme.paint() }, &tp, &lay, px);
     let tip = infotip::draw(
         theme,
@@ -1233,7 +1238,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
         let bar_lay = explorerbar::layout(
             &eb,
             Rect::new(620, strip.y + 10, 204, 130),
-            &theme.look.controls(),
+            &theme.look.controls_at_100(),
         );
         explorerbar::draw(
             &mut c,
@@ -1245,7 +1250,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
         );
         let b = bar_lay.body;
         let tree_r = Rect::new(b.x - 1, b.y, b.width + 1, b.height);
-        let tree_lay = treeview::layout(&tv, text, px, tree_r, &theme.look.controls());
+        let tree_lay = treeview::layout(&tv, text, px, tree_r, &theme.look.controls_at_100());
         treeview::draw(
             &mut c,
             text,
@@ -1262,7 +1267,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
     tv.drop_hilight = Some(4);
     tv.left = 6;
     let tree_r = Rect::new(620, strip.y + 150, 240, 110);
-    let tree_lay = treeview::layout(&tv, text, px, tree_r, &theme.look.controls());
+    let tree_lay = treeview::layout(&tv, text, px, tree_r, &theme.look.controls_at_100());
     treeview::draw(
         &mut c,
         text,

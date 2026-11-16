@@ -456,7 +456,7 @@ mod tests {
         let l = layout_for(
             &ud,
             Rect::new(112, 58, 79, 21),
-            &theme.look.controls(),
+            &theme.look.controls_at_100(),
             TextUnits::ONE,
         );
         let gap = Rect::new(
@@ -907,7 +907,7 @@ mod tests {
         let cs = &theme.colors;
         let ud = UpDown::new(2026, 1970, 2099).with_buddy();
         let r = Rect::new(112, 58, 79, 21);
-        let l = layout_for(&ud, r, &theme.look.controls(), TextUnits::ONE);
+        let l = layout_for(&ud, r, &theme.look.controls_at_100(), TextUnits::ONE);
         assert_eq!(l.field, r);
         assert_eq!(l.edit, Rect::new(114, 60, 60, 17));
         assert_eq!(l.up, Rect::new(174, 60, 15, 8));

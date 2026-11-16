@@ -88,7 +88,7 @@ pub fn draw_window(
 }
 
 fn draw_sample_scrollbar(c: &mut Canvas, p: &Paint, inner: Rect) {
-    let w = p.look.controls().scroll * p.s;
+    let w = p.look.controls_at_100().scroll * p.s;
     let sb = Rect::new(inner.right() - w, inner.y, w, inner.height);
     let track = (sb.height - 2 * w).max(0) as usize;
     draw_scrollbar(c, p, sb, 0, w as usize, track, None);

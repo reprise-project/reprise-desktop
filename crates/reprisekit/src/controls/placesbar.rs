@@ -195,7 +195,7 @@ pub fn hit(rects: &[Rect], x: i32, y: i32) -> Option<usize> {
 /// overflow. An icon larger than a shrunk tile's draws resampled to it.
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: Rect, px: u32) {
     let Paint { cs, s, .. } = *p;
-    let cm = p.look.controls().grown(p.text);
+    let cm = p.look.controls_at_100().grown(p.text);
     let (pm, bar, top) = fitted(pb, r, &cm);
     let sr = r.scaled(s);
     crate::look::widgets::placesbar::draw_panel(c, p, sr);
@@ -434,7 +434,7 @@ mod tests {
             p.icon = Some(icon.clone());
         }
         let r = Rect::new(0, 0, WIDTH, 338);
-        let rects = layout(&pb, r, &theme.look.controls());
+        let rects = layout(&pb, r, &theme.look.controls_at_100());
         assert_eq!(rects[1], Rect::new(0, 71, WIDTH, 71));
         let mut c = Canvas::new(WIDTH as u32, 338);
         draw(&mut c, &text, &theme.paint(), &pb, r, theme.fonts.size_px);
@@ -489,7 +489,7 @@ mod tests {
         use crate::theme::Color;
         const ICON: Color = Color::rgb(1, 2, 3);
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
-        let cm = theme.look.controls();
+        let cm = theme.look.controls_at_100();
         let pm = cm.places;
         assert_eq!((pm.tile, pm.icon_top, pm.label_gap), (59, 2, 1));
         let text = TextRenderer::load(&theme.fonts);
@@ -526,7 +526,7 @@ mod tests {
             text: u,
             ..classic_paint(&theme.colors, 1)
         };
-        let cm = p.look.controls().grown(u);
+        let cm = p.look.controls_at_100().grown(u);
         let pm = cm.places;
         assert_eq!((pm.tile, pm.icon), (127, 64));
         let text = TextRenderer::load(&FontConfig::default());
@@ -702,7 +702,7 @@ mod tests {
         pb.clamp(BAR, &cm);
         assert_eq!(pb.top, 0, "nothing to scroll once they fit");
         let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
-        let blue = blue.look.controls();
+        let blue = blue.look.controls_at_100();
         assert!(6 * blue.places.tile > 403);
         assert!(
             bar_parts(&pb, BAR, &blue).is_none(),
@@ -743,7 +743,7 @@ mod tests {
             let theme = crate::interfaces::theme_for(i).scaled(scale);
             let text = TextRenderer::load(&theme.fonts);
             let p = theme.paint();
-            let cm = p.look.controls().grown(p.text);
+            let cm = p.look.controls_at_100().grown(p.text);
             let mut pb = with_pins(3);
             let mut icon = Canvas::new((ICON_PX * scale) as u32, (ICON_PX * scale) as u32);
             icon.fill_rect(icon.bounds(), ICON);
@@ -790,7 +790,7 @@ mod tests {
             let theme = crate::interfaces::theme_for(i);
             let text = TextRenderer::load(&theme.fonts);
             let p = theme.paint();
-            let cm = p.look.controls().grown(p.text);
+            let cm = p.look.controls_at_100().grown(p.text);
             let mut pb = with_pins(3);
             let mut icon = Canvas::new(ICON_PX as u32, ICON_PX as u32);
             icon.fill_rect(

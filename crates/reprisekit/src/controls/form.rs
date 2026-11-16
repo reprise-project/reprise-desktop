@@ -505,7 +505,9 @@ impl Form {
     /// host that draws a copy of the form (shifted, refocused), or hits or reads
     /// [`Form::rect`] on a form not drawn yet, calls it first.
     pub fn drawn_with(&self, p: &Paint) {
-        self.rendered.controls.set(p.look.controls().grown(p.text));
+        self.rendered
+            .controls
+            .set(p.look.controls_at_100().grown(p.text));
         self.rendered.text.set(p.text);
         self.rendered.scale.set(p.s);
         self.rendered.styled.set(p.look.lights_pointer());

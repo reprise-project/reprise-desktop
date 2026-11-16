@@ -922,7 +922,7 @@ mod tests {
     #[test]
     fn a_blue_tile_lists_bar_lights_hot_and_pressed() {
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
-        let cm = theme.look.controls();
+        let cm = theme.look.controls_at_100();
         let text = TextRenderer::load(&crate::theme::FontConfig::default());
         let mut list = TileList::rows(30, 40);
         let r = Rect::new(0, 0, 200, 160);

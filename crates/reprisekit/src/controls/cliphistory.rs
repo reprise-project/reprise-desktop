@@ -322,7 +322,7 @@ pub fn draw(
     let p = &theme.paint();
     let (cs, s) = (p.cs, p.s);
     let px = theme.fonts.size_px;
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let lay = layout(m, &cm);
     let mut c = Canvas::new((width(&cm) * s) as u32, (lay.height * s) as u32);
     c.set_preedit(preedit.cloned());

@@ -475,7 +475,7 @@ pub fn page_blue(mut c: Canvas, theme: &Theme, text: &TextRenderer, with_blue: b
         y += 13 + 2 + 11 + 12;
 
         row_label(&mut c, y, "Radio");
-        let side = bp.look.controls().radio;
+        let side = bp.look.controls_at_100().radio;
         for (i, (label, checked)) in [("Unchecked", false), ("Checked", true)]
             .into_iter()
             .enumerate()
@@ -610,7 +610,7 @@ pub fn page_blue(mut c: Canvas, theme: &Theme, text: &TextRenderer, with_blue: b
             false,
         );
         state_label(&mut c, X0 + 80, y + 23, 76, "Disabled");
-        let bcm = blue_theme.look.controls();
+        let bcm = blue_theme.look.controls_at_100();
         for (i, (label, focus, enabled)) in [
             ("Focused", true, true),
             ("Normal", false, true),

@@ -432,7 +432,7 @@ pub fn render_glass_items(theme: &Theme) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let px = theme.fonts.size_px;
     let p = theme.paint();
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let mut c = Canvas::new(950, 230);
     c.fill_rect(c.bounds(), theme.colors.window);
     let rows = |n: usize| -> Vec<listview::Row> {
@@ -617,7 +617,7 @@ pub fn render_glass_popup_parts(theme: &Theme) -> Canvas {
         enabled: true,
         pinned: false,
     };
-    let tile = theme.look.controls().places.tile;
+    let tile = theme.look.controls_at_100().places.tile;
     for (i, (selected, hot, pressed)) in [(1, 0, None), (1, 1, Some(0))].into_iter().enumerate() {
         let places = placesbar::PlacesBar {
             places: vec![place("My Recent Documents"), place("Desktop")],

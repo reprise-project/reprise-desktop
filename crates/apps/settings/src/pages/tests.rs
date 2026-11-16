@@ -428,7 +428,7 @@ fn lines_under_a_choice_start_at_its_label_in_every_look() {
     let text = TextRenderer::load(&FontConfig::default());
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
         let theme = reprisekit::interfaces::theme_for(i);
-        let cm = theme.look.controls();
+        let cm = theme.look.controls_at_100();
         for (form, choice, under, past) in [
             (
                 text_and_keys(Area::MIN),
@@ -532,7 +532,7 @@ fn every_spin_shows_its_unit() {
         super::login::LOGIN_SESSIONS,
     ];
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
-        let cm = reprisekit::interfaces::theme_for(i).look.controls();
+        let cm = reprisekit::interfaces::theme_for(i).look.controls_at_100();
         let s = under(i.as_str());
         let mut missing = Vec::new();
         let mut seen = 0;

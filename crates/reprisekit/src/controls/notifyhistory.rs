@@ -655,7 +655,7 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
     let p = &theme.paint();
     let (cs, s) = (p.cs, p.s);
     let px = theme.fonts.size_px;
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let lay = layout(&cm);
     let mut c = Canvas::new((width(&cm) * s) as u32, (lay.height * s) as u32);
     let all = c.bounds();
@@ -1206,7 +1206,7 @@ mod tests {
     #[test]
     fn a_blue_do_not_disturb_label_starts_16_px_in() {
         let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
-        let cm = blue.look.controls();
+        let cm = blue.look.controls_at_100();
         let lay = layout(&cm);
         assert_eq!(lay.check, Rect::new(8, 10, 13, 13));
         assert_eq!(lay.label.x, 8 + 16);
@@ -1311,7 +1311,7 @@ mod tests {
         for iface in [Interface::Blue, Interface::Glass] {
             let theme = crate::interfaces::theme_for(iface);
             let c = draw(&theme, &text, &sample());
-            let cm = theme.look.controls();
+            let cm = theme.look.controls_at_100();
             let lay = layout(&cm);
             let m = flyout::margin(&theme);
             assert_eq!(
@@ -1334,7 +1334,7 @@ mod tests {
     fn under_glass_the_panel_is_a_flyout_with_its_contents_6_px_further_in() {
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
         let text = TextRenderer::load(&FontConfig::default());
-        let cm = theme.look.controls();
+        let cm = theme.look.controls_at_100();
         let c = draw(&theme, &text, &sample());
         let lay = layout(&cm);
         let classic = layout(&ControlMetrics {

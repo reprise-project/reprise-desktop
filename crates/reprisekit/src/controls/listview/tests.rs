@@ -507,7 +507,7 @@ fn a_17_px_scrollbar_takes_17_px_off_the_body_each_way() {
 #[test]
 fn a_blue_bar_is_drawn_where_it_is_hit() {
     let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let text = TextRenderer::load(&FontConfig::default());
     let mut lv = view(500);
     lv.top = 250;
@@ -673,7 +673,7 @@ fn both_bars_leave_each_other_room() {
 #[test]
 fn a_blue_header_lights_the_column_the_pointer_is_on() {
     let theme = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let text = TextRenderer::load(&FontConfig::default());
     let mut lv = view(3);
     let r = Rect::new(0, 0, 200, 4 + 20 + 3 * ROW_H);
@@ -812,7 +812,7 @@ fn blue_header_inks(sort: Option<(usize, bool)>) -> Vec<(Vec<i32>, Vec<i32>)> {
     ];
     lv.sort = sort;
     let r = Rect::new(0, 0, 500, 100);
-    let lay = layout(&lv, r, &theme.look.controls());
+    let lay = layout(&lv, r, &theme.look.controls_at_100());
     let mut c = Canvas::new(r.width as u32, r.height as u32);
     draw(
         &mut c,
@@ -1128,7 +1128,7 @@ fn a_row_check_box_toggles_on_the_release_over_it() {
 #[test]
 fn a_held_blue_row_box_draws_pressed_and_ticks_on_the_release() {
     let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let text = TextRenderer::load(&FontConfig::default());
     let mut lv = view(3);
     lv.checks = Some(vec![false; 3]);
@@ -1339,7 +1339,7 @@ fn render_listview() {
 fn a_blue_lists_lit_bar_part_draws_hot_or_pressed() {
     use crate::classic::widgets::{Axis, ScrollHit};
     let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let text = TextRenderer::load(&FontConfig::default());
     let mut lv = view(500);
     let r = Rect::new(0, 0, 200, 150);
@@ -1438,7 +1438,7 @@ fn a_bar_cell_fills_its_share_in_every_look_and_scale() {
         for s in [1, 2] {
             let mut theme = crate::interfaces::theme_for(i);
             theme.look = theme.look.at_scale(s);
-            let lay = layout(&lv, r, &theme.look.controls());
+            let lay = layout(&lv, r, &theme.look.controls_at_100());
             let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
             let p = Paint { s, ..theme.paint() };
             draw(&mut c, &text, &p, &lv, &lay, None, 11);

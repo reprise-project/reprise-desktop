@@ -774,7 +774,7 @@ fn draw_header<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
     let left = lv.left_in(lay);
     header_widgets::draw_strip(c, p, header);
     let arrow_w = header_widgets::sort_arrow_width(p);
-    let arrow_over = p.look.controls().header_arrow_over;
+    let arrow_over = p.look.controls_at_100().header_arrow_over;
     let mut cx = header.x - left * s;
     for (ci, col) in lv.columns.as_ref().iter().enumerate() {
         let r = Rect::new(cx, header.y, lay.col_w(col) * s, header.height);
@@ -807,7 +807,7 @@ fn draw_header<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
 fn title_room(p: &Paint, col: &Column, t: Rect, sorted: bool) -> (Rect, Option<i32>) {
     let s = p.s;
     let arrow_w = header_widgets::sort_arrow_width(p);
-    let arrow_end = p.look.controls().header_arrow_end;
+    let arrow_end = p.look.controls_at_100().header_arrow_end;
     // A right-aligned sorted column's arrow stops `header_arrow_end` short of the end and its title
     // ends the arrow gap before it; a left-aligned title keeps its place and the arrow follows.
     let right_arrow = (sorted && col.right).then(|| t.right() - (arrow_end + arrow_w) * s);
@@ -832,7 +832,7 @@ pub fn header_overflows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
     p: &Paint,
     px: u32,
 ) -> Vec<(usize, i32)> {
-    let arrow_over = p.look.controls().header_arrow_over;
+    let arrow_over = p.look.controls_at_100().header_arrow_over;
     lv.columns
         .as_ref()
         .iter()

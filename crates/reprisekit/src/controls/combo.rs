@@ -926,7 +926,7 @@ pub fn draw_list(
     bar: Lit<ScrollHit>,
     px: u32,
 ) {
-    let row_h = items_row_h(items, &p.look.controls().grown(p.text));
+    let row_h = items_row_h(items, &p.look.controls_at_100().grown(p.text));
     draw_list_rows(
         c,
         text,

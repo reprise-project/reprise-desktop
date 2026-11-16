@@ -226,7 +226,7 @@ pub fn render_file_preview(scale: i32) -> Canvas {
             bars_always: false,
             ..Metrics::default()
         };
-        m.follow_look(&theme.look.controls());
+        m.follow_look(&theme.look.controls_at_100());
         let (pw, ph) = (180 * scale as u32, 120 * scale as u32);
         let pixels = (0..pw * ph)
             .map(|k| 0xFF00_0000 | ((k % pw) * 255 / pw) << 16 | ((k / pw) * 255 / ph) << 8 | 0x60)

@@ -104,7 +104,7 @@ impl Paint {
         dlg.set_extra(
             quality_row(self.quality),
             QUALITY_ROW_H,
-            &self.forms.look.controls(),
+            &self.forms.look.controls_at_100(),
         );
         if let Some(stem) = (self.path.as_deref())
             .filter(|p| Kind::of(p).is_none())

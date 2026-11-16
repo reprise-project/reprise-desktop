@@ -33,7 +33,9 @@ impl Look {
         }
     }
 
-    pub fn controls(&self) -> crate::metrics::ControlMetrics {
+    /// The look's control sizes with every row at 100% text, whatever the text size: for art and
+    /// fixed sizes. A row that holds a line of text takes [`Theme::controls`] instead.
+    pub fn controls_at_100(&self) -> crate::metrics::ControlMetrics {
         self.style().map(|s| s.controls).unwrap_or_default()
     }
 

@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn install_is_there_only_with_checked_updates_and_nothing_running() {
         let env = Env::new();
-        let cm = env.theme.look.controls();
+        let cm = env.theme.look.controls_at_100();
         let mut w = Window::new(None);
         env.sync(&mut w, &Phase::Ready, &[]);
         assert!(!enabled(&w, "act"));
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn a_restart_puts_restart_now_beside_install_or_in_its_place_with_nothing_to_install() {
         let env = Env::new();
-        let cm = env.theme.look.controls();
+        let cm = env.theme.look.controls_at_100();
         for phase in [Phase::Installed(Restart::System), Phase::RestartDue] {
             let mut w = Window::new(None);
             env.sync(&mut w, &phase, &[update("bash")]);
@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn the_selection_follows_its_update_when_the_list_changes() {
         let env = Env::new();
-        let cm = env.theme.look.controls();
+        let cm = env.theme.look.controls_at_100();
         let mut w = Window::new(None);
         env.sync(&mut w, &Phase::Ready, &[update("a"), update("b")]);
         w.list_key(&form::Key::Down, &cm);
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn each_source_gets_a_heading_and_an_unchecked_update_stays_unchecked() {
         let env = Env::new();
-        let cm = env.theme.look.controls();
+        let cm = env.theme.look.controls_at_100();
         let mut w = Window::new(None);
         let ups = mixed();
         env.sync(&mut w, &Phase::Ready, &ups);
@@ -654,7 +654,7 @@ mod tests {
     #[test]
     fn tab_runs_from_the_list_through_the_buttons_and_back() {
         let env = Env::new();
-        let cm = env.theme.look.controls();
+        let cm = env.theme.look.controls_at_100();
         let mut w = Window::new(None);
         env.sync(&mut w, &Phase::Ready, &[update("a")]);
         assert!(w.list_focus);
@@ -670,7 +670,7 @@ mod tests {
     #[test]
     fn the_grouped_list_draws_its_headings_and_boxes() {
         let env = Env::new();
-        let cm = env.theme.look.controls();
+        let cm = env.theme.look.controls_at_100();
         let mut w = Window::new(None);
         let ups = mixed();
         let phase = Phase::Installing {

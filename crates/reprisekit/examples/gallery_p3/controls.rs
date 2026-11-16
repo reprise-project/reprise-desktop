@@ -163,7 +163,7 @@ fn draw_group_c(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
         draw_trackbar(c, &p, &lay, enabled, false, ptr);
     }
 
-    let thumb_w = theme.look.controls().vtrack_thumb;
+    let thumb_w = theme.look.controls_at_100().vtrack_thumb;
     let upright = trackbar::TrackBar::new(3, 7);
     for (i, ptr) in [Interaction::Idle, Interaction::Hot, Interaction::Pressed]
         .into_iter()

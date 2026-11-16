@@ -60,7 +60,7 @@ fn an_editable_blue_combo_lights_its_drop_only_from_the_drop() {
             _ => unreachable!(),
         },
         f.items[0].rect,
-        &theme.look.controls(),
+        &theme.look.controls_at_100(),
     );
     let drop_at = |ptr| {
         let mut c = Canvas::new(200, 200);
@@ -248,7 +248,13 @@ fn a_blue_spin_button_lights_hot_and_pressed() {
     assert_eq!(f.spin_lit(i), Some((Arrow::Up, Interaction::Hot)));
     let up = match &f.items[i].control {
         Control::UpDown(u) => {
-            updown::layout_for(u, f.items[i].rect, &theme.look.controls(), TextUnits::ONE).up
+            updown::layout_for(
+                u,
+                f.items[i].rect,
+                &theme.look.controls_at_100(),
+                TextUnits::ONE,
+            )
+            .up
         }
         _ => unreachable!("spin is an up-down"),
     };

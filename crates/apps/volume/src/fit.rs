@@ -21,7 +21,7 @@ pub fn body(m: &Mixer, theme: &Theme, room: Option<i32>) -> (i32, i32) {
     match room {
         Some(room) if w + frame > room => (
             (room - frame).max(mixer::min_width(theme.text)),
-            h + theme.look.controls().scroll,
+            h + theme.look.controls_at_100().scroll,
         ),
         _ => (w, h),
     }
@@ -136,7 +136,7 @@ mod tests {
         let m = Mixer::new(&lines, false);
         let (w, h) = body(&m, &theme, Some(1024));
         assert_eq!(w, 1024 - 2 * theme.metrics.dialog_frame_width);
-        assert_eq!(h, 225 + theme.look.controls().scroll);
+        assert_eq!(h, 225 + theme.look.controls_at_100().scroll);
         assert_eq!(
             body(&m, &theme, Some(4000)),
             m.size(theme.text),

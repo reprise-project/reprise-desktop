@@ -270,7 +270,7 @@ mod tests {
             let h = band_h(v);
             let theme = blue_theme(v);
             let r = Rect::new(0, 0, 200, 300);
-            let lay = taskpane::layout(&tp, &text, 11, r, &theme.look.controls());
+            let lay = taskpane::layout(&tp, &text, 11, r, &theme.look.controls_at_100());
             assert_eq!(lay.headers[0], Rect::new(13, 12, 185, h), "{v:?}");
             assert_eq!(lay.bodies[0].y, 12 + h, "{v:?}");
             assert_eq!(lay.back, Rect::new(1, 0, 199, 299), "{v:?}");

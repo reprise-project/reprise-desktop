@@ -409,7 +409,7 @@ fn draw_go(
 ) {
     let Paint { s, .. } = *p;
     if ab.go_hot {
-        let dx = p.look.controls().address.go_frame_x * s;
+        let dx = p.look.controls_at_100().address.go_frame_x * s;
         let frame = Rect::new(go.x + dx, go.y, go.width - 2 * dx, go.height);
         toolbar::draw_button(c, p, frame, None, State::Hot);
     }
@@ -546,7 +546,7 @@ mod tests {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
         let px = theme.fonts.size_px;
-        let lay = layout(ab, &text, px, BAND, &theme.look.controls());
+        let lay = layout(ab, &text, px, BAND, &theme.look.controls_at_100());
         let mut c = Canvas::new(792, 300);
         c.fill_rect(c.bounds(), theme.colors.button_face);
         draw(
@@ -593,7 +593,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let theme = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
         let band = Rect::new(0, 64, 792, 22);
-        let lay = layout(&ab, &text, 11, band, &theme.look.controls());
+        let lay = layout(&ab, &text, 11, band, &theme.look.controls_at_100());
         assert_eq!(lay.go, Rect::new(735, 64, 55, 22));
         assert_eq!(lay.field, Rect::new(49, 64, 686, 22));
         ab.go_hot = true;
@@ -620,7 +620,7 @@ mod tests {
         ] {
             let theme = crate::interfaces::blue_theme(v);
             let p = theme.paint();
-            let lay = layout(&ab, &text, 11, BAND, &theme.look.controls());
+            let lay = layout(&ab, &text, 11, BAND, &theme.look.controls_at_100());
             let mut c = Canvas::new(792, 90);
             c.fill_rect(c.bounds(), p.cs.button_face);
             draw(&mut c, &text, &p, &ab, &lay, false, Caret::Unfocused, 11);
@@ -913,7 +913,7 @@ mod tests {
         let ab = bar();
         for (i, caret) in [false, true].into_iter().enumerate() {
             let band = Rect::new(0, 10 + i as i32 * 32, 792, 22);
-            let lay = layout(&ab, &text, px, band, &theme.look.controls());
+            let lay = layout(&ab, &text, px, band, &theme.look.controls_at_100());
             c.etched_hline_t(0, 792, band.y - 2, cs, 1);
             draw(
                 &mut c,
@@ -930,7 +930,7 @@ mod tests {
         let mut open = bar();
         open.combo.toggle();
         let band = Rect::new(0, 79, 792, 22);
-        let lay = layout(&open, &text, px, band, &theme.look.controls());
+        let lay = layout(&open, &text, px, band, &theme.look.controls_at_100());
         c.etched_hline_t(0, 792, band.y - 2, cs, 1);
         draw(
             &mut c,

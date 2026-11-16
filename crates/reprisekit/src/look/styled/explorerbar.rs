@@ -121,7 +121,7 @@ mod tests {
     /// its left edge under the line, the close box against the strip's top.
     #[test]
     fn a_blue_bar_lays_out_without_a_ring() {
-        let cm = blue_theme(Variant::Blue).look.controls();
+        let cm = blue_theme(Variant::Blue).look.controls_at_100();
         let lay = layout(
             &ExplorerBar::new("Folders"),
             Rect::new(0, 83, 204, 300),

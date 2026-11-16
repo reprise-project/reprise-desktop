@@ -1029,7 +1029,7 @@ impl App for SettingsApp {
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         self.dialog_text = ctx.text.clone();
-        self.controls = ctx.theme.look.controls();
+        self.controls = ctx.theme.look.controls_at_100();
         self.follow_text(ctx);
         let main = win == repriseapp::MAIN;
         let moved = main && self.fit_window(ctx.size);

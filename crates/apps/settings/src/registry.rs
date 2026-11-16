@@ -310,7 +310,7 @@ mod tests {
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let theme = theme_for(i);
             let p = theme.paint();
-            let cm = p.look.controls().grown(p.text);
+            let cm = p.look.controls_at_100().grown(p.text);
             let lay = pagelist::layout(list, Rect::new(0, 0, pagelist::WIDTH, 456), &cm);
             assert!(lay.scrollbar.is_some());
             for s in [1, 2] {
@@ -454,7 +454,7 @@ mod tests {
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let theme = reprisekit::interfaces::theme_for(i);
             let text = TextRenderer::load(&theme.fonts);
-            let (cm, px) = (theme.look.controls(), theme.fonts.size_px);
+            let (cm, px) = (theme.look.controls_at_100(), theme.fonts.size_px);
             for size in sizes {
                 let a = Area::of_size(size);
                 let page = Rect::new(6, 28, a.w + 28, 464 + a.dh);

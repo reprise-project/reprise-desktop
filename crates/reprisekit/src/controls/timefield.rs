@@ -457,7 +457,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let cs = &theme.colors;
         let r = Rect::new(249, 201, 103, 20);
-        let l = layout(r, &theme.look.controls());
+        let l = layout(r, &theme.look.controls_at_100());
         assert_eq!(l.field, r);
         assert_eq!(l.up, Rect::new(335, 203, 15, 7));
         assert_eq!(l.down, Rect::new(335, 211, 15, 8));
@@ -501,7 +501,7 @@ mod tests {
     fn the_access_text_stops_at_the_buttons() {
         let r = Rect::new(249, 201, 103, 20);
         let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
-        let l = layout(r, &blue.look.controls());
+        let l = layout(r, &blue.look.controls_at_100());
         assert_eq!(access_text_rect(&l), Rect::new(252, 201, 83, 20));
         let l = layout(r, &ControlMetrics::CLASSIC);
         assert_eq!(
@@ -516,7 +516,7 @@ mod tests {
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
         let text = TextRenderer::load(&FontConfig::default());
         let cs = &theme.colors;
-        let l = layout(Rect::new(249, 201, 103, 20), &theme.look.controls());
+        let l = layout(Rect::new(249, 201, 103, 20), &theme.look.controls_at_100());
         let mut tf = TimeField::new(23, 41, 24, true);
         tf.enabled = false;
         let mut c = Canvas::new(360, 230);

@@ -222,7 +222,7 @@ impl Notepad {
     fn follow(&mut self, ctx: &Ctx) {
         self.forms = ctx.forms();
         self.forms.fonts.size_px = self.forms.text.px(self.dialog_px);
-        self.metrics.follow_look(&ctx.theme.look.controls());
+        self.metrics.follow_look(&ctx.theme.look.controls_at_100());
         let px = reprisekit::theme::text_px(EDIT_PX, ctx.text_size);
         self.metrics.font_px = px;
         self.metrics.line_h = px as i32;

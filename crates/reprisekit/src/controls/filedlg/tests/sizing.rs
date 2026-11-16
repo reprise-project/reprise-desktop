@@ -298,7 +298,10 @@ fn a_focused_glass_look_in_rings_right_of_its_icon() {
     d.key(R, form::Key::Tab { back: true }, None, Mods::default());
     assert_eq!(d.focus, Focus::LookIn);
     let focused = draw(&d);
-    let field = d.layout(&text, 11, R, &theme.look.controls()).lookin.field;
+    let field = d
+        .layout(&text, 11, R, &theme.look.controls_at_100())
+        .lookin
+        .field;
     let changed: Vec<i32> = (field.y..field.bottom())
         .flat_map(|y| (field.x..field.right()).map(move |x| (x, y)))
         .filter(|&(x, y)| plain.get(x, y) != focused.get(x, y))
@@ -327,7 +330,7 @@ fn blues_rows_sit_a_pixel_higher() {
     d.places.places = vec![place("Desktop"), place("My Computer")];
     let blue = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
     let c = d.layout(&text, 11, R, &ControlMetrics::CLASSIC);
-    let b = d.layout(&text, 11, R, &blue.look.controls());
+    let b = d.layout(&text, 11, R, &blue.look.controls_at_100());
     let up = |r: Rect| Rect::new(r.x, r.y - 1, r.width, r.height);
     assert_eq!(
         b.lookin.field,

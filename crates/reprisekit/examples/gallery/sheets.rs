@@ -329,7 +329,7 @@ pub fn render_tray_customize() -> Canvas {
                 Behaviour::Show,
             )],
             (w == Wording::Glass).then_some(false),
-            theme.look.controls(),
+            theme.look.controls_at_100(),
         );
         t.select(1);
         if i == Interface::Classic {

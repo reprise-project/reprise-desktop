@@ -46,8 +46,8 @@ fn entry(key: &str, name: &str, passive: bool, b: Behaviour) -> Entry {
 
 fn metrics(w: Wording) -> ControlMetrics {
     match w {
-        Wording::Classic => Theme::default().look.controls(),
-        Wording::Glass => glass_theme().look.controls(),
+        Wording::Classic => Theme::default().look.controls_at_100(),
+        Wording::Glass => glass_theme().look.controls_at_100(),
     }
 }
 
@@ -534,7 +534,7 @@ fn glass_ticks_its_box_and_greys_the_list() {
     let mut t = sample(Wording::Glass);
     let text = text();
     let theme = glass_theme();
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let l = t.layout(&text, theme.fonts.size_px, (0, 0));
     assert_eq!(l.check, Some(Rect::new(92, 528, cm.check, cm.check)));
     t.click(Some(Hit::AllIcons));

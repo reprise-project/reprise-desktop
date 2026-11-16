@@ -484,7 +484,9 @@ mod tests {
     #[test]
     fn a_blue_upright_trackbar_lays_out_round_its_22_px_thumb() {
         use crate::trackbar::{TrackBar, layout_vertical, layout_vertical_with, vertical_ticks};
-        let cm = crate::interfaces::blue_theme(Variant::Blue).look.controls();
+        let cm = crate::interfaces::blue_theme(Variant::Blue)
+            .look
+            .controls_at_100();
         assert_eq!(cm.vtrack_thumb, 22);
         let tb = TrackBar::new(4, 11);
         let lay = layout_vertical_with(&tb, 10, 10, 81, cm.vtrack_thumb);

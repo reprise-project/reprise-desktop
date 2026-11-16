@@ -657,7 +657,7 @@ impl Theme {
 
     /// The look's control sizes with their text rows grown by [`Theme::text`].
     pub fn controls(&self) -> crate::metrics::ControlMetrics {
-        self.look.controls().grown(self.text)
+        self.look.controls_at_100().grown(self.text)
     }
 
     pub fn icon_size(&self) -> i32 {

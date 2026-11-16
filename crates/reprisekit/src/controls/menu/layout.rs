@@ -56,7 +56,7 @@ pub struct MenuStyle {
 
 impl MenuStyle {
     pub fn submenu(theme: &Theme) -> MenuStyle {
-        let sm = theme.look.controls().start_menu;
+        let sm = theme.look.controls_at_100().start_menu;
         MenuStyle {
             inset: sm.sub,
             separator_x: sm.separator_x,
@@ -139,7 +139,7 @@ impl MenuStyle {
 
     pub fn root(theme: &Theme) -> MenuStyle {
         let m = &theme.metrics;
-        let sm = theme.look.controls().start_menu;
+        let sm = theme.look.controls_at_100().start_menu;
         MenuStyle {
             width: m.startmenu_width,
             row_height: m.startmenu_item_height,

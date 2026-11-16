@@ -113,7 +113,7 @@ pub fn render_glass_wells(theme: &Theme) -> Canvas {
 pub fn render_glass_lists(theme: &Theme) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let p = theme.paint();
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let mut c = Canvas::new(950, 250);
     c.fill_rect(c.bounds(), theme.colors.button_face);
     for (i, (sort, hot, held)) in [
@@ -206,7 +206,7 @@ pub fn render_glass_toolbars(theme: &Theme) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let px = theme.fonts.size_px;
     let p = theme.paint();
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let mut c = Canvas::new(950, 150);
     c.fill_rect(c.bounds(), theme.colors.button_face);
     let big = |hot: usize, pressed: Option<usize>, latched: Option<usize>, history: bool| {
@@ -564,7 +564,7 @@ pub fn render_glass_fields(theme: &Theme) -> Canvas {
     use reprisekit::style::{Part, State};
     let text = TextRenderer::load(&FontConfig::default());
     let p = theme.paint();
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let px = theme.fonts.size_px;
     let mut c = Canvas::new(950, 150);
     c.fill_rect(c.bounds(), theme.colors.button_face);
@@ -700,7 +700,7 @@ pub fn render_glass_fields(theme: &Theme) -> Canvas {
 pub fn render_glass_open_lists(theme: &Theme) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let p = theme.paint();
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let px = theme.fonts.size_px;
     let mut c = Canvas::new(950, 110);
     c.fill_rect(c.bounds(), theme.colors.button_face);

@@ -160,7 +160,7 @@ fn layout_puts_the_button_inside_the_edge_and_the_list_under_the_field() {
 #[test]
 fn a_blue_combo_drop_is_15_px_and_3_px_clear_of_the_highlight() {
     let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let text = TextRenderer::load(&FontConfig::default());
     let cs = &theme.colors;
     let c = combo();
@@ -228,7 +228,11 @@ fn a_greyed_blue_combo_has_a_c9c7ba_line_and_its_button_a_white_well() {
     let cs = &theme.colors;
     let mut c = combo();
     c.enabled = false;
-    let l = layout(&c, Rect::new(3, 3, 120, COMBO_H), &theme.look.controls());
+    let l = layout(
+        &c,
+        Rect::new(3, 3, 120, COMBO_H),
+        &theme.look.controls_at_100(),
+    );
     assert_eq!(l.drop, Rect::new(106, 5, 15, 17));
     let mut canvas = Canvas::new(126, 27);
     canvas.fill_rect(canvas.bounds(), cs.button_face);
@@ -301,7 +305,11 @@ fn a_greyed_blue_combo_on_a_page_rings_its_face_with_the_page() {
     let page = Rect::new(9, 49, 386, 495);
     let mut c = Combo::new(&["Center", "Tile", "Stretch"], 2, 8);
     c.enabled = false;
-    let l = layout(&c, Rect::new(306, 308, 75, COMBO_H), &theme.look.controls());
+    let l = layout(
+        &c,
+        Rect::new(306, 308, 75, COMBO_H),
+        &theme.look.controls_at_100(),
+    );
     let mut bare = Canvas::new(400, 560);
     bare.fill_rect(bare.bounds(), face);
     crate::look::widgets::draw_page(&mut bare, &p, page);
@@ -367,7 +375,7 @@ fn a_greyed_blue_combo_on_a_page_rings_its_face_with_the_page() {
         let l = layout(
             &long,
             Rect::new(306, 308, w, COMBO_H),
-            &theme.look.controls(),
+            &theme.look.controls_at_100(),
         );
         let mut c = bare.clone();
         draw(

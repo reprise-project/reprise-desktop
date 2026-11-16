@@ -155,7 +155,7 @@ impl DialogLayout {
     /// first ([`Dialog::fit`]).
     pub fn compute(theme: &Theme, text: &TextRenderer, d: &Dialog) -> DialogLayout {
         DialogLayout {
-            controls: theme.look.controls().grown(theme.text),
+            controls: theme.look.controls_at_100().grown(theme.text),
             ..Self::compute_body(theme, text, d)
         }
     }
@@ -293,7 +293,7 @@ impl DialogLayout {
         }
         .framed(theme, d.help);
         if let (Some(fl), Some(box_r)) = (&d.field, body.field) {
-            let cl = combo::layout(&fl.combo, box_r, &theme.look.controls().grown(u));
+            let cl = combo::layout(&fl.combo, box_r, &theme.look.controls_at_100().grown(u));
             body.drop = Some(cl.drop);
             body.list = Some(cl.list);
         }

@@ -38,7 +38,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
         c.fill_rect(client, theme.colors.window);
     }
     let mut hot = bar();
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let lay = hot.layout(text, px, hot_client, &cm);
     let f = lay.frames[2];
     hot.hover(f.x + 3, f.y + 3, &lay);

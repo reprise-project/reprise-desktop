@@ -156,7 +156,7 @@ fn the_volume_ticks_fall_every_tenth_position() {
 fn the_volume_thumb_takes_the_looks_width() {
     let m = Mixer::new(&lines(), false);
     let blue = theme_for(Interface::Blue);
-    let thumb = blue.look.controls().vtrack_thumb;
+    let thumb = blue.look.controls_at_100().vtrack_thumb;
     let (w, h) = m.size(TextUnits::ONE);
     let l = lay_in(&m, &blue, Rect::new(0, 0, w, h));
     let v = &col(&l, 0).volume;

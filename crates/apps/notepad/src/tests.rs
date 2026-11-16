@@ -735,7 +735,7 @@ fn the_text_boxs_scrollbar_lights_under_the_pointer_and_a_leave_clears_it() {
     let mut ctx = test_ctx();
     ctx.theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
     let mut np = Notepad::new(None);
-    np.metrics.follow_look(&ctx.theme.look.controls());
+    np.metrics.follow_look(&ctx.theme.look.controls_at_100());
     np.edit = MultiEdit::new(&"line\n".repeat(200));
     let sb = np
         .edit_layout(&ctx)

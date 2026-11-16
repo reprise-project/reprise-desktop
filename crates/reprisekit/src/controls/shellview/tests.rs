@@ -1173,7 +1173,7 @@ fn render_shellview() {
 fn a_blue_details_view_lights_its_bar_part() {
     use crate::classic::widgets::{Axis, ScrollHit};
     let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let (text, px) = rend();
     let mut sv = view(80);
     sv.mode = Mode::Details;
@@ -1204,7 +1204,7 @@ fn a_blue_details_view_lights_its_bar_part() {
 #[test]
 fn silvers_view_takes_its_list_line_in_every_mode() {
     let theme = crate::interfaces::blue_theme(crate::blue::Variant::Silver);
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let silver = crate::blue::Variant::Silver.scheme();
     let list = silver.list_border.as_ref().unwrap().normal.rim.argb();
     let (text, px) = rend();

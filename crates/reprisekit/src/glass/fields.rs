@@ -608,7 +608,7 @@ mod tests {
         let theme = theme_for(Interface::Glass);
         let m = ClipHistory::new(Vec::new());
         let c = cliphistory::draw(&theme, &text, &m, false, None);
-        let f = cliphistory::layout(&m, &theme.look.controls()).field;
+        let f = cliphistory::layout(&m, &theme.look.controls_at_100()).field;
         let at = crate::flyout::margin(&theme);
         pin(
             &c,
@@ -851,7 +851,7 @@ mod tests {
         let mut cb = Combo::new(&["(None)", "Blank"], 0, 8);
         cb.open = open.then_some(0);
         cb.icon = icon;
-        let lay = combo::layout(&cb, Rect::new(2, 2, 201, 23), &theme.look.controls());
+        let lay = combo::layout(&cb, Rect::new(2, 2, 201, 23), &theme.look.controls_at_100());
         let mut c = face(206, 28);
         combo::draw(
             &mut c,
@@ -910,7 +910,7 @@ mod tests {
             icon: icon(),
             ..Combo::new(&["x"], 0, 4)
         };
-        let lay = combo::layout(&cb, Rect::new(2, 2, 201, 23), &theme.look.controls());
+        let lay = combo::layout(&cb, Rect::new(2, 2, 201, 23), &theme.look.controls_at_100());
         let ir = lay.icon.expect("an icon rect");
         let (plain, focused) = (
             focused_list_with(false, false, icon()),
@@ -1303,7 +1303,7 @@ mod tests {
         let p = crate::look::Paint { s, ..theme.paint() };
         let mut cb = Combo::new(&["Show", "Hide", "Only"], 0, 8);
         cb.toggle();
-        let lay = combo::layout(&cb, Rect::new(2, 2, 279, 23), &theme.look.controls());
+        let lay = combo::layout(&cb, Rect::new(2, 2, 279, 23), &theme.look.controls_at_100());
         let mut c = Canvas::new(300 * s as u32, 80 * s as u32);
         c.fill_rect(c.bounds(), Color::rgb(0xFF, 0xFF, 0xFF));
         let text = crate::text::TextRenderer::load(&theme.fonts);
@@ -1384,7 +1384,7 @@ mod tests {
         let r = Rect::new(2, 2, 140, 21);
         let draw = |cb: &Combo| {
             let mut c = face(146, 25);
-            let lay = combo::layout(cb, r, &theme.look.controls());
+            let lay = combo::layout(cb, r, &theme.look.controls_at_100());
             let text = crate::text::TextRenderer::load(&theme.fonts);
             combo::draw(
                 &mut c,
@@ -1459,7 +1459,7 @@ mod tests {
     fn combo_layout_puts_the_drop_rect_where_the_tests_draw_it() {
         let theme = theme_for(Interface::Glass);
         let cb = Combo::new(&["a"], 0, 4);
-        let lay = combo::layout(&cb, Rect::new(2, 2, 140, 21), &theme.look.controls());
+        let lay = combo::layout(&cb, Rect::new(2, 2, 140, 21), &theme.look.controls_at_100());
         assert_eq!(lay.drop, Rect::new(124, 4, 16, 17), "the drop rect");
     }
 

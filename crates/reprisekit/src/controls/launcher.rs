@@ -591,7 +591,7 @@ pub fn layout(l: &Launcher, theme: &Theme) -> Layout {
 
 /// The look's control sizes at the theme's text size, as the list box lays its rows out.
 fn controls(theme: &Theme) -> crate::controls::metrics::ControlMetrics {
-    theme.look.controls().grown(theme.text)
+    theme.look.controls_at_100().grown(theme.text)
 }
 
 /// The 32 px icon on its grown centre.

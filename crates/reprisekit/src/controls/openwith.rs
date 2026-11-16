@@ -1103,7 +1103,7 @@ mod tests {
     fn a_blue_always_label_starts_16_px_in() {
         let o = OpenWith::new("a.txt", Vec::new(), Vec::new());
         let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
-        let l = o.layout(&text(), 11, (0, 0), &blue.look.controls());
+        let l = o.layout(&text(), 11, (0, 0), &blue.look.controls_at_100());
         assert_eq!(l.check, Rect::new(27, 299, 13, 13));
         assert_eq!(l.check_label.x, 27 + 16);
         assert_eq!(o.hit(&l, 27 + 16, 305), Some(Hit::Always));
@@ -1213,7 +1213,12 @@ mod tests {
             on: true,
             enabled: false,
         };
-        let l = o.layout(&t, theme.fonts.size_px, (0, 0), &theme.look.controls());
+        let l = o.layout(
+            &t,
+            theme.fonts.size_px,
+            (0, 0),
+            &theme.look.controls_at_100(),
+        );
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
         o.draw(
             &mut c,
@@ -1280,7 +1285,12 @@ mod tests {
         let cs = &theme.colors;
         let t = text();
         let mut o = sample();
-        let l = o.layout(&t, theme.fonts.size_px, (0, 0), &theme.look.controls());
+        let l = o.layout(
+            &t,
+            theme.fonts.size_px,
+            (0, 0),
+            &theme.look.controls_at_100(),
+        );
         let shot = |o: &OpenWith| {
             let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
             o.draw(
@@ -1311,7 +1321,12 @@ mod tests {
     fn shot(o: &OpenWith, active: bool, cues: Cues) -> (Canvas, Layout) {
         let theme = Theme::default();
         let t = text();
-        let l = o.layout(&t, theme.fonts.size_px, (0, 0), &theme.look.controls());
+        let l = o.layout(
+            &t,
+            theme.fonts.size_px,
+            (0, 0),
+            &theme.look.controls_at_100(),
+        );
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
         let p = Paint {
             active,
@@ -1428,7 +1443,12 @@ mod tests {
         let cs = &theme.colors;
         let t = text();
         let o = sample();
-        let l = o.layout(&t, theme.fonts.size_px, (0, 0), &theme.look.controls());
+        let l = o.layout(
+            &t,
+            theme.fonts.size_px,
+            (0, 0),
+            &theme.look.controls_at_100(),
+        );
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
         o.draw(
             &mut c,
@@ -1450,7 +1470,12 @@ mod tests {
         let cs = &theme.colors;
         let t = text();
         let o = sample();
-        let l = o.layout(&t, theme.fonts.size_px, (0, 0), &theme.look.controls());
+        let l = o.layout(
+            &t,
+            theme.fonts.size_px,
+            (0, 0),
+            &theme.look.controls_at_100(),
+        );
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
         o.draw(
             &mut c,
