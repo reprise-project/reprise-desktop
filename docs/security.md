@@ -1424,7 +1424,9 @@ What a consent prompt remembers, and where:
   Settings. So an allowed app's later binds, which add shortcuts without
   asking, can't take keys from the window you type in. An app keeps at most
   64 shortcuts, each id and description at most 256 bytes with no control
-  characters.
+  characters. A denied app
+  opens no session, and one app holds at most 4 sessions of the compositor's
+  16, so it can't leave other apps none.
 - **Access** (camera, background): answers go to xdg-desktop-portal's
   permission store.
 - **Location:** Reprise's geoclue agent keeps its own answers.
