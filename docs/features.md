@@ -234,7 +234,9 @@ are.
 - **A Turn Off dialog** that dims the desktop behind it. Shutting down used
   to have a little gravity. Hold Shift and Stand By turns into Hibernate.
 - **Save prompts.** Log Off, Turn Off and Restart ask every window to close
-  and wait, then list who's holding things up, with End Now and Cancel.
+  and wait, then list who's holding things up, with End Now and Cancel. A
+  program holding off log off through the Inhibit portal (a copy under way)
+  keeps its windows until it lets go.
 - **Session restore.** The programs you left open start again at the next
   login, on their desktops, with their tab and snap groups (`[session] restore`).
 - **XDG autostart,** with a Startup page in Reprise Settings to turn entries

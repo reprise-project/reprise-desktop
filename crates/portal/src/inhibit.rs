@@ -3,8 +3,8 @@
 //!
 //! Idle shares one `org.freedesktop.ScreenSaver` cookie, taken for the first inhibition and given
 //! back after the last; Suspend holds a logind `sleep` block descriptor; Logout goes into the list
-//! `org.reprise.SessionEnd` gives the compositor. A call that cannot hold what it asked for fails
-//! and holds nothing.
+//! `org.reprise.SessionEnd` gives the compositor, with the app's process. A call that cannot hold
+//! what it asked for fails and holds nothing.
 
 use reprisebus::desklock::RETRY;
 use std::collections::HashMap;
@@ -38,7 +38,8 @@ struct Held {
     owner: String,
     idle: bool,
     sleep: Option<OwnedFd>,
-    logout: Option<(String, String)>,
+    /// App id, reason and the app's pid (0 when the bus can't say).
+    logout: Option<(String, String, u32)>,
 }
 
 /// A message to the idle task, which owns the cookie.
@@ -110,9 +111,9 @@ impl Inhibits {
         drop(held.sleep);
     }
 
-    fn logout_holders(&self) -> Vec<(String, String)> {
+    fn logout_holders(&self) -> Vec<(String, String, u32)> {
         let held = self.held.lock().unwrap();
-        let mut v: Vec<(&String, &(String, String))> = held
+        let mut v: Vec<(&String, &(String, String, u32))> = held
             .iter()
             .filter_map(|(k, h)| Some((k, h.logout.as_ref()?)))
             .collect();
@@ -251,9 +252,13 @@ impl Inhibit {
             log::info!("Inhibit: User Switch is not held");
         }
         let owner = crate::sender(&hdr);
+        let logout = match flags & FLAG_LOGOUT {
+            0 => None,
+            _ => Some((app_id.clone(), reason.clone(), app_pid(conn, &handle).await)),
+        };
         let mut held = Held {
             owner: owner.clone(),
-            logout: (flags & FLAG_LOGOUT != 0).then(|| (app_id.clone(), reason.clone())),
+            logout,
             ..Held::default()
         };
         if flags & FLAG_SUSPEND != 0 {
@@ -382,14 +387,14 @@ pub struct SessionEnd {
 
 #[zbus::interface(name = "org.reprise.SessionEnd")]
 impl SessionEnd {
-    /// The logout inhibitors held now, as (app id, reason). The monitors move to query-end when
-    /// `ending` starts and back to running when it is called off.
+    /// The logout inhibitors held now, as (app id, reason, pid). The monitors move to query-end
+    /// when `ending` starts and back to running when it is called off.
     async fn query(
         &self,
         ending: bool,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(connection)] conn: &zbus::Connection,
-    ) -> zbus::fdo::Result<Vec<(String, String)>> {
+    ) -> zbus::fdo::Result<Vec<(String, String, u32)>> {
         let sender = hdr.sender().map_or("", |s| s.as_str());
         if !reprisebus::peer::is_process(conn, sender, self.compositor)
             .await
@@ -556,6 +561,26 @@ async fn follow_hint(
             None => read_locked(system, &session).await,
         };
         set(hint).await;
+    }
+}
+
+/// The unique name of the app a request `handle` was made for: the frontend names a request
+/// `/org/freedesktop/portal/desktop/request/SENDER/TOKEN`, SENDER the app's unique name without
+/// its colon and with `_` for each dot.
+fn request_sender(handle: &str) -> Option<String> {
+    let sender = handle
+        .strip_prefix(crate::REQUEST_PREFIX)?
+        .split('/')
+        .next()?;
+    let unique = !sender.is_empty() && sender.bytes().all(|b| b.is_ascii_digit() || b == b'_');
+    unique.then(|| format!(":{}", sender.replace('_', ".")))
+}
+
+/// The pid of the app whose request `handle` is, 0 when the bus can't say.
+async fn app_pid(conn: &zbus::Connection, handle: &ObjectPath<'_>) -> u32 {
+    match request_sender(handle.as_str()) {
+        Some(app) => reprisebus::peer::pid(conn, &app).await.unwrap_or(0),
+        None => 0,
     }
 }
 
@@ -765,7 +790,7 @@ mod tests {
     fn logout_holders_list_only_logout_inhibitions() {
         let (shared, _rx) = shared();
         let held = |logout: Option<(&str, &str)>| Held {
-            logout: logout.map(|(a, r)| (a.to_string(), r.to_string())),
+            logout: logout.map(|(a, r)| (a.to_string(), r.to_string(), 7)),
             ..Held::default()
         };
         {
@@ -780,9 +805,27 @@ mod tests {
         assert_eq!(
             shared.logout_holders(),
             [
-                (String::new(), "Burning a disc".to_string()),
-                ("org.gnome.TextEditor".to_string(), "Unsaved".to_string()),
+                (String::new(), "Burning a disc".to_string(), 7),
+                ("org.gnome.TextEditor".to_string(), "Unsaved".to_string(), 7),
             ]
+        );
+    }
+
+    #[test]
+    fn a_requests_app_is_the_unique_name_its_handle_names() {
+        let sender = |h: &str| request_sender(h);
+        assert_eq!(
+            sender("/org/freedesktop/portal/desktop/request/1_234/reprise_0").as_deref(),
+            Some(":1.234")
+        );
+        assert_eq!(
+            sender("/org/freedesktop/portal/desktop/request/x_1/t"),
+            None
+        );
+        assert_eq!(sender("/org/freedesktop/portal/desktop/request//t"), None);
+        assert_eq!(
+            sender("/org/freedesktop/portal/desktop/session/1_2/t"),
+            None
         );
     }
 
@@ -1345,6 +1388,82 @@ mod tests {
                     zbus::fdo::Error::AccessDenied(_)
                 ),
                 "only the compositor's process may query the session end"
+            );
+        });
+    }
+
+    #[test]
+    fn a_logout_inhibitor_is_listed_with_the_process_of_the_app_its_request_names() {
+        let Some(bus) = bus() else {
+            return;
+        };
+        zbus::block_on(async {
+            let (shared, _rx) = super::shared();
+            let client = connect(&bus).await;
+            let frontend = crate::Frontend::default();
+            frontend.set(client.unique_name().map(|n| n.to_string()));
+            let portal = zbus::connection::Builder::address(bus.1.as_str())
+                .serve_at(
+                    crate::PATH,
+                    Inhibit {
+                        shared: shared.clone(),
+                        frontend: frontend.clone(),
+                    },
+                )
+                .serve_at(
+                    crate::PATH,
+                    SessionEnd {
+                        shared: shared.clone(),
+                        compositor: std::process::id(),
+                    },
+                )
+                .build()
+                .await
+                .unwrap();
+            let _ = frontend.conn.set(portal.clone());
+            let app = connect(&bus).await;
+            let sender = app
+                .unique_name()
+                .unwrap()
+                .trim_start_matches(':')
+                .replace('.', "_");
+            let request = format!("/org/freedesktop/portal/desktop/request/{sender}/t");
+            let options = HashMap::from([("reason", Variant::from("Copying files"))]);
+            let to = portal.unique_name().map(|n| n.as_str());
+            client
+                .call_method(
+                    to,
+                    crate::PATH,
+                    Some("org.freedesktop.impl.portal.Inhibit"),
+                    "Inhibit",
+                    &(
+                        ObjectPath::try_from(request.as_str()).unwrap(),
+                        "reprise-explorer",
+                        "",
+                        FLAG_LOGOUT,
+                        options,
+                    ),
+                )
+                .await
+                .unwrap();
+            let held: Vec<(String, String, u32)> = connect(&bus)
+                .await
+                .call_method(
+                    to,
+                    crate::PATH,
+                    Some("org.reprise.SessionEnd"),
+                    "Query",
+                    &(false,),
+                )
+                .await
+                .unwrap()
+                .body()
+                .deserialize()
+                .unwrap();
+            let explorer = ("reprise-explorer", "Copying files", std::process::id());
+            assert_eq!(
+                held,
+                [(explorer.0.to_string(), explorer.1.to_string(), explorer.2)]
             );
         });
     }

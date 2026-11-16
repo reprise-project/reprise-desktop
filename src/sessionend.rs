@@ -1,6 +1,7 @@
 //! Ending the session: Log Off, Turn Off and Restart close programs first so nothing unsaved is lost without a word.
-//! `begin` asks every window to close, then the session ends once no window, inhibitor, recording or desktop file job holds it; after `PROMPT_AFTER`
-//! the session-end prompt lists what is left. A critical battery kills the remainder after `PROMPT_AFTER` without a prompt.
+//! `begin` asks every window to close, then the session ends once no window, inhibitor or recording holds it; after `PROMPT_AFTER`
+//! the session-end prompt lists what is left. A program holding off log off through the Inhibit portal isn't asked until it lets go:
+//! closing its window could stop the work it holds for, as closing a copy's progress dialog cancels the copy. A critical battery kills the remainder after `PROMPT_AFTER` without a prompt.
 //! Turn Off and Restart ask logind first, and a refusal before or after the programs close shows a message box;
 //! one that needs a password runs before the fade, so polkit's prompt shows over the desktop.
 //! Stand By and Hibernate close nothing; a refusal shows the same message box.
@@ -39,6 +40,8 @@ pub struct Holder {
     pub who: String,
     pub why: String,
     pub shutdown_only: bool,
+    /// The holder's process, when the portal could tell.
+    pub pid: Option<i32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,6 +62,8 @@ pub struct Ending {
     reports: Option<RegistrationToken>,
     mode: Mode,
     password: Password,
+    /// The windows open when the end began that are not asked to close yet ([`ask_windows`]).
+    unasked: Vec<WindowId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,6 +175,7 @@ fn start(
                 && let Some(e) = state.ending.as_mut()
             {
                 e.holders = Some(h);
+                ask_windows(state);
             }
         })
         .map_err(|e| log::warn!("session end: no report channel: {}", e.error))
@@ -189,6 +195,16 @@ fn start(
         })
         .map_err(|e| log::warn!("session end: no timer: {}", e.error))
         .ok();
+    // The compositor's own dialogs (Run, a hide question) go first.
+    // The windows are asked once the end is under way, so a program
+    // already known to hang gets no End Program of its own.
+    state.close_all_dialogs();
+    let unasked: Vec<WindowId> = state
+        .windows
+        .iter()
+        .filter(|w| w.mapped && !w.override_redirect)
+        .map(|w| w.id)
+        .collect();
     state.ending = Some(Ending {
         goal,
         cmd,
@@ -200,20 +216,31 @@ fn start(
         reports,
         mode: Mode::new(critical),
         password,
+        unasked,
     });
-    // The compositor's own dialogs (Run, a hide question) go first.
-    // The windows are asked once the end is under way, so a program
-    // already known to hang gets no End Program of its own. A desktop
-    // file job is not asked: closing its progress dialog would cancel it.
-    state.close_all_dialogs();
-    let open: Vec<WindowId> = state
-        .windows
-        .iter()
-        .filter(|w| w.mapped && !w.override_redirect)
-        .map(|w| w.id)
-        .filter(|&w| !state.filejobs.holds(state.client_pid(w)))
+    ask_windows(state);
+}
+
+/// Ask the windows still unasked to close once the holders are known, all but those of a process
+/// holding off log off through the portal, which wait until it lets go.
+fn ask_windows(state: &mut State) {
+    let Some(e) = state.ending.as_mut() else {
+        return;
+    };
+    let Some(holders) = e.holders.as_ref() else {
+        return;
+    };
+    let held: Vec<i32> = (holders.iter())
+        .filter(|h| !h.shutdown_only)
+        .filter_map(|h| h.pid)
         .collect();
-    for w in open {
+    let unasked = std::mem::take(&mut e.unasked);
+    let (wait, ask): (Vec<WindowId>, Vec<WindowId>) = (unasked.into_iter())
+        .partition(|&w| state.client_pid(w).is_some_and(|pid| held.contains(&pid)));
+    if let Some(e) = state.ending.as_mut() {
+        e.unasked = wait;
+    }
+    for w in ask {
         state.close(w);
     }
 }
@@ -224,7 +251,7 @@ pub fn tick(state: &mut State) {
     };
     let programs = programs(state);
     let holders = e.holders.as_ref().map(|h| holding(h, e.goal));
-    let busy = crate::screenrecord::finishing(state) || state.files_under_way().is_some();
+    let busy = crate::screenrecord::finishing(state);
     if programs.is_empty() && !busy && holders.as_ref().is_some_and(Vec::is_empty) {
         log::info!("session end: every program closed");
         finish(state, false);
@@ -249,8 +276,7 @@ fn run_step(state: &mut State, step: Step) {
 /// `override_inhibitors`: End Now, after the prompt showed the inhibitors,
 /// or a critical battery, which takes the power anyway.
 fn end_now(state: &mut State, override_inhibitors: bool) {
-    let mut pids: Vec<i32> = programs(state).iter().filter_map(|p| p.pid).collect();
-    pids.extend(state.filejobs.pids());
+    let pids: Vec<i32> = programs(state).iter().filter_map(|p| p.pid).collect();
     for pid in pids {
         log::info!("session end: ending pid {pid}");
         state.end_process(pid);
@@ -848,13 +874,12 @@ fn drop_sources(state: &mut State, e: &mut Ending) {
     }
 }
 
-/// The programs whose windows are open; a desktop file job is the prompt's Files row instead.
+/// The programs whose windows are open.
 fn programs(state: &State) -> Vec<Program> {
     let open: Vec<Shown<WindowId>> = state
         .windows
         .iter()
         .filter(|w| w.mapped && !w.override_redirect)
-        .filter(|w| !state.filejobs.holds(state.client_pid(w.id)))
         .map(|w| Shown {
             id: w.id,
             pid: state.client_pid(w.id),
@@ -948,9 +973,12 @@ fn rows(programs: &[Program], holders: &[Holder], name_of: impl Fn(&str) -> Stri
         })
         .collect();
     for h in holders {
-        let window = programs
-            .iter()
-            .position(|p| !h.shutdown_only && !h.who.is_empty() && p.app_id == h.who);
+        let ours = |p: &Program| {
+            (h.pid.is_some() && p.pid == h.pid) || (!h.who.is_empty() && p.app_id == h.who)
+        };
+        let window = (!h.shutdown_only)
+            .then(|| programs.iter().position(ours))
+            .flatten();
         match window {
             Some(i) if rows[i].reason.is_empty() || rows[i].reason == h.why => {
                 rows[i].reason = h.why.clone();
@@ -1006,12 +1034,6 @@ fn sync_prompt(state: &mut State) {
         fields.rows.push(Row {
             name: "Screen recording".into(),
             reason: "Finishing the screen recording".into(),
-        });
-    }
-    if let Some(why) = state.files_under_way() {
-        fields.rows.push(Row {
-            name: "Files".into(),
-            reason: why.into(),
         });
     }
     match prompt_index(state) {
@@ -1171,14 +1193,15 @@ async fn portal_holders(conn: &zbus::Connection, ending: bool) -> Vec<Holder> {
             &(ending,),
         )
         .await
-        .and_then(|m| m.body().deserialize::<Vec<(String, String)>>());
+        .and_then(|m| m.body().deserialize::<Vec<(String, String, u32)>>());
     match reply {
         Ok(v) => v
             .into_iter()
-            .map(|(who, why)| Holder {
+            .map(|(who, why, pid)| Holder {
                 who,
                 why,
                 shutdown_only: false,
+                pid: i32::try_from(pid).ok().filter(|&p| p > 0),
             })
             .collect(),
         Err(e) => {
@@ -1223,6 +1246,7 @@ fn blocks(
             who,
             why,
             shutdown_only: true,
+            pid: None,
         })
         .collect()
 }
@@ -1245,6 +1269,7 @@ mod tests {
             reports: None,
             mode: Mode::Prompted,
             password: Password::No,
+            unasked: Vec::new(),
         });
         sync_prompt(&mut h.state);
         h
@@ -1305,6 +1330,7 @@ mod tests {
             who: who.into(),
             why: why.into(),
             shutdown_only,
+            pid: None,
         }
     }
 
@@ -1390,6 +1416,7 @@ mod tests {
             reports: None,
             mode: Mode::Prompted,
             password: Password::No,
+            unasked: Vec::new(),
         });
         tick(&mut h.state);
         assert!(h.state.ending.is_some(), "held");
@@ -1406,38 +1433,49 @@ mod tests {
     }
 
     #[test]
-    fn a_desktop_copy_under_way_holds_the_end_and_is_listed() {
-        use reprisefs::ops::DropOp;
+    fn a_window_whose_process_holds_off_log_off_is_asked_to_close_once_it_lets_go() {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
-        let job = crate::filejobs::FakeJob::start();
-        (h.state.filejobs).started(job.pid(), crate::filejobs::What::Put(DropOp::Copy));
+        let mut c = h.connect();
+        h.map_titled(&mut c, "reprise.explorer", "Copying...", (300, 200));
+        let w = h.state.windows[0].id;
+        let copying = Holder {
+            who: String::new(),
+            why: "Copying files".into(),
+            shutdown_only: false,
+            pid: h.state.client_pid(w),
+        };
         h.state.ending = Some(Ending {
             goal: Goal::LogOff,
             cmd: None,
-            holders: Some(Vec::new()),
+            holders: Some(vec![copying]),
             stop: None,
             asked_portal: false,
             timer: None,
             reports: None,
             mode: Mode::Prompted,
             password: Password::No,
+            unasked: vec![w],
         });
+        ask_windows(&mut h.state);
         tick(&mut h.state);
-        assert!(h.state.ending.is_some(), "held");
+        h.roundtrip(&mut c);
+        assert!(c.side.closes.is_empty(), "the copy's window stays open");
         let i = prompt_index(&h.state).expect("the prompt");
         let form = h.state.dialogs.views[i].dialog.end_session_form().unwrap();
         let row = Row {
-            name: "Files".into(),
+            name: "Copying...".into(),
             reason: "Copying files".into(),
         };
-        assert!(!endsession::set_rows(form, &[row]), "its one row");
-        drop(job);
-        tick(&mut h.state);
         assert!(
-            h.state.ending.is_none(),
-            "it ends once the copy's process has"
+            !endsession::set_rows(form, &[row]),
+            "one row for the window and its reason"
         );
+        h.state.ending.as_mut().unwrap().holders = Some(Vec::new());
+        ask_windows(&mut h.state);
+        ask_windows(&mut h.state);
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.closes, [0], "asked once, after the copy let go");
     }
 
     #[test]
@@ -1539,6 +1577,7 @@ mod tests {
             reports: None,
             mode: Mode::Waiting,
             password: Password::No,
+            unasked: Vec::new(),
         };
         let asked = ending(Goal::LogOff, None, true);
         assert!(

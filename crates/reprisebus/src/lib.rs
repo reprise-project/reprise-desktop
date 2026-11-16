@@ -19,7 +19,7 @@
 //! to turn off for a critical battery, and follows which windows stopped
 //! answering. [`polkit`] asks whether a password
 //! prompt was dismissed. [`launcher`] shows a program's progress on its
-//! task button. [`journal`] starts the logger with journal priorities.
+//! task button, and [`inhibit`] holds off log off while it works. [`journal`] starts the logger with journal priorities.
 //! [`units`] lists the programs the systemd user manager starts with the
 //! session, and [`remote`] reads the Remote Desktop server and turns its user
 //! unit on or off. Every module on the session bus shares a program's one
@@ -63,6 +63,7 @@ pub mod filemanager1;
 pub mod filetransfer;
 pub mod follow;
 pub mod fprint;
+pub mod inhibit;
 pub mod instance;
 pub mod journal;
 pub mod kdeconnect;
