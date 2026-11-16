@@ -4,7 +4,7 @@ use super::notifications::{
     CAPABILITIES, action_icons, as_sent_by, notification_icons, picture_file,
 };
 use super::watcher::{
-    Admission, MAX_REGISTRATIONS, MAX_REGISTRATIONS_PER_SENDER, admit, resolve_registration,
+    Admission, MAX_REGISTRATIONS, MAX_REGISTRATIONS_PER_APP, admit, resolve_registration,
 };
 use super::*;
 use crate::tray::{
@@ -997,19 +997,19 @@ fn a_registration_takes_a_path_a_bus_or_both() {
     assert_eq!(reg(""), None);
 }
 
-fn published(sender: &str, n: usize) -> Vec<Published> {
+fn published(app: &str, n: usize) -> Vec<Published> {
     (0..n)
         .map(|i| Published {
-            key: format!("{sender}/item{i}"),
-            sender: sender.to_string(),
+            key: format!("{app}/item{i}"),
+            app: app.to_string(),
         })
         .collect()
 }
 
 #[test]
-fn admit_caps_one_sender_and_lets_another_register() {
-    let mut items = published(":1.7", MAX_REGISTRATIONS_PER_SENDER);
-    assert_eq!(admit(&items, ":1.7/extra", ":1.7"), Admission::SenderFull);
+fn admit_caps_one_app_and_lets_another_register() {
+    let mut items = published(":1.7", MAX_REGISTRATIONS_PER_APP);
+    assert_eq!(admit(&items, ":1.7/extra", ":1.7"), Admission::AppFull);
     assert_eq!(admit(&items, ":1.7/item0", ":1.7"), Admission::Known);
     assert_eq!(admit(&items, ":1.8/item0", ":1.8"), Admission::New);
     items.retain(|p| p.key != ":1.7/item3");
@@ -1018,8 +1018,8 @@ fn admit_caps_one_sender_and_lets_another_register() {
 
 #[test]
 fn admit_caps_the_total_across_senders() {
-    let items: Vec<Published> = (0..MAX_REGISTRATIONS / MAX_REGISTRATIONS_PER_SENDER)
-        .flat_map(|i| published(&format!(":1.{i}"), MAX_REGISTRATIONS_PER_SENDER))
+    let items: Vec<Published> = (0..MAX_REGISTRATIONS / MAX_REGISTRATIONS_PER_APP)
+        .flat_map(|i| published(&format!(":1.{i}"), MAX_REGISTRATIONS_PER_APP))
         .collect();
     assert_eq!(items.len(), MAX_REGISTRATIONS);
     assert_eq!(admit(&items, ":1.99/item0", ":1.99"), Admission::TotalFull);
@@ -1338,6 +1338,7 @@ fn a_session_that_joined_another_watcher_hosts_its_own_once_it_takes_the_name_ba
         let watcher = Watcher {
             items: items.clone(),
             registrations,
+            identities: Arc::default(),
         };
         ours.object_server()
             .at(WATCHER_PATH, watcher)
@@ -1375,6 +1376,54 @@ fn a_session_that_joined_another_watcher_hosts_its_own_once_it_takes_the_name_ba
             .unwrap();
         assert_eq!(listed, [format!("{app_name}/StatusNotifierItem")]);
     });
+}
+
+#[test]
+fn a_sandboxed_app_registers_at_most_its_cap_across_connections() {
+    let Some(bus) = reprisebus::testbus::bus() else {
+        return;
+    };
+    let proc = flatpak_proc("sni-cap", "org.example.Filler");
+    let held = zbus::block_on(async {
+        let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
+        let ours = connect().await.unwrap();
+        let (registrations, _registered) = async_channel::unbounded();
+        let items: WatcherItems = Arc::default();
+        let watcher = Watcher {
+            items: items.clone(),
+            registrations,
+            identities: Arc::new(Identities::under(&proc)),
+        };
+        ours.object_server()
+            .at(WATCHER_PATH, watcher)
+            .await
+            .unwrap();
+        let host = ours.unique_name().unwrap().to_string();
+        let (first, second) = (connect().await.unwrap(), connect().await.unwrap());
+        let paths = (0..=MAX_REGISTRATIONS_PER_APP).map(|i| format!("/item{i}"));
+        for (i, path) in paths.enumerate() {
+            let app = if i < MAX_REGISTRATIONS_PER_APP / 2 {
+                &first
+            } else {
+                &second
+            };
+            let register = (path.as_str(),);
+            app.call_method(
+                Some(host.as_str()),
+                WATCHER_PATH,
+                Some(WATCHER_IFACE),
+                "RegisterStatusNotifierItem",
+                &register,
+            )
+            .await
+            .unwrap();
+        }
+        lock(&items).len()
+    });
+    assert_eq!(
+        held, MAX_REGISTRATIONS_PER_APP,
+        "the app's second connection shares its first one's cap"
+    );
 }
 
 /// A `proc` folder in which this process shows Flatpak's `/.flatpak-info` for `app_id`.

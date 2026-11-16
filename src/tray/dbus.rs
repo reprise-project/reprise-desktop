@@ -1133,6 +1133,7 @@ async fn setup(kept: &Kept, address: Option<&str>) -> Result<Loop, String> {
     let watcher = Watcher {
         items: published.clone(),
         registrations: reg_tx,
+        identities: identities.clone(),
     };
     conn.object_server()
         .at(WATCHER_PATH, watcher)
