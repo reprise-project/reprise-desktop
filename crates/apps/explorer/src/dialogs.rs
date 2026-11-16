@@ -57,9 +57,9 @@ pub struct Confirm {
     pub script: Option<(reprisefs::program::ScriptOpen, reprisefs::program::Asked)>,
     /// The question before mounting the disk image `paths[0]`: Mount mounts it.
     pub mount: bool,
-    /// An item of the job counting on this meter failed and the job holds for the answer:
-    /// Skip, Retry or Cancel ([`reprisefs::progress::Decision`]).
-    pub job: Option<std::sync::Arc<reprisefs::progress::Meter>>,
+    /// An item of a job failed and the job holds for the answer: Skip, Retry or Cancel
+    /// ([`reprisefs::progress::Decision`]).
+    pub job: Option<reprisefs::progress::Asked>,
 }
 
 /// The buttons of the box a failed item raises, in [`Explorer::ask_failed`]'s order.
@@ -444,22 +444,21 @@ impl Explorer {
         matches!(&self.dialog, Some(Dialog::Confirm(c)) if c.job.is_some())
     }
 
-    /// Ask what the job counting on `meter`, held on a failed item, does next: Skip goes on with
-    /// the rest, Retry runs the item again, Cancel ends the job. While another box is up it
-    /// waits for it (`failed_waiting`).
+    /// Ask what the job held on a failed item does next: Skip goes on with the rest, Retry runs
+    /// the item again, Cancel ends the job. While another box is up it waits for it
+    /// (`failed_waiting`).
     pub(crate) fn ask_failed(
         &mut self,
-        meter: std::sync::Arc<reprisefs::progress::Meter>,
+        asked: reprisefs::progress::Asked,
         title: &'static str,
         text: String,
         ctx: &mut Ctx,
     ) -> Reply {
         if self.closing {
-            meter.decide(reprisefs::progress::Decision::Abort);
             return Reply::none();
         }
         if self.dialog.is_some() {
-            self.failed_waiting.push_back((meter, title, text));
+            self.failed_waiting.push_back((asked, title, text));
             return Reply::none();
         }
         self.dialog = Some(Dialog::Confirm(Confirm {
@@ -477,7 +476,7 @@ impl Explorer {
             undo_erase: false,
             script: None,
             mount: false,
-            job: Some(meter),
+            job: Some(asked),
         }));
         Reply::redraw_all()
     }
@@ -499,7 +498,7 @@ impl Explorer {
             _ => return Reply::redraw(),
         };
         if let Some(Dialog::Confirm(Confirm { job: Some(m), .. })) = self.dialog.take() {
-            m.decide(decision);
+            m.answer(decision);
         }
         Reply {
             redraw_all: true,
@@ -893,12 +892,14 @@ impl Explorer {
             return self.connect_event(ev, ctx);
         }
         if matches!(ev, Event::CloseRequest) {
-            if matches!(self.dialog, Some(Dialog::Question { .. })) {
-                return self.question_answered(None, ctx);
+            if matches!(
+                self.dialog,
+                Some(Dialog::Browse(_) | Dialog::ChooseProgram(_) | Dialog::Unlock(_))
+            ) {
+                self.dialog = None;
+                return self.show_waiting(ctx);
             }
-            // The close box on a replace prompt is its Cancel.
-            self.dialog = None;
-            return self.show_waiting(ctx);
+            return self.dialog_outcome(form::Event::Cancel, ctx);
         }
         if self.dialog.is_none() {
             return Reply::none();
@@ -1183,8 +1184,8 @@ impl Explorer {
     /// batch's prompt first, then the error boxes, one at a time.
     pub(crate) fn show_waiting(&mut self, ctx: &mut Ctx) -> Reply {
         while self.dialog.is_none() && self.asking.is_none() {
-            if let Some((meter, title, text)) = self.failed_waiting.pop_front() {
-                self.ask_failed(meter, title, text, ctx);
+            if let Some((asked, title, text)) = self.failed_waiting.pop_front() {
+                self.ask_failed(asked, title, text, ctx);
             } else if let Some((pending, asker)) = self.replace_waiting.pop_front() {
                 self.ask_replace(pending, asker, ctx);
             } else if let Some((title, text)) = self.messages_waiting.pop_front() {

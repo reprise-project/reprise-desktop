@@ -171,7 +171,12 @@ impl Explorer {
         }
         if let Some(text) = ask.take_if(|_| !zipping) {
             let meter = ex.job.meter().clone();
-            return Some(self.ask_failed(meter, extract::FAILURE_TITLE, text, ctx));
+            return Some(self.ask_failed(
+                reprisefs::progress::Asked::new(meter),
+                extract::FAILURE_TITLE,
+                text,
+                ctx,
+            ));
         }
         let failed = ask.map(|text| (compress::FAILURE_TITLE, text));
         let boxed = (failed.clone()).map(|(title, text)| self.message_box(title, text, ctx));

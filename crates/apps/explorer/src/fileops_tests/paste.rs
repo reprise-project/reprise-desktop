@@ -220,6 +220,34 @@ fn skipping_a_failed_file_pastes_the_rest() {
     assert!(ex.dialog.is_none(), "and no error box follows");
 }
 
+/// The failure box's close box is its Cancel: the held paste ends at the failed file.
+#[test]
+fn closing_the_failure_box_ends_its_paste() {
+    let home = tempfile::tempdir().expect("a temp dir");
+    let (from, dir) = (home.path().join("from"), home.path().join("to"));
+    std::fs::create_dir_all(&from).expect("mkdir");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(from.join("b.txt"), "b").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
+
+    ex.run(Command::Paste, &mut ctx);
+    ex.pasted(
+        FileClip {
+            cut: false,
+            paths: vec![from.join("gone.txt"), from.join("b.txt")],
+        },
+        &mut ctx,
+    );
+    ex.finish_puts(&mut ctx);
+    assert!(ex.holds_a_job(), "the paste holds on the failure box");
+
+    ex.dialog_event(repriseapp::Event::CloseRequest, &mut ctx);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| !ex.busy());
+    assert!(ex.dialog.is_none(), "no box follows");
+    assert!(!dir.join("b.txt").exists(), "the paste ended at gone.txt");
+}
+
 #[test]
 fn a_file_pasted_onto_a_folders_name_lands_numbered() {
     let home = tempfile::tempdir().expect("a temp dir");
