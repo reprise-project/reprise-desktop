@@ -206,7 +206,9 @@ impl Setting {
             KbModel(m) => s.kb_model = m.clone(),
             KbOptions(o) => s.kb_options = o.clone(),
             LayoutPerWindow(b) => s.layout_per_window = *b,
-            RepeatRate(r) => s.repeat_rate = (*r).clamp(0, i32::MAX.into()),
+            RepeatRate(r) => {
+                s.repeat_rate = (*r).clamp(0, repriseconf::config::REPEAT_RATE_MAX.into())
+            }
             RepeatDelay(d) => s.repeat_delay = (*d).clamp(0, i32::MAX.into()),
             Speed(Device::Mouse, v) => s.mouse_speed = *v,
             Speed(Device::Touchpad, v) => s.touchpad_speed = *v,

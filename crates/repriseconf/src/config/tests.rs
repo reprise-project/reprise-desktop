@@ -931,16 +931,17 @@ fn desktop_icons_defaults_on_and_is_configurable() {
 }
 
 #[test]
-fn keyboard_repeat_rejects_negative() {
-    assert!(Config::parse("[keyboard]\nrepeat_rate = -1\n").is_err());
+fn keyboard_repeat_rate_is_0_to_255_and_delay_not_negative() {
+    let rate = |v: i64| Config::parse(&format!("[keyboard]\nrepeat_rate = {v}\n"));
+    assert_eq!(rate(0).unwrap().keyboard.repeat_rate, 0);
+    assert_eq!(rate(255).unwrap().keyboard.repeat_rate, 255);
+    for bad in [-1, 256, 2_000_000] {
+        assert_eq!(
+            rate(bad).unwrap_err(),
+            format!("keyboard.repeat_rate must be 0 (off) to 255, got {bad}")
+        );
+    }
     assert!(Config::parse("[keyboard]\nrepeat_delay = -1\n").is_err());
-    assert_eq!(
-        Config::parse("[keyboard]\nrepeat_rate = 0\n")
-            .unwrap()
-            .keyboard
-            .repeat_rate,
-        0
-    );
 }
 
 #[test]
@@ -1325,6 +1326,38 @@ fn a_restored_key_that_fails_against_the_new_file_takes_its_default_alone() {
         kept,
         [false, true],
         "night_light.from takes its default, terminal its running value"
+    );
+}
+
+#[test]
+fn a_colour_scheme_is_read_with_its_interface_and_dropped_alone() {
+    let read = |text: &str| Config::parse_lenient(text).unwrap();
+    let (c, dropped) = read("[appearance]\ninterface = \"blue\"\ncolor_scheme = \"Brick\"\n");
+    assert_eq!(c.interface, Interface::Blue, "the interface stays");
+    assert_eq!(c.blue_variant, reprisekit::blue::Variant::Blue);
+    assert_eq!(
+        dropped,
+        [(
+            "appearance.color_scheme".to_string(),
+            "[appearance] color_scheme = \"Brick\" is not a Blue scheme".to_string()
+        )]
+    );
+    let (c, dropped) = read("[appearance]\ninterface = \"blue\"\ncolor_scheme = \"Olive Green\"\n");
+    assert_eq!(c.blue_variant, reprisekit::blue::Variant::Olive);
+    assert_eq!(dropped, []);
+    let (c, dropped) = read("[appearance]\ninterface = \"Glass\"\ncolor_scheme = \"Brick\"\n");
+    assert_eq!(c.interface, Interface::Classic);
+    assert_eq!(
+        c.theme.colors,
+        reprisekit::schemes::scheme("Brick").unwrap()
+    );
+    assert_eq!(
+        dropped,
+        [(
+            "appearance.interface".to_string(),
+            "[appearance] interface = \"Glass\" is not classic, blue or glass".to_string()
+        )],
+        "a scheme beside a bad interface is read under Classic"
     );
 }
 

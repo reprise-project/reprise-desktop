@@ -1,3 +1,6 @@
+/// `[keyboard] repeat_rate`'s highest value, in keys a second.
+pub const REPEAT_RATE_MAX: i32 = 255;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyboardConfig {
     pub rules: String,
