@@ -74,6 +74,8 @@ Reprise program's `org.freedesktop.Application`, Explorer's
 call from a sandboxed program, as above, or one whose root can't be read, with
 AccessDenied. A strict snap's AppArmor profile keeps it off these names where
 the bus enforces AppArmor; without AppArmor nothing else does.
+A Reprise program started while a sandboxed program owns its name hands it
+nothing, its activation token included, and runs on its own.
 
 `[clipboard] trusted_apps` gives the two data control globals back to the
 Flatpak apps it names, by the app id Flatpak put on the security context,
