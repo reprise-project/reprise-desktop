@@ -119,7 +119,7 @@ pub struct Backend {
     devices: DeviceSet<Device>,
     render_formats: Vec<DrmFormat>,
     replies: Sender<(Head, commit::Reply<Out>)>,
-    device_replies: Sender<(DrmNode, commit::Reply<Vec<crtc::Handle>>)>,
+    device_replies: Sender<(DrmNode, commit::Reply<()>)>,
     /// Disabled outputs whose threads still hold their compositors.
     retiring: HashMap<Head, std::thread::JoinHandle<()>>,
     /// Heads refused while retiring or not quiet, enabled again once quiet (`on_quiet`).
@@ -179,8 +179,6 @@ struct Surface {
     flight: Option<InFlight>,
     /// The flipped frame's feedback, presented at its vblank.
     presenting: Option<OutputPresentationFeedback>,
-    /// When the last frame that took went to the kernel.
-    lit_at: Option<std::time::Instant>,
     /// Commit timings since the last frame-rate log line.
     commit_times: Vec<commit::Times>,
     needs_redraw: bool,
@@ -318,7 +316,7 @@ impl commit::Frames for Compositor {
 
 /// The thread that turns the whole device off after a session return, and main's view of it.
 struct DeviceThread {
-    thread: commit::Thread<Vec<reset::Keep>>,
+    thread: commit::Thread<()>,
     track: commit::Track<Flip>,
 }
 
@@ -531,7 +529,7 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
             ChannelEvent::Closed => {}
         })
         .map_err(|e| e.error)?;
-    let (device_replies, device_done) = channel::<(DrmNode, commit::Reply<Vec<crtc::Handle>>)>();
+    let (device_replies, device_done) = channel::<(DrmNode, commit::Reply<()>)>();
     state
         .handle
         .insert_source(device_done, |event, _, state| {
@@ -641,7 +639,7 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
 fn reset_thread(
     drm: &DrmDevice,
     node: DrmNode,
-    replies: Sender<(DrmNode, commit::Reply<Vec<crtc::Handle>>)>,
+    replies: Sender<(DrmNode, commit::Reply<()>)>,
 ) -> std::io::Result<DeviceThread> {
     let reset = reset::Device {
         fd: drm.device_fd().clone(),

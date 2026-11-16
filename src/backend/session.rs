@@ -7,19 +7,15 @@ use smithay::{
         libinput::LibinputInputBackend,
         session::Session,
     },
-    reexports::{
-        calloop::timer::{TimeoutAction, Timer},
-        drm::control::crtc,
-    },
+    reexports::calloop::timer::{TimeoutAction, Timer},
 };
 
 use crate::compositor::State;
 
 use super::gamma::{flush_gamma, read_lut};
-use super::outputs::power_off;
 use super::render::render_waiting;
 use super::steps::{gated, on_quiet, watch};
-use super::{Ask, Backend, Head, commit, inputfds, is_master, lock, reset, schedule_all};
+use super::{Ask, Backend, Head, commit, inputfds, is_master, lock, schedule_all};
 
 pub fn on_input(state: &mut State, mut event: InputEvent<LibinputInputBackend>) {
     match &mut event {
@@ -150,7 +146,7 @@ pub(super) fn input_back(state: &mut State) {
 }
 
 /// Once the session is back, quiet and no commit is out: read back each of `node`'s CRTCs'
-/// gamma, then send the device reset (`reset::plan`) to its `commit-device` thread;
+/// gamma, then send the device reset to its `commit-device` thread;
 /// `device_reset_done` finishes the outputs. Another master may have left a CRTC lit on a
 /// connector one of ours now claims, which fails every later commit.
 pub(super) fn reset_device(state: &mut State, node: DrmNode) {
@@ -166,7 +162,6 @@ pub(super) fn reset_device(state: &mut State, node: DrmNode) {
     let Some(d) = b.devices.get_mut(node) else {
         return;
     };
-    let mut keep = Vec::new();
     for (&head, s) in b.surfaces.iter_mut().filter(|(h, _)| h.node == node) {
         // Another DRM master may have left its own LUT.
         if let Some(g) = s.hw.gamma {
@@ -176,13 +171,6 @@ pub(super) fn reset_device(state: &mut State, node: DrmNode) {
                 s.hw.wanted_lut = ours;
             }
         }
-        if !s.hw.off && s.lit_at.is_some_and(|t| d.back.after_return(t)) {
-            keep.push(reset::Keep {
-                crtc: head.crtc,
-                connector: s.connector.handle(),
-                primary: lock(&s.compositor).surface().plane(),
-            });
-        }
     }
     d.back.sent();
     d.reset
@@ -191,7 +179,7 @@ pub(super) fn reset_device(state: &mut State, node: DrmNode) {
     if !d
         .reset
         .thread
-        .send(commit::Job::Run(commit::Kind::Reset, keep))
+        .send(commit::Job::Run(commit::Kind::Reset, ()))
     {
         log::error!("the device reset thread is gone; resetting on the main thread");
         d.reset.track.unsent();
@@ -207,11 +195,7 @@ pub(super) fn reset_device(state: &mut State, node: DrmNode) {
 /// `node`'s reset commit returned: unless the session went away or came back again
 /// meanwhile, re-read each of its outputs' state, zero its buffers' ages and drop the frame
 /// whose vblank `Track::reset` forgot, then let the outputs render.
-pub(super) fn device_reset_done(
-    state: &mut State,
-    node: DrmNode,
-    done: commit::Done<Vec<crtc::Handle>>,
-) {
+pub(super) fn device_reset_done(state: &mut State, node: DrmNode, done: commit::Done<()>) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
@@ -224,22 +208,11 @@ pub(super) fn device_reset_done(
         .done(done.result.is_ok(), std::time::Instant::now());
     let took = done.ended.saturating_duration_since(done.started);
     match &done.result {
-        Ok(kept) => log::debug!("device reset in {took:?}, left lit {kept:?}"),
+        Ok(()) => log::debug!("device reset in {took:?}"),
         Err(e) => log::warn!("drm reset: {e}"),
     }
     if d.back.done(active) {
         finish_reset(state, node);
-        for crtc in done.result.unwrap_or_default() {
-            let head = Head { node, crtc };
-            let off = state
-                .backend
-                .as_ref()
-                .and_then(|b| b.surfaces.get(&head))
-                .is_some_and(|s| s.hw.off);
-            if off {
-                power_off(state, head);
-            }
-        }
     }
     on_quiet(state);
 }
