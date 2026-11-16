@@ -501,8 +501,18 @@ impl State {
             false => fade_for,
         };
         if let Some(old) = self.wallpaper.take() {
-            self.end_fade(old.fading);
-            next.fading = old.nodes.into_iter().map(|(_, n)| n.buffer).collect();
+            let nodes: Vec<BufferId> = old.nodes.into_iter().map(|(_, n)| n.buffer).collect();
+            // A picture waits unseen over the one before until its fade starts, so the one
+            // before stays; a fade cut short leaves its picture whole.
+            let (keep, gone) = match old.fading.is_empty() || old.fade.is_some() {
+                true => (nodes, old.fading),
+                false => (old.fading, nodes),
+            };
+            for &b in &keep {
+                self.scene.set_opacity(b, 1.0);
+            }
+            self.end_fade(gone);
+            next.fading = keep;
         }
         self.wallpaper = Some(next);
         self.refit_wallpaper();
@@ -1202,6 +1212,51 @@ mod tests {
             w.builtin.as_ref().is_some_and(|(_, d)| d.any().is_some()),
             "the last desktop's picture is drawn though the ones before were skipped"
         );
+    }
+
+    fn settle(h: &mut crate::harness::Harness) {
+        for _ in 0..200 {
+            if h.state.wallpaper_ready(&h.state.scene.outputs()[0].clone()) {
+                break;
+            }
+            h.run_for(10);
+        }
+    }
+
+    fn shown_buffer(h: &crate::harness::Harness) -> BufferId {
+        h.state.wallpaper.as_ref().unwrap().nodes[0].1.buffer
+    }
+
+    #[test]
+    fn a_second_switch_before_the_next_picture_is_ready_keeps_the_one_on_screen() {
+        let mut h = three_desktops();
+        settle(&mut h);
+        let first = shown_buffer(&h);
+        h.state.switch_desktop(1);
+        h.state.switch_desktop(2);
+        let w = h.state.wallpaper.as_ref().unwrap();
+        assert_eq!(w.fading, vec![first], "desktop 1's picture stays under");
+        assert!(h.state.scene.enabled(first));
+        assert_eq!(h.state.scene.opacity(first), Some(1.0));
+    }
+
+    #[test]
+    fn a_switch_mid_fade_fades_from_the_incoming_picture_at_full_opacity() {
+        let mut h = three_desktops();
+        settle(&mut h);
+        h.state.switch_desktop(1);
+        for _ in 0..200 {
+            if h.state.wallpaper.as_ref().unwrap().fade.is_some() {
+                break;
+            }
+            h.run_for(5);
+        }
+        assert!(h.state.wallpaper.as_ref().unwrap().fade.is_some());
+        let second = shown_buffer(&h);
+        h.state.switch_desktop(2);
+        let w = h.state.wallpaper.as_ref().unwrap();
+        assert_eq!(w.fading, vec![second], "desktop 2's picture stays under");
+        assert_eq!(h.state.scene.opacity(second), Some(1.0));
     }
 
     #[test]
