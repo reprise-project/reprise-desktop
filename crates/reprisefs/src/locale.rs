@@ -1,4 +1,6 @@
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
+
+use reprisekit::tr;
 use std::sync::OnceLock;
 
 /// Broken-down local time of `secs` (thread-safe `localtime_r`).
@@ -36,9 +38,13 @@ pub fn mktime(y: i32, mo: i32, d: i32, h: i32, mi: i32, s: i32) -> i64 {
 /// locale is, so every program names days and months in the same
 /// language. The C locale's names when the environment's does not load.
 pub fn strftime(tm: &libc::tm, fmt: &CStr) -> String {
+    strftime_in(env_locale(), tm, fmt)
+}
+
+fn env_locale() -> Option<&'static TimeLocale> {
     static ENV: OnceLock<Option<TimeLocale>> = OnceLock::new();
-    let env = ENV.get_or_init(|| TimeLocale::load(c"").or_else(|| TimeLocale::load(c"C")));
-    strftime_in(env.as_ref(), tm, fmt)
+    ENV.get_or_init(|| TimeLocale::load(c"").or_else(|| TimeLocale::load(c"C")))
+        .as_ref()
 }
 
 /// The LC_TIME locale's own date ("11/14/2026" in en_US, "14.11.2026" in de_DE): its `%x`, in [`strftime`].
@@ -46,14 +52,84 @@ pub fn short_date(tm: &libc::tm) -> String {
     strftime(tm, SHORT_DATE)
 }
 
-/// The weekday, then [`short_date`] ("Saturday, 14.11.2026"). glibc has no long date in the
-/// locale's order, and `%B %d` would put the month first in every one.
+/// The weekday and the date with the month named, in the order [`short_date`] writes day, month
+/// and year ("Saturday, November 14, 2026" in en_US, "Samstag 14 November 2026" in de_DE).
 pub fn long_date(tm: &libc::tm) -> String {
-    strftime(tm, LONG_DATE)
+    long_date_in(env_locale(), tm)
+}
+
+/// [`long_date`]'s strftime pattern, which holds `%A` for the weekday.
+pub fn long_date_format() -> String {
+    static FORMAT: OnceLock<String> = OnceLock::new();
+    FORMAT.get_or_init(|| long_format_in(env_locale())).clone()
 }
 
 const SHORT_DATE: &CStr = c"%x";
-const LONG_DATE: &CStr = c"%A, %x";
+
+fn long_date_in(loc: Option<&TimeLocale>, tm: &libc::tm) -> String {
+    let fmt = CString::new(long_format_in(loc)).unwrap_or_default();
+    strftime_in(loc, tm, &fmt)
+}
+
+fn long_format_in(loc: Option<&TimeLocale>) -> String {
+    // SAFETY: `loc` is a live locale object; `nl_langinfo_l` returns null or a NUL-terminated
+    // string that stays valid while it lives, and it is copied out before `loc` can go.
+    let d_fmt = unsafe {
+        let p = match loc {
+            Some(l) => libc::nl_langinfo_l(libc::D_FMT, l.0),
+            None => std::ptr::null(),
+        };
+        (!p.is_null()).then(|| CStr::from_ptr(p).to_string_lossy().into_owned())
+    };
+    long_format_for(d_fmt.as_deref().unwrap_or("%D"))
+}
+
+/// The long date's strftime pattern for a locale whose short date is `d_fmt` (its `D_FMT`).
+/// glibc has no long date, so this is reprisefs's `long-date` for the order `d_fmt` puts day,
+/// month and year in.
+pub(crate) fn long_format_for(d_fmt: &str) -> String {
+    long_pattern(date_order(d_fmt.as_bytes()))
+}
+
+fn long_pattern(order: &str) -> String {
+    tr!("long-date", order = order)
+}
+
+/// "dmy" or "ymd" when the strftime format `fmt` writes day, month and year in that order, else
+/// "mdy".
+fn date_order(fmt: &[u8]) -> &'static str {
+    let mut order = Vec::new();
+    let mut i = 0;
+    while i < fmt.len() {
+        if fmt[i] != b'%' {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        while i < fmt.len() && b"-_0^#EO".contains(&fmt[i]) {
+            i += 1;
+        }
+        let part: &[u8] = match fmt.get(i) {
+            Some(b'd' | b'e') => b"d",
+            Some(b'm' | b'b' | b'B' | b'h') => b"m",
+            Some(b'y' | b'Y') => b"y",
+            Some(b'D') => b"mdy",
+            Some(b'F') => b"ymd",
+            _ => b"",
+        };
+        for &c in part {
+            if !order.contains(&c) {
+                order.push(c);
+            }
+        }
+        i += 1;
+    }
+    match order.as_slice() {
+        b"dmy" => "dmy",
+        b"ymd" => "ymd",
+        _ => "mdy",
+    }
+}
 
 fn strftime_in(loc: Option<&TimeLocale>, tm: &libc::tm, fmt: &CStr) -> String {
     let mut buf = [0u8; 256];
@@ -209,19 +285,44 @@ mod tests {
         let tm = localtime(mktime(2026, 11, 14, 12, 0, 0));
         let c = TimeLocale::load(c"C").expect("the C locale");
         assert_eq!(strftime_in(Some(&c), &tm, SHORT_DATE), "11/14/26");
-        assert_eq!(strftime_in(Some(&c), &tm, LONG_DATE), "Saturday, 11/14/26");
+        assert_eq!(long_date_in(Some(&c), &tm), "Saturday, November 14, 2026");
+        if let Some(us) = TimeLocale::load(c"en_US.UTF-8") {
+            assert_eq!(long_date_in(Some(&us), &tm), "Saturday, November 14, 2026");
+        }
         if let Some(hu) = TimeLocale::load(c"hu_HU.UTF-8") {
             let short = strftime_in(Some(&hu), &tm, SHORT_DATE);
             assert!(short.starts_with("2026"), "the year first: {short}");
-            let long = strftime_in(Some(&hu), &tm, LONG_DATE);
-            assert_eq!(long, format!("szombat, {short}"));
+            assert_eq!(long_date_in(Some(&hu), &tm), format!("szombat, {short}"));
         }
         if let Some(de) = TimeLocale::load(c"de_DE.UTF-8") {
-            assert_eq!(
-                strftime_in(Some(&de), &tm, LONG_DATE),
-                "Samstag, 14.11.2026"
-            );
+            assert_eq!(long_date_in(Some(&de), &tm), "Samstag 14 November 2026");
         }
+    }
+
+    #[test]
+    fn a_short_dates_format_gives_the_order_of_day_month_and_year() {
+        assert_eq!(date_order(b"%m/%d/%y"), "mdy", "C");
+        assert_eq!(date_order(b"%D"), "mdy");
+        assert_eq!(date_order(b"%d/%m/%y"), "dmy", "en_GB");
+        assert_eq!(date_order(b"%d.%m.%Y"), "dmy", "de_DE");
+        assert_eq!(date_order(b"%-d.%-m.%Y"), "dmy");
+        assert_eq!(date_order(b"%e %b %Y"), "dmy");
+        assert_eq!(date_order(b"%Y. %m. %d."), "ymd", "hu_HU");
+        assert_eq!(date_order(b"%F"), "ymd");
+        assert_eq!(date_order("%Y年%m月%d日".as_bytes()), "ymd", "ja_JP");
+        assert_eq!(date_order(b"%Ey"), "mdy", "no day or month");
+        assert_eq!(date_order(b"%d/%Y/%m"), "mdy", "another order");
+    }
+
+    #[test]
+    fn the_long_date_names_the_month_in_the_short_dates_order() {
+        assert_eq!(long_pattern("mdy"), "%A, %B %-d, %Y");
+        assert_eq!(long_pattern("dmy"), "%A %-d %B %Y");
+        assert_eq!(
+            long_pattern("ymd"),
+            "%A, %x",
+            "a year-first locale keeps its short date"
+        );
     }
 
     #[test]

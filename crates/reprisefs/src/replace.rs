@@ -311,7 +311,7 @@ pub fn size_text(bytes: u64) -> String {
 }
 
 /// The date line under a file on the prompt, from its modified time in
-/// seconds since the epoch: "modified: Today, 09/28/2026,
+/// seconds since the epoch: "modified: Today, September 28, 2026,
 /// 9:41:07 AM".
 pub fn modified_text(secs: i64, is_12h: bool) -> String {
     format!("modified: {}", crate::props::format_time(secs, is_12h))

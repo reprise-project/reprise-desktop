@@ -1,10 +1,13 @@
 //! The file-system side of the shell, shared by the compositor (desktop icons, Send To, Properties, the
 //! launcher's file search) and Explorer. `std` plus `libc` for system calls `std` lacks, zbus for
 //! UDisks2, png and md5 for the thumbnail cache, and toml_edit for the Recycle Bin's settings in
-//! `config.toml`; nothing here knows about a display, a seat or the compositor.
+//! `config.toml`; nothing here knows about a display, a seat or the compositor. reprisekit's `tr!`
+//! reads the strings in `locale/en.ftl`.
 
 #[cfg(test)]
 reprisebus::test_session!();
+
+reprisekit::strings!("reprisefs");
 
 pub mod allocbudget;
 pub mod apps;
