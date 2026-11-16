@@ -24,6 +24,7 @@ use smithay_client_toolkit::data_device_manager::ReadPipe;
 use smithay_client_toolkit::reexports::calloop::EventLoop;
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::shell::xdg::window::{DecorationMode, WindowDecorations};
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
@@ -166,18 +167,32 @@ fn a_spawn_runs_in_its_folder_and_one_whose_folder_is_gone_still_runs() {
 }
 
 #[test]
-fn reply_merge_keeps_one_spawn_folder_only_when_both_ask_for_it() {
-    let spawn = |dir: &str| Reply {
-        spawn: vec![vec!["a".into()]],
+fn reply_merge_starts_each_spawn_in_the_folder_it_asked_for() {
+    let spawn = |argv: &str, dir: &str| Reply {
+        spawn: vec![vec![argv.into()]],
         spawn_dir: Some(dir.into()),
         ..Default::default()
     };
-    assert_eq!(spawn("/a").and(spawn("/a")).spawn_dir, Some("/a".into()));
+    let same = spawn("a", "/a").and(spawn("b", "/a"));
     assert_eq!(
-        spawn("/a").and(Reply::default()).spawn_dir,
+        same.spawn,
+        [vec![OsString::from("a")], vec![OsString::from("b")]]
+    );
+    assert_eq!(same.spawn_dir, Some("/a".into()));
+    assert_eq!(
+        spawn("a", "/a").and(Reply::default()).spawn_dir,
         Some("/a".into())
     );
-    assert_eq!(spawn("/a").and(spawn("/b")).spawn_dir, None);
+    let at = |argv: &str, dir: &str| (vec![OsString::from(argv)], Some(PathBuf::from(dir)));
+    let apart = spawn("a", "/a").and(spawn("b", "/b"));
+    assert!(apart.spawn.is_empty());
+    assert_eq!(apart.spawn_each, [at("a", "/a"), at("b", "/b")]);
+    let more = apart.and(spawn("c", "/c"));
+    assert_eq!(more.spawn_each, [at("a", "/a"), at("b", "/b")]);
+    assert_eq!(
+        (more.spawn, more.spawn_dir),
+        (vec![at("c", "/c").0], at("c", "/c").1)
+    );
 }
 
 struct Picker {

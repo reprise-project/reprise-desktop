@@ -300,6 +300,9 @@ impl Host {
             let argv = reprisefs::scope::in_scope(&argv, reply.spawn_app.as_deref());
             self.start(win, argv, reply.spawn_dir.clone());
         }
+        for (argv, dir) in reply.spawn_each {
+            self.start(win, argv, dir);
+        }
         if let Some(accept) = reply.drag_accept {
             self.drag_accept(win, accept);
         }
