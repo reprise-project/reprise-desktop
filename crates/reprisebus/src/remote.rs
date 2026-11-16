@@ -14,6 +14,16 @@ const SYSTEMD: &str = "org.freedesktop.systemd1";
 const SYSTEMD_PATH: &str = "/org/freedesktop/systemd1";
 const MANAGER: &str = "org.freedesktop.systemd1.Manager";
 const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
+/// [`Error::NoClient`]'s name.
+pub const NO_CLIENT: &str = "org.reprise.RemoteDesktop.Error.NoClient";
+
+/// The server's own error replies.
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "org.reprise.RemoteDesktop.Error")]
+pub enum Error {
+    /// `DisconnectClient` named an address no client is at.
+    NoClient(String),
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Status {
@@ -142,20 +152,25 @@ async fn power_ending_on(conn: &Connection) -> Result<(), String> {
     }
 }
 
-/// End the session of the client at `address`, as [`Client::address`] gives it.
+/// End the session of the client at `address`, as [`Client::address`] gives it; Ok too when the
+/// client left before the call came.
 pub fn disconnect_client(address: &str) -> Result<(), String> {
     let conn = session()?;
     let server = found("DisconnectClient", &conn)?;
-    told(
+    disconnected(crate::wait(conn.call_method(
+        Some(server.as_str()),
+        PATH,
+        Some(INTERFACE),
         "DisconnectClient",
-        crate::wait(conn.call_method(
-            Some(server.as_str()),
-            PATH,
-            Some(INTERFACE),
-            "DisconnectClient",
-            &(address,),
-        )),
-    )
+        &(address,),
+    )))
+}
+
+fn disconnected(reply: zbus::Result<zbus::Message>) -> Result<(), String> {
+    match reply {
+        Err(e) if crate::error::name(&e).is_some_and(|n| n == NO_CLIENT) => Ok(()),
+        reply => told("DisconnectClient", reply),
+    }
 }
 
 /// Replace the server's certificate with a new one.
@@ -357,6 +372,18 @@ mod tests {
         fn session_ending(&self) {
             self.0.store(true, std::sync::atomic::Ordering::SeqCst);
         }
+    }
+
+    #[test]
+    fn a_client_that_already_left_counts_as_disconnected() {
+        let gone = Error::NoClient("no client at 192.0.2.8:1".into());
+        assert_eq!(zbus::DBusError::name(&gone).as_str(), NO_CLIENT);
+        assert_eq!(
+            disconnected(Err(crate::error::reply(NO_CLIENT, "gone"))),
+            Ok(())
+        );
+        let e = crate::error::reply("org.freedesktop.DBus.Error.Failed", "the server is busy");
+        assert_eq!(disconnected(Err(e)), Err("the server is busy".into()));
     }
 
     #[test]

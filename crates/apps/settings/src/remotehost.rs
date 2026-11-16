@@ -77,9 +77,8 @@ fn act(act: Act) -> Reading {
             let to = if on { "turned on" } else { "turned off" };
             format!("Remote Desktop could not be {to}.\n\n{why}")
         }),
-        Act::Disconnect(address) => remote::disconnect_client(&address)
-            .err()
-            .and_then(disconnect_failed),
+        Act::Disconnect(address) => (remote::disconnect_client(&address).err())
+            .map(|why| format!("The remote computer could not be disconnected.\n\n{why}")),
         Act::NewCertificate => (remote::regenerate().err())
             .map(|why| format!("A new certificate could not be made.\n\n{why}")),
     };
@@ -90,12 +89,6 @@ fn act(act: Act) -> Reading {
         remote = read();
     }
     Reading { remote, failed }
-}
-
-/// What to tell when Disconnect failed; nothing when the client left before it was asked to.
-fn disconnect_failed(why: String) -> Option<String> {
-    (!why.contains("no client at"))
-        .then(|| format!("The remote computer could not be disconnected.\n\n{why}"))
 }
 
 impl SettingsApp {
@@ -218,24 +211,6 @@ impl SettingsApp {
             r.address.as_deref(),
             keep.as_deref(),
             machine,
-        );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::disconnect_failed;
-
-    #[test]
-    fn disconnecting_a_client_that_already_left_tells_nothing() {
-        assert_eq!(
-            disconnect_failed("no client at 192.168.1.30:51234".into()),
-            None
-        );
-        let told = disconnect_failed("the server does not answer".into());
-        assert_eq!(
-            told.as_deref(),
-            Some("The remote computer could not be disconnected.\n\nthe server does not answer")
         );
     }
 }
