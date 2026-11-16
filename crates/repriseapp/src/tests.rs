@@ -12,8 +12,8 @@ use crate::sizing::{
     regrown, sane_side,
 };
 use crate::windows::{
-    Placement, decoration_mode, decorations, flyout_wanted, main_wanted, output_containing,
-    placement, reconcile, reparent_to,
+    Placement, decoration_mode, decorations, flyout_wanted, main_wanted, modality,
+    output_containing, placement, reconcile, reparent_to,
 };
 use reprisefs::pipe::PasteBuf;
 use reprisekit::icontheme::{IconCache, IconTheme};
@@ -617,6 +617,14 @@ fn a_close_request_under_a_modal_child_is_dropped_and_one_on_the_child_arrives()
     let free = [(MAIN, false), (SHEET, false)];
     let modal = modal_over(SHEET, free.into_iter(), parent);
     assert!(!input_blocked(&close, modal, SHEET, false));
+}
+
+#[test]
+fn a_modal_child_asks_the_compositor_for_modality_and_a_plain_one_does_not() {
+    assert_eq!(modality(false, true), Some(true), "a new modal child");
+    assert_eq!(modality(false, false), None, "a new plain child");
+    assert_eq!(modality(true, true), None, "a kept modal child asks once");
+    assert_eq!(modality(true, false), Some(false), "a box turned plain");
 }
 
 #[test]

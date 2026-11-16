@@ -208,7 +208,7 @@ fn client_limits_keep_zero_max_unbounded_and_cap_at_32767() {
 }
 
 use super::draw::{client_glass_rects, client_holes};
-use super::owners::{modal_end, owner_chain_has, walk_owned};
+use super::owners::{owner_chain_has, walk_owned};
 use super::place::{grown_back_inside, retheme_back_inside, shrunk_origin};
 use super::*;
 use crate::raster::Rect;
@@ -248,24 +248,6 @@ fn a_huge_clients_full_blur_region_draws_glass_no_larger_than_the_layout() {
         vec![Rect::new(0, 0, 400, 78), Rect::new(390, 290, 10, 10)],
         "clipped to the client, the rect outside it dropped"
     );
-}
-
-#[test]
-fn modal_end_follows_the_chain_to_its_last_dialog() {
-    let modal = |w: u32| match w {
-        0 => Some(1),
-        1 => Some(2),
-        _ => None,
-    };
-    assert_eq!(modal_end(0, modal), 2);
-    assert_eq!(modal_end(1, modal), 2);
-    assert_eq!(modal_end(3, modal), 3);
-}
-
-#[test]
-fn modal_end_stops_on_a_parent_cycle() {
-    let modal = |w: u32| Some(if w == 2 { 1 } else { w + 1 });
-    assert_eq!(modal_end(0, modal), 2);
 }
 
 #[test]
@@ -1956,4 +1938,125 @@ fn an_x11_parent_reprise_does_not_manage_owns_nothing() {
     assert_eq!(h.state.owner_from(Some(leader)), None);
     let handle = h.state.win(main.id).unwrap().handle();
     assert_eq!(h.state.owner_from(Some(handle)), Some(main.id));
+}
+
+/// The windows in the windows layer, bottom first.
+fn stacking(h: &crate::harness::Harness) -> Vec<super::WindowId> {
+    let trees = h.state.scene.children(h.state.layers.windows);
+    let window = |t| h.state.windows.iter().find(|w| w.tree.node() == t);
+    trees
+        .iter()
+        .filter_map(|&t| window(t).map(|w| w.id))
+        .collect()
+}
+
+fn above(h: &crate::harness::Harness, a: super::WindowId, b: super::WindowId) -> bool {
+    let order = stacking(h);
+    let at = |w| order.iter().position(|&x| x == w).expect("stacked");
+    at(a) > at(b)
+}
+
+/// A press just inside `w`'s client area, clear of a dialog centred over it.
+fn click_in(h: &mut crate::harness::Harness, w: super::WindowId) {
+    let (x, y) = h.state.win(w).expect("the window").client_origin();
+    h.click(f64::from(x) + 4.0, f64::from(y) + 4.0);
+}
+
+fn task_button(h: &mut crate::harness::Harness, w: super::WindowId) {
+    let bar = &h.state.bars[0];
+    let i = (bar.slots.iter())
+        .position(|s| s.windows == [w])
+        .expect("the window's task button");
+    let tree = bar.tree;
+    h.state.task_button_click(tree, i, false);
+}
+
+fn alt_tab(h: &mut crate::harness::Harness) {
+    const ALT: u32 = 56;
+    const TAB: u32 = 15;
+    h.key(ALT, true);
+    h.key(TAB, true);
+    h.key(TAB, false);
+    h.key(ALT, false);
+}
+
+#[test]
+fn a_click_on_a_window_a_modal_box_covers_leaves_the_box_on_top_with_the_keyboard() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let folder = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let progress = h.map_dialog(&mut c, "test.app", Some(folder), "", (300, 200));
+    let failed = h.map_modal(&mut c, "test.app", folder, (120, 60));
+    assert_eq!(h.state.focused, Some(failed.id));
+    for (under, what) in [(progress, "its sibling"), (folder, "its parent")] {
+        click_in(&mut h, under.id);
+        assert_eq!(
+            h.state.focused,
+            Some(failed.id),
+            "a click on {what} leaves the box the keyboard"
+        );
+        assert!(above(&h, failed.id, under.id), "the box stays over {what}");
+    }
+}
+
+#[test]
+fn a_task_button_or_alt_tab_brings_a_family_up_with_its_modal_box_on_top() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let folder = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let sheet = h.map_dialog(&mut c, "test.app", Some(folder), "", (300, 200));
+    let advanced = h.map_modal(&mut c, "test.app", sheet, (120, 60));
+    let other = h.map_toplevel(&mut c, "test.other", 500, 400);
+    for (bring, how) in [
+        (
+            task_button as fn(&mut crate::harness::Harness, super::WindowId),
+            "task button",
+        ),
+        (|h, _| alt_tab(h), "Alt+Tab"),
+    ] {
+        h.state.focus_window(other.id);
+        bring(&mut h, folder.id);
+        assert_eq!(
+            h.state.focused,
+            Some(advanced.id),
+            "the folder's {how} gives the box the keyboard"
+        );
+        for w in [folder.id, sheet.id, other.id] {
+            assert!(above(&h, advanced.id, w), "{how}: the box is on top");
+        }
+        assert!(above(&h, folder.id, other.id), "{how}: the family comes up");
+    }
+}
+
+#[test]
+fn closing_a_modal_box_gives_the_keyboard_to_its_parent() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let folder = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let progress = h.map_dialog(&mut c, "test.app", Some(folder), "", (300, 200));
+    let failed = h.map_modal(&mut c, "test.app", folder, (120, 60));
+    let other = h.map_toplevel(&mut c, "test.other", 100, 80);
+    h.state.move_to(other.id, 900, 650);
+    h.state.focus_window(other.id);
+    click_in(&mut h, progress.id);
+    assert_eq!(h.state.focused, Some(failed.id));
+    c.destroy(failed);
+    h.roundtrip(&mut c);
+    assert_eq!(
+        h.state.focused,
+        Some(folder.id),
+        "a click on the box's sibling brought the family up, not the window behind it"
+    );
+    let sheet = h.map_dialog(&mut c, "test.app", Some(folder), "", (300, 200));
+    let advanced = h.map_modal(&mut c, "test.app", sheet, (120, 60));
+    h.state.focus_window(other.id);
+    task_button(&mut h, folder.id);
+    assert_eq!(h.state.focused, Some(advanced.id));
+    c.destroy(advanced);
+    h.roundtrip(&mut c);
+    assert_eq!(
+        h.state.focused,
+        Some(sheet.id),
+        "the sheet the box stood over, not the folder its task button named"
+    );
 }

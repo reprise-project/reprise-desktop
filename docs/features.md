@@ -98,7 +98,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **End Program.** Reprise pings windows, so closing one that stopped
   answering offers End Program at once.
 - **Modal dialogs that stay modal.** Focus can't land behind a dialog a
-  toolkit marked modal.
+  program marked modal, and no window of its family (its parent, the
+  parent's other dialogs) comes up over it.
 - **No focus stealing.** A new window opens behind the one you're typing in
   unless it has a reason to take the keyboard ([security.md](security.md#focus)).
 - **Motion.** Windows fade and grow as they open, menus fade or slide

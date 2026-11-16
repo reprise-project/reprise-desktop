@@ -12,7 +12,7 @@ use reprisekit::cues::Cues;
 use reprisekit::raster::{Canvas, Rect};
 use smithay_client_toolkit::reexports::protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_keyboard_shortcuts_inhibitor_v1;
 use smithay_client_toolkit::reexports::protocols::xdg::{
-    dialog::v1::client::xdg_dialog_v1,
+    dialog::v1::client::{xdg_dialog_v1, xdg_wm_dialog_v1},
     foreign::{zv1::client::zxdg_imported_v1, zv2::client::zxdg_imported_v2},
     shell::client::xdg_toplevel,
     toplevel_tag::v1::client::xdg_toplevel_tag_manager_v1,
@@ -179,6 +179,7 @@ impl Host {
             frame_pending: false,
             mapped: false,
             modal: false,
+            dialog: None,
             caption,
             access: access::SlotAccess::new(id, self.a11y_bus.then_some(&self.a11y)),
             glass: None,
@@ -411,6 +412,15 @@ impl Host {
                 window.set_max_size(Some((size.0 as u32, size.1 as u32)));
             }
             window.xdg_toplevel().set_parent(parent.as_ref());
+            let mut dialog = None;
+            send_modal(
+                self.wm_dialog.as_ref(),
+                &self.qh,
+                &mut dialog,
+                &window,
+                false,
+                c.modal,
+            );
             if wanted.is_none() {
                 self.join_tabs(&window, c.id);
             }
@@ -425,6 +435,7 @@ impl Host {
                 caption,
             );
             slot.modal = c.modal;
+            slot.dialog = dialog;
             slot.parent = parent_id;
             self.slots.push(slot);
         }
@@ -441,6 +452,16 @@ impl Host {
                 false => "",
             };
             if let Some(s) = self.slots.iter_mut().find(|s| s.id == c.id) {
+                if let Some(w) = s.window.toplevel() {
+                    send_modal(
+                        self.wm_dialog.as_ref(),
+                        &self.qh,
+                        &mut s.dialog,
+                        w,
+                        s.modal,
+                        c.modal,
+                    );
+                }
                 s.modal = c.modal;
                 if s.wanted != sane_size(c.size) {
                     s.wanted = sane_size(c.size);
@@ -665,6 +686,40 @@ impl Host {
         {
             w.move_(seat, self.press_serial);
         }
+    }
+}
+
+/// The xdg-dialog request that takes a child window from modal `was` to `modal`: `Some(true)` is
+/// `set_modal`, `Some(false)` `unset_modal`. A new window counts as not modal.
+pub(crate) fn modality(was: bool, modal: bool) -> Option<bool> {
+    (was != modal).then_some(modal)
+}
+
+/// Send child `window` its [`modality`] change, making its xdg-dialog object the first time it
+/// turns modal, so the compositor keeps the box over the windows the host gates.
+fn send_modal(
+    wm: Option<&xdg_wm_dialog_v1::XdgWmDialogV1>,
+    qh: &QueueHandle<Host>,
+    dialog: &mut Option<xdg_dialog_v1::XdgDialogV1>,
+    window: &Window,
+    was: bool,
+    modal: bool,
+) {
+    match modality(was, modal) {
+        Some(true) => {
+            if dialog.is_none() {
+                *dialog = wm.map(|wm| wm.get_xdg_dialog(window.xdg_toplevel(), qh, NoEvents));
+            }
+            if let Some(d) = dialog {
+                d.set_modal();
+            }
+        }
+        Some(false) => {
+            if let Some(d) = dialog {
+                d.unset_modal();
+            }
+        }
+        None => {}
     }
 }
 
