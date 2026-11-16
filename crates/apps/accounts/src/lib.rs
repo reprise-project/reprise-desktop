@@ -16,11 +16,12 @@ use std::rc::Rc;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
+use repriseapp::asks::{self, Asks};
 use repriseapp::filedlg::{Driven, Host};
 use repriseapp::keys::{dialog_key, form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, ErrorBox, MsgBox};
 use repriseapp::{
-    App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, PointerInput, Reply, WinId,
+    App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, MAIN, PointerInput, Reply, WinId,
 };
 use reprisekit::access::Tree;
 use reprisekit::controls::addfinger::{self, AddFinger};
@@ -42,11 +43,10 @@ use repriselogin::account::AccountRefusal;
 const PROPS: WinId = WinId::named("props");
 const ADD: WinId = WinId::named("add");
 const BROWSE: WinId = WinId::named("browse");
-const REMOVE: WinId = WinId::named("remove");
+const QUESTION: WinId = WinId::named("question");
 
 const RD_PASSWORD: WinId = WinId::named("rd_password");
 const ADD_FINGER: WinId = WinId::named("add_finger");
-const CLEAR_FINGERS: WinId = WinId::named("clear_fingers");
 
 const TITLE: &str = "User Accounts";
 const BUSY: &str = "Another change is still being made. Try again once it is done.";
@@ -69,6 +69,15 @@ enum After {
 
 type Answer = (Result<(), acct::Failure>, zbus::Result<Vec<User>>);
 
+/// What a question box asks about.
+#[derive(Debug, PartialEq, Eq)]
+enum Ask {
+    /// Delete Account? for this account, from the main window.
+    Remove(u32),
+    /// Delete All Fingerprints?, from the Properties sheet.
+    ClearFingers,
+}
+
 struct AccountsApp {
     users: users::Users,
     props: Option<props::Props>,
@@ -77,7 +86,7 @@ struct AccountsApp {
     add: Option<adduser::AddUser>,
     browse: Option<FileDlg>,
     browse_host: Host,
-    remove: Option<(u32, MsgBox)>,
+    asking: Asks<Ask>,
     error: ErrorBox,
     job: Option<(Receiver<Answer>, After)>,
     waker: Option<repriseapp::Waker>,
@@ -95,7 +104,6 @@ struct AccountsApp {
     fingers: fingers::Fingers,
     finger_sources: fingers::Sources,
     add_finger: Option<AddFinger>,
-    clear_fingers: Option<MsgBox>,
 }
 
 impl AccountsApp {
@@ -107,7 +115,7 @@ impl AccountsApp {
             add: None,
             browse: None,
             browse_host: Host::default(),
-            remove: None,
+            asking: Asks::new(QUESTION),
             error: ErrorBox::default(),
             job: None,
             waker: None,
@@ -122,7 +130,6 @@ impl AccountsApp {
             fingers: fingers::Fingers::default(),
             finger_sources: fingers::Sources::default(),
             add_finger: None,
-            clear_fingers: None,
         }
     }
 
@@ -293,7 +300,7 @@ impl AccountsApp {
             }
             fingerprints::Action::Delete(f) => self.delete_fingers(Some(f)),
             fingerprints::Action::DeleteAll => {
-                self.clear_fingers = Some(MsgBox::new(
+                let b = MsgBox::new(
                     "Delete All Fingerprints",
                     Fields {
                         text: "Delete all your fingerprints? You unlock with your password until \
@@ -306,7 +313,8 @@ impl AccountsApp {
                         min_w: 0,
                         max_w: repriseapp::dialog_max_w(),
                     },
-                ));
+                );
+                self.asking.ask(b, Ask::ClearFingers);
             }
         }
         Reply::redraw_all()
@@ -320,24 +328,6 @@ impl AccountsApp {
         let delete = self.finger_sources.delete;
         self.fingers.deleting = Some(self.spawn(move || delete(finger.map(|f| f.key()))));
         self.show_fingers();
-    }
-
-    fn clear_fingers_event(&mut self, ev: Event) -> Reply {
-        let text = self.text();
-        let Some(b) = &mut self.clear_fingers else {
-            return Reply::none();
-        };
-        match b.event(&ev, &text, &self.forms) {
-            oneshot::Outcome::None => Reply::none(),
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::Closed(button) => {
-                self.clear_fingers = None;
-                if button == Some(0) {
-                    self.delete_fingers(None);
-                }
-                Reply::redraw_all()
-            }
-        }
     }
 
     fn add_finger_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
@@ -550,6 +540,10 @@ impl AccountsApp {
             Ok(rows) => {
                 let pictures = self.row_pictures(&rows);
                 self.users.refresh(rows, pictures);
+                let rows = &self.users.rows;
+                self.asking.withdraw(
+                    |a| matches!(a, Ask::Remove(uid) if !rows.iter().any(|u| u.uid == *uid)),
+                );
             }
             Err(e) => {
                 log::error!("AccountsService does not answer: {e}");
@@ -563,13 +557,7 @@ impl AccountsApp {
             let uid = p.user.uid;
             let last = self.last_admin(uid);
             match self.user(uid).cloned() {
-                None => {
-                    self.props = None;
-                    self.browse = None;
-                    self.rd_password = None;
-                    self.close_add_finger();
-                    self.clear_fingers = None;
-                }
+                None => self.close_props(),
                 Some(u) => {
                     let p = self.props.as_mut().expect("checked above");
                     p.set_last_admin(last);
@@ -684,7 +672,16 @@ impl AccountsApp {
                 max_w: repriseapp::dialog_max_w(),
             },
         );
-        self.remove = Some((uid, b));
+        self.asking.ask(b, Ask::Remove(uid));
+    }
+
+    /// Close the Properties sheet and the dialogs and question raised from it.
+    fn close_props(&mut self) {
+        self.props = None;
+        self.browse = None;
+        self.rd_password = None;
+        self.close_add_finger();
+        self.asking.withdraw(|a| *a == Ask::ClearFingers);
     }
 
     fn main_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
@@ -844,11 +841,7 @@ impl AccountsApp {
             props::Outcome::RemotePassword(action) => self.open_rd_password(action),
             props::Outcome::Fingers(a) => self.fingers_action(a, ctx),
             props::Outcome::Close => {
-                self.props = None;
-                self.browse = None;
-                self.rd_password = None;
-                self.close_add_finger();
-                self.clear_fingers = None;
+                self.close_props();
                 Reply::redraw_all()
             }
         }
@@ -887,29 +880,27 @@ impl AccountsApp {
         }
     }
 
-    fn remove_event(&mut self, ev: Event) -> Reply {
+    fn question_event(&mut self, win: WinId, ev: Event) -> Reply {
         let text = self.text();
-        let Some((uid, b)) = &mut self.remove else {
-            return Reply::none();
+        let (ask, button) = match self.asking.event(win, &ev, &text, &self.forms) {
+            asks::Answer::None => return Reply::none(),
+            asks::Answer::Redraw => return Reply::redraw(),
+            asks::Answer::Closed(ask, button) => (ask, button),
         };
-        match b.event(&ev, &text, &self.forms) {
-            oneshot::Outcome::None => Reply::none(),
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::Closed(button) => {
-                let uid = *uid;
-                self.remove = None;
-                if let Some(b @ (0 | 1)) = button {
-                    let op = Op::Delete {
-                        uid,
-                        remove_files: b == 0,
-                    };
-                    if !self.run(vec![op], After::Remove) {
-                        self.fail(BUSY.into());
-                    }
+        match (ask, button) {
+            (Ask::Remove(uid), Some(b @ (0 | 1))) => {
+                let op = Op::Delete {
+                    uid,
+                    remove_files: b == 0,
+                };
+                if !self.run(vec![op], After::Remove) {
+                    self.fail(BUSY.into());
                 }
-                Reply::redraw_all()
             }
+            (Ask::ClearFingers, Some(0)) => self.delete_fingers(None),
+            _ => {}
         }
+        Reply::redraw_all()
     }
 
     fn error_event(&mut self, win: WinId, ev: Event) -> Reply {
@@ -1051,12 +1042,7 @@ impl App for AccountsApp {
             });
         }
         if let Some(text) = &self.text {
-            if let Some((_, b)) = &self.remove {
-                out.push(b.child(REMOVE, text, &self.forms));
-            }
-            if let Some(b) = &self.clear_fingers {
-                out.push(b.child(CLEAR_FINGERS, text, &self.forms));
-            }
+            out.extend(self.asking.child(text, &self.forms));
             out.extend(self.error.child(text, &self.forms));
         }
         out
@@ -1118,11 +1104,6 @@ impl App for AccountsApp {
                     form::draw(c, &ctx.text, &paint, &d.form, true, px);
                 }
             }
-            CLEAR_FINGERS => {
-                if let Some(b) = &self.clear_fingers {
-                    b.draw(c, &forms, &ctx.text);
-                }
-            }
             BROWSE => {
                 if let Some(d) = &self.browse {
                     d.draw(
@@ -1134,11 +1115,7 @@ impl App for AccountsApp {
                     );
                 }
             }
-            REMOVE => {
-                if let Some((_, b)) = &self.remove {
-                    b.draw(c, &forms, &ctx.text);
-                }
-            }
+            w if self.asking.owns(w) => self.asking.draw(c, &forms, &ctx.text),
             w if self.error.owns(w) => self.error.draw(c, &forms, &ctx.text),
             _ => self.users.draw(c, ctx, self.face.as_ref()),
         }
@@ -1148,6 +1125,19 @@ impl App for AccountsApp {
 impl repriseapp::Extended for AccountsApp {
     fn fixed(&self) -> bool {
         true
+    }
+
+    /// The dialogs and the question raised from the Properties sheet cover it.
+    fn parent(&self, win: WinId) -> Option<WinId> {
+        let from_sheet = match win {
+            RD_PASSWORD | ADD_FINGER | BROWSE => true,
+            w if self.asking.owns(w) => matches!(self.asking.up(), Some((_, Ask::ClearFingers))),
+            _ => false,
+        };
+        Some(match from_sheet && self.props.is_some() {
+            true => PROPS,
+            false => MAIN,
+        })
     }
 
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
@@ -1181,22 +1171,13 @@ impl repriseapp::Extended for AccountsApp {
                     oneshot::access_form(&d.form, tree, &ctx.text, px);
                 }
             }
-            CLEAR_FINGERS => {
-                if let Some(b) = &self.clear_fingers {
-                    b.access(tree, &ctx.text, &forms);
-                }
-            }
             BROWSE => {
                 if let Some(d) = &self.browse {
                     let r = Rect::new(0, 0, d.client().0, d.client().1);
                     d.access(tree, r, &ctx.text, px);
                 }
             }
-            REMOVE => {
-                if let Some((_, b)) = &self.remove {
-                    b.access(tree, &ctx.text, &forms);
-                }
-            }
+            w if self.asking.owns(w) => self.asking.access(tree, &ctx.text, &forms),
             w if self.error.owns(w) => self.error.access(tree, &ctx.text, &forms),
             _ => self.users.access(tree, ctx),
         }
@@ -1238,9 +1219,8 @@ impl AccountsApp {
             ADD => self.add_event(ev, ctx),
             RD_PASSWORD => self.rd_password_event(ev, ctx),
             ADD_FINGER => self.add_finger_event(ev, ctx),
-            CLEAR_FINGERS => self.clear_fingers_event(ev),
             BROWSE => self.browse_event(ev, ctx),
-            REMOVE => self.remove_event(ev),
+            w if self.asking.owns(w) => self.question_event(w, ev),
             w if self.error.owns(w) => self.error_event(w, ev),
             _ => self.main_event(ev, ctx),
         }
@@ -1359,7 +1339,7 @@ mod tests {
         app.users
             .refresh(vec![user(1000, "jo", true, true), al], vec![None, None]);
         app.ask_remove(1001, &mut test_ctx());
-        let text = app.remove.as_ref().map(|(_, b)| b.fields.text.clone());
+        let text = app.asking.up().map(|(b, _)| b.fields.text.clone());
         assert!(
             text.as_deref()
                 .is_some_and(|t| t.starts_with("Delete the account Jo Doe (mallory)?\n")),
@@ -1386,6 +1366,56 @@ mod tests {
     }
 
     #[test]
+    fn a_delete_question_about_an_account_that_leaves_the_list_is_withdrawn() {
+        let rows = vec![
+            user(1000, "jo", true, true),
+            user(1001, "al", false, false),
+            user(1002, "bo", false, false),
+        ];
+        let mut app = AccountsApp::new();
+        app.users.refresh(rows.clone(), vec![None, None, None]);
+        app.ask_remove(1001, &mut test_ctx());
+        app.ask_remove(1002, &mut test_ctx());
+        let (tx, rx) = channel();
+        let left = vec![rows[0].clone(), rows[2].clone()];
+        tx.send((Ok(()), Ok(left))).unwrap();
+        app.job = Some((rx, After::Read));
+        assert!(app.accounts_done());
+        assert_eq!(
+            app.asking.up().map(|(_, a)| a),
+            Some(&Ask::Remove(1002)),
+            "bo's question is up"
+        );
+        assert_eq!(app.asking.len(), 1, "al's question leaves with al");
+    }
+
+    #[test]
+    fn the_remote_desktop_password_box_names_the_sheet_as_its_parent() {
+        use repriseapp::Extended;
+        let mut app = with_reader();
+        app.open_props(1000);
+        app.open_rd_password(remotepassword::Action::Create);
+        assert_eq!(app.parent(RD_PASSWORD), Some(PROPS));
+        app.open_browse(app.forms.text);
+        assert_eq!(app.parent(BROWSE), Some(PROPS), "Browse covers the sheet");
+        app.fingers_done();
+        app.fingers_action(fingerprints::Action::Add, &mut test_ctx());
+        assert_eq!(app.parent(ADD_FINGER), Some(PROPS));
+        app.fingers_action(fingerprints::Action::DeleteAll, &mut test_ctx());
+        let question = app.asking.win().expect("Delete All is up");
+        assert_eq!(
+            app.parent(question),
+            Some(PROPS),
+            "Delete All covers the sheet"
+        );
+        app.close_props();
+        assert!(app.asking.is_empty(), "Delete All leaves with the sheet");
+        app.ask_remove(1001, &mut test_ctx());
+        let question = app.asking.win().expect("Delete Account is up");
+        assert_eq!(app.parent(question), Some(MAIN));
+    }
+
+    #[test]
     fn remove_greys_until_the_change_under_way_lands() {
         let rows = vec![user(1000, "jo", true, true), user(1001, "al", false, false)];
         let mut app = AccountsApp::new();
@@ -1409,7 +1439,7 @@ mod tests {
         app.users
             .refresh(vec![user(1000, "jo", true, true), al], vec![None, None]);
         app.ask_remove(1001, &mut test_ctx());
-        assert!(app.remove.is_none(), "no Delete question");
+        assert!(app.asking.is_empty(), "no Delete question");
         assert_eq!(
             error_text(&app).as_deref(),
             Some("Al Bo (al) is logged on. Delete the account once they have logged off.")
