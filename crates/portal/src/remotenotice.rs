@@ -2,7 +2,8 @@
 //! asked; its button ends the session and deletes the grant from xdg-desktop-portal's store.
 
 use crate::{SessionData, Sessions};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use zbus::{OwnedVariant, Variant};
 
@@ -29,17 +30,68 @@ struct Book {
     shown: HashMap<u32, (String, HashSet<String>)>,
     /// Apps whose grant was forgotten. A token the frontend holds only in memory (persist mode 1)
     /// never reached the store, so it restores nothing until the dialog is allowed with Remember.
-    forgotten: HashSet<String>,
+    forgotten: BTreeSet<String>,
+    /// Where `forgotten` outlives the portal, one app id a line; None keeps it in memory only.
+    file: Option<PathBuf>,
 }
 
+/// Serializes the writes of `forgotten`, so the last one written holds the newest set.
+static WRITE: Mutex<()> = Mutex::new(());
+
 impl Notices {
+    /// The notices, keeping the forgotten apps in `$XDG_STATE_HOME/reprise-portal`: a portal
+    /// restarted while the frontend still holds an in-memory token must not restore it unasked.
+    pub(crate) fn kept() -> Notices {
+        let file = reprisexdg::state_home()
+            .unwrap_or_default()
+            .join("reprise-portal/remote-forgotten");
+        Notices::kept_in(file)
+    }
+
+    fn kept_in(file: PathBuf) -> Notices {
+        let forgotten = std::fs::read_to_string(&file)
+            .map(|t| {
+                t.lines()
+                    .filter(|l| !l.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        Notices(Arc::new(Mutex::new(Book {
+            forgotten,
+            file: Some(file),
+            ..Book::default()
+        })))
+    }
+
+    /// Write the forgotten apps out, in the blocking pool.
+    fn save(&self) -> blocking::Task<()> {
+        let book = self.0.clone();
+        blocking::unblock(move || {
+            let _turn = reprisebus::mutex::lock(&WRITE);
+            let (file, text) = {
+                let b = book.lock().unwrap();
+                let lines: String = b.forgotten.iter().map(|a| format!("{a}\n")).collect();
+                (b.file.clone(), lines)
+            };
+            let Some(file) = file else { return };
+            let written = (file.parent().map_or(Ok(()), std::fs::create_dir_all))
+                .and_then(|()| reprisefs::ops::write_atomic(&file, text.as_bytes()));
+            if let Err(e) = written {
+                log::warn!("RemoteDesktop: {}: {e}", file.display());
+            }
+        })
+    }
+
     pub(crate) fn forgotten(&self, app_id: &str) -> bool {
         self.0.lock().unwrap().forgotten.contains(app_id)
     }
 
     /// The dialog allowed `app_id` with Remember: its new token restores again.
     pub(crate) fn remembered(&self, app_id: &str) {
-        self.0.lock().unwrap().forgotten.remove(app_id);
+        if self.0.lock().unwrap().forgotten.remove(app_id) {
+            self.save().detach();
+        }
     }
 
     /// Tell the user that `app_id`'s session `key` started from a remembered grant, in the
@@ -108,6 +160,8 @@ impl Notices {
         let mut book = self.0.lock().unwrap();
         let (app_id, _) = book.shown.remove(&server_id)?;
         book.forgotten.insert(app_id.clone());
+        drop(book);
+        self.save().detach();
         Some(app_id)
     }
 }
@@ -241,5 +295,28 @@ pub(crate) async fn watch(conn: zbus::Connection, sessions: Sessions, notices: N
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_forgotten_app_stays_forgotten_across_a_restart_until_remembered() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("reprise-portal/remote-forgotten");
+        let app = "org.example.Desk";
+        let n = Notices::kept_in(file.clone());
+        let shown = (app.to_string(), HashSet::new());
+        n.0.lock().unwrap().shown.insert(41, shown);
+        assert_eq!(n.forget(41).as_deref(), Some(app));
+        zbus::block_on(n.save());
+        let restarted = Notices::kept_in(file.clone());
+        assert!(restarted.forgotten(app));
+        assert!(!restarted.forgotten("org.example.Other"));
+        restarted.remembered(app);
+        zbus::block_on(restarted.save());
+        assert!(!Notices::kept_in(file).forgotten(app));
     }
 }

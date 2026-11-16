@@ -1,16 +1,40 @@
 //! `org.freedesktop.impl.portal.Email`: an app's message opened, unsent, in the default mail
-//! program. With none, or one that fails to start, the call fails and a balloon says why.
+//! program. With none, or one that fails to start, the call fails and a balloon says why, at
+//! most once a minute per app.
 
 use reprisefs::apps::{AppEntry, ExecRefused};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use zbus::{ObjectPath, Variant};
 
 const MAILTO: &str = "x-scheme-handler/mailto";
 
+/// The least time between two of one app's balloons: a sandboxed app may call as often as it likes.
+const BALLOON_GAP: Duration = Duration::from_secs(60);
+
 pub struct Email {
     pub frontend: crate::Frontend,
+    pub balloons: Balloons,
+}
+
+/// When each app last got a balloon.
+#[derive(Default)]
+pub struct Balloons(Mutex<HashMap<String, Instant>>);
+
+impl Balloons {
+    /// Whether `app` may have a balloon at `now`, taking it as shown when so.
+    fn due(&self, app: &str, now: Instant) -> bool {
+        let mut last = self.0.lock().unwrap();
+        last.retain(|_, at| now.duration_since(*at) < BALLOON_GAP);
+        if last.contains_key(app) {
+            return false;
+        }
+        last.insert(app.to_string(), now);
+        true
+    }
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Email")]
@@ -38,6 +62,9 @@ impl Email {
             Err(failure) => {
                 let said = failure.to_string();
                 log::warn!("ComposeEmail for {app_id:?}: {said}");
+                if !self.balloons.due(&app_id, Instant::now()) {
+                    return Err(zbus::fdo::Error::Failed(said));
+                }
                 blocking::unblock(move || {
                     let who = crate::permit::who(&crate::remotedesktop::display_name(&id));
                     let (summary, body) = failure.balloon(&who);
@@ -358,6 +385,16 @@ fn xdg_email_argv(m: &Mail) -> Vec<OsString> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_app_gets_one_balloon_a_minute() {
+        let b = Balloons::default();
+        let t = Instant::now();
+        assert!(b.due("org.example.App", t));
+        assert!(!b.due("org.example.App", t + Duration::from_secs(59)));
+        assert!(b.due("org.example.Other", t + Duration::from_secs(59)));
+        assert!(b.due("org.example.App", t + BALLOON_GAP));
+    }
 
     fn options<'a>(pairs: &[(&str, Variant<'a>)]) -> HashMap<String, Variant<'a>> {
         (pairs.iter())
