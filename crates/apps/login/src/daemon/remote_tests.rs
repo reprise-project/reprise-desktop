@@ -114,7 +114,7 @@ fn looked_up(conn: u64, user: &str) -> Vec<Effect> {
     effects.push(Effect::LookUp {
         key: LookUpKey::Conn(conn),
         user: user.into(),
-        group: "reprise-remote".into(),
+        groups: vec!["reprise-remote".into()],
     });
     effects
 }
@@ -123,7 +123,7 @@ fn link_look_up(uid: u32, user: &str) -> Effect {
     Effect::LookUp {
         key: LookUpKey::Link(uid),
         user: user.into(),
-        group: "reprise-remote".into(),
+        groups: vec!["reprise-remote".into()],
     }
 }
 

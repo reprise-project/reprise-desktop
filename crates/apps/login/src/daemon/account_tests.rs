@@ -76,7 +76,7 @@ fn looked_up(link: u64, user: &str) -> Vec<Effect> {
     vec![Effect::LookUp {
         key: LookUpKey::Account(link),
         user: user.into(),
-        group: "reprise-remote".into(),
+        groups: vec!["reprise-remote".into()],
     }]
 }
 
@@ -370,7 +370,7 @@ fn a_set_password_reaches_the_front_once_a_look_up_after_its_check_finds_the_use
             generation: 2,
         },
         user: "anna".into(),
-        group: "reprise-remote".into(),
+        groups: vec!["reprise-remote".into()],
     });
     assert_eq!(run.quiet(Input::Stored { ok: true }), done);
     let found = Input::Member {

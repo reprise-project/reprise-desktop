@@ -103,7 +103,7 @@ impl Daemon {
             out.push(Effect::LookUp {
                 key: LookUpKey::Account(link),
                 user: user.clone(),
-                group: self.config.remote.group.clone(),
+                groups: vec![self.config.remote.group.clone()],
             });
         }
         let change = Change {
@@ -131,7 +131,7 @@ impl Daemon {
             out.push(Effect::LookUp {
                 key: LookUpKey::Account(link),
                 user: user.clone(),
-                group: self.config.remote.group.clone(),
+                groups: vec![self.config.remote.group.clone()],
             });
             self.remote.accounts.statuses.insert(link, (uid, user));
             return;

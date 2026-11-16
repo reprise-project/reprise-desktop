@@ -619,7 +619,7 @@ fn a_login_for_the_conn_of_one_given_up_takes_its_place_and_timers() {
         [Effect::LookUp {
             key: LookUpKey::Conn(7),
             user: "anna".into(),
-            group: "reprise-remote".into(),
+            groups: vec!["reprise-remote".into()],
         }]
     );
     assert_eq!(
@@ -664,7 +664,7 @@ fn a_login_taking_the_place_of_one_given_up_within_its_refuse_delay_is_denied_on
         [Effect::LookUp {
             key: LookUpKey::Conn(7),
             user: "anna".into(),
-            group: "reprise-remote".into(),
+            groups: vec!["reprise-remote".into()],
         }]
     );
     assert_eq!(

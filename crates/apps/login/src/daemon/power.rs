@@ -13,8 +13,8 @@ use super::{
 use crate::table::Route;
 use crate::worker::{AUTH_FAILED, Mode};
 
-/// The group whose members are administrators.
-pub const ADMIN_GROUP: &str = "wheel";
+/// The groups whose members are administrators: `wheel` on Arch, `sudo` on Ubuntu.
+pub const ADMIN_GROUPS: [&str; 2] = ["wheel", "sudo"];
 /// A refused check hears its error this long after its last answer, whatever refused it.
 pub const ADMIN_REFUSE_DELAY: Duration = REFUSE_DELAY;
 
@@ -34,7 +34,7 @@ impl Daemon {
         self.converse(now, Mode::Check, user, Route::Start, purpose, out);
     }
 
-    /// PAM passed the account: anyone but root is looked up in `ADMIN_GROUP`.
+    /// PAM passed the account: anyone but root is looked up in `ADMIN_GROUPS`.
     pub(super) fn admin_authenticated(
         &mut self,
         now: Instant,
@@ -57,7 +57,7 @@ impl Daemon {
         out.push(Effect::LookUp {
             key: LookUpKey::Admin(worker),
             user,
-            group: ADMIN_GROUP.into(),
+            groups: ADMIN_GROUPS.map(String::from).into(),
         });
     }
 

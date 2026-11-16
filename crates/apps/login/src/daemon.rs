@@ -26,7 +26,7 @@ mod power;
 mod remote;
 mod switching;
 
-pub use power::{ADMIN_GROUP, ADMIN_REFUSE_DELAY};
+pub use power::{ADMIN_GROUPS, ADMIN_REFUSE_DELAY};
 pub use remote::{
     FrontUnit, GONE_CHECK, HANDOVER_DEADLINE, Inhibit, LookUpKey, MAX_LOGINS, MAX_REMOTE_CHECKS,
     REFUSE_DELAY, StoredPassword,
@@ -239,11 +239,12 @@ pub enum Effect {
     Disallocate(u16),
     Log(log::Level, String),
     ToFront(FrontEvent),
-    /// Looks up `user`'s uid and whether it is a member of `group`, answered by `Input::Member`.
+    /// Looks up `user`'s uid and whether it is a member of any of `groups`, answered by
+    /// `Input::Member`.
     LookUp {
         key: LookUpKey,
         user: String,
-        group: String,
+        groups: Vec<String>,
     },
     /// Opens the link to `uid`'s hand-over socket, answered by `IntakeOpen` once its server
     /// reports, or `IntakeLost`.

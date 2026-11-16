@@ -20,7 +20,7 @@ fn listed_look_up(p: &StoredPassword, generation: u32) -> Effect {
             generation,
         },
         user: p.user.clone(),
-        group: "reprise-remote".into(),
+        groups: vec!["reprise-remote".into()],
     }
 }
 
@@ -459,7 +459,7 @@ fn a_reload_that_changes_the_group_drops_the_round_and_the_old_members_at_once()
                     generation: 3,
                 },
                 user: "anna".into(),
-                group: "staff".into(),
+                groups: vec!["staff".into()],
             }
         ]
     );

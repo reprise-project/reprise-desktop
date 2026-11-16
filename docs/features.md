@@ -676,7 +676,7 @@ the screen takes the interface of the last session used at this computer.
   waiting.
 - **Shut Down and Restart** from the login screen. While anyone is still
   logged on (remotely or without a desktop included), the screen first asks
-  for an administrator's name and password: a member of `wheel`, never root.
+  for an administrator's name and password: a member of `wheel` or `sudo`, never root.
   Shutting down then ends every session, unsaved work included. A wrong
   password and a name that isn't an administrator's are both refused 3 s
   after the last answer. An administrator whose password must be changed is
