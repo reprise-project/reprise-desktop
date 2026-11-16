@@ -137,17 +137,26 @@ pub fn lenient_over<T>(
             continue;
         };
         if let toml::Value::Table(inner) = value {
+            let fails = |t: toml::Table| from_table(alone(key, toml::Value::Table(t))).err();
+            // A key failing with its `PARTNERS` is bad when it also fails on its own, or when the
+            // keys of its group each pass on their own and clash together.
             let bad: Vec<(String, String)> = (inner.iter())
                 .filter_map(|(name, v)| {
-                    let one = toml::Value::Table(alone(name, v.clone()));
-                    from_table(alone(key, one)).err().map(|e| (name.clone(), e))
+                    let group = with_partners(key, name, inner);
+                    let together = fails(group.clone())?;
+                    if let Some(e) = fails(alone(name, v.clone())) {
+                        return Some((name.clone(), e));
+                    }
+                    let clash = group.len() > 1
+                        && (group.iter()).all(|(k, v)| fails(alone(k, v.clone())).is_none());
+                    clash.then(|| (name.clone(), together))
                 })
                 .collect();
             let mut kept = inner.clone();
             for (name, _) in &bad {
                 kept.remove(name);
             }
-            // Keys that fail only together (`night_light.from` = `to`) drop the table whole.
+            // Keys that fail only together and are not in `PARTNERS` drop the table whole.
             if !bad.is_empty() && from_table(alone(key, toml::Value::Table(kept.clone()))).is_ok() {
                 for (name, e) in bad {
                     dropped.push((format!("{key}.{name}"), e.trim_end().to_string()));
@@ -208,6 +217,26 @@ pub fn lenient_over<T>(
         out.push(DroppedKey { key, error, kept });
     }
     Ok((from_table(table.clone())?, out, table))
+}
+
+/// Keys `Config::from_file` checks against each other, so a lenient read tries each with its
+/// partners from the file rather than their defaults.
+const PARTNERS: &[(&str, &[&str])] = &[
+    ("glass", &["dark_from", "dark_to"]),
+    ("night_light", &["from", "to"]),
+    ("night_light", &["latitude", "longitude"]),
+];
+
+/// Key `name` of table `table`, with its [`PARTNERS`] that `inner` holds.
+fn with_partners(table: &str, name: &str, inner: &toml::Table) -> toml::Table {
+    let group = PARTNERS
+        .iter()
+        .find(|(t, keys)| *t == table && keys.contains(&name))
+        .map_or(&[][..], |(_, keys)| keys);
+    (inner.iter())
+        .filter(|(k, _)| *k == name || group.contains(&k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
 }
 
 /// `name[i]` split into the array's name and the index.
