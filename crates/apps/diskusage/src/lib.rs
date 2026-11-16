@@ -9,9 +9,10 @@ reprisekit::strings!("diskusage");
 mod model;
 
 use model::{Line, SHARE, SIZE};
+use repriseapp::asks::{Answer, Asks};
 use repriseapp::ctxmenu::{Popup, Step, item};
 use repriseapp::detailslist::{List, Press};
-use repriseapp::oneshot::{self, ErrorBox, MsgBox};
+use repriseapp::oneshot::{ErrorBox, MsgBox};
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, MAIN, PointerInput, Poster, Reply, WinId,
 };
@@ -113,7 +114,7 @@ struct DiskUsage {
     list: List<Lines>,
     form: Form,
     popup: Option<Popup<Act>>,
-    confirm: Option<(PathBuf, MsgBox)>,
+    confirm: Asks<PathBuf>,
     note: ErrorBox,
     trashed: Option<(Poster<Trashed>, Receiver<Trashed>)>,
     waker: Option<repriseapp::Waker>,
@@ -166,7 +167,7 @@ impl DiskUsage {
             list,
             form,
             popup: None,
-            confirm: None,
+            confirm: Asks::new(CONFIRM),
             note: ErrorBox::default(),
             trashed: None,
             waker: None,
@@ -307,7 +308,7 @@ impl DiskUsage {
             max_w: repriseapp::dialog_max_w(),
         };
         let msg = MsgBox::on_template(title, Template::MessageBox, fields);
-        self.confirm = Some((path, msg));
+        self.confirm.ask(msg, path);
         Reply::redraw()
     }
 
@@ -543,20 +544,16 @@ impl DiskUsage {
         }
     }
 
-    fn confirm_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
-        let Some((_, b)) = &mut self.confirm else {
-            return Reply::none();
-        };
-        match b.event(&ev, &ctx.text, &ctx.forms()) {
-            oneshot::Outcome::Closed(answer) => {
-                let (path, _) = self.confirm.take().expect("open");
+    fn confirm_event(&mut self, win: WinId, ev: Event, ctx: &Ctx) -> Reply {
+        match self.confirm.event(win, &ev, &ctx.text, &ctx.forms()) {
+            Answer::Closed(path, answer) => {
                 if answer == Some(0) {
                     self.trash(path);
                 }
                 Reply::redraw_all()
             }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
+            Answer::Redraw => Reply::redraw(),
+            Answer::None => Reply::none(),
         }
     }
 
@@ -614,9 +611,7 @@ impl App for DiskUsage {
         let forms = repriseapp::start_forms();
         let text = repriseapp::start_text();
         let mut out = Vec::new();
-        if let Some((_, b)) = &self.confirm {
-            out.push(b.child(CONFIRM, &text, &forms));
-        }
+        out.extend(self.confirm.child(&text, &forms));
         out.extend(self.note.child(&text, &forms));
         out
     }
@@ -633,7 +628,7 @@ impl App for DiskUsage {
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         self.load_icons(ctx);
         match win {
-            CONFIRM => self.confirm_event(ev, ctx),
+            w if self.confirm.owns(w) => self.confirm_event(w, ev, ctx),
             w if self.note.owns(w) => self.note.event(w, &ev, &ctx.text, &ctx.forms()),
             _ => self.main_event(ev, ctx),
         }
@@ -642,11 +637,7 @@ impl App for DiskUsage {
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         let forms = ctx.forms();
         match win {
-            CONFIRM => {
-                if let Some((_, b)) = &self.confirm {
-                    b.draw(c, &forms, &ctx.text);
-                }
-            }
+            w if self.confirm.owns(w) => self.confirm.draw(c, &forms, &ctx.text),
             w if self.note.owns(w) => self.note.draw(c, &forms, &ctx.text),
             _ => self.draw_main(c, ctx),
         }
@@ -669,11 +660,7 @@ impl repriseapp::Extended for DiskUsage {
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let forms = ctx.forms();
         match win {
-            CONFIRM => {
-                if let Some((_, b)) = &self.confirm {
-                    b.access(tree, &ctx.text, &forms);
-                }
-            }
+            w if self.confirm.owns(w) => self.confirm.access(tree, &ctx.text, &forms),
             w if self.note.owns(w) => self.note.access(tree, &ctx.text, &forms),
             _ => {
                 let focus = self
