@@ -1,4 +1,3 @@
-backgrounds.png "Message Box" x1
 blue-variants.png " Desktop" x10
 blue-variants.png "Apply" x10
 blue-variants.png "Blue: common controls" x1
@@ -124,8 +123,6 @@ blue-variants.png "Type" x30
 blue-variants.png "folder to" x20
 blue-variants.png "new folder" x20
 blue-variants.png "the Web" x20
-caption-tabs-200.png "..." x6
-caption-tabs.png "..." x6
 file-dialog.png "Files of type:" x1
 filepreview.png "# Space shows a file;" x3
 filepreview.png "[appearance]" x3
@@ -136,7 +133,6 @@ fonts@1.png "The quick brown fox jumps over the lazy dog. 1234567890" x40
 fonts@1.png "abcdefghijklmnopqrstuvwxyz" x8
 glass-dark.png " Desktop" x1
 glass-dark.png "(None)" x6
-glass-dark.png "..." x2
 glass-dark.png "0 KB" x2
 glass-dark.png "1 KB" x5
 glass-dark.png "10" x2
@@ -148,7 +144,6 @@ glass-dark.png "4 KB" x2
 glass-dark.png "412..." x3
 glass-dark.png "5 KB" x2
 glass-dark.png "6 KB" x2
-glass-dark.png "Active Window" x1
 glass-dark.png "Application" x3
 glass-dark.png "Default" x1
 glass-dark.png "Desktop" x1
@@ -160,7 +155,6 @@ glass-dark.png "First" x1
 glass-dark.png "Focused" x1
 glass-dark.png "Group box" x1
 glass-dark.png "Help" x2
-glass-dark.png "Inactive Window" x1
 glass-dark.png "Inactive" x1
 glass-dark.png "Item 0" x2
 glass-dark.png "Item 1" x2
@@ -194,17 +188,13 @@ glass-dark.png "Third" x1
 glass-dark.png "Type" x3
 glass-dark.png "Updates are r..." x1
 glass-dark.png "Window Text" x1
-glass-dark.png "before.txt - Notepad" x7
 glass-dark.png "notepad" x4
 glass-dark.png "notes.txt" x3
 glass-dark.png "report.odt" x3
 glass-dark.png "setup.exe" x3
 glass-scale2.png "3:45 PM" x2
-glass-scale2.png "Notes" x3
-glass-scale2.png "before.txt - Notepad" x8
 glass.png " Desktop" x1
 glass.png "(None)" x6
-glass.png "..." x2
 glass.png "0 KB" x2
 glass.png "1 KB" x5
 glass.png "10" x2
@@ -217,8 +207,6 @@ glass.png "4 KB" x2
 glass.png "412..." x3
 glass.png "5 KB" x2
 glass.png "6 KB" x2
-glass.png "A title too long to sit centred in so narrow a window" x1
-glass.png "Active Window" x1
 glass.png "Application" x3
 glass.png "Default" x1
 glass.png "Desktop" x1
@@ -230,7 +218,6 @@ glass.png "First" x1
 glass.png "Focused" x1
 glass.png "Group box" x1
 glass.png "Help" x2
-glass.png "Inactive Window" x1
 glass.png "Inactive" x1
 glass.png "Item 0" x2
 glass.png "Item 1" x2
@@ -264,7 +251,6 @@ glass.png "Third" x1
 glass.png "Type" x3
 glass.png "Updates are r..." x1
 glass.png "Window Text" x1
-glass.png "before.txt - Notepad" x5
 glass.png "notepad" x4
 glass.png "notes.txt" x3
 glass.png "report.odt" x3
@@ -294,7 +280,6 @@ reprisekit-gallery.png "412..." x1
 reprisekit-gallery.png "5 KB" x1
 reprisekit-gallery.png "6 KB" x1
 reprisekit-gallery.png ":" x5
-reprisekit-gallery.png "Active Window" x4
 reprisekit-gallery.png "Alt+F4" x1
 reprisekit-gallery.png "Always ask" x1
 reprisekit-gallery.png "Always use the selected program to open this kind of file" x1
@@ -335,7 +320,6 @@ reprisekit-gallery.png "Help" x1
 reprisekit-gallery.png "Hot" x1
 reprisekit-gallery.png "Image Editor" x1
 reprisekit-gallery.png "Image Viewer" x1
-reprisekit-gallery.png "Inactive Window" x1
 reprisekit-gallery.png "Input" x1
 reprisekit-gallery.png "JPEG Im..." x1
 reprisekit-gallery.png "JPEG Image" x1
@@ -346,7 +330,6 @@ reprisekit-gallery.png "Line 5: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Line 6: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Make New Folder" x1
 reprisekit-gallery.png "Make a new" x1
-reprisekit-gallery.png "Message Box" x2
 reprisekit-gallery.png "Message Text" x2
 reprisekit-gallery.png "Music" x2
 reprisekit-gallery.png "My Music" x6
@@ -386,7 +369,6 @@ reprisekit-gallery.png "Recommended Programs:" x2
 reprisekit-gallery.png "Reprise Settings" x1
 reprisekit-gallery.png "Reprise" x1
 reprisekit-gallery.png "Reprise..." x3
-reprisekit-gallery.png "Run" x4
 reprisekit-gallery.png "Screenshot: drag an area or click a window. Press V to record instead." x1
 reprisekit-gallery.png "Scroll Bar" x1
 reprisekit-gallery.png "Scroll Lit" x1
@@ -405,7 +387,6 @@ reprisekit-gallery.png "Text Do..." x1
 reprisekit-gallery.png "Text Docu..." x1
 reprisekit-gallery.png "Trackbar" x1
 reprisekit-gallery.png "Type" x2
-reprisekit-gallery.png "Untitled - Notepad" x1
 reprisekit-gallery.png "Web" x1
 reprisekit-gallery.png "Window Text" x4
 reprisekit-gallery.png "folder to the" x1
@@ -426,5 +407,3 @@ taskbar-edges.png "3:45 PM" x4
 tray-arrow.png "3:45 PM" x4
 tray-arrow.png "Start" x2
 tray-arrow.png "start" x2
-welcome@1.png "Message Box" x2
-windowed-dialog.png "Copying..." x33

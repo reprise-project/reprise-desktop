@@ -86,10 +86,11 @@ pub fn draw_frame(
         ),
     }
 
+    let room = title_rect(geom, s);
     text.draw(
         canvas,
-        title_rect(geom, s),
-        state.title,
+        room,
+        &text.ellipsize(state.title, room.width, true, size),
         true,
         ink,
         Align::Left,
@@ -225,6 +226,35 @@ mod tests {
             .any(|(x, y)| c.get(x, y) == cs.button_text.argb());
         assert!(black);
         assert_eq!(c.get(207, 125), cs.button_dk_shadow.argb());
+    }
+
+    #[test]
+    fn a_title_longer_than_the_caption_ends_in_dots_before_the_buttons() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let long = "A title far too long for so narrow a window";
+        for chrome in [Chrome::WINDOW, Chrome::DIALOG] {
+            let g = FrameGeometry::layout(&theme.metrics, 160, 40, false, chrome);
+            let draw = |title: &str| {
+                let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+                let state = FrameState {
+                    title,
+                    active: true,
+                    maximized: false,
+                    pressed: None,
+                    glow: Glow::lit(None),
+                    icon: None,
+                    tabbed: false,
+                };
+                draw_frame(&mut c, &theme, &text, &g, &state);
+                c
+            };
+            let whole = draw(long);
+            assert!(
+                (1..long.len()).any(|n| draw(&format!("{}...", long[..n].trim_end())) == whole),
+                "{chrome:?}: the long title draws as its start and three dots"
+            );
+        }
     }
 
     #[test]

@@ -181,6 +181,7 @@ fn draw_title(
         (first_button_x - title_x).max(0),
         geom.caption.height,
     );
+    let shown = caption_text.ellipsize(state.title, title_rect.width, spec.bold, size);
     let ink = if state.active {
         spec.color
     } else {
@@ -198,7 +199,7 @@ fn draw_title(
         baseline.and_then(|baseline| {
             let run = TitleRun {
                 text: caption_text,
-                title: state.title,
+                title: &shown,
                 bold: spec.bold,
                 size,
                 clip: title_rect,
@@ -252,7 +253,7 @@ fn draw_title(
             canvas,
             shadow_rect,
             title_rect,
-            state.title,
+            &shown,
             spec.bold,
             sh.color,
             Align::Left,
@@ -262,7 +263,7 @@ fn draw_title(
     caption_text.draw(
         canvas,
         title_rect,
-        state.title,
+        &shown,
         spec.bold,
         ink,
         Align::Left,

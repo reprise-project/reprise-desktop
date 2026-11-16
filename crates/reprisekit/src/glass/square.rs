@@ -618,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn a_title_too_long_to_centre_starts_after_the_icon_and_stops_at_the_buttons() {
+    fn a_title_too_long_to_centre_starts_after_the_icon_and_ends_in_dots_before_the_buttons() {
         let t = theme(Mode::Light);
         let long = "A title far too long to sit centred in so narrow a window";
         let (g, c) = draw(&t, 260, 40, Chrome::WINDOW, &state(long, true, false));
@@ -631,8 +631,20 @@ mod tests {
         );
         let last = *cols.last().unwrap();
         assert!(
-            (first - 8..first).contains(&last),
-            "it runs up to the first button at {first}, ending at {last}"
+            (first - 30..first).contains(&last),
+            "it ends short of the first button at {first}, ending at {last}"
+        );
+        let mut runs: Vec<(i32, i32)> = Vec::new();
+        for &x in &cols {
+            match runs.last_mut() {
+                Some(r) if r.1 + 1 == x => r.1 = x,
+                _ => runs.push((x, x)),
+            }
+        }
+        let tail = &runs[runs.len() - 3..];
+        assert!(
+            tail.iter().all(|(a, b)| b - a < 3),
+            "it ends in three dots, got ink runs {tail:?}"
         );
     }
 
