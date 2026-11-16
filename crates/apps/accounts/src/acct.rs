@@ -250,7 +250,8 @@ pub fn read() -> zbus::Result<Vec<User>> {
         }
         let mut users = Vec::new();
         for p in paths {
-            let reply = conn
+            // A user deleted since the listing is left out, not the whole list.
+            let read = conn
                 .call_method(
                     Some(DEST),
                     p.as_str(),
@@ -258,9 +259,12 @@ pub fn read() -> zbus::Result<Vec<User>> {
                     "GetAll",
                     &(USER_IFACE,),
                 )
-                .await?;
-            let m: HashMap<String, OwnedVariant> = reply.body().deserialize()?;
-            users.extend(user_of(p.as_str(), &m, me));
+                .await
+                .and_then(|r| r.body().deserialize::<HashMap<String, OwnedVariant>>());
+            match read {
+                Ok(m) => users.extend(user_of(p.as_str(), &m, me)),
+                Err(e) => log::warn!("GetAll {}: {e}", p.as_str()),
+            }
         }
         for u in &mut users {
             u.logged_on = !logind::online_sessions(&logind::user_record(u.uid)).is_empty();
