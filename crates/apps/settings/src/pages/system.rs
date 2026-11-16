@@ -477,6 +477,8 @@ const MANAGED_NOTE: &str = "managed_note";
 pub(super) const LOCKER_NOTE: &str = "Lock mode is off while an external screen locker is set.";
 /// The certificate's fingerprint: a read-only edit, so it can be selected and copied.
 const REMOTE_FINGERPRINT: &str = "fingerprint";
+/// The login manager's certificate's SHA-1 thumbprint, on a [`managed`] page.
+const REMOTE_THUMBPRINT: &str = "thumbprint";
 pub const REMOTE_REGENERATE: &str = "regenerate";
 const CLIENTS: &str = "clients";
 pub const REMOTE_DISCONNECT: &str = "disconnect";
@@ -487,7 +489,7 @@ const RD_PASSWORD_Y: i32 = 62;
 const ACCOUNTS_W: i32 = 110;
 
 /// What greys with the switch off; New Certificate and Disconnect also need the server answering.
-const REMOTE_CONTROLS: [&str; 24] = [
+const REMOTE_CONTROLS: [&str; 26] = [
     REMOTE_STATUS,
     ENCODER,
     "port_label",
@@ -509,6 +511,8 @@ const REMOTE_CONTROLS: [&str; 24] = [
     REMOTE_SCREEN_LOCK,
     "fingerprint_label",
     REMOTE_FINGERPRINT,
+    "thumbprint_label",
+    REMOTE_THUMBPRINT,
     "second_client_label",
     REMOTE_SECOND_JOIN,
     REMOTE_SECOND_REPLACE,
@@ -518,6 +522,10 @@ const REMOTE_CONTROLS: [&str; 24] = [
 const PORT_CONTROLS: [&str; 2] = ["port_label", REMOTE_PORT];
 
 const NEW_CERTIFICATE_W: i32 = 110;
+/// On a [`managed`] page, which has no Allow rows: how much higher the fingerprint sits, and how
+/// much lower the rows under the thumbprint row sit.
+const MANAGED_FINGERPRINT_DY: i32 = -12;
+const MANAGED_ROWS_DY: i32 = 6;
 /// Where the second client's radios start, right of their label.
 const SECOND_CLIENT_X: i32 = X + 182;
 const LOCK_GRACE_W: i32 = 96;
@@ -531,7 +539,7 @@ pub fn remote_desktop(
     a: Area,
     status: Option<&Status>,
     enabled: bool,
-    machine: Option<&str>,
+    machine: Option<&super::Prints>,
 ) -> Form {
     let port = |y| {
         spin(
@@ -589,25 +597,48 @@ pub fn remote_desktop(
             Item::label_at(REMOTE_STATUS, X, 80, a.w - 18, "").under_check(),
         ]);
     }
+    let (fy, dy) = match machine {
+        Some(_) => (MANAGED_FINGERPRINT_DY, MANAGED_ROWS_DY),
+        None => (0, 0),
+    };
     items.extend([
-        Item::label_at("fingerprint_label", X, 104, 126, "&Fingerprint (SHA-256):"),
+        Item::label_at(
+            "fingerprint_label",
+            X,
+            104 + fy,
+            126,
+            "&Fingerprint (SHA-256):",
+        ),
         edit(
             REMOTE_FINGERPRINT,
             X + 130,
-            100,
+            100 + fy,
             a.w - 130 - NEW_CERTIFICATE_W - 6,
         )
         .read_only(),
         Item::button_at(
             REMOTE_REGENERATE,
             a.right() - NEW_CERTIFICATE_W,
-            98,
+            98 + fy,
             NEW_CERTIFICATE_W,
             "&New Certificate...",
             true,
         ),
-        Item::label_at("quality_label", X, 130, 200, "Picture &quality:"),
     ]);
+    // NLA clients connect through the login manager, and some show a certificate by thumbprint.
+    if machine.is_some() {
+        items.extend([
+            Item::label_at("thumbprint_label", X, 126 + fy, 126, "&Thumbprint (SHA-1):"),
+            edit(REMOTE_THUMBPRINT, X + 130, 122 + fy, a.w - 130).read_only(),
+        ]);
+    }
+    items.push(Item::label_at(
+        "quality_label",
+        X,
+        130 + dy,
+        200,
+        "Picture &quality:",
+    ));
     let (left, right) = (REMOTE_QUALITIES[0].1, REMOTE_QUALITIES[2].1);
     items.extend(ends_track(
         a,
@@ -618,7 +649,7 @@ pub fn remote_desktop(
             QUALITY_VALUE,
         ],
         "Picture quality",
-        157,
+        157 + dy,
         27,
         (left, right),
         X,
@@ -627,39 +658,49 @@ pub fn remote_desktop(
     let rates: Vec<&str> = FRAME_RATES.iter().map(|r| r.1).collect();
     let encoders: Vec<&str> = REMOTE_ENCODERS.iter().map(|e| e.1).collect();
     items.extend([
-        Item::label_at("frame_rate_label", X, 184, 160, "Frame &rate:"),
-        Item::combo(REMOTE_FRAME_RATE, X, 200, 160, &rates, rates.len()),
+        Item::label_at("frame_rate_label", X, 184 + dy, 160, "Frame &rate:"),
+        Item::combo(REMOTE_FRAME_RATE, X, 200 + dy, 160, &rates, rates.len()),
         Item::label_at(
             "video_encoder_label",
             ENCODER_X,
-            184,
+            184 + dy,
             ENCODER_W,
             "Video &encoder:",
         ),
         Item::combo(
             REMOTE_ENCODER,
             ENCODER_X,
-            200,
+            200 + dy,
             ENCODER_W,
             &encoders,
             encoders.len(),
         ),
-        Item::check(REMOTE_SOUND, X, 230, "Play &sound on the remote computer"),
-        Item::label_at(ENCODER, ENCODER_X, 230, a.right() - ENCODER_X, ""),
-        Item::label_at("clients_label", X, 252, 200, "Connected computers:"),
+        Item::check(
+            REMOTE_SOUND,
+            X,
+            230 + dy,
+            "Play &sound on the remote computer",
+        ),
+        Item::label_at(ENCODER, ENCODER_X, 230 + dy, a.right() - ENCODER_X, ""),
+        Item::label_at("clients_label", X, 252 + dy, 200, "Connected computers:"),
         Item::new(
             CLIENTS,
-            Rect::new(X, 268, a.w - BUTTON_W - 6, 2 * listbox::ROW_H + 4),
+            Rect::new(X, 268 + dy, a.w - BUTTON_W - 6, 2 * listbox::ROW_H + 4),
             Control::ListBox {
                 list: ListBox::new(Vec::new(), None),
                 icons: Vec::new(),
             },
         ),
-        button(REMOTE_DISCONNECT, a.right() - BUTTON_W, 268, "&Disconnect"),
+        button(
+            REMOTE_DISCONNECT,
+            a.right() - BUTTON_W,
+            268 + dy,
+            "&Disconnect",
+        ),
         Item::check(
             REMOTE_LOCK_ON_LEAVE,
             X,
-            312,
+            312 + dy,
             "&Lock this computer when the last one disconnects",
         ),
     ]);
@@ -669,7 +710,7 @@ pub fn remote_desktop(
         Item::label_at(
             "lock_grace_label",
             X,
-            333,
+            333 + dy,
             grace_x - 6 - X - 18,
             "&Wait before locking on a screen change:",
         )
@@ -677,7 +718,7 @@ pub fn remote_desktop(
         Item::combo(
             REMOTE_LOCK_GRACE,
             grace_x,
-            329,
+            329 + dy,
             LOCK_GRACE_W,
             &graces,
             graces.len(),
@@ -685,29 +726,35 @@ pub fn remote_desktop(
         Item::check(
             REMOTE_BORDER,
             X,
-            355,
+            355 + dy,
             "Show a red &border while a remote computer is connected",
         ),
         Item::label_at(
             "remote_screen_label",
             X,
-            377,
+            377 + dy,
             a.w,
             "While connected, this computer's screen:",
         ),
-        radio(REMOTE_SCREEN_SHOW, "remote_screen", X, 395, "Stays &on"),
+        radio(
+            REMOTE_SCREEN_SHOW,
+            "remote_screen",
+            X,
+            395 + dy,
+            "Stays &on",
+        ),
         radio(
             REMOTE_SCREEN_LOCK,
             "remote_screen",
             X + 80,
-            395,
+            395 + dy,
             "Loc&ks and fits the remote window",
         ),
-        Item::label_at(REMOTE_SCREEN_NOTE, X + 18, 413, a.w - 18, ""),
+        Item::label_at(REMOTE_SCREEN_NOTE, X + 18, 413 + dy, a.w - 18, ""),
         Item::label_at(
             "second_client_label",
             X,
-            431,
+            431 + dy,
             SECOND_CLIENT_X - X - 6,
             "When another client connects:",
         ),
@@ -715,14 +762,14 @@ pub fn remote_desktop(
             REMOTE_SECOND_JOIN,
             "second_client",
             SECOND_CLIENT_X,
-            431,
+            431 + dy,
             "&Join it",
         ),
         radio(
             REMOTE_SECOND_REPLACE,
             "second_client",
             SECOND_CLIENT_X + 70,
-            431,
+            431 + dy,
             "Replace &it",
         ),
     ]);
@@ -744,7 +791,7 @@ pub fn show_remote(
     enabled: bool,
     address: Option<&str>,
     keep: Option<&str>,
-    machine: Option<&str>,
+    machine: Option<&super::Prints>,
 ) {
     let on = enabled || machine.is_some();
     page.set_check(REMOTE_ALLOW, enabled);
@@ -767,8 +814,14 @@ pub fn show_remote(
         s.encoders.iter().map(String::as_str).collect()
     });
     grey_choices(page, REMOTE_ENCODER, REMOTE_ENCODERS, &offered, &["auto"]);
-    let fingerprint = machine.unwrap_or(shown.map_or("", |s| s.fingerprint.as_str()));
+    let fingerprint = match machine {
+        Some(m) => m.fingerprint.as_str(),
+        None => shown.map_or("", |s| s.fingerprint.as_str()),
+    };
     page.show_edit_text(REMOTE_FINGERPRINT, fingerprint);
+    if let Some(m) = machine {
+        page.show_edit_text(REMOTE_THUMBPRINT, &m.thumbprint);
+    }
     let clients = shown.map_or(&[][..], |s| s.clients.as_slice());
     let items: Vec<String> = clients
         .iter()

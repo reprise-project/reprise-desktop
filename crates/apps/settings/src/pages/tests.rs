@@ -111,7 +111,7 @@ fn every_page_fits_its_text_under_every_interface() {
         let mut forms: Vec<(String, Form)> = Page::all()
             .map(|p| (p.label().to_string(), sheet.pages[p.index()].clone()))
             .collect();
-        let managed = remote_desktop(Area::MIN, None, false, Some(""));
+        let managed = remote_desktop(Area::MIN, None, false, Some(&Prints::default()));
         forms.push(("Remote Desktop, managed".into(), managed));
         let region = crate::regionpage::filled(Area::MIN);
         forms.push(("Region & Language, filled".into(), region));
@@ -942,7 +942,12 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
 #[test]
 fn a_page_rebuilt_with_other_controls_reports_its_own_keys() {
     let mine = keys_of(&remote_desktop(Area::MIN, None, false, None));
-    let managed = keys_of(&remote_desktop(Area::MIN, None, false, Some("")));
+    let managed = keys_of(&remote_desktop(
+        Area::MIN,
+        None,
+        false,
+        Some(&Prints::default()),
+    ));
     assert!(!managed.is_empty());
     assert_ne!(mine, managed, "a managed page has no Allow check box");
     assert_eq!(keys_of(&remote_desktop(Area::MIN, None, false, None)), mine);

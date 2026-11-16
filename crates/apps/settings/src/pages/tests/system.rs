@@ -822,6 +822,13 @@ fn the_backup_page_lines_fit() {
     }
 }
 
+fn prints() -> crate::pages::Prints {
+    crate::pages::Prints {
+        fingerprint: "3F:9A:01".into(),
+        thumbprint: "3f9a01".into(),
+    }
+}
+
 fn serving(clients: Vec<reprisebus::remote::Client>) -> reprisebus::remote::Status {
     reprisebus::remote::Status {
         listening: "0.0.0.0:3389".into(),
@@ -1637,12 +1644,12 @@ fn variable_refresh_rate_words_find_display() {
 /// The Remote Logins group: off with the front not running, then on with its fingerprint.
 #[test]
 fn the_remote_logins_group_pins_its_pixels_in_every_look() {
-    let row = Rect::new(20, 264, 358, 158);
+    let row = Rect::new(20, 264, 358, 182);
     let mut f = login_manager(Area::MIN);
     let off = row_pins(&f, row);
     let mut c = repriselogin::machine::MachineConfig::default();
     c.remote.enabled = true;
-    show_login(&mut f, &c, &[], Some("3F:9A:01"), Default::default());
+    show_login(&mut f, &c, &[], Some(&prints()), Default::default());
     let on = row_pins(&f, row);
     check_rows("remote_logins_group", &["off", "on"], &[off, on]);
 }
@@ -1674,10 +1681,10 @@ fn the_login_screen_group_pins_its_pixels_in_every_look() {
 /// and the row that sends you to User Accounts for your Remote Desktop password.
 #[test]
 fn the_remote_desktop_page_under_the_login_manager_pins_its_pixels_in_every_look() {
-    let machine = Some("3F:9A:01");
-    let mut page = remote_desktop(Area::MIN, None, false, machine);
-    show_remote(&mut page, None, false, None, None, machine);
-    let row = Rect::new(20, 44, 358, 435);
+    let machine = prints();
+    let mut page = remote_desktop(Area::MIN, None, false, Some(&machine));
+    show_remote(&mut page, None, false, None, None, Some(&machine));
+    let row = Rect::new(20, 44, 358, 441);
     check_rows(
         "remote_desktop_under_login_manager",
         &["page"],

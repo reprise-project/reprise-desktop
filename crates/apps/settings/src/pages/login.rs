@@ -19,6 +19,7 @@ pub const LOGIN_GROUP_NOTE: &str = "login_group_note";
 pub const LOGIN_SESSIONS: &str = "login_sessions";
 pub const LOGIN_END_AFTER: &str = "login_end_after";
 pub const LOGIN_FINGERPRINT: &str = "login_fingerprint";
+pub const LOGIN_THUMBPRINT: &str = "login_thumbprint";
 pub const LOGIN_BACKGROUND: &str = "login_background";
 pub const LOGIN_BROWSE: &str = "login_browse";
 pub const LOGIN_SCREENS: &str = "login_screens";
@@ -27,6 +28,35 @@ pub const LOGIN_RESET_DISPLAYS: &str = "login_reset_displays";
 
 /// What the fingerprint field shows while the Remote Desktop front has none to give.
 pub const NOT_RUNNING: &str = "Not running";
+
+/// A certificate's SHA-256 fingerprint and SHA-1 thumbprint.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Prints {
+    pub fingerprint: String,
+    pub thumbprint: String,
+}
+
+impl Prints {
+    /// The front's file: the fingerprint's line, then the thumbprint's, which a front that
+    /// writes only the fingerprint leaves empty. None for a file without a fingerprint.
+    pub fn parse(text: &str) -> Option<Prints> {
+        let mut lines = text.lines().map(str::trim);
+        let fingerprint = lines.next().filter(|l| !l.is_empty())?.to_string();
+        let thumbprint = lines.next().unwrap_or_default().to_string();
+        Some(Prints {
+            fingerprint,
+            thumbprint,
+        })
+    }
+
+    /// What the fields show while the front has no certificate to give.
+    pub fn not_running() -> Prints {
+        Prints {
+            fingerprint: NOT_RUNNING.into(),
+            thumbprint: String::new(),
+        }
+    }
+}
 
 /// The interface combo's rows; `None` shows the login screen in the last one used.
 const INTERFACES: [(Option<Interface>, &str); 4] = [
@@ -141,7 +171,7 @@ pub fn login_manager(a: Area) -> Form {
             a,
             "login_remote_group",
             152 + REMOTE_DY,
-            158,
+            182,
             "Remote Logins",
         ),
         Item::check(
@@ -204,6 +234,20 @@ pub fn login_manager(a: Area) -> Form {
             LOGIN_FINGERPRINT,
             COMBO_X,
             278 + REMOTE_DY,
+            a.gright() - COMBO_X,
+        )
+        .read_only(),
+        Item::label_at(
+            "login_thumbprint_label",
+            GX,
+            306 + REMOTE_DY,
+            LABEL_W,
+            "&Thumbprint (SHA-1):",
+        ),
+        edit(
+            LOGIN_THUMBPRINT,
+            COMBO_X,
+            302 + REMOTE_DY,
             a.gright() - COMBO_X,
         )
         .read_only(),
@@ -296,12 +340,12 @@ fn set_updown(page: &mut Form, id: &str, v: u32) {
 }
 
 /// Put `c` on the page, offering `users` for automatic logon and `picture` as a background;
-/// `fingerprint` is the Remote Desktop front's, `None` while it is not running.
+/// `prints` are the Remote Desktop front's certificate's, `None` while it is not running.
 pub fn show_login(
     page: &mut Form,
     c: &MachineConfig,
     users: &[String],
-    fingerprint: Option<&str>,
+    prints: Option<&Prints>,
     picture: Picture<'_>,
 ) {
     let interface = INTERFACES
@@ -347,7 +391,9 @@ pub fn show_login(
         .unwrap_or(0);
     let labels: Vec<String> = ends.into_iter().map(|e| e.1).collect();
     page.set_combo_rows(LOGIN_END_AFTER, &labels, end, DROP_ROWS);
-    page.show_edit_text(LOGIN_FINGERPRINT, fingerprint.unwrap_or(NOT_RUNNING));
+    let prints = prints.cloned().unwrap_or_else(Prints::not_running);
+    page.show_edit_text(LOGIN_FINGERPRINT, &prints.fingerprint);
+    page.show_edit_text(LOGIN_THUMBPRINT, &prints.thumbprint);
     follow_login(page);
 }
 

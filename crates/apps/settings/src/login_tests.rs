@@ -170,7 +170,7 @@ fn the_login_manager_page_reads_the_machine_settings() {
          end_disconnected_after = 240\n",
     )
     .unwrap();
-    std::fs::write(dir.join("fingerprint"), "3F:9A:01\n").unwrap();
+    std::fs::write(dir.join("fingerprint"), "3F:9A:01\n3f9a01\n").unwrap();
     let mut a = app(&dir);
     open_login(&mut a);
     let page = login(&a);
@@ -186,6 +186,7 @@ fn the_login_manager_page_reads_the_machine_settings() {
     assert_eq!(updown(page, "login_sessions"), 3);
     assert_eq!(combo_text(page, "login_end_after"), "4 hours");
     assert_eq!(page.edit_text("login_fingerprint"), "3F:9A:01");
+    assert_eq!(page.edit_text("login_thumbprint"), "3f9a01");
     assert!(!a.dirty(), "reading the page is no change for Apply");
 }
 
@@ -199,6 +200,14 @@ fn automatic_logon_offers_the_accounts_the_login_screen_lists() {
         combo_rows(login(&a), "login_autologin"),
         ["Nobody", "anna", "old", "zoe"]
     );
+}
+
+#[test]
+fn a_front_file_without_a_thumbprint_line_shows_an_empty_one() {
+    let old = pages::Prints::parse("3F:9A:01\n").unwrap();
+    assert_eq!(old.fingerprint, "3F:9A:01");
+    assert_eq!(old.thumbprint, "");
+    assert_eq!(pages::Prints::parse("\n"), None);
 }
 
 #[test]
@@ -766,7 +775,10 @@ fn remote_read(a: &mut SettingsApp, remote: remotehost::Remote) {
 fn managed() -> remotehost::Remote {
     remotehost::Remote {
         manager: true,
-        machine_fingerprint: Some("AB:CD".into()),
+        machine_fingerprint: Some(pages::Prints {
+            fingerprint: "AB:CD".into(),
+            thumbprint: "abcd".into(),
+        }),
         ..remotehost::Remote::default()
     }
 }
@@ -787,6 +799,7 @@ fn under_reprise_login_the_allow_box_is_a_note() {
         "Remote logins are set on the Login Manager page."
     );
     assert_eq!(page.edit_text("fingerprint"), "AB:CD", "the machine's");
+    assert_eq!(page.edit_text("thumbprint"), "abcd");
     assert!(lit(page, "quality"), "the session's settings still apply");
     assert!(!lit(page, pages::REMOTE_REGENERATE));
 
