@@ -304,7 +304,7 @@ impl State {
         if placeable {
             self.session.restoring.mapped(&app);
         }
-        let out = self.placement_output(want.as_ref());
+        let out = self.opening_output(w, want.as_ref());
         let area = self.usable_area(out.as_ref());
         let owner = self.owner(w);
         let resizable = self.win(w).is_some_and(Window::is_resizable);

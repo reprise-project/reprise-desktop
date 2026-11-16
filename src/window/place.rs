@@ -194,7 +194,7 @@ pub fn centre_on(parent: Rect, size: (i32, i32), area: Rect) -> (i32, i32) {
 impl State {
     /// A maximized or fullscreen `w`'s output at its origin (its size lags), else the one under its
     /// centre; in lock mode only Remote outputs count, the remote primary when neither is one.
-    fn fit_output(&self, w: WindowId) -> Option<smithay::output::Output> {
+    pub(crate) fn fit_output(&self, w: WindowId) -> Option<smithay::output::Output> {
         let win = self.win(w)?;
         let r = win.frame_rect();
         let at_origin = |o: &&smithay::output::Output| {

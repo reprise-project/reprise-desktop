@@ -259,6 +259,11 @@ impl State {
         want
     }
 
+    /// The output window `w` opens on: its owner's, else [`State::placement_output`].
+    pub(crate) fn opening_output(&self, w: WindowId, want: Option<&Want>) -> Option<Output> {
+        (self.owner(w).and_then(|p| self.fit_output(p))).or_else(|| self.placement_output(want))
+    }
+
     /// The output `want` names, by connector or monitor id, else the one under the pointer. In
     /// lock mode only a Remote output, else the remote primary.
     pub fn placement_output(&self, want: Option<&Want>) -> Option<Output> {
@@ -303,7 +308,7 @@ impl State {
             });
         }
         let want = self.plan_window(w);
-        let out = self.placement_output(want.as_ref());
+        let out = self.opening_output(w, want.as_ref());
         let area = self.usable_area(out.as_ref());
         let metrics = &self.config.theme.metrics;
         let most = self.win(w).map(|x| area_client(metrics, area, x.chrome()));

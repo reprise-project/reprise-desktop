@@ -2060,3 +2060,75 @@ fn closing_a_modal_box_gives_the_keyboard_to_its_parent() {
         "the sheet the box stood over, not the folder its task button named"
     );
 }
+
+/// A forgetful harness with TEST-1 (1024x768) and TEST-2 (1280x1024) to its right.
+fn two_screens() -> (
+    crate::harness::Harness,
+    smithay::output::Output,
+    smithay::output::Output,
+) {
+    let mut h = forgetful();
+    let one = h.state.scene.outputs()[0].clone();
+    let two = h.output("TEST-2", 1280, 1024);
+    (h, one, two)
+}
+
+fn frame(h: &crate::harness::Harness, w: WindowId) -> Rect {
+    h.state.win(w).unwrap().frame_rect()
+}
+
+fn mid(r: Rect) -> (i32, i32) {
+    (r.x + r.width / 2, r.y + r.height / 2)
+}
+
+fn inside(r: Rect, area: Rect) -> bool {
+    r.x >= area.x && r.y >= area.y && r.right() <= area.right() && r.bottom() <= area.bottom()
+}
+
+#[test]
+fn a_dialog_maps_over_its_owner_on_the_owners_output_with_the_pointer_on_the_other() {
+    let (mut h, one, two) = two_screens();
+    let mut c = h.connect();
+    let main = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let b = h.state.layout_box(Some(&two));
+    h.state.move_to(main.id, b.x + 600, b.y + 500);
+    let a = h.state.layout_box(Some(&one));
+    h.pointer_to(f64::from(a.x + 10), f64::from(a.y + 10));
+    let d = h.map_dialog(&mut c, "test.app", Some(main), "", (200, 100));
+    assert_eq!(mid(frame(&h, d.id)), mid(frame(&h, main.id)));
+}
+
+#[test]
+fn a_box_over_a_dialog_maps_over_the_dialog_inside_the_owners_output() {
+    let (mut h, one, two) = two_screens();
+    let mut c = h.connect();
+    let main = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let b = h.state.layout_box(Some(&two));
+    h.state.move_to(main.id, b.x - 100, b.y + 200);
+    let a = h.state.layout_box(Some(&one));
+    h.pointer_to(f64::from(a.x + 10), f64::from(a.y + 10));
+    let d = h.map_dialog(&mut c, "test.app", Some(main), "", (600, 200));
+    let area = h.state.usable_area(Some(&two));
+    let df = frame(&h, d.id);
+    assert_eq!(
+        df.x, area.x,
+        "pushed right, inside TEST-2 where its owner's centre is"
+    );
+    assert_eq!(mid(df).1, mid(frame(&h, main.id)).1);
+    let g = h.map_dialog(&mut c, "test.app", Some(d), "", (200, 80));
+    let gf = frame(&h, g.id);
+    assert_eq!(mid(gf), mid(df), "centred over the dialog");
+    assert!(inside(gf, area), "{gf:?} inside {area:?}");
+}
+
+#[test]
+fn a_window_without_an_owner_opens_on_the_pointers_output() {
+    let (mut h, _, two) = two_screens();
+    let mut c = h.connect();
+    h.map_toplevel(&mut c, "test.app", 400, 300);
+    let area = h.state.usable_area(Some(&two));
+    h.pointer_to(f64::from(area.x + 10), f64::from(area.y + 10));
+    let w = h.map_toplevel(&mut c, "test.other", 300, 200);
+    let f = frame(&h, w.id);
+    assert!(inside(f, area), "{f:?} inside {area:?}");
+}
