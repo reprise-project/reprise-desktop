@@ -2604,11 +2604,13 @@ fn shell_calls(
         host_only: HostOnly::under(proc),
     };
     let replies = zbus::block_on(async {
-        let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
-        let (tray, caller) = (connect().await.unwrap(), connect().await.unwrap());
-        (tray.object_server().at(reprisebus::tray::PATH, shell))
+        let connect = || zbus::connection::Builder::address(bus.1.as_str());
+        // Served from the builder: `ObjectServer::at` on a live connection starts taking calls
+        // only once a task has run, and drops a call that comes in before that unanswered.
+        let tray = (connect().serve_at(reprisebus::tray::PATH, shell).build())
             .await
             .unwrap();
+        let caller = connect().method_timeout(CEILING).build().await.unwrap();
         let tray = tray.unique_name().unwrap().to_string();
         let mut replies = Vec::new();
         for member in ["CriticalTurnOff", "Restart"] {
@@ -2621,13 +2623,13 @@ fn shell_calls(
                     &(),
                 )
                 .await;
-            let refusal = reply.err();
-            replies.push(
-                refusal
-                    .as_ref()
-                    .and_then(reprisebus::error::name)
-                    .map(|n| n.to_string()),
-            );
+            replies.push(match &reply {
+                Ok(_) => None,
+                Err(e) => match reprisebus::error::name(e) {
+                    Some(name) => Some(name.to_string()),
+                    None => panic!("{member} is answered within {CEILING:?}: {e}"),
+                },
+            });
         }
         replies
     });
