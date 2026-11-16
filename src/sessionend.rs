@@ -1305,6 +1305,30 @@ mod tests {
     }
 
     #[test]
+    fn the_close_box_on_the_prompt_cancels_the_session_end() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.ending = Some(Ending {
+            goal: Goal::LogOff,
+            cmd: None,
+            holders: None,
+            stop: None,
+            asked_portal: false,
+            timer: None,
+            reports: None,
+            mode: Mode::Prompted,
+            password: Password::No,
+            unasked: Vec::new(),
+        });
+        sync_prompt(&mut h.state);
+        let i = prompt_index(&h.state).expect("the prompt");
+        h.click_dialog_close(i);
+        assert!(h.state.ending.is_none(), "the session end is cancelled");
+        tick(&mut h.state);
+        assert_eq!(prompt_index(&h.state), None, "and the prompt stays closed");
+    }
+
+    #[test]
     fn a_warning_icon_that_never_decodes_gives_way_to_the_question_mark() {
         let root = crate::icon::svg_theme(&["dialog-question"], &["dialog-warning"]);
         let mut h = prompted(&root);

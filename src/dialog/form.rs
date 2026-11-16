@@ -160,7 +160,7 @@ impl FormDialog {
         true
     }
 
-    pub(crate) fn event(&mut self, ev: reprisekit::controls::form::Event) -> Outcome {
+    pub(crate) fn event(&self, ev: reprisekit::controls::form::Event) -> Outcome {
         match self.kind {
             FormKind::EndSession => session_end_event(ev),
             FormKind::Location(ref id) => location_event(self, id.clone(), ev),

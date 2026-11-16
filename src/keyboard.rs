@@ -707,7 +707,9 @@ impl State {
                 crate::lockview::Origin::Desktop,
             ),
             Action::Close => {
-                if let Some(w) = self.focused {
+                if self.dialog_has_keyboard() {
+                    self.dismiss_dialog();
+                } else if let Some(w) = self.focused {
                     self.close(w);
                 }
             }

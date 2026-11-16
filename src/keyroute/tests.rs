@@ -555,6 +555,16 @@ fn the_close_bind_on_the_desktop_opens_turn_off() {
         KeyRoute::Binds(vec![Action::TurnOff]),
         "the taskbar with the keyboard holds no window to close"
     );
+    let dialog = Modes {
+        dialog_has_keyboard: true,
+        desktop_has_keyboard: true,
+        ..Modes::default()
+    };
+    assert_eq!(
+        route(&dialog, &alt_f4, &menu_binds(), &[]).route,
+        KeyRoute::Binds(vec![Action::Close]),
+        "a dialog with the keyboard takes the close bind as its own"
+    );
 }
 
 #[test]

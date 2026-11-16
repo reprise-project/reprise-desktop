@@ -470,7 +470,7 @@ impl State {
         if v.dialog.caption_box.holding() {
             v.dialog.drag_caption(over);
             let outcome = match v.dialog.release_caption() {
-                Some(CaptionButton::Close) => Outcome::Close,
+                Some(CaptionButton::Close) => v.dialog.dismiss(),
                 _ => Outcome::Redraw,
             };
             self.apply_dialog(outcome);

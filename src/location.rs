@@ -703,6 +703,25 @@ mod tests {
     }
 
     #[test]
+    fn the_close_box_refuses_at_once_without_remembering() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let rx = ask_about(&mut h, "maps-app");
+        let (i, _) = prompts(&h.state).into_iter().next().expect("the prompt");
+        let form = h.state.dialogs.views[i].dialog.form_mut().unwrap();
+        let armed = std::time::Instant::now() - reprisekit::controls::form::CONSENT_ARM;
+        form.open_page_mut().consent_focused(armed);
+        h.click_dialog_close(i);
+        assert_eq!(rx.try_recv(), Ok(false), "refused before the wait runs out");
+        assert!(prompts(&h.state).is_empty());
+        assert_eq!(
+            repriseconf::location::load().get("org.example.Maps"),
+            None,
+            "nothing is remembered"
+        );
+    }
+
+    #[test]
     fn an_unanswered_prompt_gives_up_and_a_closed_one_refuses() {
         let short = Duration::from_millis(20);
         let (tx, rx) = async_channel::bounded(1);
