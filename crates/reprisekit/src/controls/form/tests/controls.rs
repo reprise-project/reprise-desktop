@@ -755,3 +755,27 @@ fn the_wheel_scrolls_an_icon_list_a_column_a_notch() {
     assert_eq!(left(&f), (2, Some(0)));
     assert_eq!(f.wheel(None, -WHEEL_ROWS), Event::None, "off the list");
 }
+
+#[test]
+fn a_live_status_line_is_a_polite_live_region_and_a_plain_label_is_not() {
+    use crate::access::accesskit::Live;
+    use crate::access::{ROOT, Tree};
+    let mut f = Form::new(vec![
+        Item::label("plain", Rect::new(10, 10, 100, 13), "Password:"),
+        Item::label("status", Rect::new(10, 30, 100, 13), "").live(),
+        Item::lines("more", Rect::new(10, 50, 100, 26), &[]).live(),
+    ]);
+    f.set_text("status", "The password is wrong.");
+    f.set_lines("more", &["Caps Lock is on.".into(), "Try again.".into()]);
+    let mut tree = Tree::window("", (200, 100));
+    f.access(&mut tree, ROOT, &tr(), PX);
+    let live = |value: &str| {
+        let (_, n) = (tree.nodes())
+            .find(|(_, n)| n.role() == Role::Label && n.value() == Some(value))
+            .expect(value);
+        n.live()
+    };
+    assert_eq!(live("Password:"), None, "a plain label");
+    assert_eq!(live("The password is wrong."), Some(Live::Polite));
+    assert_eq!(live("Caps Lock is on. Try again."), Some(Live::Polite));
+}

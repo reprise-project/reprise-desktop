@@ -105,11 +105,14 @@ pub fn connect_form(lines: &[String], address: &str, icon: Option<Canvas>) -> Fo
         Item::edit(ADDRESS, Rect::default(), address, true),
         FIRST_Y + 8,
     ));
-    items.push(Item::label(
-        STATUS,
-        Rect::new(LABEL_X, FIRST_Y + 8 + ROW + 4, WIDTH - LABEL_X - 16, LINE_H),
-        "",
-    ));
+    items.push(
+        Item::label(
+            STATUS,
+            Rect::new(LABEL_X, FIRST_Y + 8 + ROW + 4, WIDTH - LABEL_X - 16, LINE_H),
+            "",
+        )
+        .live(),
+    );
     items.extend(buttons("C&onnect", CONNECT_CLIENT));
     let mut form = Form::new(items);
     form.focus_id(ADDRESS);
@@ -166,11 +169,14 @@ pub fn login_form(l: &Login, icon: Option<Canvas>) -> Form {
         false => "&Remember this password (needs a keyring)",
     };
     items.push(Item::check(REMEMBER, LABEL_X, check_y, remember).enabled(l.can_remember));
-    items.push(Item::label(
-        STATUS,
-        Rect::new(LABEL_X, status_y, WIDTH - LABEL_X - 16, LINE_H),
-        "",
-    ));
+    items.push(
+        Item::label(
+            STATUS,
+            Rect::new(LABEL_X, status_y, WIDTH - LABEL_X - 16, LINE_H),
+            "",
+        )
+        .live(),
+    );
     items.extend(buttons("OK", size));
     let mut form = Form::new(items);
     form.focus_id(if l.asks_user && l.user.is_empty() {

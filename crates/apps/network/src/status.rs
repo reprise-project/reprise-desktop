@@ -240,7 +240,8 @@ fn general_page(wifi: bool) -> Form {
         Rect::new(GX, GY, GW, 135),
         "Connection",
     )];
-    items.extend(row(0, "status_l", "status", "Status:"));
+    let [status_l, status] = row(0, "status_l", "status", "Status:");
+    items.extend([status_l, status.live()]);
     items.extend(row(1, "duration_l", "duration", "Duration:"));
     items.extend(row(2, "speed_l", "speed", "Speed:"));
     if wifi {
