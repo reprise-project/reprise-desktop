@@ -153,7 +153,6 @@ impl State {
         }
         self.flip_hide_dialog(tree);
         self.flip_join();
-        self.run_picker_requests();
         // A still pointer gets no motion, so what lay under it (a desktop icon's tip) keeps the hover.
         if self.pointer_free() {
             self.owe_repoint(
@@ -203,9 +202,9 @@ impl State {
         }
     }
 
-    /// Raise dialog `index` with its family (`raise_order`) and give the keyboard to the top one; a
-    /// minimised one is restored first.
-    pub(super) fn raise_dialog(&mut self, index: usize) {
+    /// Raise dialog `index` with its family (`raise_order`) and give the keyboard to the top one,
+    /// or to the window standing over it (`window_over_dialog`); a minimised one is restored first.
+    pub(crate) fn raise_dialog(&mut self, index: usize) {
         let Some(v) = self.dialogs.views.get_mut(index) else {
             return;
         };
@@ -250,6 +249,24 @@ impl State {
         }
         if restored {
             self.redraw_all();
+        }
+        self.raise_windows_over_dialogs();
+        if let Some(id) = self.dialogs.views.last().map(|v| v.id)
+            && let Some(w) = self.window_over_dialog(id)
+        {
+            self.focus_window(w);
+        }
+    }
+
+    /// Keeps the windows standing over dialogs (`Window::over_dialog`) above every dialog, the
+    /// last focused on top.
+    fn raise_windows_over_dialogs(&mut self) {
+        let over: Vec<_> = (self.focus_order.iter())
+            .filter_map(|&w| self.win(w).filter(|x| x.over_dialog.is_some()))
+            .map(|x| x.tree)
+            .collect();
+        for tree in over {
+            self.scene.raise_to_top(tree);
         }
     }
 
@@ -428,14 +445,10 @@ impl State {
     }
 
     fn destroy_dialog(&mut self, mut v: DialogView) {
-        if v.dialog.picker().is_some() {
-            self.pickthumbs.forget(v.id);
-        }
         self.switcher_forget(crate::switcherview::Entry::Dialog(v.id));
         if matches!(
             self.interaction,
             Interaction::DialogMove { .. }
-                | Interaction::DialogResize { .. }
                 | Interaction::DialogPress
                 | Interaction::FieldDrag { .. }
         ) {

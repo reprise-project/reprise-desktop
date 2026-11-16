@@ -330,15 +330,6 @@ fn an_inactive_glass_form_dialog_draws_its_default_button_plain() {
 }
 
 #[test]
-fn a_fixed_dialogs_border_sizes_nothing() {
-    let theme = Theme::default();
-    let text = TextRenderer::load(&FontConfig::default());
-    let l = DialogLayout::compute(&theme, &text, &chooser());
-    assert_eq!(l.sizing_edges(1, 100, &theme.metrics), None);
-    assert_eq!(l.sizing_edges(1, 1, &theme.metrics), None);
-}
-
-#[test]
 fn a_blue_dialog_is_framed_by_the_style() {
     use reprisekit::style::{Part, State};
     let classic = Theme::default();
@@ -634,15 +625,6 @@ fn a_form_dialog_fits_the_frame_it_is_shown_in() {
 fn a_blue_client_area_starts_under_the_styles_caption() {
     let blue = blue();
     let text = TextRenderer::load(&FontConfig::default());
-    let browse = Dialog::browse(crate::filepick::FilePicker::run_command(
-        &std::env::temp_dir(),
-        crate::filepick::Icons::default(),
-        true,
-    ));
-    let l = DialogLayout::compute(&blue, &text, &browse);
-    assert_eq!(l.page, Some(Rect::new(4, 30, 555, 451)));
-    assert_eq!(l.size, (563, 485));
-    assert_eq!(l.caption, Rect::new(4, 4, 555, 26));
     let l = DialogLayout::compute(&blue, &text, &chooser());
     assert_eq!(l.page.map(|p| (p.x, p.y)), Some((3, 29)));
     assert_eq!(l.size, (CHOOSER_W, CHOOSER_H + 8));

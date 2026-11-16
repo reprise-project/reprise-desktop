@@ -61,7 +61,8 @@ impl State {
     }
 
     /// Put each window's tree in its layer: `layers.fullscreen` (the fullscreen
-    /// `bind_window`), `layers.prompts` (consent prompts), `layers.on_top` (also X11 menus and
+    /// `bind_window`), `layers.menu` (over the dialogs, `Window::over_dialog`), `layers.prompts`
+    /// (consent prompts), `layers.on_top` (also X11 menus and
     /// tooltips) or `layers.windows`. Walks all windows: one that just left fullscreen or on top
     /// has its flag cleared and still has to come down. Reparenting lands a tree on
     /// top of its new parent, so this runs before the focused window is raised.
@@ -75,6 +76,8 @@ impl State {
             let lifted = win.fullscreen && top == Some(w);
             let want = if lifted {
                 self.layers.fullscreen
+            } else if win.over_dialog.is_some() {
+                self.layers.menu
             } else if win.consent {
                 self.layers.prompts
             } else if win.override_redirect || self.stays_on_top(w) {

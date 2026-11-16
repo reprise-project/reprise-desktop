@@ -297,8 +297,8 @@ fn watch_on_loop(state: &mut State, watch: &DirWatch) {
     }
 }
 
-/// Rescan the desktop and list each Browse dialog again when gvfs metadata changes for a file
-/// in the folder it shows: a folder icon Nautilus or `gio set` sets.
+/// Rescan the desktop when gvfs metadata changes for a file in its folder: a folder icon Nautilus
+/// or `gio set` sets.
 fn gvfs_on_loop(state: &mut State) {
     let (ping, source) = match smithay::reexports::calloop::ping::make_ping() {
         Ok(p) => p,
@@ -312,7 +312,6 @@ fn gvfs_on_loop(state: &mut State) {
         if (state.desktop.as_ref()).is_some_and(|v| folders.contains(&v.dir)) {
             state.settle_rescan();
         }
-        state.relist_pickers(&folders);
     });
     if let Err(e) = added {
         log::warn!("desktop icons: {}", e.error);
@@ -338,8 +337,7 @@ fn mounts_on_loop(state: &mut State) {
     }
 }
 
-/// Lists the desktop and each Browse dialog again when the folder it shows listed a link
-/// unfollowed whose target has since answered.
+/// Lists the desktop again when its folder listed a link unfollowed whose target has since answered.
 pub fn relist_on_loop(state: &mut State) {
     let (ping, source) = match smithay::reexports::calloop::ping::make_ping() {
         Ok(p) => p,
@@ -351,7 +349,6 @@ pub fn relist_on_loop(state: &mut State) {
         if (state.desktop.as_ref()).is_some_and(|v| due.contains(&v.dir)) {
             state.settle_rescan();
         }
-        state.relist_pickers(&due);
     });
     if let Err(e) = added {
         log::warn!("desktop icons: {}", e.error);

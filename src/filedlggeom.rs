@@ -1,9 +1,8 @@
-//! The size and place file dialogs open at, per app: programs' toplevels tagged `file-dialog`
-//! and the compositor's own Browse dialogs each keep a [`Geometry`] under their app's table in
-//! `repriseconf::filedialog`'s file.
+//! The size and place file dialogs open at, per app: toplevels tagged `file-dialog` each keep a
+//! [`Geometry`] under their app's table in `repriseconf::filedialog`'s file.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use repriseconf::filedialog::Geometry;
 
@@ -14,15 +13,14 @@ use smithay::output::Output;
 
 use crate::window::{Window, WindowId};
 
-/// The app id the compositor's own Browse dialogs keep their folder, view and geometry under.
+/// The app id Run's and Open With's Browse... dialogs keep their folder, view and geometry under.
 pub const OWN_APP: &str = "reprise";
 
-/// Each app's geometry and the Browse dialogs' last folder, read at start and after Settings
+/// Each app's geometry, read at start and after Settings
 /// imported the file (`State::reload_remembered`): the compositor is their only other writer.
 pub struct Kept {
     pub path: PathBuf,
     pub geometry: BTreeMap<String, Geometry>,
-    pub folder: Option<PathBuf>,
 }
 
 impl Kept {
@@ -38,9 +36,6 @@ impl Kept {
             geometry: (sections.iter())
                 .filter_map(|(app, s)| Some((app.clone(), Geometry::parse(s)?)))
                 .collect(),
-            folder: (sections.iter())
-                .find(|(app, _)| app == OWN_APP)
-                .and_then(|(_, s)| repriseconf::filedialog::folder(s)),
             path,
         }
     }
@@ -53,17 +48,6 @@ impl Kept {
         }
         self.geometry.insert(app.clone(), g);
         self.write(app, g.text());
-    }
-
-    /// Keeps `dir` as the folder the next Browse dialog opens in.
-    pub fn keep_folder(&mut self, dir: &Path) {
-        if self.folder.as_deref() == Some(dir) {
-            return;
-        }
-        self.folder = Some(dir.to_path_buf());
-        if let Some(line) = repriseconf::filedialog::folder_text(dir) {
-            self.write(OWN_APP.into(), line);
-        }
     }
 
     fn write(&self, app: String, lines: String) {
@@ -218,37 +202,6 @@ impl State {
         let app = self.file_dialog_app(w);
         self.wm.file_dialog.store(app, g);
     }
-
-    /// Sizes Browse dialog `p`, `pad` smaller than its frame, from the kept geometry; the place
-    /// it goes, if any.
-    pub fn restore_browse(
-        &self,
-        p: &mut crate::filepick::FilePicker,
-        pad: (i32, i32),
-    ) -> Option<(i32, i32)> {
-        p.dlg.set_text(self.config.theme.text);
-        let pos = self.pointer_location();
-        let out = self.output_at(pos.x, pos.y);
-        let o = self.file_dialog_opening(OWN_APP, p.dlg.min_client(), pad, out.as_ref())?;
-        p.dlg.set_size(o.client);
-        o.at
-    }
-
-    /// Keeps where Browse dialog `index` is and its client size for the next file dialog.
-    pub fn remember_browse(&mut self, index: usize) {
-        let Some(v) = self.dialogs.views.get(index) else {
-            return;
-        };
-        let Some(p) = v.dialog.picker() else {
-            return;
-        };
-        let g = Geometry::kept(
-            (v.x, v.y),
-            p.dlg.client(),
-            self.config.accessibility.text_size,
-        );
-        self.wm.file_dialog.store(OWN_APP.into(), g);
-    }
 }
 
 #[cfg(test)]
@@ -355,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn the_kept_file_gives_each_apps_geometry_and_browses_folder() {
+    fn the_kept_file_gives_each_apps_geometry() {
         let text = "[\"org.example.A\"]\nx = 5\ny = 6\nwidth = 600\nheight = 400\n\
                     [\"org.example.B\"]\nview = \"icons\"\n\
                     [reprise]\nfolder = \"/home/u/bin\"\nx = 1\ny = 2\nwidth = 3\nheight = 4\n";
@@ -371,7 +324,6 @@ mod tests {
         );
         assert_eq!(k.geometry.get("org.example.B"), None, "no geometry kept");
         assert!(k.geometry.contains_key(OWN_APP));
-        assert_eq!(k.folder, Some(PathBuf::from("/home/u/bin")));
     }
 
     #[test]

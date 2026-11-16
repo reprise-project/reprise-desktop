@@ -24,18 +24,6 @@ fn run_beside_a_right_bar_stays_on_a_narrow_output() {
     assert_eq!(by_start(area, Edge::Right, (347, 179)), (1920, 0));
 }
 
-#[test]
-fn runs_browse_keeps_3_px_off_the_screens_edge_on_starts_side() {
-    use reprisekit::taskbar::Edge;
-    let area = Rect::new(0, 0, 1920, 1050);
-    assert_eq!(browse_by_start(area, Edge::Bottom, (400, 300)), (3, 750));
-    let area = Rect::new(0, 0, 1860, 1080);
-    assert_eq!(
-        browse_by_start(area, Edge::Right, (400, 300)),
-        (1860 - 400 - 3, 0)
-    );
-}
-
 /// A command longer than the box scrolls with the caret; `draw` keeps `Field::first` in step.
 #[test]
 fn a_long_run_command_scrolls_instead_of_overflowing_the_field() {

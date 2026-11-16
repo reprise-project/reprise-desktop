@@ -398,7 +398,6 @@ pub struct State {
     pub scale_warm: Option<crate::output::ScaleWarm>,
     /// The recent files and document folders the menus list (`recentdocs`).
     pub recent: crate::recentdocs::RecentDocs,
-    pub pickthumbs: crate::pickthumbs::PickThumbs,
     pub hang: crate::hang::Hang,
     /// The key route's own state: the Super tap, chords, keys kept from
     /// the client (`keyboard`).
@@ -806,7 +805,6 @@ impl State {
             shots: Default::default(),
             scale_warm: None,
             recent: Default::default(),
-            pickthumbs: Default::default(),
             hang: Default::default(),
             key_input: crate::keyboard::KeyInput::new(&dh),
             devices: crate::devices::Devices::new(&dh),

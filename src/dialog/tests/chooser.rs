@@ -1,42 +1,16 @@
 use super::*;
 
-/// At 200% text the Open With chooser's and the Browse dialog's clients double inside their
-/// frames, and a click lands on the grown Cancel.
+/// At 200% text the Open With chooser's client doubles inside its frame.
 #[test]
-fn open_with_and_browse_grow_with_the_text_size() {
+fn open_with_grows_with_the_text_size() {
     let theme = Theme::default().with_text_size(200);
     let text = TextRenderer::load(&theme.fonts);
-    let px = theme.fonts.size_px;
     let caption_grow = theme.metrics.caption_height - 18;
     let d = chooser();
     let l = DialogLayout::compute(&theme, &text, &d);
     let (cw, ch) = openwith::CLIENT;
     assert_eq!(l.page.map(|p| (p.width, p.height)), Some((2 * cw, 2 * ch)));
     assert_eq!(l.size, (2 * cw + 6, 2 * ch + 21 + caption_grow + 3));
-
-    let dir = std::env::temp_dir().join(format!("reprise-browse-grown-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut d = Dialog::browse(crate::filepick::FilePicker::run_command(
-        &dir,
-        crate::filepick::Icons::default(),
-        true,
-    ));
-    d.fit(&theme, &text);
-    let l = DialogLayout::compute(&theme, &text, &d);
-    let page = l.page.unwrap();
-    assert_eq!((page.width, page.height), (1110, 902));
-    let c = render(&theme, &text, &l, &d);
-    assert_eq!((c.width as i32, c.height as i32), l.size);
-    // Cancel: 150x46, 12 px in from the right, 2 px above the Files of type row.
-    let (x, y) = (page.right() - 12 - 150 + 10, page.y + 844 - 2 + 10);
-    assert_eq!(
-        l.hit(&d, x, y, &text, px),
-        Some(DialogHit::Browse(
-            reprisekit::controls::filedlg::Hit::Cancel
-        ))
-    );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -389,147 +363,4 @@ fn open_with_chooser_draws_group_list_and_selection() {
     let cb = lay.check;
     assert_eq!(c.get(cb.x + 6, cb.y + 6), cs.window.argb());
     assert_eq!(c.get(lay.ok.x, lay.ok.y + 10), cs.button_text.argb());
-}
-
-#[test]
-fn browse_is_a_frame_around_the_file_dialog() {
-    let theme = Theme::default();
-    let text = tahoma();
-    let dir = std::env::temp_dir().join(format!("reprise-browse-frame-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut d = Dialog::browse(crate::filepick::FilePicker::run_command(
-        &dir,
-        crate::filepick::Icons::default(),
-        true,
-    ));
-    let l = DialogLayout::compute(&theme, &text, &d);
-    assert_eq!(l.size, (563, 477));
-    assert_eq!(l.page, Some(Rect::new(4, 22, 555, 451)));
-    assert!(l.help.is_some());
-    let px = theme.fonts.size_px;
-    assert_eq!(
-        l.hit(&d, 4 + 472 + 30, 22 + 416 + 10, &text, px),
-        Some(DialogHit::Browse(
-            reprisekit::controls::filedlg::Hit::Cancel
-        ))
-    );
-    let client = l.page.unwrap();
-    assert_eq!(
-        d.picker_mut()
-            .unwrap()
-            .click(client, Some(reprisekit::controls::filedlg::Hit::Cancel)),
-        Outcome::Close
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn a_grown_browse_dialog_frames_its_bigger_client() {
-    use reprisekit::controls::filedlg::{CLIENT, Hit};
-    let (dw, dh) = (168, 55);
-    let theme = Theme::default();
-    let text = tahoma();
-    let dir = std::env::temp_dir().join(format!("reprise-browse-grown-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut d = Dialog::browse(crate::filepick::FilePicker::run_command(
-        &dir,
-        crate::filepick::Icons::default(),
-        true,
-    ));
-    let draw_it = |d: &Dialog, l: &DialogLayout| {
-        draw(
-            &theme,
-            &text,
-            l,
-            None,
-            None,
-            &[],
-            d,
-            false,
-            None,
-            Cues::NONE,
-            true,
-            None,
-        )
-    };
-    let small_l = DialogLayout::compute(&theme, &text, &d);
-    let small = draw_it(&d, &small_l);
-    d.picker_mut()
-        .unwrap()
-        .dlg
-        .set_size((CLIENT.0 + dw, CLIENT.1 + dh));
-    let l = DialogLayout::compute(&theme, &text, &d);
-    assert_eq!(l.size, (731, 532));
-    assert_eq!(l.page, Some(Rect::new(4, 22, 723, 506)));
-    assert_eq!(
-        l.close,
-        small_l.close.map(|r| Rect::new(r.x + dw, r.y, 16, 14))
-    );
-    let m = &theme.metrics;
-    assert_eq!(l.sizing_edges(1, 300, m), Some(Edges::LEFT));
-    assert_eq!(l.sizing_edges(729, 300, m), Some(Edges::RIGHT));
-    assert_eq!(l.sizing_edges(300, 1, m), Some(Edges::TOP));
-    assert_eq!(
-        l.sizing_edges(730, 531, m),
-        Some(Edges::BOTTOM | Edges::RIGHT)
-    );
-    assert_eq!(l.sizing_edges(300, 10, m), None, "the caption moves it");
-    assert_eq!(l.sizing_edges(300, 300, m), None, "the client is no border");
-    let px = theme.fonts.size_px;
-    assert_eq!(
-        l.hit(&d, 4 + 472 + 30 + dw, 22 + 416 + 10 + dh, &text, px),
-        Some(DialogHit::Browse(Hit::Cancel))
-    );
-    assert_eq!(
-        l.hit(&d, 4 + 723 - 4, 22 + 506 - 4, &text, px),
-        Some(DialogHit::Browse(Hit::Grip))
-    );
-    let client = l.page.unwrap();
-    assert_eq!(
-        d.picker_mut().unwrap().click(client, Some(Hit::Grip)),
-        Outcome::Size(Edges::BOTTOM | Edges::RIGHT)
-    );
-    let big = draw_it(&d, &l);
-    for y in 477 - 80..477 {
-        for x in 563 - 120..563 {
-            assert_eq!(big.get(x + dw, y + dh), small.get(x, y), "at ({x}, {y})");
-        }
-    }
-    for y in 22..82 {
-        for x in 0..90 {
-            assert_eq!(big.get(x, y), small.get(x, y), "at ({x}, {y})");
-        }
-    }
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn a_browse_dialogs_column_title_lights_under_the_pointer() {
-    use reprisekit::controls::{filedlg, shellview};
-    let theme = blue();
-    let text = TextRenderer::load(&FontConfig::default());
-    let dir = std::env::temp_dir().join(format!("reprise-browse-hover-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut d = Dialog::browse(crate::filepick::FilePicker::run_command(
-        &dir,
-        crate::filepick::Icons::default(),
-        true,
-    ));
-    let l = DialogLayout::compute(&theme, &text, &d);
-    let client = l.page.expect("the picker's page");
-    let mut c = Canvas::new(600, 500);
-    let px = theme.fonts.size_px;
-    d.picker()
-        .unwrap()
-        .dlg
-        .draw(&mut c, &text, &theme.paint(), client, px);
-    let title = Some(DialogHit::Browse(filedlg::Hit::Shell(
-        shellview::Hit::Header(0),
-    )));
-    assert!(d.hover(title, (0, 0), true), "the title lights");
-    assert!(d.leave(true), "and goes cold");
-    let _ = std::fs::remove_dir_all(&dir);
 }

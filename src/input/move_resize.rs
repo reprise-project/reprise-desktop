@@ -262,13 +262,10 @@ impl State {
                 self.clipview_release();
                 self.emoji_release();
             }
-            Interaction::DialogMove { index, .. } | Interaction::DialogResize { index, .. } => {
-                self.remember_browse(index)
-            }
             was @ (Interaction::MiniMove { .. } | Interaction::MiniResize { .. }) => {
                 crate::miniview::released(self, was)
             }
-            Interaction::Idle => {}
+            Interaction::DialogMove { .. } | Interaction::Idle => {}
         }
         self.interaction = Interaction::Idle;
         self.set_cursor("default");
@@ -320,10 +317,8 @@ impl State {
                 self.end_marquee();
                 self.stir_cancel(Source::Pointer);
             }
-            // A dragged or sized dialog stays as it is.
-            Interaction::DialogMove { index, .. } | Interaction::DialogResize { index, .. } => {
-                self.remember_browse(index)
-            }
+            // A dragged dialog stays where it is.
+            Interaction::DialogMove { .. } => {}
             Interaction::FieldDrag {
                 editor: crate::caret::Editor::Dialog,
             }
@@ -440,7 +435,7 @@ pub(super) fn top_below_top_bar(r: Rect, edges: Edges, p: &crate::barplace::BarP
 /// Pure resize math: the new frame rect for a frame `start`, dragged on
 /// `edges` by (`dx`, `dy`), under the client's size limits and `pad`, what
 /// the frame adds to the client's size. The edges not dragged stay anchored,
-/// including after a min/max clamp. Windows and sizable dialogs both use it.
+/// including after a min/max clamp.
 pub(crate) fn resize_rect(
     start: Rect,
     edges: Edges,

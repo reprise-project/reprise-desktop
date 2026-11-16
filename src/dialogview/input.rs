@@ -1,17 +1,14 @@
-//! Pointer and key routing into dialogs: hover, tips, wheel, sizing, moving, presses, keys.
+//! Pointer and key routing into dialogs: hover, tips, wheel, moving, presses, keys.
 
-use reprisekit::controls::filedlg;
 use reprisekit::controls::form::Key;
 use reprisekit::controls::grouplist;
 use reprisekit::controls::openwith;
-use reprisekit::controls::shellview;
-use reprisekit::frame::{CaptionButton, Edges};
+use reprisekit::frame::CaptionButton;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::compositor::State;
-use crate::dialog::{self, DialogHit, DialogLayout, Outcome};
+use crate::dialog::{self, DialogHit, Outcome};
 use crate::input::Interaction;
-use crate::raster::Rect;
 use crate::textedit::EditKey;
 
 use super::*;
@@ -99,8 +96,7 @@ impl State {
 
     /// A wheel frame over `over` on dialog `index` (`discrete` in 120ths of a notch, else
     /// `continuous` travel). The tray list scrolls a row a notch and ignores it while a combo is
-    /// open; Browse goes to `browse_wheel`; others take `WHEEL_ROWS` a notch. True when a dialog
-    /// is there.
+    /// open; others take `WHEEL_ROWS` a notch. True when a dialog is there.
     pub fn dialog_wheel(
         &mut self,
         index: usize,
@@ -111,11 +107,10 @@ impl State {
         let Some(id) = self.dialogs.views.get(index).map(|v| v.id) else {
             return false;
         };
-        if self.dialogs.views.iter().any(|v| v.parent == Some(id)) {
+        if self.dialogs.views.iter().any(|v| v.parent == Some(id))
+            || self.window_over_dialog(id).is_some()
+        {
             return true;
-        }
-        if let Some(handled) = self.browse_wheel(index, discrete, continuous) {
-            return handled;
         }
         let v = &mut self.dialogs.views[index];
         if let Some(t) = v.dialog.tray_mut() {
@@ -143,81 +138,9 @@ impl State {
         true
     }
 
-    /// The wheel over Browse dialog `index`: scrolls the part under the pointer, `WHEEL_ROWS` a notch.
-    fn browse_wheel(&mut self, index: usize, discrete: i32, continuous: f64) -> Option<bool> {
-        self.dialogs.views.get(index)?.dialog.picker()?;
-        if self.dialogs.views.len() - 1 != index {
-            return Some(true);
-        }
-        let rows = self.panels.wheel.lines(discrete, continuous);
-        if rows == 0 {
-            return Some(true);
-        }
-        let pos = self.pointer_location();
-        let hit = match self.dialog_hit(index, pos.x, pos.y) {
-            Some(DialogHit::Browse(h)) => Some(h),
-            _ => None,
-        };
-        let v = &mut self.dialogs.views[index];
-        let (Some(p), Some(client)) = (v.dialog.picker_mut(), v.layout.page) else {
-            return Some(true);
-        };
-        let outcome = p.wheel(client, hit, rows);
-        self.apply_dialog(outcome);
-        Some(true)
-    }
-
     pub fn dialog_hit(&self, index: usize, lx: f64, ly: f64) -> Option<DialogHit> {
         let v = self.dialogs.views.get(index)?;
         hit(v, lx, ly, &self.text, &self.config.theme)
-    }
-
-    /// Start sizing the top dialog from `edges`, via its border or Browse's grip.
-    pub(super) fn begin_dialog_size(&mut self, edges: Edges) {
-        let Some(index) = self.dialogs.views.len().checked_sub(1) else {
-            return;
-        };
-        let pos = self.pointer_location();
-        let v = &self.dialogs.views[index];
-        let (w, h) = v.layout.size;
-        self.interaction = Interaction::DialogResize {
-            index,
-            edges,
-            start: Rect::new(v.x, v.y, w, h),
-            cx: pos.x,
-            cy: pos.y,
-        };
-        self.set_cursor(edges.cursor_name());
-    }
-
-    /// The sizing pointer moved (`dx`, `dy`) since the press: the dialog takes the new client size and
-    /// is laid out again; an unchanged size draws nothing.
-    pub fn size_dialog(&mut self, index: usize, edges: Edges, start: Rect, dx: i32, dy: i32) {
-        let State {
-            config,
-            text,
-            dialogs,
-            ..
-        } = self;
-        let Some(v) = dialogs.views.get_mut(index) else {
-            return;
-        };
-        let Some(page) = v.layout.page else {
-            return;
-        };
-        let pad = (v.layout.size.0 - page.width, v.layout.size.1 - page.height);
-        let Some(p) = v.dialog.picker_mut() else {
-            return;
-        };
-        let r = sized_frame(start, edges, (dx, dy), p.dlg.min_client(), pad);
-        let client = (r.width - pad.0, r.height - pad.1);
-        if client == p.dlg.client() {
-            return;
-        }
-        p.dlg.set_size(client);
-        v.layout = DialogLayout::compute(&config.theme, text, &v.dialog);
-        self.move_dialog(index, r.x, r.y);
-        self.redraw_dialog(index);
     }
 
     /// Moves dialog `index` to `(x, y)`; the output under its title bar becomes its own, for its
@@ -255,31 +178,16 @@ impl State {
         self.redraw_nodes(outputs, &[]);
     }
 
-    /// A thumb button pressed on dialog `index`: Back or Forward on a top Browse dialog, else ignored.
-    pub fn dialog_nav(&mut self, index: usize, nav: reprisekit::pointer::Nav) {
-        if self.dialogs.views.len().checked_sub(1) != Some(index) {
-            return;
-        }
-        let outcome = match self
-            .dialogs
-            .views
-            .last_mut()
-            .and_then(|v| v.dialog.picker_mut())
-        {
-            Some(p) => p.nav(nav),
-            None => return,
-        };
-        self.apply_dialog(outcome);
-    }
-
     /// A left press on dialog `index` at `hit` (`None` for the bare body). A dialog under the top one is
-    /// raised first; one with another opened over it raises that one instead.
+    /// raised first; one with another dialog or a window opened over it raises that one instead.
     pub fn dialog_press(&mut self, index: usize, hit: Option<DialogHit>, time_msec: u32) {
         let Some(id) = self.dialogs.views.get(index).map(|v| v.id) else {
             return;
         };
         self.raise_dialog(index);
-        if self.dialogs.views.last().is_some_and(|v| v.id != id) {
+        if self.dialogs.views.last().is_some_and(|v| v.id != id)
+            || self.window_over_dialog(id).is_some()
+        {
             return;
         }
         let top = self.dialogs.views.len() - 1;
@@ -292,10 +200,6 @@ impl State {
                 dx: pos.x - f64::from(v.x),
                 dy: pos.y - f64::from(v.y),
             };
-            return;
-        }
-        if let Some(DialogHit::Resize(e)) = hit {
-            self.begin_dialog_size(e);
             return;
         }
         let lights = self.config.theme.look.lights_pointer();
@@ -347,28 +251,17 @@ impl State {
             return;
         };
         self.raise_dialog(index);
-        if self.dialogs.views.last().is_none_or(|v| v.id != id) {
+        if self.dialogs.views.last().is_none_or(|v| v.id != id)
+            || self.window_over_dialog(id).is_some()
+        {
             return;
         }
         let px = self.top_dialog_px();
-        let pos = self.pointer_location();
         let State { dialogs, text, .. } = self;
         let Some(v) = dialogs.views.last_mut() else {
             return;
         };
-        let took = match (hit, v.dialog.picker_mut(), v.layout.page) {
-            (Some(DialogHit::Browse(filedlg::Hit::FileName)), Some(p), Some(client)) => {
-                p.click(client, Some(filedlg::Hit::FileName));
-                true
-            }
-            (Some(DialogHit::Browse(h)), Some(p), Some(client)) => {
-                let out = p.right_click(client, Some(h), to_local(pos.x, pos.y, (v.x, v.y)));
-                self.apply_dialog(out);
-                return;
-            }
-            _ => v.dialog.right_press(text, px, hit),
-        };
-        if !took {
+        if !v.dialog.right_press(text, px, hit) {
             return;
         }
         self.restart_caret();
@@ -413,8 +306,8 @@ impl State {
         }
     }
 
-    /// A left press elsewhere on the top dialog: a Browse picker or the dialog clicks `hit`, double-click
-    /// on a repeat press on the same row. A held thumb or form button keeps the pointer until release.
+    /// A left press elsewhere on the top dialog: the dialog clicks `hit`, double-click on a repeat
+    /// press on the same row. A held thumb or form button keeps the pointer until release.
     fn press_dialog_body(&mut self, hit: Option<DialogHit>, time_msec: u32) -> Outcome {
         let at = self.dialog_click(time_msec);
         let Some(v) = self.dialogs.views.last_mut() else {
@@ -422,9 +315,6 @@ impl State {
         };
         let double = match hit {
             Some(DialogHit::Chooser(openwith::Hit::List(grouplist::Hit::Row(i)))) => {
-                v.row_press.press(i, at)
-            }
-            Some(DialogHit::Browse(filedlg::Hit::Shell(shellview::Hit::Entry(i)))) => {
                 v.row_press.press(i, at)
             }
             Some(DialogHit::Control(h))
@@ -438,20 +328,9 @@ impl State {
                 false
             }
         };
-        let out = match (v.dialog.picker_mut(), v.layout.page) {
-            (Some(p), Some(client)) => {
-                let hit = match hit {
-                    Some(DialogHit::Browse(h)) => Some(h),
-                    _ => None,
-                };
-                if double {
-                    p.double_click(client, hit)
-                } else {
-                    p.click(client, hit)
-                }
-            }
-            _ if double => v.dialog.double_click(hit),
-            _ => v.dialog.click(hit),
+        let out = match double {
+            true => v.dialog.double_click(hit),
+            false => v.dialog.click(hit),
         };
         if v.dialog.ticking() {
             let id = v.id;
@@ -599,12 +478,6 @@ impl State {
             }
             return;
         }
-        if v.dialog.picker().is_some() {
-            if v.dialog.drag_picker(over) {
-                self.redraw_dialog(i);
-            }
-            return;
-        }
         let (x, y) = to_local(pos.x, pos.y, (v.x, v.y));
         if v.dialog.holding_page_bar() {
             if v.dialog.drag_page_bar(x, y, text, px) {
@@ -702,20 +575,6 @@ impl State {
         }
         let ctrl = k.mods & MOD_CTRL != 0;
         let shift = k.mods & MOD_SHIFT != 0;
-        let shortcut = match self.dialogs.views.last_mut() {
-            Some(v) => match (v.dialog.picker_mut(), v.layout.page) {
-                (Some(p), Some(client)) => {
-                    (k.syms.iter()).find_map(|&sym| p.shortcut(client, sym, ctrl, shift, alt))
-                }
-                _ => None,
-            },
-            None => None,
-        };
-        if let Some(outcome) = shortcut {
-            self.restart_caret();
-            self.apply_dialog(outcome);
-            return;
-        }
         // The table every repriseapp program reads; Ctrl+Tab cycles pages.
         let special = k
             .syms
@@ -752,12 +611,9 @@ impl State {
             self.clip_edit_key(e);
         }
         let outcome = match self.dialogs.views.last_mut() {
-            Some(v) => match (v.dialog.picker_mut(), v.layout.page) {
-                (Some(p), Some(client)) => p.key(client, key),
-                // Ctrl+Enter breaks a memo line; Ctrl+Home/End move its caret to the ends.
-                _ if ctrl => v.dialog.key(reprisekit::controls::form::ctrl_key(key)),
-                _ => v.dialog.key(key),
-            },
+            // Ctrl+Enter breaks a memo line; Ctrl+Home/End move its caret to the ends.
+            Some(v) if ctrl => v.dialog.key(reprisekit::controls::form::ctrl_key(key)),
+            Some(v) => v.dialog.key(key),
             None => return,
         };
         self.restart_caret();

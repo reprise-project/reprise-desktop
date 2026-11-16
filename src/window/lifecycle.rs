@@ -114,6 +114,7 @@ impl State {
             owned: false,
             on_top: false,
             consent: false,
+            over_dialog: None,
             frame_scale: 1,
             wm_caps: None,
             placement: None,
@@ -458,8 +459,10 @@ impl State {
         let consent = self.prompt_pid(w).is_some_and(|pid| {
             crate::mapfocus::is_consent(pid, &self.win(w).map(Window::app_id).unwrap_or_default())
         });
+        let over_dialog = self.browse_over(self.client_pid(w));
         if let Some(win) = self.win_mut(w) {
             win.consent = consent;
+            win.over_dialog = over_dialog;
         }
         self.restack();
         let mut activated = self.win(w).is_some_and(|x| x.activate_on_map);
@@ -650,6 +653,7 @@ impl State {
         }
         self.remember_window(w, true);
         self.remember_file_dialog(w);
+        let over = self.win(w).and_then(|x| x.over_dialog);
         self.forget_window(w);
         self.reset_state(w);
         self.carry_unmapped(w);
@@ -662,9 +666,18 @@ impl State {
         crate::idle::inhibition_changed(self);
         self.refresh_owned();
         if was_focused {
-            self.focus_top();
+            self.focus_after(over);
         }
         self.redraw_taskbars();
+    }
+
+    /// The focus after a window that stood `over` a dialog (`Window::over_dialog`) left it: that
+    /// dialog, or what stands over it still, else the top window.
+    fn focus_after(&mut self, over: Option<u64>) {
+        match over.and_then(|id| self.dialog_index(id)) {
+            Some(i) => self.raise_dialog(i),
+            None => self.focus_top(),
+        }
     }
 
     pub fn destroy_window(&mut self, w: WindowId) {
@@ -680,6 +693,9 @@ impl State {
             self.window_closing(w);
         }
         self.finish_window_anim(w);
+        let over = (self.win(w))
+            .filter(|_| self.focused == Some(w))
+            .and_then(|x| x.over_dialog);
         self.forget_window(w);
         if let Some(i) = self.windows.iter().position(|x| x.id == w) {
             let win = self.windows.remove(i);
@@ -688,7 +704,7 @@ impl State {
         self.refresh_owned();
         self.close_ended_programs();
         if refocus {
-            self.focus_top();
+            self.focus_after(over);
         }
         self.redraw_taskbars();
     }

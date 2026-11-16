@@ -366,8 +366,6 @@ impl State {
                     self.dialog_press(index, dialog_button, time.millis());
                 } else if button == BTN_RIGHT {
                     self.dialog_right_press(index, dialog_button, at);
-                } else if let Some(nav) = reprisekit::pointer::nav_button(button) {
-                    self.dialog_nav(index, nav);
                 }
             }
             // The desktop takes the keyboard from the windows. Any button on

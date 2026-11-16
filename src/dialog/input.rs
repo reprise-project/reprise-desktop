@@ -17,8 +17,7 @@ impl Dialog {
     /// A key. A form or the chooser takes it first. Otherwise Enter presses the default button,
     /// Escape cancels, text edits the field; without a field Space presses the focused button and a
     /// letter the button with that access key. With Run's drop list open, Up/Down move the
-    /// highlight, Enter takes it, Escape closes the list only. The file picker's keys go through
-    /// `picker_mut`.
+    /// highlight, Enter takes it, Escape closes the list only.
     pub fn key(&mut self, key: Key) -> Outcome {
         if let Some(f) = self.form_mut() {
             return f.key(key);
@@ -170,9 +169,6 @@ impl Dialog {
             self.field_lit.motion(field_part(over));
             self.field_lit.release();
             return Outcome::Redraw;
-        }
-        if let Some(p) = self.picker_mut() {
-            return p.release();
         }
         if let Some(c) = self.chooser_mut() {
             let h = match over {
@@ -581,9 +577,6 @@ impl Dialog {
     }
 
     pub fn paste(&mut self, text: &str) -> Outcome {
-        if let Some(p) = self.picker_mut() {
-            return redraw_if(p.dlg.paste(text));
-        }
         if let Some(f) = self.form_mut() {
             let Some(form) = f.open_page_mut() else {
                 return Outcome::Nothing;
@@ -616,10 +609,6 @@ impl Dialog {
     ) -> Outcome {
         match layout.hit(self, x, y, text, px) {
             Some(DialogHit::Button(i)) => self.focus_button(i),
-            Some(DialogHit::Browse(_)) => match (self.picker_mut(), layout.page) {
-                (Some(p), Some(client)) => p.focus_at(client, (x, y), text, px),
-                _ => Outcome::Nothing,
-            },
             Some(DialogHit::Chooser(h)) => match self.chooser_mut() {
                 Some(c) => redraw_if(c.ow.focus_on(Some(h)) != openwith::Event::None),
                 None => Outcome::Nothing,
@@ -678,8 +667,7 @@ impl Dialog {
         Outcome::Redraw
     }
 
-    /// A reader asked to see row `row` of the list at dialog point (`x`, `y`): Browse's file list,
-    /// Open With's programs, the tray's items, an open drop list, a sheet's page list, or a form
+    /// A reader asked to see row `row` of the list at dialog point (`x`, `y`): Open With's programs, the tray's items, an open drop list, a sheet's page list, or a form
     /// page's list box or tree, scrolls it in.
     pub fn reveal(
         &mut self,
@@ -689,9 +677,6 @@ impl Dialog {
         text: &TextRenderer,
         px: u32,
     ) -> Outcome {
-        if let (Some(p), Some(client)) = (self.picker_mut(), layout.page) {
-            return p.reveal(client, (x, y), row, text, px);
-        }
         if let Some(c) = self.chooser_mut() {
             return redraw_if(c.ow.reveal(row) != openwith::Event::None);
         }
@@ -798,11 +783,8 @@ impl Dialog {
     }
 
     /// The edit control that has the keyboard: a form's focused field or
-    /// memo, Browse's File name field, else the dialog's own field.
+    /// memo, else the dialog's own field.
     pub fn focused_edit(&self) -> Option<FocusedEdit<'_>> {
-        if let Some(p) = self.picker() {
-            return p.dlg.focused_edit().map(FocusedEdit::Line);
-        }
         match self.form() {
             Some(f) => f.open_page()?.focused_edit(),
             None => self
@@ -854,11 +836,6 @@ impl Dialog {
         if let Some(f) = self.field.as_mut() {
             f.thumb.release();
         }
-        if let Some(p) = self.picker_mut() {
-            // A toolbar button, which acted on the press, or a column
-            // title is held there: either lets go without acting.
-            p.release();
-        }
         if let Some(c) = self.chooser_mut() {
             c.ow.release(None);
         }
@@ -908,11 +885,6 @@ impl Dialog {
         self.field_lit.holding() && self.field_lit.motion(field_part(over))
     }
 
-    pub fn drag_picker(&mut self, over: Option<DialogHit>) -> bool {
-        self.picker_mut()
-            .is_some_and(|p| p.hover(browse_part(over)))
-    }
-
     pub fn drag_button(&mut self, over: Option<usize>) -> bool {
         self.pointer.holding() && self.pointer.motion(over)
     }
@@ -945,9 +917,6 @@ impl Dialog {
         let help = matches!(over, Some(DialogHit::Help)).then_some(());
         redraw |= self.help_box.motion(help) && styled;
         redraw |= self.field_lit.motion(field_part(over)) && styled;
-        if let Some(p) = self.picker_mut() {
-            redraw |= p.hover(browse_part(over));
-        }
         if let Some(t) = self.tray_mut() {
             redraw |= t.motion(tray_part(over)) != traycustomize::Event::None && styled;
         }
@@ -975,9 +944,6 @@ impl Dialog {
     pub fn leave(&mut self, styled: bool) -> bool {
         let mut redraw = self.pointer.leave() && (styled || self.lights_icons());
         redraw |= (self.help_box.leave() | self.field_lit.leave()) && styled;
-        if let Some(p) = self.picker_mut() {
-            redraw |= p.leave();
-        }
         if let Some(t) = self.tray_mut() {
             redraw |= t.leave() != traycustomize::Event::None && styled;
         }
@@ -1071,14 +1037,6 @@ impl Dialog {
 pub(crate) fn tray_part(over: Option<DialogHit>) -> Option<traycustomize::Hit> {
     match over {
         Some(DialogHit::Tray(h)) => Some(h),
-        _ => None,
-    }
-}
-
-/// The file picker's part under the pointer, when it is on the picker.
-fn browse_part(over: Option<DialogHit>) -> Option<reprisekit::controls::filedlg::Hit> {
-    match over {
-        Some(DialogHit::Browse(h)) => Some(h),
         _ => None,
     }
 }

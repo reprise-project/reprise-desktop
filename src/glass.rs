@@ -1130,10 +1130,7 @@ pub fn wanted(config: &Config) -> bool {
 pub fn quality(interaction: &Interaction, settings: &Settings) -> Quality {
     let dragging = matches!(
         interaction,
-        Interaction::Move { .. }
-            | Interaction::Resize { .. }
-            | Interaction::DialogMove { .. }
-            | Interaction::DialogResize { .. }
+        Interaction::Move { .. } | Interaction::Resize { .. } | Interaction::DialogMove { .. }
     );
     reprisefx::blur::quality(dragging, settings.fast_drag)
 }

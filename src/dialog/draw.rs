@@ -107,9 +107,6 @@ pub fn draw(
         );
     }
 
-    if let (Some(p), Some(client)) = (d.picker(), layout.page) {
-        p.dlg.draw(&mut c, text, &paint, client, px);
-    }
     if let Some(f) = d.form() {
         draw_form(&mut c, &paint, theme, text, f, dots, row_icons);
     }
@@ -277,9 +274,8 @@ pub fn access_copy(
 /// `d`'s `access` part under the dialog node `ROOT`, in dialog
 /// coordinates: its text, Run's labelled field, a form's tabs and open
 /// page, and the buttons. Returns the node with the focus: the field, the
-/// form's focused control, else the default button. The Browse dialog
-/// and the Open With chooser add their own control's tree and return its
-/// focus instead.
+/// form's focused control, else the default button. The Open With
+/// chooser adds its own control's tree and returns its focus instead.
 pub fn access(
     d: &Dialog,
     layout: &DialogLayout,
@@ -288,10 +284,6 @@ pub fn access(
     tree: &mut reprisekit::access::Tree,
 ) -> reprisekit::access::accesskit::NodeId {
     use reprisekit::access::{self as ax, ROOT};
-    if let (Some(p), Some(client)) = (d.picker(), layout.page) {
-        p.dlg.access(tree, client, text, px);
-        return tree.focus();
-    }
     if let (Some(ch), Some(client)) = (d.chooser(), layout.page) {
         let lay = ch
             .ow

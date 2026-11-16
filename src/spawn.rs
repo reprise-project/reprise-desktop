@@ -1002,6 +1002,31 @@ pub fn try_spawn_held<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     start_forked(c, &what, Some(&name)).map(Some)
 }
 
+/// `argv` unscoped with the session's environment, its stdin and stdout piped to the caller and
+/// its stderr to the journal, for a dialog child the caller feeds, reads and waits on itself
+/// (`Child::wait`) rather than [`reap_children`]. Its first window takes the keyboard as a
+/// launch's does. Forks, so for off the loop. None when this session starts no programs.
+pub fn spawn_piped<S: AsRef<std::ffi::OsStr>>(
+    argv: &[S],
+    env: &SessionEnv,
+) -> std::io::Result<Option<std::process::Child>> {
+    let program = first(argv)?;
+    let name = log_name(None, &program.as_ref().to_string_lossy());
+    let Some(mut c) = command_argv(&name, program, &argv[1..], env, None) else {
+        return Ok(None);
+    };
+    detach(&mut c);
+    c.stdin(std::process::Stdio::piped());
+    c.stdout(std::process::Stdio::piped());
+    if let Some((fd, stream)) = crate::journal::stream_for(&name) {
+        c.env("JOURNAL_STREAM", stream);
+        c.stderr(fd);
+    }
+    let child = c.spawn()?;
+    crate::mapfocus::grant(child.id() as i32);
+    Ok(Some(child))
+}
+
 /// `argv` unscoped with the session's environment and its stderr piped back, for a helper the
 /// caller waits on itself (`Child::wait`) rather than [`reap_children`], `inherit` left open in
 /// it under the same number. None when this session starts no programs.
@@ -2519,6 +2544,24 @@ mod tests {
         assert_eq!(recorded(), Vec::<String>::new());
         assert!(spawn("true", &env(None), None));
         assert_eq!(recorded(), ["true"], "a session's launch starts");
+    }
+
+    #[test]
+    fn a_piped_spawn_reads_its_input_and_answers_on_stdout() {
+        use std::io::{Read, Write};
+        let mut c = spawn_piped(&["sh", "-c", "read x; echo got $x"], &env(None))
+            .unwrap()
+            .expect("programs start");
+        c.stdin.take().unwrap().write_all(b"hi\n").unwrap();
+        let mut out = String::new();
+        c.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+        assert!(c.wait().unwrap().success());
+        assert_eq!(out, "got hi\n");
+        let refusing = SessionEnv {
+            refuses_programs: true,
+            ..env(None)
+        };
+        assert!(spawn_piped(&["true"], &refusing).unwrap().is_none());
     }
 
     #[test]

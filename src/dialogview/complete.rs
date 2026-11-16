@@ -1,7 +1,7 @@
-//! Path completion in Run and Browse's File name; folder reads run on the file jobs' threads, so
+//! Path completion in Run's field; folder reads run on the file jobs' threads, so
 //! a mount that stopped answering holds a thread and never the loop.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::textedit::TextEdit;
 
@@ -54,12 +54,6 @@ impl State {
 
 /// The dialog's completion, its edit, and the folder a relative path names from.
 fn completion(d: &mut Dialog) -> Option<(&mut PathComplete, &mut TextEdit, Option<PathBuf>)> {
-    if d.picker().is_some() {
-        let p = d.picker_mut()?;
-        let base = p.current().map(Path::to_path_buf);
-        let (pc, edit) = p.dlg.completion();
-        return Some((pc, edit, base));
-    }
     let f = d.field.as_mut()?;
     Some((&mut f.complete, f.combo.edit.as_mut()?, None))
 }

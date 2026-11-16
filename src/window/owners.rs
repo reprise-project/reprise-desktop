@@ -91,7 +91,7 @@ impl State {
     /// those windows.
     pub(crate) fn refresh_owned(&mut self) -> Vec<WindowId> {
         let changed: Vec<WindowId> = (self.windows.iter())
-            .filter(|x| self.owner(x.id).is_some() != x.owned)
+            .filter(|x| (self.owner(x.id).is_some() || x.over_dialog.is_some()) != x.owned)
             .map(|x| x.id)
             .collect();
         for &k in &changed {

@@ -20,7 +20,6 @@ mod tests;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 
-use reprisekit::controls::filedlg;
 use reprisekit::controls::openwith;
 use reprisekit::cues::Cues;
 use reprisekit::pointer::DoubleClick;
@@ -35,7 +34,6 @@ use crate::glass::{Backdrop, frame_pane};
 use crate::raster::{Canvas, Rect};
 use crate::textedit::EditKey;
 use crate::window::keep_inside;
-use reprisekit::frame::Edges;
 
 #[derive(Default)]
 pub struct Dialogs {
@@ -45,10 +43,10 @@ pub struct Dialogs {
     /// The top dialog has the keyboard until a window takes the focus.
     pub active: bool,
     pub run_history: Vec<String>,
-    /// Wakes the loop once a Browse dialog's folder watch saw a change ([`State::pickers_changed`]).
-    pub picker_wake: Option<smithay::reexports::calloop::ping::Ping>,
-    /// The pinned folders, for Browse dialogs' places bars and the desktop's folder menus.
+    /// The pinned folders, for the desktop's folder menus.
     pub pins: Option<reprisefs::pins::Pins>,
+    /// The file dialog children Browse... started, each over its dialog.
+    pub browsing: Vec<browse::Browsing>,
     /// The dialog last seen with the keyboard ([`State::follow_consent_keyboard`]).
     pub keyboard_holder: Option<u64>,
 }
@@ -140,7 +138,7 @@ pub fn setup(state: &mut State) {
         crate::state::drop_key("bin");
     }
     crate::fsjobs::setup(state);
-    browse::watch_on_loop(state);
+    state.dialogs.pins = Some(reprisefs::pins::Pins::start(|| {}));
 }
 
 /// Hide the underlines of every dialog but the one at stack index `keyboard`, which has the keyboard.
@@ -219,8 +217,8 @@ fn to_local(lx: f64, ly: f64, origin: (i32, i32)) -> (i32, i32) {
     (lx.floor() as i32 - origin.0, ly.floor() as i32 - origin.1)
 }
 
-/// What the dialog has at a layout point: a sizable frame's border under `theme`'s metrics, else
-/// `DialogLayout::hit`. The renderer is needed to measure text for a byte index in an edit field.
+/// What the dialog has at a layout point (`DialogLayout::hit`). The renderer is needed to measure
+/// text for a byte index in an edit field.
 pub fn hit(
     v: &DialogView,
     lx: f64,
@@ -229,35 +227,7 @@ pub fn hit(
     theme: &crate::theme::Theme,
 ) -> Option<DialogHit> {
     let (x, y) = to_local(lx, ly, (v.x, v.y));
-    if let Some(e) = v.layout.sizing_edges(x, y, &theme.metrics) {
-        return Some(DialogHit::Resize(e));
-    }
     v.layout.hit(&v.dialog, x, y, text, theme.fonts.size_px)
-}
-
-/// The cursor over `hit`: size arrows on a sizable frame's border and Browse's grip.
-pub fn cursor_over(hit: Option<DialogHit>) -> &'static str {
-    match hit {
-        Some(DialogHit::Resize(e)) => e.cursor_name(),
-        Some(DialogHit::Browse(filedlg::Hit::Grip)) => (Edges::BOTTOM | Edges::RIGHT).cursor_name(),
-        _ => "default",
-    }
-}
-
-/// The frame a sizable dialog takes after the pointer moved (`dx`, `dy`) from a press sizing `edges` of
-/// `start`: client no smaller than `min_client`, undragged edges fixed. `pad` is the frame around the client.
-fn sized_frame(
-    start: Rect,
-    edges: Edges,
-    (dx, dy): (i32, i32),
-    min_client: (i32, i32),
-    pad: (i32, i32),
-) -> Rect {
-    let limits = crate::window::SizeLimits {
-        min: min_client,
-        max: (None, None),
-    };
-    crate::input::resize_rect(start, edges, dx, dy, limits, pad)
 }
 
 /// The glass a dialog's backdrop covers, local to the dialog: the whole frame with look-rounded outer
