@@ -56,13 +56,17 @@ pub struct Privacy {
     _mic: Option<MicMonitor>,
 }
 
+/// The PipeWire monitor thread. `stop` ends its wait between connections, `quit` a connection's
+/// loop; the stop goes first, so a connection the quit ends is not followed by another.
 struct MicMonitor {
+    stop: std::sync::mpsc::Sender<()>,
     quit: pipewire::channel::Sender<()>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl Drop for MicMonitor {
     fn drop(&mut self) {
+        let _ = self.stop.send(());
         let _ = self.quit.send(());
         if let Some(t) = self.thread.take() {
             let _ = t.join();
@@ -415,13 +419,24 @@ fn share_label(apps: &[String], screen: bool, window: bool) -> String {
 
 fn start_mic_monitor(handle: &LoopHandle<'static, State>) -> Option<MicMonitor> {
     let (tx, rx) = channel::<Apps>();
+    let (stop, stop_rx) = std::sync::mpsc::channel::<()>();
     let (quit, quit_rx) = pipewire::channel::channel::<()>();
     let thread = std::thread::Builder::new()
         .name("mic-monitor".into())
         .spawn(move || {
-            if let Err(e) = mic_thread(tx, quit_rx) {
-                log::info!("privacy: PipeWire unavailable ({e}); microphone indicator disabled");
-            }
+            pipewire::init();
+            let mut quit_rx = Some(quit_rx);
+            let session = || {
+                let quit = quit_rx
+                    .take()
+                    .expect("each session hands the receiver back");
+                let (quit, ended) = mic_session(&tx, quit);
+                quit_rx = Some(quit);
+                ended
+            };
+            supervise(&stop_rx, session, || {
+                let _ = tx.send(Apps::default());
+            });
         })
         .ok()?;
     let inserted = handle.insert_source(rx, |event, _, state| {
@@ -449,6 +464,7 @@ fn start_mic_monitor(handle: &LoopHandle<'static, State>) -> Option<MicMonitor> 
         log::warn!("privacy: microphone channel: {e}");
     }
     Some(MicMonitor {
+        stop,
         quit,
         thread: Some(thread),
     })
@@ -586,18 +602,109 @@ impl Graph {
     }
 }
 
-fn mic_thread(
-    tx: Sender<Apps>,
+/// The first wait before a reconnect. Short in tests, so they don't sleep.
+#[cfg(not(test))]
+const RETRY: Duration = Duration::from_secs(1);
+#[cfg(test)]
+const RETRY: Duration = Duration::from_millis(10);
+/// The longest wait; a connection that lasted this long resets the wait to `RETRY`.
+const RETRY_MAX: Duration = Duration::from_secs(30);
+
+/// The waits between runs of a watch that ends: `RETRY` doubling up to `RETRY_MAX`, back to
+/// `RETRY` after a run that lasted `RETRY_MAX`.
+pub(crate) struct Backoff(Duration);
+
+impl Backoff {
+    pub(crate) fn new() -> Backoff {
+        Backoff(RETRY)
+    }
+
+    /// The wait before the next run, after one that lasted `ran`.
+    pub(crate) fn after(&mut self, ran: Duration) -> Duration {
+        if ran >= RETRY_MAX {
+            self.0 = RETRY;
+        }
+        let wait = self.0;
+        self.0 = (wait * 2).min(RETRY_MAX);
+        wait
+    }
+}
+
+/// Runs `session` (one PipeWire connection, until it ends) over and over until `stop` gets a
+/// message or hangs up, calling `ended` after each so the indicators clear.
+fn supervise<E: std::fmt::Display>(
+    stop: &std::sync::mpsc::Receiver<()>,
+    mut session: impl FnMut() -> Result<(), E>,
+    mut ended: impl FnMut(),
+) {
+    let mut backoff = Backoff::new();
+    let mut said = false;
+    loop {
+        let began = Instant::now();
+        match session() {
+            Ok(()) => {
+                log::info!("privacy: PipeWire connection ended");
+                said = false;
+            }
+            Err(e) if !said => {
+                log::info!("privacy: PipeWire unavailable ({e}); retrying");
+                said = true;
+            }
+            Err(e) => log::debug!("privacy: PipeWire unavailable ({e})"),
+        }
+        ended();
+        let wait = backoff.after(began.elapsed());
+        if !matches!(
+            stop.recv_timeout(wait),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ) {
+            return;
+        }
+    }
+}
+
+/// One PipeWire connection reporting to `tx` until a message on `quit` or a core error (the
+/// daemon went away). Hands `quit` back for the next one.
+fn mic_session(
+    tx: &Sender<Apps>,
     quit: pipewire::channel::Receiver<()>,
+) -> (pipewire::channel::Receiver<()>, Result<(), pipewire::Error>) {
+    let main_loop = match pipewire::main_loop::MainLoopRc::new(None) {
+        Ok(l) => l,
+        Err(e) => return (quit, Err(e)),
+    };
+    let weak = main_loop.downgrade();
+    let attached = quit.attach(main_loop.loop_(), move |_| {
+        if let Some(l) = weak.upgrade() {
+            l.quit();
+        }
+    });
+    let ended = watch_graph(&main_loop, tx);
+    (attached.deattach(), ended)
+}
+
+fn watch_graph(
+    main_loop: &pipewire::main_loop::MainLoopRc,
+    tx: &Sender<Apps>,
 ) -> Result<(), pipewire::Error> {
-    use pipewire::{context::ContextRc, main_loop::MainLoopRc, types::ObjectType};
+    use pipewire::{context::ContextRc, types::ObjectType};
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    pipewire::init();
-    let main_loop = MainLoopRc::new(None)?;
-    let context = ContextRc::new(&main_loop, None)?;
+    let context = ContextRc::new(main_loop, None)?;
     let core = context.connect_rc(None)?;
+    let weak = main_loop.downgrade();
+    let _errors = core
+        .add_listener_local()
+        .error(move |id, _, res, message| {
+            log::info!("privacy: PipeWire object {id}: {message} ({res})");
+            if id == pipewire::core::PW_ID_CORE
+                && let Some(l) = weak.upgrade()
+            {
+                l.quit();
+            }
+        })
+        .register();
     let registry = core.get_registry_rc()?;
     let graph = Rc::new(RefCell::new(Graph::default()));
 
@@ -703,13 +810,11 @@ fn mic_thread(
             .register()
     };
 
-    let weak = main_loop.downgrade();
-    let _quit = quit.attach(main_loop.loop_(), move |_| {
-        if let Some(l) = weak.upgrade() {
-            l.quit();
-        }
-    });
     main_loop.run();
+    // The proxies' listeners hold the graph: dropping them here frees it with this connection.
+    let mut g = graph.borrow_mut();
+    g.proxies.clear();
+    g.client_proxies.clear();
     Ok(())
 }
 
@@ -757,6 +862,50 @@ mod tests {
             NodeInfo::from_global(|k| global.iter().find(|(key, _)| *key == k).map(|p| p.1));
         n.running = true;
         n
+    }
+
+    #[test]
+    fn the_retry_wait_doubles_to_its_cap_and_resets_after_a_lasting_run() {
+        let mut b = Backoff::new();
+        let quick = Duration::ZERO;
+        let waits: Vec<Duration> = (0..4).map(|_| b.after(quick)).collect();
+        assert_eq!(waits, [RETRY, RETRY * 2, RETRY * 4, RETRY * 8]);
+        while b.after(quick) < RETRY_MAX {}
+        assert_eq!(b.after(quick), RETRY_MAX, "the wait stays at its cap");
+        assert_eq!(b.after(RETRY_MAX), RETRY, "a lasting run starts over");
+    }
+
+    #[test]
+    fn an_ended_connection_clears_the_indicators_and_connects_again_until_stopped() {
+        let (stop_tx, stop) = std::sync::mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let recording = Apps {
+            mic: vec!["pw-record".into()],
+            ..Apps::default()
+        };
+        let mut sessions = 0;
+        supervise(
+            &stop,
+            || {
+                sessions += 1;
+                match sessions {
+                    1 => {
+                        tx.send(recording.clone()).unwrap();
+                        Ok(())
+                    }
+                    2 => Err("no PipeWire"),
+                    _ => {
+                        stop_tx.send(()).unwrap();
+                        Ok(())
+                    }
+                }
+            },
+            || tx.send(Apps::default()).unwrap(),
+        );
+        assert_eq!(sessions, 3, "a lost and a failed connection are retried");
+        let sent: Vec<Apps> = rx.try_iter().collect();
+        let clear = Apps::default();
+        assert_eq!(sent, [recording, clear.clone(), clear.clone(), clear]);
     }
 
     /// `pw-record -P '{ stream.monitor = true }'`: a recorder marking its own stream as a meter;
