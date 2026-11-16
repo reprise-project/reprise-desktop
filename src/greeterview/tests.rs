@@ -894,6 +894,65 @@ fn a_failure_the_badge_and_classics_wrapped_heading_repaint_in_part() {
 }
 
 #[test]
+fn hover_a_click_and_the_wheel_repaint_in_part() {
+    use smithay::backend::input::{Axis, AxisSource};
+    let centre = |h: &mut Harness, part: Part| {
+        let r = (view(h).layout.as_ref())
+            .and_then(|l| l.rect(part))
+            .unwrap_or_else(|| panic!("{part:?} is laid out"));
+        ((r.x + r.width / 2) as f64, (r.y + r.height / 2) as f64)
+    };
+    let mut stepped = false;
+    for interface in [
+        repriselogin::Interface::Classic,
+        repriselogin::Interface::Blue,
+        repriselogin::Interface::Glass,
+    ] {
+        for scale in [1, 2] {
+            let at = format!("{interface:?} at {scale}");
+            let (mut h, _d) = shown_at(interface, 1280 * scale, 800 * scale, scale as f64);
+            h.output("TEST-2", 1024, 768);
+            if matches!(model(&h).focus, Part::Tile(_)) {
+                let (x, y) = centre(&mut h, Part::Tile(0));
+                h.pointer_to(x, y);
+                if view(&mut h).play.is_some() {
+                    settle(&mut h);
+                }
+                in_part(&mut h, &format!("{at}: the wheel over the tiles"), |h| {
+                    let down = AxisFrame::new(InputTime::now())
+                        .source(AxisSource::Wheel)
+                        .value(Axis::Vertical, 15.0)
+                        .v120(Axis::Vertical, 120);
+                    h.state.handle_axis(down);
+                    assert!(model(h).focus != Part::Tile(0), "the next tile");
+                });
+            }
+            stepped |= matches!(model(&h).focus, Part::Tile(_));
+            on_password(&mut h, interface);
+            let (x, y) = centre(&mut h, Part::Submit);
+            in_part(&mut h, &format!("{at}: hover on the submit button"), |h| {
+                h.pointer_to(x, y);
+                assert!(model(h).lit.is_some(), "the button lights");
+            });
+            in_part(&mut h, &format!("{at}: hover off it"), |h| {
+                h.pointer_to(1.0, 1.0);
+                assert!(model(h).lit.is_none(), "nothing lit");
+            });
+            let field = match interface {
+                repriselogin::Interface::Classic => Part::Name,
+                _ => Part::Password,
+            };
+            let (x, y) = centre(&mut h, field);
+            in_part(&mut h, &format!("{at}: a click on {field:?}"), |h| {
+                h.click(x, y);
+                assert_eq!(model(h).focus, field);
+            });
+        }
+    }
+    assert!(stepped, "some interface's list took the wheel");
+}
+
+#[test]
 fn glass_tiles_picked_and_left_with_keys_typed_through_repaint_in_part() {
     let flies = |h: &mut Harness| {
         view(h)
