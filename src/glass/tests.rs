@@ -974,6 +974,54 @@ fn a_held_frame_leaves_the_backdrop_undrawn_until_the_next_blur() {
 }
 
 #[test]
+fn a_capture_after_a_held_frame_keeps_the_blur_the_screen_shows() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let mut scene = DeskScene::new();
+    let root = scene.root();
+    let desktop = scene.tree_create(root);
+    scene.rect_create(desktop, (320, 200), [1.0; 4]);
+    let spot = scene.tree_create(desktop);
+    scene.set_position(spot, 40, 40);
+    scene.rect_create(spot, (60, 40), [0.0, 0.0, 0.0, 1.0]);
+    scene.set_enabled(spot, false);
+    let windows = scene.tree_create(root);
+    let _glass = glass_window(&mut scene, &ctx, windows, (20, 20), (120, 80), None);
+    let output = test_output_of(320, 200);
+    let settings = Settings {
+        streaks: false,
+        ..Settings::default()
+    };
+    let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
+    let frame = |renderer: &mut GlesRenderer, scene: &DeskScene, hold: Hold| {
+        ctx.begin(&output, settings, Quality::Full, hold);
+        ctx.update_screen_backdrop(renderer, scene, &output, clear, true);
+    };
+    frame(&mut renderer, &scene, Hold::No);
+    assert_eq!(ctx.capture_hold(&output), Hold::No, "nothing held");
+    scene.set_enabled(spot, true);
+    frame(&mut renderer, &scene, Hold::Keep(Under::Anywhere));
+    let capture = ctx.capture_hold(&output);
+    assert!(capture.keeps(), "the screen held a change");
+    frame(&mut renderer, &scene, capture);
+    assert!(
+        backdrop_red(&mut renderer, &ctx, (70, 60)) > 230,
+        "the capture blurred nothing the screen held"
+    );
+    assert!(ctx.refresh_stale());
+    assert_eq!(ctx.capture_hold(&output), Hold::No, "the blur is due");
+    frame(&mut renderer, &scene, Hold::No);
+    assert!(
+        backdrop_red(&mut renderer, &ctx, (70, 60)) < 20,
+        "the capture draws the spot"
+    );
+}
+
+#[test]
 fn a_frame_held_for_the_cursor_alone_leaves_nothing_to_blur_later() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
         reprisekit::pins::skipped("no renderer");

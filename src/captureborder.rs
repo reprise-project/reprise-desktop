@@ -301,7 +301,8 @@ pub fn refresh(state: &mut State) {
     }
 }
 
-/// A wlr-screencopy frame of `key` arrived (and is filled or waiting).
+/// A wlr-screencopy frame of `key` arrived (and is filled or waiting); the caller refreshes the
+/// border.
 pub fn wlr_frame(state: &mut State, key: WlrKey) {
     arrive(&mut state.capture_border.tracks, key, Instant::now());
     if state.capture_border.tick.is_none() {
@@ -313,7 +314,13 @@ pub fn wlr_frame(state: &mut State, key: WlrKey) {
             Err(e) => log::warn!("capture border: timer: {e}"),
         }
     }
-    refresh(state);
+}
+
+/// Whether the wlr capture `key` is bordered and shared now: a recording, or a damage frame of it
+/// waits.
+pub fn wlr_live(state: &State, key: &WlrKey) -> bool {
+    let waiting = state.captures.wlr_waiting();
+    live_wlr(&state.capture_border.tracks, &waiting, Instant::now()).any(|k| k == key)
 }
 
 /// While wlr captures are tracked: forget the stale ones and drop a
