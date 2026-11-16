@@ -58,13 +58,24 @@ fn user_note(note: Note) -> UserNote {
     }
 }
 
+/// The picture at `path`, at most [`USER_PICTURE`](crate::logonview::USER_PICTURE) a side: the
+/// screen copies and compares its model on every key.
+fn user_picture(path: &std::path::Path) -> Option<reprisekit::raster::Canvas> {
+    let c = crate::startpanelview::picture::load_picture(path)?;
+    let px = crate::logonview::USER_PICTURE as u32;
+    Some(match c.width > px || c.height > px {
+        true => c.resample_box(px, px),
+        false => c,
+    })
+}
+
 /// Starts the login screen from reprise-login's `greeting`.
 pub fn setup(state: &mut State, g: Greeting) {
     let users = (g.users.iter().enumerate())
         .map(|(stock, u)| LogonUser {
             name: u.name.clone(),
             real_name: u.real_name.clone(),
-            picture: (u.picture.as_deref()).and_then(crate::startpanelview::picture::load_picture),
+            picture: (u.picture.as_deref()).and_then(user_picture),
             note: u.note.map(user_note),
             stock,
         })

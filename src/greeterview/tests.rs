@@ -1634,3 +1634,29 @@ fn a_scale_change_mid_enter_carries_the_enter_on_from_where_it_was() {
     settle(&mut h);
     assert!(shown(&mut h) == at_rest(&mut h), "it ends at rest");
 }
+
+#[test]
+fn a_large_user_picture_is_kept_at_256_px_a_side_and_a_small_one_as_it_is() {
+    let dir = std::env::temp_dir().join(format!("reprise-greeter-picture-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut users = vec![];
+    for (name, side) in [("ann", 1024), ("bob", 96)] {
+        let path = dir.join(name);
+        std::fs::write(&path, reprisekit::raster::to_png(&Canvas::new(side, side))).unwrap();
+        users.push(repriselogin::greeter::UserEntry {
+            picture: Some(path),
+            ..user(name)
+        });
+    }
+    let (h, _d) = login_with(repriselogin::Interface::Glass, users, |_| {});
+    let _ = std::fs::remove_dir_all(&dir);
+    let side = |i: usize| {
+        let p = model(&h).users[i]
+            .picture
+            .as_ref()
+            .expect("the picture loads");
+        (p.width, p.height)
+    };
+    assert_eq!(side(0), (256, 256));
+    assert_eq!(side(1), (96, 96));
+}
