@@ -22,12 +22,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install dependencies
         run: >-
-          bash .github/pacman.sh base-devel github-cli rust clang pkgconf git python seatd systemd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire zlib ffmpeg libjxl
+          bash .github/pacman.sh base-devel github-cli rust clang pkgconf git python seatd systemd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire zlib ffmpeg libjxl desktop-file-utils
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # pkgver counts the commits.
           fetch-depth: 0
           persist-credentials: false
+      # OnlyShowIn=reprise is not in the menu-spec registry: registering the name or renaming it
+      # to X-Reprise is still open, so that one error is filtered out. DesktopNames is the
+      # display managers' session key, which the validator does not know.
+      - name: Validate the desktop entries
+        run: |
+          out=$(desktop-file-validate data/reprise.desktop data/apps/*.desktop data/autostart/*.desktop 2>&1 || true)
+          printf '%s\n' "$out"
+          ! printf '%s\n' "$out" | grep -v -e 'key "OnlyShowIn" .* unregistered value "reprise"' -e 'reprise.desktop: error: file contains key "DesktopNames"' | grep -E ': (error|warning): '
       # makepkg refuses root; -s finds the depends installed and needs sudo only for one missing.
       - name: Create build user
         run: |
@@ -125,8 +133,8 @@ jobs:
         with:
           name: deb
           path: .
-      # The tag and the notes follow the Arch package, and each asset keeps one name, so the
-      # download URLs are stable.
+      # Each asset keeps one name, so the download URLs are stable, and the notes name the commit
+      # each was built from: a package whose build failed stays as the last run left it.
       - name: Publish the Nightly release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -136,31 +144,35 @@ jobs:
           debug_asset=reprise-debug-nightly-x86_64.pkg.tar.zst
           deb_asset=reprise-nightly-ubuntu26.04-amd64.deb
           url="https://github.com/$GH_REPO/releases/download/nightly"
-          notes="Arch Linux:
+          old=$(gh release view nightly --json body --jq .body 2>/dev/null | tr -d '\r' || true)
+          built_from() { printf '%s\n' "$old" | sed -n "s/^$1, built from \([0-9a-f]*\):\$/\1/p" | head -n 1; }
+          arch_sha=$(built_from "Arch Linux")
+          deb_sha=$(built_from "Ubuntu 26.04")
+          assets=()
+          if [ -d pkg ]; then
+            cp "$(ls pkg/reprise-[0-9]*.pkg.tar.zst)" "$asset"
+            cp "$(ls pkg/reprise-debug-[0-9]*.pkg.tar.zst)" "$debug_asset"
+            assets+=("$asset" "$debug_asset")
+            arch_sha=$GITHUB_SHA
+          fi
+          if [ -f "$deb_asset" ]; then
+            assets+=("$deb_asset")
+            deb_sha=$GITHUB_SHA
+          fi
+          notes="Arch Linux, built from ${arch_sha:-an earlier commit}:
 
               curl -LO $url/$asset
               sudo pacman -U ./$asset
 
-          Ubuntu 26.04:
+          Ubuntu 26.04, built from ${deb_sha:-an earlier commit}:
 
               curl -LO $url/$deb_asset
               sudo apt install ./$deb_asset"
-          assets=()
-          if [ -d pkg ]; then
-            pkg=$(ls pkg/reprise-[0-9]*.pkg.tar.zst)
-            cp "$pkg" "$asset"
-            cp "$(ls pkg/reprise-debug-[0-9]*.pkg.tar.zst)" "$debug_asset"
-            assets+=("$asset" "$debug_asset")
-            notes="$(basename "$pkg"), built from $GITHUB_SHA.
-
-          $notes"
-            git tag -f nightly "$GITHUB_SHA"
-            git push -f origin refs/tags/nightly
-          fi
-          if [ -f "$deb_asset" ]; then assets+=("$deb_asset"); fi
+          git tag -f nightly "$GITHUB_SHA"
+          git push -f origin refs/tags/nightly
           if gh release view nightly >/dev/null 2>&1; then
             gh release upload nightly "${assets[@]}" --clobber
-            if [ -d pkg ]; then gh release edit nightly --notes "$notes"; fi
+            gh release edit nightly --notes "$notes"
           else
             gh release create nightly "${assets[@]}" --title Nightly --prerelease --notes "$notes"
           fi
