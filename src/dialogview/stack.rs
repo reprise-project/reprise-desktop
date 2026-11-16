@@ -6,11 +6,20 @@ use reprisekit::cues::Cues;
 use reprisekit::pointer::DoubleClick;
 
 use crate::compositor::{SceneOwner, State};
-use crate::dialog::{self, Dialog, DialogLayout, Placement, Style};
+use crate::dialog::{self, Dialog, DialogLayout, Kind as FormKind, Placement, Style};
 use crate::glass::Backdrop;
 use crate::input::Interaction;
 
 use super::*;
+
+/// Why a box left the stack.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gone {
+    /// Its own answer, or its owner, closed it.
+    Closed,
+    /// The stack was cleared under it: a Welcome panel, a session end, the last output unplugged.
+    TornDown,
+}
 
 impl State {
     pub(crate) fn dialog_index(&self, id: u64) -> Option<usize> {
@@ -332,10 +341,15 @@ impl State {
         }
     }
 
+    /// Close dialog `index` for its own answer or for its owner ([`Gone::Closed`]).
     pub fn close_dialog_at(&mut self, index: usize) {
+        self.remove_dialog(index, Gone::Closed);
+    }
+
+    fn remove_dialog(&mut self, index: usize, gone: Gone) {
         let v = self.dialogs.views.remove(index);
         let on_taskbar = v.dialog.on_taskbar();
-        self.destroy_dialog(v);
+        self.destroy_dialog(v, gone);
         self.settle_dialogs();
         self.sync_dialog_tasks(on_taskbar);
     }
@@ -356,9 +370,10 @@ impl State {
         }
     }
 
+    /// Clear the stack for a Welcome panel or a session end ([`Gone::TornDown`]).
     pub fn close_all_dialogs(&mut self) {
-        while !self.dialogs.views.is_empty() {
-            self.close_dialog();
+        while let Some(i) = self.dialogs.views.len().checked_sub(1) {
+            self.remove_dialog(i, Gone::TornDown);
         }
     }
 
@@ -385,7 +400,8 @@ impl State {
         fading
     }
 
-    fn destroy_dialog(&mut self, mut v: DialogView) {
+    /// The one way off the stack: the scene goes, then [`State::dialog_gone`] tells the asker.
+    fn destroy_dialog(&mut self, mut v: DialogView, gone: Gone) {
         self.switcher_forget(crate::switcherview::Entry::Dialog(v.id));
         if matches!(
             self.interaction,
@@ -401,6 +417,26 @@ impl State {
         self.scene.destroy(v.tree);
         self.redraw_nodes(was, &[]);
         crate::access::touch(self);
+        self.dialog_gone(v.id, &v.dialog, gone);
+    }
+
+    /// What a box leaving the stack means to whoever waits on it. Every kind says, so a new kind
+    /// does not build until it does.
+    fn dialog_gone(&mut self, id: u64, d: &Dialog, gone: Gone) {
+        self.browse_over_gone(id);
+        match &d.style {
+            Style::Form(f) => match &f.kind {
+                // While the session end still waits, `sessionend::tick` raises the prompt again.
+                FormKind::EndSession => {}
+                FormKind::Location(desktop_id) => crate::location::dismissed(self, desktop_id),
+            },
+            Style::EndProgram => {
+                if let (Gone::TornDown, Some(pid)) = (gone, d.end_program_pid()) {
+                    self.end_program_due(pid);
+                }
+            }
+            Style::Classic { .. } | Style::Welcome(_) | Style::TrayCustomize(_) => {}
+        }
     }
 
     /// Pull every dialog back inside its output's usable area after a layout change
@@ -449,7 +485,7 @@ impl State {
                     let v = self.dialogs.views.remove(i);
                     on_taskbar |= v.dialog.on_taskbar();
                     removed = true;
-                    self.destroy_dialog(v);
+                    self.destroy_dialog(v, Gone::TornDown);
                 }
             }
         }

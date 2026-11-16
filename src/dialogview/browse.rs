@@ -3,8 +3,10 @@
 
 use std::ffi::OsStr;
 use std::io::{Read, Write};
+use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use reprisefs::filechild::{Filter, Input, Kind, Output, Pattern};
 
@@ -13,10 +15,12 @@ use crate::dialog::{Dialog, Outcome};
 use crate::window::WindowId;
 
 /// A file dialog child running over dialog `over`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Browsing {
     pub pid: i32,
     pub over: u64,
+    /// Opened while the child was ours and unreaped, so a signal never reaches a reused pid.
+    pub pidfd: Option<Arc<OwnedFd>>,
 }
 
 /// The child's input: Programs (files with an execute bit, which wear the program icon) and All
@@ -97,7 +101,15 @@ impl State {
             let mut pid = None;
             let out = run_child(&env, &input, |p| {
                 pid = Some(p);
-                let b = Browsing { pid: p, over };
+                let pidfd = (crate::hang::process_pidfd(p))
+                    .map_err(|e| log::warn!("browse: no pidfd for pid {p}: {e}"))
+                    .ok()
+                    .map(Arc::new);
+                let b = Browsing {
+                    pid: p,
+                    over,
+                    pidfd,
+                };
                 if let Some(tx) = &to_loop {
                     let _ = tx.send(Box::new(move |state: &mut State| state.browse_started(b)));
                 }
@@ -112,14 +124,41 @@ impl State {
 
     /// The child `b` started: its windows, mapped already or later, stand over its dialog.
     pub(crate) fn browse_started(&mut self, b: Browsing) {
+        let (pid, over) = (b.pid, b.over);
         self.dialogs.browsing.push(b);
         let windows: Vec<WindowId> = (self.windows.iter())
-            .filter(|w| self.client_pid(w.id) == Some(b.pid))
+            .filter(|w| self.client_pid(w.id) == Some(pid))
             .map(|w| w.id)
             .collect();
         for w in windows {
             if let Some(win) = self.win_mut(w) {
-                win.over_dialog = Some(b.over);
+                win.over_dialog = Some(over);
+            }
+        }
+        self.refresh_owned();
+        self.restack();
+    }
+
+    /// Dialog `id` left the stack: the Browse child over it is ended, and its windows stand over
+    /// nothing.
+    pub(super) fn browse_over_gone(&mut self, id: u64) {
+        let (gone, kept) = (std::mem::take(&mut self.dialogs.browsing).into_iter())
+            .partition::<Vec<_>, _>(|b| b.over == id);
+        self.dialogs.browsing = kept;
+        if gone.is_empty() {
+            return;
+        }
+        for b in gone {
+            log::info!("browse: pid {} outlived its dialog; ending it", b.pid);
+            if let Some(fd) = &b.pidfd
+                && let Err(e) = crate::screenrecord::signal(fd, libc::SIGTERM)
+            {
+                log::debug!("browse: pid {}: {e}", b.pid);
+            }
+        }
+        for w in &mut self.windows {
+            if w.over_dialog == Some(id) {
+                w.over_dialog = None;
             }
         }
         self.refresh_owned();
@@ -224,7 +263,11 @@ mod tests {
         h.output("o", 1024, 768);
         h.state.open_dialog(Dialog::run(&[]));
         let run = h.state.dialogs.views[0].id;
-        h.state.browse_started(Browsing { pid, over: run });
+        h.state.browse_started(Browsing {
+            pid,
+            over: run,
+            pidfd: None,
+        });
         crate::mapfocus::grant(pid);
         let mut c = h.connect_as(pid);
         let t = h.map_toplevel(&mut c, "reprise", 400, 300);
@@ -281,6 +324,22 @@ mod tests {
     }
 
     #[test]
+    fn a_welcome_panel_clearing_run_lets_its_child_go() {
+        let mut h = Harness::new();
+        let (_run, _c, t) = run_under_child(&mut h, CHILD + 3);
+        h.state
+            .open_dialog(Dialog::log_off(reprisekit::powerpanel::Leave::SwitchUser {
+                live: false,
+            }));
+        assert!(h.state.dialogs.browsing.is_empty());
+        assert_eq!(h.state.win(t.id).and_then(|w| w.over_dialog), None);
+        assert!(
+            h.state.task_windows().contains(&t.id),
+            "its window is a window of its own again"
+        );
+    }
+
+    #[test]
     fn a_cancelled_child_leaves_runs_field_alone() {
         let mut h = Harness::new();
         h.output("o", 1024, 768);
@@ -289,6 +348,7 @@ mod tests {
         h.state.browse_started(Browsing {
             pid: CHILD + 2,
             over: run,
+            pidfd: None,
         });
         let before = h.state.dialogs.views[0].dialog.field.clone();
         h.state.browse_answered(CHILD + 2, Output::default());

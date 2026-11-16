@@ -201,7 +201,8 @@ fn asked(state: &mut State, ask: Ask) {
         let _ = reply.try_send(allow);
         return;
     }
-    // A prompt closed some other way left its callers; they are refused.
+    // A prompt that never opened, with no output to show it on, left its callers; they are
+    // refused.
     let open: Vec<String> = prompts(state).into_iter().map(|(_, id)| id).collect();
     state.location.pending.retain(|(id, _)| open.contains(id));
     match slot(&state.location.pending, &desktop_id) {
@@ -280,26 +281,51 @@ fn prompts(state: &State) -> Vec<(usize, String)> {
 /// The prompt for `desktop_id` was answered: close it, answer every call
 /// waiting on it, and keep the answer if asked to.
 pub fn answer(state: &mut State, desktop_id: &str, a: Answer) {
+    log::info!("location for {desktop_id:?}: {a:?}");
+    reply(state, desktop_id, a.allow);
     if let Some((i, _)) = prompts(state).into_iter().find(|(_, id)| id == desktop_id) {
         state.close_dialog_at(i);
-    }
-    log::info!("location for {desktop_id:?}: {a:?}");
-    if let Some(at) = state
-        .location
-        .pending
-        .iter()
-        .position(|(id, _)| id == desktop_id)
-    {
-        let (_, replies) = state.location.pending.remove(at);
-        for r in replies {
-            let _ = r.try_send(a.allow);
-        }
     }
     if a.remember
         && let Err(e) = repriseconf::location::remember(desktop_id, a.allow)
     {
         log::warn!("location: could not remember {desktop_id:?}: {e}");
     }
+}
+
+/// Answer every call waiting on the prompt for `desktop_id`.
+fn reply(state: &mut State, desktop_id: &str, allow: bool) {
+    let pending = &mut state.location.pending;
+    if let Some(at) = pending.iter().position(|(id, _)| id == desktop_id) {
+        for r in pending.remove(at).1 {
+            let _ = r.try_send(allow);
+        }
+    }
+}
+
+/// The prompt for `desktop_id` left the stack: a call still waiting on it is refused, and
+/// nothing is remembered.
+pub fn dismissed(state: &mut State, desktop_id: &str) {
+    if state
+        .location
+        .pending
+        .iter()
+        .any(|(id, _)| id == desktop_id)
+    {
+        log::info!("location for {desktop_id:?}: the prompt went unanswered, refused");
+        reply(state, desktop_id, false);
+    }
+}
+
+/// A caller waiting on the prompt for `desktop_id`, as `asked` adds one.
+#[cfg(test)]
+pub(crate) fn wait_on(state: &mut State, desktop_id: &str) -> async_channel::Receiver<bool> {
+    let (reply, rx) = async_channel::bounded(1);
+    state
+        .location
+        .pending
+        .push((desktop_id.to_string(), vec![reply]));
+    rx
 }
 
 /// Drop the callers that stopped waiting; true when none is left.
@@ -714,6 +740,22 @@ mod tests {
         h.click_dialog_close(i);
         assert_eq!(rx.try_recv(), Ok(false), "refused before the wait runs out");
         assert!(prompts(&h.state).is_empty());
+        assert_eq!(
+            repriseconf::location::load().get("org.example.Maps"),
+            None,
+            "nothing is remembered"
+        );
+    }
+
+    #[test]
+    fn a_prompt_a_welcome_panel_clears_refuses_at_once_without_remembering() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let rx = ask_about(&mut h, "maps-app");
+        let power = h.state.config.power.clone();
+        h.state
+            .open_dialog(crate::dialog::Dialog::turn_off(&power, false));
+        assert_eq!(rx.try_recv(), Ok(false), "refused before the wait runs out");
         assert_eq!(
             repriseconf::location::load().get("org.example.Maps"),
             None,

@@ -445,6 +445,52 @@ fn closing_any_box_answers_what_escape_answers() {
 }
 
 #[test]
+fn a_box_cleared_away_leaves_nobody_waiting_on_it() {
+    use super::browse::Browsing;
+    use crate::dialog::Kind;
+    let teardowns = ["a Welcome panel", "the last output unplugged"];
+    for teardown in teardowns {
+        for (name, d) in every_dialog(&Harness::new()) {
+            let mut h = Harness::new();
+            let o = h.output("TEST-1", 1024, 768);
+            let reply = match d.form().map(|f| &f.kind) {
+                Some(Kind::Location(id)) => Some(crate::location::wait_on(&mut h.state, id)),
+                _ => None,
+            };
+            h.state.open_dialog(d);
+            let over = h.state.dialogs.views.last().expect("the box").id;
+            h.state.browse_started(Browsing {
+                pid: 0x7EAD_0100,
+                over,
+                pidfd: None,
+            });
+            if teardown == teardowns[0] {
+                h.state
+                    .open_dialog(Dialog::log_off(Leave::SwitchUser { live: false }));
+            } else {
+                h.state.scene.remove_output(&o);
+                h.state.output_removed(&o);
+            }
+            assert!(
+                h.state.dialog_index(over).is_none(),
+                "{name} under {teardown}: closed"
+            );
+            if let Some(reply) = reply {
+                assert_eq!(
+                    reply.try_recv(),
+                    Ok(false),
+                    "{name} under {teardown}: its caller is refused"
+                );
+            }
+            assert!(
+                h.state.dialogs.browsing.is_empty(),
+                "{name} under {teardown}: its Browse child is let go"
+            );
+        }
+    }
+}
+
+#[test]
 fn alt_f4_closes_the_box_with_the_keyboard() {
     const ALT: u32 = 56;
     const F4: u32 = 62;
