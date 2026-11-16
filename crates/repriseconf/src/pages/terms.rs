@@ -56,7 +56,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("refresh_rate", "Screen refresh rate:"),
             ("orientation", "Orientation:"),
             ("scale", "Scale:"),
-            ("vrr", "Enable variable refresh rate"),
+            ("vrr", "Variable refresh rate:"),
             ("forget_layouts", "Forget saved layouts"),
             ("multiple_displays", "Multiple displays:"),
             ("auto_rotate", "Rotate automatically"),

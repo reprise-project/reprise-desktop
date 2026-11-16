@@ -1667,6 +1667,48 @@ fn variable_refresh_rate_words_find_display() {
     }
 }
 
+/// The Display page's Variable refresh rate row under each policy, and greyed on an output
+/// without VRR.
+#[test]
+fn the_variable_refresh_rate_row_pins_its_pixels_in_every_look_at_both_scales() {
+    use crate::displaypage::{Display, VRR_ROWS, page, test_head};
+    let row = Rect::new(20, 330, 358, 25);
+    let pins = |d: &Display| {
+        let f = page(d, Area::MIN);
+        [row_pins_at(&f, row, 1), row_pins_at(&f, row, 2)]
+    };
+    let mut d = Display::with_heads(vec![test_head("DP-1")]);
+    let mut rows = Vec::new();
+    for (_, p) in VRR_ROWS {
+        d.set_vrr(p);
+        rows.extend(pins(&d));
+    }
+    let mut none = test_head("DP-1");
+    none.adaptive_sync = repriseapp::heads::AdaptiveSync::Unsupported;
+    rows.extend(pins(&Display::with_heads(vec![none])));
+    let x1: Vec<_> = rows.iter().step_by(2).collect();
+    for (i, r) in x1.iter().enumerate() {
+        assert!(
+            !x1[..i].contains(r),
+            "state {i} draws apart from the ones before"
+        );
+    }
+    check_rows(
+        "variable_refresh_rate_row",
+        &[
+            "off x1",
+            "off x2",
+            "on x1",
+            "on x2",
+            "full-screen windows only x1",
+            "full-screen windows only x2",
+            "no VRR x1",
+            "no VRR x2",
+        ],
+        &rows,
+    );
+}
+
 /// The Remote Logins group: off with the front not running, then on with its fingerprint.
 #[test]
 fn the_remote_logins_group_pins_its_pixels_in_every_look() {

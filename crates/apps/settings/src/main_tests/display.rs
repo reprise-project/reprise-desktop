@@ -339,7 +339,9 @@ fn a_refused_vrr_on_ok_says_so_and_keeps_the_sheet() {
         Event::Heads(vec![displaypage::test_head("DP-1")]),
         &mut ctx,
     );
-    app.display.model.set_vrr(true);
+    app.display
+        .model
+        .set_vrr(repriseconf::config::VrrPolicy::On);
     let r = app.start_display(displayhost::Press::Ok, &mut ctx.heads);
     assert!(!r.quit, "waits for the answer");
     let asked = ctx.heads.take();
@@ -359,7 +361,11 @@ fn a_refused_vrr_on_ok_says_so_and_keeps_the_sheet() {
         app.children().iter().any(|c| c.id == ErrorBox::WIN),
         "the error box is up"
     );
-    assert!(!app.display.model.pick().unwrap().vrr, "the box unticks");
+    assert_eq!(
+        app.display.model.pick().unwrap().vrr,
+        repriseconf::config::VrrPolicy::Off,
+        "the combo goes back to Off"
+    );
 }
 
 /// After Only 2 the display switcher saved HDMI-A-1 as the pair's primary while config.toml
