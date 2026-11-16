@@ -463,7 +463,7 @@ desktop and stays out of the way when it's missing.
   (`pkexec chage`), and for the login manager's rule that keeps every session not
   on screen, Switch User's and background ones alike, from switching the
   console. The package's `50-reprise-timezone.rules` lets a local, active
-  administrator (group `wheel` or `sudo`) set the time zone without a
+  administrator (group `wheel`, `sudo` or `admin`) set the time zone without a
   password, for the automatic time zone
 - gnome-keyring, for saved passwords, the Secret portal and a network
   share's remembered password. The login

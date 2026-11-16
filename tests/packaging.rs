@@ -325,14 +325,20 @@ fn the_time_zone_rule_allows_only_set_timezone_to_local_active_admins() {
         .join("\n");
     assert_eq!(
         quoted(&code),
-        ["org.freedesktop.timedate1.set-timezone", "sudo", "wheel"].into(),
-        "the rule names only the set-timezone action and the wheel and sudo groups"
+        [
+            "admin",
+            "org.freedesktop.timedate1.set-timezone",
+            "sudo",
+            "wheel"
+        ]
+        .into(),
+        "the rule names only the set-timezone action and the wheel, sudo and admin groups"
     );
     assert_eq!(code.matches("action.id").count(), 1, "one action check");
     assert_eq!(
         code.matches("isInGroup(").count(),
-        2,
-        "group checks for wheel and sudo only"
+        3,
+        "group checks for wheel, sudo and admin only"
     );
     assert!(
         code.contains("subject.local && subject.active"),

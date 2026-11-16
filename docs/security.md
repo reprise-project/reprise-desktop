@@ -840,8 +840,8 @@ ends, so stop the share first.
   authorization off. The package's rule
   `/usr/share/polkit-1/rules.d/50-reprise-timezone.rules` answers yes to
   `org.freedesktop.timedate1.set-timezone` alone, without a password, for a
-  local, active user in `wheel` or `sudo`; others still need an
-  administrator. Without the rule the setting greys.
+  local, active user in `wheel`, `sudo` or Ubuntu's legacy `admin`; others
+  still need an administrator. Without the rule the setting greys.
 - **Language and formats.** Region & Language writes only your own
   `locale.conf` and AccountsService language; Apply to the System goes
   through localed and polkit, with no rule shipped.
