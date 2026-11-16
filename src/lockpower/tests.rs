@@ -52,13 +52,9 @@ fn pick_from(h: &mut Harness, source: InputSource, p: LockPower) {
     h.from(source, |s| pick(s, p));
 }
 
-/// Turn the loop until the power menu is open (or 5 s pass), then its rows.
+/// Turn the loop until the power menu is open, then its rows.
 fn menu_rows(h: &mut Harness) -> Vec<LockPower> {
-    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !menu_open(&h.state) {
-        assert!(std::time::Instant::now() < end, "the power menu opens");
-        h.run_for(5);
-    }
+    h.until("the power menu opens", menu_open);
     match &h.state.menus[0].kind {
         MenuKind::LockPower(rows) => rows.clone(),
         _ => unreachable!(),
@@ -73,21 +69,12 @@ fn scratch(name: &str) -> std::path::PathBuf {
     dir
 }
 
-/// Turn the loop until `done` holds (or 5 s pass).
-fn until(h: &mut Harness, what: &str, done: impl Fn(&Harness) -> bool) {
-    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !done(h) {
-        assert!(std::time::Instant::now() < end, "{what}");
-        h.run_for(5);
-    }
+fn message(s: &State) -> Option<String> {
+    s.lock.console.as_ref()?.message()
 }
 
-fn message(h: &Harness) -> Option<String> {
-    h.state.lock.console.as_ref()?.message()
-}
-
-fn ending(h: &Harness) -> bool {
-    h.state.session_fade.fading_out() || h.state.ending.is_some()
+fn ending(s: &State) -> bool {
+    s.session_fade.fading_out() || s.ending.is_some()
 }
 
 #[test]
@@ -96,12 +83,12 @@ fn the_lock_offers_restart_and_turn_off_only_while_the_session_is_alone() {
     let (mut h, _daemon) = locked(|| true);
     press(&mut h, Part::Power);
     assert_eq!(menu_rows(&mut h), [StandBy, Restart, TurnOff]);
-    assert_eq!(message(&h), None);
+    assert_eq!(message(&h.state), None);
     let (mut h, _daemon) = locked(|| false);
     press(&mut h, Part::Power);
     assert_eq!(menu_rows(&mut h), [StandBy], "another session or autologin");
     assert_eq!(
-        message(&h),
+        message(&h.state),
         Some(logon::text::unlock_to_power()),
         "the lock says why"
     );
@@ -114,8 +101,8 @@ fn outside_reprise_login_the_lock_offers_only_stand_by() {
     press(&mut h, Part::Power);
     assert_eq!(menu_rows(&mut h), [LockPower::StandBy]);
     pick_from(&mut h, InputSource::Physical, LockPower::TurnOff);
-    until(&mut h, "the lock says why", |h| message(h).is_some());
-    assert!(!ending(&h));
+    h.until("the lock says why", |s| message(s).is_some());
+    assert!(!ending(&h.state));
 }
 
 #[test]
@@ -128,7 +115,7 @@ fn power_from_any_input_but_the_computers_own_reaches_nothing() {
         assert!(!menu_open(&h.state), "{source:?} opens no menu");
         pick_from(&mut h, source, LockPower::TurnOff);
         h.run_for(20);
-        assert!(!ending(&h), "{source:?} ends nothing");
+        assert!(!ending(&h.state), "{source:?} ends nothing");
     }
 }
 
@@ -147,7 +134,7 @@ fn a_letter_on_the_lock_menu_picks_no_row() {
     }
     h.run_for(20);
     assert!(menu_open(&h.state), "the menu stays open");
-    assert!(!ending(&h));
+    assert!(!ending(&h.state));
 }
 
 #[test]
@@ -158,9 +145,9 @@ fn a_turn_off_picked_after_someone_else_logged_on_ends_nothing() {
     h.state.lock.helpers.alone = || false;
     for p in [LockPower::Restart, LockPower::TurnOff] {
         pick_from(&mut h, InputSource::Physical, p);
-        until(&mut h, "the lock says why", |h| message(h).is_some());
-        assert_eq!(message(&h), Some(logon::text::unlock_to_power()));
-        assert!(!ending(&h), "{p:?} ends nothing");
+        h.until("the lock says why", |s| message(s).is_some());
+        assert_eq!(message(&h.state), Some(logon::text::unlock_to_power()));
+        assert!(!ending(&h.state), "{p:?} ends nothing");
     }
 }
 
@@ -169,7 +156,7 @@ fn a_turn_off_picked_while_alone_ends_the_session() {
     let (mut h, _daemon) = locked(|| true);
     h.state.config.power.poweroff = "true".into();
     pick_from(&mut h, InputSource::Physical, LockPower::TurnOff);
-    until(&mut h, "the session ends", ending);
+    h.until("the session ends", ending);
 }
 
 #[test]
@@ -178,7 +165,7 @@ fn the_glass_locks_power_button_opens_the_menu() {
     assert_eq!(h.state.config.interface, Interface::Glass);
     press(&mut h, Part::Power);
     assert_eq!(menu_rows(&mut h).len(), 3);
-    assert!(!ending(&h), "nothing ends on one press");
+    assert!(!ending(&h.state), "nothing ends on one press");
 }
 
 #[test]
@@ -194,7 +181,7 @@ fn a_key_on_the_open_menu_picks_its_row() {
         h.key(code, true);
         h.key(code, false);
     }
-    until(&mut h, "Stand By runs", |_| slept.exists());
+    h.until("Stand By runs", |_| slept.exists());
     assert!(!menu_open(&h.state));
 }
 
@@ -216,7 +203,7 @@ fn lock_mode_closes_the_power_menu_and_refuses_its_rows() {
     assert_eq!(part(&h, Part::Power), None, "the button goes");
     pick_from(&mut h, InputSource::Physical, LockPower::TurnOff);
     h.run_for(20);
-    assert!(!ending(&h));
+    assert!(!ending(&h.state));
 }
 
 #[test]
@@ -241,7 +228,7 @@ fn a_remote_viewer_driving_the_seat_reaches_no_power() {
     assert!(!menu_open(&h.state));
     pick_from(&mut h, InputSource::Physical, LockPower::TurnOff);
     h.run_for(20);
-    assert!(!ending(&h));
+    assert!(!ending(&h.state));
 }
 
 #[test]

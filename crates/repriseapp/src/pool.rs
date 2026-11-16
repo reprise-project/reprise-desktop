@@ -221,21 +221,13 @@ fn spawn(name: String, f: impl FnOnce() + Send + 'static) -> std::io::Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisebus::testbus::until;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc::channel;
 
     fn leak(fresh: usize, most: usize, stuck: Duration) -> &'static Pool {
         Box::leak(Box::new(Pool::new("test", fresh, most, stuck)))
-    }
-
-    /// Spins until `done` holds, at most a minute.
-    fn until(what: &str, done: impl Fn() -> bool) {
-        let end = Instant::now() + Duration::from_secs(60);
-        while !done() {
-            assert!(Instant::now() < end, "{what}");
-            std::thread::sleep(Duration::from_millis(5));
-        }
     }
 
     #[test]

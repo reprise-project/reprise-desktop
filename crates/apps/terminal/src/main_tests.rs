@@ -3,6 +3,7 @@
 use super::*;
 use alacritty_terminal::term::TermMode;
 use repriseapp::{BTN_LEFT, Extended, Mods, PointerInput};
+use reprisebus::testbus::until;
 use reprisekit::textedit::keysym;
 use std::path::Path;
 
@@ -79,16 +80,6 @@ fn launch(cmd: &[&str]) -> Launch {
 }
 
 /// Wait up to 5 s for `f`.
-fn until(what: &str, mut f: impl FnMut() -> bool) {
-    for _ in 0..500 {
-        if f() {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    panic!("timed out waiting until {what}");
-}
-
 fn key(sym: u32, ctrl: bool, shift: bool) -> Event {
     Event::Key(KeyInput {
         sym,
