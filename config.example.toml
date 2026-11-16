@@ -701,6 +701,35 @@ suspend_after = 0            # run [power] standby
 #[[keybinds]]
 #keys = "Super+q"
 #action = "none"
+#
+# action = "spawn" runs `command` as a shell line:
+#[[keybinds]]
+#keys = "Super+Alt+n"
+#action = "spawn"
+#command = "reprise-notepad"
+#
+# Every other action is one of these names:
+#   Windows: close cycle cycle-app flip maximize minimize windowmenu
+#     showdesktop toggleframe alwaysontop mini-view center tab-next tab-prev
+#     snap-left snap-right snap-up snap-down snap-layouts overview
+#   Desktops: desktop-prev desktop-next desktop-carry-prev desktop-carry-next
+#     all-desktops desktop-1 desktop-2 desktop-3 desktop-4 desktop-5
+#     desktop-6 desktop-7 desktop-8 desktop-9 desktop-carry-1 desktop-carry-2
+#     desktop-carry-3 desktop-carry-4 desktop-carry-5 desktop-carry-6
+#     desktop-carry-7 desktop-carry-8 desktop-carry-9
+#   Launch and search: launcher startmenu run task-manager terminal explorer
+#     taskbar-item-1 taskbar-item-2 taskbar-item-3 taskbar-item-4
+#     taskbar-item-5 taskbar-item-6 taskbar-item-7 taskbar-item-8
+#     taskbar-item-9 taskbar-item-10 clipboard-history emoji-picker
+#     color-picker
+#   Screenshots: screenshot screenshot-window screenshot-region
+#     screenshot-content record-screen record-region
+#   Media: volume-up volume-down mute mic-mute brightness-up brightness-down
+#     kbd-brightness-up kbd-brightness-down play-pause next prev stop wifi
+#     touchpad touchpad-on touchpad-off airplane-mode rotation-lock
+#   Accessibility: zoom-in zoom-out zoom-reset color-filter screen-reader
+#   System: lock logoff turnoff exit do-not-disturb notifications night-light
+#     display-switcher focus-taskbar focus-tray next-layout
 
 [[keybinds]]
 keys = "Super+Return"
@@ -826,7 +855,7 @@ action = "desktop-carry-next"
 # Keep the focused window above the others, or stop; the window menu's
 # Always on Top row does the same. Not bound by default.
 #[[keybinds]]
-#keys = "Super+t"
+#keys = "Super+Ctrl+t"
 #action = "alwaysontop"
 
 # Open a mini view of the focused window, or close it; the window menu's
@@ -1003,11 +1032,8 @@ action = "tab-prev"
 # The media keys (volume, mute, brightness, play/pause, ...) act on their
 # own, ahead of the lock screen. A bind on one of them replaces its
 # built-in action and makes it an ordinary bind, so it no longer works
-# while the screen is locked; the actions
-# volume-up, volume-down, mute, mic-mute, brightness-up, brightness-down,
-# kbd-brightness-up, kbd-brightness-down, play-pause, next, prev, stop,
-# wifi, touchpad (on or off), touchpad-on, touchpad-off, airplane-mode and
-# rotation-lock bind to any key.
+# while the screen is locked. The Media actions in the list above bind to
+# any key; touchpad turns the touchpad on or off.
 #[[keybinds]]
 #keys = "Super+F10"
 #action = "mute"
