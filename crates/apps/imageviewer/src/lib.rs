@@ -16,6 +16,7 @@ mod window;
 use folder::{Folder, Step};
 use load::{Job, Msg, Picture, RenderKey, Timer};
 use menu::menus;
+use repriseapp::asks::Asks;
 use repriseapp::filedlg::Host;
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{ErrorBox, MsgBox};
@@ -81,8 +82,8 @@ struct Viewer {
     wheel_rows: i32,
     alt_arm: AltArm,
     clicks: DoubleClick<()>,
-    /// The delete prompt, the file it asks about and whether Yes erases it.
-    delete: Option<(MsgBox, PathBuf, bool)>,
+    /// The delete prompt, with the file it asks about and whether Yes erases it.
+    delete: Asks<(PathBuf, bool)>,
     error: ErrorBox,
     open: Option<FileDlg>,
     host: Host,
@@ -119,7 +120,7 @@ impl Viewer {
             wheel_rows: 0,
             alt_arm: AltArm::default(),
             clicks: DoubleClick::default(),
-            delete: None,
+            delete: Asks::new(DELETE),
             error: ErrorBox::default(),
             open: None,
             host: Host::default(),
@@ -386,9 +387,7 @@ impl App for Viewer {
 
     fn children(&self) -> Vec<Child> {
         let mut kids = Vec::new();
-        if let Some((b, _, _)) = &self.delete {
-            kids.push(b.child(DELETE, &self.dialog_text, &self.forms));
-        }
+        kids.extend(self.delete.child(&self.dialog_text, &self.forms));
         kids.extend(self.error.child(&self.dialog_text, &self.forms));
         if let Some(d) = &self.open {
             kids.push(Child {
@@ -408,7 +407,7 @@ impl App for Viewer {
             self.alt_arm.interrupt();
         }
         let reply = match win {
-            DELETE => self.delete_event(ev),
+            w if self.delete.owns(w) => self.delete_event(w, ev),
             w if self.error.owns(w) => self.error.event(w, &ev, &self.dialog_text, &self.forms),
             OPEN => self.open_event(ev, ctx),
             _ => self.main_event(ev, ctx),
@@ -419,11 +418,7 @@ impl App for Viewer {
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         match win {
-            DELETE => {
-                if let Some((b, _, _)) = &self.delete {
-                    b.draw(c, &self.forms, &self.dialog_text);
-                }
-            }
+            w if self.delete.owns(w) => self.delete.draw(c, &self.forms, &self.dialog_text),
             w if self.error.owns(w) => self.error.draw(c, &self.forms, &self.dialog_text),
             OPEN => {
                 if let Some(d) = &self.open {
@@ -480,11 +475,7 @@ impl Extended for Viewer {
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let (dt, forms) = (&self.dialog_text, &self.forms);
         match win {
-            DELETE => {
-                if let Some((b, _, _)) = &self.delete {
-                    b.access(tree, dt, forms);
-                }
-            }
+            w if self.delete.owns(w) => self.delete.access(tree, dt, forms),
             w if self.error.owns(w) => self.error.access(tree, dt, forms),
             OPEN => {
                 if let Some(d) = &self.open {

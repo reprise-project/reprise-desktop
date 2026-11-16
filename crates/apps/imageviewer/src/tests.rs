@@ -315,7 +315,7 @@ fn delete_asks_then_sends_the_picture_to_the_recycle_bin_and_shows_the_next() {
     let mut v = opened(pics.join("a.bmp"));
     let mut ctx = test_ctx();
     press(&mut v, keysym::DELETE, &mut ctx);
-    let (b, path, erase) = v.delete.as_ref().expect("the prompt is up");
+    let (b, (path, erase)) = v.delete.up().expect("the prompt is up");
     assert_eq!(
         (path.as_path(), *erase),
         (pics.join("a.bmp").as_path(), false)
@@ -326,11 +326,12 @@ fn delete_asks_then_sends_the_picture_to_the_recycle_bin_and_shows_the_next() {
         "Are you sure you want to send 'a.bmp' to the Recycle Bin?"
     );
     assert_eq!(b.fields.default, 0, "Enter is Yes");
-    v.event(DELETE, key(keysym::RETURN, Mods::default()), &mut ctx);
+    let win = v.delete.win().expect("its window");
+    v.event(win, key(keysym::RETURN, Mods::default()), &mut ctx);
     reprisefs::trash::set_home_trash(None);
     reprisefs::trash::set_mount_table(None);
     reprisefs::configfile::set_path(None);
-    assert!(v.delete.is_none());
+    assert!(v.delete.is_empty());
     assert!(!pics.join("a.bmp").exists());
     assert!(trash.join("files/a.bmp").exists());
     assert_eq!((name(&v), v.folder.pictures.len()), ("b.bmp".into(), 1));
