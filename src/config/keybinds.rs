@@ -186,9 +186,18 @@ impl Action {
         })
     }
 
+    /// The action `[[keybinds]]` names `action`: `spawn` with `command`, else an id
+    /// `ACTION_NAMES` lists, so Settings offers every action the file takes.
     pub fn from_parts(action: &str, command: Option<&str>) -> Result<Action, String> {
+        if action == "spawn" {
+            return Ok(Action::Spawn(
+                command.ok_or("spawn needs a command")?.to_string(),
+            ));
+        }
+        if repriseconf::keybind::describe(action).is_none() {
+            return Err(format!("unknown action {action:?}"));
+        }
         Ok(match action {
-            "spawn" => Action::Spawn(command.ok_or("spawn needs a command")?.to_string()),
             "terminal" => Action::Terminal,
             "explorer" => Action::Explorer,
             "close" => Action::Close,
