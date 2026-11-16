@@ -209,10 +209,15 @@ impl State {
         self.wm.snap.shown = None;
     }
 
-    /// Fill `target` with `w`: the client size that makes the frame the zone's size, within the
-    /// client's limits.
+    /// Fill `target` with `w`, rolled down: the client size that makes the frame the zone's size,
+    /// within the client's limits.
     pub(crate) fn snap_commit(&mut self, w: WindowId, target: Rect) {
         self.set_shaded(w, false);
+        self.snap_place(w, target);
+    }
+
+    /// [`State::snap_commit`] leaving a rolled-up window rolled up.
+    fn snap_place(&mut self, w: WindowId, target: Rect) {
         let Some(win) = self.win(w) else {
             return;
         };
@@ -608,7 +613,7 @@ impl State {
             }
         }
         for (w, r) in moves {
-            self.snap_commit(w, r);
+            self.snap_place(w, r);
         }
     }
 
