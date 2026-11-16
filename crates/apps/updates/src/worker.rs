@@ -15,6 +15,9 @@ use crate::{flatpak, fwupd, packagekit};
 
 const FIRST_CHECK: Duration = Duration::from_secs(90);
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+/// The longest the jobs thread sleeps before it looks at the boot clock again, so a check that
+/// fell due while the machine was asleep runs this soon after resume.
+const LOOK_EVERY: Duration = Duration::from_secs(5 * 60);
 const SETTLE: Duration = Duration::from_secs(3);
 /// A change heard this soon after a check started reading its source came before the read (the
 /// signal and the reply race on separate connections), or came from the check itself.
@@ -142,6 +145,26 @@ fn seen(read: &Read, group: Group, at: Instant) -> bool {
     read.get(&group).is_some_and(|&r| r + HEARD_LATE > at)
 }
 
+/// Time since boot, suspend included, so six hours asleep count toward the next check.
+fn boot_clock() -> Duration {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid timespec for the call to fill.
+    unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts) };
+    Duration::new(
+        ts.tv_sec.max(0) as u64,
+        ts.tv_nsec.clamp(0, 999_999_999) as u32,
+    )
+}
+
+/// How long to wait for a job before looking again, or `None` once the check at `next` is due;
+/// both times are on the boot clock.
+fn wait_for_check(next: Duration, now: Duration) -> Option<Duration> {
+    (now < next).then(|| (next - now).min(LOOK_EVERY))
+}
+
 fn run_jobs(rx: Receiver<Job>, poster: Poster, first: Duration) {
     let conn = match zbus::block_on(Connection::system()) {
         Ok(c) => Some(c),
@@ -150,23 +173,25 @@ fn run_jobs(rx: Receiver<Job>, poster: Poster, first: Duration) {
             None
         }
     };
-    let mut next_check = Instant::now() + first;
+    let mut next_check = boot_clock() + first;
     let mut read = Read::new();
     loop {
-        let wait = next_check.saturating_duration_since(Instant::now());
-        let job = match rx.recv_timeout(wait) {
-            Ok(job) => job,
-            Err(RecvTimeoutError::Timeout) => Job::Check {
+        let job = match wait_for_check(next_check, boot_clock()) {
+            Some(wait) => match rx.recv_timeout(wait) {
+                Ok(job) => job,
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => return,
+            },
+            None => Job::Check {
                 refresh: true,
                 manual: false,
             },
-            Err(RecvTimeoutError::Disconnected) => return,
         };
         for job in fold(job, rx.try_iter()) {
             match job {
                 Job::Check { refresh, manual } => {
                     if refresh {
-                        next_check = Instant::now() + CHECK_EVERY;
+                        next_check = boot_clock() + CHECK_EVERY;
                     }
                     poster.post(Msg::Checking);
                     let found = zbus::block_on(check(conn.as_ref(), refresh, manual, &mut read));
@@ -442,6 +467,20 @@ fn watch_flatpak(jobs: Jobs) {
 mod tests {
     use super::*;
     use crate::model::Kind;
+
+    #[test]
+    fn a_check_falls_due_six_boot_clock_hours_after_the_last_one_however_long_asleep() {
+        let hour = Duration::from_secs(60 * 60);
+        let checked = 10 * hour;
+        let next = checked + CHECK_EVERY;
+        assert_eq!(wait_for_check(next, checked), Some(LOOK_EVERY));
+        assert_eq!(
+            wait_for_check(next, next - Duration::from_secs(30)),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(wait_for_check(next, checked + 7 * hour), None);
+        assert_eq!(wait_for_check(next, next), None);
+    }
 
     #[test]
     fn a_dismissed_stage_is_silent_unless_every_stage_was_dismissed() {
