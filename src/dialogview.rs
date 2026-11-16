@@ -46,6 +46,8 @@ pub struct Dialogs {
     pub pins: Option<reprisefs::pins::Pins>,
     /// The file dialog children Browse... started, each over its dialog.
     pub browsing: Vec<browse::Browsing>,
+    /// Run boxes whose line is being checked; each takes no second OK meanwhile.
+    pub checking: Vec<u64>,
     /// The dialog last seen with the keyboard ([`State::follow_consent_keyboard`]).
     pub keyboard_holder: Option<u64>,
 }
