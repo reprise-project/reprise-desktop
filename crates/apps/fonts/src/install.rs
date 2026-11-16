@@ -31,9 +31,9 @@ pub fn placed(paths: &[PathBuf], user: Option<&Path>) -> Install {
     }
 }
 
-/// The path `file` is copied to in `dir`: its own name, or "name (2).ext" and on while a
-/// different file holds the name. A file with the same bytes is reused.
-pub fn target(file: &Path, dir: &Path) -> std::io::Result<PathBuf> {
+/// The path `file` is copied to in `dir` and its bytes: its own name, or "name (2).ext" and on
+/// while a different file holds the name. A file with the same bytes is reused.
+pub fn target(file: &Path, dir: &Path) -> std::io::Result<(PathBuf, Vec<u8>)> {
     let name = file
         .file_name()
         .map(PathBuf::from)
@@ -53,9 +53,9 @@ pub fn target(file: &Path, dir: &Path) -> std::io::Result<PathBuf> {
             n => dir.join(format!("{stem} ({n}){ext}")),
         };
         match std::fs::read(&at) {
-            Ok(there) if there == bytes => return Ok(at),
+            Ok(there) if there == bytes => return Ok((at, bytes)),
             Ok(_) => continue,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(at),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((at, bytes)),
             Err(_) => continue,
         }
     }
@@ -69,12 +69,13 @@ pub fn install(file: &Path, dir: &Path) -> Result<PathBuf, String> {
     Ok(at)
 }
 
-/// `file` copied into `dir` at its [`target`], `dir` made if missing.
+/// `file` copied into `dir` at its [`target`], `dir` made if missing. The copy goes through a
+/// hidden temp file renamed into place, so fontconfig never indexes half a font.
 pub fn copy_in(file: &Path, dir: &Path) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
-    let at = target(file, dir)?;
+    let (at, bytes) = target(file, dir)?;
     if !at.exists() {
-        std::fs::copy(file, &at)?;
+        reprisefs::ops::write_atomic(&at, &bytes)?;
     }
     Ok(at)
 }
@@ -127,6 +128,11 @@ mod tests {
             std::fs::read(&at).unwrap(),
             b"font one",
             "the first copy stays"
+        );
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            2,
+            "no temp file is left beside the fonts"
         );
     }
 }
