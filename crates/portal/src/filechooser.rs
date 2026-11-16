@@ -1,57 +1,15 @@
 //! `org.freedesktop.impl.portal.FileChooser`, run as our own child (`reprise-portal --file`).
 //! The child answers an `Output`; paths cross the pipe as bytes so any file name survives.
 
-use crate::choices::{self, Choice};
+use crate::choices;
 use crate::dialog;
 use crate::filters::{self, Filter};
-use serde::{Deserialize, Serialize};
+pub use reprisefs::filechild::{Input, Kind, Output};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use zbus::{ObjectPath, OwnedVariant, Variant};
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    Open,
-    Save,
-    SaveFiles,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
-pub struct Input {
-    pub parent: Option<String>,
-    pub modal: bool,
-    /// Always set; an `Option` only so `Input` has a `Default`.
-    pub kind: Option<Kind>,
-    pub folder_mode: bool,
-    pub multiple: bool,
-    pub title: String,
-    pub accept_label: String,
-    pub filters: Vec<Filter>,
-    pub filter: usize,
-    /// The folder the caller asked to start in; empty opens where the app's last dialog was
-    /// confirmed.
-    pub start: Vec<u8>,
-    /// The requesting app's id, empty when unknown: what the dialog keeps its folder and view
-    /// under.
-    pub app_id: String,
-    pub name: String,
-    /// `name`'s real bytes, when it is not UTF-8.
-    pub name_raw: Option<Vec<u8>>,
-    /// SaveFiles' names, as bytes with their trailing NUL.
-    pub files: Vec<Vec<u8>>,
-    pub choices: Vec<Choice>,
-}
-
-/// What the dialog child answers. The default (nothing picked) is a
-/// cancel, which is also what a killed or failed child reads as.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
-pub struct Output {
-    pub paths: Vec<Vec<u8>>,
-    pub filter: Option<usize>,
-    pub choices: Vec<(String, String)>,
-}
 
 pub fn bytes_path(v: &[u8]) -> PathBuf {
     let v = v.strip_suffix(b"\0").unwrap_or(v);
@@ -163,7 +121,7 @@ fn reply(out: &Output, filters: &[Filter]) -> (u32, HashMap<String, OwnedVariant
         Variant::new(uris).try_to_owned().expect("strings"),
     );
     if let Some(f) = out.filter.and_then(|i| filters.get(i)) {
-        r.insert("current_filter".into(), f.to_value());
+        r.insert("current_filter".into(), filters::to_value(f));
     }
     if !out.choices.is_empty() {
         r.insert(
@@ -265,6 +223,7 @@ fn base_input(
             .get("choices")
             .map(choices::parse_choices)
             .unwrap_or_default(),
+        exec_icon: false,
     }
 }
 
@@ -429,6 +388,28 @@ mod tests {
             accept_label: "_Save".into(),
             start: b"/tmp\0".to_vec(),
             name: "a.txt".into(),
+            ..Default::default()
+        };
+        let back: Input = toml::from_str(&toml::to_string(&input).unwrap()).unwrap();
+        assert_eq!(back, input);
+    }
+
+    #[test]
+    fn an_input_with_an_exec_filter_round_trips() {
+        use crate::filters::Pattern;
+        let input = Input {
+            kind: Some(Kind::Open),
+            filters: vec![
+                Filter {
+                    label: "Programs".into(),
+                    patterns: vec![Pattern::Exec],
+                },
+                Filter {
+                    label: "All Files".into(),
+                    patterns: vec![Pattern::Glob("*".into())],
+                },
+            ],
+            exec_icon: true,
             ..Default::default()
         };
         let back: Input = toml::from_str(&toml::to_string(&input).unwrap()).unwrap();

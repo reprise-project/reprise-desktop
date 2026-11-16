@@ -17,7 +17,7 @@ fn listed(
         icons.scale(),
         16,
     );
-    listing(folders, id, r, icons).folder
+    listing(folders, id, r, icons, false).folder
 }
 
 fn host_in(t: &Path) -> Host {
@@ -848,6 +848,7 @@ const FOLDER: u32 = 0xff20_40c0;
 const TEXT: u32 = 0xffc0_4020;
 const PICTURE: u32 = 0xff20_a040;
 const PIXELS: u32 = 0xffe0_c000;
+const PROGRAM: u32 = 0xff80_80ff;
 
 fn png(path: &Path, w: u32, h: u32, argb: u32) {
     let [a, r, g, b] = argb.to_be_bytes();
@@ -856,7 +857,8 @@ fn png(path: &Path, w: u32, h: u32, argb: u32) {
         .unwrap();
 }
 
-/// An icon theme drawing "folder", "text-x-generic" and "image-x-generic" in flat colours at
+/// An icon theme drawing "folder", "text-x-generic", "image-x-generic" and
+/// "application-x-executable" in flat colours at
 /// 16, 32 and 48 px.
 fn flat_icons(t: &Path) -> IconCache {
     let root = t.join("icons");
@@ -870,6 +872,7 @@ fn flat_icons(t: &Path) -> IconCache {
             ("folder", FOLDER),
             ("text-x-generic", TEXT),
             ("image-x-generic", PICTURE),
+            ("application-x-executable", PROGRAM),
             ("computer", FOLDER),
             ("go-up", FOLDER),
         ] {
@@ -981,6 +984,26 @@ fn a_listing_gives_entries_their_icons_at_every_size_and_tiles_lines() {
     assert_eq!(pic.detail[0], pic.kind);
 }
 
+#[test]
+fn with_exec_icon_every_file_with_an_execute_bit_wears_the_program_icon() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = pictures_folder();
+    let dir = t.path().join("list");
+    let notes = dir.join("notes.txt");
+    std::fs::set_permissions(&notes, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut icons = flat_icons(t.path());
+    for exec_icon in [false, true] {
+        let mut h = host_in(&dir);
+        h.exec_icon = exec_icon;
+        let mut dlg = open_dlg(&mut h);
+        h.ensure_listed(&mut dlg, &mut icons, &|_| true);
+        let want = if exec_icon { PROGRAM } else { TEXT };
+        assert_eq!(colour(&entry(&dlg, "notes.txt").icon), Some((16, want)));
+        assert_eq!(colour(&entry(&dlg, "sub").icon), Some((16, FOLDER)));
+        assert_eq!(colour(&entry(&dlg, "pic.png").icon), Some((16, PICTURE)));
+    }
+}
+
 /// A theme of SVGs drawing `names` in flat colours, plus `folder-music`, an SVG that never
 /// decodes.
 fn svg_icons(t: &Path, names: &[(&str, u32)]) -> IconCache {
@@ -1015,6 +1038,7 @@ fn cold_svg_icons_land_on_the_dialog_and_a_broken_own_icon_gives_way() {
             ("folder", FOLDER),
             ("text-x-generic", TEXT),
             ("image-x-generic", PICTURE),
+            ("application-x-executable", PROGRAM),
             ("computer", FOLDER),
             ("go-up", FOLDER),
         ],

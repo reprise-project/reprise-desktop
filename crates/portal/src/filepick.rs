@@ -90,7 +90,7 @@ impl Pick {
         let tree = self.mime_tree.clone();
         move |i: &reprisefs::listing::Item| {
             f.as_ref()
-                .is_none_or(|f| f.keeps(&i.name, i.mime.as_deref(), &tree))
+                .is_none_or(|f| crate::filters::keeps(f, i, &tree))
         }
     }
 
@@ -370,6 +370,7 @@ pub fn run_dialog() {
     let px = theme.fonts.size_px;
     repriseapp::filedlg::remember_as(&input.app_id);
     let mut host = Host::default();
+    host.exec_icon = input.exec_icon;
     host.icons.prime(&mut dialog::icons());
     let mode = if input.folder_mode {
         DlgMode::Folder
