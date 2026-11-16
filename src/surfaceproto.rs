@@ -451,7 +451,7 @@ mod tests {
     use wayland_client::{Proxy, protocol::wl_surface::WlSurface as ClientSurface};
     use wayland_protocols::wp::{
         commit_timing::v1::client::{
-            wp_commit_timer_v1::WpCommitTimerV1,
+            wp_commit_timer_v1::{self, WpCommitTimerV1},
             wp_commit_timing_manager_v1::WpCommitTimingManagerV1,
         },
         fifo::v1::client::{wp_fifo_manager_v1::WpFifoManagerV1, wp_fifo_v1::WpFifoV1},
@@ -514,13 +514,13 @@ mod tests {
     }
 
     /// Commit buffer scale 2 under a commit timer set to `(tv_sec_hi, tv_sec_lo, tv_nsec)`, and
-    /// let the compositor read it.
+    /// let the compositor read it: the interface and code of the protocol error the client got.
     fn commit_timed_raw(
         h: &mut Harness,
         c: &mut TestClient,
         surface: &ClientSurface,
         (hi, lo, nsec): (u32, u32, u32),
-    ) {
+    ) -> Option<(String, u32)> {
         let manager: WpCommitTimingManagerV1 = c.bind("wp_commit_timing_manager_v1", 1);
         let timer: WpCommitTimerV1 = manager.get_timer(surface, &c.qh(), ());
         timer.set_timestamp(hi, lo, nsec);
@@ -528,21 +528,36 @@ mod tests {
         surface.commit();
         c.queue.flush().expect("client flush");
         h.dispatch();
+        if let Some(guard) = c.queue.prepare_read() {
+            let _ = guard.read();
+        }
+        let _ = c.queue.dispatch_pending(&mut c.side);
+        let error = wayland_client::Connection::from_backend(timer.backend().upgrade()?)
+            .protocol_error()?;
+        Some((error.object_interface, error.code))
     }
 
     #[test]
     fn a_timestamp_out_of_range_leaves_the_compositor_serving_frames() {
+        let invalid = Some((
+            WpCommitTimerV1::interface().name.to_string(),
+            wp_commit_timer_v1::Error::InvalidTimestamp as u32,
+        ));
         let timestamps = [
-            (u32::MAX, u32::MAX, u32::MAX),
-            (0x8000_0000, 0, 0),
-            (0x7fff_ffff, u32::MAX, 999_999_999),
+            ((u32::MAX, u32::MAX, u32::MAX), invalid.clone()),
+            ((0x8000_0000, 0, 0), invalid),
+            ((0x7fff_ffff, u32::MAX, 999_999_999), None),
         ];
-        for raw in timestamps {
+        for (raw, error) in timestamps {
             let (mut h, output) = harness();
             let mut c = h.connect();
             let t = h.map_toplevel(&mut c, "timed", 200, 150);
             let surface = c.side.shells[t.shell].surface.clone();
-            commit_timed_raw(&mut h, &mut c, &surface, raw);
+            assert_eq!(
+                commit_timed_raw(&mut h, &mut c, &surface, raw),
+                error,
+                "the protocol error for {raw:x?}"
+            );
             let now = h.state.now();
             before_frame(&mut h.state, &output, now);
             tick(&mut h.state);
