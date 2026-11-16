@@ -68,24 +68,35 @@ impl Wallpaper {
         };
         let parent = crate::dialog::parent_handle(&parent_window);
         let items = vec![file_name(&path)];
-        let preview =
-            shows_preview(&app_id, show_preview).then(|| path.to_string_lossy().into_owned());
+        let shown = shows_preview(&app_id, show_preview);
         let id = app_id.clone();
-        let allowed = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
-            let input = crate::permit::Input {
-                parent,
-                app: crate::remotedesktop::display_name(&id),
-                items,
-                preview,
-                ..Default::default()
-            };
-            let kind = crate::permit::Kind::Wallpaper;
-            match remembered_applies(&real, &app_folders(&id)) {
-                true => crate::permit::ask_remembered(kind, STORE, &id, &[], input, &cancel),
-                false => crate::permit::ask_with(kind, input, &cancel).allowed(),
-            }
-        })
-        .await?;
+        let (allowed, bytes) =
+            crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
+                // The prompt decodes the bytes read above, so the picture shown is the one
+                // installed whatever the app's file holds by the time the prompt reads it.
+                let held = match shown.then(|| preview_file(&bytes)).transpose() {
+                    Ok(h) => h,
+                    Err(e) => {
+                        log::warn!("SetWallpaperURI: no preview: {e}");
+                        return (false, bytes);
+                    }
+                };
+                let preview = held.as_ref().map(|(_, p)| p.clone());
+                let input = crate::permit::Input {
+                    parent,
+                    app: crate::remotedesktop::display_name(&id),
+                    items,
+                    preview,
+                    ..Default::default()
+                };
+                let kind = crate::permit::Kind::Wallpaper;
+                let allowed = match remembered_applies(&real, &app_folders(&id)) {
+                    true => crate::permit::ask_remembered(kind, STORE, &id, &[], input, &cancel),
+                    false => crate::permit::ask_with(kind, input, &cancel).allowed(),
+                };
+                (allowed, bytes)
+            })
+            .await?;
         if !allowed {
             log::info!("SetWallpaperURI for {app_id:?} denied");
             return Ok(crate::RESPONSE_CANCELLED);
@@ -106,6 +117,28 @@ impl Wallpaper {
             }
         }
     }
+}
+
+/// `bytes` in a sealed memfd, and the path another process of the user opens it by.
+fn preview_file(bytes: &[u8]) -> std::io::Result<(std::fs::File, String)> {
+    use std::io::Write;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let flags = libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING;
+    // SAFETY: the name is a NUL-terminated string that outlives the call.
+    let fd = unsafe { libc::memfd_create(c"reprise-wallpaper".as_ptr(), flags) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `fd` is a fresh descriptor that nothing else owns.
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    file.write_all(bytes)?;
+    let seals = libc::F_SEAL_WRITE | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_SEAL;
+    // SAFETY: `file` is an open memfd; F_ADD_SEALS takes an int argument.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_ADD_SEALS, seals) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let path = format!("/proc/{}/fd/{}", std::process::id(), file.as_raw_fd());
+    Ok((file, path))
 }
 
 /// Whether `set-on` puts the picture on the desktop: `background`, or `both`, the lock screen
@@ -245,6 +278,34 @@ fn apply(doc: &mut DocumentMut, image: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_preview_reads_the_bytes_it_was_given_and_cannot_be_rewritten() {
+        use std::io::Write;
+        let (mut file, path) = preview_file(b"picture").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"picture");
+        assert!(file.write_all(b"other").is_err(), "the memfd is sealed");
+        let reopened = std::fs::OpenOptions::new().write(true).open(&path);
+        assert!(reopened.and_then(|mut f| f.write_all(b"other")).is_err());
+        drop(file);
+        assert!(
+            std::fs::read(&path).is_err(),
+            "the preview goes with its file"
+        );
+    }
+
+    #[test]
+    fn the_prompt_decodes_a_preview_by_its_path() {
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(4, 3, image::Rgba([9, 9, 9, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let (_file, path) = preview_file(&png).unwrap();
+        let decoded = repriseapp::decode::Decoders::default_set()
+            .decode_file(Path::new(&path), (64, 64))
+            .unwrap();
+        assert_eq!((decoded.width, decoded.height), (4, 3));
+    }
 
     #[test]
     fn a_file_uri_names_its_local_path_and_others_are_refused() {
