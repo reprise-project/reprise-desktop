@@ -24,6 +24,7 @@ reprisekit = { path = "../../reprisekit" }
 zbus.workspace = true
 zbus_polkit = "6.0"
 async-channel.workspace = true
+futures-util.workspace = true
 blocking.workspace = true
 zeroize.workspace = true
 libc.workspace = true
