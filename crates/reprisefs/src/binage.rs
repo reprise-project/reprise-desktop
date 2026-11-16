@@ -107,28 +107,66 @@ fn now() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
-/// Start the session's auto-empty: a pass now and every day after, and one on each [`poke`]
-/// that finds `older_than_days` changed.
+/// When the auto-empty passes: on its first wake, a day after its last pass by the wall clock, and
+/// whenever `older_than_days` changed. A wake for any other reason leaves the day alone.
+#[derive(Debug, Default)]
+struct Schedule {
+    /// Epoch seconds of the next daily pass.
+    due: i64,
+    days: Option<u16>,
+}
+
+impl Schedule {
+    /// Whether a wake at `now` (epoch seconds) with `days` set runs a pass.
+    fn wake(&mut self, now: i64, days: u16) -> bool {
+        let changed = self.days.is_some_and(|d| d != days);
+        self.days = Some(days);
+        // A clock set back must not hold the next pass off for longer than a day.
+        self.due = self.due.min(now + DAY_SECS);
+        if now >= self.due {
+            self.due = now + DAY_SECS;
+            return true;
+        }
+        changed
+    }
+
+    /// How long to sleep from `now`: until the pass is due, but at most [`CHECK`], since a sleep's
+    /// clock stops while the machine is suspended.
+    fn wait(&self, now: i64) -> Duration {
+        Duration::from_secs(
+            self.due
+                .saturating_sub(now)
+                .clamp(0, CHECK.as_secs() as i64) as u64,
+        )
+    }
+}
+
+const DAY_SECS: i64 = DAY.as_secs() as i64;
+const CHECK: Duration = Duration::from_secs(3600);
+
+/// Start the session's auto-empty on a thread of its own ([`Schedule`]); a [`poke`] makes it
+/// reread the settings.
 pub fn start() {
     let (tx, rx) = mpsc::channel();
     *lock(&POKE) = Some(tx);
     let run = move || {
-        let mut last = None;
-        let mut poked = false;
+        let mut schedule = Schedule::default();
         loop {
-            if let Some(bins) = Bins::system() {
-                let days = bins.policy.older_than_days;
-                if !poked || last != Some(days) {
-                    let n = purge(&bins, now());
-                    if n > 0 {
-                        log::info!("recycle bin: erased {n} items older than {days} days");
+            let wait = match Bins::system() {
+                Some(bins) => {
+                    let days = bins.policy.older_than_days;
+                    if schedule.wake(now(), days) {
+                        let n = purge(&bins, now());
+                        if n > 0 {
+                            log::info!("recycle bin: erased {n} items older than {days} days");
+                        }
                     }
+                    schedule.wait(now())
                 }
-                last = Some(days);
-            }
-            match rx.recv_timeout(DAY) {
-                Ok(()) => poked = true,
-                Err(RecvTimeoutError::Timeout) => poked = false,
+                None => CHECK,
+            };
+            match rx.recv_timeout(wait) {
+                Ok(()) | Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
@@ -167,6 +205,35 @@ mod tests {
     fn aged(root: &Path, name: &str, days_ago: i64) -> PathBuf {
         let body = trash::trashinfo(Path::new("/home/u/x"), NOW - days_ago * 86_400);
         item(root, name, &body)
+    }
+
+    #[test]
+    fn the_auto_empty_passes_daily_by_the_wall_clock_and_when_the_days_change() {
+        let mut s = Schedule::default();
+        assert!(s.wake(NOW, 30), "the first wake passes");
+        assert!(!s.wake(NOW + 60, 30), "a reload with the same days");
+        assert!(!s.wake(NOW + DAY_SECS - 1, 30), "reloads keep the day");
+        assert!(s.wake(NOW + DAY_SECS, 30), "a day after the last pass");
+        assert!(s.wake(NOW + DAY_SECS + 5, 7), "the days changed");
+        assert!(!s.wake(NOW + DAY_SECS + 9, 7));
+        assert!(
+            s.wake(NOW + 2 * DAY_SECS, 7),
+            "a changed days keeps the day"
+        );
+        assert_eq!(
+            s.wait(NOW + 2 * DAY_SECS),
+            CHECK,
+            "a sleep stops in a suspend"
+        );
+        assert_eq!(s.wait(NOW + 3 * DAY_SECS - 10), Duration::from_secs(10));
+        assert_eq!(s.wait(NOW + 4 * DAY_SECS), Duration::ZERO);
+        let mut back = Schedule::default();
+        assert!(back.wake(NOW, 30));
+        assert!(!back.wake(NOW - 400 * DAY_SECS, 30));
+        assert!(
+            back.wake(NOW - 399 * DAY_SECS, 30),
+            "a clock set back waits a day, not until the old due time"
+        );
     }
 
     #[test]
