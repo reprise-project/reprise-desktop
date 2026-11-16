@@ -1,18 +1,25 @@
 use crate::mutex::lock;
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-type Job = Box<dyn FnOnce() + Send>;
+/// A decode on its thread; true once a spare stands in for that thread, which then ends.
+type Job = Box<dyn FnOnce() -> bool + Send>;
 
 /// Threads that read and decode tray items' named icons and notification pictures, shared by
-/// every app: a hung read holds
-/// one thread and never starts another, and an app floods only its own share of the queue.
+/// every app. A read still running past `within` (a mount that stopped answering) gets a spare
+/// thread in its place, up to `spare` at once, and its own thread ends when the read returns; an
+/// app floods only its own share of the queue.
 pub(super) struct Decoders {
     jobs: async_channel::Sender<Job>,
+    /// Where spares take jobs from.
+    queue: async_channel::Receiver<Job>,
     /// Decodes queued or running, by app.
     held: Arc<Mutex<HashMap<String, usize>>>,
+    /// Spares running, each in place of a thread a read past `within` still holds.
+    spares: Arc<AtomicUsize>,
     pub(super) limits: Limits,
 }
 
@@ -27,7 +34,14 @@ pub(super) struct Limits {
     pub(super) wait: Duration,
     /// How long a decode may run once it has one.
     pub(super) within: Duration,
+    /// Spare threads that may run at once.
+    pub(super) spare: usize,
 }
+
+/// A job's [`AtomicU8`]: running, ended, or past `within` with a spare in its thread's place.
+const RUNNING: u8 = 0;
+const ENDED: u8 = 1;
+const STOOD_IN: u8 = 2;
 
 /// What a job tells its caller: that it has a thread, then its result.
 enum Progress<T> {
@@ -55,27 +69,35 @@ impl Drop for Held {
 
 impl Decoders {
     pub(super) fn new(limits: Limits) -> Self {
-        let (jobs, rx) = async_channel::bounded::<Job>(limits.queue);
+        let (jobs, queue) = async_channel::bounded::<Job>(limits.queue);
+        let decoders = Decoders {
+            jobs,
+            queue,
+            held: Arc::default(),
+            spares: Arc::default(),
+            limits,
+        };
         for _ in 0..limits.threads {
-            let rx = rx.clone();
-            let spawned = std::thread::Builder::new()
-                .name("tray-icon".into())
-                .spawn(move || {
-                    while let Ok(job) = rx.recv_blocking() {
-                        if catch_unwind(AssertUnwindSafe(job)).is_err() {
-                            log::warn!("tray: an icon decode panicked");
-                        }
-                    }
-                });
-            if let Err(e) = spawned {
+            if let Err(e) = decoders.start_thread() {
                 log::warn!("tray: no icon thread: {e}");
             }
         }
-        Decoders {
-            jobs,
-            held: Arc::default(),
-            limits,
-        }
+        decoders
+    }
+
+    fn start_thread(&self) -> std::io::Result<()> {
+        let (queue, spares) = (self.queue.clone(), self.spares.clone());
+        std::thread::Builder::new()
+            .name("tray-icon".into())
+            .spawn(move || {
+                while let Ok(job) = queue.recv_blocking() {
+                    if job() {
+                        spares.fetch_sub(1, Ordering::AcqRel);
+                        return;
+                    }
+                }
+            })
+            .map(drop)
     }
 
     /// `decode`'s result for `app`; None past the app's share, `wait` or `within`. A decode whose
@@ -87,11 +109,17 @@ impl Decoders {
     ) -> Option<T> {
         let held = self.hold(app)?;
         let (tx, rx) = async_channel::bounded(2);
+        let state = Arc::new(AtomicU8::new(RUNNING));
+        let ends = state.clone();
         let job: Job = Box::new(move || {
             let _held = held;
             if tx.try_send(Progress::Started).is_ok() {
-                let _ = tx.send_blocking(Progress::Done(decode()));
+                match catch_unwind(AssertUnwindSafe(decode)) {
+                    Ok(t) => drop(tx.send_blocking(Progress::Done(t))),
+                    Err(_) => log::warn!("tray: an icon decode panicked"),
+                }
             }
+            ends.swap(ENDED, Ordering::AcqRel) == STOOD_IN
         });
         let started = async {
             self.jobs.send(job).await.ok()?;
@@ -107,7 +135,43 @@ impl Decoders {
                 _ => None,
             }
         };
-        within(self.limits.within, done).await
+        let done = within(self.limits.within, done).await;
+        if done.is_none() {
+            self.stand_in(&state);
+        }
+        done
+    }
+
+    /// A spare in place of the thread running the job `state` tracks, unless the job ended or
+    /// `spare` spares run already.
+    fn stand_in(&self, state: &AtomicU8) {
+        let spare = self.limits.spare;
+        let free = |n: usize| (n < spare).then_some(n + 1);
+        let taken = self
+            .spares
+            .try_update(Ordering::AcqRel, Ordering::Acquire, free);
+        if taken.is_err() {
+            return;
+        }
+        let swapped =
+            state.compare_exchange(RUNNING, STOOD_IN, Ordering::AcqRel, Ordering::Acquire);
+        if swapped.is_err() {
+            self.spares.fetch_sub(1, Ordering::AcqRel);
+            return;
+        }
+        if let Err(e) = self.start_thread() {
+            log::warn!("tray: no spare icon thread: {e}");
+            let back =
+                state.compare_exchange(STOOD_IN, RUNNING, Ordering::AcqRel, Ordering::Acquire);
+            if back.is_ok() {
+                self.spares.fetch_sub(1, Ordering::AcqRel);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn spares(&self) -> usize {
+        self.spares.load(Ordering::Acquire)
     }
 
     fn hold(&self, app: &str) -> Option<Held> {

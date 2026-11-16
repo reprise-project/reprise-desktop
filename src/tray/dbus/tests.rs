@@ -1785,6 +1785,7 @@ fn decoders(threads: usize, queue: usize, per_app: usize, within: Duration) -> d
         per_app,
         wait: within,
         within,
+        spare: 0,
     })
 }
 
@@ -1818,12 +1819,13 @@ fn a_flood_of_icon_decodes_runs_at_most_two_at_once() {
 }
 
 #[test]
-fn hung_icon_reads_hold_their_threads_and_later_decodes_give_up() {
+fn hung_icon_reads_hand_their_threads_to_spares_and_past_the_spares_decodes_give_up() {
     use std::sync::atomic::Ordering::SeqCst;
     let mut decoders = decoders(2, 4, 64, Duration::from_millis(500));
+    decoders.limits.spare = 2;
     let started = Arc::new(AtomicUsize::new(0));
     let (release, gate) = async_channel::bounded::<()>(1);
-    let reads = |apps: std::ops::Range<usize>, decoders: &decoders::Decoders| {
+    let hang = |apps: std::ops::Range<usize>, decoders: &decoders::Decoders| {
         let runs = apps.map(|i| {
             let (started, gate) = (started.clone(), gate.clone());
             let decode = move || {
@@ -1834,27 +1836,53 @@ fn hung_icon_reads_hold_their_threads_and_later_decodes_give_up() {
         });
         zbus::block_on(futures_util::future::join_all(runs))
     };
-    // Only the timeouts the test waits out are short: the reads that must reach a thread get the
-    // ceiling to do so.
+    // Only the timeouts the test waits out are short: the decodes that must reach a thread get
+    // the ceiling to do so.
     decoders.limits.wait = CEILING;
-    let hung = reads(0..2, &decoders);
+    let hung = hang(0..2, &decoders);
     assert!(hung.iter().all(Option::is_none), "the hung reads time out");
     assert_eq!(started.load(SeqCst), 2, "each thread started a read");
+    assert_eq!(
+        zbus::block_on(decoders.run("other", || 7)),
+        Some(7),
+        "a spare decodes while both threads hang"
+    );
+    let hung = hang(2..4, &decoders);
+    assert!(
+        hung.iter().all(Option::is_none),
+        "the spares' reads time out"
+    );
+    assert_eq!(started.load(SeqCst), 4, "each spare started a read");
     decoders.limits.wait = Duration::from_millis(500);
-    let later = reads(2..22, &decoders);
+    let later = hang(4..14, &decoders);
     assert!(
         later.iter().all(Option::is_none),
-        "no decode finishes while reads hang"
+        "past the spares no decode finishes while reads hang"
     );
-    assert_eq!(
-        started.load(SeqCst),
-        2,
-        "only the two threads started a read"
-    );
+    assert_eq!(started.load(SeqCst), 4, "no thread past the spares started");
     decoders.limits.wait = CEILING;
     drop(release);
     assert_eq!(zbus::block_on(decoders.run("app", || 7)), Some(7));
-    assert_eq!(started.load(SeqCst), 2, "decodes given up on never run");
+    assert_eq!(started.load(SeqCst), 4, "decodes given up on never run");
+}
+
+#[test]
+fn a_hung_read_that_returns_gives_its_spare_back() {
+    let mut decoders = decoders(1, 4, 64, Duration::from_millis(300));
+    decoders.limits.spare = 1;
+    let hang = |decoders: &decoders::Decoders| {
+        let (release, gate) = async_channel::bounded::<()>(1);
+        let hung = decoders.run("a", move || {
+            let _ = gate.recv_blocking();
+        });
+        assert_eq!(zbus::block_on(hung), None, "the read times out");
+        assert_eq!(decoders.spares(), 1, "a spare stands in");
+        release
+    };
+    drop(hang(&decoders));
+    zbus::block_on(until("the spare given back", || decoders.spares() == 0));
+    let _held = hang(&decoders);
+    assert_eq!(zbus::block_on(decoders.run("b", || 7)), Some(7));
 }
 
 #[test]
@@ -1889,6 +1917,7 @@ fn a_decode_gets_its_whole_time_once_a_thread_takes_it() {
         per_app: 4,
         wait: CEILING,
         within,
+        spare: 0,
     });
     let (release, gate) = async_channel::bounded::<()>(1);
     let held = decoders.run("a", move || {

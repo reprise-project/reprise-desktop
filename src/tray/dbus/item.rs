@@ -37,8 +37,8 @@ async fn prop_body(proxy: &Proxy<'_>, name: &str) -> Option<Body> {
 const NAMED_WAIT: Duration = Duration::from_secs(10);
 const NAMED_WITHIN: Duration = Duration::from_secs(2);
 
-/// Two threads for tray items' names and notification pictures, so a hung read leaves one; the
-/// queue holds one fetch per registered item.
+/// Two threads for tray items' names and notification pictures, and four spares for reads hung on
+/// a mount that stopped answering; the queue holds one fetch per registered item.
 pub(super) static DECODERS: LazyLock<Decoders> = LazyLock::new(|| {
     Decoders::new(Limits {
         threads: 2,
@@ -46,6 +46,7 @@ pub(super) static DECODERS: LazyLock<Decoders> = LazyLock::new(|| {
         per_app: 4,
         wait: NAMED_WAIT,
         within: NAMED_WITHIN,
+        spare: 4,
     })
 });
 
