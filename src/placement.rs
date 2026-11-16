@@ -373,6 +373,7 @@ impl State {
 
     pub fn note_app_id(&mut self, w: WindowId) {
         self.toplevels.dirty = true;
+        self.session.owe();
         if let Some(win) = self.win_mut(w) {
             let live = win.app_id();
             if !live.is_empty() {

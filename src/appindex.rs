@@ -162,6 +162,7 @@ fn rescan(state: &mut State) {
         Box::new(move |state: &mut State| {
             log::info!("app index rescanned ({} entries)", apps.len());
             state.app_index = apps;
+            state.session.owe();
             state.app_uninstall = uninstall;
             state.search_providers = providers;
             state.launcher_index_changed();

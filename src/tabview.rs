@@ -323,6 +323,7 @@ impl State {
     /// hidden, or `lead` now is). The focus follows a focused window that
     /// went into hiding to the window shown in its place.
     pub(crate) fn retab(&mut self, members: &[WindowId], lead: Option<WindowId>) {
+        self.session.owe();
         self.redraw_changed(|s| s.retab_now(members, lead));
         self.redraw_taskbars();
     }
@@ -1084,6 +1085,7 @@ impl State {
                 let before = self.tabs.groups.members_of(member);
                 self.tabs.groups.reorder(member, slot);
                 if self.tabs.groups.members_of(member) != before {
+                    self.session.owe();
                     if let Some(h) = self.tabs.held.as_mut() {
                         h.1.tab = slot;
                     }

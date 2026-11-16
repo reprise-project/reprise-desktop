@@ -159,6 +159,7 @@ impl State {
         let (title, app_id) = (win.title(), win.app_id());
         let changes = win.titles.seen.note(&title, &app_id);
         self.toplevels.dirty = true;
+        self.session.owe();
         if changes.title {
             self.tab_retitled(w);
         }

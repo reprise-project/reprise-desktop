@@ -27,6 +27,7 @@ impl State {
     }
 
     pub fn relayout(&mut self, w: WindowId) {
+        self.session.owe();
         let m = self.config.theme.metrics.clone();
         let opens = reprisekit::look::client_glass(&self.config.theme, true).is_some();
         let Some(win) = self.win_mut(w) else {
@@ -127,6 +128,7 @@ impl State {
         if !std::mem::take(&mut win.move_pending) {
             return;
         }
+        self.session.owe();
         self.refit_scale(w);
         self.refresh_bounds(w);
         self.place_ime_popup();
