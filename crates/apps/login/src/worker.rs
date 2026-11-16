@@ -571,6 +571,32 @@ fn fail(sock: &mut UnixStream, kind: ErrorKind, text: &str) -> i32 {
     1
 }
 
+/// What `open` puts into the PAM environment: the session's seat, VT and kind, the background
+/// marker, and the system locale from `locale_conf`, which PAM's modules, the login profile and
+/// the user's own locale.conf may override.
+fn pam_vars(mode: Mode, vt: u16, background: bool, locale_conf: &str) -> Vec<(String, String)> {
+    let class = if mode == Mode::Greeter {
+        "greeter"
+    } else {
+        "user"
+    };
+    let mut vars: Vec<(String, String)> = [
+        ("XDG_SEAT", "seat0"),
+        ("XDG_VTNR", &vt.to_string()),
+        ("XDG_SESSION_CLASS", class),
+        ("XDG_SESSION_TYPE", "wayland"),
+        ("XDG_SESSION_DESKTOP", "reprise"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v.to_owned()))
+    .collect();
+    if background {
+        vars.push((BACKGROUND_ENV.to_owned(), "1".to_owned()));
+    }
+    vars.extend(locale_env(locale_conf));
+    vars
+}
+
 /// Opens the session on `vt`: its tty and environment, the VT held and, unless `background`,
 /// shown, then the credentials, `pam_open_session` and the VT owned. A background session's
 /// environment carries `BACKGROUND_ENV`, since its VT may be on screen before its compositor runs.
@@ -585,29 +611,9 @@ fn open<V: Vts>(
 ) -> Result<(V::Held, Vec<libc::gid_t>), String> {
     let pam_err = |e: PamError| e.to_string();
     pam.set_tty(&format!("tty{vt}")).map_err(pam_err)?;
-    let class = if mode == Mode::Greeter {
-        "greeter"
-    } else {
-        "user"
-    };
-    let vtnr = vt.to_string();
-    for (key, value) in [
-        ("XDG_SEAT", "seat0"),
-        ("XDG_VTNR", vtnr.as_str()),
-        ("XDG_SESSION_CLASS", class),
-        ("XDG_SESSION_TYPE", "wayland"),
-        ("XDG_SESSION_DESKTOP", "reprise"),
-    ] {
-        pam.putenv(key, value).map_err(pam_err)?;
-    }
-    if background {
-        pam.putenv(BACKGROUND_ENV, "1").map_err(pam_err)?;
-    }
-    if mode == Mode::Greeter {
-        let conf = std::fs::read_to_string(LOCALE_CONF).unwrap_or_default();
-        for (key, value) in locale_env(&conf) {
-            pam.putenv(&key, &value).map_err(pam_err)?;
-        }
+    let conf = std::fs::read_to_string(LOCALE_CONF).unwrap_or_default();
+    for (key, value) in pam_vars(mode, vt, background, &conf) {
+        pam.putenv(&key, &value).map_err(pam_err)?;
     }
     let tty = vts.hold(vt).map_err(|e| format!("/dev/tty{vt}: {e}"))?;
     if !background {

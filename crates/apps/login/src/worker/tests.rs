@@ -399,6 +399,26 @@ fn locale_conf_gives_lang_and_lc_variables() {
     );
 }
 
+#[test]
+fn every_session_gets_the_system_locale() {
+    let conf = "LANG=de_DE.UTF-8\nLC_TIME=en_GB.UTF-8\n";
+    for mode in [
+        Mode::Greeter,
+        Mode::Login,
+        Mode::Autologin,
+        Mode::Remote,
+        Mode::RemoteNla,
+    ] {
+        let vars = pam_vars(mode, 7, false, conf);
+        for want in [("LANG", "de_DE.UTF-8"), ("LC_TIME", "en_GB.UTF-8")] {
+            assert!(
+                vars.contains(&(want.0.into(), want.1.into())),
+                "{mode:?} gets {want:?}: {vars:?}"
+            );
+        }
+    }
+}
+
 static NEVER: AtomicBool = AtomicBool::new(false);
 
 #[test]
