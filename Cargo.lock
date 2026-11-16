@@ -5008,6 +5008,7 @@ dependencies = [
  "repriseapp-pins",
  "reprisefs",
  "reprisekit",
+ "repriselogin",
  "reprisexdg",
  "serde",
  "toml",

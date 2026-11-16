@@ -17,6 +17,7 @@ log.workspace = true
 reprisefs = { path = "../reprisefs" }
 repriseapp-pins = { path = "../repriseapp-pins" }
 reprisekit = { path = "../reprisekit" }
+repriselogin = { path = "../repriselogin" }
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
 toml_edit.workspace = true

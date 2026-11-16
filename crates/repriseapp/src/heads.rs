@@ -36,58 +36,7 @@ impl HeadMode {
     }
 }
 
-/// A head's rotation or flip: `wl_output.transform`, named the way
-/// `[[outputs]] transform` spells it. Rotations are counter-clockwise, as
-/// the protocol's are.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[repr(u32)]
-pub enum Transform {
-    #[default]
-    Normal = 0,
-    Rotate90 = 1,
-    Rotate180 = 2,
-    Rotate270 = 3,
-    Flipped = 4,
-    Flipped90 = 5,
-    Flipped180 = 6,
-    Flipped270 = 7,
-}
-
-impl Transform {
-    pub const ALL: [Transform; 8] = [
-        Transform::Normal,
-        Transform::Rotate90,
-        Transform::Rotate180,
-        Transform::Rotate270,
-        Transform::Flipped,
-        Transform::Flipped90,
-        Transform::Flipped180,
-        Transform::Flipped270,
-    ];
-
-    pub fn wl(self) -> u32 {
-        self as u32
-    }
-
-    /// The transform for a `wl_output.transform` value; `Normal` past
-    /// the eight.
-    pub fn from_wl(v: u32) -> Transform {
-        Transform::ALL.get(v as usize).copied().unwrap_or_default()
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Transform::Normal => "normal",
-            Transform::Rotate90 => "90",
-            Transform::Rotate180 => "180",
-            Transform::Rotate270 => "270",
-            Transform::Flipped => "flipped",
-            Transform::Flipped90 => "flipped-90",
-            Transform::Flipped180 => "flipped-180",
-            Transform::Flipped270 => "flipped-270",
-        }
-    }
-}
+pub use repriseconf::config::Transform;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AdaptiveSync {
@@ -1068,14 +1017,6 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(r.take().iter().map(|q| q.0).collect::<Vec<_>>(), vec![a, b]);
         assert!(r.take().is_empty());
-    }
-
-    #[test]
-    fn a_transform_is_spelled_as_the_config_spells_it() {
-        assert_eq!(Transform::from_wl(5), Transform::Flipped90);
-        assert_eq!(Transform::Flipped90.name(), "flipped-90");
-        assert_eq!(Transform::Rotate270.wl(), 3);
-        assert_eq!(Transform::from_wl(99), Transform::Normal);
     }
 
     #[test]

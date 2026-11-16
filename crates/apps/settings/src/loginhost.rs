@@ -7,7 +7,7 @@ use repriseapp::heads::Head;
 use repriselogin::front::FINGERPRINT;
 use repriselogin::machine::{
     Background, LoginMode, LoginOutput, MACHINE_CONFIG, MAX_OUTPUTS, MAX_PICTURE, MachineConfig,
-    Transform, decode_picture, file_tag, picture_magic, save_request,
+    decode_picture, file_tag, picture_magic, save_request,
 };
 use repriselogin::users::Source;
 use std::io::{self, Read as _, Write};
@@ -303,7 +303,7 @@ pub(crate) fn login_outputs(heads: &[Head], primary: Option<&str>) -> Vec<LoginO
                 refresh_mhz: (m.refresh_mhz > 0).then_some(m.refresh_mhz as u32),
             }),
             quarters: (h.scale * 4.0).round().clamp(4.0, 16.0) as u8,
-            transform: Transform::parse(h.transform.name()).unwrap_or_default(),
+            transform: h.transform,
             position: Some(h.position),
             primary: Some(h.name.as_str()) == primary,
         })
