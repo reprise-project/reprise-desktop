@@ -1,10 +1,12 @@
-//! The long-lived Wayland connection behind RemoteDesktop, InputCapture, GlobalShortcuts, Background and PickColor:
+//! The long-lived Wayland connection behind RemoteDesktop, InputCapture, GlobalShortcuts, Background, PickColor and Screenshot's Area and Active Window:
 //! binds `reprise_input_v1` and `zxdg_output_manager_v1`, keeps the zones and the sandboxed apps with a
 //! window current, and runs every request on
 //! its own thread. Requests come in over a channel with a socket as the wake-up; capture and shortcuts
 //! events go out on an async channel each capture or shortcuts object owns.
 
 use crate::inputproto::{
+    reprise_active_window_v1::{self, RepriseActiveWindowV1},
+    reprise_area_pick_v1::{self, RepriseAreaPickV1},
     reprise_color_pick_v1::{self, RepriseColorPickV1},
     reprise_eis_client_v1::RepriseEisClientV1,
     reprise_input_capture_v1::{self, RepriseInputCaptureV1},
@@ -14,6 +16,7 @@ use crate::inputproto::{
     reprise_sandboxed_v1::{self, RepriseSandboxedV1},
     reprise_shortcuts_v1::{self, RepriseShortcutsV1},
 };
+use reprisekit::raster::Rect;
 use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
@@ -115,6 +118,8 @@ enum Cmd {
     Pointer(u32, Pointer),
     DestroyKeys(u32),
     PickColor(u32, async_channel::Sender<Option<u32>>),
+    PickArea(u32, String, async_channel::Sender<Option<Rect>>),
+    ActiveWindow(u32, async_channel::Sender<Option<String>>),
     DestroyPick(u32),
     LockScreen(
         u32,
@@ -150,6 +155,8 @@ pub struct Link {
     /// The keys objects take pointer requests (v12).
     pointer: bool,
     picks: bool,
+    /// pick_area and active_window (v13).
+    areas: bool,
     lock_screens: bool,
     sandboxed_changes: async_channel::Receiver<()>,
 }
@@ -282,22 +289,22 @@ impl Drop for KeysHandle {
     }
 }
 
-/// One colour pick. Dropping it destroys the `reprise_color_pick_v1`, closing the picker if it is
-/// still open.
-pub struct PickHandle {
+/// One question to the compositor: a colour pick, an area pick or the active window. Dropping it
+/// destroys its object, closing a picker that is still open.
+pub struct PickHandle<T> {
     link: Link,
     id: u32,
-    answer: async_channel::Receiver<Option<u32>>,
+    answer: async_channel::Receiver<Option<T>>,
 }
 
-impl PickHandle {
-    /// The pick as 0xRRGGBB, None for a cancel or a lost link.
-    pub async fn answer(&self) -> Option<u32> {
+impl<T> PickHandle<T> {
+    /// The answer, None for a cancel or a lost link.
+    pub async fn answer(&self) -> Option<T> {
         self.answer.recv().await.ok().flatten()
     }
 }
 
-impl Drop for PickHandle {
+impl<T> Drop for PickHandle<T> {
     fn drop(&mut self) {
         self.link.send(Cmd::DestroyPick(self.id));
     }
@@ -359,12 +366,13 @@ impl Link {
             registry_queue_init::<State>(&conn).map_err(|e| format!("registry: {e}"))?;
         let qh = queue.handle();
         let input: RepriseInputV1 = globals
-            .bind(&qh, 2..=12, ())
+            .bind(&qh, 2..=13, ())
             .map_err(|e| format!("reprise_input_v1: {e}"))?;
         let shortcuts = input.version() >= 3;
         let keys = input.version() >= 4;
         let pointer = input.version() >= 12;
         let picks = input.version() >= 6;
+        let areas = input.version() >= 13;
         let lock_screens = input.version() >= 9;
         let xdg: ZxdgOutputManagerV1 = globals
             .bind(&qh, 3..=3, ())
@@ -426,6 +434,7 @@ impl Link {
             keys,
             pointer,
             picks,
+            areas,
             lock_screens,
             sandboxed_changes: changed_rx,
         };
@@ -536,19 +545,36 @@ impl Link {
         })
     }
 
-    /// Open the compositor's colour picker; None before v6.
-    pub fn pick_color(&self) -> Option<PickHandle> {
-        if !self.picks {
-            return None;
-        }
+    /// Open the compositor's colour picker; the pick is 0xRRGGBB. None before v6.
+    pub fn pick_color(&self) -> Option<PickHandle<u32>> {
+        self.picks.then(|| self.ask(Cmd::PickColor))
+    }
+
+    /// Open the compositor's region select for a screenshot for `app` (its display name); the
+    /// pick is in logical layout coordinates. None before v13.
+    pub fn pick_area(&self, app: &str) -> Option<PickHandle<Rect>> {
+        let app = app.to_string();
+        (self.areas).then(|| self.ask(|id, tx| Cmd::PickArea(id, app, tx)))
+    }
+
+    /// The focused window's ext-foreign-toplevel-list identifier; the answer is None with none
+    /// focused or the desktop locked. None before v13.
+    pub fn active_window(&self) -> Option<PickHandle<String>> {
+        (self.areas).then(|| self.ask(Cmd::ActiveWindow))
+    }
+
+    fn ask<T>(
+        &self,
+        cmd: impl FnOnce(u32, async_channel::Sender<Option<T>>) -> Cmd,
+    ) -> PickHandle<T> {
         let id = self.alloc();
         let (tx, rx) = async_channel::bounded(1);
-        self.send(Cmd::PickColor(id, tx));
-        Some(PickHandle {
+        self.send(cmd(id, tx));
+        PickHandle {
             link: self.clone(),
             id,
             answer: rx,
-        })
+        }
     }
 
     /// Ask for lock mode with `layout`; None before v9.
@@ -606,7 +632,7 @@ struct State {
     captures: HashMap<u32, (RepriseInputCaptureV1, async_channel::Sender<CaptureEvent>)>,
     shortcuts: HashMap<u32, (RepriseShortcutsV1, async_channel::Sender<ShortcutEvent>)>,
     keys: HashMap<u32, RepriseKeysV1>,
-    picks: HashMap<u32, (RepriseColorPickV1, async_channel::Sender<Option<u32>>)>,
+    picks: HashMap<u32, Pick>,
     /// Each object with the screen names heard since its last `done`.
     locks: HashMap<u32, LockScreen>,
     /// Held so the compositor goes on sending the list.
@@ -615,6 +641,13 @@ struct State {
     sandboxed_changed: async_channel::Sender<()>,
     shared: Arc<Mutex<Shared>>,
     registry: wl_registry::WlRegistry,
+}
+
+/// A compositor object answering one [`PickHandle`], with where its answer goes.
+enum Pick {
+    Color(RepriseColorPickV1, async_channel::Sender<Option<u32>>),
+    Area(RepriseAreaPickV1, async_channel::Sender<Option<Rect>>),
+    Window(RepriseActiveWindowV1, async_channel::Sender<Option<String>>),
 }
 
 impl State {
@@ -768,13 +801,22 @@ impl State {
             }
             Cmd::PickColor(id, tx) => {
                 let p = self.input.pick_color(qh, id);
-                self.picks.insert(id, (p, tx));
+                self.picks.insert(id, Pick::Color(p, tx));
             }
-            Cmd::DestroyPick(id) => {
-                if let Some((p, _)) = self.picks.remove(&id) {
-                    p.destroy();
-                }
+            Cmd::PickArea(id, app, tx) => {
+                let p = self.input.pick_area(app, qh, id);
+                self.picks.insert(id, Pick::Area(p, tx));
             }
+            Cmd::ActiveWindow(id, tx) => {
+                let p = self.input.active_window(qh, id);
+                self.picks.insert(id, Pick::Window(p, tx));
+            }
+            Cmd::DestroyPick(id) => match self.picks.remove(&id) {
+                Some(Pick::Color(p, _)) => p.destroy(),
+                Some(Pick::Area(p, _)) => p.destroy(),
+                Some(Pick::Window(p, _)) => p.destroy(),
+                None => {}
+            },
             Cmd::LockScreen(id, layout, events, ended) => {
                 let object = self.input.lock_screen(qh, id);
                 object.set_layout(layout);
@@ -1069,13 +1111,54 @@ impl Dispatch<RepriseColorPickV1, u32> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let Some((_, tx)) = state.picks.get(id) else {
+        let Some(Pick::Color(_, tx)) = state.picks.get(id) else {
             return;
         };
         let _ = tx.try_send(match ev {
             reprise_color_pick_v1::Event::Picked { rgb } => Some(rgb),
             reprise_color_pick_v1::Event::Cancelled => None,
         });
+    }
+}
+
+impl Dispatch<RepriseAreaPickV1, u32> for State {
+    fn event(
+        state: &mut Self,
+        _: &RepriseAreaPickV1,
+        ev: reprise_area_pick_v1::Event,
+        id: &u32,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some(Pick::Area(_, tx)) = state.picks.get(id) else {
+            return;
+        };
+        let _ = tx.try_send(match ev {
+            reprise_area_pick_v1::Event::Picked {
+                x,
+                y,
+                width,
+                height,
+            } => Some(Rect::new(x, y, width, height)),
+            reprise_area_pick_v1::Event::Cancelled => None,
+        });
+    }
+}
+
+impl Dispatch<RepriseActiveWindowV1, u32> for State {
+    fn event(
+        state: &mut Self,
+        _: &RepriseActiveWindowV1,
+        ev: reprise_active_window_v1::Event,
+        id: &u32,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some(Pick::Window(_, tx)) = state.picks.get(id) else {
+            return;
+        };
+        let reprise_active_window_v1::Event::Window { identifier } = ev;
+        let _ = tx.try_send(Some(identifier).filter(|i| !i.is_empty()));
     }
 }
 
@@ -1405,6 +1488,98 @@ pub(crate) mod tests {
         );
         let (link, _hang_up, _fake) = start_with_fake(5);
         assert!(link.pick_color().is_none(), "a v5 global has no pick_color");
+    }
+
+    /// A v13 compositor that answers the first `pick_area` with `area` (cancelled when None) and
+    /// the first `active_window` with `window`; returns the app name `pick_area` carried and
+    /// whether both objects were destroyed.
+    pub(crate) fn fake_answers(
+        mut theirs: UnixStream,
+        area: Option<[i32; 4]>,
+        window: &'static str,
+    ) -> std::thread::JoinHandle<(String, bool)> {
+        std::thread::spawn(move || {
+            let input = fake_compositor(&mut theirs, 2, 13);
+            theirs
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let (mut app, mut objects, mut destroyed) = (String::new(), Vec::new(), Vec::new());
+            while objects.len() < 2 {
+                let (object, opcode, body) = request(&mut theirs).unwrap();
+                if object != input {
+                    if objects.contains(&object) && opcode == 0 {
+                        destroyed.push(object);
+                    }
+                    continue;
+                }
+                let new_id = || u32::from_ne_bytes(body[..4].try_into().unwrap());
+                match opcode {
+                    12 => {
+                        let len = u32::from_ne_bytes(body[4..8].try_into().unwrap()) as usize;
+                        app = String::from_utf8(body[8..8 + len - 1].to_vec()).unwrap();
+                        match area {
+                            Some(r) => {
+                                send(&mut theirs, new_id(), 0, &r.map(i32::to_ne_bytes).concat())
+                            }
+                            None => send(&mut theirs, new_id(), 1, &[]),
+                        }
+                        objects.push(new_id());
+                    }
+                    13 => {
+                        let mut body = Vec::new();
+                        put_string(&mut body, window);
+                        send(&mut theirs, new_id(), 0, &body);
+                        objects.push(new_id());
+                    }
+                    _ => {}
+                }
+            }
+            while destroyed.len() < 2 {
+                match request(&mut theirs) {
+                    Ok((o, 0, _)) if objects.contains(&o) => destroyed.push(o),
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+            }
+            (app, destroyed.len() == 2)
+        })
+    }
+
+    #[test]
+    fn an_area_pick_hears_the_area_and_the_active_window_its_identifier() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let compositor = fake_answers(theirs, Some([10, 20, 300, 200]), "w7");
+        let link = link_on(ours);
+        let area = link.pick_area("Paint").unwrap();
+        assert_eq!(
+            zbus::block_on(area.answer()),
+            Some(Rect::new(10, 20, 300, 200))
+        );
+        let window = link.active_window().unwrap();
+        assert_eq!(zbus::block_on(window.answer()).as_deref(), Some("w7"));
+        drop((area, window));
+        let (app, destroyed) = compositor.join().unwrap();
+        assert_eq!(app, "Paint", "pick_area carries the app's name");
+        assert!(destroyed, "dropping the handles destroys both objects");
+    }
+
+    #[test]
+    fn a_cancelled_area_and_no_focused_window_answer_none() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let compositor = fake_answers(theirs, None, "");
+        let link = link_on(ours);
+        let area = link.pick_area("").unwrap();
+        assert_eq!(zbus::block_on(area.answer()), None);
+        let window = link.active_window().unwrap();
+        assert_eq!(zbus::block_on(window.answer()), None);
+        drop((area, window));
+        compositor.join().unwrap();
+        let (link, _hang_up, _fake) = start_with_fake(12);
+        assert!(
+            link.pick_area("Paint").is_none(),
+            "a v12 global has no pick_area"
+        );
+        assert!(link.active_window().is_none(), "nor active_window");
     }
 
     /// The requests `reprise_input_v1` gets until `stop` arrives: opcode and the string at

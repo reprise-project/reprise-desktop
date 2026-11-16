@@ -4,14 +4,17 @@
 //! it takes the pointer (`repoint`, `handle_button`, the wheel) and every key
 //! press (`keyroute`), and the pointer shows a crosshair. On release the
 //! overlay goes first, so the still `screenshot` renders is clean; in Record
-//! mode the pick starts a recording (`screenrecord`) instead.
+//! mode the pick starts a recording (`screenrecord`) instead. Opened for the
+//! Screenshot portal's Area target, the pick goes to its `reprise_area_pick_v1`.
 
 use reprisekit::controls::regionselect::{self, BORDER, DIM, Event, RegionSelect};
 use reprisescene::{BufferId, RectId, TreeId};
 use smithay::backend::input::InputTime;
+use smithay::reexports::wayland_server::Resource;
 
 use crate::compositor::State;
 use crate::input::Hit;
+use crate::inputproto::proto::reprise_area_pick_v1::RepriseAreaPickV1;
 use crate::output::upload_scaled;
 use crate::raster::Rect;
 
@@ -26,6 +29,8 @@ pub struct RegionView {
     border: [RectId; 4],
     readout: BufferId,
     mode: BufferId,
+    /// The portal's object that hears the pick, for an app's screenshot.
+    asker: Option<RepriseAreaPickV1>,
 }
 
 /// `argb` (premultiplied) as the scene's float colour.
@@ -41,6 +46,23 @@ impl State {
         if self.panels.region.is_some() || self.desktop_locked() {
             return;
         }
+        let p = self.pointer_location();
+        self.show_region(RegionSelect::new((p.x as i32, p.y as i32), record), None);
+    }
+
+    /// The portal's Area target: open the overlay for a screenshot that goes to `app`. An open
+    /// overlay, colour picker or the desktop's lock answer cancelled.
+    pub fn pick_area(&mut self, asker: RepriseAreaPickV1, app: String) {
+        let open = self.panels.region.is_some() || self.panels.colorpick.is_some();
+        if open || self.desktop_locked() {
+            return asker.cancelled();
+        }
+        let p = self.pointer_location();
+        let model = RegionSelect::for_app((p.x as i32, p.y as i32), &app);
+        self.show_region(model, Some(asker));
+    }
+
+    fn show_region(&mut self, model: RegionSelect, asker: Option<RepriseAreaPickV1>) {
         // The overlay takes the pointer, so held buttons are let go here: what they held ends
         // and the client hears each release. Before `panels.region` is set, which would take them.
         self.release_all_buttons(InputTime::now());
@@ -55,14 +77,14 @@ impl State {
         let border = rects(BORDER);
         let readout = self.scene.buffer_create(tree);
         let mode = self.scene.buffer_create(tree);
-        let p = self.pointer_location();
         self.panels.region = Some(RegionView {
-            model: RegionSelect::new((p.x as i32, p.y as i32), record),
+            model,
             tree,
             dim,
             border,
             readout,
             mode,
+            asker,
         });
         self.clear_pointer_focus();
         self.set_cursor("crosshair");
@@ -70,14 +92,28 @@ impl State {
         crate::access::touch(self);
     }
 
+    /// Close the overlay; a portal asking hears cancelled.
     pub fn close_region(&mut self) {
-        let Some(v) = self.panels.region.take() else {
-            return;
-        };
+        if let Some(a) = self.take_region().and_then(|v| v.asker) {
+            a.cancelled();
+        }
+    }
+
+    fn take_region(&mut self) -> Option<RegionView> {
+        let v = self.panels.region.take()?;
         self.scene.destroy(v.tree);
         self.set_cursor("default");
         self.redraw_all();
         crate::access::touch(self);
+        Some(v)
+    }
+
+    /// The portal's object went before its answer: the overlay closes unheard.
+    pub fn area_pick_gone(&mut self, r: &RepriseAreaPickV1) {
+        let asked = self.panels.region.as_ref().and_then(|v| v.asker.as_ref());
+        if asked.is_some_and(|a| a.id() == r.id()) {
+            self.take_region();
+        }
     }
 
     pub fn region_motion(&mut self, x: f64, y: f64) {
@@ -123,25 +159,28 @@ impl State {
     }
 
     fn apply_region(&mut self, e: Event) {
-        let record = self
-            .panels
-            .region
-            .as_ref()
-            .is_some_and(|v| v.model.records());
         match e {
             Event::None => return,
             Event::Redraw => return self.redraw_region(),
-            Event::Cancel | Event::Region(_) | Event::Point(..) => self.close_region(),
+            Event::Cancel | Event::Region(_) | Event::Point(..) => {}
         }
+        let Some(v) = self.take_region() else {
+            return;
+        };
         let area = match e {
             Event::Region(r) => Some(r),
             Event::Point(x, y) => Some(self.clicked_area(x, y)),
             _ => None,
         };
-        match area {
-            Some(r) if record => self.record_area(r),
-            Some(r) => self.screenshot_area(r),
-            None => {}
+        match (area, v.asker) {
+            (Some(r), Some(a)) => match r.intersect(&self.layout_box(None)) {
+                r if r.is_empty() => a.cancelled(),
+                r => a.picked(r.x, r.y, r.width, r.height),
+            },
+            (None, Some(a)) => a.cancelled(),
+            (Some(r), None) if v.model.records() => self.record_area(r),
+            (Some(r), None) => self.screenshot_area(r),
+            (None, None) => {}
         }
         self.repoint(self.pointer_location(), InputTime::now());
     }
@@ -245,6 +284,128 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::screenshot::Heard;
+    use crate::harness::{Harness, LEFT};
+
+    const KEY_ESC: u32 = 1;
+    const KEY_V: u32 = 47;
+
+    fn tap(h: &mut Harness, code: u32) {
+        h.key(code, true);
+        h.key(code, false);
+    }
+
+    fn heard(log: &crate::harness::screenshot::Log) -> Vec<Heard> {
+        std::mem::take(&mut *log.lock().unwrap())
+    }
+
+    #[test]
+    fn a_portal_area_pick_hears_the_dragged_area_or_the_clicked_screen() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut portal = h.connect_portal();
+        let (_pick, log) = portal.pick_area("Paint");
+        h.roundtrip(&mut portal);
+        let v = h.state.panels.region.as_ref().expect("the overlay opens");
+        assert_eq!(v.model.app(), Some("Paint"));
+        tap(&mut h, KEY_V);
+        let v = h.state.panels.region.as_ref().expect("V leaves it open");
+        assert!(!v.model.records(), "V does not switch to a recording");
+        h.pointer_to(100.0, 100.0);
+        h.button(LEFT, true);
+        h.pointer_to(300.0, 200.0);
+        h.button(LEFT, false);
+        h.roundtrip(&mut portal);
+        assert_eq!(heard(&log), [Heard::Picked(100, 100, 200, 100)]);
+        assert!(h.state.panels.region.is_none(), "the pick closes it");
+
+        let (_pick, log) = portal.pick_area("Paint");
+        h.roundtrip(&mut portal);
+        h.button(LEFT, true);
+        h.button(LEFT, false);
+        h.roundtrip(&mut portal);
+        assert_eq!(
+            heard(&log),
+            [Heard::Picked(0, 0, 1024, 768)],
+            "a click on the desktop picks its screen"
+        );
+    }
+
+    #[test]
+    fn an_area_pick_is_cancelled_by_escape_an_open_overlay_and_the_lock() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut portal = h.connect_portal();
+        let (_pick, log) = portal.pick_area("Paint");
+        h.roundtrip(&mut portal);
+        tap(&mut h, KEY_ESC);
+        h.roundtrip(&mut portal);
+        assert_eq!(heard(&log), [Heard::Cancelled], "Escape");
+        assert!(h.state.panels.region.is_none());
+
+        h.state.open_region(false);
+        let (_pick, log) = portal.pick_area("Paint");
+        h.roundtrip(&mut portal);
+        assert_eq!(
+            heard(&log),
+            [Heard::Cancelled],
+            "the bind's overlay is open"
+        );
+        let v = h
+            .state
+            .panels
+            .region
+            .as_ref()
+            .expect("the bind's overlay stays");
+        assert_eq!(v.model.app(), None);
+        h.state.close_region();
+
+        let (_pick, log) = portal.pick_area("Paint");
+        h.roundtrip(&mut portal);
+        crate::lockview::lock(&mut h.state);
+        h.roundtrip(&mut portal);
+        assert_eq!(heard(&log), [Heard::Cancelled], "the lock closes it");
+        let (_pick, log) = portal.pick_area("Paint");
+        h.roundtrip(&mut portal);
+        assert_eq!(heard(&log), [Heard::Cancelled], "locked");
+        assert!(h.state.panels.region.is_none());
+    }
+
+    #[test]
+    fn an_area_pick_destroyed_before_its_answer_closes_the_overlay_unheard() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut portal = h.connect_portal();
+        let (pick, log) = portal.pick_area("Paint");
+        h.roundtrip(&mut portal);
+        assert!(h.state.panels.region.is_some());
+        pick.destroy();
+        h.roundtrip(&mut portal);
+        assert!(h.state.panels.region.is_none());
+        assert_eq!(heard(&log), []);
+    }
+
+    #[test]
+    fn the_active_window_is_the_focused_one_and_none_while_locked() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.state.refresh_toplevels();
+        let id = h
+            .state
+            .toplevels
+            .identifier(t.id)
+            .expect("the window is listed");
+        let mut portal = h.connect_portal();
+        let log = portal.active_window();
+        h.roundtrip(&mut portal);
+        assert_eq!(heard(&log), [Heard::Window(id)]);
+        crate::lockview::lock(&mut h.state);
+        let log = portal.active_window();
+        h.roundtrip(&mut portal);
+        assert_eq!(heard(&log), [Heard::Window(String::new())]);
+    }
 
     #[test]
     fn a_premultiplied_colour_keeps_its_channels_in_scene_order() {

@@ -1,8 +1,11 @@
 //! `org.freedesktop.impl.portal.Screenshot` version 3: every output at its place in
-//! the layout, or the output or window picked in the share dialog for an
-//! interactive call or a Window target, as a PNG returned as a `file://` URI. The files are a
-//! hand-over to the app, kept in the runtime dir for `KEEP` up to `MAX_KEPT_BYTES`. PickColor
-//! opens the compositor's colour picker and needs no prompt; the click is the consent.
+//! the layout, the output or window picked in the share dialog for an interactive call or a
+//! Window target, the area dragged in the compositor's region select for an Area target, or the
+//! focused window for an Active Window target, as a PNG returned as a `file://` URI. A pick or a
+//! drag is the consent; the rest ask through the Access prompt unless the frontend's permission
+//! store settled it ([`plan`]). The files are a hand-over to the app, kept in the runtime dir for
+//! `KEEP` up to `MAX_KEPT_BYTES`. PickColor opens the compositor's colour picker and needs no
+//! prompt; the click is the consent.
 
 use crate::stills::{Output, grab};
 use crate::wayland::{Target, Wayland};
@@ -22,8 +25,9 @@ const MAX_KEPT_BYTES: u64 = 256 << 20;
 /// Screenshot's `target` values; AvailableTargets is the union of those served.
 const TARGET_SCREEN: u32 = 1;
 const TARGET_WINDOW: u32 = 2;
-/// Area (4) and Active Window (8) are not served.
-const AVAILABLE_TARGETS: u32 = TARGET_SCREEN | TARGET_WINDOW;
+const TARGET_AREA: u32 = 4;
+const TARGET_ACTIVE_WINDOW: u32 = 8;
+const AVAILABLE_TARGETS: u32 = TARGET_SCREEN | TARGET_WINDOW | TARGET_AREA | TARGET_ACTIVE_WINDOW;
 
 /// The most pixels a desktop picture may have: 256 MiB of ARGB, two 8K outputs side by side.
 const MAX_PIXELS: u64 = 1 << 26;
@@ -56,43 +60,28 @@ impl Screenshot {
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         log::info!("Screenshot for {app_id:?}");
-        let (picks, types) = match plan(&options) {
+        let plan = match plan(&options) {
             Ok(p) => p,
             Err(e) => {
                 log::info!("Screenshot for {app_id:?}: {e}");
                 return Ok((crate::RESPONSE_OTHER, HashMap::new()));
             }
         };
-        let mut target = None;
-        if picks || needs_consent(&options) {
-            let id = app_id.clone();
-            let parent = crate::dialog::parent_handle(&parent_window);
-            let asked = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
-                if picks {
-                    pick(&id, parent, cancel, types).map(Some)
-                } else {
-                    let allowed = crate::permit::ask(
-                        crate::permit::Kind::Screenshot,
-                        &id,
-                        Vec::new(),
-                        false,
-                        parent,
-                        cancel,
-                    )
-                    .allowed();
-                    allowed.then_some(None)
-                }
-            })
-            .await?;
-            match asked {
-                Some(t) => target = t,
-                None => {
-                    log::info!("Screenshot for {app_id:?} denied");
-                    return Ok((crate::RESPONSE_CANCELLED, HashMap::new()));
-                }
+        let shot = match self
+            .choose(plan, server, &handle, &app_id, &parent_window)
+            .await?
+        {
+            Ok(Some(shot)) => shot,
+            Ok(None) => {
+                log::info!("Screenshot for {app_id:?} denied");
+                return Ok((crate::RESPONSE_CANCELLED, HashMap::new()));
             }
-        }
-        match blocking::unblock(move || take(target)).await {
+            Err(e) => {
+                log::warn!("Screenshot: {e}");
+                return Ok((crate::RESPONSE_OTHER, HashMap::new()));
+            }
+        };
+        match blocking::unblock(move || take(shot)).await {
             Ok(path) => {
                 let mut r = HashMap::new();
                 let uri = format!("file://{}", path.display());
@@ -124,16 +113,91 @@ impl Screenshot {
             log::warn!("PickColor: the compositor has no colour picker");
             return Ok((crate::RESPONSE_OTHER, HashMap::new()));
         };
+        Ok(picked(self.heard(server, &handle, &pick).await?))
+    }
+}
+
+impl Screenshot {
+    /// What `plan` takes once the user picked it or allowed it: None for a cancel or a no, Err
+    /// for nothing to take.
+    async fn choose(
+        &self,
+        plan: Plan,
+        server: &zbus::ObjectServer,
+        handle: &ObjectPath<'_>,
+        app_id: &str,
+        parent_window: &str,
+    ) -> zbus::fdo::Result<Result<Option<Shot>, String>> {
+        let parent = crate::dialog::parent_handle(parent_window);
+        let link = crate::inputlink::live(&self.link);
+        Ok(match plan {
+            Plan::Pick(types) => {
+                let id = app_id.to_string();
+                let picked = crate::with_request(server, handle, &self.frontend, None, move |c| {
+                    pick(&id, parent, c, types)
+                });
+                Ok(picked.await?.map(Shot::Of))
+            }
+            Plan::Area => {
+                let id = app_id.to_string();
+                let name = blocking::unblock(move || crate::remotedesktop::display_name(&id)).await;
+                match link.and_then(|l| l.pick_area(&name)) {
+                    Some(p) => Ok(self.heard(server, handle, &p).await?.map(Shot::Area)),
+                    None => Err("the compositor has no region select".into()),
+                }
+            }
+            Plan::Desktop { ask } => {
+                let denied = ask && !self.allowed(server, handle, app_id, parent).await?;
+                Ok((!denied).then_some(Shot::Desktop))
+            }
+            Plan::ActiveWindow { ask } => {
+                let Some(query) = link.and_then(|l| l.active_window()) else {
+                    return Ok(Err("the compositor names no active window".into()));
+                };
+                // Asked before a prompt, which would take the focus.
+                let Some(window) = query.answer().await else {
+                    return Ok(Err("no window has the focus".into()));
+                };
+                let denied = ask && !self.allowed(server, handle, app_id, parent).await?;
+                Ok((!denied).then_some(Shot::Of(Target::Toplevel(window))))
+            }
+        })
+    }
+
+    /// Whether the user allows `app_id`'s screenshot in the Access prompt, which offers no Remember.
+    async fn allowed(
+        &self,
+        server: &zbus::ObjectServer,
+        handle: &ObjectPath<'_>,
+        app_id: &str,
+        parent: Option<String>,
+    ) -> zbus::fdo::Result<bool> {
+        let id = app_id.to_string();
+        crate::with_request(server, handle, &self.frontend, None, move |cancel| {
+            let kind = crate::permit::Kind::Screenshot;
+            crate::permit::ask(kind, &id, Vec::new(), false, parent, cancel).allowed()
+        })
+        .await
+    }
+
+    /// `pick`'s answer, with the `Request` at `handle` served meanwhile; None once the frontend
+    /// closes it.
+    async fn heard<T>(
+        &self,
+        server: &zbus::ObjectServer,
+        handle: &ObjectPath<'_>,
+        pick: &crate::inputlink::PickHandle<T>,
+    ) -> zbus::fdo::Result<Option<T>> {
         let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
-        let rgb = futures_lite::future::or(pick.answer(), closed(&cancel)).await;
+        crate::export_request(server, handle, cancel.clone(), &self.frontend).await?;
+        let answer = futures_lite::future::or(pick.answer(), closed(&cancel)).await;
         let _ = server.remove::<crate::Request, _>(handle.clone()).await;
-        Ok(picked(rgb))
+        Ok(answer)
     }
 }
 
 /// None once the frontend closes the request.
-async fn closed(cancel: &AtomicBool) -> Option<u32> {
+async fn closed<T>(cancel: &AtomicBool) -> Option<T> {
     while !cancel.load(Ordering::Relaxed) {
         async_io::Timer::after(Duration::from_millis(100)).await;
     }
@@ -153,17 +217,45 @@ fn picked(rgb: Option<u32>) -> (u32, HashMap<String, OwnedVariant>) {
     (crate::RESPONSE_OK, out)
 }
 
-/// Whether the user picks what is taken in the share picker, and the `SOURCE_*` kinds it
-/// lists: an interactive call picks, and a Window target always does. Err for a `target` not
-/// in `AVAILABLE_TARGETS`.
-fn plan(options: &HashMap<String, Variant<'_>>) -> Result<(bool, u32), String> {
+/// How a Screenshot call chooses what it takes, and so where its consent comes from.
+#[derive(Debug, PartialEq, Eq)]
+enum Plan {
+    /// The screen or window, of the `SOURCE_*` kinds, the user picks in the share picker.
+    Pick(u32),
+    /// The area the user drags in the compositor's region select.
+    Area,
+    /// Every screen, after the Access prompt when `ask`.
+    Desktop { ask: bool },
+    /// The focused window, after the Access prompt when `ask`.
+    ActiveWindow { ask: bool },
+}
+
+/// An interactive call picks in the share picker, and a Window target always does; an Area
+/// target always drags. A Screen target or none takes every screen, and an Active Window
+/// target the focused window, both asking as [`needs_consent`] says. Err for a `target` not in
+/// `AVAILABLE_TARGETS`.
+fn plan(options: &HashMap<String, Variant<'_>>) -> Result<Plan, String> {
     let interactive = matches!(options.get("interactive"), Some(Variant::Bool(true)));
+    let ask = needs_consent(options);
     match options.get("target") {
-        None => Ok((interactive, crate::SOURCE_MONITOR | crate::SOURCE_WINDOW)),
-        Some(Variant::U32(TARGET_SCREEN)) => Ok((interactive, crate::SOURCE_MONITOR)),
-        Some(Variant::U32(TARGET_WINDOW)) => Ok((true, crate::SOURCE_WINDOW)),
+        None if interactive => Ok(Plan::Pick(crate::SOURCE_MONITOR | crate::SOURCE_WINDOW)),
+        Some(Variant::U32(TARGET_SCREEN)) if interactive => Ok(Plan::Pick(crate::SOURCE_MONITOR)),
+        None | Some(Variant::U32(TARGET_SCREEN)) => Ok(Plan::Desktop { ask }),
+        Some(Variant::U32(TARGET_WINDOW)) => Ok(Plan::Pick(crate::SOURCE_WINDOW)),
+        Some(Variant::U32(TARGET_AREA)) => Ok(Plan::Area),
+        Some(Variant::U32(TARGET_ACTIVE_WINDOW)) => Ok(Plan::ActiveWindow { ask }),
         Some(v) => Err(format!("target {v} is not served")),
     }
+}
+
+/// What [`take`] captures.
+#[derive(Debug)]
+enum Shot {
+    /// Every output in one picture.
+    Desktop,
+    Of(Target),
+    /// An area in logical layout coordinates.
+    Area(Rect),
 }
 
 /// False only when the frontend already settled the `screenshot`
@@ -206,11 +298,12 @@ fn pick(
     Some(target)
 }
 
-/// Capture `target`, or every output when None, and write it out; blocking.
-fn take(target: Option<Target>) -> Result<PathBuf, String> {
-    let shot = match target {
-        Some(t) => grab(&mut Wayland::connect()?, &t, true)?,
-        None => desktop(&crate::stills::capture(true)?)?,
+/// Capture `shot` and write it out; blocking. An area leaves out the pointer that dragged it.
+fn take(shot: Shot) -> Result<PathBuf, String> {
+    let shot = match shot {
+        Shot::Of(t) => grab(&mut Wayland::connect()?, &t, true)?,
+        Shot::Desktop => desktop(&crate::stills::capture(true)?)?,
+        Shot::Area(r) => area_of(&crate::stills::capture(false)?, r)?,
     };
     let dir = shot_dir()?;
     let now = SystemTime::now();
@@ -287,16 +380,10 @@ fn doomed(
 /// bounding box at the scale of the output with the most pixels per
 /// logical pixel, each place's edges rounded so neighbours meet.
 fn arrange(outputs: &[(Rect, (u32, u32))]) -> ((u32, u32), Vec<Rect>) {
-    let scale = outputs
-        .iter()
-        .filter(|(r, _)| r.width > 0)
-        .map(|(r, (w, _))| f64::from(*w) / f64::from(r.width))
-        .fold(1.0f64, f64::max);
-    let left = outputs.iter().map(|(r, _)| r.x).min().unwrap_or(0);
-    let top = outputs.iter().map(|(r, _)| r.y).min().unwrap_or(0);
+    let (scale, (left, top)) = frame(outputs);
     let right = outputs.iter().map(|(r, _)| r.right()).max().unwrap_or(0);
     let bottom = outputs.iter().map(|(r, _)| r.bottom()).max().unwrap_or(0);
-    let at = |v: i32, origin: i32| (f64::from(v - origin) * scale).round() as i32;
+    let at = |v: i32, origin: i32| at_scale(v - origin, scale);
     let places = outputs
         .iter()
         .map(|(r, _)| {
@@ -308,14 +395,66 @@ fn arrange(outputs: &[(Rect, (u32, u32))]) -> ((u32, u32), Vec<Rect>) {
     (size, places)
 }
 
+/// The desktop picture's pixels per logical pixel, the finest any output has, and the layout's
+/// top-left, where it starts.
+fn frame(outputs: &[(Rect, (u32, u32))]) -> (f64, (i32, i32)) {
+    let scale = outputs
+        .iter()
+        .filter(|(r, _)| r.width > 0)
+        .map(|(r, (w, _))| f64::from(*w) / f64::from(r.width))
+        .fold(1.0f64, f64::max);
+    let left = outputs.iter().map(|(r, _)| r.x).min().unwrap_or(0);
+    let top = outputs.iter().map(|(r, _)| r.y).min().unwrap_or(0);
+    (scale, (left, top))
+}
+
+fn at_scale(v: i32, scale: f64) -> i32 {
+    (f64::from(v) * scale).round() as i32
+}
+
+/// Each output's layout box and still size.
+fn geometry(outputs: &[Output]) -> Vec<(Rect, (u32, u32))> {
+    (outputs.iter())
+        .map(|o| (o.layout, (o.still.width, o.still.height)))
+        .collect()
+}
+
+/// The part of the desktop picture under `area` (layout coordinates), at its scale; Err for an
+/// area on no output's place.
+fn area_of(outputs: &[Output], area: Rect) -> Result<Still, String> {
+    let whole = desktop(outputs)?;
+    let (scale, (left, top)) = frame(&geometry(outputs));
+    let (x, y) = (
+        at_scale(area.x - left, scale),
+        at_scale(area.y - top, scale),
+    );
+    let r = Rect::new(
+        x,
+        y,
+        at_scale(area.right() - left, scale) - x,
+        at_scale(area.bottom() - top, scale) - y,
+    )
+    .intersect(&Rect::new(0, 0, whole.width as i32, whole.height as i32));
+    if r.is_empty() {
+        return Err(format!("the area {area:?} is on no screen"));
+    }
+    let mut pixels = Vec::with_capacity(r.width as usize * r.height as usize);
+    for row in r.y..r.bottom() {
+        let start = row as usize * whole.width as usize + r.x as usize;
+        pixels.extend_from_slice(&whole.pixels[start..start + r.width as usize]);
+    }
+    Ok(Still {
+        logical: (area.width, area.height),
+        width: r.width as u32,
+        height: r.height as u32,
+        pixels,
+    })
+}
+
 /// Every output's still drawn at its place in one picture, black between
 /// them; a still of another size than its place is resampled to it.
 fn desktop(outputs: &[Output]) -> Result<Still, String> {
-    let geometry: Vec<_> = outputs
-        .iter()
-        .map(|o| (o.layout, (o.still.width, o.still.height)))
-        .collect();
-    let ((w, h), places) = arrange(&geometry);
+    let ((w, h), places) = arrange(&geometry(outputs));
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > MAX_PIXELS {
         return Err(format!("no desktop picture {w}x{h}"));
     }
@@ -516,25 +655,153 @@ mod tests {
         assert!(doomed(files, now, KEEP, 120).is_empty());
     }
 
+    fn with_target(pairs: &[(&str, bool)], target: u32) -> HashMap<String, Variant<'static>> {
+        let mut o = opts(pairs);
+        o.insert("target".into(), Variant::U32(target));
+        o
+    }
+
     #[test]
-    fn a_window_target_always_picks_a_window_and_a_screen_target_lists_screens() {
+    fn a_pick_or_a_drag_is_the_consent_and_the_rest_ask_unless_the_store_settled_it() {
         let both = crate::SOURCE_MONITOR | crate::SOURCE_WINDOW;
-        let with = |interactive: bool, target: u32| {
-            let mut o = opts(&[("interactive", interactive)]);
-            o.insert("target".into(), Variant::U32(target));
-            plan(&o)
-        };
-        assert_eq!(plan(&opts(&[])), Ok((false, both)));
-        assert_eq!(plan(&opts(&[("interactive", true)])), Ok((true, both)));
-        assert_eq!(
-            with(false, TARGET_SCREEN),
-            Ok((false, crate::SOURCE_MONITOR))
-        );
-        assert_eq!(with(true, TARGET_SCREEN), Ok((true, crate::SOURCE_MONITOR)));
-        assert_eq!(with(false, TARGET_WINDOW), Ok((true, crate::SOURCE_WINDOW)));
-        for unserved in [0, 4, 8, TARGET_SCREEN | TARGET_WINDOW] {
-            assert!(with(true, unserved).is_err(), "target {unserved}");
+        let checked = [("permission_store_checked", true)];
+        let interactive = [("interactive", true), ("permission_store_checked", true)];
+        let rows = [
+            (opts(&[]), Plan::Desktop { ask: true }),
+            (opts(&checked), Plan::Desktop { ask: false }),
+            (opts(&interactive), Plan::Pick(both)),
+            (with_target(&[], TARGET_SCREEN), Plan::Desktop { ask: true }),
+            (
+                with_target(&checked, TARGET_SCREEN),
+                Plan::Desktop { ask: false },
+            ),
+            (
+                with_target(&interactive, TARGET_SCREEN),
+                Plan::Pick(crate::SOURCE_MONITOR),
+            ),
+            (
+                with_target(&checked, TARGET_WINDOW),
+                Plan::Pick(crate::SOURCE_WINDOW),
+            ),
+            (
+                with_target(&interactive, TARGET_WINDOW),
+                Plan::Pick(crate::SOURCE_WINDOW),
+            ),
+            (with_target(&[], TARGET_AREA), Plan::Area),
+            (with_target(&checked, TARGET_AREA), Plan::Area),
+            (with_target(&interactive, TARGET_AREA), Plan::Area),
+            (
+                with_target(&[], TARGET_ACTIVE_WINDOW),
+                Plan::ActiveWindow { ask: true },
+            ),
+            (
+                with_target(&checked, TARGET_ACTIVE_WINDOW),
+                Plan::ActiveWindow { ask: false },
+            ),
+            (
+                with_target(&interactive, TARGET_ACTIVE_WINDOW),
+                Plan::ActiveWindow { ask: true },
+            ),
+        ];
+        for (options, want) in rows {
+            assert_eq!(plan(&options), Ok(want), "{options:?}");
         }
+        for unserved in [0, 16, TARGET_SCREEN | TARGET_WINDOW] {
+            assert!(
+                plan(&with_target(&[], unserved)).is_err(),
+                "target {unserved}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_area_is_cut_from_the_desktop_picture_at_its_finest_scale() {
+        // A 4x2 screen at scale 2 with a 2x2 one at scale 1 right of it, one lower.
+        let outputs = [
+            Output {
+                layout: Rect::new(0, 0, 4, 2),
+                still: still(8, 4, 0xffff_0000),
+            },
+            Output {
+                layout: Rect::new(4, 1, 2, 2),
+                still: still(2, 2, 0xff00_00ff),
+            },
+        ];
+        let (red, blue) = (0xffff_0000, 0xff00_00ff);
+        let shot = area_of(&outputs, Rect::new(3, 1, 2, 1)).unwrap();
+        assert_eq!((shot.width, shot.height), (4, 2));
+        assert_eq!(shot.pixels, [red, red, blue, blue, red, red, blue, blue]);
+        let shot = area_of(&outputs, Rect::new(-2, 0, 3, 1)).unwrap();
+        assert_eq!((shot.width, shot.height), (2, 2), "clipped to the picture");
+        assert!(area_of(&outputs, Rect::new(-9, 0, 3, 1)).is_err());
+    }
+
+    /// The Screenshot answers to each of `calls` from a portal served on `bus` with `link`.
+    fn answers(
+        bus: &crate::lockmode::tests::Bus,
+        link: Option<crate::inputlink::Link>,
+        calls: &[HashMap<String, Variant<'static>>],
+    ) -> Vec<u32> {
+        zbus::block_on(async {
+            let caller = crate::lockmode::tests::connect(bus).await;
+            caller.request_name(crate::FRONTEND).await.unwrap();
+            let frontend = crate::Frontend::default();
+            frontend.set(caller.unique_name().map(|n| n.to_string()));
+            let shots = Screenshot {
+                frontend: frontend.clone(),
+                link,
+            };
+            let portal = zbus::connection::Builder::address(bus.1.as_str())
+                .serve_at(crate::PATH, shots)
+                .build()
+                .await
+                .unwrap();
+            let _ = frontend.conn.set(portal.clone());
+            let dest = portal.unique_name().unwrap().to_string();
+            let mut codes = Vec::new();
+            for (n, options) in calls.iter().enumerate() {
+                let handle = format!("{}1_1/t{n}", crate::REQUEST_PREFIX);
+                let handle = ObjectPath::try_from(handle).unwrap();
+                let reply = caller
+                    .call_method(
+                        Some(dest.as_str()),
+                        crate::PATH,
+                        Some("org.freedesktop.impl.portal.Screenshot"),
+                        "Screenshot",
+                        &(handle, "org.example.App", "", options),
+                    )
+                    .await
+                    .unwrap();
+                let (code, _): (u32, HashMap<String, OwnedVariant>) =
+                    reply.body().deserialize().unwrap();
+                codes.push(code);
+            }
+            codes
+        })
+    }
+
+    #[test]
+    fn a_cancelled_drag_answers_cancelled_and_no_focused_window_takes_nothing() {
+        use crate::inputlink::tests::{fake_answers, link_on};
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let compositor = fake_answers(theirs, None, "");
+        let checked = [("permission_store_checked", true)];
+        let calls = [
+            with_target(&checked, TARGET_AREA),
+            with_target(&checked, TARGET_ACTIVE_WINDOW),
+        ];
+        let codes = answers(&bus, Some(link_on(ours)), &calls);
+        assert_eq!(codes, [crate::RESPONSE_CANCELLED, crate::RESPONSE_OTHER]);
+        compositor.join().unwrap();
+        assert_eq!(
+            answers(&bus, None, &calls),
+            [crate::RESPONSE_OTHER, crate::RESPONSE_OTHER],
+            "without the compositor's link"
+        );
     }
 
     #[test]
