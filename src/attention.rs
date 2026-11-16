@@ -29,6 +29,18 @@ impl State {
         arm(self, now);
     }
 
+    /// Whether `w`'s task button flashes at `now` from an ask; with no flash time a button that
+    /// is lit counts, since asking again would show nothing new.
+    pub fn attention_flashing(&self, w: WindowId, now: Instant) -> bool {
+        let flash_for = flash_for(self);
+        let since = self.win(w).and_then(|x| x.attention);
+        match phase(since, now, flash_for) {
+            Attention::None => false,
+            Attention::Steady => flash_for.is_zero(),
+            Attention::FlashOn | Attention::FlashOff => true,
+        }
+    }
+
     /// `w` no longer wants attention; true if it did. An X11 window loses its demands-attention
     /// state too.
     pub fn clear_attention(&mut self, w: WindowId) -> bool {
