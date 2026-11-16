@@ -12,7 +12,18 @@ use std::process::{Command, Stdio};
 /// start reports it. With a `scope` the child waits before its exec until it is in that app scope
 /// ([`reprisefs::scope::hold`]), so this blocks on the session bus.
 pub fn spawn_in(argv: &[OsString], dir: Option<&Path>, scope: Option<&str>) -> std::io::Result<()> {
-    spawn_then(argv, dir, scope, &Handoff::default(), |_| {})
+    spawn_handed(argv, dir, scope, &Handoff::default())
+}
+
+/// [`spawn_in`] handed `handoff` ([`Handoff::apply`]), for a program starting another on a
+/// request that carried its own activation token.
+pub fn spawn_handed(
+    argv: &[OsString],
+    dir: Option<&Path>,
+    scope: Option<&str>,
+    handoff: &Handoff,
+) -> std::io::Result<()> {
+    spawn_then(argv, dir, scope, handoff, |_| {})
 }
 
 /// A [`Reply::spawn`]'s process, handed `handoff` ([`Handoff::apply`]); a failure is only logged.

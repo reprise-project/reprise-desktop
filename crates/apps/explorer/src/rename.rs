@@ -160,7 +160,7 @@ impl Explorer {
         // `refresh` keeps the selection by path, and the old path is gone.
         let reply = self.refresh(ctx);
         if self.reading.is_some() {
-            self.selecting = Some((self.place.clone(), to));
+            self.selecting = Some((self.place.clone(), vec![to]));
         } else if let Some(j) = self.index_of(&to) {
             self.sv.selection.set_only(Some(j));
             self.refresh_chrome(ctx);

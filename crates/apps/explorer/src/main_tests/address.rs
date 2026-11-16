@@ -72,7 +72,8 @@ fn a_blink_redraws_only_while_the_address_field_has_the_caret() {
         start: Start {
             place: ex.place.clone(),
             dir: None,
-            select: None,
+            select: Vec::new(),
+            sheet: None,
             connect: None,
         },
         inner: Some(ex),

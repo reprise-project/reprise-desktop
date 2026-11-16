@@ -14,6 +14,7 @@ mod copydlg;
 mod dialogs;
 mod drag;
 mod extracting;
+mod filemanager;
 mod fileops;
 mod foldertree;
 mod icons;
@@ -380,8 +381,8 @@ pub struct Explorer {
     going: Option<(Place, Job<live::Gone>)>,
     /// Opened files whose opening ([`Explorer::open_file`]) has not answered.
     opening: Vec<(PathBuf, Job<Opened>)>,
-    /// The `--select` entry or a renamed item, and its folder, waiting on that folder's listing.
-    selecting: Option<(Place, PathBuf)>,
+    /// The `--select` entries or a renamed item, and their folder, waiting on that folder's listing.
+    selecting: Option<(Place, Vec<PathBuf>)>,
     watch: Option<Watch>,
     /// The pinned folders, for the task pane's Pinned group and the item menu; None in tests
     /// that read none.
@@ -851,10 +852,11 @@ impl Explorer {
             dir,
             select,
             connect,
+            sheet: _,
         } = start;
         let check = dir.map(|d| Job::spawn(Some(&ctx.wake), move || is_dir(&d)));
         let mut ex = build(place.clone(), ctx);
-        ex.selecting = select.map(|s| (place.clone(), s));
+        ex.selecting = (!select.is_empty()).then(|| (place.clone(), select));
         if let Some(job) = check {
             // A listing still being read means the mount is slow: the check would be too.
             let found = match ex.reading {
@@ -882,15 +884,15 @@ impl Explorer {
         ex
     }
 
-    /// Selects the command line's `--select` entry once its folder's listing has landed.
+    /// Selects the command line's `--select` entries once their folder's listing has landed.
     fn select_pending(&mut self, ctx: &mut Ctx) {
         if self.reading.is_some() {
             return;
         }
-        if let Some((place, path)) = self.selecting.take()
+        if let Some((place, paths)) = self.selecting.take()
             && place == self.place
         {
-            self.select_shown(&path, ctx);
+            self.select_shown(&paths, ctx);
         }
     }
 
@@ -1532,12 +1534,20 @@ impl Explorer {
         self.item_index.get(path).copied()
     }
 
-    /// The entry `--select` names. Nothing happens when the listing doesn't show it (a hidden file).
-    pub(crate) fn select_shown(&mut self, path: &Path, ctx: &mut Ctx) {
-        let Some(i) = self.index_of(path) else {
+    /// The entries `--select` names, the first focused and scrolled into view. One the listing
+    /// doesn't show (a hidden file) stays unselected.
+    pub(crate) fn select_shown(&mut self, paths: &[PathBuf], ctx: &mut Ctx) {
+        let shown: Vec<PathBuf> = paths
+            .iter()
+            .filter(|p| self.index_of(p).is_some())
+            .cloned()
+            .collect();
+        if shown.is_empty() {
             return;
-        };
-        self.sv.selection.set_only(Some(i));
+        }
+        self.select_paths(&shown);
+        self.sv.selection.focus = self.index_of(&shown[0]);
+        self.sv.selection.anchor = self.sv.selection.focus;
         let lay = self.layout(ctx);
         let sl = self.view_layout(lay.view, ctx);
         shellview::follow(&mut self.sv, &sl);
@@ -1720,12 +1730,37 @@ impl App for Lazy {
         }
     }
 
+    fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
+        // A sheet-only start has no window to bring the first event.
+        if self.start.sheet.is_some() {
+            waker.wake();
+        }
+        repriseapp::Start::Continue
+    }
+
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         let start = &self.start;
-        let ex = self.inner.get_or_insert_with(|| {
-            Explorer::open(start.clone(), |d| d.is_dir(), Explorer::new, ctx)
-        });
-        ex.event(win, ev, ctx)
+        let mut opened = Reply::none();
+        let ex = match &mut self.inner {
+            Some(ex) => ex,
+            None => {
+                let ex = self.inner.insert(Explorer::open(
+                    start.clone(),
+                    |d| d.is_dir(),
+                    Explorer::new,
+                    ctx,
+                ));
+                if let Some(path) = &start.sheet {
+                    opened = ex.open_path_properties(path, ctx);
+                }
+                ex
+            }
+        };
+        let reply = opened.and(ex.event(win, ev, ctx));
+        if start.sheet.is_some() && !ex.closing && ex.sheet_closed() {
+            return reply.and(ex.close(ctx));
+        }
+        reply
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
@@ -1774,7 +1809,7 @@ impl repriseapp::Extended for Lazy {
     }
 
     fn hidden(&self) -> bool {
-        self.inner.as_ref().is_some_and(|ex| ex.closing)
+        self.start.sheet.is_some() || self.inner.as_ref().is_some_and(|ex| ex.closing)
     }
 
     fn caption(&self, win: WinId) -> repriseapp::Caption {
@@ -1900,16 +1935,18 @@ impl repriseapp::Extended for Lazy {
 struct Start {
     place: Place,
     dir: Option<PathBuf>,
-    select: Option<PathBuf>,
+    select: Vec<PathBuf>,
     /// A server address to connect to once the window is up.
     connect: Option<String>,
+    /// `--properties`: the path whose sheet is the only window; the process ends with it.
+    sheet: Option<PathBuf>,
 }
 
-/// `reprise-explorer [PLACE]` or `--select PATH`. PLACE is a folder's path,
-/// "Computer", "Recycle Bin" or "Network", or a server address, which opens
-/// Computer and connects to it; a missing or unknown one is Home. `--select`
-/// opens the folder an absolute PATH sits in with PATH selected and scrolled
-/// into view (Find Target's window).
+/// `reprise-explorer [PLACE]`, `--select PATH...` or `--properties PATH`. PLACE is a folder's
+/// path, "Computer", "Recycle Bin" or "Network", or a server address, which opens Computer and
+/// connects to it; a missing or unknown one is Home. `--select` opens the folder the first
+/// absolute PATH sits in with it and the others there selected, the first scrolled into view
+/// (Find Target's window). `--properties` shows an absolute PATH's Properties sheet alone.
 fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
     let mut args = args.into_iter();
     let first = args.next();
@@ -1921,19 +1958,36 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
         return Start {
             place: Place::Computer,
             dir: None,
-            select: None,
+            select: Vec::new(),
             connect: Some(addr.uri()),
+            sheet: None,
+        };
+    }
+    if first.as_deref() == Some("--properties".as_ref())
+        && let Some(path) = args.next().map(PathBuf::from).filter(|p| p.is_absolute())
+    {
+        let place = path.parent().map_or(Place::Home, Place::from_path);
+        return Start {
+            place,
+            dir: None,
+            select: Vec::new(),
+            connect: None,
+            sheet: Some(path),
         };
     }
     let (place, dir, select) = if first.as_deref() == Some("--select".as_ref()) {
-        let path = args.next().map(PathBuf::from).filter(|p| p.is_absolute());
-        match path
-            .as_deref()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-        {
-            Some(dir) => (Place::from_path(&dir), Some(dir), path),
-            None => (Place::Home, None, None),
+        let paths: Vec<PathBuf> = args.map(PathBuf::from).collect();
+        let first = paths.first().filter(|p| p.is_absolute());
+        match first.and_then(|p| p.parent()).map(Path::to_path_buf) {
+            Some(dir) => {
+                let select = paths
+                    .iter()
+                    .filter(|p| p.parent() == Some(dir.as_path()))
+                    .cloned()
+                    .collect();
+                (Place::from_path(&dir), Some(dir), select)
+            }
+            None => (Place::Home, None, Vec::new()),
         }
     } else {
         let read = first.and_then(|arg| match arg.to_str() {
@@ -1944,13 +1998,14 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             }
         });
         let (place, dir) = read.unwrap_or((Place::Home, None));
-        (place, dir, None)
+        (place, dir, Vec::new())
     };
     Start {
         place,
         dir,
         select,
         connect: None,
+        sheet: None,
     }
 }
 
@@ -1972,6 +2027,9 @@ pub fn main(args: Vec<std::ffi::OsString>) {
             std::process::exit(1);
         }
         return;
+    }
+    if args.first().is_some_and(|a| a == filemanager::FLAG) {
+        std::process::exit(filemanager::serve());
     }
     reprisefs::sendto::follow_phones();
     repriseapp::run(Box::new(Lazy {

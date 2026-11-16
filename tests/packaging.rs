@@ -275,6 +275,40 @@ fn both_pkgbuilds_install_every_polkit_file() {
     }
 }
 
+#[test]
+fn both_pkgbuilds_install_every_dbus_activation_file_and_its_unit() {
+    let files = file_names("data/dbus-1/services");
+    assert!(
+        files.contains("org.reprise.Explorer.FileManager1.service"),
+        "{files:?}"
+    );
+    for path in PKGBUILDS {
+        let text = std::fs::read_to_string(root().join(path)).expect("PKGBUILD reads");
+        let has = |line: &str| text.lines().any(|l| l.trim() == line);
+        for file in &files {
+            let service = std::fs::read_to_string(root().join("data/dbus-1/services").join(file))
+                .expect("service file reads");
+            let install = format!(
+                r#"install -Dm644 data/dbus-1/services/{file} "$pkgdir/usr/share/dbus-1/services/{file}""#
+            );
+            assert!(has(&install), "{path} installs {file}");
+            let Some(unit) = service
+                .lines()
+                .find_map(|l| l.strip_prefix("SystemdService="))
+            else {
+                continue;
+            };
+            let install = format!(
+                r#"install -Dm644 data/systemd/{unit} "$pkgdir/usr/lib/systemd/user/{unit}""#
+            );
+            assert!(
+                has(&install),
+                "{path} installs the user unit {unit} {file} names"
+            );
+        }
+    }
+}
+
 /// Every double-quoted string in `js`.
 fn quoted(js: &str) -> BTreeSet<&str> {
     js.split('"').skip(1).step_by(2).collect()

@@ -118,7 +118,7 @@ pub use event::{BTN_LEFT, BTN_RIGHT, Event, KeyInput, Mods, PointerInput};
 pub use fielddrop::{DropForm, FileDrop};
 pub use input::caps_lock;
 pub use look::{caption_fit, dialog_max_w, start_forms, start_text, start_theme};
-pub use reply::{Reply, spawn_in};
+pub use reply::{Reply, spawn_handed, spawn_in};
 pub use reprisefs::dropdata::{GNOME_FILES, URI_LIST};
 pub use reprisefs::fileclip::FileClip;
 pub use reprisekit;

@@ -120,6 +120,13 @@ The file manager, and the default for folders.
   it. Paste a hash into Compare with and it says "Matches SHA-256",
   "Matches MD5" or "No match".
   Select several files for one sheet that covers them all.
+- **Show in folder** from other programs: Explorer answers
+  `org.freedesktop.FileManager1`, so a browser's "Show in folder" or an
+  editor's "Reveal in file manager" opens the file's folder with the file
+  selected (one window per folder when the files are in several), and a
+  program's file Properties opens the sheet on its own, without a folder
+  window. The session starts the service with Reprise, so it answers even
+  when another file manager is installed.
 - **Thumbnails** decode in the background into the freedesktop thumbnail
   cache, shared with other file managers: its 128 px `normal` size at scale
   1, its 256 px `large` size at scale 2. Files Reprise does not decode

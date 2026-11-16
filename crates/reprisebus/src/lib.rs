@@ -33,6 +33,7 @@
 //! [`localsearch`] asks the file indexer which files hold some words.
 //! [`sensorproxy`] reads iio-sensor-proxy's accelerometer: which way up the machine is held.
 //! [`searchprovider`] asks a program's search provider for results and opens one.
+//! [`filemanager1`] serves other programs' "Show in folder" and file Properties.
 //! [`error`] reads the name and message of an error reply.
 //! [`portal`] calls a desktop portal method and takes its Response from the portal alone.
 //! [`desklock`] follows the compositor's desktop lock on `org.freedesktop.ScreenSaver`.
@@ -57,6 +58,7 @@ pub mod colord;
 pub mod desklock;
 pub mod eds;
 pub mod error;
+pub mod filemanager1;
 pub mod filetransfer;
 pub mod fprint;
 pub mod instance;
