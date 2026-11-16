@@ -11,7 +11,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use repriselogin::fdpass::{self, FdFrameReader};
 use repriselogin::frame;
@@ -20,6 +20,7 @@ use tokio::io::Interest;
 use tokio::net::UnixStream;
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::AbortHandle;
+use tokio::time::Instant;
 use zeroize::Zeroizing;
 
 use crate::daemon::Input;
@@ -533,7 +534,7 @@ async fn open_until(
         });
         let tried = loop {
             let until = pace.until.get();
-            match tokio::time::timeout_at(until.into(), &mut tried).await {
+            match tokio::time::timeout_at(until, &mut tried).await {
                 Ok(tried) => break tried,
                 Err(_) if pace.until.get() > until => {}
                 Err(_) => return Err(io::ErrorKind::TimedOut.into()),
@@ -1168,7 +1169,7 @@ pub(crate) mod tests {
             .await;
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_reopen_tries_every_reopen_retry_until_reopen_for_then_is_lost() {
         let local = tokio::task::LocalSet::new();
         local
@@ -1191,14 +1192,13 @@ pub(crate) mod tests {
                 let asked = Instant::now();
                 links.reopen(uid);
                 assert_eq!(next(&mut rx).await, Input::IntakeLost { uid });
-                assert!(asked.elapsed() >= Duration::from_millis(350));
-                let tries = tries.get();
-                assert!((3..=5).contains(&tries), "one try every 100 ms: {tries}");
+                assert_eq!(asked.elapsed(), Duration::from_millis(400));
+                assert_eq!(tries.get(), 5, "one try every 100 ms until 450 ms");
             })
             .await;
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_login_waiting_on_a_reopen_tries_every_retry() {
         let local = tokio::task::LocalSet::new();
         local
@@ -1222,11 +1222,11 @@ pub(crate) mod tests {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 assert_eq!(tries.get(), 1, "the reopen waits a second");
                 links.open(uid);
-                tokio::time::sleep(Duration::from_millis(400)).await;
-                let tries = tries.get();
-                assert!(
-                    tries >= 5,
-                    "one try every 50 ms once a login waits: {tries}"
+                tokio::time::sleep(Duration::from_millis(375)).await;
+                assert_eq!(
+                    tries.get(),
+                    9,
+                    "one try every 50 ms once a login waits, from 100 ms to 450 ms"
                 );
             })
             .await;
