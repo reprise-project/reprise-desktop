@@ -379,7 +379,14 @@ impl NotificationsConfig {
 
 /// Whether `list` names `program`, ignoring ASCII case.
 pub fn program_listed(list: &[String], program: &str) -> bool {
-    list.iter().any(|p| p.eq_ignore_ascii_case(program))
+    list.iter().any(|p| same_program(p, program))
+}
+
+/// Whether `listed`, a key from a `[notifications]` list, names `program`, ignoring ASCII case. A
+/// key may lack the `.desktop` its program's `desktop-entry` hint ends in.
+pub fn same_program(listed: &str, program: &str) -> bool {
+    listed.eq_ignore_ascii_case(program)
+        || listed.eq_ignore_ascii_case(reprisefs::apps::DesktopId::stem_of(program))
 }
 
 /// Add `program` to `list` (`on`) or take every spelling of it out; true when `list` changed.
@@ -390,7 +397,7 @@ pub fn set_program_listed(list: &mut Vec<String>, program: &str, on: bool) -> bo
     if on {
         list.push(program.to_string());
     } else {
-        list.retain(|p| !p.eq_ignore_ascii_case(program));
+        list.retain(|p| !same_program(p, program));
     }
     true
 }

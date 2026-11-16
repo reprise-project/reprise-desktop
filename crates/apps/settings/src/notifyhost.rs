@@ -1,6 +1,7 @@
 use crate::registry::Page;
 use crate::{SettingsApp, notifypage, registry, take};
 use repriseapp::Reply;
+use repriseconf::config::same_program;
 
 impl SettingsApp {
     /// Ask the compositor which programs sent notifications each time the Notifications page opens, and
@@ -52,7 +53,7 @@ impl SettingsApp {
     fn name_unseen(&mut self) {
         let w = &self.want;
         self.notify_names = (w.notify_no_balloons.iter().chain(&w.notify_no_sounds))
-            .filter(|k| !self.notify_seen.iter().any(|(s, _)| s == *k))
+            .filter(|k| !(self.notify_seen.iter()).any(|(s, _)| same_program(k, s)))
             .filter_map(|k| Some((k.clone(), entry_name(k)?)))
             .collect();
     }

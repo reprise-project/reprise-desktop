@@ -370,6 +370,7 @@ pub fn remove(doc: &mut DocumentMut, key: &Key) {
         return;
     }
     let prefix = entry_prefix(table, key.name);
+    let top_table = key.table.is_empty() && table.get(key.name).is_some_and(|i| !i.is_value());
     let next = table
         .iter()
         .map(|(n, _)| n.to_string())
@@ -387,7 +388,11 @@ pub fn remove(doc: &mut DocumentMut, key: &Key) {
         prepend_entry_prefix(t, &next, &prefix);
         return;
     }
-    carry_past_table(doc, key.table, &prefix);
+    // Under the last top-level table comes the file's end, not the first table.
+    match top_table {
+        true => carry_to_end(doc, &prefix),
+        false => carry_past_table(doc, key.table, &prefix),
+    }
 }
 
 fn entry_prefix(t: &dyn TableLike, name: &str) -> String {
@@ -439,11 +444,18 @@ fn carry_past_table(doc: &mut DocumentMut, table: &str, prefix: &str) {
                 prepend_entry_prefix(pt, &next, prefix);
             }
         }
-        None => {
-            let old = doc.trailing().as_str().unwrap_or_default().to_string();
-            doc.set_trailing(format!("{prefix}{old}"));
-        }
+        None => carry_to_end(doc, prefix),
     }
+}
+
+fn carry_to_end(doc: &mut DocumentMut, prefix: &str) {
+    let old = doc.trailing().as_str().unwrap_or_default().to_string();
+    // A blank line kept above a header has nothing to part at the end of the file.
+    let prefix = match prefix.strip_suffix('\n') {
+        Some(p) if old.is_empty() && p.ends_with('\n') => p,
+        _ => prefix,
+    };
+    doc.set_trailing(format!("{prefix}{old}"));
 }
 
 /// The entry whose prefix holds the text below `table`'s last entry, as `(parent, name)`; None
@@ -522,6 +534,7 @@ impl std::error::Error for SetError {}
 /// scalar sits where a table is wanted or the reverse; the user wrote that, so it stays.
 pub fn set(doc: &mut DocumentMut, key: &Key, value: Value) -> Result<(), SetError> {
     let segs: Vec<&str> = segments(key.table).collect();
+    let mut made = false;
     let mut t: &mut dyn TableLike = doc.as_table_mut();
     for (i, seg) in segs.iter().enumerate() {
         match t.get(seg) {
@@ -529,6 +542,7 @@ pub fn set(doc: &mut DocumentMut, key: &Key, value: Value) -> Result<(), SetErro
                 let mut table = toml_edit::Table::new();
                 table.set_implicit(i + 1 < segs.len());
                 t.insert(seg, Item::Table(table));
+                made |= i + 1 == segs.len();
             }
             Some(item) if !item.is_table_like() => {
                 return Err(SetError::NotATable(segs[..=i].join(".")));
@@ -551,7 +565,29 @@ pub fn set(doc: &mut DocumentMut, key: &Key, value: Value) -> Result<(), SetErro
             t.insert(key.name, Item::Value(value));
         }
     }
+    if made {
+        lift_trailing(doc, key.table);
+    }
     Ok(())
+}
+
+/// A table [`set`] made renders at the end, under the text that ended the file: that text goes
+/// above its header instead, so comments that closed the file never read as the new table's.
+fn lift_trailing(doc: &mut DocumentMut, path: &str) {
+    let trailing = doc.trailing().as_str().unwrap_or_default().to_string();
+    if trailing.trim().is_empty() {
+        return;
+    }
+    let Some((parent, name)) = split_last(path) else {
+        return;
+    };
+    let Some(Item::Table(tb)) = table_of_mut(doc, parent).and_then(|t| t.get_mut(name)) else {
+        return;
+    };
+    let gap = tb.decor().prefix().and_then(|p| p.as_str()).unwrap_or("\n");
+    let prefix = format!("{trailing}{gap}");
+    tb.decor_mut().set_prefix(prefix);
+    doc.set_trailing("");
 }
 
 pub mod config;
@@ -1079,6 +1115,21 @@ name = \"Virtual-1\"
         );
         let full = "[a]\nx = 1\n";
         assert_eq!(emptied(full, "a"), full, "a table with a key stays");
+    }
+
+    #[test]
+    fn a_table_set_makes_goes_under_the_comments_that_end_the_file_and_leaves_with_them() {
+        let text = "[a]\nx = 1\n\n# the end\n";
+        let mut d = doc(text);
+        set(&mut d, &key("b", "y"), Value::from(2)).unwrap();
+        assert_eq!(d.to_string(), "[a]\nx = 1\n\n# the end\n\n[b]\ny = 2\n");
+        remove(&mut d, &key("b", "y"));
+        remove_table_if_empty(&mut d, "b");
+        assert_eq!(
+            d.to_string(),
+            text,
+            "emptied, the table goes with no header left"
+        );
     }
 
     #[test]
