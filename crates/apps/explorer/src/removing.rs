@@ -255,9 +255,13 @@ impl Explorer {
                 RemoveEvent::Finished => finished = true,
             }
         }
-        if let Some((title, text)) = ask {
+        if !finished && let Some((title, text)) = ask {
             let meter = r.progress.meter.clone();
             return Some(self.ask_failed(reprisefs::progress::Asked::new(meter), title, text, ctx));
+        }
+        // A job that ended does not wait for an answer: its end tells the failure.
+        if let Some(failure) = ask {
+            r.failed.get_or_insert(failure);
         }
         if !finished {
             return Some(Reply::none());

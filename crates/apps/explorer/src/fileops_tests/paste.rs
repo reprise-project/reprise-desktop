@@ -715,3 +715,53 @@ fn a_skipped_item_takes_its_folder_flag_with_it() {
         (Path::new("/srv/b.txt"), false)
     );
 }
+
+/// A failed item and the end of its job read in one wake: the put ends and says why, and no box
+/// asks Skip, Retry or Cancel of a job that is over.
+#[test]
+fn a_failure_read_with_the_end_of_its_put_ends_the_put_and_says_why() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut ctx = test_ctx();
+    let t = tempfile::tempdir().expect("a temp dir");
+    let dest = t.path().join("dest");
+    std::fs::create_dir(&dest).expect("mkdir");
+    std::fs::write(t.path().join("a.txt"), "a").expect("write");
+    let mut ex = crate::tests::test_explorer(Place::Folder(t.path().to_path_buf()), &mut ctx);
+    std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    let pending = PendingPut {
+        items: vec![PutItem {
+            src: t.path().join("a.txt"),
+            display_name: "a.txt".into(),
+            is_app: false,
+            op: DropOp::Copy,
+            shortcut: Box::new(|_| None),
+            replace: None,
+        }],
+        folders: vec![false],
+        dir: dest.clone(),
+        select_landed: false,
+    };
+    let ops = pending.ops();
+    ex.start_put(pending, ops, &ctx);
+    let meter = ex.put.as_ref().expect("the put").progress.meter.clone();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !meter.asking() {
+        assert!(std::time::Instant::now() < end, "the copy fails");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    // The job goes on and ends before Explorer reads its failure.
+    meter.decide(reprisefs::progress::Decision::Skip);
+    while std::sync::Arc::strong_count(&meter) > 3 {
+        assert!(std::time::Instant::now() < end, "the job's threads return");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    ex.poll_put(&mut ctx);
+    std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert!(ex.put.is_none(), "the put ended");
+    assert!(!ex.holds_a_job(), "nothing asks about a job that ended");
+    match ex.dialog() {
+        Some(Dialog::Message { text, .. }) => assert!(text.contains("a.txt"), "{text}"),
+        _ => panic!("the failure is shown"),
+    }
+}

@@ -173,9 +173,9 @@ impl Explorer {
         });
     }
 
-    /// Takes the job's events: a failed archive asks Skip, Retry or Cancel, a failed zip shows an
-    /// error box; the end lists the folder again with the new folders or zip selected and starts
-    /// the next batch.
+    /// Takes the job's events: a failed archive asks Skip, Retry or Cancel while its job waits,
+    /// and a failed zip or an ended job's failure shows an error box; the end lists the folder
+    /// again with the new folders or zip selected and starts the next batch.
     pub(crate) fn poll_extract(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let ex = self.extracting.as_mut()?;
         let zipping = ex.progress.kind == Kind::Compress;
@@ -188,7 +188,8 @@ impl Explorer {
                 ArchiveEvent::Finished => finished = true,
             }
         }
-        if let Some(text) = ask.take_if(|_| !zipping) {
+        // A job that ended does not wait for an answer: its end tells the failure.
+        if let Some(text) = ask.take_if(|_| !zipping && !finished) {
             let meter = ex.job.meter().clone();
             return Some(self.ask_failed(
                 reprisefs::progress::Asked::new(meter),
@@ -197,7 +198,11 @@ impl Explorer {
                 ctx,
             ));
         }
-        let failed = ask.map(|text| (compress::FAILURE_TITLE, text));
+        let title = match zipping {
+            true => compress::FAILURE_TITLE,
+            false => extract::FAILURE_TITLE,
+        };
+        let failed = ask.map(|text| (title, text));
         let boxed = (failed.clone()).map(|(title, text)| self.message_box(title, text, ctx));
         if !finished {
             return boxed;

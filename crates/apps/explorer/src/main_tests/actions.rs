@@ -412,3 +412,41 @@ fn the_tree_menu_pins_and_unpins_a_nodes_folder() {
         }
     }
 }
+
+/// Waits until only `held` handles to `meter` are left: the job's threads have returned.
+fn wait_threads_gone(meter: &Arc<reprisefs::progress::Meter>, held: usize) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while Arc::strong_count(meter) > held {
+        assert!(std::time::Instant::now() < end, "the job's threads return");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Cancel pressed after an archive failed and before the failure was read: the failure and the
+/// job's end arrive together, and the job ends instead of asking Skip, Retry or Cancel.
+#[test]
+fn an_archive_failure_read_with_the_end_of_its_cancelled_job_ends_it() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let d = dir.path();
+    std::fs::write(d.join("broken.zip"), "not a zip").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(d.to_path_buf()), &mut ctx);
+    ex.select_paths(&[d.join("broken.zip")]);
+    ex.run(Command::Extract { here: false }, &mut ctx);
+    let meter = ex.extracting.as_ref().expect("the job").job.meter().clone();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !meter.asking() {
+        assert!(std::time::Instant::now() < end, "the archive fails");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    ex.cancel_extracts();
+    wait_threads_gone(&meter, 3);
+
+    let _ = ex.poll_extract(&mut ctx);
+    assert!(ex.extracting.is_none(), "the job ended");
+    assert!(!ex.holds_a_job(), "nothing asks about a job that ended");
+    match ex.dialog() {
+        Some(Dialog::Message { title, .. }) => assert_eq!(title, "Error Extracting File"),
+        _ => panic!("the failure is shown"),
+    }
+}

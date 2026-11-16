@@ -620,9 +620,13 @@ impl Explorer {
                 PutEvent::Finished => finished = true,
             }
         }
-        if let Some((title, text)) = ask {
+        if !finished && let Some((title, text)) = ask {
             let meter = put.progress.meter.clone();
             return Some(self.ask_failed(reprisefs::progress::Asked::new(meter), title, text, ctx));
+        }
+        // A job that ended does not wait for an answer: its end tells the failure.
+        if let Some(failure) = ask {
+            put.failed = Some(failure);
         }
         if !finished {
             return Some(Reply::none());
