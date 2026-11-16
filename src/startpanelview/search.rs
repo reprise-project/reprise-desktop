@@ -4,7 +4,7 @@ use reprisekit::startpanel::{ResultGroup, ResultRow};
 
 use crate::compositor::State;
 use crate::raster::Canvas;
-use crate::search::{Found, SearchOwner, Setting, calc_icon, calc_row, rank_settings};
+use crate::search::{Found, Picked, SearchOwner, calc_icon, calc_row, rank_settings};
 
 use super::RESULT_ICON;
 use super::lists::{app_icon, one_per_name, unread};
@@ -200,41 +200,19 @@ impl State {
             return;
         }
         let v = &*v;
-        enum Run {
-            Copy(String),
-            App(Box<AppEntry>),
-            Setting(Setting),
-            File(crate::desktop::FileFacts),
-            Result(
-                std::sync::Arc<crate::search::Provider>,
-                reprisebus::searchprovider::Meta,
-            ),
-        }
-        let run = match v.result_kinds.get(g) {
-            Some(ResultKind::Calc) => v.answer.clone().map(|(_, a)| Run::Copy(a)),
-            Some(ResultKind::Programs) => v
-                .result_apps
-                .get(r)
+        let picked = match v.result_kinds.get(g) {
+            Some(ResultKind::Calc) => v.answer.clone().map(|(_, a)| Picked::Copy(a)),
+            Some(ResultKind::Programs) => (v.result_apps.get(r))
                 .and_then(|&a| self.app_index.get(a))
-                .map(|e| Run::App(Box::new(e.clone()))),
-            Some(ResultKind::Settings) => v.result_settings.get(r).copied().map(Run::Setting),
-            Some(&ResultKind::Found(s)) => match v.search.result(s, r) {
-                Some((p, m)) => Some(Run::Result(p.clone(), m.clone())),
-                None => (v.search.path(s, r)).map(|p| Run::File(v.search.facts_of(p))),
-            },
+                .map(|e| Picked::App(Box::new(e.clone()))),
+            Some(ResultKind::Settings) => v.result_settings.get(r).copied().map(Picked::Setting),
+            Some(&ResultKind::Found(s)) => v.search.picked(s, r),
             None => None,
         };
         let query = v.model.query().to_string();
         self.close_start_panel();
-        match run {
-            Some(Run::Copy(answer)) => self.clip_copy(&answer),
-            Some(Run::App(entry)) => self.launch_app(&entry),
-            Some(Run::Setting(s)) => self.open_setting(s),
-            Some(Run::File(facts)) => self.open_found(&facts),
-            Some(Run::Result(p, m)) => {
-                self.open_provider(&p, crate::search::providers::Open::Result(m), &query)
-            }
-            None => {}
+        if let Some(picked) = picked {
+            self.run_search_pick(picked, &query);
         }
     }
 }
