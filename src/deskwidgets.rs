@@ -213,12 +213,11 @@ impl State {
         self.widgets.meter = Meter::new(self.widgets.store.meter);
     }
 
-    /// The monitor ids of the outputs on the scene, by output.
+    /// [`State::monitors`] with the ids as the store keeps them.
     fn monitor_ids(&self) -> Vec<(Output, String)> {
-        let outputs = self.scene.outputs();
-        let refs: Vec<&Output> = outputs.iter().collect();
-        let ids = crate::outputlayouts::monitor_ids(&refs);
-        outputs.iter().cloned().zip(ids).collect()
+        (self.monitors().into_iter())
+            .map(|(o, id)| (o, id.0))
+            .collect()
     }
 
     fn widget_content(&self, kind: Kind) -> Content {

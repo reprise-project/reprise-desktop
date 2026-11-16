@@ -1,6 +1,7 @@
 //! Snap groups across a restart, matched to restored windows as they map (`State::snap_on_map`);
 //! docs/features.md has the matching rule.
 
+use crate::outputset::MonitorId;
 use crate::session::SavedApp;
 use reprisekit::snaplayouts::ZoneLayout;
 use serde::{Deserialize, Serialize};
@@ -9,8 +10,8 @@ use std::time::Instant;
 /// A snap group the session ended with.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SavedSnap {
-    /// The monitor id (`displays::monitor_ids`) of the output it was on.
-    pub monitor: String,
+    /// The monitor of the output it was on.
+    pub monitor: MonitorId,
     pub desktop: usize,
     /// Its layout (`ZoneLayout`).
     pub columns: bool,
@@ -60,7 +61,7 @@ pub enum Matched {
 /// Where a mapped window goes back to.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Resnap<T> {
-    pub monitor: String,
+    pub monitor: MonitorId,
     pub desktop: usize,
     pub layout: ZoneLayout,
     pub zone: usize,
@@ -81,7 +82,7 @@ struct Slot<T> {
 
 #[derive(Debug)]
 struct Group<T> {
-    monitor: String,
+    monitor: MonitorId,
     desktop: usize,
     layout: ZoneLayout,
     slots: Vec<Slot<T>>,
@@ -171,7 +172,7 @@ impl<T: Copy + Eq> PendingSnaps<T> {
     }
 
     /// The desktop and monitor the next window of `app` titled `title` goes back to.
-    pub fn place(&self, app: &str, title: &str, now: Instant) -> Option<(usize, &str)> {
+    pub fn place(&self, app: &str, title: &str, now: Instant) -> Option<(usize, &MonitorId)> {
         let (g, _, _) = self.slot_for(app, title, now)?;
         let g = &self.groups[g];
         Some((g.desktop, &g.monitor))
@@ -260,7 +261,7 @@ mod tests {
         let mut p = PendingSnaps::new(&saved, &[app("foot", &["left", "right"])], t);
         let r = p.claim("foot", "right", 1, t).expect("the right slot");
         assert_eq!((r.zone, r.with, r.matched), (1, None, Matched::Title));
-        assert_eq!((r.desktop, r.monitor.as_str()), (1, "Dell|U2720Q|1"));
+        assert_eq!((r.desktop, r.monitor.0.as_str()), (1, "Dell|U2720Q|1"));
         let l = p.claim("foot", "", 2, t).expect("the left slot by order");
         assert_eq!((l.zone, l.with, l.matched), (0, Some(1), Matched::Order));
         assert_eq!(p.claim("foot", "", 3, t), None, "both slots are full");

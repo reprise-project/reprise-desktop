@@ -3,6 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::outputset::MonitorId;
+
 pub use repriseconf::glob::glob;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,7 +183,7 @@ impl Rescaled {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Remembered {
-    pub output: String,
+    pub output: MonitorId,
     pub x: i32,
     pub y: i32,
     pub width: i32,
@@ -255,7 +257,7 @@ impl Remembered {
             } else {
                 Position::Cascade
             }),
-            output: first.then(|| self.output.clone()),
+            output: first.then(|| self.output.0.clone()),
             state: (first && self.maximized).then_some(WindowState::Maximized),
             ..Want::default()
         }
