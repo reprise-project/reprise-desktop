@@ -221,11 +221,12 @@ impl Host {
             Some(true) => self.make_main(),
             Some(false) => {
                 // A toplevel must not be anyone's parent when destroyed.
-                for s in self.slots.iter().filter(|s| s.id != MAIN) {
+                for s in self.slots.iter_mut().filter(|s| s.parent == Some(MAIN)) {
                     if let Some(w) = s.window.toplevel() {
                         w.xdg_toplevel().set_parent(None);
                         w.commit();
                     }
+                    s.parent = None;
                 }
                 if self.focus == Some(MAIN) {
                     self.focus = None;
@@ -367,14 +368,17 @@ impl Host {
             }
             let wanted = self.parent_of(c.id);
             let parent_slot = wanted.and_then(|p| self.slots.iter().find(|s| s.id == p));
-            let parent = match placement(wanted, parent_slot.map(|s| s.mapped)) {
+            let (parent_id, parent) = match placement(wanted, parent_slot.map(|s| s.mapped)) {
                 // xdg-shell drops a parent that is not mapped yet; `draw` calls back here once
                 // it is.
                 Placement::Wait => continue,
-                Placement::Under(_) => parent_slot
-                    .and_then(|s| s.window.toplevel())
-                    .map(|w| w.xdg_toplevel().clone()),
-                Placement::Alone => None,
+                Placement::Under(p) => (
+                    Some(p),
+                    parent_slot
+                        .and_then(|s| s.window.toplevel())
+                        .map(|w| w.xdg_toplevel().clone()),
+                ),
+                Placement::Alone => (None, None),
             };
             let size = sane_size(c.size);
             let surface = self.compositor.create_surface(&self.qh);
@@ -408,7 +412,7 @@ impl Host {
                 caption,
             );
             slot.modal = c.modal;
-            slot.parent = wanted;
+            slot.parent = parent_id;
             self.slots.push(slot);
         }
         let mut resized = Vec::new();
@@ -458,23 +462,20 @@ impl Host {
         let Some(s) = self.slots.iter().find(|s| s.id == id) else {
             return;
         };
-        if s.parent == want {
-            return;
-        }
         let parent_slot = want.and_then(|p| self.slots.iter().find(|s| s.id == p));
-        let parent = match placement(want, parent_slot.map(|s| s.mapped)) {
-            Placement::Wait => return,
-            Placement::Under(_) => parent_slot
-                .and_then(|s| s.window.toplevel())
-                .map(|w| w.xdg_toplevel().clone()),
-            Placement::Alone => None,
+        let Some(to) = reparent_to(s.parent, want, parent_slot.map(|s| s.mapped)) else {
+            return;
         };
+        let parent = parent_slot
+            .filter(|_| to.is_some())
+            .and_then(|s| s.window.toplevel())
+            .map(|w| w.xdg_toplevel().clone());
         if let Some(w) = s.window.toplevel() {
             w.xdg_toplevel().set_parent(parent.as_ref());
             w.commit();
         }
         if let Some(s) = self.slot_mut(id) {
-            s.parent = want;
+            s.parent = to;
         }
     }
 
@@ -893,6 +894,21 @@ pub(crate) fn placement(parent: Option<WinId>, mapped: Option<bool>) -> Placemen
         (Some(p), Some(true)) => Placement::Under(p),
         _ => Placement::Alone,
     }
+}
+
+/// The xdg parent a child whose xdg parent is `set` moves to, when it moves: under `want` once
+/// that one is mapped, unparented while `want` has no window.
+pub(crate) fn reparent_to(
+    set: Option<WinId>,
+    want: Option<WinId>,
+    mapped: Option<bool>,
+) -> Option<Option<WinId>> {
+    let to = match placement(want, mapped) {
+        Placement::Wait => return None,
+        Placement::Under(p) => Some(p),
+        Placement::Alone => None,
+    };
+    (to != set).then_some(to)
 }
 
 pub(crate) fn flyout_wanted(
