@@ -262,17 +262,9 @@ impl State {
                 let Some(e) = entry(self, a) else {
                     return;
                 };
-                let p = self.pointer_location();
                 self.close_start_panel();
-                let Some(file) = reprisefs::apps::find_file(&e.id) else {
-                    return;
-                };
-                match reprisefs::props::glance(&file, &e.name, &self.app_index) {
-                    Ok(info) => {
-                        let icon = e.icon.as_deref().unwrap_or("application-x-executable");
-                        self.open_properties(&info, icon, (p.x as i32, p.y as i32));
-                    }
-                    Err(err) => log::warn!("properties: {}: {err}", file.display()),
+                if let Some(file) = reprisefs::apps::find_file(&e.id) {
+                    self.show_properties(&[file]);
                 }
             }
             StartRow::SwitchUser => {

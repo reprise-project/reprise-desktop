@@ -1,10 +1,10 @@
-//! Run's and Open With's Browse...: the file dialog child (`reprise-portal --file`) over the
-//! dialog it was opened from, its pick filling Run's field or joining the chooser's list.
+//! Run's Browse...: the file dialog child (`reprise-portal --file`) over the Run dialog, its pick
+//! filling Run's field.
 
 use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use reprisefs::filechild::{Filter, Input, Kind, Output, Pattern};
 
@@ -12,44 +12,28 @@ use crate::compositor::State;
 use crate::dialog::{Dialog, Outcome};
 use crate::window::WindowId;
 
-/// Where a Browse... pick goes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Purpose {
-    /// Quoted into Run's field.
-    Run,
-    /// Into the Open With chooser's list.
-    Program,
-}
-
 /// A file dialog child running over dialog `over`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Browsing {
     pub pid: i32,
     pub over: u64,
-    pub purpose: Purpose,
 }
 
-/// The child's input for `purpose`: Programs (files with an execute bit, which wear the program
-/// icon) and All Files, starting in `start`, else in the folder the last Browse dialog was
-/// confirmed in.
-pub fn input(purpose: Purpose, start: Option<&Path>) -> Input {
+/// The child's input: Programs (files with an execute bit, which wear the program icon) and All
+/// Files, starting in the folder the last Browse dialog was confirmed in.
+pub fn input() -> Input {
     let filter = |label: &str, p: Pattern| Filter {
         label: label.into(),
         patterns: vec![p],
     };
     Input {
         kind: Some(Kind::Open),
-        title: match purpose {
-            Purpose::Run => "Browse",
-            Purpose::Program => "Open With...",
-        }
-        .into(),
+        title: "Browse".into(),
         accept_label: "&Open".into(),
         filters: vec![
             filter("Programs", Pattern::Exec),
             filter("All Files", Pattern::Glob("*".into())),
         ],
-        start: start.map_or_else(Vec::new, |p| p.as_os_str().as_bytes().to_vec()),
         app_id: crate::filedlggeom::OWN_APP.into(),
         exec_icon: true,
         ..Default::default()
@@ -98,17 +82,6 @@ impl State {
     /// Run's Browse...: on the folder the last Browse dialog was confirmed in, else Documents or
     /// home.
     pub(super) fn browse_run(&mut self) {
-        self.browse(Purpose::Run, None);
-    }
-
-    /// The Open With chooser's Browse...: "Open With..." on `/usr/bin`.
-    pub(super) fn browse_program(&mut self) {
-        self.browse(Purpose::Program, Some(Path::new("/usr/bin")));
-    }
-
-    /// Starts the file dialog child over the top dialog on a thread of its own, which waits for
-    /// as long as the child runs.
-    fn browse(&mut self, purpose: Purpose, start: Option<&Path>) {
         let Some(over) = self.dialogs.views.last().map(|v| v.id) else {
             return;
         };
@@ -116,18 +89,15 @@ impl State {
             self.focus_window(w);
             return;
         }
-        let input = input(purpose, start);
+        let input = input();
         let env = self.env.clone();
         let to_loop = self.fsjobs.sender();
+        // The thread waits for as long as the child runs.
         self.spawn_job(move || {
             let mut pid = None;
             let out = run_child(&env, &input, |p| {
                 pid = Some(p);
-                let b = Browsing {
-                    pid: p,
-                    over,
-                    purpose,
-                };
+                let b = Browsing { pid: p, over };
                 if let Some(tx) = &to_loop {
                     let _ = tx.send(Box::new(move |state: &mut State| state.browse_started(b)));
                 }
@@ -193,16 +163,13 @@ impl State {
         let Some(i) = self.dialog_index(b.over) else {
             return;
         };
-        let outcome = match b.purpose {
-            Purpose::Program => self.dialogs.views[i].dialog.add_program(&path),
-            Purpose::Run => match path.to_str() {
-                Some(picked) => {
-                    let quoted = reprisefs::ops::shell_quote(picked);
-                    self.dialogs.views[i].dialog.set_field(&quoted)
-                }
-                // The field holds text, so a non-UTF-8 name cannot go into it.
-                None => Outcome::Notice(Box::new(Dialog::not_utf8_program("Run", &path))),
-            },
+        let outcome = match path.to_str() {
+            Some(picked) => {
+                let quoted = reprisefs::ops::shell_quote(picked);
+                self.dialogs.views[i].dialog.set_field(&quoted)
+            }
+            // The field holds text, so a non-UTF-8 name cannot go into it.
+            None => Outcome::Notice(Box::new(Dialog::not_utf8_program("Run", &path))),
         };
         match outcome {
             Outcome::Redraw => {
@@ -224,8 +191,8 @@ mod tests {
     const CHILD: i32 = 0x7EAD_0001;
 
     #[test]
-    fn browse_asks_for_programs_by_their_execute_bit_for_both_purposes() {
-        let run = input(Purpose::Run, None);
+    fn browse_asks_for_programs_by_their_execute_bit() {
+        let run = input();
         assert_eq!(run.title, "Browse");
         assert_eq!(run.kind, Some(Kind::Open));
         assert!(!run.folder_mode && !run.multiple);
@@ -247,11 +214,6 @@ mod tests {
         assert!(run.exec_icon);
         assert_eq!(run.app_id, "reprise");
         assert!(run.start.is_empty(), "Run's opens where the last one left");
-        let program = input(Purpose::Program, Some(Path::new("/usr/bin")));
-        assert_eq!(program.title, "Open With...");
-        assert_eq!(program.start, b"/usr/bin");
-        assert_eq!(program.filters, run.filters);
-        assert_eq!(program.app_id, "reprise");
     }
 
     /// Run with a Browse... child of `pid` mapped over it.
@@ -262,11 +224,7 @@ mod tests {
         h.output("o", 1024, 768);
         h.state.open_dialog(Dialog::run(&[]));
         let run = h.state.dialogs.views[0].id;
-        h.state.browse_started(Browsing {
-            pid,
-            over: run,
-            purpose: Purpose::Run,
-        });
+        h.state.browse_started(Browsing { pid, over: run });
         crate::mapfocus::grant(pid);
         let mut c = h.connect_as(pid);
         let t = h.map_toplevel(&mut c, "reprise", 400, 300);
@@ -331,41 +289,10 @@ mod tests {
         h.state.browse_started(Browsing {
             pid: CHILD + 2,
             over: run,
-            purpose: Purpose::Run,
         });
         let before = h.state.dialogs.views[0].dialog.field.clone();
         h.state.browse_answered(CHILD + 2, Output::default());
         assert_eq!(h.state.dialogs.views[0].dialog.field, before);
         assert!(h.state.dialogs.active, "Run has the keyboard");
-    }
-
-    #[test]
-    fn open_with_lists_and_picks_the_program_the_child_picked() {
-        let mut h = Harness::new();
-        h.output("o", 1024, 768);
-        h.state.open_dialog(Dialog::open_with(
-            Path::new("/home/u/notes.txt"),
-            Some("text/plain".into()),
-            Vec::new(),
-            Vec::new(),
-            None,
-            false,
-        ));
-        let chooser = h.state.dialogs.views[0].id;
-        h.state.browse_started(Browsing {
-            pid: CHILD + 3,
-            over: chooser,
-            purpose: Purpose::Program,
-        });
-        h.state.browse_answered(
-            CHILD + 3,
-            Output {
-                paths: vec![b"/usr/bin/micro".to_vec()],
-                ..Default::default()
-            },
-        );
-        let c = h.state.dialogs.views[0].dialog.chooser().unwrap();
-        let chosen = c.ow.chosen().map(|p| (p.id.as_str(), p.name.as_str()));
-        assert_eq!(chosen, Some(("/usr/bin/micro", "micro")));
     }
 }

@@ -13,7 +13,7 @@ use smithay::output::Output;
 
 use crate::window::{Window, WindowId};
 
-/// The app id Run's and Open With's Browse... dialogs keep their folder, view and geometry under.
+/// The app id Run's Browse... dialog keeps its folder, view and geometry under.
 pub const OWN_APP: &str = "reprise";
 
 /// Each app's geometry, read at start and after Settings

@@ -1,4 +1,4 @@
-//! The desktop's file work that asks or answers through a dialog: Delete and Shift+Delete with their confirmations, the Recycle Bin's Empty and Properties, an icon's Properties and Open With. The work runs off the loop (`fsjobs`); the dialogs come back on it.
+//! The desktop's file work that asks or answers through a dialog: Delete and Shift+Delete with their confirmations, the Recycle Bin's Empty and Properties. The work runs off the loop (`fsjobs`); the dialogs come back on it. An icon's Properties and Open With are Explorer's, in a process of their own ([`State::show_properties`]).
 
 use std::path::{Path, PathBuf};
 
@@ -33,51 +33,22 @@ fn lone_file(entries: &[DesktopEntry], files: &[PathBuf]) -> Option<usize> {
 }
 
 impl State {
-    /// The Open With chooser for the file `path`: programs that take its MIME type (by its name,
-    /// with no stat), its default under "Recommended Programs:", the rest under "Other
-    /// Programs:". `set_default` is the sheet's Change..., which only writes the file type's
-    /// default.
-    pub fn choose_program(&mut self, path: &Path, set_default: bool) -> Dialog {
-        let apps: &[reprisefs::apps::AppEntry] = &self.app_index;
-        let mime = (path.file_name())
-            .and_then(|n| reprisefs::apps::mime_globs().mime_of_name(&n.to_string_lossy()));
-        let default = mime
-            .as_deref()
-            .and_then(|m| reprisefs::props::default_app(m, apps));
-        let (recommended, others) = reprisefs::apps::chooser_groups(apps, mime.as_deref(), default);
-        let program = |i: usize| reprisekit::controls::openwith::Program {
-            id: apps[i].id.clone(),
-            name: apps[i].name.clone(),
-            icon: apps[i].icon.clone(),
-        };
-        Dialog::open_with(
-            path,
-            mime,
-            recommended.into_iter().map(program).collect(),
-            others.into_iter().map(program).collect(),
-            default.map(|i| apps[i].id.as_str()),
-            set_default,
-        )
+    /// Explorer's Properties sheet for `paths` alone, combined for two or more.
+    pub fn show_properties(&mut self, paths: &[PathBuf]) {
+        self.explorer_box("--properties", paths);
     }
 
-    /// The file behind a desktop icon moved from `from` to `to` (a Properties OK): its dragged cell follows the new name, then the desktop rescans.
-    pub fn desktop_renamed(&mut self, from: &Path, to: &Path) {
-        if let Some(view) = self.desktop.as_mut() {
-            let old = view
-                .entries
-                .iter()
-                .find(|e| e.path == from)
-                .map(|e| e.name.clone());
-            let new = to
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            if let Some(cell) = old.and_then(|o| view.positions.remove(&o)) {
-                view.positions.insert(new, cell);
-                crate::state::save_desktop(view.auto_arrange, &view.positions);
-            }
-        }
-        self.rescan_desktop();
+    /// Explorer's Open With chooser for the file `path` alone.
+    pub fn choose_program(&mut self, path: &Path) {
+        self.explorer_box("--open-with", &[path.to_path_buf()]);
+    }
+
+    fn explorer_box(&mut self, flag: &str, paths: &[PathBuf]) {
+        let argv: Vec<&std::ffi::OsStr> = [EXPLORER.as_ref(), flag.as_ref()]
+            .into_iter()
+            .chain(paths.iter().map(|p| p.as_os_str()))
+            .collect();
+        self.spawn_app_activated(&argv, EXPLORER, None);
     }
 
     /// Take these `system_icons` names off the desktop and out of `config.toml`, which Reprise Settings shows so it can bring them back.
@@ -263,43 +234,16 @@ impl State {
     }
 
     /// Properties aimed at icon `index`: the combined sheet over its selection's files, `index`
-    /// first, when two or more read; else the icon's own sheet. The files are read in a file job,
-    /// as one may sit on a mount that never answers.
+    /// first, when it holds two or more; else the icon's own sheet.
     pub fn open_icon_properties(&mut self, index: usize) {
         let set = self.selection_around(index);
         let Some(view) = self.desktop.as_ref() else {
             return;
         };
-        let (Some(e), Some(cell)) = (view.entries.get(index), view.cells.get(index)) else {
-            return;
-        };
-        let (own, icon, at) = (
-            (e.path.clone(), e.label.clone()),
-            e.icon.clone(),
-            (cell.x, cell.y),
-        );
-        let files: Vec<(PathBuf, String)> = if set.len() > 1 {
-            crate::desktopview::aimed_in(&view.entries, &set, index, true)
-                .into_iter()
-                .map(|i| &view.entries[i])
-                .filter(|e| e.kind == desktop::Kind::File)
-                .map(|e| (e.path.clone(), e.label.clone()))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let apps = self.app_index.clone();
-        self.spawn_fs_action(Action::reads("Properties"), move |_| {
-            let read = glance_aimed(&own, &files, &apps);
-            Box::new(move |state: &mut State| match read {
-                Some(Glanced::One(info)) => state.open_properties(&info, &icon, at),
-                Some(Glanced::Set(items)) => {
-                    let info = reprisefs::props::glance_set(&items);
-                    state.open_set_properties(&info, &items[0].name, at);
-                }
-                None => {}
-            })
-        });
+        let paths = properties_paths(&view.entries, &set, index);
+        if !paths.is_empty() {
+            self.show_properties(&paths);
+        }
     }
 
     pub fn open_icon_chooser(&mut self, index: usize) {
@@ -311,8 +255,7 @@ impl State {
         else {
             return;
         };
-        let d = self.choose_program(&path, false);
-        self.open_dialog(d);
+        self.choose_program(&path);
     }
 
     pub fn open_bin_properties(&mut self, index: usize) {
@@ -427,31 +370,25 @@ impl State {
     }
 }
 
-/// What Properties on a desktop icon reads: the set's files when two or more read, else the
-/// icon's own.
-#[derive(Debug)]
-enum Glanced {
-    One(Box<reprisefs::props::FileInfo>),
-    Set(Vec<reprisefs::props::FileInfo>),
-}
+/// The program whose process shows an icon's Properties and Open With.
+const EXPLORER: &str = "reprise-explorer";
 
-/// Reads the files of `set` (`(path, label)`, the aimed icon first), falling back to the aimed
-/// icon `own` alone when fewer than two read.
-fn glance_aimed(
-    own: &(PathBuf, String),
-    set: &[(PathBuf, String)],
-    apps: &[reprisefs::apps::AppEntry],
-) -> Option<Glanced> {
-    let glance = |(path, label): &(PathBuf, String)| {
-        reprisefs::props::glance(path, label, apps)
-            .map_err(|err| log::warn!("properties: {}: {err}", path.display()))
-            .ok()
-    };
-    let items: Vec<reprisefs::props::FileInfo> = set.iter().filter_map(glance).collect();
-    if items.len() >= 2 {
-        Some(Glanced::Set(items))
-    } else {
-        glance(own).map(|info| Glanced::One(Box::new(info)))
+/// The paths Properties on icon `index` of `entries` shows, `set` being its selection: the set's
+/// files, `index` first, when there are two or more; else the icon's own.
+fn properties_paths(entries: &[DesktopEntry], set: &[usize], index: usize) -> Vec<PathBuf> {
+    let files: Vec<PathBuf> = crate::desktopview::aimed_in(entries, set, index, true)
+        .into_iter()
+        .map(|i| &entries[i])
+        .filter(|e| e.kind == desktop::Kind::File)
+        .map(|e| e.path.clone())
+        .collect();
+    match files.len() {
+        0 | 1 => entries
+            .get(index)
+            .map(|e| e.path.clone())
+            .into_iter()
+            .collect(),
+        _ => files,
     }
 }
 
@@ -500,6 +437,41 @@ mod tests {
     }
 
     #[test]
+    fn properties_takes_the_selections_files_aimed_first_else_the_icon_alone() {
+        let docs = desktop::place("documents").unwrap();
+        let entries = vec![docs, file("a.txt"), file("b.txt")];
+        let path = |n: &str| PathBuf::from("/d").join(n);
+        assert_eq!(
+            properties_paths(&entries, &[0, 1, 2], 2),
+            [path("b.txt"), path("a.txt")]
+        );
+        assert_eq!(
+            properties_paths(&entries, &[0, 1], 1),
+            [path("a.txt")],
+            "a place is no file to share the sheet"
+        );
+        assert_eq!(
+            properties_paths(&entries, &[0, 1, 2], 0),
+            [path("a.txt"), path("b.txt")]
+        );
+        assert_eq!(
+            properties_paths(&entries, &[], 0),
+            [entries[0].path.clone()]
+        );
+    }
+
+    #[test]
+    fn properties_on_an_icon_starts_explorers_sheet_and_opens_no_dialog() {
+        crate::spawn::record();
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.show_properties(&[PathBuf::from("/d/a.txt")]);
+        h.state.choose_program(Path::new("/d/a.txt"));
+        assert!(h.state.dialogs.views.is_empty());
+        assert_eq!(crate::spawn::recorded(), [EXPLORER, EXPLORER]);
+    }
+
+    #[test]
     fn a_lone_file_after_the_places_is_its_icon() {
         let docs = desktop::place("documents").unwrap();
         let mut firefox = file("firefox.desktop");
@@ -512,34 +484,6 @@ mod tests {
             None
         );
         assert_eq!(lone_file(&entries, &[path("gone.txt")]), None);
-    }
-
-    /// Properties on a selection reads its files off the loop: two that read give the combined
-    /// sheet; a set left with one (a file gone meanwhile) gives the aimed icon's own sheet.
-    #[test]
-    fn properties_on_a_set_falls_back_to_the_aimed_icon() {
-        let dir = std::env::temp_dir().join(format!("reprise-glance-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let named = |n: &str| (dir.join(n), n.to_string());
-        std::fs::write(dir.join("a.txt"), "a").unwrap();
-        std::fs::write(dir.join("b.txt"), "bb").unwrap();
-        let (a, b, gone) = (named("a.txt"), named("b.txt"), named("gone.txt"));
-        let names = |g: Option<Glanced>| match g {
-            Some(Glanced::Set(items)) => items.into_iter().map(|i| i.name).collect(),
-            Some(Glanced::One(info)) => vec![format!("one {}", info.name)],
-            None => Vec::new(),
-        };
-        assert_eq!(
-            names(glance_aimed(&a, &[a.clone(), gone.clone(), b.clone()], &[])),
-            ["a.txt", "b.txt"]
-        );
-        assert_eq!(
-            names(glance_aimed(&a, &[a.clone(), gone.clone()], &[])),
-            ["one a.txt"]
-        );
-        assert!(glance_aimed(&gone, &[], &[]).is_none());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A scratch home holding [`reprisefs::trash::Bins::system`]'s home trash and settings file,

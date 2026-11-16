@@ -19,7 +19,6 @@ fn render_key_aid_preview() {
                 &l,
                 None,
                 None,
-                &[],
                 &d,
                 true,
                 None,
@@ -59,42 +58,9 @@ fn dialogs_preview(theme: &Theme, file: &str) {
     let run = Dialog::run(&history());
     let mut open = Dialog::run(&history());
     open.key(Key::Drop);
-    let props = Dialog::properties(&file_info(), "text-x-generic", (0, 0));
-    let mut folder = file_info();
-    folder.name = "New Folder".into();
-    folder.hidden_ext = String::new();
-    folder.path = "/home/u/Desktop/New Folder".into();
-    folder.is_dir = true;
-    folder.opens_with = None;
-    folder.type_name = "File Folder".into();
-    folder.contains = Some((2, 1));
-    let folder = Dialog::properties(&folder, "folder", (0, 0));
     let dialogs = [
         run,
         open,
-        props,
-        folder,
-        chooser(),
-        {
-            let mut c = chooser();
-            c.key(Key::Up);
-            c
-        },
-        attr_confirm(),
-        Dialog::advanced_attributes(
-            Subject::File,
-            None,
-            &text,
-            theme.fonts.size_px,
-            TextUnits::ONE,
-        ),
-        Dialog::advanced_attributes(
-            Subject::Folder,
-            None,
-            &text,
-            theme.fonts.size_px,
-            TextUnits::ONE,
-        ),
         Dialog::confirm_hide(crate::desktop::Place::Computer, "Computer"),
         Dialog::end_program("signal-desktop", 1234),
         log_off(),
@@ -117,7 +83,6 @@ fn dialogs_preview(theme: &Theme, file: &str) {
                 &l,
                 icon.as_ref(),
                 caption.as_ref(),
-                &[],
                 d,
                 true,
                 None,
@@ -141,8 +106,7 @@ fn dialogs_preview(theme: &Theme, file: &str) {
 }
 
 /// Renders the tabbed sheets under each interface to
-/// `target/sheets-{classic,blue,glass}.png`: file and set Properties,
-/// Recycle Bin Properties on both tabs with Apply lit and the pointer
+/// `target/sheets-{classic,blue,glass}.png`: Recycle Bin Properties on both tabs with Apply lit and the pointer
 /// over the closed tab. Run with
 /// `cargo test render_sheets_preview -- --ignored`.
 #[test]
@@ -175,12 +139,7 @@ fn render_sheets_preview() {
             }
             d
         };
-        let dialogs = [
-            Dialog::properties(&file_info(), "text-x-generic", (0, 0)),
-            Dialog::set_properties(&a_set(), "Reports", (0, 0)),
-            bin(0),
-            bin(1),
-        ];
+        let dialogs = [bin(0), bin(1)];
         let canvases: Vec<Canvas> = dialogs
             .into_iter()
             .map(|mut d| {
@@ -197,7 +156,6 @@ fn render_sheets_preview() {
                     &l,
                     None,
                     None,
-                    &[],
                     &d,
                     false,
                     None,

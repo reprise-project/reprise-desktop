@@ -466,22 +466,6 @@ fn scan_with(
     folders
 }
 
-/// The desktop icon for the file at `path`, as [`scan`] lists it.
-pub fn entry_at(
-    path: &Path,
-    globs: &reprisefs::apps::MimeDb,
-    shown: names::Extensions,
-) -> DesktopEntry {
-    let symlink = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
-    entry_with(
-        Followed::of(path),
-        path.to_path_buf(),
-        symlink,
-        globs,
-        shown,
-    )
-}
-
 /// Everything a desktop icon reads through a symlink, so all that may wait on another file system
 /// runs where [`scan`] follows links. The default is a link that is dangling or whose target
 /// never answered.

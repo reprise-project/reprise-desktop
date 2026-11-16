@@ -33,16 +33,6 @@ impl FormBody {
 pub enum Kind {
     /// Recycle Bin Properties; `binprops::event`.
     RecycleBin(crate::binprops::BinSheet),
-    /// Confirm Attribute Changes; `attr_event`.
-    Attributes(AttrConfirm),
-    /// File or folder Properties; `props_event`.
-    Properties(Box<SheetBase>),
-    /// Multi-selection Properties; `set_event`.
-    SetProperties(SetBase),
-    /// Advanced Attributes; `advanced_event`. True when its archive and index boxes are live.
-    AdvancedAttributes(bool),
-    /// Change Icon; `change_icon_event`.
-    ChangeIcon,
     /// Confirm File/Folder Replace over a drop's batch; `replace_event`.
     Replace(Box<crate::dragview::Batch>),
     /// Programs Log Off, Turn Off or Restart waits for; `session_end_event`.
@@ -72,14 +62,6 @@ pub enum Measured {
     Replace(reprisekit::controls::replacebox::Fields),
     EndSession(reprisekit::controls::endsession::Fields),
     Location(reprisekit::controls::locationprompt::Fields),
-    Attributes {
-        verb: String,
-        subject: reprisekit::controls::filesheet::Subject,
-    },
-    Advanced {
-        subject: reprisekit::controls::filesheet::Subject,
-        robots: Option<[CheckState; 2]>,
-    },
 }
 
 impl Measured {
@@ -90,7 +72,7 @@ impl Measured {
         px: u32,
         u: TextUnits,
     ) -> ((i32, i32), reprisekit::controls::form::Form) {
-        use reprisekit::controls::{endsession, filesheet, locationprompt, replacebox};
+        use reprisekit::controls::{endsession, locationprompt, replacebox};
         match self {
             Measured::Replace(f) => (
                 replacebox::client(f, text, px, u),
@@ -103,14 +85,6 @@ impl Measured {
             Measured::Location(f) => (
                 locationprompt::client(f, text, px, u),
                 locationprompt::form(f, text, px, u),
-            ),
-            Measured::Attributes { verb, subject } => (
-                filesheet::ATTR_SIZE,
-                filesheet::attr_form(verb, *subject, text, px, u),
-            ),
-            Measured::Advanced { subject, robots } => (
-                filesheet::advanced_size(*subject),
-                filesheet::advanced_form(*subject, None, *robots, text, px, u),
             ),
         }
     }
@@ -295,14 +269,9 @@ impl FormDialog {
         let page = self.open_index();
         match self.kind {
             FormKind::RecycleBin(_) => crate::binprops::event(self, page, ev),
-            FormKind::Attributes(_) => attr_event(self, page, ev),
-            FormKind::Properties(_) => props_event(self, ev),
-            FormKind::SetProperties(_) => set_event(self, ev),
             FormKind::Replace(_) => replace_event(self, ev),
             FormKind::EndSession => session_end_event(ev),
             FormKind::Location(ref id) => location_event(self, id.clone(), ev),
-            FormKind::AdvancedAttributes(live) => advanced_event(self, live, ev),
-            FormKind::ChangeIcon => change_icon_event(self, ev),
         }
     }
 
@@ -386,69 +355,6 @@ impl FormDialog {
                 self.event(ev)
             }
         }
-    }
-}
-
-/// Change Icon: OK/Enter hand the pick to the sheet (standard folder as None), Restore Defaults
-/// picks the standard folder.
-fn change_icon_event(fd: &mut FormDialog, ev: reprisekit::controls::form::Event) -> Outcome {
-    use reprisekit::controls::filesheet::{
-        CHANGE_ICON_CANCEL, CHANGE_ICON_OK, CHANGE_ICON_RESTORE, STANDARD_FOLDER_ICON,
-        change_icon_picked, change_icon_restore,
-    };
-    use reprisekit::controls::form::Event;
-    let Some(form) = fd.body.pages_mut().first_mut() else {
-        return Outcome::Nothing;
-    };
-    match ev {
-        Event::Default | Event::Pressed(CHANGE_ICON_OK) => {
-            // A folder's box (the one with Restore Defaults) stands the
-            // standard folder for no icon of its own.
-            let folder = form.item(CHANGE_ICON_RESTORE).is_some();
-            let picked =
-                change_icon_picked(form).filter(|n| !(folder && n == STANDARD_FOLDER_ICON));
-            Outcome::IconChosen(picked)
-        }
-        Event::Pressed(CHANGE_ICON_RESTORE) => {
-            change_icon_restore(form);
-            Outcome::Redraw
-        }
-        Event::Cancel | Event::Pressed(CHANGE_ICON_CANCEL) => Outcome::Close,
-        Event::Redraw | Event::Changed(_) => Outcome::Redraw,
-        Event::None | Event::Pressed(_) => Outcome::Nothing,
-    }
-}
-
-/// Advanced Attributes: OK/Enter hand the boxes to the sheet; with them greyed (`live` false) OK
-/// closes like Cancel.
-fn advanced_event(fd: &FormDialog, live: bool, ev: reprisekit::controls::form::Event) -> Outcome {
-    use reprisekit::controls::filesheet::{ADV_CANCEL, ADV_OK, robots_chosen};
-    use reprisekit::controls::form::Event;
-    match ev {
-        Event::Redraw | Event::Changed(_) => Outcome::Redraw,
-        Event::None => Outcome::Nothing,
-        Event::Default | Event::Pressed(ADV_OK) if live => match fd.pages().first() {
-            Some(form) => Outcome::AdvancedChosen(robots_chosen(form)),
-            None => Outcome::Close,
-        },
-        Event::Default | Event::Cancel | Event::Pressed(ADV_OK | ADV_CANCEL) => Outcome::Close,
-        Event::Pressed(_) => Outcome::Nothing,
-    }
-}
-
-/// Confirm Attribute Changes' events: OK and Enter re-emit the sheet's
-/// write with the picked radio as the answer.
-fn attr_event(fd: &FormDialog, page: usize, ev: reprisekit::controls::form::Event) -> Outcome {
-    use reprisekit::controls::filesheet::{ATTR_CANCEL, ATTR_OK, attr_tree_picked};
-    use reprisekit::controls::form::Event;
-    let (FormKind::Attributes(a), Some(form)) = (&fd.kind, fd.pages().get(page)) else {
-        return Outcome::Nothing;
-    };
-    match ev {
-        Event::Default | Event::Pressed(ATTR_OK) => a.answered(attr_tree_picked(form)),
-        Event::Cancel | Event::Pressed(ATTR_CANCEL) => Outcome::Close,
-        Event::Redraw | Event::Changed(_) => Outcome::Redraw,
-        Event::None | Event::Pressed(_) => Outcome::Nothing,
     }
 }
 

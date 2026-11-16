@@ -215,8 +215,7 @@ impl State {
                     return state.open_dialog(d);
                 }
                 let Some(app) = &with else {
-                    let d = state.choose_program(&path, false);
-                    return state.open_dialog(d);
+                    return state.choose_program(&path);
                 };
                 match reprisefs::props::open_file(&path, app, &state.config.terminal) {
                     Ok(opening) => state.spawn_opening_activated(&opening),
@@ -417,8 +416,7 @@ impl State {
                 }
             } else {
                 let Some(editor) = &editor else {
-                    let d = self.choose_program(&path, false);
-                    self.open_dialog(d);
+                    self.choose_program(&path);
                     continue;
                 };
                 match reprisefs::props::open_file(&path, editor, &self.config.terminal) {

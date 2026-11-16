@@ -376,9 +376,6 @@ impl State {
             return;
         }
         self.desktop_names_refused(&refused);
-        if !refused.is_empty() {
-            self.sheets_names_refused(&refused);
-        }
         let keys: Vec<&str> = landed.iter().map(|(k, ..)| k.as_str()).collect();
         self.menu_icons_landed(&landed);
         self.window_icon_landed(&keys);

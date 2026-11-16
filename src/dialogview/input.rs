@@ -1,8 +1,6 @@
 //! Pointer and key routing into dialogs: hover, tips, wheel, moving, presses, keys.
 
 use reprisekit::controls::form::Key;
-use reprisekit::controls::grouplist;
-use reprisekit::controls::openwith;
 use reprisekit::frame::CaptionButton;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
@@ -314,16 +312,12 @@ impl State {
             return Outcome::Nothing;
         };
         let double = match hit {
-            Some(DialogHit::Chooser(openwith::Hit::List(grouplist::Hit::Row(i)))) => {
-                v.row_press.press(i, at)
-            }
             Some(DialogHit::Control(h))
                 if matches!(h.part, reprisekit::controls::form::Part::Edit(_)) =>
             {
                 v.field_press.press(h.item, at)
             }
             _ => {
-                v.row_press.reset();
                 v.field_press.reset();
                 false
             }
@@ -345,7 +339,6 @@ impl State {
                 editor: crate::caret::Editor::Dialog,
             };
         } else if page.is_some_and(|p| p.holding())
-            || v.dialog.chooser().is_some_and(|c| c.ow.holding())
             || v.dialog.tray().is_some_and(|t| t.holding())
             || v.dialog.holding_page_bar()
             || v.dialog.copy().is_some_and(|c| c.cp.form.holding())
@@ -445,23 +438,6 @@ impl State {
         }
         if v.dialog.field_lit.holding() {
             if v.dialog.drag_drop(over) && styled {
-                self.redraw_dialog(i);
-            }
-            return;
-        }
-        if let (Some(c), Some(client)) = (v.dialog.chooser_mut(), v.layout.page) {
-            let h = match over {
-                Some(DialogHit::Chooser(h)) => Some(h),
-                _ => None,
-            };
-            let lay =
-                c.ow.layout(text, px, (client.x, client.y), &v.layout.controls);
-            let y = to_local(pos.x, pos.y, (v.x, v.y)).1;
-            let ev = match c.ow.drag(&lay, y) {
-                Some(ev) => ev,
-                None => c.ow.motion(h),
-            };
-            if ev != openwith::Event::None {
                 self.redraw_dialog(i);
             }
             return;

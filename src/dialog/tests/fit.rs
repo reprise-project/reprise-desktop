@@ -4,7 +4,7 @@ use super::*;
 /// config reload refits every open dialog (`configwatch::retheme`).
 #[test]
 fn an_open_dialog_lays_out_again_at_a_new_text_size() {
-    use reprisekit::controls::filesheet;
+    use reprisekit::controls::locationprompt;
     let text = tahoma();
     let one = Theme::default();
     let big = Theme::default().with_text_size(200);
@@ -14,7 +14,16 @@ fn an_open_dialog_lays_out_again_at_a_new_text_size() {
         let mut ds = vec![
             Dialog::run(&history()),
             Dialog::confirm_delete("a.txt", path, false, false, false),
-            Dialog::advanced_attributes(filesheet::Subject::File, None, &text, px, u),
+            Dialog::location_prompt(
+                &locationprompt::Fields {
+                    program: "Maps".into(),
+                    icon: None,
+                },
+                "maps.desktop".into(),
+                &text,
+                px,
+                u,
+            ),
         ];
         ds.iter_mut().for_each(|d| d.fit(theme, &text));
         ds
@@ -65,14 +74,6 @@ fn measured_forms() -> Vec<Measured> {
             program: "Maps".into(),
             icon: None,
         }),
-        Measured::Attributes {
-            verb: "Hide".into(),
-            subject: Subject::Set { has_dir: true },
-        },
-        Measured::Advanced {
-            subject: Subject::Folder,
-            robots: Some([CheckState::On, CheckState::Off]),
-        },
     ]
 }
 
@@ -264,24 +265,6 @@ fn the_tray_customize_dialog_fits_a_small_output_at_200() {
 
 /// Every compositor dialog laid out as a form, under each interface, at each text size.
 fn form_dialogs(theme: &Theme, text: &TextRenderer) -> Vec<Dialog> {
-    use reprisekit::controls::iconlist::IconList;
-    let (px, u) = (theme.fonts.size_px, theme.text);
-    let mut folder = file_info();
-    folder.is_dir = true;
-    folder.opens_with = None;
-    folder.name = "Reports".into();
-    folder.hidden_ext = String::new();
-    folder.path = "/home/u/Desktop/Reports".into();
-    folder.contains = Some((12, 3));
-    let mut launcher = file_info();
-    launcher.name = "Shell".into();
-    launcher.hidden_ext = String::new();
-    launcher.path = "/home/u/Desktop/shell.desktop".into();
-    launcher.is_shortcut = true;
-    launcher.launcher = Some(reprisefs::launcher::Launcher {
-        target: "/bin/sh".into(),
-        ..Default::default()
-    });
     let bin = crate::binprops::BinSheet::new(
         reprisefs::bincap::Policy::default(),
         vec![crate::binprops::Drive {
@@ -290,54 +273,7 @@ fn form_dialogs(theme: &Theme, text: &TextRenderer) -> Vec<Dialog> {
             size: 21_365_735_424,
         }],
     );
-    let confirm = |write| AttrConfirm {
-        write,
-        attrs: reprisefs::props::AttrMoves {
-            read_only: Some(true),
-            ..Default::default()
-        },
-        close: true,
-    };
-    let one = AttrWrite::One {
-        path: "/d/Reports".into(),
-        name: Some(".Reports".into()),
-        hidden: Some(true),
-        folder_icon: None,
-    };
-    let set = AttrWrite::Set {
-        paths: vec!["/d/a".into(), "/d/Reports".into()],
-        hidden: Some(true),
-        folder_icon: None,
-    };
-    let icons = IconList::new(
-        ["folder", "folder-music"].map(String::from).to_vec(),
-        vec![None, None],
-        None,
-    );
-    let mut zip = file_info();
-    zip.opens_with = Some("Compressed (zipped) Folders".into());
-    let mut ds = vec![
-        Dialog::properties(&file_info(), "text-x-generic", (0, 0)),
-        Dialog::properties(&zip, "package-x-generic", (0, 0)),
-        Dialog::properties(&folder, "folder", (0, 0)),
-        Dialog::properties(&launcher, "utilities-terminal", (0, 0)),
-        Dialog::set_properties(&a_set(), "Reports", (0, 0)),
-        crate::binprops::dialog(bin, (0, 0), "user-trash"),
-        Dialog::change_icon("Reports", "theme", icons, false),
-        Dialog::advanced_attributes(Subject::File, None, text, px, u),
-        Dialog::advanced_attributes(Subject::Folder, None, text, px, u),
-        Dialog::advanced_attributes(Subject::Set { has_dir: true }, None, text, px, u),
-        Dialog::confirm_attributes(confirm(one), text, px, u),
-        Dialog::confirm_attributes(confirm(set), text, px, u),
-    ];
-    // Dates in a long weekday and month, whatever the locale.
-    let date = "Wednesday, September 30, 2026, 12:00:00 PM";
-    for d in &mut ds[..4] {
-        let page = &mut d.form_mut().unwrap().pages_mut()[0];
-        for id in ["v_made", "v_mod", "v_acc"] {
-            page.set_text(id, date);
-        }
-    }
+    let mut ds = vec![crate::binprops::dialog(bin, (0, 0), "user-trash")];
     ds.iter_mut().for_each(|d| d.fit(theme, text));
     ds.extend(
         measured_forms()
@@ -506,7 +442,7 @@ fn run_grows_with_the_text_size() {
 /// form dialog's outer size and its page's controls grow from the client's corner.
 #[test]
 fn prompts_and_form_dialogs_grow_with_the_text_size() {
-    use reprisekit::controls::filesheet;
+    use reprisekit::controls::locationprompt;
     let text = tahoma();
     let theme = Theme::default().with_text_size(150);
     let u = theme.text;
@@ -527,24 +463,28 @@ fn prompts_and_form_dialogs_grow_with_the_text_size() {
     let icon = l.icon.unwrap();
     assert_eq!((icon.width, icon.height), (ICON_PX, ICON_PX));
 
-    let mut adv = Dialog::advanced_attributes(
-        filesheet::Subject::File,
-        None,
-        &text,
-        theme.fonts.size_px,
-        u,
-    );
-    adv.fit(&theme, &text);
-    let l = DialogLayout::compute(&theme, &text, &adv);
-    let f = adv.form().unwrap();
-    let caption_grow = theme.metrics.caption_height - 18;
-    let (w, h) = filesheet::advanced_size(filesheet::Subject::File);
-    assert_eq!(l.size, (6 + u.len(w), 21 + caption_grow + u.len(h) + 3));
-    let page = f.open_page().unwrap();
-    let ok = page.rect(filesheet::ADV_OK).unwrap();
-    let design = page.item(filesheet::ADV_OK).unwrap().rect;
-    assert_eq!(ok.width, u.len(design.right()) - u.len(design.x));
-    assert!(ok.right() <= l.size.0 && ok.bottom() <= l.size.1);
-    let c = render(&theme, &text, &l, &adv);
+    let fields = locationprompt::Fields {
+        program: "Maps".into(),
+        icon: None,
+    };
+    let at = |theme: &Theme| {
+        let (px, u) = (theme.fonts.size_px, theme.text);
+        let mut d = Dialog::location_prompt(&fields, "maps.desktop".into(), &text, px, u);
+        d.fit(theme, &text);
+        let l = DialogLayout::compute(theme, &text, &d);
+        let deny = d
+            .form()
+            .unwrap()
+            .open_page()
+            .unwrap()
+            .rect(locationprompt::DENY);
+        (d, l, deny.unwrap())
+    };
+    let (_, one, one_deny) = at(&Theme::default());
+    let (prompt, l, deny) = at(&theme);
+    assert_eq!(l.size.0, 6 + u.len(one.size.0 - 6));
+    assert!(deny.width > one_deny.width, "the buttons grow");
+    assert!(deny.right() <= l.size.0 && deny.bottom() <= l.size.1);
+    let c = render(&theme, &text, &l, &prompt);
     assert_eq!((c.width as i32, c.height as i32), l.size);
 }

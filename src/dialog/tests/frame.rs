@@ -43,7 +43,6 @@ fn classic_dialog_has_a_close_button_and_a_focus_ring() {
         &l,
         None,
         None,
-        &[],
         &d,
         true,
         None,
@@ -68,7 +67,6 @@ fn classic_dialog_has_a_close_button_and_a_focus_ring() {
         &rl,
         None,
         None,
-        &[],
         &run,
         true,
         None,
@@ -151,7 +149,6 @@ fn a_blue_dialog_caption_shows_its_caption_icon_as_given() {
         &l,
         Some(&big),
         Some(&small),
-        &[],
         &d,
         false,
         Lit::default(),
@@ -195,7 +192,6 @@ fn a_blue_form_dialog_lights_its_tab_and_control_and_a_leave_clears_them() {
         &l,
         None,
         None,
-        &[],
         &d,
         false,
         None,
@@ -262,7 +258,6 @@ fn an_inactive_dialog_has_a_grey_caption_and_no_default_ring() {
         &l,
         None,
         None,
-        &[],
         &d,
         false,
         None,
@@ -289,13 +284,7 @@ fn an_inactive_glass_form_dialog_draws_its_default_button_plain() {
     use reprisekit::controls::form::Control;
     let theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
     let text = TextRenderer::load(&FontConfig::default());
-    let d = Dialog::advanced_attributes(
-        Subject::File,
-        None,
-        &text,
-        theme.fonts.size_px,
-        TextUnits::ONE,
-    );
+    let d = location_prompt(&theme, &text);
     let l = DialogLayout::compute(&theme, &text, &d);
     let ok = d
         .form()
@@ -315,7 +304,6 @@ fn an_inactive_glass_form_dialog_draws_its_default_button_plain() {
             &l,
             None,
             None,
-            &[],
             &d,
             false,
             None,
@@ -368,7 +356,6 @@ fn a_blue_dialog_is_framed_by_the_style() {
             &bl,
             None,
             None,
-            &[],
             &d,
             false,
             None,
@@ -422,7 +409,6 @@ fn a_glass_dialog_wears_the_window_frame_with_a_lone_close_box() {
         &gl,
         None,
         None,
-        &[],
         &d,
         false,
         None,
@@ -460,7 +446,6 @@ fn a_blue_dialogs_close_box_draws_hot() {
         &l,
         None,
         None,
-        &[],
         &d,
         false,
         None,
@@ -517,7 +502,6 @@ fn a_held_close_box_draws_pushed_only_while_the_pointer_is_on_it() {
                 &l,
                 None,
                 None,
-                &[],
                 d,
                 true,
                 None,
@@ -563,7 +547,6 @@ fn a_held_close_box_draws_pushed_only_while_the_pointer_is_on_it() {
         &l,
         None,
         None,
-        &[],
         &d,
         true,
         None,
@@ -585,32 +568,38 @@ fn a_held_close_box_draws_pushed_only_while_the_pointer_is_on_it() {
     );
 }
 
+/// The Location prompt, a plain form dialog, laid out for `theme`.
+fn location_prompt(theme: &Theme, text: &TextRenderer) -> Dialog {
+    let fields = reprisekit::controls::locationprompt::Fields {
+        program: "Maps".into(),
+        icon: None,
+    };
+    let (px, u) = (theme.fonts.size_px, theme.text);
+    let mut d = Dialog::location_prompt(&fields, "maps.desktop".into(), text, px, u);
+    d.fit(theme, text);
+    d
+}
+
 #[test]
 fn a_form_dialog_fits_the_frame_it_is_shown_in() {
-    use reprisekit::controls::filesheet::NAME;
+    use reprisekit::controls::locationprompt::DENY;
     let classic = Theme::default();
     let blue = blue();
     let text = TextRenderer::load(&FontConfig::default());
     let px = classic.fonts.size_px;
-    let mut d = Dialog::properties(&file_info(), "text-x-generic", (0, 0));
-    d.fit(&classic, &text);
+    let mut d = location_prompt(&classic, &text);
+    let page = |d: &Dialog| d.form().and_then(|f| f.open_page()).unwrap().rect(DENY);
     let cl = DialogLayout::compute(&classic, &text, &d);
-    let name = sheet_form(&d).rect(NAME).unwrap();
+    let deny = page(&d).unwrap();
     d.fit(&blue, &text);
     d.fit(&blue, &text);
     let bl = DialogLayout::compute(&blue, &text, &d);
     assert_eq!(bl.size, (cl.size.0, cl.size.1 + 8));
     assert_eq!(bl.caption.height, 26);
-    let page = cl.page.unwrap();
-    assert_eq!(
-        bl.page,
-        Some(Rect::new(page.x, page.y + 8, page.width, page.height))
-    );
-    assert_eq!(bl.tabs[0].y, cl.tabs[0].y + 8);
-    let moved = sheet_form(&d).rect(NAME).unwrap();
+    let moved = page(&d).unwrap();
     assert_eq!(
         moved,
-        Rect::new(name.x, name.y + 8, name.width, name.height)
+        Rect::new(deny.x, deny.y + 8, deny.width, deny.height)
     );
     assert!(matches!(
         bl.hit(&d, moved.x + 3, moved.y + 3, &text, px),
@@ -618,16 +607,22 @@ fn a_form_dialog_fits_the_frame_it_is_shown_in() {
     ));
     d.fit(&classic, &text);
     assert_eq!(DialogLayout::compute(&classic, &text, &d), cl);
-    assert_eq!(sheet_form(&d).rect(NAME).unwrap(), name);
+    assert_eq!(page(&d).unwrap(), deny);
 }
 
 #[test]
 fn a_blue_client_area_starts_under_the_styles_caption() {
-    let blue = blue();
+    use reprisekit::controls::copyprogress::{CopyProgress, Kind};
     let text = TextRenderer::load(&FontConfig::default());
-    let l = DialogLayout::compute(&blue, &text, &chooser());
-    assert_eq!(l.page.map(|p| (p.x, p.y)), Some((3, 29)));
-    assert_eq!(l.size, (CHOOSER_W, CHOOSER_H + 8));
+    let at = |theme: &Theme| {
+        let cp = CopyProgress::new(Kind::Copy, "Downloads", "KINGSTON", Color::rgb(0, 0, 0));
+        let mut d = Dialog::copy_progress(cp, "/media/KINGSTON".into());
+        d.fit(theme, &text);
+        DialogLayout::compute(theme, &text, &d)
+    };
+    let (classic, blue) = (at(&Theme::default()), at(&blue()));
+    assert_eq!(blue.page.map(|p| (p.x, p.y)), Some((3, 29)));
+    assert_eq!(blue.size, (classic.size.0, classic.size.1 + 8));
 }
 
 #[test]

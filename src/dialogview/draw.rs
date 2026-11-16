@@ -1,7 +1,5 @@
 //! Laying out and drawing dialogs, their icons and their access trees.
 
-use std::collections::HashMap;
-
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::compositor::State;
@@ -128,33 +126,15 @@ impl State {
                 n.as_deref()
                     .and_then(|n| cached(cache, n, px, &mut undecoded))
             };
-            let set = key.icon.as_deref() == Some(reprisekit::controls::filesheet::SET_ICON);
             let icons = DialogIcons {
-                icon: if set {
-                    Some(reprisekit::controls::filesheet::set_picture(scale))
-                } else {
-                    get(&key.icon, px)
-                },
+                icon: get(&key.icon, px),
                 caption: get(&key.icon, theme.icon_size()),
-                rows: HashMap::new(),
             };
             v.icons = Some((key, icons));
         }
-        let names = row_icon_names(&v.dialog);
-        let Some((_, icons)) = v.icons.as_mut() else {
+        let Some((_, icons)) = v.icons.as_ref() else {
             return;
         };
-        for (_, n, size) in &names {
-            icons
-                .rows
-                .entry((n.clone(), *size))
-                .or_insert_with(|| cached(cache, n, size * scale, &mut undecoded));
-        }
-        let mut row_icons: Vec<Option<&Canvas>> =
-            vec![None; names.last().map_or(0, |(i, _, _)| i + 1)];
-        for (i, n, size) in &names {
-            row_icons[*i] = icons.rows[&(n.clone(), *size)].as_ref();
-        }
         // A form's focused edit field draws its caret on the blink's shown half.
         if let Some(page) = v.dialog.form_mut().and_then(|f| f.open_page_mut()) {
             page.caret = caret_on;
@@ -165,7 +145,6 @@ impl State {
             &v.layout,
             icons.icon.as_ref(),
             icons.caption.as_ref(),
-            &row_icons,
             &v.dialog,
             false,
             v.dialog.lit(),
@@ -230,7 +209,6 @@ impl State {
         v.backdrop.set(scene, glass, v.glass_tree, pane);
         let origin = (v.x, v.y);
         let id = v.id;
-        let stand_ins = !v.waiting.is_empty();
         let decode = next_decode(&mut v.decodes, undecoded, std::time::Instant::now());
         if active {
             let spot = canvas.take_spot();
@@ -245,9 +223,6 @@ impl State {
             Decode::Wait => {}
         }
         self.note_icon_waits(waits, crate::icon::IconWaiter::Dialog(id));
-        if stand_ins {
-            self.wait_for_icons(crate::icon::IconWaiter::Dialog(id));
-        }
         self.redraw_nodes(was, &[tree.into()]);
         crate::access::touch(self);
     }
@@ -297,23 +272,12 @@ impl State {
         self.redraw_dialog(i);
     }
 
-    /// Theme icons landed while dialog `id` showed a stand-in for one: it looks its icons up again,
-    /// and a file dialog's listing and Change Icon's list take theirs.
+    /// Theme icons landed while dialog `id` showed a stand-in for one: it looks its icons up again.
     pub(crate) fn dialog_icons_landed(&mut self, id: u64) {
         let Some(i) = self.dialog_index(id) else {
             return;
         };
-        let px = dialog::ICON_PX
-            * self
-                .draw_scale_at(Some(&self.dialogs.views[i].output))
-                .max(1);
-        let State { dialogs, icons, .. } = self;
-        let v = &mut dialogs.views[i];
-        if !v.waiting.is_empty() {
-            let waiting = std::mem::take(&mut v.waiting);
-            v.waiting = super::properties::change_icon_landed(&mut v.dialog, icons, px, waiting);
-        }
-        v.icons = None;
+        self.dialogs.views[i].icons = None;
         self.redraw_dialog(i);
     }
 

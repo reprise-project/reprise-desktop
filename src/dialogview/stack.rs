@@ -132,11 +132,9 @@ impl State {
             y,
             output: out,
             field_press: DoubleClick::default(),
-            row_press: DoubleClick::default(),
             wheel: Default::default(),
             icons: None,
             decodes: Default::default(),
-            waiting: Vec::new(),
             still_canvas: None,
             cues: Cues::opened(self.key_input.last_key_input),
             fade: None,
@@ -375,19 +373,6 @@ impl State {
     pub(super) fn close_dialog(&mut self) {
         if let Some(i) = self.dialogs.views.len().checked_sub(1) {
             self.close_dialog_at(i);
-        }
-    }
-
-    /// Close the top dialog and raise the one it was opened over; returns whether that one is still open.
-    pub(super) fn close_to_parent(&mut self) -> bool {
-        let parent = self.dialogs.views.last().and_then(|v| v.parent);
-        self.close_dialog();
-        match parent.and_then(|p| self.dialog_index(p)) {
-            Some(i) => {
-                self.raise_dialog(i);
-                true
-            }
-            None => false,
         }
     }
 

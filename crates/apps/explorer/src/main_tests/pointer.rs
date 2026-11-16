@@ -314,7 +314,7 @@ fn a_covered_window_lets_go_of_its_marquee_and_column_divider() {
             place: ex.place.clone(),
             dir: None,
             select: Vec::new(),
-            sheet: None,
+            alone: None,
             connect: None,
             search: false,
         },
