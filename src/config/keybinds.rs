@@ -271,6 +271,14 @@ pub(super) fn global_shortcuts(list: Vec<FileGlobalShortcut>) -> Vec<GlobalShort
                 e.keys
             );
             None
+        } else if repriseconf::keybind::types_text(&e.keys) {
+            log::warn!(
+                "global_shortcuts: {} {}: {:?} types text, so the app gets no key",
+                e.app,
+                e.id,
+                e.keys
+            );
+            None
         } else {
             parse_keybind(&e.keys)
                 .inspect_err(|err| log::warn!("global_shortcuts: {} {}: {err}", e.app, e.id))

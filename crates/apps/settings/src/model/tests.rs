@@ -1641,6 +1641,20 @@ fn a_program_key_may_be_empty_but_not_wrong() {
 }
 
 #[test]
+fn a_program_key_that_types_text_is_refused_and_a_stored_one_shows_as_none() {
+    let base = load(&PROGRAMS.replace("keys = \"Pause\"", "keys = \"Return\""));
+    assert_eq!(base.programs[0].keys, "", "the compositor gives it no key");
+    let mut s = base.clone();
+    s.programs[0].keys = "a".into();
+    assert_eq!(
+        validate(&s, &base),
+        Err("Hold to talk: a types text; add Ctrl, Alt or Super.".into())
+    );
+    s.programs[0].keys = "Alt+a".into();
+    assert_eq!(validate(&s, &base), Ok(()));
+}
+
+#[test]
 fn a_bad_program_key_from_the_file_does_not_block_apply() {
     let base = load(&PROGRAMS.replace("keys = \"Pause\"", "keys = \"Ctrl+Nope\""));
     let mut s = base.clone();

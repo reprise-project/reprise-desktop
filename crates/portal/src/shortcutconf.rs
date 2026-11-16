@@ -40,9 +40,18 @@ pub fn entries(doc: &DocumentMut, app: &str) -> Vec<Entry> {
         .map(|t| Entry {
             id: str_of(t, "id").into(),
             description: str_of(t, "description").into(),
-            keys: str_of(t, "keys").into(),
+            keys: keys_given(str_of(t, "keys")).into(),
         })
         .collect()
+}
+
+/// The stored `keys` as the compositor takes them: none for a key that types text.
+fn keys_given(keys: &str) -> &str {
+    if repriseconf::keybind::types_text(keys) {
+        ""
+    } else {
+        keys
+    }
 }
 
 fn denied_list(doc: &DocumentMut) -> Vec<String> {
@@ -351,6 +360,13 @@ mod tests {
         assert!(got[0].description.starts_with("a[2Jb\u{e9}"));
         assert!(got[0].description.len() <= MAX_TEXT);
         assert!(!got[0].description.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn a_stored_typing_key_is_listed_as_no_key() {
+        let mut d = doc("[[global_shortcuts]]\napp = \"t\"\nid = \"send\"\nkeys = \"Return\"\n");
+        assert_eq!(entries(&d, "t")[0].keys, "");
+        assert_eq!(bind(&mut d, "t", &[w("send", "Return")])[0].keys, "");
     }
 
     #[test]
