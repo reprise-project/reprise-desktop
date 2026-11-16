@@ -24,4 +24,5 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install cargo-deny
         run: bash .github/pacman.sh rust cargo-deny
-      - run: cargo deny --locked check
+      # Every member is a root: without --workspace only the root package `reprise` is.
+      - run: cargo deny --workspace --locked check

@@ -1,4 +1,5 @@
-# `cargo deny check`: advisories, licences, duplicate crates and sources.
+# `cargo deny --workspace check`: advisories, licences, duplicate crates and sources, with
+# every member as a root.
 
 [graph]
 targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
@@ -7,6 +8,9 @@ targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 # Vulnerabilities always fail; an unmaintained crate fails only as a direct dependency.
 unmaintained = "workspace"
 yanked = "warn"
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "rsa 0.10.0-rc via picky (IronRDP, sspi): the RDP servers hold no RSA private key (rcgen ECDSA TLS key, rsa only encrypts to a client's public key); drop once picky takes rsa 0.10.0" },
+]
 
 [licenses]
 allow = [
@@ -50,6 +54,31 @@ skip = [
     { crate = "roxmltree@0.20.0", reason = "fontconfig-parser 0.5; usvg has 0.21" },
     { crate = "zbus@5.19.0", reason = "accesskit_unix 0.24 and atspi 0.13" },
     { crate = "zbus_macros@5.19.0", reason = "zbus 5 via accesskit_unix" },
+    { crate = "xkbcommon@0.8.0", reason = "repriseapp and smithay-client-toolkit 0.21; smithay has 0.9" },
+    { crate = "phf@0.11.3", reason = "unicode_names2 4" },
+    { crate = "phf_shared@0.11.3", reason = "phf 0.11 via unicode_names2" },
+    { crate = "phf_generator@0.11.3", reason = "phf_codegen 0.11 via unicode_names2, build only" },
+    { crate = "rand@0.8.8", reason = "phf_generator 0.11 and unicode_names2_generator, build only" },
+    { crate = "rand_chacha@0.3.1", reason = "rand 0.8, build only" },
+    { crate = "rand_core@0.6.4", reason = "rand 0.8, build only" },
+    { crate = "getrandom@0.2.17", reason = "rand_core 0.6, build only" },
+    { crate = "base64@0.22.1", reason = "alacritty_terminal 0.26 and reqwest 0.12; picky has 0.23" },
+    { crate = "synstructure@0.13.2", reason = "asn1-rs-derive via ironrdp-pdu, build only" },
+    # The RustCrypto 0.10 series ironrdp-pdu and the rdpeudp transport use beside picky's 0.11.
+    { crate = "digest@0.10.7", reason = "hmac, md-5 and sha2 0.10 via ironrdp-pdu" },
+    { crate = "block-buffer@0.10.4", reason = "digest 0.10" },
+    { crate = "crypto-common@0.1.7", reason = "digest 0.10" },
+    { crate = "hmac@0.12.1", reason = "ironrdp-pdu" },
+    { crate = "md-5@0.10.6", reason = "ironrdp-pdu" },
+    { crate = "sha2@0.10.9", reason = "ironrdp-rdpeudp-tokio" },
+    { crate = "cpufeatures@0.2.17", reason = "sha2 0.10" },
+    { crate = "pkcs1@0.7.5", reason = "ironrdp-pdu" },
+    { crate = "spki@0.7.3", reason = "pkcs1 0.7" },
+    { crate = "der@0.7.10", reason = "pkcs1 0.7" },
+    { crate = "const-oid@0.9.6", reason = "der 0.7" },
+    { crate = "rand@0.9.5", reason = "ironrdp-server; picky has 0.10" },
+    { crate = "rand_core@0.9.5", reason = "rand 0.9 via ironrdp-server" },
+    { crate = "getrandom@0.3.4", reason = "ironrdp-rdpdr, sspi and rand_core 0.9" },
 ]
 
 [sources]
