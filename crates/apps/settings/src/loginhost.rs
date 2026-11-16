@@ -47,7 +47,7 @@ pub(crate) struct Login {
     pub(crate) loaded: MachineConfig,
     pub(crate) want: MachineConfig,
     users: Vec<String>,
-    fingerprint: Option<String>,
+    fingerprint: Option<pages::Prints>,
     /// A picture browsed for the background, sent with the next save.
     pub(crate) picked: Option<PathBuf>,
 }
@@ -310,14 +310,13 @@ pub(crate) fn login_outputs(heads: &[Head], primary: Option<&str>) -> Vec<LoginO
         .collect()
 }
 
-/// The Remote Desktop front's fingerprint; `None` while it is not running.
-pub(crate) fn machine_fingerprint() -> Option<String> {
+/// The Remote Desktop front's certificate prints; `None` while it is not running.
+pub(crate) fn machine_fingerprint() -> Option<pages::Prints> {
     fingerprint(Path::new(FINGERPRINT))
 }
 
-fn fingerprint(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    Some(text.trim().to_string()).filter(|t| !t.is_empty())
+fn fingerprint(path: &Path) -> Option<pages::Prints> {
+    pages::Prints::parse(&std::fs::read_to_string(path).ok()?)
 }
 
 /// The accounts the login screen lists, read through NSS; none under test.
@@ -422,7 +421,7 @@ impl SettingsApp {
             &mut self.sheet.pages[Page::LoginManager.index()],
             &l.want,
             &l.users,
-            l.fingerprint.as_deref(),
+            l.fingerprint.as_ref(),
             l.picture(picked.as_deref()),
         );
     }

@@ -80,6 +80,8 @@ or the `tailscale0` interface).
   ([security.md](security.md#remote-desktop)).
 - **Clients.** xfreerdp3, Remmina and mstsc have been tried. mstsc
   logs in with NLA, so it needs reprise-login and a Remote Desktop password.
+  Its certificate prompt shows the SHA-1 thumbprint: compare it with the
+  Thumbprint line on the Login Manager page.
 - **FreeRDP before 3.32.2.** On x86 its full-colour decoder puts the
   auxiliary colour samples one column left, so coloured edges show dotted
   fringes when the screen width is not a multiple of 32 or the server codes

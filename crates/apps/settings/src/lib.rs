@@ -470,7 +470,7 @@ struct SettingsApp {
     login_users: Option<Receiver<Vec<String>>>,
     login_job: Option<loginhost::Saving>,
     /// The page's next read of the front's fingerprint.
-    login_poll: Option<Receiver<Option<String>>>,
+    login_poll: Option<Receiver<Option<pages::Prints>>>,
     /// The pages this machine lacks the program for, kept out of the list ([`Page::installed`]).
     absent: Vec<Page>,
 
@@ -616,7 +616,8 @@ impl SettingsApp {
                     tabletpage::page(a, &self.pads, self.pad_picked, &self.want.tablet_pads)
                 }
                 Page::RemoteDesktop => {
-                    pages::remote_desktop(a, None, false, self.remote.manager.then_some(""))
+                    let machine = self.remote.manager.then(pages::Prints::default);
+                    pages::remote_desktop(a, None, false, machine.as_ref())
                 }
                 _ => registry::build(p, &src, a),
             };
