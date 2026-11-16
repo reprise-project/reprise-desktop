@@ -15,7 +15,7 @@ members=$(cargo metadata --format-version 1 --no-deps |
   python3 -c 'import json,sys; print(" ".join(p["name"] for p in json.load(sys.stdin)["packages"]))')
 units() {
   "$@" --message-format=json 2>/dev/null | CRATES=$crates python3 -c '
-import json, os, sys
+import json, os, re, sys
 names = os.environ["CRATES"].split()
 seen = {n: {} for n in names}
 for l in sys.stdin:
@@ -25,8 +25,11 @@ for l in sys.stdin:
     if (m.get("reason") == "compiler-artifact" and n in names
             and "lib" in m["target"]["kind"] and not m["profile"]["test"]):
         version = m["package_id"].rsplit("#", 1)[-1].rsplit("@", 1)[-1]
-        f = [f for f in m["filenames"] if "/deps/" in f][0]
-        seen[n].setdefault(version, f.rsplit("-", 1)[-1].split(".")[0])
+        # The hashed copy: under deps/, or build/<crate>/<hash>/out/ in the
+        # new build-dir layout, beside an unhashed uplifted lib<crate>.rlib.
+        h = [h for f in m["filenames"]
+             for h in re.findall(r"/lib[^/]*-([0-9a-f]+)\.r(?:lib|meta)$", f)][0]
+        seen[n].setdefault(version, h)
 print("\t".join(",".join(f"{v}={h}" for v, h in sorted(seen[n].items())) for n in names))'
 }
 out=$(
