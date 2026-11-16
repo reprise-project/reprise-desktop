@@ -48,11 +48,9 @@ impl Screenshot {
         let interactive = matches!(options.get("interactive"), Some(Variant::Bool(true)));
         let mut target = None;
         if interactive || needs_consent(&options) {
-            let cancel = Arc::new(AtomicBool::new(false));
-            crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
             let id = app_id.clone();
             let parent = crate::dialog::parent_handle(&parent_window);
-            let asked = blocking::unblock(move || {
+            let asked = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
                 if interactive {
                     pick(&id, parent, cancel).map(Some)
                 } else {
@@ -68,8 +66,7 @@ impl Screenshot {
                     allowed.then_some(None)
                 }
             })
-            .await;
-            let _ = server.remove::<crate::Request, _>(handle.clone()).await;
+            .await?;
             match asked {
                 Some(t) => target = t,
                 None => {

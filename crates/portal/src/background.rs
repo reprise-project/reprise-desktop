@@ -3,8 +3,6 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use zbus::object_server::SignalEmitter;
 use zbus::{ObjectPath, OwnedVariant};
@@ -70,10 +68,8 @@ impl Background {
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
-        let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
         let id = app_id.clone();
-        let answer = blocking::unblock(move || {
+        let answer = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
             let app = if name.trim().is_empty() {
                 crate::remotedesktop::display_name(&id)
             } else {
@@ -88,8 +84,7 @@ impl Background {
             };
             crate::permit::ask_with(crate::permit::Kind::Background, input, &cancel)
         })
-        .await;
-        let _ = server.remove::<crate::Request, _>(handle.clone()).await;
+        .await?;
         let result = background_result(answer);
         log::info!("NotifyBackground for {app_id:?}: {result}");
         let mut r = HashMap::new();

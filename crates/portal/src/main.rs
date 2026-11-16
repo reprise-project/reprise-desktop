@@ -289,6 +289,32 @@ pub(crate) async fn export_request(
     Ok(())
 }
 
+/// Run `dialog` in the blocking pool with the `Request` at `handle` served, so the frontend's
+/// Close sets the flag it is given, and take the `Request` down after. With `session` (the map
+/// and a key), that session's `picking` holds the flag meanwhile, so its Close cancels too.
+pub(crate) async fn with_request<T: Send + 'static>(
+    server: &zbus::ObjectServer,
+    handle: &ObjectPath<'_>,
+    frontend: &Frontend,
+    session: Option<(&Sessions, &str)>,
+    dialog: impl FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+) -> zbus::fdo::Result<T> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    export_request(server, handle, cancel.clone(), frontend).await?;
+    let picking = |flag: Option<Arc<AtomicBool>>| {
+        if let Some((sessions, key)) = session
+            && let Some(s) = sessions.lock().unwrap().get_mut(key)
+        {
+            s.picking = flag;
+        }
+    };
+    picking(Some(cancel.clone()));
+    let out = blocking::unblock(move || dialog(cancel)).await;
+    let _ = server.remove::<Request, _>(handle.clone()).await;
+    picking(None);
+    Ok(out)
+}
+
 async fn replace_session(sessions: &Sessions, key: String, data: SessionData) {
     let old = sessions.lock().unwrap().insert(key, data);
     if let Some(mut s) = old {
@@ -628,28 +654,21 @@ pub(crate) async fn pick_and_cast(
         };
         (s.types, s.cursor_mode, s.persist_mode, s.restore.clone())
     };
-    let cancel = Arc::new(AtomicBool::new(false));
-    if let Err(e) = export_request(server, handle, cancel.clone(), frontend).await {
-        log::warn!("Start: {e}");
-        return Err(RESPONSE_OTHER);
-    }
-    if let Some(s) = sessions.lock().unwrap().get_mut(key) {
-        s.picking = Some(cancel.clone());
-    }
     let app = app_id.to_string();
     let capturer = match pick {
         Pick::Ask => cast::Capturer::App,
         Pick::All | Pick::Remote(_) => cast::Capturer::RemoteDesktop,
         Pick::Recorder => cast::Capturer::Recorder,
     };
-    let chosen = blocking::unblock(move || {
+    let session = Some((sessions, key));
+    let chosen = with_request(server, handle, frontend, session, move |cancel| {
         choose(types, restore, &app, persist_mode > 0, parent, cancel, pick)
     })
-    .await;
-    let _ = server.remove::<Request, _>(handle.clone()).await;
-    if let Some(s) = sessions.lock().unwrap().get_mut(key) {
-        s.picking = None;
-    }
+    .await
+    .map_err(|e| {
+        log::warn!("Start: {e}");
+        RESPONSE_OTHER
+    })?;
     let chosen = match chosen {
         Ok(Some(c)) => c,
         Ok(None) => return Err(RESPONSE_CANCELLED),

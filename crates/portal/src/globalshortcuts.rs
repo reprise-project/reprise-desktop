@@ -9,8 +9,6 @@ use crate::{
     RESPONSE_CANCELLED, RESPONSE_OK, RESPONSE_OTHER, Results, SessionData, SessionKind, Sessions,
 };
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use zbus::object_server::SignalEmitter;
 use zbus::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
 
@@ -269,31 +267,14 @@ impl GlobalShortcuts {
             Step::Write => false,
         };
         if first {
-            // The Request object lets the frontend cancel the prompt; a
-            // Session.Close while it is up cancels it too.
-            let cancel = Arc::new(AtomicBool::new(false));
-            crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
-            if let Some(s) = self.sessions.lock().unwrap().get_mut(key) {
-                s.picking = Some(cancel.clone());
-            }
             let items = shortcutconf::preview(&doc, &wanted);
             let parent = crate::dialog::parent_handle(&parent_window);
             let id = app.clone();
-            let answer = blocking::unblock(move || {
-                crate::permit::ask(
-                    crate::permit::Kind::Shortcuts,
-                    &id,
-                    items,
-                    false,
-                    parent,
-                    cancel,
-                )
+            let session = Some((&self.sessions, key));
+            let answer = crate::with_request(server, &handle, &self.frontend, session, move |c| {
+                crate::permit::ask(crate::permit::Kind::Shortcuts, &id, items, false, parent, c)
             })
-            .await;
-            let _ = server.remove::<crate::Request, _>(handle.clone()).await;
-            if let Some(s) = self.sessions.lock().unwrap().get_mut(key) {
-                s.picking = None;
-            }
+            .await?;
             match answer {
                 Answer::Allow { .. } => {}
                 Answer::Deny => {

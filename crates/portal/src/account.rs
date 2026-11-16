@@ -4,8 +4,6 @@
 use crate::access;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use zbus::{ObjectPath, OwnedVariant, Variant};
 
 const ACCOUNTS: &str = "org.freedesktop.Accounts";
@@ -36,15 +34,12 @@ impl Account {
             log::warn!("GetUserInformation for {app_id:?}: no account for this user");
             return Ok((crate::RESPONSE_OTHER, crate::Results::new()));
         };
-        let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
         let (id, shown) = (app_id.clone(), me.clone());
-        let out = blocking::unblock(move || {
+        let out = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
             let who = crate::permit::who(&crate::remotedesktop::display_name(&id));
             access::ask(&input(&who, &window, &reason, &shown), cancel)
         })
-        .await;
-        let _ = server.remove::<crate::Request, _>(handle.clone()).await;
+        .await?;
         log::info!(
             "GetUserInformation for {app_id:?}: {}",
             if out.granted { "shared" } else { "cancelled" }

@@ -6,8 +6,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use toml_edit::{DocumentMut, Value};
 use zbus::ObjectPath;
 
@@ -68,14 +66,12 @@ impl Wallpaper {
             );
             return Ok(crate::RESPONSE_OTHER);
         };
-        let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
         let parent = crate::dialog::parent_handle(&parent_window);
         let items = vec![file_name(&path)];
         let preview =
             shows_preview(&app_id, show_preview).then(|| path.to_string_lossy().into_owned());
         let id = app_id.clone();
-        let allowed = blocking::unblock(move || {
+        let allowed = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
             let input = crate::permit::Input {
                 parent,
                 app: crate::remotedesktop::display_name(&id),
@@ -89,8 +85,7 @@ impl Wallpaper {
                 false => crate::permit::ask_with(kind, input, &cancel).allowed(),
             }
         })
-        .await;
-        let _ = server.remove::<crate::Request, _>(handle.clone()).await;
+        .await?;
         if !allowed {
             log::info!("SetWallpaperURI for {app_id:?} denied");
             return Ok(crate::RESPONSE_CANCELLED);

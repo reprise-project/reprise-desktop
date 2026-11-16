@@ -5,8 +5,7 @@ use crate::inputlink::{Link, LockScreenHandle, Owner, Pointer, live};
 use crate::inputproto::reprise_input_v1::Device;
 use crate::wayland::Target;
 use crate::{
-    CastState, RESPONSE_CANCELLED, RESPONSE_OK, RESPONSE_OTHER, Request, SessionData, SessionKind,
-    Sessions,
+    CastState, RESPONSE_CANCELLED, RESPONSE_OK, RESPONSE_OTHER, SessionData, SessionKind, Sessions,
 };
 use std::collections::HashMap;
 use std::os::fd::OwnedFd;
@@ -223,29 +222,23 @@ impl RemoteDesktop {
         }
         let mut remember = restored;
         if !restored && !trusted {
-            let cancel = Arc::new(AtomicBool::new(false));
-            crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
-            if let Some(s) = self.sessions.lock().unwrap().get_mut(&key) {
-                s.picking = Some(cancel.clone());
-            }
             let id = app_id.clone();
             let parent = parent.clone();
             let ask = self.ask;
-            let answer = blocking::unblock(move || {
+            let session = Some((&self.sessions, key.as_str()));
+            let answer = crate::with_request(server, &handle, &self.frontend, session, move |c| {
                 ask(
                     crate::permit::Kind::RemoteControl(crate::permit::Devices::from_mask(devices)),
                     &id,
                     Vec::new(),
                     requested > 0,
                     parent,
-                    cancel,
+                    c,
                 )
             })
-            .await;
-            let _ = server.remove::<Request, _>(handle.clone()).await;
-            match self.sessions.lock().unwrap().get_mut(&key) {
-                Some(s) => s.picking = None,
-                None => return Ok((RESPONSE_CANCELLED, empty())),
+            .await?;
+            if !self.sessions.lock().unwrap().contains_key(&key) {
+                return Ok((RESPONSE_CANCELLED, empty()));
             }
             match answer {
                 crate::permit::Answer::Allow { remember: r } => {
