@@ -433,6 +433,11 @@ fn access_names_every_field_and_button() {
         msg.2.as_deref(),
         Some("The user name or password is incorrect.")
     );
+    assert_eq!(
+        tree.get(msg.0).and_then(|n| n.live()),
+        Some(crate::access::accesskit::Live::Polite),
+        "a new message is spoken"
+    );
 
     m.password.key(EditKey::Insert("abc".into()));
     let mut again = Tree::new(ax::node(Role::Window, l.output));

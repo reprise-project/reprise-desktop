@@ -1,7 +1,7 @@
 //! The login screen's model, hit and access. Each interface's `logon` module lays it out and
 //! paints it; `interfaces::logon` picks the one in force.
 
-use crate::access::accesskit::{NodeId, Role};
+use crate::access::accesskit::{Live, NodeId, Role};
 use crate::access::{self as ax, ROOT, Tree};
 use crate::interface::Interface;
 use crate::pointer::Interaction;
@@ -970,7 +970,8 @@ pub fn hit(l: &LogonLayout, x: i32, y: i32) -> Option<Part> {
 }
 
 /// The screen's fields and buttons under `tree`'s root, inside a dialog node when there is one,
-/// with the focus on the focused part. The message, Caps Lock notice included, is a label.
+/// with the focus on the focused part. The message, Caps Lock notice included, is a label in a
+/// polite live region, so a reader speaks each new one.
 pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
     let parent = match l.dialog {
         Some(r) => tree.push(ROOT, "dialog", ax::titled(Role::Dialog, r, &m.title())),
@@ -1018,7 +1019,9 @@ pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
     let said: Vec<String> = notice.into_iter().chain(message).collect();
     if !said.is_empty() {
         let r = l.dialog.unwrap_or(l.output);
-        tree.push(parent, "message", ax::label(r, &said.join(" "), true));
+        let mut n = ax::label(r, &said.join(" "), true);
+        n.set_live(Live::Polite);
+        tree.push(parent, "message", n);
     }
     if let Some(id) = focus {
         tree.set_focus(id);

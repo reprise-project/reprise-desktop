@@ -109,6 +109,18 @@ impl LogonView {
         logon::hit(l, pos.x.floor() as i32, pos.y.floor() as i32)
     }
 
+    /// The screen as a reader sees it: a window over its output holding [`logon::access`]'s
+    /// nodes. None while hidden or before its first layout.
+    pub fn access(&self) -> Option<reprisekit::access::Tree> {
+        use reprisekit::access::{self as ax, accesskit::Role};
+        let l = self.layout.as_ref().filter(|_| !self.hidden)?;
+        let mut root = ax::node(Role::Window, l.output);
+        root.set_label(self.model.title());
+        let mut tree = ax::Tree::new(root);
+        logon::access(&self.model, l, &mut tree);
+        Some(tree)
+    }
+
     /// Whether `pos` lies on the screen's dialog or one of its parts; never while hidden.
     pub fn covers_point(&self, pos: Point<f64, Logical>) -> bool {
         let (x, y) = (pos.x.floor() as i32, pos.y.floor() as i32);
@@ -496,6 +508,7 @@ pub fn redraw(state: &mut State, host: &Host) {
     if draw(state, host) {
         state.redraw_all();
     }
+    crate::access::touch(state);
 }
 
 /// [`redraw`] after a change to the model, Caps Lock and the layout included: only what it can
@@ -505,6 +518,7 @@ pub fn update(state: &mut State, host: &Host) {
     if !state.redraw_changed(|s| draw_touched(s, host)) {
         redraw(state, host);
     }
+    crate::access::touch(state);
 }
 
 /// Where the screen draws, the model brought up to the keyboard and the host's say on motion:

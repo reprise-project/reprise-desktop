@@ -264,8 +264,8 @@ core dump of a crash holds the history.
 The lock follows `ext-session-lock-v1`. While it holds, no window but an
 external locker's gets the keyboard or the pointer and virtual keyboards are
 dropped. Of the keys, only the power, sleep and media keys (but not the
-Wi-Fi key), the VT switch keys and the layout switch act; the rest go to the
-lock screen.
+Wi-Fi key), the VT switch keys, the layout switch and the screen reader
+switch act; the rest go to the lock screen.
 
 An app's RemoteDesktop session (its libei sender and its NotifyKeyboard
 and NotifyPointer input) presses, types, moves and scrolls nothing while the desktop it lands
@@ -346,6 +346,16 @@ may claim the reader itself. If the locker crashes the session stays locked
 and the screen comes back. A locker may take over a lock that has none, the
 screen's or a crashed locker's, and unlock it. A locker whose lock has ended
 can't unlock a lock taken after it.
+
+A screen reader reads the lock screen. While the desktop is locked the
+compositor publishes on the session's accessibility bus only the lock
+screen's tree and its power menu's, never a taskbar, frame, balloon or
+dialog. The password field publishes bullets, never the text, no key typed
+at the lock is echoed to the bus, and the lock takes no reader actions, so a
+program in the session can't press its buttons. Programs publish their own
+trees on that bus, which the lock does not hide; it takes their keyboard
+focus away, so none has the reader's focus. A locker client publishes its
+own tree, if any.
 
 The lock screen shows no sharing dot; a cast of a screen goes on showing
 the lock.

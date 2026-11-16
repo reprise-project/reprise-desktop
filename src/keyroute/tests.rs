@@ -1943,3 +1943,30 @@ fn the_greeters_open_menu_takes_its_presses() {
     assert_eq!(r(&menu, &press(KEY_r, MOD_LOGO)), KeyRoute::Menu(KEY_r));
     assert_eq!(r(&menu, &release(KEY_Down)), KeyRoute::Greeter);
 }
+
+#[test]
+fn the_screen_reader_switch_works_at_the_lock_and_no_other_bind_does() {
+    let reader = Keybind {
+        mods: MOD_LOGO | MOD_ALT,
+        keysym: KEY_s,
+        action: Action::ScreenReader,
+    };
+    let mut b = binds();
+    b.push(reader);
+    let locked = Modes {
+        locked: true,
+        ..Modes::default()
+    };
+    let at = |k: &KeyPress| route(&locked, k, &b, &[]).route;
+    assert_eq!(
+        at(&press(KEY_s, MOD_LOGO | MOD_ALT)),
+        KeyRoute::Binds(vec![Action::ScreenReader])
+    );
+    assert_eq!(at(&release(KEY_s)), KeyRoute::Lock);
+    assert_eq!(
+        at(&press(KEY_s, 0)),
+        KeyRoute::Lock,
+        "a letter of the password"
+    );
+    assert_eq!(at(&press(KEY_Tab, MOD_ALT)), KeyRoute::Lock);
+}
