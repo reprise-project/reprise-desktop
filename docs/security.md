@@ -1398,6 +1398,8 @@ What a consent prompt remembers, and where:
   its answer there itself, so Reprise doesn't ask again for a picture the app
   reads itself. Otherwise Reprise's prompt shows the picture; an app with an app id can tick
   Remember, and an Allow with it is kept as `yes`. A Deny there is never kept.
+  The prompt shows the bytes Reprise read and will install, so a file swapped
+  after the read changes neither.
   A picture the app reads itself is one under `$XDG_RUNTIME_DIR/doc` (the
   document portal) or in its `~/.var/app/<app id>`, checked on the path the
   opened file resolves to. Any other picture, which the app may name without
