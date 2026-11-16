@@ -430,7 +430,7 @@ async fn follow_leader(id: String, logind: Logind, events: Events) {
     let Some(pid) = logind.leader(&id).await else {
         return;
     };
-    match pidfd::open(pid) {
+    match reprisebus::pidfd::open(pid) {
         // The leader may have exited, and its pid gone to another process, before the open.
         Ok(_) if logind.ended(&id).await == Ended::Yes => {}
         Ok(fd) => {
