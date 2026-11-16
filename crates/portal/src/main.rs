@@ -819,7 +819,7 @@ async fn cast_ended(
     let Some(data) = gone else {
         return;
     };
-    log::info!("Session {key}: the compositor stopped the cast");
+    log::info!("Session {key}: the cast ended");
     end_session(&conn, &key, Some(data)).await;
 }
 
