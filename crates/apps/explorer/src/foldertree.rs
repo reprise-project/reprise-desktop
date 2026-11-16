@@ -316,7 +316,8 @@ pub fn fill(
 pub type Chain = Vec<(Place, Kids)>;
 
 /// A node's children as [`read_kids`] read them: label, place, whether the child opens (`None`
-/// for one the node already held, which keeps its own) and its own icon.
+/// for one the node already held, which keeps its own; a held child not yet read takes a `Some`)
+/// and its own icon.
 pub type Kids = Vec<(String, Place, Option<bool>, Own)>;
 
 /// The file system half of [`fill`]: `place`'s children with their own icons (icon files decoded
@@ -407,10 +408,15 @@ pub fn fill_with(
             |((label, p, opened, own), was)| match was.and_then(|i| old[i].take()) {
                 Some(n) => {
                     let (icon, open_icon) = wear(places, &p, &own, icons);
+                    let has_children = match opened {
+                        Some(opens) if n.children.is_empty() => opens,
+                        _ => n.has_children,
+                    };
                     Node {
                         label,
                         icon,
                         open_icon,
+                        has_children,
                         ..n
                     }
                 }
@@ -464,6 +470,19 @@ fn compact(tree: &mut TreeView, places: &mut Places) {
     places.at = fresh;
     let live: HashSet<&Place> = places.at.iter().collect();
     places.waiting.retain(|p, _| live.contains(p));
+}
+
+/// The places of the nodes holding children, each before the nodes under it.
+pub fn filled(tree: &TreeView, places: &[Place]) -> Vec<Place> {
+    fn walk(nodes: &[Node], places: &[Place], out: &mut Vec<Place>) {
+        for n in nodes.iter().filter(|n| !n.children.is_empty()) {
+            out.extend(places.get(n.id as usize).cloned());
+            walk(&n.children, places, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(&tree.roots, places, &mut out);
+    out
 }
 
 pub fn place_of(tree: &TreeView, places: &[Place], path: &[usize]) -> Option<Place> {

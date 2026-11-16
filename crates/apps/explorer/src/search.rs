@@ -54,6 +54,8 @@ pub(crate) struct Search {
     last_start: Option<Instant>,
     /// The re-run deadline a wake was asked for.
     armed: Option<Instant>,
+    /// The results shown came from no tool ([`reprisefs::search::NO_TOOL`]).
+    no_tool: bool,
 }
 
 /// What a held folder change asks for ([`Search::take_stale`]).
@@ -105,14 +107,20 @@ impl Search {
     }
 
     /// The run `serial` answered: true when it is the latest, whose results the view now shows.
-    pub fn landed(&mut self, serial: u64) -> bool {
+    pub fn landed(&mut self, serial: u64, no_tool: bool) -> bool {
         match self.running.take_if(|r| r.serial == serial) {
             Some(r) => {
                 self.shown = Some(r.asked.clone());
+                self.no_tool = no_tool;
                 true
             }
             None => false,
         }
+    }
+
+    /// Whether the results shown say [`reprisefs::search::NO_TOOL`] instead of a count.
+    pub fn no_tool(&self) -> bool {
+        self.shown.is_some() && self.no_tool
     }
 
     /// The folder watch saw a change: true when a run is under way or its results are shown,
@@ -159,10 +167,12 @@ impl Search {
 /// A search's answer, read on its thread.
 pub(crate) struct Found {
     serial: u64,
+    no_tool: bool,
     read: Read,
 }
 
-pub(crate) type Runner = fn(&Query, &AtomicBool) -> Vec<PathBuf>;
+/// The tool behind a search: its paths, or None when no tool searches the folder.
+pub(crate) type Runner = fn(&Query, &AtomicBool) -> Option<Vec<PathBuf>>;
 
 impl Explorer {
     /// Ctrl+F and F3: the keyboard goes to the Search field, its text selected.
@@ -204,13 +214,15 @@ impl Explorer {
                 query,
                 cancel,
             } = started;
-            let items: Vec<_> = run(&query, &cancel)
-                .iter()
+            let paths = run(&query, &cancel);
+            let no_tool = paths.is_none();
+            let items: Vec<_> = (paths.iter().flatten())
                 .map(|p| reprisefs::listing::item_at(p, &globs))
                 .collect();
             let icons = ReadIcons::read(&items, reprisekit::icontheme::listing_px(list), scale);
             Found {
                 serial,
+                no_tool,
                 read: Read {
                     place,
                     listed: Listed {
@@ -244,7 +256,7 @@ impl Explorer {
     /// since. Results for the text already shown (a refresh) keep the selection and scroll.
     fn show_found(&mut self, found: Found, ctx: &mut Ctx) -> Reply {
         let again = self.search.shown().cloned();
-        if !self.search.landed(found.serial) || found.read.place != self.place {
+        if !self.search.landed(found.serial, found.no_tool) || found.read.place != self.place {
             return Reply::none();
         }
         let reply = match again.as_ref() == self.search.shown() {
@@ -321,8 +333,8 @@ mod tests {
         let second = s.start(&folder("/data"), "ab", false).expect("second");
         assert!(first.cancel.load(Ordering::Relaxed), "the first run stops");
         assert!(!second.cancel.load(Ordering::Relaxed));
-        assert!(!s.landed(first.serial), "its answer is dropped");
-        assert!(s.landed(second.serial));
+        assert!(!s.landed(first.serial, false), "its answer is dropped");
+        assert!(s.landed(second.serial, false));
         assert_eq!(
             s.shown(),
             Some(&Asked {
@@ -347,7 +359,7 @@ mod tests {
             Stale::None,
             "not while the run is under way"
         );
-        assert!(s.landed(run.serial));
+        assert!(s.landed(run.serial, false));
         assert_eq!(
             s.take_stale(later),
             Stale::Now,
@@ -362,7 +374,7 @@ mod tests {
             Stale::None,
             "a new run already sees the change"
         );
-        assert!(!s.landed(run.serial) && s.landed(fresh.serial));
+        assert!(!s.landed(run.serial, false) && s.landed(fresh.serial, false));
     }
 
     #[test]
@@ -371,7 +383,7 @@ mod tests {
         let before = Instant::now();
         let run = s.start(&folder("/data"), "a", false).expect("a run");
         assert!(s.hold_change());
-        assert!(s.landed(run.serial));
+        assert!(s.landed(run.serial, false));
         let Stale::WakeAt(at) = s.take_stale(Instant::now()) else {
             panic!("a re-run right after a landing waits for a wake");
         };
@@ -393,9 +405,9 @@ mod tests {
         let run = s.start(&folder("/data"), "a", false).expect("a run");
         assert!(s.cancel());
         assert!(run.cancel.load(Ordering::Relaxed));
-        assert!(!s.landed(run.serial), "a cancelled run never shows");
+        assert!(!s.landed(run.serial, false), "a cancelled run never shows");
         let run = s.start(&folder("/data"), "a", false).expect("a run");
-        assert!(s.landed(run.serial));
+        assert!(s.landed(run.serial, false));
         assert!(s.cancel());
         assert_eq!(s.shown(), None);
         assert_eq!(s.caption(), None);
