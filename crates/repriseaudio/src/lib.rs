@@ -58,9 +58,16 @@ pub struct Route {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stream {
     pub id: u32,
+    /// `object.serial`, which unlike `id` is never reused.
+    pub serial: Option<u64>,
     pub channels: Channels,
     /// The sink's `node.name` the stream is moved to; `None` follows the default.
     pub target: Option<String>,
+    /// The serial its `target.object` names, also one no sink has.
+    pub target_serial: Option<u64>,
+    /// Whether its properties name a sink (`target.object`, `node.target`), which it plays to
+    /// while no `target.object` moves it.
+    pub named_target: bool,
 }
 
 /// A sound card as Disable and Enable see it: whether its profile is `off`, which directions its profiles carry, and which profile Enable picks.
@@ -151,6 +158,7 @@ impl Store {
             if matches!(item.get("info"), Some(Value::Null)) {
                 self.objects.remove(&id);
                 self.heard.remove(&id);
+                self.forget_subject(id);
                 continue;
             }
             match self.objects.get_mut(&id) {
@@ -166,6 +174,17 @@ impl Store {
                 }
             }
             self.note_heard(id);
+        }
+    }
+
+    /// PipeWire drops a removed object's metadata without `pw-dump` listing it, so an id reused
+    /// by the next stream would inherit its `target.object`.
+    fn forget_subject(&mut self, id: u32) {
+        let metadata = (self.objects.values_mut())
+            .filter(|o| o.get("type").and_then(Value::as_str) == Some(METADATA))
+            .filter_map(|o| o.get_mut("metadata").and_then(Value::as_array_mut));
+        for entries in metadata {
+            entries.retain(|e| number(&e["subject"]) != Some(id));
         }
     }
 
@@ -225,9 +244,9 @@ impl Store {
             }
         }
         for s in snap.apps.iter_mut().flat_map(|a| &mut a.streams) {
-            s.target = targets
-                .get(&s.id)
-                .and_then(|&serial| snap.sinks.iter().find(|d| d.serial == Some(serial)))
+            s.target_serial = targets.get(&s.id).copied();
+            s.target = (s.target_serial)
+                .and_then(|serial| snap.sinks.iter().find(|d| d.serial == Some(serial)))
                 .map(|d| d.name.clone());
         }
         snap.apps.sort_by(|a, b| {
@@ -459,14 +478,20 @@ fn add_stream(
     }
     .to_lowercase();
     let pids = stream_pids(props, client.map(|c| &c["info"]["props"]));
+    let named_target = ["target.object", "node.target"]
+        .iter()
+        .any(|k| text(k).is_some_and(|t| t != "-1"));
     let mut v = device(id, object);
     v.channels.shares = shares;
     match apps.iter_mut().find(|a| a.key == key) {
         Some(a) => {
             a.streams.push(Stream {
                 id,
+                serial: v.serial,
                 channels: v.channels,
                 target: None,
+                target_serial: None,
+                named_target,
             });
             for p in pids {
                 if !a.pids.contains(&p) {
@@ -498,8 +523,11 @@ fn add_stream(
                 volume: v.volume,
                 streams: vec![Stream {
                     id,
+                    serial: v.serial,
                     channels: v.channels,
                     target: None,
+                    target_serial: None,
+                    named_target,
                 }],
                 mute: v.mute,
             });
@@ -847,6 +875,16 @@ pub fn set_profile(card: u32, index: u32) -> bool {
 /// WirePlumber remembers the pick for the program's later streams.
 pub fn set_target(stream: u32, sink: Option<u64>) -> bool {
     writer().send(Key::Target(stream), PW_METADATA, target_args(stream, sink))
+}
+
+/// [`set_target`], then `done` as [`set_default_then`] calls it.
+pub fn set_target_then(
+    stream: u32,
+    sink: Option<u64>,
+    done: impl FnOnce(bool) + Send + 'static,
+) -> bool {
+    let args = target_args(stream, sink);
+    writer().send_then(Key::Target(stream), PW_METADATA, args, Box::new(done))
 }
 
 fn target_args(stream: u32, sink: Option<u64>) -> Vec<String> {
@@ -1741,6 +1779,63 @@ mod tests {
     }
 
     #[test]
+    fn a_removed_streams_target_does_not_pass_to_the_next_stream_with_its_id() {
+        let mut store = loaded();
+        let serial = store.snapshot().sinks[0]
+            .serial
+            .expect("the sink has a serial");
+        store.apply(&json(&format!(
+            "[{}]",
+            stream(90, r#""application.name": "Game""#, "[1.0]", false)
+        )));
+        store.apply(&json(&format!(
+            r#"[{{ "id": 39, "type": "PipeWire:Interface:Metadata", "metadata": [
+                {{ "subject": 90, "key": "target.object", "type": "Spa:Id", "value": {serial} }}
+            ] }}]"#
+        )));
+        assert_eq!(
+            store.snapshot().apps[0].streams[0].target_serial,
+            Some(serial)
+        );
+        store.apply(&json(r#"[{"id": 90, "info": null}]"#));
+        store.apply(&json(
+            r#"[{ "id": 39, "type": "PipeWire:Interface:Metadata", "metadata": [] }]"#,
+        ));
+        store.apply(&json(&format!(
+            "[{}]",
+            stream(90, r#""application.name": "Music""#, "[1.0]", false)
+        )));
+        let music = &store.snapshot().apps[0];
+        assert_eq!(music.label, "Music");
+        assert_eq!(music.streams[0].target_serial, None);
+    }
+
+    #[test]
+    fn a_stream_naming_a_sink_in_its_properties_is_told_apart() {
+        let mut store = loaded();
+        store.apply(&json(&format!(
+            "[{}, {}, {}]",
+            stream(
+                90,
+                r#""application.name": "a", "target.object": "speakers""#,
+                "[1.0]",
+                false
+            ),
+            stream(
+                91,
+                r#""application.name": "b", "node.target": "-1""#,
+                "[1.0]",
+                false
+            ),
+            stream(92, r#""application.name": "c""#, "[1.0]", false)
+        )));
+        let named: Vec<bool> = (store.snapshot().apps.iter())
+            .map(|a| a.streams[0].named_target)
+            .collect();
+        assert_eq!(named, [true, false, false]);
+    }
+
+    #[test]
     fn apps_sort_by_label() {
         let mut store = Store::new();
         store.apply(&json(&format!(
@@ -1787,6 +1882,17 @@ mod tests {
         assert_eq!(snap.output_of(game), Some(0), "the first sink");
         assert_eq!(output("Music"), None);
         assert_eq!(output("Call"), None);
+        let target_serial = |label: &str| {
+            let app = snap.apps.iter().find(|a| a.label == label).expect("app");
+            app.streams[0].target_serial
+        };
+        assert_eq!(target_serial("Game"), Some(serial));
+        assert_eq!(target_serial("Music"), None);
+        assert_eq!(
+            target_serial("Call"),
+            Some(9999),
+            "kept with no sink to name"
+        );
 
         store.apply(&json(
             r#"[{ "id": 39, "type": "PipeWire:Interface:Metadata",
@@ -1803,8 +1909,11 @@ mod tests {
     fn streams_on_different_sinks_are_not_settled() {
         let stream = |id, target: Option<&str>| Stream {
             id,
+            serial: None,
             channels: Default::default(),
             target: target.map(String::from),
+            target_serial: None,
+            named_target: false,
         };
         let app = |streams| App {
             key: "game".into(),
