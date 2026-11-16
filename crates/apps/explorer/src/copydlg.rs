@@ -69,9 +69,10 @@ impl Progress {
         }
     }
 
-    /// Bring the dialog up for a job still running [`SHOW_AFTER`] after it started.
+    /// Bring the dialog up for a job still running [`SHOW_AFTER`] after it started. A job held on
+    /// a failure box waits for the answer, so the dialog never maps over the box.
     fn show(&mut self) -> bool {
-        if self.shown.is_some() || self.started.elapsed() < SHOW_AFTER {
+        if self.shown.is_some() || self.started.elapsed() < SHOW_AFTER || self.meter.asking() {
             return false;
         }
         let cp = CopyProgress::new(self.kind, &self.from, &self.to, accent());
