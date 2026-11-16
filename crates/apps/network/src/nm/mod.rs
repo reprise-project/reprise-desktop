@@ -170,8 +170,8 @@ pub struct Device {
     pub managed: bool,
     pub carrier: bool,
     pub speed_mbit: u32,
-    /// When the device last entered `Connected`; the status window's
-    /// Duration counts from here.
+    /// When the device last entered `Connected`, as its oldest global address dates it; the
+    /// status window's Duration counts from here and is blank when it is None.
     pub connected_since: Option<Instant>,
     pub ip4: Option<Ip4>,
     pub wifi: Option<Wifi>,

@@ -7,6 +7,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use zbus::Connection;
 
 mod act;
+mod addrage;
 mod call;
 mod follow;
 mod snapshot;
