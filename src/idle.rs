@@ -157,7 +157,6 @@ pub struct IdleState {
     /// remainder) instead of a new timer per input event.
     deadline_current: bool,
     dim: Vec<RectId>,
-    dim_timer: Option<RegistrationToken>,
     dim_since: Instant,
     powered_off: Vec<Output>,
     /// The Console side's own clock in lock mode, which only the computer's input restarts.
@@ -198,7 +197,6 @@ impl IdleState {
             steps: Steps::default(),
             deadline_current: false,
             dim: Vec::new(),
-            dim_timer: None,
             dim_since: Instant::now(),
             powered_off: Vec::new(),
             console: ConsoleIdle::default(),
@@ -629,36 +627,26 @@ pub fn outputs_changed(state: &mut State) {
 /// premultiplied colour, so a partly faded rect is `DIM_GREY * t` at
 /// alpha `t`.
 const DIM_GREY: f32 = 0.5;
-const DIM_TICK: Duration = Duration::from_millis(40);
 
 fn start_dim(state: &mut State) {
     end_dim(state);
     state.idle.dim_since = Instant::now();
     state.idle.dim = cover_outputs(state, dim_color(0.0));
-    let timer = state
-        .handle
-        .insert_source(Timer::from_duration(DIM_TICK), |_, _, state| {
-            if state.idle.dim.is_empty() {
-                state.idle.dim_timer = None;
-                return TimeoutAction::Drop;
-            }
-            let t = dim_progress(state);
-            for &r in &state.idle.dim {
-                state.scene.rect_set_color(r, dim_color(t));
-            }
-            state.redraw_all();
-            if t < 1.0 {
-                TimeoutAction::ToDuration(DIM_TICK)
-            } else {
-                state.idle.dim_timer = None;
-                TimeoutAction::Drop
-            }
-        });
-    match timer {
-        Ok(t) => state.idle.dim_timer = Some(t),
-        Err(e) => log::warn!("idle dim timer: {}", e.error),
+    state.animate(crate::animclock::Anim::IdleDim);
+    state.redraw_all();
+}
+
+/// One frame of the dim; whether it still darkens.
+pub fn dim_step(state: &mut State, now: Instant) -> bool {
+    if state.idle.dim.is_empty() {
+        return false;
+    }
+    let t = dim_progress(state, now);
+    for &r in &state.idle.dim {
+        state.scene.rect_set_color(r, dim_color(t));
     }
     state.redraw_all();
+    t < 1.0
 }
 
 /// Re-cover the outputs after a layout change while dimming: the rects are
@@ -671,7 +659,7 @@ fn refit_dim(state: &mut State) {
     for r in std::mem::take(&mut state.idle.dim) {
         state.scene.destroy(r);
     }
-    let t = dim_progress(state);
+    let t = dim_progress(state, Instant::now());
     state.idle.dim = cover_outputs(state, dim_color(t));
     state.redraw_all();
 }
@@ -693,9 +681,11 @@ fn cover_outputs(state: &mut State, color: [f32; 4]) -> Vec<RectId> {
     rects
 }
 
-fn dim_progress(state: &State) -> f32 {
+fn dim_progress(state: &State, now: Instant) -> f32 {
     let fade_ms = config(state).lock_fade as f32 * 1000.0;
-    let elapsed = state.idle.dim_since.elapsed().as_millis() as f32;
+    let elapsed = now
+        .saturating_duration_since(state.idle.dim_since)
+        .as_millis() as f32;
     (elapsed / fade_ms.max(1.0)).min(1.0)
 }
 
@@ -710,9 +700,6 @@ pub fn end_dim(state: &mut State) {
     }
     for r in std::mem::take(&mut state.idle.dim) {
         state.scene.destroy(r);
-    }
-    if let Some(t) = state.idle.dim_timer.take() {
-        state.handle.remove(t);
     }
     state.redraw_all();
 }
@@ -835,6 +822,26 @@ impl OutputPowerHandler for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_dim_darkens_on_the_outputs_frames_over_lock_fade() {
+        let mut config = crate::config::Config::default();
+        config.idle.lock_fade = 2;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        start_dim(&mut h.state);
+        let start = h.state.idle.dim_since;
+        let shade = |h: &crate::harness::Harness| h.state.scene.rect_color(h.state.idle.dim[0]);
+        crate::animclock::step(&mut h.state, start + Duration::from_secs(1));
+        assert_eq!(shade(&h), Some(dim_color(0.5)), "half way, half dimmed");
+        crate::animclock::assert_steps_until(
+            &mut h.state,
+            crate::animclock::Anim::IdleDim,
+            &["TEST-1"],
+            start + Duration::from_secs(2),
+        );
+        assert_eq!(shade(&h), Some(dim_color(1.0)), "fully dimmed at its end");
+    }
 
     #[test]
     fn activity_reaches_the_clients_at_most_every_notify_interval() {
