@@ -15,13 +15,10 @@ impl State {
     fn jump_target(&self, tree: TreeId, i: usize) -> Option<JumpTarget> {
         let bar = self.bar(tree)?;
         let live = self.task_windows();
-        let mut windows = bar.buttons.get(i)?.clone();
+        let mut windows = bar.slots.get(i)?.windows.clone();
         windows.retain(|w| live.contains(w));
-        let pin = bar
-            .pins
-            .get(i)
-            .copied()
-            .flatten()
+        let pin = (bar.slots.get(i))
+            .and_then(|s| s.pin)
             .and_then(|k| self.quicklaunch.get(k));
         let app_id = windows
             .first()

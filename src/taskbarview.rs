@@ -168,10 +168,7 @@ pub struct Bar {
     orb_tree: TreeId,
     pub(crate) orb_up: Option<bool>,
     pub layout: TaskbarLayout,
-    pub buttons: Vec<Vec<WindowId>>,
-    pub pins: Vec<Option<usize>>,
-    pub runs: Vec<Option<String>>,
-    pub dialogs: Vec<Option<u64>>,
+    pub slots: Vec<crate::taskbar::Slot<WindowId>>,
     pub start_pressed: bool,
     quick_hot: Option<usize>,
     pub quick_pressed: Option<usize>,
@@ -302,13 +299,11 @@ fn anchored(bar: &Bar, anchors: &[(std::ops::Range<usize>, usize)]) -> Vec<Ancho
     anchors
         .iter()
         .map(|(u, anchor)| {
-            let wins = u
-                .clone()
-                .filter_map(|b| bar.buttons.get(b))
-                .flatten()
+            let wins = (u.clone().filter_map(|b| bar.slots.get(b)))
+                .flat_map(|s| &s.windows)
                 .copied()
                 .collect();
-            (wins, bar.dialogs.get(u.start).copied().flatten(), *anchor)
+            (wins, bar.slots.get(u.start).and_then(|s| s.dialog), *anchor)
         })
         .collect()
 }
@@ -428,10 +423,7 @@ impl State {
             orb_tree,
             orb_up: None,
             layout: empty_layout(),
-            buttons: Vec::new(),
-            pins: Vec::new(),
-            runs: Vec::new(),
-            dialogs: Vec::new(),
+            slots: Vec::new(),
             start_pressed: false,
             quick_hot: None,
             quick_pressed: None,

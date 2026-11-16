@@ -80,7 +80,7 @@ impl State {
         if tree != bar.tree {
             return None;
         }
-        let i = crate::taskbar::find_task(&bar.buttons, &bar.pins, &bar.dialogs, &key)?;
+        let i = crate::taskbar::find_task(&bar.slots, &key)?;
         let p = self.pointer_location();
         (self.bar_hit(bar, p.x, p.y) == TaskbarHit::Task(i)).then_some(i)
     }
@@ -101,10 +101,7 @@ impl State {
             self.scene.set_enabled(bar.orb_tree, false);
             bar.glass
                 .set(&mut self.scene, &self.glass, bar.glass_tree, None);
-            bar.buttons.clear();
-            bar.pins.clear();
-            bar.runs.clear();
-            bar.dialogs.clear();
+            bar.slots.clear();
             bar.start_mix = None;
             bar.drawn = None;
             bar.orb_up = None;
@@ -296,28 +293,23 @@ impl State {
                 }
             })
             .collect();
-        bar.buttons = slots
-            .iter()
-            .map(|s| s.windows.iter().map(|&i| windows[i]).collect())
-            .collect();
-        bar.pins = slots.iter().map(|s| s.pin).collect();
-        bar.runs = if mode == crate::config::TaskbarButtons::Group {
-            slots
-                .iter()
-                .map(|s| match (s.pin, s.windows.first()) {
-                    (None, Some(&w)) => apps.get(w).filter(|a| !a.is_empty()).cloned(),
+        let group = mode == crate::config::TaskbarButtons::Group;
+        bar.slots = (slots.iter())
+            .map(|s| crate::taskbar::Slot {
+                windows: s.windows.iter().map(|&i| windows[i]).collect(),
+                pin: s.pin,
+                run: match (group, s.pin, s.windows.first()) {
+                    (true, None, Some(&w)) => apps.get(w).filter(|a| !a.is_empty()).cloned(),
                     _ => None,
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        bar.dialogs = slots.iter().map(|s| s.dialog).collect();
+                },
+                dialog: s.dialog,
+            })
+            .collect();
         bar.layout = layout;
         let start_icon = start_icon(&self.config, icons, scale);
         let task_hot = bar
             .task_hot
-            .and_then(|key| crate::taskbar::find_task(&bar.buttons, &bar.pins, &bar.dialogs, &key));
+            .and_then(|key| crate::taskbar::find_task(&bar.slots, &key));
         bar.task_held = self.held_task(bar);
         // An idle pin's slot light has no spot, so moves over it redraw nothing.
         let spot = bar.task_held.or(task_hot).is_some_and(|i| {
@@ -333,15 +325,15 @@ impl State {
             true => self.windows.iter().filter_map(|w| pid(w.id)).collect(),
             false => HashSet::new(),
         };
-        let task_progress = (bar.buttons.iter().zip(&bar.dialogs))
-            .map(|(wins, dialog)| {
-                if let Some(id) = dialog {
-                    return (dialogs.iter().find(|d| d.id == *id)).and_then(|d| d.progress);
+        let task_progress = (bar.slots.iter())
+            .map(|s| {
+                if let Some(id) = s.dialog {
+                    return (dialogs.iter().find(|d| d.id == id)).and_then(|d| d.progress);
                 }
                 if !any_shown {
                     return None;
                 }
-                wins.iter().find_map(|id| {
+                s.windows.iter().find_map(|id| {
                     let w = self.windows.iter().find(|w| w.id == *id)?;
                     let entries = &self.launcher_entries;
                     entries.progress(pid(w.id), &w.app_id(), &self.app_index, |p| {

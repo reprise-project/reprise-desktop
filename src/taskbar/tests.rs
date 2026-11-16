@@ -1,5 +1,29 @@
 use super::*;
 
+/// A row whose slot `i` holds `pins[i]` and `runs[i]`; a shorter list leaves the rest None.
+fn row_of(pins: &[Option<usize>], runs: &[Option<String>]) -> Vec<Slot> {
+    (0..pins.len().max(runs.len()))
+        .map(|i| Slot {
+            pin: pins.get(i).copied().flatten(),
+            run: runs.get(i).cloned().flatten(),
+            ..Slot::default()
+        })
+        .collect()
+}
+
+/// A row whose slot `i` holds `buttons[i]`, `pins[i]` and `dialogs[i]`; a shorter list leaves the
+/// rest empty.
+fn keyed(buttons: &[Vec<u32>], pins: &[Option<usize>], dialogs: &[Option<u64>]) -> Vec<Slot<u32>> {
+    (0..buttons.len().max(pins.len()).max(dialogs.len()))
+        .map(|i| Slot {
+            windows: buttons.get(i).cloned().unwrap_or_default(),
+            pin: pins.get(i).copied().flatten(),
+            run: None,
+            dialog: dialogs.get(i).copied().flatten(),
+        })
+        .collect()
+}
+
 #[test]
 fn date_text_is_the_weekday_and_the_locales_own_date() {
     let s = date_text();
@@ -489,7 +513,7 @@ fn pinned_slots_lead_in_pin_order_and_unmatched_apps_follow() {
     let slot = |windows: &[usize], pin: Option<usize>| Slot {
         windows: windows.to_vec(),
         pin,
-        dialog: None,
+        ..Slot::default()
     };
     let combined = merge_row(
         vec![vec![0], vec![1, 3, 4], vec![2]],
@@ -591,17 +615,17 @@ fn a_dragged_button_drops_among_the_row_units() {
         Rect::new(186, 0, 60, 40),
     ];
     let pins = [Some(0), Some(0), Some(1), None];
-    assert_eq!(row_drop_slot(&tasks, &pins, &[], 3, 10), 0);
+    assert_eq!(row_drop_slot(&tasks, &row_of(&pins, &[]), 3, 10), 0);
     assert_eq!(
-        row_drop_slot(&tasks, &pins, &[], 3, 60),
+        row_drop_slot(&tasks, &row_of(&pins, &[]), 3, 60),
         0,
         "pin 0 spans 0..122"
     );
-    assert_eq!(row_drop_slot(&tasks, &pins, &[], 3, 61), 1);
-    assert_eq!(row_drop_slot(&tasks, &pins, &[], 3, 150), 1);
-    assert_eq!(row_drop_slot(&tasks, &pins, &[], 3, 160), 2);
+    assert_eq!(row_drop_slot(&tasks, &row_of(&pins, &[]), 3, 61), 1);
+    assert_eq!(row_drop_slot(&tasks, &row_of(&pins, &[]), 3, 150), 1);
+    assert_eq!(row_drop_slot(&tasks, &row_of(&pins, &[]), 3, 160), 2);
     assert_eq!(
-        row_drop_slot(&tasks, &pins, &[], 3, 400),
+        row_drop_slot(&tasks, &row_of(&pins, &[]), 3, 400),
         2,
         "the unpinned button stays last"
     );
@@ -609,7 +633,7 @@ fn a_dragged_button_drops_among_the_row_units() {
     assert!(move_button(
         &mut order,
         0,
-        row_drop_slot(&tasks, &pins, &[], 3, 160)
+        row_drop_slot(&tasks, &row_of(&pins, &[]), 3, 160)
     ));
     assert_eq!(order, ["files", "foot"]);
 }
@@ -703,13 +727,13 @@ fn a_dragged_button_floats_where_it_was_grabbed_inside_the_row() {
 #[test]
 fn a_pins_buttons_move_as_one_unit() {
     let pins = [Some(0), Some(0), None, Some(1)];
-    assert_eq!(row_units(&pins, &[]), [0..2, 2..3, 3..4]);
+    assert_eq!(row_units(&row_of(&pins, &[])), [0..2, 2..3, 3..4]);
 }
 
 #[test]
 fn an_unpinned_button_dropped_before_the_pins_anchors_at_0() {
     let pins = [Some(0), Some(1), None];
-    let (pin_order, anchors) = reorder_row(&pins, &[], 2, 0).unwrap();
+    let (pin_order, anchors) = reorder_row(&row_of(&pins, &[]), 2, 0).unwrap();
     assert_eq!(pin_order, [0, 1]);
     assert_eq!(anchors, [(2..3, 0)]);
 }
@@ -717,7 +741,7 @@ fn an_unpinned_button_dropped_before_the_pins_anchors_at_0() {
 #[test]
 fn a_pin_dragged_past_an_unpinned_button_reorders_both() {
     let pins = [Some(0), None, Some(1)];
-    let (pin_order, anchors) = reorder_row(&pins, &[], 0, 3).unwrap();
+    let (pin_order, anchors) = reorder_row(&row_of(&pins, &[]), 0, 3).unwrap();
     assert_eq!(pin_order, [1, 0], "p1 first, then p0");
     assert_eq!(anchors, [(1..2, 0)], "w now precedes both pins");
 }
@@ -725,7 +749,7 @@ fn a_pin_dragged_past_an_unpinned_button_reorders_both() {
 #[test]
 fn a_pin_added_after_a_drag_joins_the_pins() {
     let pins = [Some(0), Some(1), None, None];
-    let (pin_order, anchors) = reorder_row(&pins, &[], 2, 1).unwrap();
+    let (pin_order, anchors) = reorder_row(&row_of(&pins, &[]), 2, 1).unwrap();
     assert_eq!(pin_order, [0, 1]);
     assert_eq!(anchors, [(2..3, 1), (3..4, usize::MAX)]);
     let places = [
@@ -742,8 +766,8 @@ fn a_pin_added_after_a_drag_joins_the_pins() {
 #[test]
 fn a_drop_in_place_moves_nothing() {
     let pins = [Some(0), None];
-    assert_eq!(reorder_row(&pins, &[], 1, 1), None);
-    assert_eq!(reorder_row(&pins, &[], 1, 2), None);
+    assert_eq!(reorder_row(&row_of(&pins, &[]), 1, 1), None);
+    assert_eq!(reorder_row(&row_of(&pins, &[]), 1, 2), None);
 }
 
 #[test]
@@ -757,40 +781,50 @@ fn with_pins_every_task_button_acts_on_release_and_without_on_press() {
 fn a_held_task_button_is_found_again_after_the_row_changes() {
     let buttons = vec![vec![10], vec![20], vec![]];
     let pins = vec![None, None, Some(3)];
-    let second = task_key(&buttons, &pins, &[], 1).unwrap();
-    let pinned = task_key(&buttons, &pins, &[], 2).unwrap();
+    let second = task_key(&keyed(&buttons, &pins, &[]), 1).unwrap();
+    let pinned = task_key(&keyed(&buttons, &pins, &[]), 2).unwrap();
     assert_eq!((second, pinned), (TaskKey::Window(20), TaskKey::Pin(3)));
-    assert_eq!(task_key(&buttons, &pins, &[], 3), None, "stale index");
+    assert_eq!(
+        task_key(&keyed(&buttons, &pins, &[]), 3),
+        None,
+        "stale index"
+    );
     let buttons = vec![vec![20], vec![]];
     let pins = vec![None, Some(3)];
-    assert_eq!(find_task(&buttons, &pins, &[], &second), Some(0));
-    assert_eq!(find_task(&buttons, &pins, &[], &pinned), Some(1));
+    assert_eq!(find_task(&keyed(&buttons, &pins, &[]), &second), Some(0));
+    assert_eq!(find_task(&keyed(&buttons, &pins, &[]), &pinned), Some(1));
     let buttons = vec![vec![20], vec![30, 31]];
     assert_eq!(
-        find_task(&buttons, &pins, &[], &pinned),
+        find_task(&keyed(&buttons, &pins, &[]), &pinned),
         Some(1),
         "same slot"
     );
     assert_eq!(
-        find_task(&buttons, &pins, &[], &TaskKey::Window(31)),
+        find_task(&keyed(&buttons, &pins, &[]), &TaskKey::Window(31)),
         Some(1)
     );
     assert_eq!(
-        find_task(&buttons, &pins, &[], &TaskKey::Window(10)),
+        find_task(&keyed(&buttons, &pins, &[]), &TaskKey::Window(10)),
         None,
         "gone"
     );
     // A pinned slot is held by its pin even with windows, so it outlives them.
-    assert_eq!(task_key(&buttons, &pins, &[], 1), Some(TaskKey::Pin(3)));
+    assert_eq!(
+        task_key(&keyed(&buttons, &pins, &[]), 1),
+        Some(TaskKey::Pin(3))
+    );
     let buttons = vec![vec![20], vec![]];
     assert_eq!(
-        find_task(&buttons, &pins, &[], &pinned),
+        find_task(&keyed(&buttons, &pins, &[]), &pinned),
         Some(1),
         "windows gone"
     );
     let buttons = vec![vec![20], vec![30], vec![31]];
     let pins = vec![None, Some(3), Some(3)];
-    assert_eq!(task_key(&buttons, &pins, &[], 2), Some(TaskKey::Window(31)));
+    assert_eq!(
+        task_key(&keyed(&buttons, &pins, &[]), 2),
+        Some(TaskKey::Window(31))
+    );
 }
 
 /// The hot button is keyed like a held one: when its window closes, the neighbour sliding into its
@@ -799,12 +833,12 @@ fn a_held_task_button_is_found_again_after_the_row_changes() {
 fn a_hot_task_button_that_closes_lights_no_neighbour() {
     let buttons = vec![vec![10], vec![20], vec![30]];
     let pins = vec![None; 3];
-    let hot = task_key(&buttons, &pins, &[], 1).unwrap();
-    assert_eq!(find_task(&buttons, &pins, &[], &hot), Some(1));
+    let hot = task_key(&keyed(&buttons, &pins, &[]), 1).unwrap();
+    assert_eq!(find_task(&keyed(&buttons, &pins, &[]), &hot), Some(1));
     let buttons = vec![vec![10], vec![30]];
-    assert_eq!(find_task(&buttons, &pins[..2], &[], &hot), None);
+    assert_eq!(find_task(&keyed(&buttons, &pins[..2], &[]), &hot), None);
     let buttons = vec![vec![20], vec![30]];
-    assert_eq!(find_task(&buttons, &pins[..2], &[], &hot), Some(0));
+    assert_eq!(find_task(&keyed(&buttons, &pins[..2], &[]), &hot), Some(0));
 }
 
 /// A dialog's button follows the pinned buttons and earlier windows and goes before later ones, as
@@ -851,25 +885,29 @@ fn a_dragged_unit_passes_a_neighbour_by_its_leading_end() {
     let pins = [None; 4];
     let run = Some("notepad".to_string());
     let runs = [run.clone(), run.clone(), run, None];
-    assert_eq!(row_drop_slot(&tasks, &pins, &runs, 1, 90), 0, "in place");
     assert_eq!(
-        row_drop_slot(&tasks, &pins, &runs, 1, 89),
+        row_drop_slot(&tasks, &row_of(&pins, &runs), 1, 90),
+        0,
+        "in place"
+    );
+    assert_eq!(
+        row_drop_slot(&tasks, &row_of(&pins, &runs), 1, 89),
         0,
         "the lead stays short of the lone button's centre"
     );
     assert_eq!(
-        row_drop_slot(&tasks, &pins, &runs, 1, 150),
+        row_drop_slot(&tasks, &row_of(&pins, &runs), 1, 150),
         2,
         "the pointer carried to the run's last button (210) reaches the lone button's centre"
     );
     let tasks = [0, 60, 120, 180].map(|x| Rect::new(x, 0, 60, 40));
     let runs = [None, runs[0].clone(), runs[1].clone(), runs[2].clone()];
     assert_eq!(
-        row_drop_slot(&tasks, &pins, &runs, 3, 150),
+        row_drop_slot(&tasks, &row_of(&pins, &runs), 3, 150),
         1,
         "grabbed in its tail, the pointer carried to the run's first button (30) reaches the centre"
     );
-    assert_eq!(row_drop_slot(&tasks, &pins, &runs, 3, 149), 0);
+    assert_eq!(row_drop_slot(&tasks, &row_of(&pins, &runs), 3, 149), 0);
 }
 
 #[test]
@@ -896,8 +934,8 @@ fn a_dragged_group_run_moves_as_one_unit() {
         Some("notepad".into()),
         Some("explorer".into()),
     ];
-    assert_eq!(row_units(&pins, &runs), [0..1, 1..3, 3..4]);
-    let (_, anchors) = reorder_row(&pins, &runs, 2, 3).unwrap();
+    assert_eq!(row_units(&row_of(&pins, &runs)), [0..1, 1..3, 3..4]);
+    let (_, anchors) = reorder_row(&row_of(&pins, &runs), 2, 3).unwrap();
     assert_eq!(
         anchors,
         [(3..4, usize::MAX), (1..3, usize::MAX)],
@@ -1094,17 +1132,17 @@ fn a_held_dialog_button_is_found_by_its_dialog() {
     let buttons = vec![vec![10], vec![]];
     let pins = vec![None, None];
     let dialogs = vec![None, Some(4)];
-    let key = task_key(&buttons, &pins, &dialogs, 1).unwrap();
+    let key = task_key(&keyed(&buttons, &pins, &dialogs), 1).unwrap();
     assert_eq!(key, TaskKey::Dialog(4));
     assert_eq!(
-        task_key(&buttons, &pins, &dialogs, 0),
+        task_key(&keyed(&buttons, &pins, &dialogs), 0),
         Some(TaskKey::Window(10))
     );
     let buttons = vec![vec![10], vec![20], vec![]];
     let dialogs = vec![None, None, Some(4)];
-    assert_eq!(find_task(&buttons, &[], &dialogs, &key), Some(2));
+    assert_eq!(find_task(&keyed(&buttons, &[], &dialogs), &key), Some(2));
     assert_eq!(
-        find_task(&buttons, &[], &[None, None], &key),
+        find_task(&keyed(&buttons, &[], &[None, None]), &key),
         None,
         "closed"
     );
@@ -1253,20 +1291,24 @@ fn a_launcher_dropped_on_the_row_pins_at_the_gap_nearest_the_pointer() {
         Rect::new(186, 0, 60, 40),
     ];
     let pins = [Some(0), Some(0), Some(1), None];
-    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 10), 0);
+    assert_eq!(pin_drop_gap(&tasks, &row_of(&pins, &[]), 10), 0);
     assert_eq!(
-        pin_drop_gap(&tasks, &pins, &[], 60),
+        pin_drop_gap(&tasks, &row_of(&pins, &[]), 60),
         0,
         "pin 0 spans 0..122"
     );
-    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 61), 1);
-    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 153), 1);
-    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 154), 2);
-    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 215), 2);
-    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 216), 3);
-    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 400), 3, "past the row");
+    assert_eq!(pin_drop_gap(&tasks, &row_of(&pins, &[]), 61), 1);
+    assert_eq!(pin_drop_gap(&tasks, &row_of(&pins, &[]), 153), 1);
+    assert_eq!(pin_drop_gap(&tasks, &row_of(&pins, &[]), 154), 2);
+    assert_eq!(pin_drop_gap(&tasks, &row_of(&pins, &[]), 215), 2);
+    assert_eq!(pin_drop_gap(&tasks, &row_of(&pins, &[]), 216), 3);
     assert_eq!(
-        pin_drop_gap(&tasks[..3], &pins, &[], 400),
+        pin_drop_gap(&tasks, &row_of(&pins, &[]), 400),
+        3,
+        "past the row"
+    );
+    assert_eq!(
+        pin_drop_gap(&tasks[..3], &row_of(&pins, &[]), 400),
         2,
         "a button the row left out takes no gap"
     );
@@ -1275,16 +1317,25 @@ fn a_launcher_dropped_on_the_row_pins_at_the_gap_nearest_the_pointer() {
 #[test]
 fn a_pin_dropped_between_pins_takes_the_quick_launch_slot_between_them() {
     let pins = [Some(0), Some(0), Some(1), None];
-    assert_eq!(insert_pins(&pins, &[], 0, 1), (0, vec![(3..4, usize::MAX)]));
-    assert_eq!(insert_pins(&pins, &[], 1, 1), (1, vec![(3..4, usize::MAX)]));
-    assert_eq!(insert_pins(&pins, &[], 2, 2), (2, vec![(3..4, usize::MAX)]));
+    assert_eq!(
+        insert_pins(&row_of(&pins, &[]), 0, 1),
+        (0, vec![(3..4, usize::MAX)])
+    );
+    assert_eq!(
+        insert_pins(&row_of(&pins, &[]), 1, 1),
+        (1, vec![(3..4, usize::MAX)])
+    );
+    assert_eq!(
+        insert_pins(&row_of(&pins, &[]), 2, 2),
+        (2, vec![(3..4, usize::MAX)])
+    );
 }
 
 #[test]
 fn a_pin_dropped_on_an_unpinned_button_takes_its_place() {
     let place = |anchor| Place { anchor, seq: 1 };
     let row = |pins: &[Option<usize>], gap| {
-        let (at, anchors) = insert_pins(pins, &[], gap, 1);
+        let (at, anchors) = insert_pins(&row_of(pins, &[]), gap, 1);
         let anchor = anchors[0].1;
         let slots = merge_row(vec![vec![0]], 3, &[None], &[place(anchor)], &[]);
         (at, order(&slots))

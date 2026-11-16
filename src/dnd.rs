@@ -1157,7 +1157,10 @@ impl State {
         }
         rest.sprung = true;
         let (bar, button) = (rest.bar, rest.button);
-        let Some(windows) = self.bar(bar).and_then(|b| b.buttons.get(button).cloned()) else {
+        let Some(windows) = self
+            .bar(bar)
+            .and_then(|b| b.slots.get(button).map(|s| s.windows.clone()))
+        else {
             return;
         };
         let Some(w) = self
