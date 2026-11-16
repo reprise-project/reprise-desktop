@@ -42,7 +42,8 @@ pub struct Browse {
 }
 
 pub const ERROR: repriseapp::WinId = repriseapp::WinId::named("browse error");
-pub const ERROR_TITLE: &str = "Error Renaming File or Folder";
+const RENAME_ERROR_TITLE: &str = "Error Renaming File or Folder";
+const MAKE_ERROR_TITLE: &str = "Error Creating Folder";
 
 /// A picker write on a listing thread, with the children of the node it changed read after it.
 pub enum Making {
@@ -67,10 +68,12 @@ pub enum Renamed {
     Done(PathBuf, Kids),
 }
 
+/// A picker write that failed, shown in the error box over the picker.
 pub struct Refused {
-    pub path: reprisekit::controls::treeview::Path,
-    pub name: String,
+    pub title: &'static str,
     pub text: String,
+    /// The node whose rename box OK opens again, and the name it held.
+    pub rename: Option<(reprisekit::controls::treeview::Path, String)>,
 }
 
 impl Browse {
@@ -425,7 +428,15 @@ impl Explorer {
         let (made, kids) = match made {
             None => return self.put_back_picker(b, Reply::none()),
             Some(Ok(made)) => made,
-            Some(Err(text)) => return self.message_box("Error Creating Folder", text, ctx),
+            Some(Err(text)) => {
+                self.wear_error_icon(ctx);
+                b.refused = Some(Refused {
+                    title: MAKE_ERROR_TITLE,
+                    text,
+                    rename: None,
+                });
+                return self.put_back_picker(b, Reply::redraw_all());
+            }
         };
         let inp = Inputs {
             show_hidden: self.settings.show_hidden,
@@ -524,9 +535,9 @@ impl Explorer {
                 log::warn!("explorer: naming {} failed: {text}", from.display());
                 self.wear_error_icon(ctx);
                 b.refused = Some(Refused {
-                    path,
-                    name: old,
+                    title: RENAME_ERROR_TITLE,
                     text,
+                    rename: Some((path, old)),
                 });
                 return false;
             }
@@ -709,7 +720,6 @@ impl Explorer {
         match b.making.take() {
             Some(Making::New { under, job }) => match job.take() {
                 Some(made) => {
-                    // A failure's box takes the picker's place, as it does when the folder answers at once.
                     self.new_folder_landed(b, &under, made, ctx);
                     return true;
                 }
@@ -740,7 +750,7 @@ impl Explorer {
             buttons: vec!["OK".to_string()],
             default: 0,
             min_text_h: None,
-            min_w: repriseapp::caption_fit(ERROR_TITLE),
+            min_w: repriseapp::caption_fit(r.title),
             max_w: repriseapp::dialog_max_w(),
         })
     }
@@ -782,9 +792,9 @@ impl Explorer {
             return Reply::redraw();
         }
         if let Some(Dialog::Browse(b)) = self.dialogs.up_mut()
-            && let Some(r) = b.refused.take()
+            && let Some((path, name)) = b.refused.take().and_then(|r| r.rename)
         {
-            b.bf.reopen_edit(r.path, &r.name);
+            b.bf.reopen_edit(path, &name);
         }
         Reply::redraw_all()
     }
