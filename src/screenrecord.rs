@@ -2,8 +2,9 @@
 //! Videos/Screencasts while the tray's Recording cell shows. The bind records the output under the
 //! pointer and stops a running recording; the picker's Record mode records an area, clipped to the
 //! output holding most of it. None starts while locked. A stop lets the recorder finish its file;
-//! one idle for `STOP_GRACE`, past `finish_cap` or stopped again is killed and its file kept. An
-//! area recording stops when its output's scale or transform changes.
+//! one idle for `STOP_GRACE`, past `finish_cap` or stopped again is killed and its file kept. A
+//! recording stopped before anything was written leaves no file and no notice. An area recording
+//! stops when its output's scale or transform changes.
 
 use std::ffi::OsString;
 use std::io::BufRead;
@@ -35,6 +36,8 @@ const ENDED_EARLY: i32 = 3;
 /// The recorder's exit status for a recording saved whole whose sound stopped; its last stderr
 /// line says why.
 const SOUND_STOPPED: i32 = 4;
+/// The recorder's exit status when it was stopped before it wrote anything.
+const STOPPED_UNSTARTED: i32 = 5;
 
 /// What a recording records: an output, or an area of it in output-local logical pixels.
 #[derive(Clone, Debug, PartialEq)]
@@ -59,7 +62,7 @@ pub struct Recording {
     work: Option<Work>,
     /// When a stopped recorder is killed however it works, see [`finish_cap`].
     finish_by: Option<Instant>,
-    /// Set as the recorder is killed finishing its file, which is then kept.
+    /// Set as the recorder is killed finishing its file, which is then kept unless empty.
     killed: Arc<AtomicBool>,
 }
 
@@ -121,11 +124,14 @@ impl Made {
         })
     }
 
+    /// The name's metadata when it is still the file made; blocking.
+    fn metadata(&self) -> Option<std::fs::Metadata> {
+        (std::fs::symlink_metadata(&self.path).ok()).filter(|m| (m.dev(), m.ino()) == self.id)
+    }
+
     /// Unlink the name when it is still the file made; blocking.
     fn remove(&self) {
-        let same =
-            std::fs::symlink_metadata(&self.path).is_ok_and(|m| (m.dev(), m.ino()) == self.id);
-        if same {
+        if self.metadata().is_some() {
             let _ = std::fs::remove_file(&self.path);
         }
     }
@@ -140,6 +146,8 @@ enum Ended {
         last_line: String,
         /// Killed while it finished the file.
         killed: bool,
+        /// Nothing was written into the file.
+        empty: bool,
     },
     NotStarted(String),
 }
@@ -266,7 +274,8 @@ impl State {
         false
     }
 
-    /// Kill the stopped recorder and forget it, so a new recording may start; its file is kept.
+    /// Kill the stopped recorder and forget it, so a new recording may start; its file is kept
+    /// unless empty.
     fn kill_recorder(&mut self) {
         let Some(r) = self.recording.take() else {
             return;
@@ -346,6 +355,21 @@ impl State {
         }
         match ended {
             Ended::Exited { made, ok: true, .. } => saved_notice(self, SAVED, &made.path, None),
+            Ended::Exited {
+                made,
+                status: Some(STOPPED_UNSTARTED),
+                ..
+            }
+            | Ended::Exited {
+                made,
+                status: None,
+                killed: true,
+                empty: true,
+                ..
+            } => {
+                log::info!("screen recording stopped before anything was written");
+                remove_later(self, made);
+            }
             Ended::Exited {
                 made,
                 status: None,
@@ -582,6 +606,7 @@ fn wait(mut child: std::process::Child, made: Made, killed: &AtomicBool) -> Ende
     }
     match child.wait() {
         Ok(s) => Ended::Exited {
+            empty: made.metadata().is_some_and(|m| m.len() == 0),
             made,
             ok: s.success(),
             status: s.code(),
@@ -803,13 +828,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("reprise-record-cut-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("Screencast.mp4");
-        let file = std::fs::File::create(&path).unwrap();
+        std::fs::write(&path, "ftyp").unwrap();
+        let file = std::fs::File::open(&path).unwrap();
         let ended = Ended::Exited {
             made: Made::of(&file, path.clone()).unwrap(),
             ok: false,
             status: None,
             last_line: String::new(),
             killed: true,
+            empty: false,
         };
         h.state.recording_ended(None, ended);
         assert!(path.exists(), "kept");
@@ -819,6 +846,35 @@ mod tests {
             n.body,
             "Screencast.mp4\nIt was stopped while it closed the file and may not play."
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_recording_stopped_before_anything_was_written_leaves_no_file_and_no_notice() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let dir = std::env::temp_dir().join(format!("reprise-record-none-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (unstarted, killed) = (dir.join("a.mp4"), dir.join("b.mp4"));
+        for (path, status, was_killed) in [
+            (&unstarted, Some(STOPPED_UNSTARTED), false),
+            (&killed, None, true),
+        ] {
+            let file = std::fs::File::create(path).unwrap();
+            let ended = Ended::Exited {
+                made: Made::of(&file, path.clone()).unwrap(),
+                ok: false,
+                status,
+                last_line: String::new(),
+                killed: was_killed,
+                empty: true,
+            };
+            h.state.recording_ended(None, ended);
+        }
+        h.until("both files removed", |_| {
+            !unstarted.exists() && !killed.exists()
+        });
+        assert!(h.state.notify.log.get(crate::notifyview::OWN_ID).is_none());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -850,6 +906,7 @@ mod tests {
             status: Some(ENDED_EARLY),
             last_line: "The screen changed size or format.".into(),
             killed: false,
+            empty: false,
         };
         h.state.recording_ended(None, ended);
         assert!(path.exists(), "kept");
@@ -878,6 +935,7 @@ mod tests {
             status: Some(SOUND_STOPPED),
             last_line: "The sink went away.".into(),
             killed: false,
+            empty: false,
         };
         h.state.recording_ended(None, ended);
         assert!(path.exists(), "kept");

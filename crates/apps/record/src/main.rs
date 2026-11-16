@@ -7,7 +7,8 @@
 //! its file was started (the screen changed size or format, the encoder or a write failed, or
 //! frames the encoder cannot read lasted `UNREADABLE_FOR`), the file closed and playable;
 //! [`SOUND_STOPPED`] when a `--sound` recording ran to its end and closed its file but the capture
-//! of what plays stopped before; 1 on any other failure, a file started but not closed included.
+//! of what plays stopped before; [`STOPPED_UNSTARTED`] when a stop came before its file was
+//! started, the file left empty; 1 on any other failure, a file started but not closed included.
 //!
 //! `--probe` prints what codes here and exits 0, or 1 when FFmpeg fails to start: a `video CODEC
 //! ENCODER` line for each encoder choice that codes a test frame in that codec (`video h265
@@ -71,6 +72,10 @@ fn main() -> ExitCode {
             eprintln!("{e}");
             ExitCode::from(SOUND_STOPPED)
         }
+        Ok(Outcome::Stopped) => {
+            log::info!("stopped before the recording started");
+            ExitCode::from(STOPPED_UNSTARTED)
+        }
         Err(e) => {
             log::warn!("recording failed: {e}");
             eprintln!("{e}");
@@ -128,11 +133,20 @@ enum Event {
     SoundStopped(String),
 }
 
+/// Why coding ended without an error.
+#[derive(Debug, PartialEq)]
+enum End {
+    Stopped,
+    StreamEnded,
+}
+
 /// The exit status of a recording that stopped by itself after its file was started; the file is
 /// closed and plays up to there.
 const ENDED_EARLY: u8 = 3;
 /// The exit status of a recording saved whole whose sound stopped before its end.
 const SOUND_STOPPED: u8 = 4;
+/// The exit status of a recorder stopped before its file was started; nothing was written.
+const STOPPED_UNSTARTED: u8 = 5;
 
 #[derive(Debug, PartialEq)]
 enum Outcome {
@@ -141,6 +155,8 @@ enum Outcome {
     EndedEarly(String),
     /// Why the sound stopped in a recording that ran to its end.
     SoundStopped(String),
+    /// A stop came before the file was started.
+    Stopped,
 }
 
 fn record(args: &Args, stop: libc::sigset_t) -> Result<Outcome, String> {
@@ -212,25 +228,26 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<Outcome, String> {
     // From here on the recorder only finishes the file: the compositor waits while it works.
     drop((hearing, stream, cast));
     let closed = file.finish();
-    let ended = ended.map(|()| file.sound_stopped.take());
-    outcome(file.started(), file.started_writing(), ended, closed)
+    let sound = file.sound_stopped.take();
+    outcome(file.started(), file.started_writing(), ended, sound, closed)
 }
 
-/// What a recording comes to: `ended` is how coding ended (with why the sound stopped, when it
-/// did), `closed` how the file closed; a file started but not closed does not play.
+/// What a recording comes to: `ended` is how coding ended, `sound` why the sound stopped when it
+/// did, `closed` how the file closed; a file started but not closed does not play.
 fn outcome(
     started: bool,
     writing: bool,
-    ended: Result<Option<String>, String>,
+    ended: Result<End, String>,
+    sound: Option<String>,
     closed: Result<(), String>,
 ) -> Result<Outcome, String> {
     let none = || "No picture of the screen came.".to_string();
     match (started, writing, ended, closed) {
+        (_, false, Ok(End::Stopped), _) => Ok(Outcome::Stopped),
         (false, ..) | (true, false, Ok(_), _) => Err(none()),
         (true, false, Err(e), _) | (true, true, _, Err(e)) => Err(e),
         (true, true, Err(e), Ok(())) => Ok(Outcome::EndedEarly(e)),
-        (true, true, Ok(None), Ok(())) => Ok(Outcome::Saved),
-        (true, true, Ok(Some(e)), Ok(())) => Ok(Outcome::SoundStopped(e)),
+        (true, true, Ok(_), Ok(())) => Ok(sound.map_or(Outcome::Saved, Outcome::SoundStopped)),
     }
 }
 
@@ -465,7 +482,7 @@ impl<'a> File<'a> {
     /// Code what comes until a stop, the stream's end or an error, waking for the pacer's slots
     /// between. A backlog of frames is skipped to the newest, the sound among them coded in turn,
     /// so a slow encoder drops pictures rather than falling behind.
-    fn run(&mut self, events: &mpsc::Receiver<Event>) -> Result<(), String> {
+    fn run(&mut self, events: &mpsc::Receiver<Event>) -> Result<End, String> {
         let mut held = None;
         loop {
             let event = match (held.take(), self.wake()) {
@@ -500,10 +517,10 @@ impl<'a> File<'a> {
                     self.frame(frame, at)?;
                 }
                 Event::Sound(pcm, at) => self.sound(&pcm, at)?,
-                Event::Stop => return Ok(()),
+                Event::Stop => return Ok(End::Stopped),
                 Event::Ended => {
                     log::info!("the screen's stream ended");
-                    return Ok(());
+                    return Ok(End::StreamEnded);
                 }
                 Event::SoundStopped(why) => {
                     log::warn!("recording what plays: {why}");
@@ -1237,40 +1254,61 @@ mod tests {
     }
 
     #[test]
-    fn a_recording_is_saved_ends_early_or_fails_by_what_was_written_and_closed() {
+    fn a_recording_is_saved_ends_early_stops_or_fails_by_what_was_written_and_closed() {
         fn e<T>(m: &str) -> Result<T, String> {
             Err(m.to_string())
         }
         let fails = |m: &str| Err::<Outcome, _>(m.to_string());
+        let (stop, ended) = (|| Ok(End::Stopped), || Ok(End::StreamEnded));
         let changed = "The screen changed size or format.";
         let full = "Cannot finish the recording: No space left on device";
         let none = "No picture of the screen came.";
-        assert_eq!(outcome(true, true, Ok(None), Ok(())), Ok(Outcome::Saved));
+        assert_eq!(
+            outcome(true, true, stop(), None, Ok(())),
+            Ok(Outcome::Saved)
+        );
+        assert_eq!(
+            outcome(true, true, ended(), None, Ok(())),
+            Ok(Outcome::Saved)
+        );
         let gone = "PipeWire ended the capture.";
         assert_eq!(
-            outcome(true, true, Ok(Some(gone.into())), Ok(())),
+            outcome(true, true, stop(), Some(gone.into()), Ok(())),
             Ok(Outcome::SoundStopped(gone.into()))
         );
         assert_eq!(
-            outcome(true, true, Ok(Some(gone.into())), e(full)),
+            outcome(true, true, stop(), Some(gone.into()), e(full)),
             fails(full)
         );
         assert_eq!(
-            outcome(true, true, e(changed), Ok(())),
+            outcome(true, true, e(changed), None, Ok(())),
             Ok(Outcome::EndedEarly(changed.into()))
         );
         assert_eq!(
-            outcome(true, true, Ok(None), e(full)),
+            outcome(true, true, stop(), None, e(full)),
             fails(full),
             "no index"
         );
-        assert_eq!(outcome(true, true, e(changed), e(full)), fails(full));
+        assert_eq!(outcome(true, true, e(changed), None, e(full)), fails(full));
         let refused = "No AV1 encoder could code the screen.";
-        assert_eq!(outcome(true, false, e(refused), Ok(())), fails(refused));
-        assert_eq!(outcome(true, false, Ok(None), Ok(())), fails(none));
         assert_eq!(
-            outcome(false, false, e("every source ended"), Ok(())),
+            outcome(true, false, e(refused), None, Ok(())),
+            fails(refused)
+        );
+        assert_eq!(outcome(true, false, ended(), None, Ok(())), fails(none));
+        assert_eq!(
+            outcome(false, false, e("every source ended"), None, Ok(())),
             fails(none)
+        );
+        assert_eq!(outcome(false, false, ended(), None, Ok(())), fails(none));
+        assert_eq!(
+            outcome(false, false, stop(), None, Ok(())),
+            Ok(Outcome::Stopped),
+            "stopped before the first frame"
+        );
+        assert_eq!(
+            outcome(true, false, stop(), None, Ok(())),
+            Ok(Outcome::Stopped)
         );
     }
 
@@ -1428,7 +1466,7 @@ mod tests {
         ] {
             assert!(tx.send(event).is_ok());
         }
-        assert_eq!(file.run(&events), Ok(()));
+        assert_eq!(file.run(&events), Ok(End::Stopped));
         assert_eq!(file.sound_stopped.as_deref(), Some("The sink went away."));
     }
 
