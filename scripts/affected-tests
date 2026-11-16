@@ -3,8 +3,10 @@
 # Builds and runs the tests of every workspace member that the changes since
 # merge-base(BASE, HEAD) can affect (default BASE: origin/main; the working
 # tree and untracked files count): each changed member plus its reverse
-# dependencies. A change outside the members' directories runs everything.
-# --dry-run prints the crate set and the command instead of running it.
+# dependencies. A change under packaging/ runs reprise-updates' tests. The
+# scanners that read the whole tree (SCANNERS below) run on any member or
+# packaging change. A change elsewhere outside the members runs everything.
+# --dry-run prints the crate set and the commands instead of running them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 dry=
@@ -15,7 +17,8 @@ shift || true
 mb=$(git merge-base "$base" HEAD)
 files=$( { git diff --name-only "$mb"; git ls-files -o --exclude-standard; } | sort -u)
 
-# Prints "ALL" or "<changed members>\t<changed members and their reverse deps>".
+# Prints "ALL" or "<changed members>\t<affected members>\t<scanners>": the affected members
+# are the changed ones and their reverse deps, the scanners "package:test" pairs to add.
 sets=$(cargo metadata --format-version 1 --no-deps --locked | FILES=$files python3 -I -c '
 import json, os, sys
 
@@ -31,17 +34,27 @@ root_name = dirs.pop(".", None)
 # Read by tests or include_str! across crates, or configure every build.
 everything = ("Cargo.toml", "Cargo.lock", ".config/", "data/", "protocols/", "scripts/",
               "config.example.toml", ".github/ci-image/", ".github/workflows/")
-inert = ("docs/", "packaging/", ".github/", "README.md", "CONTRIBUTING.md", "SECURITY.md",
-         "LICENSE", ".gitignore")
+inert = ("docs/", ".github/", "README.md", "CONTRIBUTING.md", "SECURITY.md", "LICENSE",
+         ".gitignore")
 root_paths = ("src/", "tests/", "examples/", "benches/", "build.rs")
+# Tests that read files outside their own crate: string ids, window ids, licence citations,
+# packaging invariants. A pull request runs them whatever crate it changes.
+SCANNERS = (("reprisekit", "i18n"), ("repriseapp", "win_names"), ("reprise", "licences"),
+            ("reprise", "packaging"))
+# Unit tests that read packaging/.
+PACKAGING = ("reprise-updates",)
 
 changed = set()
+packaging = False
 for f in os.environ["FILES"].split("\n"):
     if not f:
         continue
     if f.startswith(everything):
         print("ALL")
         sys.exit()
+    if f.startswith("packaging/"):
+        packaging = True
+        continue
     hit = [d for d in dirs if f.startswith(d + "/")]
     if hit:
         changed.add(dirs[max(hit, key=len)])
@@ -65,19 +78,33 @@ while todo:
         if u not in affected:
             affected.add(u)
             todo.append(u)
+if packaging:
+    affected.update(PACKAGING)
 if affected == names:
     print("ALL")
-else:
-    print(" ".join(sorted(changed)) + "\t" + " ".join(sorted(affected)))
+    sys.exit()
+scanners = []
+if affected:
+    scanners = [f"{p}:{t}" for p, t in SCANNERS if p not in affected]
+print(" ".join(sorted(changed)) + "\t" + " ".join(sorted(affected)) + "\t" + " ".join(scanners))
 ')
 
 cmd=(cargo nextest run --locked)
+scan=()
 case $sets in
   ALL) crates="(whole workspace)"; cmd+=(--workspace) ;;
-  $'\t') echo "affected-tests: no crate changed since $base"; exit 0 ;;
+  $'\t\t') echo "affected-tests: no crate changed since $base"; exit 0 ;;
   *)
-    crates=${sets#*$'\t'}
+    rest=${sets#*$'\t'}
+    crates=${rest%%$'\t'*}
+    scanners=${rest#*$'\t'}
     for c in $crates; do cmd+=(-p "$c"); done
+    if [ -n "$scanners" ]; then
+      scan=(cargo nextest run --locked)
+      for p in $(printf '%s\n' $scanners | cut -d: -f1 | sort -u); do scan+=(-p "$p"); done
+      for t in $scanners; do scan+=(--test "${t#*:}"); done
+      scan+=("$@")
+    fi
     ;;
 esac
 cmd+=("$@")
@@ -85,6 +112,10 @@ cmd+=("$@")
 if [ -n "$dry" ]; then
   echo "crates: $crates"
   printf 'command:'; printf ' %q' "${cmd[@]}"; echo
+  if [ ${#scan[@]} -gt 0 ]; then printf 'scanners:'; printf ' %q' "${scan[@]}"; echo; fi
   exit 0
 fi
-exec "${cmd[@]}"
+status=0
+"${cmd[@]}" || status=$?
+if [ ${#scan[@]} -gt 0 ]; then "${scan[@]}" || status=$?; fi
+exit "$status"
