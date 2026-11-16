@@ -1249,6 +1249,38 @@ async fn a_session_end_queued_as_the_server_stops_tells_every_client_it_logged_o
         .await;
 }
 
+#[tokio::test]
+async fn a_shutdown_tells_every_client_it_logged_off_then_lets_its_delay_lock_go() {
+    capture_log();
+    let local = LocalSet::new();
+    local
+        .run_until(async {
+            let mut s = start_admitting(&local, 0, 4).await;
+            let [(mut a, first), (mut b, second)] = two_listed(&mut s).await;
+            let (delay, held) = std::os::unix::net::UnixStream::pair().unwrap();
+            held.set_nonblocking(true).unwrap();
+            let mut held = tokio::net::UnixStream::from_std(held).unwrap();
+            let request = Request::ShuttingDown(Some(delay.into()));
+            s.disconnect.send(request).unwrap();
+            assert!(closed_soon(&mut a).await, "the first client is ended");
+            assert!(closed_soon(&mut b).await, "the second client is ended");
+            let mut byte = [0u8; 1];
+            let read = tokio::time::timeout(Duration::from_secs(5), held.read(&mut byte));
+            assert!(
+                matches!(read.await, Ok(Ok(0))),
+                "the lock goes once both left"
+            );
+            assert!(s.status.borrow().clients.is_empty());
+            for peer in [first, second] {
+                assert!(
+                    logged(&format!("{peer}: disconnected; the session logged off")),
+                    "{peer} is told the session logged off"
+                );
+            }
+        })
+        .await;
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_kick_tells_the_client_it_was_disconnected_by_the_user_before_closing() {
     let (sent, closes) = oneshot::channel();

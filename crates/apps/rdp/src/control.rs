@@ -3,6 +3,7 @@
 
 use reprisebus::peer::HostOnly;
 use reprisebus::remote;
+use std::os::fd::OwnedFd;
 use tokio::sync::{mpsc, oneshot, watch};
 use zbus::connection::Builder;
 use zbus::message::Header;
@@ -37,6 +38,9 @@ pub enum Request {
     All,
     /// Every viewer, each told the session logged off.
     SessionEnding,
+    /// [`Request::SessionEnding`] as the computer turns off or restarts. The shutdown's delay
+    /// lock, when one was taken, is held until those viewers have left and the sound is back.
+    ShuttingDown(Option<OwnedFd>),
     /// The viewer at this address; the reply says whether there was one.
     Client(String, oneshot::Sender<bool>),
 }
