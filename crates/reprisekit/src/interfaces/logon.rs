@@ -33,6 +33,12 @@ pub fn draw_logon(
     }
 }
 
+/// Drops what the painters keep between repaints (Blue's whole-output backdrops); a host calls it
+/// once its last login or lock screen is gone.
+pub fn forget_logon_art() {
+    blue::logon::forget_art();
+}
+
 /// What [`redraw_logon_within`] repaints, design px within the output, to bring a canvas painted
 /// for `was` ([`Logon::drawn`]) on `was_l` up to `m` on `l`; None when `m.motion` is to play.
 pub fn logon_changed(
@@ -306,6 +312,21 @@ mod tests {
             let drawn = (&self.theme, self.text.for_output(s), s);
             Some(redraw_logon_within(c, m, l, drawn, &rects))
         }
+    }
+
+    #[test]
+    fn forgetting_the_art_drops_blues_kept_backdrop_and_band() {
+        let b = Bench::at(Interface::Blue, 1);
+        let mut m = Logon::locked(Interface::Blue, users().remove(1), true, true);
+        m.take_motion();
+        let l = b.laid(&mut m);
+        b.whole(&m, &l);
+        assert!(
+            blue::logon::kept_art() > 0,
+            "a drawn screen keeps its backdrop"
+        );
+        forget_logon_art();
+        assert_eq!(blue::logon::kept_art(), 0);
     }
 
     #[test]

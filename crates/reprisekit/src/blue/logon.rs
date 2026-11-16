@@ -322,18 +322,35 @@ fn drawn_backdrop(sc: &Scheme, w: i32, h: i32, d: i32, field: bool) -> Canvas {
     })
 }
 
-/// How many backdrops [`cached_backdrop`] keeps: one per output a greeter is likely to span.
+/// How many backdrops [`cached_backdrop`] keeps, for the schemes and output sizes a screen moves
+/// between.
 const KEPT_BACKDROPS: usize = 4;
+
+type KeptBackdrops = Vec<((&'static str, i32, i32, i32, bool), Rc<Canvas>)>;
+type KeptBand = Option<((&'static str, i32, i32, i32), Rc<Canvas>)>;
+
+thread_local! {
+    static BACKDROPS: RefCell<KeptBackdrops> = const { RefCell::new(Vec::new()) };
+    static BAND: RefCell<KeptBand> = const { RefCell::new(None) };
+}
+
+/// Drops the backdrops and band kept for repaints: a whole-output canvas each.
+pub fn forget_art() {
+    BACKDROPS.take();
+    BAND.take();
+}
+
+/// How many canvases [`forget_art`] would drop.
+#[cfg(test)]
+pub fn kept_art() -> usize {
+    BACKDROPS.with_borrow(Vec::len) + BAND.with_borrow(|b| usize::from(b.is_some()))
+}
 
 /// [`backdrop`] for the last few schemes and sizes asked, kept since typing repaints the whole
 /// screen.
 fn cached_backdrop(sc: &Scheme, w: i32, h: i32, d: i32, field: bool) -> Rc<Canvas> {
-    type Kept = Vec<((&'static str, i32, i32, i32, bool), Rc<Canvas>)>;
-    thread_local! {
-        static KEPT: RefCell<Kept> = const { RefCell::new(Vec::new()) };
-    }
     let key = (sc.name, w, h, d, field);
-    KEPT.with_borrow_mut(|kept| {
+    BACKDROPS.with_borrow_mut(|kept| {
         if let Some((_, c)) = kept.iter().find(|(k, _)| *k == key) {
             return Rc::clone(c);
         }
@@ -349,12 +366,8 @@ fn cached_backdrop(sc: &Scheme, w: i32, h: i32, d: i32, field: bool) -> Rc<Canva
 /// [`band`] for the last scheme and size asked, kept since a key repaints the open tile's band
 /// under the password field.
 fn cached_band(sc: &Scheme, w: i32, h: i32, d: i32) -> Rc<Canvas> {
-    type Kept = Option<((&'static str, i32, i32, i32), Rc<Canvas>)>;
-    thread_local! {
-        static KEPT: RefCell<Kept> = const { RefCell::new(None) };
-    }
     let key = (sc.name, w, h, d);
-    KEPT.with_borrow_mut(|kept| match kept {
+    BAND.with_borrow_mut(|kept| match kept {
         Some((k, c)) if *k == key => Rc::clone(c),
         _ => Rc::clone(&kept.insert((key, Rc::new(band(sc, w, h, d)))).1),
     })
