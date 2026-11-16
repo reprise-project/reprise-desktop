@@ -157,7 +157,7 @@ pub struct SessionEnv {
     /// TTY start or nested run.
     pub logind_session: Option<String>,
     /// Set on the login screen: [`command`], the `spawn*` functions and the `try_spawn*` ones
-    /// refuse every launch.
+    /// refuse every launch. Its screen reader starts outside them (`screenreader`).
     pub refuses_programs: bool,
     /// The logind session our launches name in their app scopes
     /// ([`reprisefs::scope::session_pattern`]).

@@ -34,6 +34,13 @@ pub struct OsdView {
     pub showing: Option<Value>,
 }
 
+#[cfg(test)]
+impl OsdView {
+    pub fn is_up(&self) -> bool {
+        self.panel.is_some()
+    }
+}
+
 struct Panel {
     tree: TreeId,
     glass_tree: TreeId,

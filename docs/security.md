@@ -222,7 +222,13 @@ processes:
 - **The login screen** is the compositor in greeter mode, run as the system
   user `reprise-greeter` (no password, no login shell) with `no_new_privs`,
   on VT 1. It reads no more of a user's files than any other account and
-  listens on no Wayland socket.
+  listens on no Wayland socket. It starts one program: Super+Alt+S runs
+  `/usr/bin/orca`, when installed, with no arguments and only the login
+  screen's own environment, and stops it on the next press and when the
+  login screen exits. Orca gets one Wayland connection, handed over as
+  `WAYLAND_SOCKET`, with a sandboxed program's globals. The login screen's
+  tree publishes the password as bullets, echoes no key and takes no
+  reader actions.
 - **Sessions** run as their user, through the user's login shell, with the
   environment PAM set.
 - **The settings helper**, `reprise-login-settings`, runs as root through
