@@ -112,7 +112,10 @@ rest.
 Install the [requirements](docs/install.md#requirements), then:
 
     cargo build --release --workspace
-    PATH="$PWD/target/release:$PATH" ./target/release/reprise --startup alacritty   # nested in your current Wayland session
+    PATH="$PWD/target/release:$PATH" ./target/release/reprise --startup alacritty   # from a TTY
+
+Reprise drives the display itself, so it runs from a TTY or a login manager,
+not nested in another session.
 
 On Arch, `packaging/arch/PKGBUILD` packages the whole thing, and the Nightly
 release carries a package for Arch and a .deb for Ubuntu 26.04. Elsewhere,
