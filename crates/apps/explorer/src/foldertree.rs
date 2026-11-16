@@ -353,6 +353,7 @@ pub fn read_kids(
         Place::RecycleBin | Place::Network(_) => {}
         _ => kids.extend(subfolders(place, inp)),
     }
+    let known: HashSet<&Place> = known.iter().copied().collect();
     kids.into_iter()
         .map(|(label, p)| {
             let opens = (!known.contains(&&p)).then(|| opens(&p, inp));
