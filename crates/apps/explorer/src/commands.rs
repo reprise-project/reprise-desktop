@@ -495,7 +495,7 @@ impl Explorer {
                         mode.erase,
                         mode.no_bin,
                         icon,
-                        false,
+                        None,
                         None,
                     )
                 }

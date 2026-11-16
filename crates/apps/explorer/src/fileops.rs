@@ -136,6 +136,20 @@ pub(crate) fn file_label(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// The title of a delete's error boxes.
+const DELETE_TITLE: &str = "Error Deleting File or Folder";
+
+/// Each of `paths`' fate in the session's Recycle Bins, and whether a delete asks first. Reads
+/// the paths and their mounts, so it runs off the loop.
+fn read_fates(paths: &[PathBuf]) -> (Vec<reprisefs::bincap::Fate>, bool) {
+    use reprisefs::bincap::Fate;
+    let bins = reprisefs::trash::Bins::system();
+    let fates = (paths.iter())
+        .map(|p| bins.as_ref().map_or(Fate::NoBin, |b| b.fate(p)))
+        .collect();
+    (fates, bins.as_ref().is_none_or(|b| b.policy.confirm))
+}
+
 /// A Delete's work on its job: each path trashed into `bins` or erased, stopping at the first
 /// failure. The loop pushes trashed items as one undo and drops undos for items the bin's cap
 /// erased.
@@ -807,7 +821,7 @@ impl Explorer {
     /// no Recycle Bin, or already in one, are erased (the latter always asked about). Each item's
     /// fate is read on a listing thread: it stats the item and its mount.
     pub fn confirm_delete(&mut self, erase: bool, ctx: &mut Ctx) -> Reply {
-        use reprisefs::bincap::{Fate, delete_mode};
+        use reprisefs::bincap::delete_mode;
         let in_bin = self.place == Place::RecycleBin;
         if self.place.read_only() && !in_bin {
             return Reply::none();
@@ -818,7 +832,7 @@ impl Explorer {
         }
         let only = self.sv.selection.single().and_then(|i| self.items.get(i));
         let is_dir = only.is_some_and(|it| it.is_dir && !it.is_link);
-        let name = only.map(|it| it.name.clone()).unwrap_or_default();
+        let name = only.map(|it| it.label().to_string()).unwrap_or_default();
         let kind = ConfirmKind::of(paths.len(), is_dir);
         let selected = self
             .sv
@@ -831,14 +845,8 @@ impl Explorer {
             .map(str::to_string);
         let bin = in_bin.then(|| self.selected_bin_items());
         let read = paths.clone();
-        let work = move |_: &Gate| {
-            let bins = reprisefs::trash::Bins::system();
-            let fates: Vec<Fate> = (read.iter())
-                .map(|p| bins.as_ref().map_or(Fate::NoBin, |b| b.fate(p)))
-                .collect();
-            (fates, bins.as_ref().is_none_or(|b| b.policy.confirm))
-        };
-        let action = Action::reads("Error Deleting File or Folder");
+        let work = move |_: &Gate| read_fates(&read);
+        let action = Action::reads(DELETE_TITLE);
         self.act(ctx, action, work, move |ex, (fates, confirm), ctx| {
             let mode = delete_mode(confirm, &fates, erase);
             if !in_bin && !mode.ask {
@@ -849,17 +857,24 @@ impl Explorer {
             let own = own_icon.as_deref().filter(|_| erase);
             let names: Vec<&str> = own.into_iter().chain(TRASH_ICON.iter().copied()).collect();
             let icon = IconSlot::chrome(&mut ctx.icons, &names, 32);
-            ex.confirm_box(kind, &name, paths, erase, no_bin, icon, false, bin)
+            ex.confirm_box(kind, &name, paths, erase, no_bin, icon, None, bin)
         })
     }
 
     pub fn confirm_empty_bin(&mut self, ctx: &mut Ctx) -> Reply {
-        if self.items.is_empty() {
+        let only = (self.items.len() == 1).then(|| &self.items[0]);
+        let one = only.map(|it| (it.name.clone(), it.is_dir));
+        self.ask_empty(self.items.len(), one, ctx)
+    }
+
+    /// The Empty question over `count` items, `one` naming the only one and whether it is a
+    /// folder; nothing to ask when the bins hold none.
+    fn ask_empty(&mut self, count: usize, one: Option<(String, bool)>, ctx: &mut Ctx) -> Reply {
+        if count == 0 {
             return Reply::none();
         }
-        let only = (self.items.len() == 1).then(|| &self.items[0]);
-        let kind = ConfirmKind::of(self.items.len(), only.is_some_and(|it| it.is_dir));
-        let name = only.map(|it| it.name.clone()).unwrap_or_default();
+        let (name, is_dir) = one.filter(|_| count == 1).unwrap_or_default();
+        let kind = ConfirmKind::of(count, is_dir);
         let icon = IconSlot::chrome(&mut ctx.icons, TRASH_ICON, 32);
         self.confirm_box(
             kind,
@@ -868,9 +883,118 @@ impl Explorer {
             true,
             BinLack::None,
             icon,
-            true,
+            Some(count),
             None,
         )
+    }
+
+    /// `--delete`: Delete, or Shift+Delete with `erase`, on `paths` with no folder window, asked
+    /// as [`Explorer::confirm_delete`] asks of a selection outside the Recycle Bin.
+    pub(crate) fn confirm_delete_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        erase: bool,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let read = paths.clone();
+        let work = move |_: &Gate| {
+            // A link to a folder deletes as a file: only the link goes.
+            let one = match read.as_slice() {
+                [p] => {
+                    let meta = std::fs::symlink_metadata(p).ok();
+                    let shortcut = meta.and_then(|m| apps::shortcut_at(p, &m));
+                    let label = shortcut.map(|s| s.name().to_string());
+                    Some((label, p.is_dir() && !p.is_symlink()))
+                }
+                _ => None,
+            };
+            (read_fates(&read), one)
+        };
+        self.act(
+            ctx,
+            Action::reads(DELETE_TITLE),
+            work,
+            move |ex, read, ctx| {
+                let ((fates, confirm), one) = read;
+                let mode = reprisefs::bincap::delete_mode(confirm, &fates, erase);
+                if !mode.ask {
+                    return ex.delete_now(&paths, mode.erase, ctx);
+                }
+                let is_dir = one.as_ref().is_some_and(|(_, d)| *d);
+                let name = match (paths.as_slice(), one) {
+                    ([p], Some((label, _))) => label.unwrap_or_else(|| file_label(p)),
+                    _ => String::new(),
+                };
+                let own = match paths.as_slice() {
+                    [p] if mode.erase => Some(ex.icon_name_as(p, is_dir, ctx)),
+                    _ => None,
+                };
+                let names: Vec<&str> = (own.as_deref().into_iter())
+                    .chain(TRASH_ICON.iter().copied())
+                    .collect();
+                let icon = IconSlot::chrome(&mut ctx.icons, &names, 32);
+                let kind = ConfirmKind::of(paths.len(), is_dir);
+                ex.confirm_box(
+                    kind,
+                    &name,
+                    paths,
+                    mode.erase,
+                    mode.no_bin,
+                    icon,
+                    None,
+                    None,
+                )
+            },
+        )
+    }
+
+    /// `--empty-bin`: Empty Recycle Bin with no folder window. What the bins hold is counted off
+    /// the loop, so a drive's bin on a mount that stopped answering gives up instead of asking
+    /// minutes later.
+    pub(crate) fn confirm_empty_bins(&mut self, ctx: &mut Ctx) -> Reply {
+        let work = |_: &Gate| {
+            let files = reprisefs::trash::Bins::system()
+                .map(|bins| bins.files_dirs())
+                .unwrap_or_default();
+            let mut count = 0;
+            let mut first: Option<PathBuf> = None;
+            for dir in files {
+                let (n, name) = reprisefs::places::trash_contents(&dir);
+                count += n;
+                if let Some(name) = name.map(|n| dir.join(n))
+                    && first
+                        .as_ref()
+                        .is_none_or(|f| name.file_name() < f.file_name())
+                {
+                    first = Some(name);
+                }
+            }
+            let one = first.filter(|_| count == 1).map(|f| {
+                let is_dir = f.is_dir() && !f.is_symlink();
+                (file_label(&f), is_dir)
+            });
+            (count, one)
+        };
+        self.act(
+            ctx,
+            Action::reads(DELETE_TITLE),
+            work,
+            |ex, (count, one), ctx| ex.ask_empty(count, one, ctx),
+        )
+    }
+
+    /// `--put`: `sources` copied, moved or linked into `dir` as a paste puts them, with no folder
+    /// window; a source moved into the folder that holds it stays.
+    pub(crate) fn put_paths(
+        &mut self,
+        op: DropOp,
+        sources: &[PathBuf],
+        dir: &Path,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let (cut, shortcut) = (op == DropOp::Move, op == DropOp::Shortcut);
+        let plan = |src: &Path| plan_paste(cut, shortcut, src, dir);
+        self.put_all(sources, dir, &plan, false, ctx)
     }
 
     /// Yes on that prompt: empty every trash. `Trash` undos go with it (their `files/` copies are
@@ -954,7 +1078,7 @@ impl Explorer {
                     true,
                     BinLack::None,
                     icon,
-                    false,
+                    None,
                     None,
                 );
                 c.text = text;
@@ -1380,7 +1504,7 @@ impl Explorer {
         let kind = ConfirmKind::of(if many { 2 } else { 1 }, is_dir);
         let icon = question_icon(ctx, is_dir);
         let mut c =
-            self.delete_question(kind, "", Vec::new(), true, BinLack::None, icon, false, None);
+            self.delete_question(kind, "", Vec::new(), true, BinLack::None, icon, None, None);
         c.text = text;
         c.undo_erase = true;
         self.raise(Dialog::Confirm(c))

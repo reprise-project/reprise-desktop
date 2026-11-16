@@ -10,6 +10,8 @@ use reprisefs::apps::AppEntry;
 use reprisefs::sendto::SendToRow;
 use std::ffi::OsString;
 
+#[path = "fileops_tests/alone.rs"]
+mod alone;
 #[path = "fileops_tests/closing.rs"]
 mod closing;
 #[path = "fileops_tests/cold_icons.rs"]
