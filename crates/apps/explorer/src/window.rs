@@ -321,12 +321,12 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
     let draw_field = |c: &mut Canvas| {
         if let Some(al) = &address {
             let focused = ex.focus == crate::Focus::Address;
-            let caret = reprisekit::textedit::Caret::new(focused, ctx.caret_on);
+            let caret = reprisekit::textedit::Caret::new(focused && ex.keyboard, ctx.caret_on);
             addressbar::draw_field(c, &ctx.text, &paint, &ex.address, al, focused, caret, px);
         }
         if let Some(r) = search {
             let focused = ex.focus == crate::Focus::Search;
-            let caret = reprisekit::textedit::Caret::new(focused, ctx.caret_on);
+            let caret = reprisekit::textedit::Caret::new(focused && ex.keyboard, ctx.caret_on);
             let sf = &ex.search_field;
             searchfield::draw(c, &ctx.text, &paint, sf, r, focused, caret, px);
         }

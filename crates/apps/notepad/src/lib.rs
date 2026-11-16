@@ -103,6 +103,8 @@ struct Notepad {
     info_icon: Option<Canvas>,
     /// The About dialog is open; its fields never change.
     about: bool,
+    /// The window holds the keyboard, so it draws the caret.
+    focused: bool,
     app_icon: Option<Canvas>,
     warn_icon: Option<Canvas>,
     /// Any edit sets it; undoing back to the saved text does not clear it.
@@ -175,6 +177,7 @@ impl Notepad {
             last_query: None,
             info_icon: None,
             about: false,
+            focused: false,
             app_icon: None,
             warn_icon: None,
             dirty: false,

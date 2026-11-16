@@ -458,7 +458,14 @@ pub(crate) fn input_blocked(ev: &Event, modal: Option<WinId>, win: WinId, flyout
 }
 
 /// The keyboard's window, else the pointer's (a hover tip ticks on the blink), else none; the
-/// host sends the blink only to a window that takes it ([`Slot::blinks`]).
+/// host sends the blink only to a window that takes it ([`takes_blinks`]).
 pub(crate) fn blink_target(focus: Option<WinId>, pointer_in: Option<WinId>) -> Option<WinId> {
     focus.or(pointer_in)
+}
+
+/// Whether window `id` takes caret blinks: it holds the keyboard and its last frame drew a
+/// focused field (`spot`), or a label tip waits on it. The host's blink timer runs only while
+/// one window does.
+pub(crate) fn takes_blinks(id: WinId, spot: bool, tip_waits: bool, focus: Option<WinId>) -> bool {
+    (spot && focus == Some(id)) || tip_waits
 }

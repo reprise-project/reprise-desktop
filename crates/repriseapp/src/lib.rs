@@ -188,10 +188,10 @@ struct Slot {
 }
 
 impl Slot {
-    /// Whether the window takes caret blinks: its last frame drew a focused field, or a label tip
-    /// waits on it.
-    fn blinks(&self) -> bool {
-        self.spot.is_some() || self.tip_waits
+    /// Whether the window takes caret blinks while `focus` holds the keyboard
+    /// ([`deliver::takes_blinks`]).
+    fn blinks(&self, focus: Option<WinId>) -> bool {
+        deliver::takes_blinks(self.id, self.spot.is_some(), self.tip_waits, focus)
     }
 }
 
