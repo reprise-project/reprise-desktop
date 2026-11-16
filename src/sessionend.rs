@@ -1023,6 +1023,10 @@ fn sync_prompt(state: &mut State) {
     if state.dialogs.held.iter().any(is_prompt) {
         return;
     }
+    // No box opens without an output, so the prompt is built once one arrives.
+    if state.scene.outputs().is_empty() {
+        return;
+    }
     let goal = e.goal;
     let holders = holding(e.holders.as_deref().unwrap_or(&[]), goal);
     let programs = programs(state);
@@ -1339,6 +1343,41 @@ mod tests {
         assert_eq!(h.state.dialogs.held.len(), 1, "held once");
         h.state.close_dialog_at(0);
         assert!(prompt_index(&h.state).is_some(), "up once the panel closes");
+    }
+
+    #[test]
+    fn with_no_output_the_prompt_is_built_once_one_arrives() {
+        use reprisekit::icontheme::{IconCache, IconTheme};
+        let root = crate::icon::svg_theme(&["dialog-warning"], &[]);
+        let mut h = crate::harness::Harness::new();
+        crate::fsjobs::setup(&mut h.state);
+        h.state.icons = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        h.state.ending = Some(Ending {
+            goal: Goal::LogOff,
+            cmd: None,
+            holders: None,
+            stop: None,
+            asked_portal: false,
+            timer: None,
+            reports: None,
+            mode: Mode::Prompted,
+            password: Password::No,
+            unasked: Vec::new(),
+        });
+        for _ in 0..3 {
+            tick(&mut h.state);
+        }
+        assert!(
+            !crate::icon::waits_on(&h, crate::icon::IconWaiter::SessionEnd),
+            "no prompt is built while no output can show it"
+        );
+        h.output("TEST-1", 1024, 768);
+        tick(&mut h.state);
+        assert!(
+            prompt_index(&h.state).is_some(),
+            "up once an output arrives"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
