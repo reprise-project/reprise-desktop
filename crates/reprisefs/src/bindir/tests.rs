@@ -139,7 +139,7 @@ fn making_room_never_walks_a_linked_files() {
     symlink(&d.victim, d.root.join("files")).unwrap();
     symlink(&d.victim, d.root.join("info")).unwrap();
     let used = crate::bincap::used(&d.root);
-    let _ = crate::bincap::make_room(&d.root, used, 1, 1);
+    let _ = crate::bincap::make_room(&d.root, used, 1, 1, std::ffi::OsStr::new(""));
     victim_whole(&d);
 }
 
