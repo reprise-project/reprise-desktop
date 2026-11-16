@@ -71,6 +71,25 @@ fn share_name(p: &Path) -> Option<String> {
     names.iter().find(|(d, _)| d == p).map(|(_, n)| n.clone())
 }
 
+/// `p` as the address bar writes it: inside a mounted share or device, its name and the path
+/// below its folder ("Test Phone/Internal shared storage"), else the path itself.
+fn named_address(p: &Path, shares: &[Share]) -> String {
+    let inside = (shares.iter()).find_map(|s| Some((&s.name, p.strip_prefix(&s.path).ok()?)));
+    match inside {
+        Some((name, rest)) if rest.as_os_str().is_empty() => name.clone(),
+        Some((name, rest)) => format!("{name}/{}", rest.display()),
+        None => p.display().to_string(),
+    }
+}
+
+/// The folder typed text written as [`named_address`] writes it stands for.
+fn named_path(text: &str, shares: &[Share]) -> Option<PathBuf> {
+    (shares.iter()).find_map(|s| match text.strip_prefix(s.name.as_str())? {
+        "" => Some(s.path.clone()),
+        rest => Some(s.path.join(rest.strip_prefix('/')?)),
+    })
+}
+
 impl Place {
     /// `p` compared exactly (nothing canonicalised) against `$HOME`, the Documents
     /// and Desktop folders and the trash's `files/`.
@@ -133,9 +152,10 @@ impl Place {
         }
     }
 
-    pub fn address(&self) -> String {
+    /// The address bar's text, the mounted `shares` (phones and cameras among them) written by name.
+    pub fn address_in(&self, shares: &[Share]) -> String {
         match self {
-            Place::Folder(p) => p.display().to_string(),
+            Place::Folder(p) => named_address(p, shares),
             Place::Network(uri) if uri != ROOT => uri.clone(),
             _ => self.title(),
         }
@@ -207,16 +227,20 @@ impl Place {
     }
 
     /// Typed address-bar text or a command-line place: "Computer", "Recycle Bin" and "Network"
-    /// (case-insensitive), the text the address bar shows for `here`, `~`/`~/...`, or
-    /// an absolute existing directory.
+    /// (case-insensitive), the text the address bar shows for `here`, a mounted share's or
+    /// device's name with a path below it, `~`/`~/...`, or an absolute existing directory.
     pub fn parse_address(s: &str, here: Option<&Place>) -> Option<Place> {
-        let (place, dir) = Self::read_address(s, here)?;
+        let (place, dir) = Self::read_address(s, here, &[])?;
         dir.is_none_or(|d| d.is_dir()).then_some(place)
     }
 
-    /// [`Place::parse_address`] without touching the file system: the place, and the folder
-    /// still to be checked to exist when the text is a path.
-    pub fn read_address(s: &str, here: Option<&Place>) -> Option<(Place, Option<PathBuf>)> {
+    /// [`Place::parse_address`] without touching the file system, `shares` read by name: the
+    /// place, and the folder still to be checked to exist when the text is a path.
+    pub fn read_address(
+        s: &str,
+        here: Option<&Place>,
+        shares: &[Share],
+    ) -> Option<(Place, Option<PathBuf>)> {
         let s = s.trim();
         let lower = s.to_lowercase();
         for (name, place) in [
@@ -228,8 +252,11 @@ impl Place {
                 return Some((place, None));
             }
         }
-        if let Some(here) = here.filter(|p| p.address() == s) {
+        if let Some(here) = here.filter(|p| p.address_in(shares) == s) {
             return Some((here.clone(), None));
+        }
+        if let Some(dir) = named_path(s, shares) {
+            return Some((Place::from_path(&dir), Some(dir)));
         }
         let expanded = if s == "~" {
             home()?
@@ -749,13 +776,43 @@ mod tests {
         assert_eq!(Place::Computer.title(), "Computer");
         assert_eq!(Place::Documents.title(), "Documents");
         assert_eq!(Place::Home.title(), home_label());
-        assert_eq!(Place::Documents.address(), "Documents");
+        assert_eq!(Place::Documents.address_in(&[]), "Documents");
         assert_eq!(Place::Home.icon_name(), "user-home");
         // A listing shows the home folder with Home's icon too.
         assert_eq!(
             reprisefs::places::special_folders().first(),
             super::home().map(|h| (h, "user-home")).as_ref()
         );
+    }
+
+    #[test]
+    fn a_folder_inside_a_mount_is_addressed_by_its_name_and_read_back() {
+        let root = PathBuf::from("/run/user/1000/gvfs/mtp:host=Reprise_Test_Phone");
+        let names = [Share {
+            name: "Test Phone".into(),
+            icon: String::new(),
+            path: root.clone(),
+            backend: "mtp".into(),
+            host: "Reprise_Test_Phone".into(),
+        }];
+        let inner = root.join("Internal shared storage/DCIM");
+        assert_eq!(named_address(&root, &names), "Test Phone");
+        assert_eq!(
+            named_address(&inner, &names),
+            "Test Phone/Internal shared storage/DCIM"
+        );
+        assert_eq!(
+            named_address(Path::new("/run/user/1000/gvfs"), &names),
+            "/run/user/1000/gvfs",
+            "gvfs's own folder keeps its path"
+        );
+        assert_eq!(named_path("Test Phone", &names), Some(root.clone()));
+        assert_eq!(
+            named_path("Test Phone/Internal shared storage/DCIM", &names),
+            Some(inner)
+        );
+        assert_eq!(named_path("Test Phones", &names), None);
+        assert_eq!(named_path("/run/user/1000/gvfs", &names), None);
     }
 
     #[test]

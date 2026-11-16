@@ -594,3 +594,29 @@ fn a_mount_landing_under_the_open_folder_moves_the_tree_under_computer() {
         "the phone's folder is selected as Computer's child"
     );
 }
+
+#[test]
+fn a_phones_folder_is_addressed_by_the_phones_name_and_reached_by_it() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let at = dir.path().join("mtp:host=Reprise_Test_Phone");
+    let dcim = at.join("Internal shared storage/DCIM");
+    std::fs::create_dir_all(&dcim).expect("the phone's folders");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dcim.clone()), &mut ctx);
+    ex.portable = vec![test_phone()];
+    ex.shares_changed(phone_mount(at.clone()), &mut ctx);
+    assert_eq!(ex.address.text(), "Test Phone/Internal shared storage/DCIM");
+
+    ex.run(Command::Navigate("Test Phone".into()), &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| {
+        ex.place == Place::Folder(at.clone())
+    });
+    assert_eq!(ex.address.text(), "Test Phone");
+    ex.run(
+        Command::Navigate("Test Phone/Internal shared storage/DCIM".into()),
+        &mut ctx,
+    );
+    wake_until(&mut ex, &mut ctx, |ex| {
+        ex.place == Place::Folder(dcim.clone())
+    });
+}

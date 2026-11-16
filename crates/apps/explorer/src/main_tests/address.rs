@@ -9,7 +9,7 @@ fn a_rebuilt_address_drop_names_the_place_shown() {
     let place = Place::Folder(dir.path().to_path_buf());
     let mut ex = test_explorer(place.clone(), &mut ctx);
     ex.build_address(&mut ctx);
-    assert_eq!(ex.address.text(), place.address());
+    assert_eq!(ex.address.text(), place.address_in(&[]));
 }
 
 #[test]
@@ -22,7 +22,7 @@ fn navigating_to_the_current_address_re_lists_the_folder() {
     assert_eq!(ex.items.len(), 1);
 
     std::fs::write(dir.path().join("two.txt"), "2").expect("write");
-    let reply = ex.run(Command::Navigate(here.address()), &mut ctx);
+    let reply = ex.run(Command::Navigate(here.address_in(&[])), &mut ctx);
 
     assert!(reply.redraw);
     assert_eq!(ex.items.len(), 2, "the new file shows without a refresh");

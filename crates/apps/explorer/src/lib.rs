@@ -810,7 +810,8 @@ impl Explorer {
     ) -> Reply {
         let typed = text.trim();
         self.checking = None;
-        let Some((place, dir)) = Place::read_address(typed, Some(&self.place)) else {
+        let Some((place, dir)) = Place::read_address(typed, Some(&self.place), &self.shares.shares)
+        else {
             return self.not_found(typed, ctx);
         };
         let Some(dir) = dir else {
@@ -1211,7 +1212,8 @@ impl Explorer {
         self.resort();
 
         let icon = chrome::address_icon(&mut self.chrome_waits, &mut ctx.icons, &place);
-        self.address.set_place(&place.address(), icon);
+        self.address
+            .set_place(&place.address_in(&self.shares.shares), icon);
         self.tree_follow_with(&place, tree, ctx);
         self.refresh_chrome(ctx);
         // The listing is new: every earlier thumbnail request is stale.
@@ -2081,7 +2083,7 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
         }
     } else {
         let read = first.and_then(|arg| match arg.to_str() {
-            Some(s) => Place::read_address(s, None),
+            Some(s) => Place::read_address(s, None, &[]),
             None => {
                 let p = PathBuf::from(arg);
                 p.is_absolute().then(|| (Place::from_path(&p), Some(p)))
