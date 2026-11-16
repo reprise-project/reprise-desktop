@@ -1,10 +1,11 @@
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::io;
+use std::path::Path;
 
 use repriselogin::Interface;
 use serde::{Deserialize, Serialize};
+
+use crate::atomic;
 
 pub const STATE_PATH: &str = "/var/lib/reprise-login/state.toml";
 
@@ -35,24 +36,10 @@ impl Remembered {
         })
     }
 
-    /// Writes a 0600 temp file next to `path` and renames it over `path`.
+    /// Replaces `path` with the state, the file 0600 in a 0711 directory.
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let text = toml::to_string(self).map_err(io::Error::other)?;
-        let mut tmp = path.as_os_str().to_owned();
-        tmp.push(".tmp");
-        let tmp = PathBuf::from(tmp);
-        match fs::remove_file(&tmp) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
-            _ => {}
-        }
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp)?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&tmp, path)
+        atomic::replace(path, text.as_bytes(), 0o711, 0o600)
     }
 }
 

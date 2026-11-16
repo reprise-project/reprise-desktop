@@ -169,12 +169,7 @@ fn write_drop_in(path: &Path, text: &str) -> io::Result<bool> {
     if std::fs::read_to_string(path).is_ok_and(|old| old == text) {
         return Ok(false);
     }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)?;
+    crate::atomic::replace(path, text.as_bytes(), 0o755, 0o644)?;
     Ok(true)
 }
 
