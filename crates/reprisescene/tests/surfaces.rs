@@ -280,14 +280,19 @@ impl World {
     /// A 100x100 surface whose buffer is in `format`, with `opaque` as its opaque region; not
     /// the surface [`World::request_frame`] asks frames for.
     fn cover(&mut self, format: wl_shm::Format, opaque: Option<(i32, i32, i32, i32)>) -> WlSurface {
+        self.cover_surface(format, opaque).1
+    }
+
+    /// [`World::cover`]'s surface, client side and server side.
+    fn cover_surface(
+        &mut self,
+        format: wl_shm::Format,
+        opaque: Option<(i32, i32, i32, i32)>,
+    ) -> (wl_surface::WlSurface, WlSurface) {
         let qh = self.queue.handle();
         let compositor = self.peer.compositor.clone().unwrap();
         let surface = compositor.create_surface(&qh, ());
-        let mut file = tempfile::tempfile().unwrap();
-        file.write_all(&[0x80; 100 * 100 * 4]).unwrap();
-        let shm = self.peer.shm.as_ref().unwrap();
-        let pool = shm.create_pool(file.as_fd(), 100 * 100 * 4, &qh, ());
-        let buffer = pool.create_buffer(0, 100, 100, 400, format, &qh, ());
+        let buffer = self.buffer(format);
         if let Some((x, y, w, h)) = opaque {
             let region = compositor.create_region(&qh, ());
             region.add(x, y, w, h);
@@ -296,7 +301,38 @@ impl World {
         surface.attach(Some(&buffer), 0, 0);
         surface.commit();
         self.pump();
-        self.server.surfaces.last().cloned().unwrap()
+        (surface, self.server.surfaces.last().cloned().unwrap())
+    }
+
+    /// A 100x100 shm buffer in `format`.
+    fn buffer(&mut self, format: wl_shm::Format) -> WlBuffer {
+        let qh = self.queue.handle();
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(&[0x80; 100 * 100 * 4]).unwrap();
+        let shm = self.peer.shm.as_ref().unwrap();
+        let pool = shm.create_pool(file.as_fd(), 100 * 100 * 4, &qh, ());
+        pool.create_buffer(0, 100, 100, 400, format, &qh, ())
+    }
+
+    /// Commit a new ARGB buffer on `surface` with `opaque` as its opaque region: the region
+    /// applies with a buffer.
+    fn set_opaque(
+        &mut self,
+        surface: &wl_surface::WlSurface,
+        opaque: Option<(i32, i32, i32, i32)>,
+    ) {
+        let qh = self.queue.handle();
+        let compositor = self.peer.compositor.clone().unwrap();
+        let region = opaque.map(|(x, y, w, h)| {
+            let r = compositor.create_region(&qh, ());
+            r.add(x, y, w, h);
+            r
+        });
+        surface.set_opaque_region(region.as_ref());
+        let buffer = self.buffer(wl_shm::Format::Argb8888);
+        surface.attach(Some(&buffer), 0, 0);
+        surface.commit();
+        self.pump();
     }
 
     fn request_frame(&mut self) {
@@ -798,28 +834,10 @@ fn a_custom_node_reading_nothing_leaves_a_surface_under_an_opaque_rect_below_it_
     );
 }
 
-/// A 100x100 custom node reading nothing beneath it, counting the cover walks that reach it.
-struct Counting(Rc<Cell<usize>>);
-
-impl reprisescene::CustomNode<DummyRenderer> for Counting {
-    fn size(&self) -> smithay::utils::Size<i32, smithay::utils::Logical> {
-        (100, 100).into()
-    }
-
-    fn reads_beneath(&self, _: f64) -> Option<Vec<Rectangle<i32, smithay::utils::Logical>>> {
-        self.0.set(self.0.get() + 1);
-        Some(Vec::new())
-    }
-
-    fn elements(
-        &self,
-        _: &mut DummyRenderer,
-        _: Point<f64, smithay::utils::Physical>,
-        _: smithay::utils::Scale<f64>,
-        _: f32,
-    ) -> Vec<reprisescene::CustomElement<DummyRenderer>> {
-        Vec::new()
-    }
+/// The cover walks `scene` made since the last call.
+fn walked(scene: &Scene<DummyRenderer>, since: &mut u64) -> u64 {
+    let n = scene.cover_walks();
+    n - std::mem::replace(since, n)
 }
 
 #[test]
@@ -833,26 +851,114 @@ fn a_surface_on_one_output_walks_the_cover_of_that_output_once() {
     let root = scene.root();
     let s = scene.surface_create(root, surface.clone());
     scene.set_position(s, 10, 10);
-    let walks = [Rc::new(Cell::new(0)), Rc::new(Cell::new(0))];
-    for (x, n) in [0, 100].into_iter().zip(&walks) {
-        let c = scene.custom_create(root, Box::new(Counting(n.clone())));
-        scene.set_position(c, x, 0);
-        scene.lower_to_bottom(c);
-    }
-    let taken = || walks.each_ref().map(|n| n.replace(0));
+    let mut since = scene.cover_walks();
 
     scene.surface_pass(&left);
-    assert_eq!(taken(), [1, 0], "a pass on the left output");
+    assert_eq!(walked(&scene, &mut since), 1, "a pass on the left output");
     scene.surface_pass(&right);
     assert_eq!(
-        taken(),
-        [0, 0],
+        walked(&scene, &mut since),
+        0,
         "a pass on the right output it does not lie on"
     );
+    scene.surface_pass(&left);
     assert_eq!(scene.outputs_showing(&surface), Some(vec![left.clone()]));
-    assert_eq!(taken(), [1, 0], "the outputs showing it");
+    assert_eq!(
+        walked(&scene, &mut since),
+        0,
+        "a second pass and the outputs showing it, nothing changed"
+    );
+    scene.set_position(s, 10, 12);
+    assert_eq!(scene.outputs_showing(&surface), Some(vec![left.clone()]));
+    assert_eq!(
+        walked(&scene, &mut since),
+        1,
+        "the outputs showing it, moved"
+    );
     assert_eq!(scene.surface_primary_output(&surface), Some(left));
-    assert_eq!(taken(), [1, 0], "its primary output");
+    assert_eq!(walked(&scene, &mut since), 0, "its primary output");
+}
+
+#[test]
+fn an_output_walks_its_cover_again_when_its_view_a_node_a_surface_or_glass_changes() {
+    let mut w = World::new();
+    let surface = w.surface();
+    let left = w.left.clone();
+    let mut scene = Scene::<DummyRenderer>::new();
+    scene.add_output(&left);
+    let root = scene.root();
+    let s = scene.surface_create(root, surface.clone());
+    scene.set_position(s, 10, 10);
+    let cover = scene.rect_create(root, (30, 100), [0.0, 0.0, 0.0, 1.0]);
+    let (covered, shown) = (Some(vec![]), Some(vec![left.clone()]));
+    let mut since = scene.cover_walks();
+    let mut check = |scene: &Scene<DummyRenderer>, want: &Option<Vec<Output>>, why: &str| {
+        assert_eq!(scene.outputs_showing(&surface), *want, "{why}");
+        assert_eq!(walked(scene, &mut since), 1, "{why}: walked again");
+        assert_eq!(scene.outputs_showing(&surface), *want, "{why}, asked again");
+        assert_eq!(walked(scene, &mut since), 0, "{why}, asked again: no walk");
+    };
+    let mode = |w: i32, h: i32| Mode {
+        size: (w, h).into(),
+        refresh: 60_000,
+    };
+    check(&scene, &shown, "the rect covering its left 20 px");
+
+    left.change_current_state(Some(mode(20, 100)), None, None, None);
+    check(
+        &scene,
+        &covered,
+        "an output 20 px wide, its shown part under the rect",
+    );
+    left.change_current_state(Some(mode(100, 100)), None, None, None);
+    check(&scene, &shown, "the output 100 px wide again");
+
+    left.change_current_state(None, None, None, Some((-80, 0).into()));
+    check(
+        &scene,
+        &covered,
+        "the output moved to show only its left 10 px",
+    );
+    left.change_current_state(None, None, None, Some((0, 0).into()));
+    check(&scene, &shown, "the output moved back");
+
+    scene.rect_set_size(cover, (50, 50));
+    check(&scene, &covered, "the rect grown to its edges");
+    let half = smithay::output::Scale::Fractional(1.5);
+    left.change_current_state(None, None, Some(half), None);
+    check(
+        &scene,
+        &shown,
+        "at scale 1.5 the rect's edges round a pixel in",
+    );
+    let one = smithay::output::Scale::Integer(1);
+    left.change_current_state(None, None, Some(one), None);
+    check(&scene, &covered, "at scale 1");
+
+    let grow = Rc::new(Cell::new(0));
+    let glass = scene.custom_create(
+        root,
+        Box::new(Reading {
+            size: (10, 10),
+            grow: grow.clone(),
+        }),
+    );
+    scene.set_position(glass, 60, 60);
+    check(&scene, &covered, "glass away from it");
+    grow.set(15);
+    check(&scene, &shown, "the glass reading 5 px of it");
+    scene.destroy(glass);
+    check(&scene, &covered, "the glass gone");
+
+    let (client, server) = w.cover_surface(wl_shm::Format::Argb8888, None);
+    let over = scene.surface_create(root, server);
+    scene.set_position(over, 0, 0);
+    scene.rect_set_size(cover, (1, 1));
+    check(&scene, &shown, "a surface over it with no opaque region");
+    w.set_opaque(&client, Some((0, 0, 100, 100)));
+    check(&scene, &covered, "that surface opaque over all of it");
+    w.set_opaque(&client, Some((0, 0, 100, 30)));
+    check(&scene, &shown, "that surface opaque over its top 20 px");
 }
 
 #[test]

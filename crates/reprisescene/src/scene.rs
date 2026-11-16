@@ -1,7 +1,10 @@
 //! The tree: making nodes, ordering siblings, positions, enable,
 //! reparenting, destroying, and each kind's own setters.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::{
+    cell::{Cell, RefCell},
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use smithay::{
     backend::{
@@ -26,7 +29,7 @@ use crate::node::{
     RectId, RectNode, SurfaceId, SurfaceNode, TreeId,
 };
 use crate::{
-    cover::{Seek, Shows},
+    cover::{Memo, Seek, Shows},
     output_rect,
 };
 
@@ -78,6 +81,9 @@ pub struct Scene<R: Renderer, D = ()> {
     /// first (`set_hoist`).
     pub(crate) hoist: Option<(NodeId, Vec<NodeId>)>,
     watch: Option<Watch>,
+    /// Per output, its last cover walk ([`Scene::covered_on`]).
+    pub(crate) cover: RefCell<Vec<Memo>>,
+    pub(crate) cover_walks: Cell<u64>,
 }
 
 /// The nodes edited or made since [`Scene::watch`] and the outputs that showed them before.
@@ -129,6 +135,8 @@ impl<R: Renderer, D> Scene<R, D> {
             changes: 0,
             hoist: None,
             watch: None,
+            cover: Default::default(),
+            cover_walks: Default::default(),
         }
     }
 

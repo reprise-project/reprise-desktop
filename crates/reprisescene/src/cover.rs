@@ -7,9 +7,10 @@ use std::{
 
 use smithay::{
     backend::renderer::{Renderer, utils::RendererSurfaceStateUserData},
+    desktop::utils::bbox_from_surface_tree,
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Point, Rectangle},
+    utils::{Logical, Point, Rectangle, Size},
     wayland::{
         alpha_modifier::AlphaModifierSurfaceCachedState,
         compositor::{TraversalAction, with_surface_tree_downward},
@@ -58,14 +59,59 @@ impl<R: Renderer, D> Scene<R, D> {
         }
     }
 
-    /// The surface nodes `output` draws none of ([`Scene::leaves_on`]).
+    /// The surface nodes `output` draws none of ([`Scene::leaves_on`]). The output's last walk
+    /// answers while the nodes, its view and every [`Input`] are as that walk found them.
     pub(crate) fn covered_on(&self, output: &Output) -> Vec<NodeId> {
-        let Leaves::All(leaves) = self.leaves_on(output, None) else {
+        let Some(view) = View::of(output) else {
             return Vec::new();
         };
-        (leaves.into_iter())
-            .filter(|l| l.surface && l.covered)
-            .map(|l| l.id)
+        let inputs = self.inputs(view.scale.x);
+        if let Some(m) = (self.cover.borrow().iter()).find(|m| m.output == *output)
+            && m.view == view
+            && m.changes == self.changes()
+            && m.inputs == inputs
+        {
+            return m.nodes.clone();
+        }
+        self.cover_walks.set(self.cover_walks.get() + 1);
+        let nodes: Vec<NodeId> = match self.leaves_on(output, None) {
+            Leaves::All(leaves) => (leaves.into_iter())
+                .filter(|l| l.surface && l.covered)
+                .map(|l| l.id)
+                .collect(),
+            _ => Vec::new(),
+        };
+        let m = Memo {
+            output: output.clone(),
+            view,
+            changes: self.changes(),
+            inputs,
+            nodes: nodes.clone(),
+        };
+        let mut memo = self.cover.borrow_mut();
+        memo.retain(|m| m.output != *output);
+        memo.push(m);
+        nodes
+    }
+
+    /// How many cover walks the scene has made.
+    #[doc(hidden)]
+    pub fn cover_walks(&self) -> u64 {
+        self.cover_walks.get()
+    }
+
+    /// What [`Scene::leaves_on`] reads beyond the nodes, in [`Scene::live`] order, for a view at
+    /// `scale`.
+    fn inputs(&self, scale: f64) -> Vec<Input> {
+        (self.live())
+            .filter_map(|(_, n)| match &n.content {
+                Content::Surface(s) => Some(Input::Surface(
+                    bbox_from_surface_tree(&s.surface, Point::default()),
+                    surface_opaque(&s.surface, Point::default()),
+                )),
+                Content::Custom(c) => Some(Input::Custom(c.size(), c.reads_beneath(scale))),
+                _ => None,
+            })
             .collect()
     }
 
@@ -234,6 +280,23 @@ impl<R: Renderer, D> Scene<R, D> {
                 .collect(),
         )
     }
+}
+
+/// One output's last cover walk and what it read.
+pub(crate) struct Memo {
+    pub(crate) output: Output,
+    view: View,
+    changes: u64,
+    inputs: Vec<Input>,
+    nodes: Vec<NodeId>,
+}
+
+/// What a cover walk reads that [`Scene::changes`] does not count: a client surface tree's box
+/// and opaque parts from its origin, and a custom node's size and what it reads beneath.
+#[derive(PartialEq)]
+enum Input {
+    Surface(Rectangle<i32, Logical>, Vec<Rectangle<i32, Logical>>),
+    Custom(Size<i32, Logical>, Option<Vec<Rectangle<i32, Logical>>>),
 }
 
 /// What [`Scene::leaves_on`] walked.
