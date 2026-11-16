@@ -581,12 +581,7 @@ mod tests {
 
         use reprisebus::testbus::bus;
 
-        async fn connect(address: &str) -> zbus::Connection {
-            zbus::connection::Builder::address(address)
-                .build()
-                .await
-                .expect("connect")
-        }
+        use reprisebus::testbus::connect;
 
         /// A registration: the subject's kind and session id, the locale and the agent's path.
         type Registration = (String, String, String, String);
@@ -613,10 +608,12 @@ mod tests {
         /// A polkitd that takes the authority's name on `address` and reports registrations.
         async fn polkitd(address: &str, seen: Sender<Registration>) -> zbus::Connection {
             let conn = connect(address).await;
-            conn.object_server()
-                .at("/org/freedesktop/PolicyKit1/Authority", Authority(seen))
-                .await
-                .unwrap();
+            reprisebus::testbus::serve(
+                &conn,
+                "/org/freedesktop/PolicyKit1/Authority",
+                Authority(seen),
+            )
+            .await;
             conn.request_name(NAME).await.unwrap();
             conn
         }

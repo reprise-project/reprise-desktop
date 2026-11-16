@@ -735,12 +735,7 @@ mod tests {
 
         use reprisebus::testbus::bus;
 
-        async fn connect(address: &str) -> zbus::Connection {
-            zbus::connection::Builder::address(address)
-                .build()
-                .await
-                .expect("connect")
-        }
+        use reprisebus::testbus::connect;
 
         const TID: &str = "/1";
 
@@ -799,12 +794,8 @@ mod tests {
             };
             zbus::block_on(async {
                 let services = connect(&bus.1).await;
-                services.object_server().at(PATH, Daemon).await.unwrap();
-                services
-                    .object_server()
-                    .at(TID, Transaction::default())
-                    .await
-                    .unwrap();
+                reprisebus::testbus::serve(&services, PATH, Daemon).await;
+                reprisebus::testbus::serve(&services, TID, Transaction::default()).await;
                 services.request_name(NAME).await.unwrap();
                 let conn = connect(&bus.1).await;
                 let mut tid = None;
@@ -847,8 +838,8 @@ mod tests {
                 let services = connect(&bus.1).await;
                 let tx = Transaction::default();
                 let cancelled = tx.cancelled.clone();
-                services.object_server().at(PATH, Daemon).await.unwrap();
-                services.object_server().at(TID, tx).await.unwrap();
+                reprisebus::testbus::serve(&services, PATH, Daemon).await;
+                reprisebus::testbus::serve(&services, TID, tx).await;
                 services.request_name(NAME).await.unwrap();
                 let conn = connect(&bus.1).await;
                 let ended = transaction_within(

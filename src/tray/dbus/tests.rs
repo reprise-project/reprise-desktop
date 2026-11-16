@@ -497,7 +497,7 @@ fn notification_signals(cmd: TrayCommand) -> Vec<(String, Option<String>)> {
             icons: hicolor(),
             identities: Arc::default(),
         };
-        ours.object_server().at(NOTIFY_PATH, notes).await.unwrap();
+        reprisebus::testbus::serve_to(&ours, &theirs, NOTIFY_PATH, notes).await;
         lock(&lp.senders)
             .0
             .insert(5, (":1.1".into(), "mail".into(), None));
@@ -1294,9 +1294,9 @@ fn a_session_taking_its_names_back_takes_only_free_ones_and_a_later_session_repl
         return;
     };
     zbus::block_on(async {
-        let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
-        let ours = connect().await.unwrap();
-        let newer = connect().await.unwrap();
+        let connect = || reprisebus::testbus::connect(&bus.1);
+        let ours = connect().await;
+        let newer = connect().await;
         own(&newer, NOTIFY_NAME, name_flags(false)).await.unwrap();
         let (tx, _events) = std::sync::mpsc::channel();
         let mut lp = test_loop(ours.clone(), tx, -1);
@@ -1313,7 +1313,7 @@ fn a_session_taking_its_names_back_takes_only_free_ones_and_a_later_session_repl
             newer.unique_name().map(|n| n.to_string()),
             "a session started meanwhile keeps its own"
         );
-        let later = connect().await.unwrap();
+        let later = connect().await;
         own(&later, SETTINGS_NAME, name_flags(false)).await.unwrap();
         own(&later, SCREENSAVER_NAME, screensaver_flags(false))
             .await
@@ -1360,8 +1360,8 @@ fn a_session_that_joined_another_watcher_hosts_its_own_once_it_takes_the_name_ba
         return;
     };
     zbus::block_on(async {
-        let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
-        let ours = connect().await.unwrap();
+        let connect = || reprisebus::testbus::connect(&bus.1);
+        let ours = connect().await;
         let (registrations, registered) = async_channel::unbounded();
         let items: WatcherItems = Arc::default();
         let watcher = Watcher {
@@ -1369,15 +1369,12 @@ fn a_session_that_joined_another_watcher_hosts_its_own_once_it_takes_the_name_ba
             registrations,
             identities: Arc::default(),
         };
-        ours.object_server()
-            .at(WATCHER_PATH, watcher)
-            .await
-            .unwrap();
+        reprisebus::testbus::serve(&ours, WATCHER_PATH, watcher).await;
         let (tx, _events) = std::sync::mpsc::channel();
         let mut lp = test_loop(ours.clone(), tx, -1);
         lp.idle_watcher = Some((items, registered));
         lp.retake_names().await;
-        let app = connect().await.unwrap();
+        let app = connect().await;
         app.call_method(
             Some(WATCHER_NAME),
             WATCHER_PATH,
@@ -1414,8 +1411,8 @@ fn a_sandboxed_app_registers_at_most_its_cap_across_connections() {
     };
     let proc = flatpak_proc("sni-cap", "org.example.Filler");
     let held = zbus::block_on(async {
-        let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
-        let ours = connect().await.unwrap();
+        let connect = || reprisebus::testbus::connect(&bus.1);
+        let ours = connect().await;
         let (registrations, _registered) = async_channel::unbounded();
         let items: WatcherItems = Arc::default();
         let watcher = Watcher {
@@ -1423,12 +1420,9 @@ fn a_sandboxed_app_registers_at_most_its_cap_across_connections() {
             registrations,
             identities: Arc::new(Identities::under(&proc)),
         };
-        ours.object_server()
-            .at(WATCHER_PATH, watcher)
-            .await
-            .unwrap();
+        reprisebus::testbus::serve(&ours, WATCHER_PATH, watcher).await;
         let host = ours.unique_name().unwrap().to_string();
-        let (first, second) = (connect().await.unwrap(), connect().await.unwrap());
+        let (first, second) = (connect().await, connect().await);
         let paths = (0..=MAX_REGISTRATIONS_PER_APP).map(|i| format!("/item{i}"));
         for (i, path) in paths.enumerate() {
             let app = if i < MAX_REGISTRATIONS_PER_APP / 2 {

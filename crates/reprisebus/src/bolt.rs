@@ -308,12 +308,7 @@ mod tests {
 
     use crate::testbus::bus;
 
-    async fn connect(address: &str) -> Connection {
-        zbus::connection::Builder::address(address)
-            .build()
-            .await
-            .expect("connect")
-    }
+    use crate::testbus::connect;
 
     const DOCK: &str = "/org/freedesktop/bolt/devices/dock";
     const DRIVE: &str = "/org/freedesktop/bolt/devices/drive";
@@ -426,26 +421,18 @@ mod tests {
 
     async fn fake_bolt(address: &str, calls: &Calls) -> Connection {
         let c = connect(address).await;
-        let server = c.object_server();
         let paths = [HOST, DOCK].map(|p| OwnedObjectPath::try_from(p).unwrap());
-        server
-            .at(
-                PATH,
-                FakeManager {
-                    devices: paths.to_vec(),
-                    calls: calls.clone(),
-                },
-            )
-            .await
-            .unwrap();
-        server
-            .at(HOST, fake("host-uid", "host", "authorized", calls))
-            .await
-            .unwrap();
-        server
-            .at(DOCK, fake("dock-uid", "peripheral", "connected", calls))
-            .await
-            .unwrap();
+        crate::testbus::serve(
+            &c,
+            PATH,
+            FakeManager {
+                devices: paths.to_vec(),
+                calls: calls.clone(),
+            },
+        )
+        .await;
+        crate::testbus::serve(&c, HOST, fake("host-uid", "host", "authorized", calls)).await;
+        crate::testbus::serve(&c, DOCK, fake("dock-uid", "peripheral", "connected", calls)).await;
         c.request_name(NAME).await.unwrap();
         c
     }
@@ -581,10 +568,10 @@ mod tests {
             let auto = async || found(&me).await.unwrap().devices[0].auto;
             let unread = auto().await;
             let domain = "/org/freedesktop/bolt/domains/d0";
-            server.at(domain, FakeDomain(false)).await.unwrap();
+            crate::testbus::serve(&bolt, domain, FakeDomain(false)).await;
             let off = auto().await;
             server.remove::<FakeDomain, _>(domain).await.unwrap();
-            server.at(domain, FakeDomain(true)).await.unwrap();
+            crate::testbus::serve(&bolt, domain, FakeDomain(true)).await;
             (unread, off, auto().await)
         });
         assert_eq!(autos, (false, false, true));
@@ -622,10 +609,12 @@ mod tests {
 
         zbus::block_on(async {
             let server = bolt.object_server();
-            server
-                .at(DRIVE, fake("drive-uid", "peripheral", "connected", &calls))
-                .await
-                .unwrap();
+            crate::testbus::serve(
+                &bolt,
+                DRIVE,
+                fake("drive-uid", "peripheral", "connected", &calls),
+            )
+            .await;
             let m = server.interface::<_, FakeManager>(PATH).await.unwrap();
             m.get_mut()
                 .await

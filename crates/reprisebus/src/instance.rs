@@ -404,8 +404,7 @@ mod tests {
         proc: &std::path::Path,
         member: &str,
     ) -> (zbus::Result<()>, Vec<Request>) {
-        let connect =
-            || zbus::block_on(zbus::connection::Builder::address(bus.1.as_str()).build()).unwrap();
+        let connect = || zbus::block_on(crate::testbus::connect(&bus.1));
         let (server, caller) = (connect(), connect());
         let (tx, rx) = channel();
         let app = Application {
@@ -417,7 +416,7 @@ mod tests {
         let server_name = server.unique_name().unwrap().to_string();
         let data = Handoff::default().platform_data();
         let reply = zbus::block_on(async {
-            server.object_server().at(path.as_str(), app).await.unwrap();
+            crate::testbus::serve(&server, path.as_str(), app).await;
             let to = (server_name.as_str(), path.as_str(), member);
             match member {
                 "ActivateAction" => {

@@ -323,12 +323,7 @@ mod tests {
 
     use crate::testbus::bus;
 
-    async fn connect(address: &str) -> Connection {
-        zbus::connection::Builder::address(address)
-            .build()
-            .await
-            .expect("connect")
-    }
+    use crate::testbus::connect;
 
     const DEVICE_PATH: &str = "/net/reactivated/Fprint/Device/0";
 
@@ -360,9 +355,9 @@ mod tests {
             let _fprintd = match fingers {
                 Some(fingers) => {
                     let c = connect(&bus.1).await;
-                    c.object_server().at(MANAGER_PATH, Manager).await.unwrap();
+                    crate::testbus::serve(&c, MANAGER_PATH, Manager).await;
                     let device = FakeDevice(fingers.iter().map(|f| f.to_string()).collect());
-                    c.object_server().at(DEVICE_PATH, device).await.unwrap();
+                    crate::testbus::serve(&c, DEVICE_PATH, device).await;
                     c.request_name(NAME).await.unwrap();
                     Some(c)
                 }
@@ -502,11 +497,8 @@ mod tests {
         let bus = bus()?;
         Some(zbus::block_on(async move {
             let c = connect(&bus.1).await;
-            c.object_server().at(MANAGER_PATH, Manager).await.unwrap();
-            c.object_server()
-                .at(DEVICE_PATH, reader.clone())
-                .await
-                .unwrap();
+            crate::testbus::serve(&c, MANAGER_PATH, Manager).await;
+            crate::testbus::serve(&c, DEVICE_PATH, reader.clone()).await;
             c.request_name(NAME).await.unwrap();
             let conn = connect(&bus.1).await;
             let out = test(&conn).await;

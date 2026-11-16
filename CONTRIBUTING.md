@@ -61,6 +61,12 @@ where those fonts aren't installed, dma-buf uploads with no render node,
 kernel TLS without `REPRISE_KTLS_TESTS=1`, the icon theme check with no icon
 theme installed, and the zombie test when another test's reaper wins.
 
+- **D-Bus fakes.** A test serves a fake service with `Builder::serve_at` or
+  `reprisebus::testbus::serve`, which returns once the connection answers
+  calls; zbus drops a call that reaches an interface added with
+  `ObjectServer::at` before its object server is up. Callers connect with
+  `testbus::connect`, whose calls give up after 10 s.
+  `crates/reprisebus/tests/served.rs` fails on `ObjectServer::at` in tests.
 - **Pixel-neutral changes.** If a change shouldn't move a pixel, prove it
   with `scripts/pixels-unchanged.sh [--with-blue] BASE`. It renders the
   gallery and the preview tests on BASE and on your tree and lists every

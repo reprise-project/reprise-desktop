@@ -746,12 +746,7 @@ mod tests {
 
         use reprisebus::testbus::bus;
 
-        async fn connect(address: &str) -> zbus::Connection {
-            zbus::connection::Builder::address(address)
-                .build()
-                .await
-                .expect("connect")
-        }
+        use reprisebus::testbus::connect;
 
         struct Fwupd {
             uri: String,
@@ -817,14 +812,15 @@ mod tests {
                     uri: format!("file://{}", metadata.display()),
                     handed: handed.clone(),
                 };
-                services.object_server().at("/", fwupd).await.unwrap();
+                reprisebus::testbus::serve(&services, "/", fwupd).await;
                 services.request_name(NAME).await.unwrap();
                 let authority = Authority(allowed.clone());
-                services
-                    .object_server()
-                    .at("/org/freedesktop/PolicyKit1/Authority", authority)
-                    .await
-                    .unwrap();
+                reprisebus::testbus::serve(
+                    &services,
+                    "/org/freedesktop/PolicyKit1/Authority",
+                    authority,
+                )
+                .await;
                 services
                     .request_name("org.freedesktop.PolicyKit1")
                     .await

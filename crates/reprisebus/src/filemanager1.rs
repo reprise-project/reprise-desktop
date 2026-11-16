@@ -124,8 +124,7 @@ mod tests {
         uris: &[&str],
         startup_id: &str,
     ) -> (zbus::Result<()>, Vec<Request>) {
-        let connect =
-            || zbus::block_on(zbus::connection::Builder::address(bus.1.as_str()).build()).unwrap();
+        let connect = || zbus::block_on(crate::testbus::connect(&bus.1));
         let (server, caller) = (connect(), connect());
         let (tx, rx) = channel();
         let fm = FileManager {
@@ -135,7 +134,7 @@ mod tests {
         let to = server.unique_name().unwrap().to_string();
         let uris: Vec<String> = uris.iter().map(|u| u.to_string()).collect();
         let reply = zbus::block_on(async {
-            server.object_server().at(PATH, fm).await.unwrap();
+            crate::testbus::serve(&server, PATH, fm).await;
             caller
                 .call_method(
                     Some(to.as_str()),

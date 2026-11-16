@@ -37,10 +37,10 @@ everything = ("Cargo.toml", "Cargo.lock", ".config/", "data/", "protocols/", "sc
 inert = ("docs/", ".github/", "README.md", "CONTRIBUTING.md", "SECURITY.md", "LICENSE",
          ".gitignore")
 root_paths = ("src/", "tests/", "examples/", "benches/", "build.rs")
-# Tests that read files outside their own crate: string ids, window ids, licence citations,
-# packaging invariants. A pull request runs them whatever crate it changes.
-SCANNERS = (("reprisekit", "i18n"), ("repriseapp", "win_names"), ("reprise", "licences"),
-            ("reprise", "packaging"))
+# Tests that read files outside their own crate: string ids, window ids, test D-Bus serving,
+# licence citations, packaging invariants. A pull request runs them whatever crate it changes.
+SCANNERS = (("reprisekit", "i18n"), ("repriseapp", "win_names"), ("reprisebus", "served"),
+            ("reprise", "licences"), ("reprise", "packaging"))
 # Unit tests that read packaging/.
 PACKAGING = ("reprise-updates",)
 

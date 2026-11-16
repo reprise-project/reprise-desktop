@@ -240,12 +240,7 @@ mod tests {
 
     use crate::testbus::bus;
 
-    async fn connect(address: &str) -> Connection {
-        zbus::connection::Builder::address(address)
-            .build()
-            .await
-            .expect("connect")
-    }
+    use crate::testbus::connect;
 
     const LINE: &str = "/org/freedesktop/UPower/devices/line_power_AC";
 
@@ -301,18 +296,17 @@ mod tests {
         zbus::block_on(async move {
             let enabled = Arc::new(Mutex::new(false));
             let upower = connect(&bus.1).await;
-            let server = upower.object_server();
-            server.at(PATH, FakeUPower).await.unwrap();
+            crate::testbus::serve(&upower, PATH, FakeUPower).await;
             let line = FakeDevice {
                 battery: false,
                 enabled: Arc::default(),
             };
-            server.at(LINE, line).await.unwrap();
+            crate::testbus::serve(&upower, LINE, line).await;
             let bat = FakeDevice {
                 battery: true,
                 enabled: enabled.clone(),
             };
-            server.at(BAT0, bat).await.unwrap();
+            crate::testbus::serve(&upower, BAT0, bat).await;
             upower.request_name(NAME).await.unwrap();
 
             let conn = connect(&bus.1).await;

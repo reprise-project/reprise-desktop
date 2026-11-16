@@ -206,7 +206,10 @@ mod tests {
     use crate::testbus::bus;
 
     fn connect(address: &str) -> Connection {
-        crate::connect(zbus::connection::Builder::address(address)).expect("connect")
+        crate::connect(
+            zbus::connection::Builder::address(address).method_timeout(crate::testbus::REPLY),
+        )
+        .expect("connect")
     }
 
     struct Daemon {
@@ -319,10 +322,7 @@ mod tests {
         let c = connect(address);
         crate::wait(async {
             let ids = devices.iter().map(|d| d.0.to_string()).collect();
-            c.object_server()
-                .at(DAEMON_PATH, Daemon { ids })
-                .await
-                .unwrap();
+            crate::testbus::serve(&c, DAEMON_PATH, Daemon { ids }).await;
             for (id, name, reachable, plugins, battery) in devices {
                 let path = device_path(id);
                 let device = FakeDevice {
@@ -330,22 +330,16 @@ mod tests {
                     reachable: *reachable,
                     plugins: plugins.to_vec(),
                 };
-                c.object_server().at(path.as_str(), device).await.unwrap();
+                crate::testbus::serve(&c, path.as_str(), device).await;
                 if let Some((charge, charging)) = battery {
                     let at = format!("{path}/battery");
                     let b = FakeBattery(*charge, *charging);
-                    c.object_server().at(at, b).await.unwrap();
+                    crate::testbus::serve(&c, at, b).await;
                 }
                 let find = FakeFind(calls.clone());
-                c.object_server()
-                    .at(format!("{path}/findmyphone"), find)
-                    .await
-                    .unwrap();
+                crate::testbus::serve(&c, format!("{path}/findmyphone"), find).await;
                 let share = FakeShare(calls.clone());
-                c.object_server()
-                    .at(format!("{path}/share"), share)
-                    .await
-                    .unwrap();
+                crate::testbus::serve(&c, format!("{path}/share"), share).await;
             }
             c.request_name(NAME).await.unwrap();
         });
