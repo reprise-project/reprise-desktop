@@ -460,7 +460,7 @@ fn a_box_cleared_away_leaves_nobody_waiting_on_it() {
             h.state.open_dialog(d);
             let over = h.state.dialogs.views.last().expect("the box").id;
             h.state.browse_started(Browsing {
-                pid: 0x7EAD_0100,
+                pid: Some(0x7EAD_0100),
                 over,
                 pidfd: None,
             });
@@ -593,7 +593,7 @@ fn a_browse_dialog_opens_over_run_on_runs_output_past_a_place_kept_on_another() 
     };
     (h.state.wm.file_dialog.geometry).insert(crate::filedlggeom::OWN_APP.into(), kept);
     h.state.browse_started(Browsing {
-        pid: PID,
+        pid: Some(PID),
         over: run,
         pidfd: None,
     });
