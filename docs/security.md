@@ -646,7 +646,8 @@ from the process that owns `org.freedesktop.portal.Desktop` and runs outside
 any sandbox, read through its pidfd by the rules in [Sandboxed
 programs](#sandboxed-programs); any other caller gets AccessDenied, so a
 sandboxed app that holds the name while xdg-desktop-portal is away can't
-speak for other apps. App ids, parent windows and restore data are taken
+speak for other apps. Its own `org.reprise.SessionEnd`, which lists the
+apps holding logout off, answers only the compositor's process. App ids, parent windows and restore data are taken
 on the frontend's word, and the frontend reads the app id from the sandbox.
 
 What a consent prompt remembers, and where:

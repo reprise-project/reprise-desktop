@@ -374,9 +374,10 @@ async fn emit_all(conn: &zbus::Connection, shared: &Inhibits) {
 }
 
 /// What the compositor asks while it ends the session: Reprise's own interface on the portal's
-/// object.
+/// object, answered only to the process `compositor`.
 pub struct SessionEnd {
     pub shared: Shared,
+    pub compositor: u32,
 }
 
 #[zbus::interface(name = "org.reprise.SessionEnd")]
@@ -386,13 +387,23 @@ impl SessionEnd {
     async fn query(
         &self,
         ending: bool,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(connection)] conn: &zbus::Connection,
-    ) -> Vec<(String, String)> {
+    ) -> zbus::fdo::Result<Vec<(String, String)>> {
+        let sender = hdr.sender().map_or("", |s| s.as_str());
+        if !reprisebus::peer::is_process(conn, sender, self.compositor)
+            .await
+            .unwrap_or(false)
+        {
+            return Err(zbus::fdo::Error::AccessDenied(format!(
+                "{sender} is not the compositor"
+            )));
+        }
         if self.shared.ending.swap(ending, Ordering::Relaxed) != ending {
             log::info!("Inhibit monitor: session ending {ending}");
             emit_all(conn, &self.shared).await;
         }
-        self.shared.logout_holders()
+        Ok(self.shared.logout_holders())
     }
 }
 
@@ -1118,6 +1129,7 @@ mod tests {
                 crate::PATH,
                 SessionEnd {
                     shared: shared.clone(),
+                    compositor: pid,
                 },
             )
             .build()
@@ -1305,6 +1317,35 @@ mod tests {
             assert!(hears(&mut states, (true, SESSION_QUERY_END)).await);
             end_session(&portal, &bus, false).await;
             assert!(hears(&mut states, (true, SESSION_RUNNING)).await);
+        });
+    }
+
+    #[test]
+    fn a_session_end_query_from_another_process_is_refused() {
+        let Some(bus) = bus() else {
+            return;
+        };
+        zbus::block_on(async {
+            let _compositor = Compositor::on(&bus, false).await;
+            let (portal, _states) = portal(&bus, u32::MAX).await;
+            let refused = connect(&bus)
+                .await
+                .call_method(
+                    portal.unique_name().map(|n| n.as_str()),
+                    crate::PATH,
+                    Some("org.reprise.SessionEnd"),
+                    "Query",
+                    &(true,),
+                )
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(
+                    zbus::fdo::Error::from(refused),
+                    zbus::fdo::Error::AccessDenied(_)
+                ),
+                "only the compositor's process may query the session end"
+            );
         });
     }
 
