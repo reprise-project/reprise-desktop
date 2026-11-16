@@ -140,8 +140,8 @@ impl State {
     }
 
     /// Let go of every held button when the seat loses the device (a session
-    /// pause, the lock): the gesture they hold is cancelled, not finished, and
-    /// the client under the pointer hears each release.
+    /// pause, the lock) or an overlay takes the pointer: the gesture they hold is
+    /// cancelled, not finished, and the client under the pointer hears each release.
     pub(crate) fn release_all_buttons(&mut self, time: InputTime) {
         if self.interaction != Interaction::Idle {
             self.cancel_interaction();
