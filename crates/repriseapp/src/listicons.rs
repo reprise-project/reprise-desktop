@@ -44,32 +44,24 @@ fn put_art(cache: &mut IconCache, art: &Art, scale: i32, theme: Option<&Arc<Icon
     }
 }
 
-/// Decodes `files` at `sizes` and `scale` (theme names from `theme`) on a thread that fires
-/// `wake` once the art is sent. None when no thread starts.
+/// Decodes `files` at `sizes` and `scale` (theme names from `theme`) on the icon file pool
+/// ([`crate::iconjobs::FILES`]), firing `wake` once the art is sent.
 fn spawn_decode(
     files: Vec<String>,
     sizes: Vec<i32>,
     scale: i32,
     theme: Option<Arc<IconTheme>>,
     wake: &Waker,
-) -> Option<Receiver<Art>> {
+) -> Receiver<Art> {
     let (tx, rx) = channel();
     let wake = wake.clone();
-    let spawned = std::thread::Builder::new()
-        .name("list icons".into())
-        .spawn(move || {
-            let art = decode_art(files, &sizes, scale, theme.as_deref());
-            if tx.send(art).is_ok() {
-                wake.wake();
-            }
-        });
-    match spawned {
-        Ok(_) => Some(rx),
-        Err(e) => {
-            log::warn!("cannot spawn an icon thread ({e}); icon files keep their scale");
-            None
+    crate::iconjobs::FILES.run(Box::new(move || {
+        let art = decode_art(files, &sizes, scale, theme.as_deref());
+        if tx.send(art).is_ok() {
+            wake.wake();
         }
-    }
+    }));
+    rx
 }
 
 /// What a listing's thread reads for its rows' icons, beside the rows: each folder's own icon
@@ -173,8 +165,11 @@ impl ListIcons {
         let mut sizes: Vec<i32> = LISTING_PX.into_iter().chain(self.icons.sizes()).collect();
         sizes.sort_unstable();
         sizes.dedup();
-        self.decoding = spawn_decode(files, sizes, scale, Some(theme.clone()), wake)
-            .map(|rx| (scale, theme, rx));
+        self.decoding = Some((
+            scale,
+            theme.clone(),
+            spawn_decode(files, sizes, scale, Some(theme), wake),
+        ));
     }
 
     /// Hands `cache` what [`ListIcons::decode_misses`] decoded, at the scale it was decoded at:
@@ -231,7 +226,13 @@ impl ListIcons {
         if files.is_empty() {
             return;
         }
-        self.files = spawn_decode(files, self.icons.sizes().to_vec(), scale, None, wake);
+        self.files = Some(spawn_decode(
+            files,
+            self.icons.sizes().to_vec(),
+            scale,
+            None,
+            wake,
+        ));
     }
 
     /// Hands `entries` the icon files decoded for the last scale change, and `cache` keeps them

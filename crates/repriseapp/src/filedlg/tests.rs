@@ -1087,6 +1087,32 @@ fn cold_svg_icons_land_on_the_dialog_and_a_broken_own_icon_gives_way() {
     assert!(!h.icons.waiting);
 }
 
+/// A program primes its icons on every event, the wake a landed icon sends included, so the
+/// places take the icon its prime fetched.
+#[test]
+fn a_place_icon_the_program_fetched_first_still_lands_on_the_dialog() {
+    let t = pictures_folder();
+    let mut icons = svg_icons(t.path(), &[("computer", FOLDER), ("folder", FOLDER)]);
+    let mut h = host_in(&t.path().join("list"));
+    h.icons.prime(&mut icons);
+    let mut dlg = open_dlg(&mut h);
+    let worn = |dlg: &FileDlg| {
+        dlg.places()
+            .iter()
+            .map(|p| p.icon.clone())
+            .collect::<Vec<_>>()
+    };
+    let blank = worn(&dlg);
+    assert!(crate::iconjobs::decode_now(&mut icons));
+    h.icons.prime(&mut icons);
+    assert!(
+        h.take_thumbs(&mut dlg, &mut icons),
+        "the landed icons are taken"
+    );
+    assert_ne!(worn(&dlg), blank);
+    assert_eq!(worn(&dlg), worn(&open_dlg(&mut h)));
+}
+
 /// The box over the dialog wears a blank stand-in while its cold SVG icon decodes, then the icon.
 /// An icon that decodes at no size leaves the box without one.
 #[test]
