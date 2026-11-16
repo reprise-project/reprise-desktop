@@ -40,6 +40,7 @@ use model::{Act, Arrival, Entry, Target};
 
 const FLYOUT: WinId = WinId::named("flyout");
 const UNLOCK: WinId = WinId::named("unlock");
+const UNLOCK_NEXT: WinId = WinId::named("unlock-next");
 
 struct Flyout {
     at: (i32, i32),
@@ -62,6 +63,15 @@ fn open_menu(tree: &MenuTree, at: (i32, i32), edge: Edge, cx: &MenuCtx) -> Popup
     PopupMenu::open(tree, origin, cx, false)
 }
 
+/// The call a landed unlock leads to.
+#[derive(Debug, PartialEq, Eq)]
+enum Unlocked {
+    /// The cleartext volume.
+    Mount(String),
+    /// The container, whose box was cancelled while it unlocked.
+    Lock(String),
+}
+
 /// A pending safe removal's names, read before the drive goes away.
 struct Removing {
     disk: String,
@@ -82,6 +92,12 @@ struct DrivesApp {
     /// The unlock box's client size at the text size it last heard.
     unlock_size: (i32, i32),
     unlock_queue: VecDeque<String>,
+    /// Which of [`UNLOCK`] and [`UNLOCK_NEXT`] the box is in; it changes as a box closes, so
+    /// the next maps a window of its own.
+    unlock_turn: bool,
+    /// Containers with an unlock under way, and whether it is still wanted: one cancelled while
+    /// it ran is locked again when it lands.
+    unlocking: HashMap<String, bool>,
     /// gvfs's mounts, whose phones and cameras get a Safely Remove row, named after
     /// `devices` ([`reprisefs::portable::dress`]).
     shares: Vec<reprisefs::netshare::Share>,
@@ -148,11 +164,12 @@ impl DrivesApp {
         }
         let snap = self.snapshot.as_ref().expect("just set");
         let gone = |v: &str| snap.volume(v).is_none_or(|v| v.cleartext.is_some());
-        if self.unlock.as_ref().is_some_and(|u| gone(&u.volume)) {
-            self.unlock = None;
-        }
+        let box_gone = self.unlock.as_ref().is_some_and(|u| gone(&u.volume));
         self.unlock_queue.retain(|v| !gone(v));
         self.open_after.retain(|v| snap.volume(v).is_some());
+        if box_gone {
+            self.close_unlock();
+        }
         self.entries_changed();
     }
 
@@ -345,6 +362,19 @@ impl DrivesApp {
         }
     }
 
+    fn unlock_win(&self) -> WinId {
+        if self.unlock_turn {
+            UNLOCK_NEXT
+        } else {
+            UNLOCK
+        }
+    }
+
+    fn close_unlock(&mut self) {
+        self.unlock = None;
+        self.unlock_turn = !self.unlock_turn;
+    }
+
     fn open_unlock(&mut self, ctx: &mut Ctx) {
         if self.unlock.is_some() {
             return;
@@ -384,32 +414,36 @@ impl DrivesApp {
     }
 
     /// The cleartext volume may show up in a snapshot first and close the box.
-    fn unlocked(&mut self, volume: &str, result: Result<String, reprisefs::udisks::Error>) {
+    fn unlocked(
+        &mut self,
+        volume: &str,
+        result: Result<String, reprisefs::udisks::Error>,
+    ) -> Option<Unlocked> {
         let open = self.unlock.as_ref().is_some_and(|u| u.volume == volume);
+        let wanted = self.unlocking.remove(volume) != Some(false);
         match result {
+            Ok(_) if !wanted => Some(Unlocked::Lock(volume.to_string())),
             Ok(clear) => {
                 if open {
-                    self.unlock = None;
+                    self.close_unlock();
                 }
                 if self.open_after.remove(volume) {
                     self.open_after.insert(clear.clone());
                 }
-                if let Some(c) = &self.calls {
-                    c.mount(clear);
-                }
+                Some(Unlocked::Mount(clear))
             }
             Err(e) if e.kind == ErrorKind::Cancelled => {
                 if open {
-                    self.unlock = None;
+                    self.close_unlock();
                 }
                 self.open_after.remove(volume);
+                None
             }
             Err(e) => {
-                let Some(u) = self.unlock.as_mut().filter(|_| open) else {
-                    return;
-                };
+                let u = self.unlock.as_mut().filter(|_| open)?;
                 log::info!("unlocking {volume}: {e}");
                 u.fail(unlock::failure(&e.message));
+                None
             }
         }
     }
@@ -526,7 +560,16 @@ impl DrivesApp {
                 watch::Msg::Locked(v) => log::info!("{v} arrived under the lock; left alone"),
                 watch::Msg::Arrived(a) => self.arrived(a),
                 watch::Msg::Mounted { volume, result } => self.mounted(&volume, result),
-                watch::Msg::Unlocked { volume, result } => self.unlocked(&volume, result),
+                watch::Msg::Unlocked { volume, result } => {
+                    let next = self.unlocked(&volume, result);
+                    if let Some(c) = &self.calls {
+                        match next {
+                            Some(Unlocked::Mount(clear)) => c.mount(clear),
+                            Some(Unlocked::Lock(volume)) => c.lock(volume),
+                            None => {}
+                        }
+                    }
+                }
                 watch::Msg::Removed { disk, result } => self.removed(&disk, result),
                 watch::Msg::Shares(shares) => {
                     self.shares = shares;
@@ -670,10 +713,15 @@ impl DrivesApp {
             unlock::Outcome::Redraw => Reply::redraw(),
             unlock::Outcome::Cancel => {
                 self.open_after.remove(&u.volume);
-                self.unlock = None;
+                if let Some(wanted) = self.unlocking.get_mut(&u.volume) {
+                    *wanted = false;
+                }
+                self.close_unlock();
+                self.open_unlock(ctx);
                 Reply::redraw_all()
             }
             unlock::Outcome::Submit(pass) => {
+                self.unlocking.insert(u.volume.clone(), true);
                 if let Some(c) = &self.calls {
                     c.unlock(u.volume.clone(), pass);
                 }
@@ -700,7 +748,7 @@ impl App for DrivesApp {
         self.unlock
             .iter()
             .map(|_| Child {
-                id: UNLOCK,
+                id: self.unlock_win(),
                 title: unlock::TITLE.into(),
                 size: self.unlock_size,
                 fixed: true,
@@ -733,7 +781,7 @@ impl App for DrivesApp {
         match (win, ev) {
             (_, Event::Wake) => self.wake(ctx),
             (FLYOUT, ev) => self.flyout_event(ev, ctx),
-            (UNLOCK, ev) => {
+            (w, ev) if w == self.unlock_win() => {
                 if ev == Event::Resized {
                     self.unlock_size = unlock::Unlock::client(ctx);
                 }
@@ -761,7 +809,7 @@ impl App for DrivesApp {
                 }
                 menu.draw(c, &ctx.theme, &ctx.text, false);
             }
-            UNLOCK => {
+            w if w == self.unlock_win() => {
                 if let Some(u) = &self.unlock {
                     u.draw(c, ctx);
                 }
@@ -785,7 +833,10 @@ impl repriseapp::Extended for DrivesApp {
     }
 
     fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
-        let u = self.unlock.as_mut().filter(|_| win == UNLOCK)?;
+        if win != self.unlock_win() {
+            return None;
+        }
+        let u = self.unlock.as_mut()?;
         let form = repriseapp::DropForm {
             form: &mut u.form,
             px: None,
@@ -801,7 +852,7 @@ impl repriseapp::Extended for DrivesApp {
                     tree.set_focus(focus);
                 }
             }
-            UNLOCK => {
+            w if w == self.unlock_win() => {
                 if let Some(u) = &self.unlock {
                     u.access(tree, ctx);
                 }
@@ -913,6 +964,75 @@ mod tests {
             u.form.item("message").map(|i| &i.control),
             fresh.form.item("message").map(|i| &i.control),
             "the message wraps as a box opened at 200% wraps it"
+        );
+    }
+
+    fn enter() -> Event {
+        Event::Key(repriseapp::KeyInput {
+            sym: reprisekit::textedit::keysym::RETURN,
+            utf8: None,
+            mods: Default::default(),
+            edit: None,
+        })
+    }
+
+    #[test]
+    fn a_cancel_while_the_unlock_runs_leaves_the_drive_locked_and_unopened() {
+        let sdc = "/org/freedesktop/UDisks2/block_devices/sdc";
+        let clear = "/org/freedesktop/UDisks2/block_devices/dm_2d0";
+        let mut app = DrivesApp::default();
+        let mut ctx = test_ctx(100);
+        app.go(Arrival::Unlock(sdc.into()), true);
+        app.open_unlock(&mut ctx);
+        let win = app.unlock_win();
+        let _ = app.event(win, Event::Pasted("secret".into()), &mut ctx);
+        let _ = app.event(win, enter(), &mut ctx);
+        let _ = app.event(win, Event::CloseRequest, &mut ctx);
+        assert!(app.unlock.is_none());
+        assert_eq!(
+            app.unlocked(sdc, Ok(clear.into())),
+            Some(Unlocked::Lock(sdc.into())),
+            "the container is locked again, not mounted"
+        );
+        assert!(app.open_after.is_empty(), "no window waits for a mount");
+    }
+
+    #[test]
+    fn an_unlock_that_lands_with_its_box_up_mounts_and_opens() {
+        let sdc = "/org/freedesktop/UDisks2/block_devices/sdc";
+        let clear = "/org/freedesktop/UDisks2/block_devices/dm_2d0";
+        let mut app = DrivesApp::default();
+        let mut ctx = test_ctx(100);
+        app.go(Arrival::Unlock(sdc.into()), true);
+        app.open_unlock(&mut ctx);
+        let win = app.unlock_win();
+        let _ = app.event(win, Event::Pasted("secret".into()), &mut ctx);
+        let _ = app.event(win, enter(), &mut ctx);
+        assert_eq!(
+            app.unlocked(sdc, Ok(clear.into())),
+            Some(Unlocked::Mount(clear.into()))
+        );
+        assert!(app.open_after.contains(clear));
+    }
+
+    #[test]
+    fn the_next_unlock_box_comes_up_in_a_window_of_its_own_when_one_is_cancelled() {
+        let sdc = "/org/freedesktop/UDisks2/block_devices/sdc";
+        let sdd = "/org/freedesktop/UDisks2/block_devices/sdd";
+        let mut app = DrivesApp::default();
+        let mut ctx = test_ctx(100);
+        app.unlock_queue.extend([sdc.to_string(), sdd.to_string()]);
+        app.open_unlock(&mut ctx);
+        let first = app.unlock_win();
+        let _ = app.event(first, Event::CloseRequest, &mut ctx);
+        assert_eq!(app.unlock.as_ref().map(|u| u.volume.as_str()), Some(sdd));
+        let next = app.children();
+        assert_eq!(next.len(), 1);
+        assert_ne!(next[0].id, first);
+        let _ = app.event(first, Event::CloseRequest, &mut ctx);
+        assert!(
+            app.unlock.is_some(),
+            "a late event on the first window misses the second box"
         );
     }
 

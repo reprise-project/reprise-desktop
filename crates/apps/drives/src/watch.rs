@@ -87,6 +87,14 @@ impl Calls {
         });
     }
 
+    pub fn lock(&self, volume: String) {
+        self.spawn("lock", move |u, _| {
+            if let Err(e) = u.lock(&volume) {
+                log::warn!("locking {volume}: {e}");
+            }
+        });
+    }
+
     /// Unmounts the phone or camera gvfs mounted at `at`.
     pub fn unmount(&self, at: PathBuf) {
         let p = self.poster.clone();
