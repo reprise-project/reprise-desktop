@@ -492,7 +492,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   area. Recordings are MP4 files in Videos/Screencasts, in H.264, H.265 or
   AV1 with AAC, Opus or FLAC sound, at a constant quality, an average or a
   constant bitrate, with a frame rate cap and keyframe interval
-  (`[recording]`, [configuration.md](configuration.md#recording)). They are
+  (`[recording]`, [configuration.md](configuration.md#recording)). With
+  SVT-AV1 older than 4.3, whose CBR can hang, a constant bitrate in software
+  AV1 is coded as an average one and the journal says so. They are
   coded on the graphics card when it can; a notice offers Open and Show in
   Folder. Settings > Screen Capture sets the screenshot file's format and
   the recording's codecs and rates, greying the encoders and codecs that
