@@ -3,10 +3,10 @@
 use crate::backuphost::Then;
 use crate::registry::Page;
 use crate::{
-    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, LAYOUT_WIN, RENAME_WIN, SAVER_WIN,
-    SHORTCUT_WIN, SettingsApp, additem, appearancepage, backgroundpage, defaultspage, displayhost,
-    displaypage, filepick::Pick, layoutdlg, magnifierpage, menupage, notifypage, pages, quickpage,
-    regionpage, renamedlg, saverdlg, saverpage,
+    ADD_ITEM_WIN, ADD_WIN, CHOOSER_WIN, COLOR_WIN, LAYOUT_WIN, RENAME_WIN, SAVER_WIN, SHORTCUT_WIN,
+    SettingsApp, additem, appearancepage, backgroundpage, defaultspage, displayhost, displaypage,
+    filepick::Pick, layoutdlg, magnifierpage, menupage, notifypage, pages, quickpage, regionpage,
+    renamedlg, saverdlg, saverpage,
 };
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
@@ -391,8 +391,8 @@ impl SettingsApp {
         if self.error.owns(win) {
             return self.error_event(win, ev, ctx);
         }
-        if win == ASK_WIN {
-            return self.ask_event(ev, ctx);
+        if self.asking.owns(win) {
+            return self.ask_event(win, ev, ctx);
         }
         if win == ADD_WIN {
             return self.add_event(ev, ctx);

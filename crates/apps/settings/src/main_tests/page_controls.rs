@@ -316,17 +316,64 @@ fn unchecking_run_as_asks_first_and_only_ok_unchecks_it() {
         "checked until the question is answered"
     );
     assert_eq!(
-        a.asking.as_ref().map(|q| q.msg.fields.text.as_str()),
+        a.asking.up().map(|(b, _)| b.fields.text.as_str()),
         Some(apply::RUN_AS_QUESTION)
     );
-    a.event(ASK_WIN, Event::Key(key(keysym::ESCAPE)), &mut ctx);
-    assert!(a.asking.is_none());
+    let win = a.asking.win().expect("the question is up");
+    a.event(win, Event::Key(key(keysym::ESCAPE)), &mut ctx);
+    assert!(a.asking.is_empty());
     assert_eq!(a.list.checks, Some(vec![true]), "Cancel keeps it");
 
     a.list_key(&form::Key::Space, &cm);
-    a.event(ASK_WIN, Event::Key(key(keysym::RETURN)), &mut ctx);
+    let win = a.asking.win().expect("the question is up again");
+    a.event(win, Event::Key(key(keysym::RETURN)), &mut ctx);
     assert_eq!(a.list.checks, Some(vec![false]), "OK unchecks it");
     assert!(a.dirty(), "Apply writes it");
+}
+
+#[test]
+fn a_question_asked_while_one_is_up_comes_after_it_and_each_answer_runs_its_own_step() {
+    let mut a = app("two-questions");
+    let mut ctx = test_ctx();
+    let entry = |name: &str| {
+        let text = format!("[Desktop Entry]\nName={name}\nExec={name}\n");
+        reprisefs::autostart::parse(&format!("{name}.desktop"), &text, false).unwrap()
+    };
+    a.entries = vec![entry("one"), entry("two")];
+    a.applied_checks = vec![true, true];
+    pages::fill_list(&mut a.list, &a.entries, &[true, true]);
+    a.ask(
+        "Stop one?".into(),
+        crate::backuphost::Then::StopAutostart(0),
+    );
+    a.ask(
+        "Stop two?".into(),
+        crate::backuphost::Then::StopAutostart(1),
+    );
+    let key = |sym| Event::Key(key_input(sym, Mods::default(), None));
+    let up = |a: &SettingsApp| {
+        let (b, _) = a.asking.up()?;
+        Some((b.fields.text.clone(), a.asking.win()?))
+    };
+
+    let (text, win) = up(&a).expect("a question is up");
+    assert_eq!(text, "Stop one?", "the second question waits");
+    a.event(win, key(keysym::ESCAPE), &mut ctx);
+    assert_eq!(
+        a.list.checks,
+        Some(vec![true, true]),
+        "Cancel stops nothing"
+    );
+
+    let (text, win) = up(&a).expect("the second question is up after the first's answer");
+    assert_eq!(text, "Stop two?");
+    a.event(win, key(keysym::RETURN), &mut ctx);
+    assert_eq!(
+        a.list.checks,
+        Some(vec![true, false]),
+        "OK stops the entry its own question named"
+    );
+    assert!(up(&a).is_none());
 }
 
 /// The Search page's content note waits for its read, then says what the contents check starts;

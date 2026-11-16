@@ -158,12 +158,12 @@ impl SettingsApp {
             }
             openwith::Event::Redraw => Reply::redraw(),
             openwith::Event::Cancel => {
-                self.chooser = None;
+                self.close_chooser();
                 Reply::redraw_all()
             }
             openwith::Event::Choose { id, .. } => {
                 let mime = c.mime.clone();
-                self.chooser = None;
+                self.close_chooser();
                 let dir = reprisefs::apps::user_applications_dir();
                 let chosen = match self.defaults.as_mut() {
                     Some(d) => d.chosen(&id, &mime, dir.as_deref()),
@@ -187,6 +187,15 @@ impl SettingsApp {
                 self.sync_apply();
                 Reply::redraw_all()
             }
+        }
+    }
+
+    /// The chooser closes, and its Browse... file dialog with it: a pick would have no list to
+    /// join.
+    fn close_chooser(&mut self) {
+        self.chooser = None;
+        if self.add_for == Pick::Program {
+            self.add = None;
         }
     }
 

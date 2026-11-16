@@ -5,12 +5,13 @@ use crate::backup::{self, Bundle, Roots};
 use crate::filepick::Pick;
 use crate::registry::Page;
 use crate::{SettingsApp, pages};
-use repriseapp::oneshot::{self, MsgBox};
-use repriseapp::{Ctx, Event, Reply};
+use repriseapp::asks::Answer;
+use repriseapp::oneshot::MsgBox;
+use repriseapp::{Ctx, Event, Reply, WinId};
 use reprisekit::controls::msgbox;
 use std::path::{Path, PathBuf};
 
-/// What OK in the question box goes on to do.
+/// What OK in a question box goes on to do.
 pub(crate) enum Then {
     Export(PathBuf),
     Import(PathBuf, Bundle),
@@ -18,12 +19,6 @@ pub(crate) enum Then {
     NewCertificate,
     /// Uncheck this Startup row.
     StopAutostart(usize),
-}
-
-/// The question box: its text, OK and Cancel, and what OK does.
-pub(crate) struct Ask {
-    pub(crate) msg: MsgBox,
-    then: Then,
 }
 
 /// The text Import asks with: the file, what it replaces and where the current files go.
@@ -51,6 +46,7 @@ pub(crate) fn import_question(file: &Path, bundle: &Bundle, roots: &Roots) -> St
 }
 
 impl SettingsApp {
+    /// Asks `text` with OK and Cancel, once the questions before it are answered.
     pub(crate) fn ask(&mut self, text: String, then: Then) {
         let msg = MsgBox::new(
             "Reprise Settings",
@@ -64,24 +60,20 @@ impl SettingsApp {
                 max_w: repriseapp::dialog_max_w(),
             },
         );
-        self.asking = Some(Ask { msg, then });
+        self.asking.ask(msg, then);
     }
 
-    pub(crate) fn ask_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
+    pub(crate) fn ask_event(&mut self, win: WinId, ev: Event, ctx: &Ctx) -> Reply {
         let theme = self.dialog_theme(&ctx.theme);
-        let Some(a) = &mut self.asking else {
-            return Reply::none();
-        };
-        match a.msg.event(&ev, &self.dialog_text, &theme) {
-            oneshot::Outcome::Closed(button) => {
-                let then = self.asking.take().map(|a| a.then);
-                if let (Some(0), Some(then)) = (button, then) {
+        match self.asking.event(win, &ev, &self.dialog_text, &theme) {
+            Answer::Closed(then, button) => {
+                if button == Some(0) {
                     self.carry_out(then);
                 }
                 Reply::redraw_all()
             }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
+            Answer::Redraw => Reply::redraw(),
+            Answer::None => Reply::none(),
         }
     }
 

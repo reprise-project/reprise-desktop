@@ -156,8 +156,8 @@ fn restore_defaults_takes_only_the_pages_keys_out_of_the_file() {
     );
     a.sheet.tabs.open = Page::Sound.index();
     a.ask_restore();
-    assert!(a.asking.is_some(), "it asks first");
-    a.asking = None;
+    assert!(!a.asking.is_empty(), "it asks first");
+    a.asking.close();
     a.restore_defaults(Page::Sound);
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
