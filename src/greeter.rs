@@ -219,7 +219,7 @@ fn output(o: &LoginOutput) -> crate::config::OutputConfig {
             refresh_mhz: m.refresh_mhz.map(|r| r as i32),
         }),
         adaptive_sync: None,
-        transform: crate::config::Transform::parse(o.transform.name()).unwrap_or_default(),
+        transform: o.transform,
         position: o.position,
         primary: o.primary,
         icc_profile: None,

@@ -1315,14 +1315,6 @@ fn the_saved_picture_stays_offered_after_another_background_is_picked() {
 }
 
 #[test]
-fn every_display_transform_keeps_its_name_on_the_login_screen() {
-    for t in repriseapp::heads::Transform::ALL {
-        let login = Transform::parse(t.name()).map(Transform::name);
-        assert_eq!(login, Some(t.name()), "{t:?}");
-    }
-}
-
-#[test]
 fn the_animate_box_reads_and_saves_the_login_screens_animation() {
     let dir = tmp("animation");
     std::fs::write(dir.join("login.toml"), "[login]\nanimation = false\n").unwrap();

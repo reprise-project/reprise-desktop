@@ -94,26 +94,28 @@ impl std::fmt::Display for LoginMode {
     }
 }
 
-/// A rotation or flip by its `[[outputs]] transform` name; rotations are counter-clockwise.
+/// A rotation or flip by its `[[outputs]] transform` name (wlr-randr's); the discriminants are the
+/// `wl_output.transform` values, and rotations are counter-clockwise as the protocol's are.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u32)]
 pub enum Transform {
     #[default]
     #[serde(rename = "normal")]
-    Normal,
+    Normal = 0,
     #[serde(rename = "90")]
-    Rotate90,
+    Rotate90 = 1,
     #[serde(rename = "180")]
-    Rotate180,
+    Rotate180 = 2,
     #[serde(rename = "270")]
-    Rotate270,
+    Rotate270 = 3,
     #[serde(rename = "flipped")]
-    Flipped,
+    Flipped = 4,
     #[serde(rename = "flipped-90")]
-    Flipped90,
+    Flipped90 = 5,
     #[serde(rename = "flipped-180")]
-    Flipped180,
+    Flipped180 = 6,
     #[serde(rename = "flipped-270")]
-    Flipped270,
+    Flipped270 = 7,
 }
 
 impl Transform {
@@ -143,6 +145,15 @@ impl Transform {
 
     pub fn parse(s: &str) -> Option<Transform> {
         Transform::ALL.into_iter().find(|t| t.name() == s)
+    }
+
+    pub fn wl(self) -> u32 {
+        self as u32
+    }
+
+    /// The transform for a `wl_output.transform` value; `Normal` past the eight.
+    pub fn from_wl(v: u32) -> Transform {
+        Transform::ALL.get(v as usize).copied().unwrap_or_default()
     }
 }
 
@@ -448,13 +459,16 @@ mod tests {
     }
 
     #[test]
-    fn every_transform_name_parses_back() {
+    fn every_transform_name_parses_back_and_its_wl_value_names_it() {
         for t in Transform::ALL {
             assert_eq!(Transform::parse(t.name()), Some(t));
+            assert_eq!(Transform::from_wl(t.wl()), t);
             assert_eq!(
                 serde_json::to_string(&t).unwrap(),
                 format!("\"{}\"", t.name())
             );
         }
+        assert_eq!(Transform::from_wl(5), Transform::Flipped90);
+        assert_eq!(Transform::from_wl(99), Transform::Normal);
     }
 }
