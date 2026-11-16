@@ -6,7 +6,6 @@
 //! `Action::Launcher` (Super+Space by default) opens it and its own bind closes it; `KeyRoute::Launcher` hands it every other press. Locking closes it.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use reprisekit::controls::launcher::{self, Event, Hit, Key, Launcher, Pick, Row, Section};
 use reprisekit::fuzzy;
@@ -24,7 +23,7 @@ use crate::output::upload_scaled;
 use crate::raster::Rect;
 use crate::search::providers::Open;
 use crate::search::{
-    FileSearch, Provider, SearchOwner, Setting, WindowName, calc_icon, calc_row, file_icon_name,
+    FileSearch, Picked, SearchOwner, Setting, WindowName, calc_icon, calc_row, file_icon_name,
     rank_apps, rank_settings, rank_windows, windows_first,
 };
 use crate::window::WindowId;
@@ -289,40 +288,19 @@ impl State {
                     return;
                 }
                 let v = &*v;
-                let apps = &self.app_index;
-                enum Launch {
-                    App(reprisefs::apps::AppEntry),
-                    File(crate::desktop::FileFacts),
-                    Result(Arc<Provider>, reprisebus::searchprovider::Meta),
-                    Copy(String),
-                    Setting(Setting),
-                    Window(WindowId),
-                }
-                let launch = match pick {
-                    Pick::Calc => v.answer.clone().map(Launch::Copy),
-                    Pick::Setting(i) => v.settings.get(i).copied().map(Launch::Setting),
-                    Pick::Window(i) => v.windows.get(i).copied().map(Launch::Window),
-                    Pick::App(i) => v
-                        .matches
-                        .get(i)
-                        .and_then(|&ai| apps.get(ai))
-                        .cloned()
-                        .map(Launch::App),
-                    Pick::Found(s, i) => match v.search.result(s, i) {
-                        Some((p, m)) => Some(Launch::Result(p.clone(), m.clone())),
-                        None => (v.search.path(s, i)).map(|p| Launch::File(v.search.facts_of(p))),
-                    },
+                let picked = match pick {
+                    Pick::Calc => v.answer.clone().map(Picked::Copy),
+                    Pick::Setting(i) => v.settings.get(i).copied().map(Picked::Setting),
+                    Pick::Window(i) => v.windows.get(i).copied().map(Picked::Window),
+                    Pick::App(i) => (v.matches.get(i))
+                        .and_then(|&ai| self.app_index.get(ai))
+                        .map(|e| Picked::App(Box::new(e.clone()))),
+                    Pick::Found(s, i) => v.search.picked(s, i),
                 };
                 let query = v.model.query().to_string();
                 self.close_launcher();
-                match launch {
-                    Some(Launch::App(entry)) => self.launch_app(&entry),
-                    Some(Launch::File(facts)) => self.open_found(&facts),
-                    Some(Launch::Result(p, m)) => self.open_provider(&p, Open::Result(m), &query),
-                    Some(Launch::Copy(answer)) => self.clip_copy(&answer),
-                    Some(Launch::Setting(s)) => self.open_setting(s),
-                    Some(Launch::Window(w)) => self.bring_up(w),
-                    None => {}
+                if let Some(picked) = picked {
+                    self.run_search_pick(picked, &query);
                 }
             }
             Event::OpenContainer(s, i) => {

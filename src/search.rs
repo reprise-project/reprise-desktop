@@ -335,6 +335,30 @@ pub struct FileSearch {
     timer: Option<RegistrationToken>,
 }
 
+/// A search row as picked, taken before its panel closes; [`State::run_search_pick`] runs it.
+pub enum Picked {
+    Copy(String),
+    App(Box<AppEntry>),
+    Setting(Setting),
+    File(crate::desktop::FileFacts),
+    Result(Arc<Provider>, Meta),
+    Window(crate::window::WindowId),
+}
+
+impl State {
+    /// Runs `picked`, found for `query`, once its panel has closed.
+    pub(crate) fn run_search_pick(&mut self, picked: Picked, query: &str) {
+        match picked {
+            Picked::Copy(answer) => self.clip_copy(&answer),
+            Picked::App(entry) => self.launch_app(&entry),
+            Picked::Setting(s) => self.open_setting(s),
+            Picked::File(facts) => self.open_found(&facts),
+            Picked::Result(p, m) => self.open_provider(&p, providers::Open::Result(m), query),
+            Picked::Window(w) => self.bring_up(w),
+        }
+    }
+}
+
 impl FileSearch {
     /// Files by name, by contents when `contents` is on, then each of `providers`.
     pub fn new(contents: bool, providers: Vec<Arc<Provider>>) -> Self {
@@ -368,6 +392,14 @@ impl FileSearch {
     /// Row `row` of section `section`, when it is a file.
     pub fn path(&self, section: usize, row: usize) -> Option<&Path> {
         self.found(section, row)?.path()
+    }
+
+    /// Row `row` of section `section` as picked: a program's result or a file.
+    pub fn picked(&self, section: usize, row: usize) -> Option<Picked> {
+        match self.result(section, row) {
+            Some((p, m)) => Some(Picked::Result(p.clone(), m.clone())),
+            None => (self.path(section, row)).map(|p| Picked::File(self.facts_of(p))),
+        }
     }
 
     /// Row `row` of section `section`, when it is a program's result, with its provider.
