@@ -2,8 +2,8 @@
 //! its own) and install every desktop entry and polkit file, CI installs their dependencies, the
 //! .deb's postinst applies every sysusers and tmpfiles file, an upgrade of either package raises
 //! the restart notice, the .deb's password stacks never reach a fingerprint reader, the time zone
-//! polkit rule allows one action only, and the desktop entries file only programs with a settings
-//! window under Settings.
+//! polkit rule allows one action only, the desktop entries file only programs with a settings
+//! window under Settings, and both packages ship the third-party notices.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -389,6 +389,63 @@ fn the_deb_postinst_applies_every_sysusers_and_tmpfiles_file() {
             );
         }
     }
+}
+
+const NOTICES: &str = "/usr/share/licenses/reprise/THIRD-PARTY-NOTICES";
+
+/// The text of the shell function `name` in a PKGBUILD, to its closing brace.
+fn function<'a>(pkgbuild: &'a str, name: &str) -> &'a str {
+    let head = format!("\n{name}() {{\n");
+    let at = (pkgbuild.find(&head)).unwrap_or_else(|| panic!("the PKGBUILD has {name}()"));
+    let body = &pkgbuild[at + head.len()..];
+    &body[..body
+        .find("\n}\n")
+        .unwrap_or_else(|| panic!("{name}() closes"))]
+}
+
+#[test]
+fn both_packages_ship_the_third_party_notices() {
+    for path in PKGBUILDS {
+        let text = std::fs::read_to_string(root().join(path)).expect("PKGBUILD reads");
+        let lines = |f| {
+            function(&text, f)
+                .lines()
+                .map(str::trim)
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            lines("build")
+                .contains(&r#"packaging/third-party-notices >"$srcdir/THIRD-PARTY-NOTICES""#),
+            "{path}'s build() writes the notices"
+        );
+        let install = format!(r#"install -Dm644 "$srcdir/THIRD-PARTY-NOTICES" "$pkgdir{NOTICES}""#);
+        assert!(
+            lines("package").contains(&install.as_str()),
+            "{path}'s package() installs the notices at {NOTICES}"
+        );
+        assert!(
+            deps(&text, "makedepends").contains(&"python".to_string()),
+            "{path} makedepends on python, which runs packaging/third-party-notices"
+        );
+    }
+    let build = std::fs::read_to_string(root().join("packaging/deb/build.sh")).unwrap();
+    assert!(
+        build.lines().any(|l| l.trim()
+            == r#"install -Dm644 "$here/copyright" "$root/usr/share/doc/reprise/copyright""#),
+        "the .deb installs /usr/share/doc/reprise/copyright"
+    );
+    let copyright = std::fs::read_to_string(root().join("packaging/deb/copyright")).unwrap();
+    for path in ["/usr/share/common-licenses/GPL-3", NOTICES] {
+        assert!(
+            copyright.contains(path),
+            "the .deb's copyright names {path}"
+        );
+    }
+    let depends = std::fs::read_to_string(root().join("packaging/deb/build-depends")).unwrap();
+    assert!(
+        depends.lines().any(|l| l == "python3"),
+        "the .deb build-depends on python3"
+    );
 }
 
 /// The flag Software Updates watches for a restart the system needs.

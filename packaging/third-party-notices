@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+# Prints the packages' third-party notices: each non-dev crate dependency grouped by licence,
+# with its licence and notice files. Runs offline, so after `cargo build` has fetched them.
+import json
+import os
+import subprocess
+import sys
+from collections import defaultdict
+
+root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+host = next(
+    line.split(":", 1)[1].strip()
+    for line in subprocess.run(["rustc", "-vV"], capture_output=True, text=True, check=True).stdout.splitlines()
+    if line.startswith("host:")
+)
+meta = json.loads(
+    subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--locked", "--offline", "--filter-platform", host],
+        cwd=root, capture_output=True, text=True, check=True,
+    ).stdout
+)
+
+members = set(meta["workspace_members"])
+nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
+seen = set(members)
+todo = list(members)
+while todo:
+    for dep in nodes[todo.pop()]["deps"]:
+        if all(k["kind"] == "dev" for k in dep["dep_kinds"]):
+            continue
+        if dep["pkg"] not in seen:
+            seen.add(dep["pkg"])
+            todo.append(dep["pkg"])
+packages = sorted(
+    (p for p in meta["packages"] if p["id"] in seen and p["id"] not in members),
+    key=lambda p: (p["name"], p["version"]),
+)
+
+PREFIXES = ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE", "UNLICENSE")
+
+
+def files_in(d):
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    return [os.path.join(d, n) for n in names
+            if n.upper().startswith(PREFIXES) and os.path.isfile(os.path.join(d, n))]
+
+
+def licence_files(p):
+    d = os.path.dirname(p["manifest_path"])
+    found = files_in(d)
+    if p.get("license_file"):
+        f = os.path.normpath(os.path.join(d, p["license_file"]))
+        if os.path.isfile(f) and f not in found:
+            found.append(f)
+    # A crate in a git checkout often leaves its licence at the repository's root.
+    if not found and (p.get("source") or "").startswith("git+"):
+        while not found and not os.path.isdir(os.path.join(d, ".git")) and os.path.dirname(d) != d:
+            d = os.path.dirname(d)
+            found = files_in(d)
+    return found
+
+
+def read(f):
+    with open(f, encoding="utf-8", errors="replace") as fh:
+        return "\n".join(line.rstrip() for line in fh.read().strip("\n").splitlines())
+
+
+by_licence = defaultdict(list)
+for p in packages:
+    by_licence[(p.get("license") or "(no licence named)").replace("/", " OR ")].append(p)
+
+out = sys.stdout
+out.write("""Third-party notices for Reprise
+
+Reprise is free software under the GNU General Public License, version 3 or later.
+Its programs are built with the Rust crates listed below, each under the licence it
+names; each crate's own licence and notice files follow its group.
+
+Data and code from elsewhere:
+
+- The towns the automatic time zone looks up (src/tzcity/cities.txt) are built from
+  GeoNames' cities15000 list (https://www.geonames.org), licensed under the Creative
+  Commons Attribution 4.0 licence (https://creativecommons.org/licenses/by/4.0/).
+- Reprise Terminal's key sequences and pointer report encoding are ported from
+  alacritty, Copyright The Alacritty Project, under the Apache License 2.0; its text
+  is in the alacritty_terminal entry below.
+""")
+missing = []
+for licence in sorted(by_licence):
+    group = by_licence[licence]
+    out.write("\n" + "=" * 78 + f"\n{licence}\n" + "=" * 78 + "\n\n")
+    for p in group:
+        out.write(f"{p['name']} {p['version']}\n")
+    texts = defaultdict(list)
+    for p in group:
+        files = licence_files(p)
+        if not files:
+            missing.append(p)
+        for f in files:
+            texts[read(f)].append(f"{p['name']} {p['version']} ({os.path.basename(f)})")
+    for text, who in sorted(texts.items(), key=lambda t: t[1]):
+        out.write("\n" + "-" * 78 + "\n" + "\n".join(who) + "\n" + "-" * 78 + "\n\n" + text + "\n")
+if missing:
+    out.write("\n" + "=" * 78 + "\nCrates that ship no licence file, under the licence each names; its text\n"
+              + "is in that licence's group above\n"
+              + "=" * 78 + "\n\n")
+    out.write("".join(f"{p['name']} {p['version']}: {p.get('license')}\n" for p in missing))

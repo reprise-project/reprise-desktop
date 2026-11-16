@@ -11,7 +11,7 @@ arch=('x86_64')
 url="https://github.com/reprise-project/reprise-desktop"
 license=('GPL-3.0-or-later')
 depends=('seatd' 'systemd' 'systemd-libs' 'libinput>=1.26' 'libdrm' 'mesa' 'libglvnd' 'libdisplay-info' 'libxkbcommon' 'xorg-xwayland' 'freetype2' 'fontconfig' 'pam' 'libxcrypt' 'dbus>=1.15' 'pipewire>=1:1.4' 'zlib' 'ffmpeg' 'libjxl>=0.11.1')
-makedepends=('cargo' 'clang' 'pkgconf' 'git')
+makedepends=('cargo' 'clang' 'pkgconf' 'git' 'python')
 optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for'
             'ttf-dejavu: fallback font' 'noto-fonts-cjk: Chinese, Japanese and Korean text'
             'wqy-bitmapfont: crisp Chinese text in Reprise'\''s own text with antialias = false'
@@ -129,6 +129,7 @@ build() {
   # Named explicitly: the workspace has a root package, so a bare build
   # would build only that.
   cargo build --profile "$_profile" --locked -p reprise -p reprise-portal -p reprise-apps -p reprise-rdp -p reprise-record -p reprise-login -p reprise-login-rdp
+  packaging/third-party-notices >"$srcdir/THIRD-PARTY-NOTICES"
 }
 
 package() {
@@ -194,6 +195,7 @@ package() {
   install -Dm644 data/geoclue/90-reprise.conf "$pkgdir/etc/geoclue/conf.d/90-reprise.conf"
   install -Dm644 data/libalpm/hooks/reprise-upgrade.hook "$pkgdir/usr/share/libalpm/hooks/reprise-upgrade.hook"
   install -Dm644 config.example.toml "$pkgdir/usr/share/doc/reprise/config.example.toml"
+  install -Dm644 "$srcdir/THIRD-PARTY-NOTICES" "$pkgdir/usr/share/licenses/reprise/THIRD-PARTY-NOTICES"
   for ftl in data/locale/*/*.ftl; do
     install -Dm644 "$ftl" "$pkgdir/usr/share/reprise/locale/${ftl#data/locale/}"
   done

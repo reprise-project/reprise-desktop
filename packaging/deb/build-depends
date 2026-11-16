@@ -4,6 +4,7 @@ clang
 libclang-dev
 pkg-config
 git
+python3
 rustup
 dpkg-dev
 libavcodec-dev

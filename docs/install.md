@@ -290,7 +290,8 @@ user's server.
   without it)
 - Reprise Terminal's emulation comes from the `alacritty_terminal` crate,
   built in; it needs no runtime library
-- Python 3, for the tests' string id check (`scripts/i18n-check`)
+- Python 3, for the tests' string id check (`scripts/i18n-check`) and the
+  packages' third-party notices (`packaging/third-party-notices`)
 - Translated strings come from the Fluent crates (`fluent-bundle`,
   `fluent-langneg`, `unic-langid`), built in; they need no runtime library
 - Text fields find grapheme clusters with the `unicode-segmentation` crate,
