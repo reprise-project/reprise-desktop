@@ -1829,10 +1829,13 @@ stop the share first.
   second deadline, after which its process group is killed. Without
   bubblewrap, or where it can't start (no user namespaces, no systemd user
   manager, a file it can't bind), no thumbnailer runs and no file is marked
-  failed; the built-in picture decoders (Rust, in Explorer or its
-  `--thumbnailer` helper) still do. JPEG XL goes through libjxl there,
-  refused past 96 MiB of pixels, 384 MiB held by libjxl or 60 seconds of
-  decoding, whichever comes first. A font's sample in the
+  failed; the built-in picture decoders still do. They run unjailed in the
+  process showing the folder: Explorer or its `--thumbnailer` helper, and
+  every Open and Save dialog, the portal's file chooser included, which a
+  sandboxed app may open at a folder it names. JPEG XL goes through libjxl
+  there, refused past 96 MiB of pixels, 384 MiB held by libjxl or 60
+  seconds of decoding, whichever comes first. A decoder that panics marks
+  its file failed until the file changes. A font's sample in the
   Space preview is drawn the same way, by `reprise-explorer --font-sample`
   in the jail, so FreeType never parses a font file inside Explorer.
 - **App scopes.** A program started from a desktop entry runs in a systemd
