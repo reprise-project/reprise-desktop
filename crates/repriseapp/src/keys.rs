@@ -435,7 +435,7 @@ mod tests {
             Control::HotKey(h) => h.shown(true),
             _ => unreachable!(),
         };
-        assert_eq!(shown(&form), "Ctrl + ");
+        assert_eq!(shown(&form), "Ctrl+");
         assert_eq!(
             form_input(&mut form, &Event::Focus(false), &ctx),
             Some(form::Event::Redraw)
@@ -443,7 +443,7 @@ mod tests {
         assert_eq!(shown(&form), "None");
         let _ = form_input(&mut form, &Event::Key(key(u32::from(b't'), false)), &ctx);
         // A bare letter records with Super, as the field reads one.
-        assert_eq!(shown(&form), "Super + T", "no Ctrl left over");
+        assert_eq!(shown(&form), "Super+T", "no Ctrl left over");
     }
 
     /// Super+Shift+Escape hands the shortcuts back mid-chord and the

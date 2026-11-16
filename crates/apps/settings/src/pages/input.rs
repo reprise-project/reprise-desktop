@@ -3,8 +3,8 @@
 use super::{
     Area, BOUNCE_DELAY, CURSOR_DEFAULT_ROW, CURSOR_PREVIEW, DELAY_STEPS, DOUBLE_CLICK, GX, KB_ADD,
     KB_CAPS, KB_COMPOSE, KB_LAYOUTS, KB_REMOVE, KB_SWITCH_NOTE, KB_UP, MK_ACCEL, MK_SPEED, SC_ADD,
-    SC_EDIT, SC_REMOVE, SCROLL_SPEED, SPEED_STEPS, X, button, choice, combo, edit, ends_track,
-    group, shortcuts, spin, updown,
+    SC_EDIT, SC_OVERLAY_MS, SC_REMOVE, SCROLL_SPEED, SPEED_STEPS, X, button, choice, combo, edit,
+    ends_track, group, shortcuts, spin, updown,
 };
 use crate::model::{CAPS_LOCK, CLICK_METHODS, COMPOSE_KEY, CURSOR_SIZES, TEXT_SIZES, VISUAL_BELLS};
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
@@ -108,13 +108,7 @@ pub fn keyboard(a: Area) -> Form {
         "Hold Super to &show them after",
     ));
     let (min, max) = repriseconf::config::ShortcutOverlay::DELAY_MS.into_inner();
-    items.push(updown(
-        "shortcut_overlay_ms",
-        GX + 218,
-        276,
-        min as i32,
-        max as i32,
-    ));
+    items.push(updown(SC_OVERLAY_MS, GX + 218, 276, min as i32, max as i32));
     items.push(Item::label_at(
         "shortcut_overlay_ms_units",
         GX + 272,

@@ -157,6 +157,7 @@ impl SettingsApp {
     fn side_list_after(&self) -> Option<usize> {
         match registry::open(&self.sheet) {
             Page::Privacy => self.sheet.open().index_of(pages::PRIVACY_LOCATION),
+            Page::Keyboard => self.sheet.open().index_of(pages::SC_OVERLAY_MS),
             _ => None,
         }
     }
@@ -194,10 +195,10 @@ impl SettingsApp {
         self.sheet_event(ev)
     }
 
-    /// A page whose side list is its first tab stop starts on that list unless the page list
-    /// kept the focus.
+    /// A page with a side list starts on it unless the page list kept the focus; Privacy's list
+    /// sits under its check and starts unfocused.
     pub(crate) fn tab_opened(&mut self) {
-        if !self.sheet.tabs.focused && self.side_list_after().is_none() {
+        if !self.sheet.tabs.focused && registry::open(&self.sheet) != Page::Privacy {
             self.focus_side_list(true);
         }
     }

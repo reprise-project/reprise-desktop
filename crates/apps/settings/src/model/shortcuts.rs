@@ -1,5 +1,6 @@
 use super::Settings;
 use repriseconf::{Key, key as k};
+use reprisekit::controls::hotkey::Chord;
 use toml_edit::{ArrayOfTables, Item, Table};
 
 /// One `[[keybinds]]` entry as the sheet edits it: the key string the
@@ -115,17 +116,9 @@ pub fn keys_for(binds: &[Shortcut], action: &str) -> Option<String> {
     (!shown.is_empty()).then(|| shown.join(" or "))
 }
 
-/// `keys` as the page shows them: the modifiers as written, then the key's cap ("Shift+Left Alt").
+/// `keys` as the page shows them ([`Chord::shown`]); keys that do not parse as written.
 pub fn chord_text(keys: &str) -> String {
-    let (mods, key) = keys.rsplit_once('+').unwrap_or(("", keys));
-    let key = key.trim();
-    let key = repriseconf::keybind::keysym(key)
-        .map_or_else(|| key.to_string(), repriseconf::keybind::key_text);
-    if mods.is_empty() {
-        key
-    } else {
-        format!("{}+{key}", mods.trim_end())
-    }
+    Chord::parse(keys).map_or_else(|| keys.to_string(), |c| c.shown())
 }
 
 pub fn program_text(p: &ProgramShortcut, name: &str) -> String {

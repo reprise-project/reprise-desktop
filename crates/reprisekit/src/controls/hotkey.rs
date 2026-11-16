@@ -1,6 +1,7 @@
 use crate::access::{Tree, accesskit};
 use crate::classic::widgets::access_edit;
 use crate::controls::form::greyed_field_scheme;
+use crate::keycap;
 use crate::look::Paint;
 use crate::look::widgets::{draw_disabled_field, draw_edit_field, draw_edit_text};
 use crate::pointer::Interaction;
@@ -90,6 +91,16 @@ fn is_character(sym: u32) -> bool {
     (0x21..=0x7e).contains(&sym) || (0xa0..=0xff).contains(&sym) || sym & 0xff00_0000 == 0x0100_0000
 }
 
+/// A chord as Reprise spells it everywhere: each modifier held, in the order Super, Ctrl, Alt,
+/// Shift, followed by "+", then the key's cap ("Super+Shift+Page Up").
+pub fn chord_text(mods: Mods, sym: u32) -> String {
+    held_text(mods) + &keycap::key_text(sym)
+}
+
+fn held_text(mods: Mods) -> String {
+    mods.names().map(|n| format!("{n}+")).collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chord {
     pub mods: Mods,
@@ -127,14 +138,10 @@ impl Chord {
         s.join("+")
     }
 
+    /// The chord as [`chord_text`] spells it; a key xkb does not know as written.
     pub fn shown(&self) -> String {
-        let key = match self.key.as_bytes() {
-            [c] if c.is_ascii_alphabetic() => self.key.to_ascii_uppercase(),
-            _ => self.key.clone(),
-        };
-        let mut s: Vec<&str> = self.mods.names().collect();
-        s.push(&key);
-        s.join(" + ")
+        let cap = keycap::keysym(&self.key).map_or_else(|| self.key.clone(), keycap::key_text);
+        held_text(self.mods) + &cap
     }
 
     pub fn same(&self, other: &Chord) -> bool {
@@ -284,7 +291,7 @@ impl HotKey {
 
     pub fn shown(&self, focused: bool) -> String {
         if focused && let Some(m) = self.pending() {
-            return m.names().map(|n| format!("{n} + ")).collect();
+            return held_text(m);
         }
         match &self.value {
             Some(c) => c.shown(),
@@ -401,7 +408,7 @@ mod tests {
     fn keys_strings_round_trip_in_chord_order() {
         let c = Chord::parse("Shift + super+B").unwrap();
         assert_eq!(c.keys(), "Super+Shift+B");
-        assert_eq!(c.shown(), "Super + Shift + B");
+        assert_eq!(c.shown(), "Super+Shift+B");
         assert!(c.same(&Chord::parse("Super+Shift+b").unwrap()));
         assert!(!c.same(&Chord::parse("Super+b").unwrap()));
         assert_eq!(
@@ -409,6 +416,8 @@ mod tests {
             "Super+Ctrl+Left"
         );
         assert_eq!(Chord::parse("Print").unwrap().shown(), "Print");
+        assert_eq!(Chord::parse("Super+Return").unwrap().shown(), "Super+Enter");
+        assert_eq!(Chord::parse("Ctrl+equal").unwrap().shown(), "Ctrl+=");
         assert_eq!(Chord::parse("Hyper+x"), None);
         assert_eq!(Chord::parse("Super+"), None);
         assert_eq!(HotKey::from_keys("").value, None);
@@ -419,17 +428,17 @@ mod tests {
         let mut hk = HotKey::new(None);
         assert_eq!(hk.shown(true), "None");
         assert_eq!(press(&mut hk, SUPER_L, "Super_L", NONE), Took::Redraw);
-        assert_eq!(hk.shown(true), "Super + ");
+        assert_eq!(hk.shown(true), "Super+");
         let shift = Mods {
             shift: true,
             ..NONE
         };
         press(&mut hk, SHIFT_L, "Shift_L", NONE);
-        assert_eq!(hk.shown(true), "Super + Shift + ");
+        assert_eq!(hk.shown(true), "Super+Shift+");
         assert_eq!(hk.shown(false), "None", "unfocused, the value shows");
         assert_eq!(press(&mut hk, 0x42, "b", shift), Took::Changed);
         assert_eq!(hk.keys(), "Super+Shift+b");
-        assert_eq!(hk.shown(true), "Super + Shift + B");
+        assert_eq!(hk.shown(true), "Super+Shift+B");
         assert_eq!(release(&mut hk, SHIFT_L), Took::Redraw);
         assert_eq!(release(&mut hk, SUPER_L), Took::Redraw);
         assert_eq!(hk.keys(), "Super+Shift+b");
@@ -532,7 +541,7 @@ mod tests {
             ..NONE
         };
         assert_eq!(press(&mut hk, keysym::ISO_LEFT_TAB, "", shift), Took::Pass);
-        assert_eq!(hk.shown(true), "Super + T");
+        assert_eq!(hk.shown(true), "Super+T");
         assert_eq!(release(&mut hk, SHIFT_L), Took::Pass);
         assert_eq!(hk.keys(), "Super+t");
     }
@@ -649,7 +658,7 @@ mod tests {
         press(&mut hk, CTRL_L, "Control_L", NONE);
         let shown = paint(&hk, true, true);
         let hidden = paint(&hk, true, false);
-        let caret_x = 7 + text.measure("Ctrl + ", false, 11);
+        let caret_x = 7 + text.measure("Ctrl+", false, 11);
         let diff: Vec<(i32, i32)> = (0..30)
             .flat_map(|y| (0..150).map(move |x| (x, y)))
             .filter(|&(x, y)| shown.get(x, y) != hidden.get(x, y))

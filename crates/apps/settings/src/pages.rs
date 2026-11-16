@@ -325,6 +325,8 @@ pub fn shortcuts(a: Area) -> Rect {
     Rect::new(GX, 298, a.gw(), 74 + a.dh)
 }
 pub const SHORTCUT_COLUMNS: [(&str, i32); 2] = [("Keys", 120), ("Action", 194)];
+/// The Super-hold delay, the tab stop before the Shortcuts list.
+pub const SC_OVERLAY_MS: &str = "shortcut_overlay_ms";
 pub const SC_ADD: &str = "sc_add";
 pub const SC_EDIT: &str = "sc_edit";
 pub const SC_REMOVE: &str = "sc_remove";
