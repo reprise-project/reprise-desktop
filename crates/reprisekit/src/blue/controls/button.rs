@@ -23,7 +23,7 @@
 //! the drawer adds both.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad};
+use crate::blue::scheme::{Face, stops};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, Part, PartImage, State};
@@ -89,12 +89,6 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
         .content(CONTENT)
         .at_scale(d);
     vec![(Part::PushButton, img)]
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), shape::premul(c, 255)))
-        .collect()
 }
 
 fn shift(a: Px, b: Px, c: Px) -> Px {

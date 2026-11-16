@@ -92,24 +92,13 @@ impl DropShadow {
         if (x < w && y < h) || x < 0.0 || y < 0.0 || x >= w + n || y >= h + n {
             return 0.0;
         }
-        let ramp = |t: f64| 0.5 * (1.0 + erf(t / (self.blur * std::f64::consts::SQRT_2)));
+        let ramp = |t: f64| crate::shape::phi(t / self.blur);
         self.opacity
             * ramp(x - self.inset)
             * ramp(w + self.spread - x)
             * ramp(y - self.inset)
             * ramp(h + self.spread - y)
     }
-}
-
-/// Abramowitz and Stegun 7.1.26, within 1.5e-7.
-fn erf(x: f64) -> f64 {
-    let t = 1.0 / (1.0 + 0.327_591_1 * x.abs());
-    let poly = t
-        * (0.254_829_592
-            + t * (-0.284_496_736
-                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
-    let y = 1.0 - poly * (-x * x).exp();
-    y.copysign(x)
 }
 
 /// How a look draws its popup menus when it gives them an icon gutter.

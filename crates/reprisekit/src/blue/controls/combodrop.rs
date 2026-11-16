@@ -2,7 +2,7 @@
 //! drawn from the scheme's `combo_drop` faces at the style's scale.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad, LitGreyedFaces};
+use crate::blue::scheme::{Face, LitGreyedFaces, stops};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, Part, PartImage, State};
@@ -79,12 +79,6 @@ fn atlas(faces: &LitGreyedFaces, c: Cut, d: i32) -> Canvas {
         let (x, y) = (x as i32, y as i32);
         frames[(y / fh) as usize][((y % fh) * fw + x) as usize]
     })
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), shape::premul(c, 255)))
-        .collect()
 }
 
 fn frame(f: &Face, c: Cut, well: bool, d: i32) -> Vec<Px> {

@@ -69,7 +69,7 @@ pub fn parts(d: i32) -> [(Part, PartImage); 5] {
 fn item(d: i32) -> PartImage {
     let states = [State::Normal, State::Hot, State::Pressed, State::Checked];
     let frames = states.map(|s| shape::draw(ITEM_W, H, d, |x, y| item_px(s, x, y, d)));
-    PartImage::new(stack(&frames), &states, Layout::Vertical)
+    PartImage::new(Canvas::stacked(&frames), &states, Layout::Vertical)
         .sizing(Insets::new(2, 0, 3, 0))
         .content(TITLE)
         .at_scale(d)
@@ -149,7 +149,7 @@ fn sink(col: i32, row: i32) -> f64 {
 fn sort_arrow(d: i32) -> PartImage {
     let frames = [true, false].map(|up| shape::draw(ARROW_W, H, d, |x, y| arrow_px(up, x, y, d)));
     PartImage::new(
-        stack(&frames),
+        Canvas::stacked(&frames),
         &[State::Normal, State::Checked],
         Layout::Vertical,
     )
@@ -202,15 +202,6 @@ fn arrow_px(up: bool, x: f64, y: f64, d: i32) -> Px {
     ])
     .at(h);
     shape::scale(shade, cover)
-}
-
-pub(super) fn stack(frames: &[Canvas]) -> Canvas {
-    let (w, h) = (frames[0].width, frames[0].height);
-    let mut a = Canvas::new(w, h * frames.len() as u32);
-    for (i, f) in frames.iter().enumerate() {
-        a.blit_over(0, i as i32 * h as i32, f);
-    }
-    a
 }
 
 /// The list frame: a 5x5 nine-grid border, the 1 px line and a clear ring

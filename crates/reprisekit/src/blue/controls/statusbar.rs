@@ -15,7 +15,7 @@
 //! through that column.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad};
+use crate::blue::scheme::{Face, stops};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{CLEAR, Px, Stops, centre, draw, premul};
 use crate::style::{Layout, Part, PartImage, State};
@@ -66,12 +66,6 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
     .content(Insets::new(0, CONTENT_TOP, 0, CONTENT_BOTTOM))
     .at_scale(d);
     vec![(Part::StatusBar, bar), (Part::StatusPane, pane)]
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), premul(c, 255)))
-        .collect()
 }
 
 /// `a` plus `k` of the step from `from` to `to`, channel by channel.

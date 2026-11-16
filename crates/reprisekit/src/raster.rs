@@ -73,6 +73,16 @@ fn over_px(s: u32, d: u32) -> u32 {
     a << 24 | r << 16 | g << 8 | b
 }
 
+/// [`over_px`] rounded to the nearest per channel, for pixels a part composes itself.
+pub(crate) fn over_round(s: u32, d: u32) -> u32 {
+    let k = 255 - (s >> 24);
+    let ch = |sh: u32| {
+        let (sc, dc) = ((s >> sh) & 0xFF, (d >> sh) & 0xFF);
+        (sc + (dc * k + 127) / 255).min(255) << sh
+    };
+    ch(24) | ch(16) | ch(8) | ch(0)
+}
+
 /// Premultiplied `s` screened onto `d`, per channel `s + d - s * d / 255`
 /// rounded: a valid premultiplied pixel never darker than `d`.
 fn screen_px(s: u32, d: u32) -> u32 {
@@ -160,6 +170,21 @@ impl Canvas {
             damage: None,
             blink_only: false,
         }
+    }
+
+    /// `frames`, all one size, stacked top to bottom: a vertical part atlas.
+    pub fn stacked(frames: &[Canvas]) -> Canvas {
+        let (w, h) = (frames[0].width, frames[0].height);
+        debug_assert!(
+            frames
+                .iter()
+                .all(|f| (f.width, f.height, f.scale) == (w, h, 1))
+        );
+        let pixels = frames
+            .iter()
+            .flat_map(|f| f.pixels.iter().copied())
+            .collect();
+        Canvas::from_pixels(w, h * frames.len() as u32, pixels)
     }
 
     /// A transparent canvas for part of this one, drawn and then blitted

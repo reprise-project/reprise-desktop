@@ -4,10 +4,10 @@
 //! The separator is a 1 px line two columns into a 6 px slot, from two rows under the band's top to one row over its bottom.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad};
+use crate::blue::scheme::{Face, stops};
 use crate::metrics::{ButtonPads, ToolbarMetrics};
 use crate::raster::{Canvas, Insets, Rect};
-use crate::shape::{Px, Stops, draw, premul, ringed};
+use crate::shape::{Stops, draw, premul, ringed};
 use crate::style::{Layout, Part, PartImage, State};
 use crate::theme::Color;
 
@@ -139,13 +139,6 @@ fn frame(face: &Face, d: i32) -> Canvas {
         (255.0, [0, 1, 2].map(|i| row.1[i] + col.1[i] - middle.1[i]))
     });
     draw(W, H, d, |x, y| px[(y as i32 * W * d + x as i32) as usize])
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    debug_assert!(!g.is_empty(), "a lit toolbar face shades its fill");
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), premul(c, 255)))
-        .collect()
 }
 
 /// The separator slot at `d`: transparent but for its line, which

@@ -2,7 +2,7 @@
 //! progress blocks over a faint track; the same shading in grey while paused.
 
 use super::Variant;
-use super::scheme::Grad;
+use super::scheme::stops;
 use crate::raster::Canvas;
 use crate::shape::{self, Px, Stops, over, premul};
 use crate::taskbar::{ProgressPainter, TaskProgress};
@@ -15,12 +15,6 @@ const BOTTOM: f64 = 3.0;
 const BAR_H: f64 = 4.0;
 const RADIUS: f64 = 2.0;
 const TRACK_ALPHA: u8 = 0x50;
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), premul(c, 255)))
-        .collect()
-}
 
 /// `p` at its own brightness with no colour.
 fn grey((a, [r, g, b]): Px) -> Px {

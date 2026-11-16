@@ -226,16 +226,6 @@ fn button(band: &Band, f: &Face, lines: &[[(f64, f64); 3]; 2], backed: bool, d: 
     })
 }
 
-fn stack(frames: &[Canvas]) -> Canvas {
-    let (w, h) = (frames[0].width, frames[0].height);
-    let mut a = Canvas::new(w, h * frames.len() as u32);
-    a.pixels = frames
-        .iter()
-        .flat_map(|f| f.pixels.iter().copied())
-        .collect();
-    a
-}
-
 pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let h = band_h(v);
@@ -259,7 +249,7 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
 
     let c = &s.task_collapse;
     let collapse = |backed| {
-        stack(&[
+        Canvas::stacked(&[
             button(&band, &c.normal, &UP, backed, d),
             button(&band, &c.hot, &UP, backed, d),
             button(&band, &c.pressed, &UP, backed, d),

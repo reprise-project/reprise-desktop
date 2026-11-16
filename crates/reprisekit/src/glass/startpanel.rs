@@ -5,7 +5,7 @@ use super::glyph;
 use super::panel::{Corners, Panel};
 use super::tint::{Recolour, Surface};
 use super::{Settings, caption_text};
-use crate::raster::{Canvas, Insets, Rect};
+use crate::raster::{Canvas, Insets, Rect, over_round};
 use crate::startpanel::layout::{self, Layout};
 use crate::startpanel::search::{self, ink};
 pub use crate::startpanel::search::{
@@ -71,15 +71,6 @@ fn shown(px: u32) -> Color {
     Color::rgb(ch(16), ch(8), ch(0))
 }
 
-fn over(src: u32, dst: u32) -> u32 {
-    let k = 255 - (src >> 24);
-    let ch = |sh: u32| {
-        let (s, d) = ((src >> sh) & 0xFF, (dst >> sh) & 0xFF);
-        (s + (d * k + 127) / 255).min(255) << sh
-    };
-    ch(24) | ch(16) | ch(8) | ch(0)
-}
-
 pub fn glass_colour(s: &Settings) -> Color {
     shown(glass_px(s))
 }
@@ -90,7 +81,7 @@ pub fn lit_colours(s: &Settings) -> Vec<Color> {
     let w = lit.width as i32;
     let rows = at::PLACE_BASE - 9..at::PLACE_BASE;
     rows.flat_map(|y| (at::PLACE_PEN..w - at::PLACE_PEN).map(move |x| (x, y)))
-        .map(|(x, y)| shown(over(lit.get(x, y), glass)))
+        .map(|(x, y)| shown(over_round(lit.get(x, y), glass)))
         .collect()
 }
 
@@ -980,7 +971,7 @@ mod tests {
                         let lit: Vec<Color> = (at::PLACE_BASE - 9..at::PLACE_BASE)
                             .flat_map(|y| {
                                 (at::PLACE_PEN..hot.width as i32 - at::PLACE_PEN)
-                                    .map(move |x| super::over(hot.get(x, y), px))
+                                    .map(move |x| crate::raster::over_round(hot.get(x, y), px))
                             })
                             .map(super::shown)
                             .collect();

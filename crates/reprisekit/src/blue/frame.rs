@@ -1,7 +1,7 @@
 //! Reprise Blue's window frame: the caption band, a maximized window's band, and the side and
 //! bottom borders, each drawn from its scheme's [`Face`]s at `d` device pixels per design pixel.
 
-use crate::blue::scheme::{Face, Grad, Scheme};
+use crate::blue::scheme::{Face, Scheme, stops};
 use crate::raster::{Canvas, Fill, Insets};
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, PartImage, State};
@@ -17,12 +17,6 @@ const BOTTOM_MIDDLE: i32 = 4;
 /// How far (levels) the band's `across` colour one column in from the rim may sit from the face's
 /// `inner` colour for that column to count as a light line inside the rim.
 const GLINT_MATCH: f64 = 24.0;
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), shape::premul(c, 255)))
-        .collect()
-}
 
 fn opaque(c: Color) -> Px {
     shape::premul(c, 255)

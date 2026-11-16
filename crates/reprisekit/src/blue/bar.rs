@@ -1,18 +1,12 @@
 //! Blue's taskbar band and notification area, drawn from the scheme's shading at the output scale. Both are vertical bands: a flat 1 design px line along the top and foot, the shading between shaded per device row so a band at scale 2 is smooth.
 
-use crate::blue::scheme::{Face, Grad, Scheme};
+use crate::blue::scheme::{Face, Scheme, stops};
 use crate::raster::{Canvas, Insets};
-use crate::shape::{Px, Stops, centre, draw, premul};
+use crate::shape::{Px, Stops, centre, draw};
 use crate::style::{Layout, PartImage, State};
 
 /// Atlas width in design px: one stretched column would do, a few leave the stretch room.
 const BAND_WIDTH: i32 = 4;
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), premul(c, 255)))
-        .collect()
-}
 
 /// The shade of device row `y` of an `h`-row band at `d`, from the band's `down` stops (one per design row). Rows 0 and `h - 1` are the band's lines, flat over their `d` device rows; the rows between are shaded at the device row's middle, held clear of the lines.
 fn band(down: &Stops, h: i32, y: i32, d: i32) -> Px {

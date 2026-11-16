@@ -3,9 +3,9 @@
 //! to the bar's height, since a nine-grid atlas cannot repeat one axis while stretching the other.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad};
+use crate::blue::scheme::{Face, stops};
 use crate::raster::{Canvas, Fill, Insets};
-use crate::shape::{CLEAR, Px, Stops, centre, draw, mix, premul, ringed, smooth};
+use crate::shape::{CLEAR, Stops, centre, draw, mix, ringed, smooth};
 use crate::style::{Layout, Part, PartImage, State};
 
 const SIDE: i32 = 4;
@@ -45,7 +45,7 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
 
     let troughs = [&s.progress_bar.normal, &s.progress_bar.disabled];
     let bar = PartImage::new(
-        stack(troughs.map(|f| trough(f, d))),
+        Canvas::stacked(&troughs.map(|f| trough(f, d))),
         &states,
         Layout::Vertical,
     )
@@ -58,28 +58,13 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
     // Default zero sizing and `Fill::Stretch`: the drawer asks for one block
     // at a time and the frame stretches to that call's height.
     let chunk = PartImage::new(
-        stack(blocks.map(|f| block(f, gap(v), d))),
+        Canvas::stacked(&blocks.map(|f| block(f, gap(v), d))),
         &states,
         Layout::Vertical,
     )
     .at_scale(d);
 
     vec![(Part::ProgressBar, bar), (Part::ProgressChunk, chunk)]
-}
-
-fn stack<const N: usize>(frames: [Canvas; N]) -> Canvas {
-    let (w, h) = (frames[0].width, frames[0].height);
-    let mut atlas = Canvas::new(w, h * N as u32);
-    for (i, f) in frames.iter().enumerate() {
-        atlas.blit_over(0, (h * i as u32) as i32, f);
-    }
-    atlas
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), premul(c, 255)))
-        .collect()
 }
 
 /// One trough frame at `d`. Ring `i` on the top and left takes row `i`'s
