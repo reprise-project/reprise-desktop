@@ -340,12 +340,30 @@ impl SessionEnv {
 /// bus-activated services find the compositor. [`begin_session`] publishes first; this runs when
 /// `DISPLAY` is known and when colours change. Best effort.
 pub fn export_session_env(env: &SessionEnv) {
-    publish(env, login_manager_session_runs_reprise);
+    publish(env, export_argv(env), login_manager_session_runs_reprise);
 }
 
-/// [`export_session_env`], unless this is a text-login session and `taken_over` says a login
-/// manager's Reprise session has since taken the user manager over.
-fn publish(env: &SessionEnv, taken_over: impl FnOnce() -> bool) {
+/// Take `DISPLAY` and `XAUTHORITY` out of the user manager once X11 programs cannot run:
+/// [`export_session_env`] only sets. Best effort, as it.
+pub fn unpublish_x11(env: &SessionEnv) {
+    publish(env, unset_x11_argv(), login_manager_session_runs_reprise);
+}
+
+fn unset_x11_argv() -> Vec<String> {
+    [
+        "systemctl",
+        "--user",
+        "unset-environment",
+        "DISPLAY",
+        "XAUTHORITY",
+    ]
+    .map(String::from)
+    .to_vec()
+}
+
+/// Run `argv`, unless this session defers or is a text-login session and `taken_over` says a
+/// login manager's Reprise session has since taken the user manager over.
+fn publish(env: &SessionEnv, argv: Vec<String>, taken_over: impl FnOnce() -> bool) {
     if env.defers_user_units {
         return;
     }
@@ -353,13 +371,15 @@ fn publish(env: &SessionEnv, taken_over: impl FnOnce() -> bool) {
         log::info!("a login manager's Reprise session runs; its user manager variables stay");
         return;
     }
-    let argv = export_argv(env);
     let mut c = std::process::Command::new(&argv[0]);
     c.args(&argv[1..]);
     // Not waited on: the tool round-trips the bus, and colour changes call this from the event
     // loop.
-    if let Err(e) = start(c, "dbus-update-activation-environment", None) {
-        log::warn!("dbus-update-activation-environment: {e}; portals may not find the display");
+    if let Err(e) = start(c, &argv[0], None) {
+        log::warn!(
+            "{}: {e}; bus-activated services may miss the change",
+            argv[0]
+        );
     }
 }
 
@@ -1835,7 +1855,7 @@ mod tests {
     fn a_text_login_stops_publishing_once_a_login_managers_reprise_session_runs() {
         let publishes = |e: &SessionEnv, taken_over: bool| {
             record();
-            publish(e, || taken_over);
+            publish(e, export_argv(e), || taken_over);
             recorded() == ["dbus-update-activation-environment"]
         };
         let tty = env(None);

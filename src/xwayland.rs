@@ -366,7 +366,7 @@ fn give_up(state: &mut State, why: &str) {
     state.xwayland.sockets = None;
     state.xwayland.cookie = None;
     state.env.x11 = None;
-    crate::spawn::export_session_env(&state.env);
+    crate::spawn::unpublish_x11(&state.env);
 }
 
 /// The pid of the Xwayland server Smithay spawned: our child named
@@ -1182,6 +1182,24 @@ mod tests {
         assert_eq!(h.state.bridge_focus(), bridge::Focus::Wayland(None));
         h.state.focus_desktop();
         assert_eq!(h.state.bridge_focus(), bridge::Focus::None);
+    }
+
+    #[test]
+    fn giving_up_takes_display_out_of_the_user_manager() {
+        let mut h = crate::harness::Harness::new();
+        h.state.env.logind_session = Some("7".into());
+        h.state.env.x11 = Some(crate::spawn::X11Env {
+            display: ":1".into(),
+            authority: "/run/user/1000/reprise/xauth-1".into(),
+        });
+        crate::spawn::record();
+        give_up(&mut h.state, "test");
+        assert_eq!(h.state.env.x11, None);
+        assert_eq!(
+            crate::spawn::recorded(),
+            ["systemctl"],
+            "one unset-environment, no publish"
+        );
     }
 
     #[test]
