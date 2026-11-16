@@ -454,6 +454,15 @@ impl State {
         self.keys_release_apps();
     }
 
+    /// Remove `id`'s devices, first letting go of what it holds: libei drops a release sent on
+    /// a removed device, so the seat would keep the key down.
+    fn eis_remove_devices(&mut self, id: EisId) {
+        self.eis_release_held(id);
+        if let Some(d) = (self.inputproto.eis.get_mut(id)).and_then(|c| c.devices.take()) {
+            d.remove_all();
+        }
+    }
+
     fn eis_release_held(&mut self, id: EisId) {
         let Some(c) = self.inputproto.eis.get_mut(id) else {
             return;
@@ -593,15 +602,13 @@ impl State {
     fn eis_handle(&mut self, id: EisId, r: EisRequest) {
         match r {
             EisRequest::Bind(b) => {
-                let Some(c) = self.inputproto.eis.get_mut(id) else {
-                    return;
-                };
                 // A bind replaces the last one's set: libei's unbind is a
                 // bind with no capabilities, and a re-bind with different
                 // ones must not leave the old devices behind.
-                if let Some(d) = c.devices.take() {
-                    d.remove_all();
-                }
+                self.eis_remove_devices(id);
+                let Some(c) = self.inputproto.eis.get_mut(id) else {
+                    return;
+                };
                 let caps = b.capabilities & c.allowed;
                 let devices = self.eis_make_devices(&b.seat, caps);
                 if let Some(c) = self.inputproto.eis.get_mut(id) {
@@ -612,14 +619,7 @@ impl State {
                 crate::privacy::control_changed(self);
             }
             EisRequest::DeviceClosed(_) => {
-                if let Some(d) = self
-                    .inputproto
-                    .eis
-                    .get_mut(id)
-                    .and_then(|c| c.devices.take())
-                {
-                    d.remove_all();
-                }
+                self.eis_remove_devices(id);
                 crate::power::remote_control_changed(self);
                 crate::privacy::control_changed(self);
             }
@@ -953,10 +953,9 @@ impl State {
             let Some(seat) = c.seat.clone() else {
                 continue;
             };
-            if let Some(d) = c.devices.take() {
-                let caps = d.caps;
+            if let Some(caps) = c.devices.as_ref().map(|d| d.caps) {
                 let capture = c.capture.filter(|_| c.kind == Kind::Receiver);
-                d.remove_all();
+                self.eis_remove_devices(id);
                 let devices = self.eis_make_devices(&seat, caps);
                 if let Some(c) = self.inputproto.eis.get_mut(id) {
                     c.devices = Some(devices);
@@ -1723,6 +1722,21 @@ mod tests {
         send_key(&mut h, &peer, &keyboard, SHIFT, false);
         h.state.keys_key(keys, CTRL, false);
         assert_eq!(mods(&h), (false, false));
+    }
+
+    #[test]
+    fn a_key_a_sender_holds_is_released_when_its_devices_are_made_again() {
+        const SHIFT: u32 = 42;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (peer, keyboard) = sender_keyboard(&mut h);
+        send_key(&mut h, &peer, &keyboard, SHIFT, true);
+        let shift = |h: &crate::harness::Harness| {
+            h.state.seat.get_keyboard().unwrap().modifier_state().shift
+        };
+        assert!(shift(&h), "held");
+        h.state.eis_readvertise();
+        assert!(!shift(&h), "let go with the old keyboard");
     }
 
     #[test]

@@ -152,6 +152,7 @@ impl State {
         self.buttons_down = 0;
         self.seat_buttons.clear();
         self.key_input.ctrl_tap.buttons_released();
+        self.mousekeys_buttons_released();
     }
 
     /// Whether `pos` is on an X11 program's surface, where Xwayland gets the press itself.

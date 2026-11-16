@@ -30,12 +30,13 @@ pub struct HeldKeys(HashMap<u32, Owner>);
 impl HeldKeys {
     /// `code`'s press went to `owner`, replacing what an earlier press of
     /// the same key left. A key holding global shortcuts keeps them until
-    /// its release, adding those a further press fires.
+    /// its release.
     pub fn press(&mut self, code: u32, owner: Owner) {
-        if let Some(Owner::Global(held)) = self.0.get_mut(&code) {
-            if let Owner::Global(hits) = owner {
-                held.extend(hits);
-            }
+        if let Owner::Global(hits) = owner {
+            self.press_global(code, hits);
+            return;
+        }
+        if matches!(self.0.get(&code), Some(Owner::Global(_))) {
             return;
         }
         match owner {
@@ -46,6 +47,21 @@ impl HeldKeys {
                 self.0.insert(code, owner);
             }
         }
+    }
+
+    /// `code`'s press fired `hits`: returns those it does not hold yet, which go active. A
+    /// repeated press (an autorepeating sender) fires each shortcut once.
+    pub fn press_global(&mut self, code: u32, hits: Vec<GlobalHit>) -> Vec<GlobalHit> {
+        let held = match self.0.get_mut(&code) {
+            Some(Owner::Global(held)) => held,
+            _ => {
+                self.0.insert(code, Owner::Global(hits.clone()));
+                return hits;
+            }
+        };
+        let fresh: Vec<GlobalHit> = hits.into_iter().filter(|h| !held.contains(h)).collect();
+        held.extend(fresh.iter().cloned());
+        fresh
     }
 
     /// Where `code`'s press went, as its release forgets it; `None` for
@@ -143,6 +159,26 @@ mod tests {
         h.press(30, Owner::Ime);
         assert_eq!(h.release(30), Some(Owner::Ime));
         assert_eq!(h.release(30), None, "the next release is the client's");
+    }
+
+    #[test]
+    fn a_repeated_press_fires_only_the_global_shortcuts_not_held() {
+        let mut h = HeldKeys::default();
+        assert_eq!(h.press_global(40, vec![hit("ptt")]), [hit("ptt")]);
+        assert_eq!(
+            h.press_global(40, vec![hit("ptt")]),
+            [],
+            "a repeat fires nothing"
+        );
+        assert_eq!(
+            h.press_global(40, vec![hit("ptt"), hit("mute")]),
+            [hit("mute")]
+        );
+        assert_eq!(
+            h.release(40),
+            Some(Owner::Global(vec![hit("ptt"), hit("mute")])),
+            "one release each"
+        );
     }
 
     #[test]

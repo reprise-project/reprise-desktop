@@ -473,10 +473,9 @@ impl State {
                 }
             }
             KeyRoute::Global(hits) => {
-                for h in &hits {
+                for h in &self.key_input.held.press_global(keycode, hits) {
                     self.global_shortcut(h, true, time.millis());
                 }
-                self.key_input.held.press(keycode, Owner::Global(hits));
             }
             KeyRoute::Client => {
                 if pressed && let Some(w) = self.focused {

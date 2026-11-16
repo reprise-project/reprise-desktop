@@ -148,6 +148,11 @@ impl MouseKeys {
         self.held = None;
     }
 
+    /// The seat let go of every button: none stays held. Returns whether one was.
+    pub fn buttons_released(&mut self) -> bool {
+        self.held.take().is_some()
+    }
+
     pub fn pick(&self) -> u32 {
         self.pick
     }
@@ -330,6 +335,13 @@ impl State {
         self.key_input.mouse_keys.model.forget();
         self.arm_mousekeys();
         self.redraw_taskbars();
+    }
+
+    /// The seat let go of every button, the one the keypad held among them.
+    pub fn mousekeys_buttons_released(&mut self) {
+        if self.key_input.mouse_keys.model.buttons_released() {
+            self.redraw_taskbars();
+        }
     }
 
     fn arm_mousekeys(&mut self) {

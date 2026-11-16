@@ -396,6 +396,39 @@ fn a_cancelled_caption_press_asks_its_output_for_a_frame() {
 }
 
 #[test]
+fn a_session_pause_or_the_lock_lets_go_of_the_mouse_keys_button_and_a_pause_stops_the_glide() {
+    const KP0: u32 = 82;
+    const KP6: u32 = 77;
+    let stops = [
+        ("lock", crate::lockview::engage as fn(&mut State)),
+        ("session pause", crate::backend::pause_session),
+    ];
+    for (name, stop) in stops {
+        let mut config = crate::config::Config::default();
+        config.accessibility.mouse_keys = true;
+        config.accessibility.mouse_keys_num_lock = false;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        h.state.mousekeys_configured();
+        h.pointer_to(500.0, 400.0);
+        h.key(KP0, true);
+        h.key(KP0, false);
+        assert!(
+            h.state.key_input.mouse_keys.model.held().is_some(),
+            "{name}"
+        );
+        h.key(KP6, true);
+        stop(&mut h.state);
+        assert_eq!(h.state.key_input.mouse_keys.model.held(), None, "{name}");
+        if name == "session pause" {
+            let at = h.state.pointer_location();
+            h.run_for(600);
+            assert_eq!(h.state.pointer_location(), at, "the glide stops");
+        }
+    }
+}
+
+#[test]
 fn letting_go_of_every_button_ends_the_held_move_and_tells_the_client() {
     let stops = [
         ("lock", crate::lockview::engage as fn(&mut State)),
