@@ -52,6 +52,19 @@ impl NmHandle {
         }
     }
 
+    /// A handle whose commands land on the receiver, for a test.
+    #[cfg(test)]
+    pub fn channel() -> (NmHandle, async_channel::Receiver<Cmd>) {
+        let (cmds, rx) = async_channel::unbounded();
+        (
+            NmHandle {
+                cmds,
+                done: channel().1,
+            },
+            rx,
+        )
+    }
+
     pub fn quit(&self) {
         if self.cmds.send_blocking(Cmd::Quit).is_err() {
             return;
