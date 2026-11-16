@@ -212,3 +212,33 @@ fn zip_lands_one_archive_named_past_the_folders_names_and_ends() {
         .collect();
     assert_eq!(zips.len(), 1, "one new zip: {zips:?}");
 }
+
+#[test]
+fn a_failure_box_up_before_the_progress_dialog_keeps_it_from_coming_up() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().expect("a temp dir");
+    let (src, dest) = (t.path().join("src"), t.path().join("dest"));
+    std::fs::create_dir(&src).expect("mkdir");
+    std::fs::create_dir(&dest).expect("mkdir");
+    std::fs::write(src.join("a.txt"), "a").expect("write");
+    std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    let from = src.join("a.txt");
+    let args = [
+        "--put".as_ref(),
+        "move".as_ref(),
+        dest.as_os_str(),
+        "--".as_ref(),
+        from.as_os_str(),
+    ];
+    let mut app = started(&args);
+    let mut ctx = test_ctx();
+    assert!(!run(&mut app, &mut ctx, Explorer::holds_a_job));
+    std::thread::sleep(reprisekit::controls::copyprogress::SHOW_AFTER);
+    app.event(MAIN, repriseapp::Event::Wake, &mut ctx);
+    let ids: Vec<_> = app.children().iter().map(|c| c.id).collect();
+    assert_eq!(ids, [crate::dialogs::DIALOG], "the failure box alone");
+    app.event(crate::dialogs::DIALOG, key_event_escape(), &mut ctx);
+    run_out(&mut app, &mut ctx);
+    std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert!(from.exists(), "the file stays where it was");
+}

@@ -517,6 +517,9 @@ impl Explorer {
         if let Some(Dialog::Confirm(Confirm { job: Some(m), .. })) = self.dialog.take() {
             m.answer(decision);
         }
+        if decision != Decision::Abort {
+            self.show_progress_dialogs();
+        }
         Reply::redraw_all()
     }
 

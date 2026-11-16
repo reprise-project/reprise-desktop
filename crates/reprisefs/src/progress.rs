@@ -160,6 +160,11 @@ impl Meter {
         self.decision.store(d as u8, Ordering::Relaxed);
     }
 
+    /// Whether a failed item waits for the host's [`Decision`].
+    pub fn asking(&self) -> bool {
+        self.decision.load(Ordering::Relaxed) == Decision::Pending as u8
+    }
+
     /// Mark the item that just failed as waiting for a [`Decision`], before the host hears of it.
     pub(crate) fn ask(&self) {
         if self.asks.load(Ordering::Relaxed) {
@@ -191,8 +196,7 @@ impl Meter {
 
     /// The step count and whether the job is paused or waiting on a flush, for [`watch`].
     pub(crate) fn stirring(&self) -> (u64, Rest) {
-        let asked = self.decision.load(Ordering::Relaxed) == Decision::Pending as u8;
-        let rest = if self.paused.load(Ordering::Relaxed) || asked {
+        let rest = if self.paused.load(Ordering::Relaxed) || self.asking() {
             Rest::Paused
         } else if self.flush_waits.load(Ordering::Relaxed) > 0 {
             Rest::Flushing
