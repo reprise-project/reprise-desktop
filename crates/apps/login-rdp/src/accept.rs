@@ -27,6 +27,7 @@ use ironrdp_tokio::{FramedWrite, LocalTokioFramed, NetworkClient, TokioFramed};
 use repriselogin::account::{nt_hash, same_hash};
 use repriselogin::front::{FrontEvent, FrontRequest, NlaUser, Secret};
 use repriselogin::handover::Step;
+use repriselogin::refusals::Refusals;
 use repriselogin::throttle::Attempt;
 use reprisetls::cert::Identity;
 use reprisetls::cork::Cork;
@@ -45,7 +46,6 @@ use crate::limits::{
 };
 use crate::link::LinkSender;
 use crate::negotiate;
-use crate::refusals::Refusals;
 
 const DESKTOP: DesktopSize = DesktopSize {
     width: 1024,

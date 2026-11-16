@@ -403,9 +403,12 @@ The server in your session logs to the user journal:
 
 - `listening on ADDRESS`, or `cannot listen on port N: ...` when another
   program holds the port. Settings > Remote Desktop shows the same.
-- `ADDRESS: connected`, `ADDRESS: logged in as USER`, `ADDRESS: wrong
-  password for USER`, and a `disconnected` or `closed` line with the reason
-  a connection ended.
+- `ADDRESS: logged in as USER`, `ADDRESS: wrong password for USER`, and a
+  `disconnected` or `closed` line with the reason a connection ended.
+- Of the refusals before a login (back-off, a full server, a client that
+  closes or runs out of time before logging in), the first each minute is
+  logged in full and the rest are counted in a `refused more connections:`
+  line a minute later.
 - `ADDRESS: refused: the client requires NLA or RDP security; choose TLS
   security in its settings` means the client asked for NLA or RDP
   security. Set it to TLS ([Login](#connecting)).

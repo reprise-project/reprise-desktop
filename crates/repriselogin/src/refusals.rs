@@ -14,6 +14,13 @@ pub struct Refusals {
 }
 
 impl Refusals {
+    pub const fn new() -> Refusals {
+        Refusals {
+            held_back: false,
+            counts: BTreeMap::new(),
+        }
+    }
+
     /// Whether a refusal of `kind` is logged in full; if not, it is counted for the report.
     pub fn log_in_full(&mut self, kind: &'static str) -> bool {
         if !self.held_back {

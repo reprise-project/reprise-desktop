@@ -7,7 +7,6 @@ mod limits;
 mod link;
 mod listen;
 mod negotiate;
-mod refusals;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -23,6 +22,7 @@ use std::time::Duration;
 use reprisebus::journal;
 use repriselogin::front::{FRONT_SOCKET, FrontEvent, FrontRequest, Secret};
 use repriselogin::machine::{MACHINE_CONFIG, MachineConfig};
+use repriselogin::refusals::REPORT_EVERY;
 use reprisetls::{cert, tcp};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
@@ -31,7 +31,6 @@ use tokio::time::Instant;
 
 use accept::{Ctx, Pending, Refused};
 use limits::{Limits, MAX_PREAUTH, PREAUTH_PER_IP, Permit, VERDICT_WAIT};
-use refusals::REPORT_EVERY;
 
 const RECONNECT: Duration = Duration::from_secs(1);
 /// A failing accept (out of fds) is retried after this, not at once.
@@ -368,7 +367,8 @@ fn refused(
 }
 
 async fn report_refusals(ctx: Rc<Ctx>) {
-    let mut every = tokio::time::interval(REPORT_EVERY);
+    let mut every =
+        tokio::time::interval_at(tokio::time::Instant::now() + REPORT_EVERY, REPORT_EVERY);
     every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         every.tick().await;
