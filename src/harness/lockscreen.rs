@@ -64,10 +64,10 @@ impl TestClient {
         input.create_keys(&self.qh(), ())
     }
 
-    /// Bind `reprise_input_v1` v10 and make a keys object for `app_id`, as the portal does for
+    /// Bind `reprise_input_v1` v12 and make a keys object for `app_id`, as the portal does for
     /// an app's session.
     pub fn create_app_keys(&self, app_id: &str) -> RepriseKeysV1 {
-        let input: RepriseInputV1 = self.bind("reprise_input_v1", 10);
+        let input: RepriseInputV1 = self.bind("reprise_input_v1", 12);
         input.create_app_keys(app_id.into(), &self.qh(), ())
     }
 }

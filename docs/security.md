@@ -268,7 +268,7 @@ Wi-Fi key), the VT switch keys and the layout switch act; the rest go to the
 lock screen.
 
 An app's RemoteDesktop session (its libei sender and its NotifyKeyboard
-keys) presses, types, moves and scrolls nothing while the desktop it lands
+and NotifyPointer input) presses, types, moves and scrolls nothing while the desktop it lands
 on is locked, by the lock screen or a locker. In lock mode that desktop is
 the remote side: an app's input reaches the remote side's windows while that
 side is unlocked and never the computer's own lock. The keys and buttons it
@@ -1342,8 +1342,8 @@ What a consent prompt remembers, and where:
   `remote-desktop`). A token names the app it was issued to and restores
   only for that app. Without Remember nothing is kept. A restored
   RemoteDesktop grant starts without a prompt, but the app can't use it
-  unseen: while an app's session holds the keyboard (a keys object for
-  NotifyKeyboard) or a libei sender with a device, the screen-sharing dot
+  unseen: while an app's session holds the keyboard or the pointer (a keys
+  object for NotifyKeyboard and NotifyPointer) or a libei sender with a device, the screen-sharing dot
   shows, its tooltip naming the app by the app id the frontend gave
   ("An application" without one). The session the portal starts for
   Reprise's own server doesn't light it this way. A restored grant also shows a
@@ -1467,7 +1467,8 @@ you type must not be answered by your typing. Each of them:
   client's socket. An X11 window never counts, whatever `_NET_WM_PID` and
   `WM_CLASS` it sets.
 - takes no input from an app's RemoteDesktop session: neither its libei
-  sender's keys and clicks nor its NotifyKeyboard keys reach a prompt, so an
+  sender's keys and clicks nor its NotifyKeyboard keys and NotifyPointer
+  clicks reach a prompt, so an
   app granted the keyboard can't widen its own grant or answer another
   app's. Reprise's own remote desktop server still answers prompts from the
   viewer. The compositor tells the two apart by the kind of sender the portal

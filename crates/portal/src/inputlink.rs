@@ -112,6 +112,7 @@ enum Cmd {
     CreateKeys(u32, Owner),
     Key(u32, u32, bool),
     Keysym(u32, u32, bool),
+    Pointer(u32, Pointer),
     DestroyKeys(u32),
     PickColor(u32, async_channel::Sender<Option<u32>>),
     DestroyPick(u32),
@@ -146,9 +147,27 @@ pub struct Link {
     shortcuts: bool,
     live_shortcuts: Arc<AtomicUsize>,
     keys: bool,
+    /// The keys objects take pointer requests (v12).
+    pointer: bool,
     picks: bool,
     lock_screens: bool,
     sandboxed_changes: async_channel::Receiver<()>,
+}
+
+/// One NotifyPointer call as a `reprise_keys_v1` request; distances are logical pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Pointer {
+    Motion(f64, f64),
+    /// To (x, y) of the named output, in its logical coordinates.
+    MotionAbsolute(String, f64, f64),
+    /// An evdev button, pressed or released.
+    Button(u32, bool),
+    Axis(f64, f64),
+    /// Wheel notches on the vertical axis, else the horizontal one.
+    Wheel {
+        vertical: bool,
+        steps: i32,
+    },
 }
 
 /// One EIS connection. Dropping it destroys the `reprise_eis_client_v1`, disconnecting the libei client.
@@ -248,6 +267,13 @@ impl KeysHandle {
     pub fn keysym(&self, sym: u32, pressed: bool) {
         self.link.send(Cmd::Keysym(self.id, sym, pressed));
     }
+
+    /// Sent only to a v12 compositor (`Link::has_pointer`); dropped before.
+    pub fn pointer(&self, input: Pointer) {
+        if self.link.pointer {
+            self.link.send(Cmd::Pointer(self.id, input));
+        }
+    }
 }
 
 impl Drop for KeysHandle {
@@ -333,10 +359,11 @@ impl Link {
             registry_queue_init::<State>(&conn).map_err(|e| format!("registry: {e}"))?;
         let qh = queue.handle();
         let input: RepriseInputV1 = globals
-            .bind(&qh, 2..=11, ())
+            .bind(&qh, 2..=12, ())
             .map_err(|e| format!("reprise_input_v1: {e}"))?;
         let shortcuts = input.version() >= 3;
         let keys = input.version() >= 4;
+        let pointer = input.version() >= 12;
         let picks = input.version() >= 6;
         let lock_screens = input.version() >= 9;
         let xdg: ZxdgOutputManagerV1 = globals
@@ -397,6 +424,7 @@ impl Link {
             shortcuts,
             live_shortcuts: Arc::new(AtomicUsize::new(0)),
             keys,
+            pointer,
             picks,
             lock_screens,
             sandboxed_changes: changed_rx,
@@ -489,6 +517,11 @@ impl Link {
             id,
             events: rx,
         })
+    }
+
+    /// Whether keys objects drive the pointer.
+    pub fn has_pointer(&self) -> bool {
+        self.pointer
     }
 
     pub fn create_keys(&self, owner: Owner) -> Option<KeysHandle> {
@@ -723,6 +756,11 @@ impl State {
                     k.keysym(sym, key_state(pressed));
                 }
             }
+            Cmd::Pointer(id, input) => {
+                if let Some(k) = self.keys.get(&id) {
+                    send_pointer(k, input);
+                }
+            }
             Cmd::DestroyKeys(id) => {
                 if let Some(k) = self.keys.remove(&id) {
                     k.destroy();
@@ -767,6 +805,24 @@ struct LockScreen {
     screens: Vec<String>,
     events: async_channel::Sender<LockEvent>,
     ended: Arc<AtomicBool>,
+}
+
+fn send_pointer(k: &RepriseKeysV1, input: Pointer) {
+    use crate::inputproto::reprise_keys_v1::Axis;
+    match input {
+        Pointer::Motion(dx, dy) => k.pointer_motion(dx, dy),
+        Pointer::MotionAbsolute(output, x, y) => k.pointer_motion_absolute(output, x, y),
+        Pointer::Button(button, pressed) => k.pointer_button(button, key_state(pressed)),
+        Pointer::Axis(dx, dy) => k.pointer_axis(dx, dy),
+        Pointer::Wheel { vertical, steps } => {
+            let axis = if vertical {
+                Axis::Vertical
+            } else {
+                Axis::Horizontal
+            };
+            k.pointer_axis_discrete(axis, steps);
+        }
+    }
 }
 
 fn key_state(pressed: bool) -> KeyState {
@@ -1384,6 +1440,69 @@ pub(crate) mod tests {
         let link = Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap();
         drive(&link);
         compositor.join().unwrap()
+    }
+
+    /// The requests on the first keys object until its destroy, after `drive` on a link to a
+    /// compositor at `version`: opcode and body.
+    fn keys_requests(version: u32, drive: impl FnOnce(&Link)) -> Vec<(u32, Vec<u8>)> {
+        const CREATE_KEYS: u32 = 4;
+        const CREATE_APP_KEYS: u32 = 10;
+        const DESTROY: u32 = 2;
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
+        let compositor = std::thread::spawn(move || {
+            let input = fake_compositor(&mut theirs, 2, version);
+            theirs
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let (mut keys, mut seen) = (None, Vec::new());
+            loop {
+                let (object, opcode, body) = request(&mut theirs).unwrap();
+                if object == input && matches!(opcode, CREATE_KEYS | CREATE_APP_KEYS) {
+                    keys = Some(u32::from_ne_bytes(body[..4].try_into().unwrap()));
+                } else if Some(object) == keys {
+                    seen.push((opcode, body));
+                    if opcode == DESTROY {
+                        break seen;
+                    }
+                }
+            }
+        });
+        let link = Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap();
+        drive(&link);
+        compositor.join().unwrap()
+    }
+
+    #[test]
+    fn a_v12_keys_object_carries_the_pointer_and_an_older_one_drops_it() {
+        const MOTION: u32 = 3;
+        const BUTTON: u32 = 5;
+        const AXIS_DISCRETE: u32 = 7;
+        let drive = |link: &Link| {
+            let keys = link.create_keys(Owner::App("org.example.Remote".into()));
+            let keys = keys.unwrap();
+            keys.pointer(Pointer::Motion(1.5, -2.0));
+            keys.pointer(Pointer::Button(0x110, true));
+            keys.pointer(Pointer::Wheel {
+                vertical: true,
+                steps: -1,
+            });
+        };
+        let words = |ws: &[i32]| ws.iter().flat_map(|w| w.to_ne_bytes()).collect::<Vec<u8>>();
+        let seen = keys_requests(12, drive);
+        assert_eq!(
+            seen,
+            [
+                (MOTION, words(&[384, -512])),
+                (BUTTON, words(&[0x110, 1])),
+                (AXIS_DISCRETE, words(&[0, -1])),
+                (2, Vec::new()),
+            ]
+        );
+        assert_eq!(
+            keys_requests(11, drive),
+            [(2, Vec::new())],
+            "v11 hears no pointer"
+        );
     }
 
     #[test]

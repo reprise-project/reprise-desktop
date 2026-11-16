@@ -98,6 +98,7 @@ const FALLBACK_REFRESH_MHZ: u32 = 60_000;
 /// A running stream: its PipeWire node id and the handle to stop it.
 pub struct Cast {
     pub node_id: u32,
+    pub target: Target,
     pub serial: u64,
     pub width: u32,
     pub height: u32,
@@ -119,11 +120,12 @@ impl Cast {
         let (tx, rx) = std::sync::mpsc::channel::<NodeReport>();
         let (stop, stop_rx) = pipewire::channel::channel::<()>();
         let (ended_tx, ended) = std::sync::mpsc::channel::<()>();
+        let cast_target = target.clone();
         let thread = std::thread::Builder::new()
             .name("reprise-portal-cast".into())
             .spawn(move || {
                 let _ended = ended_tx;
-                if let Err(e) = run(target, cursor, capturer, &app, tx.clone(), stop_rx) {
+                if let Err(e) = run(cast_target, cursor, capturer, &app, tx.clone(), stop_rx) {
                     log::warn!("cast thread: {e}");
                     let _ = tx.send(Err(e));
                 }
@@ -147,6 +149,7 @@ impl Cast {
         };
         Ok(Cast {
             node_id,
+            target,
             serial,
             width,
             height,
