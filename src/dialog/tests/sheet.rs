@@ -17,6 +17,30 @@ fn identity_tells_same_named_files_apart() {
 }
 
 #[test]
+fn a_sheet_renamed_by_apply_takes_the_new_name_and_stays_the_files_one_sheet() {
+    let mut d = Dialog::properties(&file_info(), "text-x-generic", (0, 0));
+    let to = std::path::PathBuf::from("/home/u/Desktop/Notes.txt");
+    d.sheet_applied(&Written {
+        path: to.clone(),
+        ..Written::default()
+    });
+    assert_eq!(d.title, "Notes Properties");
+    assert_eq!(d.sheet_name(), Some("Notes"));
+    let mut info = file_info();
+    info.path = to;
+    info.name = "Notes".into();
+    let fresh = Dialog::properties(&info, "text-x-generic", (0, 0));
+    assert_eq!(d.identity(), fresh.identity());
+    info.name = "Notes.txt".into();
+    let shown = Dialog::properties(&info, "text-x-generic", (0, 0));
+    assert_eq!(
+        d.identity(),
+        shown.identity(),
+        "the path alone, whatever name the desktop shows"
+    );
+}
+
+#[test]
 fn the_wheel_scrolls_a_form_dialog_s_open_combo() {
     use reprisekit::controls::form::{Control, Form, Item};
     let items = ["a", "b", "c", "d", "e", "f"];

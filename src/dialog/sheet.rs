@@ -21,6 +21,7 @@ impl Dialog {
         let Some((base, _)) = self.props_mut() else {
             return;
         };
+        let renamed = base.path != w.path;
         base.path = w.path.clone();
         if let Some(on) = w.attrs.read_only {
             base.read_only = state(on);
@@ -57,6 +58,12 @@ impl Dialog {
             if *key == reprisefs::launcher::Key::Icon {
                 base.own_icon = Some(v.clone());
             }
+        }
+        // A launcher goes by its Name= key, which a rename leaves.
+        if renamed && base.launcher.is_none() {
+            let file = w.path.file_name().unwrap_or_default().to_string_lossy();
+            base.name = reprisekit::controls::filesheet::shown_name(&file, &base.ext, base.hidden);
+            self.title = format!("{} Properties", base.name);
         }
         if let Some(f) = self.form_mut() {
             sync_apply(f);
