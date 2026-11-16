@@ -6,7 +6,8 @@ After=reprise-login-rdp.socket reprise-login.service network.target
 
 [Service]
 # "+" loads the kernel's tls module outside the sandbox; "-" starts the front when that fails.
-ExecStartPre=-+/usr/bin/modprobe -q tls
+# A bare name: modprobe is in /usr/bin on some distributions and /usr/sbin on others.
+ExecStartPre=-+modprobe -q tls
 ExecStart=/usr/bin/reprise-login-rdp
 User=reprise-login-rdp
 Group=reprise-login-rdp

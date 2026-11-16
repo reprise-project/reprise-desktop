@@ -53,7 +53,7 @@ fn the_front_unit_runs_unprivileged_and_sandboxed() {
         &unit,
         "Service",
         &[
-            "ExecStartPre=-+/usr/bin/modprobe -q tls",
+            "ExecStartPre=-+modprobe -q tls",
             "ExecStart=/usr/bin/reprise-login-rdp",
             "User=reprise-login-rdp",
             "Group=reprise-login-rdp",
