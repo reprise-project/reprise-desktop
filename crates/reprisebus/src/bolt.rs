@@ -1,11 +1,10 @@
 //! boltd's Thunderbolt and USB4 devices on the system bus: the list and its changes, and
 //! authorizing, enrolling and forgetting a device. boltd asks polkit for each change.
 
-use std::collections::HashMap;
-
+use crate::{Props, prop};
 use futures_util::stream::StreamExt;
 use zbus::proxy::{CacheProperties, MethodFlags};
-use zbus::{Connection, OwnedMatchRule, OwnedObjectPath, OwnedVariant, Proxy, Variant};
+use zbus::{Connection, OwnedMatchRule, OwnedObjectPath, Proxy, Variant};
 
 pub const NAME: &str = "org.freedesktop.bolt";
 const PATH: &str = "/org/freedesktop/bolt";
@@ -77,25 +76,15 @@ impl Device {
     }
 }
 
-type Props = HashMap<String, OwnedVariant>;
-
 /// A device in `props`. Under the `iommu` policy boltd authorizes it itself only while the IOMMU
 /// is on, which `iommu` says.
 fn device(path: &str, props: &Props, iommu: bool) -> Option<Device> {
-    let text = |k: &str| {
-        props
-            .get(k)
-            .and_then(|v| String::try_from(v.clone()).ok())
-            .unwrap_or_default()
-    };
+    let text = |k: &str| prop::<String>(props, k).unwrap_or_default();
     // The computer's own controller is listed too and is never authorized.
     if text("Type") == "host" {
         return None;
     }
-    let stored = props
-        .get("Stored")
-        .and_then(|v| bool::try_from(v.clone()).ok())
-        .unwrap_or(false);
+    let stored = prop(props, "Stored").unwrap_or(false);
     Some(Device {
         path: path.to_string(),
         uid: text("Uid"),
@@ -126,8 +115,8 @@ async fn props(conn: &Connection, path: &str, iface: &str) -> zbus::Result<Props
 /// Whether every domain reports its IOMMU on; false for one that can't be read.
 async fn iommu_on(conn: &Connection, domains: &[OwnedObjectPath]) -> bool {
     for d in domains {
-        let on = (props(conn, d.as_str(), DOMAIN).await.ok())
-            .and_then(|p| p.get("IOMMU").and_then(|v| bool::try_from(v.clone()).ok()));
+        let on =
+            (props(conn, d.as_str(), DOMAIN).await.ok()).and_then(|p| prop::<bool>(&p, "IOMMU"));
         if on != Some(true) {
             return false;
         }

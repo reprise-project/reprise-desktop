@@ -2,10 +2,10 @@
 //! whether it is on, where charging stops, and turning it on or off. UPower holds the thresholds and
 //! asks polkit; Reprise only calls `EnableChargeThreshold`.
 
-use std::collections::HashMap;
+use crate::{Props, prop};
 use std::time::Duration;
 use zbus::proxy::{CacheProperties, MethodFlags};
-use zbus::{Connection, OwnedObjectPath, OwnedVariant, Proxy};
+use zbus::{Connection, OwnedObjectPath, Proxy};
 
 pub const NAME: &str = "org.freedesktop.UPower";
 const PATH: &str = "/org/freedesktop/UPower";
@@ -31,14 +31,9 @@ pub struct ChargeLimit {
 
 impl ChargeLimit {
     /// The limit a device's properties describe: a system battery reporting `ChargeThresholdSupported`.
-    pub fn from_props(device: &str, props: &HashMap<String, OwnedVariant>) -> Option<ChargeLimit> {
-        let flag = |k: &str| {
-            props
-                .get(k)
-                .and_then(|v| bool::try_from(v.clone()).ok())
-                .unwrap_or(false)
-        };
-        let num = |k: &str| props.get(k).and_then(|v| u32::try_from(v.clone()).ok());
+    pub fn from_props(device: &str, props: &Props) -> Option<ChargeLimit> {
+        let flag = |k: &str| prop(props, k).unwrap_or(false);
+        let num = |k: &str| prop::<u32>(props, k);
         if num("Type") != Some(BATTERY) || !flag("PowerSupply") || !flag("ChargeThresholdSupported")
         {
             return None;
@@ -61,7 +56,7 @@ pub fn touches_limit<'a>(mut keys: impl Iterator<Item = &'a str>) -> bool {
     keys.any(|k| k.starts_with("ChargeThreshold") || k.ends_with("Threshold"))
 }
 
-async fn device_props(conn: &Connection, path: &str) -> Option<HashMap<String, OwnedVariant>> {
+async fn device_props(conn: &Connection, path: &str) -> Option<Props> {
     let props = zbus::proxy::Builder::<Proxy>::new(conn)
         .destination(NAME)
         .path(path)
@@ -136,8 +131,9 @@ pub fn set(device: &str, on: bool) -> Result<(), Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
-    use zbus::Variant;
+    use zbus::{OwnedVariant, Variant};
 
     fn props(entries: Vec<(&str, Variant<'static>)>) -> HashMap<String, OwnedVariant> {
         entries

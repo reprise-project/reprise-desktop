@@ -1,8 +1,8 @@
 //! Reprise's Remote Desktop server, `reprise-rdp`, from a program on the session bus: what it
 //! reports, ending its connections, a new certificate, and turning its user unit on or off.
 
-use std::collections::HashMap;
-use zbus::{Connection, OwnedVariant};
+use crate::{Props, prop};
+use zbus::Connection;
 
 pub const NAME: &str = "org.reprise.RemoteDesktop";
 pub const PATH: &str = "/org/reprise/RemoteDesktop";
@@ -47,17 +47,10 @@ pub struct Client {
 }
 
 /// The status a `GetAll` of [`INTERFACE`] describes; a missing or mistyped property reads empty.
-pub fn from_props(props: &HashMap<String, OwnedVariant>) -> Status {
-    let text = |k: &str| {
-        props
-            .get(k)
-            .and_then(|v| String::try_from(v.clone()).ok())
-            .unwrap_or_default()
-    };
+pub fn from_props(props: &Props) -> Status {
+    let text = |k: &str| prop::<String>(props, k).unwrap_or_default();
     // `Clients` is `a(sst)`: address, user, since.
-    let clients = props
-        .get("Clients")
-        .and_then(|v| Vec::<(String, String, u64)>::try_from(v.clone()).ok())
+    let clients = prop::<Vec<(String, String, u64)>>(props, "Clients")
         .unwrap_or_default()
         .into_iter()
         .map(|(address, user, since)| Client {
@@ -70,10 +63,7 @@ pub fn from_props(props: &HashMap<String, OwnedVariant>) -> Status {
         listening: text("Listening"),
         clients,
         encoder: text("Encoder"),
-        encoders: props
-            .get("Encoders")
-            .and_then(|v| Vec::<String>::try_from(v.clone()).ok())
-            .unwrap_or_default(),
+        encoders: prop(props, "Encoders").unwrap_or_default(),
         fingerprint: text("Fingerprint"),
     }
 }
@@ -108,7 +98,7 @@ pub async fn read(conn: &Connection) -> Option<Status> {
             &(INTERFACE,),
         )
         .await;
-    match reply.and_then(|m| m.body().deserialize::<HashMap<String, OwnedVariant>>()) {
+    match reply.and_then(|m| m.body().deserialize::<Props>()) {
         Ok(props) => Some(from_props(&props)),
         Err(e) => {
             log::info!("{NAME} does not report its status: {e}");
@@ -271,7 +261,8 @@ fn told(what: &str, reply: zbus::Result<zbus::Message>) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::peer::tests::{bus, sandboxed_proc};
-    use zbus::Variant;
+    use std::collections::HashMap;
+    use zbus::{OwnedVariant, Variant};
 
     fn owned(v: Variant<'_>) -> OwnedVariant {
         v.try_to_owned().unwrap()

@@ -93,6 +93,14 @@ use std::sync::Mutex;
 use std::time::Duration;
 use zbus::{Connection, Message, MessageStream, OwnedMatchRule};
 
+/// A `GetAll` reply, or the changed map of a `PropertiesChanged`.
+pub type Props = std::collections::HashMap<String, zbus::OwnedVariant>;
+
+/// `key` of `props` as a `T`; None when it is missing or of another type.
+pub fn prop<T: TryFrom<zbus::OwnedVariant>>(props: &Props, key: &str) -> Option<T> {
+    props.get(key)?.clone().try_into().ok()
+}
+
 /// How long a method call on [`session`]'s connection waits for its reply;
 /// a hung service never holds a caller's thread past this.
 pub const METHOD_TIMEOUT: Duration = Duration::from_secs(5);

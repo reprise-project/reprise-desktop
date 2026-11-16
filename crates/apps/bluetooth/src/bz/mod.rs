@@ -7,13 +7,12 @@ mod obex;
 
 pub use bus::{BzHandle, watch};
 
-use std::collections::HashMap;
-
+use reprisebus::prop;
 use reprisekit::art::devicon;
-use zbus::{OwnedObjectPath, OwnedVariant};
+use zbus::OwnedObjectPath;
 
-pub type Props = HashMap<String, OwnedVariant>;
-pub type Objects = HashMap<OwnedObjectPath, HashMap<String, Props>>;
+pub use reprisebus::Props;
+pub use reprisebus::bluez::Objects;
 
 pub const ADAPTER_IFACE: &str = "org.bluez.Adapter1";
 pub const DEVICE_IFACE: &str = "org.bluez.Device1";
@@ -242,39 +241,29 @@ impl Change {
 }
 
 fn flag(p: &Props, key: &str) -> bool {
-    p.get(key)
-        .and_then(|v| bool::try_from(v.clone()).ok())
-        .unwrap_or(false)
-}
-
-fn text(p: &Props, key: &str) -> Option<String> {
-    p.get(key).and_then(|v| String::try_from(v.clone()).ok())
+    prop(p, key).unwrap_or(false)
 }
 
 fn adapter_of(path: &str, p: &Props) -> Adapter {
     Adapter {
         path: path.to_string(),
         powered: flag(p, "Powered"),
-        blocked: text(p, "PowerState").as_deref() == Some("off-blocked"),
+        blocked: prop::<String>(p, "PowerState").as_deref() == Some("off-blocked"),
         discoverable: flag(p, "Discoverable"),
         discovering: flag(p, "Discovering"),
     }
 }
 
 fn device_of(path: &str, p: &Props, battery: Option<&Props>) -> Device {
-    let address = text(p, "Address").unwrap_or_default();
-    let name = text(p, "Name").filter(|n| !n.is_empty());
-    let alias = text(p, "Alias")
+    let address = prop::<String>(p, "Address").unwrap_or_default();
+    let name = prop::<String>(p, "Name").filter(|n| !n.is_empty());
+    let alias = prop::<String>(p, "Alias")
         .filter(|a| !a.is_empty())
         .or_else(|| name.clone())
         .unwrap_or_else(|| address.clone());
-    let kind = text(p, "Icon")
+    let kind = prop::<String>(p, "Icon")
         .and_then(|i| Kind::from_icon(&i))
-        .or_else(|| {
-            p.get("Class")
-                .and_then(|v| u32::try_from(v.clone()).ok())
-                .and_then(Kind::from_class)
-        })
+        .or_else(|| prop::<u32>(p, "Class").and_then(Kind::from_class))
         .unwrap_or_default();
     Device {
         path: path.to_string(),
@@ -286,9 +275,7 @@ fn device_of(path: &str, p: &Props, battery: Option<&Props>) -> Device {
         trusted: flag(p, "Trusted"),
         connected: flag(p, "Connected"),
         heard: p.contains_key(RSSI),
-        battery: battery
-            .and_then(|b| b.get("Percentage"))
-            .and_then(|v| u8::try_from(v.clone()).ok()),
+        battery: battery.and_then(|b| prop(b, "Percentage")),
     }
 }
 
@@ -337,8 +324,9 @@ pub fn fold(objects: &Objects) -> Snapshot {
 /// The device at `address` under the adapter at `adapter` (both Bluetooth addresses, as obexd
 /// names a session's two ends); None when no adapter has that address.
 pub fn device_at(objects: &Objects, adapter: &str, address: &str) -> Option<Device> {
-    let same =
-        |p: &Props, want: &str| text(p, "Address").is_some_and(|a| a.eq_ignore_ascii_case(want));
+    let same = |p: &Props, want: &str| {
+        prop::<String>(p, "Address").is_some_and(|a| a.eq_ignore_ascii_case(want))
+    };
     let under = objects.iter().find_map(|(p, ifaces)| {
         ifaces
             .get(ADAPTER_IFACE)
@@ -595,6 +583,7 @@ pub fn plain_error(name: &str, detail: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use zbus::{OwnedVariant, Str};
 
     fn s(v: &str) -> OwnedVariant {

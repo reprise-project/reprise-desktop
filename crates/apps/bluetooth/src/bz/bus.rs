@@ -222,16 +222,7 @@ async fn register_agent(conn: &Connection) {
 }
 
 async fn read(conn: &Connection) -> Snapshot {
-    let reply = conn
-        .call_method(
-            Some(NAME),
-            "/",
-            Some(OBJECT_MANAGER),
-            "GetManagedObjects",
-            &(),
-        )
-        .await;
-    match reply.and_then(|m| m.body().deserialize::<Objects>()) {
+    match reprisebus::bluez::objects(conn).await {
         Ok(objects) => fold(&objects),
         Err(e) => {
             log::debug!("no BlueZ objects ({e})");
@@ -466,16 +457,7 @@ async fn command(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
 
 /// The paths of every adapter BlueZ lists.
 async fn adapters(conn: &Connection) -> Vec<String> {
-    let objects = conn
-        .call_method(
-            Some(NAME),
-            "/",
-            Some(OBJECT_MANAGER),
-            "GetManagedObjects",
-            &(),
-        )
-        .await
-        .and_then(|m| m.body().deserialize::<Objects>());
+    let objects = reprisebus::bluez::objects(conn).await;
     match objects {
         Ok(o) => (o.into_iter())
             .filter(|(_, ifaces)| ifaces.contains_key(ADAPTER_IFACE))

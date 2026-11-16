@@ -12,7 +12,8 @@ use zbus::message::Header;
 use zbus::{Connection, ObjectPath, OwnedObjectPath, OwnedVariant};
 
 use super::bus::Poster;
-use super::{BzMsg, Objects, Offer, Props, device_at, label, text};
+use super::{BzMsg, Objects, Offer, Props, device_at, label};
+use reprisebus::prop;
 
 pub const NAME: &str = "org.bluez.obex";
 pub const PATH: &str = "/reprise/bluetooth/obex";
@@ -103,9 +104,9 @@ impl Agent {
     ) -> zbus::Result<Option<(String, PathBuf)>> {
         let s = props(conn, session, SESSION_IFACE).await?;
         let (Some(source), Some(dest), Some(root)) = (
-            text(&s, "Source"),
-            text(&s, "Destination"),
-            text(&s, "Root"),
+            prop::<String>(&s, "Source"),
+            prop::<String>(&s, "Destination"),
+            prop::<String>(&s, "Root"),
         ) else {
             return Ok(None);
         };
@@ -176,7 +177,7 @@ impl Agent {
             return Err(Error::Rejected("receiving files is turned off".into()));
         }
         let t = props(conn, transfer.as_str(), TRANSFER_IFACE).await?;
-        let name = text(&t, "Name").unwrap_or_default();
+        let name = prop::<String>(&t, "Name").unwrap_or_default();
         let size = t.get("Size").and_then(|v| u64::try_from(v.clone()).ok());
         let session = t
             .get("Session")
@@ -432,7 +433,7 @@ impl Obex {
         else {
             return;
         };
-        let status = text(&changed, "Status");
+        let status = prop::<String>(&changed, "Status");
         let Some(done) = status
             .as_deref()
             .filter(|s| matches!(*s, "complete" | "error"))
