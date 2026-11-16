@@ -25,7 +25,6 @@ mod receive;
 mod tray;
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::ffi::OsString;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
@@ -394,12 +393,16 @@ impl BtApp {
                 }
                 tray::TrayMsg::Balloon(tag, i) => {
                     if let Some(path) = self.received.get(&tag) {
-                        let argv = if i == receive::OPEN {
-                            reprisefs::apps::open_argv_for(path)
+                        let open = if i == receive::OPEN {
+                            let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
+                            let globs = reprisefs::apps::mime_globs();
+                            let terminal = repriseconf::current().terminal.clone();
+                            let found = reprisefs::props::open_in(path, &globs, &apps, &terminal);
+                            receive::open_command(path, found)
                         } else {
-                            reprisefs::apps::open_location_argv(path)
+                            receive::shown_in_folder(path)
                         };
-                        self.spawn_with_token(&argv);
+                        self.spawn_with_token(&open);
                     }
                 }
                 tray::TrayMsg::Airplane => {
@@ -1014,21 +1017,15 @@ impl BtApp {
         }
     }
 
-    /// Starts `argv` with the tray's activation token, so its window comes up.
-    fn spawn_with_token(&self, argv: &[OsString]) {
-        let Some((program, args)) = argv.split_first() else {
-            return;
-        };
-        let mut cmd = std::process::Command::new(program);
-        cmd.args(args);
-        if let Some(t) = self.tray.as_ref().and_then(|t| t.take_activation_token()) {
-            cmd.env("XDG_ACTIVATION_TOKEN", t);
-        }
-        match cmd.spawn() {
-            Ok(mut child) => {
-                std::thread::spawn(move || child.wait());
-            }
-            Err(e) => log::warn!("could not start {program:?}: {e}"),
+    /// Starts `open` in its program's app scope and folder with the tray's activation token, so
+    /// its window comes up.
+    fn spawn_with_token(&self, open: &reprisefs::props::Opening) {
+        let argv = reprisefs::scope::in_scope(&open.argv, open.app.as_deref());
+        let handoff = (self.tray.as_ref())
+            .and_then(|t| t.take_handoff())
+            .unwrap_or_default();
+        if let Err(e) = repriseapp::spawn_handed(&argv, open.dir.as_deref(), None, &handoff) {
+            log::warn!("could not start {argv:?}: {e}");
         }
     }
 

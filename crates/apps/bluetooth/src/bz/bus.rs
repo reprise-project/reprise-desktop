@@ -5,7 +5,7 @@
 use super::*;
 use futures_util::future;
 use futures_util::stream::StreamExt;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::pin::pin;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -243,7 +243,8 @@ pub(crate) fn error_of(e: &zbus::Error) -> String {
 }
 
 /// The pairings in flight by device, each under a serial of its own. Dropping a pairing's sender
-/// tells its task the user cancelled it.
+/// tells its task the user cancelled it. A pairing that reported Paired stays in `reported` until
+/// that device pairs again, so a Cancel sent before the wizard saw it still removes the device.
 #[derive(Clone, Default)]
 struct Pairings(Arc<Mutex<InFlight>>);
 
@@ -251,6 +252,7 @@ struct Pairings(Arc<Mutex<InFlight>>);
 struct InFlight {
     serial: u64,
     by_device: HashMap<String, (u64, async_channel::Sender<()>)>,
+    reported: HashSet<String>,
 }
 
 impl Pairings {
@@ -263,12 +265,29 @@ impl Pairings {
         let mut m = self.lock();
         m.serial += 1;
         let serial = m.serial;
+        m.reported.remove(device);
         m.by_device.insert(device.to_string(), (serial, tx));
         (serial, rx)
     }
 
-    fn cancel(&self, device: &str) {
-        self.lock().by_device.remove(device);
+    /// Cancels `device`'s pairing: true when it already reported Paired, so the device is paired
+    /// and must be removed.
+    fn cancel(&self, device: &str) -> bool {
+        let mut m = self.lock();
+        m.by_device.remove(device);
+        m.reported.remove(device)
+    }
+
+    /// Pairing `serial` of `device` paired: true when it may report so, false when a Cancel came
+    /// first. Settled under the lock, so a Cancel lands either before it or on `reported`.
+    fn settle(&self, device: &str, serial: u64) -> bool {
+        let mut m = self.lock();
+        if !m.by_device.get(device).is_some_and(|(s, _)| *s == serial) {
+            return false;
+        }
+        m.by_device.remove(device);
+        m.reported.insert(device.to_string());
+        true
     }
 
     fn end(&self, device: &str, serial: u64) {
@@ -290,8 +309,11 @@ fn commands(
     let pairings = Pairings::default();
     zruntime::spawn(async move {
         while let Ok(cmd) = cmds.recv().await {
-            if let Cmd::CancelPair(device) = &cmd {
-                pairings.cancel(device);
+            if let Cmd::CancelPair(device) = &cmd
+                && pairings.cancel(device)
+            {
+                log::info!("pairing {device} was cancelled after it paired; removing it");
+                remove_paired(&bus, device).await;
             }
             match cmd {
                 Cmd::Quit => {
@@ -302,7 +324,7 @@ fn commands(
                     let (b, p, all) = (bus.clone(), poster.clone(), pairings.clone());
                     let (serial, cancelled) = all.start(&device);
                     zruntime::spawn(async move {
-                        pair(&b, &device, &p, &cancelled).await;
+                        pair(&b, &device, &p, &cancelled, &all, serial).await;
                         all.end(&device, serial);
                     })
                     .detach();
@@ -355,6 +377,8 @@ async fn pair(
     device: &str,
     poster: &Poster,
     cancelled: &async_channel::Receiver<()>,
+    pairings: &Pairings,
+    serial: u64,
 ) {
     if let Err(e) = call0(conn, device, DEVICE_IFACE, "Pair").await {
         poster.post(BzMsg::PairFailed {
@@ -377,18 +401,23 @@ async fn pair(
             _ => None,
         },
     };
-    let Some(connected) = connected else {
+    let Some(connected) = connected.filter(|_| pairings.settle(device, serial)) else {
         log::info!("pairing {device} was cancelled after it paired; removing it");
-        let adapter = device.rsplit_once('/').map_or("", |(a, _)| a);
-        if let Err(e) = remove(conn, adapter, device).await {
-            log::warn!("could not remove {device}: {e}");
-        }
+        remove_paired(conn, device).await;
         return;
     };
     poster.post(BzMsg::Paired {
         device: device.into(),
         connect_error: connected.err().map(|e| error_of(&e)),
     });
+}
+
+/// Removes paired `device` from its adapter.
+async fn remove_paired(conn: &Connection, device: &str) {
+    let adapter = device.rsplit_once('/').map_or("", |(a, _)| a);
+    if let Err(e) = remove(conn, adapter, device).await {
+        log::warn!("could not remove {device}: {e}");
+    }
 }
 
 async fn remove(conn: &Connection, adapter: &str, device: &str) -> zbus::Result<()> {
@@ -806,6 +835,54 @@ mod tests {
             paired,
             [OTHER],
             "only the pairing left alone reports Paired"
+        );
+    }
+
+    #[test]
+    fn a_cancel_after_paired_was_reported_removes_the_device() {
+        let Some(bus) = bus() else {
+            return;
+        };
+        let (calls_tx, calls) = std::sync::mpsc::channel();
+        let (poster, posted) = Poster::channel(repriseapp::Waker::noop());
+        zbus::block_on(async {
+            let bluez = connect(&bus.1).await;
+            let server = bluez.object_server();
+            let adapter = FakeAdapter {
+                calls: calls_tx.clone(),
+                powered: true,
+            };
+            server.at("/org/bluez/hci0", adapter).await.unwrap();
+            let device = FakeDevice {
+                path: DEVICE,
+                hang: false,
+                trusted: false,
+                calls: calls_tx,
+            };
+            server.at(DEVICE, device).await.unwrap();
+            bluez.request_name(NAME).await.unwrap();
+            let conn = connect(&bus.1).await;
+            let (cmds_tx, cmds) = async_channel::unbounded();
+            let (wakes, _wakes_rx) = async_channel::unbounded();
+            let _commands = commands(&conn, cmds, wakes, poster, None);
+            cmds_tx.send(Cmd::Pair(DEVICE.into())).await.unwrap();
+            let rt = zruntime::SharedRuntime::current().unwrap();
+            let reported = rt.timeout(Duration::from_secs(5), async {
+                while !matches!(posted.try_recv(), Ok(BzMsg::Paired { .. })) {
+                    pause(20).await;
+                }
+            });
+            reported.await.expect("Paired reported");
+            cmds_tx.send(Cmd::CancelPair(DEVICE.into())).await.unwrap();
+            pause(500).await;
+        });
+        let seen: Vec<String> = calls.try_iter().collect();
+        assert_eq!(
+            seen,
+            [
+                format!("Connect {DEVICE}"),
+                format!("RemoveDevice {DEVICE}")
+            ]
         );
     }
 
