@@ -76,8 +76,8 @@ impl Host {
                 s.access.state.dirty = true;
             }
         }
-        if win == crate::filebox::FILE_BOX {
-            return self.file_box_event(ev);
+        if crate::filebox::owns(win) {
+            return self.file_box_event(win, ev);
         }
         let blink = ev == Event::Blink;
         if self.edit_menu_event(win, &ev) {

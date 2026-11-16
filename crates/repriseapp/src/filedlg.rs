@@ -18,6 +18,7 @@ use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
 use std::sync::Mutex;
 
+use crate::asks::{self, Asks};
 use crate::iconjobs::IconWaits;
 use crate::listicons::{ListIcons, ReadIcons};
 use crate::listjob::Job;
@@ -498,13 +499,45 @@ enum Deleting {
     Done(Result<(), (PathBuf, std::io::Error)>),
 }
 
-/// The box over the dialog: Delete's question, or why a rename or a delete failed.
-pub(crate) struct Ask {
-    pub(crate) msg: MsgBox,
+/// What a box over the dialog (Delete's question, or why a rename or a delete failed) holds
+/// beside its [`MsgBox`].
+pub(crate) struct Pending {
     icon: &'static str,
     /// Set once [`Host::prime_box`] fetched `icon`: what it waits on to fetch it again.
     primed: Option<IconWaits>,
     then: Then,
+}
+
+impl Pending {
+    fn new(icon: &'static str, then: Then) -> Pending {
+        Pending {
+            icon,
+            primed: None,
+            then,
+        }
+    }
+}
+
+/// The boxes over the dialog, in the file dialog box's windows ([`crate::filebox`]).
+struct Boxes(Asks<Pending>);
+
+impl Default for Boxes {
+    fn default() -> Boxes {
+        Boxes(Asks::new(crate::filebox::FILE_BOX))
+    }
+}
+
+impl std::ops::Deref for Boxes {
+    type Target = Asks<Pending>;
+    fn deref(&self) -> &Asks<Pending> {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Boxes {
+    fn deref_mut(&mut self) -> &mut Asks<Pending> {
+        &mut self.0
+    }
 }
 
 /// What the box's answer does.
@@ -567,8 +600,8 @@ pub struct Host {
     last_probe: Option<(PathBuf, Job<Option<PathBuf>>)>,
     /// Delete's work under way off the loop; [`Host::take_thumbs`] takes each step.
     deleting: Option<Job<Deleting>>,
-    /// The box the dialog shows over itself ([`Host::asking`]).
-    ask: Option<Ask>,
+    /// The boxes the dialog shows over itself, the one up first ([`Host::asking`]).
+    ask: Boxes,
     /// The view and sort the open dialog last stored ([`Host::remember`]).
     remembered: Remembered,
     /// Where they are stored; None is [`MEMORY`].
@@ -644,7 +677,7 @@ impl Host {
         };
         self.folder = Some(self.folders.id(&dir));
         self.watched = None;
-        self.ask = None;
+        self.ask.drain();
         self.deleting = None;
         if let Some(w) = &mut self.watch {
             w.clear();
@@ -1236,7 +1269,7 @@ impl Host {
                     Some(Ok(name)) => dlg.expect(&name, false),
                     Some(Err(why)) => {
                         dlg.resume_rename(&from, &to);
-                        self.ask = Some(error_box("Rename", why));
+                        self.tell("Rename", why);
                     }
                     None => {}
                 }
@@ -1254,7 +1287,7 @@ impl Host {
     /// Delete on `paths` (for good with `shift`), the first of them listed as `name`: asked
     /// first as Explorer's Delete asks ([`dialogops::delete_mode`]). One Delete at a time.
     fn delete(&mut self, paths: Vec<PathBuf>, name: String, shift: bool) {
-        if self.deleting.is_some() || self.ask.is_some() || paths.is_empty() {
+        if self.deleting.is_some() || !self.ask.is_empty() || paths.is_empty() {
             return;
         }
         self.spawn_delete(move || {
@@ -1299,26 +1332,23 @@ impl Host {
                     default: dlgtemplate::delete_default_index(&buttons, mode.erase),
                     ..box_fields(text, &buttons)
                 };
-                self.ask = Some(Ask {
-                    msg: MsgBox::on_template(title, template, fields),
-                    icon: if mode.erase {
-                        ERASE_ICON
-                    } else {
-                        "user-trash-full"
-                    },
-                    primed: None,
-                    then: Then::Delete {
-                        paths,
-                        erase: mode.erase,
-                    },
-                });
+                let icon = match mode.erase {
+                    true => ERASE_ICON,
+                    false => "user-trash-full",
+                };
+                let then = Then::Delete {
+                    paths,
+                    erase: mode.erase,
+                };
+                let msg = MsgBox::on_template(title, template, fields);
+                self.ask.ask(msg, Pending::new(icon, then));
             }
             Deleting::Measured(asker, dirs) => self.too_big_step(asker, dirs),
             Deleting::Done(done) => {
                 if let Err((path, e)) = done {
                     log::warn!("file dialog: could not delete {}: {e}", path.display());
                     let text = dialogops::delete_failed_text(&path, &e);
-                    self.ask = Some(error_box("Error Deleting File or Folder", text));
+                    self.tell("Error Deleting File or Folder", text);
                 }
                 self.refresh();
             }
@@ -1342,6 +1372,7 @@ impl Host {
     }
 
     /// Asks about the next item too big for its Recycle Bin, or deletes the batch as answered.
+    /// The batch waits on the question, so it comes up ahead of a box that is only waiting.
     fn too_big_step(&mut self, asker: TooBig, dirs: Vec<PathBuf>) {
         let path = match asker.step() {
             TooBigStep::Ask(path) => path.to_path_buf(),
@@ -1363,57 +1394,69 @@ impl Host {
             default: dlgtemplate::delete_default_index(buttons, true),
             ..box_fields(text, buttons)
         };
-        self.ask = Some(Ask {
-            msg: MsgBox::on_template(title, Template::MessageBox, fields),
-            icon: ERASE_ICON,
-            primed: None,
-            then: Then::TooBig(asker, dirs),
-        });
+        let msg = MsgBox::on_template(title, Template::MessageBox, fields);
+        (self.ask).ask_held(msg, Pending::new(ERASE_ICON, Then::TooBig(asker, dirs)));
     }
 
-    /// The box over the dialog, asking before Delete or saying why a rename or a delete failed.
-    /// The repriseapp host shows it as a child window of the dialog's ([`crate::filebox`]).
+    /// An OK box titled `title` saying `text`, behind any box up.
+    fn tell(&mut self, title: &str, text: String) {
+        let msg = MsgBox::new(title, box_fields(text, &["OK"]));
+        self.ask.ask(msg, Pending::new(ERROR_ICON, Then::Nothing));
+    }
+
+    /// The box up over the dialog, asking before Delete or saying why a rename or a delete
+    /// failed. The repriseapp host shows it as a child window of the dialog's
+    /// ([`crate::filebox`]).
     pub fn asking(&self) -> Option<&MsgBox> {
-        self.ask.as_ref().map(|a| &a.msg)
+        self.ask.up().map(|(m, _)| m)
     }
 
-    /// Gives the box its icon from `icons`, a blank stand-in while it decodes off the loop
+    /// The window of the box up.
+    pub(crate) fn box_child(&self, text: &TextRenderer, theme: &Theme) -> Option<crate::Child> {
+        self.ask.child(text, theme)
+    }
+
+    /// Gives the box up its icon from `icons`, a blank stand-in while it decodes off the loop
     /// ([`crate::iconjobs`]) and the icon once it landed: true when the icon changed.
     pub(crate) fn prime_box(&mut self, icons: &mut IconCache) -> bool {
-        let Some(a) = &mut self.ask else {
+        let Some((msg, p)) = self.ask.iter_mut().next() else {
             return false;
         };
-        if a.primed.as_ref().is_some_and(|w| !w.landed(icons)) {
+        if p.primed.as_ref().is_some_and(|w| !w.landed(icons)) {
             return false;
         }
         let mut waits = IconWaits::default();
-        let icon = waits.first(icons, &[a.icon], 32);
-        a.primed = Some(waits);
-        let changed = a.msg.fields.icon != icon;
-        a.msg.fields.icon = icon;
+        let icon = waits.first(icons, &[p.icon], 32);
+        p.primed = Some(waits);
+        let changed = msg.fields.icon != icon;
+        msg.fields.icon = icon;
         changed
     }
 
-    /// Whether the box's icon landed since [`Host::prime_box`] gave it a stand-in.
+    /// Whether the icon of the box up landed since [`Host::prime_box`] gave it a stand-in.
     fn box_landed(&self, icons: &mut IconCache) -> bool {
-        (self.ask.as_ref())
-            .and_then(|a| a.primed.as_ref())
+        (self.ask.up())
+            .and_then(|(_, p)| p.primed.as_ref())
             .is_some_and(|w| w.landed(icons))
     }
 
-    /// An event on the box's window. Closing it carries out its answer: Yes deletes, an answer
-    /// about an item too big for its bin goes on to the next.
-    pub(crate) fn box_event(&mut self, ev: &Event, text: &TextRenderer, theme: &Theme) -> Outcome {
-        let Some(a) = &mut self.ask else {
-            return Outcome::None;
-        };
-        let out = a.msg.event(ev, text, theme);
-        if let Outcome::Closed(button) = out
-            && let Some(a) = self.ask.take()
-        {
-            self.answered(a.then, button);
+    /// An event on box window `win`. Closing the box up carries out its answer (Yes deletes, an
+    /// answer about an item too big for its bin goes on to the next), and the next box is up.
+    pub(crate) fn box_event(
+        &mut self,
+        win: crate::WinId,
+        ev: &Event,
+        text: &TextRenderer,
+        theme: &Theme,
+    ) -> Outcome {
+        match self.ask.event(win, ev, text, theme) {
+            asks::Answer::None => Outcome::None,
+            asks::Answer::Redraw => Outcome::Redraw,
+            asks::Answer::Closed(p, button) => {
+                self.answered(p.then, button);
+                Outcome::Closed(button)
+            }
         }
-        out
     }
 
     /// Button `button` pressed on the box, None for Escape or the close box.
@@ -1729,7 +1772,7 @@ impl Host {
             Ok(Resolved::File(path)) => Driven::Picked(path),
             Err(msg) => {
                 log::warn!("file dialog: {msg}");
-                self.ask = Some(error_box(dlg.title(), msg));
+                self.tell(dlg.title(), msg);
                 Driven::Reply(Box::new(crate::Reply::redraw()))
             }
         }
@@ -1765,6 +1808,7 @@ impl Host {
 
 /// The icon of a question whose Yes deletes for good.
 const ERASE_ICON: &str = "dialog-warning";
+const ERROR_ICON: &str = "dialog-error";
 
 /// A box's fields: `text` over `buttons`, the first the default; its icon comes later
 /// ([`Host::prime_box`]).
@@ -1777,16 +1821,6 @@ fn box_fields(text: String, buttons: &[&str]) -> msgbox::Fields {
         min_text_h: None,
         min_w: 0,
         max_w: crate::dialog_max_w(),
-    }
-}
-
-/// An OK box titled `title` saying `text`.
-fn error_box(title: &str, text: String) -> Ask {
-    Ask {
-        msg: MsgBox::new(title, box_fields(text, &["OK"])),
-        icon: "dialog-error",
-        primed: None,
-        then: Then::Nothing,
     }
 }
 

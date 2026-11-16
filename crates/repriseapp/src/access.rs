@@ -170,9 +170,7 @@ impl Host {
         };
         let (size, modal) = (s.size, s.modal);
         self.ctx.aim(s);
-        let box_owner = (self.file_box.as_ref())
-            .filter(|_| id == crate::filebox::FILE_BOX)
-            .map(|(o, _)| *o);
+        let box_owner = crate::filebox::owner(&self.file_box, id);
         let (app, ctx) = (&mut self.app, &self.ctx);
         let menu = self.edit_menu.menu(id);
         let acc = &mut self.slots[i].access;
