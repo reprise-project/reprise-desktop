@@ -53,7 +53,7 @@ fn open(state: &mut State, output: &Output, cell: Rect) {
         return;
     }
     let usable = state.usable_area(Some(output));
-    let cm = state.config.theme.look.controls_at_100();
+    let cm = state.config.theme.controls();
     let size = (notifyhistory::width(&cm), notifyhistory::layout(&cm).height);
     let at = crate::barplace::bar_popup(&state.bar_placement(output), cell, size, usable);
     let scale = state.draw_scale_at(Some(output)).max(1);
@@ -116,7 +116,7 @@ fn open_at_bell(state: &mut State) {
     };
     let cell = crate::tray::bell_cell(state, &output).unwrap_or_else(|| {
         let shown = state.bar_placement(&output).shown;
-        let w = notifyhistory::width(&state.config.theme.look.controls_at_100());
+        let w = notifyhistory::width(&state.config.theme.controls());
         Rect::new(shown.right() - w, shown.y, 1, shown.height)
     });
     open(state, &output, cell);
@@ -182,7 +182,7 @@ fn redraw(state: &mut State) {
     let was = state.scene.outputs_of(tree);
     let theme = state.config.theme.scaled(v.scale);
     let canvas = notifyhistory::draw(&theme, state.text.for_output(theme.scale), &v.model);
-    let cm = state.config.theme.look.controls_at_100();
+    let cm = state.config.theme.controls();
     let size = (notifyhistory::width(&cm), notifyhistory::layout(&cm).height);
     let pane = glass::flyout_glass(&state.config, size);
     let Some(v) = state.notify.center.as_mut() else {
@@ -200,7 +200,7 @@ fn redraw(state: &mut State) {
 pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
     use reprisekit::access::{ROOT, accesskit::Role};
     let v = state.notify.center.as_ref()?;
-    let cm = state.config.theme.look.controls_at_100();
+    let cm = state.config.theme.controls();
     let size = (notifyhistory::width(&cm), notifyhistory::layout(&cm).height);
     let rect = Rect::new(v.at.0, v.at.1, size.0, size.1);
     let mut tree = crate::access::root(Role::Window, "Notifications", rect);
@@ -212,7 +212,7 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
 /// A reader focused the row at layout point (`x`, `y`): select it without the click that would
 /// fold a header.
 pub fn select_at(state: &mut State, x: f64, y: f64) {
-    let cm = state.config.theme.look.controls_at_100();
+    let cm = state.config.theme.controls();
     let Some(v) = state.notify.center.as_mut() else {
         return;
     };
@@ -232,7 +232,7 @@ fn hit(v: &CenterView, x: f64, y: f64, cm: &ControlMetrics) -> Hit {
 
 pub fn press(state: &mut State, x: f64, y: f64, button: u32, time: u32) -> bool {
     let threshold = state.config.theme.metrics.double_click_ms.max(0) as u32;
-    let cm = state.config.theme.look.controls_at_100();
+    let cm = state.config.theme.controls();
     let Some(v) = state.notify.center.as_mut() else {
         return false;
     };
@@ -294,7 +294,7 @@ pub fn press(state: &mut State, x: f64, y: f64, button: u32, time: u32) -> bool 
 }
 
 pub fn drag(state: &mut State, x: f64, y: f64) {
-    let cm = state.config.theme.look.controls_at_100();
+    let cm = state.config.theme.controls();
     let Some(v) = state.notify.center.as_mut() else {
         return;
     };
@@ -306,7 +306,7 @@ pub fn drag(state: &mut State, x: f64, y: f64) {
 }
 
 pub fn release(state: &mut State, x: f64, y: f64) {
-    let cm = state.config.theme.look.controls_at_100();
+    let cm = state.config.theme.controls();
     let Some(v) = state.notify.center.as_mut() else {
         return;
     };
@@ -379,7 +379,7 @@ fn apply(state: &mut State, event: Event) {
         Event::Dismiss(id) => crate::notifyview::forget(state, id),
         Event::Invoke(id) => crate::notifyview::invoke(state, id, DEFAULT_ACTION),
         Event::Menu(id) => {
-            let cm = state.config.theme.look.controls_at_100();
+            let cm = state.config.theme.controls();
             let Some(v) = state.notify.center.as_ref() else {
                 return;
             };
@@ -389,7 +389,7 @@ fn apply(state: &mut State, event: Event) {
             }
         }
         Event::GroupMenu(key) => {
-            let cm = state.config.theme.look.controls_at_100();
+            let cm = state.config.theme.controls();
             let Some(v) = state.notify.center.as_ref() else {
                 return;
             };

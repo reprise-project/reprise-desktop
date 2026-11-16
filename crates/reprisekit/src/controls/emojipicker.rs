@@ -317,7 +317,7 @@ pub fn width(cm: &ControlMetrics) -> i32 {
 pub fn layout(cm: &ControlMetrics) -> Layout {
     let w = width(cm);
     let pad = PAD + extra(cm);
-    let field = Rect::new(pad, pad, w - 2 * pad, FIELD_H);
+    let field = Rect::new(pad, pad, w - 2 * pad, cm.text.len(FIELD_H));
     let grid = Rect::new(
         pad,
         field.bottom() + PAD,
@@ -327,7 +327,12 @@ pub fn layout(cm: &ControlMetrics) -> Layout {
     let inner = grid.inset(2);
     let cells = Rect::new(inner.x, inner.y, inner.width - cm.scroll, inner.height);
     let scrollbar = Rect::new(cells.right(), inner.y, cm.scroll, inner.height);
-    let name = Rect::new(pad + 2, grid.bottom() + 2, w - 2 * pad - 4, NAME_H);
+    let name = Rect::new(
+        pad + 2,
+        grid.bottom() + 2,
+        w - 2 * pad - 4,
+        cm.text.len(NAME_H),
+    );
     Layout {
         field,
         grid,
@@ -398,7 +403,7 @@ pub fn draw(
     let p = &theme.paint();
     let (cs, s) = (p.cs, p.s);
     let px = theme.fonts.size_px;
-    let cm = theme.look.controls_at_100();
+    let cm = theme.controls();
     let lay = layout(&cm);
     let mut c = Canvas::new((width(&cm) * s) as u32, (lay.height * s) as u32);
     c.set_preedit(preedit.cloned());
@@ -466,7 +471,9 @@ pub fn draw(
                 } else {
                     cs.window_text
                 };
-                text.draw(&mut c, cell, e.emoji, false, ink, Align::Center, px);
+                // The cells keep their size at any text size, so the stand-in glyph does too.
+                let at_100 = theme.text.base_px(px);
+                text.draw(&mut c, cell, e.emoji, false, ink, Align::Center, at_100);
             }
         }
     }
@@ -487,7 +494,7 @@ pub fn draw(
         }
         None if !m.edit.text.is_empty() => {
             let r = lay.cells.scaled(s);
-            let r = Rect::new(r.x + 3 * s, r.y, r.width - 3 * s, 17 * s);
+            let r = Rect::new(r.x + 3 * s, r.y, r.width - 3 * s, cm.text.len(17) * s);
             text.draw(&mut c, r, NO_MATCH, false, cs.gray_text, Align::Left, px);
         }
         None => {}
@@ -559,6 +566,37 @@ mod tests {
     use super::*;
     use crate::emoji::catalog;
     use crate::theme::FontConfig;
+
+    #[test]
+    fn at_200_percent_text_the_field_and_name_rows_grow_the_cells_keep_and_the_panel_pins() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let big = Theme::default().with_text_size(200).controls();
+        let (lay, at_100) = (layout(&big), layout(&ControlMetrics::CLASSIC));
+        assert_eq!(width(&big), width(&ControlMetrics::CLASSIC));
+        assert_eq!(
+            (lay.field.height, lay.name.height),
+            (2 * FIELD_H, 2 * NAME_H)
+        );
+        assert_eq!(
+            (lay.cells.width, lay.cells.height),
+            (at_100.cells.width, at_100.cells.height)
+        );
+        let mut got = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for scale in [1, 2] {
+                let theme = crate::interfaces::theme_for(look)
+                    .with_text_size(200)
+                    .scaled(scale);
+                let text = TextRenderer::load(&theme.fonts);
+                let mut m = EmojiPicker::new(Vec::new(), catalog(None));
+                m.key(Key::Down);
+                let c = draw(&theme, &text, None, &m, true, None);
+                got.push((format!("{look:?}@{scale}"), crate::pins::fnv(&c)));
+            }
+        }
+        crate::pins::check("emoji_picker_text_200", &got);
+    }
 
     fn e(emoji: &str) -> Entry {
         Entry::get(emoji).unwrap()

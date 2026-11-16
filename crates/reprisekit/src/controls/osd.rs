@@ -6,11 +6,17 @@ use crate::look::widgets::draw_progress;
 use crate::look::{Paint, panel};
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::text::{Align, TextRenderer};
-use crate::theme::{Color, Theme};
+use crate::theme::{Color, TextUnits, Theme};
 
+/// The panel's size at 100% text.
 pub const W: i32 = 260;
 pub const H: i32 = 72;
 const PAD: i32 = 12;
+const TEXT_X: i32 = PAD + ICON + PAD;
+const TITLE_Y: i32 = 16;
+const TITLE_H: i32 = 13;
+const BAR_GAP: i32 = 7;
+const BAR_BELOW: i32 = 18;
 const ICON: i32 = 32;
 const BAR_H: i32 = 18;
 const PERCENT_GAP: i32 = 8;
@@ -47,12 +53,21 @@ pub struct Layout {
     pub bar: Rect,
 }
 
-pub fn layout() -> Layout {
-    let text_x = PAD + ICON + PAD;
+/// The panel's size with its title row and text column grown by `u`: [`W`] x [`H`] at 100%.
+pub fn size(u: TextUnits) -> (i32, i32) {
+    let bar = layout(u).bar;
+    (bar.right() + PAD, bar.bottom() + BAR_BELOW)
+}
+
+pub fn layout(u: TextUnits) -> Layout {
+    let text_w = u.len(W - TEXT_X - PAD);
+    let title = Rect::new(TEXT_X, TITLE_Y, text_w, u.len(TITLE_H));
+    let bar = Rect::new(TEXT_X, title.bottom() + BAR_GAP, text_w, BAR_H);
+    let h = bar.bottom() + BAR_BELOW;
     Layout {
-        icon: Rect::new(PAD, (H - ICON) / 2, ICON, ICON),
-        title: Rect::new(text_x, 16, W - text_x - PAD, 13),
-        bar: Rect::new(text_x, 36, W - text_x - PAD, BAR_H),
+        icon: Rect::new(PAD, (h - ICON) / 2, ICON, ICON),
+        title,
+        bar,
     }
 }
 
@@ -82,38 +97,47 @@ pub fn draw(theme: &Theme, text: &TextRenderer, osd: &Osd, icon: Option<&Canvas>
     let p = &theme.paint();
     let (cs, s) = (p.cs, p.s);
     let px = theme.fonts.size_px;
+    let (w, h) = size(theme.text);
     if let Some((style, spec)) = panel::glass(theme) {
-        return panel::draw_inked(style, spec, W, H, s, |c| {
-            body(c, p, text, px, osd, icon, true)
+        return panel::draw_inked(style, spec, w, h, s, |c| {
+            body(c, p, text, px, theme.text, osd, icon, true)
         });
     }
-    let mut c = Canvas::new((W * s) as u32, (H * s) as u32);
+    let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
     c.fill_rect(c.bounds(), cs.button_face);
     c.edge_t(c.bounds(), EdgeStyle::WindowRaised, cs, s);
-    body(&mut c, p, text, px, osd, icon, false);
+    body(&mut c, p, text, px, theme.text, osd, icon, false);
     c
 }
 
 /// The icon, the title and the meter, in panel coordinates; `glass` sets
 /// the title in white and adds the percentage.
+#[expect(clippy::too_many_arguments)]
 fn body(
     c: &mut Canvas,
     p: &Paint,
     text: &TextRenderer,
     px: u32,
+    u: TextUnits,
     osd: &Osd,
     icon: Option<&Canvas>,
     glass: bool,
 ) {
     let (cs, s) = (p.cs, p.s);
-    let lay = layout();
+    let lay = layout(u);
     if let Some(ic) = icon {
         c.blit_over(lay.icon.x * s, lay.icon.y * s, ic);
     }
     let title_r = if osd.meter.is_some() {
         lay.title
     } else {
-        Rect::new(lay.title.x, (H - 13) / 2, lay.title.width, 13)
+        let h = size(u).1;
+        Rect::new(
+            lay.title.x,
+            (h - lay.title.height) / 2,
+            lay.title.width,
+            lay.title.height,
+        )
     }
     .scaled(s);
     let percent = osd
@@ -190,11 +214,16 @@ pub struct Lines {
     pub lines: Vec<Line>,
 }
 
-pub const LINES_W: i32 = 360;
 pub const NOT_ADJUSTABLE: &str = "Not adjustable";
-const TITLE_H: i32 = 13;
 const TITLE_GAP: i32 = 6;
+/// A display's line at 100% text: its 13 px label row with 5 px above and 6 below.
 const LINE_H: i32 = 24;
+const LABEL_X: i32 = 36;
+const LABEL_W: i32 = 120;
+const BAR_W: i32 = 142;
+const LEVEL_GAP: i32 = 8;
+const PERCENT_W: i32 = 34;
+const LINE_ICON: i32 = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LineLayout {
@@ -209,23 +238,36 @@ pub struct LinesLayout {
     pub lines: Vec<LineLayout>,
 }
 
-/// The panel's size at scale 1 for `n` displays.
-pub fn lines_size(n: usize) -> (i32, i32) {
-    (LINES_W, 2 * PAD + TITLE_H + TITLE_GAP + LINE_H * n as i32)
+/// The panel's size at scale 1 for `n` displays, its rows and text columns grown by `u`.
+pub fn lines_size(n: usize, u: TextUnits) -> (i32, i32) {
+    let title_h = u.len(TITLE_H);
+    let line_h = LINE_H - TITLE_H + title_h;
+    (
+        LABEL_X + u.len(LABEL_W) + LEVEL_GAP + BAR_W + LEVEL_GAP + u.len(PERCENT_W) + PAD,
+        2 * PAD + title_h + TITLE_GAP + line_h * n as i32,
+    )
 }
 
-pub fn lines_layout(n: usize) -> LinesLayout {
-    let y_first = PAD + TITLE_H + TITLE_GAP;
+pub fn lines_layout(n: usize, u: TextUnits) -> LinesLayout {
+    let (w, _) = lines_size(n, u);
+    let title_h = u.len(TITLE_H);
+    let line_h = LINE_H - TITLE_H + title_h;
+    let y_first = PAD + title_h + TITLE_GAP;
+    let label_w = u.len(LABEL_W);
+    let bar_x = LABEL_X + label_w + LEVEL_GAP;
+    let mid = |h: i32| (line_h - h) / 2;
     LinesLayout {
-        title: Rect::new(PAD, PAD, LINES_W - 2 * PAD, TITLE_H),
+        title: Rect::new(PAD, PAD, w - 2 * PAD, title_h),
         lines: (0..n as i32)
             .map(|i| {
-                let y = y_first + LINE_H * i;
+                let y = y_first + line_h * i;
+                let label = Rect::new(LABEL_X, y + mid(title_h), label_w, title_h);
+                let bar = Rect::new(bar_x, y + mid(LINE_ICON), BAR_W, LINE_ICON);
                 LineLayout {
-                    icon: Rect::new(PAD, y + 4, 16, 16),
-                    label: Rect::new(36, y + 5, 120, 13),
-                    bar: Rect::new(164, y + 4, 142, 16),
-                    percent: Rect::new(314, y + 5, 34, 13),
+                    icon: Rect::new(PAD, y + mid(LINE_ICON), LINE_ICON, LINE_ICON),
+                    label,
+                    bar,
+                    percent: Rect::new(bar.right() + LEVEL_GAP, label.y, u.len(PERCENT_W), title_h),
                 }
             })
             .collect(),
@@ -236,16 +278,24 @@ pub fn lines_layout(n: usize) -> LinesLayout {
 pub fn draw_lines(theme: &Theme, text: &TextRenderer, lines: &Lines) -> Canvas {
     let p = &theme.paint();
     let (cs, s) = (p.cs, p.s);
-    let (w, h) = lines_size(lines.lines.len());
+    let (w, h) = lines_size(lines.lines.len(), theme.text);
     if let Some((style, spec)) = panel::glass(theme) {
         return panel::draw_inked(style, spec, w, h, s, |c| {
-            lines_body(c, p, text, theme.fonts.size_px, lines, true)
+            lines_body(c, p, text, theme.fonts.size_px, theme.text, lines, true)
         });
     }
     let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
     c.fill_rect(c.bounds(), cs.button_face);
     c.edge_t(c.bounds(), EdgeStyle::WindowRaised, cs, s);
-    lines_body(&mut c, p, text, theme.fonts.size_px, lines, false);
+    lines_body(
+        &mut c,
+        p,
+        text,
+        theme.fonts.size_px,
+        theme.text,
+        lines,
+        false,
+    );
     c
 }
 
@@ -272,9 +322,17 @@ fn put(
     text.draw_run_over(c, x, baseline, r, t, bold, ink, px);
 }
 
-fn lines_body(c: &mut Canvas, p: &Paint, text: &TextRenderer, px: u32, lines: &Lines, glass: bool) {
+fn lines_body(
+    c: &mut Canvas,
+    p: &Paint,
+    text: &TextRenderer,
+    px: u32,
+    u: TextUnits,
+    lines: &Lines,
+    glass: bool,
+) {
     let (cs, s) = (p.cs, p.s);
-    let lay = lines_layout(lines.lines.len());
+    let lay = lines_layout(lines.lines.len(), u);
     let (ink, dim) = if glass {
         (panel::INK, panel::DIM_INK)
     } else {
@@ -317,10 +375,16 @@ fn lines_body(c: &mut Canvas, p: &Paint, text: &TextRenderer, px: u32, lines: &L
                 );
             }
             Level::Fixed => {
+                let r = Rect::new(
+                    l.bar.x,
+                    l.label.y,
+                    l.percent.right() - l.bar.x,
+                    l.label.height,
+                );
                 put(
                     c,
                     text,
-                    l.bar.scaled(s),
+                    r.scaled(s),
                     NOT_ADJUSTABLE,
                     false,
                     dim,
@@ -352,7 +416,7 @@ mod tests {
         assert_eq!(c.get(0, 0), cs.button_face.argb());
         assert_eq!(c.get(1, 1), cs.button_hilight.argb());
         assert_eq!(c.get(W - 1, H - 1), cs.button_dk_shadow.argb());
-        let bar = layout().bar;
+        let bar = layout(TextUnits::ONE).bar;
         assert_eq!(c.get(bar.x, bar.y), cs.button_shadow.argb());
         assert_eq!(c.get(bar.x + 4, bar.y + 8), cs.hilight.argb());
         let muted = Osd {
@@ -384,7 +448,7 @@ mod tests {
                 ..Meter::new(0.75, true)
             }),
         };
-        let lay = layout();
+        let lay = layout(TextUnits::ONE);
         let inked = |c: &Canvas| {
             let t = lay.title;
             (t.right() - 30..t.right())
@@ -416,7 +480,7 @@ mod tests {
             draw(&theme, &text, &osd, None)
         };
         let m = panel::margin(&theme);
-        let lay = layout();
+        let lay = layout(TextUnits::ONE);
         let meter = |enabled| Some(Meter::new(0.5, enabled));
         let c = draw_one("Volume", meter(true));
         assert_eq!(
@@ -550,9 +614,9 @@ mod tests {
 
     #[test]
     fn lines_grow_by_24_px_a_display() {
-        assert_eq!(lines_size(1), (360, 67));
-        assert_eq!(lines_size(3), (360, 115));
-        let l = lines_layout(2);
+        assert_eq!(lines_size(1, TextUnits::ONE), (360, 67));
+        assert_eq!(lines_size(3, TextUnits::ONE), (360, 115));
+        let l = lines_layout(2, TextUnits::ONE);
         assert_eq!(l.title, Rect::new(12, 12, 336, 13));
         assert_eq!(
             l.lines[1],
@@ -566,16 +630,66 @@ mod tests {
     }
 
     #[test]
+    fn at_200_percent_text_the_title_rows_and_text_columns_double_and_the_bars_keep_their_size() {
+        let u = Theme::default().with_text_size(200).text;
+        assert_eq!(size(TextUnits::ONE), (W, H));
+        let lay = layout(u);
+        assert_eq!(lay.title, Rect::new(56, 16, 384, 26));
+        assert_eq!(lay.bar, Rect::new(56, 49, 384, BAR_H));
+        assert_eq!(size(u), (452, 85));
+        assert_eq!(lay.icon.y, (85 - ICON) / 2, "the icon stays centred");
+        assert_eq!(
+            lines_size(2, u),
+            (36 + 240 + 8 + 142 + 8 + 68 + 12, 2 * 12 + 26 + 6 + 2 * 37)
+        );
+        let line = lines_layout(2, u).lines[1];
+        assert_eq!(line.label, Rect::new(36, 12 + 26 + 6 + 37 + 5, 240, 26));
+        assert_eq!(line.bar, Rect::new(284, 12 + 26 + 6 + 37 + 10, 142, 16));
+        assert_eq!(line.percent, Rect::new(434, line.label.y, 68, 26));
+    }
+
+    #[test]
+    fn panels_at_200_percent_text_pin_in_every_interface() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let mut got = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for scale in [1, 2] {
+                let theme = crate::interfaces::theme_for(look)
+                    .with_text_size(200)
+                    .scaled(scale);
+                let text = TextRenderer::load(&theme.fonts);
+                let volume = Osd {
+                    title: "Volume".into(),
+                    meter: Some(Meter::new(1.0, true)),
+                };
+                let key = format!("{look:?}@{scale}");
+                got.push((
+                    format!("{key} volume"),
+                    fnv(&draw(&theme, &text, &volume, None)),
+                ));
+                let caps = draw_lock_key(&theme, &text, LockKey::Caps, true);
+                got.push((format!("{key} caps"), fnv(&caps)));
+                got.push((
+                    format!("{key} lines"),
+                    fnv(&draw_lines(&theme, &text, &three())),
+                ));
+            }
+        }
+        crate::pins::check("osd_text_200", &got);
+    }
+
+    #[test]
     fn classic_lines_draw_a_bar_per_adjustable_display_and_grey_the_rest() {
         let theme = Theme::default();
         let cs = &theme.colors;
         let text = TextRenderer::load(&FontConfig::default());
         let c = draw_lines(&theme, &text, &three());
-        let (w, h) = lines_size(3);
+        let (w, h) = lines_size(3, TextUnits::ONE);
         assert_eq!(c.get(0, 0), cs.button_face.argb());
         assert_eq!(c.get(1, 1), cs.button_hilight.argb());
         assert_eq!(c.get(w - 1, h - 1), cs.button_dk_shadow.argb());
-        let lay = lines_layout(3).lines;
+        let lay = lines_layout(3, TextUnits::ONE).lines;
         assert_eq!(c.get(164, 35), cs.button_shadow.argb());
         assert_eq!(c.get(168, 43), cs.hilight.argb());
         assert!(any_px(&c, lay[0].percent, |p| p == cs.button_text.argb()));
@@ -597,13 +711,13 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let c = draw_lines(&theme, &text, &three());
         let m = panel::margin(&theme);
-        let (w, h) = lines_size(3);
+        let (w, h) = lines_size(3, TextUnits::ONE);
         assert_eq!(
             (c.width as i32, c.height as i32),
             (w + m.left + m.right, h + m.top + m.bottom)
         );
         let moved = |r: Rect| Rect::new(r.x + m.left, r.y + m.top, r.width, r.height);
-        let lay = lines_layout(3).lines;
+        let lay = lines_layout(3, TextUnits::ONE).lines;
         let white = |p: u32| p == 0xFFFF_FFFF;
         assert!(any_px(&c, moved(lay[0].percent), white));
         assert!(any_px(&c, moved(lay[1].label), |p| p == panel::DIM_INK.argb()));
@@ -626,7 +740,7 @@ mod tests {
             }],
         };
         let c = draw_lines(&theme, &text, &lines);
-        let l = lines_layout(1).lines[0];
+        let l = lines_layout(1, TextUnits::ONE).lines[0];
         let ink = cs.button_text.argb();
         let px = theme.fonts.size_px;
         assert!(

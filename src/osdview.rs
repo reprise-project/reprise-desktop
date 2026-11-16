@@ -207,7 +207,7 @@ impl State {
             .get(icon_name, 32 * scale)
             .unwrap_or_else(|| reprisekit::icon::fallback(&theme, 32 * scale));
         let canvas = osd::draw(&theme, self.text.for_output(theme.scale), &osd, Some(&icon));
-        if self.show_canvas(canvas, (osd::W, osd::H), true) {
+        if self.show_canvas(canvas, osd::size(theme.text), true) {
             self.osd.showing = None;
         }
     }
@@ -221,7 +221,7 @@ impl State {
             return;
         };
         let canvas = osd::draw_lock_key(&theme, self.text.for_output(theme.scale), key, on);
-        if self.show_canvas(canvas, (osd::W, osd::H), true) {
+        if self.show_canvas(canvas, osd::size(theme.text), true) {
             self.osd.showing = None;
         }
     }
@@ -245,7 +245,7 @@ impl State {
             return false;
         };
         let lines = self.displays.lines(value);
-        let size = osd::lines_size(lines.lines.len());
+        let size = osd::lines_size(lines.lines.len(), theme.text);
         let canvas = osd::draw_lines(&theme, self.text.for_output(theme.scale), &lines);
         self.show_canvas(canvas, size, restart_timer)
     }
@@ -558,7 +558,7 @@ mod tests {
             panel_origin(usable, (osd::W, osd::H)),
             ((1920 - osd::W) / 2, 1040 - osd::H - GAP)
         );
-        let (w, h) = osd::lines_size(3);
+        let (w, h) = osd::lines_size(3, reprisekit::theme::TextUnits::ONE);
         assert_eq!(
             panel_origin(usable, (w, h)),
             ((1920 - w) / 2, 1040 - h - GAP)

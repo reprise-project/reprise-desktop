@@ -6,7 +6,8 @@
 //! page. `REPRISE_GALLERY_LOOK=classic` leaves the Blue bands blank and skips
 //! the Blue, Glass and taskbar PNGs. `REPRISE_GALLERY_TEXT_SIZE=<percent>` writes
 //! only a message box, a property sheet, window controls, panes and the shell
-//! view's icon modes in each look at that text size, About's system view and the caption tabs.
+//! view's icon modes in each look at that text size, About's system view, the caption tabs and
+//! the popups (media keys, notification and clipboard history, emoji).
 
 #[path = "gallery_checksums/mod.rs"]
 mod gallery_checksums;
@@ -98,7 +99,7 @@ use page::render;
 use popups::{
     render_calendar_events, render_desktop_labels, render_glass_clock_popup, render_glass_launcher,
     render_glass_notify_sheets, render_glass_popups, render_launchers, render_now_playing,
-    write_volume_popups,
+    render_popups_text_size, write_volume_popups,
 };
 use sheets::{
     render_list_sheet_links, render_list_sheet_search, render_list_sheets, render_long_list_sheets,
@@ -357,6 +358,10 @@ fn write_text_size(pct: u32) {
         write_preview(
             &render_caption_tabs(pct),
             &format!("reprisekit-gallery-caption-tabs-{pct}.png"),
+        );
+        write_preview(
+            &render_popups_text_size(pct),
+            &format!("reprisekit-gallery-popups-text-size-{pct}.png"),
         );
     }
 }
