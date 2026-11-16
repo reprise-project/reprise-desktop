@@ -528,6 +528,49 @@ fn a_plugged_phone_lists_in_computer_and_its_mount_takes_its_name_and_eject() {
     assert!(computer_nodes(&ex).contains(&Place::Folder(at)));
 }
 
+/// A phone's folder walked to before gvfs listed it as a share leaves no folder node behind under
+/// its parent once it mounts, or once it goes.
+#[test]
+fn a_phones_folder_leaves_no_node_under_its_parent_after_a_mount_or_an_unmount() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let at = dir.path().join("mtp:host=Reprise_Test_Phone");
+    std::fs::create_dir(&at).expect("the phone's folder");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(at.clone()), &mut ctx);
+    // `tempdir` names start with a dot, so the tree hides the chain until hidden entries are shown.
+    ex.settings.show_hidden = true;
+    ex.build_tree(&mut ctx);
+    ex.show(Place::Folder(at.clone()), &mut ctx);
+    let parent = Place::Folder(dir.path().to_path_buf());
+    let kids = |ex: &Explorer| -> Vec<Option<Place>> {
+        let Some(node) = ex.tree_path_of(&parent) else {
+            return Vec::new();
+        };
+        let n = ex.tree.node(&node).map_or(0, |n| n.children.len());
+        (0..n)
+            .map(|i| {
+                let mut child = node.clone();
+                child.push(i);
+                ex.place_of(&child)
+            })
+            .collect()
+    };
+    let phone = Some(Place::Folder(at.clone()));
+    wake_until(&mut ex, &mut ctx, |ex| kids(ex).contains(&phone));
+
+    ex.shares_changed(phone_mount(at.clone()), &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| !kids(ex).contains(&phone));
+
+    std::fs::remove_dir(&at).expect("the phone goes");
+    let none = reprisefs::netshare::Snapshot {
+        gio: true,
+        shares: Vec::new(),
+    };
+    ex.shares_changed(none, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| !kids(ex).contains(&phone));
+    assert_eq!(ex.place, Place::Computer);
+}
+
 #[test]
 fn a_mount_landing_under_the_open_folder_moves_the_tree_under_computer() {
     let dir = tempfile::tempdir().expect("a temp dir");
