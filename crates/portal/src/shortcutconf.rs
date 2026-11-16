@@ -170,12 +170,22 @@ fn assign(doc: &DocumentMut, trigger: &str) -> String {
         .unwrap_or_default()
 }
 
-/// "description: keys" for each wanted shortcut, as a first bind would
-/// assign them; the permit prompt lists these.
-pub fn preview(doc: &DocumentMut, wanted: &[Wanted]) -> Vec<String> {
+/// "description: keys" for each id of `wanted` that `bind` would add for `app`, with the key
+/// it would get; the permit prompt lists these. Ids the app already has are left out.
+pub fn preview(doc: &DocumentMut, app: &str, wanted: &[Wanted]) -> Vec<String> {
+    let had = entries(doc, app);
     let mut d = doc.clone();
-    bind(&mut d, "\u{0}preview", wanted)
+    let mut seen = Vec::new();
+    bind(&mut d, app, wanted)
         .into_iter()
+        .filter(|e| !had.iter().any(|h| h.id == e.id))
+        .filter(|e| {
+            let new = !seen.contains(&e.id);
+            if new {
+                seen.push(e.id.clone());
+            }
+            new
+        })
         .map(|e| {
             let keys = if e.keys.is_empty() {
                 "no key".to_string()
@@ -482,8 +492,29 @@ mod tests {
     fn the_prompt_lists_what_bind_would_give() {
         let d = doc("");
         assert_eq!(
-            preview(&d, &[w("talk", "Pause"), w("x", "ALT+Tab")]),
+            preview(
+                &d,
+                "t",
+                &[w("talk", "Pause"), w("x", "ALT+Tab"), w("talk", "F5")]
+            ),
             ["talk desc: Pause", "x desc: no key"]
+        );
+    }
+
+    #[test]
+    fn the_prompt_lists_only_ids_the_app_does_not_have() {
+        let mut d = doc("");
+        bind(&mut d, "t", &[w("talk", "Pause")]);
+        assert_eq!(
+            preview(&d, "t", &[w("talk", "Pause"), w("mute", "CTRL+m")]),
+            ["mute desc: Ctrl+m"]
+        );
+        assert!(preview(&d, "t", &[w("talk", "F5"), w("", "")]).is_empty());
+        let full: Vec<Wanted> = (1..MAX_PER_APP).map(|i| w(&i.to_string(), "")).collect();
+        bind(&mut d, "t", &full);
+        assert!(
+            preview(&d, "t", &[w("late", "F6")]).is_empty(),
+            "an id past the cap is not offered"
         );
     }
 }

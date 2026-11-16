@@ -53,22 +53,49 @@ fn wanted(shortcuts: Shortcuts) -> Vec<Wanted> {
 #[derive(Debug, PartialEq, Eq)]
 enum Step {
     Refused,
-    /// A first bind of no shortcuts: an empty OK, nothing asked or written,
+    /// A first bind that adds no shortcuts: an empty OK, nothing asked or written,
     /// so the app is asked once it binds something.
     Nothing,
-    Ask,
+    /// The permit prompt, listing `new`: every shortcut on a first bind (`first`), else only the
+    /// ids an allowed app has not bound before.
+    Ask {
+        first: bool,
+        new: Vec<String>,
+    },
     Write,
 }
 
 fn step(doc: &toml_edit::DocumentMut, app: &str, wanted: &[Wanted]) -> Step {
     if shortcutconf::is_denied(doc, app) {
-        Step::Refused
-    } else if !shortcutconf::entries(doc, app).is_empty() {
-        Step::Write
-    } else if wanted.is_empty() {
-        Step::Nothing
-    } else {
-        Step::Ask
+        return Step::Refused;
+    }
+    let first = shortcutconf::entries(doc, app).is_empty();
+    let new = shortcutconf::preview(doc, app, wanted);
+    match (first, new.is_empty()) {
+        (true, true) => Step::Nothing,
+        (false, true) => Step::Write,
+        (_, false) => Step::Ask { first, new },
+    }
+}
+
+/// What an allowed app's bind writes after the prompt for the ids not in `had`, its entries:
+/// all of `wanted` on Allow; on Deny the new ids with no key, so they are not asked about
+/// again; with no answer only the ids it had, so the next bind asks again.
+fn granted(had: &[Entry], wanted: &[Wanted], answer: Answer) -> Vec<Wanted> {
+    let known = |w: &Wanted| had.iter().any(|e| e.id == w.id);
+    match answer {
+        Answer::Allow { .. } => wanted.to_vec(),
+        Answer::Deny => (wanted.iter())
+            .map(|w| Wanted {
+                trigger: if known(w) {
+                    w.trigger.clone()
+                } else {
+                    String::new()
+                },
+                ..w.clone()
+            })
+            .collect(),
+        Answer::Dismissed => wanted.iter().filter(|w| known(w)).cloned().collect(),
     }
 }
 
@@ -240,8 +267,9 @@ impl GlobalShortcuts {
 
     /// Binds `shortcuts` for the session's app. The app's first bind asks
     /// the user; a Deny is kept, and later binds answer Cancelled without
-    /// asking. A prompt closed without an answer asks again next time. A
-    /// first bind of no shortcuts answers OK with none and asks nothing.
+    /// asking. Once allowed, a bind asks only about ids the app has not bound
+    /// before (`granted`). A prompt closed without an answer asks again next
+    /// time. A first bind that adds no shortcut answers OK with none and asks nothing.
     #[allow(clippy::too_many_arguments)]
     async fn bind_shortcuts(
         &self,
@@ -264,46 +292,61 @@ impl GlobalShortcuts {
             wanted.iter().map(|w| &w.id).collect::<Vec<_>>()
         );
         let doc = read().await;
-        let first = match step(&doc, &app, &wanted) {
+        let (first, items) = match step(&doc, &app, &wanted) {
             Step::Refused => return Ok((RESPONSE_CANCELLED, Results::new())),
             Step::Nothing => return Ok((RESPONSE_OK, results(&[]))),
-            Step::Ask => true,
-            Step::Write => false,
+            Step::Ask { first, new } => (first, Some(new)),
+            Step::Write => (false, None),
         };
-        if first {
-            let items = shortcutconf::preview(&doc, &wanted);
-            let parent = crate::dialog::parent_handle(&parent_window);
-            let id = app.clone();
-            let session = Some((&self.sessions, key));
-            let answer = crate::with_request(server, &handle, &self.frontend, session, move |c| {
-                crate::permit::ask(crate::permit::Kind::Shortcuts, &id, items, false, parent, c)
-            })
-            .await?;
-            match answer {
-                Answer::Allow { .. } => {}
-                Answer::Deny => {
-                    log::info!("GlobalShortcuts.BindShortcuts for {app:?} denied");
-                    let denied = app.clone();
-                    if let Err(e) = update(move |d| shortcutconf::deny(d, &denied)).await {
-                        log::warn!("GlobalShortcuts: recording the refusal: {e}");
-                    }
-                    return Ok((RESPONSE_CANCELLED, Results::new()));
+        let answer = match items {
+            None => Answer::Allow { remember: false },
+            Some(items) => {
+                let parent = crate::dialog::parent_handle(&parent_window);
+                let id = app.clone();
+                let session = Some((&self.sessions, key));
+                crate::with_request(server, &handle, &self.frontend, session, move |c| {
+                    crate::permit::ask(crate::permit::Kind::Shortcuts, &id, items, false, parent, c)
+                })
+                .await?
+            }
+        };
+        match answer {
+            Answer::Allow { .. } => {}
+            Answer::Deny if first => {
+                log::info!("GlobalShortcuts.BindShortcuts for {app:?} denied");
+                let denied = app.clone();
+                if let Err(e) = update(move |d| shortcutconf::deny(d, &denied)).await {
+                    log::warn!("GlobalShortcuts: recording the refusal: {e}");
                 }
-                Answer::Dismissed => {
-                    log::info!("GlobalShortcuts.BindShortcuts for {app:?}: no answer");
-                    return Ok((RESPONSE_CANCELLED, Results::new()));
-                }
+                return Ok((RESPONSE_CANCELLED, Results::new()));
+            }
+            Answer::Dismissed if first => {
+                log::info!("GlobalShortcuts.BindShortcuts for {app:?}: no answer");
+                return Ok((RESPONSE_CANCELLED, Results::new()));
+            }
+            Answer::Deny | Answer::Dismissed => {
+                log::info!("GlobalShortcuts.BindShortcuts for {app:?}: new shortcuts {answer:?}");
             }
         }
-        let ids: Vec<String> = wanted.iter().map(|w| w.id.clone()).collect();
         let bound = app.clone();
-        let entries = match update(move |d| shortcutconf::bind(d, &bound, &wanted)).await {
-            Ok(e) => e,
+        let written = update(move |d| {
+            let had = shortcutconf::entries(d, &bound);
+            let wanted = granted(&had, &wanted, answer);
+            let ids: Vec<String> = wanted.iter().map(|w| w.id.clone()).collect();
+            let known = (wanted.iter()).any(|w| had.iter().any(|e| e.id == w.id));
+            (ids, known, shortcutconf::bind(d, &bound, &wanted))
+        });
+        let (ids, known, entries) = match written.await {
+            Ok(w) => w,
             Err(e) => {
                 log::warn!("GlobalShortcuts: writing {app}'s shortcuts: {e}");
                 return Ok((RESPONSE_OTHER, Results::new()));
             }
         };
+        // A refusal that leaves the session none of the shortcuts it already had is Cancelled.
+        if !answer.allowed() && !known {
+            return Ok((RESPONSE_CANCELLED, Results::new()));
+        }
         if let Some(d) = self.sessions.lock().unwrap().get_mut(key)
             && let SessionKind::GlobalShortcuts(g) = &mut d.kind
         {
@@ -504,26 +547,94 @@ mod tests {
         assert_eq!(trigger(3), "Pause");
     }
 
-    #[test]
-    fn a_first_bind_of_nothing_asks_nothing() {
-        let w = |id: &str| Wanted {
+    fn w(id: &str, trigger: &str) -> Wanted {
+        Wanted {
             id: id.into(),
             description: String::new(),
-            trigger: String::new(),
-        };
+            trigger: trigger.into(),
+        }
+    }
+
+    fn bound() -> toml_edit::DocumentMut {
+        "[[global_shortcuts]]\napp = \"t\"\nid = \"talk\"\nkeys = \"Pause\"\n"
+            .parse()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_first_bind_of_nothing_asks_nothing() {
         let none = toml_edit::DocumentMut::new();
         assert_eq!(step(&none, "t", &[]), Step::Nothing, "nothing to ask about");
-        assert_eq!(step(&none, "t", &[w("talk")]), Step::Ask);
-        let bound: toml_edit::DocumentMut =
-            "[[global_shortcuts]]\napp = \"t\"\nid = \"talk\"\nkeys = \"\"\n"
-                .parse()
-                .unwrap();
-        assert_eq!(step(&bound, "t", &[]), Step::Write, "an allowed app binds");
-        assert_eq!(step(&bound, "t", &[w("talk")]), Step::Write);
+        assert_eq!(
+            step(&none, "t", &[w("", "")]),
+            Step::Nothing,
+            "no id is added"
+        );
+        assert_eq!(
+            step(&none, "t", &[w("talk", "")]),
+            Step::Ask {
+                first: true,
+                new: vec!["talk: no key".into()]
+            }
+        );
+        assert_eq!(
+            step(&bound(), "t", &[]),
+            Step::Write,
+            "an allowed app binds"
+        );
         let denied: toml_edit::DocumentMut =
             "[portal]\nshortcuts_denied = [\"t\"]\n".parse().unwrap();
         assert_eq!(step(&denied, "t", &[]), Step::Refused);
-        assert_eq!(step(&denied, "t", &[w("talk")]), Step::Refused);
+        assert_eq!(step(&denied, "t", &[w("talk", "")]), Step::Refused);
+    }
+
+    #[test]
+    fn a_rebind_of_known_ids_asks_nothing() {
+        assert_eq!(step(&bound(), "t", &[w("talk", "F5")]), Step::Write);
+    }
+
+    #[test]
+    fn a_rebind_with_a_new_id_asks_about_that_id_only() {
+        assert_eq!(
+            step(&bound(), "t", &[w("talk", "Pause"), w("mute", "CTRL+m")]),
+            Step::Ask {
+                first: false,
+                new: vec!["mute: Ctrl+m".into()]
+            }
+        );
+    }
+
+    fn rebind(answer: Answer) -> Vec<Entry> {
+        let mut d = bound();
+        let had = shortcutconf::entries(&d, "t");
+        let g = granted(&had, &[w("talk", "F5"), w("mute", "CTRL+m")], answer);
+        shortcutconf::bind(&mut d, "t", &g);
+        shortcutconf::entries(&d, "t")
+    }
+
+    fn e(id: &str, keys: &str) -> Entry {
+        Entry {
+            id: id.into(),
+            description: String::new(),
+            keys: keys.into(),
+        }
+    }
+
+    #[test]
+    fn an_allowed_rebind_gives_the_new_id_its_key() {
+        let got = rebind(Answer::Allow { remember: false });
+        assert_eq!(got, [e("talk", "Pause"), e("mute", "Ctrl+m")]);
+    }
+
+    #[test]
+    fn a_denied_rebind_keeps_the_old_set_and_adds_the_new_id_with_no_key() {
+        let got = rebind(Answer::Deny);
+        assert_eq!(got, [e("talk", "Pause"), e("mute", "")]);
+    }
+
+    #[test]
+    fn an_unanswered_rebind_keeps_only_the_old_set() {
+        assert_eq!(rebind(Answer::Dismissed), [e("talk", "Pause")]);
     }
 
     #[test]
