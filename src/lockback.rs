@@ -161,7 +161,14 @@ fn land(state: &mut State, got: Read) {
     let b = &mut state.lock.back;
     b.reading = false;
     match got {
-        Read::Same => return,
+        // A cover of a size the read was not asked for showed while it ran.
+        Read::Same => {
+            let asked = &state.lock.back.asked;
+            if wanted(state).iter().any(|(size, _)| !asked.contains(size)) {
+                read(state);
+            }
+            return;
+        }
         Read::Unset if b.key.is_none() => return,
         Read::Unset => {
             b.key = None;

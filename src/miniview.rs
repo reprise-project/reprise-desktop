@@ -253,6 +253,43 @@ pub fn restyle(state: &mut State) {
     }
 }
 
+/// Outputs changed: a mini view whose centre is on none (its output was unplugged) moves into the
+/// usable area of the pointer's output, narrowed to fit.
+pub fn output_gone(state: &mut State) {
+    let centre = |r: Rect| (f64::from(r.x + r.width / 2), f64::from(r.y + r.height / 2));
+    let lost: Vec<u64> = (state.mini_views.minis.iter())
+        .filter(|m| {
+            let at = centre(m.rect);
+            !(state.scene.outputs().iter())
+                .any(|o| reprisescene::output_rect(o).is_some_and(|r| r.to_f64().contains(at)))
+        })
+        .map(|m| m.id)
+        .collect();
+    for id in lost {
+        let p = state.pointer_location();
+        let Some(out) = state.output_at(p.x, p.y).or_else(|| state.first_output()) else {
+            return;
+        };
+        let work = state.usable_area(Some(&out));
+        let Some(m) = state.mini_views.get(id) else {
+            continue;
+        };
+        let Some(aspect) = state.win(m.window).map(|x| (x.client_w, x.client_h)) else {
+            continue;
+        };
+        let size = miniview::size_for(m.look, m.rect.width, aspect, miniview::room(work));
+        let taken: Vec<Rect> = (state.mini_views.minis.iter())
+            .filter(|o| o.id != id)
+            .map(|o| o.rect)
+            .collect();
+        let rect = miniview::place(work, size, &taken);
+        if let Some(m) = state.mini_views.get_mut(id) {
+            m.rect = rect;
+        }
+        rebuild(state, id);
+    }
+}
+
 /// The part of mini view `id` at layout point (`x`, `y`).
 pub fn hit(state: &State, id: u64, x: f64, y: f64) -> Option<Part> {
     let m = state.mini_views.get(id)?;
@@ -458,6 +495,30 @@ mod tests {
             h.state.mini_views.of(t.id),
             None,
             "Mini View again closes it"
+        );
+    }
+
+    #[test]
+    fn a_mini_view_on_an_unplugged_output_moves_to_the_pointers() {
+        let mut h = Harness::new();
+        let one = h.output("DP-1", 1920, 1080);
+        let two = h.output("DP-2", 1280, 1024);
+        let mut c = h.connect();
+        let t = h.map_titled(&mut c, "foot", "top", (800, 600));
+        h.state.move_to(t.id, 2000, 100);
+        let id = open(&mut h, t);
+        let (x, y) = centre(h.state.mini_views.rect(id).unwrap());
+        assert_eq!(h.state.output_at(x, y), Some(two.clone()), "opened on DP-2");
+        h.pointer_to(500.0, 500.0);
+        h.state.scene.remove_output(&two);
+        h.state.output_removed(&two);
+        h.dispatch();
+        let r = h.state.mini_views.rect(id).unwrap();
+        let work = h.state.usable_area(Some(&one));
+        assert_eq!(
+            (r.right(), r.bottom()),
+            (work.right() - 16, work.bottom() - 16),
+            "in DP-1's lower right"
         );
     }
 

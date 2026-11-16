@@ -384,6 +384,9 @@ impl State {
         if gone.iter().any(|b| b.show_desktop_hot) {
             crate::peek::leave(self);
         }
+        if (self.bar_shared.keys).is_some_and(|k| gone.iter().any(|b| b.tree == k.bar)) {
+            self.leave_bar_keys();
+        }
         for bar in gone {
             self.scene.destroy(bar.tree);
             self.scene.destroy(bar.orb_tree);

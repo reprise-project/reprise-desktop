@@ -349,6 +349,7 @@ impl State {
         self.close_overview();
         self.finish_window_anims();
         self.magnifier.retain(self.scene.outputs());
+        self.sync_caret_reports();
         self.glass.output_removed(output);
         laid_out(output).0.set(None);
         reprisescene::set_copied(output, None);
@@ -762,6 +763,7 @@ impl State {
         crate::displays::outputs_changed(self);
         crate::screenrecord::outputs_changed(self);
         crate::tooltip::output_gone(self);
+        crate::miniview::output_gone(self);
         self.relayout_desktop();
         // An output's scale can change under a window (wlr-randr --scale).
         // X11 menus and tooltips keep the client's own placement.
@@ -1170,6 +1172,49 @@ pub fn pick_mode(modes: &[ModeInfo], want: Option<&OutputMode>) -> Option<usize>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn unplug(h: &mut crate::harness::Harness, o: &Output) {
+        h.state.scene.remove_output(o);
+        h.state.output_removed(o);
+        h.dispatch();
+    }
+
+    #[test]
+    fn an_unplugged_zoomed_output_ends_the_caret_reports() {
+        use smithay::wayland::text_input::TextInputSeat;
+        let mut h = crate::harness::Harness::new();
+        h.output("DP-1", 1920, 1080);
+        let two = h.output("DP-2", 1280, 1024);
+        h.pointer_to(2500.0, 500.0);
+        h.state.zoom(crate::magnifier::ZoomStep::In);
+        assert!(
+            h.state.seat.text_input().compositor_input_method(),
+            "zoomed"
+        );
+        unplug(&mut h, &two);
+        assert!(!h.state.seat.text_input().compositor_input_method());
+    }
+
+    #[test]
+    fn the_taskbar_keys_on_an_unplugged_bar_go_back_to_the_window() {
+        let mut h = crate::harness::Harness::new();
+        h.output("DP-1", 1920, 1080);
+        let two = h.output("DP-2", 1280, 1024);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        assert_eq!(h.state.focused, Some(t.id));
+        h.pointer_to(2500.0, 500.0);
+        h.state.focus_taskbar(false);
+        assert!(h.state.bar_shared.keys.is_some(), "DP-2's bar has the keys");
+        assert_eq!(h.state.focused, None);
+        unplug(&mut h, &two);
+        assert_eq!(h.state.bar_shared.keys, None);
+        assert_eq!(
+            h.state.focused,
+            Some(t.id),
+            "the window has the keyboard again"
+        );
+    }
 
     #[test]
     fn windows_move_with_the_output_their_centre_lies_on() {

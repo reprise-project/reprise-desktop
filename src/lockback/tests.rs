@@ -131,3 +131,25 @@ fn a_background_set_while_unlocked_shows_on_the_next_lock() {
     assert!(over_picture(&h));
     assert_eq!(walls(&h), [Some(true)]);
 }
+
+#[test]
+fn an_output_plugged_in_while_a_read_runs_gets_its_picture() {
+    let toml = format!("[login]\nbackground = \"{BACKGROUND_PICTURE}\"\n");
+    let dir = scratch("plugged", &toml);
+    let (mut h, _daemon) = locked("classic", &dir, true);
+    // A read in flight while TEST-2 comes, which then finds nothing new.
+    h.state.lock.back.reading = true;
+    h.output("TEST-2", 80, 60);
+    assert_eq!(walls(&h)[1], Some(false), "cleared until its picture comes");
+    land(&mut h.state, Read::Same);
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while h.state.lock.back.reading {
+        assert!(std::time::Instant::now() < end, "the background reads land");
+        h.run_for(5);
+    }
+    assert!(
+        h.state.lock.back.get((80, 60)).is_some(),
+        "composed for TEST-2"
+    );
+    assert_eq!(walls(&h), [Some(true), Some(true)]);
+}

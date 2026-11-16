@@ -94,7 +94,7 @@ impl State {
             return;
         };
         let Some(items) = self.bar(keys.bar).map(|b| taskbarfocus::items(&b.layout)) else {
-            self.bar_shared.keys = None;
+            self.leave_bar_keys();
             return;
         };
         let Some(at) = taskbarfocus::fit(&items, keys.at) else {
