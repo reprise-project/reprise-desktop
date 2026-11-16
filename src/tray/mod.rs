@@ -700,14 +700,14 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
             tray.left_hidden.remove(&id);
             tray.items.retain(|i| i.id != id);
             tray.hidden.retain(|i| i.id != id);
-            if tray
-                .pending_menu
-                .as_ref()
-                .is_some_and(|(pid, ..)| *pid == id)
-            {
-                tray.pending_menu = None;
-            }
+            // Also each item's end when the bus connection drops, which takes its menu request.
+            let dropped = (tray.pending_menu)
+                .take_if(|(pid, ..)| *pid == id)
+                .is_some();
             tray.submenus.forget_item(&id);
+            if dropped {
+                crate::autohideview::poke(state);
+            }
             if menu_open_for(state, &id) {
                 state.close_menu();
             }
