@@ -1,28 +1,7 @@
 use super::Settings;
-use repriseconf::{Key, Lens, key as k, lens};
-use toml_edit::{Array, Item, Value};
+use repriseconf::{Key, key as k, lens};
 
-/// One field's key and how to move it in and out of a `Settings`. The
-/// list is the single place a key name appears, so `load` and `save`
-/// cannot drift apart.
-pub(super) enum Field {
-    Text(Key, Lens<Settings, String>),
-    Int(Key, Lens<Settings, i64>),
-    Flag(Key, Lens<Settings, bool>),
-    /// A comma-separated `Settings` string against a TOML array of
-    /// strings (`fonts.family`).
-    List(Key, Lens<Settings, String>),
-    /// A `Settings` string of words apart by spaces or commas against a
-    /// TOML array of strings (`window_snapping.layouts`).
-    Words(Key, Lens<Settings, String>),
-    /// A `Settings` integer in tenths against a TOML float (`mouse.speed`),
-    /// read back into its range of tenths.
-    Tenths(Key, Lens<Settings, i64>, (i64, i64)),
-    /// The system icon names, an older file's read as the current ones.
-    Names(Key, Lens<Settings, Vec<String>>),
-    /// A TOML array of strings kept entry for entry, empty ones included.
-    Strings(Key, Lens<Settings, Vec<String>>),
-}
+pub(super) type Field = repriseconf::fields::Field<Settings>;
 
 pub(crate) const INTERFACE: Key = k("appearance", "interface");
 
@@ -380,77 +359,4 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Text(k("accessibility", "visual_bell"), lens!(visual_bell)),
         Field::Flag(k("accessibility", "locate_pointer"), lens!(locate_pointer)),
     ]
-}
-
-impl Field {
-    pub(super) fn key(&self) -> &Key {
-        match self {
-            Field::Text(k, _)
-            | Field::Int(k, _)
-            | Field::Flag(k, _)
-            | Field::List(k, _)
-            | Field::Words(k, _)
-            | Field::Tenths(k, _, _)
-            | Field::Names(k, _)
-            | Field::Strings(k, _) => k,
-        }
-    }
-
-    pub(super) fn value(&self, s: &Settings) -> Value {
-        match self {
-            Field::Text(_, at) => Value::from(at.get(s).as_str()),
-            Field::Int(_, at) => Value::from(*at.get(s)),
-            Field::Flag(_, at) => Value::from(*at.get(s)),
-            Field::List(_, at) => {
-                Value::Array(text_to_list(at.get(s)).into_iter().collect::<Array>())
-            }
-            Field::Words(_, at) => Value::Array(words(at.get(s)).collect::<Array>()),
-            Field::Tenths(_, at, _) => Value::from(*at.get(s) as f64 / 10.0),
-            Field::Names(_, at) | Field::Strings(_, at) => {
-                Value::Array(at.get(s).iter().map(String::as_str).collect::<Array>())
-            }
-        }
-    }
-
-    pub(super) fn same(&self, a: &Settings, b: &Settings) -> bool {
-        match self {
-            Field::Text(_, at) | Field::List(_, at) | Field::Words(_, at) => at.get(a) == at.get(b),
-            Field::Int(_, at) | Field::Tenths(_, at, _) => at.get(a) == at.get(b),
-            Field::Flag(_, at) => at.get(a) == at.get(b),
-            Field::Names(_, at) | Field::Strings(_, at) => at.get(a) == at.get(b),
-        }
-    }
-
-    pub(super) fn copy(&self, from: &Settings, to: &mut Settings) {
-        match self {
-            Field::Text(_, at) | Field::List(_, at) | Field::Words(_, at) => {
-                *at.get_mut(to) = at.get(from).clone()
-            }
-            Field::Int(_, at) | Field::Tenths(_, at, _) => *at.get_mut(to) = *at.get(from),
-            Field::Flag(_, at) => *at.get_mut(to) = *at.get(from),
-            Field::Names(_, at) | Field::Strings(_, at) => *at.get_mut(to) = at.get(from).clone(),
-        }
-    }
-}
-
-pub(super) fn list_to_text(item: &Item) -> Option<String> {
-    let arr = item.as_array()?;
-    Some(
-        arr.iter()
-            .filter_map(|v| v.as_str())
-            .collect::<Vec<_>>()
-            .join(", "),
-    )
-}
-
-pub(super) fn words(text: &str) -> impl Iterator<Item = &str> {
-    (text.split([',', ' ', '\t'])).filter(|w| !w.is_empty())
-}
-
-pub(crate) fn text_to_list(text: &str) -> Vec<String> {
-    text.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect()
 }

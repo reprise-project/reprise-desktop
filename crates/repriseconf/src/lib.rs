@@ -556,6 +556,7 @@ pub fn set(doc: &mut DocumentMut, key: &Key, value: Value) -> Result<(), SetErro
 
 pub mod config;
 pub mod displays;
+pub mod fields;
 pub mod filedialog;
 pub mod glob;
 pub mod keybind;

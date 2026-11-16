@@ -1,5 +1,5 @@
-use repriseconf::{Key, Lens, get, key as k, lens, remove, set};
-use toml_edit::{DocumentMut, Value};
+use repriseconf::{get, key as k, lens};
+use toml_edit::DocumentMut;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
@@ -110,12 +110,7 @@ pub fn commands(text: &str) -> Commands {
     c
 }
 
-enum Field {
-    Int(Key, Lens<Settings, i64>),
-    OptInt(Key, Lens<Settings, Option<i64>>),
-    Text(Key, Lens<Settings, String>),
-    Flag(Key, Lens<Settings, bool>),
-}
+type Field = repriseconf::fields::Field<Settings>;
 
 /// The single place a key name appears, so `load` and `save` agree.
 fn fields() -> Vec<Field> {
@@ -141,65 +136,13 @@ fn fields() -> Vec<Field> {
     ]
 }
 
-impl Field {
-    fn key(&self) -> &Key {
-        match self {
-            Field::Int(k, _) | Field::OptInt(k, _) | Field::Text(k, _) | Field::Flag(k, _) => k,
-        }
-    }
-
-    fn value(&self, s: &Settings) -> Option<Value> {
-        match self {
-            Field::Int(_, at) => Some(Value::from(*at.get(s))),
-            Field::OptInt(_, at) => at.get(s).map(Value::from),
-            Field::Text(_, at) => Some(Value::from(at.get(s).as_str())),
-            Field::Flag(_, at) => Some(Value::from(*at.get(s))),
-        }
-    }
-
-    fn same(&self, a: &Settings, b: &Settings) -> bool {
-        match self {
-            Field::Int(_, at) => at.get(a) == at.get(b),
-            Field::OptInt(_, at) => at.get(a) == at.get(b),
-            Field::Text(_, at) => at.get(a) == at.get(b),
-            Field::Flag(_, at) => at.get(a) == at.get(b),
-        }
-    }
-}
-
 pub fn load(text: &str) -> Settings {
     let mut s = Settings::default();
     let Ok(doc) = text.parse::<DocumentMut>() else {
         log::warn!("config.toml does not parse; showing defaults");
         return s;
     };
-    for f in fields() {
-        let Some(item) = get(&doc, f.key()) else {
-            continue;
-        };
-        match &f {
-            Field::Int(_, at) => {
-                if let Some(v) = item.as_integer() {
-                    *at.get_mut(&mut s) = v;
-                }
-            }
-            Field::OptInt(_, at) => {
-                if let Some(v) = item.as_integer() {
-                    *at.get_mut(&mut s) = Some(v);
-                }
-            }
-            Field::Text(_, at) => {
-                if let Some(v) = item.as_str() {
-                    *at.get_mut(&mut s) = v.to_string();
-                }
-            }
-            Field::Flag(_, at) => {
-                if let Some(v) = item.as_bool() {
-                    *at.get_mut(&mut s) = v;
-                }
-            }
-        }
-    }
+    repriseconf::fields::load(&doc, &fields(), &mut s);
     s
 }
 
@@ -208,24 +151,14 @@ pub fn load(text: &str) -> Settings {
 /// file the user is editing.
 pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, String> {
     let mut doc = text.parse::<DocumentMut>().map_err(|e| e.to_string())?;
-    let have = load(text);
-    let def = Settings::default();
-    for f in fields() {
-        if f.same(want, base) || f.same(want, &have) {
-            continue;
-        }
-        match f.value(want) {
-            Some(v) if !f.same(want, &def) => {
-                set(&mut doc, f.key(), v).map_err(|e| e.to_string())?
-            }
-            _ => remove(&mut doc, f.key()),
-        }
-    }
+    let (have, def) = (load(text), Settings::default());
+    repriseconf::fields::save(&mut doc, &fields(), want, base, &have, &def)
+        .map_err(|e| e.to_string())?;
     Ok(doc.to_string())
 }
 
 #[cfg(test)]
-fn has(text: &str, key: &Key) -> bool {
+fn has(text: &str, key: &repriseconf::Key) -> bool {
     text.parse::<DocumentMut>()
         .ok()
         .and_then(|d| get(&d, key).map(toml_edit::Item::is_value))
