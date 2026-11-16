@@ -6,7 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-description = "The libpam binding the lock screen and reprise-login share: its constants, types and functions"
+description = "The libpam binding the lock screen and reprise-login share: a handle from pam_start to pam_end, its conversation callback, and the FFI"
 
 [lints]
 workspace = true
+
+[dependencies]
+libc.workspace = true
+repriselogin = { path = "../repriselogin" }
+zeroize.workspace = true
