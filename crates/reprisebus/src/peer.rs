@@ -1,5 +1,14 @@
 //! Which process a session bus peer is, whether it runs in a Flatpak sandbox, which may own any
 //! name under its app id, and which app it is ([`app_identity`]).
+//!
+//! A file a Flatpak peer names opens inside its sandbox's root ([`Identities::files`]). The peer
+//! is often the app's `xdg-dbus-proxy`, whose root shows the host's folders, so the root comes
+//! from the sandbox Flatpak recorded for the instance the peer's `.flatpak-info` names:
+//! `$XDG_RUNTIME_DIR/.flatpak/<instance>/bwrapinfo.json`, which only programs outside the
+//! sandbox can write. Its `child-pid` counts only while that process shows the same app and
+//! instance in the recorded mount namespace, not the host's, and still runs once its root is
+//! open. That namespace must also be the peer's own, unless the peer's `.flatpak-info` says it
+//! is the proxy, which runs outside it.
 
 use crate::mutex::lock;
 use std::collections::HashMap;
@@ -495,7 +504,7 @@ impl Identities {
     }
 
     /// The root of the sandbox of the `app_id` instance its peer's `.flatpak-info` `info` names,
-    /// the peer in mount namespace `peer_ns`; docs/security.md lists what must check out.
+    /// the peer in mount namespace `peer_ns`; the module doc lists what must check out.
     fn flatpak_root(&self, app_id: &str, info: &str, peer_ns: u64) -> Option<OwnedFd> {
         const RECORD_BYTES: u64 = 4096;
         let instance = key_of_flatpak_info(info, "Instance", "instance-id")?;

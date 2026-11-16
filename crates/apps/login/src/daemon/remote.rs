@@ -1,5 +1,10 @@
 //! Remote logins from the RDP front: checked against the group and PAM or the stored NT hash,
 //! routed to the user's session or a new background one, then handed over to its reprise-rdp.
+//!
+//! Which sessions get a hand-over link: every background session, whatever `enabled` and the
+//! group say, since a client may still be connected; each session in the viewed list once, after
+//! a restart, without a group look-up while remote logins are off and after one while they are
+//! on; and no other console session, so no hand-over server starts where no client is.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -1442,7 +1447,7 @@ impl Daemon {
     }
 
     /// Links every session that may have a client, looking up the group first for a listed
-    /// console session while remote logins are on (docs/security.md, Background sessions).
+    /// console session while remote logins are on (the module doc has the rule).
     pub(super) fn open_intakes(&mut self, out: &mut Vec<Effect>) {
         let users: BTreeMap<u32, (String, bool)> = (self.sessions.iter())
             .filter(|e| !self.remote.linked.contains(&e.uid))

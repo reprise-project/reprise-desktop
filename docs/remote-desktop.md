@@ -301,6 +301,12 @@ the journal logs each change ([Troubleshooting](#troubleshooting)).
   a client can type it. One that logind refuses after the programs close
   leaves the session running with its programs closed; connecting again
   lands in it.
+- **Stopping the server.** Turning Remote Desktop off locks the session
+  before a client shown it is disconnected, and a server that dies with
+  one connected locks it when it next starts. A lock logind refuses is
+  tried again every 10 s until it takes or a client is shown the session
+  again. Clearing Lock this computer when the last one disconnects turns
+  these locks off too.
 - **What a client is told.** A client this side ends hears why before the
   connection closes: 0x5, another connection took over, when a newer client
   replaces it (`second_client = "replace"`) and when lock mode ends at this
