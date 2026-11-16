@@ -454,6 +454,35 @@ fn access_names_every_field_and_button() {
 }
 
 #[test]
+fn a_failure_repeating_the_last_message_is_a_new_live_node() {
+    let mut m = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
+    let message = |m: &Logon| {
+        let l = classic_layout(m);
+        let mut tree = Tree::new(ax::node(Role::Window, l.output));
+        access(m, &l, &mut tree);
+        let (id, n) = tree.nodes().find(|(_, n)| n.role() == Role::Label).unwrap();
+        (id, n.value().map(str::to_owned))
+    };
+    typed(&mut m, "pw");
+    m.fail(text::incorrect());
+    let first = message(&m);
+    typed(&mut m, "pw2");
+    assert_eq!(
+        message(&m),
+        first,
+        "typing leaves the message node as it was"
+    );
+    m.set_busy(true);
+    m.fail(text::incorrect());
+    let second = message(&m);
+    assert_eq!(second.1, first.1);
+    assert_ne!(
+        second.0, first.0,
+        "the repeated failure is announced as a new node"
+    );
+}
+
+#[test]
 fn the_power_menu_arrow_is_named_for_its_options() {
     let m = Logon::new(Interface::Glass, users(1), true, None);
     let l = LogonLayout {
