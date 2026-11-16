@@ -8,6 +8,7 @@
 use crate::mutex::lock;
 use crate::peer::HostOnly;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -119,8 +120,9 @@ impl Requests {
 }
 
 /// Own `name`, or hand `action` (None: just raise the window) and this
-/// start's [`Handoff`] to the copy that owns it. The first copy owns the name again on each
-/// session bus connection made after its own closes.
+/// start's [`Handoff`] to the copy that owns it. An owner in a sandbox gets nothing, and this
+/// copy runs alone. The first copy owns the name again on each session bus connection made after
+/// its own closes.
 pub fn claim(name: &str, action: Option<(String, Vec<String>)>) -> Claim {
     claim_on(name, action, crate::session)
 }
@@ -129,6 +131,16 @@ fn claim_on(
     name: &str,
     action: Option<(String, Vec<String>)>,
     connect: impl Fn() -> zbus::Result<Connection> + Send + 'static,
+) -> Claim {
+    claim_in(name, action, connect, Path::new("/proc"))
+}
+
+/// [`claim_on`] judging the owner by its process under `proc`.
+fn claim_in(
+    name: &str,
+    action: Option<(String, Vec<String>)>,
+    connect: impl Fn() -> zbus::Result<Connection> + Send + 'static,
+    proc: &Path,
 ) -> Claim {
     let conn = match connect() {
         Ok(c) => c,
@@ -154,6 +166,12 @@ fn claim_on(
             log::warn!("could not own {name}: {e}");
             return Claim::Alone;
         }
+    }
+    if let Some(owner) = crate::wait(crate::peer::owner(&conn, name))
+        && crate::wait(crate::peer::sandboxed_under(&conn, &owner, proc))
+    {
+        log::warn!("{name} is owned by a sandboxed program, which gets nothing; running alone");
+        return Claim::Alone;
     }
     let path = path(name);
     let data = Handoff::from_env().platform_data();
@@ -442,6 +460,28 @@ mod tests {
             assert!(Instant::now() < until, "the name is owned again");
             std::thread::sleep(Duration::from_millis(50));
         }
+        assert!(matches!(claim_on(name, None, connect), Claim::Handed));
+        assert_eq!(requests.next(), Some(Request::default()));
+    }
+
+    #[test]
+    fn a_start_hands_nothing_to_a_sandboxed_owner() {
+        let Some(bus) = crate::testbus::bus() else {
+            return;
+        };
+        let address = bus.1.clone();
+        let connect = move || crate::connect(zbus::connection::Builder::address(address.as_str()));
+        let name = "org.example.Shadowed";
+        let Claim::First(requests) = claim_on(name, None, connect.clone()) else {
+            panic!("the first start owns the name");
+        };
+        let sandboxed = crate::peer::tests::sandboxed_proc();
+        let action = Some(("new".to_string(), Vec::new()));
+        assert!(matches!(
+            claim_in(name, action, connect.clone(), sandboxed.path()),
+            Claim::Alone
+        ));
+        assert_eq!(requests.next(), None, "the owner heard nothing");
         assert!(matches!(claim_on(name, None, connect), Claim::Handed));
         assert_eq!(requests.next(), Some(Request::default()));
     }

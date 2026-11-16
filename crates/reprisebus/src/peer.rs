@@ -542,7 +542,7 @@ impl Identities {
 }
 
 /// The unique name owning `name`, when it has an owner.
-async fn owner(conn: &Connection, name: &str) -> Option<String> {
+pub(crate) async fn owner(conn: &Connection, name: &str) -> Option<String> {
     let dbus = zbus::fdo::DBusProxy::new(conn).await.ok()?;
     let name = zbus::names::BusName::try_from(name).ok()?;
     Some(dbus.get_name_owner(name).await.ok()?.to_string())
