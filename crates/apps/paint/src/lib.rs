@@ -20,6 +20,7 @@ reprisekit::strings!("paint");
 
 use bitmap::{Bitmap, WHITE};
 use doc::{Doc, Tool};
+use repriseapp::asks::Asks;
 use repriseapp::colordlg::ColorDialog;
 use repriseapp::filedlg::Host;
 use repriseapp::keys::AltArm;
@@ -109,7 +110,7 @@ struct Paint {
     fonts: Option<Form>,
     families: Vec<String>,
     dialog: Option<(dialogs::Kind, Form)>,
-    prompt: Option<(MsgBox, Prompt)>,
+    prompt: Asks<Prompt>,
     /// What runs after the Save As that a Yes on the save prompt raised.
     after_save: Option<Then>,
     about: bool,
@@ -167,7 +168,7 @@ impl Paint {
             fonts: None,
             families: Vec::new(),
             dialog: None,
-            prompt: None,
+            prompt: Asks::new(PROMPT),
             after_save: None,
             about: false,
             open: None,
@@ -214,10 +215,10 @@ impl Paint {
         if self.warn_icon.is_none() {
             self.warn_icon = ctx.icons.get("dialog-warning", 32);
         }
-        if let Some((b, _)) = &mut self.prompt
-            && b.fields.icon.is_none()
-        {
-            b.fields.icon = self.warn_icon.clone();
+        for (b, _) in self.prompt.iter_mut() {
+            if b.fields.icon.is_none() {
+                b.fields.icon = self.warn_icon.clone();
+            }
         }
         self.host.icons.prime(&mut ctx.icons);
     }
@@ -307,9 +308,7 @@ impl App for Paint {
                 });
             }
         }
-        if let Some((b, _)) = &self.prompt {
-            kids.push(b.child(PROMPT, &self.dialog_text, &self.forms));
-        }
+        kids.extend(self.prompt.child(&self.dialog_text, &self.forms));
         kids
     }
 
@@ -320,7 +319,7 @@ impl App for Paint {
             self.alt_arm.interrupt();
         }
         let reply = match win {
-            PROMPT => self.prompt_event(ev),
+            _ if self.prompt.owns(win) => self.prompt_event(win, ev),
             DIALOG => self.dialog_event(ev, ctx),
             FONTS => self.fonts_event(ev, ctx),
             ABOUT => self.about_event(ev),
@@ -339,11 +338,7 @@ impl App for Paint {
         let cs = &ctx.theme.colors;
         let px = self.forms.fonts.size_px;
         match win {
-            PROMPT => {
-                if let Some((b, _)) = &self.prompt {
-                    b.draw(c, &self.forms, &self.dialog_text);
-                }
-            }
+            _ if self.prompt.owns(win) => self.prompt.draw(c, &self.forms, &self.dialog_text),
             DIALOG | FONTS => {
                 c.fill_rect(c.bounds(), cs.button_face);
                 let f = match win {
@@ -431,11 +426,7 @@ impl Extended for Paint {
         self.follow(ctx);
         let (dt, fpx) = (&self.dialog_text, self.forms.fonts.size_px);
         match win {
-            PROMPT => {
-                if let Some((b, _)) = &self.prompt {
-                    b.access(tree, dt, &self.forms);
-                }
-            }
+            _ if self.prompt.owns(win) => self.prompt.access(tree, dt, &self.forms),
             DIALOG => {
                 if let Some((_, f)) = &self.dialog {
                     oneshot::access_form(f, tree, dt, fpx);

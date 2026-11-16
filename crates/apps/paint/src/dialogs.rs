@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::bitmap::skewed_size;
+use repriseapp::asks::Answer;
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
 use reprisekit::controls::combo::Combo;
 use reprisekit::controls::form::{Control, Item};
@@ -200,7 +201,7 @@ impl Paint {
                 max_w: repriseapp::dialog_max_w(),
             },
         );
-        self.prompt = Some((b, Prompt::Error));
+        self.prompt.ask(b, Prompt::Error);
     }
 
     pub(crate) fn ask(&mut self, text: String, buttons: Vec<String>, default: usize, then: Prompt) {
@@ -216,22 +217,14 @@ impl Paint {
                 max_w: repriseapp::dialog_max_w(),
             },
         );
-        self.prompt = Some((b, then));
+        self.prompt.ask(b, then);
     }
 
-    pub(crate) fn prompt_event(&mut self, ev: Event) -> Reply {
-        let Some((b, _)) = &mut self.prompt else {
-            return Reply::none();
-        };
-        match b.event(&ev, &self.dialog_text, &self.forms) {
-            oneshot::Outcome::Closed(answer) => {
-                let Some((_, what)) = self.prompt.take() else {
-                    return Reply::redraw_all();
-                };
-                self.answered(what, answer)
-            }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
+    pub(crate) fn prompt_event(&mut self, win: WinId, ev: Event) -> Reply {
+        match (self.prompt).event(win, &ev, &self.dialog_text, &self.forms) {
+            Answer::Closed(what, answer) => self.answered(what, answer),
+            Answer::Redraw => Reply::redraw(),
+            Answer::None => Reply::none(),
         }
     }
 
