@@ -1226,3 +1226,25 @@ fn the_remote_sides_shutdown_options_list_disconnect_first() {
         [crate::console::ClientsEnd::Disconnect]
     );
 }
+
+#[test]
+fn a_program_menu_acts_on_its_program_after_a_rescan_moves_it() {
+    let mut h = crate::harness::Harness::new();
+    h.state.app_index = vec![app("Zoom", "Network")];
+    let (_, rows) = h.state.program_menu_of(0, false).expect("a program menu");
+    h.state.app_index = vec![app("Audacity", "Audio"), app("Zoom", "Network")];
+    h.state.launcher_index_changed();
+    h.state.start_panel_index_changed();
+    crate::spawn::record();
+    h.state.start_row(rows[0].clone().expect("Open"));
+    assert_eq!(crate::spawn::recorded(), ["Zoom"], "Open starts Zoom");
+    h.state.app_index.remove(1);
+    let pin =
+        (rows.iter().flatten()).find(|r| matches!(r, crate::startmenu::StartRow::PinStart(_)));
+    h.state.start_row(pin.expect("Pin to Start Menu").clone());
+    assert!(
+        !h.state.launches.is_pinned("Zoom.desktop"),
+        "a program gone since the menu opened is left alone"
+    );
+    assert!(!h.state.launches.is_pinned("Audacity.desktop"));
+}

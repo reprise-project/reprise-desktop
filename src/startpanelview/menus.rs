@@ -207,8 +207,8 @@ impl State {
     }
 
     pub(crate) fn start_row(&mut self, row: StartRow) {
-        let entry = |s: &State, a: usize| s.app_index.get(a).cloned();
-        match row {
+        let entry = |s: &State, id: &str| s.app_index.iter().find(|a| a.id == id).cloned();
+        match &row {
             StartRow::Open(a) => {
                 let e = entry(self, a);
                 self.close_start_panel();
@@ -230,7 +230,7 @@ impl State {
                 let Some(e) = entry(self, a) else {
                     return;
                 };
-                match row {
+                match &row {
                     StartRow::PinStart(_) => {
                         self.launches.pin(&e.id);
                         if let Some(v) = self.start_panel.as_mut() {

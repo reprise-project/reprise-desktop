@@ -438,8 +438,6 @@ impl State {
     /// closed, and anything else drops its stale tree.
     pub fn start_panel_index_changed(&mut self) {
         if self.start_panel.is_some() {
-            // A popup's rows index the old app index.
-            self.close_menu();
             self.list_start_programs();
             let mode = self.start_panel.as_ref().map(|v| v.model.mode());
             // The search rows index the old app index: rank the text again.

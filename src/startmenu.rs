@@ -47,7 +47,7 @@ impl State {
         let pinned_taskbar = self.quick_file_of(&entry.id).is_some();
         let uninstall = (self.app_uninstall.get(&entry.id).copied()).unwrap_or(Uninstall::Absent);
         Some(program_menu(
-            app,
+            &entry.id,
             pinned_start,
             pinned_taskbar,
             in_frequent,
@@ -169,19 +169,20 @@ const RUN_TIP: &str = "Opens a program, folder, document or web site by its name
 const HELP_TIP: &str = "Opens the Reprise project page.";
 
 /// A row of a Glass Start menu popup: a program row's context menu or the
-/// Shut down options. The `usize` is an index into the app index.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Shut down options. The `String` is the program's desktop entry id, so a
+/// rescan while the menu is up leaves the row on its program.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StartRow {
-    Open(usize),
-    PinTaskbar(usize),
-    UnpinTaskbar(usize),
-    PinStart(usize),
-    UnpinStart(usize),
-    Forget(usize),
-    Uninstall(usize),
+    Open(String),
+    PinTaskbar(String),
+    UnpinTaskbar(String),
+    PinStart(String),
+    UnpinStart(String),
+    Forget(String),
+    Uninstall(String),
     /// A greyed Uninstall: its infotip says why.
     CannotUninstall(&'static str),
-    Properties(usize),
+    Properties(String),
     SwitchUser,
     Disconnect,
     LogOff,
@@ -239,7 +240,7 @@ pub fn uninstall_offers(
 /// row (`in_frequent`), Uninstall as `uninstall` has it, and Properties. Returns the rows and,
 /// parallel to them, what each does (None at a separator).
 pub fn program_menu(
-    app: usize,
+    app: &str,
     pinned_start: bool,
     pinned_taskbar: bool,
     in_frequent: bool,
@@ -248,29 +249,29 @@ pub fn program_menu(
     let mut v = vec![
         (
             MenuItem::item("&Open").bold(true),
-            Some(StartRow::Open(app)),
+            Some(StartRow::Open(app.into())),
         ),
         (MenuItem::Separator, None),
         if pinned_taskbar {
             (
                 MenuItem::item("Unpin from Tas&kbar"),
-                Some(StartRow::UnpinTaskbar(app)),
+                Some(StartRow::UnpinTaskbar(app.into())),
             )
         } else {
             (
                 MenuItem::item("Pin to Tas&kbar"),
-                Some(StartRow::PinTaskbar(app)),
+                Some(StartRow::PinTaskbar(app.into())),
             )
         },
         if pinned_start {
             (
                 MenuItem::item("Unpin from Start Men&u"),
-                Some(StartRow::UnpinStart(app)),
+                Some(StartRow::UnpinStart(app.into())),
             )
         } else {
             (
                 MenuItem::item("Pin to Start Men&u"),
-                Some(StartRow::PinStart(app)),
+                Some(StartRow::PinStart(app.into())),
             )
         },
     ];
@@ -278,14 +279,14 @@ pub fn program_menu(
         v.push((MenuItem::Separator, None));
         v.push((
             MenuItem::item("Remove from this &list"),
-            Some(StartRow::Forget(app)),
+            Some(StartRow::Forget(app.into())),
         ));
     }
     v.push((MenuItem::Separator, None));
     match uninstall {
         Uninstall::Offered => v.push((
             MenuItem::item("U&ninstall..."),
-            Some(StartRow::Uninstall(app)),
+            Some(StartRow::Uninstall(app.into())),
         )),
         Uninstall::Greyed(why) => v.push((
             MenuItem::item("U&ninstall...").enabled(false),
@@ -295,7 +296,7 @@ pub fn program_menu(
     }
     v.push((
         MenuItem::item("P&roperties"),
-        Some(StartRow::Properties(app)),
+        Some(StartRow::Properties(app.into())),
     ));
     v.into_iter().unzip()
 }
@@ -524,7 +525,7 @@ mod tests {
 
     #[test]
     fn the_program_menu_offers_what_applies() {
-        let (items, _) = program_menu(0, false, true, true, Uninstall::Absent);
+        let (items, _) = program_menu("a", false, true, true, Uninstall::Absent);
         assert_eq!(
             labels(&items),
             [
@@ -538,7 +539,7 @@ mod tests {
                 "P&roperties"
             ]
         );
-        let (_, rows2) = program_menu(0, true, false, false, Uninstall::Absent);
+        let (_, rows2) = program_menu("a", true, false, false, Uninstall::Absent);
         assert!(
             rows2
                 .iter()
@@ -555,13 +556,13 @@ mod tests {
 
     #[test]
     fn uninstall_sits_above_properties_and_greys_with_its_reason() {
-        let (items, rows) = program_menu(3, false, false, false, Uninstall::Offered);
+        let (items, rows) = program_menu("c", false, false, false, Uninstall::Offered);
         let at = labels(&items).iter().position(|l| l == "U&ninstall...");
         assert_eq!(at, Some(items.len() - 2), "{:?}", labels(&items));
-        assert_eq!(rows[items.len() - 2], Some(StartRow::Uninstall(3)));
+        assert_eq!(rows[items.len() - 2], Some(StartRow::Uninstall("c".into())));
         assert!(items[items.len() - 2].selectable());
 
-        let (items, rows) = program_menu(3, false, false, false, Uninstall::Greyed("why"));
+        let (items, rows) = program_menu("c", false, false, false, Uninstall::Greyed("why"));
         assert!(!items[items.len() - 2].selectable(), "greyed");
         assert_eq!(
             rows[items.len() - 2],
