@@ -1,6 +1,8 @@
 //! Network shares: Connect to Server, typed addresses and the Network place connect through
 //! `netshare::mount`, whose prompts show here as boxes; Computer's Network Locations disconnect.
 
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 
 use repriseapp::iconjobs::IconWaits;
@@ -189,17 +191,26 @@ impl Explorer {
         }
         let here = self.place.path();
         let holds = |s: &netshare::Share| here.as_ref().is_some_and(|h| h.starts_with(&s.path));
-        let left = (self.shares.shares.iter())
+        let gone: Vec<&netshare::Share> = (self.shares.shares.iter())
             .filter(|s| snap.share_at(&s.path).is_none())
-            .any(holds);
-        let arrived = (snap.shares.iter())
+            .collect();
+        let new: Vec<&netshare::Share> = (snap.shares.iter())
             .filter(|s| self.shares.share_at(&s.path).is_none())
-            .any(holds);
+            .collect();
+        let (left, arrived) = (gone.iter().any(|s| holds(s)), new.iter().any(|s| holds(s)));
+        // A share's folder may stand as a plain folder where the walk to it went before it was
+        // listed as a share (gvfs's folder, under Local Disk): that node is read again.
+        let parents: BTreeSet<PathBuf> = (gone.iter().chain(&new))
+            .filter_map(|s| s.path.parent().map(Path::to_path_buf))
+            .collect();
         self.shares = snap;
         place::set_share_names(&self.shares.shares);
         self.drive_mounts = place::drive_mounts(&self.drives, &self.shares.shares);
         self.refollow |= arrived;
         self.refill_tree_node(&Place::Computer, ctx);
+        for p in &parents {
+            self.refill_tree_node(&Place::from_path(p), ctx);
+        }
         self.build_address(ctx);
         if left {
             // The share's folder is gone; its parent is gvfs's own folder, not a place to land.

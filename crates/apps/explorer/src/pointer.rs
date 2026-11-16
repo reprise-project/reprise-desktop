@@ -177,19 +177,24 @@ impl Explorer {
     }
 
     fn press(&mut self, x: i32, y: i32, time: u32, mods: repriseapp::Mods, ctx: &mut Ctx) -> Reply {
+        // A press off the menu closes it and goes on to what it landed on.
         if let Some(p) = self.popup.as_mut() {
-            return match p.click(x, y, ctx) {
+            match p.click(x, y, ctx) {
                 MenuAction::Chosen(path) => {
                     let cmd = p.command(&path);
                     self.popup = None;
-                    self.run(cmd, ctx)
+                    return self.run(cmd, ctx);
                 }
                 MenuAction::Close => {
                     self.popup = None;
-                    Reply::redraw()
+                    let landed = self.press(x, y, time, mods, ctx);
+                    return Reply {
+                        redraw: true,
+                        ..landed
+                    };
                 }
-                _ => Reply::redraw(),
-            };
+                _ => return Reply::redraw(),
+            }
         }
 
         self.sync_menus();

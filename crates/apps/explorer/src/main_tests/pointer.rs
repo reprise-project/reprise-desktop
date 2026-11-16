@@ -364,3 +364,31 @@ fn a_covered_window_lets_go_of_its_marquee_and_column_divider() {
     assert_eq!(ex.sv.columns[0].width, width + 30, "Name stays 30 px wider");
     assert_eq!(ex.settings.columns[0], width + 30, "the width is kept");
 }
+
+/// A press off an open context menu closes it and lands where it was aimed: the entry under it
+/// is selected, so Alt+Enter then shows that entry's sheet rather than the folder's own.
+#[test]
+fn a_press_off_a_menu_closes_it_and_selects_the_entry_under_it() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("a.txt"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.sv.selection.clear();
+    let lay = ex.layout(&ctx);
+    let at = (lay.view.x + 300, lay.view.y + 100);
+    let menu = crate::menus::background_menu(&ex.menu_state());
+    ex.popup = Some(crate::window::Popup::new(at, menu, &ctx, false));
+    let sl = ex.view_layout(lay.view, &ctx);
+    let cell = sl.cells[0];
+    let (x, y) = (cell.x + cell.width / 2, cell.y + cell.height / 2);
+    let reply = ex.event(crate::MAIN, press_at(x, y, 5000), &mut ctx);
+    ex.event(crate::MAIN, release_at(x, y), &mut ctx);
+    assert!(reply.redraw, "the menu's room is repainted");
+    assert!(ex.popup.is_none(), "the press closed the menu");
+    assert_eq!(ex.sv.selection.single(), Some(0), "and selected the entry");
+    ex.properties(&mut ctx);
+    assert_eq!(
+        ex.props.as_ref().map(|p| p.title()),
+        Some("a.txt Properties".to_string())
+    );
+}
