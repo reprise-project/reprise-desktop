@@ -512,7 +512,11 @@ impl ScreenCast {
         s.types = options.types.unwrap_or(SOURCE_MONITOR) & self.source_types;
         s.cursor_mode = options.cursor_mode.unwrap_or(CURSOR_HIDDEN);
         s.persist_mode = options.persist_mode.unwrap_or(0);
-        s.restore = (options.restore_data.as_ref()).and_then(|d| restore_target(d, &app_id));
+        // A remote desktop session's picture came with SelectDevices, and the frontend sends it
+        // no token here.
+        if let Some(d) = options.restore_data.as_ref() {
+            s.restore = restore_target(d, &app_id);
+        }
         log::info!(
             "SelectSources types={} cursor={} persist={} restore={:?}",
             s.types,

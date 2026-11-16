@@ -153,10 +153,12 @@ impl RemoteDesktop {
         let restored = (options.get("restore_data"))
             .and_then(|v| our_grant(v, &app_id))
             .filter(|_| !self.notices.forgotten(&app_id));
-        if let Some(granted) = restored {
-            s.devices &= granted;
-        }
         s.restored = restored.is_some();
+        // The frontend passes a token only here, so the picture it remembers is restored here too.
+        if let Some((granted, target)) = restored {
+            s.devices &= granted;
+            s.screencast.restore = target;
+        }
         log::info!(
             "RemoteDesktop.SelectDevices devices={} persist={} restored={}",
             s.devices,
@@ -259,6 +261,13 @@ impl RemoteDesktop {
             }
         }
         let persist = crate::granted_persist(requested, remember);
+        // The frontend refuses a persist mode on ScreenCast.SelectSources in a remote desktop
+        // session: the share picker offers Remember when this grant is remembered.
+        if let Some(s) =
+            (self.sessions.lock().unwrap().get_mut(&key)).and_then(SessionData::remote_mut)
+        {
+            s.screencast.persist_mode = persist;
+        }
         // A session that also went through ScreenCast.SelectSources gets its picture here: the
         // frontend expects `streams` from this Start.
         let types = (self.sessions.lock().unwrap().get_mut(&key))
@@ -556,9 +565,9 @@ pub(crate) fn parse_grant(grant: &str) -> Option<(u32, Option<Target>)> {
     Some((mask, target))
 }
 
-fn our_grant(v: &Variant<'_>, app_id: &str) -> Option<u32> {
+fn our_grant(v: &Variant<'_>, app_id: &str) -> Option<(u32, Option<Target>)> {
     let data = <(String, u32, OwnedVariant)>::try_from(v.try_to_owned().ok()?).ok()?;
-    parse_grant(crate::restored_grant(&data, app_id)?).map(|(mask, _)| mask)
+    parse_grant(crate::restored_grant(&data, app_id)?)
 }
 
 pub(crate) fn display_name(app_id: &str) -> String {
@@ -671,6 +680,17 @@ mod tests {
         crate::permit::Answer::Allow { remember: true }
     }
 
+    fn allowed_once(
+        _: crate::permit::Kind,
+        _: &str,
+        _: Vec<String>,
+        _: bool,
+        _: Option<String>,
+        _: Arc<AtomicBool>,
+    ) -> crate::permit::Answer {
+        crate::permit::Answer::Allow { remember: false }
+    }
+
     #[derive(Clone, Debug, PartialEq)]
     struct Note {
         app_name: String,
@@ -758,8 +778,8 @@ mod tests {
         }
     }
 
-    /// The portal's RemoteDesktop with `ask` for its dialog, a notification server and a
-    /// permission store holding `table`, on a private bus.
+    /// The portal's RemoteDesktop and ScreenCast with `ask` for its dialog, a notification server
+    /// and a permission store holding `table`, on a private bus.
     struct Desk {
         _bus: crate::lockmode::tests::Bus,
         client: zbus::Connection,
@@ -825,6 +845,15 @@ mod tests {
                         ask,
                     },
                 )
+                .serve_at(
+                    crate::PATH,
+                    crate::ScreenCast {
+                        sessions: sessions.clone(),
+                        source_types: crate::SOURCE_MONITOR | crate::SOURCE_WINDOW,
+                        frontend: frontend.clone(),
+                        link: None,
+                    },
+                )
                 .build()
                 .await
                 .unwrap();
@@ -848,8 +877,17 @@ mod tests {
             B: serde::Serialize + zbus::zvariant::DynamicType,
             R: serde::de::DeserializeOwned + zbus::zvariant::Type,
         {
+            self.call_on("RemoteDesktop", method, body).await
+        }
+
+        async fn call_on<B, R>(&self, iface: &str, method: &str, body: &B) -> R
+        where
+            B: serde::Serialize + zbus::zvariant::DynamicType,
+            R: serde::de::DeserializeOwned + zbus::zvariant::Type,
+        {
             let dest = self.portal.unique_name().unwrap().to_string();
-            let iface = Some("org.freedesktop.impl.portal.RemoteDesktop");
+            let iface = format!("org.freedesktop.impl.portal.{iface}");
+            let iface = Some(iface.as_str());
             (self
                 .client
                 .call_method(Some(dest.as_str()), crate::PATH, iface, method, body))
@@ -863,10 +901,27 @@ mod tests {
         /// CreateSession, SelectDevices (with `restore` for a remembered grant) and Start for
         /// `app_id` as session `n`; Start's response code.
         async fn start(&self, n: u32, app_id: &str, restore: bool) -> u32 {
+            let grant = restore.then(|| grant(3, None));
+            let (handle, path) = self.select(n, app_id, grant.as_deref()).await;
+            let none: HashMap<&str, Variant<'_>> = HashMap::new();
+            let (code, _): (u32, HashMap<String, OwnedVariant>) = self
+                .call("Start", &(&handle, &path, app_id, "", &none))
+                .await;
+            code
+        }
+
+        /// CreateSession and SelectDevices with persist mode 2 and a token for `grant`, if
+        /// any, for `app_id` as session `n`; the request and session paths.
+        async fn select(
+            &self,
+            n: u32,
+            app_id: &str,
+            grant: Option<&str>,
+        ) -> (ObjectPath<'static>, ObjectPath<'static>) {
             let session = format!("/org/freedesktop/portal/desktop/session/1_99/s{n}");
             let request = format!("/org/freedesktop/portal/desktop/request/1_99/r{n}");
-            let handle = ObjectPath::try_from(request.as_str()).unwrap();
-            let path = ObjectPath::try_from(session.as_str()).unwrap();
+            let handle = ObjectPath::try_from(request).unwrap();
+            let path = ObjectPath::try_from(session).unwrap();
             let none: HashMap<&str, Variant<'_>> = HashMap::new();
             let (code, _): (u32, HashMap<String, OwnedVariant>) = self
                 .call("CreateSession", &(&handle, &path, app_id, &none))
@@ -875,17 +930,23 @@ mod tests {
             let mut options: HashMap<&str, Variant<'_>> = HashMap::new();
             options.insert("types", Variant::U32(DEVICE_KEYBOARD | DEVICE_POINTER));
             options.insert("persist_mode", Variant::U32(2));
-            if restore {
-                options.insert("restore_data", token(app_id, &grant(3, None)));
+            if let Some(grant) = grant {
+                options.insert("restore_data", token(app_id, grant));
             }
             let (code, _): (u32, HashMap<String, OwnedVariant>) = self
                 .call("SelectDevices", &(&handle, &path, app_id, &options))
                 .await;
             assert_eq!(code, RESPONSE_OK);
-            let (code, _): (u32, HashMap<String, OwnedVariant>) = self
-                .call("Start", &(&handle, &path, app_id, "", &none))
-                .await;
-            code
+            (handle, path)
+        }
+
+        /// Session `n`'s picture state: the target to restore and the persist mode the share
+        /// picker sees.
+        fn cast_state(&self, n: u32) -> (Option<Target>, u32) {
+            let key = format!("/org/freedesktop/portal/desktop/session/1_99/s{n}");
+            let map = self.sessions.lock().unwrap();
+            let s = map.get(&key).and_then(SessionData::screencast).unwrap();
+            (s.restore.clone(), s.persist_mode)
         }
 
         /// Close session `n` as the frontend does.
@@ -1079,6 +1140,55 @@ mod tests {
         });
     }
 
+    #[test]
+    fn a_remembered_grant_restores_its_screen_past_select_sources() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let desk = Desk::on(bus, never_asked, &[]).await;
+            let screen = Target::Output("DP-1".into());
+            let remembered = grant(DEVICE_KEYBOARD | DEVICE_POINTER, Some(&screen));
+            let (handle, path) = desk.select(1, APP, Some(&remembered)).await;
+            assert_eq!(desk.cast_state(1).0, Some(screen.clone()));
+            let mut options: HashMap<&str, Variant<'_>> = HashMap::new();
+            options.insert("types", Variant::U32(crate::SOURCE_MONITOR));
+            let (code, _): (u32, HashMap<String, OwnedVariant>) = desk
+                .call_on(
+                    "ScreenCast",
+                    "SelectSources",
+                    &(&handle, &path, APP, &options),
+                )
+                .await;
+            assert_eq!(code, RESPONSE_OK);
+            assert_eq!(
+                desk.cast_state(1).0,
+                Some(screen),
+                "SelectSources without a token keeps the screen"
+            );
+        });
+    }
+
+    #[test]
+    fn the_share_picker_offers_remember_when_the_grant_is_remembered() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let desk = Desk::on(bus, allowed, &[]).await;
+            assert_eq!(desk.start(1, APP, false).await, RESPONSE_OK);
+            assert_eq!(desk.cast_state(1).1, 2, "Remember ticked in the dialog");
+            assert_eq!(desk.start(2, APP, true).await, RESPONSE_OK);
+            assert_eq!(desk.cast_state(2).1, 2, "a restored grant");
+            let desk_once =
+                Desk::on(crate::lockmode::tests::bus().unwrap(), allowed_once, &[]).await;
+            assert_eq!(desk_once.start(1, APP, false).await, RESPONSE_OK);
+            assert_eq!(desk_once.cast_state(1).1, 0, "allowed without Remember");
+        });
+    }
+
     fn token(app_id: &str, grant: &str) -> Variant<'static> {
         Variant::from(restore_data(app_id, grant))
     }
@@ -1086,7 +1196,7 @@ mod tests {
     #[test]
     fn only_our_own_restore_data_skips_the_dialog() {
         let ours = token(APP, &grant(DEVICE_POINTER, None));
-        assert_eq!(our_grant(&ours, APP), Some(DEVICE_POINTER));
+        assert_eq!(our_grant(&ours, APP), Some((DEVICE_POINTER, None)));
         let unasked = Variant::from((
             RESTORE_VENDOR.to_string(),
             2u32,
@@ -1107,7 +1217,7 @@ mod tests {
     #[test]
     fn a_grant_restores_only_for_the_app_it_was_issued_to() {
         let ours = token(APP, &grant(DEVICE_KEYBOARD, None));
-        assert_eq!(our_grant(&ours, APP), Some(DEVICE_KEYBOARD));
+        assert_eq!(our_grant(&ours, APP), Some((DEVICE_KEYBOARD, None)));
         assert_eq!(our_grant(&ours, "org.example.Other"), None);
         assert_eq!(our_grant(&ours, ""), None);
     }

@@ -1026,7 +1026,10 @@ the screen takes the interface of the last session used at this computer.
   balloon, "<app> is controlling this computer", even under Do Not Disturb.
   After 30 s it waits in the history until you close it or the session
   ends; its Stop and forget ends the
-  app's sessions and forgets the choice, so the next start asks again. Reprise's own
+  app's sessions and forgets the choice, so the next start asks again. A tool
+  that also shares the screen offers Remember in the share picker once control
+  was allowed with Remember, and a remembered start shares the same screen or
+  window without the picker. Reprise's own
   server for RDP clients is [Remote Desktop](remote-desktop.md).
 - **One keyboard and mouse across computers** with Deskflow. Super+Shift+Esc
   always takes them back. Deskflow asks first; allowed with Remember, it
