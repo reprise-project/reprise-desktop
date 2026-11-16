@@ -579,3 +579,20 @@ fn bar_redraw_cost() {
         }
     }
 }
+
+#[test]
+fn a_resume_redraws_the_clock_and_sets_its_minute_timer_again() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.state.redraw_taskbars();
+    let before = h.state.clock_timer.expect("the minute timer");
+    crate::backend::take_asks();
+    crate::taskbar::TEST_CLOCK.set(crate::taskbar::TEST_CLOCK.get() + 3600);
+    crate::power::report(&mut h.state, crate::power::Report::Resumed);
+    assert!(
+        !crate::backend::take_asks().is_empty(),
+        "the clock an hour on asks for a frame"
+    );
+    let after = h.state.clock_timer.expect("a minute timer");
+    assert_ne!(after, before, "set again from the wall clock");
+}

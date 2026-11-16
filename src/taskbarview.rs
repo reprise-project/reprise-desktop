@@ -499,6 +499,18 @@ impl State {
         Some(r)
     }
 
+    /// After a resume: the minute timer runs on the monotonic clock, which stood still through
+    /// the sleep, so the clock redraws now and the timer is set again from the wall clock.
+    pub fn clock_resumed(&mut self) {
+        let Some(t) = self.clock_timer.take() else {
+            return;
+        };
+        self.handle.remove(t);
+        reprisefs::locale::refresh_zone();
+        self.redraw_taskbars();
+        self.arm_clock();
+    }
+
     fn arm_clock(&mut self) {
         if self.clock_timer.is_some() {
             return;
