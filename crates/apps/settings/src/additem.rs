@@ -1,26 +1,20 @@
 //! The Add Item dialog the Start Menu page's Add... opens: pick a program or type a command.
 
 use reprisefs::apps::{self, AppEntry};
-use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::listbox::{self, ListBox};
+use reprisekit::controls::rowsdlg::{MARGIN, Rows};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::TextEdit;
 
 pub const CLIENT: (i32, i32) = (340, 319);
 
-const MARGIN: i32 = 12;
-const INNER_W: i32 = CLIENT.0 - 2 * MARGIN;
-const LIST: Rect = Rect::new(MARGIN, 30, INNER_W, 10 * listbox::ROW_H + 4);
-const LABEL_W: i32 = 64;
-const FIELD_X: i32 = MARGIN + LABEL_W + 4;
-const FIELD_W: i32 = CLIENT.0 - MARGIN - FIELD_X;
+const ROWS: Rows = Rows {
+    client: CLIENT,
+    label_w: 64,
+};
+const LIST: Rect = Rect::new(MARGIN, 30, ROWS.inner_w(), 10 * listbox::ROW_H + 4);
 const ROW_Y: [i32; 2] = [LIST.y + LIST.height + 14, LIST.y + LIST.height + 42];
-const LABEL_DY: i32 = 4;
-
-const BTN_Y: i32 = CLIENT.1 - MARGIN - BUTTON_H;
-const CANCEL_X: i32 = CLIENT.0 - MARGIN - BUTTON_W;
-const OK_X: i32 = CANCEL_X - BUTTON_GAP - BUTTON_W;
 
 pub const OK: &str = "ok";
 pub const CANCEL: &str = "cancel";
@@ -51,24 +45,6 @@ pub struct AddItemDialog {
     pub icons_due: bool,
 }
 
-fn label(id: &'static str, y: i32, text: &str) -> Item {
-    Item::label(id, Rect::new(MARGIN, y + LABEL_DY, LABEL_W, 13), text)
-}
-
-fn edit(id: &'static str, y: i32) -> Item {
-    Item::edit(id, Rect::new(FIELD_X, y, FIELD_W, 20), "", true)
-}
-
-fn button(id: &'static str, x: i32, text: &str, default: bool) -> Item {
-    Item::button(
-        id,
-        Rect::new(x, BTN_Y, BUTTON_W, BUTTON_H),
-        text,
-        true,
-        default,
-    )
-}
-
 /// `app`'s command line, empty for an entry Reprise refuses to run.
 pub fn command_for(app: &AppEntry, terminal: &str) -> String {
     let argv: Vec<String> = apps::launch_argv(app, terminal)
@@ -86,10 +62,10 @@ impl AddItemDialog {
     pub fn new(mut apps: Vec<AppEntry>, terminal: &str) -> AddItemDialog {
         apps.retain(|a| a.shown);
         let rows = apps.iter().map(|a| a.name.clone()).collect();
-        let items = vec![
+        let mut items = vec![
             Item::label(
                 "intro",
-                Rect::new(MARGIN, MARGIN, INNER_W, 13),
+                Rect::new(MARGIN, MARGIN, ROWS.inner_w(), 13),
                 "&Pick a program, or type a name and a command:",
             ),
             Item::new(
@@ -100,13 +76,12 @@ impl AddItemDialog {
                     icons: Vec::new(),
                 },
             ),
-            label("name_l", ROW_Y[0], "&Name:"),
-            edit(NAME, ROW_Y[0]),
-            label("command_l", ROW_Y[1], "&Command:"),
-            edit(COMMAND, ROW_Y[1]),
-            button(OK, OK_X, "OK", true),
-            button(CANCEL, CANCEL_X, "Cancel", false),
+            ROWS.label("name_l", ROW_Y[0], "&Name:"),
+            ROWS.edit(NAME, ROW_Y[0], "", true),
+            ROWS.label("command_l", ROW_Y[1], "&Command:"),
+            ROWS.edit(COMMAND, ROW_Y[1], "", true),
         ];
+        items.extend(ROWS.ok_cancel(OK, CANCEL));
         let mut d = AddItemDialog {
             form: Form::new(items),
             apps,

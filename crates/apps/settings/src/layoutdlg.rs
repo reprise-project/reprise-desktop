@@ -2,25 +2,19 @@
 //! its variants from the xkb registry. Laid out like the Shortcut dialog.
 
 use reprisefs::xkb::Layout;
-use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W};
 use reprisekit::controls::combo::{Combo, ListItem};
 use reprisekit::controls::form::{self, Control, Form, Item};
-use reprisekit::raster::Rect;
+use reprisekit::controls::rowsdlg::{COMBO_H, MARGIN, Rows};
 
 pub const CLIENT: (i32, i32) = (320, 104);
 
-const MARGIN: i32 = 12;
-const LABEL_W: i32 = 64;
-const FIELD_X: i32 = MARGIN + LABEL_W + 4;
-const FIELD_W: i32 = CLIENT.0 - MARGIN - FIELD_X;
-/// The two rows' combo tops; a 13 px label sits 4 px into the 21 px combo.
+const ROWS: Rows = Rows {
+    client: CLIENT,
+    label_w: 64,
+};
+/// The two rows' combo tops.
 const ROW_Y: [i32; 2] = [MARGIN, MARGIN + 28];
-const LABEL_DY: i32 = 4;
 const DROP_ROWS: usize = 12;
-
-const BTN_Y: i32 = CLIENT.1 - MARGIN - BUTTON_H;
-const CANCEL_X: i32 = CLIENT.0 - MARGIN - BUTTON_W;
-const OK_X: i32 = CANCEL_X - BUTTON_GAP - BUTTON_W;
 
 pub const OK: &str = "ok";
 pub const CANCEL: &str = "cancel";
@@ -44,25 +38,11 @@ pub struct LayoutDialog {
     layouts: Vec<Layout>,
 }
 
-fn label(id: &'static str, y: i32, text: &str) -> Item {
-    Item::label(id, Rect::new(MARGIN, y + LABEL_DY, LABEL_W, 13), text)
-}
-
 fn combo(id: &'static str, y: i32, items: Vec<ListItem>, selected: usize) -> Item {
     Item::new(
         id,
-        Rect::new(FIELD_X, y, FIELD_W, 21),
+        ROWS.field(y, COMBO_H),
         Control::Combo(Combo::with_items(items, selected, DROP_ROWS)),
-    )
-}
-
-fn button(id: &'static str, x: i32, text: &str, default: bool) -> Item {
-    Item::button(
-        id,
-        Rect::new(x, BTN_Y, BUTTON_W, BUTTON_H),
-        text,
-        true,
-        default,
     )
 }
 
@@ -86,14 +66,13 @@ impl LayoutDialog {
             .iter()
             .map(|l| ListItem::new(l.description.as_str()))
             .collect();
-        let items = vec![
-            label("layout_l", ROW_Y[0], "&Layout:"),
+        let mut items = vec![
+            ROWS.label("layout_l", ROW_Y[0], "&Layout:"),
             combo(LAYOUT, ROW_Y[0], names, first),
-            label("variant_l", ROW_Y[1], "&Variant:"),
+            ROWS.label("variant_l", ROW_Y[1], "&Variant:"),
             combo(VARIANT, ROW_Y[1], variant_items(layouts.get(first)), 0),
-            button(OK, OK_X, "OK", true),
-            button(CANCEL, CANCEL_X, "Cancel", false),
         ];
+        items.extend(ROWS.ok_cancel(OK, CANCEL));
         let mut form = Form::new(items);
         form.set_enabled(OK, !layouts.is_empty());
         LayoutDialog { form, layouts }
@@ -142,6 +121,7 @@ impl LayoutDialog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisekit::raster::Rect;
 
     fn reg() -> Vec<Layout> {
         reprisefs::xkb::parse(

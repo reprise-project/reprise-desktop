@@ -1,7 +1,8 @@
-use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W};
+use reprisekit::classic::widgets::BUTTON_W;
 use reprisekit::controls::combo::{Combo, ListItem};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::hotkey::{Chord, HotKey};
+use reprisekit::controls::rowsdlg::{COMBO_H, EDIT_H, MARGIN, Rows};
 use reprisekit::raster::Rect;
 
 use repriseconf::keybind::NONE;
@@ -10,19 +11,14 @@ use crate::model::{ACTIONS, Shortcut, action_text, check_keys, check_program_key
 
 pub const CLIENT: (i32, i32) = (330, 160);
 
-const MARGIN: i32 = 12;
-const LABEL_W: i32 = 64;
-const FIELD_X: i32 = MARGIN + LABEL_W + 4;
-const FIELD_W: i32 = CLIENT.0 - MARGIN - FIELD_X;
+const ROWS: Rows = Rows {
+    client: CLIENT,
+    label_w: 64,
+};
 const ROW_Y: [i32; 3] = [MARGIN, MARGIN + 28, MARGIN + 56];
-const LABEL_DY: i32 = 4;
 const NOTE_Y: i32 = ROW_Y[2] + 28;
 const CLEAR_X: i32 = CLIENT.0 - MARGIN - BUTTON_W;
-const KEYS_W: i32 = CLEAR_X - 6 - FIELD_X;
-
-const BTN_Y: i32 = CLIENT.1 - MARGIN - BUTTON_H;
-const CANCEL_X: i32 = CLIENT.0 - MARGIN - BUTTON_W;
-const OK_X: i32 = CANCEL_X - BUTTON_GAP - BUTTON_W;
+const KEYS_W: i32 = CLEAR_X - 6 - ROWS.field_x();
 
 pub const KEYS: &str = "keys";
 pub const CLEAR: &str = "clear";
@@ -55,18 +51,6 @@ pub struct ShortcutDialog {
     program: bool,
 }
 
-fn label(id: &'static str, y: i32, text: &str) -> Item {
-    Item::label(id, Rect::new(MARGIN, y + LABEL_DY, LABEL_W, 13), text)
-}
-
-fn edit(id: &'static str, y: i32, text: &str, enabled: bool) -> Item {
-    Item::edit(id, Rect::new(FIELD_X, y, FIELD_W, 20), text, enabled)
-}
-
-fn button(id: &'static str, x: i32, y: i32, text: &str, default: bool) -> Item {
-    Item::button(id, Rect::new(x, y, BUTTON_W, BUTTON_H), text, true, default)
-}
-
 impl ShortcutDialog {
     pub fn new(sc: Option<&Shortcut>, others: Vec<Shortcut>) -> ShortcutDialog {
         let (title, sc) = match sc {
@@ -76,18 +60,18 @@ impl ShortcutDialog {
         let selected = (choices().iter())
             .position(|a| *a == sc.action)
             .unwrap_or(1);
-        let items = vec![
-            label("keys_l", ROW_Y[0], "&Keys:"),
+        let mut items = vec![
+            ROWS.label("keys_l", ROW_Y[0], "&Keys:"),
             Item::new(
                 KEYS,
-                Rect::new(FIELD_X, ROW_Y[0], KEYS_W, 20),
+                Rect::new(ROWS.field_x(), ROW_Y[0], KEYS_W, EDIT_H),
                 Control::HotKey(HotKey::from_keys(&sc.keys)),
             ),
-            button(CLEAR, CLEAR_X, ROW_Y[0] - 2, "C&lear", false),
-            label("action_l", ROW_Y[1], "&Action:"),
+            Rows::button(CLEAR, CLEAR_X, ROW_Y[0] - 2, "C&lear", false),
+            ROWS.label("action_l", ROW_Y[1], "&Action:"),
             Item::new(
                 "action",
-                Rect::new(FIELD_X, ROW_Y[1], FIELD_W, 21),
+                ROWS.field(ROW_Y[1], COMBO_H),
                 Control::Combo(Combo::with_items(
                     (choices().iter())
                         .map(|a| ListItem::new(action_text(a, None)))
@@ -96,16 +80,15 @@ impl ShortcutDialog {
                     8,
                 )),
             ),
-            label("command_l", ROW_Y[2], "&Command:"),
-            edit("command", ROW_Y[2], &sc.command, sc.action == "spawn"),
+            ROWS.label("command_l", ROW_Y[2], "&Command:"),
+            ROWS.edit("command", ROW_Y[2], &sc.command, sc.action == "spawn"),
             Item::new(
                 "note",
-                Rect::new(MARGIN, NOTE_Y, CLIENT.0 - 2 * MARGIN, 2 * 13),
+                Rect::new(MARGIN, NOTE_Y, ROWS.inner_w(), 2 * 13),
                 Control::Lines(HINT.map(String::from).to_vec()),
             ),
-            button(OK, OK_X, BTN_Y, "OK", true),
-            button(CANCEL, CANCEL_X, BTN_Y, "Cancel", false),
         ];
+        items.extend(ROWS.ok_cancel(OK, CANCEL));
         let mut d = ShortcutDialog {
             form: Form::new(items),
             title,
