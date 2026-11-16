@@ -1185,18 +1185,18 @@ pub fn set_default_app(mime: &str, id: &str) -> std::io::Result<()> {
     edit_defaults(&[(mime.to_string(), Some(id.to_string()))])
 }
 
-/// Make `edits` in the user's `mimeapps.list` ([`with_edits`]). The file is read just before the write; an unreadable one is left alone.
+/// Make `edits` in the user's `mimeapps.list` ([`edit_defaults_in`]).
 pub fn edit_defaults(edits: &[(String, Option<String>)]) -> std::io::Result<()> {
-    let path = user_mimeapps()?;
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e),
-    };
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    crate::ops::write_atomic(&path, with_edits(&text, edits).as_bytes())
+    edit_defaults_in(&user_mimeapps()?, edits)
+}
+
+/// Make `edits` in the `mimeapps.list` at `path` ([`with_edits`]) under the lock every Reprise
+/// writer of it takes ([`crate::ops::locked_edit`]); an unreadable file is left alone.
+fn edit_defaults_in(path: &Path, edits: &[(String, Option<String>)]) -> std::io::Result<()> {
+    crate::ops::locked_edit(path, false, |text| {
+        Ok::<_, std::convert::Infallible>(with_edits(text, edits))
+    })
+    .map(|_| ())
 }
 
 /// `text` with `edits` made in turn: `(mime, Some(id))` sets the default ([`with_default`]), `(mime, None)` drops the user's default ([`without_default`]).

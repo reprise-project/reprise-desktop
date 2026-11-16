@@ -1028,3 +1028,33 @@ fn applying_to_subfolders_leaves_a_drive_mounted_inside_alone() {
     // SAFETY: a NUL-terminated path that outlives the call.
     unsafe { libc::umount2(c(&mnt).as_ptr(), 0) };
 }
+
+#[test]
+fn a_default_set_while_another_writer_edits_mimeapps_list_keeps_both() {
+    let t = tempfile::tempdir().unwrap();
+    let path = t.path().join("mimeapps.list");
+    let slow = {
+        let path = path.clone();
+        std::thread::spawn(move || {
+            crate::ops::locked_edit::<()>(&path, false, |text| {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                Ok(with_default(text, "text/plain", "zed.desktop"))
+            })
+            .unwrap()
+            .unwrap()
+        })
+    };
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let edit = [("image/png".to_string(), Some("viewer.desktop".to_string()))];
+    edit_defaults_in(&path, &edit).unwrap();
+    slow.join().unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        default_in_list(&text, "text/plain").as_deref(),
+        Some("zed.desktop")
+    );
+    assert_eq!(
+        default_in_list(&text, "image/png").as_deref(),
+        Some("viewer.desktop")
+    );
+}

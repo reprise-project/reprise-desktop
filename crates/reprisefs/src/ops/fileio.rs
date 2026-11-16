@@ -119,6 +119,49 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     replace(path, bytes, false)
 }
 
+/// Read `path` (absent is empty, and with `reset` so is one not UTF-8), hand its text to `edit` and
+/// [`write_atomic`] a changed result, under an exclusive `flock` on a `.lock` file beside it (the
+/// rename replaces the target's inode). `edit`'s error comes back as `Ok(Err)`, nothing written.
+pub fn locked_edit<E>(
+    path: &Path,
+    reset: bool,
+    edit: impl FnOnce(&str) -> Result<String, E>,
+) -> io::Result<Result<String, E>> {
+    let dir = match path.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    std::fs::create_dir_all(&dir)?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "out".into());
+    let lock = std::fs::File::create(dir.join(format!(".{name}.lock")))?;
+    // SAFETY: a valid fd from the open file above; LOCK_EX blocks until
+    // the other editor is done and the lock goes with the fd on drop.
+    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut stale = false;
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) if reset && e.kind() == io::ErrorKind::InvalidData => {
+            stale = true;
+            String::new()
+        }
+        Err(e) => return Err(e),
+    };
+    let out = match edit(&text) {
+        Ok(out) => out,
+        Err(e) => return Ok(Err(e)),
+    };
+    if out != text || stale {
+        write_atomic(path, out.as_bytes())?;
+    }
+    Ok(Ok(out))
+}
+
 /// [`write_atomic`] for a file only its owner may read: the new file is 0600 whatever the old
 /// one's mode was.
 pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {

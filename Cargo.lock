@@ -5004,7 +5004,6 @@ dependencies = [
 name = "repriseconf"
 version = "0.1.0"
 dependencies = [
- "libc",
  "log",
  "repriseapp-pins",
  "reprisefs",
