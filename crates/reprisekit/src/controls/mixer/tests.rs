@@ -1,6 +1,7 @@
 use super::*;
 use crate::interface::Interface;
 use crate::interfaces::theme_for;
+use crate::pointer::WHEEL_ROWS;
 
 fn line(key: &str, volume: usize, balance: Option<usize>, check: Check) -> Line {
     Line {
@@ -51,6 +52,7 @@ fn a_readers_focus_moves_to_a_trackbar_or_box_without_moving_it() {
     let volume = m.columns[1].volume.pos;
     assert_eq!(m.focus_at(&l, x, y), Event::Redraw);
     assert_eq!(m.focus, Focus::Volume(1));
+    assert!(m.cues, "the focus ring shows");
     assert_eq!(m.columns[1].volume.pos, volume, "the thumb stays");
     assert_eq!(m.focus_at(&l, x, y), Event::None, "already there");
     let (x, y) = mid(col(&l, 2).check);
