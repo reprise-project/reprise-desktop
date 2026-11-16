@@ -244,7 +244,7 @@ pub(crate) fn draw_tile(
             label.x,
             label.y + k as i32 * u.len(LINE_PITCH) * s,
             avail,
-            px as i32 + 3 * s,
+            px as i32 + u.len(3) * s,
         );
         let shown = text.ellipsize(line, avail, false, px);
         text.draw(c, r, &shown, false, fg, Align::Left, px);
@@ -308,7 +308,7 @@ pub(crate) fn draw_thumb(
             label.x,
             label.y + k as i32 * u.len(LINE_PITCH) * s,
             label.width,
-            px as i32 + 3 * s,
+            px as i32 + u.len(3) * s,
         );
         text.draw(c, r, line, false, fg, Align::Center, px);
     }
@@ -340,7 +340,7 @@ pub(crate) fn draw_grid(
     for (h, g) in lay.headers.iter().zip(&sv.groups) {
         let r = off(*h);
         if !r.intersect(&all).is_empty() {
-            let title_box = (u.len(GROUP_TITLE_Y) * s, px as i32 + 3 * s);
+            let title_box = (u.len(GROUP_TITLE_Y) * s, px as i32 + u.len(3) * s);
             let rule = GroupRule {
                 from: cs.gradient_active_title,
                 to: cs.window,
@@ -462,7 +462,7 @@ pub(crate) fn label_of(
 ) -> Rect {
     match mode {
         Mode::Icons => {
-            let r = iconview::label_layout(text, &e.name, px, 1, cell.width).rect;
+            let r = iconview::label_layout(text, &e.name, px, 1, cell.width, u).rect;
             Rect::new(cell.x + r.x, cell.y + r.y, r.width, r.height)
         }
         Mode::Tiles => {

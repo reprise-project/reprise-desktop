@@ -457,7 +457,7 @@ pub fn draw_cell_at(
         }
     };
     let boxed = selected.is_some() && rename.is_none() && {
-        let l = label_layout(text, name, theme.fonts.size_px, s, cell.w).rect;
+        let l = label_layout(text, name, theme.fonts.size_px, s, cell.w, theme.text).rect;
         let r = Rect::new(x0, y0, size, (l.bottom() + 2 * s).min(cell.h * s));
         item::draw_desktop_item(c, &theme.paint(), r)
     };
@@ -477,7 +477,7 @@ pub fn draw_cell_at(
     }
 
     let font = theme.fonts.size_px;
-    let line_h = font as i32 + 3 * s;
+    let line_h = font as i32 + theme.text.len(3) * s;
 
     if let Some((own, caret_state)) = rename {
         let preedit = c.preedit().filter(|_| caret_state.focused()).cloned();
@@ -552,7 +552,7 @@ pub fn draw_cell_at(
         return;
     }
 
-    let label = label_layout(text, name, font, s, cell.w);
+    let label = label_layout(text, name, font, s, cell.w, theme.text);
     let l = label.rect;
     let rect = Rect::new(x0 + l.x, y0 + l.y, l.width, l.height);
     let (fg, shadow) = match (selected, ground) {
@@ -598,7 +598,7 @@ fn label_shadow(ink: Color) -> Color {
     }
 }
 
-/// A `w` px wide cell's label at scale `s`, in the cell's coordinates: `name` wrapped to two
+/// A `w` px wide cell's label at scale `s` and text size `u`, in the cell's coordinates: `name` wrapped to two
 /// lines; `rect` is what a selection fills.
 pub struct LabelLayout {
     pub rect: Rect,
@@ -612,9 +612,16 @@ pub struct LabelLine {
     pub width: i32,
 }
 
-pub fn label_layout(text: &TextRenderer, name: &str, px: u32, s: i32, w: i32) -> LabelLayout {
+pub fn label_layout(
+    text: &TextRenderer,
+    name: &str,
+    px: u32,
+    s: i32,
+    w: i32,
+    u: TextUnits,
+) -> LabelLayout {
     let size = w * s;
-    let step = px as i32 + 2 * s;
+    let step = px as i32 + u.len(2) * s;
     let lines: Vec<LabelLine> = wrap_label(text, name, size - 4 * s, px)
         .into_iter()
         .map(|l| {
@@ -1250,7 +1257,7 @@ mod tests {
         assert_eq!(c.get(x0 + wide + 3, y0 + 20), hil);
         assert_eq!(c.get(x0 + wide + 4, y0 + 20), 0);
         assert_eq!(
-            label_layout(&t, name, font, 1, CELL).rect,
+            label_layout(&t, name, font, 1, CELL, TextUnits::ONE).rect,
             Rect::new(x0, y0, wide + 4, 28)
         );
         let ink = cs.hilight_text.argb();
@@ -1841,7 +1848,7 @@ mod tests {
                 one.fade(1, 2);
                 assert!(holds(&img, &one, (0, k as i32 * cell.h)), "{pct}%: {k}");
             }
-            let label = label_layout(&t, name, theme.fonts.size_px, 1, cell.w);
+            let label = label_layout(&t, name, theme.fonts.size_px, 1, cell.w, theme.text);
             assert!(
                 label.lines.iter().all(|l| l.width <= cell.w - 4),
                 "{pct}%: wrapped in the grown width"
