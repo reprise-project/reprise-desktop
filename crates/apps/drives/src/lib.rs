@@ -1,7 +1,8 @@
 //! reprise-drives: removable drives for the session. Does what `[drives]
 //! on_insert` says with plugged-in drives (asks in a balloon, mounts through
 //! UDisks2, opens a window, raises the passphrase box for locked ones) and
-//! lists them in the Safely Remove Hardware tray menu, warns when the disk of
+//! lists them, and the phones and cameras gvfs mounted, in the Safely Remove
+//! Hardware tray menu, warns when the disk of
 //! `$HOME` or `/` runs low on space (`space`), and asks in a balloon before a
 //! Thunderbolt device is authorized (`thunderbolt`). No main window; the process
 //! is autostarted for the session.
@@ -33,7 +34,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::taskbar::Edge;
 use reprisekit::textedit::keysym;
 
-use model::{Act, Arrival, Entry};
+use model::{Act, Arrival, Entry, Target};
 
 const FLYOUT: WinId = WinId::named("flyout");
 const UNLOCK: WinId = WinId::named("unlock");
@@ -79,7 +80,11 @@ struct DrivesApp {
     /// The unlock box's client size at the text size it last heard.
     unlock_size: (i32, i32),
     unlock_queue: VecDeque<String>,
-    removing: HashMap<String, Removing>,
+    /// gvfs's mounts, whose phones and cameras get a Safely Remove row, named after
+    /// `devices` ([`reprisefs::portable::dress`]).
+    shares: Vec<reprisefs::netshare::Share>,
+    devices: Vec<reprisefs::portable::Device>,
+    removing: HashMap<Target, Removing>,
     balloons: HashMap<u32, PathBuf>,
     /// Ask balloons by tag, kept after the balloon goes: the history still runs its buttons.
     asks: HashMap<u32, Arrival>,
@@ -120,7 +125,7 @@ impl DrivesApp {
     }
 
     fn push_state(&mut self) {
-        self.entries = model::entries(self.snap());
+        self.entries = model::entries(self.snap(), &self.shares);
         let next = tray::shown(&self.entries);
         if self.tray_state.as_ref() == Some(&next) {
             return;
@@ -146,6 +151,11 @@ impl DrivesApp {
         }
         self.unlock_queue.retain(|v| !gone(v));
         self.open_after.retain(|v| snap.volume(v).is_some());
+        self.entries_changed();
+    }
+
+    /// The tray takes the new rows; an open menu showing others closes.
+    fn entries_changed(&mut self) {
         self.push_state();
         if self
             .flyout
@@ -391,7 +401,7 @@ impl DrivesApp {
     }
 
     fn removed(&mut self, disk: &str, result: Result<(), reprisefs::udisks::Error>) {
-        let Some(r) = self.removing.remove(disk) else {
+        let Some(r) = self.removing.remove(&Target::Disk(disk.to_string())) else {
             return;
         };
         match result {
@@ -407,12 +417,44 @@ impl DrivesApp {
         }
     }
 
+    fn unmounted(&mut self, at: PathBuf, result: Result<(), reprisefs::netshare::Unmount>) {
+        use reprisefs::netshare::Unmount;
+        let Some(r) = self.removing.remove(&Target::Mount(at)) else {
+            return;
+        };
+        match result {
+            Ok(()) => self.notify(model::safe_balloon(&r.disk)),
+            Err(Unmount::Busy) => self.notify(model::busy_balloon(&r.disk, &r.volumes)),
+            Err(Unmount::Error(e)) => {
+                log::warn!("unmounting {}: {e}", r.disk);
+                self.notify((format!("Problem Ejecting {}", r.disk), e));
+            }
+        }
+    }
+
     fn remove(&mut self, entry: &Entry) {
-        if self.removing.contains_key(&entry.disk) {
+        if self.removing.contains_key(&entry.target) {
             return;
         }
+        let disk = match &entry.target {
+            Target::Disk(disk) => disk,
+            Target::Mount(at) => {
+                let Some(s) = self.shares.iter().find(|s| s.path == *at) else {
+                    return;
+                };
+                let r = Removing {
+                    disk: s.name.clone(),
+                    volumes: s.name.clone(),
+                };
+                self.removing.insert(entry.target.clone(), r);
+                if let Some(c) = &self.calls {
+                    c.unmount(at.clone());
+                }
+                return;
+            }
+        };
         let snap = self.snap();
-        let Some(d) = snap.disk(&entry.disk) else {
+        let Some(d) = snap.disk(disk) else {
             return;
         };
         let volumes: Vec<String> = snap
@@ -425,9 +467,9 @@ impl DrivesApp {
             disk: d.name(),
             volumes: volumes.join(", "),
         };
-        self.removing.insert(entry.disk.clone(), r);
+        self.removing.insert(entry.target.clone(), r);
         if let Some(c) = &self.calls {
-            c.remove(entry.disk.clone());
+            c.remove(disk.clone());
         }
     }
 
@@ -472,6 +514,17 @@ impl DrivesApp {
                 watch::Msg::Mounted { volume, result } => self.mounted(&volume, result),
                 watch::Msg::Unlocked { volume, result } => self.unlocked(&volume, result),
                 watch::Msg::Removed { disk, result } => self.removed(&disk, result),
+                watch::Msg::Shares(shares) => {
+                    self.shares = shares;
+                    reprisefs::portable::dress(&mut self.shares, &self.devices);
+                    self.entries_changed();
+                }
+                watch::Msg::Devices(devices) => {
+                    self.devices = devices;
+                    reprisefs::portable::dress(&mut self.shares, &self.devices);
+                    self.entries_changed();
+                }
+                watch::Msg::Unmounted { at, result } => self.unmounted(at, result),
             }
         }
         while let Some(round) = self.space.as_ref().and_then(|rx| rx.try_recv().ok()) {

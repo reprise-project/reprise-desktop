@@ -6,6 +6,7 @@ use reprisefs::listing::Item;
 use reprisefs::netshare::browse::{self, ROOT};
 use reprisefs::netshare::{Address, Share};
 use reprisefs::places::{Drive, DriveKind, home_label};
+use reprisefs::portable::{self, Device};
 use reprisefs::udisks::{Disk, Snapshot, Volume};
 use reprisekit::controls::shellview::Field;
 use std::ffi::OsString;
@@ -298,12 +299,16 @@ pub fn tree_subfolders(listed: &Listed, mounts: &[PathBuf]) -> Vec<(String, Plac
         .collect()
 }
 
-/// Computer's children in the Folders tree: the mounted drives, then the network shares. An
-/// unmounted volume has no folder yet, and Home hangs off the Desktop ([`Place::chain_in`]), so
-/// neither is a node here.
+/// Computer's children in the Folders tree: the mounted drives, then the mounted phones and
+/// cameras and the network shares. An unmounted volume or device has no folder yet, and Home
+/// hangs off the Desktop ([`Place::chain_in`]), so neither is a node here.
 pub fn computer_tree_children(listed: &Listed) -> Vec<(String, Place)> {
     let shares = (listed.items.iter())
-        .filter(|it| it.drive == Some(DriveKind::Network))
+        .filter(|it| match it.drive {
+            Some(DriveKind::Network) => true,
+            Some(DriveKind::Portable(_)) => it.path.is_absolute(),
+            _ => false,
+        })
         .map(|it| (it.name.clone(), Place::Folder(it.path.clone())));
     (listed.drives.iter())
         .map(|d| (d.name(), Place::Folder(d.mount.clone())))
@@ -315,6 +320,19 @@ pub fn computer_tree_children(listed: &Listed) -> Vec<(String, Place)> {
 pub fn row_share<'a>(shares: &'a [Share], it: &Item) -> Option<&'a Share> {
     (it.drive == Some(DriveKind::Network))
         .then(|| shares.iter().find(|s| s.path == it.path))
+        .flatten()
+}
+
+/// The phone or camera behind Computer's row `it`, among `devices` joined with their mounts
+/// ([`portable::with_mounts`]): mounted at its path, or unmounted with its URI as the path.
+pub fn row_device<'a>(devices: &'a [Device], it: &Item) -> Option<&'a Device> {
+    matches!(it.drive, Some(DriveKind::Portable(_)))
+        .then(|| {
+            devices.iter().find(|d| match &d.mount {
+                Some(m) => *m == it.path,
+                None => Path::new(&d.uri) == it.path,
+            })
+        })
         .flatten()
 }
 
@@ -444,13 +462,14 @@ pub fn bin_watches() -> Vec<(PathBuf, Option<OsString>)> {
         .collect()
 }
 
-/// What Computer lists besides the folders: the drives, UDisks2's volumes and the mounted
-/// network shares.
+/// What Computer lists besides the folders: the drives, UDisks2's volumes, gvfs's mounts (network
+/// shares, phones and cameras) and the phones and cameras plugged in.
 #[derive(Clone, Copy)]
 pub struct Devices<'a> {
     pub drives: &'a [Drive],
     pub volumes: &'a Snapshot,
     pub shares: &'a [Share],
+    pub portable: &'a [Device],
 }
 
 /// `place`'s contents: a real directory read (for `RecycleBin` each of
@@ -561,6 +580,7 @@ fn list_computer(d: Devices) -> Listed {
         d.drives.to_vec(),
         d.volumes,
         d.shares,
+        d.portable,
         home().map(|h| (h, home_label())),
     )
 }
@@ -598,12 +618,14 @@ fn network_item(e: &browse::Entry) -> Item {
 /// Computer: "Files Stored on This Computer" (the home folder `home`),
 /// "Hard Disk Drives" (non-removable, non-optical), "Devices with Removable
 /// Storage" (removable or optical drives, then unmounted removable `volumes`),
-/// then "Network Locations" (the mounted `shares`), each omitted when empty.
+/// "Portable Devices" (the phones and cameras plugged in or mounted), then
+/// "Network Locations" (the other mounted `shares`), each omitted when empty.
 /// Split from `list_computer` so a test can drive it with fake drives.
 fn build_computer(
     drives: Vec<Drive>,
     volumes: &Snapshot,
     shares: &[Share],
+    portable: &[Device],
     home: Option<(PathBuf, String)>,
 ) -> Listed {
     let mut items = Vec::new();
@@ -649,6 +671,15 @@ fn build_computer(
         items.extend(removable.into_iter().map(drive_item));
         items.extend(unmounted);
     }
+    let portable = portable::with_mounts(portable, shares);
+    if !portable.is_empty() {
+        groups.push(("Portable Devices".to_string(), items.len()));
+        items.extend(portable.iter().map(|d| {
+            let path = d.mount.clone().unwrap_or_else(|| PathBuf::from(&d.uri));
+            remote_item(&d.name, path, DriveKind::Portable(d.kind))
+        }));
+    }
+    let shares: Vec<&Share> = shares.iter().filter(|s| !s.is_portable()).collect();
     if !shares.is_empty() {
         groups.push(("Network Locations".to_string(), items.len()));
         items.extend(
@@ -819,6 +850,7 @@ mod tests {
             drives,
             &Snapshot::default(),
             &[share()],
+            &[],
             Some((PathBuf::from("/home/u"), "u's Home".to_string())),
         );
         let kids = computer_tree_children(&listed);
@@ -925,6 +957,7 @@ mod tests {
             drives,
             &Snapshot::default(),
             &[share()],
+            &[],
             Some((PathBuf::from("/home/u"), "u's Home".to_string())),
         );
 
@@ -961,6 +994,8 @@ mod tests {
             name: "public on nas".into(),
             icon: "folder-remote".into(),
             path: PathBuf::from("/run/user/1000/gvfs/smb-share:server=nas,share=public"),
+            backend: "smb-share".into(),
+            host: "nas".into(),
         }
     }
 
@@ -1005,7 +1040,7 @@ mod tests {
         let removable = |d: &str| d == "sdc1";
         let drives =
             reprisefs::places::drives_from(mounts, &removable, &|_| None, &|_| (1000, 500));
-        let listed = build_computer(drives, &udisks_snapshot(), &[], None);
+        let listed = build_computer(drives, &udisks_snapshot(), &[], &[], None);
 
         assert_eq!(
             listed.groups,
@@ -1101,7 +1136,7 @@ mod tests {
             }),
             ..Volume::default()
         });
-        let listed = build_computer(snap.image_drives(), &snap, &[], None);
+        let listed = build_computer(snap.image_drives(), &snap, &[], &[], None);
         assert_eq!(
             listed.groups,
             [("Devices with Removable Storage".to_string(), 0)]
@@ -1112,9 +1147,77 @@ mod tests {
         assert_eq!((v.device.as_str(), disk), ("/dev/loop0", None));
     }
 
+    fn phone() -> Device {
+        Device {
+            name: "Pixel 7".into(),
+            kind: reprisefs::places::Gadget::Phone,
+            uri: "mtp://Google_Pixel_7_2A0F/".into(),
+            mount: None,
+        }
+    }
+
+    fn phone_mount() -> Share {
+        Share {
+            name: "Pixel 7".into(),
+            icon: "phone".into(),
+            path: PathBuf::from("/run/user/1000/gvfs/mtp:host=Google_Pixel_7_2A0F"),
+            backend: "mtp".into(),
+            host: "Google_Pixel_7_2A0F".into(),
+        }
+    }
+
+    #[test]
+    fn a_plugged_phone_lists_under_portable_devices_by_its_uri_until_mounted() {
+        let listed = build_computer(
+            Vec::new(),
+            &Snapshot::default(),
+            &[share()],
+            &[phone()],
+            None,
+        );
+        assert_eq!(
+            listed.groups,
+            vec![
+                ("Portable Devices".to_string(), 0),
+                ("Network Locations".to_string(), 1),
+            ]
+        );
+        let row = &listed.items[0];
+        assert_eq!(row.name, "Pixel 7");
+        assert_eq!(row.kind, "Mobile Phone");
+        assert_eq!(row.path, PathBuf::from("mtp://Google_Pixel_7_2A0F/"));
+        assert!(row.mount_root, "a device is never read into while listing");
+        assert_eq!(row_device(&[phone()], row), Some(&phone()));
+        assert_eq!(row_share(&[share()], row), None, "a device is no share");
+        assert!(
+            computer_tree_children(&listed)
+                .iter()
+                .all(|(n, _)| n != "Pixel 7")
+        );
+    }
+
+    #[test]
+    fn a_mounted_phone_opens_as_its_fuse_folder_and_leaves_network_locations() {
+        let shares = [share(), phone_mount()];
+        let listed = build_computer(Vec::new(), &Snapshot::default(), &shares, &[phone()], None);
+        let row = &listed.items[0];
+        assert_eq!(row.path, phone_mount().path);
+        assert_eq!(listed.items.len(), 2, "the phone's mount shows once");
+        assert_eq!(listed.items[1].name, "public on nas");
+        let joined = portable::with_mounts(&[phone()], &shares);
+        assert_eq!(
+            row_device(&joined, row).and_then(|d| d.mount.clone()),
+            Some(phone_mount().path)
+        );
+        assert_eq!(
+            computer_tree_children(&listed)[0],
+            ("Pixel 7".to_string(), Place::Folder(phone_mount().path))
+        );
+    }
+
     #[test]
     fn build_computer_omits_empty_groups() {
-        let listed = build_computer(Vec::new(), &Snapshot::default(), &[], None);
+        let listed = build_computer(Vec::new(), &Snapshot::default(), &[], &[], None);
         assert!(listed.groups.is_empty());
         assert!(listed.items.is_empty());
     }

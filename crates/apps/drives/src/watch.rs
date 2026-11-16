@@ -1,9 +1,11 @@
 //! The UDisks2 side: [`udisks::follow`] hands the app a whole [`Snapshot`] after
 //! every change, and the calls the app asks for, each on its own thread (any can wait on polkit).
+//! gvfs's mounts and its phones and cameras come the same way, for the devices to unmount.
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
+use reprisefs::netshare::{self, Share, Unmount};
 use reprisefs::udisks::{self, Error, Snapshot, Udisks};
 use zeroize::Zeroizing;
 
@@ -27,6 +29,14 @@ pub enum Msg {
     Removed {
         disk: String,
         result: Result<(), Error>,
+    },
+    /// gvfs's mounts, after every change.
+    Shares(Vec<Share>),
+    /// The phones and cameras plugged in, after every change.
+    Devices(Vec<reprisefs::portable::Device>),
+    Unmounted {
+        at: PathBuf,
+        result: Result<(), Unmount>,
     },
 }
 
@@ -77,6 +87,20 @@ impl Calls {
         });
     }
 
+    /// Unmounts the phone or camera gvfs mounted at `at`.
+    pub fn unmount(&self, at: PathBuf) {
+        let p = self.poster.clone();
+        if let Err(e) = std::thread::Builder::new()
+            .name("reprise-drives-unmount".into())
+            .spawn(move || {
+                let result = netshare::unmount(&at, false);
+                p.post(Msg::Unmounted { at, result });
+            })
+        {
+            log::warn!("could not start unmount: {e}");
+        }
+    }
+
     pub fn remove(&self, disk: String) {
         self.spawn("remove", move |u, p| {
             let snap = u.snapshot();
@@ -108,6 +132,10 @@ pub fn watch(waker: repriseapp::Waker) -> (Receiver<Msg>, Calls) {
         udisks: Udisks::system(),
         poster: poster.clone(),
     };
+    let shares = poster.clone();
+    netshare::follow(move |s| shares.post(Msg::Shares(s.shares)));
+    let devices = poster.clone();
+    reprisefs::portable::follow(move |d| devices.post(Msg::Devices(d)));
     udisks::follow(move |s| poster.post(Msg::Snapshot(s)));
     (rx, calls)
 }

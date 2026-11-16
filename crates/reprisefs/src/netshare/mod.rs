@@ -166,6 +166,17 @@ pub struct Share {
     pub icon: String,
     /// Its FUSE folder under `$XDG_RUNTIME_DIR/gvfs`.
     pub path: PathBuf,
+    /// The gvfs backend that mounted it (its mount spec's `type`: `smb-share`, `sftp`, `mtp`).
+    pub backend: String,
+    /// Its mount spec's `host`; empty when the spec has none.
+    pub host: String,
+}
+
+impl Share {
+    /// A phone or camera gvfs mounted ([`crate::portable`]), which Computer lists as a device.
+    pub fn is_portable(&self) -> bool {
+        crate::portable::SCHEMES.contains(&self.backend.as_str())
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -181,7 +192,7 @@ impl Snapshot {
     }
 }
 
-fn gio() -> Option<&'static Path> {
+pub(crate) fn gio() -> Option<&'static Path> {
     static GIO: OnceLock<Option<PathBuf>> = OnceLock::new();
     GIO.get_or_init(|| {
         let path = std::env::var_os("PATH")?;
@@ -212,7 +223,7 @@ fn gio_error(stderr: &str) -> String {
 }
 
 /// Runs `gio args`, killed after `wait`: its standard output, or its error.
-fn run_gio(args: &[&str], wait: Duration) -> Result<String, String> {
+pub(crate) fn run_gio(args: &[&str], wait: Duration) -> Result<String, String> {
     let Some(mut cmd) = gio_command() else {
         return Err("gio is not installed.".into());
     };
@@ -367,6 +378,8 @@ fn shares(mounts: Vec<Mount>) -> Vec<Share> {
                 name: m.2,
                 icon: themed_icon(&m.5).unwrap_or("folder-remote").to_string(),
                 path: PathBuf::from(std::ffi::OsString::from_vec(fuse)),
+                backend: spec_value(&m.10.1, "type"),
+                host: spec_value(&m.10.1, "host"),
             })
         })
         .collect();
@@ -374,13 +387,28 @@ fn shares(mounts: Vec<Mount>) -> Vec<Share> {
     out
 }
 
-/// The first name of a serialized themed icon: `. GThemedIcon folder-remote folder`.
-fn themed_icon(icon: &str) -> Option<&str> {
+/// A mount spec's `key`: gvfs sends each value as a NUL-terminated byte string.
+fn spec_value(spec: &HashMap<String, OwnedVariant>, key: &str) -> String {
+    let Some(bytes) = spec
+        .get(key)
+        .and_then(|v| Vec::<u8>::try_from(v.clone()).ok())
+    else {
+        return String::new();
+    };
+    let bytes = bytes.split(|&b| b == 0).next().unwrap_or_default();
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// The first name of a serialized themed icon: `. GThemedIcon folder-remote folder`, or a lone
+/// name as GIO writes an icon with one.
+pub(crate) fn themed_icon(icon: &str) -> Option<&str> {
     let mut words = icon.split(' ');
-    (words.next() == Some(".") && words.next() == Some("GThemedIcon"))
-        .then(|| words.next())
-        .flatten()
-        .filter(|n| !n.is_empty())
+    match (words.next(), words.next()) {
+        (Some("."), Some("GThemedIcon")) => words.next(),
+        (Some(name), None) if !name.starts_with('.') => Some(name),
+        _ => None,
+    }
+    .filter(|n| !n.is_empty())
 }
 
 #[cfg(test)]
@@ -472,6 +500,10 @@ mod tests {
 
     #[test]
     fn mounts_list_as_visible_shares_with_their_fuse_folder_and_icon() {
+        let spec = HashMap::from([
+            ("type".to_string(), bytes(b"smb-share\0")),
+            ("host".to_string(), bytes(b"nas\0")),
+        ]);
         let mount = |name: &str, visible: bool, fuse: &[u8]| -> Mount {
             (
                 ":1.1".into(),
@@ -484,7 +516,7 @@ mod tests {
                 String::new(),
                 visible,
                 fuse.to_vec(),
-                (Vec::new(), HashMap::new()),
+                (Vec::new(), spec.clone()),
                 Vec::new(),
             )
         };
@@ -503,8 +535,39 @@ mod tests {
                 name: "public on nas".into(),
                 icon: "network-server".into(),
                 path: PathBuf::from("/run/user/1000/gvfs/smb-share:server=nas,share=public"),
+                backend: "smb-share".into(),
+                host: "nas".into(),
             }]
         );
-        assert_eq!(themed_icon("garbage"), None);
+        assert!(!got[0].is_portable());
+    }
+
+    fn bytes(b: &[u8]) -> OwnedVariant {
+        zbus::Variant::from(b.to_vec())
+            .try_into()
+            .expect("a byte string")
+    }
+
+    #[test]
+    fn an_icon_is_read_from_its_themed_form_or_as_a_lone_name() {
+        assert_eq!(
+            themed_icon(". GThemedIcon phone multimedia-player"),
+            Some("phone")
+        );
+        assert_eq!(themed_icon("camera-photo"), Some("camera-photo"));
+        assert_eq!(themed_icon(". GFileIcon file:///x.png"), None);
+        assert_eq!(themed_icon("two words"), None);
+        assert_eq!(themed_icon(""), None);
+    }
+
+    #[test]
+    fn an_mtp_mount_is_a_portable_device_and_its_host_loses_the_nul() {
+        let spec = HashMap::from([
+            ("type".to_string(), bytes(b"mtp\0")),
+            ("host".to_string(), bytes(b"Google_Pixel_7_2A0F\0")),
+        ]);
+        assert_eq!(spec_value(&spec, "type"), "mtp");
+        assert_eq!(spec_value(&spec, "host"), "Google_Pixel_7_2A0F");
+        assert_eq!(spec_value(&spec, "share"), "");
     }
 }

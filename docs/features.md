@@ -950,6 +950,9 @@ the screen takes the interface of the last session used at this computer.
   phone, and Send files from the tray or Send To.
 - **Drives** mount when you plug them in, ask for a passphrase if they're
   encrypted, and eject from the tray or from Computer.
+- **Phones and cameras** plugged in by USB (MTP and PTP, through gvfs) show
+  in Computer under Portable Devices; open one to browse it, and eject it
+  from Computer or the tray.
 - **Thunderbolt and USB4.** A dock or eGPU that waits for authorization gets
   a balloon with Authorize Once, Always Authorize and Ignore, and Settings >
   Thunderbolt lists the devices boltd knows to authorize or forget them.

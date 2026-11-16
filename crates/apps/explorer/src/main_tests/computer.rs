@@ -470,3 +470,84 @@ fn the_opening_drive_scan_that_answers_late_lands_on_a_later_wake() {
         "free space moves between two scans"
     );
 }
+
+fn test_phone() -> reprisefs::portable::Device {
+    reprisefs::portable::Device {
+        name: "Test Phone".into(),
+        kind: reprisefs::places::Gadget::Phone,
+        uri: "mtp://Reprise_Test_Phone/".into(),
+        mount: None,
+    }
+}
+
+fn phone_mount(path: PathBuf) -> reprisefs::netshare::Snapshot {
+    reprisefs::netshare::Snapshot {
+        gio: true,
+        shares: vec![reprisefs::netshare::Share {
+            name: "mtp".into(),
+            icon: "multimedia-player".into(),
+            path,
+            backend: "mtp".into(),
+            host: "Reprise_Test_Phone".into(),
+        }],
+    }
+}
+
+#[test]
+fn a_plugged_phone_lists_in_computer_and_its_mount_takes_its_name_and_eject() {
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Computer, &mut ctx);
+    let (tx, rx) = std::sync::mpsc::channel();
+    ex.portable_changes = Some(rx);
+    tx.send(vec![test_phone()]).unwrap();
+    let row = |ex: &Explorer| ex.items.iter().position(|it| it.name == "Test Phone");
+    wake_until(&mut ex, &mut ctx, |ex| row(ex).is_some());
+    let i = row(&ex).unwrap();
+    assert_eq!(ex.items[i].path, PathBuf::from("mtp://Reprise_Test_Phone/"));
+    assert!(!ex.ejectable(i), "nothing to eject before it mounts");
+    ex.sv.selection.set_only(Some(i));
+    assert_eq!(ex.selected_unmounted_device(), Some(test_phone()));
+
+    let at = PathBuf::from("/run/user/1000/gvfs/mtp:host=Reprise_Test_Phone");
+    ex.shares_changed(phone_mount(at.clone()), &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| {
+        ex.items.iter().any(|it| it.path == at)
+    });
+    let i = ex.items.iter().position(|it| it.path == at).unwrap();
+    assert_eq!(ex.items[i].name, "Test Phone");
+    assert_eq!(
+        ex.items.iter().filter(|it| it.name == "Test Phone").count(),
+        1
+    );
+    assert!(ex.ejectable(i), "a mounted phone ejects");
+    assert!(
+        !ex.share_selected(i),
+        "its menu reads Eject, not Disconnect"
+    );
+    assert_eq!(Place::Folder(at.clone()).title(), "Test Phone");
+    assert!(computer_nodes(&ex).contains(&Place::Folder(at)));
+}
+
+#[test]
+fn a_mount_landing_under_the_open_folder_moves_the_tree_under_computer() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let at = dir.path().join("mtp:host=Reprise_Test_Phone");
+    std::fs::create_dir(&at).expect("the phone's folder");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(at.clone()), &mut ctx);
+    assert_eq!(
+        ex.place.chain_in(&ex.drive_mounts)[1],
+        Place::Computer,
+        "before the mount, the folder hangs off a drive"
+    );
+    ex.shares_changed(phone_mount(at.clone()), &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| {
+        ex.tree.selected.is_some() && ex.tree.selected == ex.tree_path_of(&ex.place)
+    });
+    let computer = ex.tree_path_of(&Place::Computer).unwrap();
+    assert_eq!(
+        ex.tree.selected.as_ref().map(|p| p.len()),
+        Some(computer.len() + 1),
+        "the phone's folder is selected as Computer's child"
+    );
+}

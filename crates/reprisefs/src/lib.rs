@@ -49,6 +49,7 @@ pub mod pictures;
 pub mod pins;
 pub mod pipe;
 pub mod places;
+pub mod portable;
 pub mod program;
 pub mod progress;
 pub mod props;

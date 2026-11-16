@@ -2,8 +2,9 @@
 //! volumes arrived and what `[drives] on_insert` does with them, the rows of
 //! the Safely Remove Hardware menu, and the words of its balloons.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use reprisefs::netshare::Share;
 use reprisefs::udisks::{Disk, Snapshot, Volume};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,9 +114,18 @@ pub fn arrivals(prev: Option<&Snapshot>, next: &Snapshot) -> Vec<Arrival> {
     out
 }
 
+/// What a Safely Remove row takes away.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Target {
+    /// A removable drive, by its UDisks2 path.
+    Disk(String),
+    /// A phone or camera gvfs mounted, by its FUSE folder.
+    Mount(PathBuf),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
-    pub disk: String,
+    pub target: Target,
     pub label: String,
 }
 
@@ -127,8 +137,18 @@ fn mounted_on<'a>(snap: &'a Snapshot, disk: &Disk) -> Vec<&'a Volume> {
 }
 
 /// A row per removable drive with something mounted, in drive order:
-/// "Safely remove <drive> - <volume names>".
-pub fn entries(snap: &Snapshot) -> Vec<Entry> {
+/// "Safely remove <drive> - <volume names>"; then one per phone or camera
+/// gvfs mounted among `shares`: "Safely remove <device>".
+pub fn entries(snap: &Snapshot, shares: &[Share]) -> Vec<Entry> {
+    let mut out = drive_entries(snap);
+    out.extend(shares.iter().filter(|s| s.is_portable()).map(|s| Entry {
+        target: Target::Mount(s.path.clone()),
+        label: format!("Safely remove {}", s.name),
+    }));
+    out
+}
+
+fn drive_entries(snap: &Snapshot) -> Vec<Entry> {
     snap.disks
         .iter()
         .filter(|d| d.removable)
@@ -139,7 +159,7 @@ pub fn entries(snap: &Snapshot) -> Vec<Entry> {
             }
             let names: Vec<String> = mounted.iter().map(|v| v.name(Some(d))).collect();
             Some(Entry {
-                disk: d.path.clone(),
+                target: Target::Disk(d.path.clone()),
                 label: format!("Safely remove {} - {}", d.name(), names.join(", ")),
             })
         })
@@ -463,12 +483,41 @@ mod tests {
             ],
         );
         assert_eq!(
-            entries(&s),
+            entries(&s, &[]),
             [Entry {
-                disk: "d".into(),
+                target: Target::Disk("d".into()),
                 label: "Safely remove Kingston DataTraveler - KINGSTON, Removable Disk".into(),
             }]
         );
-        assert!(entries(&snap(vec![], vec![])).is_empty());
+        assert!(entries(&snap(vec![], vec![]), &[]).is_empty());
+    }
+
+    #[test]
+    fn a_mounted_phone_gets_a_row_after_the_drives_and_a_network_share_does_not() {
+        let share = |name: &str, backend: &str, path: &str| Share {
+            name: name.into(),
+            icon: String::new(),
+            path: path.into(),
+            backend: backend.into(),
+            host: "h".into(),
+        };
+        let shares = [
+            share(
+                "public on nas",
+                "smb-share",
+                "/run/user/1000/gvfs/smb-share:server=nas",
+            ),
+            share("Pixel 7", "mtp", "/run/user/1000/gvfs/mtp:host=h"),
+        ];
+        let s = snap(vec![disk("d", true)], vec![fat("sdb1", "d", true)]);
+        let got = entries(&s, &shares);
+        assert_eq!(got.len(), 2);
+        assert_eq!(
+            got[1],
+            Entry {
+                target: Target::Mount("/run/user/1000/gvfs/mtp:host=h".into()),
+                label: "Safely remove Pixel 7".into(),
+            }
+        );
     }
 }

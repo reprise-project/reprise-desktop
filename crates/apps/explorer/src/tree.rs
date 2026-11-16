@@ -138,7 +138,8 @@ impl Explorer {
         }
     }
 
-    /// Fills the node standing for `place` from `kids`, if the tree still holds it.
+    /// Fills the node standing for `place` from `kids`, if the tree still holds it. A filled
+    /// Computer that now holds the place's mount takes the tree there ([`Explorer::refollow`]).
     fn fill_read(&mut self, place: &Place, kids: Kids, ctx: &mut Ctx) {
         let Some(path) = self.tree_path_of(place) else {
             return;
@@ -159,6 +160,11 @@ impl Explorer {
             &mut ctx.icons,
         );
         self.note_art(place, art);
+        if self.refollow && *place == Place::Computer && self.tree_path_of(&self.place).is_some() {
+            self.refollow = false;
+            let here = self.place.clone();
+            self.tree_follow(&here, ctx);
+        }
     }
 
     /// Fills the nodes whose late reads ([`Explorer::fill_node`]) answered: true when one did.

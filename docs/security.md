@@ -1769,7 +1769,10 @@ stop the share first.
   Computer lists mounted shares from gvfs's mount tracker, asked only while
   gvfs runs, and never reads inside a share; opening, listing and
   unmounting run off the event loop, so a server that stops answering holds
-  only that thread.
+  only that thread. Phones and cameras come from gvfs's MTP and PTP volume
+  monitors on the session bus, which Explorer and reprise-drives start by
+  asking; a name is shown as text, an icon picks one of three fixed ones,
+  and a device mounts only when opened.
 - **Disk images.** Opening an `.iso` or `.img` asks before it is mounted,
   since the kernel's file system driver then parses a file that may come
   from anywhere, and those drivers aren't hardened against hostile images.

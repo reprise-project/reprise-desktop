@@ -45,6 +45,8 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'bolt: the balloon asking to authorize a new Thunderbolt or USB4 device, and Settings > Thunderbolt'
             'gvfs: Connect to Server, network shares under Computer and the Network place'
             'gvfs-smb: SMB shares in Connect to Server and the Network place'
+            'gvfs-mtp: phones and media players plugged in by USB, under Computer'\''s Portable Devices'
+            'gvfs-gphoto2: cameras plugged in by USB, under Computer'\''s Portable Devices'
             'iio-sensor-proxy: the built-in screen turning with a convertible or tablet'
             'colord: the profiles colord keeps outside the ICC folders in the Display page'\''s Color profile list'
             'packagekit: reprise-updates, the updates tray icon and Software Updates, and installing package files and uninstalling programs from the Start menu'
