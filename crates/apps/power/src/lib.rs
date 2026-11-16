@@ -4,7 +4,8 @@
 //! and the Power Options Properties sheet behind it, which edits `config.toml`'s `[idle]`,
 //! `[idle.battery]` and `[power]` keys, and the battery charge limit, which acts at once. The sheet and
 //! the tray menu also switch power-profiles-daemon's profile, when the daemon is there, and the low battery
-//! saver holds its power saver profile while the charge is low. `--tray` starts
+//! saver holds its power saver profile while the charge is low. The menu's Keep Awake check holds an
+//! idle inhibitor. `--tray` starts
 //! with the sheet hidden (the autostart entry); plain `reprise-power` shows it. Closing the sheet hides
 //! it; only Exit in the tray menu quits. The compositor does the acting: the timeouts, lid and buttons
 //! are its, read from the same file.
@@ -13,6 +14,7 @@
 reprisebus::test_session!();
 
 mod alarms;
+mod awake;
 mod logind;
 mod profiles;
 mod settings;
@@ -73,6 +75,8 @@ struct PowerApp {
     /// The charge limit toggle under way.
     charging: Option<Receiver<Charged>>,
     waker: Option<repriseapp::Waker>,
+    /// Keep Awake's cookie while it holds.
+    awake: Option<u32>,
 }
 
 /// A charge limit toggle's result: the limit as UPower tells it afterwards, and the toggle's
@@ -135,6 +139,7 @@ impl PowerApp {
             tray::tooltip(&self.power),
             self.power.battery.is_some() || self.settings.always_show_icon,
             &self.profiles,
+            self.awake.is_some(),
         );
         if self.tray_state.as_ref() == Some(&next) {
             return;
@@ -348,6 +353,22 @@ impl PowerApp {
         ok
     }
 
+    /// Keep Awake on or off; a cookie the compositor will not give is told in a box.
+    fn toggle_awake(&mut self) {
+        let conn = match reprisebus::session() {
+            Ok(c) => c,
+            Err(e) => return self.fail(format!("Keep Awake cannot reach the session bus: {e}")),
+        };
+        match self.awake.take() {
+            Some(cookie) => awake::release(&conn, cookie),
+            None => match awake::hold(&conn) {
+                Ok(cookie) => self.awake = Some(cookie),
+                Err(e) => self.fail(format!("Reprise could not keep the computer awake: {e}")),
+            },
+        }
+        self.push_state();
+    }
+
     fn fail(&mut self, text: String) {
         self.error = Some(MsgBox::new(
             "Power Options",
@@ -533,6 +554,7 @@ impl PowerApp {
                         ..Reply::none()
                     };
                 }
+                tray::TrayMsg::KeepAwake => self.toggle_awake(),
                 tray::TrayMsg::Profile(i) => {
                     if let Some(p) = self.profiles.available.get(i).cloned() {
                         self.set_profile(p);

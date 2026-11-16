@@ -12,21 +12,26 @@ pub const BUS_NAME: &str = "reprise.power";
 pub enum TrayMsg {
     OpenMeter,
     OpenProperties,
+    KeepAwake,
     Exit,
     Profile(usize),
 }
+
+/// The tooltip's line while Keep Awake holds.
+pub const AWAKE_TIP: &str = "Keep Awake is on";
 
 /// What `msg` means while the menu shows `p`'s profiles.
 pub fn translate(msg: Msg, p: &Profiles) -> Option<TrayMsg> {
     match msg {
         Msg::Activate(..) | Msg::SecondaryActivate => Some(TrayMsg::OpenMeter),
-        msg => menu(p).translate(msg),
+        msg => menu(p, false).translate(msg),
     }
 }
 
 /// The tray menu's rows: one radio row per power profile the daemon offers, the active one on, and a
-/// separator under them (none while the daemon is missing); then Open Power Meter, Adjust Power Properties, and Exit.
-pub fn menu(p: &Profiles) -> Rows<TrayMsg> {
+/// separator under them (none while the daemon is missing); then Open Power Meter, Adjust Power
+/// Properties, the Keep Awake check (on while `awake`) and Exit.
+pub fn menu(p: &Profiles, awake: bool) -> Rows<TrayMsg> {
     let mut rows = Rows::default();
     for (i, name) in p.available.iter().enumerate() {
         rows.add(TrayMsg::Profile(i), |id| {
@@ -41,12 +46,16 @@ pub fn menu(p: &Profiles) -> Rows<TrayMsg> {
             Node::row(id, "Adjust Power Properties")
         })
         .separator()
+        .add(TrayMsg::KeepAwake, |id| {
+            Node::toggle(id, "Keep Awake", awake)
+        })
+        .separator()
         .add(TrayMsg::Exit, |id| Node::row(id, "Exit"));
     rows
 }
 
-pub fn menu_nodes(p: &Profiles) -> Vec<Node> {
-    menu(p).into_nodes()
+pub fn menu_nodes(p: &Profiles, awake: bool) -> Vec<Node> {
+    menu(p, awake).into_nodes()
 }
 
 pub fn clock(seconds: u64) -> String {
@@ -80,16 +89,26 @@ pub fn tooltip(p: &Power) -> String {
     }
 }
 
-/// Everything the item shows for a drawn icon (16x16 ARGB big-endian), tooltip, status and power profiles.
-pub fn shown(pixmap: Vec<u8>, tip: String, active: bool, profiles: &Profiles) -> Shown {
+/// Everything the item shows for a drawn icon (16x16 ARGB big-endian), tooltip, status and power
+/// profiles. While Keep Awake holds (`awake`) the item shows and its tooltip says so.
+pub fn shown(
+    pixmap: Vec<u8>,
+    tip: String,
+    active: bool,
+    profiles: &Profiles,
+    awake: bool,
+) -> Shown {
     Shown {
         icon: Icon::Pixmap {
             size: reprisekit::art::powericon::SIZE as i32,
             argb: pixmap,
         },
-        tip,
-        active,
-        nodes: menu_nodes(profiles),
+        tip: match awake {
+            true => format!("{tip}\n{AWAKE_TIP}"),
+            false => tip,
+        },
+        active: active || awake,
+        nodes: menu_nodes(profiles, awake),
     }
 }
 
@@ -109,6 +128,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
         "On AC power".to_string(),
         false,
         &Profiles::default(),
+        false,
     );
     reprisetray::start(config, initial, std::sync::Arc::new(move || waker.wake()))
 }
@@ -190,13 +210,33 @@ mod tests {
 
     #[test]
     fn menu_has_the_meter_properties_and_exit_rows() {
-        let nodes = menu_nodes(&Profiles::default());
+        let nodes = menu_nodes(&Profiles::default(), false);
         let labels: Vec<&str> = nodes.iter().map(|n| n.label.as_str()).collect();
         assert_eq!(
             labels,
-            ["Open Power Meter", "Adjust Power Properties", "", "Exit"]
+            [
+                "Open Power Meter",
+                "Adjust Power Properties",
+                "",
+                "Keep Awake",
+                "",
+                "Exit"
+            ]
         );
         assert!(nodes[2].separator);
+        assert_eq!(nodes[3].toggle, Some(false));
+        assert_eq!(menu_nodes(&Profiles::default(), true)[3].toggle, Some(true));
+    }
+
+    #[test]
+    fn keep_awake_shows_the_item_and_says_so() {
+        let tip = || "On AC power".to_string();
+        let off = shown(Vec::new(), tip(), false, &Profiles::default(), false);
+        assert!(!off.active);
+        assert_eq!(off.tip, "On AC power");
+        let on = shown(Vec::new(), tip(), false, &Profiles::default(), true);
+        assert!(on.active, "shown on a machine without a battery");
+        assert_eq!(on.tip, "On AC power\nKeep Awake is on");
     }
 
     #[test]
@@ -206,7 +246,7 @@ mod tests {
             active: "balanced".into(),
             ..Profiles::default()
         };
-        let nodes = menu_nodes(&p);
+        let nodes = menu_nodes(&p, false);
         let labels: Vec<&str> = nodes.iter().map(|n| n.label.as_str()).collect();
         assert_eq!(
             labels,
@@ -216,6 +256,8 @@ mod tests {
                 "",
                 "Open Power Meter",
                 "Adjust Power Properties",
+                "",
+                "Keep Awake",
                 "",
                 "Exit"
             ]
@@ -249,6 +291,10 @@ mod tests {
         assert_eq!(
             translate(Rows::clicked(&TrayMsg::OpenProperties)),
             Some(TrayMsg::OpenProperties)
+        );
+        assert_eq!(
+            translate(Rows::clicked(&TrayMsg::KeepAwake)),
+            Some(TrayMsg::KeepAwake)
         );
         assert_eq!(
             translate(Rows::clicked(&TrayMsg::Exit)),
