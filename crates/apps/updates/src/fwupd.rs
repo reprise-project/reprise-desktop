@@ -272,6 +272,8 @@ impl Drop for Scratch {
     }
 }
 
+/// Fetches `url` into `to`. A connection that stalls for a minute fails, so a dead server does
+/// not hold the worker; a slow but moving download of a large capsule still completes.
 fn download(url: &str, to: &Path) -> Result<(), String> {
     let out = Command::new("curl")
         .args([
@@ -281,6 +283,12 @@ fn download(url: &str, to: &Path) -> Result<(), String> {
             "--location",
             "--retry",
             "2",
+            "--connect-timeout",
+            "30",
+            "--speed-limit",
+            "1",
+            "--speed-time",
+            "60",
         ])
         .arg("--output")
         .arg(to)
