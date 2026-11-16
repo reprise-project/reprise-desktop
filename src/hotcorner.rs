@@ -17,11 +17,11 @@ impl Default for Corner {
 }
 
 impl Corner {
-    /// The pointer is at `pos` in a layout whose box is `bounds`: true
+    /// The pointer is at `pos` in a layout of `outputs` (their boxes): true
     /// when this motion reaches `corner` while armed. With no corner set
     /// it never fires.
-    pub fn motion(&mut self, corner: HotCorner, pos: (f64, f64), bounds: Rect) -> bool {
-        let Some((cx, cy)) = point(corner, bounds) else {
+    pub fn motion(&mut self, corner: HotCorner, pos: (f64, f64), outputs: &[Rect]) -> bool {
+        let Some((cx, cy)) = point(corner, outputs) else {
             return false;
         };
         let (dx, dy) = ((pos.0 - cx).abs(), (pos.1 - cy).abs());
@@ -37,24 +37,39 @@ impl Corner {
     }
 }
 
-/// The layout's outer corner, so a corner between two outputs never fires.
-fn point(corner: HotCorner, b: Rect) -> Option<(f64, f64)> {
-    let (l, t) = (f64::from(b.x), f64::from(b.y));
-    let (r, btm) = (f64::from(b.right() - 1), f64::from(b.bottom() - 1));
-    Some(match corner {
+/// The layout's outer corner: of the outputs' own corners on that side, the one furthest out
+/// along the diagonal. The pointer stops there on both axes, and a corner between two outputs
+/// never fires.
+fn point(corner: HotCorner, outputs: &[Rect]) -> Option<(f64, f64)> {
+    let (right, bottom) = match corner {
         HotCorner::None => return None,
-        HotCorner::TopLeft => (l, t),
-        HotCorner::TopRight => (r, t),
-        HotCorner::BottomLeft => (l, btm),
-        HotCorner::BottomRight => (r, btm),
-    })
+        HotCorner::TopLeft => (false, false),
+        HotCorner::TopRight => (true, false),
+        HotCorner::BottomLeft => (false, true),
+        HotCorner::BottomRight => (true, true),
+    };
+    let at = |b: &Rect| {
+        let x = if right { b.right() - 1 } else { b.x };
+        let y = if bottom { b.bottom() - 1 } else { b.y };
+        (x, y)
+    };
+    let out = |(x, y): (i32, i32)| {
+        let sx = if right { x } else { -x };
+        let sy = if bottom { y } else { -y };
+        i64::from(sx) + i64::from(sy)
+    };
+    let (x, y) = (outputs.iter())
+        .filter(|b| !b.is_empty())
+        .map(at)
+        .reduce(|a, b| if out(b) > out(a) { b } else { a })?;
+    Some((f64::from(x), f64::from(y)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const B: Rect = Rect::new(0, 0, 1920, 1080);
+    const B: &[Rect] = &[Rect::new(0, 0, 1920, 1080)];
 
     #[test]
     fn fires_once_in_the_corner_and_again_after_leaving_it() {
@@ -92,9 +107,26 @@ mod tests {
 
     #[test]
     fn the_corner_is_the_layout_s_outer_one() {
-        let both = Rect::new(0, 0, 3840, 1080);
+        let both = &[Rect::new(0, 0, 1920, 1080), Rect::new(1920, 0, 1920, 1080)];
         let mut c = Corner::default();
         assert!(!c.motion(HotCorner::TopRight, (1919.0, 0.0), both));
         assert!(c.motion(HotCorner::TopRight, (3839.0, 0.0), both));
+    }
+
+    #[test]
+    fn beside_a_shorter_output_the_corner_is_on_the_outermost_output() {
+        let outputs = &[Rect::new(0, 0, 1920, 1080), Rect::new(1920, 0, 1280, 1024)];
+        let at = |corner| point(corner, outputs).unwrap();
+        assert_eq!(at(HotCorner::BottomRight), (3199.0, 1023.0));
+        assert_eq!(at(HotCorner::BottomLeft), (0.0, 1079.0));
+        assert_eq!(at(HotCorner::TopRight), (3199.0, 0.0));
+        let stacked = &[Rect::new(0, 0, 1920, 1080), Rect::new(0, 1080, 1280, 1024)];
+        assert_eq!(
+            point(HotCorner::BottomRight, stacked),
+            Some((1279.0, 2103.0))
+        );
+        let mut c = Corner::default();
+        assert!(c.motion(HotCorner::BottomRight, (3199.0, 1023.0), outputs));
+        assert_eq!(point(HotCorner::TopLeft, &[]), None);
     }
 }

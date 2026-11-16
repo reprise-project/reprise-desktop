@@ -926,13 +926,12 @@ impl State {
             .any(|o| self.layout_box(Some(o)).contains(x, y))
     }
 
-    /// The box of the desktop's outputs (`console::on_desk`).
-    pub fn desk_box(&self) -> Rect {
+    /// The boxes of the desktop's outputs (`console::on_desk`).
+    pub fn desk_boxes(&self) -> Vec<Rect> {
         (self.scene.outputs().iter())
             .filter(|o| crate::console::on_desk(self, o))
             .map(|o| self.layout_box(Some(o)))
-            .reduce(|a, b| a.union(&b))
-            .unwrap_or_default()
+            .collect()
     }
 
     /// Box of one output in layout coordinates, or of the whole layout for None.
