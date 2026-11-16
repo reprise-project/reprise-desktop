@@ -5,6 +5,7 @@ pub mod front;
 pub mod greeter;
 pub mod handover;
 pub mod machine;
+pub mod refusals;
 pub mod session;
 pub mod throttle;
 pub mod users;

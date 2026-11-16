@@ -579,8 +579,8 @@ client's address:
 - **Per address.** The first three failures are free. The fourth starts a
   2 s back-off, doubling with each further failure up to 60 s. During it the
   address's new connections are closed before TLS, a login already under way
-  from it is rejected without a check, and the journal logs each refusal. A
-  success clears the address, and so do 20 minutes without a failure from it.
+  from it is rejected without a check. A success clears the address, and so
+  do 20 minutes without a failure from it.
 - **Every address.** 10 failures within 10 minutes pause every login for 10
   minutes: no password is checked and the journal says so once. A success
   doesn't clear the failures before it.
@@ -592,6 +592,12 @@ about 2 s; a wrong name, a back-off and the pause are answered at once. A
 connection has 10 s from its TCP accept to send its X.224 request and its TLS
 ClientHello, then 60 s to log in, time for its user to answer a certificate
 prompt; a check in flight when that time runs out is finished first.
+
+A wrong password is logged in full each time. Of the other refusals before a
+login (a back-off, the pause, a full server, a wrong name, a client that
+closes or runs out of time first), the first each minute is logged in full and
+the rest are counted by kind in one line a minute, so a peer looping
+connections can't use up the user journal's rate limit.
 
 Up to `max_viewers` connections are served at once, counting those still
 logging in. One more is closed at once, before TLS, and never touches the
