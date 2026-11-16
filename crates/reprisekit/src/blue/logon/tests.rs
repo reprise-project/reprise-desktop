@@ -307,6 +307,24 @@ fn contrast(a: u32, b: u32) -> f64 {
 }
 
 #[test]
+fn every_schemes_text_is_4_5_to_1_on_the_glow_the_field_and_a_hot_tile() {
+    for v in Variant::ALL {
+        let sc = v.scheme();
+        for (what, ground) in [
+            ("glow", sc.welcome_glow),
+            ("field", sc.welcome_field),
+            ("hot tile", sc.welcome_tile_hot),
+        ] {
+            let ratio = sc.welcome_text.contrast(ground);
+            assert!(
+                ratio >= 4.5,
+                "{v:?}: the text is 4.5:1 on the {what}, got {ratio:.2}"
+            );
+        }
+    }
+}
+
+#[test]
 fn over_a_bright_or_dark_picture_the_text_reads_with_no_dark_rim() {
     crate::pins::fonts();
     let mut m = Logon::new(Interface::Blue, users(), true, None);
