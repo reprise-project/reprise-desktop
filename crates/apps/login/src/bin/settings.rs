@@ -1,5 +1,14 @@
 //! `pkexec reprise-login-settings`: replaces `MACHINE_CONFIG` and `BACKGROUND_PICTURE` with the
-//! save request on stdin. Its exits are listed in docs/programs.md.
+//! save request on stdin, which Settings > Login Manager sends.
+//!
+//! The request is an `expect TAG` line, TAG being the `file_tag` of the file the settings were
+//! read from, then for a new background a `picture LENGTH` line and the picture's bytes, then
+//! the settings as TOML (`repriselogin::machine::save_request`). Holding the 0600
+//! `.login.toml.lock` beside the file, it writes the file only while its tag is still TAG,
+//! stores the picture as a PNG, and reloads `reprise-login.service` when it runs.
+//!
+//! Exits: 0 saved; 2 refused, a reason per stderr line; 3 the file changed since it was read;
+//! 1 any other failure, another save holding the lock for 5 s included.
 
 use std::ffi::CString;
 use std::io::Read as _;

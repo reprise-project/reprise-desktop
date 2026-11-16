@@ -1,7 +1,17 @@
 //! reprise-record: records a screen, or an area of it, and with `--sound` what plays, into an MP4
 //! file the compositor made and handed it open, until SIGINT or SIGTERM or until the screen goes.
 //! On failure, or exiting [`ENDED_EARLY`], its last line on stderr is the reason. Its settings are
-//! `[recording]`; with `--probe` it prints what codes here and exits.
+//! `[recording]`.
+//!
+//! Exits: 0 once the file is closed; [`ENDED_EARLY`] when the recording stopped by itself after
+//! its file was started (the screen changed size or format, the encoder or a write failed, or
+//! frames the encoder cannot read lasted `UNREADABLE_FOR`), the file closed and playable; 1 on
+//! any other failure, a file started but not closed included.
+//!
+//! `--probe` prints what codes here and exits 0, or 1 when FFmpeg fails to start: a `video CODEC
+//! ENCODER` line for each encoder choice that codes a test frame in that codec (`video h265
+//! vaapi`), then an `audio CODEC` line for each audio codec the MP4 muxer takes (`audio opus`).
+//! Settings greys what it leaves out.
 
 mod args;
 mod fallback;
