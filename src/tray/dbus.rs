@@ -358,6 +358,7 @@ enum Wake {
     ItemChanged(String),
     Owner {
         name: String,
+        old_owner: String,
         new_owner: String,
     },
     /// A read's item, and whether its named icons were decoded.
@@ -446,6 +447,8 @@ struct Loop {
     senders: Arc<Mutex<Senders>>,
     responding: Arc<Mutex<Responding>>,
     identities: Arc<Identities>,
+    /// Our names another connection took: the connection, by name.
+    taken: HashMap<String, String>,
 }
 
 impl Loop {
@@ -842,6 +845,24 @@ impl Loop {
         }
     }
 
+    /// One of the [`HOSTED`] names changed hands. A connection taking one of ours is logged, and
+    /// once it lets the name go, every name is asked for again.
+    async fn hosted_moved(&mut self, name: &str, old_owner: &str, new_owner: &str) {
+        let ours = self
+            .conn
+            .unique_name()
+            .is_some_and(|u| u.as_str() == old_owner);
+        if ours && !new_owner.is_empty() {
+            log::warn!("tray: {new_owner} took {name}; asking again once it lets go");
+            self.taken.insert(name.into(), new_owner.into());
+        } else if self.taken.get(name).is_some_and(|t| t == old_owner) {
+            self.taken.remove(name);
+            if new_owner.is_empty() {
+                self.retake_names().await;
+            }
+        }
+    }
+
     /// Reads every item again, for `IconPixmap` entries and named icons at `sizes`.
     fn resize_icons(&mut self, sizes: Vec<i32>) {
         *lock(&self.sizes) = sizes;
@@ -941,9 +962,16 @@ impl Loop {
                     item,
                     decoded,
                 } => self.fetched(key, fetch, item, decoded).await,
-                Wake::Owner { name, new_owner } => {
+                Wake::Owner {
+                    name,
+                    old_owner,
+                    new_owner,
+                } => {
                     if new_owner.is_empty() {
                         self.left(&name).await;
+                    }
+                    if HOSTED.contains(&name.as_str()) {
+                        self.hosted_moved(&name, &old_owner, &new_owner).await;
                     }
                 }
             }
@@ -1005,6 +1033,15 @@ fn pumped<T: Send + 'static>(
 fn load_icons(theme: &str) -> IconCache {
     IconCache::new(IconTheme::load(theme, &IconTheme::default_roots()))
 }
+
+/// The well-known names the tray asks for.
+const HOSTED: [&str; 5] = [
+    NOTIFY_NAME,
+    SETTINGS_NAME,
+    reprisebus::tray::NAME,
+    SCREENSAVER_NAME,
+    WATCHER_NAME,
+];
 
 /// How the tray asks for its well-known names. A session that defers to another Reprise session
 /// of the user takes only names nobody holds and lets none go, so it never takes that session's
@@ -1119,8 +1156,12 @@ async fn setup(kept: &Kept, address: Option<&str>) -> Result<Loop, String> {
         .await
         .map_err(|e| format!("DBus proxy: {e}"))?;
     if let Some(s) = signal_stream(&dbus, "NameOwnerChanged", |m| {
-        let (name, _old, new_owner): (String, String, String) = m.body().deserialize().ok()?;
-        Some(Wake::Owner { name, new_owner })
+        let (name, old_owner, new_owner): (String, String, String) = m.body().deserialize().ok()?;
+        Some(Wake::Owner {
+            name,
+            old_owner,
+            new_owner,
+        })
     })
     .await
     {
@@ -1267,6 +1308,7 @@ async fn setup(kept: &Kept, address: Option<&str>) -> Result<Loop, String> {
         senders,
         responding,
         identities,
+        taken: HashMap::new(),
     })
 }
 
