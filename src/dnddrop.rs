@@ -1179,14 +1179,7 @@ mod tests {
                     ..over
                 },
             );
-            let end = std::time::Instant::now() + Duration::from_secs(3);
-            while list.heard.lock().unwrap().is_empty() {
-                assert!(
-                    std::time::Instant::now() < end,
-                    "sandboxed {sandboxed}: the drop never ended"
-                );
-                h.run_for(5);
-            }
+            h.until("the drop ends", |_| !list.heard.lock().unwrap().is_empty());
             let moved = desk.join("id_ed25519");
             if sandboxed {
                 assert_eq!(*list.heard.lock().unwrap(), ["cancel"]);
@@ -1194,10 +1187,10 @@ mod tests {
                 assert!(!moved.exists(), "nothing lands on the desktop");
             } else {
                 assert_eq!(*list.heard.lock().unwrap(), ["finished"]);
-                assert!(
-                    moved.exists(),
-                    "a host X11 program's file moves to the desktop"
-                );
+                // The source hears the drop end before the move runs on a file job.
+                h.until("a host X11 program's file moves to the desktop", |_| {
+                    moved.exists()
+                });
                 std::fs::remove_file(moved).unwrap();
             }
         }
