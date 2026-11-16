@@ -20,32 +20,25 @@ fn png(w: u32, h: u32) -> Vec<u8> {
 }
 
 fn read_at(path: &Path, route: Route) -> Loaded {
-    let fonts = FontSampler {
+    let jailed = Jailed {
         runner: None,
         exe: "/nonexistent".into(),
     };
-    read(
-        path,
-        route,
-        &Decoders::default_set(),
-        None,
-        &fonts,
-        (400, 300),
-        1,
-    )
+    read(path, route, None, &jailed, (400, 300), 1)
 }
 
-/// A sampler whose helper is a script copying `sample` to its output, run unconfined in `dir`.
-fn fake_sampler(dir: &Path, sample: &Path) -> FontSampler {
+/// A helper script copying `sample` to its output, run unconfined in `dir`.
+fn fake_helper(dir: &Path, sample: &Path) -> Jailed {
     use std::os::unix::fs::PermissionsExt;
     let exe = dir.join("helper");
     let body = format!(
-        "#!/bin/sh\n[ \"$1\" = --font-sample ] && [ \"$4\" = 1 ] && cp '{}' \"$6\"\n",
+        "#!/bin/sh\ncase \"$1\" in\n--font-sample) [ \"$4\" = 1 ] && cp '{0}' \"$6\" ;;\n\
+         --jxl-thumbnail) cp '{0}' \"$4\" ;;\nesac\n",
         sample.display()
     );
     std::fs::write(&exe, body).expect("write");
     std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    FontSampler {
+    Jailed {
         runner: Some(reprisefs::thumbnailers::Runner::new(
             dir,
             std::time::Duration::from_secs(5),
@@ -62,24 +55,38 @@ fn a_font_sample_is_drawn_by_the_helper_and_none_without_a_jail() {
     std::fs::write(&sample, png(120, 80)).expect("write");
     let font = dir.path().join("face.ttf");
     std::fs::write(&font, "not a font Explorer ever parses").expect("write");
-    let mut fonts = fake_sampler(dir.path(), &sample);
-    let at = |fonts: &FontSampler| {
-        read(
-            &font,
-            Route::Font,
-            &Decoders::default_set(),
-            None,
-            fonts,
-            (400, 300),
-            1,
-        )
-    };
-    match at(&fonts) {
+    let mut jailed = fake_helper(dir.path(), &sample);
+    let at = |jailed: &Jailed| read(&font, Route::Font, None, jailed, (400, 300), 1);
+    match at(&jailed) {
         Loaded::Picture(c) => assert_eq!((c.width, c.height), (120, 80)),
         _ => panic!("the helper's sample lands"),
     }
-    fonts.runner = None;
-    assert!(matches!(at(&fonts), Loaded::Nothing), "no jail, no sample");
+    jailed.runner = None;
+    assert!(matches!(at(&jailed), Loaded::Nothing), "no jail, no sample");
+}
+
+#[test]
+fn a_jpeg_xl_is_drawn_by_the_helper_and_none_without_a_jail() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let sample = dir.path().join("sample.png");
+    std::fs::write(&sample, png(120, 80)).expect("write");
+    let photo = dir.path().join("red.png");
+    let red_2x2_jxl = [
+        0xff, 0x0a, 0x08, 0x10, 0xb0, 0x12, 0x08, 0x00, 0x10, 0x00, 0x30, 0x00, 0x4b, 0x18, 0x8b,
+        0x15, 0xc2, 0x49, 0x41, 0x4e, 0x7f, 0x00, 0xf4, 0x07,
+    ];
+    std::fs::write(&photo, red_2x2_jxl).expect("write");
+    let mut jailed = fake_helper(dir.path(), &sample);
+    let at = |jailed: &Jailed| read(&photo, Route::Picture, None, jailed, (400, 300), 1);
+    match at(&jailed) {
+        Loaded::Picture(c) => assert_eq!((c.width, c.height), (120, 80)),
+        _ => panic!("the helper's picture lands"),
+    }
+    jailed.runner = None;
+    assert!(
+        matches!(at(&jailed), Loaded::Nothing),
+        "no jail, no picture"
+    );
 }
 
 #[test]

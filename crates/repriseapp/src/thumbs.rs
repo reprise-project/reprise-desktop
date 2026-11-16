@@ -312,7 +312,7 @@ fn jxl_helper(helper: &std::path::Path) -> Option<Thumbnailer> {
 /// The picture file at `path` an app named, fitted inside `max`: a JPEG XL by [`JXL_FLAG`] in the
 /// thumbnailers' jail (none without one), anything else by [`Decoders::without_jxl`].
 pub fn picture(path: &std::path::Path, max: (u32, u32)) -> Option<Canvas> {
-    picture_with(
+    picture_in(
         Runner::jailed().as_ref(),
         thumbpipe::PROGRAM.as_ref(),
         path,
@@ -320,7 +320,8 @@ pub fn picture(path: &std::path::Path, max: (u32, u32)) -> Option<Canvas> {
     )
 }
 
-fn picture_with(
+/// [`picture`] with `runner` (None: no jail) running `helper`.
+pub fn picture_in(
     runner: Option<&Runner>,
     helper: &std::path::Path,
     path: &std::path::Path,
@@ -1457,12 +1458,12 @@ mod tests {
             Duration::from_secs(5),
             reprisefs::thumbnailers::Jail::Bare,
         );
-        let c = picture_with(Some(&runner), &helper, &photo, (60, 60)).expect("the helper's");
+        let c = picture_in(Some(&runner), &helper, &photo, (60, 60)).expect("the helper's");
         assert_eq!((c.width, c.height), (60, 30));
         let asked = std::fs::read_to_string(&runs).unwrap();
         assert!(asked.starts_with(&format!("{JXL_FLAG} 60 {} ", photo.display())));
-        assert!(picture_with(None, &helper, &photo, (60, 60)).is_none());
-        let c = picture_with(None, &helper, &wide, (60, 60)).expect("decoded here");
+        assert!(picture_in(None, &helper, &photo, (60, 60)).is_none());
+        let c = picture_in(None, &helper, &wide, (60, 60)).expect("decoded here");
         assert_eq!((c.width, c.height), (60, 30));
         assert_eq!(std::fs::read_to_string(&runs).unwrap().lines().count(), 1);
     }

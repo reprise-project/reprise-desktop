@@ -805,10 +805,11 @@ ends, so stop the share first.
   their installed `.thumbnailer` with no click, so each runs under
   bubblewrap: new namespaces, `/usr` and the input file read-only, a scratch
   folder its one writable place, no home, session bus or display socket, a
-  memory cap and a deadline. JPEG XL thumbnails and the Account prompt's
-  picture decode in the same jail, and the portal's other prompts never
-  decode JPEG XL; Image Viewer decodes it in-process. Without bubblewrap
-  neither runs and the file keeps its icon. The other built-in decoders run in the
+  memory cap and a deadline. JPEG XL thumbnails, Explorer's Space preview
+  and the Account prompt's picture decode in the same jail, and the
+  portal's other prompts never decode JPEG XL; Image Viewer is the one
+  in-process JPEG XL decoder. Without bubblewrap none of these runs and the
+  file keeps its icon. The other built-in decoders run in the
   process showing the folder, and one that panics marks its file failed.
 - **App scopes.** A program started from a desktop entry runs in a systemd
   scope `app-reprise-<app id>-<n>.scope`, for identification and cleanup,
