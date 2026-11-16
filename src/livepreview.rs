@@ -238,6 +238,48 @@ impl State {
         ids
     }
 
+    /// Live pictures for `cells`, a window and its well each, under `parent` at `scale`: a picture
+    /// of `old` already showing that window there is kept, the rest are made together
+    /// ([`State::thumbs_create`]), and what no cell kept is dropped after.
+    pub fn place_thumbs(
+        &mut self,
+        old: Vec<Option<ThumbId>>,
+        parent: TreeId,
+        cells: &[Option<(WindowId, Rect)>],
+        scale: i32,
+    ) -> Vec<Option<ThumbId>> {
+        let mut old = old;
+        let mut thumbs = Vec::with_capacity(cells.len());
+        let mut wants = Vec::new();
+        for (i, &cell) in cells.iter().enumerate() {
+            let Some((w, well)) = cell else {
+                thumbs.push(None);
+                continue;
+            };
+            let kept = old
+                .iter()
+                .position(|t| t.is_some_and(|id| self.thumb_shows(id, w, well, scale)))
+                .and_then(|i| old[i].take());
+            if kept.is_none() {
+                wants.push((i, (w, well)));
+            }
+            thumbs.push(kept);
+        }
+        if !wants.is_empty() {
+            let (at, wants): (Vec<usize>, Vec<_>) = wants.into_iter().unzip();
+            for (i, id) in at
+                .into_iter()
+                .zip(self.thumbs_create(parent, &wants, scale))
+            {
+                thumbs[i] = id;
+            }
+        }
+        for id in old.into_iter().flatten() {
+            self.thumb_drop(id);
+        }
+        thumbs
+    }
+
     /// Show the whole of `w` live, `px` device pixels large, in `slot`,
     /// and draw its first picture now. None when the window has nothing to
     /// show.
@@ -312,6 +354,14 @@ impl State {
                 && matches!(t.show, Show::Well { well: at, scale: s, .. }
                     if at == well && s == scale.max(1))
         })
+    }
+
+    /// The shared texture picture `id` is a cell of.
+    #[cfg(test)]
+    pub(crate) fn thumb_sheet(&self, id: ThumbId) -> Option<u64> {
+        (self.live_previews.thumbs.iter())
+            .find(|t| t.id == id)?
+            .sheet
     }
 
     /// Whether picture `id` waits to draw what its window committed.
