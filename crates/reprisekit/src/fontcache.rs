@@ -8,11 +8,12 @@ use std::path::{Path, PathBuf};
 
 const MAGIC: &[u8; 4] = b"RPF1";
 
-/// The system fonts as `Database::load_system_fonts` finds them, through the cache.
-pub(crate) fn system_database() -> Database {
+/// The system fonts as `Database::load_system_fonts` finds them, through the cache, with the
+/// stamp they were scanned at.
+pub(crate) fn system_database() -> (Database, Stamp) {
     let path = cache_path();
-    if let Some(db) = path.as_deref().and_then(|p| load(p, &env_key())) {
-        return db;
+    if let Some(found) = path.as_deref().and_then(|p| load(p, &env_key())) {
+        return found;
     }
     // Stamped before the scan: a font installed meanwhile makes the next start scan again.
     let stamp = Stamp::new(env_key(), &watched(&fontconfig()));
@@ -23,7 +24,7 @@ pub(crate) fn system_database() -> Database {
     {
         log::warn!("font cache {}: {e}", path.display());
     }
-    db
+    (db, stamp)
 }
 
 fn cache_path() -> Option<PathBuf> {
@@ -109,7 +110,7 @@ fn mtime(path: &Path) -> Mtime {
 
 /// The modification times a scan was made at; a missing path is stamped as missing.
 #[derive(Debug, PartialEq)]
-struct Stamp {
+pub(crate) struct Stamp {
     env: String,
     paths: Vec<(PathBuf, Mtime)>,
 }
@@ -134,6 +135,12 @@ impl Stamp {
 
     fn holds(&self, env: &str) -> bool {
         self.env == env && self.paths.iter().all(|(p, t)| mtime(p) == *t)
+    }
+
+    /// Whether a scan now would find what this one did: no font directory, fontconfig file or
+    /// environment naming them changed.
+    pub(crate) fn current(&self) -> bool {
+        self.holds(&env_key())
     }
 }
 
@@ -168,8 +175,8 @@ const GENERIC: [Family<'static>; 5] = [
     Family::Monospace,
 ];
 
-/// The database `path` holds when its stamp still holds under `env`.
-fn load(path: &Path, env: &str) -> Option<Database> {
+/// The database `path` holds, with its stamp, when the stamp still holds under `env`.
+fn load(path: &Path, env: &str) -> Option<(Database, Stamp)> {
     let bytes = std::fs::read(path).ok()?;
     let mut r = Reader(&bytes);
     if r.take(4)? != MAGIC {
@@ -185,12 +192,11 @@ fn load(path: &Path, env: &str) -> Option<Database> {
         };
         paths.push((p, t));
     }
-    if !(Stamp {
+    let stamp = Stamp {
         env: env_was,
         paths,
-    })
-    .holds(env)
-    {
+    };
+    if !stamp.holds(env) {
         return None;
     }
     let mut db = Database::new();
@@ -227,7 +233,7 @@ fn load(path: &Path, env: &str) -> Option<Database> {
             monospaced,
         });
     }
-    r.0.is_empty().then_some(db)
+    r.0.is_empty().then_some((db, stamp))
 }
 
 fn stretch(n: u16) -> Option<Stretch> {
@@ -425,7 +431,7 @@ mod tests {
     fn a_stored_scan_loads_back_face_for_face() {
         let dir = scratch("roundtrip");
         let (path, db) = stored(&dir);
-        let back = load(&path, "env").expect("an unchanged stamp holds");
+        let (back, _) = load(&path, "env").expect("an unchanged stamp holds");
         assert_eq!(rows(&back), rows(&db));
         for f in &GENERIC {
             assert_eq!(back.family_name(f), db.family_name(f));

@@ -729,6 +729,14 @@ fn font_database_is_rescanned_only_for_a_missing_preferred_family() {
 }
 
 #[test]
+fn a_missing_family_keeps_the_database_while_the_font_directories_hold() {
+    let missing = ["No Such Font Family".to_string()];
+    let first = system_fonts(&missing);
+    let again = system_fonts(&missing);
+    assert!(std::sync::Arc::ptr_eq(&first, &again), "not read again");
+}
+
+#[test]
 fn span_is_the_prefix_width_and_the_char_advance() {
     let r = renderer();
     let text = "Séarch";

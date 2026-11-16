@@ -1,4 +1,5 @@
 use super::{LoadedFace, TextRenderer};
+use crate::fontcache::Stamp;
 use crate::mutex::lock;
 use crate::theme::FontConfig;
 use fontdb::{Database, Family, Query, Weight};
@@ -102,18 +103,20 @@ pub(super) fn full_hinting(lib: &Library) {
 }
 
 /// The system font database, shared by every renderer and cached on disk ([`crate::fontcache`]);
-/// read again when it lacks the preferred family.
+/// read again when it lacks the preferred family and a font directory changed since.
 pub(crate) fn system_fonts(families: &[String]) -> Arc<Database> {
-    static FONTS: Mutex<Option<Arc<Database>>> = Mutex::new(None);
+    static FONTS: Mutex<Option<(Arc<Database>, Stamp)>> = Mutex::new(None);
     let mut fonts = lock(&FONTS);
-    if let Some(db) = fonts.as_ref().filter(|db| !needs_scan(db, families)) {
+    if let Some((db, stamp)) = fonts.as_ref()
+        && (!needs_scan(db, families) || stamp.current())
+    {
         return db.clone();
     }
-    let mut db = crate::fontcache::system_database();
+    let (mut db, stamp) = crate::fontcache::system_database();
     if let Some(dir) = test_fonts_dir() {
         load_test_fonts(&mut db, &dir);
     }
-    fonts.insert(Arc::new(db)).clone()
+    fonts.insert((Arc::new(db), stamp)).0.clone()
 }
 
 /// The family names of the fonts installed, sorted, each once; a family whose name starts with a

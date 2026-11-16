@@ -10,6 +10,7 @@ use crate::look::widgets::{draw_field_frame, draw_focus_ring, draw_scrollbar};
 use crate::metrics::ControlMetrics;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
+use std::fmt::Write;
 
 pub mod view;
 pub use view::*;
@@ -62,30 +63,56 @@ pub fn code(c: char) -> String {
     format!("U+{:04X}", c as u32)
 }
 
-/// Whether `c` answers search `query`: one character finds itself in either case, a code
-/// (`U+20AC`, `20ac`) its character, anything else the characters whose names hold every word.
-pub fn matches(c: char, query: &str) -> bool {
-    let query = query.trim();
-    let mut one = query.chars();
-    if let (Some(q), None) = (one.next(), one.next()) {
-        return c == q || c.to_lowercase().eq(q.to_lowercase());
+/// A search parsed once for every character it is matched against: one character finds itself in
+/// either case, a code (`U+20AC`, `20ac`) its character, anything else the characters whose names
+/// hold every word.
+struct Search {
+    one: Option<char>,
+    code: Option<u32>,
+    words: Vec<String>,
+}
+
+impl Search {
+    fn new(query: &str) -> Search {
+        let query = query.trim();
+        let mut chars = query.chars();
+        let one = match (chars.next(), chars.next()) {
+            (Some(q), None) => Some(q),
+            _ => None,
+        };
+        let hex = query
+            .strip_prefix("U+")
+            .or_else(|| query.strip_prefix("u+"))
+            .unwrap_or(query);
+        let code = (hex.len() >= 2)
+            .then(|| u32::from_str_radix(hex, 16).ok())
+            .flatten();
+        let words = query
+            .to_uppercase()
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect();
+        Search { one, code, words }
     }
-    let hex = query
-        .strip_prefix("U+")
-        .or_else(|| query.strip_prefix("u+"))
-        .unwrap_or(query);
-    if hex.len() >= 2
-        && let Ok(v) = u32::from_str_radix(hex, 16)
-        && v == c as u32
-    {
-        return true;
+
+    /// Whether `c` answers the search; `name` is scratch room for `c`'s Unicode name.
+    fn matches(&self, c: char, name: &mut String) -> bool {
+        if let Some(q) = self.one {
+            return c == q || c.to_lowercase().eq(q.to_lowercase());
+        }
+        if self.code == Some(c as u32) {
+            return true;
+        }
+        if self.words.is_empty() {
+            return false;
+        }
+        let Some(n) = unicode_names2::name(c) else {
+            return false;
+        };
+        name.clear();
+        let _ = write!(name, "{n}");
+        self.words.iter().all(|w| name.contains(w.as_str()))
     }
-    let Some(name) = name(c) else {
-        return false;
-    };
-    let upper = query.to_uppercase();
-    let mut words = upper.split_whitespace().peekable();
-    words.peek().is_some() && words.all(|w| name.contains(w))
 }
 
 /// A move of the pick in the grid.
@@ -156,13 +183,14 @@ impl CharMap {
 
     fn refilter(&mut self, keep: Option<char>) {
         let block = self.block.map(|b| self.blocks[b]);
-        let query = self.query.trim();
+        let search = (!self.query.trim().is_empty()).then(|| Search::new(&self.query));
+        let mut name = String::new();
         self.shown = self
             .chars
             .iter()
             .copied()
             .filter(|&c| block.is_none_or(|b| b.holds(c)))
-            .filter(|&c| query.is_empty() || matches(c, query))
+            .filter(|&c| search.as_ref().is_none_or(|s| s.matches(c, &mut name)))
             .collect();
         self.selected = keep
             .and_then(|k| self.shown.iter().position(|&c| c == k))
