@@ -217,7 +217,7 @@ async fn read_item(
     let (key, title, files, saved_icon) = match &identity {
         AppIdentity::Host { .. } => {
             let program = pid.and_then(program_name);
-            let key = item_key(sni_id.as_deref(), program.as_deref(), bus);
+            let key = item_key(sni_id.as_deref(), program.as_deref(), title.as_deref(), bus);
             (key, title, IconFiles::Host, icon_name.clone())
         }
         AppIdentity::Sandboxed { app_id } => {
@@ -229,7 +229,12 @@ async fn read_item(
             let (name, icon) = entry.map_or((app_id.clone(), None), |e| (e.name, e.icon));
             (app_id.clone(), Some(name), files, icon)
         }
-        AppIdentity::Unknown => (item_key(None, None, bus), None, IconFiles::Refused, None),
+        AppIdentity::Unknown => (
+            item_key(None, None, None, bus),
+            None,
+            IconFiles::Refused,
+            None,
+        ),
     };
     let (title, tooltip) = item_texts(title, tip);
     let item = TrayItem {
@@ -269,14 +274,34 @@ fn sandbox_files(files: Files, app_id: &str) -> IconFiles {
     }
 }
 
-fn item_key(sni_id: Option<&str>, program: Option<&str>, bus: &str) -> String {
-    let key = [sni_id, program]
-        .into_iter()
-        .flatten()
-        .map(str::trim)
-        .find(|s| !s.is_empty())
-        .unwrap_or(bus);
+/// What Customize remembers a host item by: its `Id`, else its program's name, else its bus name.
+/// An `Id` that names no app goes with the program's name, else the title.
+pub(super) fn item_key(
+    sni_id: Option<&str>,
+    program: Option<&str>,
+    title: Option<&str>,
+    bus: &str,
+) -> String {
+    let key = match given(sni_id) {
+        Some(id) if shared_id(id) => match given(program).or(given(title)) {
+            Some(app) => format!("{app} {id}"),
+            None => id.to_string(),
+        },
+        Some(id) => id.to_string(),
+        None => given(program).unwrap_or(bus).to_string(),
+    };
     key.chars().take(TIP_CHARS).collect()
+}
+
+fn given(s: Option<&str>) -> Option<&str> {
+    s.map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// The `Id` Chromium and every Electron app give a process's icons: `chrome_status_icon_<n>`,
+/// counted from 1 in each process.
+fn shared_id(id: &str) -> bool {
+    id.strip_prefix("chrome_status_icon_")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn program_name(pid: i32) -> Option<String> {

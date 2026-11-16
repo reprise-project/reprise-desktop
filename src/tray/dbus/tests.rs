@@ -1,4 +1,4 @@
-use super::item::{Pixmaps, ToolTip, decode_names, icon_ref, item_texts};
+use super::item::{Pixmaps, ToolTip, decode_names, icon_ref, item_key, item_texts};
 use super::menu::{LABEL_CHARS, MENU_ROWS, parse_layout};
 use super::notifications::{
     CAPABILITIES, action_icons, as_sent_by, notification_icons, picture_file,
@@ -2624,4 +2624,30 @@ fn a_sandboxed_peer_cannot_turn_the_computer_off_or_restart_it() {
         "a host program is answered"
     );
     let _ = std::fs::remove_dir_all(&proc);
+}
+
+#[test]
+fn chromium_items_are_told_apart_by_program_and_other_ids_kept() {
+    let chrome = Some("chrome_status_icon_1");
+    let slack = item_key(chrome, Some("slack"), Some("Slack"), ":1.5");
+    let discord = item_key(chrome, Some("Discord"), Some("Discord"), ":1.6");
+    assert_ne!(slack, discord, "two Electron apps get two keys");
+    assert_eq!(slack, "slack chrome_status_icon_1");
+    assert_eq!(
+        item_key(chrome, None, Some("Signal"), ":1.7"),
+        "Signal chrome_status_icon_1",
+        "the title when the program is unknown"
+    );
+    assert_eq!(
+        item_key(Some("nm-applet"), Some("nm-applet"), None, ":1.8"),
+        "nm-applet",
+        "an app's own Id stays the key"
+    );
+    assert_eq!(
+        item_key(Some("chrome_status_icon_"), Some("x"), None, ":1.9"),
+        "chrome_status_icon_",
+        "only a numbered Id is Chromium's"
+    );
+    assert_eq!(item_key(None, Some("foo"), None, ":1.9"), "foo");
+    assert_eq!(item_key(None, None, None, ":1.9"), ":1.9");
 }
