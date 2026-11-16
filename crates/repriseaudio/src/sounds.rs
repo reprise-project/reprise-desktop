@@ -3,7 +3,7 @@
 use log::warn;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,7 +23,10 @@ const EXTENSIONS: [&str; 3] = ["oga", "ogg", "wav"];
 /// A file that has not finished playing by then is cut off.
 const MAX_PLAY: Duration = Duration::from_secs(10);
 
-static PLAYING: AtomicBool = AtomicBool::new(false);
+/// When the sound playing now started; a slot older than [`MAX_PLAY`] plus [`STUCK_GRACE`] is
+/// free, since its thread is stuck (a sound file on a dead mount blocks its `is_file`).
+static PLAYING: Mutex<Option<Instant>> = Mutex::new(None);
+const STUCK_GRACE: Duration = Duration::from_secs(5);
 
 /// A name or theme that cannot leave the sounds directory.
 fn safe_name(s: &str) -> bool {
@@ -125,7 +128,11 @@ pub fn resolve(dirs: &[PathBuf], theme: &str, name: &str) -> Option<PathBuf> {
 /// Play `sound` from `theme` on a thread of its own; one plays at a time and a sound asked for while
 /// another plays is skipped.
 pub fn play(sound: Sound, theme: String) {
-    if PLAYING.swap(true, Ordering::AcqRel) {
+    let started = Instant::now();
+    if !take_slot(
+        &mut PLAYING.lock().unwrap_or_else(|e| e.into_inner()),
+        started,
+    ) {
         return;
     }
     let spawned = std::thread::Builder::new()
@@ -138,10 +145,28 @@ pub fn play(sound: Sound, theme: String) {
             if let Some(path) = path {
                 run(&path);
             }
-            PLAYING.store(false, Ordering::Release);
+            free_slot(started);
         });
     if spawned.is_err() {
-        PLAYING.store(false, Ordering::Release);
+        free_slot(started);
+    }
+}
+
+/// Take the slot `busy` at `now` when no sound holds it or the one that does is stuck.
+fn take_slot(busy: &mut Option<Instant>, now: Instant) -> bool {
+    let free =
+        busy.is_none_or(|since| now.saturating_duration_since(since) > MAX_PLAY + STUCK_GRACE);
+    if free {
+        *busy = Some(now);
+    }
+    free
+}
+
+/// Free the slot the sound started at `started` took, unless a later sound took it over.
+fn free_slot(started: Instant) {
+    let mut busy = PLAYING.lock().unwrap_or_else(|e| e.into_inner());
+    if *busy == Some(started) {
+        *busy = None;
     }
 }
 
@@ -189,6 +214,17 @@ mod tests {
             std::fs::write(&path, "").unwrap();
         }
         root
+    }
+
+    #[test]
+    fn a_sound_is_skipped_while_another_plays_until_that_one_is_stuck() {
+        let t0 = Instant::now();
+        let mut busy = None;
+        assert!(take_slot(&mut busy, t0));
+        assert!(!take_slot(&mut busy, t0 + MAX_PLAY), "still playing");
+        let stuck = t0 + MAX_PLAY + STUCK_GRACE + Duration::from_millis(1);
+        assert!(take_slot(&mut busy, stuck));
+        assert_eq!(busy, Some(stuck));
     }
 
     #[test]
