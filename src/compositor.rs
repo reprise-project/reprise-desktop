@@ -216,6 +216,7 @@ pub struct State {
     pub dnd: crate::dnd::Dnd,
     /// The desktop's icon drags and the drops' file work (`dragview`).
     pub drags: crate::dragview::Drags,
+    pub filejobs: crate::filejobs::FileJobs,
     /// The windows client drags carry (`toplevelsdrag`).
     pub toplevel_drags: crate::toplevelsdrag::ToplevelDrags,
     pub seat_state: SeatState<State>,
@@ -671,6 +672,7 @@ impl State {
             clip,
             dnd: Default::default(),
             drags: Default::default(),
+            filejobs: Default::default(),
             toplevel_drags: Default::default(),
             globals: Globals {
                 xdg_decoration: XdgDecorationState::new::<State>(&dh),

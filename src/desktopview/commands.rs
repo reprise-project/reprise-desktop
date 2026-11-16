@@ -19,20 +19,18 @@ impl State {
         let Some(view) = self.desktop.as_ref() else {
             return;
         };
-        let existing: Vec<String> = view.entries.iter().map(|e| e.name.clone()).collect();
         let sources = self.aimed_sources(index, true);
         let beside = view.cells.get(index).map(|c| (c.x, c.y));
-        self.send_sources_to(row, &sources, &existing, beside);
+        self.send_sources_to(row, &sources, beside);
     }
 
     /// Send To row `row` (of the rows the submenu last listed) for `sources`:
-    /// a zip named apart from `existing`, a desktop shortcut on the cell
-    /// nearest `beside` (else the first free one), a mail, a copy or a share to a phone.
+    /// a zip, a desktop shortcut on the cell nearest `beside` (else the first
+    /// free one), a mail, a copy or a share to a phone.
     pub(crate) fn send_sources_to(
         &mut self,
         row: usize,
         sources: &[crate::dragview::DragSource],
-        existing: &[String],
         beside: Option<(i32, i32)>,
     ) {
         use reprisefs::sendto::SendTo;
@@ -44,11 +42,7 @@ impl State {
         };
         let paths: Vec<PathBuf> = sources.iter().map(|s| s.path().to_path_buf()).collect();
         match dest {
-            SendTo::Zip => {
-                if let Some(c) = reprisefs::sendto::zip_target(&paths, existing) {
-                    self.start_zip(c);
-                }
-            }
+            SendTo::Zip => self.zip_files(paths),
             SendTo::DesktopShortcut => {
                 let area = self.desktop_area();
                 let (x, y) = beside.unwrap_or((area.x, area.y));
@@ -609,7 +603,7 @@ impl State {
                 }
             }
             Dc::BinProperties => self.open_bin_properties(),
-            Dc::EmptyBin => self.ask_empty_bin(),
+            Dc::EmptyBin => self.empty_bin(),
         }
     }
 }

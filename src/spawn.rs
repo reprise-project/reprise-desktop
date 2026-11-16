@@ -1405,6 +1405,13 @@ pub(crate) fn detach(c: &mut std::process::Command) {
     }
 }
 
+/// Whether `pid` is a child spawned here that [`reap_children`] has not reaped yet.
+pub fn running(pid: u32) -> bool {
+    lock(&CHILDREN)
+        .iter()
+        .any(|&(p, _)| p == pid as libc::pid_t)
+}
+
 /// Leave `pid`, a child spawned outside this module and not yet waited for, to `reap_children`.
 pub fn adopt(pid: libc::pid_t, what: &str) {
     lock(&CHILDREN).push((pid, what.to_string()));

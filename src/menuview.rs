@@ -678,13 +678,6 @@ fn land_icon(
     !took.is_empty()
 }
 
-/// What Show Desktop minimises and restores.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Shown {
-    Window(WindowId),
-    Dialog(u64),
-}
-
 /// `items` bottom first by their trees' place in `stack` (the windows layer's children), trees in
 /// another layer first: restoring each in turn raises it, leaving them stacked as they were.
 fn restore_order<T>(stack: &[NodeId], mut items: Vec<(TreeId, T)>) -> Vec<(TreeId, T)> {

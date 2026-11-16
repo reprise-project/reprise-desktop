@@ -222,7 +222,7 @@ fn precedence_runs_vt_lock_interaction_switcher_menu_dialog_rename_icons_binds_c
 }
 
 #[test]
-fn the_switcher_bind_passes_a_dialog_and_show_desktop_a_windowed_one_but_not_a_welcome_panel() {
+fn the_switcher_bind_passes_a_dialog_but_not_a_welcome_panel() {
     let mut m = Modes {
         dialog_has_keyboard: true,
         ..Modes::default()
@@ -240,15 +240,11 @@ fn the_switcher_bind_passes_a_dialog_and_show_desktop_a_windowed_one_but_not_a_w
         action: Action::ShowDesktop,
     });
     let super_d = |m: &Modes| route(m, &press(KEY_d, MOD_LOGO), &with_sd, &[]).route;
-    assert_eq!(super_d(&m), KeyRoute::Dialog);
-    m.dialog_windowed = true;
     assert_eq!(
         super_d(&m),
-        KeyRoute::Binds(vec![Action::ShowDesktop]),
-        "a windowed dialog lets Show Desktop through"
+        KeyRoute::Dialog,
+        "Show Desktop stays the dialog's"
     );
-    assert_eq!(r(&m, &press(KEY_r, MOD_LOGO)), KeyRoute::Dialog);
-    m.dialog_windowed = false;
     m.dialog_modal = true;
     assert_eq!(r(&m, &alt_tab), KeyRoute::Dialog);
     assert_eq!(r(&m, &super_tab), KeyRoute::Dialog);
@@ -1651,12 +1647,6 @@ fn a_dialog_with_the_keyboard_passes_a_chord_only_what_it_passes_a_bind() {
     assert!(chord_allowed(&dialog, &Action::Lock));
     assert!(!chord_allowed(&dialog, &Action::Terminal));
     assert!(!chord_allowed(&dialog, &Action::ShowDesktop));
-    let windowed = Modes {
-        dialog_windowed: true,
-        ..dialog
-    };
-    assert!(chord_allowed(&windowed, &Action::ShowDesktop));
-    assert!(!chord_allowed(&windowed, &Action::Terminal));
 }
 
 #[test]

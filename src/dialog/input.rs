@@ -25,23 +25,6 @@ impl Dialog {
         if matches!(self.style, Style::Welcome(_)) {
             return self.welcome_key(&key);
         }
-        if let Some(c) = self.copy_mut() {
-            let key = match key {
-                Key::Edit(k) => match reprisekit::controls::form::flat_key(&k) {
-                    Some(k) => k,
-                    None => return Outcome::Nothing,
-                },
-                k => k,
-            };
-            let out = match key {
-                Key::Access(ch) if ch.eq_ignore_ascii_case(&'d') => c.cp.toggle_details(),
-                k => {
-                    let ev = c.cp.form.key(k);
-                    c.cp.event(ev)
-                }
-            };
-            return Self::copy_outcome(out);
-        }
         if let Some(t) = self.tray_mut() {
             // Nothing in it edits text: a space is Space.
             let key = match key {
@@ -151,10 +134,6 @@ impl Dialog {
         if let Some(t) = self.tray_mut() {
             return Self::tray_outcome(t.release(tray_part(over)));
         }
-        if let Some(c) = self.copy_mut() {
-            let ev = c.cp.form.release();
-            return Self::copy_outcome(c.cp.event(ev));
-        }
         let Some(f) = self.form_mut() else {
             return Outcome::Nothing;
         };
@@ -183,20 +162,6 @@ impl Dialog {
         }
         if let Some(t) = self.tray_mut() {
             return Self::tray_outcome(t.click(tray_part(hit)));
-        }
-        if let Some(c) = self.copy_mut() {
-            let out = match hit {
-                Some(DialogHit::CopyDetails) => c.cp.toggle_details(),
-                Some(DialogHit::Control(h)) => {
-                    let ev = c.cp.form.click(Some(h));
-                    c.cp.event(ev)
-                }
-                _ => {
-                    let ev = c.cp.form.click(None);
-                    c.cp.event(ev)
-                }
-            };
-            return Self::copy_outcome(out);
         }
         if hit == Some(DialogHit::Drop) && self.field.is_some() {
             // The drop button draws held until the release, and the
@@ -505,19 +470,13 @@ impl Dialog {
                 Some(t) => redraw_if(t.focus_on(Some(h)) != traycustomize::Event::None),
                 None => Outcome::Nothing,
             },
-            Some(DialogHit::Control(_)) => {
-                if let Some(f) = self.form_mut() {
+            Some(DialogHit::Control(_)) => match self.form_mut() {
+                Some(f) => {
                     let ev = f.form.focus_at(x, y, text, px);
-                    return redraw_if(ev != reprisekit::controls::form::Event::None);
+                    redraw_if(ev != reprisekit::controls::form::Event::None)
                 }
-                match (self.copy_mut(), layout.page) {
-                    (Some(c), Some(client)) => {
-                        let ev = c.cp.form.focus_at(x - client.x, y - client.y, text, px);
-                        redraw_if(ev != reprisekit::controls::form::Event::None)
-                    }
-                    _ => Outcome::Nothing,
-                }
-            }
+                None => Outcome::Nothing,
+            },
             _ => Outcome::Nothing,
         }
     }
@@ -778,13 +737,6 @@ impl Dialog {
         if let Some(t) = self.tray_mut() {
             redraw |= t.motion(tray_part(over)) != traycustomize::Event::None && styled;
         }
-        if let Some(c) = self.copy_mut() {
-            let on = match over {
-                Some(DialogHit::Control(h)) => Some(h),
-                _ => None,
-            };
-            redraw |= c.cp.form.motion(x, y, on) != reprisekit::controls::form::Event::None;
-        }
         if let Some(f) = self.form_mut() {
             let control = match over {
                 Some(DialogHit::Control(h)) => Some(h),
@@ -800,9 +752,6 @@ impl Dialog {
         redraw |= (self.help_box.leave() | self.field_lit.leave()) && styled;
         if let Some(t) = self.tray_mut() {
             redraw |= t.leave() != traycustomize::Event::None && styled;
-        }
-        if let Some(c) = self.copy_mut() {
-            redraw |= c.cp.form.leave() != reprisekit::controls::form::Event::None;
         }
         if let Some(f) = self.form_mut() {
             redraw |= f.form.leave() != reprisekit::controls::form::Event::None;
@@ -833,11 +782,6 @@ impl Dialog {
             DialogAction::StandBy(cmd) => Outcome::StandBy(cmd.clone()),
             DialogAction::Hibernate(cmd) => Outcome::Hibernate(cmd.clone()),
             DialogAction::EndSession(goal, cmd) => Outcome::EndSession(*goal, cmd.clone()),
-            DialogAction::Delete { paths, erase } => Outcome::Delete {
-                paths: paths.clone(),
-                erase: *erase,
-            },
-            DialogAction::EmptyBin => Outcome::EmptyBin,
             DialogAction::SwitchUser => Outcome::SwitchUser,
             DialogAction::Disconnect => Outcome::Disconnect,
             DialogAction::GreeterPower(a) => Outcome::GreeterPower(*a),
@@ -861,10 +805,6 @@ impl Dialog {
                 recent: *recent,
             },
             DialogAction::MountImage(path) => Outcome::MountImage(path.clone()),
-            DialogAction::TooBig { asker, answer } => Outcome::TooBig {
-                asker: asker.clone(),
-                answer: *answer,
-            },
             DialogAction::RenameDesktop(n) => Outcome::RenameDesktop(
                 *n,
                 (self.field.as_ref()).map_or(String::new(), |f| f.combo.text().trim().to_string()),

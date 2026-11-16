@@ -203,7 +203,7 @@ impl State {
         let lights = self.config.theme.look.lights_pointer();
         let v = &mut self.dialogs.views[top];
         let outcome = match hit {
-            Some(h @ (DialogHit::Close | DialogHit::Minimize)) => {
+            Some(h @ DialogHit::Close) => {
                 if let Some(b) = dialog::caption_button(Some(h)) {
                     v.dialog.press_caption(b);
                 }
@@ -340,7 +340,6 @@ impl State {
             };
         } else if page.is_some_and(|p| p.holding())
             || v.dialog.tray().is_some_and(|t| t.holding())
-            || v.dialog.copy().is_some_and(|c| c.cp.form.holding())
             || v.dialog.field_lit.holding()
         {
             // A held push button acts on release.
@@ -472,11 +471,6 @@ impl State {
             v.dialog.drag_caption(over);
             let outcome = match v.dialog.release_caption() {
                 Some(CaptionButton::Close) => Outcome::Close,
-                Some(CaptionButton::Minimize) => {
-                    let id = v.id;
-                    self.minimize_dialog(id);
-                    return;
-                }
                 _ => Outcome::Redraw,
             };
             self.apply_dialog(outcome);

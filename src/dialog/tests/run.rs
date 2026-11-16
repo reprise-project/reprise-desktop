@@ -229,8 +229,7 @@ fn a_readers_focus_on_a_button_moves_the_keyboard_without_pressing_it() {
     assert_eq!(run.key(Key::Tab { back: false }), Outcome::Redraw);
     assert_eq!(run.button_focus, Some(2), "Tab goes on from Cancel");
 
-    let path = std::path::Path::new("/srv/a.txt");
-    let mut ask = Dialog::confirm_delete("a.txt", path, false, false, false);
+    let mut ask = yes_no("a.txt");
     let l = DialogLayout::compute(&theme, &text, &ask);
     let no = ask.buttons.iter().position(|b| !b.default).unwrap();
     let (x, y) = middle(l.buttons[no]);
