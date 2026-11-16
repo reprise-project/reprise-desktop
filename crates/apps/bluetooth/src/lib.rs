@@ -29,6 +29,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 
+use repriseapp::asks::{Answer, Asks};
 use repriseapp::keys::{dialog_key, form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, ErrorBox, MsgBox};
 use repriseapp::{App, BTN_LEFT, Child, Ctx, DropForm, Event, PointerInput, Reply, WinId};
@@ -63,7 +64,8 @@ struct BtApp {
     pair: Option<pairdlg::PairDialog>,
     /// Requests that came while the Pairing Request box was open, shown one after another.
     pair_queue: VecDeque<bz::AgentRequest>,
-    remove: Option<(String, MsgBox)>,
+    /// Confirm Device Removal, with the device's path.
+    remove: Asks<String>,
     error: ErrorBox,
     /// The file offer on screen, and the ones that came while it was.
     offer: Option<(bz::Offer, MsgBox)>,
@@ -104,7 +106,7 @@ impl BtApp {
             props: None,
             pair: None,
             pair_queue: VecDeque::new(),
-            remove: None,
+            remove: Asks::new(REMOVE),
             error: ErrorBox::default(),
             offer: None,
             offer_queue: VecDeque::new(),
@@ -206,15 +208,10 @@ impl BtApp {
             self.pair = None;
             self.pair_queue.clear();
         }
-        if self.snapshot.adapter.is_none()
-            || self
-                .remove
-                .as_ref()
-                .is_some_and(|(p, _)| self.device(p).is_none())
-        {
-            self.remove = None;
-        }
         let devs = &self.snapshot.devices;
+        let lost = self.snapshot.adapter.is_none();
+        self.remove
+            .withdraw(|p| lost || !devs.iter().any(|d| d.path == *p));
         self.connecting
             .retain(|p| devs.iter().any(|d| d.path == *p && !d.connected));
         self.disconnected
@@ -544,7 +541,7 @@ impl BtApp {
                 max_w: repriseapp::dialog_max_w(),
             },
         );
-        self.remove = Some((path, b));
+        self.remove.ask(b, path);
     }
 
     /// The Devices list's share of a sheet event; `None` leaves it to the sheet.
@@ -905,17 +902,12 @@ impl BtApp {
         }
     }
 
-    fn remove_event(&mut self, ev: Event) -> Reply {
+    fn remove_event(&mut self, win: WinId, ev: Event) -> Reply {
         let (text, forms) = self.text_forms();
-        let Some((path, b)) = &mut self.remove else {
-            return Reply::none();
-        };
-        match b.event(&ev, &text, &forms) {
-            oneshot::Outcome::None => Reply::none(),
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::Closed(button) => {
-                let path = path.clone();
-                self.remove = None;
+        match self.remove.event(win, &ev, &text, &forms) {
+            Answer::None => Reply::none(),
+            Answer::Redraw => Reply::redraw(),
+            Answer::Closed(path, button) => {
                 if button == Some(0)
                     && let Some(adapter) = self.adapter()
                 {
@@ -1083,9 +1075,7 @@ impl App for BtApp {
             });
         }
         if let Some(text) = &self.text {
-            if let Some((_, b)) = &self.remove {
-                out.push(b.child(REMOVE, text, &self.forms));
-            }
+            out.extend(self.remove.child(text, &self.forms));
             out.extend(self.error.child(text, &self.forms));
             if let Some((_, b)) = &self.offer {
                 out.push(b.child(OFFER, text, &self.forms));
@@ -1122,7 +1112,7 @@ impl App for BtApp {
             WIZARD => self.wizard_event(ev, ctx),
             PROPS => self.props_event(ev, ctx),
             PAIR => self.pair_event(ev, ctx),
-            REMOVE => self.remove_event(ev),
+            w if self.remove.owns(w) => self.remove_event(w, ev),
             w if self.error.owns(w) => self.error_event(w, ev),
             OFFER => self.offer_event(ev, ctx),
             _ => self.main_event(ev, ctx),
@@ -1176,11 +1166,7 @@ impl App for BtApp {
                     );
                 }
             }
-            REMOVE => {
-                if let Some((_, b)) = &self.remove {
-                    b.draw(c, &forms, &ctx.text);
-                }
-            }
+            w if self.remove.owns(w) => self.remove.draw(c, &forms, &ctx.text),
             w if self.error.owns(w) => self.error.draw(c, &forms, &ctx.text),
             OFFER => {
                 if let Some((_, b)) = &self.offer {
@@ -1220,11 +1206,7 @@ impl repriseapp::Extended for BtApp {
                     oneshot::access_form(&d.form, tree, &ctx.text, px);
                 }
             }
-            REMOVE => {
-                if let Some((_, b)) = &self.remove {
-                    b.access(tree, &ctx.text, &forms);
-                }
-            }
+            w if self.remove.owns(w) => self.remove.access(tree, &ctx.text, &forms),
             w if self.error.owns(w) => self.error.access(tree, &ctx.text, &forms),
             _ => self.devices.access(tree, ctx),
         }
@@ -1510,11 +1492,11 @@ mod tests {
         a.snapshot_in(snap(true));
         let mut ctx = test_ctx();
         a.ask_remove("/a/cans".into(), &mut ctx);
-        assert!(a.remove.is_some());
+        assert!(!a.remove.is_empty());
         let mut s = snap(true);
         s.devices.clear();
         a.snapshot_in(s);
-        assert!(a.remove.is_none());
+        assert!(a.remove.is_empty());
     }
 
     /// Accepts the open box's Confirm by picking its Yes radio and pressing OK; `trust` ticks
