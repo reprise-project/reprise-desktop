@@ -322,7 +322,7 @@ impl MenuKind {
                 .map_or(MenuPick::Nothing, MenuPick::Dnd),
             MenuKind::StartPanel { rows } => rows
                 .get(idx)
-                .copied()
+                .cloned()
                 .flatten()
                 .map_or(MenuPick::Nothing, MenuPick::StartPanel),
             MenuKind::TaskOverflow { bar, keys } => {
