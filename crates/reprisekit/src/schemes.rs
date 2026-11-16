@@ -324,7 +324,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             desktop_text: Color::rgb(255, 255, 255),
             info_bk: Color::rgb(255, 255, 225),
             info_text: Color::rgb(0, 0, 0),
-            hot_light: Color::rgb(128, 0, 128),
+            hot_light: Color::rgb(216, 112, 216),
             menu_hilight: Color::rgb(0, 0, 255),
             menu_bar: Color::rgb(0, 0, 0),
         },
@@ -360,7 +360,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             desktop_text: Color::rgb(255, 255, 255),
             info_bk: Color::rgb(255, 255, 225),
             info_text: Color::rgb(0, 0, 0),
-            hot_light: Color::rgb(128, 0, 128),
+            hot_light: Color::rgb(216, 112, 216),
             menu_hilight: Color::rgb(0, 255, 255),
             menu_bar: Color::rgb(0, 0, 0),
         },
@@ -396,7 +396,7 @@ pub static SCHEMES: &[(&str, ColorScheme)] = &[
             desktop_text: Color::rgb(255, 255, 255),
             info_bk: Color::rgb(255, 255, 225),
             info_text: Color::rgb(0, 0, 0),
-            hot_light: Color::rgb(128, 0, 128),
+            hot_light: Color::rgb(216, 112, 216),
             menu_hilight: Color::rgb(128, 0, 128),
             menu_bar: Color::rgb(0, 0, 0),
         },
@@ -1341,23 +1341,24 @@ mod tests {
     }
 
     #[test]
-    fn every_schemes_links_are_4_5_to_1_on_the_face() {
-        // The high-contrast links are pinned purple by their own test.
-        for (name, cs) in SCHEMES
-            .iter()
-            .filter(|(n, _)| !n.starts_with("High Contrast"))
-        {
+    fn every_schemes_links_are_4_5_to_1_on_the_face_and_high_contrast_7_to_1() {
+        for (name, cs) in SCHEMES {
+            let least = if name.starts_with("High Contrast") {
+                7.0
+            } else {
+                4.5
+            };
             let ratio = cs.hot_light.contrast(cs.button_face);
             assert!(
-                ratio >= 4.5,
-                "{name}: hot_light is 4.5:1 on the face, got {ratio:.2}"
+                ratio >= least,
+                "{name}: hot_light is {least}:1 on the face, got {ratio:.2}"
             );
         }
     }
 
     #[test]
     fn high_contrast_links_are_purple_on_black_and_black_on_white() {
-        let purple = Color::rgb(128, 0, 128);
+        let purple = Color::rgb(216, 112, 216);
         for name in [
             "High Contrast #1",
             "High Contrast #2",

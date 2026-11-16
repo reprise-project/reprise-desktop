@@ -324,7 +324,11 @@ mod tests {
             "black does not read on its blue inactive caption"
         );
         let hcb = schemes::scheme("High Contrast Black").unwrap();
-        assert_eq!(get(&hcb, Interface::Classic, "accent_color"), WHITE);
+        assert_eq!(
+            get(&hcb, Interface::Classic, "accent_color"),
+            hcb.hot_light,
+            "the link colour stands in for the purple selection, which does not read on black"
+        );
     }
 
     #[test]
