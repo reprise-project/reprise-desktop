@@ -9,12 +9,14 @@ use reprisekit::text::{Align, TextRenderer};
 use reprisekit::theme::{Color, FontConfig};
 
 pub fn render(s: i32) -> Canvas {
-    let (cw, ch) = welcome::CLIENT;
     let looks = [
         ("Classic", Interface::Classic),
         ("Blue", Interface::Blue),
         ("Glass", Interface::Glass),
     ];
+    let grown = looks.map(|(_, i)| interfaces::theme_for(i).text.size(welcome::CLIENT));
+    let cw = grown.iter().map(|g| g.0).max().unwrap_or(welcome::CLIENT.0);
+    let ch = grown.iter().map(|g| g.1).max().unwrap_or(welcome::CLIENT.1);
     let pages = [Page::Interface, Page::Look, Page::Ready];
     let label_w = 70;
     let (w, h) = (
@@ -46,10 +48,12 @@ pub fn render(s: i32) -> Canvas {
             id: "settings",
             label: "Open &Settings",
         }];
-        let mut wiz = Welcome::new(picks, base.clone(), links, &text, &theme);
+        let sample = super::cued(reprisekit::interfaces::theme_for(interface));
+        let mut wiz = Welcome::new(picks, sample, links, &text, &theme);
         for (j, page) in pages.into_iter().enumerate() {
             wiz.go(page, &text, &theme);
-            let mut d = Canvas::new((cw * s) as u32, (ch * s) as u32);
+            let (dw, dh) = base.text.size(welcome::CLIENT);
+            let mut d = Canvas::new((dw * s) as u32, (dh * s) as u32);
             welcome::draw(
                 &mut d,
                 &text,

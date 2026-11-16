@@ -364,8 +364,19 @@ pub(super) fn radio_box(r: Rect, cm: &ControlMetrics, dy: i32) -> Rect {
 /// A radio button's label: `cm.radio_label` right of its item rect's left
 /// edge, `w` wide, as tall as the item rect or the circle, whichever is
 /// taller, so a 13 px circle's label sits on the same row as a check box's.
+/// Grown text gets at least a grown line.
 pub(super) fn radio_label_rect(r: Rect, cm: &ControlMetrics, w: i32) -> Rect {
-    Rect::new(r.x + cm.radio_label, r.y, w, r.height.max(cm.radio))
+    let line = if cm.text.is_one() {
+        0
+    } else {
+        cm.text.len(LINE_H)
+    };
+    Rect::new(
+        r.x + cm.radio_label,
+        r.y,
+        w,
+        r.height.max(cm.radio).max(line),
+    )
 }
 
 /// The rects and fit kinds a check box's or radio's label is bounded by, as laid out.

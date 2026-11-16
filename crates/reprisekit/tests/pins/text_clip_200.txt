@@ -1,6 +1,4 @@
 backgrounds.png "Message Box" x1
-bin-sheet.png "Configure drives indepe..." x3
-bin-sheet.png "Use one setting for all..." x3
 blue-variants.png " Desktop" x10
 blue-variants.png "Apply" x10
 blue-variants.png "Blue: common controls" x1
@@ -126,7 +124,6 @@ blue-variants.png "Type" x30
 blue-variants.png "folder to" x20
 blue-variants.png "new folder" x20
 blue-variants.png "the Web" x20
-calculator@1.png "Degrees" x4
 caption-tabs-200.png "..." x6
 caption-tabs.png "..." x6
 desk-widgets@1.png "15:39" x3
@@ -137,8 +134,6 @@ desk-widgets@1.png "CPU" x3
 desk-widgets@1.png "Memory 42%" x3
 desk-widgets@1.png "Memory" x3
 desk-widgets@1.png "Monday, Novem..." x3
-desktop-labels.png "My" x16
-desktop-labels.png "Recy..." x24
 doc-tabs@1.png "htop" x104
 doc-tabs@1.png "s..." x144
 doc-tabs@1.png "ssh b..." x84
@@ -149,10 +144,6 @@ file-dialog.png "Files of type:" x1
 filepreview.png "# Space shows a file;" x3
 filepreview.png "[appearance]" x3
 filepreview.png "interface = \"glass\"" x3
-fingerprints@1.png "Index finger" x4
-fingerprints@1.png "Little finger" x4
-fingerprints@1.png "Middle finger" x4
-fingerprints@1.png "Ring finger" x4
 fonts@1.png "1234567890.:,;(\"*!?')" x8
 fonts@1.png "ABCDEFGHIJKLMNOPQRSTUVWXYZ" x8
 fonts@1.png "The quick brown fox jumps over the lazy dog. 1234567890" x40
@@ -181,7 +172,6 @@ glass-dark.png "Edit" x3
 glass-dark.png "File Folder" x6
 glass-dark.png "First" x1
 glass-dark.png "Focused" x1
-glass-dark.png "Greyed radio" x1
 glass-dark.png "Group box" x1
 glass-dark.png "Help" x2
 glass-dark.png "Inactive Window" x1
@@ -198,7 +188,7 @@ glass-dark.png "Message Text" x1
 glass-dark.png "Music" x1
 glass-dark.png "My Music" x3
 glass-dark.png "My Pictures" x3
-glass-dark.png "My" x4
+glass-dark.png "My" x2
 glass-dark.png "Name" x5
 glass-dark.png "New message" x3
 glass-dark.png "Normal" x1
@@ -219,10 +209,8 @@ glass-dark.png "Type" x3
 glass-dark.png "Updates are r..." x1
 glass-dark.png "Window Text" x1
 glass-dark.png "before.txt - Notepad" x7
-glass-dark.png "hills.j..." x1
 glass-dark.png "notepad" x4
 glass-dark.png "notes.txt" x3
-glass-dark.png "repo..." x1
 glass-dark.png "report.odt" x3
 glass-dark.png "setup.exe" x3
 glass-scale2.png "3:45 PM" x2
@@ -254,7 +242,6 @@ glass.png "Edit" x3
 glass.png "File Folder" x6
 glass.png "First" x1
 glass.png "Focused" x1
-glass.png "Greyed radio" x1
 glass.png "Group box" x1
 glass.png "Help" x2
 glass.png "Inactive Window" x1
@@ -271,7 +258,7 @@ glass.png "Message Text" x1
 glass.png "Music" x1
 glass.png "My Music" x3
 glass.png "My Pictures" x3
-glass.png "My" x4
+glass.png "My" x2
 glass.png "Name" x5
 glass.png "New message" x3
 glass.png "Normal" x1
@@ -292,16 +279,10 @@ glass.png "Type" x3
 glass.png "Updates are r..." x1
 glass.png "Window Text" x1
 glass.png "before.txt - Notepad" x5
-glass.png "hills.j..." x1
 glass.png "notepad" x4
 glass.png "notes.txt" x3
-glass.png "repo..." x1
 glass.png "report.odt" x3
 glass.png "setup.exe" x3
-grid-drag.png "JPEG Image" x1
-grid-drag.png "My Music" x1
-grid-drag.png "My Pictures" x2
-grid-drag.png "hills.jpg" x1
 label-ellipsis.png "HP LaserJet 4250" x2
 label-ellipsis.png "PostScript Printer" x2
 overview.png "My Documents" x3
@@ -316,7 +297,6 @@ power@1.png "Stand By" x8
 power@1.png "Switch User" x12
 power@1.png "Turn Off" x16
 quick-more.png "3:45 PM" x6
-rename@1.png "Replace text" x8
 reprisekit-gallery.png "#0A246A" x1
 reprisekit-gallery.png "00" x1
 reprisekit-gallery.png "1 KB" x1
@@ -343,7 +323,6 @@ reprisekit-gallery.png "Applicati..." x1
 reprisekit-gallery.png "Application" x1
 reprisekit-gallery.png "Browse..." x3
 reprisekit-gallery.png "Button" x1
-reprisekit-gallery.png "Bytes" x1
 reprisekit-gallery.png "Calendar" x1
 reprisekit-gallery.png "Caption ?" x1
 reprisekit-gallery.png "Check Box" x1
@@ -394,7 +373,7 @@ reprisekit-gallery.png "Music" x2
 reprisekit-gallery.png "My Music" x6
 reprisekit-gallery.png "My Pictures" x5
 reprisekit-gallery.png "My Recent" x1
-reprisekit-gallery.png "My" x4
+reprisekit-gallery.png "My" x2
 reprisekit-gallery.png "Name" x2
 reprisekit-gallery.png "New Folder" x2
 reprisekit-gallery.png "New Text Document.txt" x1
@@ -402,7 +381,6 @@ reprisekit-gallery.png "None" x1
 reprisekit-gallery.png "Normal" x4
 reprisekit-gallery.png "Not connected" x2
 reprisekit-gallery.png "Notepad" x2
-reprisekit-gallery.png "Nowhere (disable..." x2
 reprisekit-gallery.png "Open" x1
 reprisekit-gallery.png "Open:" x1
 reprisekit-gallery.png "OpenDo..." x1
@@ -446,7 +424,6 @@ reprisekit-gallery.png "System Folder" x1
 reprisekit-gallery.png "Tab" x1
 reprisekit-gallery.png "Text Do..." x1
 reprisekit-gallery.png "Text Docu..." x1
-reprisekit-gallery.png "This folder only" x1
 reprisekit-gallery.png "Trackbar" x1
 reprisekit-gallery.png "Type" x2
 reprisekit-gallery.png "Untitled - Notepad" x1
@@ -454,12 +431,10 @@ reprisekit-gallery.png "Web" x1
 reprisekit-gallery.png "Window Text" x4
 reprisekit-gallery.png "folder to the" x1
 reprisekit-gallery.png "folder" x2
-reprisekit-gallery.png "hills.j..." x1
 reprisekit-gallery.png "hills.jpg" x4
 reprisekit-gallery.png "notepad readme.txt" x1
 reprisekit-gallery.png "notepad" x1
 reprisekit-gallery.png "notes.txt" x3
-reprisekit-gallery.png "repo..." x1
 reprisekit-gallery.png "report" x1
 reprisekit-gallery.png "report...." x1
 reprisekit-gallery.png "report.odt" x4
@@ -491,13 +466,6 @@ stats-panel.png "Surfaces" x3
 stats-panel.png "Windows" x3
 taskbar-cells.png "3:45 PM" x6
 taskbar-edges.png "3:45 PM" x4
-text-size-200.png "JPEG Image" x3
-text-size-200.png "Large icons" x3
-text-size-200.png "My Music" x9
-text-size-200.png "My Pictures" x9
-text-size-200.png "hills.jpg" x9
-text-size-200.png "report.odt" x3
-text-size-200.png "setup.exe" x3
 tray-arrow.png "3:45 PM" x4
 tray-arrow.png "Start" x2
 tray-arrow.png "start" x2
@@ -522,16 +490,5 @@ tray-customize.png "and keeps the idle ones behind" x2
 tray-customize.png "and urgent items on the taskbar" x2
 tray-customize.png "for any item below." x2
 tray-customize.png "the arrow. Pick another behavior" x2
-welcome@1.png "Active Window" x6
-welcome@1.png "Disabled" x12
-welcome@1.png "Inactive Window" x4
-welcome@1.png "Light" x3
-welcome@1.png "Message Box" x4
-welcome@1.png "Message Text" x6
-welcome@1.png "Normal" x6
-welcome@1.png "Reprise Classic" x3
-welcome@1.png "Reprise is ready" x3
-welcome@1.png "Reprise..." x3
-welcome@1.png "Selected" x6
-welcome@1.png "Window Text" x6
+welcome@1.png "Message Box" x2
 windowed-dialog.png "Copying..." x33

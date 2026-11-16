@@ -149,7 +149,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, w: &Wizard, cues: bo
             c.fill_rect(Rect::new(panel_w, 0, cw - panel_w, rule_y), cs.window);
             c.dither_rect_t(Rect::new(0, 0, panel_w, rule_y), PANEL_NAVY, PANEL_BLACK, s);
             let title_px = u.px(EXT_TITLE_PX);
-            let line_h = title_px as i32 + 4;
+            let line_h = title_px as i32 + u.len(4);
             let x = u.len(EXT_TITLE_AT.0);
             let tr = Rect::new(x, u.len(EXT_TITLE_AT.1), cw - x - u.len(8), line_h);
             for (i, line) in crate::text::wrap_bold(text, title, tr.width, title_px, true)
