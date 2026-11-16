@@ -11,6 +11,7 @@ mod input;
 mod output;
 mod parse;
 mod power;
+mod startmenu;
 
 #[cfg(test)]
 mod tests;
@@ -25,6 +26,7 @@ pub use parse::{Dropped, DroppedKey, METRIC_MAX, lenient, lenient_over};
 pub use power::*;
 use reprisekit::interface::Interface;
 use reprisekit::theme::Theme;
+pub use startmenu::*;
 
 /// `config.toml` validated, every key the file leaves out at its default.
 #[derive(Clone, Debug, PartialEq)]

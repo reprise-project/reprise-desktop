@@ -1,10 +1,10 @@
 //! `[[startmenu]]` as the Start Menu page edits it: a tree of entries
 //! read out of the file and written back whole, as `[[keybinds]]` is.
 //!
-//! **The default menu here mirrors `default_startmenu` in
-//! `src/config/menu.rs`**, the menu a file without `[[startmenu]]` gets; a test
-//! holds both to `config.example.toml`'s block.
+//! The default menu is `repriseconf`'s, which the compositor reads too; a test holds it to
+//! `config.example.toml`'s block.
 
+use repriseconf::config::file::FileMenuEntry;
 use repriseconf::{Key, key as k, remove};
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, TableLike};
 
@@ -59,23 +59,6 @@ impl Entry {
             icon,
             Target::Command(command),
         )
-    }
-
-    fn tipped(self, text: &str) -> Entry {
-        match self {
-            Entry::Item {
-                label,
-                icon,
-                target,
-                ..
-            } => Entry::Item {
-                label,
-                icon,
-                tip: Some(text.into()),
-                target,
-            },
-            sep => sep,
-        }
     }
 
     /// The folder's entries, for a folder the page can open and fill.
@@ -226,85 +209,30 @@ pub fn rename(entries: &mut Vec<Entry>, path: &[usize], to: &str) -> bool {
 
 /// The menu a file without `[[startmenu]]` gets.
 pub fn default_menu() -> Vec<Entry> {
-    use Target as T;
-    let cmd = |s: &str| T::Command(s.into());
-    let act = |s: &str| T::Action(s.into(), None);
-    vec![
-        Entry::item(
-            "&Programs",
-            "applications-other",
-            T::Special("programs".into()),
-        ),
-        Entry::item(
-            "&Documents",
-            "folder-documents",
-            T::Special("documents".into()),
-        ),
-        Entry::item(
-            "&Settings",
-            "preferences-system",
-            T::Folder(vec![
-                Entry::item(
-                    "&Control Panel",
-                    "preferences-other",
-                    T::Special("settings".into()),
-                )
-                .tipped(
-                    "Provides options for you to customize the appearance and functionality \
-                     of your computer, add or remove programs, and set up network connections \
-                     and user accounts.",
-                ),
-                Entry::Separator,
-                Entry::item(
-                    "&Network Connections",
-                    "network-workgroup",
-                    cmd("reprise-network"),
-                )
-                .tipped(
-                    "Displays existing network connections on this computer and helps you \
-                     create new ones",
-                ),
-                Entry::item("&Printers", "printer", cmd("reprise-printers")).tipped(
-                    "Add, remove, and configure local and network printers, and see what is \
-                     printing.",
-                ),
-                Entry::item(
-                    "&Taskbar and Start Menu",
-                    "preferences-desktop",
-                    cmd("reprise-settings --page taskbar"),
-                )
-                .tipped(
-                    "Customize the Start Menu and the taskbar, such as the types of items to \
-                     be displayed and how they should appear.",
-                ),
-            ]),
-        ),
-        Entry::item(
-            "Sear&ch",
-            "system-search",
-            T::Folder(vec![
-                Entry::item(
-                    "&For Files or Folders...",
-                    "system-search",
-                    cmd("reprise-explorer --search \"$HOME\""),
-                ),
-                Entry::item(
-                    "On the &Internet...",
-                    "web-browser",
-                    cmd("xdg-open https://duckduckgo.com/"),
-                ),
-            ]),
-        ),
-        Entry::item(
-            "&Help and Support",
-            "help-browser",
-            cmd("xdg-open https://github.com/reprise-project/reprise-desktop"),
-        ),
-        Entry::item("&Run...", "system-run", act("run")),
-        Entry::Separator,
-        Entry::item("&Log Off {user}...", "gnome-session-logout", act("logoff")),
-        Entry::item("T&urn Off Computer...", "system-shutdown", act("turnoff")),
-    ]
+    (repriseconf::config::default_startmenu_entries().iter())
+        .map(from_file)
+        .collect()
+}
+
+/// `f` as [`read_entry`] reads its table.
+fn from_file(f: &FileMenuEntry) -> Entry {
+    if f.separator == Some(true) {
+        return Entry::Separator;
+    }
+    let target = match (&f.action, &f.command, &f.submenu, &f.items) {
+        (Some(a), c, _, _) => Target::Action(a.clone(), c.clone()),
+        (None, Some(c), _, _) => Target::Command(c.clone()),
+        (None, None, Some(s), _) => Target::Special(s.clone()),
+        (None, None, None, items) => {
+            Target::Folder(items.iter().flatten().map(from_file).collect())
+        }
+    };
+    Entry::Item {
+        label: f.label.clone().unwrap_or_default(),
+        icon: f.icon.clone(),
+        tip: f.tip.clone(),
+        target,
+    }
 }
 
 /// The file's `[[startmenu]]` (or an inline `startmenu = [{...}]`); None
@@ -499,8 +427,12 @@ command = \"foot\"
                     "Box",
                     "folder",
                     Target::Folder(vec![
-                        Entry::item("Edit", "", Target::Command("gedit".into()))
-                            .tipped("Edits text"),
+                        Entry::Item {
+                            label: "Edit".into(),
+                            icon: None,
+                            tip: Some("Edits text".into()),
+                            target: Target::Command("gedit".into()),
+                        },
                         Entry::item("Apps", "", Target::Special("programs".into())),
                     ])
                 ),

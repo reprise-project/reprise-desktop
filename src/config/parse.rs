@@ -207,7 +207,7 @@ fn quicklaunch_entry(f: &FileQuickLaunch) -> Result<QuickLaunchEntry, String> {
     })
 }
 
-fn menu_entry(f: &FileMenuEntry) -> Result<MenuEntry, String> {
+pub(super) fn menu_entry(f: &FileMenuEntry) -> Result<MenuEntry, String> {
     if f.separator == Some(true) {
         return Ok(MenuEntry::Separator);
     }

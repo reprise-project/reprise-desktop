@@ -45,7 +45,7 @@ pub struct FileQuickLaunch {
     pub action: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct FileMenuEntry {
     pub label: Option<String>,
