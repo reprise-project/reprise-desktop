@@ -318,6 +318,7 @@ impl State {
     fn capture_activate(&mut self, cap: CaptureId, barrier_id: u32, target: (f64, f64)) {
         // A drag would take the button releases below as its drop.
         self.cancel_drag();
+        self.vk_release_held();
         // Nothing local keeps a press: the focused client hears every held key come up, and the buttons are released here. This runs before `active` is set; otherwise the releases would go to the receiver and the clients would keep the buttons down.
         let time = InputTime::now();
         if let Some(kb) = self.seat.get_keyboard() {

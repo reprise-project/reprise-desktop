@@ -324,6 +324,21 @@ impl State {
         self.sync_aids();
     }
 
+    /// Let go of every key and modifier the virtual keyboards hold, before the lock or an input
+    /// capture shuts their requests out and with them the releases.
+    pub fn vk_release_held(&mut self) {
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        for (_, source) in std::mem::take(&mut self.ime.vk.sources) {
+            keyboard.release_source(self, source);
+        }
+        self.ime.vk.echoed.clear();
+        for (_, owned) in std::mem::take(&mut self.ime.vk.mods) {
+            self.vk_release_mods(owned);
+        }
+    }
+
     pub fn vk_restore(&mut self) {
         let Some((own, mask)) = self.ime.vk.own.take() else {
             return;
@@ -2006,6 +2021,37 @@ mod harness_tests {
             h.layout_heard(&mut c),
             (1, 1, 1),
             "de, and the client hears it"
+        );
+    }
+
+    #[test]
+    fn the_lock_lets_go_of_the_keys_and_modifiers_a_virtual_keyboard_holds() {
+        const KEY_LEFTMETA: u32 = 125;
+        let (mut h, _c, _) = focused_client();
+        let (_, index) = h.state.xkb_mask().expect("the seat's mask");
+        let (shift, logo) = (1 << index[0], 1 << index[6]);
+        let mut v = h.connect();
+        let keys = v.virtual_keyboard();
+        let mods = v.virtual_keyboard();
+        h.roundtrip(&mut v);
+        v.vk_key(keys, KEY_LEFTMETA, true);
+        // A modifiers request sets the whole mask, so it keeps the held Super.
+        v.vk_modifiers(mods, logo, shift, 0);
+        h.roundtrip(&mut v);
+        let kb = h.state.seat.get_keyboard().expect("keyboard");
+        assert!(kb.modifier_state().logo, "Super is down");
+        assert_eq!(
+            h.state.xkb_mask().unwrap().0.latched,
+            shift,
+            "Shift is latched"
+        );
+        crate::lockview::lock(&mut h.state);
+        assert!(kb.pressed_keys().is_empty(), "no key is held");
+        let (mask, _) = h.state.xkb_mask().unwrap();
+        assert_eq!(
+            (mask.depressed, mask.latched, mask.locked),
+            (0, 0, 0),
+            "no modifier is set"
         );
     }
 }
