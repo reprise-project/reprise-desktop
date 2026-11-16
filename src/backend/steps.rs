@@ -111,9 +111,9 @@ pub(super) enum Step {
     Config,
 }
 
-/// The next step. `rescan` asks for a new scan, which starts over at the first probe;
-/// `unprobed` counts the connectors left to probe while one is under way; `mode` says a
-/// `PendingMode` is due.
+/// The next step. `rescan` asks for a new scan, taken once the pass under way has scanned, so
+/// uevents faster than a pass still let it finish; `unprobed` counts the connectors left to probe
+/// while one is under way; `mode` says a `PendingMode` is due.
 pub(super) fn next_step(
     reset: bool,
     rescan: bool,
@@ -124,9 +124,9 @@ pub(super) fn next_step(
 ) -> Option<Step> {
     match unprobed {
         _ if reset => Some(Step::Reset),
-        _ if rescan => Some(Step::Probe),
         Some(0) => Some(Step::Scan),
         Some(_) => Some(Step::Probe),
+        None if rescan => Some(Step::Probe),
         None if reenable => Some(Step::Reenable),
         None if mode => Some(Step::Mode),
         None if config => Some(Step::Config),
@@ -291,7 +291,9 @@ fn quiet_step(state: &mut State) {
             }
         }
         Step::Probe => {
-            let rescan = b.devices.iter().find(|(_, d)| d.rescan).map(|(n, _)| n);
+            let rescan = (b.devices.iter())
+                .find(|(_, d)| d.rescan && d.probe.is_none())
+                .map(|(n, _)| n);
             if let Some(node) = rescan {
                 gated(b, "connector list");
                 let Some(d) = b.devices.get_mut(node) else {
