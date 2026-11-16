@@ -1,6 +1,7 @@
 //! The thread that samples: a [`Snapshot`] every interval while one is set, posted to the event
 //! loop, and what End Task and End Process send: window closes and signals.
 
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::Duration;
 
@@ -137,6 +138,36 @@ pub fn end_gently(
     term();
 }
 
+/// A pidfd for `pid` while `/proc` still shows it started at `start`; a pid reused since is refused.
+pub fn open_process(pid: i32, start: u64) -> std::io::Result<OwnedFd> {
+    let gone = || std::io::Error::from_raw_os_error(libc::ESRCH);
+    let fd = reprisebus::pidfd::open(u32::try_from(pid).map_err(|_| gone())?)?;
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    match crate::procfs::parse_stat(&stat) {
+        Some(s) if s.start == start => Ok(fd),
+        _ => Err(gone()),
+    }
+}
+
+/// Sends `sig` to the process `fd` names; ESRCH once it has ended.
+pub fn signal(fd: &OwnedFd, sig: i32) -> std::io::Result<()> {
+    // SAFETY: pidfd_send_signal takes an open fd, a signal, a null siginfo and no flags.
+    let r = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            fd.as_raw_fd(),
+            sig,
+            std::ptr::null::<libc::siginfo_t>(),
+            0,
+        )
+    };
+    if r == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
 /// Sends `sig` to process `pid`.
 pub fn kill_pid(pid: i32, sig: i32) -> std::io::Result<()> {
     // SAFETY: kill takes plain integers and touches no memory.
@@ -165,6 +196,34 @@ mod tests {
         let step = Duration::from_millis(1);
         end_gently(|| closed, count, || termed.set(true), step * 20, step);
         (counts.get(), termed.get())
+    }
+
+    #[test]
+    fn a_process_is_signalled_only_as_the_one_the_box_was_opened_for() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as i32;
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+        let start = crate::procfs::parse_stat(&stat).unwrap().start;
+        assert!(
+            open_process(pid, start + 1).is_err(),
+            "another start is another process"
+        );
+        let fd = open_process(pid, start).unwrap();
+        signal(&fd, libc::SIGTERM).unwrap();
+        let status = child.wait().unwrap();
+        assert_eq!(
+            std::os::unix::process::ExitStatusExt::signal(&status),
+            Some(libc::SIGTERM)
+        );
+        let gone = signal(&fd, libc::SIGTERM).unwrap_err();
+        assert_eq!(
+            gone.raw_os_error(),
+            Some(libc::ESRCH),
+            "a reaped process takes no signal"
+        );
     }
 
     #[test]
