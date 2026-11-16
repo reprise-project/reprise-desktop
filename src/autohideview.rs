@@ -584,6 +584,34 @@ mod tests {
     }
 
     #[test]
+    fn a_tray_item_gone_with_its_menu_in_flight_lets_its_bar_hide() {
+        use std::os::fd::AsRawFd;
+        let mut config = crate::config::Config::default();
+        config.taskbar.auto_hide = true;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let (tx, wake, _heard) = crate::tray::headless(&mut h.state);
+        let out = h.state.bars[0].output.clone();
+        let tray = h.state.tray.as_mut().expect("the tray");
+        tray.pending_menu = Some(("a".into(), out.clone(), Rect::new(0, 0, 16, 16), (8, 8)));
+        refresh(&mut h.state);
+        let wait = crate::autohide::HIDE_DELAY.as_millis() as u64 + 200;
+        let hiding = |h: &crate::harness::Harness| {
+            (h.state.bar_hide.entry(&out)).is_some_and(|e| e.hide.headed_out())
+        };
+        h.run_for(wait);
+        assert!(!hiding(&h), "the menu in flight holds the bar");
+
+        tx.send(crate::tray::TrayEvent::Removed("a".into()))
+            .expect("send");
+        // SAFETY: `wake` is an open eventfd and the buffer a live 8-byte local.
+        let n = unsafe { libc::write(wake.as_raw_fd(), (&1u64 as *const u64).cast(), 8) };
+        assert_eq!(n, 8);
+        h.run_for(wait);
+        assert!(hiding(&h), "the bar hides once the item is gone");
+    }
+
+    #[test]
     fn a_poke_from_an_idle_steps_the_bars_on_the_next_turn_with_nothing_else_ready() {
         let mut config = crate::config::Config::default();
         config.taskbar.auto_hide = true;
