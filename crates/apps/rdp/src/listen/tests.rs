@@ -640,17 +640,23 @@ async fn an_address_in_back_off_is_closed_before_it_takes_a_place() {
     let local = LocalSet::new();
     local
         .run_until(async {
-            let (s, _throttle) = start_throttled(&local, 1, 6).await;
-            for _ in 0..3 {
+            let (s, throttle) = start_throttled(&local, 1, 6).await;
+            for n in 0..3 {
                 let mut refused = TcpStream::connect(s.addr).await.unwrap();
                 let closed =
                     tokio::time::timeout(Duration::from_secs(5), until_closed(&mut refused)).await;
                 assert_eq!(closed.ok(), Some(0), "closed at once with nothing sent");
                 let peer = refused.local_addr().unwrap();
-                assert!(logged(&format!(
+                let line = format!(
                     "{peer}: closed; 127.0.0.1 has 8 s of back-off left after failed logins"
-                )));
+                );
+                assert_eq!(logged(&line), n == 0, "only the first is logged in full");
             }
+            assert_eq!(
+                throttle.lock().unwrap().refusals_report().as_deref(),
+                Some("refused more connections: 2 backed off"),
+                "the rest are counted for the minute's report"
+            );
             let mut other = connect_from([127, 0, 0, 2], s.addr).await;
             assert!(
                 confirmed(&mut other).await,

@@ -21,8 +21,10 @@ use ironrdp_server::{
     CliprdrServerFactory, CredentialValidator, ErrorInfo, GfxServerFactory, RdpServer,
     RdpServerDisplay, RdpServerInputHandler, ReplayStep, Resumed, SoundServerFactory,
 };
+use log::Level;
 use repriseconf::remote::{RemoteDesktop, SecondClient};
 use repriselogin::handover::{HandOver, Step};
+use repriselogin::refusals::REPORT_EVERY;
 use repriselogin::{RDP_HANDSHAKE, RDP_HELLO};
 use reprisetls::cert::Identity;
 use reprisetls::ktls::{self, KtlsStream};
@@ -255,15 +257,21 @@ pub async fn serve<D, I, L>(
     });
     let (alive, mut all_closed) = mpsc::channel::<Infallible>(1);
     tokio::pin!(stop);
+    let mut report =
+        tokio::time::interval_at(tokio::time::Instant::now() + REPORT_EVERY, REPORT_EVERY);
+    report.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             () = &mut stop => break,
+            _ = report.tick() => if let Some(line) = logins.refusals_report() {
+                log::info!("{line}");
+            },
             Some(request) = server.disconnect.recv() => answer(&shared, request),
             arrival = intake.next() => {
                 let (incoming, peer, admission) = match arrival {
                     Arrival::Connection { stream, peer, admission } => {
                         let Some(identity) = &server.identity else {
-                            log::info!("{peer}: closed; this server takes only hand-overs");
+                            logins.refused(Level::Info, peer, "hand-overs only", "closed; this server takes only hand-overs");
                             continue;
                         };
                         let tls = identity.borrow().acceptor.clone();
@@ -287,7 +295,8 @@ pub async fn serve<D, I, L>(
                 let backoff = logins.backoff(peer.ip());
                 if !backoff.is_zero() {
                     let ip = peer.ip();
-                    log::info!("{peer}: closed; {ip} has {} s of back-off left after failed logins", backoff.as_secs_f32().ceil());
+                    let left = backoff.as_secs_f32().ceil();
+                    logins.refused(Level::Info, peer, "backed off", format_args!("closed; {ip} has {left} s of back-off left after failed logins"));
                     continue;
                 }
                 let (max, second) = {
@@ -300,11 +309,11 @@ pub async fn serve<D, I, L>(
                     Ok(joined) => joined,
                     Err(Refused::Full) => {
                         let n = shared.viewers.borrow().len();
-                        log::info!("{peer}: closed; {n} viewers are connected");
+                        logins.refused(Level::Info, peer, "full", format_args!("closed; {n} viewers are connected"));
                         continue;
                     }
                     Err(Refused::LoggingIn(place)) => {
-                        log::info!("{peer}: closed; {place} has {LOGGING_IN_PER_IP} connections logging in");
+                        logins.refused(Level::Info, peer, "logging in", format_args!("closed; {place} has {LOGGING_IN_PER_IP} connections logging in"));
                         continue;
                     }
                 };
@@ -499,7 +508,7 @@ async fn run<L: Leave + 'static, C: Login, S>(
         ending,
         alive,
     } = viewer;
-    log::info!("{peer}: connected");
+    log::debug!("{peer}: connected");
     let arrived = Rc::new(Cell::new(false));
     let _unwound = Unwound {
         shared: shared.clone(),
@@ -571,7 +580,7 @@ async fn run<L: Leave + 'static, C: Login, S>(
             None
         }
         expired = login_expired(&*check, &seen) => {
-            log::warn!("{peer}: dropped; {expired}");
+            check.refused(Level::Warn, peer, "deadline", format_args!("dropped; {expired}"));
             None
         }
         () = ending.0.gone.wait() => {
@@ -592,10 +601,23 @@ async fn run<L: Leave + 'static, C: Login, S>(
     shared.forget(id, peer);
     drop(alive);
     if let Some(ended) = ended {
-        if !check.accepted() && seen.lock().unwrap().refuses_tls() {
-            log::warn!(
-                "{peer}: refused: the client requires NLA or RDP security; choose TLS security in its settings"
-            );
+        if !check.accepted() {
+            let refuses_tls = seen.lock().unwrap().refuses_tls();
+            match (refuses_tls, ended) {
+                (true, _) => check.refused(
+                    Level::Warn,
+                    peer,
+                    "NLA or RDP security",
+                    "refused: the client requires NLA or RDP security; choose TLS security in its settings",
+                ),
+                (false, Ok(())) => check.refused(Level::Info, peer, "closed", "closed before logging in"),
+                (false, Err(e)) => check.refused(
+                    Level::Info,
+                    peer,
+                    "closed",
+                    format_args!("closed before logging in: {}", e.report()),
+                ),
+            }
             return;
         }
         match ended {

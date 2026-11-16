@@ -6,7 +6,10 @@ use crate::intake::Admission;
 use ironrdp_server::{
     CredentialDecision, CredentialValidationError, CredentialValidator, Credentials,
 };
+use log::Level;
+use repriselogin::refusals::Refusals;
 use repriselogin::throttle::{self, Attempt, Pause};
+use std::fmt::Display;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::os::unix::process::CommandExt;
@@ -38,9 +41,10 @@ const KEPT_ENV: [&str; 5] = ["PATH", "LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"
 /// How long the helper has to give its verdict before it is killed and the check fails.
 const HELPER_LIMIT: Duration = Duration::from_secs(30);
 
-/// [`throttle::Throttle`] on tokio's clock, so tests with paused time move it.
+/// [`throttle::Throttle`] on tokio's clock, so tests with paused time move it, and the refusals
+/// before a login it counts.
 #[derive(Default)]
-pub struct Throttle(throttle::Throttle);
+pub struct Throttle(throttle::Throttle, Refusals);
 
 impl Throttle {
     pub fn delay(&self, peer: IpAddr) -> Duration {
@@ -67,6 +71,26 @@ impl Throttle {
             }
             Pause::Running => true,
         }
+    }
+
+    /// Logs a refusal of `peer` before its login at `level`, or counts it as `kind` when one was
+    /// logged in full since the last [`Throttle::refusals_report`].
+    pub fn refused(
+        &mut self,
+        level: Level,
+        peer: SocketAddr,
+        kind: &'static str,
+        why: impl Display,
+    ) {
+        if self.1.log_in_full(kind) {
+            log::log!(level, "{peer}: {why}");
+        }
+    }
+
+    /// The refusals counted since the last report, taken every
+    /// [`repriselogin::refusals::REPORT_EVERY`].
+    pub fn refusals_report(&mut self) -> Option<String> {
+        self.1.report()
     }
 
     #[cfg(test)]
@@ -123,6 +147,10 @@ pub trait Login: CredentialValidator + Send + Sync + 'static {
     fn accepted(&self) -> bool;
     /// Whether this connection has logged in, once no check is in flight.
     fn settled(&self) -> impl Future<Output = bool>;
+    /// Logs a refusal of `peer` before its login, as [`Throttle::refused`] does.
+    fn refused(&self, level: Level, peer: SocketAddr, _kind: &'static str, why: impl Display) {
+        log::log!(level, "{peer}: {why}");
+    }
 }
 
 /// Makes the login of each new connection.
@@ -132,6 +160,15 @@ pub trait Logins {
     fn check(&self, peer: SocketAddr, admission: Admission) -> Arc<Self::Check>;
     /// How long connections from `peer` are still refused after failed logins.
     fn backoff(&self, peer: IpAddr) -> Duration;
+    /// Logs a refusal of `peer` before its login, as [`Throttle::refused`] does.
+    fn refused(&self, level: Level, peer: SocketAddr, _kind: &'static str, why: impl Display) {
+        log::log!(level, "{peer}: {why}");
+    }
+    /// The refusals held back since the last report, taken every
+    /// [`repriselogin::refusals::REPORT_EVERY`].
+    fn refusals_report(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The session user's password, with one [`Throttle`] for every connection.
@@ -170,6 +207,17 @@ impl Logins for PasswordLogins {
 
     fn backoff(&self, peer: IpAddr) -> Duration {
         self.throttle.lock().unwrap().delay(peer)
+    }
+
+    fn refused(&self, level: Level, peer: SocketAddr, kind: &'static str, why: impl Display) {
+        self.throttle
+            .lock()
+            .unwrap()
+            .refused(level, peer, kind, why);
+    }
+
+    fn refusals_report(&self) -> Option<String> {
+        self.throttle.lock().unwrap().refusals_report()
     }
 }
 
@@ -236,14 +284,20 @@ impl PasswordCheck {
         let peer = self.peer;
         // The typed name stays out of the log: it may be a password typed into the name field.
         if repriselogin::account_name(&credentials.username) != self.user {
-            log::warn!(
-                "{peer}: refused a login as another user; only {} can log in",
+            let why = format_args!(
+                "refused a login as another user; only {} can log in",
                 self.user
             );
+            self.refused(Level::Warn, peer, "another user", why);
             return Ok(false);
         }
         if credentials.password.contains('\n') {
-            log::warn!("{peer}: refused a password with a line break");
+            self.refused(
+                Level::Warn,
+                peer,
+                "line break",
+                "refused a password with a line break",
+            );
             return Ok(false);
         }
         let mut line = Zeroizing::new(Vec::with_capacity(credentials.password.len() + 1));
@@ -295,6 +349,13 @@ impl Login for PasswordCheck {
             .wait_for(|l| *l != Stage::Checking)
             .await
             .is_ok_and(|l| *l == Stage::Accepted)
+    }
+
+    fn refused(&self, level: Level, peer: SocketAddr, kind: &'static str, why: impl Display) {
+        self.throttle
+            .lock()
+            .unwrap()
+            .refused(level, peer, kind, why);
     }
 }
 
@@ -377,15 +438,20 @@ impl CredentialValidator for PasswordCheck {
         // Another connection from this address may have failed since this one was let in.
         let backoff = self.delay();
         if !backoff.is_zero() {
-            log::info!(
-                "{}: refused; {} s of back-off left",
-                self.peer,
+            let why = format_args!(
+                "refused; {} s of back-off left",
                 backoff.as_secs_f32().ceil()
             );
+            self.refused(Level::Info, self.peer, "backed off", why);
             return Ok(CredentialDecision::Reject);
         }
         if self.throttle.lock().unwrap().paused() {
-            log::info!("{}: refused; logins are paused", self.peer);
+            self.refused(
+                Level::Info,
+                self.peer,
+                "paused",
+                "refused; logins are paused",
+            );
             return Ok(CredentialDecision::Reject);
         }
         let ok = self.check(credentials).await.map_err(|e| {
@@ -433,6 +499,7 @@ impl Logins for HandedOverLogins {
             }
         };
         let check = HandedOverCheck {
+            peer,
             user: self.user.clone(),
             admitted,
             logged_in: watch::Sender::new(false),
@@ -449,6 +516,7 @@ impl Logins for HandedOverLogins {
 /// check sees the session user (bare, `DOMAIN\user` or `user@host`) with an empty password, since
 /// the password never reaches this server.
 pub struct HandedOverCheck {
+    peer: SocketAddr,
     user: String,
     /// The hand-over named the session user.
     admitted: bool,
@@ -481,6 +549,7 @@ impl CredentialValidator for HandedOverCheck {
         if !ok {
             return Ok(CredentialDecision::Reject);
         }
+        log::info!("{}: logged in as {}, handed over", self.peer, self.user);
         self.logged_in.send_replace(true);
         Ok(CredentialDecision::Accept)
     }
