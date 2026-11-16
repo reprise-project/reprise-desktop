@@ -359,12 +359,13 @@ fn thumbnail(
         }
     }
     let decoded = if picture {
-        match fs.run(move || crate::decode::read_capped_from(file)) {
+        let budget = crate::decode::Budget::THUMBNAIL;
+        match fs.run(move || crate::decode::read_capped_from(file, budget.file)) {
             Err(e) if e.kind() == io::ErrorKind::TimedOut => {
                 log::debug!("thumbnail {}: {e}", path.display());
                 return None;
             }
-            bytes => (bytes.ok()).and_then(|b| make.decoders.decode(&b, (edge, edge))),
+            bytes => (bytes.ok()).and_then(|b| make.decoders.decode(&b, (edge, edge), budget).ok()),
         }
     } else {
         None
@@ -596,13 +597,20 @@ mod tests {
         fn probe(&self, bytes: &[u8]) -> bool {
             bytes.starts_with(b"FAKE")
         }
-        fn decode(&self, bytes: &[u8], _: (u32, u32)) -> Option<crate::decode::Decoded> {
+        fn decode(
+            &self,
+            bytes: &[u8],
+            _: (u32, u32),
+            _: crate::decode::Budget,
+        ) -> Result<crate::decode::Decoded, crate::decode::Unread> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            (!bytes.starts_with(b"FAKE BAD")).then(|| crate::decode::Decoded {
-                canvas: Canvas::from_pixels(2, 1, vec![0xff00_00ff, 0xff00_ff00]),
-                width: 640,
-                height: 320,
-            })
+            (!bytes.starts_with(b"FAKE BAD"))
+                .then(|| crate::decode::Decoded {
+                    canvas: Canvas::from_pixels(2, 1, vec![0xff00_00ff, 0xff00_ff00]),
+                    width: 640,
+                    height: 320,
+                })
+                .ok_or(crate::decode::Unread::Unreadable)
         }
     }
 
@@ -768,11 +776,16 @@ mod tests {
         fn probe(&self, bytes: &[u8]) -> bool {
             bytes.starts_with(b"RAMP")
         }
-        fn decode(&self, _: &[u8], max: (u32, u32)) -> Option<crate::decode::Decoded> {
+        fn decode(
+            &self,
+            _: &[u8],
+            max: (u32, u32),
+            _: crate::decode::Budget,
+        ) -> Result<crate::decode::Decoded, crate::decode::Unread> {
             let (w, h) = reprisekit::raster::fit_size(1024, 512, max);
             let row = (0..w).map(|x| 0xff00_4080 | (x * 256 / w) << 16);
             let pixels = std::iter::repeat_n(row, h as usize).flatten().collect();
-            Some(crate::decode::Decoded {
+            Ok(crate::decode::Decoded {
                 canvas: Canvas::from_pixels(w, h, pixels),
                 width: 1024,
                 height: 512,

@@ -410,8 +410,12 @@ fn launcher_icon(bytes: &[u8]) -> Option<Canvas> {
     }
     let px = PICTURE_PX as u32;
     let max = 4 * px;
-    let raster = repriseapp::decode::Decoders::default_set().decode(bytes, (max, max));
-    match raster {
+    let raster = repriseapp::decode::Decoders::default_set().decode(
+        bytes,
+        (max, max),
+        repriseapp::decode::Budget::THUMBNAIL,
+    );
+    match raster.ok() {
         Some(d) => Some(d.canvas.resample_box(px, px)),
         None => {
             reprisekit::icontheme::decode_bytes(std::path::Path::new("launcher"), bytes, px, false)

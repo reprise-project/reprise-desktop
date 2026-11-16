@@ -2,7 +2,7 @@
 //! and the timer slideshows and moving pictures step on.
 
 use repriseapp::Poster;
-use repriseapp::decode::{Decoders, frames, read_capped_from};
+use repriseapp::decode::{Budget, Decoders, Unread, frames, read_capped_from};
 use reprisefs::bincap::Fate;
 use reprisekit::raster::Canvas;
 use std::path::PathBuf;
@@ -85,11 +85,22 @@ pub enum Msg {
 /// The message a picture that does not open shows instead.
 pub const CANNOT_OPEN: &str = "This picture cannot be shown.";
 
+/// The message a picture past the viewer's [`Budget`] shows instead.
+pub const TOO_LARGE: &str = "This picture is too large to show.";
+
 fn open(path: &std::path::Path) -> Result<Picture, String> {
+    let budget = Budget::viewer();
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let bytes = read_capped_from(file).map_err(|e| e.to_string())?;
+    let bytes = read_capped_from(file, budget.file).map_err(|e| match e.kind() {
+        std::io::ErrorKind::FileTooLarge => TOO_LARGE.to_string(),
+        _ => e.to_string(),
+    })?;
+    picture(&bytes, budget)
+}
+
+fn picture(bytes: &[u8], budget: Budget) -> Result<Picture, String> {
     let len = bytes.len() as u64;
-    if let Some(f) = frames(&bytes) {
+    if let Some(f) = frames(bytes, budget) {
         let frames = f
             .into_iter()
             .map(|f| (Arc::new(f.canvas), f.delay_ms))
@@ -97,8 +108,11 @@ fn open(path: &std::path::Path) -> Result<Picture, String> {
         return Ok(Picture { frames, bytes: len });
     }
     let d = Decoders::default_set()
-        .decode(&bytes, (u32::MAX, u32::MAX))
-        .ok_or_else(|| CANNOT_OPEN.to_string())?;
+        .decode(bytes, (u32::MAX, u32::MAX), budget)
+        .map_err(|e| match e {
+            Unread::TooLarge => TOO_LARGE.to_string(),
+            Unread::Unreadable => CANNOT_OPEN.to_string(),
+        })?;
     Ok(Picture {
         frames: vec![(Arc::new(d.canvas), 0)],
         bytes: len,
@@ -236,5 +250,35 @@ mod tests {
         std::fs::write(&p, b"not a picture").unwrap();
         assert_eq!(open(&p).err().as_deref(), Some(CANNOT_OPEN));
         assert!(open(&dir.path().join("gone.png")).is_err());
+    }
+
+    /// A PAM one row past the thumbnail budget (25 megapixels of RGBA) opens in the viewer; a
+    /// header claiming 16 GiB of pixels says it is too large.
+    #[test]
+    fn a_picture_past_the_thumbnail_budget_opens_and_one_past_the_viewer_budget_is_too_large() {
+        let (w, h) = (4096, (Budget::THUMBNAIL.pixels / 4 / 4096) as u32 + 1);
+        let mut pam =
+            format!("P7\nWIDTH {w}\nHEIGHT {h}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n")
+                .into_bytes();
+        pam.resize(pam.len() + (w * h * 4) as usize, 0xff);
+        assert_eq!(
+            Decoders::default_set()
+                .decode(&pam, (96, 96), Budget::THUMBNAIL)
+                .err(),
+            Some(Unread::TooLarge)
+        );
+        let viewer = Budget {
+            file: 1 << 30,
+            pixels: 4 * Budget::THUMBNAIL.pixels,
+        };
+        let p = picture(&pam, viewer).unwrap();
+        assert_eq!(p.size(), (w, h));
+        drop(p);
+        let huge =
+            "P7\nWIDTH 65535\nHEIGHT 65535\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n";
+        assert_eq!(
+            picture(huge.as_bytes(), Budget::viewer()).err().as_deref(),
+            Some(TOO_LARGE)
+        );
     }
 }
