@@ -57,6 +57,9 @@ pub struct CalendarState {
     asked: u64,
     /// The last read whose answer came back: one is still out while it trails `asked`.
     answered: u64,
+    /// `asked` as the refresh timer last found it out: a read still out a whole refresh later
+    /// is taken as lost (a panicked or hung job) and asked again.
+    out_at_refresh: u64,
 }
 
 struct CalendarView {
@@ -251,8 +254,8 @@ fn arm_refresh(state: &mut State) {
     }
 }
 
-/// The refresh timer's turn: the open popup's day is read again unless a read is still out. A
-/// popup without a list, or none, stops it.
+/// The refresh timer's turn: the open popup's day is read again unless a read asked since the
+/// last turn is still out. A popup without a list, or none, stops it.
 fn refresh(state: &mut State) -> TimeoutAction {
     let Some(v) = state.calendar.view.as_mut() else {
         return TimeoutAction::Drop;
@@ -261,8 +264,11 @@ fn refresh(state: &mut State) -> TimeoutAction {
         v.refresh = None;
         return TimeoutAction::Drop;
     };
-    if state.calendar.answered == state.calendar.asked {
+    let c = &mut state.calendar;
+    if c.answered == c.asked || c.out_at_refresh == c.asked {
         read_day(state, day);
+    } else {
+        c.out_at_refresh = c.asked;
     }
     TimeoutAction::ToDuration(REFRESH)
 }
@@ -680,6 +686,21 @@ mod tests {
         close(&mut h.state);
         assert!(matches!(refresh(&mut h.state), TimeoutAction::Drop));
         assert_eq!(h.state.calendar.asked, 3, "none while closed");
+    }
+
+    #[test]
+    fn a_read_out_for_a_whole_refresh_is_asked_again() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.calendar.eds = Some(true);
+        let bar = h.state.bars[0].tree;
+        open(&mut h.state, bar);
+        h.state.calendar.asked += 1;
+        refresh(&mut h.state);
+        assert_eq!(h.state.calendar.asked, 2, "the read may still land");
+        refresh(&mut h.state);
+        assert_eq!(h.state.calendar.asked, 3, "the lost read is asked again");
+        assert_eq!(h.state.calendar.answered, 3);
     }
 
     #[test]

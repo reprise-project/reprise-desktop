@@ -325,12 +325,21 @@ fn time(params: &[(String, String)], value: &str) -> Option<Time> {
     if v.as_bytes().get(8) != Some(&b'T') {
         return None;
     }
-    let dt = date.at(
-        i8::try_from(num(9..11)?).ok()?,
-        i8::try_from(num(11..13)?).ok()?,
-        i8::try_from(num(13..15)?.min(59)).ok()?,
-        0,
-    );
+    let (h, m, s) = (num(9..11)?, num(11..13)?, num(13..15)?);
+    // `T240000` is read as the next midnight; any other time out of range drops the value.
+    let dt = if (h, m, s) == (24, 0, 0) {
+        date.tomorrow()
+            .ok()?
+            .to_datetime(jiff::civil::Time::midnight())
+    } else {
+        let t = jiff::civil::Time::new(
+            i8::try_from(h).ok()?,
+            i8::try_from(m).ok()?,
+            i8::try_from(s.min(59)).ok()?,
+            0,
+        );
+        date.to_datetime(t.ok()?)
+    };
     let zone = if v.ends_with(['Z', 'z']) {
         Zone::Utc
     } else if let Some(id) = param(params, "TZID") {
@@ -530,6 +539,32 @@ mod tests {
     fn a_cancelled_event_is_left_out() {
         let e = event("SUMMARY:Gone\nSTATUS:CANCELLED\nDTSTART:20261113T100000Z\n");
         assert_eq!(on(&[e], DAY), []);
+    }
+
+    #[test]
+    fn an_out_of_range_time_drops_its_value_and_the_day_still_lists() {
+        let bad_start = event("SUMMARY:Bad start\nDTSTART:20261113T250000\n");
+        let end_of_day = event(
+            "SUMMARY:Evening\nDTSTART;TZID=Europe/Budapest:20261113T200000\nDTEND;TZID=Europe/Budapest:20261113T240000\n",
+        );
+        let bad_exdate = event(
+            "SUMMARY:Standup\nDTSTART:20261101T083000Z\nDURATION:PT15M\nRRULE:FREQ=DAILY\nEXDATE:20261113T09-100\n",
+        );
+        let minute_60 = event("SUMMARY:Minute\nDTSTART:20261113T106000\n");
+        let fine = event("SUMMARY:Fine\nDTSTART:20261113T100000Z\n");
+        let got = on(&[bad_start, end_of_day, bad_exdate, minute_60, fine], DAY);
+        let times: Vec<_> = got
+            .iter()
+            .map(|o| (o.summary.as_str(), o.start, o.end))
+            .collect();
+        assert_eq!(
+            times,
+            [
+                ("Evening", at(20, 0), at(24, 0)),
+                ("Standup", at(9, 30), at(9, 45)),
+                ("Fine", at(11, 0), at(11, 0)),
+            ]
+        );
     }
 
     #[test]
