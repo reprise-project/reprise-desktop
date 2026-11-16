@@ -46,8 +46,9 @@ impl State {
             }
             Outcome::Notice(d) => self.open_dialog_over(*d),
             Outcome::Run(cmd) => {
-                let from = self.dialogs.views.last().map(|v| v.id);
-                self.run_line_activated(&cmd, from);
+                if let Some(from) = self.dialogs.views.last().map(|v| v.id) {
+                    self.run_line_activated(&cmd, from);
+                }
             }
             Outcome::RenameDesktop(n, name) => {
                 self.close_dialog();

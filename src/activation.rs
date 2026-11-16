@@ -219,7 +219,12 @@ impl State {
     /// [`State::spawn_command_activated`]. Each closes the box. A line whose program is not there
     /// keeps the box open under a notice. The paths are checked off the loop on a
     /// [`State::spawn_job`], so a mount that does not answer stalls neither the loop nor the launch.
-    pub fn run_line_activated(&mut self, cmd: &str, from: Option<u64>) {
+    /// The box takes no second OK while its line is checked, and a check that lands after the box
+    /// closed runs nothing.
+    pub fn run_line_activated(&mut self, cmd: &str, from: u64) {
+        if self.dialogs.checking.contains(&from) {
+            return;
+        }
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         let folder = crate::spawn::command_folder(cmd, home.as_deref());
         let program = crate::spawn::command_program(cmd, home.as_deref());
@@ -227,7 +232,8 @@ impl State {
         let mime = (folder.as_ref().and_then(|d| d.file_name()))
             .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
         let cmd = cmd.to_string();
-        self.spawn_job(move || {
+        self.dialogs.checking.push(from);
+        let started = self.spawn_job(move || {
             let line = match (folder, program) {
                 (Some(dir), _) => match std::fs::metadata(&dir) {
                     Ok(m) if m.is_dir() => RunLine::Folder(dir),
@@ -248,16 +254,21 @@ impl State {
             };
             Box::new(move |state: &mut State| state.run_line_checked(&cmd, from, line))
         });
+        if !started {
+            self.dialogs.checking.retain(|&id| id != from);
+        }
     }
 
-    fn run_line_checked(&mut self, cmd: &str, from: Option<u64>, line: RunLine) {
+    fn run_line_checked(&mut self, cmd: &str, from: u64, line: RunLine) {
+        self.dialogs.checking.retain(|&id| id != from);
+        let Some(i) = self.dialog_index(from) else {
+            return;
+        };
         if let RunLine::Missing(word) = &line {
             let d = crate::dialog::Dialog::run_not_found(word);
-            return self.open_dialog_over_id(d, from);
+            return self.open_dialog_over_id(d, Some(from));
         }
-        if let Some(i) = from.and_then(|id| self.dialog_index(id)) {
-            self.close_dialog_at(i);
-        }
+        self.close_dialog_at(i);
         crate::dialog::remember(&mut self.dialogs.run_history, cmd);
         crate::state::save_dialogs(&self.dialogs.run_history);
         match line {
@@ -489,7 +500,7 @@ mod tests {
         h.output("o", 800, 600);
         let run = |h: &mut crate::harness::Harness| {
             h.state.open_dialog(crate::dialog::Dialog::run(&[]));
-            h.state.dialogs.views.last().map(|v| v.id)
+            h.state.dialogs.views.last().expect("Run").id
         };
         crate::spawn::record();
         let from = run(&mut h);
@@ -497,7 +508,7 @@ mod tests {
             .run_line_activated("reprise-no-such-program --flag", from);
         h.until("the notice", |s| s.dialogs.views.len() == 2);
         assert!(
-            from.and_then(|id| h.state.dialog_index(id)).is_some(),
+            h.state.dialog_index(from).is_some(),
             "the Run box stays open"
         );
         assert!(
@@ -520,12 +531,61 @@ mod tests {
         let from = run(&mut h);
         h.state.run_line_activated(&doc.display().to_string(), from);
         h.until("the document opens", |s| {
-            from.and_then(|id| s.dialog_index(id)).is_none()
+            s.dialog_index(from).is_none()
                 && (!s.dialogs.views.is_empty() || !crate::spawn::recorded().is_empty())
         });
         assert!(
             !crate::spawn::recorded().contains(&"notes.txt".to_string()),
             "the document is not handed to the shell"
+        );
+    }
+
+    /// Run with `line` in its field, its line checked on a thread, and starts recorded.
+    fn run_box(line: &str) -> crate::harness::Harness {
+        let mut h = crate::harness::Harness::new();
+        crate::fsjobs::setup(&mut h.state);
+        h.output("o", 800, 600);
+        h.state
+            .open_dialog(crate::dialog::Dialog::run(&[line.to_string()]));
+        crate::spawn::record();
+        h
+    }
+
+    /// Key `code` down and up without turning the loop, so no check lands in between.
+    fn tap(h: &mut crate::harness::Harness, code: u32) {
+        use smithay::backend::input::InputTime;
+        for pressed in [true, false] {
+            h.state
+                .with_source(crate::inputproto::InputSource::Physical, |s| {
+                    s.handle_key((code + 8).into(), pressed, InputTime::now())
+                });
+        }
+    }
+
+    const ENTER: u32 = 28;
+
+    #[test]
+    fn enter_twice_in_run_before_its_line_is_checked_runs_it_once() {
+        let mut h = run_box("true");
+        tap(&mut h, ENTER);
+        tap(&mut h, ENTER);
+        h.until("the line is checked", |s| s.dialogs.checking.is_empty());
+        assert_eq!(crate::spawn::recorded().len(), 1, "the line runs once");
+        assert!(h.state.dialogs.views.is_empty(), "Run closes");
+    }
+
+    #[test]
+    fn a_line_checked_after_run_closed_runs_nothing() {
+        const ESCAPE: u32 = 1;
+        let mut h = run_box("true");
+        tap(&mut h, ENTER);
+        tap(&mut h, ESCAPE);
+        assert!(h.state.dialogs.views.is_empty(), "Escape closes Run");
+        h.until("the line is checked", |s| s.dialogs.checking.is_empty());
+        assert_eq!(
+            crate::spawn::recorded(),
+            Vec::<String>::new(),
+            "nothing runs"
         );
     }
 
