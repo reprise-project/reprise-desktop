@@ -1244,20 +1244,6 @@ mod tests {
     /// cursor on Bluetooth, cues out.
     #[test]
     fn a_link_row_draws_its_label_and_dots_in_every_look() {
-        let want: [(Interface, i32, &str, u64); 12] = [
-            (Interface::Classic, 1, "rest", 0x92719c5fa6c193b0),
-            (Interface::Classic, 1, "cursor", 0x305d04fcb4a84508),
-            (Interface::Classic, 2, "rest", 0x125053a00225449d),
-            (Interface::Classic, 2, "cursor", 0x1286ed701a20108d),
-            (Interface::Blue, 1, "rest", 0x40ba698820e64e34),
-            (Interface::Blue, 1, "cursor", 0x92b9398054b2c430),
-            (Interface::Blue, 2, "rest", 0xb873db6697fee7e3),
-            (Interface::Blue, 2, "cursor", 0x8cacb4b348b0212b),
-            (Interface::Glass, 1, "rest", 0xe540a73a9f5b9770),
-            (Interface::Glass, 1, "cursor", 0x6524582380167712),
-            (Interface::Glass, 2, "rest", 0xf63a64a61bdc685c),
-            (Interface::Glass, 2, "cursor", 0x018db865dd4ddb6a),
-        ];
         let mut got = Vec::new();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             for s in [1, 2] {
@@ -1275,7 +1261,7 @@ mod tests {
                     c.fill_rect(c.bounds(), cs.button_face);
                     let strip = strip(1, focused);
                     draw(&mut c, &text, &p, &list, &strip, &lay, false, px);
-                    got.push((i, s, state, hash(&c)));
+                    got.push((format!("{i:?} {s} {state}"), hash(&c)));
                     if s != 1 {
                         continue;
                     }
@@ -1308,8 +1294,7 @@ mod tests {
                 }
             }
         }
-        crate::pins::fonts();
-        assert_eq!(got, want);
+        crate::pins::check("controls/page_list_links", &got);
     }
 
     #[test]

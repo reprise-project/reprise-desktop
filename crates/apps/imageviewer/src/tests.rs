@@ -412,16 +412,8 @@ fn the_main_window_is_pinned_per_interface_and_scale() {
             got.push((format!("{i:?}@{s}"), fnv(&c)));
         }
     }
-    let want: [(&str, u64); 6] = [
-        ("Classic@1", 0xad48_f3a9_99c1_ff50),
-        ("Classic@2", 0x5a5d_d328_abb7_7165),
-        ("Blue@1", 0x9849_84eb_d85e_a379),
-        ("Blue@2", 0x14d7_6ff6_50e8_9052),
-        ("Glass@1", 0x56f0_ac80_7e5f_f7a5),
-        ("Glass@2", 0xd1d9_2189_8e1b_c85b),
-    ];
-    let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
-    assert_eq!(got, want);
+    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/main_window.txt");
+    reprisekit::pins::check_file(std::path::Path::new(file), &got);
 }
 
 #[test]

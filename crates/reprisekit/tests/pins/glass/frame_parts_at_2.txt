@@ -1,0 +1,10 @@
+Rounded caption ceba77a71e8e5905
+Rounded max caption 091b3ba0520c0105
+Rounded left c8dcf957a85612b5
+Rounded right 177208cefb37aac5
+Rounded bottom 0d099a179ff605c9
+Square caption fe9c16e4be11a91d
+Square max caption 091b3ba0520c0105
+Square left c8dcf957a85612b5
+Square right 177208cefb37aac5
+Square bottom 09bdf4d0eb8d77f5

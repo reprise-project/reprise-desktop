@@ -848,26 +848,8 @@ mod tests {
                     })
                 })
         };
-        for (mode, wants) in [
-            (
-                Mode::Light,
-                [
-                    0x8979_797A_FF89_1B8D_u64,
-                    0x03C3_EBD4_7434_6041,
-                    0x5130_6DCE_6374_5C15,
-                    0x9CBA_5FAD_5F30_7241,
-                ],
-            ),
-            (
-                Mode::Dark,
-                [
-                    0x426D_62AB_EFCA_08F5,
-                    0x7A48_567F_7173_9AFE,
-                    0x6337_A21E_5304_0775,
-                    0x4273_373A_5E31_1896,
-                ],
-            ),
-        ] {
+        let mut got = Vec::new();
+        for mode in [Mode::Light, Mode::Dark] {
             let s = style(&settings(mode));
             let parts = [
                 Part::CaptionGroup,
@@ -875,9 +857,11 @@ mod tests {
                 Part::CloseButton,
                 Part::HelpButton,
             ];
-            let got = parts.map(|part| fnv(s.part(part).unwrap()));
-            assert_eq!(got, wants, "{mode:?}: {got:#018X?}");
+            for part in parts {
+                got.push((format!("{mode:?} {part:?}"), fnv(s.part(part).unwrap())));
+            }
         }
+        crate::pins::check("glass/square_buttons", &got);
     }
 
     #[test]

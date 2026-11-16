@@ -551,29 +551,21 @@ mod tests {
 
     #[test]
     fn toolbar_buttons_pin_at_scale_1_and_2() {
-        let got: Vec<u64> = [glass(), dark_glass(), smoked_glass()]
-            .iter()
-            .flat_map(|t| {
-                [Part::ToolbarButton, Part::ToolbarDrop]
-                    .into_iter()
-                    .flat_map(move |p| [1, 2].map(|d| fnv(&part_at(t, p, d).atlas)))
-            })
-            .collect();
-        let want: [u64; 12] = [
-            0x3486_84ab_6d7a_3716,
-            0x782e_504f_132d_9de1,
-            0x6896_4cdf_3d9b_c8b0,
-            0x2e26_23e1_437d_f4ee,
-            0x1361_da40_01a0_879b,
-            0xe7f5_56db_16f7_ed84,
-            0xa823_8cce_5bfa_3d66,
-            0x442e_6ad3_1376_53d4,
-            0x3486_84ab_6d7a_3716,
-            0x782e_504f_132d_9de1,
-            0x6896_4cdf_3d9b_c8b0,
-            0x2e26_23e1_437d_f4ee,
-        ];
-        assert_eq!(got, want, "{got:#018x?}");
+        let got: Vec<_> = [
+            ("light", glass()),
+            ("dark", dark_glass()),
+            ("smoked", smoked_glass()),
+        ]
+        .iter()
+        .flat_map(|(name, t)| {
+            [Part::ToolbarButton, Part::ToolbarDrop]
+                .into_iter()
+                .flat_map(move |p| {
+                    [1, 2].map(|d| (format!("{name} {p:?} {d}"), fnv(&part_at(t, p, d).atlas)))
+                })
+        })
+        .collect();
+        crate::pins::check("glass/toolbar_buttons", &got);
     }
 
     #[test]

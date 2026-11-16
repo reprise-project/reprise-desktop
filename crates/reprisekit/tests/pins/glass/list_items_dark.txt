@@ -1,0 +1,12 @@
+bare 1 00776fd3bbb7e749
+hot 1 70bcc80a4150d54d
+selected 1 87a117e8f96ae1c1
+selected hot 1 ec02fbffd9481f61
+inactive 1 4a6f4c4ca358cab5
+focused 1 7c729c2c71428c31
+bare 2 9fe567fb8c0f94dd
+hot 2 547e74280b3e114d
+selected 2 fe7bdf64befc681d
+selected hot 2 67322bb30d35a4dd
+inactive 2 c87ebd39c6de424d
+focused 2 cbe019d9385a0f3d

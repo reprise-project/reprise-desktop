@@ -353,33 +353,13 @@ mod tests {
             for scale in [1, 2] {
                 let theme = theme_for(i).scaled(scale);
                 let l = layout(look(&theme), (240, 180));
+                got.push((format!("{i:?} {scale} frame"), fnv(&draw_frame(&theme, &l))));
                 got.push((
-                    i,
-                    scale,
-                    fnv(&draw_frame(&theme, &l)),
+                    format!("{i:?} {scale} controls"),
                     fnv(&draw_controls(&theme, &l)),
                 ));
             }
         }
-        assert_eq!(got, PINS, "pins changed; now:\n{got:#x?}");
+        crate::pins::check("controls/mini_view", &got);
     }
-
-    const PINS: &[(Interface, i32, u64, u64)] = &[
-        (
-            Interface::Classic,
-            1,
-            0x56c2c0843362a7d8,
-            0x3fd0ebbd130386c8,
-        ),
-        (
-            Interface::Classic,
-            2,
-            0xe952af93569430d5,
-            0x7d7bc126e3ac63b5,
-        ),
-        (Interface::Blue, 1, 0x3ce0336a41fae004, 0xc4e33266901af903),
-        (Interface::Blue, 2, 0x05483dc8155527c5, 0xdc28cf8e1e6ce6c3),
-        (Interface::Glass, 1, 0x449b36160c7624a9, 0xb92c3a6e501cd0ab),
-        (Interface::Glass, 2, 0x70120dd545d8b812, 0xd1367e792d27e172),
-    ];
 }

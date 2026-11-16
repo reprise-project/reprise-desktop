@@ -275,14 +275,5 @@ fn the_view_is_pinned_per_interface_and_scale() {
             got.push((format!("{name}@{s}"), fnv(&c)));
         }
     }
-    let want: [(&str, u64); 6] = [
-        ("classic@1", 0xed1b_a465_bbee_b41d),
-        ("classic@2", 0x2e9c_34e3_1a0e_6fbd),
-        ("blue@1", 0x48db_a1b1_0a12_f1bc),
-        ("blue@2", 0x81b0_f480_ce7b_a44d),
-        ("glass@1", 0xc17a_bed3_33d8_c5e9),
-        ("glass@2", 0xa0b6_41b0_f3ab_427b),
-    ];
-    let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
-    assert_eq!(got, want);
+    crate::pins::check("controls/image_view", &got);
 }

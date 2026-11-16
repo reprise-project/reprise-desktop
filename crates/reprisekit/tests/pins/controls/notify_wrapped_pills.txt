@@ -1,0 +1,6 @@
+Lozenge x1 c0119631d1d3265a
+Lozenge x2 ba4fff44421ea53f
+Halo x1 a727912c2a5a2fef
+Halo x2 c23c9f348c48263d
+Droplet x1 fcc91249b767bee4
+Droplet x2 ee67f01cba1aa78e

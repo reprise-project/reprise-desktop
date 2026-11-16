@@ -501,53 +501,28 @@ mod tests {
 
     #[test]
     fn every_state_draws_its_own_pixels_in_blue_and_olive_at_scale_1_and_2() {
-        let got: Vec<Vec<u64>> = [Variant::Blue, Variant::Olive]
+        let cases: Vec<_> = [Variant::Blue, Variant::Olive]
             .into_iter()
-            .flat_map(|v| [1, 2].map(|d| hashes(v, d)))
+            .flat_map(|v| [1, 2].map(|d| (v, d)))
             .collect();
+        let got: Vec<Vec<u64>> = cases.iter().map(|&(v, d)| hashes(v, d)).collect();
         for h in &got {
             let mut seen = h.clone();
             seen.dedup();
             assert_eq!(seen.len(), STATES.len(), "every state differs");
         }
         assert_ne!(got[0], got[2], "Olive draws its own colours");
-        assert_eq!(got, PINS, "the panel's pixels, hashed");
+        let keyed: Vec<_> = cases
+            .iter()
+            .zip(&got)
+            .flat_map(|(&(v, d), h)| {
+                STATES.iter().zip(h).map(move |((hot, pressed), &h)| {
+                    (format!("{v:?} {d} hot={hot:?} pressed={pressed:?}"), h)
+                })
+            })
+            .collect();
+        crate::pins::check("blue/start_panel", &keyed);
     }
-
-    const PINS: [[u64; 6]; 4] = [
-        [
-            0x7E6FAD905BBCFBFD,
-            0x6B23435E5C050657,
-            0xE9C97E932731D06D,
-            0x4E2329FD41549673,
-            0x3BDEB1F5E433B98A,
-            0x4FFE038D8464A422,
-        ],
-        [
-            0xA4B6037F59DFC894,
-            0x20628B6E855F8D02,
-            0xAB03C87F3793406B,
-            0xF0AF4158945E9FA6,
-            0xF9C3707FAE567C07,
-            0x61177BA0BFF33425,
-        ],
-        [
-            0x402A40B122E2F9CC,
-            0x6B7780E6DB7358CA,
-            0x5FB11F53B050FBFC,
-            0x05119C0CD60CC0BE,
-            0x654CF75B5C50CF90,
-            0x5ED634731A253867,
-        ],
-        [
-            0x684585FD65B387DF,
-            0xA536A8EDD13B901D,
-            0xAB415C4B4966F0CD,
-            0x1F62589D174227B9,
-            0x415D4636D1815D04,
-            0xEFD473A675C11375,
-        ],
-    ];
 
     #[test]
     fn the_corners_are_clear_and_round_at_scale_2() {

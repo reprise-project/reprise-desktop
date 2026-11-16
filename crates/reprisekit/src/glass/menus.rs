@@ -638,26 +638,16 @@ mod tests {
 
     #[test]
     fn menu_marks_pin_at_scale_1_and_2() {
-        let got: Vec<u64> = [1, 2]
+        let got: Vec<_> = [1, 2]
             .into_iter()
             .flat_map(|d| {
                 super::parts(d)
                     .into_iter()
                     .skip(2)
-                    .map(|(_, img)| fnv(&img.atlas))
+                    .map(move |(p, img)| (format!("{p:?} {d}"), fnv(&img.atlas)))
             })
             .collect();
-        let want: [u64; 8] = [
-            0xf296ce72ada92351,
-            0xfb031f0607ce72c5,
-            0x8fb9f523a087de68,
-            0xcf4eddf6cdc207ae,
-            0xe204a1a40ddf7695,
-            0xa09f4c420159ce4c,
-            0xf5d87b878e5c790b,
-            0xfb913e06d0d9bc23,
-        ];
-        assert_eq!(got, want, "{got:#x?}");
+        crate::pins::check("glass/menu_marks", &got);
     }
 
     fn options_theme(mode: super::Mode, scale: i32) -> Theme {
@@ -749,25 +739,16 @@ mod tests {
     #[test]
     fn the_options_menu_pins_at_scale_1_and_2() {
         use super::Mode;
-        let got: Vec<u64> = [Mode::Light, Mode::Dark]
+        let got: Vec<_> = [Mode::Light, Mode::Dark]
             .into_iter()
             .flat_map(|m| [1, 2].map(move |s| (m, s)))
             .flat_map(|(m, s)| {
                 let theme = options_theme(m, s);
-                [false, true].map(|lit| fnv(&options(&theme, lit).0))
+                [false, true]
+                    .map(|lit| (format!("{m:?} {s} lit={lit}"), fnv(&options(&theme, lit).0)))
             })
             .collect();
-        let want: [u64; 8] = [
-            0x0b893eee676d22b1,
-            0x8fd533b96b4ffb1d,
-            0x139ee9da3301412d,
-            0x989f08c9e4bfb7e5,
-            0x1e7fef25e74581f3,
-            0x1170d223d3014d13,
-            0x14d9f0f92d98b6dd,
-            0xe9fa2e0e06523c12,
-        ];
-        assert_eq!(got, want, "{got:#x?}");
+        crate::pins::check("glass/options_menu", &got);
         let (one, _) = options(&options_theme(Mode::Light, 1), false);
         let (two, _) = options(&options_theme(Mode::Light, 2), false);
         assert_eq!(two.get(20, 60), one.get(10, 30), "the frame doubles");

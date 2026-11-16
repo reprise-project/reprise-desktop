@@ -770,36 +770,17 @@ mod tests {
 
     #[test]
     fn the_frames_parts_keep_their_pixels_at_sky() {
-        for (frame, want) in [
-            (
-                Frame::Rounded,
-                [
-                    0x5D93_CD68_1261_1D25_u64,
-                    0x89CD_5ACB_EE44_F915,
-                    0x68FD_F885_915E_6F91,
-                    0x8ECF_C16E_A3F7_5BD1,
-                    0x30F0_5207_0564_7CAD,
-                ],
-            ),
-            (
-                Frame::Square,
-                [
-                    0x9E15_8DAA_BDD7_EEE1,
-                    0x89CD_5ACB_EE44_F915,
-                    0x68FD_F885_915E_6F91,
-                    0x8ECF_C16E_A3F7_5BD1,
-                    0x39C7_C816_AFBB_4631,
-                ],
-            ),
-        ] {
+        let mut got = Vec::new();
+        for frame in [Frame::Rounded, Frame::Square] {
             let s = Settings {
                 frame,
                 ..Settings::default()
             };
-            for ((name, img), want) in parts(&s).into_iter().zip(want) {
-                assert_eq!(fnv(&img), want, "{frame:?} {name}: the atlas");
+            for (name, img) in parts(&s) {
+                got.push((format!("{frame:?} {name}"), fnv(&img)));
             }
         }
+        crate::pins::check("glass/frame_parts", &got);
     }
 
     #[test]
@@ -864,31 +845,12 @@ mod tests {
 
     #[test]
     fn the_sheet_keeps_its_pixels_in_each_material_and_frame() {
-        for (mode, material, frame, want) in [
-            (
-                Mode::Light,
-                Material::Frosted,
-                Frame::Rounded,
-                [0xFB7E_AE68_1F97_FEAC_u64, 0x8376_DA57_7E89_2AED],
-            ),
-            (
-                Mode::Light,
-                Material::Smoked,
-                Frame::Square,
-                [0x9935_69D2_DAD4_3239, 0x97F8_8FAB_346A_9EA5],
-            ),
-            (
-                Mode::Light,
-                Material::Molten,
-                Frame::Rounded,
-                [0xE571_96E4_329A_3B23, 0xFE08_FBCA_0A2E_9155],
-            ),
-            (
-                Mode::Dark,
-                Material::Frosted,
-                Frame::Rounded,
-                [0xFB7E_AE68_1F97_FEAC, 0x8376_DA57_7E89_2AED],
-            ),
+        let mut got = Vec::new();
+        for (mode, material, frame) in [
+            (Mode::Light, Material::Frosted, Frame::Rounded),
+            (Mode::Light, Material::Smoked, Frame::Square),
+            (Mode::Light, Material::Molten, Frame::Rounded),
+            (Mode::Dark, Material::Frosted, Frame::Rounded),
         ] {
             let s = Settings {
                 mode,
@@ -896,9 +858,12 @@ mod tests {
                 frame,
                 ..Settings::default()
             };
-            let got = [1, 2].map(|d| fnv(&sheet(&s, d)));
-            assert_eq!(got, want, "{mode:?} {material:?} {frame:?}: {got:X?}");
+            for d in [1, 2] {
+                let key = format!("{mode:?} {material:?} {frame:?} {d}");
+                got.push((key, fnv(&sheet(&s, d))));
+            }
         }
+        crate::pins::check("glass/sheet_glass", &got);
     }
 
     #[test]
@@ -995,31 +960,24 @@ mod tests {
 
     #[test]
     fn client_glass_keeps_its_pixels_in_each_material() {
-        let got = [Material::Frosted, Material::Smoked, Material::Molten].map(|material| {
+        let mut got = Vec::new();
+        for material in [Material::Frosted, Material::Smoked, Material::Molten] {
             let s = Settings {
                 material,
                 ..Settings::default()
             };
-            [1, 2].map(|d| [fnv(&client_glass(&s, d)), fnv(&max_client_glass(&s, d))])
-        });
-        let want = [
-            [
-                [0x4787_5A5E_F15B_DA6D, 0xD6C9_6FCC_DFB0_0A84],
-                [0x13D7_BAC6_2753_11CD, 0x3CD3_AEE4_9B07_8B15],
-            ],
-            [
-                [0x1AB6_329F_A262_8915, 0x7542_D690_08B5_0B29],
-                [0x4F79_DFDF_84D1_2091, 0x0C48_F624_358D_9065],
-            ],
-            [
-                [0x3925_0BDD_7575_F885, 0xF755_0E91_5CDB_520B],
-                [0x3765_9B57_6106_0319, 0x7ECF_8D47_39DC_8475],
-            ],
-        ];
-        assert_eq!(
-            got, want,
-            "Frosted, Smoked, Molten, sheened then plain: {got:X?}"
-        );
+            for d in [1, 2] {
+                got.push((
+                    format!("{material:?} {d} sheened"),
+                    fnv(&client_glass(&s, d)),
+                ));
+                got.push((
+                    format!("{material:?} {d} plain"),
+                    fnv(&max_client_glass(&s, d)),
+                ));
+            }
+        }
+        crate::pins::check("glass/client_glass", &got);
     }
 
     #[test]
@@ -1452,38 +1410,17 @@ mod tests {
 
     #[test]
     fn the_frames_parts_at_scale_2_keep_their_pixels_at_sky() {
-        for (frame, want) in [
-            (
-                Frame::Rounded,
-                [
-                    0xCEBA_77A7_1E8E_5905_u64,
-                    0x091B_3BA0_520C_0105,
-                    0xC8DC_F957_A856_12B5,
-                    0x1772_08CE_FB37_AAC5,
-                    0x0D09_9A17_9FF6_05C9,
-                ],
-            ),
-            (
-                Frame::Square,
-                [
-                    0xFE9C_16E4_BE11_A91D,
-                    0x091B_3BA0_520C_0105,
-                    0xC8DC_F957_A856_12B5,
-                    0x1772_08CE_FB37_AAC5,
-                    0x09BD_F4D0_EB8D_77F5,
-                ],
-            ),
-        ] {
+        let mut got = Vec::new();
+        for frame in [Frame::Rounded, Frame::Square] {
             let s = Settings {
                 frame,
                 ..Settings::default()
             };
-            let got = parts_at(&s, 2).map(|(_, img)| fnv(&img));
-            assert_eq!(
-                got, want,
-                "{frame:?}: caption, max caption, left, right, bottom, {got:#018X?}"
-            );
+            for (name, img) in parts_at(&s, 2) {
+                got.push((format!("{frame:?} {name}"), fnv(&img)));
+            }
         }
+        crate::pins::check("glass/frame_parts_at_2", &got);
     }
 
     #[test]
@@ -1590,20 +1527,8 @@ mod tests {
                 (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
             })
         };
-        for (mode, color, reach, hashes) in [
-            (
-                Mode::Light,
-                0xFF,
-                [17, 36],
-                [0xb7fe_a99c_cd02_fb89, 0x21dc_c1ff_c30e_cb4d],
-            ),
-            (
-                Mode::Dark,
-                0,
-                [3, 7],
-                [0xa8f9_28b4_df90_e186, 0x726d_3fbe_69cf_e537],
-            ),
-        ] {
+        let mut got = Vec::new();
+        for (mode, color, reach) in [(Mode::Light, 0xFF, [17, 36]), (Mode::Dark, 0, [3, 7])] {
             let st = crate::glass::style(&Settings {
                 mode,
                 ..Settings::default()
@@ -1624,7 +1549,7 @@ mod tests {
                 reach,
                 "{mode:?}: its reach at scale 1 and 2"
             );
-            for (active, hash) in [true, false].into_iter().zip(hashes) {
+            for active in [true, false] {
                 let mask = crate::style::GlowMask {
                     coverage: &title,
                     width: w,
@@ -1633,12 +1558,9 @@ mod tests {
                     active,
                     scale: 1,
                 };
-                assert_eq!(
-                    fnv(&(g.alpha)(&mask)),
-                    hash,
-                    "{mode:?}, focused {active}: the glow"
-                );
+                got.push((format!("{mode:?} focused={active}"), fnv(&(g.alpha)(&mask))));
             }
         }
+        crate::pins::check("glass/caption_title_glow", &got);
     }
 }

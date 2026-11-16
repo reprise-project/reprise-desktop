@@ -1,0 +1,10 @@
+plain 1 d97b6337936e14ee
+hot 1 fc89093a91624708
+selected 1 5568f687c81c5f82
+selected hot 1 3d8cb3b71a174aec
+held 1 c381206a4271525d
+plain 2 3f3d1b0d8ae07615
+hot 2 b88dba0bf5068301
+selected 2 b03b4cb9ae51bb05
+selected hot 2 c626ad8a26c91159
+held 2 577bc710d045ac31

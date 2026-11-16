@@ -168,14 +168,7 @@ fn the_thunderbolt_page_pins_its_pixels_in_every_look() {
     let listed = row_pins(&f, page);
     show_thunderbolt(&mut f, None, None, false);
     let none = row_pins(&f, page);
-    assert_eq!(
-        [listed, none],
-        [
-            [0x6b75b993a083523f, 0x8644206d843fa1b5, 0x074021d4fb3f4d18],
-            [0xb75eab4eda87ac25, 0x8469dcb7d427eb5f, 0x67602befd6c79841],
-        ],
-        "listed, no bolt; Classic, Blue, Glass"
-    );
+    check_rows("thunderbolt_page", &["listed", "no bolt"], &[listed, none]);
 }
 
 #[test]

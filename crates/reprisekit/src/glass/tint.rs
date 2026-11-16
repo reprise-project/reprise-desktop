@@ -423,7 +423,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(hash, 0xa421_888c_a1c0_9df1, "every swatch's plain glass");
+        crate::pins::check("glass/swatch_glass", &[("every swatch".into(), hash)]);
     }
 
     #[test]

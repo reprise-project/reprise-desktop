@@ -882,27 +882,14 @@ mod tests {
         h
     }
 
-    const PINS: [(&str, u64); 6] = [
-        ("classic 1", 0x960a_0587_cd47_5d2a),
-        ("classic 2", 0xab3e_218a_448d_dd52),
-        ("blue 1", 0x8f82_dce3_9656_86f6),
-        ("blue 2", 0x92f3_b785_db6c_6f12),
-        ("glass 1", 0xfd07_12ec_136b_0394),
-        ("glass 2", 0xb3fe_7c3a_31d7_bf74),
-    ];
-
     #[test]
     fn the_panel_pins_per_interface_at_scale_1_and_2() {
         crate::pins::fonts();
-        let lines: Vec<String> = pin_cases()
+        let got: Vec<_> = pin_cases()
             .iter()
-            .map(|(name, c)| format!("(\"{name}\", 0x{:016x}),", fnv(c)))
+            .map(|(name, c)| (name.to_string(), fnv(c)))
             .collect();
-        let want: Vec<String> = PINS
-            .iter()
-            .map(|(name, h)| format!("(\"{name}\", 0x{h:016x}),"))
-            .collect();
-        assert!(lines == want, "the panel moved:\n{}", lines.join("\n"));
+        crate::pins::check("controls/display_panel", &got);
     }
 
     #[test]

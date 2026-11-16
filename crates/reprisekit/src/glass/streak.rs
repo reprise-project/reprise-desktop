@@ -168,10 +168,7 @@ mod tests {
             .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
                 (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
             });
-        assert_eq!(
-            hash, 0x12c7_6765_8456_67c1,
-            "the streaks of a 1920x1080 screen"
-        );
+        crate::pins::check("glass/streaks_1080p", &[("1920x1080".into(), hash)]);
         assert!(
             p.iter().any(|&v| channels(v)[1] >= 20),
             "a bright band crosses it"

@@ -288,28 +288,22 @@ fn the_screen_capture_page_pins_its_pixels_in_every_look() {
         let f = capture(sheet);
         [row_pins_at(f, row, 1), row_pins_at(f, row, 2)]
     };
-    assert_eq!(
-        [pins(&default), pins(&set), pins(&failed), pins(&checking)],
-        [
-            [
-                [0xbcceb65e937e79cb, 0xc4d7fd21c3526ee2, 0x2bfb45746bfff3d4],
-                [0xc040bdb823de0bc8, 0xbe5b168c759c0b38, 0xc20f2c91f2fb205b],
-            ],
-            [
-                [0x26a3338f6f2dc6d1, 0x545683389527b572, 0x7c5fba35f06e5d2a],
-                [0x7e39fc154fa82437, 0xf57b9f293edc5978, 0x1cd90d595a1f9937],
-            ],
-            [
-                [0xb610fe24c7073bab, 0xb8dc8f7d7a9541d9, 0x4a647225f143a3f3],
-                [0x714ca0a102617ea4, 0x66a348cccfe7df27, 0xc7e67611058f19ba],
-            ],
-            [
-                [0x83dcc28a240d7dc2, 0x78c4c4188be4be36, 0x2456e5135eb0b25b],
-                [0x38c419eaa6b8e9b0, 0xbfa93f5f3e3680a5, 0x9bdf595bccf92900],
-            ],
+    let rows: Vec<_> = [&default, &set, &failed, &checking]
+        .into_iter()
+        .flat_map(pins)
+        .collect();
+    check_rows(
+        "capture_rows",
+        &[
+            "defaults x1",
+            "defaults x2",
+            "JPEG XL lossy after a probe x1",
+            "JPEG XL lossy after a probe x2",
+            "JPG after a failed probe x1",
+            "JPG after a failed probe x2",
+            "JPEG XL lossless while checking x1",
+            "JPEG XL lossless while checking x2",
         ],
-        "defaults; JPEG XL lossy, Average, H.265 and Opus after a probe; JPG, Constant, AV1 in \
-         software and FLAC after a failed probe; JPEG XL lossless while checking; scale 1, 2; \
-         Classic, Blue, Glass"
+        &rows,
     );
 }

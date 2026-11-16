@@ -1154,27 +1154,11 @@ mod tests {
 
     #[test]
     fn sky_frames_keep_their_pixels() {
-        let want: [u64; 16] = [
-            0xC898_A3F2_E839_2891,
-            0x312B_CD0E_711F_590E,
-            0x5B07_675D_5B32_F0AE,
-            0x4C98_76E0_805D_3649,
-            0x3FFE_0746_2707_E545,
-            0x8C56_9A24_7E26_0CC2,
-            0xE3B2_DFFD_554F_B7B9,
-            0x8E54_5716_B56B_8219,
-            0x0477_1018_18EE_3909,
-            0xDCE9_D0E7_D01C_01BD,
-            0xBF2D_2339_C661_A608,
-            0x1C14_98F0_BC85_75DD,
-            0x0966_BC1C_AC7F_8AF3,
-            0x4CD2_D323_E581_F16D,
-            0x29BB_C637_1328_B3F2,
-            0xE7A7_A468_1402_5435,
-        ];
-        for ((name, img), want) in parts(&Settings::default(), 1).iter().zip(want) {
-            assert_eq!(fnv(img), want, "{name}: the atlas {:#018X}", fnv(img));
-        }
+        let got: Vec<_> = parts(&Settings::default(), 1)
+            .iter()
+            .map(|(name, img)| (name.to_string(), fnv(img)))
+            .collect();
+        crate::pins::check("glass/task_button_parts", &got);
         let s = Settings::default();
         let (b, l, e) = (
             buttons(&s, BUTTON, 1),
@@ -1793,29 +1777,11 @@ mod tests {
 
     #[test]
     fn sky_frames_at_scale_2_keep_their_pixels() {
-        let want: [u64; 16] = [
-            0xC03F_5CA0_516E_CEA7,
-            0x0422_AF69_8F22_115F,
-            0xBA40_3C3F_0604_411A,
-            0x4ABB_D6E5_5160_4032,
-            0x6957_DDF1_048D_2BCF,
-            0x03D3_A08D_BE0E_8379,
-            0x7720_CECA_1356_5A71,
-            0xE0FC_57E7_1AF5_3D2F,
-            0x0686_BB2F_6173_7CF1,
-            0xB170_C622_1118_450D,
-            0x2922_F3F2_5FE7_A8E7,
-            0x5C7A_D473_7D13_FBED,
-            0x87D9_CEC7_3F71_FE61,
-            0x12BB_7CB0_7587_7B45,
-            0x22D1_A678_2DC5_0655,
-            0x0F8B_4437_ADF2_EC05,
-        ];
-        let got: Vec<u64> = parts(&Settings::default(), 2)
+        let got: Vec<_> = parts(&Settings::default(), 2)
             .iter()
-            .map(|(_, img)| fnv(img))
+            .map(|(name, img)| (name.to_string(), fnv(img)))
             .collect();
-        assert_eq!(got, want, "{got:#018X?}");
+        crate::pins::check("glass/task_button_parts_at_2", &got);
     }
 
     #[test]

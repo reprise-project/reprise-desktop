@@ -163,33 +163,6 @@ const HALO_CASES: [&str; 6] = [
     "blue tint",
 ];
 
-const HALO_PINS: [u64; 24] = [
-    0xc87baade66c86c50,
-    0xc15e81e1b26ed426,
-    0x08f7453f23193b67,
-    0x6f1a7ab14cccb98e,
-    0xd18bdae0cbfce7dd,
-    0x662a91cdd0d9eb67,
-    0xb089ae5e075f0bc6,
-    0x26fb58f810a4bf27,
-    0x8bc0bdcefce6bda7,
-    0x526bde193ecf3240,
-    0x2b96f63ca064b37a,
-    0xfbc687a88aa59f4d,
-    0x6b3812eb5fca657b,
-    0xd4e27dd1ea4ef6f3,
-    0xa58186a1c834bce6,
-    0x0c69f2445e672382,
-    0x9d409da44a21dcf5,
-    0xf6c935a74d8c9579,
-    0x62ff16259d512b5e,
-    0x53d25fb60cd67965,
-    0x2cafd025beeb7306,
-    0xa1bad3ac5ac3cf29,
-    0x4120aa3ac20c5e05,
-    0x0c4ac6dca907400a,
-];
-
 #[test]
 fn halo_pins() {
     crate::pins::fonts();
@@ -203,10 +176,7 @@ fn halo_pins() {
             }
         }
     }
-    let now: Vec<String> = got.iter().map(|(_, h)| format!("{h:#018x},")).collect();
-    for (i, (case, h)) in got.iter().enumerate() {
-        assert_eq!(*h, HALO_PINS[i], "{case}; now:\n{}", now.join("\n"));
-    }
+    crate::pins::check("controls/notify_halo", &got);
 }
 
 #[test]

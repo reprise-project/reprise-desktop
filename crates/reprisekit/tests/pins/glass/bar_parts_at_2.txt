@@ -1,0 +1,14 @@
+40 px taskbar 8b6c3c1e000898c5
+40 px tray aa754acdf116504d
+40 px veil 4fd3cb86e0d22b15
+40 px band 334687f04f50c88d
+40 px edges 63cae354e03aa51d
+40 px foot light dbd091e8856f93f5
+40 px strip 364f0c29ad8154c7
+30 px taskbar 6a49fcd702bcc825
+30 px tray 10845139518a6035
+30 px veil f40bd5aeeb531bc5
+30 px band cb94c4c1ff3ee68d
+30 px edges e033ce2c76d05a05
+30 px foot light de90a15c1f590bf5
+30 px strip 28b6d09de28b1733

@@ -543,20 +543,14 @@ mod tests {
         let mut got = Vec::new();
         for active in [true, false] {
             for scale in [1, 2] {
-                got.push(
-                    (0..8)
-                        .map(|i| fnv(&piece(active, i, scale)))
-                        .collect::<Vec<_>>(),
-                );
+                for i in 0..8 {
+                    got.push((
+                        format!("active={active} {scale} piece {i}"),
+                        fnv(&piece(active, i, scale)),
+                    ));
+                }
             }
         }
-        #[rustfmt::skip]
-        let want: Vec<Vec<u64>> = vec![
-            vec![0xa9c0b46d56662aa7, 0x97b076074191b7b1, 0x0ac03dd1a1f2949f, 0x3111ce6cf8ae3850, 0x6bb46ec54e50dcce, 0xd45ee115212744db, 0x270e9accfaeccd7c, 0x37f2dc00909d30c7],
-            vec![0x049d3ab81a36ab0a, 0x83ccbc068a1dbc9e, 0xc87b31ca6bb338d6, 0xefc0184907ceb84f, 0x5eb7081cc154ba3f, 0xe23b0d625c4df541, 0x67978fc3733df3fd, 0xaa6b04b211aca3c3],
-            vec![0x5e0f0ca29d61b9bb, 0x4e7cddd2ade754ac, 0x54597c73b3888ffc, 0x019c94d00e4716bd, 0xa148843709d3e9e3, 0x9d8cbee7104f87c5, 0x29733ea7f87ee643, 0x68d5e521db213c45],
-            vec![0x1b7ea30f5821d477, 0x7b191739fb392ee7, 0x38105a483f36b1d7, 0xd36dfe1e5956b36a, 0xf78e09df9d092729, 0x12d2c61e7771ec45, 0xcd2ad6502a6943a9, 0x374d75c3f6f51275],
-        ];
-        assert_eq!(got, want, "the shadow's pieces");
+        crate::pins::check("glass/shadow", &got);
     }
 }

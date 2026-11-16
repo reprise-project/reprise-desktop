@@ -545,28 +545,13 @@ mod tests {
         for mode in [Mode::Light, Mode::Dark] {
             for t in [(10, 9, 30), (3, 0, 45), (21, 37, 5)] {
                 for d in [1, 2] {
-                    got.push(fnv(&painter(mode)(t, true, SIDE, d)));
+                    let (h, m, sec) = t;
+                    let key = format!("{mode:?} {h:02}:{m:02}:{sec:02} {d}");
+                    got.push((key, fnv(&painter(mode)(t, true, SIDE, d))));
                 }
             }
         }
-        assert_eq!(
-            got,
-            [
-                0x33bd_ebda_f9a1_6150,
-                0x7dbf_1051_8b61_d2c9,
-                0xfbe7_1acf_91fe_8492,
-                0x17ec_ebc7_b7aa_d7db,
-                0x0f54_85d5_5b5c_5ae3,
-                0xe6ec_1d10_323f_1843,
-                0xc36e_94ba_02d3_6b47,
-                0x0015_e70f_b818_12b8,
-                0x5888_d237_a795_f759,
-                0x1a55_8425_7524_b516,
-                0x16ad_f2ed_3882_8fed,
-                0xb18a_168b_9d27_bebc,
-            ],
-            "{got:#x?}"
-        );
+        crate::pins::check("glass/clock", &got);
     }
 
     /// A paint over a dial kept from another time matches one over a fresh dial, and `forget`

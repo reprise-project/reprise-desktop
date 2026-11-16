@@ -1670,43 +1670,31 @@ mod tests {
 
     #[test]
     fn the_icon_button_pins_its_pixels_in_every_look_at_1_and_2() {
-        let want: [(Interface, i32, u64); 6] = [
-            (Interface::Classic, 1, 0x7d35_7413_054c_1c4a),
-            (Interface::Classic, 2, 0xc459_a513_3384_83bc),
-            (Interface::Blue, 1, 0x5879_eedc_65d6_600b),
-            (Interface::Blue, 2, 0x1792_b510_4119_ddd7),
-            (Interface::Glass, 1, 0x44f5_cd24_22b0_2b68),
-            (Interface::Glass, 2, 0x86ee_d626_3c70_5d81),
-        ];
-        let got: Vec<String> = want
-            .iter()
-            .filter_map(|&(interface, s, hash)| {
+        let cases = [Interface::Classic, Interface::Blue, Interface::Glass]
+            .into_iter()
+            .flat_map(|i| [1, 2].map(|s| (i, s)));
+        let got: Vec<_> = cases
+            .map(|(interface, s)| {
                 let all = icon_buttons(interface, s);
                 let h = all[..4].iter().fold(0u64, |h, c| h.rotate_left(7) ^ fnv(c));
-                (h != hash).then(|| format!("{interface:?} at {s}: {h:#018x}"))
+                (format!("{interface:?} {s}"), h)
             })
             .collect();
-        assert!(got.is_empty(), "{got:#?}");
+        crate::pins::check("look/icon_button", &got);
     }
 
     #[test]
     fn a_focused_icon_button_pins_its_pixels_in_every_look_at_1_and_2() {
-        let want: [(Interface, i32, u64); 6] = [
-            (Interface::Classic, 1, 0x0c77_5762_3b95_9c73),
-            (Interface::Classic, 2, 0xa045_e113_47f7_193b),
-            (Interface::Blue, 1, 0x2246_6f2d_1895_bdc6),
-            (Interface::Blue, 2, 0xef6d_08a2_ed11_491f),
-            (Interface::Glass, 1, 0x8ba8_3014_1ba1_df1d),
-            (Interface::Glass, 2, 0x1b5d_2b96_372c_5e47),
-        ];
-        let got: Vec<String> = want
-            .iter()
-            .filter_map(|&(interface, s, hash)| {
+        let cases = [Interface::Classic, Interface::Blue, Interface::Glass]
+            .into_iter()
+            .flat_map(|i| [1, 2].map(|s| (i, s)));
+        let got: Vec<_> = cases
+            .map(|(interface, s)| {
                 let h = fnv(&icon_buttons(interface, s)[4]);
-                (h != hash).then(|| format!("{interface:?} at {s}: {h:#018x}"))
+                (format!("{interface:?} {s}"), h)
             })
             .collect();
-        assert!(got.is_empty(), "{got:#?}");
+        crate::pins::check("look/icon_button_focused", &got);
     }
 
     /// Classic's focus ring runs 2 px in, between the button's edge and the icon, and leaves the

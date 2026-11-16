@@ -695,15 +695,6 @@ fn fnv(c: &Canvas) -> u64 {
         })
 }
 
-const WRAPPED_PINS: [u64; 6] = [
-    0x73acc913fd881244,
-    0x798b5b5a7a48f6e0,
-    0x4ca44806f82bf3a8,
-    0x0c239197338ab164,
-    0xd5ac7b09480b9329,
-    0xf26de3d28d2f147b,
-];
-
 /// Three long buttons on two rows: Classic and Blue at scale 1 and 2, and at 200% text.
 #[test]
 fn wrapped_button_rows_pins() {
@@ -730,10 +721,7 @@ fn wrapped_button_rows_pins() {
             got.push((format!("{i:?} {pct}% x{s}"), fnv(&c)));
         }
     }
-    let now: Vec<String> = got.iter().map(|(_, h)| format!("{h:#018x},")).collect();
-    for (i, (case, h)) in got.iter().enumerate() {
-        assert_eq!(*h, WRAPPED_PINS[i], "{case}; now:\n{}", now.join("\n"));
-    }
+    crate::pins::check("controls/balloon_wrapped_buttons", &got);
 }
 
 /// Blue's tip, in every variant, is a black 1 px frame round info_bk

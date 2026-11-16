@@ -414,27 +414,29 @@ mod tests {
         let mut got = Vec::new();
         for a in [Action::Create, Action::Remove] {
             let mut d = RdPasswordDialog::new(a, 1);
-            got.push(pins(&d));
+            got.push((format!("{a:?} empty"), pins(&d)));
             for id in [LOGIN, NEW, CONFIRM] {
                 if d.form.item(id).is_some() {
                     type_into(&mut d, id, "swordfish");
                 }
             }
-            got.push(pins(&d));
+            got.push((format!("{a:?} typed"), pins(&d)));
             d.refused(AccountRefusal::NotRemoteUser);
-            got.push(pins(&d));
+            got.push((format!("{a:?} refused"), pins(&d)));
         }
-        assert_eq!(
-            got,
-            [
-                [0x2257e143d4ae3064, 0x62ee661248c965f0, 0x053345cacc82ef33],
-                [0xfbfd5ca4ae78819f, 0x9189bdc2eb60b61d, 0x9c99f9185f026ec6],
-                [0x13e6874b649e692f, 0xb6d0e8a9e682b0d9, 0x1669cff72d11d12a],
-                [0xbabbbdfc0331d2cc, 0x8a87746c7e76c83b, 0xd311d41a3e1af5f0],
-                [0x23a60d53daf65d43, 0xc34d4f182551418e, 0x969db73445924479],
-                [0x90839a3197dc33b3, 0x7fad7217f0b61d3a, 0xf9b3cd0d18d1666d],
-            ],
-            "Create then Remove: empty, typed, refused; Classic, Blue, Glass"
+        let got: Vec<_> = got
+            .into_iter()
+            .flat_map(|(state, h)| {
+                ["Classic", "Blue", "Glass"]
+                    .into_iter()
+                    .zip(h)
+                    .map(move |(look, h)| (format!("{state} {look}"), h))
+            })
+            .collect();
+        let file = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/pins/remote_password_dialogs.txt"
         );
+        reprisekit::pins::check_file(std::path::Path::new(file), &got);
     }
 }

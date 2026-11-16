@@ -771,39 +771,26 @@ mod tests {
             let mut got = Vec::new();
             for d in [1, 2] {
                 for bar in [Bar::Full, Bar::Small] {
-                    got.push(fnv(&orb(s, bar, d)));
-                    got.push(fnv(&above(s, bar, d)));
+                    got.push((format!("orb {bar:?} {d}"), fnv(&orb(s, bar, d))));
+                    got.push((format!("above {bar:?} {d}"), fnv(&above(s, bar, d))));
                 }
             }
             got
         };
         let got = hashes(&Settings::default());
-        let blooms: Vec<u64> = [1, 2]
+        let blooms: Vec<_> = [1, 2]
             .into_iter()
-            .flat_map(|d| STATES.map(|st| fnv_canvas(&bloom(&mark(d), st, d, 100).canvas)))
+            .flat_map(|d| {
+                STATES.map(|st| {
+                    let h = fnv_canvas(&bloom(&mark(d), st, d, 100).canvas);
+                    (format!("{st:?} {d}"), h)
+                })
+            })
             .collect();
-        let want_blooms: [u64; 6] = [
-            0xe0f93492b92e7655,
-            0xa35dfb09890112ed,
-            0x6cfa94cc554a82ed,
-            0x01f776e60cdd7c15,
-            0x0cf4fb02493cebfd,
-            0x8296529a2af5f741,
-        ];
-        assert_eq!(blooms, want_blooms, "blooms {blooms:#018x?}");
-        let want: [u64; 8] = [
-            0x3f916d9cd8749b69,
-            0x681c3fa3d15982e5,
-            0x0353c2c2215d2ffd,
-            0x81db121f5eb6fd21,
-            0xb020206431d2f855,
-            0x5c60aeb554108225,
-            0x9af695e7222090c1,
-            0x9287a159cdb64fd1,
-        ];
-        assert_eq!(got, want, "{got:#018x?}");
-        assert_eq!(hashes(&dark), want, "dark glass");
-        assert_eq!(hashes(&smoked), want, "smoked glass");
+        crate::pins::check("glass/orb_blooms", &blooms);
+        crate::pins::check("glass/orb", &got);
+        assert_eq!(hashes(&dark), got, "dark glass");
+        assert_eq!(hashes(&smoked), got, "smoked glass");
     }
 
     #[test]

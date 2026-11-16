@@ -118,15 +118,6 @@ fn a_reply_takes_the_first_pill_row_and_the_sheet_keeps_its_height() {
     }
 }
 
-const WRAPPED_PILL_PINS: [u64; 6] = [
-    0xc0119631d1d3265a,
-    0xba4fff44421ea53f,
-    0xa727912c2a5a2fef,
-    0xc23c9f348c48263d,
-    0xfcc91249b767bee4,
-    0xee67f01cba1aa78e,
-];
-
 /// Three long pills on two rows on each shape, expanded, at scale 1 and 2.
 #[test]
 fn wrapped_pill_rows_pins() {
@@ -159,8 +150,5 @@ fn wrapped_pill_rows_pins() {
             got.push((format!("{shape:?} x{s}"), fnv(&drawn)));
         }
     }
-    let now: Vec<String> = got.iter().map(|(_, h)| format!("{h:#018x},")).collect();
-    for (i, (case, h)) in got.iter().enumerate() {
-        assert_eq!(*h, WRAPPED_PILL_PINS[i], "{case}; now:\n{}", now.join("\n"));
-    }
+    crate::pins::check("controls/notify_wrapped_pills", &got);
 }

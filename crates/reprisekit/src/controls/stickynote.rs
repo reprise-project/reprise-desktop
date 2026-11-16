@@ -450,23 +450,21 @@ mod tests {
             hot: Some(Part::Delete),
             held: None,
         };
-        let got: Vec<u64> = [1, 2]
+        let got: Vec<_> = [1, 2]
             .into_iter()
             .flat_map(|s| {
                 [
-                    hash(&drawn(Colour::Yellow, Strip::default(), s)),
-                    hash(&drawn(Colour::Blue, hot, s)),
+                    (
+                        format!("yellow {s}"),
+                        hash(&drawn(Colour::Yellow, Strip::default(), s)),
+                    ),
+                    (
+                        format!("blue, delete hot {s}"),
+                        hash(&drawn(Colour::Blue, hot, s)),
+                    ),
                 ]
             })
             .collect();
-        assert_eq!(
-            got,
-            [
-                0x0747_cc9c_aef9_bbb0,
-                0xa267_d7e3_f2b1_ffbd,
-                0x4161_6c26_3034_8831,
-                0xfbb6_889b_cfe7_6511
-            ]
-        );
+        crate::pins::check("controls/sticky_note_strip", &got);
     }
 }
