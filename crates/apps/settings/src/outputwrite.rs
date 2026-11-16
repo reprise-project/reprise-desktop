@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use repriseapp::heads::{Head, Transform};
 use repriseconf::displays::{Layouts, Monitor, monitor_ids, outputs_fingerprint};
 use repriseconf::hz_string;
+use repriseconf::projection::Home;
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, TableLike, Value, value};
 
 /// What to record for one output; a None leaves that key as it is.
@@ -194,6 +195,30 @@ pub fn read_primary(text: &str) -> Option<String> {
         .into_iter()
         .find(|t| t.get("primary").and_then(Item::as_bool) == Some(true))
         .and_then(|t| t.get("name")?.as_str().map(str::to_string))
+}
+
+/// Each of `connected`'s home by name (`projection::homes`): its place in the saved side-by-side
+/// arrangement in `layouts` under `config`'s `[[outputs]]`, else its `[[outputs]]` entry.
+pub fn homes(connected: &[Head], layouts: &str, config: &str) -> Vec<(String, Home)> {
+    let monitors: Vec<Monitor<'_>> = (connected.iter())
+        .map(|h| Monitor {
+            connector: &h.name,
+            make: &h.make,
+            model: &h.model,
+            serial: &h.serial,
+        })
+        .collect();
+    let ids = monitor_ids(&monitors);
+    let outputs = (repriseconf::config::Config::parse_lenient(config))
+        .map(|(c, _)| c.outputs)
+        .unwrap_or_default();
+    let saved = Layouts::parse(layouts);
+    let extended = (saved.find(&ids, &outputs_fingerprint(&outputs)))
+        .and_then(|l| l.extended())
+        .unwrap_or_default();
+    let names: Vec<String> = connected.iter().map(|h| h.name.clone()).collect();
+    let homes = repriseconf::projection::homes(extended, &ids, &names, &outputs);
+    names.into_iter().zip(homes).collect()
 }
 
 /// The output the session takes as primary: the one the saved layout in `layouts` marks for the

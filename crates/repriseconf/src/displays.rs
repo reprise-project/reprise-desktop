@@ -2,7 +2,8 @@
 //! connected monitors (`monitor_ids`): which are on, their modes, places, scales, rotations and
 //! the primary. The compositor saves the connected set's layout each time `[[outputs]]` takes
 //! effect or the display switcher or output management changes the monitors, and puts it back
-//! over `[[outputs]]` when that set connects again. The file carries the `[[outputs]]` fingerprint
+//! over `[[outputs]]` when that set connects again. A set saved copying or with a monitor off also
+//! keeps its last side-by-side arrangement, which Extend goes back to. The file carries the `[[outputs]]` fingerprint
 //! it was saved under: a different one (an edit while Reprise was not running) hides every
 //! layout, and the next save drops them.
 
@@ -90,16 +91,42 @@ pub struct MonitorLayout {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
     pub monitors: Vec<(String, MonitorLayout)>,
+    /// While `monitors` is not side by side (`side_by_side`), the set's last arrangement that was;
+    /// else empty.
+    pub extended: Vec<(String, MonitorLayout)>,
 }
 
 impl Layout {
     pub fn new(mut monitors: Vec<(String, MonitorLayout)>) -> Layout {
         monitors.sort_by(|a, b| a.0.cmp(&b.0));
-        Layout { monitors }
+        Layout {
+            monitors,
+            extended: Vec::new(),
+        }
     }
 
     fn ids(&self) -> Vec<&str> {
         self.monitors.iter().map(|(id, _)| id.as_str()).collect()
+    }
+
+    /// Whether two or more monitors are on and not all at one place: neither a copy nor one
+    /// monitor shown alone.
+    pub fn side_by_side(&self) -> bool {
+        let mut on = self.monitors.iter().filter(|(_, m)| m.enabled);
+        let Some((_, first)) = on.next() else {
+            return false;
+        };
+        let rest: Vec<_> = on.collect();
+        !rest.is_empty() && rest.iter().any(|(_, m)| m.position != first.position)
+    }
+
+    /// The arrangement the set extends back to: this one when side by side, else the one it kept.
+    pub fn extended(&self) -> Option<&[(String, MonitorLayout)]> {
+        if self.side_by_side() {
+            Some(&self.monitors)
+        } else {
+            (!self.extended.is_empty()).then_some(&self.extended[..])
+        }
     }
 }
 
@@ -121,6 +148,8 @@ struct FileLayouts {
 #[derive(Serialize, Deserialize)]
 struct FileLayout {
     monitor: Vec<FileMonitor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    extended: Vec<FileMonitor>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -137,6 +166,18 @@ struct FileMonitor {
 }
 
 impl FileMonitor {
+    fn of((id, m): &(String, MonitorLayout)) -> FileMonitor {
+        FileMonitor {
+            id: id.clone(),
+            enabled: m.enabled,
+            mode: m.mode.map(|m| m.to_string()),
+            position: [m.position.0, m.position.1],
+            scale: m.scale,
+            transform: m.transform.name().to_string(),
+            primary: m.primary,
+        }
+    }
+
     fn parse(self) -> Option<(String, MonitorLayout)> {
         let mode = match self.mode {
             Some(m) => Some(OutputMode::parse(&m).ok()?),
@@ -168,7 +209,11 @@ impl Layouts {
             .filter_map(|l| {
                 let monitors: Option<Vec<_>> =
                     l.monitor.into_iter().map(FileMonitor::parse).collect();
-                monitors.map(Layout::new)
+                let mut layout = monitors.map(Layout::new)?;
+                let extended: Option<Vec<_>> =
+                    l.extended.into_iter().map(FileMonitor::parse).collect();
+                layout.extended = Layout::new(extended.unwrap_or_default()).monitors;
+                Some(layout)
             })
             .collect();
         Layouts {
@@ -182,17 +227,8 @@ impl Layouts {
             outputs_seen: self.outputs_seen.clone(),
             layout: (self.list.iter())
                 .map(|l| FileLayout {
-                    monitor: (l.monitors.iter())
-                        .map(|(id, m)| FileMonitor {
-                            id: id.clone(),
-                            enabled: m.enabled,
-                            mode: m.mode.map(|m| m.to_string()),
-                            position: [m.position.0, m.position.1],
-                            scale: m.scale,
-                            transform: m.transform.name().to_string(),
-                            primary: m.primary,
-                        })
-                        .collect(),
+                    monitor: l.monitors.iter().map(FileMonitor::of).collect(),
+                    extended: l.extended.iter().map(FileMonitor::of).collect(),
                 })
                 .collect(),
         };
@@ -214,12 +250,20 @@ impl Layouts {
     }
 
     /// `layout` in place of the one for its set, the file now under `outputs_seen`. When the file
-    /// was saved under another fingerprint than `expected`, its other layouts are dropped.
-    pub fn put(&mut self, layout: Layout, expected: &str, outputs_seen: &str) {
+    /// was saved under another fingerprint than `expected`, its other layouts are dropped. A
+    /// layout that is not side by side keeps the replaced one's `extended`.
+    pub fn put(&mut self, mut layout: Layout, expected: &str, outputs_seen: &str) {
         if self.outputs_seen != expected {
             self.list.clear();
         }
-        self.list.retain(|l| l.ids() != layout.ids());
+        let old = (self.list.iter()).position(|l| l.ids() == layout.ids());
+        let old = old.map(|i| self.list.remove(i));
+        layout.extended = match layout.side_by_side() {
+            true => Vec::new(),
+            false => (old.as_ref().and_then(Layout::extended))
+                .map(<[_]>::to_vec)
+                .unwrap_or_default(),
+        };
         self.list.push(layout);
         self.outputs_seen = outputs_seen.to_string();
     }
@@ -385,6 +429,47 @@ mod tests {
         l.put(Layout::new(vec![("a".into(), on(0, true))]), "new", "new");
         assert_eq!(l.list.len(), 1);
         assert_eq!(l.find(&ids(&["a", "b"]), "new"), None);
+    }
+
+    #[test]
+    fn a_copy_saved_over_a_side_by_side_layout_keeps_it_to_extend_back_to() {
+        let mut l = Layouts::default();
+        let apart = Layout::new(vec![
+            ("a".into(), on(0, true)),
+            ("b".into(), on(1920, false)),
+        ]);
+        l.put(apart.clone(), "", "f");
+        let copy = |m: &str| MonitorLayout {
+            mode: Some(OutputMode::parse(m).unwrap()),
+            ..on(0, false)
+        };
+        let copied = vec![
+            ("a".into(), copy("1280x720")),
+            ("b".into(), copy("1280x720")),
+        ];
+        l.put(Layout::new(copied.clone()), "f", "f");
+        let saved = l.find(&ids(&["a", "b"]), "f").unwrap();
+        assert_eq!(saved.monitors, copied);
+        assert_eq!(saved.extended(), Some(&apart.monitors[..]));
+        let alone = MonitorLayout {
+            enabled: false,
+            mode: None,
+            ..on(0, false)
+        };
+        l.put(
+            Layout::new(vec![("a".into(), on(0, true)), ("b".into(), alone)]),
+            "f",
+            "f",
+        );
+        let saved = l.find(&ids(&["a", "b"]), "f").unwrap();
+        assert_eq!(
+            saved.extended(),
+            Some(&apart.monitors[..]),
+            "kept through Only"
+        );
+        assert_eq!(Layouts::parse(&l.render()), l);
+        l.put(apart.clone(), "f", "f");
+        assert!(l.find(&ids(&["a", "b"]), "f").unwrap().extended.is_empty());
     }
 
     #[test]

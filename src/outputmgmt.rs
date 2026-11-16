@@ -292,6 +292,7 @@ pub fn resolve(
 /// (earlier heads stay applied), then lay out once; one that went through is saved as the
 /// connected set's layout.
 fn apply(state: &mut State, reqs: Vec<(String, HeadRequest)>) -> bool {
+    state.save_side_by_side();
     let mut ok = true;
     for (name, req) in reqs {
         let output = crate::backend::heads(state)

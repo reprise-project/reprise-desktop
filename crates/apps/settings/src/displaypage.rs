@@ -16,7 +16,7 @@ use crate::pages::Area;
 use crate::registry::Page;
 
 use repriseconf::hz_string;
-use repriseconf::projection::{self, Projection, Screen};
+use repriseconf::projection::{self, Home, Projection, Screen};
 
 /// How many rows the Scale combo has: 100% to 400% in quarter steps, the scales `[[outputs]] scale`
 /// takes.
@@ -84,6 +84,8 @@ pub struct Display {
     primary: Option<String>,
     /// The "Multiple displays" row picked, while it differs from what the displays show.
     projection: Option<Projection>,
+    /// Each connected display's home by name, which Extend puts it back to (`projection::homes`).
+    pub homes: Vec<(String, Home)>,
     /// Whether the compositor has saved layouts in `displays.toml`, which Forget drops.
     pub layouts_saved: bool,
     /// Whether iio-sensor-proxy reports an accelerometer; None until read.
@@ -502,6 +504,10 @@ impl Display {
                         | Transform::Flipped90
                         | Transform::Flipped270
                 ),
+                home: (self.homes.iter())
+                    .find(|(n, _)| *n == h.name)
+                    .map(|(_, home)| *home)
+                    .unwrap_or_default(),
             })
             .collect()
     }

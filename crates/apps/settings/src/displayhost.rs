@@ -79,6 +79,13 @@ impl SettingsApp {
         outputwrite::session_primary(heads, &layouts, &config)
     }
 
+    /// Each of `heads`' home, read from the saved layouts and config.
+    fn display_homes(&self, heads: &[Head]) -> Vec<(String, repriseconf::projection::Home)> {
+        let read = |p: &std::path::Path| std::fs::read_to_string(p).unwrap_or_default();
+        let (layouts, config) = (read(&self.display.layouts), read(&self.path));
+        outputwrite::homes(heads, &layouts, &config)
+    }
+
     /// Take the saved layouts, primary and profiles afresh from displays.toml and config.toml,
     /// after an Import replaced them.
     pub(crate) fn reread_display_files(&mut self) {
@@ -88,12 +95,14 @@ impl SettingsApp {
         self.display.model.layouts_saved = self.display.layouts.exists();
         let primary = self.session_primary(&self.display.connected);
         self.display.model.set_primary_saved(primary);
+        self.display.model.homes = self.display_homes(&self.display.connected);
         displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
     }
 
     pub(crate) fn heads_changed(&mut self, heads: Vec<Head>) -> Reply {
         let primary = self.session_primary(&heads);
         self.display.model.set_primary_saved(primary);
+        self.display.model.homes = self.display_homes(&heads);
         self.display.connected = heads.clone();
         self.display.model.set_heads(heads);
         self.display.model.layouts_saved = self.display.layouts.exists();
@@ -205,6 +214,7 @@ impl SettingsApp {
             }
         }
         self.display.model.layouts_saved = false;
+        self.display.model.homes = self.display_homes(&self.display.connected);
         self.display_changed()
     }
 
