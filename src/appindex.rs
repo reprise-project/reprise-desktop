@@ -1,4 +1,4 @@
-//! Keeps `State::app_index` (and `search_providers`, which a program installs beside its entry) current: inotify watches on every XDG applications directory, debounced through a timer because a package install touches many files. A missing directory is covered by a watch on its nearest existing ancestor. The scan runs from the timer, never an input callback, and only when something changed; it and the watch syncs run on file jobs.
+//! Keeps `State::app_index` (and `search_providers`, which a program installs beside its entry) current: inotify watches on every XDG applications directory and its folders, debounced through a timer because a package install touches many files. A missing directory is covered by a watch on its nearest existing ancestor. The scan runs from the timer, never an input callback, and only when something changed; it and the watch syncs run on file jobs.
 
 use crate::compositor::State;
 use crate::dirwatch::{DirWatch, JobWatch, Want};
@@ -24,13 +24,13 @@ pub struct AppIndexWatch {
     scan_again: bool,
 }
 
-/// What to watch for `dirs`: each existing directory for any change to its entries, and for each missing one its nearest existing ancestor.
+/// What to watch for `dirs`: each existing directory and every folder below it that the scan reads (inotify is not recursive) for any change to its entries, and for each missing one its nearest existing ancestor.
 fn wants(dirs: &[PathBuf]) -> Vec<Want> {
     let mut want: Vec<Want> = Vec::new();
-    for dir in dirs {
-        if dir.is_dir() && !want.iter().any(|w| w.dir == *dir) {
+    for folder in dirs.iter().flat_map(|d| reprisefs::apps::entry_folders(d)) {
+        if !want.iter().any(|w| w.dir == folder) {
             want.push(Want {
-                dir: dir.clone(),
+                dir: folder,
                 mask: WatchMask::CREATE
                     | WatchMask::DELETE
                     | WatchMask::MOVED_FROM
@@ -207,6 +207,24 @@ mod tests {
         std::fs::write(dirs[0].join("app.desktop"), "").unwrap();
         assert!(w.drain(), "a new entry: rescan");
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_entry_in_a_new_subfolder_is_seen() {
+        let root = crate::harness::scratch().join("appindex-nested/applications");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let dirs = [root.clone()];
+        let mut w = DirWatch::new().unwrap();
+        w.sync(&wants(&dirs));
+
+        let folder = root.join("wine/Programs/Test");
+        std::fs::create_dir_all(&folder).unwrap();
+        assert!(w.drain(), "the subfolder made: rescan");
+        w.sync(&wants(&dirs));
+        std::fs::write(folder.join("Test.desktop"), "").unwrap();
+        assert!(w.drain(), "an entry two folders down: rescan");
         let _ = std::fs::remove_dir_all(&root);
     }
 

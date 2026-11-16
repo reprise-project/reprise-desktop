@@ -584,6 +584,63 @@ fn scan_orders_and_overrides() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+fn write_entry(path: &Path, exec: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let text = format!("[Desktop Entry]\nType=Application\nName={exec}\nExec={exec}\n");
+    std::fs::write(path, text).unwrap();
+}
+
+#[test]
+fn a_nested_entry_takes_its_dash_joined_id_and_earlier_dirs_shadow_it() {
+    let base = tempfile::tempdir().unwrap();
+    let user = base.path().join("user");
+    let sys = base.path().join("sys");
+    write_entry(&user.join("wine/Programs/Test/Test App.desktop"), "test");
+    write_entry(&sys.join("wine-Programs-Test-Test App.desktop"), "shadowed");
+    write_entry(&sys.join("kde4/old.desktop"), "old");
+    write_entry(&user.join("x-y.desktop"), "top");
+    write_entry(&user.join("x/y.desktop"), "nested");
+    let ids = |list: Vec<AppEntry>| {
+        let mut v: Vec<(String, String)> = list.into_iter().map(|e| (e.id, e.exec_line)).collect();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        ids(scan(&[user.clone(), sys.clone()])),
+        [
+            ("kde4-old.desktop".into(), "old".into()),
+            ("wine-Programs-Test-Test App.desktop".into(), "test".into()),
+            ("x-y.desktop".into(), "top".into()),
+        ]
+    );
+    let dirs = [user.clone(), sys.clone()];
+    assert_eq!(
+        find_file_in(&dirs, "wine-Programs-Test-Test App.desktop"),
+        Some(user.join("wine/Programs/Test/Test App.desktop"))
+    );
+    assert_eq!(
+        find_file_in(&dirs, "kde4-old.desktop"),
+        Some(sys.join("kde4/old.desktop"))
+    );
+    assert_eq!(
+        find_file_in(&dirs, "x-y.desktop"),
+        Some(user.join("x-y.desktop"))
+    );
+    assert_eq!(find_file_in(&dirs, "wine-Programs-Gone.desktop"), None);
+}
+
+#[test]
+fn a_symlink_loop_below_an_applications_dir_is_read_once() {
+    let base = tempfile::tempdir().unwrap();
+    let dir = base.path().join("applications");
+    write_entry(&dir.join("vendor/app.desktop"), "app");
+    std::os::unix::fs::symlink(&dir, dir.join("vendor/loop")).unwrap();
+    let list = scan(std::slice::from_ref(&dir));
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert_eq!(list[0].id, "vendor-app.desktop");
+    assert_eq!(entry_folders(&dir), [dir.clone(), dir.join("vendor")]);
+}
+
 #[test]
 fn group_files_apps_by_first_matching_category() {
     let app = |name: &str, cats: &[&str]| AppEntry {

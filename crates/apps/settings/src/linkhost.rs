@@ -5,13 +5,13 @@ use crate::SettingsApp;
 use crate::pages::PROGRAM_BUTTONS;
 use repriseapp::Reply;
 use repriseconf::pages::links;
-use reprisefs::apps::{AppEntry, launch_argv, parse_desktop, read_desktop_file};
+use reprisefs::apps::{AppEntry, find_file_in, launch_argv, parse_desktop, read_desktop_file};
 use std::path::PathBuf;
 
 /// The entry `id` names: the first of `dirs` holding the file decides; `None` when that one is
 /// not shown (`NoDisplay`, `Hidden`, `OnlyShowIn`, `NotShowIn`) or does not parse.
 pub(crate) fn find(id: &str, dirs: &[PathBuf]) -> Option<AppEntry> {
-    let path = dirs.iter().map(|d| d.join(id)).find(|p| p.is_file())?;
+    let path = find_file_in(dirs, id)?;
     parse_desktop(&read_desktop_file(&path).ok()?, id)
 }
 
