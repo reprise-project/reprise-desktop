@@ -1429,18 +1429,20 @@ What a consent prompt remembers, and where:
   and Forget drops one. The grant goes by app id alone, so an unsandboxed
   program that names itself after a remembered app gets it too.
 - **GlobalShortcuts:** an app with `[[global_shortcuts]]` entries in
-  `config.toml` is allowed; a Deny adds it to `[portal] shortcuts_denied`
-  and it isn't asked again. A shortcut gets the key the app suggests only
-  when no desktop bind or other app holds it and it isn't a key that types
-  or edits text without Ctrl, Alt or Super (a letter, Shift+letter, space,
-  Return, Tab, BackSpace, Delete, Escape, an arrow, Home, End, Page Up or
-  Page Down); otherwise it is kept with no key until you set one in
-  Settings. So an allowed app's later binds, which add shortcuts without
-  asking, can't take keys from the window you type in. An app keeps at most
-  64 shortcuts, each id and description at most 256 bytes with no control
-  characters. A denied app
-  opens no session, and one app holds at most 4 sessions of the compositor's
-  16, so it can't leave other apps none.
+  `config.toml` is allowed; a Deny on its first prompt adds it to
+  `[portal] shortcuts_denied` and it isn't asked again. When an allowed app
+  binds ids it hasn't bound before, the prompt lists only those; its other
+  shortcuts keep their keys whatever the answer. Allow gives the new ones
+  their keys, Deny keeps them with no key so they aren't asked about again,
+  and closing the prompt adds none, so the next bind asks again. A shortcut
+  gets the key the app suggests only when no desktop bind or other app
+  holds it and it isn't a key that types or edits text without Ctrl, Alt or
+  Super (a letter, Shift+letter, space, Return, Tab, BackSpace, Delete,
+  Escape, an arrow, Home, End, Page Up or Page Down); otherwise it is kept
+  with no key until you set one in Settings. An app keeps at most 64
+  shortcuts, each id and description at most 256 bytes with no control
+  characters. A denied app opens no session, and one app holds at most 4
+  sessions of the compositor's 16, so it can't leave other apps none.
 - **Access** (camera, background): answers go to xdg-desktop-portal's
   permission store.
 - **Location:** Reprise's geoclue agent keeps its own answers.
