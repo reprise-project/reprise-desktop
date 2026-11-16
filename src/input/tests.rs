@@ -740,3 +740,29 @@ fn a_size_picked_from_the_window_menu_follows_the_pointer_until_the_next_click()
         "a under the cursor hears neither the commit press nor its release"
     );
 }
+
+#[test]
+fn a_motion_over_water_looks_under_the_pointer_once() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.state.config.wallpaper.water = reprisekit::water::Water::Calm;
+    h.pointer_to(500.0, 400.0);
+    for (x, due) in [(510.0, false), (900.0, true)] {
+        if due {
+            h.state.pointers.hovered_at = None;
+        }
+        super::pointer::SCENE_HITS.set(0);
+        h.from(crate::inputproto::InputSource::Physical, |s| {
+            s.pointer_to(
+                Point::from((x, 400.0)),
+                smithay::backend::input::InputTime::now(),
+            )
+        });
+        let held = if due {
+            "the hover is due"
+        } else {
+            "the hover just ran"
+        };
+        assert_eq!(super::pointer::SCENE_HITS.get(), 1, "{held}");
+    }
+}
