@@ -81,7 +81,7 @@ impl PartialEq for Look {
     fn eq(&self, o: &Look) -> bool {
         match (self, o) {
             (Look::Classic, Look::Classic) => true,
-            (Look::Styled(a), Look::Styled(b)) => a.name == b.name,
+            (Look::Styled(a), Look::Styled(b)) => (a.name, a.key) == (b.name, b.key),
             _ => false,
         }
     }
