@@ -37,10 +37,7 @@ impl Explorer {
         match out {
             openwith::Event::None => Reply::none(),
             openwith::Event::Redraw => Reply::redraw(),
-            openwith::Event::Cancel => {
-                self.take_up();
-                Reply::redraw_all()
-            }
+            openwith::Event::Cancel => self.dismiss_up(ctx),
             openwith::Event::Browse => {
                 let mut host = Host::default();
                 host.icons.prime(&mut ctx.icons);

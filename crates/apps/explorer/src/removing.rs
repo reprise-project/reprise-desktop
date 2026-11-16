@@ -263,6 +263,7 @@ impl Explorer {
             return Some(Reply::none());
         }
         let mut r = self.removing.take()?;
+        self.job_ended(&r.progress.meter, ctx);
         let undo_failed = r.undo.as_ref().and_then(|u| u.error.as_ref());
         let failed = (r.failed.as_ref().cloned())
             .or_else(|| undo_failed.map(|e| ("Error", format!("Cannot undo: {e}"))));

@@ -296,7 +296,6 @@ impl Explorer {
         let clip =
             clip.unwrap_or_else(|| repriseapp::keys::form_clipboard(form.focused_edit(), &ev));
         let out = match ev {
-            Event::CloseRequest => form::Event::Cancel,
             Event::Pasted(text) => form.paste(text),
             ev => match repriseapp::keys::form_input(form, &ev, ctx) {
                 Some(out) => out,
@@ -317,7 +316,7 @@ impl Explorer {
                 Reply::redraw()
             }
             (Some(_), form::Event::Pressed(nc::CANCEL) | form::Event::Cancel) => {
-                self.cancel_connection()
+                self.dismiss_up(ctx)
             }
             (Some(Dialog::Connect(b)), form::Event::Pressed(nc::OK) | form::Event::Default) => {
                 if !nc::enabled(&b.form, nc::OK) {
@@ -404,7 +403,7 @@ impl Explorer {
         }
     }
 
-    fn cancel_connection(&mut self) -> Reply {
+    pub(crate) fn cancel_connection(&mut self) -> Reply {
         if let Some(conn) = self.connection.take().and_then(|c| c.conn) {
             conn.cancel();
         }
@@ -572,13 +571,13 @@ impl Explorer {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::tests::{test_ctx, test_explorer};
     use std::sync::mpsc::Sender;
 
     /// An Explorer with a connection to `uri` under way whose steps the test sends.
-    fn connecting(uri: &str, ctx: &mut Ctx) -> (Explorer, Sender<Step>) {
+    pub(crate) fn connecting(uri: &str, ctx: &mut Ctx) -> (Explorer, Sender<Step>) {
         let mut ex = test_explorer(Place::Computer, ctx);
         let addr = Address::parse(uri).expect("an address");
         let (tx, steps) = std::sync::mpsc::channel();
@@ -594,7 +593,7 @@ mod tests {
         (ex, tx)
     }
 
-    fn login(retry: bool) -> mount::Login {
+    pub(crate) fn login(retry: bool) -> mount::Login {
         mount::Login {
             message: "Password required for share private on nas".into(),
             user: "alice".into(),

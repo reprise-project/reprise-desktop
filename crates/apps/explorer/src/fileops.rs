@@ -628,6 +628,7 @@ impl Explorer {
             return Some(Reply::none());
         }
         let mut put = self.put.take()?;
+        self.job_ended(&put.progress.meter, ctx);
         if !put.job.settled() {
             self.unsettled.push(put.job);
         }
@@ -742,8 +743,8 @@ impl Explorer {
 
     /// File > Close or the close box. With work in flight the window hides and [`Explorer::wake`]
     /// quits once it drains. The hidden window asks nothing: the box up (the taskbar's Close
-    /// passes it) and those waiting are dropped, which ends a job held on a failed item, and
-    /// every replace prompt answers No, so the rest of its paste is put.
+    /// passes it) and those waiting are dismissed ([`Explorer::dismiss`]), which ends a job held
+    /// on a failed item, and every replace prompt answers No, so the rest of its paste is put.
     pub fn close(&mut self, ctx: &mut Ctx) -> Reply {
         self.flush_settings();
         self.closing = self
@@ -753,9 +754,7 @@ impl Explorer {
         // A paste's work stays: behind a prompt whose files are being read, `take_asking` and
         // `ask_pastes` answer them in turn.
         for d in self.dialogs.withdraw(Dialog::shows) {
-            if let Dialog::Replace(r) = d {
-                self.ask_replace(r.pending, r.asker, ctx);
-            }
+            self.dismiss(d, ctx);
         }
         self.ask_pastes(ctx);
         self.answer_ends();
@@ -1587,6 +1586,13 @@ pub(crate) struct Asking {
     src: PathBuf,
     many: bool,
     folder: Option<String>,
+}
+
+impl Asking {
+    /// The paste the prompt asks for and its asker.
+    pub(crate) fn into_paste(self) -> (PendingPut, Asker) {
+        (self.pending, self.asker)
+    }
 }
 
 /// One file of the replace prompt, read off the loop: its size and date lines and whether it is a folder.

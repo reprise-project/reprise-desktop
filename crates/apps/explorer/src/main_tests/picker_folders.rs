@@ -177,6 +177,26 @@ fn a_pickers_new_folder_and_rename_landing_after_cancel_keep_their_undo() {
     assert!(dir.path().join("Photos").is_dir() && !second.exists());
 }
 
+/// The picker closed by its close box while its Make New Folder is still on disk leaves the
+/// write as Cancel does: the folder lands with its undo entry.
+#[test]
+fn a_pickers_new_folder_landing_after_its_close_box_keeps_its_undo() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = browse_fixture(&mut ctx);
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    ex.open_browse(false, &mut ctx);
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    click_at(&mut ex, 60, 328, &mut ctx);
+    ex.event(crate::DIALOG, Event::CloseRequest, &mut ctx);
+    assert!(ex.dialog().is_none(), "the close box closes the picker");
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| ex.undo.is_some());
+    assert!(dir.path().join("New Folder").is_dir());
+    assert_eq!(ex.undo, Some("New"));
+}
+
 /// A window closed while a picker's rename left by Cancel is still on disk waits for it and
 /// keeps its undo until it quits.
 #[test]

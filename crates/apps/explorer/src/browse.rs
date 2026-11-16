@@ -406,10 +406,7 @@ impl Explorer {
                 self.browse_left.extend(b.making);
                 return Reply::redraw_all();
             }
-            browsefolder::Event::Cancel => {
-                self.browse_left.extend(b.making);
-                return Reply::redraw_all();
-            }
+            browsefolder::Event::Cancel => return self.dismiss(Dialog::Browse(b), ctx),
             browsefolder::Event::Resize => Reply::resize(),
         };
         // A click opens a row as it picks it without a `Selected`, so every event re-checks the pick.
