@@ -2,8 +2,6 @@ name: package
 # What ships: the desktop entries validate and makepkg builds and installs every binary. A
 # pull request that touches none of these paths leaves it to the nightly build after the merge.
 on:
-  push:
-    branches: [main]
   pull_request:
     paths:
       - "**/Cargo.toml"
