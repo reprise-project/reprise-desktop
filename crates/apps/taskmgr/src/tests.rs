@@ -293,6 +293,7 @@ fn a_selection_follows_its_process_across_samples() {
 fn end_process_asks_first_and_offers_end_now_once_it_outlives_the_wait() {
     let mut ctx = ctx();
     let mut t = loaded(&mut ctx);
+    t.open_process = |_, _| reprisebus::pidfd::open(std::process::id());
     open(&mut t, &mut ctx, Page::Processes);
     click_row(&mut t, &mut ctx, 2);
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
@@ -321,6 +322,20 @@ fn end_process_asks_first_and_offers_end_now_once_it_outlives_the_wait() {
     assert!(
         t.ending.is_empty(),
         "a reused pid is another process: the first one ended"
+    );
+}
+
+#[test]
+fn end_process_asks_nothing_for_a_process_gone_since_the_sample() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    t.open_process = |_, _| Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+    open(&mut t, &mut ctx, Page::Processes);
+    click_row(&mut t, &mut ctx, 2);
+    t.event(MAIN, key(keysym::DELETE), &mut ctx);
+    assert!(
+        t.ask.is_none(),
+        "no box for a pid that names another process now"
     );
 }
 

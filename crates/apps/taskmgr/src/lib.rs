@@ -17,6 +17,7 @@ mod switchto;
 mod worker;
 
 use std::collections::HashMap;
+use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -142,9 +143,15 @@ struct Ending {
     asked: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 enum Ask {
-    EndProcess { pid: i32, start: u64, name: String },
+    /// `fd` names the process the box was opened for, so Yes never signals a pid reused since.
+    EndProcess {
+        pid: i32,
+        start: u64,
+        name: String,
+        fd: Rc<OwnedFd>,
+    },
     EndNow(Target),
 }
 
@@ -209,6 +216,8 @@ pub struct TaskMgr {
     ending: Vec<Ending>,
     /// End Task on a program that answers ([`worker::end_task`]), given its scope and pids.
     end_task: fn(String, Vec<i32>),
+    /// A pidfd for a process End Process asks about ([`worker::open_process`]).
+    open_process: fn(i32, u64) -> std::io::Result<OwnedFd>,
     entries: Arc<Vec<AppEntry>>,
     icons: HashMap<String, Option<Rc<Canvas>>>,
     tip: Option<Tip>,
@@ -234,6 +243,7 @@ impl TaskMgr {
             hung: Vec::new(),
             hung_rx: None,
             end_task: worker::end_task,
+            open_process: worker::open_process,
             procs: List::new(Vec::new()),
             proc_rows: Vec::new(),
             starts: HashMap::new(),
@@ -723,6 +733,13 @@ impl TaskMgr {
         if p.uid != self.uid {
             return Reply::none();
         }
+        let fd = match (self.open_process)(p.pid, p.start) {
+            Ok(fd) => Rc::new(fd),
+            Err(e) => {
+                log::info!("end process {}: {e}", p.pid);
+                return Reply::none();
+            }
+        };
         let b = MsgBox::new(
             "Task Manager Warning",
             Fields {
@@ -739,12 +756,12 @@ impl TaskMgr {
                 max_w: repriseapp::dialog_max_w(),
             },
         );
-        let start = self.starts.get(&p.pid).copied().unwrap_or(0);
         self.ask = Some((
             Ask::EndProcess {
                 pid: p.pid,
-                start,
+                start: p.start,
                 name: p.name,
+                fd,
             },
             b,
         ));
@@ -759,7 +776,12 @@ impl TaskMgr {
             return;
         }
         match ask {
-            Ask::EndProcess { pid, start, name } => match worker::kill_pid(pid, SIGTERM) {
+            Ask::EndProcess {
+                pid,
+                start,
+                name,
+                fd,
+            } => match worker::signal(&fd, SIGTERM) {
                 Ok(()) => self.wait_for(Target::Process(pid, start), name),
                 Err(e) => log::warn!("end process {pid}: {e}"),
             },
