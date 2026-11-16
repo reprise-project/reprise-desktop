@@ -283,8 +283,21 @@ impl Meter {
     }
 
     /// `file` is written whole, `len` bytes; `windowed` when [`Writeback`] flushed it as it went.
-    /// Other files start a background flush every [`KICK_EVERY`] and wait for it past [`FLUSH_EVERY`].
+    /// Other files on a drive start a background flush every [`KICK_EVERY`] and wait for it past
+    /// [`FLUSH_EVERY`]; an internal disk is left to writeback (btrfs commits a whole transaction).
     pub(crate) fn wrote_file(&self, file: &std::fs::File, len: u64, windowed: bool) {
+        self.wrote_file_on(file, len, windowed, crate::ops::on_a_drive);
+    }
+
+    /// [`Meter::wrote_file`], `on_drive` saying whether a device is a drive.
+    fn wrote_file_on(
+        &self,
+        file: &std::fs::File,
+        len: u64,
+        windowed: bool,
+        on_drive: impl FnOnce(u64) -> bool,
+    ) {
+        use std::os::unix::fs::MetadataExt;
         self.items.fetch_add(1, Ordering::Relaxed);
         self.stir();
         if windowed {
@@ -292,6 +305,10 @@ impl Meter {
         }
         let piled = self.unflushed.fetch_add(len, Ordering::Relaxed) + len;
         if piled < KICK_EVERY {
+            return;
+        }
+        if !file.metadata().is_ok_and(|m| on_drive(m.dev())) {
+            self.unflushed.store(0, Ordering::Relaxed);
             return;
         }
         let Ok(mut flushing) = self.flushing.lock() else {
@@ -596,6 +613,30 @@ mod tests {
         let cancelled = Meter::default();
         cancelled.cancel();
         assert_eq!(walk(&d, true, &cancelled), None);
+    }
+
+    #[test]
+    fn small_files_start_a_flush_only_on_a_drive() {
+        let t = tempfile::tempdir().unwrap();
+        let file = std::fs::File::create(t.path().join("f")).unwrap();
+        let flushes = |drive: bool| {
+            let m = Meter::default();
+            m.wrote_file_on(&file, KICK_EVERY - 1, false, |_| drive);
+            assert!(
+                m.flushing.lock().unwrap().is_none(),
+                "under {KICK_EVERY} bytes"
+            );
+            m.wrote_file_on(&file, 1, false, |_| drive);
+            let started = m.flushing.lock().unwrap().take().map(|h| h.join().unwrap());
+            assert_eq!(m.unflushed.load(Ordering::Relaxed), 0);
+            assert_eq!(m.items.load(Ordering::Relaxed), 2);
+            started.is_some()
+        };
+        assert!(flushes(true));
+        assert!(
+            !flushes(false),
+            "an internal disk is left to the kernel's writeback"
+        );
     }
 
     #[test]
