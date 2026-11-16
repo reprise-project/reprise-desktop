@@ -455,7 +455,7 @@ pub fn can_set_executable(owner: u32, mount: Mount) -> bool {
     (owner == me || me == 0) && !mount.read_only && !mount.noexec && !mount.fixed_modes
 }
 
-/// `set_read_only` down a whole tree. The walk goes by directory fd and never follows a link, so an entry swapped for a symlink mid-walk is skipped; `path` itself is followed.
+/// `set_read_only` down a whole tree. The walk goes by directory fd and never follows a link, so an entry swapped for a symlink mid-walk is skipped; `path` itself is followed. A folder on another device (a drive or share mounted inside) is left alone, its own mode included.
 pub fn set_read_only_tree(path: &Path, on: bool) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let top = match std::fs::OpenOptions::new()
@@ -468,15 +468,12 @@ pub fn set_read_only_tree(path: &Path, on: bool) -> std::io::Result<()> {
         Err(e) => return Err(e),
     };
     set_read_only_fd(&top, on)?;
+    let dev = device_of(&top)?;
     let mut pending = Vec::new();
     push_tree_entries(std::rc::Rc::new(top), on, &mut pending);
     while let Some((parent, name)) = pending.pop() {
-        let dir = match open_dir_at(&parent, &name) {
-            Ok(dir) => dir,
-            Err(e) => {
-                log::warn!("properties: could not open {name:?}: {e}");
-                continue;
-            }
+        let Some(dir) = open_sub_dir(&parent, &name, dev) else {
+            continue;
         };
         if let Err(e) = set_read_only_fd(&dir, on) {
             log::warn!("properties: could not set read-only: {e}");
@@ -520,6 +517,30 @@ fn set_read_only_fd(file: &std::fs::File, on: bool) -> std::io::Result<()> {
         return Ok(());
     }
     file.set_permissions(PermissionsExt::from_mode(new))
+}
+
+fn device_of(file: &std::fs::File) -> std::io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(file.metadata()?.dev())
+}
+
+/// Folder `name` in `dir` for a tree walk that stays on device `dev`; None (logged) when it cannot
+/// be opened or is on another device.
+fn open_sub_dir(dir: &std::fs::File, name: &std::ffi::CStr, dev: u64) -> Option<std::fs::File> {
+    let sub = open_dir_at(dir, name)
+        .inspect_err(|e| log::warn!("properties: could not open {name:?}: {e}"))
+        .ok()?;
+    match device_of(&sub) {
+        Ok(d) if d == dev => Some(sub),
+        Ok(_) => {
+            log::info!("properties: {name:?} is another drive, left alone");
+            None
+        }
+        Err(e) => {
+            log::warn!("properties: could not read {name:?}: {e}");
+            None
+        }
+    }
 }
 
 fn open_dir_at(dir: &std::fs::File, name: &std::ffi::CStr) -> std::io::Result<std::fs::File> {
@@ -617,7 +638,7 @@ fn dir_entry_names(dir: &std::fs::File) -> std::io::Result<Vec<std::ffi::CString
     Ok(names)
 }
 
-/// Hide down a whole tree through `.hidden` lists, never a rename. Dotfiles are left alone and dotted folders not entered, so `.git` keeps what it had; `path` itself keeps its own rename. The walk goes by directory fd and never enters a link.
+/// Hide down a whole tree through `.hidden` lists, never a rename. Dotfiles are left alone and dotted folders not entered, so `.git` keeps what it had; `path` itself keeps its own rename. The walk goes by directory fd, never enters a link and stays on `path`'s device.
 pub fn set_hidden_tree(path: &Path, hide: bool) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let top = match std::fs::OpenOptions::new()
@@ -629,16 +650,14 @@ pub fn set_hidden_tree(path: &Path, hide: bool) -> std::io::Result<()> {
         Err(e) if e.raw_os_error() == Some(libc::ENOTDIR) => return Ok(()),
         Err(e) => return Err(e),
     };
+    let dev = device_of(&top)?;
     let mut pending = Vec::new();
     let mut first = list_entries(std::rc::Rc::new(top), hide, &mut pending).err();
     while let Some((parent, name)) = pending.pop() {
-        match open_dir_at(&parent, &name) {
-            Ok(dir) => {
-                if let Err(e) = list_entries(std::rc::Rc::new(dir), hide, &mut pending) {
-                    first.get_or_insert(e);
-                }
-            }
-            Err(e) => log::warn!("properties: could not open {name:?}: {e}"),
+        if let Some(dir) = open_sub_dir(&parent, &name, dev)
+            && let Err(e) = list_entries(std::rc::Rc::new(dir), hide, &mut pending)
+        {
+            first.get_or_insert(e);
         }
     }
     first.map_or(Ok(()), Err)
@@ -716,7 +735,7 @@ impl AttrMoves {
     }
 }
 
-/// Write `moves` to `path`, and with `tree` to everything under it (symlinks left alone). Every write is tried; the first failure is returned.
+/// Write `moves` to `path`, and with `tree` to everything under it on its device (symlinks and mounted drives left alone). Every write is tried; the first failure is returned.
 pub fn write_attrs(path: &Path, moves: &AttrMoves, tree: bool) -> std::io::Result<()> {
     let mut first = None;
     let mut note = |r: std::io::Result<()>| {
@@ -740,6 +759,8 @@ pub fn write_attrs(path: &Path, moves: &AttrMoves, tree: bool) -> std::io::Resul
         (crate::meta::INDEX, moves.index),
     ];
     if robots.iter().any(|(_, m)| m.is_some()) {
+        use std::os::unix::fs::MetadataExt;
+        let dev = std::fs::metadata(path).map(|m| m.dev());
         let mut todo = vec![path.to_path_buf()];
         while let Some(p) = todo.pop() {
             for (name, on) in robots {
@@ -749,7 +770,10 @@ pub fn write_attrs(path: &Path, moves: &AttrMoves, tree: bool) -> std::io::Resul
             }
             if tree && let Ok(dir) = std::fs::read_dir(&p) {
                 for e in dir.flatten() {
-                    if e.file_type().is_ok_and(|t| !t.is_symlink()) {
+                    let here = e.metadata().is_ok_and(|m| {
+                        !m.file_type().is_symlink() && dev.as_ref().is_ok_and(|&d| m.dev() == d)
+                    });
+                    if here {
                         todo.push(e.path());
                     }
                 }

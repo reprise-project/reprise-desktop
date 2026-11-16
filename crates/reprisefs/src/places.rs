@@ -302,11 +302,10 @@ impl MountedDrives {
     }
 }
 
-/// Whether the mount point `top` is a folder the user may write to. It stats the drive, which
-/// waits for as long as the drive does not answer.
+/// Whether the mount point `top` is a folder this process may write to (`faccessat`, so not a
+/// read-only mount or another owner's folder). It waits for as long as the drive does not answer.
 pub fn usable_drive(top: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(top).is_ok_and(|m| m.is_dir() && m.permissions().mode() & 0o200 != 0)
+    std::fs::metadata(top).is_ok_and(|m| m.is_dir()) && crate::ops::can_write(top)
 }
 
 impl Default for MountedDrives {
@@ -846,6 +845,29 @@ sshfs#u@h:/ /media/ssh fuse.sshfs rw 0 0
             [root.join("CARD")],
             "STICK unmounted; its folder is left behind"
         );
+    }
+
+    #[test]
+    fn a_drive_counts_as_usable_only_when_this_user_may_write_to_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        assert!(usable_drive(t.path()));
+        let file = t.path().join("file");
+        std::fs::write(&file, "").unwrap();
+        assert!(!usable_drive(&file), "a file is no drive");
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        assert!(
+            !usable_drive(Path::new("/usr")),
+            "a root-owned 0755 folder has the owner's write bit but is not this user's"
+        );
+        let shut = t.path().join("shut");
+        std::fs::create_dir(&shut).unwrap();
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o500)).unwrap();
+        assert!(!usable_drive(&shut));
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     #[test]
