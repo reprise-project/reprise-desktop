@@ -216,7 +216,7 @@ struct Data {
     timer: Timer,
     /// When `timer` fires, if armed.
     wake_at: Option<Instant>,
-    /// No buffer is free, none is out with the compositor and none is held.
+    /// No buffer of the announced size is free, none is out with the compositor and none is held.
     starved: bool,
     /// How long a starved driving stream waits for its next empty cycle.
     retry: Duration,
@@ -239,6 +239,14 @@ impl Buffer {
         match self {
             Buffer::Shm(b) => b,
             Buffer::Dma(b) => b,
+        }
+    }
+
+    /// The width and height the buffer was made for.
+    fn size(&self) -> (u32, u32) {
+        match self {
+            Buffer::Shm(b) => (b.width, b.height),
+            Buffer::Dma(b) => (b.width, b.height),
         }
     }
 
@@ -987,14 +995,24 @@ fn on_process(stream: &pipewire::stream::Stream, d: &mut Data) {
         // SAFETY: as above.
         buf = unsafe { dequeue(stream, d.buffers.len()) };
     }
+    let mut stale = false;
     if !buf.is_null() {
         match d.buffers.iter().position(|(k, _)| *k == buf as usize) {
-            Some(i) => ask(d, i, buf as usize),
+            Some(i) if fits(d.buffers[i].1.size(), &d.constraints) => ask(d, i, buf as usize),
+            // A buffer from before the size changed waits out the renegotiation with the
+            // consumers, going out empty on the retry's cycle.
+            // SAFETY: `buf` was dequeued just above and is in `d.buffers`, so each data entry
+            // has a chunk.
+            Some(_) => unsafe {
+                stale = true;
+                corrupted((*buf).buffer);
+                stream.queue_raw_buffer(buf);
+            },
             // SAFETY: `buf` was dequeued from this stream just above.
             None => unsafe { send(stream, &d.clock, buf) },
         }
     }
-    d.starved = buf.is_null() && d.asked.is_none() && d.held.is_none();
+    d.starved = (buf.is_null() || stale) && d.asked.is_none() && d.held.is_none();
     if !d.starved {
         d.retry = STARVED_RETRY;
     } else if stream.is_driving() {
@@ -1167,14 +1185,17 @@ fn hand_on(
                 // The source changed size: adopt the new constraints and
                 // re-announce the format; PipeWire reallocates the buffers.
                 corrupted(sb);
-                d.constraints = d.wl.constraints();
-                d.modifier = None;
-                log::info!(
-                    "constraints changed: {}x{}",
-                    d.constraints.width,
-                    d.constraints.height
-                );
-                announce_formats(stream, d);
+                if adopt(&mut d.constraints, d.wl.constraints()) {
+                    d.modifier = None;
+                    log::info!(
+                        "constraints changed: {}x{}",
+                        d.constraints.width,
+                        d.constraints.height
+                    );
+                    announce_formats(stream, d);
+                } else {
+                    log::debug!("a frame failed on the constraints already announced");
+                }
             }
             Err(CaptureError::Failed(FailureReason::Stopped)) => {
                 corrupted(sb);
@@ -1187,6 +1208,20 @@ fn hand_on(
         }
         send(stream, &d.clock, buf);
     }
+}
+
+/// Whether a buffer made `size` takes a frame under `constraints`.
+fn fits(size: (u32, u32), constraints: &Constraints) -> bool {
+    size == (constraints.width, constraints.height)
+}
+
+/// Take `now` as the announced constraints; whether they changed and need announcing.
+fn adopt(announced: &mut Constraints, now: Constraints) -> bool {
+    if *announced == now {
+        return false;
+    }
+    *announced = now;
+    true
 }
 
 /// Mark every plane of `sb` as holding no picture.
@@ -1864,6 +1899,41 @@ mod tests {
         };
         // SAFETY: one valid pollfd, no wait.
         unsafe { libc::poll(&mut pfd, 1, 0) == 1 }
+    }
+
+    #[test]
+    fn only_a_buffer_of_the_announced_size_is_asked_into() {
+        let c = Constraints {
+            width: 800,
+            height: 600,
+            ..Default::default()
+        };
+        assert!(fits((800, 600), &c));
+        assert!(!fits((1024, 600), &c), "a wider buffer waits");
+        assert!(!fits((800, 480), &c), "a shorter buffer waits");
+    }
+
+    #[test]
+    fn a_repeated_constraints_failure_announces_once() {
+        let mut announced = Constraints {
+            width: 800,
+            height: 600,
+            ..Default::default()
+        };
+        let resized = Constraints {
+            width: 1024,
+            height: 768,
+            ..Default::default()
+        };
+        assert!(
+            adopt(&mut announced, resized.clone()),
+            "the new size is announced"
+        );
+        assert_eq!((announced.width, announced.height), (1024, 768));
+        assert!(
+            !adopt(&mut announced, resized),
+            "the same size again is not"
+        );
     }
 
     #[test]
