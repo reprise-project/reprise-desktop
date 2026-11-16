@@ -268,7 +268,11 @@ pub struct Explorer {
     pub send_to: Vec<reprisefs::sendto::SendToRow>,
     /// What the Send To rows are read from, off the loop.
     pub(crate) send: sendreads::SendReads,
-    pub dialog: Option<Dialog>,
+    /// The boxes: the one up and those waiting for it ([`Explorer::raise`]).
+    pub(crate) dialogs: repriseapp::asks::Queue<Dialog>,
+    /// The handler running took the box up to answer it, and nothing has taken its place yet
+    /// ([`Explorer::take_up`]).
+    answered: bool,
     /// The Properties sheet, in its own modeless window: it and a box can be up at once.
     pub props: Option<Props>,
     /// Recycle Bin Properties, in its own modeless window.
@@ -330,14 +334,6 @@ pub struct Explorer {
     pub(crate) task_progress: Option<(u32, bool)>,
     /// The reason the process last held off log off with ([`Explorer::hold_logout`]).
     pub(crate) logout_held: Option<&'static str>,
-    /// The boxes raised while another was up, oldest first ([`Explorer::raise`]).
-    pub(crate) waiting: std::collections::VecDeque<Dialog>,
-    /// The pastes whose next clash is asked once the slot is free and no replace prompt's files
-    /// are being read.
-    pub(crate) replace_waiting:
-        std::collections::VecDeque<(fileops::PendingPut, reprisefs::replace::Asker)>,
-    /// A replace prompt whose two files are still being read, on a listing thread.
-    pub(crate) asking: Option<fileops::ReadingSides>,
     /// Finished background jobs (deletes, the bin's Empty) waiting for a wake.
     jobs_tx: std::sync::mpsc::Sender<fileops::JobDone>,
     jobs_rx: std::sync::mpsc::Receiver<fileops::JobDone>,
@@ -557,7 +553,8 @@ impl Explorer {
             open_with_path: None,
             send_to: Vec::new(),
             send: sendreads::SendReads::default(),
-            dialog: None,
+            dialogs: Default::default(),
+            answered: false,
             props: None,
             bin_props: None,
             props_due: None,
@@ -594,9 +591,6 @@ impl Explorer {
             extract_queue: std::collections::VecDeque::new(),
             task_progress: None,
             logout_held: None,
-            waiting: std::collections::VecDeque::new(),
-            replace_waiting: std::collections::VecDeque::new(),
-            asking: None,
             jobs_tx,
             jobs_rx,
             jobs_pending: 0,
@@ -1642,7 +1636,7 @@ struct Lazy {
 }
 
 impl Explorer {
-    /// An event on window `win`. After every event an empty dialog slot takes what waits for it.
+    /// An event on window `win`. After every event a paste whose turn came asks its clash.
     pub(crate) fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         let reply = route(self, win, ev, ctx);
         // The task pane draws its focus rectangle only while it holds the keyboard.
@@ -1699,7 +1693,7 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
             // the bar; a popup or modal child owns the keys while up.
             if ex.alt_arm.release_alt()
                 && ex.popup.is_none()
-                && ex.dialog.is_none()
+                && ex.dialog().is_none()
                 && ex.props.is_none()
                 && ex.bin_props.is_none()
             {
@@ -1978,7 +1972,7 @@ impl repriseapp::Extended for Lazy {
     }
 
     fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
-        let Some(Dialog::ChooseProgram(cp)) = self.inner.as_mut()?.dialog.as_mut() else {
+        let Some(Dialog::ChooseProgram(cp)) = self.inner.as_mut()?.dialogs.up_mut() else {
             return None;
         };
         let b = cp.browse.as_mut().filter(|_| win == PROGRAM_BROWSE)?;

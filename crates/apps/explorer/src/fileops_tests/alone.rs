@@ -38,7 +38,7 @@ fn yes(app: &mut Lazy, ctx: &mut repriseapp::Ctx) {
 }
 
 fn confirm_text(app: &Lazy) -> Option<String> {
-    match &app.inner.as_ref()?.dialog {
+    match app.inner.as_ref()?.dialog() {
         Some(Dialog::Confirm(c)) => Some(c.text.clone()),
         _ => None,
     }
@@ -125,7 +125,7 @@ fn delete_asks_then_trashes_and_erase_asks_then_removes() {
     let mut ctx = test_ctx();
 
     let mut app = started(&["--delete".as_ref(), a.as_os_str()]);
-    assert!(!run(&mut app, &mut ctx, |ex| ex.dialog.is_some()));
+    assert!(!run(&mut app, &mut ctx, |ex| ex.dialog().is_some()));
     let text = confirm_text(&app).expect("Confirm File Delete");
     assert!(text.contains("a.txt"), "names the file: {text}");
     assert!(a.exists(), "nothing goes before the answer");
@@ -135,7 +135,7 @@ fn delete_asks_then_trashes_and_erase_asks_then_removes() {
     assert!(home.path().join("Trash/files/a.txt").exists(), "trashed");
 
     let mut app = started(&["--delete".as_ref(), "--erase".as_ref(), b.as_os_str()]);
-    assert!(!run(&mut app, &mut ctx, |ex| ex.dialog.is_some()));
+    assert!(!run(&mut app, &mut ctx, |ex| ex.dialog().is_some()));
     yes(&mut app, &mut ctx);
     run_out(&mut app, &mut ctx);
     assert!(!b.exists());
@@ -154,7 +154,7 @@ fn a_cancelled_delete_question_ends_the_process_and_keeps_the_file() {
     std::fs::write(&a, "x").expect("write");
     let mut ctx = test_ctx();
     let mut app = started(&["--delete".as_ref(), a.as_os_str()]);
-    assert!(!run(&mut app, &mut ctx, |ex| ex.dialog.is_some()));
+    assert!(!run(&mut app, &mut ctx, |ex| ex.dialog().is_some()));
     let reply = app.event(crate::dialogs::DIALOG, key_event_escape(), &mut ctx);
     assert!(
         reply.quit || run(&mut app, &mut ctx, |_| false),
@@ -172,7 +172,7 @@ fn empty_bin_counts_every_bin_asks_and_empties_them() {
     let mut app = started(&["--empty-bin".as_ref()]);
     run_out(&mut app, &mut ctx);
     assert!(
-        app.inner.as_ref().is_some_and(|ex| ex.dialog.is_none()),
+        app.inner.as_ref().is_some_and(|ex| ex.dialog().is_none()),
         "an empty bin asks nothing"
     );
 
@@ -180,7 +180,7 @@ fn empty_bin_counts_every_bin_asks_and_empties_them() {
     std::fs::write(&a, "x").expect("write");
     reprisefs::trash::trash(&a, None).expect("trash");
     let mut app = started(&["--empty-bin".as_ref()]);
-    assert!(!run(&mut app, &mut ctx, |ex| ex.dialog.is_some()));
+    assert!(!run(&mut app, &mut ctx, |ex| ex.dialog().is_some()));
     let text = confirm_text(&app).expect("Confirm File Delete");
     assert!(
         text.contains("Quarterly report.txt"),

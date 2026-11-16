@@ -106,7 +106,7 @@ fn a_hit_renamed_to_another_folders_hits_name_is_not_refused() {
     use reprisekit::controls::batchrename::{FIND, OK, WITH};
     use reprisekit::controls::form::Control;
     for (id, text) in [(FIND, "x"), (WITH, "y")] {
-        let Some(crate::dialogs::Dialog::BatchRename(b)) = ex.dialog.as_mut() else {
+        let Some(crate::dialogs::Dialog::BatchRename(b)) = ex.dialogs.up_mut() else {
             panic!("the Rename dialog is up");
         };
         if let Some(Control::Edit { edit, .. }) = b.form.item_mut(id).map(|i| &mut i.control) {
@@ -114,7 +114,7 @@ fn a_hit_renamed_to_another_folders_hits_name_is_not_refused() {
         }
         ex.dialog_outcome(reprisekit::controls::form::Event::Changed(id), &mut ctx);
     }
-    let Some(crate::dialogs::Dialog::BatchRename(b)) = ex.dialog.as_ref() else {
+    let Some(crate::dialogs::Dialog::BatchRename(b)) = ex.dialog() else {
         panic!("the Rename dialog is up");
     };
     let ok = b.form.item(OK);
@@ -125,7 +125,7 @@ fn a_hit_renamed_to_another_folders_hits_name_is_not_refused() {
         ),
         "y.txt is free in a"
     );
-    ex.dialog = None;
+    ex.take_up();
 
     ex.sv.selection.set_only(Some(x));
     ex.run(Command::Rename, &mut ctx);
@@ -134,7 +134,7 @@ fn a_hit_renamed_to_another_folders_hits_name_is_not_refused() {
     }
     ex.commit_rename(&mut ctx);
     ex.finish_puts(&mut ctx);
-    assert!(ex.dialog.is_none(), "no clash box");
+    assert!(ex.dialog().is_none(), "no clash box");
     assert!(
         dir.path().join("a/y.txt").exists(),
         "the rename was written"
@@ -233,7 +233,7 @@ fn a_zip_that_cannot_be_written_shows_an_error_box_and_leaves_nothing() {
     ex.run(Command::Compress, &mut ctx);
     ex.finish_extracts(reprisefs::progress::Decision::Abort, &mut ctx);
     std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    match &ex.dialog {
+    match ex.dialog() {
         Some(crate::dialogs::Dialog::Message { title, text }) => {
             assert_eq!(title, "Error Compressing File");
             assert!(text.starts_with("Cannot compress a.zip: "), "{text}");
@@ -260,7 +260,7 @@ fn about_opens_the_shared_box_with_the_explorer_name() {
     assert_eq!(about.size, reprisekit::controls::aboutbox::CLIENT);
     assert!(about.fixed && about.modal);
 
-    let Some(Dialog::About(form, _)) = ex.dialog.as_ref() else {
+    let Some(Dialog::About(form, _)) = ex.dialog() else {
         panic!("the About box is what is up");
     };
     let product = form.item("product").expect("the product row");
@@ -280,7 +280,7 @@ fn about_opens_the_shared_box_with_the_explorer_name() {
         edit: None,
     };
     ex.dialog_event(Event::Key(esc), &mut ctx);
-    assert!(ex.dialog.is_none());
+    assert!(ex.dialog().is_none());
     assert!(ex.children().iter().all(|c| c.id != DIALOG));
 }
 

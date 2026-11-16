@@ -140,7 +140,7 @@ impl Explorer {
             }
             None => false,
         };
-        let dialog = self.dialog.as_mut().is_some_and(|d| d.land_icons(ctx));
+        let dialog = self.dialogs.up_mut().is_some_and(|d| d.land_icons(ctx));
         let error = (self.error_icon.as_mut()).is_some_and(|s| s.land(&mut ctx.icons));
         let others = dialog | error | self.land_sheet_icons(ctx) | self.land_preview_icon(ctx);
         (listed || tree || chrome || menu, others, broken)
@@ -1401,7 +1401,7 @@ pub(crate) mod tests {
             .expect("a Customize page");
         let press = form::Event::Pressed(filesheet::CHANGE_ICON);
         ex.props_outcome(propsheet::Event::Page(customize, press), &mut ctx);
-        let names = |ex: &Explorer| match &ex.dialog {
+        let names = |ex: &Explorer| match ex.dialog() {
             Some(Dialog::ChangeIcon { form, .. }) => {
                 match form.item(filesheet::CHANGE_ICON_LIST).map(|i| &i.control) {
                     Some(Control::IconList(list)) => list.names.clone(),

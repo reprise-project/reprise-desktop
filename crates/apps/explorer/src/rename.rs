@@ -306,7 +306,7 @@ impl Explorer {
 
     /// What the Rename dialog's form answered.
     pub(crate) fn batch_rename_answered(&mut self, out: form::Event, ctx: &mut Ctx) -> Reply {
-        let Some(Dialog::BatchRename(b)) = self.dialog.as_mut() else {
+        let Some(Dialog::BatchRename(b)) = self.dialogs.up_mut() else {
             return Reply::none();
         };
         match out {
@@ -315,7 +315,7 @@ impl Explorer {
                 Reply::redraw()
             }
             form::Event::Cancel | form::Event::Pressed(renamebox::CANCEL) => {
-                self.dialog = None;
+                self.take_up();
                 Reply::redraw_all()
             }
             form::Event::Default | form::Event::Pressed(renamebox::OK) => {
@@ -323,7 +323,7 @@ impl Explorer {
                 if !batchrename::ready(&rows) {
                     return Reply::none();
                 }
-                let Some(Dialog::BatchRename(b)) = self.dialog.take() else {
+                let Some(Dialog::BatchRename(b)) = self.take_up() else {
                     return Reply::none();
                 };
                 let tag = format!("reprise-rename-{}", std::process::id());
@@ -419,7 +419,7 @@ mod tests {
     }
 
     fn form_of(ex: &mut Explorer) -> &mut Form {
-        match ex.dialog.as_mut() {
+        match ex.dialogs.up_mut() {
             Some(Dialog::BatchRename(b)) => &mut b.form,
             _ => panic!("the Rename dialog is up"),
         }
@@ -453,12 +453,12 @@ mod tests {
         let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
         ex.sv.selection.set_only(Some(0));
         ex.run(Command::Rename, &mut ctx);
-        assert!(ex.sv.edit.is_some() && ex.dialog.is_none());
+        assert!(ex.sv.edit.is_some() && ex.dialog().is_none());
         ex.sv.edit = None;
         ex.run(Command::SelectAll, &mut ctx);
         ex.run(Command::Rename, &mut ctx);
         assert!(ex.sv.edit.is_none());
-        assert!(matches!(ex.dialog, Some(Dialog::BatchRename(_))));
+        assert!(matches!(ex.dialog(), Some(Dialog::BatchRename(_))));
         assert_eq!(ex.children()[0].title, "Rename");
     }
 
@@ -490,7 +490,7 @@ mod tests {
             ]
         );
         ex.dialog_outcome(form::Event::Default, &mut ctx);
-        assert!(ex.dialog.is_none());
+        assert!(ex.dialog().is_none());
         assert_eq!(
             names(dir.path()),
             [
@@ -532,7 +532,7 @@ mod tests {
         assert!(!enabled(&mut ex), "y1.txt is kept by the item not picked");
         ex.dialog_outcome(form::Event::Default, &mut ctx);
         assert!(
-            ex.dialog.is_some(),
+            ex.dialog().is_some(),
             "Enter does nothing while a name clashes"
         );
         assert_eq!(names(dir.path()), ["x1.txt", "x2.txt", "y1.txt"]);

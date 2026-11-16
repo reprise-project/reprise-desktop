@@ -350,7 +350,7 @@ fn a_folders_hidden_asks_first_and_lists_its_tree() {
         p.sheet.open_mut().set_check(HIDDEN, on);
         ex.props_outcome(reprisekit::controls::propsheet::Event::Apply, ctx);
     };
-    let label = |ex: &crate::Explorer| match &ex.dialog {
+    let label = |ex: &crate::Explorer| match ex.dialog() {
         Some(crate::dialogs::Dialog::AttrConfirm(a)) => match a.form.item("attr_verb") {
             Some(Item {
                 control: Control::Label { text, .. },
@@ -366,11 +366,11 @@ fn a_folders_hidden_asks_first_and_lists_its_tree() {
     assert_eq!(label(&ex), "hide");
     assert!(full.exists(), "nothing is written before the answer");
     ex.dialog_event(repriseapp::Event::CloseRequest, &mut ctx);
-    assert!(ex.dialog.is_none(), "the close box closes the question");
+    assert!(ex.dialog().is_none(), "the close box closes the question");
     assert!(!filesheet::hidden(ex.props.as_ref().unwrap().sheet.open()));
 
     tick(&mut ex, true, &mut ctx);
-    let Some(crate::dialogs::Dialog::AttrConfirm(a)) = ex.dialog.take() else {
+    let Some(crate::dialogs::Dialog::AttrConfirm(a)) = ex.take_up() else {
         panic!("Confirm Attribute Changes is up");
     };
     assert!(attr_tree_picked(&a.form));
@@ -385,7 +385,7 @@ fn a_folders_hidden_asks_first_and_lists_its_tree() {
     ex.finish_puts(&mut ctx);
     tick(&mut ex, false, &mut ctx);
     assert_eq!(label(&ex), "unhide");
-    let a = ex.dialog.take().map(|d| match d {
+    let a = ex.take_up().map(|d| match d {
         crate::dialogs::Dialog::AttrConfirm(a) => a,
         _ => unreachable!(),
     });
@@ -414,7 +414,7 @@ fn read_only_and_hidden_land_together_down_a_tree() {
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     let confirm = |ex: &mut crate::Explorer, ctx: &mut repriseapp::Ctx| {
         ex.props_outcome(reprisekit::controls::propsheet::Event::Apply, ctx);
-        let Some(crate::dialogs::Dialog::AttrConfirm(a)) = ex.dialog.take() else {
+        let Some(crate::dialogs::Dialog::AttrConfirm(a)) = ex.take_up() else {
             panic!("Confirm Attribute Changes is up");
         };
         assert!(attr_tree_picked(&a.form));
@@ -433,7 +433,7 @@ fn read_only_and_hidden_land_together_down_a_tree() {
     let mode = |p: &Path| std::fs::metadata(p).expect("stat").permissions().mode();
     let listed = (list(&hidden), list(&hidden.join("sub")));
     let locked = mode(&hidden.join("sub")) & 0o222;
-    let first_box = ex.dialog.take();
+    let first_box = ex.take_up();
 
     ex.open_properties(&hidden, ".Reports", ".Reports", &mut ctx);
     ex.finish_puts(&mut ctx);
@@ -444,7 +444,7 @@ fn read_only_and_hidden_land_together_down_a_tree() {
         .open_mut()
         .set_check(HIDDEN, false);
     confirm(&mut ex, &mut ctx);
-    let second_box = ex.dialog.take();
+    let second_box = ex.take_up();
     for p in [full.join("sub"), full.clone()] {
         std::fs::set_permissions(&p, PermissionsExt::from_mode(0o755)).expect("chmod back");
     }
@@ -504,7 +504,7 @@ fn the_sheets_rename_refuses_a_taken_name() {
         &mut ctx,
     );
 
-    match &ex.dialog {
+    match ex.dialog() {
         Some(crate::dialogs::Dialog::Message { text, .. }) => {
             assert_eq!(*text, reprisefs::names::taken_text("notes.txt"));
         }
@@ -841,7 +841,7 @@ fn change_opens_the_chooser_with_always_checked_and_greyed() {
     let mut ctx = crate::tests::test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.choose_program_for(&path, true, &mut ctx);
-    match ex.dialog.as_mut() {
+    match ex.dialogs.up_mut() {
         Some(Dialog::ChooseProgram(c)) => {
             assert_eq!(
                 c.ow.always,
@@ -879,7 +879,7 @@ fn a_blue_attribute_box_picks_a_radio_by_its_label_16_px_in() {
         TextUnits::ONE,
     );
     let only = form.item(ATTR_ONLY).expect("the this-folder radio").rect;
-    ex.dialog = Some(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
+    ex.raise(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
         set: None,
         new_name: None,
         attrs: RO_TRUE,
@@ -908,7 +908,7 @@ fn a_blue_attribute_box_picks_a_radio_by_its_label_16_px_in() {
         }),
         &mut ctx,
     );
-    let Some(crate::dialogs::Dialog::AttrConfirm(a)) = &ex.dialog else {
+    let Some(crate::dialogs::Dialog::AttrConfirm(a)) = ex.dialog() else {
         panic!("the box stays up");
     };
     assert!(
@@ -940,7 +940,7 @@ fn the_attribute_box_is_left_unlit_after_press_release_and_leave() {
     let only = form.index_of(ATTR_ONLY).expect("the this-folder radio");
     let cancel = form.index_of(ATTR_CANCEL).expect("Cancel");
     let (r, cr) = (form.items[only].rect, form.items[cancel].rect);
-    ex.dialog = Some(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
+    ex.raise(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
         set: None,
         new_name: None,
         attrs: RO_TRUE,
@@ -950,7 +950,7 @@ fn the_attribute_box_is_left_unlit_after_press_release_and_leave() {
     }));
     let mut c = Canvas::new(ATTR_SIZE.0 as u32, ATTR_SIZE.1 as u32);
     ex.draw_dialog(&mut c, &ctx);
-    let form = |ex: &crate::Explorer| match &ex.dialog {
+    let form = |ex: &crate::Explorer| match ex.dialog() {
         Some(crate::dialogs::Dialog::AttrConfirm(a)) => a.form.clone(),
         _ => panic!("the box stays up"),
     };
@@ -1045,7 +1045,7 @@ fn properties_over_a_multi_selection_opens_the_combined_sheet() {
         .open_mut()
         .set_check_state(READ_ONLY, CheckState::On);
     ex.props_outcome(reprisekit::controls::propsheet::Event::Apply, &mut ctx);
-    let Some(crate::dialogs::Dialog::AttrConfirm(a)) = ex.dialog.take() else {
+    let Some(crate::dialogs::Dialog::AttrConfirm(a)) = ex.take_up() else {
         panic!("a folder with something in it asks first");
     };
     assert_eq!(a.set.as_ref().map(Vec::len), Some(3));
@@ -1152,14 +1152,14 @@ fn advanced_attributes_hands_the_archive_box_to_apply() {
         ),
         &mut ctx,
     );
-    let Some(crate::dialogs::Dialog::Advanced { form, live, .. }) = ex.dialog.as_mut() else {
+    let Some(crate::dialogs::Dialog::Advanced { form, live, .. }) = ex.dialogs.up_mut() else {
         panic!("Advanced Attributes is up");
     };
     assert!(*live);
     assert_eq!(robots_chosen(form), [CheckState::On, CheckState::On]);
     form.focus_id(ADV_ARCHIVE);
     form.key(reprisekit::controls::form::Key::Space);
-    let Some(crate::dialogs::Dialog::Advanced { form, .. }) = ex.dialog.take() else {
+    let Some(crate::dialogs::Dialog::Advanced { form, .. }) = ex.take_up() else {
         unreachable!()
     };
     ex.advanced_chosen(&form);
@@ -1237,7 +1237,7 @@ fn a_summary_the_file_refuses_keeps_the_sheet_and_says_so() {
     ex.props_outcome(reprisekit::controls::propsheet::Event::Ok, &mut ctx);
     ex.finish_puts(&mut ctx);
     assert!(
-        matches!(&ex.dialog, Some(crate::dialogs::Dialog::Message { text, .. }) if text.starts_with("Cannot change a.txt")),
+        matches!(ex.dialog(), Some(crate::dialogs::Dialog::Message { text, .. }) if text.starts_with("Cannot change a.txt")),
         "the error box is up"
     );
     assert!(ex.props.is_some(), "the sheet stays open");
@@ -1312,7 +1312,7 @@ fn change_icon_gives_a_folder_its_own_icon() {
     ex.finish_puts(&mut ctx);
     let page = |ev| reprisekit::controls::propsheet::Event::Page(2, ev);
     ex.props_outcome(page(form::Event::Pressed(CHANGE_ICON)), &mut ctx);
-    let Some(crate::dialogs::Dialog::ChangeIcon { form, name, .. }) = ex.dialog.as_mut() else {
+    let Some(crate::dialogs::Dialog::ChangeIcon { form, name, .. }) = ex.dialogs.up_mut() else {
         panic!("Change Icon is up");
     };
     assert_eq!(name, "sub");
@@ -1320,7 +1320,7 @@ fn change_icon_gives_a_folder_its_own_icon() {
         form.item("ci_list").map(|i| &i.control),
         Some(Control::IconList(l)) if l.picked() == Some("folder")
     ));
-    ex.dialog = None;
+    ex.take_up();
     ex.icon_chosen(Some("folder-music".to_string()), &mut ctx);
     assert!(ex.props.as_ref().is_some_and(|p| p.dirty()), "Apply lights");
     ex.props_outcome(reprisekit::controls::propsheet::Event::Apply, &mut ctx);
@@ -1361,7 +1361,7 @@ fn the_wheel_scrolls_the_change_icon_list() {
     let page = |ev| reprisekit::controls::propsheet::Event::Page(2, ev);
     ex.props_outcome(page(form::Event::Pressed(CHANGE_ICON)), &mut ctx);
     fn list(ex: &mut Explorer) -> (reprisekit::raster::Rect, &mut IconList) {
-        match ex.dialog.as_mut() {
+        match ex.dialogs.up_mut() {
             Some(crate::dialogs::Dialog::ChangeIcon { form, .. }) => {
                 let it = form.item_mut("ci_list").expect("the list");
                 match &mut it.control {
@@ -1440,11 +1440,11 @@ fn a_launchers_shortcut_tab_writes_its_keys() {
     assert!(ex.props.is_some(), "the sheet stays up");
 
     ex.props_outcome(on_page(form::Event::Pressed(CHANGE_ICON)), &mut ctx);
-    let Some(crate::dialogs::Dialog::ChangeIcon { form, .. }) = ex.dialog.as_ref() else {
+    let Some(crate::dialogs::Dialog::ChangeIcon { form, .. }) = ex.dialog() else {
         panic!("Change Icon is up");
     };
     assert!(form.item(CHANGE_ICON_RESTORE).is_none(), "a launcher's box");
-    ex.dialog = None;
+    ex.take_up();
     ex.icon_chosen(Some("utilities-terminal".to_string()), &mut ctx);
     ex.props_outcome(reprisekit::controls::propsheet::Event::Ok, &mut ctx);
     ex.finish_puts(&mut ctx);
@@ -1565,12 +1565,12 @@ fn change_reads_a_links_target_off_the_loop() {
     let closed = gate.write().expect("lock");
     ex.held = Some(gate.clone());
     ex.choose_program_for(&link, true, &mut ctx);
-    assert!(ex.dialog.is_none(), "no chooser before the read lands");
+    assert!(ex.dialog().is_none(), "no chooser before the read lands");
 
     drop(closed);
     ex.held = None;
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
-    match ex.dialog.as_ref() {
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    match ex.dialog() {
         Some(Dialog::ChooseProgram(c)) => assert_eq!(c.path, real.join("notes.txt")),
         _ => panic!("the chooser is up"),
     }

@@ -229,18 +229,28 @@ pub enum Dialog {
         choices: Vec<String>,
         about: crate::shares::Asking,
     },
+    /// A paste whose next clash waits its turn; once it is up, [`Explorer::ask_pastes`] asks it.
+    Paste(Box<(crate::fileops::PendingPut, reprisefs::replace::Asker)>),
+    /// A replace prompt whose two files are still being read off the loop. Nothing shows while
+    /// it is up, and the boxes behind it wait ([`Explorer::take_asking`]).
+    Reading(Box<crate::fileops::ReadingSides>),
 }
 
 impl Dialog {
     /// A job, a paste or a server connection holds for the answer, so it comes up before the
-    /// other boxes waiting ([`Explorer::show_waiting`]).
+    /// other boxes waiting.
     fn held(&self) -> bool {
         match self {
-            Dialog::Replace(_) | Dialog::Login(_) => true,
+            Dialog::Replace(_) | Dialog::Login(_) | Dialog::Paste(_) | Dialog::Reading(_) => true,
             Dialog::Confirm(c) => c.job.is_some(),
             Dialog::Question { about, .. } => matches!(about, crate::shares::Asking::Connection),
             _ => false,
         }
+    }
+
+    /// Whether it is a box with a window, not a paste's work.
+    pub(crate) fn shows(&self) -> bool {
+        !matches!(self, Dialog::Paste(_) | Dialog::Reading(_))
     }
 
     fn title(&self) -> String {
@@ -268,6 +278,7 @@ impl Dialog {
             Dialog::Connect(_) => reprisekit::controls::netconnect::CONNECT_TITLE.to_string(),
             Dialog::Login(b) => crate::shares::login_title(&b.host),
             Dialog::Question { title, .. } => title.clone(),
+            Dialog::Paste(_) | Dialog::Reading(_) => String::new(),
         }
     }
 
@@ -300,7 +311,9 @@ impl Dialog {
             Dialog::Message { .. }
             | Dialog::AttrConfirm(_)
             | Dialog::BatchRename(_)
-            | Dialog::Question { .. } => false,
+            | Dialog::Question { .. }
+            | Dialog::Paste(_)
+            | Dialog::Reading(_) => false,
         }
     }
 }
@@ -335,15 +348,72 @@ impl Explorer {
         f
     }
 
-    /// The one way a box goes up: into the empty slot, or behind the box up, which it never
-    /// replaces. [`Explorer::show_waiting`] raises it once the slot empties.
+    /// The one way a box goes up ([`repriseapp::asks::Queue`]): behind the box up, which it never replaces, and
+    /// behind the boxes waiting, or ahead of the plain ones when its owner holds for it. A box an
+    /// answer raises takes the answered box's place ([`Explorer::take_up`]).
     pub(crate) fn raise(&mut self, d: Dialog) -> Reply {
-        if self.dialog.is_some() {
-            self.waiting.push_back(d);
-            return Reply::none();
+        let up = self.dialogs.is_empty() || self.answered;
+        if std::mem::take(&mut self.answered) {
+            self.dialogs.restore(d);
+        } else if d.held() {
+            self.dialogs.raise_held(d);
+        } else {
+            self.dialogs.raise(d);
         }
-        self.dialog = Some(d);
-        Reply::redraw_all()
+        if up {
+            Reply::redraw_all()
+        } else {
+            Reply::none()
+        }
+    }
+
+    /// The box up, unless the front of the queue is a paste's work, which shows nothing.
+    pub(crate) fn dialog(&self) -> Option<&Dialog> {
+        self.dialogs.up().filter(|d| d.shows())
+    }
+
+    /// Takes the box up to answer it. Until the handler that took it returns
+    /// ([`Explorer::answer_ends`]), the next box raised goes up in its place, ahead of those
+    /// waiting: the answer's own box, or the answered box put back.
+    pub(crate) fn take_up(&mut self) -> Option<Dialog> {
+        let d = self.dialogs.close();
+        self.answered |= d.is_some();
+        d
+    }
+
+    /// The handler that took a box returned: a box raised from here on waits its turn. A box's
+    /// own event ends at [`Explorer::raise_waiting`]; a wake runs several handlers, and each one
+    /// that can take a box ends its answer itself.
+    pub(crate) fn answer_ends(&mut self) {
+        self.answered = false;
+    }
+
+    /// The boxes waiting behind the one up.
+    #[cfg(test)]
+    pub(crate) fn boxes_waiting(&self) -> usize {
+        self.dialogs.len().saturating_sub(1)
+    }
+
+    /// The pastes waiting their turn to ask a clash.
+    #[cfg(test)]
+    pub(crate) fn pastes_waiting(&self) -> usize {
+        self.dialogs
+            .iter()
+            .filter(|d| matches!(d, Dialog::Paste(_)))
+            .count()
+    }
+
+    /// Whether a replace prompt's files are being read.
+    #[cfg(test)]
+    pub(crate) fn reading(&self) -> bool {
+        self.dialogs.iter().any(|d| matches!(d, Dialog::Reading(_)))
+    }
+
+    /// [`Explorer::take_up`] when the box up is one `is` picks.
+    pub(crate) fn take_up_if(&mut self, is: impl FnOnce(&Dialog) -> bool) -> Option<Dialog> {
+        let d = self.dialogs.close_if(is);
+        self.answered |= d.is_some();
+        d
     }
 
     /// Raise a box titled `title` over `text` with the theme's error icon.
@@ -464,7 +534,7 @@ impl Explorer {
     /// Whether the box up is [`Explorer::ask_failed`]'s, which a job waits on.
     #[cfg(test)]
     pub(crate) fn holds_a_job(&self) -> bool {
-        matches!(&self.dialog, Some(Dialog::Confirm(c)) if c.job.is_some())
+        matches!(self.dialogs.up(), Some(Dialog::Confirm(c)) if c.job.is_some())
     }
 
     /// Ask what the job held on a failed item does next: Skip goes on with the rest, Retry runs
@@ -514,7 +584,7 @@ impl Explorer {
             form::Event::None => return Reply::none(),
             _ => return Reply::redraw(),
         };
-        if let Some(Dialog::Confirm(Confirm { job: Some(m), .. })) = self.dialog.take() {
+        if let Some(Dialog::Confirm(Confirm { job: Some(m), .. })) = self.take_up() {
             m.answer(decision);
         }
         if decision != Decision::Abort {
@@ -555,7 +625,7 @@ impl Explorer {
     /// The answer to [`Explorer::ask_run`]: the button `out` pressed, by its place in
     /// [`reprisefs::program::Asked::buttons`].
     fn script_answered(&mut self, out: form::Event, ctx: &mut Ctx) -> Reply {
-        let default = match &self.dialog {
+        let default = match self.dialogs.up() {
             Some(Dialog::Confirm(c)) => c.default_button(),
             _ => 0,
         };
@@ -574,7 +644,7 @@ impl Explorer {
             script: Some((open, asked)),
             mut paths,
             ..
-        })) = self.dialog.take()
+        })) = self.take_up()
         else {
             return Reply::none();
         };
@@ -598,7 +668,7 @@ impl Explorer {
     }
 
     fn box_fields(&self) -> Option<msgbox::Fields> {
-        match self.dialog.as_ref()? {
+        match self.dialogs.up()? {
             Dialog::Message { title, text } => Some(msgbox::Fields {
                 text: text.clone(),
                 icon: self.error_icon(),
@@ -633,12 +703,14 @@ impl Explorer {
             | Dialog::Unlock(_)
             | Dialog::BatchRename(_)
             | Dialog::Connect(_)
-            | Dialog::Login(_) => None,
+            | Dialog::Login(_)
+            | Dialog::Paste(_)
+            | Dialog::Reading(_) => None,
         }
     }
 
     fn replace_form(&self) -> Option<Form> {
-        let Some(Dialog::Replace(r)) = self.dialog.as_ref() else {
+        let Some(Dialog::Replace(r)) = self.dialogs.up() else {
             return None;
         };
         let (px, u) = (self.forms.fonts.size_px, self.forms.text);
@@ -650,7 +722,7 @@ impl Explorer {
     }
 
     fn confirm_layout(&self) -> Option<dlgtemplate::Layout> {
-        let Some(Dialog::Confirm(c)) = &self.dialog else {
+        let Some(Dialog::Confirm(c)) = self.dialogs.up() else {
             return None;
         };
         Some(c.layout(&self.dialog_text, self.forms.fonts.size_px, self.forms.text))
@@ -658,7 +730,7 @@ impl Explorer {
 
     /// The form of whichever text box is up, focus on the button the keys left it on.
     pub fn box_form(&self) -> Option<Form> {
-        if let (Some(lay), Some(Dialog::Confirm(c))) = (self.confirm_layout(), &self.dialog) {
+        if let (Some(lay), Some(Dialog::Confirm(c))) = (self.confirm_layout(), self.dialogs.up()) {
             let mut f = dlgtemplate::form(&lay, c.icon.icon(), &c.buttons(), c.default_button());
             if let Some(id) = c.focus {
                 f.focus_id(id);
@@ -671,7 +743,7 @@ impl Explorer {
     }
 
     pub fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
-        match (win, &self.dialog) {
+        match (win, self.dialogs.up()) {
             (DIALOG, Some(Dialog::Browse(_))) => Some(browsefolder::min(&self.forms.controls())),
             (PROGRAM_BROWSE, Some(Dialog::ChooseProgram(cp))) => {
                 cp.browse.as_ref().map(|b| b.dlg.min_client())
@@ -684,7 +756,7 @@ impl Explorer {
     /// The program Browse is a file dialog and keeps the plain caption, which tags it `file-dialog`.
     pub fn caption(&self, win: WinId) -> Caption {
         match win {
-            DIALOG => match self.dialog {
+            DIALOG => match self.dialogs.up() {
                 Some(
                     Dialog::ChooseProgram(_)
                     | Dialog::Browse(_)
@@ -705,7 +777,7 @@ impl Explorer {
     pub fn children(&self) -> Vec<Child> {
         let mut out = Vec::new();
         let (text, px, u) = (&self.dialog_text, self.forms.fonts.size_px, self.forms.text);
-        if let Some(d) = &self.dialog {
+        if let Some(d) = self.dialog() {
             let size = match self.box_fields() {
                 Some(f) => u.size(msgbox::client(&f, text, px, u)),
                 None => match d {
@@ -734,6 +806,7 @@ impl Explorer {
                     Dialog::Message { .. } | Dialog::Question { .. } => {
                         unreachable!("box_fields answers it")
                     }
+                    Dialog::Paste(_) | Dialog::Reading(_) => unreachable!("it shows nothing"),
                 },
             };
             out.push(Child {
@@ -755,7 +828,7 @@ impl Explorer {
                 modal: true,
             });
         }
-        if let Some(Dialog::ChooseProgram(cp)) = &self.dialog
+        if let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up()
             && let Some(b) = &cp.browse
         {
             out.push(Child {
@@ -775,11 +848,11 @@ impl Explorer {
 
     pub fn draw_dialog(&self, c: &mut Canvas, ctx: &Ctx) {
         c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
-        if let Some(Dialog::Unlock(u)) = &self.dialog {
+        if let Some(Dialog::Unlock(u)) = self.dialogs.up() {
             u.draw(c, ctx);
             return;
         }
-        if let Some(Dialog::Browse(b)) = &self.dialog {
+        if let Some(Dialog::Browse(b)) = self.dialogs.up() {
             let lay = b.bf.layout(
                 &self.dialog_text,
                 self.forms.fonts.size_px,
@@ -797,7 +870,7 @@ impl Explorer {
             );
             return;
         }
-        if let Some(Dialog::ChooseProgram(cp)) = &self.dialog {
+        if let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up() {
             let lay = cp.ow.layout(
                 &self.dialog_text,
                 self.forms.fonts.size_px,
@@ -823,7 +896,7 @@ impl Explorer {
         // The kept form is drawn itself, not a copy: it keeps the sizes of
         // the look it was drawn in, which its hit test then reads.
         let built;
-        let form = match &self.dialog {
+        let form = match self.dialogs.up() {
             Some(Dialog::AttrConfirm(a)) => &a.form,
             Some(Dialog::Advanced { form, .. }) => form,
             Some(Dialog::ChangeIcon { form, .. }) => form,
@@ -854,11 +927,11 @@ impl Explorer {
     }
 
     pub fn access_dialog(&self, tree: &mut reprisekit::access::Tree, ctx: &Ctx) {
-        if let Some(Dialog::Unlock(u)) = &self.dialog {
+        if let Some(Dialog::Unlock(u)) = self.dialogs.up() {
             u.access(tree, ctx);
             return;
         }
-        if let Some(Dialog::Browse(b)) = &self.dialog {
+        if let Some(Dialog::Browse(b)) = self.dialogs.up() {
             b.bf.access(
                 tree,
                 &self.dialog_text,
@@ -867,7 +940,7 @@ impl Explorer {
             );
             return;
         }
-        if let Some(Dialog::ChooseProgram(cp)) = &self.dialog {
+        if let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up() {
             let lay = cp.ow.layout(
                 &self.dialog_text,
                 self.forms.fonts.size_px,
@@ -878,7 +951,7 @@ impl Explorer {
             return;
         }
         let built;
-        let form = match &self.dialog {
+        let form = match self.dialogs.up() {
             Some(Dialog::AttrConfirm(a)) => &a.form,
             Some(Dialog::Advanced { form, .. }) => form,
             Some(Dialog::ChangeIcon { form, .. }) => form,
@@ -902,33 +975,36 @@ impl Explorer {
     /// The dialog's own event loop. Every box closes on its cancel
     /// button, on Escape and on the frame's close box.
     pub fn dialog_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
-        if matches!(self.dialog, Some(Dialog::Connect(_) | Dialog::Login(_))) {
+        if matches!(
+            self.dialogs.up(),
+            Some(Dialog::Connect(_) | Dialog::Login(_))
+        ) {
             return self.connect_event(ev, ctx);
         }
         if matches!(ev, Event::CloseRequest) {
             if matches!(
-                self.dialog,
+                self.dialogs.up(),
                 Some(Dialog::Browse(_) | Dialog::ChooseProgram(_) | Dialog::Unlock(_))
             ) {
-                self.dialog = None;
+                self.take_up();
                 return Reply::redraw_all();
             }
             return self.dialog_outcome(form::Event::Cancel, ctx);
         }
-        if self.dialog.is_none() {
+        if self.dialog().is_none() {
             return Reply::none();
         }
-        if matches!(self.dialog, Some(Dialog::Browse(_))) {
+        if matches!(self.dialogs.up(), Some(Dialog::Browse(_))) {
             return self.browse_event(ev, ctx);
         }
-        if matches!(self.dialog, Some(Dialog::ChooseProgram(_))) {
+        if matches!(self.dialogs.up(), Some(Dialog::ChooseProgram(_))) {
             return self.chooser_event(ev, ctx);
         }
-        if matches!(self.dialog, Some(Dialog::Unlock(_))) {
+        if matches!(self.dialogs.up(), Some(Dialog::Unlock(_))) {
             return self.unlock_event(ev, ctx);
         }
         // The boxes that keep a form (attribute confirm, Advanced Attributes, Change Icon) take their events in place; the text boxes rebuild theirs per event.
-        let kept = match self.dialog.as_mut() {
+        let kept = match self.dialogs.up_mut() {
             Some(Dialog::AttrConfirm(a)) => Some(&mut a.form),
             Some(Dialog::Advanced { form, .. }) => Some(form),
             Some(Dialog::ChangeIcon { form, .. }) => Some(form),
@@ -991,7 +1067,7 @@ impl Explorer {
     /// Keep the focus of the button `f` is on in the prompt `f` was built for; the next form puts it back so Enter and Space press it.
     fn keep_box_focus(&mut self, f: &Form) {
         let id = f.focus().map(|i| f.items[i].id);
-        match self.dialog.as_mut() {
+        match self.dialogs.up_mut() {
             Some(Dialog::Confirm(c)) => c.focus = id,
             Some(Dialog::Replace(r)) => r.focus = id,
             _ => {}
@@ -1005,13 +1081,13 @@ impl Explorer {
             Accept,
         }
         if let (Some(Dialog::ChangeIcon { form, .. }), form::Event::Pressed(id)) =
-            (self.dialog.as_mut(), &out)
+            (self.dialogs.up_mut(), &out)
             && *id == reprisekit::controls::filesheet::CHANGE_ICON_RESTORE
         {
             reprisekit::controls::filesheet::change_icon_restore(form);
             return Reply::redraw();
         }
-        let Some(d) = &self.dialog else {
+        let Some(d) = self.dialogs.up() else {
             return Reply::none();
         };
         if let Dialog::BatchRename(_) = d {
@@ -1032,7 +1108,7 @@ impl Explorer {
         {
             return match c.too_big_answer(&out) {
                 Some(a) => {
-                    let Some(Dialog::Confirm(c)) = self.dialog.take() else {
+                    let Some(Dialog::Confirm(c)) = self.take_up() else {
                         return Reply::none();
                     };
                     let mut asker = c.too_big.expect("a question about an item too big");
@@ -1118,7 +1194,9 @@ impl Explorer {
             | Dialog::BatchRename(_)
             | Dialog::Connect(_)
             | Dialog::Login(_)
-            | Dialog::Question { .. } => Answer::Stay,
+            | Dialog::Question { .. }
+            | Dialog::Paste(_)
+            | Dialog::Reading(_) => Answer::Stay,
         };
         match answer {
             Answer::Stay if out == form::Event::None => Reply::none(),
@@ -1126,14 +1204,14 @@ impl Explorer {
             Answer::Close => {
                 // Cancelling the attribute question leaves the sheet's
                 // box where the file says it should be.
-                let attrs = matches!(self.dialog, Some(Dialog::AttrConfirm(_)));
-                self.dialog = None;
+                let attrs = matches!(self.dialogs.up(), Some(Dialog::AttrConfirm(_)));
+                self.take_up();
                 if attrs {
                     return self.attrs_cancelled();
                 }
                 Reply::redraw_all()
             }
-            Answer::Accept => match self.dialog.take() {
+            Answer::Accept => match self.take_up() {
                 Some(Dialog::Confirm(c)) if c.empty_bin => self.empty_bin_now(ctx),
                 Some(Dialog::Confirm(c)) if c.mount => match c.paths.first() {
                     Some(path) => self.mount_image_at(path.clone(), ctx),
@@ -1166,7 +1244,7 @@ impl Explorer {
 impl Explorer {
     fn replace_answered(&mut self, c: replacebox::Choice, ctx: &mut Ctx) -> Reply {
         use reprisefs::replace::Answer;
-        let Some(Dialog::Replace(r)) = self.dialog.take() else {
+        let Some(Dialog::Replace(r)) = self.take_up() else {
             return Reply::none();
         };
         let ReplaceAsk {
@@ -1185,31 +1263,23 @@ impl Explorer {
         }
     }
 
-    /// After every event: an empty slot takes what waits, whichever way it emptied.
+    /// After every event: a paste whose turn came asks its clash.
     pub(crate) fn raise_waiting(&mut self, reply: Reply, ctx: &mut Ctx) -> Reply {
-        if self.dialog.is_some() || (self.waiting.is_empty() && self.replace_waiting.is_empty()) {
-            return reply;
-        }
-        reply.and(self.show_waiting(ctx))
+        let reply = reply.and(self.ask_pastes(ctx));
+        self.answer_ends();
+        reply
     }
 
-    /// With the slot empty, raise what waits ([`Explorer::raise`]): a box a job, paste or
-    /// connection holds for first, then the next paste's prompt, then the rest in order. A
-    /// replace prompt whose files are being read holds them all, so a paste's prompts keep their
-    /// order.
-    pub(crate) fn show_waiting(&mut self, ctx: &mut Ctx) -> Reply {
+    /// Asks the clashes of the pastes up in turn, each in the place of the paste
+    /// ([`Explorer::ask_replace`]), until a box or a replace prompt's read is up.
+    pub(crate) fn ask_pastes(&mut self, ctx: &mut Ctx) -> Reply {
         let mut reply = Reply::none();
-        while self.dialog.is_none() && self.asking.is_none() {
-            let held = self.waiting.iter().position(Dialog::held);
-            if let Some(d) = held.and_then(|i| self.waiting.remove(i)) {
-                reply = reply.and(self.raise(d));
-            } else if let Some((pending, asker)) = self.replace_waiting.pop_front() {
-                reply = reply.and(self.ask_replace(pending, asker, ctx));
-            } else if let Some(d) = self.waiting.pop_front() {
-                reply = reply.and(self.raise(d));
-            } else {
+        while matches!(self.dialogs.up(), Some(Dialog::Paste(_))) {
+            let Some(Dialog::Paste(p)) = self.take_up() else {
                 break;
-            }
+            };
+            let (pending, asker) = *p;
+            reply = reply.and(self.ask_replace(pending, asker, ctx));
         }
         reply
     }

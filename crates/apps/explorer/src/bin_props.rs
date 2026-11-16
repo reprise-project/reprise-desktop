@@ -359,7 +359,7 @@ mod tests {
         let text = std::fs::read_to_string(&config).expect("read");
         assert!(text.starts_with(mine), "{text}");
         assert!(Policy::parse(&text).global.remove_immediately, "{text}");
-        assert!(ex.dialog.is_none());
+        assert!(ex.dialog().is_none());
     }
 
     #[test]
@@ -370,8 +370,8 @@ mod tests {
         let mut ctx = test_ctx();
         let mut ex = sheet_up(&config, &mut ctx);
         ex.bin_props_event(key(keysym::RETURN), &mut ctx);
-        wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
-        match &ex.dialog {
+        wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+        match ex.dialog() {
             Some(crate::dialogs::Dialog::Message { title, text }) => {
                 assert_eq!(title, TITLE);
                 assert!(

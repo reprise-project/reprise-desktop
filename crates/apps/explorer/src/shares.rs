@@ -239,7 +239,7 @@ impl Explorer {
         let Some(addr) = Address::parse(text) else {
             return Reply::none();
         };
-        if self.dialog.is_some() || self.connection.is_some() {
+        if self.dialog().is_some() || self.connection.is_some() {
             return Reply::none();
         }
         let mut b = ConnectBox::open(&addr.uri(), ctx);
@@ -274,7 +274,7 @@ impl Explorer {
     /// Connect to Server's and the password box's own events.
     pub(crate) fn connect_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         let resized = matches!(ev, Event::Resized);
-        let (form, clip) = match self.dialog.as_mut() {
+        let (form, clip) = match self.dialogs.up_mut() {
             Some(Dialog::Connect(b)) => {
                 if resized {
                     b.rewrap(ctx);
@@ -307,7 +307,7 @@ impl Explorer {
     }
 
     fn connect_answered(&mut self, out: form::Event, ctx: &mut Ctx) -> Reply {
-        match (self.dialog.as_mut(), out) {
+        match (self.dialogs.up_mut(), out) {
             (Some(Dialog::Connect(b)), form::Event::Changed(_)) => {
                 nc::follow(&mut b.form);
                 Reply::redraw()
@@ -335,7 +335,7 @@ impl Explorer {
                     Some(_) => addr.uri(),
                     None => typed,
                 };
-                let Some(Dialog::Connect(mut b)) = self.dialog.take() else {
+                let Some(Dialog::Connect(mut b)) = self.take_up() else {
                     return Reply::none();
                 };
                 self.start_connection(addr, &mut b, ctx);
@@ -362,7 +362,7 @@ impl Explorer {
     /// The question box's answer: the index of the button pressed, `None` for Cancel.
     pub(crate) fn question_answered(&mut self, choice: Option<usize>, ctx: &mut Ctx) -> Reply {
         if matches!(
-            &self.dialog,
+            self.dialogs.up(),
             Some(Dialog::Question {
                 about: Asking::Disconnect(_),
                 ..
@@ -371,7 +371,7 @@ impl Explorer {
             let Some(Dialog::Question {
                 about: Asking::Disconnect(share),
                 ..
-            }) = self.dialog.take()
+            }) = self.take_up()
             else {
                 return Reply::none();
             };
@@ -397,7 +397,7 @@ impl Explorer {
 
     /// Connect to Server, still busy, back up while the connection goes on.
     fn show_connect_again(&mut self) -> Reply {
-        self.dialog = None;
+        self.take_up();
         match self.connection.as_mut().and_then(|c| c.connect.take()) {
             Some(b) => self.raise(Dialog::Connect(Box::new(b))),
             None => Reply::redraw_all(),
@@ -426,13 +426,11 @@ impl Explorer {
                     }
             )
         };
-        let up = self.dialog.take_if(|d| ours(d));
+        let up = self.take_up_if(ours);
         let mut connect = None;
-        for d in up.into_iter().chain(std::mem::take(&mut self.waiting)) {
-            match d {
-                Dialog::Connect(b) => connect = Some(*b),
-                d if ours(&d) => {}
-                d => self.waiting.push_back(d),
+        for d in up.into_iter().chain(self.dialogs.withdraw(ours)) {
+            if let Dialog::Connect(b) = d {
+                connect = Some(*b);
             }
         }
         connect
@@ -441,7 +439,9 @@ impl Explorer {
     /// The connection's next prompt or its outcome, if one arrived.
     pub(crate) fn poll_connection(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let step = self.connection.as_ref()?.steps.try_recv().ok()?;
-        Some(self.connection_step(step, ctx))
+        let reply = self.connection_step(step, ctx);
+        self.answer_ends();
+        Some(reply)
     }
 
     fn connection_step(&mut self, step: Step, ctx: &mut Ctx) -> Reply {
@@ -584,7 +584,7 @@ mod tests {
         let (tx, steps) = std::sync::mpsc::channel();
         let mut b = ConnectBox::open(&addr.uri(), ctx);
         nc::set_busy(&mut b.form, true, "Connecting to nas...");
-        ex.dialog = Some(Dialog::Connect(Box::new(b)));
+        ex.raise(Dialog::Connect(Box::new(b)));
         ex.connection = Some(Connection {
             conn: None,
             steps,
@@ -618,7 +618,7 @@ mod tests {
         let (mut ex, tx) = connecting("smb://nas/private", &mut ctx);
         tx.send(Step::Login(login(false))).unwrap();
         ex.poll_connection(&mut ctx);
-        let Some(Dialog::Login(b)) = &mut ex.dialog else {
+        let Some(Dialog::Login(b)) = ex.dialogs.up_mut() else {
             panic!("the password box is up");
         };
         assert_eq!(login_title(&b.host), "Connect to nas");
@@ -626,14 +626,14 @@ mod tests {
         assert_eq!(status(&b.form), "");
         b.form.show_edit_text(nc::PASSWORD, "secret");
         ex.connect_answered(form::Event::Default, &mut ctx);
-        let Some(Dialog::Connect(b)) = &ex.dialog else {
+        let Some(Dialog::Connect(b)) = ex.dialog() else {
             panic!("Connect to Server is back while the server checks the password");
         };
         assert!(!nc::enabled(&b.form, nc::OK), "still busy");
 
         tx.send(Step::Login(login(true))).unwrap();
         ex.poll_connection(&mut ctx);
-        let Some(Dialog::Login(b)) = &ex.dialog else {
+        let Some(Dialog::Login(b)) = ex.dialog() else {
             panic!("asked again");
         };
         assert_eq!(status(&b.form), nc::WRONG);
@@ -650,14 +650,14 @@ mod tests {
         ex.poll_connection(&mut ctx);
         ex.message_box("Error Compressing", "The disk is full.".into(), &mut ctx);
         assert!(
-            matches!(ex.dialog, Some(Dialog::Login(_))),
+            matches!(ex.dialog(), Some(Dialog::Login(_))),
             "the password box stays up"
         );
 
         ex.event(crate::DIALOG, Event::CloseRequest, &mut ctx);
         assert!(ex.connection.is_none(), "the connection is cancelled");
         assert!(
-            matches!(&ex.dialog, Some(Dialog::Message { text, .. }) if text == "The disk is full."),
+            matches!(ex.dialog(), Some(Dialog::Message { text, .. }) if text == "The disk is full."),
             "the error box comes up after"
         );
     }
@@ -672,7 +672,7 @@ mod tests {
         .unwrap();
         ex.poll_connection(&mut ctx);
         assert!(ex.connection.is_none());
-        let Some(Dialog::Connect(b)) = &ex.dialog else {
+        let Some(Dialog::Connect(b)) = ex.dialog() else {
             panic!("Connect to Server stays up");
         };
         assert_eq!(status(&b.form), "Failed to mount share: Connection refused");
@@ -690,17 +690,17 @@ mod tests {
         }))
         .unwrap();
         ex.poll_connection(&mut ctx);
-        let Some(Dialog::Question { title, choices, .. }) = &ex.dialog else {
+        let Some(Dialog::Question { title, choices, .. }) = ex.dialog() else {
             panic!("the question is up");
         };
         assert_eq!(title, "Connect to box");
         assert_eq!(choices, &["Log In Anyway", "Cancel Login"]);
         assert_eq!(Asking::Connection.default_choice(choices.len()), 1);
         ex.question_answered(Some(0), &mut ctx);
-        assert!(matches!(ex.dialog, Some(Dialog::Connect(_))));
+        assert!(matches!(ex.dialog(), Some(Dialog::Connect(_))));
         ex.question_answered(None, &mut ctx);
         assert!(
-            ex.dialog.is_none() && ex.connection.is_none(),
+            ex.dialog().is_none() && ex.connection.is_none(),
             "Cancel ends it"
         );
     }
@@ -713,7 +713,7 @@ mod tests {
         tx.send(Step::Done(Ok(Some(dir.path().to_path_buf()))))
             .unwrap();
         ex.poll_connection(&mut ctx);
-        assert!(ex.dialog.is_none());
+        assert!(ex.dialog().is_none());
         assert_eq!(ex.place, Place::Folder(dir.path().to_path_buf()));
 
         let (mut ex, tx) = connecting("smb://nas", &mut ctx);
@@ -722,6 +722,23 @@ mod tests {
         assert_eq!(ex.place, Place::Network("smb://nas/".into()));
         assert_eq!(ex.place.title(), "nas");
         assert_eq!(ex.place.parent(), Some(Place::network()));
+    }
+
+    /// A connection that lands takes Connect to Server and opens no box of its own, so a box a
+    /// later step of the same wake raises waits behind the held box already waiting.
+    #[test]
+    fn a_box_raised_after_a_connection_lands_waits_behind_a_held_box() {
+        let mut ctx = test_ctx();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (mut ex, tx) = connecting("smb://nas/public", &mut ctx);
+        let meter = std::sync::Arc::new(reprisefs::progress::Meter::default());
+        let job = reprisefs::progress::Asked::new(meter);
+        ex.ask_failed(job, "Error Copying File or Folder", "x".into(), &mut ctx);
+        tx.send(Step::Done(Ok(Some(dir.path().to_path_buf()))))
+            .unwrap();
+        ex.poll_connection(&mut ctx);
+        ex.message_box("Explorer", "x".into(), &mut ctx);
+        assert!(ex.holds_a_job(), "the failure box is up");
     }
 
     #[test]

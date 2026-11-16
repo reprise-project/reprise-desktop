@@ -123,8 +123,8 @@ fn a_send_to_drive_whose_stat_is_out_greys_its_row_and_a_send_past_the_deadline_
     ex.action_deadline = std::time::Duration::from_millis(20);
     ex.send_to(i, &mut ctx);
     assert!(ex.busy(), "the send waits on STICK's stat");
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
-    match &ex.dialog {
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    match ex.dialog() {
         Some(Dialog::Message { title, text }) => assert_eq!(
             (title.as_str(), text.as_str()),
             ("Send To", "The location is not responding.")
@@ -134,7 +134,7 @@ fn a_send_to_drive_whose_stat_is_out_greys_its_row_and_a_send_past_the_deadline_
     assert!(!ex.busy());
     drop(closed);
     ex.held = None;
-    ex.dialog = None;
+    ex.take_up();
     // The menu's rows wait on the late stat, so it has landed once they are built.
     let (i, enabled) = send_row(&mut ex, &mut ctx);
     assert!(enabled, "the late stat landed");

@@ -412,9 +412,8 @@ impl Explorer {
         }
         match asker.step() {
             Step::Cancelled => Reply::none(),
-            Step::Ask { .. } if self.dialog.is_some() || self.asking.is_some() => {
-                self.replace_waiting.push_back((pending, asker));
-                Reply::none()
+            Step::Ask { .. } if !self.dialogs.is_empty() && !self.answered => {
+                self.raise(Dialog::Paste(Box::new((pending, asker))))
             }
             Step::Ask {
                 index,
@@ -452,7 +451,7 @@ impl Explorer {
                     Ok(sides) => self.open_replace(ask, sides, ctx),
                     Err(job) => {
                         let deadline = Deadline::start(self.action_deadline, ctx);
-                        self.asking = Some((ask, job, deadline));
+                        self.raise(Dialog::Reading(Box::new((ask, job, deadline))));
                         Reply::none()
                     }
                 }
@@ -513,24 +512,35 @@ impl Explorer {
     /// Raises the replace prompt whose sides ([`Explorer::ask_replace`]) were read late. A window
     /// closed meanwhile asks again, which answers No, and so do the pastes waiting behind it.
     pub(crate) fn take_asking(&mut self, ctx: &mut Ctx) -> Option<Reply> {
-        let (ask, job, deadline) = self.asking.as_ref()?;
+        let reply = self.asking_landed(ctx);
+        self.answer_ends();
+        reply
+    }
+
+    fn asking_landed(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let Some(Dialog::Reading(r)) = self.dialogs.up() else {
+            return None;
+        };
+        let (ask, job, deadline) = &**r;
         let Some(sides) = job.take() else {
             if !deadline.passed(std::time::Instant::now()) {
                 return None;
             }
             let title = (ask.pending.items.first()).map_or("Paste", |it| it.op.failure_title());
             log::warn!("explorer: a replace prompt's files gave up");
-            self.asking = None;
+            self.take_up();
             if self.closing {
-                return Some(self.show_waiting(ctx));
+                return Some(Reply::none());
             }
             let text = reprisefs::deadline::not_responding(false, false);
             return Some(self.message_box(title, text, ctx));
         };
-        let (ask, ..) = self.asking.take()?;
+        let Some(Dialog::Reading(r)) = self.take_up() else {
+            return None;
+        };
+        let (ask, ..) = *r;
         if self.closing {
-            self.ask_replace(ask.pending, ask.asker, ctx);
-            return Some(self.show_waiting(ctx));
+            return Some(self.ask_replace(ask.pending, ask.asker, ctx));
         }
         Some(self.open_replace(ask, sides, ctx))
     }
@@ -707,6 +717,7 @@ impl Explorer {
         while let Ok(done) = self.jobs_rx.try_recv() {
             self.jobs_pending = self.jobs_pending.saturating_sub(1);
             let r = done(self, ctx);
+            self.answer_ends();
             reply = Some(match reply {
                 Some(was) => was.and(r),
                 None => r,
@@ -723,7 +734,7 @@ impl Explorer {
             || self.extracting.is_some()
             || self.jobs_pending > 0
             || !self.opening.is_empty()
-            || self.asking.is_some()
+            || self.dialogs.iter().any(|d| matches!(d, Dialog::Reading(_)))
             || !self.acting.is_empty()
             || !self.send.sends.is_empty()
             || !self.browse_left.is_empty()
@@ -735,22 +746,19 @@ impl Explorer {
     /// every replace prompt answers No, so the rest of its paste is put.
     pub fn close(&mut self, ctx: &mut Ctx) -> Reply {
         self.flush_settings();
-        let boxes: Vec<Dialog> = self
-            .dialog
-            .take()
-            .into_iter()
-            .chain(self.waiting.drain(..))
-            .collect();
-        self.closing = !boxes.is_empty() || !self.replace_waiting.is_empty();
-        for d in boxes {
+        self.closing = self
+            .dialogs
+            .iter()
+            .any(|d| !matches!(d, Dialog::Reading(_)));
+        // A paste's work stays: behind a prompt whose files are being read, `take_asking` and
+        // `ask_pastes` answer them in turn.
+        for d in self.dialogs.withdraw(Dialog::shows) {
             if let Dialog::Replace(r) = d {
                 self.ask_replace(r.pending, r.asker, ctx);
             }
         }
-        // Behind a prompt whose files are being read, `take_asking` answers them in turn.
-        if self.asking.is_none() {
-            self.show_waiting(ctx);
-        }
+        self.ask_pastes(ctx);
+        self.answer_ends();
         if self.busy() {
             self.closing = true;
             return Reply::none();
@@ -770,7 +778,7 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Option<(String, String)> {
         use reprisefs::progress::Decision;
-        let Some(Dialog::Confirm(c)) = &self.dialog else {
+        let Some(Dialog::Confirm(c)) = self.dialogs.up() else {
             return None;
         };
         c.job.as_ref()?;

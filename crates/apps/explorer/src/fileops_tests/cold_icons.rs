@@ -20,7 +20,7 @@ fn picture(form: &Form, id: &str) -> Option<u32> {
 }
 
 fn confirm_icon(ex: &Explorer) -> Option<u32> {
-    match &ex.dialog {
+    match ex.dialog() {
         Some(Dialog::Confirm(c)) => mid(&c.icon.icon()),
         _ => None,
     }
@@ -59,9 +59,9 @@ fn a_boxs_cold_icon_lands_and_a_broken_name_gives_way() {
     land_until(&mut ex, &mut ctx, |ex| mid(&ex.error_icon()) == Some(DRAWN));
     assert_eq!(mid(&ex.error_icon()), Some(DRAWN));
 
-    ex.dialog = None;
+    ex.take_up();
     ex.about_box(&mut ctx);
-    let about = |ex: &Explorer| match &ex.dialog {
+    let about = |ex: &Explorer| match ex.dialog() {
         Some(Dialog::About(form, _)) => picture(form, "icon"),
         _ => None,
     };
@@ -69,9 +69,9 @@ fn a_boxs_cold_icon_lands_and_a_broken_name_gives_way() {
     land_until(&mut ex, &mut ctx, |ex| about(ex) == Some(OTHER));
     assert_eq!(about(&ex), Some(OTHER));
 
-    ex.dialog = None;
+    ex.take_up();
     ex.advanced_attributes(filesheet::Subject::File, None, &mut ctx);
-    let advanced = |ex: &Explorer| match &ex.dialog {
+    let advanced = |ex: &Explorer| match ex.dialog() {
         Some(Dialog::Advanced { form, .. }) => picture(form, "icon"),
         _ => None,
     };
@@ -112,7 +112,7 @@ fn the_delete_prompt_wears_a_stand_in_and_a_broken_entry_icon_gives_way() {
 
     ex.sv.selection.set_only(Some(0));
     ex.run(Command::Delete { erase: true }, &mut ctx);
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
     assert_eq!(confirm_icon(&ex), Some(0), "the prompt's stand-in");
     land_until(&mut ex, &mut ctx, |ex| confirm_icon(ex) == Some(DRAWN));
     assert_eq!(confirm_icon(&ex), Some(DRAWN));
@@ -135,8 +135,8 @@ fn the_replace_prompt_wears_its_cold_icons_once_they_land() {
     let mut ex = explorer_in(&dest, &mut ctx);
     let copy = |_: &Path| Some(DropOp::Copy);
     ex.put_all(&[src.join("a.pdf")], &dest, &copy, false, &mut ctx);
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
-    let worn = |ex: &Explorer| match &ex.dialog {
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    let worn = |ex: &Explorer| match ex.dialog() {
         Some(Dialog::Replace(r)) => match &r.fields.subject {
             replacebox::Subject::File { existing, incoming } => [
                 mid(&r.fields.icon),
@@ -171,8 +171,8 @@ fn the_chooser_wears_its_cold_icons_once_they_land() {
     ]
     .into();
     ex.choose_program_for(&path, false, &mut ctx);
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
-    let worn = |ex: &Explorer| match &ex.dialog {
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    let worn = |ex: &Explorer| match ex.dialog() {
         Some(Dialog::ChooseProgram(c)) => {
             let rows = (c.ow.list.rows.iter()).zip(&c.row_icons);
             let named = rows.filter_map(|(r, i)| {

@@ -180,7 +180,7 @@ impl Explorer {
     /// its cleartext volume and goes into it; a refused passphrase keeps the
     /// box up to try again.
     pub(crate) fn unlock_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
-        let Some(Dialog::Unlock(u)) = self.dialog.as_mut() else {
+        let Some(Dialog::Unlock(u)) = self.dialogs.up_mut() else {
             return Reply::none();
         };
         let clip = repriseapp::keys::form_clipboard(u.form.focused_edit(), &ev);
@@ -188,7 +188,7 @@ impl Explorer {
             Outcome::None => Reply::none(),
             Outcome::Redraw => Reply::redraw(),
             Outcome::Cancel => {
-                self.dialog = None;
+                self.take_up();
                 Reply::redraw_all()
             }
             Outcome::Submit(pass) => {
@@ -222,18 +222,18 @@ impl Explorer {
         opened: Result<Result<std::path::PathBuf, Error>, Error>,
         ctx: &mut Ctx,
     ) -> Reply {
-        let open = matches!(&self.dialog, Some(Dialog::Unlock(u)) if u.volume == volume);
+        let open = matches!(self.dialogs.up(), Some(Dialog::Unlock(u)) if u.volume == volume);
         match opened {
             Err(e) if e.kind != ErrorKind::Cancelled => {
                 log::info!("unlocking {volume}: {e}");
-                if let Some(Dialog::Unlock(u)) = self.dialog.as_mut().filter(|_| open) {
+                if let Some(Dialog::Unlock(u)) = self.dialogs.up_mut().filter(|_| open) {
                     u.fail(unlock::failure(&e.message));
                 }
                 Reply::redraw_all()
             }
             done => {
                 if open {
-                    self.dialog = None;
+                    self.take_up();
                 }
                 let reply = match done {
                     Ok(Ok(at)) => self.go(Place::Folder(at), ctx),

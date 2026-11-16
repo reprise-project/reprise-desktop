@@ -72,7 +72,7 @@ fn a_colliding_rename_is_refused_with_a_box() {
     ex.commit_rename(&mut ctx);
 
     assert!(dir.path().join("one.txt").is_file());
-    match ex.dialog.as_ref().expect("the box is up") {
+    match ex.dialog().expect("the box is up") {
         crate::dialogs::Dialog::Message { title, text } => {
             assert_eq!(title, "Rename");
             assert!(text.starts_with("Cannot rename one.txt: "), "{text}");
@@ -97,7 +97,7 @@ fn a_rename_onto_a_name_taken_since_the_listing_is_refused() {
     std::fs::write(dir.path().join("b.txt"), "someone else").expect("write");
     ex.commit_rename(&mut ctx);
 
-    match ex.dialog.as_ref().expect("the box is up") {
+    match ex.dialog().expect("the box is up") {
         crate::dialogs::Dialog::Message { title, text } => {
             assert_eq!(title, "Rename");
             assert_eq!(

@@ -160,7 +160,7 @@ fn enter() -> repriseapp::Event {
 }
 
 fn asked(ex: &Explorer) -> Option<(&'static str, String)> {
-    match &ex.dialog {
+    match ex.dialog() {
         Some(Dialog::Replace(r)) => Some((r.fields.title(), r.fields.name.clone())),
         _ => None,
     }

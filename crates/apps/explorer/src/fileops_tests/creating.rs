@@ -32,7 +32,7 @@ fn new_text_document_never_truncates_an_unlisted_file() {
 
     assert_eq!(std::fs::read_to_string(&taken).expect("read"), "keep me");
     assert!(
-        matches!(ex.dialog, Some(Dialog::Message { .. })),
+        matches!(ex.dialog(), Some(Dialog::Message { .. })),
         "the clash is reported"
     );
     assert_eq!(ex.undo, None);

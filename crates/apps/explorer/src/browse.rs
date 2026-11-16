@@ -230,7 +230,7 @@ impl Explorer {
     }
 
     pub fn browse_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
-        let Some(Dialog::Browse(mut b)) = self.dialog.take_if(|d| matches!(d, Dialog::Browse(_)))
+        let Some(Dialog::Browse(mut b)) = self.take_up_if(|d| matches!(d, Dialog::Browse(_)))
         else {
             return Reply::none();
         };
@@ -595,7 +595,7 @@ impl Explorer {
     /// [`Explorer::refill_tree_node`] does for the Folders tree. True when the node was filled
     /// at once; a late read lands through [`Explorer::take_browse`].
     pub(crate) fn refill_browse_node(&mut self, place: &Place, ctx: &mut Ctx) -> bool {
-        let Some(Dialog::Browse(mut b)) = self.dialog.take_if(|d| matches!(d, Dialog::Browse(_)))
+        let Some(Dialog::Browse(mut b)) = self.take_up_if(|d| matches!(d, Dialog::Browse(_)))
         else {
             return false;
         };
@@ -645,7 +645,7 @@ impl Explorer {
     /// True when one did.
     pub(crate) fn take_browse(&mut self, ctx: &mut Ctx) -> bool {
         let left = self.take_browse_left(ctx);
-        let Some(Dialog::Browse(mut b)) = self.dialog.take_if(|d| matches!(d, Dialog::Browse(_)))
+        let Some(Dialog::Browse(mut b)) = self.take_up_if(|d| matches!(d, Dialog::Browse(_)))
         else {
             return left;
         };
@@ -733,7 +733,7 @@ impl Explorer {
     }
 
     pub fn browse_error_fields(&self) -> Option<msgbox::Fields> {
-        let Some(Dialog::Browse(b)) = &self.dialog else {
+        let Some(Dialog::Browse(b)) = self.dialogs.up() else {
             return None;
         };
         let r = b.refused.as_ref()?;
@@ -784,7 +784,7 @@ impl Explorer {
         if !closed {
             return Reply::redraw();
         }
-        if let Some(Dialog::Browse(b)) = self.dialog.as_mut()
+        if let Some(Dialog::Browse(b)) = self.dialogs.up_mut()
             && let Some(r) = b.refused.take()
         {
             b.bf.reopen_edit(r.path, &r.name);

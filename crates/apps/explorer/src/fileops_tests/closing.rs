@@ -99,14 +99,14 @@ fn a_close_after_a_put_gave_up_waits_for_its_stuck_call_to_return() {
     };
     let ops = pending.ops();
     ex.start_put(pending, ops, &ctx);
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
-    match &ex.dialog {
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    match ex.dialog() {
         Some(Dialog::Message { text, .. }) => {
             assert!(text.ends_with("The location is not responding."), "{text}")
         }
         _ => panic!("the give-up box is up"),
     }
-    ex.dialog = None;
+    ex.take_up();
     assert!(!ex.close(&mut ctx).quit, "the stuck call is still out");
     release.send(()).expect("release");
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| !ex.busy());

@@ -73,7 +73,7 @@ fn restore_puts_the_selection_back_then_everything() {
     );
     assert!(ex.items.is_empty());
     assert_eq!(ex.undo, None);
-    assert!(ex.dialog.is_none(), "no error box");
+    assert!(ex.dialog().is_none(), "no error box");
 }
 
 /// A file on another drive goes to that drive's own trash. The Recycle Bin lists it beside the home
@@ -131,7 +131,7 @@ fn the_recycle_bin_holds_every_drives_trash() {
     ex.finish_puts(&mut ctx);
     assert!(ex.items.is_empty());
     assert_eq!(std::fs::read_dir(&drive_files).expect("files").count(), 0);
-    assert!(ex.dialog.is_none(), "no error box");
+    assert!(ex.dialog().is_none(), "no error box");
 }
 
 #[test]
@@ -254,7 +254,7 @@ fn the_bin_shows_origins_and_deletes_for_good() {
         .clone();
     ex.sv.selection.set_only(Some(b));
     ex.run(Command::Delete { erase: false }, &mut ctx);
-    let Some(Dialog::Confirm(c)) = ex.dialog.take() else {
+    let Some(Dialog::Confirm(c)) = ex.take_up() else {
         panic!("Delete asks first");
     };
     assert!(c.erase, "the bin's Delete is for good");
@@ -270,7 +270,7 @@ fn the_bin_shows_origins_and_deletes_for_good() {
     assert!(!dir.join("b.txt").exists());
     assert!(ex.items.is_empty());
     assert_eq!(ex.undo, None, "nothing is left to put back");
-    assert!(ex.dialog.is_none(), "no error box");
+    assert!(ex.dialog().is_none(), "no error box");
 }
 
 /// An item replaced in the bin under the same name since it was listed is left alone: Yes on the prompt
@@ -396,14 +396,14 @@ fn emptying_the_bin_drops_only_the_trash_undos() {
     ex.empty_bin_now(&mut ctx);
     ex.finish_puts(&mut ctx);
     assert!(
-        matches!(ex.dialog, Some(crate::dialogs::Dialog::Message { .. })),
+        matches!(ex.dialog(), Some(crate::dialogs::Dialog::Message { .. })),
         "the failure is reported"
     );
     assert_eq!(std::fs::read_dir(&files).expect("the trash").count(), 1);
     assert_eq!(ex.undo, Some("Delete"), "nothing was forgotten");
 
     mode(0o700);
-    ex.dialog = None;
+    ex.take_up();
     ex.empty_bin_now(&mut ctx);
     ex.finish_puts(&mut ctx);
 
@@ -420,7 +420,7 @@ fn the_empty_bin_prompt_counts_the_bin() {
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.confirm_empty_bin(&mut ctx);
-    match ex.dialog.as_ref() {
+    match ex.dialog() {
         Some(Dialog::Confirm(c)) => assert_eq!(
             c.text.replace('\n', " "),
             "Are you sure you want to delete these 3 items?"
