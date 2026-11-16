@@ -15,8 +15,8 @@ pub const SLOTS: usize = 2;
 /// How long a thumbnailer may run before its process group is killed.
 pub const DEADLINE: Duration = Duration::from_secs(10);
 
-/// The memory a jailed thumbnailer's scope may use, as systemd's `MemoryMax` reads it.
-pub const MEMORY_MAX: &str = "512M";
+/// The memory a jailed thumbnailer's scope may use, in bytes.
+pub const MEMORY_MAX: u64 = 512 << 20;
 
 /// The largest PNG a thumbnailer may leave, in bytes and on either side.
 const MAX_PNG_BYTES: u64 = 16 << 20;

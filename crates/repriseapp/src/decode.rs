@@ -50,6 +50,14 @@ impl Decoders {
         d
     }
 
+    /// [`Decoders::default_set`] without [`JxlDecoder`], for a picture an app hands over: a JPEG
+    /// XL from one decodes only in the thumbnailers' jail ([`crate::thumbs::picture`]).
+    pub fn without_jxl() -> Decoders {
+        let mut d = Decoders { list: Vec::new() };
+        d.register(Box::new(ImageCrateDecoder));
+        d
+    }
+
     pub fn register(&mut self, d: Box<dyn ImageDecoder>) {
         self.list.push(d);
     }
@@ -212,19 +220,28 @@ impl ImageDecoder for JxlDecoder {
     }
 
     fn decode(&self, bytes: &[u8], max: (u32, u32), budget: Budget) -> Result<Decoded, Unread> {
-        let p = jxl::first_frame(bytes, budget.pixels, budget.jxl_alloc(), JXL_TIME_LIMIT)
-            .map_err(|e| match e {
-                jxl::Refused::Size | jxl::Refused::Memory => Unread::TooLarge,
-                jxl::Refused::Time | jxl::Refused::Broken => Unread::Unreadable,
-            })?;
-        let img = image::RgbaImage::from_raw(p.width, p.height, p.px).ok_or(Unread::Unreadable)?;
-        let (fw, fh) = reprisekit::raster::fit_size(p.width, p.height, max);
-        Ok(Decoded {
-            canvas: fit_buffer(&img, fw, fh),
-            width: p.width,
-            height: p.height,
-        })
+        decode_jxl(bytes, max, budget.pixels, budget.jxl_alloc())
     }
+}
+
+/// [`JxlDecoder`] with libjxl's allocations capped at `alloc` bytes rather than [`Budget`]'s.
+pub(crate) fn decode_jxl(
+    bytes: &[u8],
+    max: (u32, u32),
+    pixels: u64,
+    alloc: usize,
+) -> Result<Decoded, Unread> {
+    let p = jxl::first_frame(bytes, pixels, alloc, JXL_TIME_LIMIT).map_err(|e| match e {
+        jxl::Refused::Size | jxl::Refused::Memory => Unread::TooLarge,
+        jxl::Refused::Time | jxl::Refused::Broken => Unread::Unreadable,
+    })?;
+    let img = image::RgbaImage::from_raw(p.width, p.height, p.px).ok_or(Unread::Unreadable)?;
+    let (fw, fh) = reprisekit::raster::fit_size(p.width, p.height, max);
+    Ok(Decoded {
+        canvas: fit_buffer(&img, fw, fh),
+        width: p.width,
+        height: p.height,
+    })
 }
 
 /// The file extensions [`Decoders::default_set`] reads, lower case.
@@ -491,6 +508,21 @@ mod tests {
     /// then default image metadata.
     fn jxl_header_claiming_20000_square() -> Vec<u8> {
         vec![0xff, 0x0a, 0xfc, 0x70, 0x22, 0x01]
+    }
+
+    #[test]
+    fn the_set_for_an_apps_picture_decodes_no_jxl() {
+        let bytes = jxl_of(rgba_gradient(4, 3));
+        assert!(
+            Decoders::default_set()
+                .decode(&bytes, (8, 8), Budget::THUMBNAIL)
+                .is_ok()
+        );
+        assert!(
+            Decoders::without_jxl()
+                .decode(&bytes, (8, 8), Budget::THUMBNAIL)
+                .is_err()
+        );
     }
 
     #[test]

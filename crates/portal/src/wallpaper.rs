@@ -375,6 +375,9 @@ mod tests {
         std::fs::write(&text, "not a picture").unwrap();
         assert_eq!(read_picture(&text), None);
         assert_eq!(read_picture(dir.path()), None);
+        let jxl = dir.path().join("red.jxl");
+        std::fs::write(&jxl, crate::access::RED_2X2_JXL).unwrap();
+        assert_eq!(read_picture(&jxl), None, "the desktop shows no JPEG XL");
         let to = dir.path().join("wallpapers");
         assert_eq!(file_name(&png), "dot.png");
         let config = dir.path().join("config.toml");

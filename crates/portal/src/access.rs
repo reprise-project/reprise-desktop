@@ -388,9 +388,8 @@ pub fn run_dialog() {
 /// The picture file at `path` cut to its centred square, [`PICTURE_PX`] a side.
 fn account_picture(path: &str) -> Option<Canvas> {
     let max = (4 * PICTURE_PX) as u32;
-    let d = repriseapp::decode::Decoders::default_set()
-        .decode_file(std::path::Path::new(path), (max, max))?;
-    let (w, h) = (d.canvas.width, d.canvas.height);
+    let picture = repriseapp::thumbs::picture(std::path::Path::new(path), (max, max))?;
+    let (w, h) = (picture.width, picture.height);
     let side = w.min(h);
     let square = Rect::new(
         ((w - side) / 2) as i32,
@@ -399,8 +398,15 @@ fn account_picture(path: &str) -> Option<Canvas> {
         side as i32,
     );
     let px = PICTURE_PX as u32;
-    Some(d.canvas.copy_rect(square).resample_box(px, px))
+    Some(picture.copy_rect(square).resample_box(px, px))
 }
+
+/// A lossless 2x2 JPEG XL.
+#[cfg(test)]
+pub(crate) const RED_2X2_JXL: [u8; 24] = [
+    0xff, 0x0a, 0x08, 0x10, 0xb0, 0x12, 0x08, 0x00, 0x10, 0x00, 0x30, 0x00, 0x4b, 0x18, 0x8b, 0x15,
+    0xc2, 0x49, 0x41, 0x4e, 0x7f, 0x00, 0xf4, 0x07,
+];
 
 /// A launcher's icon file (PNG, JPEG or SVG), [`PICTURE_PX`] a side.
 fn launcher_icon(bytes: &[u8]) -> Option<Canvas> {
@@ -409,7 +415,7 @@ fn launcher_icon(bytes: &[u8]) -> Option<Canvas> {
     }
     let px = PICTURE_PX as u32;
     let max = 4 * px;
-    let raster = repriseapp::decode::Decoders::default_set().decode(
+    let raster = repriseapp::decode::Decoders::without_jxl().decode(
         bytes,
         (max, max),
         repriseapp::decode::Budget::THUMBNAIL,
@@ -821,6 +827,11 @@ mod tests {
         assert_eq!((c.width, c.height), (48, 48));
         assert!(launcher_icon(b"not an image").is_none());
         assert!(launcher_icon(&[]).is_none());
+    }
+
+    #[test]
+    fn a_jpeg_xl_launcher_icon_drops() {
+        assert!(launcher_icon(&RED_2X2_JXL).is_none());
     }
 
     #[test]
