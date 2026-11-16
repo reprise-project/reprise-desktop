@@ -398,9 +398,14 @@ impl State {
         {
             log::debug!("x11 hidden: {e}");
         }
+        // Marked before the deactivation, which sends both in one configure.
+        let suspended = self.mark_suspended(m);
         self.set_activated(m, false);
         self.scene.set_enabled(tree, false);
         self.show_children(m, false);
+        if suspended {
+            self.send_configure(m);
+        }
         crate::idle::inhibition_changed(self);
     }
 
@@ -420,6 +425,9 @@ impl State {
         }
         self.scene.set_enabled(tree, show);
         self.show_children(m, show);
+        if self.mark_suspended(m) {
+            self.send_configure(m);
+        }
         crate::idle::inhibition_changed(self);
     }
 
@@ -1254,6 +1262,27 @@ mod tests {
         assert_eq!(take_asked_outputs(), ["TEST-1"], "armed on TEST-1");
         h.state.end_tab_drop();
         assert_eq!(take_asked_outputs(), ["TEST-1"], "let go on TEST-1");
+    }
+
+    #[test]
+    fn a_tab_behind_another_is_suspended_until_it_shows() {
+        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as Xdg;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "a", 300, 200).id;
+        let b = h.map_toplevel(&mut c, "b", 300, 200).id;
+        let suspended = |h: &crate::harness::Harness, w| {
+            let t = h.state.win(w).unwrap().xdg().unwrap().clone();
+            t.with_pending_state(|p| p.states.contains(Xdg::Suspended))
+        };
+        h.state.join_tabs(b, a, 1, true);
+        h.roundtrip(&mut c);
+        assert!(suspended(&h, a), "a, behind b, is suspended");
+        assert!(!suspended(&h, b), "b shows");
+        h.state.select_tab(a);
+        assert!(!suspended(&h, a), "a shows again");
+        assert!(suspended(&h, b), "b went behind");
     }
 
     #[test]
