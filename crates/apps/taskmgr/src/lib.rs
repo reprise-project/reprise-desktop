@@ -24,6 +24,7 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+use repriseapp::asks::{Answer, Asks};
 use repriseapp::ctxmenu::{self, Popup};
 use repriseapp::detailslist::{List, Press};
 use repriseapp::keys::AltArm;
@@ -47,6 +48,7 @@ use reprisekit::textedit::keysym;
 
 use columns::Column as ProcColumn;
 use sample::{ProcRow, Snapshot};
+use scopes::Scope;
 use state::State;
 
 const ASK: WinId = WinId::named("ask");
@@ -156,6 +158,23 @@ enum Ask {
     EndNow(Target),
 }
 
+impl Ask {
+    fn target(&self) -> Target {
+        match self {
+            Ask::EndProcess { pid, start, .. } => Target::Process(*pid, *start),
+            Ask::EndNow(t) => t.clone(),
+        }
+    }
+}
+
+/// Whether `t` is still running in the snapshot with these `scopes` and process `starts`.
+fn alive(starts: &HashMap<i32, u64>, scopes: &[Scope], t: &Target) -> bool {
+    match t {
+        Target::Scope(unit) => scopes.iter().any(|s| &s.unit == unit),
+        Target::Process(pid, start) => starts.get(pid) == Some(start),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Act {
     Quit,
@@ -210,7 +229,7 @@ pub struct TaskMgr {
     form: Form,
     /// The page, Performance pane and size `form` was built for.
     form_for: Option<(Page, Option<perf::Pane>, (i32, i32))>,
-    ask: Option<(Ask, MsgBox)>,
+    asks: Asks<Ask>,
     /// Select Columns, while open.
     pick: Option<Form>,
     ending: Vec<Ending>,
@@ -264,7 +283,7 @@ impl TaskMgr {
             bar: Bar::new(Vec::<(&str, _)>::new()),
             form: Form::new(Vec::new()),
             form_for: None,
-            ask: None,
+            asks: Asks::new(ASK),
             pick: None,
             ending: Vec::new(),
             entries: Arc::new(entries),
@@ -654,30 +673,19 @@ impl TaskMgr {
         self.apps.selected().and_then(|i| self.app_rows.get(i))
     }
 
-    fn alive(&self, t: &Target) -> bool {
-        match t {
-            Target::Scope(unit) => self.snap.scopes.iter().any(|s| &s.unit == unit),
-            Target::Process(pid, start) => self.starts.get(pid) == Some(start),
-        }
-    }
-
-    /// Drops what has ended, and offers End Now for the first that outlived [`END_WAIT`].
+    /// Drops what has ended and the questions about it, and offers End Now for each that
+    /// outlived [`END_WAIT`].
     fn check_ending(&mut self) {
-        let ending = std::mem::take(&mut self.ending);
-        self.ending = ending
-            .into_iter()
-            .filter(|e| self.alive(&e.target))
-            .collect();
-        if self.ask.is_some() {
-            return;
-        }
+        let (starts, scopes) = (&self.starts, &self.snap.scopes);
+        self.ending.retain(|e| alive(starts, scopes, &e.target));
+        self.asks.withdraw(|a| !alive(starts, scopes, &a.target()));
         let now = Instant::now();
-        if let Some(e) =
-            (self.ending.iter_mut()).find(|e| !e.asked && now.duration_since(e.since) >= END_WAIT)
-        {
-            e.asked = true;
-            let (target, name) = (e.target.clone(), e.name.clone());
-            self.ask = Some((Ask::EndNow(target), end_now_box(&name, true)));
+        for e in (self.ending.iter_mut()).filter(|e| !e.asked) {
+            if now.duration_since(e.since) >= END_WAIT {
+                e.asked = true;
+                self.asks
+                    .ask(end_now_box(&e.name, true), Ask::EndNow(e.target.clone()));
+            }
         }
     }
 
@@ -686,10 +694,12 @@ impl TaskMgr {
             return Reply::none();
         };
         if row.hung {
-            self.ending
-                .retain(|e| e.target != Target::Scope(row.unit.clone()));
-            let b = end_now_box(&row.name, false);
-            self.ask = Some((Ask::EndNow(Target::Scope(row.unit)), b));
+            let target = Target::Scope(row.unit);
+            self.ending.retain(|e| e.target != target);
+            if !(self.asks.iter()).any(|(_, a)| matches!(a, Ask::EndNow(t) if *t == target)) {
+                self.asks
+                    .ask(end_now_box(&row.name, false), Ask::EndNow(target));
+            }
             return Reply::redraw_all();
         }
         let pids = (self.snap.scopes.iter())
@@ -761,15 +771,15 @@ impl TaskMgr {
                 max_w: repriseapp::dialog_max_w(),
             },
         );
-        self.ask = Some((
+        self.asks.ask(
+            b,
             Ask::EndProcess {
                 pid: p.pid,
                 start: p.start,
                 name: p.name,
                 fd,
             },
-            b,
-        ));
+        );
         Reply::redraw()
     }
 
@@ -801,18 +811,13 @@ impl TaskMgr {
         }
     }
 
-    fn ask_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
+    fn ask_event(&mut self, win: WinId, ev: Event, ctx: &Ctx) -> Reply {
         let theme = self.forms.clone().unwrap_or_else(|| ctx.forms());
-        let Some((_, b)) = &mut self.ask else {
-            return Reply::none();
-        };
-        match b.event(&ev, &ctx.text, &theme) {
-            oneshot::Outcome::None => Reply::none(),
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::Closed(button) => {
-                let (ask, _) = self.ask.take().expect("asking");
+        match self.asks.event(win, &ev, &ctx.text, &theme) {
+            Answer::None => Reply::none(),
+            Answer::Redraw => Reply::redraw(),
+            Answer::Closed(ask, button) => {
                 self.answered(ask, button);
-                self.check_ending();
                 Reply::redraw_all()
             }
         }
@@ -1244,8 +1249,8 @@ impl App for TaskMgr {
                 modal: true,
             });
         }
-        if let (Some(theme), Some(text), Some((_, b))) = (&self.forms, &self.text, &self.ask) {
-            kids.push(b.child(ASK, text, theme));
+        if let (Some(theme), Some(text)) = (&self.forms, &self.text) {
+            kids.extend(self.asks.child(text, theme));
         }
         kids
     }
@@ -1274,17 +1279,15 @@ impl App for TaskMgr {
         self.forms = Some(ctx.forms());
         self.text = Some(ctx.text.clone());
         match win {
-            ASK => self.ask_event(ev, ctx),
+            w if self.asks.owns(w) => self.ask_event(w, ev, ctx),
             PICK => self.pick_event(ev, ctx),
             _ => self.main_event(ev, ctx),
         }
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        if win == ASK {
-            if let Some((_, b)) = &self.ask {
-                b.draw(c, &ctx.forms(), &ctx.text);
-            }
+        if self.asks.owns(win) {
+            self.asks.draw(c, &ctx.forms(), &ctx.text);
             return;
         }
         if win == PICK {
@@ -1340,10 +1343,8 @@ impl repriseapp::Extended for TaskMgr {
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        if win == ASK {
-            if let Some((_, b)) = &self.ask {
-                b.access(tree, &ctx.text, &ctx.forms());
-            }
+        if self.asks.owns(win) {
+            self.asks.access(tree, &ctx.text, &ctx.forms());
             return;
         }
         if win == PICK {

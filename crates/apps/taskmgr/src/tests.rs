@@ -244,7 +244,7 @@ fn only_your_own_processes_show_until_all_users_is_ticked() {
         "another user's process cannot be ended"
     );
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
-    assert!(t.ask.is_none());
+    assert!(t.asks.is_empty());
 }
 
 fn enabled(t: &TaskMgr, id: &str) -> bool {
@@ -306,22 +306,22 @@ fn end_process_asks_first_and_offers_end_now_once_it_outlives_the_wait() {
     open(&mut t, &mut ctx, Page::Processes);
     click_row(&mut t, &mut ctx, 2);
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
-    let Some((Ask::EndProcess { pid, start, .. }, _)) = &t.ask else {
+    let Some((_, Ask::EndProcess { pid, start, .. })) = t.asks.up() else {
         panic!("Delete asks before ending");
     };
     assert_eq!((*pid, *start), (42, 142));
     assert_eq!(t.children().len(), 1, "the warning opens as a window");
-    t.ask = None;
+    t.asks.close();
     t.wait_for(Target::Process(42, 142), "helper".into());
     t.take(snapshot(), &mut ctx);
-    assert!(t.ask.is_none(), "it has a few seconds to end");
+    assert!(t.asks.is_empty(), "it has a few seconds to end");
     t.ending[0].since -= END_WAIT;
     t.take(snapshot(), &mut ctx);
     assert!(matches!(
-        t.ask,
-        Some((Ask::EndNow(Target::Process(42, 142)), _))
+        t.asks.up(),
+        Some((_, Ask::EndNow(Target::Process(42, 142))))
     ));
-    t.ask = None;
+    t.asks.close();
     t.answered(Ask::EndNow(Target::Process(42, 142)), Some(1));
     assert!(t.ending.is_empty(), "Cancel stops waiting");
     let mut s = snapshot();
@@ -343,7 +343,7 @@ fn end_process_asks_nothing_for_a_process_gone_since_the_sample() {
     click_row(&mut t, &mut ctx, 2);
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
     assert!(
-        t.ask.is_none(),
+        t.asks.is_empty(),
         "no box for a pid that names another process now"
     );
 }
@@ -359,7 +359,35 @@ fn an_ended_program_is_no_longer_waited_on() {
     s.scopes.remove(0);
     t.take(s, &mut ctx);
     assert!(t.ending.is_empty());
-    assert!(t.ask.is_none());
+    assert!(t.asks.is_empty());
+}
+
+#[test]
+fn a_question_about_a_process_that_exits_is_withdrawn_and_the_next_comes_up() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    t.open_process = |_, _| reprisebus::pidfd::open(std::process::id());
+    open(&mut t, &mut ctx, Page::Processes);
+    click_row(&mut t, &mut ctx, 2);
+    t.event(MAIN, key(keysym::DELETE), &mut ctx);
+    let unit = t.app_rows[0].unit.clone();
+    t.wait_for(Target::Scope(unit.clone()), "Ark".into());
+    t.ending[0].since -= END_WAIT;
+    t.take(snapshot(), &mut ctx);
+    assert!(
+        matches!(t.asks.up(), Some((_, Ask::EndProcess { pid: 42, .. }))),
+        "End Now waits behind the End Process question"
+    );
+    let first = t.asks.win();
+    let mut s = snapshot();
+    s.procs.remove(3);
+    t.take(s, &mut ctx);
+    assert!(
+        matches!(t.asks.up(), Some((_, Ask::EndNow(Target::Scope(u)))) if *u == unit),
+        "the question about pid 42 went with it, and End Now is up"
+    );
+    assert_eq!(t.asks.len(), 1);
+    assert_ne!(t.asks.win(), first, "in a window of its own");
 }
 
 #[test]
@@ -715,7 +743,7 @@ fn end_task_on_a_program_that_answers_closes_its_windows_and_waits_for_it() {
         [(unit.clone(), pids)],
         "the program's processes are asked to close their windows"
     );
-    assert!(t.ask.is_none(), "End Now waits");
+    assert!(t.asks.is_empty(), "End Now waits");
     assert!(matches!(&t.ending[..], [e] if e.target == Target::Scope(unit.clone())));
 }
 
@@ -728,7 +756,7 @@ fn end_task_on_a_program_not_responding_offers_end_now_at_once() {
     click_row(&mut t, &mut ctx, 0);
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
     let unit = t.app_rows[0].unit.clone();
-    assert!(matches!(&t.ask, Some((Ask::EndNow(Target::Scope(u)), _)) if *u == unit));
+    assert!(matches!(t.asks.up(), Some((_, Ask::EndNow(Target::Scope(u)))) if *u == unit));
     assert!(
         t.ending.is_empty(),
         "nothing waits on a request it cannot answer"
