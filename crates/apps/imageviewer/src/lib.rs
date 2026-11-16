@@ -4,6 +4,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("imageviewer");
+
 mod dialogs;
 mod folder;
 mod input;
@@ -29,12 +31,12 @@ use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
-const NAME: &str = "Image Viewer";
 const DELETE: WinId = WinId::named("delete");
 
 const OPEN: WinId = WinId::named("open");
@@ -133,8 +135,8 @@ impl Viewer {
 
     fn title(&self) -> String {
         match self.folder.current().and_then(Path::file_name) {
-            Some(n) => format!("{} - {NAME}", n.to_string_lossy()),
-            None => NAME.into(),
+            Some(n) => tr!("window-title", name = n.to_string_lossy().into_owned()),
+            None => tr!("name"),
         }
     }
 
@@ -306,9 +308,7 @@ impl Viewer {
         };
         if let Err(e) = set_wallpaper(&self.config, &path) {
             log::warn!("set {} as the background: {e}", path.display());
-            self.fail(&format!(
-                "The picture could not be set as the desktop background.\n\n{e}"
-            ));
+            self.fail(&tr!("background-failed", error = e));
             return Reply::redraw_all();
         }
         Reply::none()
@@ -351,7 +351,7 @@ const SLIDESHOW: repriseconf::Key = repriseconf::key("wallpaper", "slideshow");
 /// Set `path` as the desktop's picture in the config at `config`, ending a slideshow that would
 /// show in its place; the compositor picks the change up from the file.
 fn set_wallpaper(config: &Path, path: &Path) -> Result<(), String> {
-    let image = path.to_str().ok_or("The picture's path is not UTF-8.")?;
+    let image = path.to_str().ok_or_else(|| tr!("path-not-utf8"))?;
     repriseconf::edit(config, |text| {
         let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
         repriseconf::set(&mut doc, &IMAGE, toml_edit::Value::from(image))
@@ -393,7 +393,7 @@ impl App for Viewer {
         if let Some(d) = &self.open {
             kids.push(Child {
                 id: OPEN,
-                title: "Open".into(),
+                title: tr!("title-open"),
                 size: d.client(),
                 fixed: false,
                 modal: true,

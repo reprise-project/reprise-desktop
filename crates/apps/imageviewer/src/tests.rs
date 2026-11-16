@@ -380,8 +380,8 @@ fn a_file_that_is_no_picture_says_so_in_the_box() {
     let p = dir.path().join("broken.png");
     std::fs::write(&p, b"not a picture").unwrap();
     let v = opened(p);
-    assert_eq!(v.blank, Blank::Failed(load::CANNOT_OPEN.into()));
-    assert_eq!(v.blank_text(), load::CANNOT_OPEN);
+    assert_eq!(v.blank, Blank::Failed(load::cannot_open()));
+    assert_eq!(v.blank_text(), load::cannot_open());
 }
 
 fn fnv(c: &Canvas) -> u64 {

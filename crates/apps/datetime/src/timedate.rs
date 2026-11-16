@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
+use reprisekit::tr;
+
 use futures_util::StreamExt;
 
 use crate::sheet::{Blocked, Change, System};
@@ -212,7 +214,7 @@ impl Failure {
             Failure::Dismissed => None,
             Failure::TimedOut => Some(reprisebus::polkit::TIMED_OUT.into()),
             Failure::Denied(msg) | Failure::Text(msg) => {
-                Some(format!("The clock could not be changed: {msg}"))
+                Some(tr!("change-failed", error = msg.as_str()))
             }
         }
     }

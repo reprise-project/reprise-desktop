@@ -34,46 +34,49 @@ pub(crate) mod row {
     pub const ROTATE_CCW: usize = 1;
 }
 
-pub(crate) fn menus() -> Vec<(&'static str, Vec<MenuItem>)> {
+pub(crate) fn menus() -> Vec<(String, Vec<MenuItem>)> {
     vec![
         (
-            "&File",
+            tr!("menu-file"),
             vec![
-                mi("&Open...", Some("Ctrl+O")),
+                mi(&tr!("menu-open"), Some("Ctrl+O")),
                 MenuItem::Separator,
-                mi("Set as Desktop &Background", None),
+                mi(&tr!("menu-set-background"), None),
                 MenuItem::Separator,
-                mi("E&xit", None),
+                mi(&tr!("menu-exit"), None),
             ],
         ),
         (
-            "&Edit",
-            vec![mi("&Copy", Some("Ctrl+C")), mi("&Delete", Some("Del"))],
-        ),
-        (
-            "&View",
+            tr!("menu-edit"),
             vec![
-                mi("&Previous Picture", Some("Left")),
-                mi("&Next Picture", Some("Right")),
-                mi("&First Picture", Some("Home")),
-                mi("&Last Picture", Some("End")),
-                MenuItem::Separator,
-                mi("Zoom &In", Some("+")),
-                mi("Zoom O&ut", Some("-")),
-                mi("Fit to &Window", Some("Ctrl+0")),
-                mi("&Actual Size", Some("Ctrl+1")),
-                MenuItem::Separator,
-                mi("F&ull Screen", Some("F11")),
-                mi("&Slide Show", Some("F5")),
-                MenuItem::Separator,
-                mi("Status &Bar", None).checked(true),
+                mi(&tr!("menu-copy"), Some("Ctrl+C")),
+                mi(&tr!("menu-delete"), Some("Del")),
             ],
         ),
         (
-            "&Image",
+            tr!("menu-view"),
             vec![
-                mi("Rotate &Clockwise", Some("Ctrl+R")),
-                mi("Rotate C&ounterclockwise", Some("Ctrl+L")),
+                mi(&tr!("menu-previous"), Some("Left")),
+                mi(&tr!("menu-next"), Some("Right")),
+                mi(&tr!("menu-first"), Some("Home")),
+                mi(&tr!("menu-last"), Some("End")),
+                MenuItem::Separator,
+                mi(&tr!("menu-zoom-in"), Some("+")),
+                mi(&tr!("menu-zoom-out"), Some("-")),
+                mi(&tr!("menu-fit"), Some("Ctrl+0")),
+                mi(&tr!("menu-actual-size"), Some("Ctrl+1")),
+                MenuItem::Separator,
+                mi(&tr!("menu-full-screen"), Some("F11")),
+                mi(&tr!("menu-slide-show"), Some("F5")),
+                MenuItem::Separator,
+                mi(&tr!("menu-status-bar"), None).checked(true),
+            ],
+        ),
+        (
+            tr!("menu-image"),
+            vec![
+                mi(&tr!("menu-rotate-cw"), Some("Ctrl+R")),
+                mi(&tr!("menu-rotate-ccw"), Some("Ctrl+L")),
             ],
         ),
     ]

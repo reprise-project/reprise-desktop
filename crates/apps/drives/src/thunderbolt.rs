@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::sync::mpsc::Receiver;
 
 use reprisebus::bolt::{self, Change, Device, Found};
+use reprisekit::tr;
 
 pub enum Msg {
     /// What boltd knows now; None while it is not on the bus.
@@ -64,7 +65,7 @@ fn start(
     }));
     if let Err(e) = started {
         log::warn!("could not authorize a Thunderbolt device: {e}");
-        let result = Err(Some(format!("Reprise could not start the change: {e}")));
+        let result = Err(Some(tr!("change-not-started", error = e.to_string())));
         poster.post(Msg::Done { uid, label, result });
     }
 }
@@ -88,7 +89,13 @@ impl Asked {
 
 pub const AUTHORIZE_ONCE: usize = 0;
 pub const ALWAYS: usize = 1;
-pub const BUTTONS: [&str; 3] = ["Authorize Once", "Always Authorize", "Ignore"];
+pub fn buttons() -> [String; 3] {
+    [
+        tr!("authorize-once"),
+        tr!("authorize-always"),
+        tr!("authorize-ignore"),
+    ]
+}
 
 /// What button `i` of a device's balloon asks for; Ignore asks nothing.
 pub fn change_for(i: usize) -> Option<Change> {
@@ -102,16 +109,14 @@ pub fn change_for(i: usize) -> Option<Change> {
 /// The balloon asking about `d`.
 pub fn balloon(d: &Device) -> (String, String) {
     (
-        format!("Authorize {}?", d.label()),
-        "This Thunderbolt device does nothing until you authorize it, and can then reach this \
-         computer's memory. Authorize it only if you trust it."
-            .into(),
+        tr!("authorize-title", device = d.label()),
+        tr!("authorize-body"),
     )
 }
 
 /// The balloon telling why authorizing the device `label` failed.
 pub fn failed_balloon(label: &str, why: &str) -> (String, String) {
-    (format!("Could not authorize {label}"), why.to_string())
+    (tr!("authorize-failed", device = label), why.to_string())
 }
 
 #[cfg(test)]
@@ -175,7 +180,7 @@ mod tests {
 
     #[test]
     fn the_buttons_authorize_once_enroll_or_do_nothing() {
-        assert_eq!(BUTTONS.len(), 3);
+        assert_eq!(buttons().len(), 3);
         assert_eq!(change_for(0), Some(Change::Authorize));
         assert_eq!(change_for(1), Some(Change::Always));
         assert_eq!(change_for(2), None);

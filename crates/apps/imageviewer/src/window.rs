@@ -119,7 +119,7 @@ impl Viewer {
                     ctx.theme.colors.window_text
                 };
                 let msg = self.blank_text();
-                imageview::draw_message(c, &ctx.text, self.box_rect(ctx), msg, (ground, ink), px);
+                imageview::draw_message(c, &ctx.text, self.box_rect(ctx), &msg, (ground, ink), px);
             }
         }
         if self.full {
@@ -132,11 +132,11 @@ impl Viewer {
         self.bar.draw(c, &ctx.text, &ctx.theme, &lay);
     }
 
-    pub(crate) fn blank_text(&self) -> &str {
+    pub(crate) fn blank_text(&self) -> String {
         match &self.blank {
-            Blank::Nothing => "No picture is open.",
-            Blank::Loading => "",
-            Blank::Failed(e) => e,
+            Blank::Nothing => tr!("no-picture"),
+            Blank::Loading => String::new(),
+            Blank::Failed(e) => e.clone(),
         }
     }
 
@@ -160,9 +160,9 @@ impl Viewer {
         [
             name,
             self.folder.position(),
-            format!("{w} x {h}"),
+            tr!("dimensions", width = w.to_string(), height = h.to_string()),
             reprisefs::props::short_size(p.bytes),
-            format!("{}%", zoom.round()),
+            tr!("zoom", percent = zoom.round().to_string()),
         ]
     }
 

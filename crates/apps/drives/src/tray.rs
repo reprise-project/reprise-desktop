@@ -8,7 +8,11 @@ use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 use crate::model::Entry;
 
 pub const BUS_NAME: &str = "reprise.drives";
-pub const TIP: &str = "Safely Remove Hardware";
+/// The tooltip, which is also the program's title.
+pub fn tip() -> &'static str {
+    static TIP: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TIP.get_or_init(|| reprisekit::tr!("tip"))
+}
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum TrayMsg {
@@ -44,7 +48,7 @@ pub fn translate(msg: Msg, entries: &[Entry]) -> Option<TrayMsg> {
 pub fn shown(entries: &[Entry]) -> Shown {
     Shown {
         icon: Icon::Name("media-eject".into()),
-        tip: TIP.into(),
+        tip: tip().into(),
         active: !entries.is_empty(),
         nodes: rows(entries).into_nodes(),
     }
@@ -56,7 +60,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
         Config {
             bus_name: BUS_NAME,
             id: "reprise-drives",
-            title: TIP,
+            title: tip(),
             notify_icon: "drive-removable-media",
             // No window to raise: a second instance clicks the root,
             // which is no row, and exits.

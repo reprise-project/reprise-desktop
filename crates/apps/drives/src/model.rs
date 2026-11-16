@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use reprisefs::netshare::Share;
 use reprisefs::udisks::{Disk, Snapshot, Volume};
+use reprisekit::tr;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Arrival {
@@ -143,7 +144,7 @@ pub fn entries(snap: &Snapshot, shares: &[Share]) -> Vec<Entry> {
     let mut out = drive_entries(snap);
     out.extend(shares.iter().filter(|s| s.is_portable()).map(|s| Entry {
         target: Target::Mount(s.path.clone()),
-        label: format!("Safely remove {}", s.name),
+        label: tr!("safely-remove", device = s.name.as_str()),
     }));
     out
 }
@@ -160,7 +161,11 @@ fn drive_entries(snap: &Snapshot) -> Vec<Entry> {
             let names: Vec<String> = mounted.iter().map(|v| v.name(Some(d))).collect();
             Some(Entry {
                 target: Target::Disk(d.path.clone()),
-                label: format!("Safely remove {} - {}", d.name(), names.join(", ")),
+                label: tr!(
+                    "safely-remove-drive",
+                    drive = d.name(),
+                    volumes = names.join(", ")
+                ),
             })
         })
         .collect()
@@ -176,25 +181,29 @@ pub fn container_name(snap: &Snapshot, volume: &str) -> String {
     let v = snap.volume(volume);
     let label = v.and_then(|v| v.label.clone());
     let disk = v.and_then(|v| snap.disk_of(v)).map(Disk::name);
-    label.or(disk).unwrap_or_else(|| "Removable Disk".into())
+    label.or(disk).unwrap_or_else(|| tr!("removable-disk"))
 }
 
 /// How the ask balloon names a new volume: its label, else its size and
 /// its drive's name ("7.45 GB Kingston DataTraveler").
 pub fn arrival_name(snap: &Snapshot, volume: &str) -> String {
     let Some(v) = snap.volume(volume) else {
-        return "Removable Disk".into();
+        return tr!("removable-disk");
     };
     if let Some(l) = &v.label {
         return l.clone();
     }
     let disk = snap
         .disk_of(v)
-        .map_or_else(|| "Removable Disk".into(), Disk::name);
+        .map_or_else(|| tr!("removable-disk"), Disk::name);
     if v.size == 0 {
         return disk;
     }
-    format!("{} {disk}", reprisefs::props::short_size(v.size))
+    tr!(
+        "arrival-name",
+        size = reprisefs::props::short_size(v.size),
+        drive = disk
+    )
 }
 
 /// The ask balloon's title, body and buttons; button 0 opens a window
@@ -202,21 +211,21 @@ pub fn arrival_name(snap: &Snapshot, volume: &str) -> String {
 pub struct AskBalloon {
     pub summary: String,
     pub body: String,
-    pub buttons: [&'static str; 2],
+    pub buttons: [String; 2],
 }
 
 pub fn ask_balloon(name: &str, locked: bool) -> AskBalloon {
     if locked {
         AskBalloon {
-            summary: format!("New drive: {name}"),
-            body: "This drive is locked. Unlock it to use the files on it.".into(),
-            buttons: ["Unlock and Open", "Unlock"],
+            summary: tr!("new-drive", name = name),
+            body: tr!("locked-body"),
+            buttons: [tr!("unlock-and-open"), tr!("unlock")],
         }
     } else {
         AskBalloon {
-            summary: format!("New drive: {name}"),
-            body: "Mount it to use the files on it.".into(),
-            buttons: ["Mount and Open", "Mount"],
+            summary: tr!("new-drive", name = name),
+            body: tr!("mount-body"),
+            buttons: [tr!("mount-and-open"), tr!("mount")],
         }
     }
 }
@@ -224,21 +233,18 @@ pub fn ask_balloon(name: &str, locked: bool) -> AskBalloon {
 pub fn mounted_balloon(name: &str, at: &Path) -> (String, String) {
     (
         name.to_string(),
-        format!("Mounted at {}. Click here to open it.", at.display()),
+        tr!("mounted-body", path = at.display().to_string()),
     )
 }
 
 pub fn safe_balloon(disk: &str) -> (String, String) {
-    (
-        "Safe To Remove Hardware".into(),
-        format!("The '{disk}' device can now be safely removed from the system."),
-    )
+    (tr!("safe-title"), tr!("safe-body", disk = disk))
 }
 
 pub fn busy_balloon(disk: &str, volumes: &str) -> (String, String) {
     (
-        format!("Problem Ejecting {disk}"),
-        format!("'{volumes}' is in use. Close any program or window using it, and then try again."),
+        tr!("eject-failed", disk = disk),
+        tr!("busy-body", volumes = volumes),
     )
 }
 

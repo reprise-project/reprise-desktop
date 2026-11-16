@@ -4,6 +4,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("diskusage");
+
 mod model;
 
 use model::{Line, SHARE, SIZE};
@@ -27,6 +29,7 @@ use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::keysym;
+use reprisekit::tr;
 use std::borrow::Cow;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -39,18 +42,23 @@ const PATH_Y: i32 = 40;
 const STATUS_Y: i32 = 58;
 /// Where the list starts and how much room it leaves under it, at 100% text.
 const LIST_Y: i32 = 78;
-const COLUMNS: [(&str, i32, bool); 4] = [
-    ("Name", 240, false),
-    ("Size", 80, true),
-    ("Share", 150, false),
-    ("Files", 80, true),
-];
-const BUTTONS: [(&str, &str, i32); 4] = [
-    ("back", "< &Back", 75),
-    ("up", "&Up", 75),
-    ("refresh", "&Refresh", 75),
-    ("explore", "Open in &Explorer", 110),
-];
+fn columns() -> [(String, i32, bool); 4] {
+    [
+        (tr!("column-name"), 240, false),
+        (tr!("column-size"), 80, true),
+        (tr!("column-share"), 150, false),
+        (tr!("column-files"), 80, true),
+    ]
+}
+
+fn button_rows() -> [(&'static str, String, i32); 4] {
+    [
+        ("back", tr!("back"), 75),
+        ("up", tr!("up"), 75),
+        ("refresh", tr!("refresh"), 75),
+        ("explore", tr!("explore"), 110),
+    ]
+}
 const SCAN_THREADS: usize = 4;
 
 const CONFIRM: WinId = WinId::named("confirm");
@@ -116,11 +124,11 @@ struct DiskUsage {
 fn buttons() -> Vec<Item> {
     let mut x = MARGIN;
     let mut items = Vec::new();
-    for (id, label, w) in BUTTONS {
+    for (id, label, w) in button_rows() {
         items.push(Item::button(
             id,
             Rect::new(x, MARGIN, w, BUTTON_H),
-            label,
+            &label,
             true,
             false,
         ));
@@ -137,11 +145,11 @@ fn buttons() -> Vec<Item> {
 
 impl DiskUsage {
     fn new(root: PathBuf) -> DiskUsage {
-        let columns = COLUMNS
-            .iter()
-            .map(|&(t, w, right)| Column {
+        let columns = columns()
+            .into_iter()
+            .map(|(t, w, right)| Column {
                 right,
-                ..Column::new(t, w)
+                ..Column::new(&t, w)
             })
             .collect();
         let mut list = List::new(columns);
@@ -313,7 +321,7 @@ impl DiskUsage {
         std::thread::spawn(move || {
             let done = match reprisefs::trash::Bins::system() {
                 Some(bins) => bins.trash(&path).map(|_| ()),
-                None => Err(std::io::Error::other("there is no Recycle Bin")),
+                None => Err(std::io::Error::other(tr!("no-recycle-bin"))),
             };
             let done = done.map_err(|e| reprisefs::dialogops::delete_failed_text(&path, &e));
             poster.post((path, done));
@@ -337,7 +345,7 @@ impl DiskUsage {
                 }
                 Err(text) => {
                     log::warn!("disk usage: {text}");
-                    self.note = Some(note("Error Deleting File or Folder", text));
+                    self.note = Some(note(&tr!("title-delete-failed"), text));
                 }
             }
         }
@@ -352,16 +360,16 @@ impl DiskUsage {
         let trashable = line.kind != Kind::Mount;
         let rows = vec![
             (
-                item("&Open", line.opens()),
+                item(&tr!("menu-open"), line.opens()),
                 line.opens().then(|| Act::Open(path.clone())),
             ),
             (
-                item("Open in &Explorer", true),
+                item(&tr!("menu-explore"), true),
                 Some(Act::Explore(path.clone())),
             ),
             (MenuItem::Separator, None),
             (
-                item("Move to &Recycle Bin", trashable),
+                item(&tr!("menu-trash"), trashable),
                 trashable.then_some(Act::Trash(path)),
             ),
         ];
@@ -595,7 +603,7 @@ fn note(title: &str, text: String) -> MsgBox {
         Fields {
             text,
             icon: None,
-            buttons: vec!["OK".into()],
+            buttons: vec![reprisekit::kit_tr!("ok")],
             default: 0,
             min_text_h: None,
             min_w: 0,
@@ -618,7 +626,7 @@ fn explore(path: &Path) -> Reply {
 
 impl App for DiskUsage {
     fn title(&self) -> String {
-        "Disk Usage".into()
+        tr!("name")
     }
 
     fn app_id(&self) -> String {
