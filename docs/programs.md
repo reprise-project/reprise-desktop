@@ -55,6 +55,11 @@ The file manager, and the default for folders.
   the Start menu's and search results' Properties and Open With, and Recycle
   Bin Properties, are Explorer's too, each in a process of its own without a
   folder window.
+- **The desktop's file work** runs in Explorer the same way: a drop or paste
+  onto the desktop or one of its folders, Delete and Shift+Delete, Empty
+  Recycle Bin and Send To > Compressed (zipped) Folder each start a process
+  that asks, shows the progress dialog and ends with its job. Log Off, Turn
+  Off and Restart wait for one under way and list it as Files.
 - **Show in folder** from other programs: Explorer answers
   `org.freedesktop.FileManager1`, so a browser's "Show in folder" opens the
   file's folder with the file selected.

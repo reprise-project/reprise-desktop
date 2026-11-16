@@ -8,7 +8,6 @@ use crate::text::{DialogFont, TextRenderer};
 use crate::textedit::{EditKey, TextEdit};
 use crate::theme::Theme;
 use reprisekit::controls::combo::Combo;
-use reprisekit::controls::copyprogress::CopyProgress;
 use reprisekit::controls::dlgtemplate::Template;
 use reprisekit::controls::endsession::Goal;
 use reprisekit::controls::pathcomplete::{self, PathComplete};
@@ -27,7 +26,7 @@ mod layout;
 mod tests;
 mod welcome;
 
-pub use self::draw::{access, access_copy, draw, draw_copy, draw_field};
+pub use self::draw::{access, draw, draw_field};
 pub use self::form::{FormDialog, Kind, Measured};
 pub(crate) use self::input::tray_part;
 pub(crate) use self::layout::FORM_CLIENT;
@@ -52,12 +51,6 @@ pub enum DialogAction {
     Hibernate(String),
     /// End the session toward `Goal`, then run this command (`sessionend`).
     EndSession(Goal, String),
-    /// Delete these paths, to the trash or, with `erase`, for good.
-    Delete {
-        paths: Vec<std::path::PathBuf>,
-        erase: bool,
-    },
-    EmptyBin,
     /// Lock and hand the screen to the login screen (`loginlink::switch_user`).
     SwitchUser,
     /// Lock the console and let every remote client go (`console::disconnect`).
@@ -89,11 +82,6 @@ pub enum DialogAction {
     },
     /// The Mount Disk Image question's Mount for the disk image at this path.
     MountImage(std::path::PathBuf),
-    /// Answer the too-big-for-the-bin question, then ask the next or delete the batch.
-    TooBig {
-        asker: Box<reprisefs::bincap::TooBig>,
-        answer: reprisefs::replace::Answer,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -167,15 +155,12 @@ pub enum Style {
     /// Log Off or Turn off computer: the Blue `powerpanel`, or under glass a framed dialog with
     /// push buttons unless the panel is to be Blue there too.
     Welcome(Box<Welcome>),
-    /// A form laid out around its measured text: Replace, the session-end prompt, the location
-    /// prompt.
+    /// A form laid out around its measured text: the session-end prompt, the location prompt.
     Form(Box<FormDialog>),
     /// End Program: classic dialog on a fixed 354x243 template (see `EP_PARA_Y`).
     EndProgram,
     /// The `traycustomize` control in a fixed frame.
     TrayCustomize(Box<TrayCustomize>),
-    /// A desktop copy or move's progress: the `copyprogress` control in a fixed frame.
-    Copy(Box<CopyDialog>),
 }
 
 /// A Welcome panel's model and what each of its choices does; `d.buttons` are drawn from them
@@ -186,14 +171,6 @@ pub struct Welcome {
     pub actions: Vec<(Choice, DialogAction)>,
     /// Drawn Blue under glass too, as the Blue Start menu opens it.
     pub always_blue: bool,
-}
-
-/// The progress of the put into `dir`; `units` is the text growth its control is laid out for.
-#[derive(Clone, Debug, PartialEq)]
-pub struct CopyDialog {
-    pub cp: CopyProgress,
-    pub dir: std::path::PathBuf,
-    pub units: reprisekit::theme::TextUnits,
 }
 
 /// Where the dialog lands on the output.
@@ -305,35 +282,21 @@ impl Dialog {
                 t.fit(text, theme.fonts.size_px);
                 self.title = t.wording.title().into();
             }
-            Style::Copy(c) => {
-                c.cp.follow(&theme.paint());
-                c.units = theme.text;
-                self.title = c.cp.title().into();
-            }
             _ => {}
         }
     }
 
-    /// What makes this dialog "the same window" as one already open: its title, the file it is
-    /// about and, for a message box, what its first button other than Cancel does. Two delete
-    /// questions about different items both stay up, while Run or Recycle Bin Properties stay
-    /// single.
-    pub fn identity(&self) -> (&str, Option<&std::path::Path>, Option<&DialogAction>) {
-        let path = match &self.style {
-            Style::Form(f) => match &f.kind {
-                FormKind::Replace(b) => Some(b.identity()),
-                _ => None,
-            },
-            Style::Copy(c) => Some(c.dir.as_path()),
-            _ => None,
-        };
+    /// What makes this dialog "the same window" as one already open: its title and, for a message
+    /// box, what its first button other than Cancel does. Two questions about hiding different
+    /// place icons both stay up, while Run stays single.
+    pub fn identity(&self) -> (&str, Option<&DialogAction>) {
         let acts = match self.style {
             Style::Classic { .. } => (self.buttons.iter())
                 .map(|b| &b.action)
                 .find(|a| **a != DialogAction::Cancel),
             _ => None,
         };
-        (self.title.as_str(), path, acts)
+        (self.title.as_str(), acts)
     }
 
     /// The pid End Program's End Now would kill; None for any other dialog.
@@ -348,42 +311,9 @@ impl Dialog {
     }
 
     /// Whether the dialog has a taskbar button: End Program, which stands for an unresponsive
-    /// program, and every [`Dialog::windowed`] one.
+    /// program.
     pub fn on_taskbar(&self) -> bool {
-        matches!(self.style, Style::EndProgram) || self.windowed()
-    }
-
-    /// Whether the dialog stands among the windows rather than over them: it goes behind the
-    /// window clicked, and its task button minimises and restores it. The copy progress dialog.
-    pub fn windowed(&self) -> bool {
-        matches!(self.style, Style::Copy(_))
-    }
-
-    /// The icon theme name its task button shows; without one it draws the fallback glyph.
-    pub fn task_icon(&self) -> Option<&str> {
-        matches!(self.style, Style::Copy(_)).then_some("system-file-manager")
-    }
-
-    /// The job's progress its task button fills with.
-    pub fn task_progress(&self) -> Option<reprisekit::taskbar::TaskProgress> {
-        self.copy().map(|c| reprisekit::taskbar::TaskProgress {
-            fraction: c.cp.fraction(),
-            paused: c.cp.status.paused,
-        })
-    }
-
-    pub fn copy(&self) -> Option<&CopyDialog> {
-        match &self.style {
-            Style::Copy(c) => Some(c),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn copy_mut(&mut self) -> Option<&mut CopyDialog> {
-        match &mut self.style {
-            Style::Copy(c) => Some(c),
-            _ => None,
-        }
+        matches!(self.style, Style::EndProgram)
     }
 
     pub fn tray(&self) -> Option<&TrayCustomize> {
@@ -429,13 +359,6 @@ impl Dialog {
 pub enum Outcome {
     Nothing,
     Redraw,
-    /// The copy progress dialog's Pause (true) or Resume (false).
-    CopyPause(bool),
-    /// The copy progress dialog's Cancel, Escape or close box.
-    CopyCancel,
-    /// Redraw after recomputing the layout: the open tab changed, and a
-    /// tab's rect depends on which one is open.
-    Relayout,
     Close,
     Spawn(String),
     StandBy(String),
@@ -448,11 +371,6 @@ pub enum Outcome {
         desktop_id: String,
         answer: reprisekit::controls::locationprompt::Answer,
     },
-    Delete {
-        paths: Vec<std::path::PathBuf>,
-        erase: bool,
-    },
-    EmptyBin,
     SwitchUser,
     Disconnect,
     GreeterPower(repriselogin::greeter::PowerAction),
@@ -478,12 +396,6 @@ pub enum Outcome {
     RenameDesktop(usize, String),
     Act(Action),
     BrowseRun,
-    /// Close the question about an item too big for the Recycle Bin and
-    /// carry on with its batch.
-    TooBig {
-        asker: Box<reprisefs::bincap::TooBig>,
-        answer: reprisefs::replace::Answer,
-    },
     HideSystemIcon(String),
     DeleteIcons {
         hide: Vec<String>,
@@ -492,8 +404,4 @@ pub enum Outcome {
     EndProgram(i32),
     TurnOn(crate::keyfilter::Aid),
     TrayChoices(traycustomize::Choices),
-    Replace {
-        batch: Box<crate::dragview::Batch>,
-        answer: reprisefs::replace::Answer,
-    },
 }

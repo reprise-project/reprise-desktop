@@ -6,8 +6,6 @@ use reprisekit::controls::form::{Form, Key};
 /// Which dialog a `FormDialog` is, so its events reach the right code.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
-    /// Confirm File/Folder Replace over a drop's batch; `replace_event`.
-    Replace(Box<crate::dragview::Batch>),
     /// Programs Log Off, Turn Off or Restart waits for; `session_end_event`.
     EndSession,
     /// Location prompt for this desktop id; `location_event`.
@@ -32,7 +30,6 @@ pub struct FormDialog {
 /// A plain form whose rows and size come from its text as measured and wrapped.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Measured {
-    Replace(reprisekit::controls::replacebox::Fields),
     EndSession(reprisekit::controls::endsession::Fields),
     Location(reprisekit::controls::locationprompt::Fields),
 }
@@ -45,12 +42,8 @@ impl Measured {
         px: u32,
         u: TextUnits,
     ) -> ((i32, i32), reprisekit::controls::form::Form) {
-        use reprisekit::controls::{endsession, locationprompt, replacebox};
+        use reprisekit::controls::{endsession, locationprompt};
         match self {
-            Measured::Replace(f) => (
-                replacebox::client(f, text, px, u),
-                replacebox::form(f, text, px, u),
-            ),
             Measured::EndSession(f) => (
                 endsession::client(f, text, px, u),
                 endsession::form(f, text, px, u),
@@ -169,7 +162,6 @@ impl FormDialog {
 
     pub(crate) fn event(&mut self, ev: reprisekit::controls::form::Event) -> Outcome {
         match self.kind {
-            FormKind::Replace(_) => replace_event(self, ev),
             FormKind::EndSession => session_end_event(ev),
             FormKind::Location(ref id) => location_event(self, id.clone(), ev),
         }
@@ -194,29 +186,6 @@ impl FormDialog {
         };
         let ev = self.form.click(h);
         self.event(ev)
-    }
-}
-
-/// The replace prompt's events: each button hands the batch back to the
-/// host with its answer.
-fn replace_event(fd: &FormDialog, ev: reprisekit::controls::form::Event) -> Outcome {
-    use reprisefs::replace::Answer;
-    use reprisekit::controls::form::Event;
-    use reprisekit::controls::replacebox::{Choice, choice};
-    let FormKind::Replace(batch) = &fd.kind else {
-        return Outcome::Nothing;
-    };
-    let answer = match choice(&ev) {
-        Some(Choice::Yes) => Answer::Yes,
-        Some(Choice::YesToAll) => Answer::YesToAll,
-        Some(Choice::No) => Answer::No,
-        Some(Choice::Cancel) => Answer::Cancel,
-        None if ev == Event::None => return Outcome::Nothing,
-        None => return Outcome::Redraw,
-    };
-    Outcome::Replace {
-        batch: batch.clone(),
-        answer,
     }
 }
 

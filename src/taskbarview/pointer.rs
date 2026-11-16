@@ -122,7 +122,7 @@ impl State {
             TaskbarHit::Task(i) => {
                 if let Some(id) = self.task_button_dialog(tree, i) {
                     if button == BTN_LEFT {
-                        self.task_dialog_click(id);
+                        self.focus_dialog(id);
                     }
                     return;
                 }
@@ -677,7 +677,7 @@ impl State {
 
     pub fn task_button_click(&mut self, tree: TreeId, i: usize, list_was_open: bool) {
         if let Some(id) = self.task_button_dialog(tree, i) {
-            self.task_dialog_click(id);
+            self.focus_dialog(id);
             return;
         }
         let Some(wins) = self

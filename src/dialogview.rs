@@ -1,9 +1,9 @@
 //! The dialogs on the scene (`State::dialogs`, a stack; the top one has the keyboard), placed on the
 //! output under the pointer, with key and pointer routing. Model, layout and drawing live in `dialog.rs`.
 //!
-//! Each dialog is one tree in `layers.menu` (`layers.windows` for a windowed one): `content` (the
-//! client area, the only part the glass backdrop sees), the frame's `Backdrop`, then the buffer. A
-//! Welcome panel stands over a still of its output (`output_still`) that fades to grey.
+//! Each dialog is one tree in `layers.menu`: `content` (the client area, the only part the glass
+//! backdrop sees), the frame's `Backdrop`, then the buffer. A Welcome panel stands over a still of
+//! its output (`output_still`) that fades to grey.
 
 mod browse;
 mod complete;
@@ -83,9 +83,6 @@ pub struct DialogView {
     pub cues: Cues,
     /// A Welcome panel's still fading in, and when the fade began.
     fade: Option<(BufferId, std::time::Instant)>,
-    /// A windowed dialog minimised from its task button: its tree is off and it sits at the
-    /// bottom of the stack.
-    pub minimized: bool,
 }
 
 impl DialogView {
@@ -180,15 +177,6 @@ fn raise_order(links: &[(u64, Option<u64>)], index: usize) -> Vec<usize> {
     let top = root(index);
     let (family, rest): (Vec<usize>, Vec<usize>) = (0..links.len()).partition(|&i| root(i) == top);
     rest.into_iter().chain(family).collect()
-}
-
-/// The layer a dialog's tree stands in: among the windows when [`Dialog::windowed`], else over them.
-fn dialog_layer(d: &Dialog, layers: &crate::compositor::Layers) -> TreeId {
-    if d.windowed() {
-        layers.windows
-    } else {
-        layers.menu
-    }
 }
 
 /// Where a dialog of `size` at `origin` goes when its output's usable area becomes `area`: moved as

@@ -1,14 +1,10 @@
-//! The desktop's file work that asks or answers through a dialog: Delete and Shift+Delete with their confirmations, and Empty Recycle Bin. The work runs off the loop (`fsjobs`); the dialogs come back on it. An icon's Properties and Open With and Recycle Bin Properties are Explorer's, in a process of their own ([`State::show_properties`]).
+//! The desktop's Delete, Shift+Delete and Empty Recycle Bin: a place icon asks here whether to leave the desktop, and files go to Explorer, which asks and deletes them (`filejobs`). An icon's Properties and Open With and Recycle Bin Properties are Explorer's too, in a process of their own ([`State::show_properties`]).
 
 use std::path::{Path, PathBuf};
-
-use reprisefs::places;
-use reprisefs::removal::Removal;
 
 use crate::compositor::State;
 use crate::desktop::{self, DesktopEntry};
 use crate::dialog::Dialog;
-use crate::fsjobs::{Action, OnLoop};
 
 /// What Delete on the set `set` of `entries` covers: the `system_icons` names of its place icons and the paths of its files.
 pub fn set_for_delete(entries: &[DesktopEntry], set: &[usize]) -> (Vec<String>, Vec<PathBuf>) {
@@ -21,15 +17,6 @@ pub fn set_for_delete(entries: &[DesktopEntry], set: &[usize]) -> (Vec<String>, 
         }
     }
     (places, files)
-}
-
-fn lone_file(entries: &[DesktopEntry], files: &[PathBuf]) -> Option<usize> {
-    let [path] = files else {
-        return None;
-    };
-    entries
-        .iter()
-        .position(|e| e.kind == desktop::Kind::File && &e.path == path)
 }
 
 impl State {
@@ -67,7 +54,7 @@ impl State {
         crate::configwrite::save_system_icons(&self.config_path, shown);
     }
 
-    /// Delete icon `index`: a file asks Confirm File Delete (per [`reprisefs::bincap::delete_mode`]) before [`State::delete_paths`], a place asks to hide itself, the Recycle Bin is ignored.
+    /// Delete icon `index`: a file goes to Explorer's Delete, a place asks to hide itself, the Recycle Bin is ignored.
     pub fn trash_icon(&mut self, index: usize) {
         let Some(entry) = self.desktop.as_ref().and_then(|v| v.entries.get(index)) else {
             return;
@@ -76,123 +63,11 @@ impl State {
             desktop::Kind::RecycleBin => return,
             desktop::Kind::Place(place) => Dialog::confirm_hide(place, &entry.label),
             desktop::Kind::File => {
-                let (path, label) = (entry.path.clone(), entry.label.clone());
-                return self.ask_delete(vec![path], Some(label), false);
+                let path = entry.path.clone();
+                return self.delete_files(vec![path], false);
             }
         };
         self.open_dialog(dialog);
-    }
-
-    /// Delete `paths`, asking first as `delete_mode` says (Delete, or Shift+Delete with `shift`). Each item's fate (`Bins::fate`) is read off the loop first: it stats the paths and their mounts, which a hung network mount would stall.
-    pub(crate) fn ask_delete(&mut self, paths: Vec<PathBuf>, label: Option<String>, shift: bool) {
-        let action = Action::reads("Error Deleting File or Folder");
-        self.spawn_fs_action(action, move |_| -> OnLoop {
-            use reprisefs::bincap::BinLack;
-            let mode = reprisefs::dialogops::delete_mode(&paths, shift);
-            // A symlink to a folder deletes as a file: only the link goes.
-            let is_dir = matches!(paths.as_slice(), [one] if one.is_dir() && !one.is_symlink());
-            Box::new(move |state| {
-                let erase = mode.erase;
-                let dialog = match paths.as_slice() {
-                    [] => return,
-                    _ if !mode.ask => return state.delete_paths(paths, erase),
-                    [one] => {
-                        let name = label.unwrap_or_else(|| {
-                            one.file_name().unwrap_or_default().to_string_lossy().into()
-                        });
-                        Dialog::confirm_delete(
-                            &name,
-                            one,
-                            is_dir,
-                            erase,
-                            mode.no_bin != BinLack::None,
-                        )
-                    }
-                    _ => Dialog::confirm_delete_many(&paths, erase, mode.no_bin),
-                };
-                state.open_dialog(dialog);
-            })
-        });
-    }
-
-    /// Delete `paths` on a removal job: to the trash, or for good with `erase`. Trashing first asks one at a time about items too big for their Recycle Bin ([`State::too_big_step`]). The first failure stops the rest and an error box says why.
-    pub fn delete_paths(&mut self, paths: Vec<PathBuf>, erase: bool) {
-        use reprisefs::bincap::{Plan, TooBig, TooBigStep};
-        self.spawn_fs_job(move || -> OnLoop {
-            let bins = reprisefs::trash::Bins::system();
-            let plan = if erase {
-                paths.into_iter().map(|p| (p, Plan::Erase)).collect()
-            } else {
-                let measured = paths
-                    .iter()
-                    .map(|p| bins.as_ref().and_then(|b| b.measure(p)))
-                    .collect();
-                let asker = TooBig::new(paths, measured);
-                match asker.step() {
-                    TooBigStep::Done(plan) => plan,
-                    _ => return Box::new(move |state| state.too_big_step(asker)),
-                }
-            };
-            Box::new(move |state| state.delete_planned(plan, bins))
-        });
-    }
-
-    fn delete_planned(
-        &mut self,
-        plan: Vec<(PathBuf, reprisefs::bincap::Plan)>,
-        bins: Option<reprisefs::trash::Bins>,
-    ) {
-        use reprisekit::controls::copyprogress::Kind;
-        let erase = plan
-            .iter()
-            .all(|(_, p)| matches!(p, reprisefs::bincap::Plan::Erase));
-        let (paths, items) = plan
-            .into_iter()
-            .map(|(p, plan)| (p.clone(), Removal::planned(p, plan)))
-            .unzip();
-        let kind = if erase { Kind::Erase } else { Kind::Delete };
-        self.start_removal(items, paths, bins, kind);
-    }
-
-    /// The next step of a Delete holding items too big for their Recycle Bin: the next question, the batch deleted as answered, or nothing after Cancel.
-    pub fn too_big_step(&mut self, asker: reprisefs::bincap::TooBig) {
-        use reprisefs::bincap::TooBigStep;
-        match asker.step() {
-            TooBigStep::Ask(path) => {
-                let is_dir = path.is_dir() && !path.is_symlink();
-                let d = Dialog::too_big(path, is_dir, asker.clone());
-                self.open_dialog(d);
-            }
-            TooBigStep::Done(plan) => {
-                self.spawn_fs_job(move || -> OnLoop {
-                    let bins = reprisefs::trash::Bins::system();
-                    Box::new(move |state| state.delete_planned(plan, bins))
-                });
-            }
-            TooBigStep::Cancelled => {}
-        }
-    }
-
-    /// Empty the Recycle Bin, the home trash and each drive's, on a removal job. The watch flips its icon; a failure says why in an error box. While one runs, its progress dialog comes up instead.
-    pub fn empty_bin(&mut self) {
-        if self.raise_emptying() {
-            return;
-        }
-        self.spawn_fs_job(move || -> OnLoop {
-            let roots = reprisefs::trash::Bins::system().map(|b| b.roots());
-            Box::new(move |state| match roots {
-                _ if state.raise_emptying() => {}
-                Some(roots) => {
-                    let items = roots.iter().cloned().map(Removal::Empty).collect();
-                    let kind = reprisekit::controls::copyprogress::Kind::Empty;
-                    state.start_removal(items, roots, None, kind);
-                }
-                None => {
-                    let text = "Cannot empty the Recycle Bin: cannot find the Recycle Bin".into();
-                    state.open_dialog(Dialog::error("Error Deleting File or Folder", text));
-                }
-            })
-        });
     }
 
     /// Delete aimed at icon `index`: alone it goes through `trash_icon`. In a multi-selection holding place icons, "Confirm Delete" asks first whether to take them off the desktop, then the files. The Recycle Bin in a set stays put.
@@ -212,18 +87,7 @@ impl State {
     }
 
     pub fn trash_files(&mut self, files: Vec<PathBuf>) {
-        let one = self
-            .desktop
-            .as_ref()
-            .and_then(|v| lone_file(&v.entries, &files));
-        match one {
-            Some(i) => self.trash_icon(i),
-            None => self.ask_delete(files, None, false),
-        }
-    }
-
-    pub fn trash_paths(&mut self, paths: Vec<PathBuf>) {
-        self.ask_delete(paths, None, false);
+        self.delete_files(files, false);
     }
 
     /// Shift+Delete aimed at icon `index`: its selection's files go for good, once asked; place icons and the Recycle Bin in the set stay.
@@ -233,8 +97,7 @@ impl State {
             return;
         };
         let (_, files) = set_for_delete(&view.entries, &set);
-        let label = lone_file(&view.entries, &files).map(|i| view.entries[i].label.clone());
-        self.ask_delete(files, label, true);
+        self.delete_files(files, true);
     }
 
     /// Properties aimed at icon `index`: the combined sheet over its selection's files, `index`
@@ -265,35 +128,6 @@ impl State {
     /// Explorer's Recycle Bin Properties.
     pub fn open_bin_properties(&mut self) {
         self.explorer_box("--bin-properties", &[]);
-    }
-
-    /// Empty Recycle Bin: asks to delete what the bins hold, counted in a file action, so a drive
-    /// bin on a mount that stopped answering gives up instead of asking minutes later. While an
-    /// emptying runs, its progress dialog comes up instead.
-    pub fn ask_empty_bin(&mut self) {
-        if self.raise_emptying() {
-            return;
-        }
-        let action = Action::reads("Error Deleting File or Folder");
-        self.spawn_fs_action(action, |_| -> OnLoop {
-            let (count, first) = reprisefs::trash::Bins::system()
-                .map(|bins| bins.files_dirs())
-                .unwrap_or_default()
-                .iter()
-                .map(|files| places::trash_contents(files))
-                .fold((0, None::<String>), |(n, first), (m, other)| {
-                    let first = match (first, other) {
-                        (Some(a), Some(b)) => Some(a.min(b)),
-                        (a, b) => a.or(b),
-                    };
-                    (n + m, first)
-                });
-            Box::new(move |state: &mut State| {
-                if count > 0 && !state.raise_emptying() {
-                    state.open_dialog(Dialog::confirm_empty_bin(count, first.as_deref()));
-                }
-            })
-        });
     }
 }
 
@@ -398,211 +232,59 @@ mod tests {
         assert_eq!(crate::spawn::recorded(), [EXPLORER, EXPLORER]);
     }
 
-    #[test]
-    fn a_lone_file_after_the_places_is_its_icon() {
-        let docs = desktop::place("documents").unwrap();
-        let mut firefox = file("firefox.desktop");
-        firefox.label = "Firefox".into();
-        let entries = vec![docs, file("a.txt"), firefox];
-        let path = |n: &str| PathBuf::from("/d").join(n);
-        assert_eq!(lone_file(&entries, &[path("firefox.desktop")]), Some(2));
-        assert_eq!(
-            lone_file(&entries, &[path("a.txt"), path("firefox.desktop")]),
-            None
-        );
-        assert_eq!(lone_file(&entries, &[path("gone.txt")]), None);
-    }
-
-    /// A scratch home holding [`reprisefs::trash::Bins::system`]'s home trash and settings file,
-    /// with no drives. The seams are process-wide, so one test holds them at a time. Drop puts
-    /// them back and removes the home, failed assertion or not.
-    struct SystemBin(
-        PathBuf,
-        #[allow(dead_code)] std::sync::MutexGuard<'static, ()>,
-    );
-
-    impl SystemBin {
-        fn new() -> SystemBin {
-            static HELD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-            let held = crate::mutex::lock(&HELD);
-            let home =
-                std::env::temp_dir().join(format!("reprise-system-bin-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&home);
-            std::fs::create_dir_all(&home).expect("mkdir");
-            reprisefs::trash::set_home_trash(Some(home.join("Trash")));
-            reprisefs::trash::set_mount_table(Some("/dev/null".into()));
-            reprisefs::configfile::set_path(Some(home.join("config.toml")));
-            SystemBin(home, held)
-        }
-
-        fn settings(&self, keys: &str) {
-            let text = format!("[recycle_bin]\n{keys}");
-            std::fs::write(self.0.join("config.toml"), text).expect("write");
-        }
-
-        /// Points the mount table at a named pipe, so reading it blocks as a drive that stopped
-        /// answering does. [`SystemBin::answer`] lets the reads through.
-        fn hang(&self) -> PathBuf {
-            let pipe = self.0.join("mounts");
-            let c = std::ffi::CString::new(pipe.as_os_str().as_encoded_bytes()).unwrap();
-            // SAFETY: `c` is a valid NUL-terminated path for the call's duration.
-            assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
-            reprisefs::trash::set_mount_table(Some(pipe.clone()));
-            pipe
-        }
-
-        /// Opens `pipe` to write for `ms`, ending each read blocked on it with an empty table.
-        fn answer(h: &mut Harness, pipe: &Path, ms: u64) {
-            use std::os::unix::fs::OpenOptionsExt;
-            let end = std::time::Instant::now() + std::time::Duration::from_millis(ms);
-            while std::time::Instant::now() < end {
-                let _ = std::fs::OpenOptions::new()
-                    .write(true)
-                    .custom_flags(libc::O_NONBLOCK)
-                    .open(pipe);
-                h.run_for(5);
-            }
-        }
-    }
-
-    impl Drop for SystemBin {
-        fn drop(&mut self) {
-            reprisefs::trash::set_home_trash(None);
-            reprisefs::trash::set_mount_table(None);
-            reprisefs::configfile::set_path(None);
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    #[test]
-    fn delete_follows_the_session_bin_and_its_recycle_bin_settings() {
-        use reprisefs::bincap::{BinLack, DeleteMode};
-        let home = SystemBin::new();
-        let file = home.0.join("a.txt");
-        std::fs::write(&file, "a").expect("write");
-        let settings = |keys: &str| home.settings(keys);
-        let mode = |erase, ask, no_bin| DeleteMode { erase, ask, no_bin };
-        let delete = |shift| reprisefs::dialogops::delete_mode(std::slice::from_ref(&file), shift);
-
-        assert_eq!(delete(false), mode(false, true, BinLack::None));
-        assert_eq!(delete(true), mode(true, true, BinLack::None));
-        settings("confirm = false\n");
-        assert_eq!(delete(false), mode(false, false, BinLack::None));
-        settings("confirm = false\nremove_immediately = true\n");
-        assert_eq!(delete(false), mode(true, false, BinLack::None));
-        let off_drive = [file.clone(), PathBuf::from("/proc/version")];
-        assert_eq!(
-            reprisefs::dialogops::delete_mode(&off_drive, false),
-            mode(true, true, BinLack::Some),
-            "a file on a drive with no Recycle Bin asks even with confirm off"
-        );
-    }
-
-    /// A give-up deadline short enough for a test to wait out.
-    const GIVE_UP: std::time::Duration = std::time::Duration::from_millis(100);
-
-    /// A headless state whose file actions run on threads and give up after `deadline`.
-    fn with_file_jobs(deadline: std::time::Duration) -> Harness {
-        let mut h = Harness::new();
-        h.output("TEST-1", 1024, 768);
-        h.state.fsjobs.deadline = Some(deadline);
-        crate::fsjobs::setup(&mut h.state);
-        h
-    }
-
-    fn titles(h: &Harness) -> Vec<String> {
-        (h.state.dialogs.views.iter())
-            .map(|v| v.dialog.title.clone())
+    /// The command lines of the file jobs started, after the program's name.
+    fn jobs(h: &Harness) -> Vec<Vec<String>> {
+        (h.state.filejobs.jobs.iter())
+            .map(|j| {
+                (j.args.iter())
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .collect()
+            })
             .collect()
     }
 
-    /// Runs the loop until `done`, at most 3 s.
-    fn run_until(h: &mut Harness, what: &str, done: impl Fn(&Harness) -> bool) {
-        let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        while !done(h) {
-            assert!(
-                std::time::Instant::now() < end,
-                "timed out waiting for {what}"
-            );
-            h.run_for(5);
-        }
-    }
-
     #[test]
-    fn a_desktop_delete_asks_trashes_or_erases_as_the_recycle_bin_settings_say() {
-        let home = SystemBin::new();
-        let mut h = with_file_jobs(crate::fsjobs::ACTION_DEADLINE);
-        let (a, b) = (home.0.join("a.txt"), home.0.join("b.txt"));
-        std::fs::write(&a, "a").expect("write");
-        std::fs::write(&b, "b").expect("write");
-
-        h.state.trash_paths(vec![a.clone()]);
-        run_until(&mut h, "the prompt", |h| !titles(h).is_empty());
-        assert_eq!(titles(&h), ["Confirm File Delete"]);
-        assert!(a.exists(), "nothing goes before the answer");
-        h.state.close_all_dialogs();
-
-        home.settings("confirm = false\n");
-        h.state.trash_paths(vec![a.clone()]);
-        let trashed = home.0.join("Trash/files/a.txt");
-        run_until(&mut h, "the trash", |_| trashed.exists());
-        assert!(!a.exists(), "moved into the Recycle Bin");
-
-        home.settings("confirm = false\nremove_immediately = true\n");
-        h.state.trash_paths(vec![b.clone()]);
-        run_until(&mut h, "the erase", |_| !b.exists());
+    fn delete_and_shift_delete_on_icons_hand_their_files_to_explorer() {
+        crate::spawn::record();
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state
+            .trash_files(vec![PathBuf::from("/d/a.txt"), PathBuf::from("/d/b.txt")]);
+        h.state.delete_files(vec![PathBuf::from("/d/c.txt")], true);
+        h.state.delete_files(Vec::new(), false);
+        assert_eq!(
+            jobs(&h),
+            [
+                vec!["--delete", "/d/a.txt", "/d/b.txt"],
+                vec!["--delete", "--erase", "/d/c.txt"],
+            ]
+        );
+        assert_eq!(crate::spawn::recorded(), [EXPLORER, EXPLORER]);
         assert!(
-            !home.0.join("Trash/files/b.txt").exists(),
-            "erased, not trashed"
+            h.state.dialogs.views.is_empty(),
+            "Explorer asks, not the desktop"
         );
-        assert!(titles(&h).is_empty(), "no prompt with confirm off");
     }
 
     #[test]
-    fn a_desktop_delete_gives_up_when_its_recycle_bin_stops_answering() {
-        let home = SystemBin::new();
-        let mut h = with_file_jobs(GIVE_UP);
-        let a = home.0.join("a.txt");
-        std::fs::write(&a, "a").expect("write");
-        let pipe = home.hang();
-        h.state.trash_paths(vec![a.clone()]);
-        run_until(&mut h, "the give-up", |h| !titles(h).is_empty());
-        assert_eq!(titles(&h), ["Error Deleting File or Folder"]);
-        assert_eq!(
-            h.state.dialogs.views[0].dialog.text,
-            reprisefs::deadline::not_responding(false, false)
-        );
-        SystemBin::answer(&mut h, &pipe, 300);
-        assert_eq!(
-            titles(&h),
-            ["Error Deleting File or Folder"],
-            "the late answer asks nothing"
-        );
-        assert!(a.exists());
-    }
-
-    #[test]
-    fn empty_recycle_bin_gives_up_when_a_drive_bin_stops_answering() {
-        let home = SystemBin::new();
-        let mut h = with_file_jobs(GIVE_UP);
-        let trash = home.0.join("Trash");
-        std::fs::create_dir_all(trash.join("files")).expect("mkdir");
-        std::fs::create_dir_all(trash.join("info")).expect("mkdir");
-        std::fs::write(trash.join("files/a.txt"), "a").expect("write");
-        std::fs::write(
-            trash.join("info/a.txt.trashinfo"),
-            "[Trash Info]\nPath=/srv/a.txt\nDeletionDate=2026-10-20T01:00:00\n",
-        )
-        .expect("write");
-        let pipe = home.hang();
-        h.state.ask_empty_bin();
-        run_until(&mut h, "the give-up", |h| !titles(h).is_empty());
-        assert_eq!(titles(&h), ["Error Deleting File or Folder"]);
-        SystemBin::answer(&mut h, &pipe, 300);
-        assert_eq!(
-            titles(&h),
-            ["Error Deleting File or Folder"],
-            "the late count asks nothing"
-        );
+    fn empty_recycle_bin_starts_explorers_and_a_second_starts_none_while_it_runs() {
+        crate::spawn::record();
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.empty_bin();
+        assert_eq!(jobs(&h), [vec!["--empty-bin"]]);
+        let mut sleeper = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("sleep");
+        crate::spawn::adopt(sleeper.id() as libc::pid_t, "sleep");
+        h.state.filejobs.jobs[0].pid = sleeper.id();
+        h.state.empty_bin();
+        assert_eq!(jobs(&h).len(), 1, "the running one stays alone");
+        let _ = sleeper.kill();
+        let _ = sleeper.wait();
+        crate::spawn::reap_children();
+        h.state.empty_bin();
+        assert_eq!(jobs(&h).len(), 2, "once it ends, Empty starts again");
     }
 }

@@ -127,59 +127,6 @@ fn a_readers_focus_brings_out_the_focus_rectangles_but_not_the_underlines() {
 }
 
 #[test]
-fn a_windowed_dialog_stacks_with_the_windows_and_others_stand_over_them() {
-    use crate::compositor::{DeskScene, Layers};
-    use reprisekit::controls::copyprogress::{CopyProgress, Kind};
-    use reprisescene::TreeId;
-    let mut scene = DeskScene::new();
-    let layers = Layers::new(&mut scene);
-    let cp = CopyProgress::new(
-        Kind::Copy,
-        "Downloads",
-        "KINGSTON",
-        crate::theme::Color::rgb(0, 0, 0),
-    );
-    let copy = Dialog::copy_progress(cp, "/media/KINGSTON".into());
-    let run = Dialog::run(&[]);
-    let put = |scene: &mut DeskScene, layer: TreeId| {
-        let tree = scene.tree_create(layer);
-        let b = scene.buffer_create(tree);
-        scene.buffer_set_canvas(b, &[0xff00_0000; 16 * 16], 16, 16);
-        tree
-    };
-    let dialog = put(&mut scene, super::dialog_layer(&copy, &layers));
-    let window = put(&mut scene, layers.windows);
-    let top = |scene: &DeskScene| {
-        let hit = scene
-            .node_at(scene.root(), (8.0, 8.0).into())
-            .expect("a hit");
-        scene.parent(hit.node).expect("a tree")
-    };
-    assert_eq!(
-        top(&scene),
-        window,
-        "the window raised last covers the dialog"
-    );
-    scene.raise_to_top(dialog);
-    assert_eq!(top(&scene), dialog, "the dialog comes up over the window");
-    scene.raise_to_top(window);
-    assert_eq!(top(&scene), window, "a clicked window goes over it again");
-    scene.raise_to_top(dialog);
-    scene.set_enabled(dialog, false);
-    assert_eq!(top(&scene), window, "minimised, it lets the window show");
-
-    let menu = super::dialog_layer(&run, &layers);
-    assert_eq!(menu, layers.menu);
-    let run_tree = put(&mut scene, menu);
-    scene.raise_to_top(window);
-    assert_eq!(
-        top(&scene),
-        run_tree,
-        "a dialog that is not windowed stays over the windows"
-    );
-}
-
-#[test]
 fn a_glass_dialogs_backdrop_covers_its_frame_only() {
     use crate::dialog::DialogLayout;
     use reprisekit::interface::Interface;
@@ -345,34 +292,31 @@ fn a_dialog_asks_for_frames_only_on_the_outputs_it_covers() {
 }
 
 #[test]
-fn a_delete_question_about_other_items_opens_over_an_unanswered_one() {
-    use reprisefs::bincap::BinLack;
+fn a_hide_question_about_another_icon_opens_over_an_unanswered_one() {
+    use crate::desktop::Place;
     let mut h = crate::harness::Harness::new();
     h.output("TEST-1", 1024, 768);
-    let empty = Dialog::confirm_empty_bin(7, None);
-    let paths: Vec<std::path::PathBuf> = ["a", "b", "c"].map(|n| format!("/d/{n}").into()).into();
-    let trash = Dialog::confirm_delete_many(&paths, false, BinLack::None);
-    let erase = Dialog::confirm_delete_many(&paths, true, BinLack::None);
-    assert_eq!(empty.title, trash.title, "one title for both questions");
-    h.state.open_dialog(empty.clone());
-    h.state.open_dialog(trash.clone());
-    h.state.open_dialog(erase.clone());
+    let docs = Dialog::confirm_hide(Place::Documents, "Documents");
+    let pc = Dialog::confirm_hide(Place::Computer, "Computer");
+    assert_eq!(docs.title, pc.title, "one title for both questions");
+    h.state.open_dialog(docs.clone());
+    h.state.open_dialog(pc.clone());
     let shown = |h: &crate::harness::Harness| -> Vec<Dialog> {
         (h.state.dialogs.views.iter())
             .map(|v| v.dialog.clone())
             .collect()
     };
     let texts = |ds: Vec<Dialog>| -> Vec<String> { ds.into_iter().map(|d| d.text).collect() };
-    let want = [&empty, &trash, &erase].map(|d| d.text.clone());
-    assert_eq!(texts(shown(&h)), want, "three questions, newest on top");
-    h.state.open_dialog(trash.clone());
+    let want = [&docs, &pc].map(|d| d.text.clone());
+    assert_eq!(texts(shown(&h)), want, "two questions, newest on top");
+    h.state.open_dialog(docs.clone());
     let top = shown(&h).pop().unwrap();
     assert_eq!(
         top.identity(),
-        trash.identity(),
+        docs.identity(),
         "the same question is raised"
     );
-    assert_eq!(shown(&h).len(), 3, "and not opened twice");
+    assert_eq!(shown(&h).len(), 2, "and not opened twice");
 }
 
 #[test]

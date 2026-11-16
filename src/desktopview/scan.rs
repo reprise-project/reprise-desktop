@@ -383,6 +383,11 @@ impl State {
         view.icons_read = (px, icons.file_drops());
         desktop::wear_file_icons(&mut entries, &view.mime, &|n| icons.has_unread(n));
         let old = std::mem::replace(&mut view.entries, entries);
+        let listed: std::collections::HashSet<&str> = old.iter().map(|e| e.name.as_str()).collect();
+        let fresh: Vec<String> = (view.entries.iter())
+            .filter(|e| !listed.contains(e.name.as_str()))
+            .map(|e| e.name.clone())
+            .collect();
         let moved = remap(&old, &view.entries);
         let remap = |i: &usize| moved.get(*i).copied().flatten();
         view.selection = Selection {
@@ -400,6 +405,7 @@ impl State {
             crate::state::save_desktop(view.auto_arrange, &view.positions);
         }
         let again = std::mem::take(&mut view.rescan_again);
+        self.land_job_icons(&fresh);
         self.relayout_desktop();
         if again {
             self.rescan_desktop();

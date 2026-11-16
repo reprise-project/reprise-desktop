@@ -201,61 +201,6 @@ pub fn draw(
     c
 }
 
-/// The copy progress control of `c` into `client` of a dialog drawn at `scale`, from the unscaled
-/// `theme`: the control draws on a canvas of the output's scale, underlining while `keys`.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_copy(
-    canvas: &mut Canvas,
-    theme: &Theme,
-    text: &TextRenderer,
-    c: &CopyDialog,
-    client: Rect,
-    scale: i32,
-    active: bool,
-    keys: bool,
-) {
-    let mut page = Canvas::with_scale(client.width as u32, client.height as u32, scale);
-    let paint = Paint {
-        active,
-        access_keys: keys,
-        s: 1,
-        ..theme.paint()
-    };
-    c.cp.draw(&mut page, text, &paint, theme.fonts.size_px);
-    canvas.blit_canvas(client.x * scale, client.y * scale, &page.at_scale(1));
-}
-
-/// The copy progress control's nodes under `ROOT`, moved from its own origin to `client`'s.
-pub fn access_copy(
-    c: &CopyDialog,
-    client: Rect,
-    theme: &Theme,
-    text: &TextRenderer,
-    tree: &mut reprisekit::access::Tree,
-) {
-    use reprisekit::access::ROOT;
-    let before: std::collections::HashSet<_> = tree.nodes().map(|(id, _)| id).collect();
-    c.cp.access(tree, text, &theme.paint(), theme.fonts.size_px);
-    let added: Vec<_> = tree
-        .nodes()
-        .map(|(id, _)| id)
-        .filter(|id| *id != ROOT && !before.contains(id))
-        .collect();
-    let (dx, dy) = (f64::from(client.x), f64::from(client.y));
-    for id in added {
-        if let Some(n) = tree.get_mut(id)
-            && let Some(b) = n.bounds()
-        {
-            n.set_bounds(reprisekit::access::accesskit::Rect::new(
-                b.x0 + dx,
-                b.y0 + dy,
-                b.x1 + dx,
-                b.y1 + dy,
-            ));
-        }
-    }
-}
-
 /// `d`'s `access` part under the dialog node `ROOT`, in dialog
 /// coordinates: its text, Run's labelled field, a form's controls, and the
 /// buttons. Returns the node with the focus: the field, the

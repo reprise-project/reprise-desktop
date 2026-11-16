@@ -21,8 +21,6 @@ pub struct DialogLayout {
     pub close: Option<Rect>,
     /// Caption ? button, 2 px left of the close button.
     pub help: Option<Rect>,
-    /// A windowed dialog's minimize box, where the ? button would be.
-    pub minimize: Option<Rect>,
     pub icon: Option<Rect>,
     pub lines: Vec<(Rect, String)>,
     pub field_label: Option<Rect>,
@@ -48,8 +46,6 @@ pub struct DialogLayout {
 pub enum DialogHit {
     Button(usize),
     Close,
-    /// A windowed dialog's minimize box.
-    Minimize,
     Help,
     Caption,
     /// The text field itself, with the point's x from the text's origin.
@@ -61,15 +57,12 @@ pub enum DialogHit {
     Row(usize),
     Control(reprisekit::controls::form::Hit),
     Tray(traycustomize::Hit),
-    /// The copy progress dialog's More/Fewer details toggle.
-    CopyDetails,
 }
 
 /// The caption button `over` is on.
 pub fn caption_button(over: Option<DialogHit>) -> Option<CaptionButton> {
     match over? {
         DialogHit::Close => Some(CaptionButton::Close),
-        DialogHit::Minimize => Some(CaptionButton::Minimize),
         _ => None,
     }
 }
@@ -143,13 +136,6 @@ impl DialogLayout {
             Style::TrayCustomize(t) => {
                 return Self::compute_client(t.client()).framed(theme, d.help);
             }
-            Style::Copy(c) => {
-                return Self::compute_client(theme.text.size(c.cp.client())).framed_as(
-                    theme,
-                    d.help,
-                    Chrome::WINDOWED_DIALOG,
-                );
-            }
             Style::EndProgram => Self::compute_end_program(theme, text.dialog(d.font()), d),
             Style::Classic {
                 template, text_h, ..
@@ -185,12 +171,7 @@ impl DialogLayout {
     /// A body laid out for `DIALOG_FRAME` and a `CAPTION_H` caption, put
     /// inside `theme`'s frame: the body moves by `client_shift` and the
     /// dialog grows around it.
-    pub(super) fn framed(self, theme: &Theme, help: bool) -> DialogLayout {
-        self.framed_as(theme, help, Chrome::DIALOG)
-    }
-
-    /// [`Self::framed`] in a frame with `chrome`'s caption buttons.
-    fn framed_as(mut self, theme: &Theme, help: bool, chrome: Chrome) -> DialogLayout {
+    pub(super) fn framed(mut self, theme: &Theme, help: bool) -> DialogLayout {
         let (dx, dy) = client_shift(theme);
         let mv = |r: &mut Rect| {
             r.x += dx;
@@ -209,7 +190,7 @@ impl DialogLayout {
         self.buttons.iter_mut().for_each(mv);
         let f = DIALOG_FRAME;
         let (w, h) = (self.size.0 - 2 * f, self.size.1 - 2 * f - CAPTION_H);
-        let g = FrameGeometry::layout(&theme.metrics, w, h, false, chrome);
+        let g = FrameGeometry::layout(&theme.metrics, w, h, false, Chrome::DIALOG);
         self.with_frame(g, help)
     }
 
@@ -219,8 +200,6 @@ impl DialogLayout {
             caption: g.caption,
             close: Some(g.buttons[2]),
             help: help.then_some(g.help_box()),
-            minimize: (g.chrome.buttons.has(CaptionButton::Minimize))
-                .then(|| g.button_rect(CaptionButton::Minimize)),
             frame: Some(g),
             ..self
         }
@@ -371,9 +350,6 @@ impl DialogLayout {
         if self.close.is_some_and(|r| r.contains(x, y)) {
             return Some(DialogHit::Close);
         }
-        if self.minimize.is_some_and(|r| r.contains(x, y)) {
-            return Some(DialogHit::Minimize);
-        }
         if self.help.is_some_and(|r| r.contains(x, y)) {
             return Some(DialogHit::Help);
         }
@@ -388,14 +364,6 @@ impl DialogLayout {
         if let (Some(t), Some(client)) = (d.tray(), self.page) {
             let lay = t.layout(text, px, (client.x, client.y));
             return t.hit(&lay, x, y).map(DialogHit::Tray);
-        }
-        if let (Some(c), Some(client)) = (d.copy(), self.page) {
-            // The control is laid out from its own origin, the client's corner.
-            let (lx, ly) = (x - client.x, y - client.y);
-            if c.cp.on_toggle(lx, ly, c.units) {
-                return Some(DialogHit::CopyDetails);
-            }
-            return c.cp.form.hit(lx, ly, text, px).map(DialogHit::Control);
         }
         if let Some((f, lay)) = self.completion(d)
             && lay.list.contains(x, y)
