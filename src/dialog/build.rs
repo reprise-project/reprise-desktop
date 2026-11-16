@@ -177,7 +177,7 @@ impl Dialog {
                     c
                 },
                 thumb: ThumbDrag::default(),
-                complete: PathComplete::new(Scope::Rooted),
+                complete: PathComplete::new(Scope::Shell),
             }),
             buttons: vec![
                 button("OK", DialogAction::RunField, true),
