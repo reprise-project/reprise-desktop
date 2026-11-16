@@ -1389,8 +1389,9 @@ What a consent prompt remembers, and where:
   non-interactive screenshot, through the Access prompt, and keeps the
   answer, yes or no, in its permission store (table and id `screenshot`).
   After a yes the app's screenshots are taken without a prompt; after a no
-  they are refused without one. An interactive screenshot opens the share
-  picker every time, which has no Remember.
+  they are refused without one. An interactive screenshot, and one whose
+  `target` is a window, opens the share picker every time, which has no
+  Remember.
 - **Wallpaper:** an app with `yes` in the permission store (table and id
   `wallpaper`) sets a picture it reads itself without a prompt, and one with `no` is
   refused by xdg-desktop-portal. Without either, a call without

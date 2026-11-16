@@ -1,6 +1,6 @@
-//! `org.freedesktop.impl.portal.Screenshot`: every output at its place in
+//! `org.freedesktop.impl.portal.Screenshot` version 3: every output at its place in
 //! the layout, or the output or window picked in the share dialog for an
-//! interactive call, as a PNG returned as a `file://` URI. The files are a
+//! interactive call or a Window target, as a PNG returned as a `file://` URI. The files are a
 //! hand-over to the app, kept in the runtime dir for `KEEP` up to `MAX_KEPT_BYTES`. PickColor
 //! opens the compositor's colour picker and needs no prompt; the click is the consent.
 
@@ -19,6 +19,12 @@ use zbus::{ObjectPath, OwnedVariant, Variant};
 const KEEP: Duration = Duration::from_secs(60 * 60);
 /// The most bytes the kept screenshots may hold: the runtime dir is a small tmpfs.
 const MAX_KEPT_BYTES: u64 = 256 << 20;
+/// Screenshot's `target` values; AvailableTargets is the union of those served.
+const TARGET_SCREEN: u32 = 1;
+const TARGET_WINDOW: u32 = 2;
+/// Area (4) and Active Window (8) are not served.
+const AVAILABLE_TARGETS: u32 = TARGET_SCREEN | TARGET_WINDOW;
+
 /// The most pixels a desktop picture may have: 256 MiB of ARGB, two 8K outputs side by side.
 const MAX_PIXELS: u64 = 1 << 26;
 
@@ -31,7 +37,12 @@ pub struct Screenshot {
 impl Screenshot {
     #[zbus(property, name = "version")]
     fn version(&self) -> u32 {
-        2
+        3
+    }
+
+    #[zbus(property)]
+    fn available_targets(&self) -> u32 {
+        AVAILABLE_TARGETS
     }
 
     async fn screenshot(
@@ -45,14 +56,20 @@ impl Screenshot {
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         log::info!("Screenshot for {app_id:?}");
-        let interactive = matches!(options.get("interactive"), Some(Variant::Bool(true)));
+        let (picks, types) = match plan(&options) {
+            Ok(p) => p,
+            Err(e) => {
+                log::info!("Screenshot for {app_id:?}: {e}");
+                return Ok((crate::RESPONSE_OTHER, HashMap::new()));
+            }
+        };
         let mut target = None;
-        if interactive || needs_consent(&options) {
+        if picks || needs_consent(&options) {
             let id = app_id.clone();
             let parent = crate::dialog::parent_handle(&parent_window);
             let asked = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
-                if interactive {
-                    pick(&id, parent, cancel).map(Some)
+                if picks {
+                    pick(&id, parent, cancel, types).map(Some)
                 } else {
                     let allowed = crate::permit::ask(
                         crate::permit::Kind::Screenshot,
@@ -136,6 +153,19 @@ fn picked(rgb: Option<u32>) -> (u32, HashMap<String, OwnedVariant>) {
     (crate::RESPONSE_OK, out)
 }
 
+/// Whether the user picks what is taken in the share picker, and the `SOURCE_*` kinds it
+/// lists: an interactive call picks, and a Window target always does. Err for a `target` not
+/// in `AVAILABLE_TARGETS`.
+fn plan(options: &HashMap<String, Variant<'_>>) -> Result<(bool, u32), String> {
+    let interactive = matches!(options.get("interactive"), Some(Variant::Bool(true)));
+    match options.get("target") {
+        None => Ok((interactive, crate::SOURCE_MONITOR | crate::SOURCE_WINDOW)),
+        Some(Variant::U32(TARGET_SCREEN)) => Ok((interactive, crate::SOURCE_MONITOR)),
+        Some(Variant::U32(TARGET_WINDOW)) => Ok((true, crate::SOURCE_WINDOW)),
+        Some(v) => Err(format!("target {v} is not served")),
+    }
+}
+
 /// False only when the frontend already settled the `screenshot`
 /// permission: a non-interactive call with `permission_store_checked`.
 fn needs_consent(options: &HashMap<String, Variant<'_>>) -> bool {
@@ -143,15 +173,24 @@ fn needs_consent(options: &HashMap<String, Variant<'_>>) -> bool {
     flag("interactive") || !flag("permission_store_checked")
 }
 
-/// The screen or window the user picks for `app_id`; None on Cancel or a
-/// frontend Close. Blocking.
-fn pick(app_id: &str, parent: Option<String>, cancel: Arc<AtomicBool>) -> Option<Target> {
+/// The screen or window, of the `types` kinds, the user picks for `app_id`; None on Cancel, a
+/// frontend Close or nothing to list. Blocking.
+fn pick(
+    app_id: &str,
+    parent: Option<String>,
+    cancel: Arc<AtomicBool>,
+    types: u32,
+) -> Option<Target> {
     let wl = Wayland::connect()
         .map_err(|e| log::warn!("Screenshot: {e}"))
         .ok()?;
-    let mut types = crate::SOURCE_MONITOR;
-    if wl.can_capture_toplevels() {
-        types |= crate::SOURCE_WINDOW;
+    let types = match wl.can_capture_toplevels() {
+        true => types,
+        false => types & !crate::SOURCE_WINDOW,
+    };
+    if types == 0 {
+        log::warn!("Screenshot: the compositor captures no windows");
+        return None;
     }
     let entries = crate::share_entries(types, &wl.outputs(), &wl.toplevels());
     drop(wl);
@@ -475,6 +514,27 @@ mod tests {
             ]
         );
         assert!(doomed(files, now, KEEP, 120).is_empty());
+    }
+
+    #[test]
+    fn a_window_target_always_picks_a_window_and_a_screen_target_lists_screens() {
+        let both = crate::SOURCE_MONITOR | crate::SOURCE_WINDOW;
+        let with = |interactive: bool, target: u32| {
+            let mut o = opts(&[("interactive", interactive)]);
+            o.insert("target".into(), Variant::U32(target));
+            plan(&o)
+        };
+        assert_eq!(plan(&opts(&[])), Ok((false, both)));
+        assert_eq!(plan(&opts(&[("interactive", true)])), Ok((true, both)));
+        assert_eq!(
+            with(false, TARGET_SCREEN),
+            Ok((false, crate::SOURCE_MONITOR))
+        );
+        assert_eq!(with(true, TARGET_SCREEN), Ok((true, crate::SOURCE_MONITOR)));
+        assert_eq!(with(false, TARGET_WINDOW), Ok((true, crate::SOURCE_WINDOW)));
+        for unserved in [0, 4, 8, TARGET_SCREEN | TARGET_WINDOW] {
+            assert!(with(true, unserved).is_err(), "target {unserved}");
+        }
     }
 
     #[test]
