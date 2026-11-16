@@ -25,6 +25,12 @@ use super::{Hit, Interaction};
 /// pointer, about 120 runs a second; clients still get every motion.
 const HOVER_EVERY: Duration = Duration::from_millis(8);
 
+#[cfg(test)]
+thread_local! {
+    /// The scene hits looked up on this thread.
+    pub static SCENE_HITS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 impl State {
     /// The bounding box of every output; a 1x1 box at 0,0 with none.
     pub(crate) fn output_area(&self) -> Rectangle<i32, Logical> {
@@ -57,10 +63,11 @@ impl State {
         }
         let from = self.pointer_location();
         let pos = self.clamp_to_layout(pos);
-        if !self.motion_only(pos, time) {
-            self.repoint(pos, time);
-        }
-        self.water_pointer(from, pos);
+        let hit = match self.motion_only(pos, time) {
+            Some(hit) => Some(hit),
+            None => self.repoint_hit(pos, time),
+        };
+        self.water_pointer(from, pos, hit.as_ref());
         crate::capture::pointer_moved(self);
         self.hot_corner_motion(pos.x, pos.y);
         self.redraw_pointer();
@@ -68,31 +75,26 @@ impl State {
 
     /// Move the pointer to `pos` for the client under it and leave the hover
     /// work owed, when it may wait: the pointer is free, keeps its focus and
-    /// `repoint` ran under `HOVER_EVERY` ago. False when `repoint` must run
-    /// now.
-    fn motion_only(&mut self, pos: Point<f64, Logical>, time: InputTime) -> bool {
-        let Some(left) = self
-            .pointers
-            .hovered_at
-            .and_then(|t| HOVER_EVERY.checked_sub(t.elapsed()))
-        else {
-            return false;
-        };
+    /// `repoint` ran under `HOVER_EVERY` ago. Gives what lies under `pos`;
+    /// None when `repoint` must run now.
+    fn motion_only(&mut self, pos: Point<f64, Logical>, time: InputTime) -> Option<Hit> {
+        let left = (self.pointers.hovered_at).and_then(|t| HOVER_EVERY.checked_sub(t.elapsed()))?;
         if !self.pointer_free() {
-            return false;
+            return None;
         }
-        let focus = match self.scene_hit(pos) {
+        let hit = self.scene_hit(pos);
+        let focus = match &hit {
             Hit::Surface {
                 surface, origin, ..
-            } => Some((surface, origin)),
+            } => Some((surface.clone(), *origin)),
             _ => None,
         };
         if !self.focus_holds(focus.as_ref().map(|f| &f.0)) {
-            return false;
+            return None;
         }
         self.pointer_motion(focus, pos, time);
         self.owe_repoint(time, left);
-        true
+        Some(hit)
     }
 
     /// Whether the seat's pointer focus is `surface` (None: no client).
@@ -153,6 +155,8 @@ impl State {
     /// What lies under layout point `pos`: a client surface, a window's
     /// frame, the shell's own trees, or the desktop.
     pub fn scene_hit(&self, pos: Point<f64, Logical>) -> Hit {
+        #[cfg(test)]
+        SCENE_HITS.set(SCENE_HITS.get() + 1);
         let Some(h) = self.scene.node_at(self.scene.root(), pos) else {
             return Hit::Desktop { index: None };
         };
@@ -322,31 +326,37 @@ impl State {
     /// The pointer moved to `pos`: carry on the interaction it is in, or
     /// hand it to what lies under it.
     pub fn repoint(&mut self, pos: Point<f64, Logical>, time: InputTime) {
+        self.repoint_hit(pos, time);
+    }
+
+    /// [`State::repoint`], giving what lies under `pos` when it looked; None when an
+    /// interaction or a view holding the pointer took the motion first.
+    fn repoint_hit(&mut self, pos: Point<f64, Logical>, time: InputTime) -> Option<Hit> {
         self.pointers.hovered_at = Some(Instant::now());
         self.pointers.owed = None;
         if self.host == Host::Greeter && self.dialogs.views.is_empty() && self.menus.is_empty() {
             crate::greeterview::motion(self, pos, time);
-            return;
+            return None;
         }
         if self.desktop_locked() {
             crate::lockview::motion(self, pos, time);
-            return;
+            return None;
         }
         crate::autohideview::poke(self);
         if self.drag_running() {
             self.drag_motion(pos, time);
-            return;
+            return None;
         }
         // The region overlay takes the pointer from everything.
         if self.panels.region.is_some() {
             self.pointer_motion(None, pos, time);
             self.region_motion(pos.x, pos.y);
-            return;
+            return None;
         }
         if self.panels.colorpick.is_some() {
             self.pointer_motion(None, pos, time);
             self.color_pick_motion(pos.x, pos.y);
-            return;
+            return None;
         }
         match self.interaction {
             Interaction::Move {
@@ -362,7 +372,7 @@ impl State {
                 let held = (cx - press.0).abs() < slop && (cy - press.1).abs() < slop;
                 let grouped = self.wm.snap.group_of(window).is_some();
                 if held && (self.fitted(window) || grouped) {
-                    return;
+                    return None;
                 }
                 // Moved off its zone for real, not jittered: out of its
                 // group.
@@ -389,7 +399,7 @@ impl State {
                 }
                 self.drag_to(window, (cx - dx) as i32, y);
                 crate::shakeview::motion(self, window, pos);
-                return;
+                return None;
             }
             Interaction::Resize {
                 window,
@@ -403,26 +413,21 @@ impl State {
                 if keyboard.is_some() && edges == Edges::NONE {
                     // A keyboard size with no side yet: the first pointer
                     // move picks the side it heads for.
-                    let Some(e) = crate::keyboard::edge_for_motion(pos.x - cx, pos.y - cy) else {
-                        return;
-                    };
+                    let e = crate::keyboard::edge_for_motion(pos.x - cx, pos.y - cy)?;
                     edges = e;
                     self.set_resize_edges(e);
                 }
                 self.drag_resize(window, edges, start, cx, cy);
-                return;
+                return None;
             }
             Interaction::PressButton { window, button } => {
                 self.pointer_motion(None, pos, time);
                 // The held button pops up while the pointer is off it,
                 // and no other caption button lights up until the
                 // release.
-                let Some(hit) = self
+                let hit = self
                     .win(window)
-                    .map(|w| w.hit_at(pos.x, pos.y, &self.config.theme.metrics))
-                else {
-                    return;
-                };
+                    .map(|w| w.hit_at(pos.x, pos.y, &self.config.theme.metrics))?;
                 let held = reprisekit::frame::held_button(hit, button);
                 self.frame_hover(
                     Some(window),
@@ -435,12 +440,12 @@ impl State {
                     self.redraw_frame(window);
                     self.redraw_window(window);
                 }
-                return;
+                return None;
             }
             Interaction::TabPress { .. } => {
                 self.pointer_motion(None, pos, time);
                 self.tab_press_moved(pos.x, pos.y);
-                return;
+                return None;
             }
             Interaction::TaskPress { .. }
             | Interaction::QuickPress { .. }
@@ -448,32 +453,32 @@ impl State {
             | Interaction::Band { .. } => {
                 self.pointer_motion(None, pos, time);
                 self.taskbar_press_moved();
-                return;
+                return None;
             }
             Interaction::BarMove { .. } | Interaction::BarWidth { .. } => {
                 self.pointer_motion(None, pos, time);
                 self.bar_drag_moved();
-                return;
+                return None;
             }
             Interaction::Drag { .. } => {
                 self.pointer_motion(None, pos, time);
                 self.drag_view_motion(pos);
-                return;
+                return None;
             }
             Interaction::Marquee => {
                 self.pointer_motion(None, pos, time);
                 self.drag_marquee(pos.x, pos.y);
-                return;
+                return None;
             }
             Interaction::WidgetDrag(_) => {
                 self.pointer_motion(None, pos, time);
                 self.widget_drag((pos.x, pos.y));
-                return;
+                return None;
             }
             Interaction::Stir => {
                 self.pointer_motion(None, pos, time);
                 self.stir_move(Source::Pointer, pos);
-                return;
+                return None;
             }
             Interaction::FieldDrag { editor } => {
                 self.pointer_motion(None, pos, time);
@@ -487,48 +492,49 @@ impl State {
                     | crate::caret::Editor::EmojiView
                     | crate::caret::Editor::NotifyReply => {}
                 }
-                return;
+                return None;
             }
             Interaction::MiniMove { .. } => {
                 self.pointer_motion(None, pos, time);
                 crate::miniview::drag_to(self, pos.x, pos.y);
-                return;
+                return None;
             }
             Interaction::MiniResize { id, start, cx, cy } => {
                 self.pointer_motion(None, pos, time);
                 crate::miniview::size_to(self, id, start, (pos.x - cx, pos.y - cy));
-                return;
+                return None;
             }
             Interaction::DialogMove { index, dx, dy } => {
                 self.pointer_motion(None, pos, time);
                 self.move_dialog(index, (pos.x - dx) as i32, (pos.y - dy) as i32);
-                return;
+                return None;
             }
             Interaction::DialogPress => {
                 self.pointer_motion(None, pos, time);
                 self.dialog_drag_button();
-                return;
+                return None;
             }
             Interaction::NotifyPress => {
                 self.pointer_motion(None, pos, time);
                 crate::notifyview::drag(self, pos.x, pos.y);
                 crate::notifycenter::drag(self, pos.x, pos.y);
-                return;
+                return None;
             }
             Interaction::DisplaysSlide => {
                 self.pointer_motion(None, pos, time);
                 crate::displaysview::drag(self, pos.x);
-                return;
+                return None;
             }
             Interaction::PanelBar => {
                 self.pointer_motion(None, pos, time);
                 self.clipview_drag(pos.x, pos.y);
                 self.emoji_drag(pos.x, pos.y);
-                return;
+                return None;
             }
             Interaction::Idle => {}
         }
         let hit = self.scene_hit(pos);
+        let seen = hit.clone();
         // Off the taskbar, the dialogs, the desktop's icons, the caption
         // buttons and the Glass Start menu's spots the tip goes, and none is owed.
         if !matches!(
@@ -586,7 +592,7 @@ impl State {
         if owned {
             self.pointer_motion(None, pos, time);
             self.set_cursor("default");
-            return;
+            return None;
         }
         match hit {
             Hit::Surface {
@@ -708,5 +714,6 @@ impl State {
                 self.set_cursor("default");
             }
         }
+        Some(seen)
     }
 }

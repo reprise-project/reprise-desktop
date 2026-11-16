@@ -1033,10 +1033,16 @@ impl State {
         }
     }
 
-    /// The pointer moved from `from` to `to` (layout): a wake in the water under it when it moves
-    /// nothing else over bare desktop. The only pointer-motion hook, the lock screen's included;
-    /// warps and tablet jumps lay no wake (`reprisekit::water::WAKE_JUMP`).
-    pub fn water_pointer(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
+    /// The pointer moved from `from` to `to` (layout), over `hit` when the motion already looked:
+    /// a wake in the water under it when it moves nothing else over bare desktop. The only
+    /// pointer-motion hook, the lock screen's included; warps and tablet jumps lay no wake
+    /// (`reprisekit::water::WAKE_JUMP`).
+    pub fn water_pointer(
+        &mut self,
+        from: Point<f64, Logical>,
+        to: Point<f64, Logical>,
+        hit: Option<&Hit>,
+    ) {
         if !self.water_on() {
             return;
         }
@@ -1046,7 +1052,11 @@ impl State {
             }
             return;
         }
-        if !self.pointer_free() || !matches!(self.scene_hit(to), Hit::Desktop { index: None }) {
+        if !self.pointer_free() {
+            return;
+        }
+        let bare = |hit: &Hit| matches!(hit, Hit::Desktop { index: None });
+        if !hit.map_or_else(|| bare(&self.scene_hit(to)), bare) {
             return;
         }
         if self.fluid_on() {
