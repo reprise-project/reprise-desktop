@@ -347,6 +347,11 @@ impl State {
         true
     }
 
+    /// The history entry the clipboard was recorded as.
+    pub(crate) fn clip_live_entry(&self) -> Option<u64> {
+        self.panels.history.live
+    }
+
     /// The client holding the clipboard destroyed its source without a new selection, which
     /// Smithay tells no handler: the copy recorded of it stays on the clipboard.
     pub(crate) fn clip_keep_orphaned(&mut self) {

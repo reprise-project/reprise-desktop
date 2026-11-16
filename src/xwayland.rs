@@ -39,8 +39,8 @@ use smithay::{
     xwayland::{
         X11Surface, X11Wm, XWayland, XWaylandEvent, XwmHandler,
         xwm::{
-            MwmDecorationsHint, MwmHints, Reorder, ResizeEdge, WmInputModel, WmWindowProperty,
-            WmWindowType, X11Window, XwmId,
+            MwmDecorationsHint, MwmHints, Reorder, ResizeEdge, SelectionGone, WmInputModel,
+            WmWindowProperty, WmWindowType, X11Window, XwmId,
         },
     },
 };
@@ -1104,6 +1104,12 @@ impl XwmHandler for State {
     }
 
     fn cleared_selection(&mut self, xwm: XwmId, selection: SelectionTarget) {
+        self.selection_gone(xwm, selection, SelectionGone::Cleared);
+    }
+
+    /// An X11 selection went away. A clipboard whose owner quit keeps the copy the history
+    /// recorded of it, as a Wayland one does (`clip_keep_orphaned`); one the owner cleared empties.
+    fn selection_gone(&mut self, xwm: XwmId, selection: SelectionTarget, reason: SelectionGone) {
         if self.bridge_verdict(xwm, bridge::Event::Cleared, selection) != bridge::Verdict::Clear {
             return;
         }
@@ -1111,8 +1117,12 @@ impl XwmHandler for State {
             SelectionTarget::Clipboard => {
                 self.clip.offered.clear();
                 self.clip.sandboxed = false;
-                clear_data_device_selection(&self.dh, &self.seat);
-                self.clipboard_changed();
+                let kept = reason == SelectionGone::OwnerGone
+                    && (self.clip_live_entry()).is_some_and(|id| self.clip_offer_entry(id));
+                if !kept {
+                    clear_data_device_selection(&self.dh, &self.seat);
+                    self.clipboard_changed();
+                }
             }
             SelectionTarget::Primary => clear_primary_selection(&self.dh, &self.seat),
         }
@@ -1128,7 +1138,7 @@ impl XwmHandler for State {
     /// the loop's next turn (`restart`).
     fn disconnected(&mut self, xwm: XwmId) {
         log::info!("the X11 window manager lost Xwayland");
-        self.cleared_selection(xwm, SelectionTarget::Clipboard);
+        self.selection_gone(xwm, SelectionTarget::Clipboard, SelectionGone::OwnerGone);
         self.cleared_selection(xwm, SelectionTarget::Primary);
         self.xwayland.wm = None;
         self.xwayland.helper = None;
