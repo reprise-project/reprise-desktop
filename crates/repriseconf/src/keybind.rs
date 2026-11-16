@@ -769,6 +769,38 @@ mod tests {
     }
 
     #[test]
+    fn the_example_config_lists_every_action_under_its_heading() {
+        let text = include_str!("../../../config.example.toml");
+        assert!(text.contains("#action = \"spawn\"\n#command = "));
+        let list = text
+            .split_once("# Every other action is one of these names:\n")
+            .expect("the [[keybinds]] preamble lists the action names")
+            .1;
+        let mut listed: Vec<(String, Vec<String>)> = Vec::new();
+        for line in list.lines() {
+            if let Some(more) = line.strip_prefix("#     ") {
+                let (_, ids) = listed.last_mut().expect("a heading line comes first");
+                ids.extend(more.split_whitespace().map(String::from));
+            } else if let Some((heading, ids)) =
+                line.strip_prefix("#   ").and_then(|l| l.split_once(": "))
+            {
+                let ids = ids.split_whitespace().map(String::from).collect();
+                listed.push((heading.to_string(), ids));
+            } else {
+                break;
+            }
+        }
+        let mut expected: Vec<(String, Vec<String>)> = Vec::new();
+        for (id, heading, _) in ACTION_NAMES {
+            match expected.last_mut() {
+                Some((h, ids)) if h == heading => ids.push(id.to_string()),
+                _ => expected.push((heading.to_string(), vec![id.to_string()])),
+            }
+        }
+        assert_eq!(listed, expected);
+    }
+
+    #[test]
     fn every_default_bind_checks() {
         for (keys, _) in DEFAULTS {
             check(keys).unwrap_or_else(|e| panic!("{keys}: {e}"));
