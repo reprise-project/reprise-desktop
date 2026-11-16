@@ -1,4 +1,5 @@
 use super::{Wake, lock};
+use reprisebus::peer::{AppIdentity, Identities};
 use std::sync::{Arc, Mutex};
 use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
@@ -28,11 +29,13 @@ pub(super) fn split_service(service: &str) -> (String, String) {
 /// Each item costs property round-trips and a match rule per [`super::ITEM_SIGNALS`] entry, and
 /// the bus daemon caps rules per connection.
 pub(super) const MAX_REGISTRATIONS: usize = 64;
-pub(super) const MAX_REGISTRATIONS_PER_SENDER: usize = 8;
+/// Per app: a sandboxed app counts as one however many connections it opens.
+pub(super) const MAX_REGISTRATIONS_PER_APP: usize = 8;
 
 pub(super) struct Published {
     pub(super) key: String,
-    pub(super) sender: String,
+    /// Who the per-app cap counts it under: a sandboxed registrant's app id, else its unique name.
+    pub(super) app: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -40,18 +43,18 @@ pub(super) enum Admission {
     Known,
     New,
     TotalFull,
-    SenderFull,
+    AppFull,
 }
 
-pub(super) fn admit(published: &[Published], key: &str, sender: &str) -> Admission {
+pub(super) fn admit(published: &[Published], key: &str, app: &str) -> Admission {
     if published.iter().any(|p| p.key == key) {
         return Admission::Known;
     }
     if published.len() >= MAX_REGISTRATIONS {
         return Admission::TotalFull;
     }
-    if published.iter().filter(|p| p.sender == sender).count() >= MAX_REGISTRATIONS_PER_SENDER {
-        return Admission::SenderFull;
+    if published.iter().filter(|p| p.app == app).count() >= MAX_REGISTRATIONS_PER_APP {
+        return Admission::AppFull;
     }
     Admission::New
 }
@@ -59,6 +62,7 @@ pub(super) fn admit(published: &[Published], key: &str, sender: &str) -> Admissi
 pub(super) struct Watcher {
     pub(super) items: Arc<Mutex<Vec<Published>>>,
     pub(super) registrations: async_channel::Sender<Wake>,
+    pub(super) identities: Arc<Identities>,
 }
 
 #[zbus::interface(name = "org.kde.StatusNotifierWatcher")]
@@ -67,6 +71,7 @@ impl Watcher {
         &self,
         service: &str,
         #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) {
         let Some(sender) = hdr.sender().map(|s| s.as_str()) else {
@@ -77,21 +82,25 @@ impl Watcher {
             return;
         };
         let key = format!("{bus}{path}");
+        let app = match self.identities.of(conn, sender).await {
+            AppIdentity::Sandboxed { app_id } => app_id,
+            _ => sender.to_string(),
+        };
         {
             let mut items = lock(&self.items);
-            match admit(&items, &key, sender) {
+            match admit(&items, &key, &app) {
                 Admission::Known => {}
                 Admission::New => items.push(Published {
                     key: key.clone(),
-                    sender: sender.to_string(),
+                    app,
                 }),
                 Admission::TotalFull => {
                     log::warn!("tray: refusing item {key}: {MAX_REGISTRATIONS} already registered");
                     return;
                 }
-                Admission::SenderFull => {
+                Admission::AppFull => {
                     log::warn!(
-                        "tray: refusing item {key}: {sender} already registered {MAX_REGISTRATIONS_PER_SENDER}"
+                        "tray: refusing item {key}: {app} already registered {MAX_REGISTRATIONS_PER_APP}"
                     );
                     return;
                 }
