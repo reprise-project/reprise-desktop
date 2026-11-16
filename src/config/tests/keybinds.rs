@@ -115,62 +115,18 @@ fn keybind_parsing() {
 }
 
 #[test]
-fn action_names_round_trip() {
-    for name in [
-        "terminal",
-        "close",
-        "cycle",
-        "cycle-app",
-        "flip",
-        "exit",
-        "maximize",
-        "minimize",
-        "lock",
-        "startmenu",
-        "run",
-        "logoff",
-        "turnoff",
-        "windowmenu",
-        "showdesktop",
-        "toggleframe",
-        "alwaysontop",
-        "mini-view",
-        "launcher",
-        "task-manager",
-        "overview",
-        "snap-layouts",
-        "display-switcher",
-        "focus-taskbar",
-        "focus-tray",
-        "clipboard-history",
-        "emoji-picker",
-        "next-layout",
-        "center",
-        "tab-next",
-        "tab-prev",
-        "do-not-disturb",
-        "notifications",
-        "night-light",
-        "desktop-prev",
-        "desktop-next",
-        "desktop-carry-prev",
-        "desktop-carry-next",
-        "all-desktops",
-        "screenshot",
-        "screenshot-window",
-        "screenshot-region",
-        "screenshot-content",
-        "record-screen",
-        "record-region",
-        "zoom-in",
-        "zoom-out",
-        "zoom-reset",
-        "color-filter",
-        "screen-reader",
-    ] {
-        let a = Action::from_parts(name, None).unwrap();
-        assert_eq!(a.name(), Some(name));
+fn every_listed_action_parses_and_names_itself() {
+    use repriseconf::keybind::{ACTION_NAMES, DESKTOP_CARRY_ITEMS, DESKTOP_ITEMS, TASKBAR_ITEMS};
+    for (id, _, _) in ACTION_NAMES {
+        let a = Action::from_parts(id, None).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(a.name(), Some(*id));
     }
+    let numbered = TASKBAR_ITEMS.len() + DESKTOP_ITEMS.len() + DESKTOP_CARRY_ITEMS.len();
+    assert_eq!(
+        NAMED_ACTIONS.len() + numbered,
+        ACTION_NAMES.len(),
+        "ACTION_NAMES lists every action once"
+    );
     assert_eq!(Action::Spawn("x".into()).name(), None);
 }
 
@@ -309,32 +265,6 @@ fn launcher_is_bound_to_super_space_by_default() {
 }
 
 #[test]
-fn media_actions_round_trip_through_their_names() {
-    for a in [
-        Action::VolumeUp,
-        Action::VolumeDown,
-        Action::Mute,
-        Action::MicMute,
-        Action::BrightnessUp,
-        Action::BrightnessDown,
-        Action::KbdBrightnessUp,
-        Action::KbdBrightnessDown,
-        Action::PlayPause,
-        Action::Next,
-        Action::Prev,
-        Action::Stop,
-        Action::Wifi,
-        Action::Touchpad(None),
-        Action::Touchpad(Some(true)),
-        Action::Touchpad(Some(false)),
-        Action::Airplane,
-        Action::RotationLock,
-    ] {
-        assert_eq!(Action::from_parts(a.name().unwrap(), None), Ok(a));
-    }
-}
-
-#[test]
 fn dialog_actions_and_power_commands_parse() {
     let c = Config::parse(
         "[power]\nreboot = \"loginctl reboot\"\n\n[[keybinds]]\nkeys = \"Super+F4\"\naction = \"turnoff\"\n\n[[startmenu]]\nlabel = \"Go\"\naction = \"run\"\n\n[[startmenu]]\nlabel = \"Bye\"\naction = \"logoff\"\n",
@@ -370,28 +300,4 @@ fn lock_action_and_default_bind() {
     );
     let c = Config::parse("[[keybinds]]\nkeys = \"Super+F12\"\naction = \"lock\"\n").unwrap();
     assert_eq!(action_on(&c, "Super+F12"), Some(Action::Lock));
-}
-
-/// With `every_named_action_parses_and_names_itself`, `ACTION_NAMES` and `from_parts` agree, so
-/// Settings' action list (built from `ACTION_NAMES`) offers every action.
-#[test]
-fn every_action_from_parts_takes_is_in_action_names() {
-    let src = include_str!("../keybinds.rs");
-    let body = src.split("pub fn from_parts").nth(1).unwrap();
-    let body = body.split("other => {").next().unwrap();
-    let ids: Vec<&str> = (body.lines())
-        .filter_map(|l| l.trim().strip_prefix('"')?.split_once("\" =>"))
-        .map(|(id, _)| id)
-        .filter(|id| *id != "spawn")
-        .chain(repriseconf::keybind::TASKBAR_ITEMS)
-        .chain(repriseconf::keybind::DESKTOP_ITEMS)
-        .chain(repriseconf::keybind::DESKTOP_CARRY_ITEMS)
-        .collect();
-    let named: Vec<&str> = (repriseconf::keybind::ACTION_NAMES.iter())
-        .map(|n| n.0)
-        .collect();
-    for id in &ids {
-        assert!(named.contains(id), "ACTION_NAMES lists {id}");
-    }
-    assert_eq!(ids.len(), named.len(), "one ACTION_NAMES row per action");
 }
