@@ -1,12 +1,13 @@
 //! reprise-record: records a screen, or an area of it, and with `--sound` what plays, into an MP4
 //! file the compositor made and handed it open, until SIGINT or SIGTERM or until the screen goes.
-//! On failure, or exiting [`ENDED_EARLY`], its last line on stderr is the reason. Its settings are
-//! `[recording]`.
+//! On failure, or exiting [`ENDED_EARLY`] or [`SOUND_STOPPED`], its last line on stderr is the
+//! reason. Its settings are `[recording]`.
 //!
 //! Exits: 0 once the file is closed; [`ENDED_EARLY`] when the recording stopped by itself after
 //! its file was started (the screen changed size or format, the encoder or a write failed, or
-//! frames the encoder cannot read lasted `UNREADABLE_FOR`), the file closed and playable; 1 on
-//! any other failure, a file started but not closed included.
+//! frames the encoder cannot read lasted `UNREADABLE_FOR`), the file closed and playable;
+//! [`SOUND_STOPPED`] when a `--sound` recording ran to its end and closed its file but the capture
+//! of what plays stopped before; 1 on any other failure, a file started but not closed included.
 //!
 //! `--probe` prints what codes here and exits 0, or 1 when FFmpeg fails to start: a `video CODEC
 //! ENCODER` line for each encoder choice that codes a test frame in that codec (`video h265
@@ -66,6 +67,10 @@ fn main() -> ExitCode {
             eprintln!("{e}");
             ExitCode::from(ENDED_EARLY)
         }
+        Ok(Outcome::SoundStopped(e)) => {
+            eprintln!("{e}");
+            ExitCode::from(SOUND_STOPPED)
+        }
         Err(e) => {
             log::warn!("recording failed: {e}");
             eprintln!("{e}");
@@ -119,17 +124,23 @@ enum Event {
     Stop,
     /// The screen's stream ended.
     Ended,
+    /// The capture of what plays ended before the recording, and why.
+    SoundStopped(String),
 }
 
 /// The exit status of a recording that stopped by itself after its file was started; the file is
 /// closed and plays up to there.
 const ENDED_EARLY: u8 = 3;
+/// The exit status of a recording saved whole whose sound stopped before its end.
+const SOUND_STOPPED: u8 = 4;
 
 #[derive(Debug, PartialEq)]
 enum Outcome {
     Saved,
     /// Why the recording stopped by itself.
     EndedEarly(String),
+    /// Why the sound stopped in a recording that ran to its end.
+    SoundStopped(String),
 }
 
 fn record(args: &Args, stop: libc::sigset_t) -> Result<Outcome, String> {
@@ -201,23 +212,25 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<Outcome, String> {
     // From here on the recorder only finishes the file: the compositor waits while it works.
     drop((hearing, stream, cast));
     let closed = file.finish();
+    let ended = ended.map(|()| file.sound_stopped.take());
     outcome(file.started(), file.started_writing(), ended, closed)
 }
 
-/// What a recording comes to: `ended` is how coding ended, `closed` how the file closed; a file
-/// started but not closed does not play.
+/// What a recording comes to: `ended` is how coding ended (with why the sound stopped, when it
+/// did), `closed` how the file closed; a file started but not closed does not play.
 fn outcome(
     started: bool,
     writing: bool,
-    ended: Result<(), String>,
+    ended: Result<Option<String>, String>,
     closed: Result<(), String>,
 ) -> Result<Outcome, String> {
     let none = || "No picture of the screen came.".to_string();
     match (started, writing, ended, closed) {
-        (false, ..) | (true, false, Ok(()), _) => Err(none()),
+        (false, ..) | (true, false, Ok(_), _) => Err(none()),
         (true, false, Err(e), _) | (true, true, _, Err(e)) => Err(e),
         (true, true, Err(e), Ok(())) => Ok(Outcome::EndedEarly(e)),
-        (true, true, Ok(()), Ok(())) => Ok(Outcome::Saved),
+        (true, true, Ok(None), Ok(())) => Ok(Outcome::Saved),
+        (true, true, Ok(Some(e)), Ok(())) => Ok(Outcome::SoundStopped(e)),
     }
 }
 
@@ -346,8 +359,9 @@ fn capture_sound(tx: mpsc::Sender<Event>) -> Result<pipewire::channel::Sender<()
         .name("reprise-record-sound".into())
         .spawn(move || {
             pipewire::init();
+            let sound_tx = tx.clone();
             let samples = Box::new(move |pcm: &[u8], at| {
-                let _ = tx.send(Event::Sound(pcm.to_vec(), at));
+                let _ = sound_tx.send(Event::Sound(pcm.to_vec(), at));
             });
             let captured = reprisevideo::monitor::capture(
                 None,
@@ -357,9 +371,11 @@ fn capture_sound(tx: mpsc::Sender<Event>) -> Result<pipewire::channel::Sender<()
                 samples,
                 stopped,
             );
-            if let Err(e) = captured {
-                log::warn!("recording what plays: {e}");
-            }
+            // Read only while the recording runs: a stop ends the capture after the last read.
+            let why = captured
+                .err()
+                .unwrap_or_else(|| "PipeWire ended the capture.".into());
+            let _ = tx.send(Event::SoundStopped(why));
         })
         .map_err(|e| e.to_string())?;
     Ok(stop)
@@ -382,6 +398,8 @@ struct File<'a> {
     /// The newest frame the pacer holds for its next slot.
     held: Option<Frame>,
     sound: Option<Sound>,
+    /// Why the capture of what plays ended while the recording ran.
+    sound_stopped: Option<String>,
     movie: Option<Movie>,
     output: Option<ffmpeg::format::context::Output>,
     /// When the first frame came: the movie's time 0.
@@ -427,6 +445,7 @@ impl<'a> File<'a> {
             pacer: making.pacer,
             held: None,
             sound: making.sound,
+            sound_stopped: None,
             movie: None,
             output: None,
             start: None,
@@ -485,6 +504,10 @@ impl<'a> File<'a> {
                 Event::Ended => {
                     log::info!("the screen's stream ended");
                     return Ok(());
+                }
+                Event::SoundStopped(why) => {
+                    log::warn!("recording what plays: {why}");
+                    self.sound_stopped.get_or_insert(why);
                 }
             }
         }
@@ -1215,25 +1238,36 @@ mod tests {
 
     #[test]
     fn a_recording_is_saved_ends_early_or_fails_by_what_was_written_and_closed() {
-        let e = |m: &str| Err(m.to_string());
+        fn e<T>(m: &str) -> Result<T, String> {
+            Err(m.to_string())
+        }
         let fails = |m: &str| Err::<Outcome, _>(m.to_string());
         let changed = "The screen changed size or format.";
         let full = "Cannot finish the recording: No space left on device";
         let none = "No picture of the screen came.";
-        assert_eq!(outcome(true, true, Ok(()), Ok(())), Ok(Outcome::Saved));
+        assert_eq!(outcome(true, true, Ok(None), Ok(())), Ok(Outcome::Saved));
+        let gone = "PipeWire ended the capture.";
+        assert_eq!(
+            outcome(true, true, Ok(Some(gone.into())), Ok(())),
+            Ok(Outcome::SoundStopped(gone.into()))
+        );
+        assert_eq!(
+            outcome(true, true, Ok(Some(gone.into())), e(full)),
+            fails(full)
+        );
         assert_eq!(
             outcome(true, true, e(changed), Ok(())),
             Ok(Outcome::EndedEarly(changed.into()))
         );
         assert_eq!(
-            outcome(true, true, Ok(()), e(full)),
+            outcome(true, true, Ok(None), e(full)),
             fails(full),
             "no index"
         );
         assert_eq!(outcome(true, true, e(changed), e(full)), fails(full));
         let refused = "No AV1 encoder could code the screen.";
         assert_eq!(outcome(true, false, e(refused), Ok(())), fails(refused));
-        assert_eq!(outcome(true, false, Ok(()), Ok(())), fails(none));
+        assert_eq!(outcome(true, false, Ok(None), Ok(())), fails(none));
         assert_eq!(
             outcome(false, false, e("every source ended"), Ok(())),
             fails(none)
@@ -1378,6 +1412,24 @@ mod tests {
             .map(|(_, p)| p.duration())
             .sum();
         assert_eq!(sound, 2 * 960, "both chunks");
+    }
+
+    #[test]
+    fn the_first_reason_the_sound_stopped_is_kept_and_the_recording_runs_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mp4");
+        let node = PathBuf::from(probe::RENDER_NODE);
+        let mut file = File::new(&path, &node, software(), None, (64, 64), h264());
+        let (tx, events) = mpsc::channel();
+        for event in [
+            Event::SoundStopped("The sink went away.".into()),
+            Event::SoundStopped("PipeWire ended the capture.".into()),
+            Event::Stop,
+        ] {
+            assert!(tx.send(event).is_ok());
+        }
+        assert_eq!(file.run(&events), Ok(()));
+        assert_eq!(file.sound_stopped.as_deref(), Some("The sink went away."));
     }
 
     #[test]

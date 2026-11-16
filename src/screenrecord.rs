@@ -32,6 +32,9 @@ const MAY_NOT_PLAY: &str = "It was stopped while it closed the file and may not 
 /// The recorder's exit status for a recording that stopped by itself and kept its file; its last
 /// stderr line says why.
 const ENDED_EARLY: i32 = 3;
+/// The recorder's exit status for a recording saved whole whose sound stopped; its last stderr
+/// line says why.
+const SOUND_STOPPED: i32 = 4;
 
 /// What a recording records: an output, or an area of it in output-local logical pixels.
 #[derive(Clone, Debug, PartialEq)]
@@ -360,6 +363,16 @@ impl State {
             } => {
                 log::warn!("screen recording ended early: {last_line}");
                 let note = format!("Stopped early: {last_line}");
+                saved_notice(self, SAVED, &made.path, Some(&note));
+            }
+            Ended::Exited {
+                made,
+                status: Some(SOUND_STOPPED),
+                last_line,
+                ..
+            } => {
+                log::warn!("screen recording lost its sound: {last_line}");
+                let note = format!("The sound stopped: {last_line}");
                 saved_notice(self, SAVED, &made.path, Some(&note));
             }
             Ended::Exited {
@@ -845,6 +858,34 @@ mod tests {
         assert_eq!(
             n.body,
             "Screencast.mp4\nStopped early: The screen changed size or format."
+        );
+        assert!(n.actions.iter().any(|(key, _)| key == "folder"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_recording_whose_sound_stopped_is_saved_and_says_why() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let dir = std::env::temp_dir().join(format!("reprise-record-sound-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Screencast.mp4");
+        let file = std::fs::File::create(&path).unwrap();
+        let made = Made::of(&file, path.clone()).unwrap();
+        let ended = Ended::Exited {
+            made,
+            ok: false,
+            status: Some(SOUND_STOPPED),
+            last_line: "The sink went away.".into(),
+            killed: false,
+        };
+        h.state.recording_ended(None, ended);
+        assert!(path.exists(), "kept");
+        let n = &h.state.notify.log.get(crate::notifyview::OWN_ID).unwrap().n;
+        assert_eq!(n.summary, "Screen recording saved");
+        assert_eq!(
+            n.body,
+            "Screencast.mp4\nThe sound stopped: The sink went away."
         );
         assert!(n.actions.iter().any(|(key, _)| key == "folder"));
         std::fs::remove_dir_all(&dir).unwrap();
