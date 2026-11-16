@@ -641,7 +641,7 @@ fn raise(state: &mut State, side: Side) {
         crate::lockpower::offered(state, side),
     );
     let compose = state.compose.as_ref().map(Compose::over);
-    state.read_user_pictures(vec![PICTURE]);
+    state.read_user_pictures(vec![logonview::USER_PICTURE]);
     *state.lock.slot(side) = Some(Lock {
         view: LogonView::new(model, compose),
         user,
@@ -958,9 +958,6 @@ pub enum Origin {
     Console,
     Desktop,
 }
-
-/// The user picture's read size in device px: the largest tile any interface draws, at scale 2.
-const PICTURE: i32 = 256;
 
 const CONSOLE: Host = Host {
     view: |s| Some((&mut s.lock.console.as_mut()?.view, &s.text)),

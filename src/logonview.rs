@@ -28,6 +28,10 @@ use crate::keys;
 use crate::menuview::{MenuFrom, MenuKind};
 use crate::startmenu::{MenuItem, MenuStyle};
 
+/// The largest side a login or lock screen keeps a user picture at, in device px: the largest tile
+/// any interface draws, at scale 2.
+pub const USER_PICTURE: i32 = 256;
+
 /// One host of a login screen: where its view lives (with the text renderer, borrowed apart from
 /// it), what the screen's actions do, and the Caps Lock of the keys it reads.
 pub struct Host {
