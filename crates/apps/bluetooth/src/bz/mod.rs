@@ -21,7 +21,7 @@ pub const BATTERY_IFACE: &str = "org.bluez.Battery1";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Snapshot {
-    /// The first adapter in path order; None without bluetoothd or a
+    /// The first powered adapter in path order, else the first; None without bluetoothd or a
     /// radio.
     pub adapter: Option<Adapter>,
     pub devices: Vec<Device>,
@@ -292,16 +292,22 @@ fn device_of(path: &str, p: &Props, battery: Option<&Props>) -> Device {
     }
 }
 
-/// The first adapter in path order and the devices under it, sorted by
-/// alias.
+/// The first powered adapter in path order, else the first, and the devices under it, sorted by
+/// alias. A dongle added beside a dead built-in radio is the one shown.
 pub fn fold(objects: &Objects) -> Snapshot {
     let mut paths: Vec<&OwnedObjectPath> = objects.keys().collect();
     paths.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-    let Some(adapter) = paths.iter().find_map(|p| {
-        objects[*p]
-            .get(ADAPTER_IFACE)
-            .map(|a| adapter_of(p.as_str(), a))
-    }) else {
+    let adapters: Vec<Adapter> = (paths.iter())
+        .filter_map(|p| {
+            objects[*p]
+                .get(ADAPTER_IFACE)
+                .map(|a| adapter_of(p.as_str(), a))
+        })
+        .collect();
+    let Some(adapter) = (adapters.iter().find(|a| a.powered))
+        .or(adapters.first())
+        .cloned()
+    else {
         return Snapshot::default();
     };
     let prefix = format!("{}/", adapter.path);
@@ -688,8 +694,9 @@ mod tests {
     }
 
     #[test]
-    fn the_first_adapter_and_only_its_devices_are_read() {
+    fn the_first_powered_adapter_and_only_its_devices_are_read() {
         let mut o = Objects::new();
+        o.insert(path("/org/bluez/hci2"), adapter(true, "on"));
         o.insert(path("/org/bluez/hci1"), adapter(true, "on"));
         o.insert(path("/org/bluez/hci0"), adapter(false, "off-blocked"));
         o.insert(
@@ -701,10 +708,24 @@ mod tests {
             device(Some("Cans"), "Cans", "audio-headphones", true),
         );
         let snap = fold(&o);
+        assert_eq!(snap.adapter.expect("hci1").path, "/org/bluez/hci1");
+        assert_eq!(snap.devices.len(), 1, "hci0's device is not hci1's");
+        assert_eq!(snap.devices[0].kind, Kind::Headphones);
+    }
+
+    #[test]
+    fn with_every_adapter_off_the_first_is_read() {
+        let mut o = Objects::new();
+        o.insert(path("/org/bluez/hci1"), adapter(false, "off"));
+        o.insert(path("/org/bluez/hci0"), adapter(false, "off-blocked"));
+        o.insert(
+            path("/org/bluez/hci0/dev_AA"),
+            device(Some("Pad"), "Pad", "input-gaming", true),
+        );
+        let snap = fold(&o);
         let a = snap.adapter.expect("hci0");
         assert_eq!(a.path, "/org/bluez/hci0");
         assert!(!a.powered && a.blocked && a.discovering);
-        assert_eq!(snap.devices.len(), 1, "hci1's device is not hci0's");
         assert_eq!(snap.devices[0].kind, Kind::Gamepad);
     }
 
