@@ -2,6 +2,7 @@ use reprisekit::{icontheme, raster, text, textedit, theme};
 
 mod access;
 mod activation;
+mod animclock;
 mod appindex;
 mod attention;
 mod autohideview;

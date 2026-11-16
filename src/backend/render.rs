@@ -401,6 +401,7 @@ pub(crate) fn advance(state: &mut State, output: &Output) {
     crate::dim::frame(state);
     crate::bellflash::frame(state);
     crate::locatepointer::frame(state);
+    crate::animclock::frame(state);
     crate::autohideview::frame(state, output);
     crate::snapbarview::frame(state, output);
     crate::greeterview::frame(state, output);

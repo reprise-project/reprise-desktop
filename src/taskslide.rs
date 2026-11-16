@@ -2,19 +2,17 @@
 //! floats under the pointer (`Bar::task_float`) with the rest of its unit
 //! (`taskbar::row_units`); with `[effects] taskbar_slide` on, moved buttons slide
 //! to their new x (`Bar::task_slides`) and the dropped button glides into its
-//! slot. A timer ticks every `TICK_MS` while anything moves.
+//! slot. They step on the frame clock (`animclock`) while anything moves.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use reprisekit::anim::{Ease, Slide};
 use reprisescene::TreeId;
-use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::{
-    compositor::State, input::Interaction, taskbar::TaskKey, taskbarview::Bar, window::WindowId,
+    animclock::Anim, compositor::State, input::Interaction, taskbar::TaskKey, taskbarview::Bar,
+    window::WindowId,
 };
-
-const TICK_MS: u64 = 16;
 const SLIDE_MS: u32 = 150;
 const GLIDE_MS: u32 = 200;
 
@@ -128,7 +126,7 @@ impl State {
         }
         if started {
             self.redraw_taskbar(tree);
-            self.arm_slide();
+            self.animate(Anim::TaskSlide);
         }
     }
 
@@ -156,7 +154,7 @@ impl State {
         };
         bar.task_float = Some((key, Slide::at(x)));
         if bar.task_float_drawn != Some(x) {
-            self.arm_slide();
+            self.animate(Anim::TaskSlide);
         }
     }
 
@@ -173,33 +171,19 @@ impl State {
         let slot = crate::taskbar::find_task(&bar.buttons, &bar.pins, &bar.dialogs, &key)
             .and_then(|i| bar.layout.tasks.get(i))
             .map(|r| bar.layout.to_along(*r).x);
-        // From where the float is on screen; a motion since the last tick has not
+        // From where the float is on screen; a motion since the last frame has not
         // moved it yet.
         let now = Instant::now();
         let from = bar.task_float_drawn.unwrap_or(at.x(now));
         match slot.filter(|&to| slide && to != from) {
             Some(to) => {
                 bar.task_float = Some((key, Slide::new(from, to, now, GLIDE_MS, Ease::InOut)));
-                self.arm_slide();
+                self.animate(Anim::TaskSlide);
             }
             None => {
                 bar.task_float = None;
                 self.redraw_taskbar(tree);
             }
-        }
-    }
-
-    fn arm_slide(&mut self) {
-        if self.bar_shared.slide_timer.is_some() {
-            return;
-        }
-        let token = self.handle.insert_source(
-            Timer::from_duration(Duration::from_millis(TICK_MS)),
-            |_, _, state| state.slide_tick(),
-        );
-        match token {
-            Ok(t) => self.bar_shared.slide_timer = Some(t),
-            Err(e) => log::warn!("slide timer: {}", e.error),
         }
     }
 
@@ -228,9 +212,8 @@ impl State {
         (redraw, !bar.task_slides.is_empty() || gliding)
     }
 
-    /// One frame of every bar in motion; ticks again while anything moves.
-    fn slide_tick(&mut self) -> TimeoutAction {
-        let now = Instant::now();
+    /// One frame of every bar in motion; whether anything still moves.
+    pub(crate) fn slide_step(&mut self, now: Instant) -> bool {
         let trees: Vec<TreeId> = self.bars.iter().map(|b| b.tree).collect();
         let mut moving = false;
         for tree in trees {
@@ -238,13 +221,39 @@ impl State {
             if redraw {
                 self.redraw_taskbar(tree);
             }
+            // A step that moves nothing a whole px still asks the next frame.
+            if still && let Some(o) = self.bar(tree).map(|b| b.output.clone()) {
+                crate::backend::schedule(self, &o);
+            }
             moving |= still;
         }
-        if moving {
-            TimeoutAction::ToDuration(Duration::from_millis(TICK_MS))
-        } else {
-            self.bar_shared.slide_timer = None;
-            TimeoutAction::Drop
-        }
+        moving
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dropped_task_button_glides_on_its_bars_frames_until_it_lands() {
+        let mut config = crate::config::Config::default();
+        config.effects.taskbar_slide = true;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "a.app", 300, 200);
+        h.map_toplevel(&mut c, "b.app", 300, 200);
+        let tree = h.state.bars[0].tree;
+        let output = h.state.bars[0].output.name();
+        let (key, x) = row(h.state.bar(tree).unwrap())[0];
+        h.pointer_to(f64::from(x + 200), 768.0 - 15.0);
+        h.state.slide_follow(tree, key, 0);
+        assert!(h.state.bar(tree).unwrap().task_float.is_some(), "it floats");
+        h.state.slide_release(tree);
+        let end = Instant::now() + std::time::Duration::from_millis(u64::from(GLIDE_MS));
+        crate::animclock::assert_steps_until(&mut h.state, Anim::TaskSlide, &[&output], end);
+        assert!(h.state.bar(tree).unwrap().task_float.is_none(), "it landed");
     }
 }
