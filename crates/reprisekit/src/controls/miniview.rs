@@ -76,13 +76,27 @@ pub fn layout(look: Look, (w, h): (i32, i32)) -> Layout {
     }
 }
 
-/// The frame `w` wide whose picture has the aspect of a `aspect` window.
-pub fn size_for(look: Look, w: i32, aspect: (i32, i32)) -> (i32, i32) {
+/// The room a frame has in `work`: the area less [`EDGE`] on each side.
+pub fn room(work: Rect) -> (i32, i32) {
+    (
+        (work.width - 2 * EDGE).max(1),
+        (work.height - 2 * EDGE).max(1),
+    )
+}
+
+/// The frame `w` wide whose picture has the aspect of a `aspect` window, narrowed to fit inside
+/// `max`; `max` wins over [`MIN_W`].
+pub fn size_for(look: Look, w: i32, aspect: (i32, i32), max: (i32, i32)) -> (i32, i32) {
     let b = look.border;
-    let pw = (w - 2 * b).max(1);
-    let (aw, ah) = (aspect.0.max(1), aspect.1.max(1));
-    let ph = ((i64::from(pw) * i64::from(ah) + i64::from(aw) / 2) / i64::from(aw)) as i32;
-    (w, ph.max(1) + 2 * b)
+    let (aw, ah) = (i64::from(aspect.0.max(1)), i64::from(aspect.1.max(1)));
+    let pw = i64::from((w.min(max.0) - 2 * b).max(1));
+    let ph = (pw * ah + aw / 2) / aw;
+    let max_ph = i64::from((max.1 - 2 * b).max(1));
+    if ph <= max_ph {
+        return (pw as i32 + 2 * b, ph.max(1) as i32 + 2 * b);
+    }
+    let pw = ((max_ph * aw + ah / 2) / ah).max(1);
+    (pw as i32 + 2 * b, max_ph as i32 + 2 * b)
 }
 
 /// A new mini view of `size` in `work`: its lower-right corner [`EDGE`] in from the area's, and
@@ -102,7 +116,7 @@ pub fn place(work: Rect, size: (i32, i32), taken: &[Rect]) -> Rect {
 
 /// The frame a drag of the grip by (`dx`, `dy`) gives the one at `start`: its top-left stays,
 /// its width follows whichever way the pointer went further, its picture keeps `aspect`, and it
-/// stays between [`MIN_W`] and the right edge of `work`.
+/// stays between [`MIN_W`] and the right and bottom edges of `work`.
 pub fn resized(
     look: Look,
     start: Rect,
@@ -111,14 +125,19 @@ pub fn resized(
     work: Rect,
 ) -> Rect {
     let by_x = start.width + dx;
-    let tall = size_for(look, start.width, aspect).1 - 2 * look.border;
+    let tall = start.height - 2 * look.border;
     let wide = start.width - 2 * look.border;
     let tall_n = i64::from(tall.max(1));
     let by_y =
         2 * look.border + ((i64::from(tall + dy) * i64::from(wide) + tall_n / 2) / tall_n) as i32;
-    let max = (work.right() - start.x).max(MIN_W);
-    let w = by_x.max(by_y).clamp(MIN_W, max);
-    let (w, h) = size_for(look, w, aspect);
+    let room = room(work);
+    // A frame already past an edge is not shrunk by it.
+    let max = (
+        (work.right() - start.x).max(MIN_W).min(room.0),
+        (work.bottom() - start.y).max(start.height).min(room.1),
+    );
+    let w = by_x.max(by_y).clamp(MIN_W, max.0.max(MIN_W));
+    let (w, h) = size_for(look, w, aspect, max);
     Rect::new(start.x, start.y, w, h)
 }
 
@@ -196,7 +215,7 @@ mod tests {
 
     #[test]
     fn it_opens_320_wide_in_the_lower_right_with_the_windows_aspect() {
-        let size = size_for(classic(), DEFAULT_W, (800, 600));
+        let size = size_for(classic(), DEFAULT_W, (800, 600), room(WORK));
         assert_eq!(size, (320, 6 + 236), "a 314 px picture at 4:3");
         let r = place(WORK, size, &[]);
         assert_eq!(r, Rect::new(1920 - 16 - 320, 1050 - 16 - 242, 320, 242));
@@ -224,8 +243,35 @@ mod tests {
         assert_eq!(r.width, 420, "75 px down at 4:3 is 100 px across");
         let r = resized(l, start, (800, 600), (-500, -500), WORK);
         assert_eq!(r.width, MIN_W);
-        let r = resized(l, start, (800, 600), (5000, 0), WORK);
+        let r = resized(l, start, (4000, 600), (5000, 0), WORK);
         assert_eq!(r.right(), WORK.right(), "held inside the area");
+    }
+
+    #[test]
+    fn a_tall_narrow_window_gets_a_frame_inside_the_area_at_its_aspect() {
+        let l = classic();
+        let work = Rect::new(0, 0, 1920, 1080);
+        let (w, h) = size_for(l, DEFAULT_W, (1, 32767), room(work));
+        assert_eq!(h, 1080 - 2 * EDGE, "as tall as the area allows");
+        assert_eq!(w, 1 + 6, "a one-pixel picture");
+        let (w, h) = size_for(l, DEFAULT_W, (100, 1000), room(work));
+        assert_eq!((w, h), (6 + 104, 1048), "narrowed past MIN_W, keeping 1:10");
+        let (w, h) = size_for(l, 5000, (32767, 1), room(work));
+        assert_eq!(
+            (w, h),
+            (1920 - 2 * EDGE, 6 + 1),
+            "as wide as the area allows"
+        );
+        let start = Rect::new(100, 100, 320, 242);
+        let r = resized(l, start, (800, 600), (0, 1_000_000), work);
+        assert!(
+            r.bottom() <= work.bottom(),
+            "{r:?} stays above the area's bottom"
+        );
+        assert_eq!(r.height - 6, (r.width - 6) * 3 / 4, "still 4:3");
+        let tall = Rect::new(100, 16, 7, 1048);
+        let r = resized(l, tall, (1, 32767), (1_000_000, 1_000_000), work);
+        assert_eq!(r, tall, "already as large as the area allows");
     }
 
     #[test]

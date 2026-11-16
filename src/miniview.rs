@@ -94,7 +94,7 @@ fn open(state: &mut State, w: WindowId) {
         .or_else(|| state.first_output());
     let work = state.usable_area(out.as_ref());
     let look = miniview::look(&state.config.theme);
-    let size = miniview::size_for(look, miniview::DEFAULT_W, aspect);
+    let size = miniview::size_for(look, miniview::DEFAULT_W, aspect, miniview::room(work));
     let taken: Vec<Rect> = state.mini_views.minis.iter().map(|m| m.rect).collect();
     let rect = miniview::place(work, size, &taken);
     let scene = &mut state.scene;
@@ -239,8 +239,12 @@ pub fn restyle(state: &mut State) {
             .window(id)
             .and_then(|w| state.win(w))
             .map(|x| (x.client_w, x.client_h));
-        if let (Some(m), Some(aspect)) = (state.mini_views.get_mut(id), aspect) {
-            let (w, h) = miniview::size_for(look, m.rect.width, aspect);
+        let room = state.mini_views.rect(id).map(|r| {
+            let out = state.output_at(f64::from(r.x), f64::from(r.y));
+            miniview::room(state.usable_area(out.as_ref()))
+        });
+        if let (Some(m), Some(aspect), Some(room)) = (state.mini_views.get_mut(id), aspect, room) {
+            let (w, h) = miniview::size_for(look, m.rect.width, aspect, room);
             m.look = look;
             m.rect = Rect::new(m.rect.x, m.rect.y, w, h);
         }
@@ -454,6 +458,23 @@ mod tests {
             None,
             "Mini View again closes it"
         );
+    }
+
+    #[test]
+    fn a_tall_narrow_windows_mini_view_fits_the_usable_area() {
+        let mut h = Harness::new();
+        h.output("DP-1", 1920, 1080);
+        let mut c = h.connect();
+        let t = h.map_titled(&mut c, "foot", "thin", (1, 4000));
+        let id = open(&mut h, t);
+        let r = h.state.mini_views.rect(id).unwrap();
+        let work = h.state.usable_area(h.state.scene.outputs().first());
+        assert_eq!(r.height, work.height - 2 * 16, "as tall as the area allows");
+        let inside = r.x >= work.x
+            && r.y >= work.y
+            && r.right() <= work.right()
+            && r.bottom() <= work.bottom();
+        assert!(inside, "{r:?} inside {work:?}");
     }
 
     #[test]
