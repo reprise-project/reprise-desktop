@@ -56,9 +56,13 @@ impl Host {
     }
 
     pub(crate) fn send(&mut self, win: WinId, ev: Event) {
-        if self.gated(win, &ev) {
-            return;
+        if !self.gated(win, &ev) {
+            self.deliver(win, ev);
         }
+    }
+
+    /// `ev` to `win` past the modal gate, for an event the host raises itself.
+    pub(crate) fn deliver(&mut self, win: WinId, ev: Event) {
         match self.slots.iter().find(|s| s.id == win) {
             Some(s) => self.ctx.aim(s),
             // A hidden main window still takes events the host has no
@@ -440,6 +444,21 @@ pub(crate) fn newly_covered(
         .iter()
         .filter(|&&(id, m)| m.is_some() && was_free(id))
         .map(|&(id, _)| id)
+        .collect()
+}
+
+/// The windows open in `after` whose parent window was open in `before` and is not now: each
+/// gets one close request. The main window going hidden orphans nothing, since its children
+/// then stand as plain toplevels.
+pub(crate) fn orphaned(
+    before: &[WinId],
+    after: &[WinId],
+    parent: impl Fn(WinId) -> Option<WinId>,
+) -> Vec<WinId> {
+    (after.iter().copied())
+        .filter(|&w| {
+            parent(w).is_some_and(|p| p != MAIN && before.contains(&p) && !after.contains(&p))
+        })
         .collect()
 }
 

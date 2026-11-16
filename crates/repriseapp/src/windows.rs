@@ -329,9 +329,15 @@ impl Host {
 
     pub(crate) fn sync_children(&mut self) {
         let before = self.gates();
+        let open: Vec<WinId> = self.slots.iter().map(|s| s.id).collect();
         self.sync_child_windows();
         for win in crate::deliver::newly_covered(&before, &self.gates()) {
             self.cover(win);
+        }
+        let now: Vec<WinId> = self.slots.iter().map(|s| s.id).collect();
+        // Past the gate: a newer box elsewhere in the root must not keep this one up.
+        for win in crate::deliver::orphaned(&open, &now, |w| self.parent_of(w)) {
+            self.deliver(win, Event::CloseRequest);
         }
     }
 

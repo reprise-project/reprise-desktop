@@ -1,8 +1,8 @@
 use super::*;
 use crate::clipboard::{TEXT_MIME, pasted_text, read_capped, text_mime};
 use crate::deliver::{
-    blink_target, input_blocked, modal_over, newly_covered, redraws, root_of, takes_blinks,
-    top_modal,
+    blink_target, input_blocked, modal_over, newly_covered, orphaned, redraws, root_of,
+    takes_blinks, top_modal,
 };
 use crate::draw::{buffer_damage, copy_pixels, next_buffer, surface_damage};
 use crate::reply::spawn_then;
@@ -617,6 +617,41 @@ fn a_close_request_under_a_modal_child_is_dropped_and_one_on_the_child_arrives()
     let free = [(MAIN, false), (SHEET, false)];
     let modal = modal_over(SHEET, free.into_iter(), parent);
     assert!(!input_blocked(&close, modal, SHEET, false));
+}
+
+#[test]
+fn a_child_whose_parent_window_leaves_is_asked_to_close_once() {
+    const SHEET: WinId = WinId::named("sheet");
+    const ADVANCED: WinId = WinId::named("advanced");
+    const FIND: WinId = WinId::named("find");
+    let parent = |w: WinId| match w {
+        ADVANCED => Some(SHEET),
+        _ => Some(MAIN),
+    };
+    let open = [MAIN, FIND, SHEET, ADVANCED];
+    let left = [MAIN, FIND, ADVANCED];
+    assert_eq!(orphaned(&open, &left, parent), vec![ADVANCED]);
+    assert!(
+        orphaned(&left, &left, parent).is_empty(),
+        "asked once, while its parent stays gone"
+    );
+    assert!(
+        orphaned(&open, &[MAIN, FIND], parent).is_empty(),
+        "the box left with its sheet"
+    );
+    let moved = |w: WinId| (w != MAIN).then_some(MAIN);
+    assert!(
+        orphaned(&open, &left, moved).is_empty(),
+        "the box moved over the main window as the sheet left"
+    );
+}
+
+#[test]
+fn a_hidden_main_window_orphans_none_of_its_children() {
+    const PROGRESS: WinId = WinId::named("progress");
+    const FAILED: WinId = WinId::named("failed");
+    let parent = |w: WinId| (w != MAIN).then_some(MAIN);
+    assert!(orphaned(&[MAIN, PROGRESS, FAILED], &[PROGRESS, FAILED], parent).is_empty());
 }
 
 #[test]

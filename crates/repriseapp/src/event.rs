@@ -112,7 +112,8 @@ pub enum Event {
     /// answers `Reply::quit`; on a child it drops that `Child`. On a
     /// flyout, the compositor took it away; the program stops returning
     /// it from `Extended::flyout`. A window under a modal child gets none
-    /// while the child is up.
+    /// while the child is up. A child gets one from the host when the
+    /// window it sits over (`Extended::parent`) closes and it stays.
     CloseRequest,
     /// Something off the event loop's thread has work for the program (see
     /// `Waker::wake`). Delivered on `MAIN` even when the main window is
