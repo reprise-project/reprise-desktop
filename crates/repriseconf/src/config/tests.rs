@@ -372,6 +372,19 @@ fn set_program_listed_adds_once_and_drops_every_spelling() {
 }
 
 #[test]
+fn a_key_listed_without_its_desktop_suffix_still_names_the_program() {
+    let mut list = vec!["org.telegram".to_string()];
+    assert!(program_listed(&list, "org.telegram.desktop"));
+    assert!(!program_listed(&list, "org.telegram.web"));
+    assert!(!program_listed(
+        &["org.telegram.desktop".to_string()],
+        "org.telegram"
+    ));
+    assert!(set_program_listed(&mut list, "org.telegram.desktop", false));
+    assert!(list.is_empty(), "turning it back on drops the old spelling");
+}
+
+#[test]
 fn screenshot_save_defaults_on_and_is_configurable() {
     assert!(Config::default().screenshot.save);
     let c = Config::parse("[screenshot]\nsave = false\n").unwrap();

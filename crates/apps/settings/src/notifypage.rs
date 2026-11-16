@@ -2,7 +2,7 @@
 //! no_balloons` and `no_sounds` name, with Show balloons and Play sounds for the picked one.
 
 use crate::model::Settings;
-use repriseconf::config::{program_listed, set_program_listed};
+use repriseconf::config::{program_listed, same_program, set_program_listed};
 use reprisekit::controls::form::{Control, Form};
 use reprisekit::controls::listbox::ListBox;
 
@@ -42,7 +42,9 @@ pub fn programs(
     let configured = s.notify_no_balloons.iter().chain(&s.notify_no_sounds);
     let seen = seen.iter().map(|(k, n)| (k.clone(), Some(n.clone())));
     for (key, name) in seen.chain(configured.map(|k| (k.clone(), None))) {
-        if key.is_empty() || out.iter().any(|p| p.key.eq_ignore_ascii_case(&key)) {
+        if key.is_empty()
+            || (out.iter()).any(|p| same_program(&key, &p.key) || same_program(&p.key, &key))
+        {
             continue;
         }
         let name = name
@@ -166,6 +168,18 @@ mod tests {
         ]
         .map(|(k, n)| (k.to_string(), n.to_string()));
         assert_eq!(got, want);
+    }
+
+    #[test]
+    fn a_key_listed_without_its_desktop_suffix_joins_its_programs_row() {
+        let s = Settings {
+            notify_no_balloons: vec!["org.telegram".into()],
+            ..Settings::default()
+        };
+        let seen = [("org.telegram.desktop".to_string(), "Telegram".to_string())];
+        let list = programs(&seen, &s, |_| None);
+        assert_eq!(list.len(), 1);
+        assert_eq!(detail(&s, &list[0].key), "No balloons");
     }
 
     #[test]
