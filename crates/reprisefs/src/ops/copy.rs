@@ -145,7 +145,8 @@ fn twin_name(e: io::Error, to: &Path) -> io::Error {
 /// instead of being overwritten: the name was picked as free a moment
 /// ago and nothing else may have taken it since. Keeps `from`'s mode,
 /// xattrs (the launcher trust marker re-made for the copy) and times. A copy that fails after `to` was
-/// created removes it, so no truncated file is left behind.
+/// created removes it; one whose process dies leaves it, so puts copy into a part
+/// ([`super::land_part`]).
 ///
 /// `from` must be a regular file (a link to one is followed): anything
 /// else is an `InvalidInput` error before `to` is made. The open is
