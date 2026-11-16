@@ -6,7 +6,7 @@ an issue first so we can agree on the shape before you write it.
 ## Build
 
 [docs/install.md](docs/install.md) lists the requirements and how to build
-and run Reprise, nested in your current session or from a login manager.
+and run Reprise, from a TTY or a login manager.
 
 ## Before you open a pull request
 

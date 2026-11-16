@@ -11,10 +11,14 @@ The workspace's root package is the compositor alone, so without
 `--workspace` the programs, the portal and the Remote Desktop server aren't
 built.
 
-To try it without committing your afternoon, run it nested inside another
-Wayland session:
+To try it without committing your afternoon, log in on a free TTY
+(Ctrl+Alt+F3) and run:
 
     PATH="$PWD/target/release:$PATH" ./target/release/reprise --startup alacritty
+
+Reprise opens the seat's display and input through logind, so it doesn't run
+nested inside another session: started from a terminal there, it exits with
+an error and leaves that session as it was.
 
 Reprise starts its programs by name, so without `target/release` on `PATH`
 Computer and Documents on the desktop open nothing. The Start menu lists the
