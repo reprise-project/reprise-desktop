@@ -14,10 +14,11 @@ use crate::compositor::State;
 use crate::dialog::{Dialog, Outcome};
 use crate::window::WindowId;
 
-/// A file dialog child running over dialog `over`.
+/// A file dialog child running over dialog `over`, from the press of Browse... on.
 #[derive(Clone, Debug)]
 pub struct Browsing {
-    pub pid: i32,
+    /// None while the child is starting.
+    pub pid: Option<i32>,
     pub over: u64,
     /// Opened while the child was ours and unreaped, so a signal never reaches a reused pid.
     pub pidfd: Option<Arc<OwnedFd>>,
@@ -77,9 +78,25 @@ fn run_child(env: &crate::spawn::SessionEnv, input: &Input, started: impl FnOnce
     if let Err(e) = child.wait() {
         log::warn!("browse: {e}");
     }
+    if answer.is_empty() {
+        return Output::default();
+    }
     toml::from_str(&answer)
         .map_err(|e| log::warn!("browse: answer: {e}"))
         .unwrap_or_default()
+}
+
+/// Ends the child of `b`, whose dialog left.
+fn end_child(b: &Browsing) {
+    let Some(pid) = b.pid else {
+        return;
+    };
+    log::info!("browse: pid {pid} outlived its dialog; ending it");
+    if let Some(fd) = &b.pidfd
+        && let Err(e) = crate::screenrecord::signal(fd, libc::SIGTERM)
+    {
+        log::debug!("browse: pid {pid}: {e}");
+    }
 }
 
 impl State {
@@ -93,20 +110,26 @@ impl State {
             self.focus_window(w);
             return;
         }
+        if self.dialogs.browsing.iter().any(|b| b.over == over) {
+            return;
+        }
+        self.dialogs.browsing.push(Browsing {
+            pid: None,
+            over,
+            pidfd: None,
+        });
         let input = input();
         let env = self.env.clone();
         let to_loop = self.fsjobs.sender();
         // The thread waits for as long as the child runs.
-        self.spawn_job(move || {
-            let mut pid = None;
+        let started = self.spawn_job(move || {
             let out = run_child(&env, &input, |p| {
-                pid = Some(p);
                 let pidfd = (crate::hang::process_pidfd(p))
                     .map_err(|e| log::warn!("browse: no pidfd for pid {p}: {e}"))
                     .ok()
                     .map(Arc::new);
                 let b = Browsing {
-                    pid: p,
+                    pid: Some(p),
                     over,
                     pidfd,
                 };
@@ -114,17 +137,24 @@ impl State {
                     let _ = tx.send(Box::new(move |state: &mut State| state.browse_started(b)));
                 }
             });
-            Box::new(move |state: &mut State| {
-                if let Some(pid) = pid {
-                    state.browse_answered(pid, out);
-                }
-            })
+            Box::new(move |state: &mut State| state.browse_answered(over, out))
         });
+        if !started {
+            self.dialogs.browsing.retain(|b| b.over != over);
+        }
     }
 
-    /// The child `b` started: its windows, mapped already or later, stand over its dialog.
+    /// The child `b` started: its windows, mapped already or later, stand over its dialog. One
+    /// whose dialog left while it started is ended.
     pub(crate) fn browse_started(&mut self, b: Browsing) {
-        let (pid, over) = (b.pid, b.over);
+        let (Some(pid), over) = (b.pid, b.over) else {
+            return;
+        };
+        if self.dialog_index(over).is_none() {
+            end_child(&b);
+            return;
+        }
+        self.dialogs.browsing.retain(|x| x.over != over);
         self.dialogs.browsing.push(b);
         let windows: Vec<WindowId> = (self.windows.iter())
             .filter(|w| self.client_pid(w.id) == Some(pid))
@@ -148,13 +178,8 @@ impl State {
         if gone.is_empty() {
             return;
         }
-        for b in gone {
-            log::info!("browse: pid {} outlived its dialog; ending it", b.pid);
-            if let Some(fd) = &b.pidfd
-                && let Err(e) = crate::screenrecord::signal(fd, libc::SIGTERM)
-            {
-                log::debug!("browse: pid {}: {e}", b.pid);
-            }
+        for b in &gone {
+            end_child(b);
         }
         for w in &mut self.windows {
             if w.over_dialog == Some(id) {
@@ -169,7 +194,7 @@ impl State {
     pub(crate) fn browse_over(&self, pid: Option<i32>) -> Option<u64> {
         let pid = pid?;
         (self.dialogs.browsing.iter())
-            .find(|b| b.pid == pid)
+            .find(|b| b.pid == Some(pid))
             .map(|b| b.over)
     }
 
@@ -183,10 +208,10 @@ impl State {
             })
     }
 
-    /// The child of `pid` exited with `out`: its dialog comes back up with the keyboard and takes
-    /// the pick.
-    pub(crate) fn browse_answered(&mut self, pid: i32, out: Output) {
-        let Some(at) = self.dialogs.browsing.iter().position(|b| b.pid == pid) else {
+    /// The child over dialog `over` exited with `out`, or never started: the dialog comes back up
+    /// with the keyboard and takes the pick.
+    pub(crate) fn browse_answered(&mut self, over: u64, out: Output) {
+        let Some(at) = self.dialogs.browsing.iter().position(|b| b.over == over) else {
             return;
         };
         let b = self.dialogs.browsing.remove(at);
@@ -264,7 +289,7 @@ mod tests {
         h.state.open_dialog(Dialog::run(&[]));
         let run = h.state.dialogs.views[0].id;
         h.state.browse_started(Browsing {
-            pid,
+            pid: Some(pid),
             over: run,
             pidfd: None,
         });
@@ -310,7 +335,7 @@ mod tests {
         assert!(h.state.dialogs.active, "Run has the keyboard back");
         assert_eq!(h.state.focused, None);
         h.state.browse_answered(
-            CHILD + 1,
+            run,
             Output {
                 paths: vec![b"/home/u/bin/my tool".to_vec()],
                 ..Default::default()
@@ -340,18 +365,64 @@ mod tests {
     }
 
     #[test]
+    fn browse_pressed_twice_before_the_child_maps_starts_one_child() {
+        use std::os::unix::fs::PermissionsExt;
+        const ALT: u32 = 56;
+        const B: u32 = 48;
+        let mut h = Harness::new();
+        crate::fsjobs::setup(&mut h.state);
+        h.output("o", 1024, 768);
+        let dir = crate::harness::scratch().join(format!("browse-twice-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let started = dir.join("started");
+        let _ = std::fs::remove_file(&started);
+        let portal = dir.join("reprise-portal");
+        let script = format!(
+            "#!/bin/sh\necho $$ >> '{}'\nexec sleep 30\n",
+            started.display()
+        );
+        std::fs::write(&portal, script).unwrap();
+        std::fs::set_permissions(&portal, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::env::var("PATH").unwrap_or_default();
+        (h.state.env.login).push(("PATH", format!("{}:{path}", dir.display())));
+        let starts = || {
+            std::fs::read_to_string(&started)
+                .map(|s| s.lines().count())
+                .unwrap_or(0)
+        };
+
+        h.state.open_dialog(Dialog::run(&[]));
+        h.key(ALT, true);
+        for _ in 0..2 {
+            h.key(B, true);
+            h.key(B, false);
+        }
+        h.key(ALT, false);
+        h.until("the child is tracked", |s| {
+            !s.dialogs.browsing.is_empty() && starts() > 0
+        });
+        h.run_for(300);
+        assert_eq!(starts(), 1, "one file dialog starts");
+        assert_eq!(h.state.dialogs.browsing.len(), 1, "one child is tracked");
+
+        h.state.close_all_dialogs();
+        assert!(h.state.dialogs.browsing.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_cancelled_child_leaves_runs_field_alone() {
         let mut h = Harness::new();
         h.output("o", 1024, 768);
         h.state.open_dialog(Dialog::run(&["notepad".to_string()]));
         let run = h.state.dialogs.views[0].id;
         h.state.browse_started(Browsing {
-            pid: CHILD + 2,
+            pid: Some(CHILD + 2),
             over: run,
             pidfd: None,
         });
         let before = h.state.dialogs.views[0].dialog.field.clone();
-        h.state.browse_answered(CHILD + 2, Output::default());
+        h.state.browse_answered(run, Output::default());
         assert_eq!(h.state.dialogs.views[0].dialog.field, before);
         assert!(h.state.dialogs.active, "Run has the keyboard");
     }
