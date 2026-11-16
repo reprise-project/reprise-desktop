@@ -6,6 +6,7 @@ use crate::controls::menu::{PopupMenu, level_shadow};
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
 use crate::theme::Theme;
+use std::time::Instant;
 
 /// What a level's popup opens off: in the owner's coordinates for a root, in the parent level's
 /// for a submenu.
@@ -67,6 +68,14 @@ pub trait Hosted {
     fn host(&mut self);
     /// Closes it without a pick: the compositor dismissed the popups.
     fn dismiss(&mut self);
+    /// When a hovered submenu row opens or closes ([`PopupMenu::due`]).
+    fn due(&self) -> Option<Instant> {
+        None
+    }
+    /// Opens or closes what [`Hosted::due`] named once `now` passes it; `true` when it changed.
+    fn settle(&mut self, _now: Instant) -> bool {
+        false
+    }
 }
 
 impl<T: Hosted + ?Sized> Hosted for &mut T {
@@ -94,6 +103,12 @@ impl<T: Hosted + ?Sized> Hosted for &mut T {
     }
     fn dismiss(&mut self) {
         (**self).dismiss();
+    }
+    fn due(&self) -> Option<Instant> {
+        (**self).due()
+    }
+    fn settle(&mut self, now: Instant) -> bool {
+        (**self).settle(now)
     }
 }
 
@@ -136,5 +151,11 @@ impl<T: Chain> Hosted for Option<T> {
     }
     fn dismiss(&mut self) {
         *self = None;
+    }
+    fn due(&self) -> Option<Instant> {
+        self.as_ref().and_then(|t| t.chain().due())
+    }
+    fn settle(&mut self, now: Instant) -> bool {
+        self.as_mut().is_some_and(|t| t.chain_mut().settle(now))
     }
 }

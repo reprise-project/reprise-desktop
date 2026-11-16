@@ -200,23 +200,8 @@ impl Calculator {
         self.alt_arm.interrupt();
         let lay = self.bar_layout(ctx);
         let px = ctx.theme.fonts.size_px;
-        let bar_key = match k.sym {
-            keysym::F10 => Some(Key::Activate),
-            _ if !self.bar.is_active() => None,
-            keysym::ESCAPE => Some(Key::Escape),
-            keysym::LEFT | keysym::KP_LEFT => Some(Key::Left),
-            keysym::RIGHT | keysym::KP_RIGHT => Some(Key::Right),
-            keysym::UP | keysym::KP_UP => Some(Key::Up),
-            keysym::DOWN | keysym::KP_DOWN => Some(Key::Down),
-            keysym::RETURN | keysym::KP_ENTER => Some(Key::Enter),
-            _ => None,
-        };
         let access = k.utf8.as_deref().and_then(|s| s.chars().next());
-        let bar_key = bar_key.or_else(|| {
-            access
-                .filter(|c| c.is_alphanumeric() && (k.mods.alt || self.bar.is_active()))
-                .map(|c| Key::Char(c, k.mods.alt))
-        });
+        let bar_key = Key::from_input(k.sym, k.utf8.as_deref(), k.mods.shift, k.mods.alt);
         if let Some(bk) = bar_key {
             match self.bar.key(bk, &lay, &ctx.text, &ctx.theme, px) {
                 Action::Chosen { title, row, .. } => return self.command(title, row),

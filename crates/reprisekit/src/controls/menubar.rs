@@ -631,8 +631,33 @@ pub enum Key {
     Right,
     Up,
     Down,
+    Home,
+    End,
     Enter,
     Char(char, bool),
+}
+
+impl Key {
+    /// The bar's key in keysym `sym` typing `utf8`: F10 arms the bar (Shift+F10 is the context
+    /// menu's), an open menu's keys ([`MenuKey::from_keysym`]), and a letter or digit as an
+    /// access key, `alt` saying whether Alt holds it.
+    pub fn from_input(sym: u32, utf8: Option<&str>, shift: bool, alt: bool) -> Option<Key> {
+        use crate::controls::menu::MenuKey;
+        if sym == crate::textedit::keysym::F10 {
+            return (!shift).then_some(Key::Activate);
+        }
+        Some(match MenuKey::from_keysym(sym, utf8)? {
+            MenuKey::Up => Key::Up,
+            MenuKey::Down => Key::Down,
+            MenuKey::Left => Key::Left,
+            MenuKey::Right => Key::Right,
+            MenuKey::Home => Key::Home,
+            MenuKey::End => Key::End,
+            MenuKey::Enter => Key::Enter,
+            MenuKey::Escape => Key::Escape,
+            MenuKey::Char(c) => Key::Char(c, alt),
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -786,6 +811,8 @@ impl Bar {
         let menu_key = match key {
             Key::Up => Some(MenuKey::Up),
             Key::Down => Some(MenuKey::Down),
+            Key::Home => Some(MenuKey::Home),
+            Key::End => Some(MenuKey::End),
             Key::Left => Some(MenuKey::Left),
             Key::Right => Some(MenuKey::Right),
             Key::Enter => Some(MenuKey::Enter),
@@ -869,6 +896,7 @@ impl Bar {
                 }
                 Action::Redraw
             }
+            Key::Home | Key::End => Action::Redraw,
         }
     }
 
@@ -1083,6 +1111,12 @@ impl Hosted for Bar {
     }
     fn dismiss(&mut self) {
         self.close();
+    }
+    fn due(&self) -> Option<std::time::Instant> {
+        self.popup.as_ref().and_then(|p| p.due())
+    }
+    fn settle(&mut self, now: std::time::Instant) -> bool {
+        self.popup.as_mut().is_some_and(|p| p.settle(now))
     }
 }
 
@@ -1572,6 +1606,8 @@ mod bar_tests {
             m,
             px,
         );
+        let due = b.due().expect("the submenu waits out the hover delay");
+        assert!(b.settle(due));
         let popup = b.popup.clone().unwrap();
         assert_eq!(popup.depth(), 2);
         let child = &popup.levels()[1];

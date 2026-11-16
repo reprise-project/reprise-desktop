@@ -12,7 +12,6 @@ use reprisekit::controls::tabstrip::{self, AdderPart, DocHit, DocLayout, Drag, T
 use reprisekit::controls::toolbar::{self, Item, Part, ToolBar};
 use reprisekit::look::{self, Paint};
 use reprisekit::raster::{Canvas, Rect};
-use reprisekit::textedit::keysym;
 use reprisekit::theme::Theme;
 
 use crate::Terminal;
@@ -420,17 +419,8 @@ impl Terminal {
     }
 
     pub(crate) fn menu_key(&mut self, k: &KeyInput, ctx: &Ctx) -> Reply {
-        let key = match k.sym {
-            keysym::ESCAPE => MenuKey::Escape,
-            keysym::UP | keysym::KP_UP => MenuKey::Up,
-            keysym::DOWN | keysym::KP_DOWN => MenuKey::Down,
-            keysym::LEFT | keysym::KP_LEFT => MenuKey::Left,
-            keysym::RIGHT | keysym::KP_RIGHT => MenuKey::Right,
-            keysym::RETURN | keysym::KP_ENTER => MenuKey::Enter,
-            _ => match k.utf8.as_deref().and_then(|s| s.chars().next()) {
-                Some(c) if c.is_alphanumeric() => MenuKey::Char(c),
-                _ => return Reply::none(),
-            },
+        let Some(key) = MenuKey::from_keysym(k.sym, k.utf8.as_deref()) else {
+            return Reply::none();
         };
         let Some(m) = &mut self.w.chrome.menu else {
             return Reply::none();

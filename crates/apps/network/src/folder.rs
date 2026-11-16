@@ -542,7 +542,7 @@ impl Folder {
     /// Enter acts as a double click, and Shift+F10 or the Menu key opens the row's menu.
     pub fn key(&mut self, k: &KeyInput, s: &nm::Snapshot, ctx: &Ctx) -> Outcome {
         if let Some(p) = self.popup.as_mut() {
-            let Some(mk) = menu_key(k) else {
+            let Some(mk) = MenuKey::from_keysym(k.sym, k.utf8.as_deref()) else {
                 return Outcome::None;
             };
             let act = p.chain.key(&p.tree, mk, &popup_ctx(ctx));
@@ -726,18 +726,6 @@ fn popup_ctx(ctx: &Ctx) -> MenuCtx<'_> {
         px: ctx.theme.fonts.size_px,
         within: ctx.menu_within(),
     }
-}
-
-fn menu_key(k: &KeyInput) -> Option<MenuKey> {
-    Some(match k.sym {
-        keysym::UP | keysym::KP_UP => MenuKey::Up,
-        keysym::DOWN | keysym::KP_DOWN => MenuKey::Down,
-        keysym::LEFT | keysym::KP_LEFT => MenuKey::Left,
-        keysym::RIGHT | keysym::KP_RIGHT => MenuKey::Right,
-        keysym::RETURN | keysym::KP_ENTER => MenuKey::Enter,
-        keysym::ESCAPE => MenuKey::Escape,
-        _ => MenuKey::Char(k.utf8.as_ref()?.chars().next()?),
-    })
 }
 
 #[cfg(test)]

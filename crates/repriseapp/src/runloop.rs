@@ -230,6 +230,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         field_drag: None,
         edit_menu: Default::default(),
         menu_popups: None,
+        menu_hover: None,
         asked_drop: None,
         file_box: None,
         ticking: Vec::new(),

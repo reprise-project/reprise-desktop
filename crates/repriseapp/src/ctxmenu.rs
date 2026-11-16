@@ -7,7 +7,6 @@ use reprisekit::access::accesskit::NodeId;
 use reprisekit::controls::hosted::Chain;
 use reprisekit::controls::menu::{MenuAction, MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu};
 use reprisekit::raster::Canvas;
-use reprisekit::textedit::keysym;
 
 pub struct Popup<A> {
     tree: MenuTree,
@@ -80,7 +79,7 @@ impl<A: Clone> Popup<A> {
     }
 
     pub fn key(&mut self, k: &KeyInput, ctx: &Ctx) -> Step<A> {
-        let Some(mk) = menu_key(k) else {
+        let Some(mk) = MenuKey::from_keysym(k.sym, k.utf8.as_deref()) else {
             return Step::None;
         };
         let act = self.chain.key(&self.tree, mk, &menu_ctx(ctx));
@@ -108,17 +107,4 @@ fn menu_ctx(ctx: &Ctx) -> MenuCtx<'_> {
         px: ctx.theme.fonts.size_px,
         within: ctx.menu_within(),
     }
-}
-
-/// The key an open menu takes, if it takes this one.
-fn menu_key(k: &KeyInput) -> Option<MenuKey> {
-    Some(match k.sym {
-        keysym::UP | keysym::KP_UP => MenuKey::Up,
-        keysym::DOWN | keysym::KP_DOWN => MenuKey::Down,
-        keysym::LEFT | keysym::KP_LEFT => MenuKey::Left,
-        keysym::RIGHT | keysym::KP_RIGHT => MenuKey::Right,
-        keysym::RETURN | keysym::KP_ENTER => MenuKey::Enter,
-        keysym::ESCAPE => MenuKey::Escape,
-        _ => MenuKey::Char(k.utf8.as_ref()?.chars().next()?),
-    })
 }
