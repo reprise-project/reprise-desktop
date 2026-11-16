@@ -41,9 +41,9 @@ impl State {
         if self.panels.region.is_some() || self.desktop_locked() {
             return;
         }
-        // The overlay takes the button, so whatever it held ends here
-        // rather than on a release it never sees.
-        self.cancel_interaction();
+        // The overlay takes the pointer, so held buttons are let go here: what they held ends
+        // and the client hears each release. Before `panels.region` is set, which would take them.
+        self.release_all_buttons(InputTime::now());
         let tree = self.scene.tree_create(self.layers.overlay);
         crate::glass::leave_out(&mut self.scene, tree);
         self.scene.raise_to_top(tree);

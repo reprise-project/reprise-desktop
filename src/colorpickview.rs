@@ -38,6 +38,8 @@ pub struct ColorPickView {
     tree: TreeId,
     loupe: BufferId,
     asker: Asker,
+    /// The buttons pressed since it opened: only their releases act.
+    pressed: Vec<u32>,
 }
 
 /// The picker's point over the stills.
@@ -150,8 +152,13 @@ impl State {
         if stills.is_empty() {
             return asker.cancel();
         }
-        // The picker takes the button, so whatever it held ends here.
-        self.cancel_interaction();
+        self.show_color_pick(stills, asker);
+    }
+
+    fn show_color_pick(&mut self, stills: Vec<(Rect, Still)>, asker: Asker) {
+        // The picker takes the pointer, so held buttons are let go here: what they held ends and
+        // the client hears each release. Before `panels.colorpick` is set, which would take them.
+        self.release_all_buttons(InputTime::now());
         let tree = self.scene.tree_create(self.layers.overlay);
         crate::glass::leave_out(&mut self.scene, tree);
         self.scene.raise_to_top(tree);
@@ -168,6 +175,7 @@ impl State {
             tree,
             loupe,
             asker,
+            pressed: Vec::new(),
         };
         self.panels.colorpick = Some(v);
         self.clear_pointer_focus();
@@ -205,14 +213,22 @@ impl State {
         }
     }
 
-    /// A button came up: the left picks the point under it, the right
-    /// cancels. Presses do nothing, so the release is the picker's too.
+    /// A button went down or came up: the release of one pressed since it opened acts, the left
+    /// picking the point under it and the right cancelling.
     pub fn color_pick_button(&mut self, button: u32, pressed: bool) {
         let p = self.pointer_location();
         let Some(v) = self.panels.colorpick.as_mut() else {
             return;
         };
-        if pressed || !matches!(button, BTN_LEFT | BTN_RIGHT) {
+        if pressed {
+            v.pressed.push(button);
+            return;
+        }
+        let Some(i) = v.pressed.iter().position(|&b| b == button) else {
+            return;
+        };
+        v.pressed.remove(i);
+        if !matches!(button, BTN_LEFT | BTN_RIGHT) {
             return;
         }
         v.pick.motion((p.x as i32, p.y as i32));
@@ -328,6 +344,63 @@ mod tests {
     }
 
     #[test]
+    fn a_button_held_as_an_overlay_opens_is_let_go_and_its_release_does_nothing() {
+        use crate::harness::LEFT;
+        use crate::input::Interaction;
+        for (what, picker) in [("the region overlay", false), ("the colour picker", true)] {
+            let mut h = crate::harness::Harness::new();
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+            let w = h.state.win(t.id).expect("the window");
+            let (client, cap, x, y) = (w.geom.client, w.geom.caption, w.x, w.y);
+            let mid = |r: Rect| {
+                (
+                    f64::from(x + r.x + r.width / 2),
+                    f64::from(y + r.y + r.height / 2),
+                )
+            };
+            let (px, py) = mid(client);
+            h.pointer_to(px, py);
+            h.button(LEFT, true);
+            if picker {
+                let r = h.state.layout_box(None);
+                let still = flat((r.width, r.height), 0xff11_2233);
+                h.state.show_color_pick(vec![(r, still)], Asker::Bind);
+            } else {
+                h.state.open_region(false);
+            }
+            h.button(LEFT, false);
+            h.roundtrip(&mut c);
+            assert_eq!(
+                c.side.buttons,
+                [(LEFT, true), (LEFT, false)],
+                "{what}: the window hears the release once"
+            );
+            assert_eq!(h.state.buttons_down, 0, "{what}: no button counts as down");
+            let pointer = h.state.seat.get_pointer().expect("a pointer");
+            assert!(!pointer.is_grabbed(), "{what}: no click grab is left");
+            assert!(h.state.panels.takes_pointer(), "{what} is still open");
+            h.state.close_region();
+            h.state.cancel_color_pick();
+            let (cx, cy) = mid(cap);
+            h.pointer_to(cx, cy);
+            h.button(LEFT, true);
+            assert!(
+                matches!(h.state.interaction, Interaction::Move { .. }),
+                "{what}: a caption press moves the window"
+            );
+            h.pointer_to(cx + 40.0, cy + 30.0);
+            h.button(LEFT, false);
+            assert_eq!(
+                h.state.interaction,
+                Interaction::Idle,
+                "{what}: the move ends on its release"
+            );
+        }
+    }
+
+    #[test]
     fn the_loupe_reads_as_a_colour_well_valued_by_the_pixel_on_the_output_under_the_point() {
         use reprisekit::access::accesskit::Role;
         let t = pick_access(&view((120, 100))).expect("a tree");
@@ -373,6 +446,7 @@ mod tests {
             tree,
             loupe,
             asker: Asker::Bind,
+            pressed: Vec::new(),
         });
         click_lock_cancel(&mut h);
         assert_eq!(lock_input(&h), "", "Cancel cleared the field");
@@ -391,6 +465,7 @@ mod tests {
             tree,
             loupe,
             asker: Asker::Bind,
+            pressed: Vec::new(),
         });
         s.lock.console.as_mut().unwrap().set_input("secret");
         h.remote_pointer_to(2200.0, 300.0);
