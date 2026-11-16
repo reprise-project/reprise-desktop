@@ -7,12 +7,12 @@
 //! The host owns the devices and the writes: it hands the popup a [`Mix`] with [`VolumePopup::sync`] and acts on the [`Event`]s at once; there is no Apply.
 
 use crate::classic::widgets::ScrollHit;
+use crate::controls::columns::{self, Bar, Hover, Remap, Strip};
 use crate::controls::combo::Combo;
 use crate::look::widgets::MediaGlyph;
 use crate::pointer::Pointer;
 use crate::raster::Canvas;
-use crate::trackbar::{self, TrackBar};
-use std::cell::Cell;
+use crate::trackbar::TrackBar;
 
 mod access_tree;
 mod draw;
@@ -308,13 +308,7 @@ pub struct VolumePopup {
     pub cues: bool,
     pub ptr: Pointer<Part>,
     pub playing: Option<NowPlaying>,
-    /// Where the pointer last pressed or moved on the popup; `None` once
-    /// it left. A key or the device moving a thumb finds the part under
-    /// it again.
-    point: Option<(i32, i32)>,
-    grab: i32,
-    /// Whether the last draw's look lights a part under the pointer.
-    styled: Cell<bool>,
+    hover: Hover,
 }
 
 fn combo_focus(p: Pick) -> Focus {
@@ -336,9 +330,7 @@ impl VolumePopup {
             cues: false,
             ptr: Pointer::new(),
             playing: mix.playing.clone(),
-            point: None,
-            grab: 0,
-            styled: Cell::new(false),
+            hover: Hover::default(),
         }
     }
 
@@ -352,39 +344,22 @@ impl VolumePopup {
     /// Take the devices and programs from the host. Programs are matched by key: one that stays keeps its focus, light and drag; one that left sends its focus to master and ends its drag. A held thumb keeps its own position since the device lags the drag's writes. Changed combos close their lists; `Redraw` when anything shown moved.
     pub fn sync(&mut self, lay: &Layout, mix: &Mix) -> Event {
         let mut columns = columns(mix);
-        let moved: Vec<Option<usize>> = self
-            .columns
-            .iter()
-            .map(|old| match &old.key {
-                None => Some(0),
-                Some(k) => columns.iter().position(|c| c.key.as_ref() == Some(k)),
-            })
-            .collect();
-        let remap = |i: usize| moved.get(i).copied().flatten();
-        if let Some(Part::Thumb(i)) = self.ptr.held()
-            && let Some(j) = remap(i)
-        {
-            columns[j].volume.set(self.columns[i].volume.pos);
-        }
-        // A program's combo keeps its open list while its rows stay.
-        let rows = app_outputs(mix);
-        let mut rebuilt = vec![false; columns.len()];
-        for (i, old) in self.columns.iter_mut().enumerate() {
-            if let (Some(j), Some(mut c)) = (remap(i), old.output.take())
-                && let Some(a) = j.checked_sub(1).and_then(|a| mix.apps.get(a))
-                && columns[j].output.is_some()
-            {
-                rebuilt[j] = c.sync_names(&rows, Some(app_output(a)), LIST_ROWS);
-                columns[j].output = Some(c);
-            }
-        }
-        let has_combo = |j: usize| columns.get(j).is_some_and(|c| c.output.is_some());
+        let held: Option<(usize, Bar<Column>)> = match self.ptr.held() {
+            Some(Part::Thumb(i)) => Some((i, |c| &mut c.volume)),
+            _ => None,
+        };
+        let names = app_outputs(mix);
+        let rows = |j: usize, _: &Column| {
+            let a = mix.apps.get(j.checked_sub(1)?)?;
+            Some((names.clone(), Some(app_output(a))))
+        };
+        let remap = Remap::sync(&mut self.columns, &mut columns, held, rows, LIST_ROWS);
         let can = |t: Transport| mix.playing.as_ref().is_some_and(|np| np.can(t));
         self.focus = match self.focus {
-            Focus::Thumb(i) => remap(i).map_or(Focus::Thumb(0), Focus::Thumb),
-            Focus::Mute(i) => remap(i).map_or(Focus::Thumb(0), Focus::Mute),
-            Focus::Device(i) => match remap(i) {
-                Some(j) if has_combo(j) => Focus::Device(j),
+            Focus::Thumb(i) => remap.get(i).map_or(Focus::Thumb(0), Focus::Thumb),
+            Focus::Mute(i) => remap.get(i).map_or(Focus::Thumb(0), Focus::Mute),
+            Focus::Device(i) => match remap.get(i) {
+                Some(j) if remap.has_combo(j) => Focus::Device(j),
                 Some(j) => Focus::Thumb(j),
                 None => Focus::Thumb(0),
             },
@@ -395,46 +370,33 @@ impl VolumePopup {
         let input = self.input.sync_names(&mix.inputs, mix.input, LIST_ROWS);
         let bar = columns.len() - 1 > MAX_SHOWN;
         self.ptr = std::mem::take(&mut self.ptr).carry(|p| match p {
-            Part::Thumb(i) => remap(i).map(Part::Thumb),
-            Part::Mute(i) => remap(i).map(Part::Mute),
+            Part::Thumb(i) => remap.get(i).map(Part::Thumb),
+            Part::Mute(i) => remap.get(i).map(Part::Mute),
             Part::Combo(Pick::Device(Dir::Output)) if output => None,
             Part::Combo(Pick::Device(Dir::Input)) if input => None,
-            Part::Combo(Pick::App(i)) => remap(i)
-                .filter(|&j| has_combo(j) && !rebuilt[j])
-                .map(|j| Part::Combo(Pick::App(j))),
+            Part::Combo(Pick::App(i)) => remap.combo_kept(i).map(|j| Part::Combo(Pick::App(j))),
             Part::Bar(_) if !bar => None,
             Part::Media(t) if !can(t) => None,
             p => Some(p),
         });
         self.columns = columns;
         self.playing = mix.playing.clone();
-        self.first = self
-            .first
-            .min(self.columns.len().saturating_sub(1 + MAX_SHOWN));
-        self.rehit(lay)
+        self.synced(lay)
     }
 
     pub fn dragging(&self) -> bool {
         matches!(self.ptr.held(), Some(Part::Thumb(_)))
     }
+}
 
-    /// `lay` with every shown thumb where its volume puts it now.
-    fn current(&self, lay: &Layout) -> Layout {
-        let columns = lay
-            .columns
-            .iter()
-            .zip(&self.columns)
-            .map(|(cl, c)| {
-                cl.as_ref().map(|cl| ColumnLayout {
-                    track: trackbar::at_position(&cl.track, c.volume.pos),
-                    ..cl.clone()
-                })
-            })
-            .collect();
-        Layout {
-            columns,
-            ..lay.clone()
-        }
+impl columns::Column for Column {
+    /// `None` on master.
+    type Key = Option<String>;
+    fn key(&self) -> &Option<String> {
+        &self.key
+    }
+    fn output(&mut self) -> &mut Option<Combo> {
+        &mut self.output
     }
 }
 

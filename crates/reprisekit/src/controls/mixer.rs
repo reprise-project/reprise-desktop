@@ -19,10 +19,9 @@
 //! The host owns the devices and the writes: it hands the mixer its
 //! [`Line`]s with [`Mixer::sync`] and acts on the [`Event`]s at once.
 
+use super::columns::{self, Bar, Hover, Remap, Strip, StripEvent, notches};
 use crate::access::{self, Tree, accesskit};
-use crate::classic::widgets::{
-    ScrollHit, ScrollParts, scrollbar_hit, scrollbar_parts, scrollbar_pos_at,
-};
+use crate::classic::widgets::{ScrollHit, ScrollParts, scrollbar_hit, scrollbar_parts};
 use crate::controls::combo::{self, Combo, ComboLit};
 use crate::controls::form;
 use crate::look::Paint;
@@ -30,7 +29,7 @@ use crate::look::widgets::{
     draw_button, draw_checkbox, draw_checkbox_disabled, draw_disabled_label, draw_focus_ring,
     draw_hscrollbar, draw_label, draw_trackbar, draw_vertical_trackbar,
 };
-use crate::pointer::{Interaction, Lit, Pointer, WHEEL_ROWS};
+use crate::pointer::Pointer;
 use crate::raster::{Canvas, Rect};
 use crate::style::Part as StylePart;
 use crate::text::{Align, DialogFont, TextRenderer};
@@ -38,7 +37,6 @@ use crate::textedit::Caret;
 use crate::theme::{TextUnits, Theme};
 use crate::trackbar::{self, TrackBar};
 use accesskit::{NodeId, Role};
-use std::cell::Cell;
 
 /// Volume positions: 0 to 60, a tick every tenth.
 pub const STEPS: usize = 61;
@@ -268,13 +266,7 @@ pub struct Mixer {
     /// Whether a key has been pressed: only then is the focus ring drawn.
     pub cues: bool,
     pub ptr: Pointer<Part>,
-    /// Where the pointer last pressed or moved; `None` once it left.
-    point: Option<(i32, i32)>,
-    /// How far right of its left edge the held scrollbar thumb was
-    /// grabbed.
-    grab: i32,
-    /// Whether the last draw's look lights a part under the pointer.
-    styled: Cell<bool>,
+    hover: Hover,
 }
 
 /// Where one column's parts go.
@@ -698,7 +690,7 @@ pub fn hit(m: &Mixer, lay: &Layout, x: i32, y: i32) -> Hit {
 /// scrollbar, then an open output list over them. The focus ring shows
 /// once a key was pressed.
 pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, m: &Mixer, lay: &Layout) {
-    m.styled.set(theme.look.lights_pointer());
+    m.hover.styled.set(theme.look.lights_pointer());
     let text = text.dialog(DialogFont::ShellDlg);
     let p = &Paint {
         s: 1,
@@ -935,9 +927,7 @@ impl Mixer {
             focus: Focus::Volume(0),
             cues: false,
             ptr: Pointer::new(),
-            point: None,
-            grab: 0,
-            styled: Cell::new(false),
+            hover: Hover::default(),
         }
     }
 
@@ -956,32 +946,6 @@ impl Mixer {
         self.columns.get(i)?.output.as_ref()
     }
 
-    fn output_mut(&mut self, i: usize) -> Option<&mut Combo> {
-        self.columns.get_mut(i)?.output.as_mut()
-    }
-
-    /// The column whose output list is open.
-    fn open_list(&self) -> Option<usize> {
-        (0..self.columns.len()).find(|&i| self.output(i).is_some_and(|c| c.open.is_some()))
-    }
-
-    fn close_list(&mut self) {
-        if let Some(c) = self.open_list().and_then(|i| self.output_mut(i)) {
-            c.open = None;
-        }
-    }
-
-    /// What column `i`'s output combo act asks: a redraw, or for a pick the move.
-    fn act(&self, i: usize, a: combo::Act) -> Event {
-        match a {
-            combo::Act::None => Event::None,
-            combo::Act::Redraw => Event::Redraw,
-            combo::Act::Picked(row) => {
-                Event::Output(self.columns[i].key.clone(), row.checked_sub(1))
-            }
-        }
-    }
-
     /// Take the lines from the host. Columns are matched by key: one that
     /// stays keeps its focus, light and drag wherever it moved to; one
     /// that left takes the focus to the first column and ends its drag.
@@ -990,44 +954,19 @@ impl Mixer {
     /// pointer turns hot or cold; `Redraw` when that shows.
     pub fn sync(&mut self, lay: &Layout, lines: &[Line]) -> Event {
         let mut columns: Vec<Column> = lines.iter().map(Column::new).collect();
-        let moved: Vec<Option<usize>> = self
-            .columns
-            .iter()
-            .map(|old| columns.iter().position(|c| c.key == old.key))
-            .collect();
-        let remap = |i: usize| moved.get(i).copied().flatten();
-        match self.ptr.held() {
-            Some(Part::Volume(i)) => {
-                if let Some(j) = remap(i) {
-                    columns[j].volume.set(self.columns[i].volume.pos);
-                }
-            }
-            Some(Part::Balance(i)) => {
-                if let Some(j) = remap(i) {
-                    columns[j].balance.set(self.columns[i].balance.pos);
-                }
-            }
-            _ => {}
-        }
-        // An output combo keeps its open list while its rows stay.
-        let mut rebuilt = vec![false; columns.len()];
-        for (i, old) in self.columns.iter_mut().enumerate() {
-            if let (Some(j), Some(mut c)) = (remap(i), old.output.take())
-                && columns[j].output.is_some()
-                && let Some(route) = &columns[j].route
-            {
-                let (rows, picked) = route.rows();
-                rebuilt[j] = c.sync_names(&rows, picked, OUTPUT_ROWS);
-                columns[j].output = Some(c);
-            }
-        }
-        let has_output = |j: usize| columns.get(j).is_some_and(|c| c.output.is_some());
+        let held: Option<(usize, Bar<Column>)> = match self.ptr.held() {
+            Some(Part::Volume(i)) => Some((i, |c| &mut c.volume)),
+            Some(Part::Balance(i)) => Some((i, |c| &mut c.balance)),
+            _ => None,
+        };
+        let rows = |_, c: &Column| c.route.as_ref().map(Route::rows);
+        let remap = Remap::sync(&mut self.columns, &mut columns, held, rows, OUTPUT_ROWS);
         self.focus = match self.focus {
-            Focus::Balance(i) => remap(i).map_or(Focus::Volume(0), Focus::Balance),
-            Focus::Volume(i) => remap(i).map_or(Focus::Volume(0), Focus::Volume),
-            Focus::Check(i) => remap(i).map_or(Focus::Volume(0), Focus::Check),
-            Focus::Output(i) => match remap(i) {
-                Some(j) if has_output(j) => Focus::Output(j),
+            Focus::Balance(i) => remap.get(i).map_or(Focus::Volume(0), Focus::Balance),
+            Focus::Volume(i) => remap.get(i).map_or(Focus::Volume(0), Focus::Volume),
+            Focus::Check(i) => remap.get(i).map_or(Focus::Volume(0), Focus::Check),
+            Focus::Output(i) => match remap.get(i) {
+                Some(j) if remap.has_combo(j) => Focus::Output(j),
                 Some(j) => Focus::Volume(j),
                 None => Focus::Volume(0),
             },
@@ -1035,17 +974,14 @@ impl Mixer {
             Focus::Advanced => Focus::Advanced,
         };
         self.ptr = std::mem::take(&mut self.ptr).carry(|p| match p {
-            Part::Balance(i) => remap(i).map(Part::Balance),
-            Part::Volume(i) => remap(i).map(Part::Volume),
-            Part::Check(i) => remap(i).map(Part::Check),
-            Part::Output(i) => remap(i)
-                .filter(|&j| has_output(j) && !rebuilt[j])
-                .map(Part::Output),
+            Part::Balance(i) => remap.get(i).map(Part::Balance),
+            Part::Volume(i) => remap.get(i).map(Part::Volume),
+            Part::Check(i) => remap.get(i).map(Part::Check),
+            Part::Output(i) => remap.combo_kept(i).map(Part::Output),
             p => Some(p),
         });
         self.columns = columns;
-        self.first = self.first.min(self.last_first(lay.shown));
-        self.rehit(lay)
+        self.synced(lay)
     }
 
     /// Show or hide the Advanced button.
@@ -1074,75 +1010,6 @@ impl Mixer {
     /// Whether a thumb is held.
     pub fn dragging(&self) -> bool {
         matches!(self.ptr.held(), Some(Part::Volume(_) | Part::Balance(_)))
-    }
-
-    /// `lay` with every shown thumb where its column puts it now.
-    fn current(&self, lay: &Layout) -> Layout {
-        let columns = lay
-            .columns
-            .iter()
-            .zip(&self.columns)
-            .map(|(cl, c)| {
-                cl.as_ref().map(|cl| ColumnLayout {
-                    balance: trackbar::at_position(&cl.balance, c.balance.pos),
-                    volume: trackbar::at_position(&cl.volume, c.volume.pos),
-                    ..cl.clone()
-                })
-            })
-            .collect();
-        Layout {
-            columns,
-            ..lay.clone()
-        }
-    }
-
-    fn part_at(&self, lay: &Layout, x: i32, y: i32) -> Option<Part> {
-        let col = |i: usize| self.columns.get(i);
-        match hit(self, lay, x, y) {
-            Hit::Balance(i, trackbar::Hit::Thumb) if col(i)?.balance.enabled => {
-                Some(Part::Balance(i))
-            }
-            Hit::Volume(i, trackbar::Hit::Thumb) if col(i)?.live => Some(Part::Volume(i)),
-            Hit::Check(i) if col(i)?.live => Some(Part::Check(i)),
-            Hit::Output(i, _) if self.output(i)?.enabled => Some(Part::Output(i)),
-            Hit::Advanced if col(0)?.live => Some(Part::Advanced),
-            Hit::Bar(h) => Some(Part::Bar(h)),
-            _ => None,
-        }
-    }
-
-    fn rehit(&mut self, lay: &Layout) -> Event {
-        let Some((x, y)) = self.point else {
-            return Event::None;
-        };
-        let over = self.part_at(&self.current(lay), x, y);
-        let changed = self.ptr.motion(over);
-        self.lit(changed)
-    }
-
-    /// `Redraw` when what draws changed and the look shows it. A held
-    /// scrollbar part or button shows pressed in every look.
-    fn lit(&self, changed: bool) -> Event {
-        let pressed = matches!(self.ptr.held(), Some(Part::Bar(_) | Part::Advanced));
-        if changed && (self.styled.get() || pressed) {
-            Event::Redraw
-        } else {
-            Event::None
-        }
-    }
-
-    fn lit_from(&self, before: Lit<Part>) -> Event {
-        let changed = self.ptr.lit() != before;
-        if changed
-            && matches!(
-                before,
-                Some((Part::Bar(_) | Part::Advanced, Interaction::Pressed))
-            )
-        {
-            Event::Redraw
-        } else {
-            self.lit(changed)
-        }
     }
 
     fn slide_volume(&mut self, i: usize, f: impl FnOnce(&mut TrackBar) -> bool) -> Event {
@@ -1188,107 +1055,8 @@ impl Mixer {
         Event::Check(key, on)
     }
 
-    /// The focus order: each live column's balance (when it has one),
-    /// volume, check box and output combo (when it has one), the Advanced
-    /// button after the first column's.
-    fn focus_order(&self) -> Vec<Focus> {
-        let mut v = Vec::new();
-        for (i, c) in self.columns.iter().enumerate() {
-            if c.live {
-                if c.balance.enabled {
-                    v.push(Focus::Balance(i));
-                }
-                v.extend([Focus::Volume(i), Focus::Check(i)]);
-                if c.output.as_ref().is_some_and(|o| o.enabled) {
-                    v.push(Focus::Output(i));
-                }
-                if i == 0 && self.advanced {
-                    v.push(Focus::Advanced);
-                }
-            }
-        }
-        v
-    }
-
-    fn walk(&mut self, back: bool, shown: usize) {
-        let order = self.focus_order();
-        let n = order.len();
-        if n == 0 {
-            return;
-        }
-        let next = match order.iter().position(|f| *f == self.focus) {
-            Some(i) if back => (i + n - 1) % n,
-            Some(i) => (i + 1) % n,
-            None if back => n - 1,
-            None => 0,
-        };
-        self.focus = order[next];
-        self.reveal_focus(shown);
-    }
-
-    /// The column the focus is in.
-    fn focus_column(&self) -> usize {
-        match self.focus {
-            Focus::Balance(i) | Focus::Volume(i) | Focus::Check(i) | Focus::Output(i) => i,
-            Focus::Advanced => 0,
-        }
-    }
-
-    /// Scroll so the focused column shows.
-    fn reveal_focus(&mut self, shown: usize) {
-        self.show_column(self.focus_column(), shown);
-    }
-
-    fn show_column(&mut self, i: usize, shown: usize) {
-        self.first = self.first.min(self.last_first(shown));
-        if i < self.first {
-            self.first = i;
-        } else if i >= self.first + shown {
-            self.first = i + 1 - shown;
-        }
-    }
-
-    fn last_first(&self, shown: usize) -> usize {
-        self.columns.len().saturating_sub(shown)
-    }
-
-    fn scroll_bar(&mut self, lay: &Layout, notches: i32) -> Event {
-        let last = self.last_first(lay.shown) as i64;
-        let first = (self.first as i64 + i64::from(notches)).clamp(0, last);
-        if first as usize == self.first {
-            return Event::None;
-        }
-        self.first = first as usize;
-        // A list scrolled out of view would go on taking the keys unseen.
-        self.close_list();
-        self.rehit(lay);
-        Event::Redraw
-    }
-
-    fn press_bar(&mut self, lay: &Layout, h: ScrollHit, x: i32) -> Event {
-        let last = self.last_first(lay.shown);
-        // A body that grew since the last scroll shows fewer columns
-        // past the first than `first` left room for.
-        self.first = self.first.min(last);
-        self.first = match h {
-            ScrollHit::Back => self.first.saturating_sub(1),
-            ScrollHit::Forward => (self.first + 1).min(last),
-            ScrollHit::PageBack => self.first.saturating_sub(lay.shown),
-            ScrollHit::PageForward => (self.first + lay.shown).min(last),
-            ScrollHit::Thumb => {
-                if let Some(bar) = lay.bar
-                    && let Some(thumb) = bar_parts(self, lay, bar).thumb
-                {
-                    self.grab = x - thumb.x;
-                }
-                self.first
-            }
-        };
-        Event::Redraw
-    }
-
     /// A reader's Focus on the control at (`x`, `y`): it takes the keyboard as Tab gives it,
-    /// without sliding, flipping or pressing it.
+    /// with its focus ring shown, without sliding, flipping or pressing it.
     pub fn focus_at(&mut self, lay: &Layout, x: i32, y: i32) -> Event {
         let lay = &self.current(lay);
         let f = match hit(self, lay, x, y) {
@@ -1299,12 +1067,7 @@ impl Mixer {
             Hit::Advanced => Focus::Advanced,
             _ => return Event::None,
         };
-        if self.focus == f || !self.focus_order().contains(&f) {
-            return Event::None;
-        }
-        self.close_list();
-        self.focus = f;
-        Event::Redraw
+        self.focus_to(f)
     }
 
     /// A reader's ScrollIntoView on column `i`: the columns scroll until it shows, the focus
@@ -1314,7 +1077,7 @@ impl Mixer {
             return Event::None;
         }
         let before = self.first;
-        self.show_column(i, lay.shown);
+        self.show_column(lay, i);
         if self.first == before {
             return Event::None;
         }
@@ -1329,20 +1092,9 @@ impl Mixer {
     /// list open, a press on it acts there and any other press closes it.
     pub fn press(&mut self, lay: &Layout, x: i32, y: i32) -> Event {
         let lay = &self.current(lay);
-        self.point = Some((x, y));
-        if let Some(i) = self.open_list() {
-            if let Hit::Output(j, h) = hit(self, lay, x, y)
-                && j == i
-            {
-                let a = self
-                    .output_mut(i)
-                    .map_or(combo::Act::None, |c| c.press_list(h));
-                return self.act(i, a);
-            }
-            self.close_list();
-            // Nothing under it acts at the release either.
-            self.ptr.clear();
-            return Event::Redraw;
+        self.hover.point = Some((x, y));
+        if let Some(ev) = self.press_open_list(lay, x, y) {
+            return ev;
         }
         let part = self.part_at(lay, x, y);
         let sticky = matches!(
@@ -1377,7 +1129,7 @@ impl Mixer {
             }
             Hit::Output(i, combo::Hit::Field | combo::Hit::Drop) if part.is_some() => {
                 self.focus = Focus::Output(i);
-                if let Some(c) = self.output_mut(i) {
+                if let Some(c) = self.pick_mut(i) {
                     c.toggle();
                 }
                 Event::Redraw
@@ -1390,7 +1142,7 @@ impl Mixer {
     /// The pointer moved: a held thumb follows it, and the held scrollbar
     /// thumb scrolls the columns.
     pub fn motion(&mut self, lay: &Layout, x: i32, y: i32) -> Event {
-        self.point = Some((x, y));
+        self.hover.point = Some((x, y));
         let shown = |i: usize| lay.columns.get(i).and_then(Option::as_ref);
         let moved = match self.ptr.held() {
             Some(Part::Volume(i)) => match shown(i) {
@@ -1407,20 +1159,7 @@ impl Mixer {
                 }
                 None => Event::None,
             },
-            Some(Part::Bar(ScrollHit::Thumb)) => match lay.bar {
-                Some(bar) => {
-                    let p = bar_parts(self, lay, bar);
-                    let to =
-                        scrollbar_pos_at(&p, x - self.grab, lay.shown, self.columns.len(), true);
-                    if to == self.first {
-                        Event::None
-                    } else {
-                        self.first = to;
-                        Event::Redraw
-                    }
-                }
-                None => Event::None,
-            },
+            Some(Part::Bar(ScrollHit::Thumb)) => self.drag_bar(lay, x),
             _ => Event::None,
         };
         let changed = self.ptr.motion(self.part_at(&self.current(lay), x, y));
@@ -1442,7 +1181,7 @@ impl Mixer {
     }
 
     pub fn leave(&mut self) -> Event {
-        self.point = None;
+        self.hover.point = None;
         let changed = self.ptr.leave();
         self.lit(changed)
     }
@@ -1451,15 +1190,10 @@ impl Mixer {
     /// scrolls it, over the scrollbar a column per notch; over a column it
     /// steps that column's volume a position per notch (down is quieter).
     pub fn scroll(&mut self, lay: &Layout, x: i32, y: i32, rows: i32) -> Event {
-        if let Some(i) = self.open_list()
-            && lay.output(i).is_some_and(|cl| cl.list.contains(x, y))
-        {
-            return match self.output_mut(i).is_some_and(|c| c.scroll(rows)) {
-                true => Event::Redraw,
-                false => Event::None,
-            };
+        if let Some(ev) = self.scroll_list(lay, x, y, rows) {
+            return ev;
         }
-        let notches = rows.signum() * (rows.abs() / WHEEL_ROWS).max(1);
+        let notches = notches(rows);
         let i = match hit(self, lay, x, y) {
             Hit::Balance(i, _)
             | Hit::Volume(i, _)
@@ -1487,53 +1221,35 @@ impl Mixer {
     /// scrolls it back first.
     pub fn key(&mut self, lay: &Layout, key: form::Key) -> Event {
         use form::Key as K;
-        let first = !self.cues;
-        self.cues = true;
-        if let Some(i) = self.open_list() {
-            let a = self.output_mut(i).map_or(combo::Act::None, |c| c.key(key));
-            return self.act(i, a);
-        }
-        let scrolled = self.first;
-        if !matches!(key, K::Tab { .. }) {
-            self.reveal_focus(lay.shown);
-        }
-        let ev = match (key, self.focus) {
+        let reveal = !matches!(key, K::Tab { .. });
+        self.key_with(lay, key, reveal, |m, key| match (key, m.focus) {
             (K::Tab { back }, _) => {
-                self.walk(back, lay.shown);
+                m.walk(lay, back);
                 Event::Redraw
             }
-            (K::Space, Focus::Check(i)) => self.flip(i),
-            (K::Space | K::Enter, Focus::Advanced) if self.advanced_live() => Event::Advanced,
-            (k, Focus::Output(i)) => {
-                let a = self.output_mut(i).map_or(combo::Act::None, |c| c.key(k));
-                self.act(i, a)
-            }
+            (K::Space, Focus::Check(i)) => m.flip(i),
+            (K::Space | K::Enter, Focus::Advanced) if m.advanced_live() => Event::Advanced,
+            (k, Focus::Output(i)) => m.on_combo(i, |c| c.key(k)),
             (k, Focus::Volume(i)) => match k {
-                K::Up | K::Right => self.slide_volume(i, |t| t.step(1)),
-                K::Down | K::Left => self.slide_volume(i, |t| t.step(-1)),
-                K::PageUp => self.slide_volume(i, |t| t.step(t.page as i32)),
-                K::PageDown => self.slide_volume(i, |t| t.step(-(t.page as i32))),
-                K::Home => self.slide_volume(i, |t| t.set(t.count - 1)),
-                K::End => self.slide_volume(i, |t| t.set(0)),
+                K::Up | K::Right => m.slide_volume(i, |t| t.step(1)),
+                K::Down | K::Left => m.slide_volume(i, |t| t.step(-1)),
+                K::PageUp => m.slide_volume(i, |t| t.step(t.page as i32)),
+                K::PageDown => m.slide_volume(i, |t| t.step(-(t.page as i32))),
+                K::Home => m.slide_volume(i, |t| t.set(t.count - 1)),
+                K::End => m.slide_volume(i, |t| t.set(0)),
                 _ => Event::None,
             },
             (k, Focus::Balance(i)) => match k {
-                K::Left | K::Up => self.slide_balance(i, |t| t.step(-1)),
-                K::Right | K::Down => self.slide_balance(i, |t| t.step(1)),
-                K::PageUp => self.slide_balance(i, |t| t.step(-(t.page as i32))),
-                K::PageDown => self.slide_balance(i, |t| t.step(t.page as i32)),
-                K::Home => self.slide_balance(i, |t| t.set(0)),
-                K::End => self.slide_balance(i, |t| t.set(BALANCE_STEPS - 1)),
+                K::Left | K::Up => m.slide_balance(i, |t| t.step(-1)),
+                K::Right | K::Down => m.slide_balance(i, |t| t.step(1)),
+                K::PageUp => m.slide_balance(i, |t| t.step(-(t.page as i32))),
+                K::PageDown => m.slide_balance(i, |t| t.step(t.page as i32)),
+                K::Home => m.slide_balance(i, |t| t.set(0)),
+                K::End => m.slide_balance(i, |t| t.set(BALANCE_STEPS - 1)),
                 _ => Event::None,
             },
             _ => Event::None,
-        };
-        let lit = self.rehit(lay);
-        match ev {
-            Event::None if first || self.first != scrolled => Event::Redraw,
-            Event::None => lit,
-            ev => ev,
-        }
+        })
     }
 
     /// The mixer's `access` part: a scroll view over the columns holding a group per column
@@ -1612,6 +1328,149 @@ impl Mixer {
             }
         }
         focus
+    }
+}
+
+impl StripEvent for Event {
+    const NONE: Event = Event::None;
+    const REDRAW: Event = Event::Redraw;
+}
+
+impl columns::Column for Column {
+    type Key = String;
+    fn key(&self) -> &String {
+        &self.key
+    }
+    fn output(&mut self) -> &mut Option<Combo> {
+        &mut self.output
+    }
+}
+
+impl Strip for Mixer {
+    type Part = Part;
+    type Focus = Focus;
+    /// A column's output combo, by the column's index.
+    type Pick = usize;
+    type Layout = Layout;
+    type Event = Event;
+
+    const PINNED: usize = 0;
+
+    fn count(&self) -> usize {
+        self.columns.len()
+    }
+    fn hover_mut(&mut self) -> &mut Hover {
+        &mut self.hover
+    }
+    fn ptr_mut(&mut self) -> &mut Pointer<Part> {
+        &mut self.ptr
+    }
+    fn focus_mut(&mut self) -> &mut Focus {
+        &mut self.focus
+    }
+    fn cues_mut(&mut self) -> &mut bool {
+        &mut self.cues
+    }
+    fn first_mut(&mut self) -> &mut usize {
+        &mut self.first
+    }
+    fn shown(&self, lay: &Layout) -> usize {
+        lay.shown
+    }
+
+    fn current(&self, lay: &Layout) -> Layout {
+        let columns = lay
+            .columns
+            .iter()
+            .zip(&self.columns)
+            .map(|(cl, c)| {
+                cl.as_ref().map(|cl| ColumnLayout {
+                    balance: trackbar::at_position(&cl.balance, c.balance.pos),
+                    volume: trackbar::at_position(&cl.volume, c.volume.pos),
+                    ..cl.clone()
+                })
+            })
+            .collect();
+        Layout {
+            columns,
+            ..lay.clone()
+        }
+    }
+
+    fn part_at(&self, lay: &Layout, x: i32, y: i32) -> Option<Part> {
+        let col = |i: usize| self.columns.get(i);
+        match hit(self, lay, x, y) {
+            Hit::Balance(i, trackbar::Hit::Thumb) if col(i)?.balance.enabled => {
+                Some(Part::Balance(i))
+            }
+            Hit::Volume(i, trackbar::Hit::Thumb) if col(i)?.live => Some(Part::Volume(i)),
+            Hit::Check(i) if col(i)?.live => Some(Part::Check(i)),
+            Hit::Output(i, _) if self.output(i)?.enabled => Some(Part::Output(i)),
+            Hit::Advanced if col(0)?.live => Some(Part::Advanced),
+            Hit::Bar(h) => Some(Part::Bar(h)),
+            _ => None,
+        }
+    }
+
+    fn pressed(p: Part) -> bool {
+        matches!(p, Part::Bar(_) | Part::Advanced)
+    }
+
+    fn picks(&self) -> impl Iterator<Item = usize> {
+        0..self.columns.len()
+    }
+    fn pick(&self, i: usize) -> Option<&Combo> {
+        self.output(i)
+    }
+    fn pick_mut(&mut self, i: usize) -> Option<&mut Combo> {
+        self.columns.get_mut(i)?.output.as_mut()
+    }
+    fn combo_hit(&self, lay: &Layout, x: i32, y: i32) -> Option<(usize, combo::Hit)> {
+        match hit(self, lay, x, y) {
+            Hit::Output(i, h) => Some((i, h)),
+            _ => None,
+        }
+    }
+    fn combo_layout(lay: &Layout, i: usize) -> Option<&combo::Layout> {
+        lay.output(i)
+    }
+    fn pick_column(i: usize) -> Option<usize> {
+        Some(i)
+    }
+    fn picked(&self, i: usize, row: usize) -> Event {
+        Event::Output(self.columns[i].key.clone(), row.checked_sub(1))
+    }
+
+    /// Each live column's balance (when it has one), volume, check box and output combo (when
+    /// it has one), the Advanced button after the first column's.
+    fn focus_order(&self) -> Vec<Focus> {
+        let mut v = Vec::new();
+        for (i, c) in self.columns.iter().enumerate() {
+            if c.live {
+                if c.balance.enabled {
+                    v.push(Focus::Balance(i));
+                }
+                v.extend([Focus::Volume(i), Focus::Check(i)]);
+                if c.output.as_ref().is_some_and(|o| o.enabled) {
+                    v.push(Focus::Output(i));
+                }
+                if i == 0 && self.advanced {
+                    v.push(Focus::Advanced);
+                }
+            }
+        }
+        v
+    }
+
+    fn focus_column(f: Focus) -> Option<usize> {
+        Some(match f {
+            Focus::Balance(i) | Focus::Volume(i) | Focus::Check(i) | Focus::Output(i) => i,
+            Focus::Advanced => 0,
+        })
+    }
+
+    fn bar(&self, lay: &Layout) -> Option<ScrollParts> {
+        lay.bar.map(|bar| bar_parts(self, lay, bar))
     }
 }
 
