@@ -38,11 +38,11 @@ fn open_with_runs_the_program_as_its_entry_on_the_entry_the_menu_was_built_for()
     );
 
     ex.run(Command::ChooseProgram, &mut ctx);
-    match ex.dialog.as_ref() {
+    match ex.dialog() {
         Some(Dialog::ChooseProgram(c)) => assert_eq!(c.path, dir.path().join("b.txt")),
         other => panic!("no chooser: {:?}", other.is_some()),
     }
-    match ex.dialog.as_ref() {
+    match ex.dialog() {
         Some(Dialog::ChooseProgram(c)) => {
             assert_eq!(
                 c.row_icons.len(),
@@ -64,13 +64,13 @@ fn a_chooser_opened_by_key_shows_its_cues() {
     std::fs::write(&path, "1").expect("write");
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    let cues = |ex: &crate::Explorer| match ex.dialog.as_ref() {
+    let cues = |ex: &crate::Explorer| match ex.dialog() {
         Some(Dialog::ChooseProgram(c)) => c.input.cues(),
         other => panic!("expected the chooser, got {:?}", other.is_some()),
     };
     ex.choose_program_for(&path, false, &mut ctx);
     assert_eq!(cues(&ex), Cues::NONE, "opened with the pointer");
-    ex.dialog = None;
+    ex.take_up();
     ex.keyed = true;
     ex.choose_program_for(&path, false, &mut ctx);
     assert_eq!(cues(&ex), Cues::ALL, "opened from the keyboard");
@@ -87,7 +87,7 @@ fn chooser_ok_runs_the_program_on_release() {
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.app_index = vec![app("Editor", "editor", &["text/plain"])].into();
     ex.choose_program_for(&path, false, &mut ctx);
-    let ok = match ex.dialog.as_ref() {
+    let ok = match ex.dialog() {
         Some(Dialog::ChooseProgram(c)) => {
             c.ow.layout(&ex.dialog_text, ex.dialog_px, (0, 0), &ctx.theme.controls())
                 .ok
@@ -114,7 +114,7 @@ fn chooser_ok_runs_the_program_on_release() {
     let argv = reply.spawn.first().expect("the release runs the program");
     assert_eq!(argv.last(), Some(&path.clone().into_os_string()));
     assert_eq!(reply.spawn_app.as_ref().map(|a| a.as_str()), Some("editor"));
-    assert!(ex.dialog.is_none(), "the chooser closes");
+    assert!(ex.dialog().is_none(), "the chooser closes");
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn ok_on_a_browsed_program_runs_it_on_the_file() {
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.choose_program_for(&dir.path().join("b.txt"), false, &mut ctx);
-    let c = match ex.dialog.take() {
+    let c = match ex.take_up() {
         Some(Dialog::ChooseProgram(c)) => c,
         _ => panic!("expected the chooser"),
     };

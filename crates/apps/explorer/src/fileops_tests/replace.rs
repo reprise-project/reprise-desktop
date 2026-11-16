@@ -60,7 +60,7 @@ fn a_paste_whose_clash_check_answers_late_asks_on_a_later_wake() {
     assert!(ex.busy(), "a close waits for the check");
     drop(closed);
     ex.held = None;
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
     assert_eq!(
         asked(&ex),
         Some(("Confirm Folder Replace", "Reports".to_string()))
@@ -95,7 +95,7 @@ fn a_paste_whose_clash_check_passes_the_deadline_gives_up_and_copies_nothing() {
         &mut ctx,
     );
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.clashing.is_empty());
-    match &ex.dialog {
+    match ex.dialog() {
         Some(Dialog::Message { title, text }) => assert_eq!(
             (title.as_str(), text.as_str()),
             (
@@ -148,15 +148,15 @@ fn a_replace_prompt_whose_files_answer_late_comes_up_on_a_later_wake() {
     drop(checking);
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.clashing.is_empty());
     assert_eq!(asked(&ex), None, "no prompt before its files are read");
-    assert!(ex.asking.is_some());
+    assert!(ex.reading());
     drop(statting);
     ex.held = None;
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
     assert_eq!(
         asked(&ex),
         Some(("Confirm File Replace", "a.txt".to_string()))
     );
-    match &ex.dialog {
+    match ex.dialog() {
         Some(Dialog::Replace(r)) => match &r.fields.subject {
             replacebox::Subject::File { existing, incoming } => {
                 assert_eq!(
@@ -173,6 +173,50 @@ fn a_replace_prompt_whose_files_answer_late_comes_up_on_a_later_wake() {
         asked(&ex),
         Some(("Confirm File Replace", "b.txt".to_string()))
     );
+}
+
+/// A replace prompt whose files are still being read holds its place: a failure raised meanwhile
+/// waits behind it instead of going up first.
+#[test]
+fn a_failure_raised_while_a_prompts_files_are_read_comes_up_after_the_prompt() {
+    let mut ctx = test_ctx();
+    let t = tempfile::tempdir().expect("a temp dir");
+    let (src, dest) = (t.path().join("src"), t.path().join("dest"));
+    for d in [&src, &dest] {
+        std::fs::create_dir_all(d).expect("mkdir");
+        std::fs::write(d.join("a.txt"), "x").expect("write");
+    }
+    let mut ex = crate::tests::test_explorer(Place::Folder(dest.clone()), &mut ctx);
+    let check = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let checking = check.write().expect("lock");
+    ex.held = Some(check.clone());
+    ex.put_all(
+        &[src.join("a.txt")],
+        &dest,
+        &|_| Some(DropOp::Copy),
+        false,
+        &mut ctx,
+    );
+    let stat = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let statting = stat.write().expect("lock");
+    ex.held = Some(stat.clone());
+    drop(checking);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.clashing.is_empty());
+    assert!(ex.reading());
+
+    let meter = std::sync::Arc::new(reprisefs::progress::Meter::default());
+    let job = reprisefs::progress::Asked::new(meter);
+    ex.ask_failed(job, "Error Copying File or Folder", "x".into(), &mut ctx);
+    assert!(ex.dialog().is_none(), "the failure waits for the prompt");
+    drop(statting);
+    ex.held = None;
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    assert_eq!(
+        asked(&ex),
+        Some(("Confirm File Replace", "a.txt".to_string()))
+    );
+    ex.event(crate::DIALOG, key_event_alt('n'), &mut ctx);
+    assert!(ex.holds_a_job(), "the failure is up after the prompt");
 }
 
 /// After Close the window is hidden, so a prompt could never be answered.
@@ -254,7 +298,7 @@ fn a_paste_whose_prompt_is_still_reading_at_close_keeps_the_clashes_puts_the_res
     ex.held = Some(stat.clone());
     drop(checking);
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.clashing.is_empty());
-    assert!(ex.asking.is_some() && ex.replace_waiting.len() == 1);
+    assert!(ex.reading() && ex.pastes_waiting() == 1);
     assert!(
         !ex.run(Command::Close, &mut ctx).quit,
         "the prompt's read is out"
@@ -287,6 +331,75 @@ fn a_paste_whose_prompt_is_still_reading_at_close_keeps_the_clashes_puts_the_res
     );
 }
 
+/// The prompt whose files land after Close answers No and opens no box of its own, so a box a
+/// later step of the same wake raises waits behind the paste waiting at Close, which still puts
+/// what did not clash.
+#[test]
+fn a_box_raised_after_a_prompts_read_lands_at_close_waits_behind_the_next_paste() {
+    let mut ctx = test_ctx();
+    let t = tempfile::tempdir().expect("a temp dir");
+    let (src, dest) = (t.path().join("src"), t.path().join("dest"));
+    for d in [&src, &dest] {
+        std::fs::create_dir_all(d).expect("mkdir");
+    }
+    for name in ["a.txt", "b.txt"] {
+        std::fs::write(src.join(name), "new").expect("write");
+        std::fs::write(dest.join(name), "old").expect("write");
+    }
+    std::fs::write(src.join("d.txt"), "d").expect("write");
+    let mut ex = crate::tests::test_explorer(Place::Folder(dest.clone()), &mut ctx);
+    let check = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let checking = check.write().expect("lock");
+    ex.held = Some(check.clone());
+    for batch in [
+        &[src.join("a.txt")][..],
+        &[src.join("b.txt"), src.join("d.txt")],
+    ] {
+        ex.put_all(batch, &dest, &|_| Some(DropOp::Copy), false, &mut ctx);
+    }
+    let stat = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let statting = stat.write().expect("lock");
+    ex.held = Some(stat.clone());
+    drop(checking);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.clashing.is_empty());
+    assert!(ex.reading() && ex.pastes_waiting() == 1);
+    assert!(!ex.run(Command::Close, &mut ctx).quit);
+    drop(statting);
+    ex.held = None;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while ex.take_asking(&mut ctx).is_none() {
+        assert!(std::time::Instant::now() < deadline, "the files land");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    ex.message_box("Explorer", "x".into(), &mut ctx);
+    ex.raise_waiting(Reply::none(), &mut ctx);
+    let quit = loop {
+        if ex
+            .event(repriseapp::MAIN, repriseapp::Event::Wake, &mut ctx)
+            .quit
+        {
+            break true;
+        }
+        if std::time::Instant::now() > deadline {
+            break false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    };
+    assert!(quit, "the closed window quits once the pastes are done");
+    for name in ["a.txt", "b.txt"] {
+        assert_eq!(
+            std::fs::read_to_string(dest.join(name)).ok().as_deref(),
+            Some("old"),
+            "{name} is kept"
+        );
+    }
+    assert!(
+        dest.join("d.txt").exists(),
+        "d.txt, which did not clash, is copied"
+    );
+}
+
 /// Close from the taskbar, which the modal prompt does not block, while one paste's Replace
 /// prompt is up and a second paste waits behind it.
 #[test]
@@ -310,9 +423,9 @@ fn closing_with_the_replace_prompt_up_answers_no_puts_the_rest_and_quits() {
         ex.put_all(batch, &dest, &|_| Some(DropOp::Copy), false, &mut ctx);
     }
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
-        ex.clashing.is_empty() && ex.asking.is_none()
+        ex.clashing.is_empty() && !ex.reading()
     });
-    assert!(asked(&ex).is_some() && ex.replace_waiting.len() == 1);
+    assert!(asked(&ex).is_some() && ex.pastes_waiting() == 1);
     assert!(
         !ex.run(Command::Close, &mut ctx).quit,
         "the window waits for the rest of the paste"
@@ -369,15 +482,15 @@ fn the_replace_prompt_asks_per_clash_and_carries_out_each_answer() {
         Some(("Confirm File Replace", "r.txt".to_string()))
     );
     assert!(
-        matches!(&ex.dialog, Some(Dialog::Replace(r)) if r.fields.many),
+        matches!(ex.dialog(), Some(Dialog::Replace(r)) if r.fields.many),
         "a file inside a merge offers Yes to All"
     );
     assert!(
-        matches!(&ex.dialog, Some(Dialog::Replace(r)) if r.fields.folder.as_deref() == Some("Reports")),
+        matches!(ex.dialog(), Some(Dialog::Replace(r)) if r.fields.folder.as_deref() == Some("Reports")),
         "a file inside a merge names the folder 'Reports'"
     );
     ex.dialog_event(key_event_alt('y'), &mut ctx);
-    assert!(ex.dialog.is_none());
+    assert!(ex.dialog().is_none());
     ex.finish_puts(&mut ctx);
 
     let read = |n: &str| std::fs::read_to_string(dest.join(n)).expect("read");
@@ -405,7 +518,7 @@ fn no_on_a_file_inside_a_merge_keeps_it() {
         Some(("Confirm File Replace", "r.txt".to_string()))
     );
     ex.dialog_event(key_event_alt('n'), &mut ctx);
-    assert!(ex.dialog.is_none());
+    assert!(ex.dialog().is_none());
     ex.finish_puts(&mut ctx);
     let read = |n: &str| std::fs::read_to_string(dest.join(n)).expect("read");
     assert!(read("Reports/r.txt").ends_with("dest"), "No kept r.txt");
@@ -440,7 +553,7 @@ fn arrows_move_the_replace_prompt_s_focus_and_enter_presses_it() {
     ex.dialog_event(key_event_alt('y'), &mut ctx);
     ex.dialog_event(key_event_alt('y'), &mut ctx);
     assert!(
-        ex.dialog.is_none(),
+        ex.dialog().is_none(),
         "the folder and r.txt inside it answered"
     );
     ex.finish_puts(&mut ctx);
@@ -454,7 +567,7 @@ fn yes_to_all_replaces_the_rest_and_cancel_puts_nothing() {
     let mut ctx = test_ctx();
     let (_t, dest, mut ex) = paste_onto_taken_names(&mut ctx);
     ex.dialog_event(key_event_alt('a'), &mut ctx);
-    assert!(ex.dialog.is_none(), "no more questions");
+    assert!(ex.dialog().is_none(), "no more questions");
     ex.finish_puts(&mut ctx);
     assert_eq!(
         std::fs::read_to_string(dest.join("b.txt")).expect("read"),
@@ -464,7 +577,7 @@ fn yes_to_all_replaces_the_rest_and_cancel_puts_nothing() {
     let (_t, dest, mut ex) = paste_onto_taken_names(&mut ctx);
     ex.dialog_event(key_event_alt('y'), &mut ctx);
     ex.dialog_event(key_event_escape(), &mut ctx);
-    assert!(ex.dialog.is_none() && ex.put.is_none());
+    assert!(ex.dialog().is_none() && ex.put.is_none());
     assert_eq!(
         std::fs::read_to_string(dest.join("a.txt")).expect("read"),
         "old"
@@ -505,9 +618,9 @@ fn a_box_or_a_second_prompt_waits_for_the_prompt_up() {
         Some(("Confirm File Replace", "a.txt".to_string())),
         "the second batch asks next"
     );
-    assert!(matches!(&ex.dialog, Some(Dialog::Replace(r)) if !r.fields.many));
+    assert!(matches!(ex.dialog(), Some(Dialog::Replace(r)) if !r.fields.many));
     ex.event(crate::DIALOG, key_event_alt('y'), &mut ctx);
-    match &ex.dialog {
+    match ex.dialog() {
         Some(Dialog::Message { text, .. }) => assert_eq!(text, "Cannot copy x"),
         _ => panic!("the waiting box comes last"),
     }

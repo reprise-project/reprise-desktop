@@ -558,8 +558,7 @@ impl Explorer {
         self.props.is_none()
             && self.bin_props.is_none()
             && self.props_due.is_none()
-            && self.dialog.is_none()
-            && self.waiting.is_empty()
+            && self.dialogs.is_empty()
             && !self.busy()
     }
 

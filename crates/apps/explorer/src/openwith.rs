@@ -24,7 +24,7 @@ pub fn chooser_row_icons(
 
 impl Explorer {
     pub fn chooser_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
-        let Some(Dialog::ChooseProgram(cp)) = self.dialog.as_mut() else {
+        let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up_mut() else {
             return Reply::none();
         };
         let lay = cp.ow.layout(
@@ -38,23 +38,20 @@ impl Explorer {
             openwith::Event::None => Reply::none(),
             openwith::Event::Redraw => Reply::redraw(),
             openwith::Event::Cancel => {
-                self.dialog = None;
+                self.take_up();
                 Reply::redraw_all()
             }
             openwith::Event::Browse => {
                 let mut host = Host::default();
                 host.icons.prime(&mut ctx.icons);
                 let dlg = host.open(Path::new(PROGRAMS_DIR), browse_fields(), self.forms.text);
-                if let Some(Dialog::ChooseProgram(cp)) = self.dialog.as_mut() {
+                if let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up_mut() {
                     cp.browse = Some(ProgramBrowse { host, dlg });
                 }
                 Reply::redraw_all()
             }
             openwith::Event::Choose { id, always } => {
-                match self
-                    .dialog
-                    .take_if(|d| matches!(d, Dialog::ChooseProgram(_)))
-                {
+                match self.take_up_if(|d| matches!(d, Dialog::ChooseProgram(_))) {
                     Some(Dialog::ChooseProgram(c)) => self.choose_program_ok(*c, id, always, ctx),
                     _ => Reply::none(),
                 }
@@ -65,7 +62,7 @@ impl Explorer {
     /// A reader's ScrollIntoView on a program out of view, or Focus on a button; true when the
     /// chooser changed.
     pub fn chooser_reader(&mut self, act: repriseapp::Reader) -> bool {
-        let Some(Dialog::ChooseProgram(cp)) = self.dialog.as_mut() else {
+        let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up_mut() else {
             return false;
         };
         let ev = match act {
@@ -84,7 +81,7 @@ impl Explorer {
     }
 
     pub fn program_browse_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
-        let Some(Dialog::ChooseProgram(cp)) = self.dialog.as_mut() else {
+        let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up_mut() else {
             return Reply::none();
         };
         let Some(b) = cp.browse.as_mut() else {
@@ -121,7 +118,7 @@ impl Explorer {
     }
 
     pub fn draw_program_browse(&self, c: &mut Canvas) {
-        if let Some(Dialog::ChooseProgram(cp)) = &self.dialog
+        if let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up()
             && let Some(b) = &cp.browse
         {
             let (w, h) = b.dlg.client();
@@ -139,7 +136,7 @@ impl Explorer {
     }
 
     pub fn access_program_browse(&self, tree: &mut reprisekit::access::Tree) {
-        if let Some(Dialog::ChooseProgram(cp)) = &self.dialog
+        if let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up()
             && let Some(b) = &cp.browse
         {
             let (w, h) = b.dlg.client();

@@ -26,7 +26,7 @@ fn the_tree_menus_file_rows_take_the_node() {
     assert_eq!(reply.copy_files.map(|c| c.paths), Some(vec![sub.clone()]));
 
     ex.run(Command::NodeDelete, &mut ctx);
-    match ex.dialog.as_ref() {
+    match ex.dialog() {
         Some(Dialog::Confirm(c)) => assert_eq!(c.paths, vec![sub.clone()]),
         other => panic!("no confirm box: {:?}", other.is_some()),
     }
@@ -45,7 +45,10 @@ fn a_delete_prompt_has_the_prompt_caption() {
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.sv.selection.set_only(Some(0));
     ex.run(Command::Delete { erase: false }, &mut ctx);
-    assert!(matches!(ex.dialog, Some(Dialog::Confirm(_))), "Delete asks");
+    assert!(
+        matches!(ex.dialog(), Some(Dialog::Confirm(_))),
+        "Delete asks"
+    );
     assert_eq!(ex.caption(crate::dialogs::DIALOG), Caption::Prompt);
     assert_eq!(ex.caption(crate::props_dialog::PROPS), Caption::Help);
     assert_eq!(ex.caption(repriseapp::MAIN), Caption::Window);
@@ -61,15 +64,18 @@ fn an_arrow_moves_the_delete_prompt_s_focus_and_enter_presses_it() {
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.sv.selection.set_only(Some(0));
     ex.run(Command::Delete { erase: false }, &mut ctx);
-    assert!(matches!(ex.dialog, Some(Dialog::Confirm(_))), "Delete asks");
+    assert!(
+        matches!(ex.dialog(), Some(Dialog::Confirm(_))),
+        "Delete asks"
+    );
     ex.dialog_event(right(), &mut ctx);
     assert!(
-        matches!(ex.dialog, Some(Dialog::Confirm(_))),
+        matches!(ex.dialog(), Some(Dialog::Confirm(_))),
         "Right leaves the prompt up"
     );
     ex.dialog_event(enter(), &mut ctx);
     ex.finish_puts(&mut ctx);
-    assert!(ex.dialog.is_none(), "Enter on No closes the prompt");
+    assert!(ex.dialog().is_none(), "Enter on No closes the prompt");
     assert!(dir.path().join("a.txt").exists(), "Enter on No keeps a.txt");
 }
 
@@ -89,7 +95,7 @@ fn enter_on_the_shift_delete_prompt_keeps_the_file() {
     };
     ex.run(Command::Delete { erase: false }, &mut ctx);
     assert_eq!(focused(&ex), Some(BUTTON_IDS[0]), "Delete opens on Yes");
-    ex.dialog = None;
+    ex.take_up();
     ex.run(Command::Delete { erase: true }, &mut ctx);
     assert_eq!(
         focused(&ex),
@@ -98,7 +104,7 @@ fn enter_on_the_shift_delete_prompt_keeps_the_file() {
     );
     ex.dialog_event(enter(), &mut ctx);
     ex.finish_puts(&mut ctx);
-    assert!(ex.dialog.is_none(), "Enter closes the prompt");
+    assert!(ex.dialog().is_none(), "Enter closes the prompt");
     assert!(dir.path().join("a.txt").exists(), "Enter keeps a.txt");
 }
 
@@ -124,7 +130,7 @@ fn the_tree_menus_file_rows_skip_a_drive() {
     assert_eq!(ex.node_folder(), None);
     assert!(ex.run(Command::NodeCut, &mut ctx).copy_files.is_none());
     ex.run(Command::NodeDelete, &mut ctx);
-    assert!(ex.dialog.is_none(), "Delete opens no confirm box");
+    assert!(ex.dialog().is_none(), "Delete opens no confirm box");
     assert!(stick.join("a.txt").exists());
 }
 
@@ -141,7 +147,7 @@ fn delete_trashes_the_selection_and_undo_restores_it() {
     ex.sv.selection.set_only(Some(0));
 
     ex.run(Command::Delete { erase: false }, &mut ctx);
-    assert!(ex.dialog.is_some());
+    assert!(ex.dialog().is_some());
     assert!(dir.join("a.txt").exists());
 
     ex.delete_now(&[dir.join("a.txt")], false, &mut ctx);
@@ -204,7 +210,7 @@ fn a_delete_that_purges_the_bin_drops_the_purged_items_undo() {
 
     assert!(dir.join("b.iso").exists() && dir.join("c.iso").exists());
     assert_eq!(ex.undo, None, "a.iso's undo went with it");
-    assert!(ex.dialog.is_none(), "no error box");
+    assert!(ex.dialog().is_none(), "no error box");
 }
 
 /// An item bigger than its whole Recycle Bin (1% of the drive here) raises "too big for the Recycle
@@ -229,7 +235,7 @@ fn an_item_too_big_for_the_bin_asks_to_be_deleted_for_good() {
 
     ex.delete_now(&[big.clone(), small.clone()], false, &mut ctx);
     ex.finish_puts(&mut ctx);
-    let Some(Dialog::Confirm(c)) = &ex.dialog else {
+    let Some(Dialog::Confirm(c)) = ex.dialog() else {
         panic!("the question is up")
     };
     assert_eq!(
@@ -245,13 +251,13 @@ fn an_item_too_big_for_the_bin_asks_to_be_deleted_for_good() {
 
     ex.dialog_outcome(form::Event::Pressed("btn2"), &mut ctx);
     ex.finish_puts(&mut ctx);
-    assert!(ex.dialog.is_none());
+    assert!(ex.dialog().is_none());
     assert!(big.exists(), "No leaves it");
     assert!(!small.exists(), "the rest of the batch is trashed");
 
     ex.delete_now(std::slice::from_ref(&big), false, &mut ctx);
     ex.finish_puts(&mut ctx);
-    let Some(Dialog::Confirm(c)) = &ex.dialog else {
+    let Some(Dialog::Confirm(c)) = ex.dialog() else {
         panic!("the question is up")
     };
     assert_eq!(c.buttons(), ["&Yes", "&No"], "one item: Yes or No");
@@ -281,16 +287,16 @@ fn remove_immediately_erases_and_the_prompt_can_be_turned_off() {
     ex.sv.selection.set_only(Some(0));
 
     ex.run(Command::Delete { erase: false }, &mut ctx);
-    let Some(Dialog::Confirm(c)) = &ex.dialog else {
+    let Some(Dialog::Confirm(c)) = ex.dialog() else {
         panic!("the prompt is up")
     };
     assert!(c.erase);
     assert_eq!(c.text, "Are you sure you want to delete 'a.txt'?");
-    ex.dialog = None;
+    ex.take_up();
 
     data_home.recycle_bin("remove_immediately = true\nconfirm = false\n");
     ex.run(Command::Delete { erase: false }, &mut ctx);
-    assert!(ex.dialog.is_none(), "no prompt");
+    assert!(ex.dialog().is_none(), "no prompt");
     ex.finish_puts(&mut ctx);
     assert!(!dir.join("a.txt").exists());
     assert!(!home.path().join("Trash/files").exists(), "nothing trashed");
@@ -317,7 +323,7 @@ fn undo_of_a_copy_on_a_remove_immediately_drive_asks_then_erases() {
 
     ex.run(Command::Undo, &mut ctx);
     ex.finish_puts(&mut ctx);
-    let Some(Dialog::Confirm(c)) = &ex.dialog else {
+    let Some(Dialog::Confirm(c)) = ex.dialog() else {
         panic!("the question is up")
     };
     assert_eq!(
@@ -327,7 +333,7 @@ fn undo_of_a_copy_on_a_remove_immediately_drive_asks_then_erases() {
     assert_eq!(c.buttons(), ["&Yes", "&No"]);
     let no = reprisekit::controls::msgbox::button_id(1);
     ex.dialog_outcome(form::Event::Pressed(no), &mut ctx);
-    assert!(ex.dialog.is_none());
+    assert!(ex.dialog().is_none());
     assert!(copy.exists(), "No keeps the copy");
     assert_eq!(ex.undo, Some("Copy"), "and the Undo row");
 
@@ -335,7 +341,7 @@ fn undo_of_a_copy_on_a_remove_immediately_drive_asks_then_erases() {
     ex.finish_puts(&mut ctx);
     ex.dialog_outcome(form::Event::Default, &mut ctx);
     ex.finish_puts(&mut ctx);
-    assert!(ex.dialog.is_none());
+    assert!(ex.dialog().is_none());
     assert!(!copy.exists(), "Yes erases it");
     assert!(!home.path().join("Trash/files").exists(), "nothing trashed");
     assert_eq!(ex.undo, None);
@@ -367,7 +373,7 @@ fn delete_on_a_drive_with_no_recycle_bin_says_so() {
     ex.run(Command::Delete { erase: false }, &mut ctx);
 
     std::fs::set_permissions(&drive, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    let Some(Dialog::Confirm(c)) = ex.dialog.as_ref() else {
+    let Some(Dialog::Confirm(c)) = ex.dialog() else {
         panic!("a confirm box");
     };
     assert!(c.erase);
@@ -395,5 +401,5 @@ fn erasing_a_symlink_to_a_folder_removes_only_the_link() {
 
     assert!(!link.exists() && std::fs::symlink_metadata(&link).is_err());
     assert!(target.join("x.txt").is_file(), "the target is untouched");
-    assert!(ex.dialog.is_none());
+    assert!(ex.dialog().is_none());
 }

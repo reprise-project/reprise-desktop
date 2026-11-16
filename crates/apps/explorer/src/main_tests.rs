@@ -182,7 +182,7 @@ fn browse_state(
     ex: &Explorer,
     ctx: &Ctx,
 ) -> (reprisekit::controls::browsefolder::Layout, TreeView) {
-    let Some(Dialog::Browse(b)) = ex.dialog.as_ref() else {
+    let Some(Dialog::Browse(b)) = ex.dialog() else {
         panic!("the Browse dialog is what is up");
     };
     let lay =

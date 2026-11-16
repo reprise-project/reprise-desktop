@@ -16,7 +16,7 @@ fn type_in(ex: &mut Explorer, s: &str, ctx: &mut Ctx) {
 
 /// The picker's pick and its place, and the open rename box's text.
 fn picker_pick(ex: &Explorer) -> (Option<Place>, Option<String>) {
-    let Some(Dialog::Browse(b)) = ex.dialog.as_ref() else {
+    let Some(Dialog::Browse(b)) = ex.dialog() else {
         panic!("the picker is up");
     };
     let place =
@@ -80,7 +80,7 @@ fn the_pickers_new_folder_is_named_in_place() {
         (Some(Place::Folder(photos.clone())), None),
         "the renamed folder stays the pick"
     );
-    assert!(ex.dialog.is_some(), "Enter left the picker up");
+    assert!(ex.dialog().is_some(), "Enter left the picker up");
     ex.undo_last(&mut ctx);
     ex.finish_puts(&mut ctx);
     assert!(
@@ -90,7 +90,7 @@ fn the_pickers_new_folder_is_named_in_place() {
 }
 
 fn picker_making(ex: &Explorer) -> bool {
-    matches!(&ex.dialog, Some(Dialog::Browse(b)) if b.making.is_some())
+    matches!(ex.dialog(), Some(Dialog::Browse(b)) if b.making.is_some())
 }
 
 /// The picker's Make New Folder and its rename run on a listing thread: on a folder that does not
@@ -154,7 +154,7 @@ fn a_pickers_new_folder_and_rename_landing_after_cancel_keep_their_undo() {
     ex.held = Some(gate.clone());
     click_at(&mut ex, 60, 328, &mut ctx);
     ex.dialog_event(Event::Key(key_in(keysym::ESCAPE)), &mut ctx);
-    assert!(ex.dialog.is_none(), "Cancel closes the picker");
+    assert!(ex.dialog().is_none(), "Cancel closes the picker");
     drop(closed);
     ex.held = None;
     wake_until(&mut ex, &mut ctx, |ex| ex.undo.is_some());
@@ -170,7 +170,7 @@ fn a_pickers_new_folder_and_rename_landing_after_cancel_keep_their_undo() {
     ex.held = Some(gate.clone());
     ex.dialog_event(Event::Key(key_in(keysym::RETURN)), &mut ctx);
     ex.dialog_event(Event::Key(key_in(keysym::ESCAPE)), &mut ctx);
-    assert!(ex.dialog.is_none(), "Cancel closes the picker");
+    assert!(ex.dialog().is_none(), "Cancel closes the picker");
     drop(closed);
     ex.held = None;
     wake_until(&mut ex, &mut ctx, |ex| ex.undo == Some("Rename"));
@@ -191,7 +191,7 @@ fn closing_waits_for_a_pickers_rename_left_by_cancel() {
     ex.held = Some(gate.clone());
     ex.dialog_event(Event::Key(key_in(keysym::RETURN)), &mut ctx);
     ex.dialog_event(Event::Key(key_in(keysym::ESCAPE)), &mut ctx);
-    assert!(ex.dialog.is_none(), "Cancel closes the picker");
+    assert!(ex.dialog().is_none(), "Cancel closes the picker");
     assert!(!ex.close(&mut ctx).quit, "the window waits for the rename");
 
     drop(closed);
@@ -258,7 +258,7 @@ fn a_click_on_move_names_the_new_folder_and_moves() {
 
     type_in(&mut ex, "Photos", &mut ctx);
     click_at(&mut ex, x, y, &mut ctx);
-    assert!(ex.dialog.is_none(), "the click went on to Move");
+    assert!(ex.dialog().is_none(), "the click went on to Move");
     ex.finish_puts(&mut ctx);
     assert!(dir.path().join("Photos/a.txt").exists());
     assert!(!dir.path().join("New Folder").exists());
@@ -306,15 +306,15 @@ fn the_pickers_buttons_act_on_the_release() {
     let (lay, _) = browse_state(&ex, &ctx);
     let (x, y) = (lay.cancel.x + 10, lay.cancel.y + 10);
     ex.dialog_event(press_at(x, y, 5000), &mut ctx);
-    assert!(ex.dialog.is_some(), "the press leaves it up");
+    assert!(ex.dialog().is_some(), "the press leaves it up");
     ex.dialog_event(
         Event::Pointer(PointerInput::Motion { x: 5, y: 5 }),
         &mut ctx,
     );
     ex.dialog_event(release_at(5, 5), &mut ctx);
-    assert!(ex.dialog.is_some(), "a release off Cancel too");
+    assert!(ex.dialog().is_some(), "a release off Cancel too");
     click_at(&mut ex, x, y, &mut ctx);
-    assert!(ex.dialog.is_none(), "a release on it closes it");
+    assert!(ex.dialog().is_none(), "a release on it closes it");
 }
 
 #[test]
@@ -326,13 +326,13 @@ fn the_pickers_tree_takes_the_wheel_and_a_thumb_drag() {
         std::fs::create_dir(dir.path().join(format!("folder {i:02}"))).expect("mkdir");
     }
     ex.open_browse(true, &mut ctx);
-    let top = |ex: &Explorer| match ex.dialog.as_ref() {
+    let top = |ex: &Explorer| match ex.dialog() {
         Some(Dialog::Browse(b)) => b.bf.tree.top,
         _ => panic!("the picker is up"),
     };
     let (lay, _) = browse_state(&ex, &ctx);
     let body = lay.tree.body;
-    if let Some(Dialog::Browse(b)) = ex.dialog.as_mut() {
+    if let Some(Dialog::Browse(b)) = ex.dialogs.up_mut() {
         b.bf.tree.top = 0;
     }
     let (x, y) = (body.x + 20, body.y + 20);
@@ -386,7 +386,7 @@ fn a_click_on_a_picker_row_opens_it() {
     ex.open_browse(true, &mut ctx);
     let sub = Place::Folder(dir.path().join("sub"));
     let (_, tree) = browse_state(&ex, &ctx);
-    let Some(Dialog::Browse(b)) = ex.dialog.as_ref() else {
+    let Some(Dialog::Browse(b)) = ex.dialog() else {
         panic!("the picker is up");
     };
     let rows = tree.visible();
@@ -395,7 +395,7 @@ fn a_click_on_a_picker_row_opens_it() {
         .position(|r| foldertree::place_of(&b.bf.tree, &b.places, &r.path) == Some(sub.clone()))
         .expect("sub's row");
     let sub_path = rows[at].path.clone();
-    if let Some(Dialog::Browse(b)) = ex.dialog.as_mut() {
+    if let Some(Dialog::Browse(b)) = ex.dialogs.up_mut() {
         b.bf.tree.top = at - 1;
     }
     let (lay, tree) = browse_state(&ex, &ctx);
@@ -405,7 +405,7 @@ fn a_click_on_a_picker_row_opens_it() {
         .expect("sub's icon")
         + 2;
     ex.dialog_event(press_at(x, y, 5000), &mut ctx);
-    let Some(Dialog::Browse(b)) = ex.dialog.as_ref() else {
+    let Some(Dialog::Browse(b)) = ex.dialog() else {
         panic!("the picker is up");
     };
     assert_eq!(b.bf.tree.selected, Some(sub_path.clone()), "picked");
@@ -424,7 +424,7 @@ fn a_double_click_on_a_picker_plus_box_turns_it_once() {
     std::fs::create_dir(dir.path().join("sub/inner")).expect("mkdir");
     ex.open_browse(true, &mut ctx);
     let sub = Place::Folder(dir.path().join("sub"));
-    let Some(Dialog::Browse(b)) = ex.dialog.as_mut() else {
+    let Some(Dialog::Browse(b)) = ex.dialogs.up_mut() else {
         panic!("the picker is up");
     };
     let rows = b.bf.tree.visible();
@@ -439,7 +439,7 @@ fn a_double_click_on_a_picker_plus_box_turns_it_once() {
     let x = (lay.tree.body.x..lay.tree.body.right())
         .find(|&x| tree.hit(&lay.tree, x, y) == reprisekit::controls::treeview::Hit::Expander(at))
         .expect("sub's plus box");
-    let open = |ex: &Explorer| match ex.dialog.as_ref() {
+    let open = |ex: &Explorer| match ex.dialog() {
         Some(Dialog::Browse(b)) => b.bf.tree.node(&sub_path).is_some_and(|n| n.expanded),
         _ => panic!("the picker is up"),
     };

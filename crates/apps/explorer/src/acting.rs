@@ -197,7 +197,7 @@ mod tests {
     use std::time::Duration;
 
     fn message(ex: &Explorer) -> Option<(&str, &str)> {
-        match &ex.dialog {
+        match ex.dialog() {
             Some(Dialog::Message { title, text }) => Some((title, text)),
             _ => None,
         }

@@ -71,7 +71,7 @@ fn the_pickers_cues_wait_for_a_key() {
     use reprisekit::cues::Cues;
     let mut ctx = test_ctx();
     let (_dir, mut ex) = browse_fixture(&mut ctx);
-    let cues = |ex: &Explorer| match ex.dialog.as_ref() {
+    let cues = |ex: &Explorer| match ex.dialog() {
         Some(Dialog::Browse(b)) => b.bf.cues(),
         _ => panic!("the picker is up"),
     };
@@ -79,7 +79,7 @@ fn the_pickers_cues_wait_for_a_key() {
     assert_eq!(cues(&ex), Cues::NONE, "opened with the pointer");
     ex.dialog_event(Event::Key(key_in(keysym::ALT_L)), &mut ctx);
     assert_eq!(cues(&ex), Cues::ALL, "Alt brings out both");
-    ex.dialog = None;
+    ex.take_up();
     ex.keyed = true;
     ex.open_browse(true, &mut ctx);
     assert_eq!(cues(&ex), Cues::ALL, "opened from the keyboard");
@@ -91,7 +91,7 @@ fn the_dialog_opens_on_the_items_folder() {
     let (dir, mut ex) = browse_fixture(&mut ctx);
     ex.open_browse(true, &mut ctx);
 
-    let Some(Dialog::Browse(b)) = ex.dialog.as_ref() else {
+    let Some(Dialog::Browse(b)) = ex.dialog() else {
         panic!("the Browse dialog is what is up");
     };
     let picked =
@@ -119,7 +119,7 @@ fn browsing_leaves_the_folders_pane_alone() {
     ex.dialog_event(Event::Key(key_in(keysym::RIGHT)), &mut ctx);
     ex.dialog_event(Event::Key(key_in(keysym::DOWN)), &mut ctx);
 
-    assert!(ex.dialog.is_some(), "the picker is still up");
+    assert!(ex.dialog().is_some(), "the picker is still up");
     assert_eq!(ex.tree, tree);
     assert_eq!(ex.tree_places, places);
 }
@@ -136,7 +136,7 @@ fn the_picker_opens_at_once_and_walks_to_a_folder_that_answers_late() {
     ex.held = Some(gate.clone());
     ex.open_browse(true, &mut ctx);
     let picked = |ex: &Explorer| {
-        let Some(Dialog::Browse(b)) = ex.dialog.as_ref() else {
+        let Some(Dialog::Browse(b)) = ex.dialog() else {
             panic!("the Browse dialog is what is up");
         };
         let at = b.bf.tree.selected.as_deref();
@@ -159,7 +159,7 @@ fn accept_queues_a_move_into_the_pick() {
     ex.open_browse(true, &mut ctx);
     let sub = Place::Folder(dir.path().join("sub"));
     let mounts = ex.drive_mounts.clone();
-    let Some(Dialog::Browse(b)) = ex.dialog.as_mut() else {
+    let Some(Dialog::Browse(b)) = ex.dialogs.up_mut() else {
         panic!("the Browse dialog is what is up");
     };
     let path = foldertree::path_of(&b.bf.tree, &b.places, &sub, &mounts);
@@ -170,7 +170,7 @@ fn accept_queues_a_move_into_the_pick() {
 
     ex.dialog_event(Event::Key(key_in(keysym::RETURN)), &mut ctx);
 
-    assert!(ex.dialog.is_none(), "Move closes the picker");
+    assert!(ex.dialog().is_none(), "Move closes the picker");
     assert!(ex.put.is_some(), "the move runs on a job");
     ex.finish_puts(&mut ctx);
     assert!(dir.path().join("sub/a.txt").exists());
@@ -203,7 +203,7 @@ fn the_picker_opens_on_home_for_an_item_in_home() {
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.browse_items(true, vec![home.join("a.txt")], &mut ctx);
 
-    let Some(Dialog::Browse(b)) = ex.dialog.as_ref() else {
+    let Some(Dialog::Browse(b)) = ex.dialog() else {
         panic!("the Browse dialog is what is up");
     };
     let picked =
@@ -228,7 +228,7 @@ fn the_picker_focuses_the_tree_when_the_items_folder_is_hidden() {
     ex.settings.show_hidden = false;
     ex.browse_items(true, vec![hidden.join("a.txt")], &mut ctx);
 
-    let Some(Dialog::Browse(b)) = ex.dialog.as_ref() else {
+    let Some(Dialog::Browse(b)) = ex.dialog() else {
         panic!("the Browse dialog is what is up");
     };
     let picked =
@@ -264,7 +264,7 @@ fn the_picker_tree_wears_a_folder_icon_set_while_it_is_open() {
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.browse_items(true, vec![dir.path().join("a.txt")], &mut ctx);
     let worn = |ex: &Explorer| {
-        let Some(Dialog::Browse(b)) = ex.dialog.as_ref() else {
+        let Some(Dialog::Browse(b)) = ex.dialog() else {
             panic!("the Browse dialog is what is up");
         };
         let path = foldertree::path_of(&b.bf.tree, &b.places, &Place::Folder(sub.clone()), &[])
@@ -309,7 +309,7 @@ fn make_new_folder_refills_the_folders_pane() {
         .expect("a.txt");
     ex.sv.selection.set_only(Some(a));
     ex.open_browse(false, &mut ctx);
-    let pick = |ex: &Explorer| match ex.dialog.as_ref() {
+    let pick = |ex: &Explorer| match ex.dialog() {
         Some(Dialog::Browse(b)) => b.bf.tree.selected.clone(),
         _ => None,
     };
@@ -319,8 +319,8 @@ fn make_new_folder_refills_the_folders_pane() {
     click_at(&mut ex, 60, 328, &mut ctx);
 
     assert!(dir.path().join("New Folder").is_dir());
-    assert!(ex.dialog.is_some(), "the picker stays up");
-    let made = match ex.dialog.as_ref() {
+    assert!(ex.dialog().is_some(), "the picker stays up");
+    let made = match ex.dialog() {
         Some(Dialog::Browse(b)) => {
             assert_eq!(b.bf.focus, reprisekit::controls::browsefolder::Focus::Tree);
             let p = b.bf.tree.selected.clone().expect("a pick");
@@ -343,7 +343,7 @@ fn make_new_folder_refills_the_folders_pane() {
     for _ in 0..2 {
         ex.dialog_event(Event::Key(key_in(keysym::ESCAPE)), &mut ctx);
     }
-    assert!(ex.dialog.is_none());
+    assert!(ex.dialog().is_none());
     ex.undo_last(&mut ctx);
     ex.finish_puts(&mut ctx);
     assert_eq!(labels(&ex), ["sub"], "Undo takes it out of the pane");
@@ -357,7 +357,7 @@ fn make_new_folder_keeps_open_subfolders_and_undoes() {
     ex.open_browse(false, &mut ctx);
     let sub = Place::Folder(dir.path().join("sub"));
     let mounts = ex.drive_mounts.clone();
-    let sub_open = |ex: &Explorer| match ex.dialog.as_ref() {
+    let sub_open = |ex: &Explorer| match ex.dialog() {
         Some(Dialog::Browse(b)) => foldertree::path_of(&b.bf.tree, &b.places, &sub, &mounts)
             .and_then(|p| b.bf.tree.node(&p).map(|n| n.expanded)),
         _ => panic!("the picker is up"),

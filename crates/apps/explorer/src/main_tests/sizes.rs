@@ -247,7 +247,7 @@ fn boxes_and_the_sheet_grow_with_the_text_size() {
     let sizes = |ex: &mut Explorer, ctx: &mut Ctx| {
         ex.run(commands::Command::About, ctx);
         let about = ex.children()[0].size;
-        ex.dialog = None;
+        ex.take_up();
         ex.open_properties(dir.path(), "d", "d", ctx);
         let sheet = ex.children()[0].size;
         ex.props = None;
@@ -261,7 +261,7 @@ fn boxes_and_the_sheet_grow_with_the_text_size() {
     assert_eq!(sizes(&mut ex, &mut ctx), (u.size(about), u.size(sheet)));
 
     ex.run(commands::Command::About, &mut ctx);
-    let Some(Dialog::About(form, _)) = &ex.dialog else {
+    let Some(Dialog::About(form, _)) = ex.dialog() else {
         panic!("the About box is up");
     };
     let banner = match &form.item("banner").expect("the banner").control {

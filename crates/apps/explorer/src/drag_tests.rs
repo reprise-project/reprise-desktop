@@ -333,7 +333,7 @@ fn a_move_onto_a_folder_moves_the_file() {
     assert!(dir.path().join("Box/a.txt").is_file(), "it moved in");
     assert!(!dir.path().join("a.txt").exists(), "and left the folder");
     assert!(ex.drag.is_none() && ex.sv.drop_target.is_none());
-    assert!(ex.dialog.is_none(), "nothing went wrong");
+    assert!(ex.dialog().is_none(), "nothing went wrong");
     assert_eq!(ex.undo, Some("Move"));
     assert!(!ex.items.iter().any(|it| it.name == "a.txt"));
 }
@@ -406,7 +406,7 @@ fn a_drop_onto_a_name_already_taken_asks_to_replace() {
     drag_onto(&mut ex, &mut ctx, "a.txt", "Box", DragAction::Copy);
 
     assert!(matches!(
-        ex.dialog,
+        ex.dialog(),
         Some(crate::dialogs::Dialog::Replace(_))
     ));
     let kept = std::fs::read_to_string(dir.path().join("Box/a.txt")).expect("read");
@@ -434,7 +434,7 @@ fn dropping_a_folder_into_its_own_subtree_is_refused() {
         text,
         "Cannot move Box: The destination folder is a subfolder of the source folder."
     );
-    assert!(ex.dialog.is_none(), "Cancel ends the job");
+    assert!(ex.dialog().is_none(), "Cancel ends the job");
     assert!(box_.is_dir() && !inner.join("Box").exists());
 }
 
@@ -1418,8 +1418,8 @@ fn a_link_drop_past_its_deadline_writes_nothing() {
         Actions::ALL,
         &mut ctx,
     );
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
-    match &ex.dialog {
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    match ex.dialog() {
         Some(crate::dialogs::Dialog::Message { title, text }) => {
             assert_eq!(title, "Error Creating Shortcut");
             assert_eq!(text, "The location is not responding. Nothing was changed.");
@@ -1668,11 +1668,11 @@ fn a_move_onto_the_files_own_folder_before_their_facts_answer_moves_nothing() {
     drop(closed);
     ex.held = None;
     let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while ex.busy() && ex.dialog.is_none() && std::time::Instant::now() < end {
+    while ex.busy() && ex.dialog().is_none() && std::time::Instant::now() < end {
         std::thread::sleep(std::time::Duration::from_millis(10));
         ex.poll_put(&mut ctx);
     }
-    assert!(ex.dialog.is_none(), "no box comes up");
+    assert!(ex.dialog().is_none(), "no box comes up");
     assert!(!ex.busy(), "nothing is put");
     assert!(a.is_file(), "a.txt stays where it was");
 }

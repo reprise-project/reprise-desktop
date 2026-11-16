@@ -43,11 +43,11 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
         "run, not opened"
     );
     ran();
-    assert!(ex.dialog.is_none());
+    assert!(ex.dialog().is_none());
     let mut open = |i: usize, ex: &mut Explorer| open_as(i, ScriptOpen::Terminal, ex);
     assert!(open(0, &mut ex).spawn.is_empty(), "run, not opened");
     ran();
-    assert!(ex.dialog.is_none());
+    assert!(ex.dialog().is_none());
     let state = std::env::temp_dir().join(format!("reprise-explorer-tests-{}", std::process::id()));
     let term_argv = std::fs::read_to_string(state.join("term-argv")).expect("the terminal ran");
     let a_sh = dir.path().join("a.sh");
@@ -64,7 +64,7 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
     );
 
     open(1, &mut ex);
-    match ex.dialog.take().expect("the error box is up") {
+    match ex.take_up().expect("the error box is up") {
         crate::dialogs::Dialog::Message { title, text } => {
             assert_eq!(title, "b.sh");
             assert_eq!(
@@ -96,7 +96,7 @@ fn the_script_question_fits_its_button_labels() {
         reprisefs::program::Asked::Script,
         &mut ctx,
     );
-    let Some(crate::dialogs::Dialog::Confirm(c)) = &ex.dialog else {
+    let Some(crate::dialogs::Dialog::Confirm(c)) = ex.dialog() else {
         panic!("the script question is up");
     };
     let over = reprisekit::interfaces::overflows(|_, theme, text| {
@@ -130,7 +130,7 @@ fn opening_an_executable_script_asks_before_it_runs() {
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     let marker = dir.path().join("ran");
-    let asked = |ex: &crate::Explorer| match &ex.dialog {
+    let asked = |ex: &crate::Explorer| match ex.dialog() {
         Some(crate::dialogs::Dialog::Confirm(c)) => {
             assert_eq!(c.title, "Open File");
             assert_eq!(c.buttons(), ["&Run", "Open in &Notepad", "Cancel"]);
@@ -147,7 +147,7 @@ fn opening_an_executable_script_asks_before_it_runs() {
     assert!(!marker.exists(), "the script did not run");
 
     let reply = ex.dialog_outcome(Event::Pressed(BUTTON_IDS[1]), &mut ctx);
-    assert!(ex.dialog.is_none());
+    assert!(ex.dialog().is_none());
     assert_eq!(
         reply.spawn,
         [vec![
@@ -161,7 +161,7 @@ fn opening_an_executable_script_asks_before_it_runs() {
     ex.open_selected(&mut ctx);
     assert!(asked(&ex), "Notepad is not remembered");
     ex.dialog_outcome(Event::Pressed(BUTTON_IDS[2]), &mut ctx);
-    assert!(ex.dialog.is_none(), "Cancel closes it");
+    assert!(ex.dialog().is_none(), "Cancel closes it");
 
     ex.open_selected(&mut ctx);
     let reply = ex.dialog_outcome(Event::Default, &mut ctx);
@@ -175,13 +175,13 @@ fn opening_an_executable_script_asks_before_it_runs() {
 
     if reprisefs::apps::is_trusted(&script) {
         ex.open_selected(&mut ctx);
-        assert!(ex.dialog.is_none(), "Run is remembered for the file");
+        assert!(ex.dialog().is_none(), "Run is remembered for the file");
     }
 }
 
 /// The question up in `ex`, as its buttons.
 fn question(ex: &crate::Explorer) -> Option<Vec<String>> {
-    match &ex.dialog {
+    match ex.dialog() {
         Some(crate::dialogs::Dialog::Confirm(c)) if c.script.is_some() => {
             assert_eq!(c.title, "Open File");
             Some(c.buttons())
@@ -210,11 +210,11 @@ fn opening_an_elf_file_asks_run_or_cancel() {
         ["&Run", "Cancel"]
     );
     ex.dialog_outcome(Event::Default, &mut ctx);
-    assert!(ex.dialog.is_none(), "Cancel, the default, closes it");
+    assert!(ex.dialog().is_none(), "Cancel, the default, closes it");
 
     ex.open_selected(&mut ctx);
     ex.dialog_outcome(Event::Pressed(BUTTON_IDS[0]), &mut ctx);
-    match ex.dialog.take() {
+    match ex.take_up() {
         Some(crate::dialogs::Dialog::Message { text, .. }) => assert_eq!(
             text,
             "Cannot run invoice.pdf: It is not a program this computer can run."
@@ -251,7 +251,7 @@ fn opening_a_runnable_type_asks_before_its_program_opens_it() {
         );
         let reply = ex.dialog_outcome(Event::Default, &mut ctx);
         assert!(
-            reply.spawn.is_empty() && ex.dialog.is_none(),
+            reply.spawn.is_empty() && ex.dialog().is_none(),
             "Cancel, the default, opens nothing"
         );
 
@@ -260,7 +260,7 @@ fn opening_a_runnable_type_asks_before_its_program_opens_it() {
         if name == "invoice" {
             assert!(reply.spawn.is_empty(), "a file with no type has no program");
             assert!(
-                matches!(&ex.dialog, Some(crate::dialogs::Dialog::ChooseProgram(_))),
+                matches!(ex.dialog(), Some(crate::dialogs::Dialog::ChooseProgram(_))),
                 "Run asks which program opens it"
             );
         } else {
@@ -285,7 +285,7 @@ fn opening_a_file_no_program_takes_asks_open_with() {
 
     let reply = ex.open_selected(&mut ctx);
     assert!(reply.spawn.is_empty(), "nothing runs: {reply:?}");
-    match &ex.dialog {
+    match ex.dialog() {
         Some(crate::dialogs::Dialog::ChooseProgram(c)) => {
             assert_eq!(c.path, data);
             assert!(!c.ow.always.on, "Always use starts unticked");
@@ -319,12 +319,12 @@ fn a_program_that_answers_late_raises_its_box_on_a_later_wake() {
         ex.open_selected_as(ScriptOpen::Run, &mut ctx),
         Reply::none()
     );
-    assert!(ex.dialog.is_none(), "no box before the answer");
+    assert!(ex.dialog().is_none(), "no box before the answer");
 
     drop(closed);
     ex.held = None;
-    wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
-    match ex.dialog.take().expect("the error box is up") {
+    wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    match ex.take_up().expect("the error box is up") {
         crate::dialogs::Dialog::Message { title, text } => {
             assert_eq!(title, "b.sh");
             assert_eq!(
@@ -426,13 +426,13 @@ fn opening_a_disk_image_asks_before_mounting_it() {
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.items[0].mime = Some("application/x-raw-disk-image".into());
     ex.sv.selection.set_only(Some(0));
-    let mounting = |ex: &crate::Explorer| match &ex.dialog {
+    let mounting = |ex: &crate::Explorer| match ex.dialog() {
         Some(crate::dialogs::Dialog::Message { title, .. }) => title == "Could not mount stick.img",
         _ => false,
     };
 
     ex.open_selected(&mut ctx);
-    match &ex.dialog {
+    match ex.dialog() {
         Some(crate::dialogs::Dialog::Confirm(c)) => {
             assert_eq!(c.title, "Mount Disk Image");
             assert_eq!(c.buttons(), ["&Mount", "Cancel"]);
@@ -440,12 +440,12 @@ fn opening_a_disk_image_asks_before_mounting_it() {
         _ => panic!("the question is up before any mount"),
     }
     ex.dialog_outcome(Event::Default, &mut ctx);
-    assert!(ex.dialog.is_none(), "Cancel, the default, mounts nothing");
+    assert!(ex.dialog().is_none(), "Cancel, the default, mounts nothing");
 
     ex.open_selected(&mut ctx);
     ex.dialog_outcome(Event::Pressed(BUTTON_IDS[0]), &mut ctx);
     assert!(mounting(&ex), "Mount mounts it (here with no UDisks2)");
-    ex.dialog = None;
+    ex.take_up();
 
     ex.run(crate::commands::Command::MountImage, &mut ctx);
     assert!(mounting(&ex), "the Mount row mounts unasked");

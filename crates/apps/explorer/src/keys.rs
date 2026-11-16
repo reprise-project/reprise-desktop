@@ -412,7 +412,7 @@ impl Explorer {
                 // The focus drops into the view once the address
                 // takes, so Backspace there is Up and not a deletion. A
                 // failure leaves the caret in the field behind the box.
-                if self.dialog.is_none() {
+                if self.dialog().is_none() {
                     self.focus = Focus::View;
                 }
                 reply

@@ -218,7 +218,7 @@ fn skipping_a_failed_file_pastes_the_rest() {
         .expect("the failure box is up");
     assert!(text.starts_with("Cannot copy gone.txt: "), "{text}");
     assert!(dir.join("b.txt").is_file(), "Skip goes on to the next file");
-    assert!(ex.dialog.is_none(), "and no error box follows");
+    assert!(ex.dialog().is_none(), "and no error box follows");
 }
 
 /// The failure box's close box is its Cancel: the held paste ends at the failed file.
@@ -245,7 +245,7 @@ fn closing_the_failure_box_ends_its_paste() {
 
     ex.dialog_event(repriseapp::Event::CloseRequest, &mut ctx);
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| !ex.busy());
-    assert!(ex.dialog.is_none(), "no box follows");
+    assert!(ex.dialog().is_none(), "no box follows");
     assert!(!dir.join("b.txt").exists(), "the paste ended at gone.txt");
 }
 
@@ -271,8 +271,8 @@ fn a_failure_behind_the_chooser_comes_up_when_it_closes() {
         },
         &mut ctx,
     );
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| !ex.waiting.is_empty());
-    assert!(matches!(ex.dialog, Some(Dialog::ChooseProgram(_))));
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.boxes_waiting() > 0);
+    assert!(matches!(ex.dialog(), Some(Dialog::ChooseProgram(_))));
 
     ex.event(crate::DIALOG, key_event_escape(), &mut ctx);
     assert!(ex.holds_a_job(), "the failure box comes up");
@@ -310,7 +310,7 @@ fn a_delete_question_waits_behind_a_failed_items_box() {
     assert!(ex.holds_a_job(), "the paste's question stays up");
 
     ex.event(crate::DIALOG, key_event_alt('s'), &mut ctx);
-    match &ex.dialog {
+    match ex.dialog() {
         Some(Dialog::Confirm(c)) => assert_eq!(c.paths, vec![dir.join("x.txt")]),
         _ => panic!("the delete asks next"),
     }
@@ -333,7 +333,7 @@ fn a_file_pasted_onto_a_folders_name_lands_numbered() {
         },
         &mut ctx,
     );
-    assert!(ex.dialog.is_none(), "nothing to ask");
+    assert!(ex.dialog().is_none(), "nothing to ask");
     ex.finish_puts(&mut ctx);
     assert!(dir.join("b.txt").is_dir());
     assert_eq!(
@@ -370,7 +370,7 @@ fn undo_after_the_source_folder_vanished_keeps_the_batch_for_a_retry() {
     std::fs::remove_dir_all(&from).expect("rmdir");
     ex.run(Command::Undo, &mut ctx);
     ex.finish_puts(&mut ctx);
-    match ex.dialog.as_ref().expect("the failure is reported") {
+    match ex.dialog().expect("the failure is reported") {
         Dialog::Message { title, text } => {
             assert_eq!(title, "Error");
             assert!(text.starts_with("Cannot undo: "), "{text}");
@@ -380,7 +380,7 @@ fn undo_after_the_source_folder_vanished_keeps_the_batch_for_a_retry() {
     assert_eq!(ex.undo, Some("Move"), "the batch stays for a retry");
     assert!(dir.join("a.txt").is_file() && dir.join("b.txt").is_file());
 
-    ex.dialog = None;
+    ex.take_up();
     std::fs::create_dir_all(&from).expect("mkdir");
     ex.run(Command::Undo, &mut ctx);
     ex.finish_puts(&mut ctx);
