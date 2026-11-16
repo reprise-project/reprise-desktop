@@ -89,7 +89,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Window memory.** A program opens where its last window closed, per set
   of connected screens (`[windows] remember`).
 - **Window rules** in the config match windows by app id and title and pin
-  their size, place, screen, desktop, state or tab group.
+  their size, place, screen, desktop, state or tab group. A browser's
+  picture-in-picture video stays on top on every desktop unless a rule says
+  otherwise.
 - **Small conveniences.** Super+C centres a window, Super+Shift+B hides its
   frame, and Esc during a caption drag puts it back.
 - **End Program.** Reprise pings windows, so closing one that stopped

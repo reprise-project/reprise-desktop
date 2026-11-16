@@ -264,9 +264,25 @@ impl Remembered {
     }
 }
 
+/// The titles Firefox and Chromium give a picture-in-picture video's window.
+const PICTURE_IN_PICTURE: [&str; 2] = ["Picture-in-Picture", "Picture in picture"];
+
+/// The rules before the config's own: a picture-in-picture window stays on top on every desktop.
+fn built_in() -> impl Iterator<Item = WindowRule> {
+    PICTURE_IN_PICTURE.into_iter().map(|title| WindowRule {
+        app_id: "*".into(),
+        title: Some(title.into()),
+        always_on_top: Some(true),
+        sticky: Some(true),
+        ..WindowRule::default()
+    })
+}
+
 pub fn want(rules: &[WindowRule], app_id: &str, title: &str, base: Want) -> Want {
-    rules
+    let built_in: Vec<WindowRule> = built_in().collect();
+    built_in
         .iter()
+        .chain(rules)
         .filter(|r| r.matches(app_id, title))
         .fold(base, |mut w, r| {
             fn over<T: Clone>(slot: &mut Option<T>, v: &Option<T>) {
@@ -301,6 +317,25 @@ mod tests {
             app_id: app_id.into(),
             ..WindowRule::default()
         }
+    }
+
+    #[test]
+    fn a_picture_in_picture_window_stays_on_top_on_every_desktop_unless_a_rule_says_not() {
+        let pip = want(&[], "firefox", "Picture-in-Picture", Want::default());
+        assert_eq!((pip.always_on_top, pip.sticky), (Some(true), Some(true)));
+        let chromium = want(&[], "chromium", "Picture in picture", Want::default());
+        assert_eq!(chromium.always_on_top, Some(true));
+        assert_eq!(
+            want(&[], "firefox", "Mozilla Firefox", Want::default()),
+            Want::default()
+        );
+        let off = WindowRule {
+            title: Some("Picture-in-Picture".into()),
+            always_on_top: Some(false),
+            ..rule("firefox")
+        };
+        let kept = want(&[off], "firefox", "Picture-in-Picture", Want::default());
+        assert_eq!((kept.always_on_top, kept.sticky), (Some(false), Some(true)));
     }
 
     #[test]
