@@ -42,6 +42,9 @@ struct UpdatesApp {
     announced: Announced,
     /// An install just ended: its result stays up through the check that follows it.
     hold: bool,
+    /// The restart or log off an earlier install asked for: a later install, dismissed or failed,
+    /// leaves it owed.
+    owed: Restart,
     tray_state: Option<model::TrayLook>,
     /// What the restart watch last said, and `[updates] restart_notice`, reread on each config change.
     restart_due: bool,
@@ -74,6 +77,7 @@ impl UpdatesApp {
             updates: Vec::new(),
             announced: Announced::default(),
             hold: false,
+            owed: Restart::None,
             tray_state: None,
             restart_due: false,
             notice_on: repriseconf::current().restart_notice,
@@ -119,12 +123,20 @@ impl UpdatesApp {
         )
     }
 
+    /// The phase with nothing running: the restart or log off still owed, else ready.
+    fn settled(&self) -> Phase {
+        match self.owed {
+            Restart::None => Phase::Ready,
+            r => Phase::Installed(r),
+        }
+    }
+
     /// A restart the system needs shows in the window and tray until it happens, and in a balloon
     /// once a boot. An install's result says it instead, and one running holds it until it ends.
     fn settle_restart(&mut self) {
         if !(self.restart_due && self.notice_on) {
             if self.phase == Phase::RestartDue {
-                self.phase = Phase::Ready;
+                self.phase = self.settled();
             }
             return;
         }
@@ -207,7 +219,7 @@ impl UpdatesApp {
                 if !keep {
                     self.phase = match failed {
                         Some(why) => Phase::Failed(model::check_failed(&why)),
-                        None => Phase::Ready,
+                        None => self.settled(),
                     };
                 }
             }
@@ -238,17 +250,17 @@ impl UpdatesApp {
                 self.hold = true;
                 match result {
                     Ok(restart) => {
-                        let restart = if self.restart_due && self.notice_on {
-                            restart.max(Restart::System)
-                        } else {
-                            restart
-                        };
+                        self.owed = self.owed.max(restart);
+                        let mut restart = self.owed;
+                        if self.restart_due && self.notice_on {
+                            restart = restart.max(Restart::System);
+                        }
                         if self.hidden || restart != Restart::None {
                             self.notify(model::installed_balloon(restart), true);
                         }
                         self.phase = Phase::Installed(restart);
                     }
-                    Err(worker::Failure::Dismissed) => self.phase = Phase::Ready,
+                    Err(worker::Failure::Dismissed) => self.phase = self.settled(),
                     Err(worker::Failure::Text(why)) => {
                         log::warn!("installing updates: {why}");
                         let message = model::install_failed(&why);
@@ -494,6 +506,7 @@ pub fn main(args: Vec<std::ffi::OsString>) {
 mod tests {
     use super::*;
     use model::{Group, Kind, Origin};
+    use reprisekit::controls::form::Event::Pressed;
 
     fn update(name: &str) -> Update {
         Update {
@@ -673,9 +686,54 @@ mod tests {
         app.worker_msg(found(Ok(vec![update("a")])));
         assert_eq!(app.phase, Phase::RestartDue);
         assert_eq!(app.updates.len(), 1);
+        let (text, theme) = window_env();
+        app.window.sync(&app.phase, &app.updates, &text, &theme);
+        assert_eq!(
+            app.window.event(Pressed("act")),
+            window::Outcome::Install,
+            "the update found later can be installed"
+        );
+        assert_eq!(
+            app.window.event(Pressed("restart")),
+            window::Outcome::Restart
+        );
+        let look = model::tray_look(&app.phase, &app.updates);
+        assert_eq!(look.icon, "system-reboot");
         app.worker_msg(worker::Msg::RestartDue(false));
         assert_eq!(app.phase, Phase::Ready);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn window_env() -> (reprisekit::text::TextRenderer, reprisekit::theme::Theme) {
+        let fonts = reprisekit::theme::FontConfig::default();
+        (
+            reprisekit::text::TextRenderer::load(&fonts),
+            reprisekit::theme::Theme::default(),
+        )
+    }
+
+    #[test]
+    fn a_restart_an_install_asked_for_outlasts_later_installs() {
+        let mut app = UpdatesApp::new(true);
+        app.worker_msg(worker::Msg::Installed(Ok(Restart::System)));
+        app.worker_msg(found(Ok(vec![update("b")])));
+        app.install();
+        assert!(app.phase.busy());
+        app.worker_msg(worker::Msg::Installed(Err(worker::Failure::Dismissed)));
+        assert_eq!(app.phase, Phase::Installed(Restart::System));
+        app.install();
+        app.worker_msg(worker::Msg::Installed(Ok(Restart::None)));
+        assert_eq!(app.phase, Phase::Installed(Restart::System));
+        app.install();
+        let failed = worker::Failure::Text("No network.".into());
+        app.worker_msg(worker::Msg::Installed(Err(failed)));
+        app.worker_msg(found(Ok(vec![update("b")])));
+        assert!(
+            matches!(app.phase, Phase::Failed(_)),
+            "the failure shows first"
+        );
+        app.worker_msg(found(Ok(vec![update("b")])));
+        assert_eq!(app.phase, Phase::Installed(Restart::System));
     }
 
     #[test]
