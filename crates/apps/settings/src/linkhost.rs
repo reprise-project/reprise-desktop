@@ -37,7 +37,7 @@ pub(crate) fn start(id: &str) -> bool {
     let Some(e) = find(id, &dirs()) else {
         return false;
     };
-    let Ok(argv) = launch_argv(&e, &repriseconf::terminal()) else {
+    let Ok(argv) = launch_argv(&e, &repriseconf::current().terminal) else {
         return false;
     };
     match repriseapp::spawn_in(&argv, e.path.as_deref(), Some(&e.id)) {

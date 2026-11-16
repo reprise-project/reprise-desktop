@@ -448,7 +448,7 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Explorer {
         let (jobs_tx, jobs_rx) = std::sync::mpsc::channel();
-        let thumb_setting = repriseconf::thumbnail_cache();
+        let thumb_setting = repriseconf::current().thumbnail_cache;
         let mut sv = ShellView {
             mode: commands::mode_from_name(&settings.mode),
             sort: Some(settings.sort),
@@ -1316,8 +1316,8 @@ impl Explorer {
     /// In the Recycle Bin an item opens its Properties (its menu's default
     /// row): a deleted file is not opened until restored.
     pub fn open_selected(&mut self, ctx: &mut Ctx) -> Reply {
-        let how = Confirm::on_open(repriseconf::confirm_scripts());
-        self.open_selected_with(repriseconf::script_open(), how, ctx)
+        let how = Confirm::on_open(repriseconf::current().confirm_scripts);
+        self.open_selected_with(repriseconf::current().script_open, how, ctx)
     }
 
     /// [`Explorer::open_selected`] from a Run row: a script runs as `open` says, unasked.
@@ -1355,7 +1355,7 @@ impl Explorer {
 
     /// Starts the configured terminal in `dir`, in its program's app scope.
     pub(crate) fn open_terminal(&self, dir: &Path) -> Reply {
-        let terminal = repriseconf::terminal();
+        let terminal = repriseconf::current().terminal.clone();
         let app = reprisefs::apps::terminal_app(&terminal, &self.app_index);
         let argv = reprisefs::apps::terminal_argv(&terminal);
         let argv = reprisefs::scope::in_scope(&argv, app.as_deref());
@@ -1376,7 +1376,10 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Reply {
         let (globs, apps) = (self.globs.clone(), self.app_index.clone());
-        let (terminal, end) = (repriseconf::terminal(), repriseconf::script_terminal());
+        let (terminal, end) = (
+            repriseconf::current().terminal.clone(),
+            repriseconf::current().script_terminal,
+        );
         let path = path.to_path_buf();
         let at = path.clone();
         let read = move || {
@@ -1396,7 +1399,7 @@ impl Explorer {
                     return Opened::Choose;
                 };
                 if let Ok(open) = &open
-                    && repriseconf::recent_files()
+                    && repriseconf::current().recent_files
                 {
                     let app = (open.app.as_deref()).and_then(|id| apps.iter().find(|a| a.id == id));
                     if let Err(e) = reprisefs::recent::record(&[(&path, app, mime.as_deref())]) {

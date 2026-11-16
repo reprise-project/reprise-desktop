@@ -164,7 +164,7 @@ impl DrivesApp {
 
     /// `[drives] on_insert` is read at each arrival, so a change applies to the next drive.
     fn arrived(&mut self, a: Arrival) {
-        let mode = model::OnInsert::parse(&repriseconf::drives_on_insert());
+        let mode = model::OnInsert::parse(&repriseconf::current().drives_on_insert);
         let volume = a.volume().to_string();
         match model::act(a, mode) {
             Act::Ask(a) => {
@@ -220,7 +220,9 @@ impl DrivesApp {
 
     /// `[storage] low_space_percent` is read at each round, so a change applies to the next.
     fn space_read(&mut self, round: &[space::Reading]) {
-        let low = self.warned.feed(round, repriseconf::low_space_percent());
+        let low = self
+            .warned
+            .feed(round, repriseconf::current().low_space_percent);
         for r in low {
             let (summary, body) = space::balloon(r);
             log::info!("{body}");
@@ -495,7 +497,7 @@ impl DrivesApp {
                     );
                     self.flyout = Some(Flyout {
                         at: (x, y),
-                        edge: Edge::from_name(&repriseconf::taskbar_position()).unwrap_or_default(),
+                        edge: repriseconf::current().taskbar.position,
                         entries,
                         tree,
                         menu: None,

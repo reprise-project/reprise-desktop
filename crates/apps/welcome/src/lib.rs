@@ -167,7 +167,7 @@ impl WelcomeApp {
         let Some((_, e)) = self.entries.iter().find(|(l, _)| l.id == id) else {
             return Reply::none();
         };
-        match reprisefs::apps::launch_argv(e, &repriseconf::terminal()) {
+        match reprisefs::apps::launch_argv(e, &repriseconf::current().terminal) {
             Ok(argv) => Reply {
                 spawn: vec![argv],
                 spawn_app: Some(e.id.clone()),

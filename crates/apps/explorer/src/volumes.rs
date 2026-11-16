@@ -246,8 +246,8 @@ impl Explorer {
             return self.open_selected(ctx);
         };
         let (path, exec) = (it.path.clone(), it.exec);
-        let how = reprisefs::program::Confirm::on_open(repriseconf::confirm_scripts());
-        self.open_file(&path, exec, repriseconf::script_open(), how, ctx)
+        let how = reprisefs::program::Confirm::on_open(repriseconf::current().confirm_scripts);
+        self.open_file(&path, exec, repriseconf::current().script_open, how, ctx)
     }
 
     /// Eject: safely remove the drive under the single selected row, or unmount and detach the

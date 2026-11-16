@@ -203,7 +203,7 @@ fn work(
 /// The thumbnail helper of [`reprisefs::thumbpipe`]: answers the paths on stdin through the
 /// shared cache as `[thumbnail_cache]` sets it, decoding a miss into it, until stdin closes.
 pub fn serve_stdio() -> std::io::Result<()> {
-    let setting = repriseconf::thumbnail_cache();
+    let setting = repriseconf::current().thumbnail_cache;
     let mut cache = cache_for(setting);
     let decoders = Decoders::default_set();
     serve(

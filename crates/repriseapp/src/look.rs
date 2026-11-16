@@ -116,7 +116,8 @@ pub(crate) struct Look {
 
 impl Look {
     pub(crate) fn from_env() -> Look {
-        let keys = repriseconf::look_keys();
+        let cfg = repriseconf::current();
+        let (fonts, metrics) = (&cfg.theme.fonts, &cfg.theme.metrics);
         Look {
             interface: std::env::var(reprisekit::interface::ENV).ok(),
             blue_variant: std::env::var(reprisekit::blue::ENV).ok(),
@@ -125,11 +126,11 @@ impl Look {
             colors: std::env::var(reprisekit::theme::COLORS_ENV).ok(),
             icon_theme: std::env::var(reprisekit::icontheme::ENV)
                 .unwrap_or_else(|_| "hicolor".into()),
-            shell_dlg: keys.shell_dlg,
-            font_family: keys.font_family,
-            antialias: keys.antialias,
-            text_size: keys.text_size,
-            double_click_ms: keys.double_click_ms,
+            shell_dlg: fonts.shell_dlg.clone(),
+            font_family: Some(fonts.family.clone()),
+            antialias: Some(fonts.antialias),
+            text_size: cfg.accessibility.text_size,
+            double_click_ms: Some(metrics.double_click_ms),
         }
     }
 

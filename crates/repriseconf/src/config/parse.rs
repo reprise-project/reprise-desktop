@@ -965,6 +965,33 @@ impl Config {
         if let Some(v) = file.updates.and_then(|u| u.restart_notice) {
             cfg.restart_notice = v;
         }
+        if let Some(v) = file.drives.and_then(|d| d.on_insert) {
+            cfg.drives_on_insert = v;
+        }
+        if let Some(v) = file.storage.and_then(|s| s.low_space_percent) {
+            cfg.low_space_percent = v.clamp(0, i64::from(crate::LOW_SPACE_MAX)) as u8;
+        }
+        if let Some(b) = file.bluetooth {
+            if let Some(v) = b.battery_warning {
+                cfg.bluetooth.battery_warning = v.clamp(0, i64::from(crate::BT_BATTERY_MAX)) as u8;
+            }
+            if let Some(v) = b.receive_files {
+                cfg.bluetooth.receive_files = v;
+            }
+        }
+        if let Some(t) = file.thumbnail_cache {
+            let c = &mut cfg.thumbnail_cache;
+            let mb = crate::ThumbnailCache::MAX_MB;
+            if let Some(v) = t.enabled {
+                c.enabled = v;
+            }
+            if let Some(v) = t.max_mb {
+                c.max_mb = v.clamp(i64::from(*mb.start()), i64::from(*mb.end())) as u32;
+            }
+            if let Some(v) = t.external_thumbnailers {
+                c.external_thumbnailers = v;
+            }
+        }
         if let Some(v) = file.time_zone.and_then(|t| t.automatic) {
             cfg.auto_time_zone = v;
         }

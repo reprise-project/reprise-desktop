@@ -76,7 +76,7 @@ impl UpdatesApp {
             hold: false,
             tray_state: None,
             restart_due: false,
-            notice_on: repriseconf::restart_notice(),
+            notice_on: repriseconf::current().restart_notice,
             config: None,
             mark: restart::mark_path(),
             boot: restart::boot_id(),
@@ -274,7 +274,7 @@ impl UpdatesApp {
             .map(|rx| rx.try_iter().filter_map(tray::translate).collect())
             .unwrap_or_default();
         if self.config.as_mut().is_some_and(|w| w.take_changed()) {
-            self.notice_on = repriseconf::restart_notice();
+            self.notice_on = repriseconf::current().restart_notice;
             self.settle_restart();
         }
         let raised = !msgs.is_empty();

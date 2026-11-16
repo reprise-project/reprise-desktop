@@ -98,8 +98,8 @@ impl BtApp {
             snapshot: bz::Snapshot::default(),
             tray_state: None,
             devices: devices::Devices::new(
-                repriseconf::bt_battery_warning(),
-                repriseconf::bt_receive_files(),
+                repriseconf::current().bluetooth.battery_warning,
+                repriseconf::current().bluetooth.receive_files,
             ),
             wizard: None,
             props: None,
@@ -164,7 +164,7 @@ impl BtApp {
         if !self.snapshot.devices.iter().any(|d| d.battery.is_some()) {
             return;
         }
-        let level = repriseconf::bt_battery_warning();
+        let level = repriseconf::current().bluetooth.battery_warning;
         for w in self.battery.check(&self.snapshot, level) {
             if let Some(t) = &self.tray {
                 t.notify_with_icon(&w.summary, &w.body, w.icon);
@@ -360,7 +360,7 @@ impl BtApp {
                 bz::BzMsg::AgentCancel => self.agent_cancel(),
                 bz::BzMsg::Obex(present) => {
                     self.devices.set_obex(present);
-                    if present && repriseconf::bt_receive_files() {
+                    if present && repriseconf::current().bluetooth.receive_files {
                         self.send(bz::Cmd::Receive(true));
                     }
                 }
@@ -493,12 +493,12 @@ impl BtApp {
     }
 
     fn apply_options(&self, o: devices::Options) {
-        if o.battery_warning != repriseconf::bt_battery_warning()
+        if o.battery_warning != repriseconf::current().bluetooth.battery_warning
             && let Err(e) = repriseconf::save_bt_battery_warning(o.battery_warning)
         {
             log::warn!("could not save the battery warning: {e}");
         }
-        if o.receive != repriseconf::bt_receive_files() {
+        if o.receive != repriseconf::current().bluetooth.receive_files {
             if let Err(e) = repriseconf::save_bt_receive_files(o.receive) {
                 log::warn!("could not save Receive files: {e}");
             }
@@ -1071,7 +1071,8 @@ impl App for BtApp {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        let forms = repriseapp::start_theme().with_form_text(repriseconf::text_size());
+        let forms = repriseapp::start_theme()
+            .with_form_text(repriseconf::current().accessibility.text_size);
         forms.text.size(devices::CLIENT)
     }
 

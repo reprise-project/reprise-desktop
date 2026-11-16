@@ -43,7 +43,8 @@ where
 }
 
 async fn read_system(conn: &zbus::Connection) -> zbus::Result<System> {
-    let (auto_zone, location) = repriseconf::auto_time_zone();
+    let cfg = repriseconf::current();
+    let (auto_zone, location) = (cfg.auto_time_zone, cfg.location);
     let geoclue = activatable(conn, GEOCLUE).await;
     let allowed = reprisebus::polkit::allowed_without_password(conn, SET_TIMEZONE).await;
     Ok(System {

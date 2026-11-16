@@ -559,7 +559,7 @@ impl SettingsApp {
             app.open_page(p, focus.as_deref());
         }
         app.requests = requests;
-        app.text_size = repriseconf::text_size();
+        app.text_size = repriseconf::current().accessibility.text_size;
         app.units = Theme::default().with_form_text(app.text_size).text;
         let state = winstate::path();
         app.kept = winstate::kept(&state);

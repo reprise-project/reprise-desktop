@@ -409,6 +409,24 @@ impl Default for NotificationsConfig {
 
 /// `[sounds]`: the theme notifications and the bell play from, whether the bell sounds, and
 /// whether playback volumes may go past 100 %.
+/// `[bluetooth]`: reprise-bluetooth warns once when a connected device's battery drops to
+/// `battery_warning` percent (0 turns it off, clamped to 0..=[`crate::BT_BATTERY_MAX`]), and
+/// `receive_files` lets a paired device offer files.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BluetoothConfig {
+    pub battery_warning: u8,
+    pub receive_files: bool,
+}
+
+impl Default for BluetoothConfig {
+    fn default() -> Self {
+        BluetoothConfig {
+            battery_warning: crate::BT_BATTERY_WARNING,
+            receive_files: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SoundsConfig {
     /// An XDG sound theme name.
