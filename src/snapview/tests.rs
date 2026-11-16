@@ -1161,3 +1161,23 @@ fn a_drag_to_the_side_of_an_output_with_no_work_area_left_snaps_nothing() {
         "and snaps nothing"
     );
 }
+
+#[test]
+fn a_rolled_up_snapped_window_stays_rolled_up_as_its_work_area_moves() {
+    use crate::harness::Harness;
+    let mut h = Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    super_arrow(&mut h, &mut c, KEY_LEFT);
+    assert!(h.state.wm.snap.group_of(t.id).is_some(), "snapped");
+    h.state.set_shaded(t.id, true);
+    assert!(h.state.win(t.id).expect("window").shaded);
+    let before = h.state.win(t.id).expect("window").frame_rect();
+    let mut panel = h.connect();
+    h.map_reserving_panel(&mut panel, 40);
+    h.roundtrip(&mut c);
+    let w = h.state.win(t.id).expect("window");
+    assert!(w.shaded, "still rolled up");
+    assert_ne!(w.frame_rect().y, before.y, "moved with the work area");
+}
