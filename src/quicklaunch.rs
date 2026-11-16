@@ -132,14 +132,19 @@ fn add_from(dir: &Path, src: &Path, app_dirs: &[PathBuf]) -> Option<String> {
 }
 
 /// Whether the `.desktop` file `src` may become a button that runs its `Exec`: it sits in one of
-/// `app_dirs` or in `dir` (Quick Launch's own), or the user allowed it to run.
+/// `app_dirs` (or a folder below one) or in `dir` (Quick Launch's own), or the user allowed it to
+/// run.
 fn runs_as_is(src: &Path, dir: &Path, app_dirs: &[PathBuf]) -> bool {
     let real = |d: &Path| std::fs::canonicalize(d).ok();
     let Some(parent) = src.parent().and_then(real) else {
         return false;
     };
-    let listed = std::iter::once(dir).chain(app_dirs.iter().map(PathBuf::as_path));
-    listed.filter_map(real).any(|d| d == parent) || apps::is_trusted(src)
+    real(dir).is_some_and(|d| d == parent)
+        || app_dirs
+            .iter()
+            .filter_map(|d| real(d))
+            .any(|d| parent.starts_with(d))
+        || apps::is_trusted(src)
 }
 
 pub fn remove(dir: &Path, file: &str) {
@@ -373,6 +378,26 @@ mod tests {
         let copied = scan(&dir, "foot");
         let copied = copied.iter().find(|i| i.file == file).unwrap();
         assert_eq!(copied.entry.action, exec(&["sh", "-c", "true"], &file));
+    }
+
+    #[test]
+    fn a_launcher_in_a_folder_below_an_application_folder_is_copied() {
+        let apps_dir = fixture("nested-apps");
+        let _c = Cleanup(apps_dir.clone());
+        let folder = apps_dir.join("wine/Programs/Test");
+        std::fs::create_dir_all(&folder).unwrap();
+        let app = folder.join("Test.desktop");
+        std::fs::write(
+            &app,
+            "[Desktop Entry]\nType=Application\nName=Test\nExec=true\n",
+        )
+        .unwrap();
+        let dir = fixture("nested-dst");
+        let _c2 = Cleanup(dir.clone());
+        assert_eq!(
+            add_from(&dir, &app, &[apps_dir]).as_deref(),
+            Some("Test.desktop")
+        );
     }
 
     #[test]

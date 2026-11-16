@@ -1250,32 +1250,98 @@ pub fn user_applications_dir() -> Option<PathBuf> {
         .map(|d| d.join("applications"))
 }
 
+/// Folder levels below an applications directory that [`scan`] reads.
+const MAX_DEPTH: usize = 8;
+
+/// The file of desktop-file id `id` in [`default_dirs`], as [`find_file_in`].
 pub fn find_file(id: &str) -> Option<PathBuf> {
-    default_dirs()
-        .into_iter()
-        .map(|d| d.join(id))
-        .find(|p| p.is_file())
+    find_file_in(&default_dirs(), id)
 }
 
-/// Earlier directories override later ones by file name; result sorted by
-/// name, case-insensitive. An excluded entry in an earlier directory still
-/// shadows the same id in later directories, per the desktop-entry spec.
-pub fn scan(dirs: &[PathBuf]) -> Vec<AppEntry> {
-    let mut seen: HashMap<String, Option<AppEntry>> = HashMap::new();
-    for dir in dirs {
-        let Ok(rd) = std::fs::read_dir(dir) else {
+/// The file [`scan`] reads for `id` over `dirs`: the first directory holding it wins, and in one
+/// directory `a-b.desktop` comes before `a/b.desktop`.
+pub fn find_file_in(dirs: &[PathBuf], id: &str) -> Option<PathBuf> {
+    if id.contains('/') {
+        return None;
+    }
+    dirs.iter().find_map(|d| resolve(d, id, 0))
+}
+
+fn resolve(dir: &Path, rest: &str, depth: usize) -> Option<PathBuf> {
+    let file = dir.join(rest);
+    if file.is_file() {
+        return Some(file);
+    }
+    if depth == MAX_DEPTH {
+        return None;
+    }
+    rest.match_indices('-').find_map(|(i, _)| {
+        let name = &rest[..i];
+        let sub = dir.join(name);
+        (!matches!(name, "" | "." | "..") && sub.is_dir())
+            .then(|| resolve(&sub, &rest[i + 1..], depth + 1))
+            .flatten()
+    })
+}
+
+/// `dir` and its folders down to [`MAX_DEPTH`], the ones the app index watches.
+pub fn entry_folders(dir: &Path) -> Vec<PathBuf> {
+    walk(dir).into_iter().map(|f| f.path).collect()
+}
+
+struct Folder {
+    path: PathBuf,
+    /// `(id, file)` per `.desktop` file, the id being the path below the applications directory
+    /// with `/` as `-` (`wine/Programs/App.desktop` is `wine-Programs-App.desktop`).
+    files: Vec<(String, PathBuf)>,
+}
+
+/// `dir` and the folders below it, each before its subfolders. A folder reached twice (a
+/// symlink loop) is read once.
+fn walk(dir: &Path) -> Vec<Folder> {
+    use std::os::unix::fs::MetadataExt;
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    let mut todo = vec![(dir.to_path_buf(), String::new(), 0)];
+    while let Some((path, prefix, depth)) = todo.pop() {
+        let Ok(meta) = std::fs::metadata(&path) else {
             continue;
         };
+        if !meta.is_dir() || !seen.insert((meta.dev(), meta.ino())) {
+            continue;
+        }
+        let Ok(rd) = std::fs::read_dir(&path) else {
+            continue;
+        };
+        let mut files = Vec::new();
+        let mut subs = Vec::new();
         for entry in rd.flatten() {
-            let path = entry.path();
-            let Some(id) = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(str::to_string)
-            else {
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
                 continue;
             };
-            if !id.ends_with(".desktop") || seen.contains_key(&id) {
+            let child = entry.path();
+            if name.ends_with(".desktop") {
+                files.push((format!("{prefix}{name}"), child));
+            } else if depth < MAX_DEPTH && child.is_dir() {
+                subs.push((child, format!("{prefix}{name}-"), depth + 1));
+            }
+        }
+        // Popped last-first: reversed, the folders are read in name order.
+        subs.sort_by(|a, b| b.0.cmp(&a.0));
+        todo.extend(subs);
+        out.push(Folder { path, files });
+    }
+    out
+}
+
+/// Earlier directories override later ones by desktop-file id, and a folder's own files override
+/// its subfolders'; result sorted by name, case-insensitive. An excluded entry in an earlier
+/// directory still shadows the same id in later directories, per the desktop-entry spec.
+pub fn scan(dirs: &[PathBuf]) -> Vec<AppEntry> {
+    let mut seen: HashMap<String, Option<AppEntry>> = HashMap::new();
+    for folder in dirs.iter().flat_map(|d| walk(d)) {
+        for (id, path) in folder.files {
+            if seen.contains_key(&id) {
                 continue;
             }
             let Ok(text) = read_desktop_file(&path) else {
