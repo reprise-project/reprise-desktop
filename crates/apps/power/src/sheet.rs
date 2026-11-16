@@ -1,7 +1,7 @@
 //! Power Options Properties: the pure model.
 //!
 //! One `PropSheet` with the laptop tabs: Power Schemes (power profile, idle timeouts, plugged in against
-//! on battery), Alarms, Power Meter and Advanced (tray icon, lid and buttons). Nothing here reads a file
+//! on battery, Keep Awake), Alarms, Power Meter and Advanced (tray icon, lid and buttons). Nothing here reads a file
 //! or a bus: the host feeds it [`Settings`], [`Power`] and [`Profiles`] snapshots and applies the
 //! [`Settings`] and profile it hands back.
 
@@ -104,6 +104,8 @@ pub enum Outcome {
         device: String,
         on: bool,
     },
+    /// The Keep Awake check changed: the host takes or gives back its idle inhibitor at once.
+    KeepAwake(bool),
 }
 
 pub struct Sheet {
@@ -185,6 +187,11 @@ impl Sheet {
         }
     }
 
+    /// Keep Awake's check shows `on`, the host's state; the tray menu's check shows the same.
+    pub fn set_awake(&mut self, on: bool) {
+        self.sheet.pages[TAB_SCHEMES].set_check(KEEP_AWAKE, on);
+    }
+
     /// Whether a toggle the host runs is under way; the check is grey while it is.
     pub fn set_charging(&mut self, on: bool) {
         self.charging = on;
@@ -230,6 +237,10 @@ impl Sheet {
             }
             propsheet::Event::Redraw => Outcome::Redraw,
             propsheet::Event::Page(_, form::Event::Changed(CHARGE_LIMIT)) => self.charge_toggled(),
+            propsheet::Event::Page(_, form::Event::Changed(KEEP_AWAKE)) => {
+                let on = self.sheet.pages[TAB_SCHEMES].checked(KEEP_AWAKE);
+                on.map_or(Outcome::Redraw, Outcome::KeepAwake)
+            }
             propsheet::Event::Page(_, form::Event::Changed(id)) => {
                 self.read(id);
                 Outcome::Redraw
@@ -647,15 +658,24 @@ fn schemes_page(icon: Option<Canvas>) -> Form {
         minutes_combo("ac_standby", COL_AC, 246),
         minutes_combo("bat_standby", COL_BAT, 246),
     ];
+    items.push(Item::check(
+        KEEP_AWAKE,
+        X,
+        314,
+        "&Keep Awake: no screen saver, lock or stand by",
+    ));
     items.push(Item::label_at(
         "schemes_note",
         X,
-        314,
+        340,
         W,
         "Screen saver and lock times are in Reprise Settings.",
     ));
     Form::new(items)
 }
+
+/// The Power Schemes tab's Keep Awake check box, which acts at once like the tray menu's.
+pub const KEEP_AWAKE: &str = "keep_awake";
 
 /// The Alarms tab's power saver check box: greyed while the low alarm is off or the daemon offers no power saver profile.
 pub const LOW_SAVER: &str = "low_saver";
@@ -1236,5 +1256,21 @@ mod tests {
         assert!(enabled(&s));
         assert_eq!(s.sheet.pages[TAB_METER].checked(CHARGE_LIMIT), Some(true));
         assert!(!apply_on(&s), "the limit acts at once");
+    }
+
+    #[test]
+    fn keep_awake_acts_at_once_and_leaves_apply_alone() {
+        let mut s = sheet();
+        s.sheet.pages[TAB_SCHEMES].set_check(KEEP_AWAKE, true);
+        assert_eq!(changed(&mut s, KEEP_AWAKE), Outcome::KeepAwake(true));
+        assert!(!apply_on(&s));
+        assert_eq!(s.event(propsheet::Event::Cancel), Outcome::Close);
+        assert_eq!(
+            s.sheet.pages[TAB_SCHEMES].checked(KEEP_AWAKE),
+            Some(true),
+            "Cancel leaves the host's state to the host"
+        );
+        s.set_awake(false);
+        assert_eq!(s.sheet.pages[TAB_SCHEMES].checked(KEEP_AWAKE), Some(false));
     }
 }
