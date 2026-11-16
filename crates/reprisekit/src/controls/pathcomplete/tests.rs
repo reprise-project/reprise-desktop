@@ -76,6 +76,54 @@ fn split_finds_the_folder_part_and_the_name_being_typed() {
 }
 
 #[test]
+fn a_shell_line_completes_its_last_word_with_escaped_spaces() {
+    assert_eq!(split("~/My\\ Al", Scope::Shell), Some((0, 2)));
+    assert_eq!(split("mpv ~/My\\ Music/Al", Scope::Shell), Some((4, 16)));
+    assert_eq!(
+        split("mpv ~/My Al", Scope::Shell),
+        None,
+        "Al is a word of its own"
+    );
+    assert_eq!(split("~/a\\", Scope::Shell), None, "a trailing backslash");
+    assert_eq!(split("~/$HOME", Scope::Shell), None, "an expansion");
+    assert_eq!(split("~/'a b'", Scope::Shell), None, "quoted names");
+}
+
+#[test]
+fn a_shell_line_lists_its_folder_unescaped_and_writes_names_escaped() {
+    let fs: &[(&str, &[&str])] = &[
+        ("~/", &["My Music/", "Docs/"]),
+        ("~/My Music/", &["A;b $(x)", "Album/", "line\nbreak"]),
+    ];
+    let mut pc = PathComplete::new(Scope::Shell);
+    let mut edit = TextEdit::new("", false);
+    typed(&mut pc, &mut edit, "~/My");
+    serve(&mut pc, &mut edit, fs);
+    assert_eq!(shown(&edit), ("~/My", "\\ Music/"), "the tail is escaped");
+    assert!(pc.nav(&mut edit, Key::Tab));
+    serve(&mut pc, &mut edit, fs);
+    assert_eq!(
+        pc.rows(),
+        ["Album/", "A;b $(x)"],
+        "the folder is listed unescaped, rows show names as they are and none with a newline"
+    );
+    assert!(pc.nav(&mut edit, Key::Down));
+    assert!(pc.nav(&mut edit, Key::Down));
+    assert!(pc.nav(&mut edit, Key::Enter));
+    assert_eq!(edit.text, "~/My\\ Music/A\\;b\\ \\$\\(x\\)");
+    assert_eq!(
+        shell_word(&edit.text).as_deref(),
+        Some("~/My Music/A;b $(x)")
+    );
+
+    let mut pc = PathComplete::new(Scope::Shell);
+    let mut edit = TextEdit::new("", false);
+    typed(&mut pc, &mut edit, "~/My\\ Music/Al");
+    serve(&mut pc, &mut edit, fs);
+    assert_eq!(shown(&edit), ("~/My\\ Music/Al", "bum/"));
+}
+
+#[test]
 fn typing_asks_for_the_folder_once_and_completes_the_common_prefix_selected() {
     let mut pc = PathComplete::new(Scope::Rooted);
     let mut edit = TextEdit::new("", false);

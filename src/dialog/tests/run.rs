@@ -922,6 +922,28 @@ fn run_completes_a_typed_path_in_a_list_inside_the_dialog() {
 }
 
 #[test]
+fn run_writes_a_completed_name_with_a_space_escaped_and_runs_it_as_one_word() {
+    use reprisekit::controls::pathcomplete::Entry;
+    let mut d = Dialog::run(&[]);
+    for ch in "~/My".chars() {
+        d.key(Key::Edit(EditKey::Insert(ch.to_string())));
+    }
+    let f = d.field.as_mut().unwrap();
+    let want = f.complete.take_want().expect("Run lists the typed folder");
+    let entries = vec![Entry {
+        name: "My Album".into(),
+        dir: true,
+    }];
+    f.complete
+        .set_listing(f.combo.edit.as_mut().unwrap(), &want, entries);
+    assert_eq!(
+        d.key(Key::Enter),
+        Outcome::Run("~/My\\ Album/".into()),
+        "the completed folder runs as one word"
+    );
+}
+
+#[test]
 fn the_wheel_scrolls_runs_completion_list_when_it_has_a_scrollbar() {
     use reprisekit::controls::pathcomplete::Entry;
     let theme = Theme::default();

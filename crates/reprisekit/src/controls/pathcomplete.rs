@@ -28,12 +28,15 @@ pub struct Entry {
 pub enum Scope {
     /// The whole text is a path, relative ones from the host's folder (a file name box).
     Relative,
-    /// Only a path from `/` or `~`: the whole text, else its last word (a command line).
+    /// Only a path from `/` or `~`: the whole text, else its last word (a path box).
     Rooted,
+    /// Rooted, for a line a shell runs: the path is the last word, a backslash-escaped space
+    /// stays in it, and names complete backslash-escaped (Run).
+    Shell,
 }
 
 /// A folder the host lists for the model: `dir` is the folder part as typed (`~/`, `/usr/`,
-/// `sub/`, or empty for the host's folder).
+/// `sub/`, or empty for the host's folder), unescaped under [`Scope::Shell`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Want {
     pub dir: String,
@@ -247,7 +250,7 @@ impl PathComplete {
             return;
         };
         edit.text.truncate(stem);
-        edit.text.push_str(&label);
+        edit.text.push_str(&self.written(&label));
         let end = edit.text.len();
         edit.set_selection(end, end);
         self.typed = false;
@@ -296,6 +299,14 @@ impl PathComplete {
         self.seen.clone_from(&edit.text);
     }
 
+    /// A listed name as the field holds it.
+    fn written(&self, name: &str) -> String {
+        match self.scope {
+            Scope::Shell => shell_escape(name),
+            _ => name.to_string(),
+        }
+    }
+
     fn fill(&mut self, edit: &mut TextEdit, typed: bool) {
         let query = self.inline.query(edit).to_string();
         let at_end = match self.inline.tail() {
@@ -306,7 +317,23 @@ impl PathComplete {
             self.inline.drop_tail(edit);
             return;
         };
-        let (dir, stem) = (&query[dir_at..stem_at], &query[stem_at..]);
+        let (dir, stem) = match self.scope {
+            Scope::Shell => match (
+                shell_word(&query[dir_at..stem_at]),
+                shell_word(&query[stem_at..]),
+            ) {
+                (Some(d), Some(s)) => (d, s),
+                _ => {
+                    self.inline.drop_tail(edit);
+                    return;
+                }
+            },
+            _ => (
+                query[dir_at..stem_at].to_string(),
+                query[stem_at..].to_string(),
+            ),
+        };
+        let (dir, stem) = (dir.as_str(), stem.as_str());
         let entries = match &self.listing {
             Some((d, e)) if d == dir => e,
             _ => {
@@ -323,6 +350,8 @@ impl PathComplete {
         let labels: Vec<String> = entries
             .iter()
             .filter(|e| e.name.starts_with(stem) && (show_hidden || !e.name.starts_with('.')))
+            // A backslash before a newline joins lines instead of escaping it.
+            .filter(|e| self.scope != Scope::Shell || !e.name.contains('\n'))
             .map(|e| match e.dir {
                 true => format!("{}/", e.name),
                 false => e.name.clone(),
@@ -330,7 +359,7 @@ impl PathComplete {
             .collect();
         let common = common_prefix(&labels);
         if typed && self.inline.completing() && !stem.is_empty() && common.len() > stem.len() {
-            let rest = common[stem.len()..].to_string();
+            let rest = self.written(&common[stem.len()..]);
             self.inline.offer(edit, &query, &rest);
         } else {
             self.inline.drop_tail(edit);
@@ -354,6 +383,11 @@ pub fn split(text: &str, scope: Scope) -> Option<(usize, usize)> {
             let at = text.rfind(char::is_whitespace)? + 1;
             rooted(&text[at..]).then_some(at)?
         }
+        Scope::Shell => {
+            let at = last_word(text);
+            shell_word(&text[at..])?;
+            rooted(&text[at..]).then_some(at)?
+        }
     };
     let path = &text[start..];
     if path.is_empty() || path == "~" || path.contains(['*', '?']) {
@@ -364,6 +398,58 @@ pub fn split(text: &str, scope: Scope) -> Option<(usize, usize)> {
         return None;
     }
     Some((start, start + stem))
+}
+
+/// Where the last word of `text` starts: after its last whitespace not escaped by a backslash.
+fn last_word(text: &str) -> usize {
+    let mut at = 0;
+    let mut chars = text.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            c if c.is_whitespace() => at = i + c.len_utf8(),
+            _ => {}
+        }
+    }
+    at
+}
+
+/// `name` as one shell word: every char a shell would read as syntax backslash-escaped.
+pub fn shell_escape(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        let plain = c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                '/' | '.' | '_' | '-' | '+' | ',' | ':' | '@' | '%' | '=' | '~'
+            )
+            || (!c.is_ascii() && !c.is_whitespace());
+        if !plain {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The text a shell reads `word` as when it is one plain word: backslash escapes undone. None
+/// when the shell would split, quote, expand or redirect it, or for a trailing backslash.
+pub fn shell_word(word: &str) -> Option<String> {
+    let mut out = String::with_capacity(word.len());
+    let mut chars = word.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next()? {
+                '\n' => return None,
+                e => out.push(e),
+            },
+            c if c.is_whitespace() || "'\"$`;&|<>(){}*?[]".contains(c) => return None,
+            c => out.push(c),
+        }
+    }
+    Some(out)
 }
 
 fn common_prefix(labels: &[String]) -> &str {

@@ -1067,8 +1067,9 @@ pub fn command_app(cmd: &str, apps: &[reprisefs::apps::AppEntry]) -> Option<Stri
     Some(entry.map_or_else(|| program.to_string(), |e| e.id.clone()))
 }
 
-/// The folder a Run line names when the whole line is one path: absolute or under `~`, bare or
-/// single-quoted as Browse... writes it. None for a line the shell would read as more than a path.
+/// The folder a Run line names when the whole line is one path: absolute or under `~`, single-
+/// quoted as Browse... writes it or one backslash-escaped word as completion writes it. None for
+/// a line the shell would read as more than a path.
 pub fn command_folder(cmd: &str, home: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     use std::path::PathBuf;
     let cmd = cmd.trim();
@@ -1078,14 +1079,15 @@ pub fn command_folder(cmd: &str, home: Option<&std::path::Path>) -> Option<std::
             return None;
         }
         PathBuf::from(word)
-    } else if cmd.contains(|c: char| c.is_whitespace() || "'\"\\$`;&|<>(){}*?[]".contains(c)) {
-        return None;
-    } else if cmd == "~" {
-        home?.to_path_buf()
-    } else if let Some(rest) = cmd.strip_prefix("~/") {
-        home?.join(rest)
     } else {
-        PathBuf::from(cmd)
+        let word = reprisekit::controls::pathcomplete::shell_word(cmd)?;
+        if cmd == "~" {
+            home?.to_path_buf()
+        } else if cmd.starts_with("~/") {
+            home?.join(&word[2..])
+        } else {
+            PathBuf::from(word)
+        }
     };
     path.is_absolute().then_some(path)
 }
@@ -2638,6 +2640,8 @@ mod tests {
         assert_eq!(folder("'/srv/my files'"), at("/srv/my files"));
         assert_eq!(folder("'/srv/it'\\''s'"), at("/srv/it's"));
         assert_eq!(folder("'~/Documents'"), None, "a quoted ~ is not home");
+        assert_eq!(folder("~/Music/My\\ Album/"), at("/home/u/Music/My Album/"));
+        assert_eq!(folder("/srv/a\\;b"), at("/srv/a;b"));
         assert_eq!(command_folder("~/Documents", None), None);
         for line in [
             "foot",
@@ -2646,6 +2650,8 @@ mod tests {
             "/srv/a;b",
             "'/srv/a' '/srv/b'",
             "$HOME",
+            "~/My Album",
+            "~/a\\",
         ] {
             assert_eq!(folder(line), None, "{line}");
         }

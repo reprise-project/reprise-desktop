@@ -459,7 +459,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   under the box: folders first, ending in `/`. Up and Down pick one, Enter or
   Tab take it, Escape closes the list. Hidden names show once the typed name
   starts with a dot; matching is case-sensitive. File name completes from the
-  dialog's folder, Run from a word starting with `/` or `~`.
+  dialog's folder, Run from a word starting with `/` or `~`. Run writes a
+  name with spaces or shell characters backslash-escaped (`My\ Album/`), so
+  the line runs or opens the path it names.
 - **Clipboard managers work,** and so does middle-click paste.
 - **Edit menu.** A right-click in a text field, Shift+F10 or the Menu key
   opens Undo, Redo, Cut, Copy, Paste, Delete and Select All: in Run and the other
