@@ -103,19 +103,15 @@ impl Dialog {
         {
             return out;
         }
+        // Typing into the field closes its list.
         if let Some(f) = self.field.as_mut().filter(|f| f.combo.open.is_some()) {
-            match key {
-                Key::Escape | Key::Enter | Key::Drop => {
-                    f.combo.open = None;
-                    return Outcome::Redraw;
-                }
-                Key::Up | Key::Down => {
-                    return redraw_if(f.combo.step(key == Key::Down));
-                }
-                Key::Access(_) | Key::Backspace | Key::Edit(_) | Key::Char(_) | Key::Space => {
-                    f.combo.open = None
-                }
-                _ => return Outcome::Nothing,
+            match (f.combo.key(key.clone()), &key) {
+                (
+                    combo::Act::None,
+                    Key::Access(_) | Key::Backspace | Key::Edit(_) | Key::Char(_) | Key::Space,
+                ) => f.combo.open = None,
+                (combo::Act::None, _) => return Outcome::Nothing,
+                _ => return Outcome::Redraw,
             }
         }
         match key {
@@ -124,12 +120,8 @@ impl Dialog {
                 Some(i) => self.press(i),
                 None => Outcome::Nothing,
             },
-            Key::Up | Key::Down => match self.field.as_mut() {
-                Some(f) => redraw_if(f.combo.step(key == Key::Down)),
-                None => Outcome::Nothing,
-            },
-            Key::Drop => match self.field.as_mut() {
-                Some(f) => redraw_if(f.combo.toggle()),
+            Key::Up | Key::Down | Key::Drop => match self.field.as_mut() {
+                Some(f) => redraw_if(f.combo.key(key) != combo::Act::None),
                 None => Outcome::Nothing,
             },
             Key::Backspace => match self.field.as_mut() {

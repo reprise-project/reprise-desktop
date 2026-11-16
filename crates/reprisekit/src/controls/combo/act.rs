@@ -4,6 +4,7 @@
 use super::{Combo, Hit, Layout, widen_list};
 use crate::controls::form::Key;
 use crate::raster::Rect;
+use crate::selection::type_ahead;
 use crate::text::TextRenderer;
 
 /// What a press or key on a combo asks of its host.
@@ -68,39 +69,56 @@ impl Combo {
         }
     }
 
-    /// A key with the list open: arrows, Home / End and the Page keys move the highlight, Enter
-    /// takes it, Esc, Tab or the drop key close the list.
-    pub fn list_key(&mut self, key: Key) -> Act {
-        let page = self.rows as i32;
-        let _ = match key {
-            Key::Up | Key::Down => self.step(key == Key::Down),
-            Key::Home | Key::End => self.jump(key == Key::End),
-            Key::PageUp => self.scroll(-page),
-            Key::PageDown => self.scroll(page),
-            Key::Enter if self.take() => return Act::Picked(self.selected),
-            Key::Enter | Key::Escape | Key::Tab { .. } | Key::Drop => {
-                self.open = None;
-                false
-            }
-            _ => return Act::None,
-        };
-        Act::Redraw
-    }
-
-    /// A key on the focused combo with its list closed: arrows, Home / End and the Page keys pick at
-    /// once; F4 or Alt+Down opens the list.
-    pub fn closed_key(&mut self, key: Key) -> Act {
+    /// A key on the focused combo, its list open or closed; `None` leaves it to the host. An
+    /// editable combo leaves characters, Left / Right and Home / End to its field.
+    pub fn key(&mut self, key: Key) -> Act {
+        let edit = self.edit.is_some();
+        if self.open.is_some() {
+            let page = self.rows as i32;
+            match key {
+                Key::Up | Key::Down => self.step(key == Key::Down),
+                Key::Home | Key::End if !edit => self.jump(key == Key::End),
+                Key::PageUp => self.scroll(-page),
+                Key::PageDown => self.scroll(page),
+                Key::Enter if !edit && self.take() => return Act::Picked(self.selected),
+                Key::Enter | Key::Escape | Key::Tab { .. } | Key::Drop => {
+                    self.open = None;
+                    false
+                }
+                Key::Char(ch) if !edit => {
+                    if let Some(i) = type_ahead(self.live_names(), self.open, ch) {
+                        self.open = Some(i);
+                        self.keep_in_view(i);
+                    }
+                    false
+                }
+                _ => return Act::None,
+            };
+            return Act::Redraw;
+        }
         let changed = match key {
-            Key::Up | Key::Left => self.step(false),
-            Key::Down | Key::Right => self.step(true),
-            Key::Home | Key::PageUp => self.jump(false),
-            Key::End | Key::PageDown => self.jump(true),
             Key::Drop => {
                 return if self.toggle() {
                     Act::Redraw
                 } else {
                     Act::None
                 };
+            }
+            Key::Up => self.step(false),
+            Key::Down => self.step(true),
+            _ if edit => return Act::None,
+            Key::Left => self.step(false),
+            Key::Right => self.step(true),
+            Key::Home | Key::PageUp => self.jump(false),
+            Key::End | Key::PageDown => self.jump(true),
+            Key::Char(ch) if ch.is_alphanumeric() && self.enabled => {
+                let Some(i) = type_ahead(self.live_names(), Some(self.selected), ch) else {
+                    return Act::None;
+                };
+                if !self.pick(i) {
+                    return Act::Redraw;
+                }
+                true
             }
             _ => false,
         };
@@ -109,6 +127,13 @@ impl Combo {
         } else {
             Act::None
         }
+    }
+
+    /// The rows' names for type-ahead, a greyed row's empty so no letter lands on it.
+    fn live_names(&self) -> impl Iterator<Item = &str> {
+        self.items
+            .iter()
+            .map(|it| if it.greyed { "" } else { it.text.as_str() })
     }
 }
 

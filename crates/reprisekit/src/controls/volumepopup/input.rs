@@ -92,17 +92,8 @@ impl VolumePopup {
         self.act(p, a)
     }
 
-    fn list_key(&mut self, p: Pick, key: form::Key) -> Event {
-        let a = self
-            .pick_mut(p)
-            .map_or(combo::Act::None, |c| c.list_key(key));
-        self.act(p, a)
-    }
-
     fn combo_key(&mut self, p: Pick, key: form::Key) -> Event {
-        let a = self
-            .pick_mut(p)
-            .map_or(combo::Act::None, |c| c.closed_key(key));
+        let a = self.pick_mut(p).map_or(combo::Act::None, |c| c.key(key));
         self.act(p, a)
     }
 
@@ -414,7 +405,7 @@ impl VolumePopup {
         let first = !self.cues;
         self.cues = true;
         if let Some(d) = self.open_list() {
-            return self.list_key(d, key);
+            return self.combo_key(d, key);
         }
         let shown = self.first;
         if let Focus::Thumb(i) | Focus::Mute(i) | Focus::Device(i) = self.focus

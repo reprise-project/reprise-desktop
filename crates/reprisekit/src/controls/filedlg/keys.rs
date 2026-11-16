@@ -1,5 +1,5 @@
 use super::{DlgMode, Event, FOCUS_ORDER, FileDlg, Focus, split_names};
-use crate::controls::combo::Combo;
+use crate::controls::combo;
 use crate::controls::form;
 use crate::controls::iconview::IconMove;
 use crate::controls::metrics::ControlMetrics;
@@ -11,45 +11,34 @@ use crate::selection::Mods;
 use crate::text::access_key;
 use crate::textedit::{EditKey, TextEdit, keysym};
 
-fn combo_key(combo: &mut Combo, key: form::Key) -> Event {
+/// Hosts send Left, Right, Home, End and typed letters as edit keys, which only File name edits
+/// with.
+fn flat(key: form::Key) -> form::Key {
     match key {
-        form::Key::Drop => {
-            combo.toggle();
-            Event::Redraw
-        }
-        form::Key::Up => {
-            combo.step(false);
-            Event::Redraw
-        }
-        form::Key::Down => {
-            combo.step(true);
-            Event::Redraw
-        }
-        form::Key::Home => {
-            combo.jump(false);
-            Event::Redraw
-        }
-        form::Key::End => {
-            combo.jump(true);
-            Event::Redraw
-        }
-        form::Key::PageUp => {
-            combo.scroll(-(combo.rows as i32));
-            Event::Redraw
-        }
-        form::Key::PageDown => {
-            combo.scroll(combo.rows as i32);
-            Event::Redraw
-        }
-        form::Key::Enter if combo.open.is_some() => {
-            combo.take();
-            Event::Redraw
-        }
-        _ => Event::None,
+        form::Key::Edit(ek) => form::flat_key(&ek).unwrap_or(form::Key::Edit(ek)),
+        k => k,
+    }
+}
+
+fn redraw_unless_none(a: combo::Act) -> Event {
+    match a {
+        combo::Act::None => Event::None,
+        _ => Event::Redraw,
     }
 }
 
 impl FileDlg {
+    /// A key on Look in: a crumb it picks is listed, as the wheel's is.
+    fn lookin_key(&mut self, key: form::Key) -> Event {
+        match self.lookin.key(key) {
+            combo::Act::Picked(i) => match self.crumbs.get(i) {
+                Some(c) => Event::NeedListing(c.id),
+                None => Event::Redraw,
+            },
+            a => redraw_unless_none(a),
+        }
+    }
+
     /// Alt+letter: a label's key focuses its field, the accept button's
     /// accepts, and any other goes to the extra rows.
     fn access_press(&mut self, ch: char) -> Event {
@@ -245,27 +234,12 @@ impl FileDlg {
         {
             return Event::Redraw;
         }
-        // A dropped list owns Enter and Escape: Enter commits the row (Look in
-        // navigates to the crumb), Escape closes the list. Neither may reach
-        // `activate` or `combo_key`.
-        let combo_open = self.lookin.open.is_some() || self.filetype.open.is_some();
-        if combo_open {
-            if matches!(key, form::Key::Escape) {
-                self.lookin.open = None;
-                self.filetype.open = None;
-                return Event::Redraw;
-            }
-            if matches!(key, form::Key::Enter) {
-                if let Some(i) = self.lookin.open {
-                    self.lookin.take();
-                    if let Some(c) = self.crumbs.get(i) {
-                        return Event::NeedListing(c.id);
-                    }
-                    return Event::Redraw;
-                }
-                self.filetype.take();
-                return Event::Redraw;
-            }
+        // A dropped list owns the keyboard: Enter must not reach `activate`, nor Escape `Cancel`.
+        if self.lookin.open.is_some() {
+            return self.lookin_key(flat(key));
+        }
+        if self.filetype.open.is_some() {
+            return redraw_unless_none(self.filetype.key(flat(key)));
         }
         if self.focus == Focus::Extra && !matches!(key, form::Key::Tab { .. }) {
             let open = self.extra_list_open();
@@ -326,8 +300,8 @@ impl FileDlg {
                 }
                 _ => Event::None,
             },
-            Focus::FileType => combo_key(&mut self.filetype, key),
-            Focus::LookIn => combo_key(&mut self.lookin, key),
+            Focus::FileType => redraw_unless_none(self.filetype.key(flat(key))),
+            Focus::LookIn => self.lookin_key(flat(key)),
             Focus::Accept | Focus::Cancel | Focus::Extra => Event::None,
             Focus::Places => {
                 // The nearest live tile past the selection: a greyed one
@@ -517,11 +491,7 @@ impl FileDlg {
             self.sync_name_field();
             return Event::Redraw;
         }
-        // Hosts send Left, Right, Home and End as edit keys, which only the File name field edits with.
-        let key = match key {
-            form::Key::Edit(ek) => form::flat_key(&ek).unwrap_or(form::Key::Edit(ek)),
-            k => k,
-        };
+        let key = flat(key);
         let dir = match key {
             form::Key::Up => IconMove::Up,
             form::Key::Down => IconMove::Down,

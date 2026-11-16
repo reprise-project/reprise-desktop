@@ -16,26 +16,10 @@ use crate::selection::Mods;
 use crate::text::TextRenderer;
 
 fn combo_click(combo: &mut Combo, h: combo::Hit) {
-    match h {
-        combo::Hit::Field | combo::Hit::Drop => {
-            combo.toggle();
-        }
-        combo::Hit::Row(i) => {
-            combo.pick(i);
-        }
-        combo::Hit::ScrollUp => {
-            combo.scroll(-1);
-        }
-        combo::Hit::ScrollDown => {
-            combo.scroll(1);
-        }
-        combo::Hit::PageUp => {
-            combo.scroll(-(combo.rows as i32));
-        }
-        combo::Hit::PageDown => {
-            combo.scroll(combo.rows as i32);
-        }
-        combo::Hit::Thumb(_) => {}
+    if combo.open.is_some() {
+        combo.press_list(h);
+    } else if matches!(h, combo::Hit::Field | combo::Hit::Drop) {
+        combo.toggle();
     }
 }
 

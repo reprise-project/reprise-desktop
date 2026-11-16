@@ -139,9 +139,9 @@ impl AddressBar {
         }
     }
 
-    /// A key while the list is open: Up and Down move the highlight, Page Up and Page Down
-    /// scroll, Enter takes the row, Escape, Tab and the drop key close the list. With the list
-    /// closed only the drop key (F4, Alt+Down) answers, opening it. `None` for any other key.
+    /// A key while the list is open goes to [`Combo::key`](combo::Combo::key), but Enter takes
+    /// the row as a place. With the list closed only the drop key (F4, Alt+Down) answers, opening
+    /// it. `None` for any key the field keeps.
     pub fn list_key(&mut self, key: &Key) -> Option<Event> {
         if let (Some(nav), Some(edit)) = (pathcomplete::nav_key(key), self.combo.edit.as_mut())
             && self.combo.open.is_none()
@@ -149,26 +149,16 @@ impl AddressBar {
         {
             return Some(Event::Redraw);
         }
-        let rows = self.combo.rows as i32;
         match (self.combo.open, key) {
-            (None, Key::Drop) => {
-                self.combo.toggle();
-            }
+            (None, Key::Drop) => {}
             (None, _) => return None,
             (Some(i), Key::Enter) => return Some(self.take(i)),
-            (Some(_), Key::Up | Key::Down) => {
-                self.combo.step(*key == Key::Down);
-            }
-            (Some(_), Key::PageUp) => {
-                self.combo.scroll(-rows);
-            }
-            (Some(_), Key::PageDown) => {
-                self.combo.scroll(rows);
-            }
-            (Some(_), Key::Escape | Key::Drop | Key::Tab { .. }) => self.combo.open = None,
-            (Some(_), _) => return None,
+            _ => {}
         }
-        Some(Event::Redraw)
+        match self.combo.key(key.clone()) {
+            combo::Act::None => None,
+            _ => Some(Event::Redraw),
+        }
     }
 
     /// A press while the list is open anywhere but on the list or the drop arrow closes the

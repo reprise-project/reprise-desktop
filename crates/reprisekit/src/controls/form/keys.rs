@@ -1,4 +1,5 @@
 use crate::controls::arrange;
+use crate::controls::combo::Act;
 use crate::controls::hotkey;
 use crate::controls::iconlist;
 use crate::controls::listbox;
@@ -259,51 +260,10 @@ impl Form {
         if let Some(i) = self.open_combo() {
             let id = self.items[i].id;
             return match &mut self.items[i].control {
-                Control::Combo(c) => match key {
-                    Key::Up => {
-                        c.step(false);
-                        Event::Redraw
-                    }
-                    Key::Down => {
-                        c.step(true);
-                        Event::Redraw
-                    }
-                    Key::Home => {
-                        c.jump(false);
-                        Event::Redraw
-                    }
-                    Key::End => {
-                        c.jump(true);
-                        Event::Redraw
-                    }
-                    Key::PageUp => {
-                        c.scroll(-(c.rows as i32));
-                        Event::Redraw
-                    }
-                    Key::PageDown => {
-                        c.scroll(c.rows as i32);
-                        Event::Redraw
-                    }
-                    Key::Enter => {
-                        if c.take() {
-                            Event::Changed(id)
-                        } else {
-                            Event::Redraw
-                        }
-                    }
-                    Key::Escape | Key::Drop | Key::Tab { .. } => {
-                        c.open = None;
-                        Event::Redraw
-                    }
-                    Key::Char(ch) => {
-                        let names = c.items.iter().map(|it| it.text.as_str());
-                        if let Some(k) = crate::selection::type_ahead(names, c.open, ch) {
-                            c.open = Some(k);
-                            c.top = k.saturating_sub(c.rows - 1).min(k);
-                        }
-                        Event::Redraw
-                    }
-                    _ => Event::None,
+                Control::Combo(c) => match c.key(key) {
+                    Act::Picked(_) => Event::Changed(id),
+                    Act::Redraw => Event::Redraw,
+                    Act::None => Event::None,
                 },
                 Control::Color(b) => match key {
                     Key::Escape | Key::Enter | Key::Space | Key::Tab { .. } => {
@@ -469,26 +429,21 @@ impl Form {
                         b.at = None;
                         Event::Redraw
                     }
-                    (Control::Combo(c), Key::Drop) => {
-                        c.toggle();
-                        Event::Redraw
-                    }
-                    (Control::Combo(c), Key::Up | Key::Left) => {
-                        let ch = c.step(false);
-                        self.changed(i, ch)
-                    }
-                    (Control::Combo(c), Key::Down | Key::Right) => {
-                        let ch = c.step(true);
-                        self.changed(i, ch)
-                    }
-                    (Control::Combo(c), Key::Home | Key::PageUp) => {
-                        let ch = c.jump(false);
-                        self.changed(i, ch)
-                    }
-                    (Control::Combo(c), Key::End | Key::PageDown) => {
-                        let ch = c.jump(true);
-                        self.changed(i, ch)
-                    }
+                    (
+                        Control::Combo(c),
+                        k @ (Key::Drop
+                        | Key::Up
+                        | Key::Down
+                        | Key::Left
+                        | Key::Right
+                        | Key::Home
+                        | Key::End
+                        | Key::PageUp
+                        | Key::PageDown),
+                    ) => match c.key(k) {
+                        Act::Picked(_) => Event::Changed(id),
+                        _ => Event::Redraw,
+                    },
                     (Control::ListBox { list, .. }, k) => {
                         let visible =
                             listbox::layout(list, rect, &self.rendered.controls.get()).visible;
@@ -651,17 +606,11 @@ impl Form {
                         Event::Redraw
                     };
                 }
-                Control::Combo(c) if ch.is_alphanumeric() => {
-                    let names = c.items.iter().map(|it| it.text.as_str());
-                    if let Some(k) = crate::selection::type_ahead(names, Some(c.selected), ch) {
-                        let changed = c.pick(k);
-                        return if changed {
-                            Event::Changed(id)
-                        } else {
-                            Event::Redraw
-                        };
-                    }
-                }
+                Control::Combo(c) => match c.key(Key::Char(ch)) {
+                    Act::Picked(_) => return Event::Changed(id),
+                    Act::Redraw => return Event::Redraw,
+                    Act::None => {}
+                },
                 Control::ListBox { list, .. } if ch.is_alphanumeric() => {
                     let visible =
                         listbox::layout(list, rect, &self.rendered.controls.get()).visible;
