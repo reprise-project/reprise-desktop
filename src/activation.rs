@@ -15,7 +15,7 @@ use smithay::{
 };
 
 use crate::compositor::State;
-use reprisefs::apps::DesktopId;
+use reprisefs::apps::{AppId, DesktopId};
 
 const TOKEN_LIFETIME: Duration = Duration::from_secs(30);
 
@@ -137,7 +137,8 @@ impl XdgActivationHandler for State {
             return;
         };
         let app = (self.win(w)).and_then(|win| {
-            reprisefs::apps::entry_for_app_id(&self.app_index, &win.app_id(), |_| true)
+            reprisefs::apps::AppId::new(&win.app_id())
+                .and_then(|a| reprisefs::apps::entry_for_app_id(&self.app_index, &a, |_| true))
                 .map(|e| e.id.clone())
                 .filter(|id| crate::sandbox::may_take_raise(win, id))
         });
@@ -201,7 +202,7 @@ impl State {
     pub fn spawn_command_activated(&mut self, cmd: &str) -> bool {
         let app = crate::spawn::command_app(cmd, &self.app_index);
         let launch = self.new_launch();
-        crate::spawn::spawn_in(cmd, app.as_deref(), &self.env, Some(&launch))
+        crate::spawn::spawn_in(cmd, app.as_ref(), &self.env, Some(&launch))
     }
 
     /// The configured terminal on its own in `dir`, in its [`crate::spawn::command_app`] scope.
@@ -210,7 +211,7 @@ impl State {
         let app = crate::spawn::command_app(&terminal, &self.app_index);
         let launch = self.new_launch();
         let argv = reprisefs::apps::terminal_argv(&terminal);
-        crate::spawn::spawn_argv_in(&argv, app.as_deref(), Some(dir), &self.env, Some(&launch));
+        crate::spawn::spawn_argv_in(&argv, app.as_ref(), Some(dir), &self.env, Some(&launch));
     }
 
     /// The line typed in Run box `from`: one that names a folder opens it in Explorer, a document
@@ -284,7 +285,7 @@ impl State {
     /// Open a path as `open` says, in its program's app scope when it has one.
     pub fn spawn_opening_activated(&mut self, open: &reprisefs::props::Opening) {
         match &open.app {
-            Some(app) => self.spawn_app_activated(&open.argv, app.as_str(), open.dir.as_deref()),
+            Some(app) => self.spawn_app_activated(&open.argv, &app.app_id(), open.dir.as_deref()),
             None => self.spawn_argv_activated(&open.argv),
         }
     }
@@ -294,7 +295,7 @@ impl State {
     pub fn spawn_app_activated<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
         &mut self,
         argv: &[S],
-        app: &str,
+        app: &AppId,
         dir: Option<&std::path::Path>,
     ) {
         let launch = self.new_launch();
@@ -304,7 +305,7 @@ impl State {
     /// Start the desktop entry `app` with no file, in its app scope.
     pub fn launch_entry(&mut self, app: &reprisefs::apps::AppEntry) {
         match reprisefs::apps::launch_argv(app, &self.config.terminal) {
-            Ok(argv) => self.spawn_app_activated(&argv, app.id.as_str(), app.path.as_deref()),
+            Ok(argv) => self.spawn_app_activated(&argv, &app.id.app_id(), app.path.as_deref()),
             Err(refused) => self.exec_refused(&refused),
         }
     }
@@ -321,7 +322,7 @@ impl State {
     pub fn spawn_launcher_activated(
         &mut self,
         argv: &[std::ffi::OsString],
-        app: &str,
+        app: &AppId,
         dir: Option<&std::path::Path>,
     ) {
         if crate::spawn::xdg_open_file(argv).is_none() {
@@ -329,7 +330,7 @@ impl State {
         }
         let (argv, app, dir) = (
             argv.to_vec(),
-            app.to_string(),
+            app.clone(),
             dir.map(std::path::Path::to_path_buf),
         );
         self.spawn_job(move || {

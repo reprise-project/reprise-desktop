@@ -1021,7 +1021,8 @@ fn sync_prompt(state: &mut State) {
         if app_id.is_empty() {
             return "A program".to_string();
         }
-        reprisefs::apps::entry_for_app_id(apps, app_id, |_| true)
+        reprisefs::apps::AppId::new(app_id)
+            .and_then(|a| reprisefs::apps::entry_for_app_id(apps, &a, |_| true))
             .map(|e| e.name.clone())
             .unwrap_or_else(|| app_id.to_string())
     };

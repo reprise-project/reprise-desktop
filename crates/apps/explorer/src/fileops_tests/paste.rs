@@ -577,7 +577,7 @@ fn paste_on_a_launcher_opens_the_clipboards_files_in_its_program() {
             vec![OsString::from("editor"), OsString::from("/srv/b.txt")],
         ]
     );
-    assert_eq!(reply.spawn_app.as_deref(), Some("editor.desktop"));
+    assert_eq!(reply.spawn_app.as_ref().map(|a| a.as_str()), Some("editor"));
     assert!(ex.put.is_none(), "nothing is copied");
     assert!(dir.path().join("a.txt").exists(), "a cut file stays put");
 

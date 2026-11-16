@@ -147,7 +147,10 @@ pub fn stand_in(icons: &mut IconCache, name: &str, px: i32) -> Option<Arc<Canvas
 /// Whether app `app_id`'s icon, as [`crate::taskbarview::app_icon`] finds it, is `key` (an icon
 /// file or a theme name).
 fn app_wears(index: &[reprisefs::apps::AppEntry], app_id: &str, key: &str) -> bool {
-    app_id == key || reprisefs::apps::icon_for_app_id(index, app_id) == Some(key)
+    app_id == key
+        || reprisefs::apps::AppId::new(app_id)
+            .and_then(|a| reprisefs::apps::icon_for_app_id(index, &a))
+            == Some(key)
 }
 
 /// Whether a Quick Launch item or taskbar pin wears icon file `file`.

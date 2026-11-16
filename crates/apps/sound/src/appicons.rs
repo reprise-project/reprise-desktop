@@ -261,7 +261,8 @@ fn window_canvases(icon: &WindowIcon, icons: &mut IconCache) -> Option<AppIcon> 
 /// `StartupWMClass`, then as a theme icon.
 fn hint_icon(app: &App, entries: &[AppEntry], has: impl Fn(&str) -> bool) -> Option<String> {
     for hint in &app.icon_hints {
-        if let Some(icon) = apps::icon_for_app_id(entries, hint) {
+        if let Some(icon) = apps::AppId::new(hint).and_then(|a| apps::icon_for_app_id(entries, &a))
+        {
             return Some(icon.to_string());
         }
         let lower = hint.to_lowercase();

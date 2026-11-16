@@ -252,7 +252,10 @@ mod tests {
     fn file(id: &str, default_disabled: bool) -> reprisefs::searchproviders::Provider {
         reprisefs::searchproviders::Provider {
             desktop_id: id.into(),
-            bus_name: format!("org.example.{}", reprisefs::apps::DesktopId::stem_of(id)),
+            bus_name: format!(
+                "org.example.{}",
+                id.parse::<reprisefs::apps::DesktopId>().unwrap().stem()
+            ),
             object_path: "/".into(),
             default_disabled,
         }

@@ -82,7 +82,9 @@ pub fn pick(open: &[(String, usize)], apps: &[AppEntry], exclude: &[String]) -> 
         if excluded(exclude, app_id) {
             continue;
         }
-        let Some(e) = reprisefs::apps::entry_for_app_id(apps, app_id, |_| true) else {
+        let Some(e) = reprisefs::apps::AppId::new(app_id)
+            .and_then(|a| reprisefs::apps::entry_for_app_id(apps, &a, |_| true))
+        else {
             continue;
         };
         saved.push(SavedApp {
@@ -181,7 +183,8 @@ pub fn to_start<'a>(
         .filter_map(|s| Some((s, apps.iter().find(|e| e.id == s.entry)?)))
         .filter(|(_, e)| {
             let prog = program(&e.exec_line);
-            !autostarted.iter().any(|a| e.id == a.id)
+            let app = e.id.app_id();
+            !autostarted.iter().any(|a| app == a.id.as_str())
                 && !started.iter().any(|p| p.is_some() && *p == prog)
         })
         .collect()
@@ -853,7 +856,7 @@ fn restore_now(state: &mut State, autostarted: &[Entry]) {
     for (s, (argv, id, dir)) in started.iter().zip(&argvs) {
         log::info!("session: restoring {} ({id})", s.app_id);
         if let Ok(argv) = argv {
-            crate::spawn::spawn_argv_in(argv, Some(id.as_str()), dir.as_deref(), &state.env, None);
+            crate::spawn::spawn_argv_in(argv, Some(&id.app_id()), dir.as_deref(), &state.env, None);
         }
     }
     await_windows(state, &started, now);
@@ -895,7 +898,7 @@ pub fn settle_restart(state: &mut State, app_id: &str) {
             return TimeoutAction::Drop;
         };
         for _ in 0..n {
-            crate::spawn::spawn_argv_in(&argv, Some(e.id.as_str()), e.path.as_deref(), &state.env, None);
+            crate::spawn::spawn_argv_in(&argv, Some(&e.id.app_id()), e.path.as_deref(), &state.env, None);
         }
         TimeoutAction::Drop
     });
@@ -1001,10 +1004,10 @@ mod tests {
             reprisefs::autostart::parse(id, &format!("[Desktop Entry]\nExec={exec}\n"), false)
                 .unwrap()
         };
-        // The same entry id, and another entry running the same program;
-        // a flatpak autostarted is not every flatpak.
+        // The same id (an autostart file's is its name without `.desktop`), and another entry
+        // running the same program; a flatpak autostarted is not every flatpak.
         let autostarted = [
-            auto("reprise-power.desktop", "reprise-power --tray"),
+            auto("reprise-power", "/usr/libexec/reprise-power-tray"),
             auto("fx.desktop", "firefox --headless"),
             auto("chat.desktop", "/usr/bin/flatpak run org.chat.Chat"),
         ];

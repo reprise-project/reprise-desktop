@@ -1116,7 +1116,8 @@ pub(crate) fn share_entries(
             }
             entries.push(picker::Entry {
                 label: w.title.clone(),
-                icon: reprisefs::apps::icon_for_app_id(&apps, &w.app_id)
+                icon: reprisefs::apps::AppId::new(&w.app_id)
+                    .and_then(|a| reprisefs::apps::icon_for_app_id(&apps, &a))
                     .unwrap_or("")
                     .to_string(),
                 screen: false,

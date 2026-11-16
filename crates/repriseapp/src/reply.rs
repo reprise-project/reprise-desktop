@@ -2,6 +2,7 @@
 
 use crate::{Accept, DragAction, DragOut, FileClip, WinId};
 use reprisebus::instance::Handoff;
+use reprisefs::apps::AppId;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -11,7 +12,11 @@ use std::process::{Command, Stdio};
 /// [`Reply::spawn`] for a caller that needs the exec's error, as a program file that will not
 /// start reports it. With a `scope` the child waits before its exec until it is in that app scope
 /// ([`reprisefs::scope::hold`]), so this blocks on the session bus.
-pub fn spawn_in(argv: &[OsString], dir: Option<&Path>, scope: Option<&str>) -> std::io::Result<()> {
+pub fn spawn_in(
+    argv: &[OsString],
+    dir: Option<&Path>,
+    scope: Option<&AppId>,
+) -> std::io::Result<()> {
     spawn_handed(argv, dir, scope, &Handoff::default())
 }
 
@@ -20,7 +25,7 @@ pub fn spawn_in(argv: &[OsString], dir: Option<&Path>, scope: Option<&str>) -> s
 pub fn spawn_handed(
     argv: &[OsString],
     dir: Option<&Path>,
-    scope: Option<&str>,
+    scope: Option<&AppId>,
     handoff: &Handoff,
 ) -> std::io::Result<()> {
     spawn_then(argv, dir, scope, handoff, |_| {})
@@ -38,7 +43,7 @@ pub(crate) fn spawn_handing(argv: &[OsString], dir: Option<&Path>, handoff: &Han
 pub(crate) fn spawn_then(
     argv: &[OsString],
     dir: Option<&Path>,
-    scope: Option<&str>,
+    scope: Option<&AppId>,
     handoff: &Handoff,
     then: impl FnOnce(u32) + Send + 'static,
 ) -> std::io::Result<()> {
@@ -83,9 +88,8 @@ pub struct Reply {
     /// Run each argument vector as its own process, no shell, reaped in the background, with a
     /// token asked for on the last input so its window takes the focus even from a running copy.
     pub spawn: Vec<Vec<OsString>>,
-    /// The desktop entry id `spawn` runs as: each process starts in that app's scope
-    /// (`reprisefs::scope`).
-    pub spawn_app: Option<String>,
+    /// The app `spawn` runs as: each process starts in that app's scope (`reprisefs::scope`).
+    pub spawn_app: Option<AppId>,
     /// The folder `spawn` runs in, a desktop entry's `Path=`; the program's own when None.
     pub spawn_dir: Option<PathBuf>,
     /// Spawns [`Reply::and`] kept apart because they asked for different folders: each already in
@@ -241,10 +245,10 @@ impl Reply {
             fullscreen,
             bell,
         } = then;
-        let scoped = |argvs: Vec<Vec<OsString>>, app: Option<String>| {
+        let scoped = |argvs: Vec<Vec<OsString>>, app: Option<AppId>| {
             argvs
                 .into_iter()
-                .map(move |argv| reprisefs::scope::in_scope(&argv, app.as_deref()))
+                .map(move |argv| reprisefs::scope::in_scope(&argv, app.as_ref()))
         };
         let mut spawn_each = self.spawn_each;
         spawn_each.extend(then_each);

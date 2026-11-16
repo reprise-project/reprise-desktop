@@ -617,8 +617,9 @@ pub fn invoke(state: &mut State, id: u32, key: &str) {
         return;
     };
     let (resident, pid) = (n.resident, n.pid);
-    let app = (reprisefs::apps::DesktopId::for_app_id(&n.key).into_iter())
-        .find(|id| state.app_index.iter().any(|e| e.id == id.as_str()));
+    let app = reprisefs::apps::AppId::new(&n.key)
+        .and_then(|a| reprisefs::apps::entry_for_app_id(&state.app_index, &a, |_| true))
+        .map(|e| e.id.clone());
     if id == OWN_ID {
         let own = state.notify.own_actions.iter().find(|(k, _)| k == key);
         match own.map(|(_, a)| a.clone()) {

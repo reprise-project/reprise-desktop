@@ -29,7 +29,9 @@ impl State {
         }
         let entry = pin.and_then(|q| q.app.clone()).or_else(|| {
             let a = app_id.as_deref()?;
-            reprisefs::apps::entry_for_app_id(&self.app_index, a, |_| true).cloned()
+            reprisefs::apps::AppId::new(a)
+                .and_then(|a| reprisefs::apps::entry_for_app_id(&self.app_index, &a, |_| true))
+                .cloned()
         });
         let terminal = &self.config.terminal;
         let name = match (pin, &entry) {

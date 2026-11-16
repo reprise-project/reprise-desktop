@@ -16,6 +16,7 @@ use crate::compositor::State;
 
 /// The program that runs the jobs.
 const EXPLORER: &str = "reprise-explorer";
+const EXPLORER_APP: reprisefs::apps::AppId = reprisefs::apps::AppId::from_static(EXPLORER);
 
 /// How long a job's icons may still land once its process has ended: the desktop's scan that
 /// finds the last of them can come after the exit.
@@ -77,7 +78,8 @@ pub(crate) fn landing_name(
     let file = src.file_name()?.to_string_lossy().into_owned();
     let name = match op {
         DropOp::Shortcut => {
-            let base = file.strip_suffix(".desktop").unwrap_or(&file);
+            let id = reprisefs::apps::DesktopId::from_file_name(&file);
+            let base = id.as_ref().map_or(file.as_str(), |id| id.stem());
             format!("Shortcut to {base}.desktop")
         }
         DropOp::Copy if same_dir => format!("Copy of {file}"),
@@ -168,8 +170,13 @@ impl State {
             .chain(args.iter().map(|a| a.as_os_str()))
             .collect();
         let launch = self.new_launch();
-        match crate::spawn::try_spawn_argv_in(&argv, Some(EXPLORER), None, &self.env, Some(&launch))
-        {
+        match crate::spawn::try_spawn_argv_in(
+            &argv,
+            Some(&EXPLORER_APP),
+            None,
+            &self.env,
+            Some(&launch),
+        ) {
             Ok(Some(pid)) => {
                 let job = Job {
                     pid,

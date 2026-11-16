@@ -229,25 +229,24 @@ pub struct Slot<W = usize> {
 /// 2. the pin's `StartupWMClass` is the app id;
 /// 3. the pin's file name without `.desktop` is the app id.
 pub fn pin_for(pins: &[QuickItem], app_id: &str, desktop_id: Option<&str>) -> Option<usize> {
-    if app_id.is_empty() {
-        return None;
-    }
-    let same = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
+    let app_id = reprisefs::apps::AppId::new(app_id)?;
     let by_file = || {
         let id = desktop_id?;
-        pins.iter().position(|p| same(&p.file, id))
+        pins.iter().position(|p| p.file.eq_ignore_ascii_case(id))
     };
     let by_class = || {
         pins.iter().position(|p| {
             p.app
                 .as_ref()
                 .and_then(|a| a.startup_wm_class.as_deref())
-                .is_some_and(|c| same(c, app_id))
+                .is_some_and(|c| app_id.is_like(c))
         })
     };
     let by_stem = || {
-        pins.iter()
-            .position(|p| same(reprisefs::apps::DesktopId::stem_of(&p.file), app_id))
+        pins.iter().position(|p| {
+            reprisefs::apps::DesktopId::from_file_name(&p.file)
+                .is_some_and(|f| app_id.is_like(f.stem()))
+        })
     };
     by_file().or_else(by_class).or_else(by_stem)
 }

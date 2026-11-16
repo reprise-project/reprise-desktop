@@ -74,7 +74,7 @@ fn put_copies_moves_and_links_into_its_target_and_ends_with_it() {
     assert!(dest.join("b.txt").exists() && !src.join("b.txt").exists());
     let links: Vec<_> = (std::fs::read_dir(&dest).unwrap().flatten())
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".desktop"))
+        .filter(|n| reprisefs::apps::DesktopId::from_file_name(n).is_some())
         .collect();
     assert_eq!(links.len(), 1, "one shortcut: {links:?}");
     assert!(src.join("c.txt").exists(), "a shortcut leaves its source");

@@ -2,7 +2,7 @@
 //! program. With none, or one that fails to start, the call fails and a balloon says why, at
 //! most once a minute per app.
 
-use reprisefs::apps::{AppEntry, ExecRefused};
+use reprisefs::apps::{AppEntry, AppId, ExecRefused};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -242,10 +242,10 @@ fn compose(mail: &Mail, token: Option<&str>) -> Result<String, Failure> {
     let entry = reprisefs::props::default_app_entry(MAILTO, &apps).ok_or(Failure::NoProgram)?;
     let (argv, as_uri) =
         compose_argv(entry, mail, &repriseconf::current().terminal).map_err(Failure::Refused)?;
-    let started = match start(&argv, entry.id.as_str(), token) {
+    let started = match start(&argv, &entry.id.app_id(), token) {
         // Without xdg-utils the program gets the mailto: URI itself.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && argv[0] == "xdg-email" => {
-            start(&as_uri, entry.id.as_str(), token)
+            start(&as_uri, &entry.id.app_id(), token)
         }
         r => r,
     };
@@ -275,7 +275,7 @@ fn compose_argv(
     Ok((argv, as_uri))
 }
 
-fn start(argv: &[OsString], app: &str, token: Option<&str>) -> std::io::Result<()> {
+fn start(argv: &[OsString], app: &AppId, token: Option<&str>) -> std::io::Result<()> {
     let Some((program, args)) = argv.split_first() else {
         return Err(std::io::ErrorKind::InvalidInput.into());
     };

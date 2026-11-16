@@ -261,7 +261,10 @@ fn read_permissions(file: &std::path::Path) -> PermissionList {
         .into_iter()
         .map(|a| {
             let e = (!a.app.is_empty())
-                .then(|| reprisefs::apps::entry_for_app_id(&entries, &a.app, |_| true))
+                .then(|| {
+                    reprisefs::apps::AppId::new(&a.app)
+                        .and_then(|a| reprisefs::apps::entry_for_app_id(&entries, &a, |_| true))
+                })
                 .flatten();
             let name = program_name(&a.app, e.map(|e| e.name.as_str()));
             let icon = e.and_then(|e| e.icon.clone());

@@ -123,7 +123,8 @@ pub fn camera_tip(state: &State) -> String {
         let name = window
             .map(|w| {
                 let app = w.app();
-                reprisefs::apps::entry_for_app_id(&state.app_index, &app, |_| true)
+                reprisefs::apps::AppId::new(&app)
+                    .and_then(|a| reprisefs::apps::entry_for_app_id(&state.app_index, &a, |_| true))
                     .map(|e| e.name.clone())
                     .unwrap_or(app)
             })
@@ -245,7 +246,8 @@ fn app_name(state: &State, id: &str) -> String {
     if id.is_empty() {
         return "An application".into();
     }
-    reprisefs::apps::entry_for_app_id(&state.app_index, id, |_| true)
+    reprisefs::apps::AppId::new(id)
+        .and_then(|a| reprisefs::apps::entry_for_app_id(&state.app_index, &a, |_| true))
         .map(|e| e.name.clone())
         .unwrap_or_else(|| id.to_string())
 }
