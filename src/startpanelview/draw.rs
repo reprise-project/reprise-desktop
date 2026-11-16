@@ -9,7 +9,6 @@ use reprisekit::startpanel::{self, Mode, Shape, Spot, StartPanel};
 use reprisekit::taskbar::{Edge, StartMenuDock};
 use reprisekit::textedit::{Preedit, TextSpot};
 use reprisescene::Input;
-use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::{Buffer as BufferCoords, Logical, Point, Rectangle};
 
 use crate::barplace::BarPlacement;
@@ -20,7 +19,6 @@ use crate::raster::{Canvas, Rect};
 
 use super::StartPanelView;
 
-const FADE_TICK: Duration = Duration::from_millis(16);
 const CROSSFADE: Duration = Duration::from_millis(350);
 
 /// What a panel canvas is drawn from, besides the look.
@@ -191,64 +189,32 @@ impl State {
         }
     }
 
-    fn arm_start_panel_crossfade(&mut self) {
+    /// One frame of the open panel's opening and picture crossfades; whether either still runs.
+    pub(crate) fn start_panel_step(&mut self, now: Instant) -> bool {
+        let fade = self.config.theme.metrics.menu_fade_ms.max(1) as f32;
+        let Some(v) = self.start_panel.as_mut() else {
+            return false;
+        };
+        if v.opening {
+            let since = now.saturating_duration_since(v.opened);
+            let t = (since.as_secs_f32() * 1000.0 / fade).min(1.0);
+            v.opening = t < 1.0;
+            let (tree, output) = (v.tree, v.output.clone());
+            if v.unroll.is_some() {
+                unroll_frame(v, &mut self.scene, t);
+            } else {
+                self.scene.set_opacity(tree, t);
+            }
+            crate::backend::schedule(self, &output);
+        }
         if self
             .start_panel
             .as_ref()
-            .is_none_or(|v| v.crossfade_timer.is_some())
+            .is_some_and(|v| !v.crossfades.is_empty())
         {
-            return;
+            self.redraw_start_panel();
         }
-        let token = self
-            .handle
-            .insert_source(Timer::from_duration(FADE_TICK), |_, _, state| {
-                state.redraw_start_panel();
-                match state.start_panel.as_mut() {
-                    Some(v) if !v.crossfades.is_empty() => TimeoutAction::ToDuration(FADE_TICK),
-                    Some(v) => {
-                        v.crossfade_timer = None;
-                        TimeoutAction::Drop
-                    }
-                    None => TimeoutAction::Drop,
-                }
-            });
-        match (token, self.start_panel.as_mut()) {
-            (Ok(t), Some(v)) => v.crossfade_timer = Some(t),
-            (Ok(t), None) => self.handle.remove(t),
-            (Err(e), _) => log::warn!("start panel crossfade timer: {}", e.error),
-        }
-    }
-
-    pub(super) fn arm_start_panel_fade(&mut self) {
-        let token = self
-            .handle
-            .insert_source(Timer::from_duration(FADE_TICK), |_, _, state| {
-                let fade = state.config.theme.metrics.menu_fade_ms.max(1) as f32;
-                let Some(v) = state.start_panel.as_mut() else {
-                    return TimeoutAction::Drop;
-                };
-                let t = (v.opened.elapsed().as_secs_f32() * 1000.0 / fade).min(1.0);
-                if t >= 1.0 {
-                    v.fade = None;
-                }
-                let (tree, output) = (v.tree, v.output.clone());
-                if v.unroll.is_some() {
-                    unroll_frame(v, &mut state.scene, t);
-                } else {
-                    state.scene.set_opacity(tree, t);
-                }
-                crate::backend::schedule(state, &output);
-                if t >= 1.0 {
-                    TimeoutAction::Drop
-                } else {
-                    TimeoutAction::ToDuration(FADE_TICK)
-                }
-            });
-        match (token, self.start_panel.as_mut()) {
-            (Ok(t), Some(v)) => v.fade = Some(t),
-            (Ok(t), None) => self.handle.remove(t),
-            (Err(e), _) => log::warn!("start panel fade timer: {}", e.error),
-        }
+        (self.start_panel.as_ref()).is_some_and(|v| v.opening || !v.crossfades.is_empty())
     }
 
     pub fn redraw_start_panel(&mut self) {
@@ -414,7 +380,7 @@ impl State {
         });
         let output = v.output.clone();
         if !v.crossfades.is_empty() {
-            self.arm_start_panel_crossfade();
+            self.animate(crate::animclock::Anim::StartPanel);
         }
         crate::backend::schedule(self, &output);
         crate::access::touch(self);

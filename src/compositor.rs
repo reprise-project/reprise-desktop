@@ -356,8 +356,6 @@ pub struct State {
     /// something is pending.
     pub menu_pending: Option<MenuPending>,
     pub menu_timer: Option<smithay::reexports::calloop::RegistrationToken>,
-    /// The menu fade-in's timer, while a menu fades in.
-    pub menu_fade_timer: Option<smithay::reexports::calloop::RegistrationToken>,
     /// The open stack was driven from the keyboard: access keys show.
     pub menu_keys: bool,
     /// Where the desktop's menu was opened, for what New and Paste make.
@@ -789,7 +787,6 @@ impl State {
             icon_jobs: Default::default(),
             menu_pending: None,
             menu_timer: None,
-            menu_fade_timer: None,
             menu_keys: false,
             desktop_menu_at: None,
             desktop: None,

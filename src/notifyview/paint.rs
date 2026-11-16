@@ -21,7 +21,7 @@ use crate::raster::{Canvas, Rect};
 
 use super::clock::{hold_clocks, rearm};
 use super::layout::{Drawn, Painted, lay_out_open, sheet_glass};
-use super::motion::{aim_open, arm_tick, follow_slot, pose_balloon};
+use super::motion::{aim_open, animate, follow_slot, pose_balloon};
 use super::pointer::{rehold, rehover};
 use super::stack::chip_count;
 use super::warm::warm_openings;
@@ -112,7 +112,7 @@ fn paint_stack(state: &mut State) {
     }
     redraw(state);
     crate::access::touch(state);
-    arm_tick(state);
+    animate(state);
     warm_openings(state);
     rehover(state);
 }

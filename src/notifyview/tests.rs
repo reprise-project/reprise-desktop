@@ -1,7 +1,7 @@
 use super::clock::{Due, due_step};
 use super::layout::{droplet_ends, lay_out, lay_out_open, sheet_glass};
 use super::motion::{
-    Band, aim_stack, band, follow_slot, keeps_ticking, open_target, restack, still,
+    Band, aim_stack, band, follow_slot, keeps_stepping, open_target, restack, still,
 };
 use super::paint::{balloon_icon, frame_outputs, paint, relative, sheet_icons, slot_needs_icon};
 use super::pointer::{hold_at, icon_tip, point_at, press_target, rest_point};
@@ -893,22 +893,22 @@ fn close_newest(v: &mut NotifyView, pitch: i32, now: Instant) {
 }
 
 #[test]
-fn a_tick_before_a_slide_ends_runs_once_more_to_re_check_the_pointer() {
+fn a_step_before_a_slide_ends_runs_once_more_to_re_check_the_pointer() {
     let mut scene = crate::compositor::DeskScene::new();
     let (mut v, pitch) = sheets_at(&mut scene);
     let now = Instant::now();
     close_newest(&mut v, pitch, now);
-    let (tick, later) = (
+    let (step, later) = (
         now + Duration::from_millis(249),
         now + Duration::from_millis(251),
     );
     assert!(
-        keeps_ticking(&v, still(&v, tick), later),
-        "settled after the tick began"
+        keeps_stepping(&v, still(&v, step), later),
+        "settled after the step began"
     );
     assert!(
-        !keeps_ticking(&v, still(&v, later), later),
-        "the next tick ends it"
+        !keeps_stepping(&v, still(&v, later), later),
+        "the next step ends it"
     );
 }
 
@@ -1305,7 +1305,7 @@ fn a_slide_retargets_from_its_current_offset() {
 }
 
 #[test]
-fn a_repaint_in_the_same_slot_starts_no_slide_and_arms_no_tick() {
+fn a_repaint_in_the_same_slot_starts_no_slide_and_no_step() {
     let t0 = Instant::now();
     let mut scene = crate::compositor::DeskScene::new();
     let mut v = NotifyView::default();
@@ -1318,7 +1318,7 @@ fn a_repaint_in_the_same_slot_starts_no_slide_and_arms_no_tick() {
         t0,
         250,
     );
-    assert!(still(&v, t0), "settled, so no tick is armed");
+    assert!(still(&v, t0), "settled, so nothing steps");
     follow_slot(
         &mut v.stack[0].motion,
         (400, 100),
@@ -2040,4 +2040,23 @@ fn a_flood_from_the_bus_paints_the_stack_and_the_bar_once_per_wake() {
         draws(&h) - bar_before
     );
     assert_eq!(wakes, 16, "64 notifications a wake");
+}
+
+#[test]
+fn an_arriving_sheet_steps_on_its_outputs_frames_until_it_rests() {
+    let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    show(&mut h.state, note(1, "Mail"));
+    assert!(
+        !still(&h.state.notify, Instant::now()),
+        "the sheet comes in"
+    );
+    crate::animclock::assert_steps_until(
+        &mut h.state,
+        crate::animclock::Anim::Notify,
+        &["TEST-1"],
+        Instant::now() + Duration::from_secs(5),
+    );
 }
