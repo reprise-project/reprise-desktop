@@ -697,16 +697,37 @@ impl State {
                     self.open_window_list(tree, i);
                 }
             }
-            wins => {
-                let live = self.task_windows();
-                let wins: Vec<WindowId> =
-                    wins.iter().copied().filter(|w| live.contains(w)).collect();
-                if let Some(w) =
-                    crate::taskbar::group_click_pick(&wins, &self.focus_order, self.focused)
-                {
-                    self.bring_up(w);
-                }
+            wins => self.cycle_group(wins),
+        }
+    }
+
+    /// `taskbar-item-N`: task button `i` of the bar on the pointer's output, as a left click,
+    /// except that a group cycles its windows rather than listing them.
+    pub fn task_item_key(&mut self, i: usize) {
+        let p = self.pointer_location();
+        let Some(output) = self.output_at(p.x, p.y) else {
+            return;
+        };
+        let Some(bar) = self.bars.iter().find(|b| b.output == output) else {
+            return;
+        };
+        let tree = bar.tree;
+        match bar.buttons.get(i) {
+            Some(wins) if wins.len() > 1 && bar.dialogs.get(i).is_none_or(Option::is_none) => {
+                let wins = wins.clone();
+                self.cycle_group(&wins);
             }
+            Some(_) => self.task_button_click(tree, i, false),
+            None => {}
+        }
+    }
+
+    /// Bring up the window of group `wins` a click picks (`taskbar::group_click_pick`).
+    fn cycle_group(&mut self, wins: &[WindowId]) {
+        let live = self.task_windows();
+        let wins: Vec<WindowId> = wins.iter().copied().filter(|w| live.contains(w)).collect();
+        if let Some(w) = crate::taskbar::group_click_pick(&wins, &self.focus_order, self.focused) {
+            self.bring_up(w);
         }
     }
 

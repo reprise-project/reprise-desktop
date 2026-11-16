@@ -1,5 +1,6 @@
 use crate::keys::{MOD_ALT, MOD_CTRL, MOD_LOGO, MOD_SHIFT};
 use repriseconf::config::file::FileGlobalShortcut;
+use repriseconf::keybind::{DESKTOP_CARRY_ITEMS, DESKTOP_ITEMS, TASKBAR_ITEMS};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -12,6 +13,8 @@ pub enum Action {
         dir: Option<std::path::PathBuf>,
     },
     Terminal,
+    /// Open Explorer on the home folder.
+    Explorer,
     Close,
     Cycle,
     /// The switcher over the focused window's app's windows alone.
@@ -27,6 +30,8 @@ pub enum Action {
     TurnOff,
     WindowMenu,
     ShowDesktop,
+    /// Task button `n` (from 0) of the row on the pointer's output, as a click on it.
+    TaskItem(usize),
     /// Hide or show the focused window's border and caption; it keeps its outer rect.
     ToggleFrame,
     AlwaysOnTop,
@@ -89,6 +94,7 @@ impl Action {
         Some(match self {
             Action::Spawn(_) | Action::Exec { .. } => return None,
             Action::Terminal => "terminal",
+            Action::Explorer => "explorer",
             Action::Close => "close",
             Action::Cycle => "cycle",
             Action::CycleApp => "cycle-app",
@@ -103,6 +109,7 @@ impl Action {
             Action::TurnOff => "turnoff",
             Action::WindowMenu => "windowmenu",
             Action::ShowDesktop => "showdesktop",
+            Action::TaskItem(n) => return TASKBAR_ITEMS.get(*n).copied(),
             Action::ToggleFrame => "toggleframe",
             Action::AlwaysOnTop => "alwaysontop",
             Action::MiniView => "mini-view",
@@ -113,6 +120,10 @@ impl Action {
             Action::Desktop(crate::desktops::Step::Next) => "desktop-next",
             Action::CarryToDesktop(crate::desktops::Step::Prev) => "desktop-carry-prev",
             Action::CarryToDesktop(crate::desktops::Step::Next) => "desktop-carry-next",
+            Action::Desktop(crate::desktops::Step::To(n)) => return DESKTOP_ITEMS.get(*n).copied(),
+            Action::CarryToDesktop(crate::desktops::Step::To(n)) => {
+                return DESKTOP_CARRY_ITEMS.get(*n).copied();
+            }
             Action::AllDesktops => "all-desktops",
             Action::DoNotDisturb => "do-not-disturb",
             Action::Notifications => "notifications",
@@ -179,6 +190,7 @@ impl Action {
         Ok(match action {
             "spawn" => Action::Spawn(command.ok_or("spawn needs a command")?.to_string()),
             "terminal" => Action::Terminal,
+            "explorer" => Action::Explorer,
             "close" => Action::Close,
             "cycle" => Action::Cycle,
             "cycle-app" => Action::CycleApp,
@@ -251,7 +263,18 @@ impl Action {
             "touchpad-off" => Action::Touchpad(Some(false)),
             "airplane-mode" => Action::Airplane,
             "rotation-lock" => Action::RotationLock,
-            other => return Err(format!("unknown action {other:?}")),
+            other => {
+                let at = |names: &[&str]| names.iter().position(|n| *n == other);
+                if let Some(n) = at(&TASKBAR_ITEMS) {
+                    Action::TaskItem(n)
+                } else if let Some(n) = at(&DESKTOP_ITEMS) {
+                    Action::Desktop(crate::desktops::Step::To(n))
+                } else if let Some(n) = at(&DESKTOP_CARRY_ITEMS) {
+                    Action::CarryToDesktop(crate::desktops::Step::To(n))
+                } else {
+                    return Err(format!("unknown action {other:?}"));
+                }
+            }
         })
     }
 }

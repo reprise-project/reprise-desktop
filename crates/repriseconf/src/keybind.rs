@@ -94,6 +94,17 @@ pub const DEFAULTS: &[(&str, &str)] = &[
     ("Super+equal", "zoom-in"),
     ("Super+minus", "zoom-out"),
     ("Super+0", "zoom-reset"),
+    ("Super+1", "taskbar-item-1"),
+    ("Super+2", "taskbar-item-2"),
+    ("Super+3", "taskbar-item-3"),
+    ("Super+4", "taskbar-item-4"),
+    ("Super+5", "taskbar-item-5"),
+    ("Super+6", "taskbar-item-6"),
+    ("Super+7", "taskbar-item-7"),
+    ("Super+8", "taskbar-item-8"),
+    ("Super+9", "taskbar-item-9"),
+    ("Super+d", "showdesktop"),
+    ("Super+e", "explorer"),
     ("Super+Ctrl+c", "color-filter"),
     ("Super+Alt+s", "screen-reader"),
     ("Super+w", "overview"),
@@ -310,6 +321,46 @@ pub const ACCESSIBILITY: &str = "Accessibility";
 pub const SYSTEM: &str = "System";
 pub const PROGRAMS: &str = "Programs";
 
+/// `taskbar-item-N`: task button N of the row, pinned slots first.
+pub const TASKBAR_ITEMS: [&str; 10] = [
+    "taskbar-item-1",
+    "taskbar-item-2",
+    "taskbar-item-3",
+    "taskbar-item-4",
+    "taskbar-item-5",
+    "taskbar-item-6",
+    "taskbar-item-7",
+    "taskbar-item-8",
+    "taskbar-item-9",
+    "taskbar-item-10",
+];
+
+/// `desktop-N`: switch to desktop N.
+pub const DESKTOP_ITEMS: [&str; 9] = [
+    "desktop-1",
+    "desktop-2",
+    "desktop-3",
+    "desktop-4",
+    "desktop-5",
+    "desktop-6",
+    "desktop-7",
+    "desktop-8",
+    "desktop-9",
+];
+
+/// `desktop-carry-N`: switch to desktop N, taking the focused window along.
+pub const DESKTOP_CARRY_ITEMS: [&str; 9] = [
+    "desktop-carry-1",
+    "desktop-carry-2",
+    "desktop-carry-3",
+    "desktop-carry-4",
+    "desktop-carry-5",
+    "desktop-carry-6",
+    "desktop-carry-7",
+    "desktop-carry-8",
+    "desktop-carry-9",
+];
+
 /// Every `[[keybinds]]` action but `spawn`: its id, the key sheet heading it is listed under and
 /// what it does in words.
 pub const ACTION_NAMES: &[(&str, &str, &str)] = &[
@@ -346,11 +397,40 @@ pub const ACTION_NAMES: &[(&str, &str, &str)] = &[
         "Take the window to the next one",
     ),
     ("all-desktops", DESKTOPS, "Show on all desktops"),
+    ("desktop-1", DESKTOPS, "Desktop 1"),
+    ("desktop-2", DESKTOPS, "Desktop 2"),
+    ("desktop-3", DESKTOPS, "Desktop 3"),
+    ("desktop-4", DESKTOPS, "Desktop 4"),
+    ("desktop-5", DESKTOPS, "Desktop 5"),
+    ("desktop-6", DESKTOPS, "Desktop 6"),
+    ("desktop-7", DESKTOPS, "Desktop 7"),
+    ("desktop-8", DESKTOPS, "Desktop 8"),
+    ("desktop-9", DESKTOPS, "Desktop 9"),
+    ("desktop-carry-1", DESKTOPS, "Take the window to desktop 1"),
+    ("desktop-carry-2", DESKTOPS, "Take the window to desktop 2"),
+    ("desktop-carry-3", DESKTOPS, "Take the window to desktop 3"),
+    ("desktop-carry-4", DESKTOPS, "Take the window to desktop 4"),
+    ("desktop-carry-5", DESKTOPS, "Take the window to desktop 5"),
+    ("desktop-carry-6", DESKTOPS, "Take the window to desktop 6"),
+    ("desktop-carry-7", DESKTOPS, "Take the window to desktop 7"),
+    ("desktop-carry-8", DESKTOPS, "Take the window to desktop 8"),
+    ("desktop-carry-9", DESKTOPS, "Take the window to desktop 9"),
     ("launcher", LAUNCH, "Launcher"),
     ("startmenu", LAUNCH, "Start menu"),
     ("run", LAUNCH, "Run"),
     ("task-manager", LAUNCH, "Task Manager"),
     ("terminal", LAUNCH, "Terminal"),
+    ("explorer", LAUNCH, "Explorer"),
+    ("taskbar-item-1", LAUNCH, "Taskbar button 1"),
+    ("taskbar-item-2", LAUNCH, "Taskbar button 2"),
+    ("taskbar-item-3", LAUNCH, "Taskbar button 3"),
+    ("taskbar-item-4", LAUNCH, "Taskbar button 4"),
+    ("taskbar-item-5", LAUNCH, "Taskbar button 5"),
+    ("taskbar-item-6", LAUNCH, "Taskbar button 6"),
+    ("taskbar-item-7", LAUNCH, "Taskbar button 7"),
+    ("taskbar-item-8", LAUNCH, "Taskbar button 8"),
+    ("taskbar-item-9", LAUNCH, "Taskbar button 9"),
+    ("taskbar-item-10", LAUNCH, "Taskbar button 10"),
     ("clipboard-history", LAUNCH, "Clipboard history"),
     ("emoji-picker", LAUNCH, "Emoji picker"),
     ("color-picker", LAUNCH, "Colour picker"),

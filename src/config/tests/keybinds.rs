@@ -175,6 +175,46 @@ fn action_names_round_trip() {
 }
 
 #[test]
+fn numbered_actions_name_a_button_or_desktop_counted_from_one() {
+    use crate::desktops::Step;
+    for (name, action) in [
+        ("taskbar-item-1", Action::TaskItem(0)),
+        ("taskbar-item-10", Action::TaskItem(9)),
+        ("desktop-3", Action::Desktop(Step::To(2))),
+        ("desktop-carry-9", Action::CarryToDesktop(Step::To(8))),
+    ] {
+        assert_eq!(Action::from_parts(name, None), Ok(action.clone()));
+        assert_eq!(action.name(), Some(name));
+    }
+    assert!(Action::from_parts("taskbar-item-0", None).is_err());
+    assert!(Action::from_parts("taskbar-item-11", None).is_err());
+    assert!(Action::from_parts("desktop-10", None).is_err());
+}
+
+#[test]
+fn super_digits_d_and_e_are_bound_by_default() {
+    let cfg = Config::default();
+    let on = |keys: &str| {
+        let (mods, keysym) = parse_keybind(keys).unwrap();
+        (cfg.keybinds.iter())
+            .filter(|b| b.mods == mods && b.keysym == keysym)
+            .map(|b| b.action.clone())
+            .collect::<Vec<_>>()
+    };
+    for n in 1..=9 {
+        assert_eq!(on(&format!("Super+{n}")), [Action::TaskItem(n - 1)]);
+    }
+    assert_eq!(
+        on("Super+0"),
+        [Action::Zoom(crate::magnifier::ZoomStep::Reset)],
+        "Super+0 stays the magnifier's"
+    );
+    assert_eq!(on("Super+d"), [Action::ShowDesktop]);
+    assert_eq!(on("Super+e"), [Action::Explorer]);
+    assert_eq!(on("Super+Shift+e"), [Action::Exit]);
+}
+
+#[test]
 fn toggleframe_is_bound_by_default() {
     let (mods, keysym) = parse_keybind("Super+Shift+b").unwrap();
     let cfg = Config::default();
@@ -338,11 +378,14 @@ fn lock_action_and_default_bind() {
 fn every_action_from_parts_takes_is_in_action_names() {
     let src = include_str!("../keybinds.rs");
     let body = src.split("pub fn from_parts").nth(1).unwrap();
-    let body = body.split("other => return Err").next().unwrap();
+    let body = body.split("other => {").next().unwrap();
     let ids: Vec<&str> = (body.lines())
         .filter_map(|l| l.trim().strip_prefix('"')?.split_once("\" =>"))
         .map(|(id, _)| id)
         .filter(|id| *id != "spawn")
+        .chain(repriseconf::keybind::TASKBAR_ITEMS)
+        .chain(repriseconf::keybind::DESKTOP_ITEMS)
+        .chain(repriseconf::keybind::DESKTOP_CARRY_ITEMS)
         .collect();
     let named: Vec<&str> = (repriseconf::keybind::ACTION_NAMES.iter())
         .map(|n| n.0)

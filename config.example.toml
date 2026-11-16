@@ -754,6 +754,14 @@ action = "toggleframe"
 keys = "Super+space"
 action = "launcher"
 
+[[keybinds]]                 # every window down, or back up; the Show Desktop button does the same
+keys = "Super+d"
+action = "showdesktop"
+
+[[keybinds]]                 # an Explorer window on the home folder
+keys = "Super+e"
+action = "explorer"
+
 [[keybinds]]                 # the task manager (`task_manager`)
 keys = "Ctrl+Shift+Escape"
 action = "task-manager"
@@ -802,6 +810,12 @@ action = "desktop-carry-prev"
 [[keybinds]]
 keys = "Super+Ctrl+Shift+Right"
 action = "desktop-carry-next"
+
+# desktop-1 to desktop-9 show that desktop, desktop-carry-1 to
+# desktop-carry-9 take the focused window there too. Not bound by default.
+#[[keybinds]]
+#keys = "Super+Ctrl+1"
+#action = "desktop-1"
 
 # Show the focused window on every desktop, or only on this one; the window
 # menu's Show on All Desktops row does the same. Not bound by default.
@@ -913,6 +927,47 @@ action = "focus-taskbar"
 [[keybinds]]                 # the same, on the notification area
 keys = "Super+b"
 action = "focus-tray"
+
+# Super and a digit act on that task button of the taskbar under the
+# pointer, pinned programs first: a pinned program with no window starts,
+# a window comes up, or goes down when it already has the keyboard, and a
+# group brings up its windows in turn. taskbar-item-10 is unbound, as
+# Super+0 resets the zoom.
+[[keybinds]]
+keys = "Super+1"
+action = "taskbar-item-1"
+
+[[keybinds]]
+keys = "Super+2"
+action = "taskbar-item-2"
+
+[[keybinds]]
+keys = "Super+3"
+action = "taskbar-item-3"
+
+[[keybinds]]
+keys = "Super+4"
+action = "taskbar-item-4"
+
+[[keybinds]]
+keys = "Super+5"
+action = "taskbar-item-5"
+
+[[keybinds]]
+keys = "Super+6"
+action = "taskbar-item-6"
+
+[[keybinds]]
+keys = "Super+7"
+action = "taskbar-item-7"
+
+[[keybinds]]
+keys = "Super+8"
+action = "taskbar-item-8"
+
+[[keybinds]]
+keys = "Super+9"
+action = "taskbar-item-9"
 
 [[keybinds]]                 # the notification history on the newest notification with an
 keys = "Super+Shift+n"       # action left: Enter runs it, the Menu key lists its actions; a

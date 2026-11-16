@@ -701,6 +701,7 @@ impl State {
                 let cmd = self.config.terminal.clone();
                 self.spawn_command_activated(&cmd);
             }
+            Action::Explorer => self.spawn_argv_activated(&["reprise-explorer"]),
             Action::Exit => crate::sessionend::begin(
                 self,
                 reprisekit::controls::endsession::Goal::LogOff,
@@ -757,6 +758,7 @@ impl State {
                 }
             }
             Action::ShowDesktop => self.toggle_show_desktop(),
+            Action::TaskItem(n) => self.task_item_key(*n),
             Action::AlwaysOnTop => {
                 if let Some(w) = self.focused
                     && let Some(win) = self.win(w)

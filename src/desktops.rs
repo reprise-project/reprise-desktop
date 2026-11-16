@@ -9,6 +9,8 @@ use crate::window::WindowId;
 pub enum Step {
     Prev,
     Next,
+    /// Desktop `n`, from 0.
+    To(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,11 +41,13 @@ impl Desktops {
         }
     }
 
-    /// The desktop one step from the current one; None past either end, which do not wrap.
+    /// The desktop `s` leads to; None past either end, which do not wrap, for a desktop past the
+    /// count and for the current one.
     pub fn step(&self, s: Step) -> Option<usize> {
         match s {
             Step::Prev => self.current.checked_sub(1),
             Step::Next => Some(self.current + 1).filter(|&n| n < self.count),
+            Step::To(n) => (n < self.count && n != self.current).then_some(n),
         }
     }
 }
@@ -199,7 +203,7 @@ impl State {
         self.repoint(self.pointer_location(), InputTime::now());
     }
 
-    /// Switch one desktop along, taking the focused window's family with it when `carry` is set (a window on all desktops stays put).
+    /// Switch to the desktop `step` leads to, taking the focused window's family with it when `carry` is set (a window on all desktops stays put).
     pub fn step_desktop(&mut self, step: Step, carry: bool) {
         let Some(n) = self.desktops.step(step) else {
             return;
@@ -447,6 +451,18 @@ mod tests {
         d.current = 3;
         assert_eq!(d.step(Step::Next), None);
         assert_eq!(d.step(Step::Prev), Some(2));
+    }
+
+    #[test]
+    fn a_numbered_desktop_is_reached_only_when_it_exists_and_is_not_shown() {
+        let d = Desktops {
+            count: 4,
+            current: 1,
+        };
+        assert_eq!(d.step(Step::To(3)), Some(3));
+        assert_eq!(d.step(Step::To(0)), Some(0));
+        assert_eq!(d.step(Step::To(1)), None, "already shown");
+        assert_eq!(d.step(Step::To(4)), None, "past the count");
     }
 
     #[test]
