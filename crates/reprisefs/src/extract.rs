@@ -86,6 +86,8 @@ pub(crate) struct Listed {
     pub(crate) bytes: u64,
     /// A top-level entry's name starts with a `.`.
     pub(crate) hidden: bool,
+    /// A top-level entry is named `bin`.
+    pub(crate) bin: bool,
 }
 
 /// How much one extraction may write into a folder.
@@ -388,7 +390,9 @@ fn listing(argv: &[OsString], m: &Meter) -> Result<Listed, Failure> {
         }
         got.entries += 1;
         got.bytes = got.bytes.saturating_add(size);
-        got.hidden |= hidden_at_top(entry);
+        let top = top_name(entry);
+        got.hidden |= top.is_some_and(|n| n.starts_with(b"."));
+        got.bin |= top == Some(b"bin".as_slice());
         true
     });
     let status = finish(child, &read);
@@ -428,14 +432,27 @@ fn listed_line(line: &[u8]) -> Option<(u8, u64, &[u8])> {
     Some((kind, size, rest.strip_prefix(b" ")?))
 }
 
-fn hidden_at_top(entry: &[u8]) -> bool {
-    let first = Path::new(OsStr::from_bytes(entry))
+fn top_name(entry: &[u8]) -> Option<&[u8]> {
+    Path::new(OsStr::from_bytes(entry))
         .components()
         .find_map(|c| match c {
-            Component::Normal(n) => Some(n.as_bytes().starts_with(b".")),
+            Component::Normal(n) => Some(n.as_bytes()),
             _ => None,
-        });
-    first == Some(true)
+        })
+}
+
+/// Whether Extract Here keeps `listed` in a folder of its own in `dir`: one with a hidden top-level
+/// entry, or with a top-level `bin` in the home folder. docs/security.md "Extracting archives".
+fn kept_apart(listed: Listed, dir: &Path, home: Option<&Path>) -> bool {
+    listed.hidden || listed.bin && home.is_some_and(|h| is_same_dir(dir, h))
+}
+
+fn is_same_dir(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(a), Ok(b)) => (a.dev(), a.ino()) == (b.dev(), b.ino()),
+        _ => false,
+    }
 }
 
 /// Extracts `a`, the batch having counted `before` items, into a fresh folder that Extract to keeps
@@ -452,7 +469,8 @@ fn extract(
         .parent()
         .ok_or_else(|| Failure::Tool("it has no folder".into()))?;
     limits(dir).admit(listed)?;
-    let here = a.here && !listed.hidden;
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let here = a.here && !kept_apart(listed, dir, home.as_deref());
     let name = folder_name(a.src.file_name().unwrap_or_default());
     let into = make_folder(dir, &if here { staging(&name) } else { name.clone() })?;
     let remove = || discard(&into);
@@ -1396,13 +1414,48 @@ mod tests {
             Listed {
                 entries: 5,
                 bytes: 8,
-                hidden: false
+                ..Listed::default()
             },
             "a hard link adds no bytes"
         );
         std::fs::write(src.join(".rc"), "").unwrap();
         bsdtar(&src, &["-cf", tar.to_str().unwrap(), "e", ".rc"]);
         assert!(list(&tar, &Meter::default()).unwrap().hidden);
+        std::fs::create_dir_all(src.join("bin")).unwrap();
+        std::fs::write(src.join("bin/sudo"), "").unwrap();
+        std::fs::create_dir_all(src.join("pkg/bin")).unwrap();
+        bsdtar(&src, &["-cf", tar.to_str().unwrap(), "e", "pkg"]);
+        assert!(
+            !list(&tar, &Meter::default()).unwrap().bin,
+            "a bin below the top"
+        );
+        bsdtar(&src, &["-cf", tar.to_str().unwrap(), "e", "bin"]);
+        assert!(list(&tar, &Meter::default()).unwrap().bin);
+    }
+
+    #[test]
+    fn extract_here_keeps_a_top_level_bin_apart_only_in_the_home_folder() {
+        let t = tempfile::tempdir().unwrap();
+        let (home, other) = (t.path().join("home"), t.path().join("other"));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let bin = Listed {
+            bin: true,
+            ..Listed::default()
+        };
+        assert!(kept_apart(bin, &home, Some(&home)));
+        assert!(
+            kept_apart(bin, &home.join("."), Some(&t.path().join("other/../home"))),
+            "the same folder by another path"
+        );
+        assert!(!kept_apart(bin, &other, Some(&home)));
+        assert!(!kept_apart(bin, &home, None));
+        assert!(!kept_apart(Listed::default(), &home, Some(&home)));
+        let hidden = Listed {
+            hidden: true,
+            ..Listed::default()
+        };
+        assert!(kept_apart(hidden, &other, None));
     }
 
     #[test]
@@ -1410,7 +1463,7 @@ mod tests {
         let at = |bytes, entries| Listed {
             entries,
             bytes,
-            hidden: false,
+            ..Listed::default()
         };
         let limits = Limits::from_free(1000, None);
         assert_eq!(

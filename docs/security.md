@@ -1753,7 +1753,9 @@ stop the share first.
   extract too. An archive with a hidden top-level entry, or with a link that
   resolves to nothing in the archive, stays in its new folder, as with
   Extract to, so Extract Here can't add autostart entries or settings to a
-  home folder, or a link that would name a file already there.
+  home folder, or a link that would name a file already there. In the home
+  folder, so does one with a top-level `bin`, since a login shell's profile
+  can put `~/bin` ahead of the system's programs in `PATH`.
 - **Copying from a drive.** A copy from a drive (a mount under `/run/media`
   or `/media`) onto another device carries no extended attributes: no POSIX
   ACLs, `user.*` attributes or `security.*` labels, which name another
