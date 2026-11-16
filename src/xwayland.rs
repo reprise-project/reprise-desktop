@@ -79,6 +79,8 @@ pub struct Xwayland {
     source: Option<RegistrationToken>,
     /// When the last server was spawned (`RESTART_AFTER`).
     started: Option<Instant>,
+    /// When servers died within `RESTART_AFTER` of their start, the last `EARLY_WINDOW`'s.
+    early_exits: Vec<Instant>,
     /// The mime types of the Wayland clipboard and primary selection, for
     /// a server that starts after they were set.
     selections: [Option<Vec<String>>; 2],
@@ -89,13 +91,21 @@ pub struct Xwayland {
     grabbing: Vec<X11Window>,
 }
 
-/// How long an X server must have run for its death to leave the display
-/// waiting for the next X11 program.
+/// How long an X server must have run for its death not to count as a failed start.
 const RESTART_AFTER: Duration = Duration::from_secs(5);
+/// Failed starts within [`EARLY_WINDOW`] after which X11 stays off for the session.
+const EARLY_EXITS_MAX: usize = 3;
+const EARLY_WINDOW: Duration = Duration::from_secs(600);
 
-/// Whether a server that dies `ran` after its spawn is started again.
-fn restarts(ran: Duration) -> bool {
-    ran > RESTART_AFTER
+/// Whether the display waits for the next X11 program after a server that ran `ran` (None:
+/// unknown) died at `now`; `early` holds the failed starts before, and gains this one.
+fn restarts(ran: Option<Duration>, early: &mut Vec<Instant>, now: Instant) -> bool {
+    early.retain(|&t| now.duration_since(t) < EARLY_WINDOW);
+    if ran.is_some_and(|r| r > RESTART_AFTER) {
+        return true;
+    }
+    early.push(now);
+    early.len() < EARLY_EXITS_MAX
 }
 
 fn slot(target: SelectionTarget) -> usize {
@@ -117,6 +127,7 @@ impl Xwayland {
             watches: Vec::new(),
             source: None,
             started: None,
+            early_exits: Vec::new(),
             selections: [None, None],
             pressed: Vec::new(),
             grabbing: Vec::new(),
@@ -303,7 +314,8 @@ fn stop(state: &mut State) {
 }
 
 /// After the X server went: hold the display again and wait for the next
-/// program, unless it died within `RESTART_AFTER` of its start.
+/// program, unless it was the [`EARLY_EXITS_MAX`]th to die at its start within
+/// [`EARLY_WINDOW`].
 fn restart(state: &mut State) {
     if let Some(token) = state.xwayland.source.take() {
         state.handle.remove(token);
@@ -312,11 +324,14 @@ fn restart(state: &mut State) {
         return;
     }
     let ran = state.xwayland.started.map(|t| t.elapsed());
-    if !ran.is_some_and(restarts) {
+    if !restarts(ran, &mut state.xwayland.early_exits, Instant::now()) {
         return give_up(
             state,
-            &format!("Xwayland died within {RESTART_AFTER:?} of its start"),
+            &format!("Xwayland died within {RESTART_AFTER:?} of its start {EARLY_EXITS_MAX} times"),
         );
+    }
+    if ran.is_none_or(|r| r <= RESTART_AFTER) {
+        log::warn!("Xwayland died at its start; the next X11 program starts it again");
     }
     let Some(sockets) = state.xwayland.sockets.as_mut() else {
         return;
@@ -336,10 +351,15 @@ fn restart(state: &mut State) {
     watch(state);
 }
 
-/// X11 programs cannot run: let go of the display and take `DISPLAY` out
-/// of the session.
+/// X11 programs cannot run: let go of the display, take `DISPLAY` out
+/// of the session and say so once.
 fn give_up(state: &mut State, why: &str) {
     log::warn!("{why}; X11 programs will not run");
+    crate::notifyview::notice(
+        state,
+        "X11 programs cannot run",
+        "Xwayland would not start. Programs that need X11 will not open until you log on again.",
+    );
     for token in state.xwayland.watches.drain(..) {
         state.handle.remove(token);
     }
@@ -1295,10 +1315,25 @@ mod tests {
     }
 
     #[test]
-    fn a_server_that_dies_soon_after_its_start_is_left_down() {
-        assert!(!restarts(Duration::from_secs(1)), "a crash at startup");
-        assert!(!restarts(RESTART_AFTER), "the limit itself");
-        assert!(restarts(Duration::from_secs(60)), "a server that ran");
+    fn a_server_that_dies_at_its_start_a_third_time_in_ten_minutes_is_left_down() {
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs(s);
+        let crash = Some(Duration::from_secs(1));
+        let mut early = Vec::new();
+        assert!(restarts(crash, &mut early, at(0)), "a crash at startup");
+        assert!(
+            restarts(Some(RESTART_AFTER), &mut early, at(10)),
+            "the limit"
+        );
+        assert!(restarts(Some(Duration::from_secs(60)), &mut early, at(20)));
+        assert_eq!(early.len(), 2, "a server that ran is no failed start");
+        assert!(!restarts(None, &mut early, at(30)), "the third");
+        let mut early = vec![at(0), at(1)];
+        assert!(
+            restarts(crash, &mut early, at(601)),
+            "the first two ten minutes back"
+        );
+        assert_eq!(early, [at(601)]);
     }
 
     #[test]

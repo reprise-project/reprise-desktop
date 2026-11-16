@@ -352,7 +352,9 @@ user's server.
   unlocked, and logging off lists no app that holds logout off through the
   portal
 - Xwayland, for X11 programs. Reprise starts it on the first X11 connection
-  and stops it when X11 programs have gone quiet.
+  and stops it when X11 programs have gone quiet. When it fails at its start
+  three times in ten minutes, X11 stays off until you log on again, and a
+  notice says so.
 - A UI font: Wine's Tahoma is recommended (`ttf-tahoma` on Arch, from the
   AUR); without it, Reprise falls back to DejaVu Sans. The other period
   faces are picked up when installed ([assets](assets.md#fonts)).
