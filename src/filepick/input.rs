@@ -212,8 +212,7 @@ impl FilePicker {
                 Outcome::Redraw
             }
             Event::Rename { from, to } => {
-                let path = self.typed_path(&from);
-                if let Some(path) = path {
+                if let Ok(path) = self.typed_path(&from) {
                     self.queue(Work::Rename {
                         from: path,
                         old: from,
@@ -223,7 +222,10 @@ impl FilePicker {
                 Outcome::Redraw
             }
             Event::Delete { names, erase } => {
-                let paths: Vec<PathBuf> = names.iter().filter_map(|n| self.typed_path(n)).collect();
+                let paths: Vec<PathBuf> = names
+                    .iter()
+                    .filter_map(|n| self.typed_path(n).ok())
+                    .collect();
                 match self
                     .current()
                     .is_some_and(|d| !reprisefs::places::is_recent(d))
@@ -248,8 +250,9 @@ impl FilePicker {
                     }
                     return Outcome::Redraw;
                 }
-                let Some(path) = self.typed_path(&dir) else {
-                    return Outcome::Nothing;
+                let path = match self.typed_path(&dir) {
+                    Ok(path) => path,
+                    Err(text) => return refused(text),
                 };
                 let pattern = &name[dir.len()..];
                 self.opening = Some(self.request(None, path, Some(pattern)));
@@ -260,8 +263,9 @@ impl FilePicker {
                 let Some(name) = names.into_iter().next() else {
                     return Outcome::Nothing;
                 };
-                let Some(path) = self.typed_path(&name) else {
-                    return Outcome::Nothing;
+                let path = match self.typed_path(&name) {
+                    Ok(path) => path,
+                    Err(text) => return refused(text),
                 };
                 self.opening = Some(self.request(None, path, None));
                 Outcome::Nothing
@@ -269,19 +273,14 @@ impl FilePicker {
         }
     }
 
-    /// Where a typed `name` points from the open folder. Lexical, so a
-    /// typed ".." gets the same folder handle as Up and its parent is the
-    /// one above it. None for a relative name in My Recent Documents,
-    /// which is no folder to look a new name up in.
-    fn typed_path(&self, name: &str) -> Option<PathBuf> {
-        Some(match self.current() {
-            Some(dir) if reprisefs::places::is_recent(dir) => match self.recent.get(name) {
-                Some(p) => p.clone(),
-                None if name.starts_with('/') => reprisefs::ops::lexical(Path::new(name)),
-                None => return None,
-            },
-            Some(dir) => reprisefs::ops::lexical(&dir.join(name)),
-            None => reprisefs::ops::lexical(Path::new(name)),
-        })
+    /// Where a typed `name` points from the open folder ([`reprisefs::dialogops::typed_path`]).
+    fn typed_path(&self, name: &str) -> Result<PathBuf, String> {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        reprisefs::dialogops::typed_path(self.current(), name, home.as_deref(), &self.aliases)
     }
+}
+
+/// An error box over the picker.
+pub(super) fn refused(text: String) -> Outcome {
+    Outcome::Notice(Box::new(crate::dialog::Dialog::error(TITLE, text)))
 }

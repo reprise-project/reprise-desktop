@@ -309,12 +309,8 @@ fn listing(folders: &mut FolderTable, id: FolderId, read: Read, icons: &mut Icon
         .zip(names)
         .map(|(r, name)| {
             let it = r.item;
-            if it.path.parent() != Some(path.as_path()) {
-                aliases.push((it.name.clone(), it.path.clone().into_os_string()));
-            } else if let Some(raw) = it.path.file_name()
-                && raw.to_str().is_none()
-            {
-                aliases.push((it.name.clone(), raw.to_os_string()));
+            if let Some(raw) = reprisefs::dialogops::alias(&path, &it.path) {
+                aliases.push((it.name.clone(), raw));
             }
             let id = if it.is_dir {
                 folders.id(&it.path)
@@ -1672,26 +1668,9 @@ impl Host {
     }
 
     pub fn resolve(&mut self, name: &str) -> Result<Resolved, String> {
-        let base = self
-            .folder
-            .and_then(|id| self.folders.path(id))
-            .map(Path::to_path_buf)
-            .ok_or_else(|| "The folder is no longer available.".to_string())?;
+        let base = self.folder.and_then(|id| self.folders.path(id));
         let home = std::env::var_os("HOME").map(PathBuf::from);
-        let raw = match (name, &home) {
-            ("~", Some(h)) => h.clone(),
-            (n, Some(h)) if n.starts_with("~/") => h.join(&n[2..]),
-            (n, _) => match self.aliases.get(n) {
-                Some(raw) => base.join(raw),
-                None if reprisefs::places::is_recent(&base) && !n.starts_with('/') => {
-                    return Err(format!(
-                        "{n} is not in My Recent Documents. Type the full path to save or open it elsewhere."
-                    ));
-                }
-                None => base.join(n),
-            },
-        };
-        let path = reprisefs::ops::lexical(&raw);
+        let path = reprisefs::dialogops::typed_path(base, name, home.as_deref(), &self.aliases)?;
         let job = match self.probing.take() {
             Some((p, job)) if p == path => job,
             _ => probe_folders(&path),
@@ -1709,9 +1688,8 @@ impl Host {
                 }
                 Ok(Resolved::File(path))
             }
-            (false, false) => Err(format!(
-                "The folder {} does not exist.",
-                path.parent().unwrap_or(&path).display()
+            (false, false) => Err(reprisefs::dialogops::no_folder_text(
+                path.parent().unwrap_or(&path),
             )),
         }
     }

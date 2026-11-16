@@ -2,7 +2,9 @@
 //! a rename, Delete and Shift+Delete. Each blocks for as long as the file system does, so a host runs it off
 //! its loop.
 
-use crate::{bincap, hidden, names, trash};
+use crate::{bincap, hidden, names, places, trash};
+use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -77,9 +79,112 @@ pub fn delete_failed_text(path: &Path, e: &io::Error) -> String {
     format!("Cannot delete {}: {e}", bincap::label(path))
 }
 
+/// Where `name`, typed into File name, points from `base`, the folder shown: `~` and `~/` from
+/// `home`, a listed name through `aliases` ([`alias`]), else from `base`. Lexical, so `..` climbs.
+/// Err with the text to show for a relative name with no folder shown, or one My Recent
+/// Documents does not list.
+pub fn typed_path(
+    base: Option<&Path>,
+    name: &str,
+    home: Option<&Path>,
+    aliases: &HashMap<String, OsString>,
+) -> Result<PathBuf, String> {
+    let raw = match (name, home) {
+        ("~", Some(h)) => h.to_path_buf(),
+        (n, Some(h)) if n.starts_with("~/") => h.join(&n[2..]),
+        (n, _) if n.starts_with('/') => PathBuf::from(n),
+        (n, _) => {
+            let base = base.ok_or_else(|| "The folder is no longer available.".to_string())?;
+            match aliases.get(n) {
+                Some(raw) => base.join(raw),
+                None if places::is_recent(base) => {
+                    return Err(format!(
+                        "{n} is not in My Recent Documents. Type the full path to save or open it elsewhere."
+                    ));
+                }
+                None => base.join(n),
+            }
+        }
+    };
+    Ok(crate::ops::lexical(&raw))
+}
+
+/// What [`typed_path`] reads the name of an entry at `path`, listed in `dir`, as: the full path
+/// of one that lives elsewhere (My Recent Documents), the raw name of one whose name is not
+/// UTF-8; none when the shown name is the name on disk.
+pub fn alias(dir: &Path, path: &Path) -> Option<OsString> {
+    if path.parent() != Some(dir) {
+        return Some(path.as_os_str().to_os_string());
+    }
+    let raw = path.file_name()?;
+    raw.to_str().is_none().then(|| raw.to_os_string())
+}
+
+/// The error box's text for a typed name whose folder `dir` is not there.
+pub fn no_folder_text(dir: &Path) -> String {
+    format!("The folder {} does not exist.", dir.display())
+}
+
+/// The error box's text for a typed file to open, `path`, that is not there.
+pub fn not_found_text(path: &Path) -> String {
+    format!(
+        "{} was not found. Check the file name and try again.",
+        path.display()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_typed_name_resolves_from_home_the_root_an_alias_or_the_folder() {
+        use std::os::unix::ffi::OsStrExt;
+        let (home, base) = (Path::new("/home/u"), Path::new("/home/u/Documents"));
+        let raw = std::ffi::OsStr::from_bytes(b"caf\xe9.txt").to_os_string();
+        let aliases = HashMap::from([("caf\u{FFFD}.txt".to_string(), raw.clone())]);
+        let f = |n: &str| typed_path(Some(base), n, Some(home), &aliases);
+        assert_eq!(f("~"), Ok("/home/u".into()));
+        assert_eq!(f("~/bin/tool"), Ok("/home/u/bin/tool".into()));
+        assert_eq!(f("/usr/bin/"), Ok("/usr/bin".into()));
+        assert_eq!(f("a.txt"), Ok("/home/u/Documents/a.txt".into()));
+        assert_eq!(f("../Music"), Ok("/home/u/Music".into()));
+        assert_eq!(f("caf\u{FFFD}.txt"), Ok(base.join(&raw)));
+        assert_eq!(
+            typed_path(None, "~/x", Some(home), &aliases),
+            Ok("/home/u/x".into())
+        );
+        assert_eq!(
+            typed_path(None, "x", Some(home), &aliases),
+            Err("The folder is no longer available.".into())
+        );
+    }
+
+    #[test]
+    fn my_recent_documents_resolves_only_the_names_it_lists() {
+        let recent = Path::new(places::RECENT);
+        let aliases = HashMap::from([("a.txt".to_string(), "/srv/a.txt".into())]);
+        let f = |n: &str| typed_path(Some(recent), n, None, &aliases);
+        assert_eq!(f("a.txt"), Ok("/srv/a.txt".into()));
+        assert_eq!(f("/srv/b.txt"), Ok("/srv/b.txt".into()));
+        assert_eq!(
+            f("b.txt"),
+            Err("b.txt is not in My Recent Documents. Type the full path to save or open it elsewhere.".into())
+        );
+    }
+
+    #[test]
+    fn an_alias_is_a_link_target_or_a_raw_name() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = Path::new("/d");
+        assert_eq!(alias(dir, Path::new("/d/a.txt")), None);
+        assert_eq!(
+            alias(dir, Path::new("/srv/a.txt")),
+            Some("/srv/a.txt".into())
+        );
+        let raw = std::ffi::OsStr::from_bytes(b"caf\xe9");
+        assert_eq!(alias(dir, &dir.join(raw)), Some(raw.to_os_string()));
+    }
 
     #[test]
     fn a_new_folder_takes_the_first_name_free_on_disk() {

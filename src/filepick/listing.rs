@@ -96,13 +96,16 @@ impl FilePicker {
                 // A typed folder is newer than any listing still pending.
                 self.listing = None;
                 let id = r.id.unwrap_or_else(|| self.folders.id(&r.path));
-                self.recent = if reprisefs::places::is_recent(&r.path) {
-                    rows.iter()
-                        .map(|l| (l.row.item.name.clone(), l.row.item.path.clone()))
-                        .collect()
-                } else {
-                    Default::default()
-                };
+                self.aliases = rows
+                    .iter()
+                    .filter_map(|l| {
+                        let it = &l.row.item;
+                        Some((
+                            it.name.clone(),
+                            reprisefs::dialogops::alias(&r.path, &it.path)?,
+                        ))
+                    })
+                    .collect();
                 let (entries, pictures) = self.entries(rows, cache, r.scale, r.list);
                 self.show(id, &r.path, entries);
                 self.watch_shown(&r.path);
@@ -123,10 +126,7 @@ impl FilePicker {
                 Purpose::RunCommand => Outcome::RunPick(r.path),
                 Purpose::Program => Outcome::ProgramPick(r.path),
             },
-            Found::Missing => {
-                log::warn!("browse: {} is not a file", r.path.display());
-                Outcome::Nothing
-            }
+            Found::Missing(text) => super::input::refused(text),
         }
     }
 

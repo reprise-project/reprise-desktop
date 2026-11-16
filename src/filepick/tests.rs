@@ -261,6 +261,33 @@ fn run_browse_lists_programs_and_hands_the_pick_to_run() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn a_typed_name_resolves_from_home_and_through_a_raw_name() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = sandbox("typed");
+    let raw = std::ffi::OsStr::from_bytes(b"caf\xe9");
+    std::fs::write(dir.join(raw), "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(dir.join(raw), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+    settle(&mut p);
+    p.dlg.set_file_name("~/bin/tool");
+    p.key(R, Key::Enter);
+    let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+    assert_eq!(p.take_requests()[0].path, home.join("bin/tool"));
+
+    p.dlg.set_file_name("caf\u{FFFD}");
+    p.key(R, Key::Enter);
+    assert_eq!(settle(&mut p), Outcome::RunPick(dir.join(raw)));
+
+    p.dlg.set_file_name("gone");
+    p.key(R, Key::Enter);
+    assert!(matches!(
+        settle(&mut p),
+        Outcome::Notice(n) if n.text == format!("{} was not found. Check the file name and try again.", dir.join("gone").display())
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A typed pattern lists what it matches and every folder; one with
 /// a folder part enters that folder, the field keeping the pattern.
 /// One whose folder part is no folder leaves the dialog as it was.
@@ -281,9 +308,8 @@ fn a_typed_pattern_filters_the_listing() {
     assert_eq!(p.dlg.file_name(), "m*");
     p.dlg.set_file_name("../dunes/*");
     p.key(R, Key::Enter);
-    assert_eq!(
-        settle(&mut p),
-        Outcome::Nothing,
+    assert!(
+        matches!(settle(&mut p), Outcome::Notice(n) if n.text == format!("The folder {} does not exist.", dir.join("dunes").display())),
         "a file is no folder to list"
     );
     assert_eq!(p.dlg.file_name(), "../dunes/*", "the field as typed");
@@ -332,7 +358,10 @@ fn a_recent_file_picks_its_own_path() {
     );
     assert!(!p.dlg.can_go_up(), "Recent has no folder above it");
     p.dlg.set_file_name("nope");
-    p.key(R, Key::Enter);
+    assert!(
+        matches!(p.key(R, Key::Enter), Outcome::Notice(n) if n.text.starts_with("nope is not in My Recent Documents.")),
+        "a name not listed says so"
+    );
     assert!(
         p.take_requests().is_empty(),
         "a name not listed goes nowhere"
