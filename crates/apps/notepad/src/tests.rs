@@ -1963,3 +1963,17 @@ fn only_the_window_with_the_keyboard_draws_and_blinks_its_caret() {
     np.event(MAIN, Event::Focus(false), &mut ctx);
     assert_eq!(draw(&mut np, &ctx).pixels, unfocused.pixels);
 }
+
+#[test]
+fn time_date_writes_the_time_then_the_locales_short_date() {
+    let at = reprisefs::locale::mktime(2026, 11, 14, 21, 5, 0);
+    let stamp = crate::window::local_stamp(at);
+    let date = reprisefs::locale::short_date(&reprisefs::locale::localtime(at));
+    let time = stamp.strip_suffix(&date).map(str::trim_end);
+    let want = if reprisefs::locale::is_12h() {
+        "9:05 PM"
+    } else {
+        "21:05"
+    };
+    assert_eq!(time, Some(want), "{stamp:?}");
+}

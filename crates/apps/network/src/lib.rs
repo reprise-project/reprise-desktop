@@ -687,6 +687,9 @@ impl NetApp {
             Event::Pointer(PointerInput::Release { .. }) => self.folder.release(ctx),
             Event::Pointer(PointerInput::Leave) => self.folder.leave(ctx),
             Event::Pointer(PointerInput::Scroll { rows, .. }) => self.folder.wheel(rows, ctx),
+            Event::Pointer(PointerInput::ScrollAcross { cols, .. }) => {
+                self.folder.wheel_across(cols, ctx)
+            }
             _ => return Reply::none(),
         };
         match out {

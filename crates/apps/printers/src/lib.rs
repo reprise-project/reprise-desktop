@@ -70,6 +70,18 @@ fn note(title: &str, text: String, icon: Option<Canvas>) -> MsgBox {
     )
 }
 
+/// The widest a question's text runs before it wraps, at 100% text size.
+const QUESTION_W: i32 = 360;
+
+/// A question box's `max_w`: [`QUESTION_W`] at the text size, or less where the screen is narrower.
+fn question_w(ctx: &Ctx) -> i32 {
+    let cap = ctx.forms().text.len(QUESTION_W);
+    match repriseapp::dialog_max_w() {
+        0 => cap,
+        screen => screen.min(cap),
+    }
+}
+
 /// What the confirm box asks before it is sent.
 enum Ask {
     Delete(String),
@@ -431,7 +443,7 @@ impl PrintersApp {
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
-                max_w: repriseapp::dialog_max_w(),
+                max_w: question_w(ctx),
             },
         );
         self.confirm = Some((Ask::Rename { old, new }, b));
@@ -586,6 +598,9 @@ impl PrintersApp {
             Event::Pointer(PointerInput::Release { .. }) => self.folder.release(ctx),
             Event::Pointer(PointerInput::Leave) => self.folder.leave(ctx),
             Event::Pointer(PointerInput::Scroll { rows, .. }) => self.folder.wheel(rows, ctx),
+            Event::Pointer(PointerInput::ScrollAcross { cols, .. }) => {
+                self.folder.wheel_across(cols, ctx)
+            }
             _ => return Reply::none(),
         };
         self.folder_outcome(out, ctx)
@@ -616,6 +631,7 @@ impl PrintersApp {
             Event::Pointer(PointerInput::Release { .. }) => q.release(ctx),
             Event::Pointer(PointerInput::Leave) => q.leave(ctx),
             Event::Pointer(PointerInput::Scroll { rows, .. }) => q.wheel(rows, ctx),
+            Event::Pointer(PointerInput::ScrollAcross { cols, .. }) => q.wheel_across(cols, ctx),
             _ => return Reply::none(),
         };
         let printer = q.printer.clone();
@@ -1391,6 +1407,12 @@ mod tests {
         assert!(app.confirm.is_none(), "an address without a password");
         app.folder_outcome(rename("Laser"), &mut ctx);
         assert!(matches!(app.confirm, Some((Ask::Rename { .. }, _))));
+        let (_, b) = app.confirm.as_ref().expect("the question");
+        let w = b.child(CONFIRM, &ctx.text, &ctx.forms()).size.0;
+        assert!(
+            w <= QUESTION_W,
+            "the question wraps at {QUESTION_W}, not {w}"
+        );
         assert!(!app.renaming.contains("Laser_2"), "nothing sent yet");
         let enter = repriseapp::KeyInput {
             sym: reprisekit::textedit::keysym::RETURN,
