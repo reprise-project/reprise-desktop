@@ -349,7 +349,11 @@ impl State {
     /// are announced, gone ones closed, changes sent. The focused window
     /// goes last, so a client sees the old one deactivated first.
     pub fn refresh_toplevels(&mut self) {
-        if self.toplevels.wlr.managers.is_empty() && self.toplevels.wlr.windows.is_empty() {
+        let wlr = &mut self.toplevels.wlr;
+        // With no manager and no handle left, nobody hears of a window: forget them all, and a
+        // manager bound later announces each anew.
+        if wlr.managers.is_empty() && wlr.windows.values().all(|d| d.handles.is_empty()) {
+            wlr.windows.clear();
             return;
         }
         if !std::mem::take(&mut self.toplevels.dirty) {
@@ -563,6 +567,37 @@ mod tests {
         assert_eq!(
             h.state.toplevels.wlr.windows[&t.id].shown.states,
             vec![S::Maximized as u32, S::Activated as u32]
+        );
+    }
+
+    #[test]
+    fn once_the_last_manager_goes_a_change_refreshes_nothing() {
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "app", 200, 100);
+        let mut dock = h.connect();
+        let _manager = dock.watch_toplevels();
+        h.roundtrip(&mut dock);
+        assert!(h.state.toplevels.wlr.windows.contains_key(&t.id));
+        dock.hang_up();
+        h.dispatch();
+        h.state.set_maximized(t.id, true);
+        h.dispatch();
+        assert!(
+            h.state.toplevels.wlr.windows.is_empty(),
+            "no window is kept for no one"
+        );
+        h.state.toplevels.refreshes = 0;
+        h.state.set_maximized(t.id, false);
+        h.dispatch();
+        assert_eq!(h.state.toplevels.refreshes, 0, "nothing to refresh");
+        let mut again = h.connect();
+        let _manager = again.watch_toplevels();
+        h.roundtrip(&mut again);
+        assert!(
+            h.state.toplevels.wlr.windows.contains_key(&t.id),
+            "a manager bound later hears of the window"
         );
     }
 
