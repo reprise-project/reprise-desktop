@@ -206,13 +206,19 @@ impl Source {
         query.chars().count() >= MIN_CHARS && (files || matches!(self, Source::Provider(_)))
     }
 
-    /// The paths it finds for `query` under `home`, best first, at most `max`. Blocks: runs on a
-    /// file job.
-    fn find(&self, query: &str, home: &Path, max: usize, cancel: &AtomicBool) -> Vec<PathBuf> {
-        match self {
+    /// The paths it finds for `query` under `home`, best first, at most `max`; None when no tool
+    /// searches names there. Blocks: runs on a file job.
+    fn find(
+        &self,
+        query: &str,
+        home: &Path,
+        max: usize,
+        cancel: &AtomicBool,
+    ) -> Option<Vec<PathBuf>> {
+        Some(match self {
             Source::Names => {
                 let q = reprisefs::search::Query::launcher(query, home);
-                let paths = reprisefs::search::run(&q, cancel);
+                let paths = reprisefs::search::try_run(&q, cancel)?;
                 (reprisekit::fuzzy::rank_paths(query, &paths).into_iter())
                     .take(max)
                     .map(|i| paths[i].clone())
@@ -220,7 +226,7 @@ impl Source {
             }
             Source::Contents => contents(query, max, cancel),
             Source::Provider(_) => Vec::new(),
-        }
+        })
     }
 
     /// The rows `found` for older text that stay up for `query` until its own answer lands: names
@@ -270,10 +276,12 @@ fn file_path(url: &str) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
-/// A found row: a file, or a result a program's search provider found.
+/// A found row: a file, a result a program's search provider found, or a note that picks
+/// nothing (the Files section's [`reprisefs::search::NO_TOOL`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Found {
     Path(PathBuf),
+    Note(String),
     Result(Meta),
 }
 
@@ -281,7 +289,7 @@ impl Found {
     pub fn path(&self) -> Option<&Path> {
         match self {
             Found::Path(p) => Some(p),
-            Found::Result(_) => None,
+            Found::Result(_) | Found::Note(_) => None,
         }
     }
 
@@ -292,6 +300,7 @@ impl Found {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
             Found::Result(m) => m.name.clone(),
+            Found::Note(text) => text.clone(),
         }
     }
 }
@@ -566,6 +575,7 @@ impl FileSearch {
         let detail = match f {
             Found::Path(p) => p.parent().map(|d| tilde(d, home)).unwrap_or_default(),
             Found::Result(m) => m.description.clone(),
+            Found::Note(_) => String::new(),
         };
         FoundRow {
             name: f.name(),
@@ -586,7 +596,7 @@ impl FileSearch {
         match (f, source) {
             (Found::Path(p), _) => file_row_icon(p, self.is_dir(p), mime, icons, px),
             (Found::Result(m), Source::Provider(p)) => p.result_icon(m, icons, px),
-            (Found::Result(_), _) => None,
+            (Found::Result(_), _) | (Found::Note(_), _) => None,
         }
     }
 }
@@ -710,11 +720,15 @@ impl State {
                     return Box::new(|_| {});
                 }
                 let best = source.find(&query, &home, max, &cancel);
-                let facts = (best.iter())
+                let facts = (best.iter().flatten())
                     .map(|p| (p.clone(), crate::desktop::file_facts(p)))
                     .collect();
+                let found = match best {
+                    Some(best) => paths(best),
+                    None => vec![Found::Note(reprisefs::search::NO_TOOL.into())],
+                };
                 Box::new(move |state: &mut State| {
-                    state.files_found(o, generation, section, paths(best), facts)
+                    state.files_found(o, generation, section, found, facts)
                 })
             });
         }
@@ -1115,6 +1129,23 @@ mod tests {
             f.path(1, 1),
             Some(Path::new("/h/b.pdf")),
             "back once names drop it"
+        );
+    }
+
+    #[test]
+    fn the_no_tool_note_reads_as_a_row_that_picks_nothing() {
+        let mut f = FileSearch::new(false, Vec::new());
+        f.set(0, vec![Found::Note(reprisefs::search::NO_TOOL.into())]);
+        let rows: Vec<String> = f
+            .sections()
+            .flat_map(|(_, r)| r.iter().map(Found::name))
+            .collect();
+        assert_eq!(rows, ["File search needs plocate or fd."]);
+        assert!(f.picked(0, 0).is_none());
+        assert!(f.path(0, 0).is_none());
+        assert!(
+            Source::Names.kept("notes", &f.sections[0].found).is_empty(),
+            "new text drops it"
         );
     }
 

@@ -178,6 +178,9 @@ impl Explorer {
         let zone = self.chrome_waits.first(&mut ctx.icons, &["computer"], 16);
         self.status.panels =
             window::status_panels(self.items.len(), chosen.len(), bytes, "Computer", zone);
+        if self.search.no_tool() {
+            self.status.panels[0].text = reprisefs::search::NO_TOOL.into();
+        }
         // One item picked in the Recycle Bin says where it came from; one shortcut elsewhere, where it points.
         if let [i] = chosen[..]
             && let Some(it) = self.items.get(i)

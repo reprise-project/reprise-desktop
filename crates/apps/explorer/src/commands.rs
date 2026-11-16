@@ -432,9 +432,7 @@ impl Explorer {
             Command::ToggleHidden => {
                 self.settings.show_hidden = !self.settings.show_hidden;
                 self.settings_dirty = true;
-                // The Folders tree lists hidden folders too: built afresh, it fills again down
-                // to the place shown.
-                self.build_tree(ctx);
+                self.rescan_tree(ctx);
                 self.refresh(ctx)
             }
             Command::ToggleToolbar(i) => {

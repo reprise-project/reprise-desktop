@@ -54,7 +54,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Sums and units.** Type `2+3*4` or `5 km in mi` in the launcher and Enter
   copies the result.
 - **File search** uses plocate's database, or `fd` without one, so nothing
-  crawls your disk in the background.
+  crawls your disk in the background. With neither, the launcher's Files
+  section and Explorer's status bar say "File search needs plocate or fd."
 - **Search by contents.** Settings > Search > "Find files by their contents"
   (`[launcher] contents`, off by default) adds localsearch's results.
 - **Search providers.** Programs that answer the GNOME search provider

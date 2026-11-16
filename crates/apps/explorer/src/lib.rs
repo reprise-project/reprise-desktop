@@ -228,7 +228,7 @@ pub struct Explorer {
     pub(crate) search: search::Search,
     /// A search still running after [`LIST_WAIT`] ([`Explorer::take_search`]).
     pub(crate) search_job: Option<Job<search::Found>>,
-    /// The tool behind a search: [`reprisefs::search::run`], or a test's own.
+    /// The tool behind a search: [`reprisefs::search::try_run`], or a test's own.
     pub(crate) search_run: search::Runner,
     pub explorer_bar: ExplorerBar,
     pub taskpane: TaskPane,
@@ -521,7 +521,7 @@ impl Explorer {
             search_field: SearchField::default(),
             search: search::Search::default(),
             search_job: None,
-            search_run: reprisefs::search::run,
+            search_run: reprisefs::search::try_run,
             explorer_bar: ExplorerBar {
                 title: "Folders".to_string(),
                 width: settings.bar_width,
