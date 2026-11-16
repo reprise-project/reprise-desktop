@@ -168,10 +168,11 @@ fn work(
         };
         newest = newest.max(req.generation);
         queue.push_back(req);
-        take_queued(&rx, &mut queue, &mut newest);
         while let Some(req) = queue.pop_front() {
-            // A fresh listing may have landed while the last decode ran.
-            take_queued(&rx, &mut queue, &mut newest);
+            // A fresh listing may have landed while the last decode ran, or the window gone.
+            if !take_queued(&rx, &mut queue, &mut newest) {
+                return;
+            }
             if req.generation < newest {
                 continue;
             }
@@ -365,7 +366,16 @@ fn thumbnail(
                 log::debug!("thumbnail {}: {e}", path.display());
                 return None;
             }
-            bytes => (bytes.ok()).and_then(|b| make.decoders.decode(&b, (edge, edge), budget).ok()),
+            bytes => (bytes.ok()).and_then(|b| {
+                // A decoder that panics counts as one that failed, so the file is marked failed.
+                let decode = || make.decoders.decode(&b, (edge, edge), budget).ok();
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(decode)).unwrap_or_else(
+                    |_| {
+                        log::error!("thumbnail {}: the decoder panicked", path.display());
+                        None
+                    },
+                )
+            }),
         }
     } else {
         None
@@ -510,10 +520,17 @@ fn straight_rgba(canvas: &Canvas) -> Vec<u8> {
         .collect()
 }
 
-fn take_queued(rx: &Receiver<Request>, queue: &mut VecDeque<Request>, newest: &mut u64) {
-    while let Ok(req) = rx.try_recv() {
-        *newest = (*newest).max(req.generation);
-        queue.push_back(req);
+/// Moves the requests waiting in `rx` onto `queue`: false once [`Thumbs`] dropped its sender.
+fn take_queued(rx: &Receiver<Request>, queue: &mut VecDeque<Request>, newest: &mut u64) -> bool {
+    loop {
+        match rx.try_recv() {
+            Ok(req) => {
+                *newest = (*newest).max(req.generation);
+                queue.push_back(req);
+            }
+            Err(TryRecvError::Empty) => return true,
+            Err(TryRecvError::Disconnected) => return false,
+        }
     }
 }
 
@@ -604,6 +621,7 @@ mod tests {
             _: crate::decode::Budget,
         ) -> Result<crate::decode::Decoded, crate::decode::Unread> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert!(!bytes.starts_with(b"FAKE PANIC"), "a decoder bug");
             (!bytes.starts_with(b"FAKE BAD"))
                 .then(|| crate::decode::Decoded {
                     canvas: Canvas::from_pixels(2, 1, vec![0xff00_00ff, 0xff00_ff00]),
@@ -865,6 +883,41 @@ mod tests {
         assert_eq!(hash, 0x399e_f26a_352b_475d, "the scale-2 frame");
         let (normal, _) = shades(128);
         assert_eq!(normal, 128, "a 128 px thumbnail stretched over 188 columns");
+    }
+
+    #[test]
+    fn a_decoder_that_panics_marks_the_picture_failed() {
+        let (_dir, src, decoders, count, mut cache) = counted(b"FAKE PANIC picture");
+        for _ in 0..2 {
+            let made = thumbnail(
+                &mut Make::new(&decoders, false),
+                128,
+                Some(&mut cache),
+                &src,
+                &fs(),
+            );
+            assert!(made.is_none());
+        }
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn the_worker_decodes_nothing_once_its_sender_is_dropped() {
+        let (_dir, src, decoders, count, _) = counted(b"FAKE picture");
+        let (tx, rx) = channel();
+        for scale in 1..=3 {
+            tx.send(Request {
+                path: src.clone(),
+                generation: 0,
+                scale,
+            })
+            .unwrap();
+        }
+        drop(tx);
+        let (done_tx, done) = channel();
+        work(Arc::new(decoders), false, None, rx, done_tx, Waker::noop());
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(done.try_recv().is_err());
     }
 
     #[test]
