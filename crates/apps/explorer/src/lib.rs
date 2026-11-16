@@ -94,6 +94,8 @@ pub enum Focus {
     Address,
     Search,
     Tree,
+    /// The task pane, on [`TaskPane::focus`]'s stop.
+    Tasks,
     View,
 }
 
@@ -678,7 +680,12 @@ impl Explorer {
 
     /// The keyboard cannot be left in a tree that is gone.
     pub fn sync_bar(&mut self) {
-        if self.focus == Focus::Tree && !self.settings.folders {
+        let gone = match self.focus {
+            Focus::Tree => !self.settings.folders,
+            Focus::Tasks => self.settings.folders,
+            _ => false,
+        };
+        if gone {
             self.focus = Focus::View;
         }
     }
@@ -1627,6 +1634,10 @@ impl Explorer {
     /// An event on window `win`. After every event an empty dialog slot takes what waits for it.
     pub(crate) fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         let reply = route(self, win, ev, ctx);
+        // The task pane draws its focus rectangle only while it holds the keyboard.
+        if self.focus != Focus::Tasks {
+            self.taskpane.focus = None;
+        }
         self.raise_waiting(reply, ctx)
     }
 }
