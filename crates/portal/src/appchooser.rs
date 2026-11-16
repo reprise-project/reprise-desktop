@@ -71,14 +71,15 @@ impl AppChooser {
             Some(Variant::Str(s)) => Some(s.to_string()),
             _ => None,
         };
-        let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
         let (tx, rx) = mpsc::channel();
         let key = handle.to_string();
         self.live.lock().unwrap().insert(key.clone(), tx);
-        let out = blocking::unblock(move || ask(&input, rx, cancel)).await;
+        let out = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
+            ask(&input, rx, cancel)
+        })
+        .await;
         self.live.lock().unwrap().remove(&key);
-        let _ = server.remove::<crate::Request, _>(handle.clone()).await;
+        let out = out?;
         log::info!("AppChooser for {app_id:?}: {:?}", out.choice);
         Ok(reply(&out, token))
     }

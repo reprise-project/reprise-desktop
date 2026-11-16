@@ -9,8 +9,6 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use zbus::{ObjectPath, OwnedVariant, Variant};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -280,21 +278,19 @@ impl FileChooser {
         app_id: String,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         input.app_id = app_id;
-        let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, handle, cancel.clone(), &self.frontend).await?;
         let filters = input.filters.clone();
-        let out: Output = blocking::unblock(move || {
-            input.start = start_in(asked);
-            dialog::run_toml(&["--file"], &input, &cancel)
-                .and_then(|s| {
-                    toml::from_str(&s)
-                        .map_err(|e| log::warn!("file answer: {e}"))
-                        .ok()
-                })
-                .unwrap_or_default()
-        })
-        .await;
-        let _ = server.remove::<crate::Request, _>(handle.clone()).await;
+        let out: Output =
+            crate::with_request(server, handle, &self.frontend, None, move |cancel| {
+                input.start = start_in(asked);
+                dialog::run_toml(&["--file"], &input, &cancel)
+                    .and_then(|s| {
+                        toml::from_str(&s)
+                            .map_err(|e| log::warn!("file answer: {e}"))
+                            .ok()
+                    })
+                    .unwrap_or_default()
+            })
+            .await?;
         Ok(reply(&out, &filters))
     }
 }

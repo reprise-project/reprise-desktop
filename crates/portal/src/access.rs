@@ -56,11 +56,10 @@ impl Access {
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         let input = Input::from_call(&parent_window, title, subtitle, body, &options);
-        // The Request object lets the frontend cancel the prompt.
-        let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
-        let out = blocking::unblock(move || ask(&input, cancel)).await;
-        let _ = server.remove::<crate::Request, _>(handle.clone()).await;
+        let out = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
+            ask(&input, cancel)
+        })
+        .await?;
         log::info!(
             "Access for {app_id:?}: {}",
             if out.granted { "granted" } else { "denied" }

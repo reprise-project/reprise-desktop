@@ -4,8 +4,6 @@
 
 use crate::access;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use zbus::{ObjectPath, Variant};
 
 const APPLICATION: u32 = 1;
@@ -33,15 +31,12 @@ impl DynamicLauncher {
     ) -> zbus::fdo::Result<(u32, crate::Results)> {
         self.frontend.check(&hdr).await?;
         let ask = Ask::from_call(name, &icon_v, &options);
-        let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
         let (id, shown) = (app_id.clone(), ask.clone());
-        let out = blocking::unblock(move || {
+        let out = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
             let who = crate::permit::who(&crate::remotedesktop::display_name(&id));
             access::ask(&input(&who, &parent_window, &shown), cancel)
         })
-        .await;
-        let _ = server.remove::<crate::Request, _>(handle.clone()).await;
+        .await?;
         let (code, results) = reply(&out, &ask, &icon_v);
         log::info!(
             "PrepareInstall for {app_id:?}: {}",

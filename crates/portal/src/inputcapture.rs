@@ -178,12 +178,12 @@ impl InputCapture {
             "InputCapture.CreateSession {} for {app_id:?}: capabilities {caps}",
             session_handle.as_str()
         );
-        let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
         let id = app_id.clone();
         let parent = crate::dialog::parent_handle(&parent_window);
-        let ok = blocking::unblock(move || permit(&id, caps, parent, cancel)).await;
-        let _ = server.remove::<crate::Request, _>(handle.clone()).await;
+        let ok = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
+            permit(&id, caps, parent, cancel)
+        })
+        .await?;
         if !ok {
             log::info!("InputCapture.CreateSession for {app_id:?} denied");
             return Ok((crate::RESPONSE_CANCELLED, HashMap::new()));
