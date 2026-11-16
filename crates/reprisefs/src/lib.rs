@@ -16,6 +16,7 @@ mod bindir;
 pub mod checksum;
 pub mod complete;
 pub mod compress;
+pub mod configfile;
 pub mod confined;
 pub mod deadline;
 pub mod dialogops;

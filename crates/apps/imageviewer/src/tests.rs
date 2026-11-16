@@ -311,7 +311,7 @@ fn delete_asks_then_sends_the_picture_to_the_recycle_bin_and_shows_the_next() {
     let trash = root.path().join("Trash");
     reprisefs::trash::set_home_trash(Some(trash.clone()));
     reprisefs::trash::set_mount_table(Some("/dev/null".into()));
-    reprisefs::bincap::set_config_path(Some(root.path().join("config.toml")));
+    reprisefs::configfile::set_path(Some(root.path().join("config.toml")));
     let mut v = opened(pics.join("a.bmp"));
     let mut ctx = test_ctx();
     press(&mut v, keysym::DELETE, &mut ctx);
@@ -329,7 +329,7 @@ fn delete_asks_then_sends_the_picture_to_the_recycle_bin_and_shows_the_next() {
     v.event(DELETE, key(keysym::RETURN, Mods::default()), &mut ctx);
     reprisefs::trash::set_home_trash(None);
     reprisefs::trash::set_mount_table(None);
-    reprisefs::bincap::set_config_path(None);
+    reprisefs::configfile::set_path(None);
     assert!(v.delete.is_none());
     assert!(!pics.join("a.bmp").exists());
     assert!(trash.join("files/a.bmp").exists());

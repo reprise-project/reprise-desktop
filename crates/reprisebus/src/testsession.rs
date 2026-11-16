@@ -28,7 +28,8 @@ const HOMES: [(&str, &str); 4] = [
 ];
 
 /// Variables that lead to the user's own files, buses or displays.
-const DROPPED: [&str; 8] = [
+const DROPPED: [&str; 9] = [
+    "REPRISE_CONFIG",
     "XDG_CONFIG_DIRS",
     "XDG_DATA_DIRS",
     "DBUS_SESSION_BUS_ADDRESS",

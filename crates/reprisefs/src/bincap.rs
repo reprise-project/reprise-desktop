@@ -75,7 +75,7 @@ impl Policy {
     }
 
     pub fn load() -> Policy {
-        Policy::parse(&std::fs::read_to_string(config_path()).unwrap_or_default())
+        Policy::parse(&std::fs::read_to_string(crate::configfile::path()).unwrap_or_default())
     }
 
     pub fn parse(text: &str) -> Policy {
@@ -138,22 +138,6 @@ impl Policy {
         }
         Ok(doc.to_string())
     }
-}
-
-static CONFIG_PATH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
-
-#[doc(hidden)]
-pub fn set_config_path(path: Option<PathBuf>) {
-    *lock(&CONFIG_PATH) = path;
-}
-
-pub fn config_path() -> PathBuf {
-    if let Some(path) = lock(&CONFIG_PATH).clone() {
-        return path;
-    }
-    crate::autostart::config_home()
-        .join("reprise")
-        .join("config.toml")
 }
 
 pub fn drive_key(device: &str, top: &Path) -> String {
@@ -766,18 +750,19 @@ mod tests {
 
     #[test]
     fn a_set_config_path_is_the_one_load_reads() {
+        use crate::configfile::{path, set_path};
         let t = tempfile::tempdir().unwrap();
         let file = t.path().join("config.toml");
         fs::write(&file, "[recycle_bin]\nconfirm = false\n").unwrap();
-        set_config_path(Some(file.clone()));
-        let (named, set) = (config_path(), Policy::load());
-        set_config_path(Some(t.path().join("missing.toml")));
+        set_path(Some(file.clone()));
+        let (named, set) = (path(), Policy::load());
+        set_path(Some(t.path().join("missing.toml")));
         let missing = Policy::load();
-        set_config_path(None);
+        set_path(None);
         assert_eq!(named, file);
         assert!(!set.confirm, "the set file's [recycle_bin]");
         assert_eq!(missing, Policy::default(), "a missing file: the defaults");
-        assert_ne!(config_path(), file, "None: the real path again");
+        assert_ne!(path(), file, "None: the real path again");
     }
 
     #[test]

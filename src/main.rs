@@ -335,6 +335,9 @@ fn main() {
         .config
         .clone()
         .unwrap_or_else(config::Config::default_path);
+    // Absolute, since children get it as REPRISE_CONFIG and may start in another directory.
+    let config_path = std::path::absolute(&config_path).unwrap_or(config_path);
+    reprisefs::configfile::set_path(Some(config_path.clone()));
     migrate::run(&config_path, &state::path());
     if cli.after_crash.is_none() {
         repriseconf::welcome::mark_first_login(&config_path, &state::path());

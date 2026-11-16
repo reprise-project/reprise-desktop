@@ -571,7 +571,7 @@ mod tests {
             std::fs::create_dir_all(&home).expect("mkdir");
             reprisefs::trash::set_home_trash(Some(home.join("Trash")));
             reprisefs::trash::set_mount_table(Some("/dev/null".into()));
-            reprisefs::bincap::set_config_path(Some(home.join("config.toml")));
+            reprisefs::configfile::set_path(Some(home.join("config.toml")));
             SystemBin(home, held)
         }
 
@@ -609,7 +609,7 @@ mod tests {
         fn drop(&mut self) {
             reprisefs::trash::set_home_trash(None);
             reprisefs::trash::set_mount_table(None);
-            reprisefs::bincap::set_config_path(None);
+            reprisefs::configfile::set_path(None);
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
