@@ -380,11 +380,22 @@ impl Explorer {
         } else {
             self.dialogs.raise(d);
         }
-        if up {
-            Reply::redraw_all()
-        } else {
-            Reply::none()
+        if !up {
+            return Reply::none();
         }
+        // Mapping without an activation, a box no window of ours covers maps behind the focused
+        // window: the raise focuses it while this program holds the keyboard, else flags its task button.
+        let alone = self.dialog().is_some() && self.box_stands_alone();
+        Reply {
+            raise: alone.then(|| self.dialog_win()),
+            ..Reply::redraw_all()
+        }
+    }
+
+    /// Whether the box up stands over no window of this program: the folder window never shows
+    /// ([`Explorer::alone`]) and no sheet holds the box.
+    fn box_stands_alone(&self) -> bool {
+        self.alone && self.parent_of(self.dialog_win()) == repriseapp::MAIN
     }
 
     /// Puts back the box [`Explorer::take_up`] took to handle an event that leaves it up, in the
@@ -815,6 +826,8 @@ impl Explorer {
                     | Dialog::Advanced { .. }
                     | Dialog::ChangeIcon { .. },
                 ) => Caption::Help,
+                // A prompt has no task button, and nothing else of this program would show one.
+                _ if self.box_stands_alone() => Caption::Fixed,
                 _ => Caption::Prompt,
             },
             crate::props_dialog::PROPS | crate::bin_props::BIN_PROPS => Caption::Help,

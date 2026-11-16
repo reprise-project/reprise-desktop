@@ -355,6 +355,8 @@ pub struct Explorer {
     pub(crate) landed_late: Arc<std::sync::atomic::AtomicBool>,
     /// Close came while a put or job was out: the program quits at the wake that finds them all done.
     pub(crate) closing: bool,
+    /// Started for one job or box from the command line ([`Start::alone`]): the folder window never shows.
+    pub(crate) alone: bool,
     /// The thumbnail worker. Every listing bumps the generation, which drops
     /// work for a folder the user has left.
     thumbs: Thumbs,
@@ -608,6 +610,7 @@ impl Explorer {
             action_deadline: acting::ACTION_DEADLINE,
             landed_late: Arc::default(),
             closing: false,
+            alone: false,
             thumbs: Thumbs::new(
                 Arc::new(Decoders::default_set()),
                 thumbs::cache_for(thumb_setting),
@@ -877,11 +880,12 @@ impl Explorer {
             dir,
             select,
             connect,
-            alone: _,
+            alone,
             search,
         } = start;
         let check = dir.map(|d| Job::spawn(Some(&ctx.wake), move || is_dir(&d)));
         let mut ex = build(place.clone(), ctx);
+        ex.alone = alone.is_some();
         ex.selecting = (!select.is_empty()).then(|| (place.clone(), select));
         if let Some(job) = check {
             // A listing still being read means the mount is slow: the check would be too.

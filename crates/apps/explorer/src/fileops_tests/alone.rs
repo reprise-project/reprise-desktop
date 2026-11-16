@@ -242,3 +242,44 @@ fn a_failure_box_up_before_the_progress_dialog_keeps_it_from_coming_up() {
     std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     assert!(from.exists(), "the file stays where it was");
 }
+
+#[test]
+fn a_failure_box_with_no_folder_window_has_a_task_button_and_asks_to_come_up() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().expect("a temp dir");
+    let (src, dest) = (t.path().join("src"), t.path().join("dest"));
+    std::fs::create_dir(&src).expect("mkdir");
+    std::fs::create_dir(&dest).expect("mkdir");
+    std::fs::write(src.join("a.txt"), "a").expect("write");
+    std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    let from = src.join("a.txt");
+    let args = [
+        "--put".as_ref(),
+        "copy".as_ref(),
+        dest.as_os_str(),
+        "--".as_ref(),
+        from.as_os_str(),
+    ];
+    let mut app = started(&args);
+    let mut ctx = test_ctx();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let raised = loop {
+        let reply = app.event(MAIN, repriseapp::Event::Wake, &mut ctx);
+        if app.inner.as_ref().is_some_and(Explorer::holds_a_job) {
+            break reply;
+        }
+        assert!(std::time::Instant::now() < end, "the copy fails");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    let ex = app.inner.as_ref().expect("the program");
+    let win = ex.dialog_win();
+    assert_eq!(raised.raise, Some(win), "the box asks to come to the front");
+    assert_eq!(
+        repriseapp::Extended::caption(&app, win),
+        repriseapp::Caption::Fixed,
+        "the box keeps a task button"
+    );
+    app.event(win, key_event_escape(), &mut ctx);
+    run_out(&mut app, &mut ctx);
+    std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+}
