@@ -347,8 +347,10 @@ user's server.
 - dbus-broker, or dbus-daemon 1.15 or later, whose peer credentials carry a
   process fd: Remote Desktop and the Inhibit portal check by it which process
   owns a name. On an older bus Settings reads Remote Desktop as off, its
-  clipboard stays cut, and the portal's `screensaver-active` follows logind's
-  `LockedHint`, which in lock mode stays true while the remote side is unlocked
+  clipboard stays cut, the portal's `screensaver-active` follows logind's
+  `LockedHint`, which in lock mode stays true while the remote side is
+  unlocked, and logging off lists no app that holds logout off through the
+  portal
 - Xwayland, for X11 programs. Reprise starts it on the first X11 connection
   and stops it when X11 programs have gone quiet.
 - A UI font: Wine's Tahoma is recommended (`ttf-tahoma` on Arch, from the

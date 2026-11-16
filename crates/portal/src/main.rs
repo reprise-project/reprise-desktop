@@ -1307,7 +1307,6 @@ async fn serve(
                 frontend: frontend(),
             },
         )
-        .serve_at(PATH, inhibit::SessionEnd { shared: inhibits })
         .serve_at(
             PATH,
             background::Background {
@@ -1472,6 +1471,14 @@ fn main() {
         )
         .await
         .unwrap_or_else(|e| fail(e));
+        let session_end = inhibit::SessionEnd {
+            shared: inhibits.clone(),
+            compositor: compositor.pid(),
+        };
+        conn.object_server()
+            .at(PATH, session_end)
+            .await
+            .unwrap_or_else(|e| fail(e));
         let changes = owner_changes(&conn).await.unwrap_or_else(|e| fail(e));
         let _ = frontend.conn.set(conn.clone());
         frontend.set(reprisebus::name_owner(&conn, FRONTEND).await);
