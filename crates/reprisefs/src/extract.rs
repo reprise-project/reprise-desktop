@@ -864,9 +864,20 @@ fn spawn_with(
 /// (`Ok(false)`). The child is stopped while `m` is paused.
 pub(crate) fn lines(
     child: &mut Child,
+    out: impl Read + AsRawFd,
+    m: &Meter,
+    each: impl FnMut(&[u8]) -> bool,
+) -> std::io::Result<bool> {
+    lines_ticking(child, out, m, each, || {})
+}
+
+/// [`lines`], calling `tick` at least every [`SLICE_MS`] while the child is unreaped.
+pub(crate) fn lines_ticking(
+    child: &mut Child,
     mut out: impl Read + AsRawFd,
     m: &Meter,
     mut each: impl FnMut(&[u8]) -> bool,
+    mut tick: impl FnMut(),
 ) -> std::io::Result<bool> {
     let fd = out.as_raw_fd();
     let pid = child.id() as libc::pid_t;
@@ -894,6 +905,7 @@ pub(crate) fn lines(
         };
         // SAFETY: `pfd` is one valid pollfd for the duration of the call.
         let ready = unsafe { libc::poll(&mut pfd, 1, SLICE_MS) };
+        tick();
         if ready == 0 {
             continue;
         }
