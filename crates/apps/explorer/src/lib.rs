@@ -1186,10 +1186,13 @@ impl Explorer {
         self.request_thumbs(ctx.icons.scale());
         if let Some(w) = self.watch.as_mut() {
             match place.path() {
-                Some(_) if place == Place::RecycleBin => w.watch_all(&place::bin_watches()),
+                Some(_) if place == Place::RecycleBin => {
+                    let add = w.watch_all_later();
+                    drop(Job::spawn(None, move || add.run(&place::bin_watches())));
+                }
                 Some(dir) => {
                     let add = w.watch(&dir);
-                    drop(repriseapp::listjob::Job::spawn(None, move || add.run()));
+                    drop(Job::spawn(None, move || add.run()));
                 }
                 None => w.clear(),
             }

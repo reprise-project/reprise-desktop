@@ -4,7 +4,8 @@
 //! The thread owns the `Inotify`; the view keeps the [`Watches`] handle, so the watch moves with
 //! the view while the thread sits in its read. The thread ends, freeing its inotify instance, once
 //! the [`Watch`] drops. Adding a folder walks its path, which blocks on a dead mount, so
-//! [`Watch::watch`] hands the add to the host as an [`Adder`] to run off its loop.
+//! [`Watch::watch`] hands the add to the host as an [`Adder`] to run off its loop, and
+//! [`Watch::watch_all_later`] as an [`AllAdder`].
 
 use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask, Watches};
 use reprisebus::mutex::lock;
@@ -242,22 +243,20 @@ impl Watch {
     }
 
     /// Watch every one of `dirs` (the Recycle Bin's folders, one per drive, and the folders above
-    /// the home trash) instead of whatever was being watched. A folder paired with a name counts
+    /// the home trash) instead of what was being watched. A folder paired with a name counts
     /// only events naming that entry. A folder that cannot be watched is logged and left
     /// unwatched; F5 still refreshes it.
     pub fn watch_all(&mut self, dirs: &[(PathBuf, Option<OsString>)]) {
+        self.watch_all_later().run(dirs);
+    }
+
+    /// [`Watch::watch_all`] for folders the returned [`AllAdder`] is given off the host's loop.
+    pub fn watch_all_later(&mut self) -> AllAdder {
         self.clear();
-        for (dir, name) in dirs {
-            match self.watches.add(dir, mask()) {
-                Ok(wd) => {
-                    let mut shared = self.shared();
-                    shared.wds.push(wd.clone());
-                    if let Some(name) = name {
-                        shared.only.push((wd, name.clone()));
-                    }
-                }
-                Err(e) => log::info!("cannot watch {}: {e}", dir.display()),
-            }
+        AllAdder {
+            watches: self.watches.clone(),
+            shared: self.shared.clone(),
+            generation: self.shared().generation,
         }
     }
 
@@ -385,6 +384,39 @@ impl Adder {
 
     fn current(&self, shared: &Shared) -> bool {
         shared.generation == self.generation
+    }
+}
+
+/// [`Watch::watch_all_later`]'s adds, for the host to run off its loop.
+pub struct AllAdder {
+    watches: Watches,
+    shared: Arc<Mutex<Shared>>,
+    generation: u64,
+}
+
+impl AllAdder {
+    /// Watches each of `dirs`, as [`Watch::watch_all`] does, while no later watch or clear began.
+    pub fn run(mut self, dirs: &[(PathBuf, Option<OsString>)]) {
+        for (dir, name) in dirs {
+            if lock(&self.shared).generation != self.generation {
+                return;
+            }
+            let added = self.watches.add(dir, mask() | WatchMask::MASK_ADD);
+            let mut shared = lock(&self.shared);
+            match added {
+                Ok(wd) if shared.generation != self.generation => {
+                    shared.stale.push(wd);
+                    return;
+                }
+                Ok(wd) => {
+                    shared.wds.push(wd.clone());
+                    if let Some(name) = name {
+                        shared.only.push((wd, name.clone()));
+                    }
+                }
+                Err(e) => log::info!("cannot watch {}: {e}", dir.display()),
+            }
+        }
     }
 }
 
@@ -550,6 +582,29 @@ mod tests {
         watch.clear();
         late.run();
         assert!(!watched(left.path()), "nor after a clear");
+    }
+
+    #[test]
+    fn a_bin_add_the_view_moved_on_from_watches_nothing() {
+        let mut watch = Watch::new(|| {}).expect("inotify");
+        let (bin, shown) = (
+            tempfile::tempdir().expect("tempdir"),
+            tempfile::tempdir().expect("tempdir"),
+        );
+        let late = watch.watch_all_later();
+        watch.watch(shown.path()).run();
+        late.run(&[(bin.path().to_path_buf(), None)]);
+        assert!(!watched(bin.path()), "the bin left is not watched");
+        std::fs::write(bin.path().join("a.txt"), "x").expect("write");
+        watch.sync();
+        assert!(!watch.take_changed(), "the bin left is not a change");
+
+        watch
+            .watch_all_later()
+            .run(&[(bin.path().to_path_buf(), None)]);
+        std::fs::write(bin.path().join("b.txt"), "x").expect("write");
+        watch.sync();
+        assert!(watch.take_changed(), "the bin shown is");
     }
 
     #[test]
