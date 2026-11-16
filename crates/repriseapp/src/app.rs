@@ -119,11 +119,12 @@ pub trait Extended {
     fn output_management(&self) -> bool {
         false
     }
-    /// Whether [`Ctx::theme`] is at the text size: the program lays its own lists, trees, menus and
-    /// bars out with [`Theme::controls`](reprisekit::theme::Theme::controls), so they grow with the
-    /// text. Read at start and on every look change.
+    /// Whether [`Ctx::theme`] is at the text size, so the lists, trees, menus and bars the
+    /// program lays out with [`Theme::controls`](reprisekit::theme::Theme::controls) grow with
+    /// the text. A program that lays its window out at 100% and grows it by its forms' own units
+    /// returns false. Read at start and on every look change.
     fn text_sized(&self) -> bool {
-        false
+        true
     }
     /// Called before each draw of `win`, at `scale` device px per logical px, with
     /// [`Ctx::icons`] at that scale: a program fetches again what it holds at another one.

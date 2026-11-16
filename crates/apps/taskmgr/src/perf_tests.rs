@@ -250,7 +250,7 @@ fn each_pane_fits_its_graphs_and_figures_inside_the_page_at_either_size() {
         ctx.size = size;
         let inner = pages::layout(&t, &ctx).inner;
         for pane in panes {
-            let lay = layout(inner, pane);
+            let lay = layout(inner, pane, TextUnits::ONE);
             let mut rects = vec![lay.list, lay.heading];
             for r in &lay.rows {
                 rects.extend(r.meter.map(|m| m.group));

@@ -62,7 +62,7 @@ impl AboutBox {
         if self.form.as_ref().is_some_and(|f| f.units() != paint.text) {
             self.form = None;
         }
-        let px = ctx.theme.fonts.size_px;
+        let px = ctx.base_px();
         let system = self.system();
         self.form.get_or_insert_with(|| {
             let f = aboutbox::system_form(&system, &ctx.text, px, paint.text);

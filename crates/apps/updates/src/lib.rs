@@ -414,10 +414,6 @@ impl App for UpdatesApp {
 }
 
 impl repriseapp::Extended for UpdatesApp {
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn fixed(&self) -> bool {
         true
     }

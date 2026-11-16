@@ -476,10 +476,6 @@ impl Extended for Notes {
         true
     }
 
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn parent(&self, win: WinId) -> Option<WinId> {
         match win {
             CONFIRM => self.confirm.as_ref().map(|(w, _)| *w),

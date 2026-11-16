@@ -1448,10 +1448,6 @@ impl App for NetApp {
 }
 
 impl repriseapp::Extended for NetApp {
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn hidden(&self) -> bool {
         self.hidden
     }

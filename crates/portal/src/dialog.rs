@@ -381,7 +381,7 @@ impl repriseapp::Extended for Prompt {
     }
 
     fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let px = self.form.units().px(ctx.theme.fonts.size_px);
+        let px = self.form.units().px(ctx.base_px());
         repriseapp::oneshot::access_form(&self.form, tree, &ctx.text, px);
     }
 }

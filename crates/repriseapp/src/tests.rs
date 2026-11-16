@@ -310,6 +310,45 @@ impl crate::Extended for Kept {
     }
 }
 
+/// Kept's window, laid out at 100% and grown by its forms' own units.
+struct AtHundred(Kept);
+
+impl App for AtHundred {
+    fn title(&self) -> String {
+        String::new()
+    }
+    fn app_id(&self) -> String {
+        String::new()
+    }
+    fn initial_size(&self) -> (i32, i32) {
+        self.0.kept
+    }
+    fn event(&mut self, _: WinId, _: Event, _: &mut Ctx) -> Reply {
+        Reply::default()
+    }
+    fn draw(&mut self, _: WinId, _: &mut Canvas, _: &Ctx) {}
+}
+
+impl crate::Extended for AtHundred {
+    fn text_sized(&self) -> bool {
+        false
+    }
+}
+
+#[test]
+fn a_program_gets_its_theme_at_the_text_size_unless_it_opts_out() {
+    let kept = || Kept {
+        kept: (100, 100),
+        min: None,
+        fixed: false,
+    };
+    let theme = Theme::default();
+    let sized = crate::look::sized(theme.clone(), &kept(), 150);
+    assert_eq!(sized, theme.with_text_size(150));
+    let at_100 = crate::look::sized(theme.clone(), &AtHundred(kept()), 150);
+    assert_eq!(at_100, theme);
+}
+
 #[test]
 fn a_kept_size_under_the_minimum_opens_at_the_minimum() {
     let app = |kept, min, fixed| Kept { kept, min, fixed };

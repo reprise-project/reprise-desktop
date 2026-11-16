@@ -1050,7 +1050,7 @@ impl TaskMgr {
             Event::Resized => {
                 self.fit_lists(ctx);
                 let inner = pages::layout(self, ctx).inner;
-                if let Some(r) = perf::layout(inner, perf::Pane::Sensors).sensors {
+                if let Some(r) = perf::layout(inner, perf::Pane::Sensors, ctx.theme.text).sensors {
                     self.perf.sensors.fit_last(r, ctx);
                 }
                 Reply::redraw()
@@ -1207,7 +1207,7 @@ impl App for TaskMgr {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        pages::CLIENT
+        repriseapp::start_forms().text.size(pages::CLIENT)
     }
 
     fn children(&self) -> Vec<Child> {
@@ -1282,7 +1282,11 @@ impl App for TaskMgr {
 
 impl repriseapp::Extended for TaskMgr {
     fn min_size(&self, _win: WinId) -> Option<(i32, i32)> {
-        Some(pages::MIN)
+        Some(
+            self.forms
+                .as_ref()
+                .map_or(pages::MIN, |t| t.text.size(pages::MIN)),
+        )
     }
 
     fn on_top(&self) -> Option<bool> {

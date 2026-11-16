@@ -1232,10 +1232,6 @@ impl repriseapp::Extended for BtApp {
         true
     }
 
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn hidden(&self) -> bool {
         self.hidden
     }
