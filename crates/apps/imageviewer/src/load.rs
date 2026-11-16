@@ -90,7 +90,10 @@ pub const TOO_LARGE: &str = "This picture is too large to show.";
 
 fn open(path: &std::path::Path) -> Result<Picture, String> {
     let budget = Budget::viewer();
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let file = reprisefs::ops::open_regular(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::InvalidInput => CANNOT_OPEN.to_string(),
+        _ => e.to_string(),
+    })?;
     let bytes = read_capped_from(file, budget.file).map_err(|e| match e.kind() {
         std::io::ErrorKind::FileTooLarge => TOO_LARGE.to_string(),
         _ => e.to_string(),
@@ -250,6 +253,23 @@ mod tests {
         std::fs::write(&p, b"not a picture").unwrap();
         assert_eq!(open(&p).err().as_deref(), Some(CANNOT_OPEN));
         assert!(open(&dir.path().join("gone.png")).is_err());
+    }
+
+    #[test]
+    fn a_fifo_named_like_a_picture_is_not_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("pipe.png");
+        let made = std::process::Command::new("mkfifo").arg(&p).status();
+        assert!(made.is_ok_and(|s| s.success()), "mkfifo");
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(open(&p).err()));
+        let opened = rx.recv_timeout(std::time::Duration::from_secs(5));
+        assert_eq!(
+            opened
+                .expect("the open returns without a writer")
+                .as_deref(),
+            Some(CANNOT_OPEN)
+        );
     }
 
     /// A PAM one row past the thumbnail budget (25 megapixels of RGBA) opens in the viewer; a
