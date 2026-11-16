@@ -1,11 +1,13 @@
 //! Files a paired device sends over Bluetooth: the name one is saved under in Downloads, the
-//! Accept / Decline prompt's text and the balloons after it.
+//! Accept / Decline prompt's text, the balloons after it and what their Open runs.
 
 use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use reprisefs::apps::ExecRefused;
 use reprisefs::names;
+use reprisefs::props::Opening;
 
 use crate::bz::Offer;
 
@@ -159,6 +161,29 @@ pub fn received(path: &Path, sender: &str) -> (String, String) {
     )
 }
 
+/// What the received balloon's Open runs for `path`, given `found`, what the shared open path
+/// ([`reprisefs::props::open_in`]) picked: that program, else Explorer on the file's folder with
+/// the file selected, for a type no program opens or a program whose `Exec=` is refused.
+pub fn open_command(path: &Path, found: Result<Option<Opening>, ExecRefused>) -> Opening {
+    match found {
+        Ok(Some(open)) => open,
+        Ok(None) => shown_in_folder(path),
+        Err(refused) => {
+            log::warn!("{refused}");
+            shown_in_folder(path)
+        }
+    }
+}
+
+/// Explorer on the folder `path` sits in, with `path` selected.
+pub fn shown_in_folder(path: &Path) -> Opening {
+    Opening {
+        argv: reprisefs::apps::open_location_argv(path),
+        app: None,
+        dir: None,
+    }
+}
+
 pub fn not_received(name: &str, sender: &str) -> (String, String) {
     (
         "File not received".into(),
@@ -172,6 +197,31 @@ pub fn not_received(name: &str, sender: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_runs_the_default_program_else_shows_the_file_in_its_folder() {
+        let path = Path::new("/home/u/Downloads/a.qqz");
+        let program = Opening {
+            argv: vec!["viewer".into(), path.into()],
+            app: Some("viewer.desktop".into()),
+            dir: Some("/opt/viewer".into()),
+        };
+        assert_eq!(open_command(path, Ok(Some(program.clone()))), program);
+        let shown = Opening {
+            argv: vec!["reprise-explorer".into(), "--select".into(), path.into()],
+            app: None,
+            dir: None,
+        };
+        assert_eq!(
+            open_command(path, Ok(None)),
+            shown,
+            "no program for the type"
+        );
+        let refused = ExecRefused {
+            name: "viewer".into(),
+        };
+        assert_eq!(open_command(path, Err(refused)), shown, "a refused Exec=");
+    }
 
     #[test]
     fn safe_name_keeps_the_file_in_one_folder() {
