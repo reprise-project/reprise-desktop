@@ -2,8 +2,8 @@
 //! a fingerprint line does to the screen. The verifier zeroes the copies of the password it owns.
 
 use reprisekit::logon::Logon;
-use repriselogin::add_prompt_lines;
 use repriselogin::greeter::AuthKind;
+use repriselogin::{add_prompt_lines, is_login_prompt};
 use reprisepam::{Converse, Pam, PamError, ffi};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -245,12 +245,6 @@ impl Converse for Credentials<'_> {
         }
         answer
     }
-}
-
-/// libpam's own user prompt is "login:"; modules ask "Username:".
-fn is_login_prompt(text: &str) -> bool {
-    let t = text.trim().to_lowercase();
-    ["login:", "username:", "user name:"].contains(&t.as_str())
 }
 
 /// Login name of the user running the compositor: the passwd entry for

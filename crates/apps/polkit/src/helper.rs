@@ -11,6 +11,7 @@
 //! and pam_faillock counts it against the account.
 
 use reprisebus::mutex::lock;
+use repriselogin::is_login_prompt;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -25,7 +26,7 @@ use zeroize::Zeroizing;
 pub enum Line {
     /// A prompt whose answer must not be shown: the password.
     PromptEchoOff(String),
-    /// A prompt whose answer may be shown: the user name.
+    /// A prompt whose answer may be shown: the login name, or a one-time code.
     PromptEchoOn(String),
     Error(String),
     Info(String),
@@ -123,17 +124,21 @@ pub enum Verdict {
 pub enum Report {
     Info(String),
     Error(String),
-    /// The helper asks a hidden question (the password, then any second factor), whose text
-    /// this is, and waits for [`Session::answer`]. Text before the first belonged to an earlier
-    /// step of the PAM stack (the fingerprint reader's, say).
-    Prompt(String),
+    /// The helper asks a question (the password, then any second factor) and waits for
+    /// [`Session::answer`]. `echo` asks for an answer shown as it is typed (a one-time code).
+    /// Text before the first belonged to an earlier step of the PAM stack (the fingerprint
+    /// reader's, say).
+    Prompt {
+        text: String,
+        echo: bool,
+    },
     Done(Verdict),
 }
 
 /// Run one PAM conversation over an open transport whose header lines
-/// (user, cookie) have been written. Each hidden prompt reports
-/// [`Report::Prompt`] and takes a fresh answer from `password`, which
-/// blocks until the dialog has one. The user name answers a shown prompt.
+/// (user, cookie) have been written. Each prompt reports [`Report::Prompt`]
+/// and takes a fresh answer from `password`, which blocks until the dialog
+/// has one; the user name answers a login prompt that comes first.
 /// `password` returning None, or a line outside the protocol, ends the
 /// conversation. Each answer is wiped once written. `deadline` hears
 /// whether the next read waits on the helper (true) or on the user's
@@ -149,6 +154,7 @@ pub fn converse<R: BufRead, W: Write>(
 ) {
     let mut line = String::new();
     let mut answered = false;
+    let mut prompted = false;
     let mut timed = true;
     let verdict = loop {
         line.clear();
@@ -162,20 +168,27 @@ pub fn converse<R: BufRead, W: Write>(
             timed = on;
             deadline(on);
         }
+        let echo = matches!(parsed, Some(Line::PromptEchoOn(_)));
         match parsed {
-            Some(Line::PromptEchoOff(t)) => {
-                report(Report::Prompt(t.trim_end().to_string()));
+            Some(Line::PromptEchoOn(t))
+                if !std::mem::replace(&mut prompted, true) && is_login_prompt(&t) =>
+            {
+                if writeln!(writer, "{user}").is_err() {
+                    break None;
+                }
+                let _ = writer.flush();
+            }
+            Some(Line::PromptEchoOff(t) | Line::PromptEchoOn(t)) => {
+                prompted = true;
+                report(Report::Prompt {
+                    text: t.trim_end().to_string(),
+                    echo,
+                });
                 let Some(p) = password() else {
                     break None;
                 };
                 answered = true;
                 if writer.write_all(p.as_bytes()).is_err() || writer.write_all(b"\n").is_err() {
-                    break None;
-                }
-                let _ = writer.flush();
-            }
-            Some(Line::PromptEchoOn(_)) => {
-                if writeln!(writer, "{user}").is_err() {
                     break None;
                 }
                 let _ = writer.flush();
@@ -580,14 +593,15 @@ mod tests {
                 got.push(line.trim_end().to_string());
             }
             w.write_all(b"PAM_TEXT_INFO hi\n").unwrap();
-            w.write_all(b"PAM_PROMPT_ECHO_OFF Password: \n").unwrap();
-            line.clear();
-            r.read_line(&mut line).unwrap();
-            got.push(line.trim_end().to_string());
-            w.write_all(b"PAM_PROMPT_ECHO_ON login: \n").unwrap();
-            line.clear();
-            r.read_line(&mut line).unwrap();
-            got.push(line.trim_end().to_string());
+            for prompt in [
+                "PAM_PROMPT_ECHO_ON login: ",
+                "PAM_PROMPT_ECHO_OFF Password: ",
+            ] {
+                writeln!(w, "{prompt}").unwrap();
+                line.clear();
+                r.read_line(&mut line).unwrap();
+                got.push(line.trim_end().to_string());
+            }
             w.write_all(verdict.as_bytes()).unwrap();
             w.write_all(b"\n").unwrap();
             got
@@ -621,13 +635,16 @@ mod tests {
         );
         assert_eq!(
             helper.join().unwrap(),
-            ["alice", "cookie-1", "hunter2", "alice"]
+            ["alice", "cookie-1", "alice", "hunter2"]
         );
         assert_eq!(
             reports,
             [
                 Report::Info("hi".into()),
-                Report::Prompt("Password:".into()),
+                Report::Prompt {
+                    text: "Password:".into(),
+                    echo: false,
+                },
                 Report::Done(Verdict::Success)
             ]
         );
@@ -677,7 +694,10 @@ mod tests {
         assert_eq!(
             reports,
             [
-                Report::Prompt("Password:".into()),
+                Report::Prompt {
+                    text: "Password:".into(),
+                    echo: false,
+                },
                 Report::Done(Verdict::Failed)
             ]
         );
@@ -747,10 +767,57 @@ mod tests {
         assert_eq!(
             reports,
             [
-                Report::Prompt("Password:".into()),
-                Report::Prompt("Verification code:".into()),
+                Report::Prompt {
+                    text: "Password:".into(),
+                    echo: false,
+                },
+                Report::Prompt {
+                    text: "Verification code:".into(),
+                    echo: false,
+                },
                 Report::Done(Verdict::Success)
             ]
+        );
+    }
+
+    /// Only a login prompt that comes first gets the user name; a shown prompt after it (a
+    /// one-time code) is the dialog's to answer, shown as typed.
+    #[test]
+    fn a_shown_prompt_past_the_first_is_asked_of_the_dialog() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let helper = std::thread::spawn(move || {
+            let mut r = BufReader::new(theirs.try_clone().unwrap());
+            let mut w = theirs;
+            let mut got = Vec::new();
+            for prompt in [
+                "PAM_PROMPT_ECHO_OFF Password: ",
+                "PAM_PROMPT_ECHO_ON Passcode: ",
+            ] {
+                writeln!(w, "{prompt}").unwrap();
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                got.push(line.trim_end().to_string());
+            }
+            w.write_all(b"SUCCESS\n").unwrap();
+            got
+        });
+        let mut reports = Vec::new();
+        let mut given = ["hunter2", "123456"].into_iter();
+        converse(
+            BufReader::new(ours.try_clone().unwrap()),
+            ours,
+            "alice",
+            &mut || given.next().map(|a| Zeroizing::new(a.to_string())),
+            &mut |_| {},
+            &mut |r| reports.push(r),
+        );
+        assert_eq!(helper.join().unwrap(), ["hunter2", "123456"]);
+        assert_eq!(
+            reports[1],
+            Report::Prompt {
+                text: "Passcode:".into(),
+                echo: true,
+            }
         );
     }
 
@@ -820,7 +887,10 @@ mod tests {
         assert_eq!(
             reports,
             [
-                Report::Prompt("Password:".into()),
+                Report::Prompt {
+                    text: "Password:".into(),
+                    echo: false,
+                },
                 Report::Done(Verdict::Unreachable)
             ]
         );
@@ -950,7 +1020,10 @@ mod tests {
         assert_eq!(
             reports,
             [
-                Report::Prompt("Password:".into()),
+                Report::Prompt {
+                    text: "Password:".into(),
+                    echo: false,
+                },
                 Report::Done(Verdict::Success)
             ]
         );
@@ -1133,7 +1206,10 @@ mod tests {
         assert_eq!(
             reports,
             [
-                Report::Prompt("Password:".into()),
+                Report::Prompt {
+                    text: "Password:".into(),
+                    echo: false,
+                },
                 Report::Done(Verdict::Success)
             ]
         );

@@ -245,11 +245,22 @@ impl RunAs {
         self.form.focus_id("password");
     }
 
-    /// Label the field with a further hidden prompt's `text` (None: the password) and open it,
-    /// emptied, for the answer.
-    pub fn ask(&mut self, text: Option<&str>) {
+    /// Label the field with a further prompt's `text` (None: the password) and open it,
+    /// emptied, for the answer; `echo` shows the answer as it is typed.
+    pub fn ask(&mut self, text: Option<&str>, echo: bool) {
         let label = text.map_or(PASSWORD_LABEL.into(), reprisekit::text::escape_mnemonic);
         self.form.set_text("password_l", &label);
+        if let Some(Control::Edit { edit, .. }) =
+            self.form.item_mut("password").map(|i| &mut i.control)
+            && edit.is_secret() == echo
+        {
+            edit.wipe();
+            *edit = if echo {
+                TextEdit::default()
+            } else {
+                TextEdit::secret()
+            };
+        }
         if text.is_some() {
             self.take_password();
             self.set_busy(false);
