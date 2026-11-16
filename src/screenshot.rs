@@ -73,6 +73,15 @@ impl State {
         })
     }
 
+    /// The Screenshot portal's Active Window: the toplevel identifier of the window Alt+PrtSc
+    /// takes. None while the desktop is locked.
+    pub fn active_window_identifier(&self) -> Option<String> {
+        if self.desktop_locked() {
+            return None;
+        }
+        self.toplevels.identifier(self.shot_window()?)
+    }
+
     /// A screenshot of `area`, in layout coordinates, as the screens show
     /// it: what no output covers is black.
     pub fn screenshot_area(&mut self, area: Rect) {

@@ -1,5 +1,5 @@
 //! `reprise_input_v1`, the private global reprise-portal binds. Glue only: each request calls
-//! `eis`, `inputcapture`, `globalshortcuts`, `remotekeys`, `toplevels`, `colorpickview` or `console`.
+//! `eis`, `inputcapture`, `globalshortcuts`, `remotekeys`, `toplevels`, `colorpickview`, `regionview`, `screenshot` or `console`.
 //!
 //! Protocol objects carry ids, not the objects themselves: a resource whose
 //! object the compositor already dropped finds nothing behind its id.
@@ -17,6 +17,8 @@ use crate::globalshortcuts::ShortcutsId;
 use crate::inputcapture::{Added, Barrier, CaptureId};
 use crate::remotekeys::KeysId;
 
+use proto::reprise_active_window_v1::{self, RepriseActiveWindowV1};
+use proto::reprise_area_pick_v1::{self, RepriseAreaPickV1};
 use proto::reprise_color_pick_v1::{self, RepriseColorPickV1};
 use proto::reprise_eis_client_v1::{self, RepriseEisClientV1};
 use proto::reprise_input_capture_v1::{self, RepriseInputCaptureV1};
@@ -51,7 +53,7 @@ pub mod proto {
     wayland_scanner::generate_server_code!("protocols/reprise-input-v1.xml");
 }
 
-const VERSION: u32 = 12;
+const VERSION: u32 = 13;
 
 pub const DEVICE_KEYBOARD: u32 = 1;
 pub const DEVICE_POINTER: u32 = 2;
@@ -283,6 +285,14 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
             Request::PickColor { id } => {
                 let r = data_init.init(id, ColorPickData);
                 state.open_color_pick(crate::colorpickview::Asker::Portal(r));
+            }
+            Request::PickArea { id, app } => {
+                let r = data_init.init(id, AreaPickData);
+                state.pick_area(r, app);
+            }
+            Request::ActiveWindow { id } => {
+                let r = data_init.init(id, ActiveWindowData);
+                r.window(state.active_window_identifier().unwrap_or_default());
             }
             Request::RemoteCapture => {
                 if let Some(d) = client.get_data::<crate::compositor::ClientState>() {
@@ -579,6 +589,40 @@ impl Dispatch2<RepriseColorPickV1, State> for ColorPickData {
 
     fn destroyed(&self, state: &mut State, _client: ClientId, resource: &RepriseColorPickV1) {
         state.color_pick_gone(resource);
+    }
+}
+
+pub struct AreaPickData;
+
+impl Dispatch2<RepriseAreaPickV1, State> for AreaPickData {
+    fn request(
+        &self,
+        _state: &mut State,
+        _client: &Client,
+        _resource: &RepriseAreaPickV1,
+        _request: reprise_area_pick_v1::Request,
+        _dh: &DisplayHandle,
+        _data_init: &mut DataInit<'_, State>,
+    ) {
+    }
+
+    fn destroyed(&self, state: &mut State, _client: ClientId, resource: &RepriseAreaPickV1) {
+        state.area_pick_gone(resource);
+    }
+}
+
+pub struct ActiveWindowData;
+
+impl Dispatch2<RepriseActiveWindowV1, State> for ActiveWindowData {
+    fn request(
+        &self,
+        _state: &mut State,
+        _client: &Client,
+        _resource: &RepriseActiveWindowV1,
+        _request: reprise_active_window_v1::Request,
+        _dh: &DisplayHandle,
+        _data_init: &mut DataInit<'_, State>,
+    ) {
     }
 }
 

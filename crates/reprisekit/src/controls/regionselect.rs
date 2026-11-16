@@ -2,7 +2,7 @@
 //! rectangle to keep (undimmed, with a 1 px white line just outside it) and a tip beside the
 //! pointer reads its size, "W x H". A click that never moves `DRAG_PX` picks the point instead (the
 //! host takes the window under it). A tip at the top of the pointer's screen names the mode, which
-//! V switches.
+//! V switches, or for a screenshot an app asked for, the app; V does nothing then.
 
 use crate::access::{self, Tree, accesskit};
 use crate::controls::tooltip::{draw_tip, tip_size};
@@ -32,6 +32,8 @@ pub struct RegionSelect {
     dragging: bool,
     /// The pick starts a recording rather than taking a screenshot.
     record: bool,
+    /// The display name of the app the screenshot goes to.
+    app: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,12 +54,28 @@ impl RegionSelect {
         }
     }
 
+    /// A screenshot for `app`, which may be empty for an app with no name.
+    pub fn for_app(pointer: (i32, i32), app: &str) -> RegionSelect {
+        RegionSelect {
+            pointer,
+            app: Some(app.to_string()),
+            ..RegionSelect::default()
+        }
+    }
+
+    pub fn app(&self) -> Option<&str> {
+        self.app.as_deref()
+    }
+
     pub fn records(&self) -> bool {
         self.record
     }
 
     /// V: switch between a screenshot and a recording.
     pub fn toggle_record(&mut self) -> Event {
+        if self.app.is_some() {
+            return Event::None;
+        }
         self.record = !self.record;
         Event::Redraw
     }
@@ -139,7 +157,7 @@ pub fn layout(
     area: Rect,
     screen: Rect,
 ) -> Layout {
-    let mode = place_mode(tip_size(text, theme, mode_text(m)), screen);
+    let mode = place_mode(tip_size(text, theme, &mode_text(m)), screen);
     let Some(sel) = m.selection().map(|s| s.intersect(&area)) else {
         return Layout {
             dim: vec![area],
@@ -180,12 +198,15 @@ pub fn layout(
     }
 }
 
-/// What the mode tip says: what a pick does now, and that V switches.
-pub fn mode_text(m: &RegionSelect) -> &'static str {
-    match m.record {
-        false => "Screenshot: drag an area or click a window. Press V to record instead.",
-        true => "Record: drag an area or click a window. Press V for a screenshot instead.",
-    }
+/// What the mode tip says: what a pick does now and that V switches, or who the screenshot is for.
+pub fn mode_text(m: &RegionSelect) -> String {
+    let text = match (m.app.as_deref(), m.record) {
+        (Some(""), _) => "Screenshot for an app: drag an area or click a window.",
+        (Some(app), _) => return format!("Screenshot for {app}: drag an area or click a window."),
+        (None, false) => "Screenshot: drag an area or click a window. Press V to record instead.",
+        (None, true) => "Record: drag an area or click a window. Press V for a screenshot instead.",
+    };
+    text.to_string()
 }
 
 /// `MODE_TOP` below the top of `screen`, centred, kept inside it.
@@ -224,7 +245,7 @@ pub fn draw_readout(theme: &Theme, text: &TextRenderer, m: &RegionSelect) -> Opt
 }
 
 pub fn draw_mode(theme: &Theme, text: &TextRenderer, m: &RegionSelect) -> Canvas {
-    draw_tip(theme, text, mode_text(m))
+    draw_tip(theme, text, &mode_text(m))
 }
 
 /// The mode tip and, while dragging, the size tip, as labels under `parent`.
@@ -232,7 +253,7 @@ pub fn access(m: &RegionSelect, lay: &Layout, tree: &mut Tree, parent: NodeId) {
     tree.push(
         parent,
         "mode",
-        access::titled(Role::Label, lay.mode, mode_text(m)),
+        access::titled(Role::Label, lay.mode, &mode_text(m)),
     );
     if let (Some(r), Some(sel)) = (lay.readout, m.selection()) {
         tree.push(parent, "size", access::titled(Role::Label, r, &label(sel)));
@@ -419,6 +440,19 @@ mod tests {
     }
 
     #[test]
+    fn a_screenshot_for_an_app_names_it_and_v_keeps_it_a_screenshot() {
+        let mut m = RegionSelect::for_app((0, 0), "Paint");
+        assert_eq!(m.toggle_record(), Event::None);
+        assert!(!m.records());
+        assert_eq!(
+            mode_text(&m),
+            "Screenshot for Paint: drag an area or click a window."
+        );
+        let m = RegionSelect::for_app((0, 0), "");
+        assert!(mode_text(&m).starts_with("Screenshot for an app:"));
+    }
+
+    #[test]
     fn the_mode_tip_sits_top_centre_of_the_pointer_screen() {
         let screen = Rect::new(1920, 0, 1280, 1024);
         assert_eq!(
@@ -440,23 +474,27 @@ mod tests {
         let lay = layout(&m, &text, &Theme::default(), area, area);
         let mut tree = Tree::window("Screenshot", (800, 600));
         access(&m, &lay, &mut tree, access::ROOT);
-        assert!(tree.find(Role::Label, mode_text(&m)).is_some());
+        assert!(tree.find(Role::Label, &mode_text(&m)).is_some());
         assert!(tree.find(Role::Label, "200 x 100").is_some());
     }
 
     #[test]
-    fn the_mode_tip_pins_its_pixels_in_both_modes_under_every_interface() {
+    fn the_mode_tip_pins_its_pixels_in_every_mode_under_every_interface() {
         use crate::interface::Interface;
         crate::pins::fonts();
         let mut got = Vec::new();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let base = crate::interfaces::theme_for(i);
             let text = TextRenderer::load(&base.fonts);
-            for record in [false, true] {
+            let modes = [
+                ("record=false", RegionSelect::new((0, 0), false)),
+                ("record=true", RegionSelect::new((0, 0), true)),
+                ("app", RegionSelect::for_app((0, 0), "Paint")),
+            ];
+            for (mode, m) in &modes {
                 for s in [1, 2] {
-                    let m = RegionSelect::new((0, 0), record);
-                    let c = draw_mode(&base.scaled(s), text.for_output(s), &m);
-                    got.push((format!("{i:?} record={record} {s}"), fnv(&c)));
+                    let c = draw_mode(&base.scaled(s), text.for_output(s), m);
+                    got.push((format!("{i:?} {mode} {s}"), fnv(&c)));
                 }
             }
         }
