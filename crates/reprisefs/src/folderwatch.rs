@@ -134,8 +134,9 @@ impl Shared {
         {
             return s.note(k, e);
         }
-        match self.only.iter().find(|(wd, _)| *wd == e.wd) {
-            Some((_, name)) => e.name == Some(name.as_os_str()),
+        let mut named = self.only.iter().filter(|(wd, _)| *wd == e.wd).peekable();
+        match named.peek() {
+            Some(_) => named.any(|(_, name)| e.name == Some(name.as_os_str())),
             None => self.wds.contains(&e.wd),
         }
     }
@@ -478,6 +479,19 @@ mod tests {
         std::fs::create_dir(dir.path().join("Trash")).expect("mkdir");
         watch.sync();
         assert!(watch.take_changed(), "the named entry is");
+    }
+
+    #[test]
+    fn a_folder_watched_for_two_entries_counts_both() {
+        let mut watch = Watch::new(|| {}).expect("inotify");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let d = dir.path().to_path_buf();
+        watch.watch_all(&[(d.clone(), Some("a".into())), (d, Some("b".into()))]);
+        for (name, counts) in [("c", false), ("a", true), ("b", true)] {
+            std::fs::write(dir.path().join(name), "x").expect("write");
+            watch.sync();
+            assert_eq!(watch.take_changed(), counts, "{name}");
+        }
     }
 
     /// Whether an inotify instance open in this process watches `dir`, read from its fdinfo.

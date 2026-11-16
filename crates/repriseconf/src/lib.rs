@@ -481,14 +481,49 @@ pub type ConfigWatch = reprisefs::folderwatch::Watch;
 /// A watch on the config file: `wake` runs on its thread after each write or rename onto it, and
 /// [`ConfigWatch::take_changed`] says whether one came. None when inotify fails.
 pub fn watch(wake: impl Fn() + Send + Sync + 'static) -> Option<ConfigWatch> {
-    let path = config_path();
+    watch_at(&config_path(), wake)
+}
+
+fn watch_at(path: &Path, wake: impl Fn() + Send + Sync + 'static) -> Option<ConfigWatch> {
     let mut w = reprisefs::folderwatch::Watch::new(wake)
         .map_err(|e| log::warn!("the config file is not watched: {e}"))
         .ok()?;
-    if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
-        w.watch_all(&[(dir.to_path_buf(), Some(name.to_os_string()))]);
-    }
+    let entries: Vec<_> = watch_targets(path)
+        .into_iter()
+        .flat_map(|(dir, names)| names.into_iter().map(move |n| (dir.clone(), Some(n))))
+        .collect();
+    w.watch_all(&entries);
     Some(w)
+}
+
+/// The directories a watch on the config file at `path` covers, each with the entry names that
+/// count: `path`'s own, and, when `path` is a symlink, the file it resolves to, since
+/// [`write_atomic`] and editors writing through the link replace that file in its own directory.
+pub fn watch_targets(path: &Path) -> Vec<(PathBuf, Vec<OsString>)> {
+    let Some(name) = path.file_name() else {
+        return Vec::new();
+    };
+    // A relative `--config path.toml` has "" for a parent; that is the working directory, which
+    // is what inotify wants spelled out.
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let mut targets = vec![(dir.clone(), vec![name.to_os_string()])];
+    if let Ok(real) = std::fs::canonicalize(path)
+        && let (Some(real_dir), Some(real_name)) = (real.parent(), real.file_name())
+    {
+        // One inotify watch per directory: a link to a file beside it adds a name, not a second
+        // watch.
+        if std::fs::canonicalize(&dir).is_ok_and(|d| d == real_dir) {
+            if real_name != name {
+                targets[0].1.push(real_name.to_os_string());
+            }
+        } else {
+            targets.push((real_dir.to_path_buf(), vec![real_name.to_os_string()]));
+        }
+    }
+    targets
 }
 
 /// `[sounds] allow_boost`, read now: whether playback volumes may go past 100 %.
@@ -1276,6 +1311,29 @@ mod tests {
             std::fs::metadata(&real).unwrap().permissions().mode() & 0o777,
             0o600
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_save_through_a_symlinked_config_wakes_the_watch() {
+        let dir = std::env::temp_dir().join(format!("repriseconf-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("conf")).unwrap();
+        std::fs::create_dir_all(dir.join("dotfiles")).unwrap();
+        std::fs::write(dir.join("dotfiles/config.toml"), "").unwrap();
+        let link = dir.join("conf/config.toml");
+        std::os::unix::fs::symlink("../dotfiles/config.toml", &link).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut w = watch_at(&link, move || {
+            let _ = tx.send(());
+        })
+        .unwrap();
+
+        write_atomic(&link, "terminal = \"foot\"\n").unwrap();
+
+        let woke = rx.recv_timeout(std::time::Duration::from_secs(10));
+        assert!(woke.is_ok(), "the save through the link wakes the watch");
+        assert!(w.take_changed());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -3,7 +3,7 @@
 
 use std::os::fd::BorrowedFd;
 use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::SystemTime;
 
 use inotify::WatchMask;
@@ -152,46 +152,15 @@ pub fn output_change(old: &Config, new: &Config, name: &str) -> OutputChange {
     }
 }
 
-/// What the config watch covers: the directory `path` names, and, when
-/// `path` is a symlink, the directory of the file it resolves to, since
-/// `repriseconf::write_atomic` and editors writing through the link replace
-/// that file in its own directory. MOVED_TO catches the rename they do,
-/// CLOSE_WRITE a write in place. Not CREATE: that fires on an empty new
-/// file, before whatever wrote it has put anything in it.
+/// What the config watch covers ([`repriseconf::watch_targets`]). MOVED_TO catches the rename a
+/// save through `repriseconf::write_atomic` or an editor does, CLOSE_WRITE a write in place. Not
+/// CREATE: that fires on an empty new file, before whatever wrote it has put anything in it.
 fn wants(path: &Path) -> Vec<Want> {
-    let Some(name) = path.file_name() else {
-        return Vec::new();
-    };
     let mask = WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO;
-    // A relative `--config path.toml` has "" for a parent; that is the
-    // working directory, which is what inotify wants spelled out.
-    let dir = match path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
-        _ => PathBuf::from("."),
-    };
-    let mut want = vec![Want {
-        dir: dir.clone(),
-        mask,
-        only: vec![name.to_os_string()],
-    }];
-    if let Ok(real) = std::fs::canonicalize(path)
-        && let (Some(real_dir), Some(real_name)) = (real.parent(), real.file_name())
-    {
-        // One inotify watch per directory: a link to a file beside it adds
-        // a name, not a second watch.
-        if std::fs::canonicalize(&dir).is_ok_and(|d| d == real_dir) {
-            if real_name != name {
-                want[0].only.push(real_name.to_os_string());
-            }
-        } else {
-            want.push(Want {
-                dir: real_dir.to_path_buf(),
-                mask,
-                only: vec![real_name.to_os_string()],
-            });
-        }
-    }
-    want
+    repriseconf::watch_targets(path)
+        .into_iter()
+        .map(|(dir, only)| Want { dir, mask, only })
+        .collect()
 }
 
 /// `startup` is the file's [`stamp`] before the startup read.
