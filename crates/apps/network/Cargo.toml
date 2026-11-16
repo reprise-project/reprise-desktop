@@ -11,11 +11,6 @@ description = "Network Connections: the Reprise network icon and its windows"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-network"
-path = "src/bin/reprise-network.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisefs = { path = "../../reprisefs" }

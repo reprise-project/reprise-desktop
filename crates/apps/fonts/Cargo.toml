@@ -11,11 +11,6 @@ description = "Font Viewer: a font file's names and sample, and Install"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-fonts"
-path = "src/bin/reprise-fonts.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

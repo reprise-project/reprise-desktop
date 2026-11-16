@@ -11,11 +11,6 @@ description = "About Reprise: the version box"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-about"
-path = "src/bin/reprise-about.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

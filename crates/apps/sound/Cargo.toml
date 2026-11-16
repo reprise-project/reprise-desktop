@@ -11,11 +11,6 @@ description = "Sounds and Audio Devices: the Reprise volume control"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-sound"
-path = "src/bin/reprise-sound.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisefs = { path = "../../reprisefs" }

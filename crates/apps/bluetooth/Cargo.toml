@@ -11,11 +11,6 @@ description = "Bluetooth Devices: the Reprise Bluetooth icon and its windows"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-bluetooth"
-path = "src/bin/reprise-bluetooth.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

@@ -11,11 +11,6 @@ description = "Task Manager: running programs, processes, and CPU and memory his
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-taskmgr"
-path = "src/bin/reprise-taskmgr.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

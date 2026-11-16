@@ -11,11 +11,6 @@ description = "Notepad: a plain text editor"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-notepad"
-path = "src/bin/reprise-notepad.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

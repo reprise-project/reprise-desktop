@@ -11,11 +11,6 @@ description = "Character Map: every character of a font, to copy"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-charmap"
-path = "src/bin/reprise-charmap.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

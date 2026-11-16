@@ -11,11 +11,6 @@ description = "User Accounts: the Reprise program for people's accounts, their p
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-accounts"
-path = "src/bin/reprise-accounts.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

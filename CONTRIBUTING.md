@@ -111,10 +111,11 @@ each interface draws its own; only Classic's painters call
 calling `classic::widgets` passes and draws Classic bevels under Blue and
 Glass.
 
-Each program in `crates/apps` is a library with a thin binary, so
-`cargo run -p reprise-notepad` runs one alone; packages install them all as
-one binary, `reprise-apps`, which runs the program named by the symlink it
-was started through.
+Each program in `crates/apps` is a library, and one binary, `reprise-apps`,
+holds them all. It runs the program named by the symlink it was started
+through or by its first argument, so
+`cargo run -p reprise-apps -- reprise-notepad` runs one alone. Packages
+install `reprise-apps` with a symlink per program.
 
 A control is done when a unit test pins its pixels,
 `cargo run -p reprisekit --example gallery` draws it on a page of one of the

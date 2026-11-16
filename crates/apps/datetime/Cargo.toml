@@ -11,11 +11,6 @@ description = "Date and Time Properties: the Reprise date, time and time zone sh
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-datetime"
-path = "src/bin/reprise-datetime.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
