@@ -29,6 +29,7 @@ mkdir -p "$root/DEBIAN"
 rm -r "$root/usr/share/libalpm"
 
 "$here/pam.sh" "$root"
+install -Dm644 "$here/copyright" "$root/usr/share/doc/reprise/copyright"
 
 mapfile -t elves < <(find "$root/usr" -type f -perm -u+x)
 # The release profile's line tables make each binary about four times its
