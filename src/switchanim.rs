@@ -307,6 +307,15 @@ impl State {
         true
     }
 
+    /// Forget the swipe the compositor keeps and take down the desktop slide it drags,
+    /// uncommitted, when the lock takes the input.
+    pub fn drop_kept_swipe(&mut self) {
+        self.pointers.swipe = None;
+        if self.switch_anim.drag.is_some() {
+            self.cancel_switch_anim();
+        }
+    }
+
     fn drag_begin(&mut self, to: usize) -> bool {
         self.finish_window_anims();
         self.cancel_switch_anim();
@@ -584,6 +593,31 @@ mod tests {
 
     fn at(style: SwitchStyle, forward: bool, e: f64) -> (Option<Piece>, Option<Piece>) {
         pieces(style, B, A, forward, e)
+    }
+
+    #[test]
+    fn a_lock_mid_swipe_drops_the_swipe_and_its_slide() {
+        let config = crate::config::Config {
+            base: repriseconf::config::Config {
+                workspaces: 4,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        h.swipe_with(3, &[(60.0, 0.0); 3], |h| {
+            assert!(h.state.pointers.swipe.is_some(), "the swipe is kept");
+            // The harness renders no stills, so a bare tree stands in for the slide.
+            let tree = h.state.scene.tree_create(h.state.layers.switching);
+            h.state.switch_anim.tree = Some(tree);
+            h.state.switch_anim.drag = Some((1, 0.4));
+            crate::lockview::lock(&mut h.state);
+            assert!(h.state.pointers.swipe.is_none(), "the lock drops the swipe");
+            assert_eq!(h.state.switch_anim.drag, None, "and its slide");
+            assert_eq!(h.state.switch_anim.tree, None, "with the slide's stills");
+        });
+        assert_eq!(h.state.desktops.current, 0, "the lift switches nothing");
     }
 
     #[test]
