@@ -1,4 +1,4 @@
-//! `[recording]`: reprise-record's settings, each key described in docs/configuration.md.
+//! `[recording]`: reprise-record's settings, each key described in config.example.toml.
 //! Each key that is missing or out of range keeps its default alone.
 
 use crate::remote::EncoderChoice;

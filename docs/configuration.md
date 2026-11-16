@@ -1,8 +1,10 @@
 # Configuration
 
-Reprise reads `~/.config/reprise/config.toml`. Every key is documented in
-[`config.example.toml`](../config.example.toml), and a key you leave out
-takes its default. An edit applies the moment you save the file.
+Reprise reads `~/.config/reprise/config.toml`. Every key, its values and
+its default are documented in [`config.example.toml`](../config.example.toml)
+(installed as `/usr/share/doc/reprise/config.example.toml`), and a key you
+leave out takes its default. An edit applies the moment you save the file.
+This page indexes the sections and covers what doesn't fit beside a key.
 
 `reprise --config FILE` reads another file. The programs Reprise starts read
 that file too: they get its path as `REPRISE_CONFIG`.
@@ -12,7 +14,7 @@ writes back into the same file and leaves your comments, key order and the
 sections it doesn't touch alone. Use whichever you like. They don't fight.
 
 Some defaults depend on the interface; [interfaces.md](interfaces.md#defaults-by-interface)
-lists them. Glass's `[glass]` section is documented there too.
+lists them.
 
 ## A broken save
 
@@ -57,7 +59,7 @@ while an editor saves it doesn't.
 | `[launcher]`, `[clipboard]`, `[screenshot]`, `[previews]` | the launcher's file, window and content search (contents off by default) and the programs it asks, clipboard history (in memory only, password managers' copies left out; see [security.md](security.md#the-clipboard-history)), where screenshots go, the saved file's format (`format`: `png`, `jpg` or `jxl`, with `png_compression`, `jpg_quality`, `jxl_lossless`, `jxl_quality` and `jxl_effort`; the clipboard always takes a PNG) and whether screen recordings carry sound (`record_sound`, off), live previews |
 | `[notifications]` | balloon sounds, quiet hours, Do Not Disturb during full screen and screen sharing, programs whose balloons or sounds are off |
 | `[sounds]` | the sound theme balloons and the bell play from, whether the bell sounds, and `allow_boost`: playback volumes past 100 % up to 150 % |
-| `[privacy]` | recent files and location |
+| `[privacy]` | recent files, location and the red border around a shared or recorded screen |
 | `[time_zone]` | `automatic`: the time zone follows the location, off by default (Date and Time > Time Zone) |
 | `[recycle_bin]` | what Delete does, each drive's bin size, `older_than_days` to empty old items (Recycle Bin Properties) |
 | `[thumbnail_cache]` | whether thumbnails are kept, the cap, and whether installed thumbnailers make them for PDFs, videos and fonts |
@@ -78,39 +80,15 @@ while an editor saves it doesn't.
 
 ## Wallpaper
 
-| Key | Values | Default |
-| --- | --- | --- |
-| `image` | a picture file, or a built-in as `reprise:design/variant` (below); `""` shows `[colors] background` alone | Classic none, Blue `reprise:tarn/blue`, Glass `reprise:flow/glass` |
-| `position` | `fill` (cover the screen evenly, cropping the overflow), `fit` (the whole picture on the colour), `stretch`, `tile` or `center`; a built-in always fills the screen | `fill` |
-| `slideshow` | a folder whose pictures take turns, fading into each other | none |
-| `interval` | minutes per picture, 1 to 1440 | 30 |
-| `shuffle` | random order instead of by name | `false` |
-| `desktops` | each virtual desktop's own picture, spelled as `image` is: entry 1 is desktop 1; `""` shows the picture above | none |
-| `water` | `off`, `calm`, `lively`, `rain`, `ink`, `glow`, `sparks` or `neon` | `off` |
-| `water_rate` | `refresh` (each screen's refresh rate) or 30 to 240 times a second | `refresh` |
-
-Reprise draws its built-in wallpapers in code at each screen's size, so they
-are sharp at any resolution. `reprise:tarn` alone is its first variant.
-
-| Design | Variants |
-| --- | --- |
-| `tarn`, `ridges` | `dawn`, `day`, `dusk`, `night`, `blue` |
-| `terraces` | `spring`, `harvest`, `dusk`, `frost`, `blue` |
-| `caustic`, `reeded`, `panes` | `sky`, `ruby`, `green`, `violet`, `dark` |
-| `flow` | `night`, `ink`, `teal`, `ember` |
-| `fold` | `teal`, `steel`, `sand`, `night` |
-| `contour` | `teal`, `night`, `paper`, `dusk` |
-
-`caustic`, `reeded`, `panes` and `flow` also take any hue: `hue-200` or
-`hue-200-dark` (OKLCH degrees, 0 to 359), and `glass`, the hue of
-`[glass] color` (dark in Glass's dark mode, where `flow/glass` is
-`flow/night`). A glass-tinted wallpaper is drawn again when the glass colour
-or mode changes. Without an `image` key, Blue shows `tarn/blue` and Glass
-`flow/glass`; Classic keeps its desktop colour. Drawn pictures are cached in
-`$XDG_CACHE_HOME/reprise/wallpapers`, so a login shows them at once; until
-one is ready the desktop shows its colour. Glass's lock screen, desktop water
-and the Background page's monitor show a built-in like any picture; Classic's
-and Blue's lock screens draw the welcome backdrop.
+`[wallpaper]` takes a picture file or one of the built-in wallpapers;
+config.example.toml lists its keys and the built-ins' names. Reprise draws
+the built-ins in code at each screen's size, so they are sharp at any
+resolution. A glass-tinted one is drawn again when the glass colour or mode
+changes. Drawn pictures are cached in `$XDG_CACHE_HOME/reprise/wallpapers`,
+so a login shows them at once; until one is ready the desktop shows its
+colour. Glass's lock screen, desktop water and the Background page's monitor
+show a built-in like any picture; Classic's and Blue's lock screens draw the
+welcome backdrop.
 
 Desktop water ripples the wallpaper: the pointer leaves a wake over bare
 desktop, and clicks, dropped icons and windows opening, closing or moving make
@@ -167,26 +145,9 @@ while the session is locked.
 
 ## Recording
 
-`[recording]` sets how screen recordings are coded. The recorder reads it
-as each recording starts. A missing key takes its default; an invalid key
-takes its default too, and the journal names the invalid ones. A file it
-can't read or that isn't TOML gives the defaults. Recordings are MP4 files
-whatever the codecs.
-
-| Key | Values | Default |
-| --- | --- | --- |
-| `codec` | `"h264"`, `"h265"` or `"av1"`. H.265 is tagged `hvc1`, which QuickTime and Safari play. With no encoder that codes it here, the recording fails with a notice naming the codec; another codec never stands in | `"h264"` |
-| `encoder` | `"auto"`: the first of VA-API, NVENC, Vulkan and the CPU that codes a test frame in the codec at start. `"vaapi"`, `"nvenc"`, `"vulkan"`, `"software"` (x264, x265 or SVT-AV1) are tried first, then the others in auto's order. An area under 256 pixels a side always codes on the CPU | `"auto"` |
-| `rate` | `"quality"`: a constant quality, the bitrate following the picture. `"average"`: `bitrate` on average, peaks up to twice that (SVT-AV1 caps no peaks). `"constant"`: `bitrate` held through each second; the last picture is repeated at the frame rate on a still screen, and x264, x265 and NVENC pad each second to the rate, so the file grows by the same amount every second. SVT-AV1, VA-API and Vulkan have no padding, so with them the file can stay under the rate on a still screen. Quality and Average add a picture only when the screen changes | `"quality"` |
-| `quality` | 1 to 100, for `"quality"`. 55 codes H.264 at x264's CRF 23 and the hardware encoders' QP 24; H.265 and AV1 run along their own scales | `55` |
-| `bitrate` | 500 to 100000 kbit/s, for `"average"` and `"constant"` | `8000` |
-| `frame_rate` | 1 to 240: frames a second at most, one in each slot of a grid at that rate; a change inside a slot already coded reaches the file at the next slot, so picture and sound can be up to one slot apart. `0`: the screen's refresh rate (60 when it can't be read), and for `"constant"` at most 60. The encoder plans its rate control for it, and `"constant"` codes every slot | `0` |
-| `keyframe_interval` | 1 to 60 seconds: the first picture this long after a keyframe is the next keyframe, however few pictures the screen adds | `4` |
-| `audio_codec` | `"aac"`, `"opus"` or `"flac"`, for recordings carrying sound (`[screenshot] record_sound`). With no encoder for it here, the recording fails with a notice naming the codec ("No Opus encoder works here.") before the screen is shared | `"aac"` |
-| `audio_bitrate` | 32 to 512 kbit/s, for AAC and Opus | `160` |
-| `audio_vbr` | `true`: Opus at a variable bitrate; `false` holds it. AAC always holds its bitrate | `true` |
-| `flac_compression` | 0 (fastest) to 12 (smallest), for FLAC; the sound is the same at every level | `5` |
-
+`[recording]` sets how screen recordings are coded; its keys are in
+config.example.toml. The recorder reads it as each recording starts. A file
+it can't read or that isn't TOML gives the defaults.
 `reprise-record --probe` prints what codes here
 ([programs.md](programs.md)). Settings > Screen Capture sets every key of
 `[recording]` and `[screenshot]`'s `save`, `record_sound`, `format` and the
@@ -207,23 +168,8 @@ Under reprise-login the server never listens itself: the login manager
 takes the connections and hands them to it, and `port` goes unused ([Remote
 logins](#remote-logins)).
 
-| Key | Values | Default |
-| --- | --- | --- |
-| `port` | 1 to 65535, the TCP port on every interface. A change moves the listener at once and ends every connected session; a port that can't be bound is tried again on the next save | `3389` |
-| `quality` | `"speed"`, `"balanced"`, `"sharp"`: H.264 quantizer 30, 25 or 21. Balanced and Sharp send full colour (AVC444) to a client that offers it, Speed reduced colour (AVC420) | `"balanced"` |
-| `frame_rate` | `30`, `60`, `120` or `144`, frames a second at most. The screen sends no more frames than its refresh rate, so the rate a client gets is the lower of the two | `60` |
-| `encoder` | `"auto"`: the first of VA-API, NVENC, Vulkan and x264 that codes a test frame at start. `"vaapi"`, `"nvenc"`, `"vulkan"`, `"software"` (x264) pick one; one that doesn't work here falls back to `"auto"` with a journal line, and one that fails while coding hands over to the next that works, then to RemoteFX bitmaps. `"none"` sends RemoteFX bitmaps only | `"auto"` |
-| `sound` | `true` plays this computer's sound on the client, not here; `false` plays nothing there | `true` |
-| `max_viewers` | 1 to 16, how many computers may be connected at once, counting those still logging in; one more is closed before it logs in (with `second_client = "replace"`, one more is let in to replace them), as is a third from an address with two logging in and any from an address in its back-off after failed logins ([security.md](security.md#remote-desktop)). Read as each computer connects | `4` |
-| `lock_on_leave` | `true` locks the session when the last logged-in computer leaves; `false` leaves it unlocked. Read as each computer logs in and leaves. In lock mode the session stays locked here when the last one leaves, whatever this says | `true` |
-| `lock_grace_s` | 0 to 60: seconds the lock waits when the last computer left because the screen it showed went (a monitor switched away or back), so it can reconnect; one shown the session in that time keeps it unlocked. `0` locks at once. Any other leave locks at once. Read as each computer leaves; unused in lock mode | `5` |
-| `capture_border` | `true` draws the red capture border around the screen the server shares while a computer is connected, if `[privacy] capture_border` is on; `false` leaves it off. The Sharing icon shows either way, and every other capture keeps its border. Read by the compositor on each save | `false` |
-| `laptop_screen` | `"lock"`: while a computer is connected, this computer's screens show the session lock and only their lock screen takes this computer's keyboard and mouse; the viewer works on screens of its own, one per client monitor or one the size of its window. Unlocking here ends it and disconnects every computer. `"show"` keeps the session on this computer's screens as well. With `[power] locker` set, connections run as `"show"` and Settings greys the Locks choice. Read when a computer is shown the session while none is ([remote-desktop.md](remote-desktop.md#lock-mode-and-show-mode)) | `"lock"` |
-| `avc444_split_encoders` | `true` codes the two full-colour (AVC444) views on two encoders of the same kind and merges them into one stream, a sixth to four fifths of the bytes of one encoder coding both depending on the encoder and layout ([remote-desktop.md](remote-desktop.md#encoders-and-picture-quality)), and in the AVC444v2 layout where the coded width is a whole number of 32-pixel columns; a merge that fails codes both views on one encoder until the encoder is next set up (a new frame rate or encoder choice), with a journal line. `false` codes both views on one encoder. One encoder always sends the AVC444 (v1) layout. Read as each computer is shown the session | `true` |
-| `second_client` | `"join"`: a computer logging in while others are connected joins them. `"replace"`: it ends every other connection, each logged-in one told another connection took its place; in lock mode the screens stay locked here and take the new viewer's monitors. Read as each computer connects | `"join"` |
-
-`quality`, `frame_rate` and `encoder` reach a connected client at the next
-frame, and `sound` at once.
+Its keys are in config.example.toml, and
+[remote-desktop.md](remote-desktop.md) says what each does to a connection.
 
 ## Login manager
 
@@ -320,63 +266,9 @@ seconds (30 by default, 0 locks at once) locks the session. The Screen Saver
 - It never unlocks. Nothing holds it off: a playing video or another idle
   inhibitor holds off the idle lock only.
 
-## Taskbar
+## Reduce motion
 
-| Key | Values | Default |
-| --- | --- | --- |
-| `position` | `bottom`, `top`, `left` or `right`, the same edge on every screen | `bottom` |
-| `side_width` | a side bar's width in px; 0 takes the interface's own | 0 |
-| `buttons` | `combine`, `when_full`, `never` or `group` | by interface |
-| `pinned` | Quick Launch programs lead the task row | by interface |
-| `show_desktop_button` | a Show desktop strip at the end | by interface |
-| `peek` | resting on a preview or the strip fades the other windows | by interface |
-| `small_icons` | a 30 px bar (Glass only) | `false` |
-| `tray_overflow` | quiet tray icons wait behind an arrow or a ^ | `true` |
-| `network_meter` | download and upload speed (`↓ 2.4 MB/s` over `↑ 120 KB/s`, in thousands of bytes) on two lines between the tray icons and the clock, read once a second while shown | `false` |
-| `calendar_events` | the clock's calendar lists the picked day's events (today's when it opens) from evolution-data-server's calendars, read-only; a click on one opens the default calendar program. Nothing shows without evolution-data-server | `true` |
-| `badges` | a program's unread count (LauncherEntry `count`) shows as a badge in its task buttons' top-right corner, `99+` above 99 | `true` |
-| `auto_hide` | the bar slides away when nothing needs it | `false` |
-| `reveal_on_edge` | the pointer resting on, clicking or dragging onto the 2 px line brings it back | `true` |
-| `reveal_on_keys` | the Start key, Ctrl+Esc and Alt+Tab bring it back | `true` |
-| `reveal_on_attention` | a window asking for attention or a new balloon brings it back | `true` |
-| `attention_flash` | seconds a window's button flashes when it asks for attention before it stays lit until the window is focused; 0 lights it at once | 30 |
-
-The button modes:
-
-- `combine`: one icon-only button per program.
-- `when_full`: one labelled button per window until the row is full, then a
-  program's windows share one.
-- `never`: one labelled button per window, in the order they opened.
-- `group`: as `never`, with a program's buttons kept side by side. Dragging
-  one moves them all.
-
-With the taskbar unlocked, dragging empty bar space to another edge writes
-`position`, and dragging a side bar's inner edge writes `side_width`. A side
-bar stacks its buttons one a row and puts the ones that don't fit behind a »
-button.
-
-`startmenu_style` picks the Start menu: `classic`, `blue` or `glass`, by
-default the interface's own. The Start Menu page of Reprise Settings edits the
-Classic Start menu and the Quick Launch buttons. The buttons and their order live in
-`~/.config/reprise/quicklaunch/`.
-
-## Effects
-
-| Key | What | Default |
-| --- | --- | --- |
-| `window_animation` | windows fade and grow in, shrink out | by interface |
-| `window_open_ms`, `window_close_ms` | how long | 250, 200 |
-| `window_scale` | the size they grow from | 0.95 |
-| `hover_fade` | caption buttons and Start fade their highlight | by interface |
-| `hover_in_ms`, `hover_out_ms` | how long | 120, 250 |
-| `taskbar_slide` | task buttons slide aside during a drag | by interface |
-| `taskbar_hide_ms` | how long auto-hide takes, 0 for at once | 200 |
-| `session_fade` | the screen fades in from black at log on and out to black when the session ends; the fade in waits a second after the display's mode is set, so a monitor syncing to it shows the whole fade | on |
-| `session_fade_in_ms`, `session_fade_out_ms` | how long, 0 for at once | 600, 400 |
-| `logon_animation` | the lock screen's transitions on Blue and Glass, its fade out after a right password or fingerprint, and Glass's busy ring turning; off, each screen shows at once, the ring stands still and an unlock takes the lock down at once. Settings > Effects > Animate the lock screen. The login screen follows `[login] animation` in `/etc/reprise/login.toml` | on |
-| `reduce_motion` | the session's animations off or at once, whatever the keys above and `[workspaces] animation` say (see below). Settings > Effects > Reduce motion everywhere, also on Magnifier & Filters | off |
-
-`reduce_motion = true` turns off window and notification animations, the
+`[effects] reduce_motion = true` turns off window and notification animations, the
 fade of the inactive-window dim, highlight fades, the taskbar's slides (task
 buttons, auto-hide, the notification area's arrow), menu and Start menu
 openings with the Start menu's crossfades, the screen's fade at log on and log

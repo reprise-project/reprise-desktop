@@ -98,24 +98,10 @@ checked.
 
 ### Colour and material
 
-Glass has no colour schemes. It has a `[glass]` section instead:
-
-| Key | Values | Default |
-| --- | --- | --- |
-| `color` | `sky`, `twilight`, `sea`, `leaf`, `lime`, `sun`, `pumpkin`, `ruby`, `fuchsia`, `blush`, `violet`, `lavender`, `taupe`, `chocolate`, `slate`, `frost`, or `"#RRGGBB"` | `sky` |
-| `intensity` | how much of the colour shows, 0 to 100; part of it follows the brightness behind the glass, so translucent glass shows more colour over light backdrops than over dark ones (not under Smoked) | 42 |
-| `mode` | `light`, `dark`, `night` (dark from sunset to sunrise, or between `[night_light]`'s fixed times, whether or not night light is on) or `hours` (dark from `dark_from` to `dark_to`) | `light` |
-| `dark_from`, `dark_to` | local times for `mode = "hours"`, which must differ; a `dark_to` before `dark_from` is the next morning | `"19:00"`, `"07:00"` |
-| `material` | `frosted`, `smoked` or `molten` | `frosted` |
-| `frame` | `rounded` or `square` | `rounded` |
-| `notification_style` | the notification sheet's shape: `lozenge`; `halo`, with the app icon breaking out of its top-left edge and the glass washed in the icon's colour; or `droplet`, one row that opens on hover | `lozenge` |
-| `transparency` | `false` draws the glass opaque and turns the blur off | `true` |
-| `blur` | strength, 1 (least GPU work) to 5 | 2 |
-| `streaks` | the diagonal reflections on Frosted glass | `true` |
-| `fast_drag` | a cheaper blur while a window is dragged or sized; at output scale 2 and up the blur is always this one | `true` |
-| `blur_frames` | glass over another window's frame and glass, a dialog's or the taskbar's shows them blurred; `false` saves a blur per such piece of glass | `true` |
-| `blur_rate` | at most this many re-blurs a second of a busy program next to the glass or of desktop water, `0` for every frame | 30 |
-| `orb_glow` | how strongly the Start button's icon glows, 0 (none) to 100 | 100 |
+Glass has no colour schemes. It has a `[glass]` section instead, with its
+colour, intensity, light or dark mode and its schedule, material, frame,
+notification style, blur and the Start button's glow; config.example.toml
+documents each key.
 
 - **Dark mode** turns controls, dialogs, menus and titles dark and tells
   programs to go dark through the portal. The glass keeps its colour.

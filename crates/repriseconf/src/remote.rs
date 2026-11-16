@@ -1,4 +1,4 @@
-//! `[remote_desktop]`: reprise-rdp's settings, each key described in docs/configuration.md.
+//! `[remote_desktop]`: reprise-rdp's settings, each key described in config.example.toml.
 //! Each key that is missing or out of range keeps its default alone.
 
 use crate::recording::Codec;

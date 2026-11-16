@@ -96,7 +96,8 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 #                            # built-ins: caustic, reeded, panes (sky ruby green violet dark), ridges, tarn (dawn day dusk night blue),
 #                            # terraces (spring harvest dusk frost blue), fold (teal steel sand night), contour (teal night paper dusk),
 #                            # flow (night ink teal ember). caustic, reeded, panes and flow also take glass (tinted from [glass] color; flow is night in dark mode),
-#                            # hue-<0..359> and hue-<0..359>-dark. A built-in always fills the screen; position does not apply
+#                            # hue-<0..359> and hue-<0..359>-dark. A design alone ("reprise:tarn") is its first variant.
+#                            # A built-in always fills the screen; position does not apply
 # position = "fill"          # fill (cover the screen evenly, cropped) | fit (whole, on the colour) | stretch | tile | center
 # desktops = ["", "reprise:tarn/dusk"]   # each virtual desktop's own picture, entry 1 for desktop 1; "" shows image (or the slideshow)
 # slideshow = "~/Pictures/Wallpapers"   # a folder whose pictures take turns in place of image, each fading into the next
@@ -108,12 +109,15 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # [glass]                    # Reprise Glass only
 # color = "sky"              # sky twilight sea leaf lime sun pumpkin ruby fuchsia blush
 #                            # violet lavender taupe chocolate slate frost, or "#RRGGBB"
-# intensity = 42             # 0 to 100: how much of the colour shows
+# intensity = 42             # 0 to 100: how much of the colour shows; part of it follows the
+#                            # brightness behind, so translucent glass shows more colour over
+#                            # a light backdrop than a dark one (not under smoked)
 # transparency = true        # false: opaque glass, no blur, least GPU work
 # blur = 2                   # 1 (lightest, least GPU work) to 5 (strongest)
-# streaks = true             # false: no reflection streaks over the glass
-# fast_drag = true           # while a window is dragged or sized: a lighter blur,
-#                            # a frame behind; the full one again once let go
+# streaks = true             # false: no reflection streaks over frosted glass
+# fast_drag = true           # while a window is dragged or sized: the blur at a quarter
+#                            # of the resolution, the same spread; the full one again once
+#                            # let go. At output scale 2 and up the blur is always this one
 # blur_frames = true         # glass over another window's frame and glass, a dialog's
 #                            # or the taskbar's shows them blurred; false: one blur less
 #                            # per such glass
@@ -122,11 +126,11 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 #                            # into it again; 0: every frame
 # mode = "light"             # light | dark | night (dark from sunset to sunrise, or between
 #                            # [night_light]'s fixed times, night light on or not) | hours
-# dark_from = "19:00"        # local times for mode = "hours"; a dark_to at or before
-# dark_to = "07:00"          # dark_from is the next morning
+# dark_from = "19:00"        # local times for mode = "hours", which must differ; a dark_to
+# dark_to = "07:00"          # before dark_from is the next morning
 # material = "frosted"       # frosted | smoked (darker, white titles) | molten (bent edges)
 # frame = "rounded"          # rounded | square (flat, separate caption buttons)
-# notification_style = "lozenge"  # lozenge | halo (the app icon breaks out of the top-left edge) | droplet (one row, opens on hover)
+# notification_style = "lozenge"  # lozenge | halo (the app icon breaks out of the top-left edge, the glass washed in its colour) | droplet (one row, opens on hover)
 # orb_glow = 100             # 0 to 100: how strongly the Start button's icon glows; 0: none
 
 # [taskbar]                  # a key left out follows the interface: Glass's
@@ -137,8 +141,11 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 #                            # every bar sits on, under every interface
 # side_width = 0             # a left or right bar's width; 0: the
 #                            # interface's own (Start's width, or one icon
-#                            # in Glass), one icon to a third of the output
-#                            # dragging an unlocked side bar's edge sets it
+#                            # in Glass), one icon to a third of the output;
+#                            # dragging an unlocked side bar's edge sets it,
+#                            # and dragging its empty space to an edge sets
+#                            # position. A side bar puts the buttons that
+#                            # don't fit behind a » button
 # buttons = "combine"        # combine: one icon-only button per app;
 #                            # when_full: one labelled button per window, an
 #                            # app's windows grouped once the row is full;
@@ -156,7 +163,8 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # badges = true              # a program's unread count (LauncherEntry count)
 #                            # shows in a badge on its task buttons, 99+ above 99
 # network_meter = false      # download and upload speed on two lines between
-#                            # the tray icons and the clock, once a second
+#                            # the tray icons and the clock, once a second, in
+#                            # thousands of bytes (2.4 MB/s)
 # calendar_events = true     # the clock's calendar lists the picked day's
 #                            # events (today's at first) from
 #                            # evolution-data-server; a click on one opens
@@ -328,18 +336,26 @@ suspend_after = 0            # run [power] standby
 # jxl_effort = 7             # 1 (fastest) to 9 (smallest file); 8 and 9 take many seconds a shot, and shots save one at a time
 # record_sound = false       # screen recordings (Videos/Screencasts) also carry what plays
 
-# [recording]                # how screen recordings are coded, read as each one starts (Settings > Screen Capture)
-# codec = "h264"             # "h264", "h265" or "av1"; with no encoder for it here, recording fails
-# encoder = "auto"           # "auto", "vaapi", "nvenc", "vulkan" or "software"
-# rate = "quality"           # "quality", "average" (bitrate) or "constant" (bitrate, a frame each slot)
-# quality = 55               # 1 to 100, for "quality"; 55 is x264's CRF 23
+# [recording]                # how screen recordings are coded, read as each one starts (Settings > Screen Capture);
+#                            # an invalid key takes its default and the journal names it. Recordings are MP4 files
+# codec = "h264"             # "h264", "h265" (tagged hvc1, which QuickTime and Safari play) or "av1"; with no
+#                            # encoder for it here, the recording fails with a notice; no other codec stands in
+# encoder = "auto"           # "auto", "vaapi", "nvenc", "vulkan" or "software" (x264, x265 or SVT-AV1)
+# rate = "quality"           # "quality": a constant quality; "average": bitrate on average, peaks up to twice it
+#                            # (SVT-AV1 caps none); "constant": bitrate each second, a frame each slot, a still
+#                            # screen padded to it by x264, x265 and NVENC (SVT-AV1, VA-API and Vulkan can stay
+#                            # under it). Quality and average add a picture only when the screen changes
+# quality = 55               # 1 to 100, for "quality"; 55 is x264's CRF 23 and the hardware encoders' QP 24,
+#                            # H.265 and AV1 on their own scales
 # bitrate = 8000             # kbit/s, 500 to 100000, for "average" and "constant"
-# frame_rate = 0             # most frames a second, 1 to 240; 0 is the screen's refresh rate (at most 60 for constant)
+# frame_rate = 0             # most frames a second, 1 to 240, one in each slot of a grid at that rate; 0 is the
+#                            # screen's refresh rate (60 when it can't be read, at most 60 for constant)
 # keyframe_interval = 4      # seconds after a keyframe that the next picture is one, 1 to 60
-# audio_codec = "aac"        # "aac", "opus" or "flac", for record_sound
+# audio_codec = "aac"        # "aac", "opus" or "flac", for [screenshot] record_sound; with no encoder for it
+#                            # here, the recording fails before the screen is shared
 # audio_bitrate = 160        # kbit/s, 32 to 512, for AAC and Opus
-# audio_vbr = true           # Opus at a variable bitrate; false holds the bitrate
-# flac_compression = 5       # 0 (fastest) to 12 (smallest), for FLAC
+# audio_vbr = true           # Opus at a variable bitrate; false holds the bitrate, as AAC always does
+# flac_compression = 5       # 0 (fastest) to 12 (smallest), for FLAC; the sound is the same at every level
 
 # [previews]                 # live pictures of windows, redrawn while they change
 # taskbar = true             # pointing at a task button shows its windows; false keeps the text tip
@@ -443,9 +459,10 @@ suspend_after = 0            # run [power] standby
 # [remote_desktop]           # the Remote Desktop server; Settings > Remote Desktop
 #                            # also sets these and turns it on
 # port = 3389                # the TCP port it listens on, on every interface; a change
-#                            # moves it at once and ends every connected session. Unused
+#                            # moves it at once and ends every connected session; a port
+#                            # that can't be bound is tried again on the next save. Unused
 #                            # under reprise-login, whose /etc/reprise/login.toml sets it
-# quality = "balanced"       # "speed", "balanced" or "sharp": sharper text costs bandwidth;
+# quality = "balanced"       # "speed", "balanced" or "sharp": H.264 quantizer 30, 25 or 21;
 #                            # "balanced" and "sharp" send full colour to a client that takes it
 # frame_rate = 60            # 30, 60, 120 or 144 frames a second at most, and never more
 #                            # than the screen's refresh rate
@@ -458,7 +475,8 @@ suspend_after = 0            # run [power] standby
 # lock_grace_s = 5           # 0 to 60: when the last one left because its screen went (a KVM
 #                            # switch), seconds to wait for it to reconnect before locking
 # capture_border = false     # true draws [privacy] capture_border's red border around the
-#                            # screen while a computer is connected too
+#                            # screen while a computer is connected too; the Sharing icon
+#                            # shows either way
 # laptop_screen = "lock"     # "lock": while a computer is connected, this screen shows the
 #                            # lock and the viewer gets screens sized to its window; "show"
 #                            # keeps the session on this screen too, as does a [power] locker
@@ -557,7 +575,9 @@ suspend_after = 0            # run [power] standby
 #                            # menu_fade_ms
 # session_fade = true       # the screen fades in from black at log on and out to
 #                            # black at Log Off, Turn Off and Restart; on under
-#                            # every interface
+#                            # every interface. The fade in waits a second after
+#                            # the display's mode is set, so a monitor syncing to
+#                            # it shows the whole fade
 # session_fade_in_ms = 600   # 0 to 2000; 0 shows the desktop at once
 # session_fade_out_ms = 400  # 0 to 2000; 0 ends at once
 # logon_animation = true     # the lock screen's transitions, its fade at unlock and Glass's
