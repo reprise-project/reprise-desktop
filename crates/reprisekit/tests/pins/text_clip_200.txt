@@ -124,13 +124,6 @@ blue-variants.png "folder to" x20
 blue-variants.png "new folder" x20
 blue-variants.png "the Web" x20
 file-dialog.png "Files of type:" x1
-filepreview.png "# Space shows a file;" x3
-filepreview.png "[appearance]" x3
-filepreview.png "interface = \"glass\"" x3
-fonts@1.png "1234567890.:,;(\"*!?')" x8
-fonts@1.png "ABCDEFGHIJKLMNOPQRSTUVWXYZ" x8
-fonts@1.png "The quick brown fox jumps over the lazy dog. 1234567890" x40
-fonts@1.png "abcdefghijklmnopqrstuvwxyz" x8
 glass-dark.png " Desktop" x1
 glass-dark.png "(None)" x6
 glass-dark.png "0 KB" x2

@@ -895,6 +895,18 @@ impl Default for Metrics {
 }
 
 impl Metrics {
+    /// The defaults with `font` at `px`, each line as tall as the font's line.
+    pub fn for_font(font: &TextRenderer, px: u32) -> Metrics {
+        let line_h = font
+            .line(Rect::default(), false, px)
+            .map_or(px as i32, |(_, h)| h);
+        Metrics {
+            font_px: px,
+            line_h: line_h.max(px as i32),
+            ..Metrics::default()
+        }
+    }
+
     /// Take the look's scrollbar thickness and shortest thumb from `cm`.
     pub fn follow_look(&mut self, cm: &crate::controls::metrics::ControlMetrics) {
         self.bar = cm.scroll;

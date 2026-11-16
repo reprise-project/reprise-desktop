@@ -26,6 +26,8 @@ const SIZE_COL: i32 = 28;
 const ROW_GAP: i32 = 4;
 /// The widest a sample asks to be, at 100%.
 const MAX_W: i32 = 640;
+/// How far past its line box, above and below, a sample line's ink may reach.
+const INK_OVER: i32 = 2;
 
 /// A row's top and height.
 type Row = (i32, i32);
@@ -109,27 +111,22 @@ pub fn draw_rows(
         sizes,
     } = rows(sample, r.y, s);
     let x = r.x + PAD * s;
-    let wide = |y: i32, h: i32, x: i32| Rect::new(x, y, (r.right() - x).max(0), h);
-    for (t, (y, h)) in CHARSET.iter().zip(charset) {
-        sample.draw_clipped(
-            c,
-            wide(y, h, x),
-            r,
-            t,
-            false,
-            ink,
-            Align::Left,
-            CHARSET_PX * s as u32,
-        );
+    // A sample line inks past its line box and off the well's right edge; only the well clips it.
+    let line = |c: &mut Canvas, x: i32, (y, h): Row, t: &str, px: u32| {
+        let w = sample.measure(t, false, px);
+        let rect = Rect::new(x, y - INK_OVER * s, w, h + 2 * INK_OVER * s);
+        sample.draw_clipped(c, rect, r, t, false, ink, Align::Left, px);
+    };
+    for (t, row) in CHARSET.iter().zip(charset) {
+        line(c, x, row, t, CHARSET_PX * s as u32);
     }
     c.fill_rect(
         Rect::new(x, rule_y, (r.width - 2 * PAD * s).max(0), s).intersect(&r),
         rule,
     );
     for (&px, (y, h)) in SIZES.iter().zip(sizes) {
-        let row = wide(y, h, x + SIZE_COL * s);
         let px = px * s as u32;
-        if let Some(base) = sample.baseline(row, false, px) {
+        if let Some(base) = sample.baseline(Rect::new(x, y, 0, h), false, px) {
             ui.draw_run(
                 c,
                 x,
@@ -141,7 +138,7 @@ pub fn draw_rows(
                 ui_px,
             );
         }
-        sample.draw_clipped(c, row, r, PANGRAM, false, ink, Align::Left, px);
+        line(c, x + SIZE_COL * s, (y, h), PANGRAM, px);
     }
 }
 

@@ -231,14 +231,14 @@ impl Explorer {
         let (mono, metrics) = match self.preview.take() {
             Some(p) => (p.mono, p.metrics),
             None => {
+                let px = ctx.theme.text.px(MONO_PX);
+                let mono = TextRenderer::monospace(px);
                 let mut m = Metrics {
-                    font_px: MONO_PX,
-                    line_h: MONO_PX as i32,
                     bars_always: false,
-                    ..Metrics::default()
+                    ..Metrics::for_font(&mono, px)
                 };
                 m.follow_look(&ctx.theme.controls());
-                (TextRenderer::monospace(MONO_PX), m)
+                (mono, m)
             }
         };
         let mut p = Preview {
