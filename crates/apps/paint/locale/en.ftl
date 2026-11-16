@@ -126,7 +126,7 @@ title-open = Open
 title-save-as = Save As
 open-button = &Open
 save-button = &Save
-filter-pictures = All Picture Files (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp)
+filter-pictures = All Picture Files (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.jxl)
 filter-png = PNG (*.png)
 filter-jpeg = JPEG (*.jpg;*.jpeg)
 filter-bmp = Bitmap (*.bmp)
@@ -147,6 +147,8 @@ save-failed = Paint cannot save { $path }.
 background-failed = Paint cannot set the desktop background.
     { $error }
 paste-failed = The clipboard holds no picture Paint can read.
+unreadable = This is not a picture Paint reads.
+picture-too-large = This picture is too large to open.
 bad-size = Please enter a whole number from 1 to { $max }.
 too-large = The picture would be more than { $max } pixels wide or high.
 draw-failed = Paint could not draw this window. { $error }

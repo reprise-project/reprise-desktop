@@ -1,8 +1,10 @@
-//! Reading and writing pictures. The file type follows the name's extension; anything the image
-//! decoders read opens, and PNG, JPEG and BMP save.
+//! Reading and writing pictures. Anything `repriseapp::decode` reads opens; PNG, JPEG and BMP
+//! save, the type following the name's extension.
 
 use crate::bitmap::Bitmap;
 use image::ImageEncoder;
+use repriseapp::decode::{Budget, Decoders, Unread};
+use reprisekit::tr;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,18 +36,24 @@ impl Kind {
     }
 }
 
+/// `bytes` as a picture, turned upright by its Exif orientation, transparent pixels on white.
 pub fn decode(bytes: &[u8]) -> Result<Bitmap, String> {
-    let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
-    let rgba = img.to_rgba8();
-    Ok(Bitmap::from_rgba(
-        rgba.width(),
-        rgba.height(),
-        rgba.as_raw(),
-    ))
+    let d = Decoders::default_set()
+        .decode(bytes, (u32::MAX, u32::MAX), Budget::viewer())
+        .map_err(|e| match e {
+            Unread::TooLarge => tr!("picture-too-large"),
+            Unread::Unreadable => tr!("unreadable"),
+        })?;
+    Ok(Bitmap::from_canvas(&d.canvas))
 }
 
+/// The picture in the regular file `path`; a FIFO or device is refused, never opened to read.
 pub fn load(path: &Path) -> Result<Bitmap, String> {
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let cap = Budget::viewer().file;
+    let bytes = reprisefs::ops::read_regular(path, cap).map_err(|e| match e.kind() {
+        std::io::ErrorKind::FileTooLarge => tr!("picture-too-large"),
+        _ => e.to_string(),
+    })?;
     decode(&bytes)
 }
 
@@ -152,6 +160,52 @@ mod tests {
         let path = dir.path().join("pic.png");
         save(&sample(), &path, Kind::Png, DEFAULT_QUALITY).unwrap();
         assert_eq!(mode(&path), mode(&probe));
+    }
+
+    /// An 8x4 JPEG, left half red and right half blue, tagged Exif orientation 6: shown turned a
+    /// quarter clockwise, 4x8 with red on top.
+    #[test]
+    fn a_jpeg_tagged_to_turn_opens_upright() {
+        let img = image::RgbImage::from_fn(8, 4, |x, _| {
+            image::Rgb(if x < 4 { [255, 0, 0] } else { [0, 0, 255] })
+        });
+        // A big-endian TIFF header and one IFD entry: Orientation (0x0112), SHORT, count 1, value 6.
+        let exif = [
+            b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0,
+            0,
+        ];
+        let mut bytes = Vec::new();
+        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 100);
+        enc.set_exif_metadata(exif.to_vec()).unwrap();
+        enc.write_image(img.as_raw(), 8, 4, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let b = decode(&bytes).unwrap();
+        assert_eq!((b.w, b.h), (4, 8));
+        let [_, r, _, bl] = b.get(1, 1).unwrap().to_be_bytes();
+        assert!(r > 200 && bl < 60, "top is red");
+        let [_, r, _, bl] = b.get(1, 6).unwrap().to_be_bytes();
+        assert!(r < 60 && bl > 200, "bottom is blue");
+    }
+
+    /// A lossless 3x2 JPEG XL of 0xC81E1E.
+    const JXL: [u8; 26] = [
+        0xff, 0x0a, 0x08, 0x40, 0x10, 0x09, 0x08, 0x00, 0x01, 0x00, 0x38, 0x00, 0x4b, 0x18, 0x8b,
+        0x15, 0xc2, 0x49, 0x82, 0xe5, 0x01, 0xc4, 0x38, 0x00, 0xa6, 0x02,
+    ];
+
+    #[test]
+    fn a_picture_past_the_viewer_budget_is_too_large_and_junk_is_unreadable() {
+        let huge =
+            b"P7\nWIDTH 65535\nHEIGHT 65535\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n";
+        assert_eq!(decode(huge).err(), Some(tr!("picture-too-large")));
+        assert_eq!(decode(b"not a picture").err(), Some(tr!("unreadable")));
+    }
+
+    #[test]
+    fn a_jpeg_xl_opens() {
+        let b = decode(&JXL).unwrap();
+        assert_eq!((b.w, b.h), (3, 2));
+        assert!(b.px.iter().all(|&c| c == 0xFFC8_1E1E), "{:08x?}", b.px);
     }
 
     #[test]
