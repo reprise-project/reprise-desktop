@@ -176,8 +176,9 @@ password.
   program plays to it, also one sent to another output. When the last client
   leaves, the default before comes back unless you picked another meanwhile,
   and each program plays where it did before, or where you sent it
-  meanwhile; a program that stopped playing while connected follows the
-  default until you pick its output again. Both also come back when the
+  meanwhile; a program that stopped playing while connected goes back
+  there with its next sound while the server runs, its first few
+  hundredths of a second on the default. Both also come back when the
   server stops or, after a crash, when it next starts. A change while
   connected applies at once. Sound goes as Opus when the client takes it,
   else as 16-bit PCM at 44.1 kHz. The client's own
