@@ -103,6 +103,8 @@ struct Lines {
     name: i32,
     line: i32,
     field: i32,
+    /// The wordmark's row; the logo beside it keeps its size.
+    mark: i32,
 }
 
 fn lines(u: TextUnits) -> Lines {
@@ -110,6 +112,7 @@ fn lines(u: TextUnits) -> Lines {
         name: u.len(NAME_LINE),
         line: u.len(LINE),
         field: u.len(FIELD_H),
+        mark: u.len(LOGO),
     }
 }
 
@@ -710,17 +713,18 @@ fn draw_mark(c: &mut Canvas, m: &Logon, f: &Frame, k: Lines, pen: &Pen, whole: b
     let s = pen.s;
     let right = f.split - SIDE_GAP;
     let begin = begin_line(f, k);
-    let top = begin.y - LOGO - BEGIN_GAP;
+    let top = begin.y - k.mark - BEGIN_GAP;
     let spec = title_text();
     let t = pen.title.for_output(s);
     let size = spec.size_in(t) * MARK_SIZE.0 / MARK_SIZE.1;
     let mark_px = pen.u.px(size) * s as u32;
     let word_w = t.measure(MARK, spec.bold, mark_px);
-    let word = pen.at(Rect::new(right, top, 0, LOGO));
+    let word = pen.at(Rect::new(right, top, 0, k.mark));
     let word = Rect::new(word.x - word_w, word.y, word_w, word.height);
     pen.put(t, c, word, MARK, spec.bold, mark_px, Align::Left);
     let logo_x = word.x - (LOGO_GAP + LOGO) * s;
-    logo::draw_any(c, logo_x, word.y, LOGO * s, pen.ink);
+    let logo_y = word.y + (word.height - LOGO * s) / 2;
+    logo::draw_any(c, logo_x, logo_y, LOGO * s, pen.ink);
     if !whole || m.screen == Screen::Typed {
         return;
     }
@@ -742,9 +746,9 @@ fn draw_mark(c: &mut Canvas, m: &Logon, f: &Frame, k: Lines, pen: &Pen, whole: b
 /// The "To begin" line under the logo and wordmark.
 fn begin_line(f: &Frame, k: Lines) -> Rect {
     let (left, right) = (f.middle.x + SIDE_GAP, f.split - SIDE_GAP);
-    let block = LOGO + BEGIN_GAP + k.line;
+    let block = k.mark + BEGIN_GAP + k.line;
     let top = f.middle.y + (f.middle.height - block) / 2;
-    Rect::new(left, top + LOGO + BEGIN_GAP, right - left, k.line)
+    Rect::new(left, top + k.mark + BEGIN_GAP, right - left, k.line)
 }
 
 /// Where the tiles' message goes, under "To begin".
@@ -917,8 +921,9 @@ fn draw_password_row(
     if let (Some(short), Some(b)) = (&m.layout, l.rect(Part::Layout)) {
         let at = pen.at(b);
         c.blit_over(at.x, at.y, &badge_box(sc.welcome_band, s));
+        let px = pen.u.base_px(pen.px);
         pen.text
-            .draw(c, at, short, false, pen.ink, Align::Center, pen.px);
+            .draw(c, at, short, false, pen.ink, Align::Center, px);
     }
     let (r, room) = said_under(m, l, field, k);
     let mut lines = Vec::new();

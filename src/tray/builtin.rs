@@ -80,7 +80,7 @@ pub fn icon(state: &mut State, b: Builtin, px: i32) -> Option<Canvas> {
         }
         Builtin::Layout => {
             let theme = &state.config.theme;
-            let size = theme.fonts.size_px * (px / 16).max(1) as u32;
+            let size = theme.text.base_px(theme.fonts.size_px) * (px / 16).max(1) as u32;
             let layouts = &state.key_input.layouts;
             let short = layouts.active().map_or("", |d| d.short.as_str());
             Some(indicator::draw_layout(

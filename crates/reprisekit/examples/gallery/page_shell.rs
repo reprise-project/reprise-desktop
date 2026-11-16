@@ -918,7 +918,8 @@ pub fn page_desk(
         c.blit_canvas(402 + 22 * i as i32, 5932, &bell);
     }
     for (i, label) in ["EN", "HU"].into_iter().enumerate() {
-        let sq = indicator::draw_layout(text, cs, label, 16, theme.fonts.size_px);
+        let px = theme.text.base_px(theme.fonts.size_px);
+        let sq = indicator::draw_layout(text, cs, label, 16, px);
         c.blit_canvas(492 + 22 * i as i32, 5932, &sq);
     }
     c.fill_rect(Rect::new(540, 5930, 70, 20), cs.button_face);

@@ -304,11 +304,6 @@ grid-drag.png "My Pictures" x2
 grid-drag.png "hills.jpg" x1
 label-ellipsis.png "HP LaserJet 4250" x2
 label-ellipsis.png "PostScript Printer" x2
-logon-motion@1.png "Reprise" x50
-logon-motion@1.png "Verifying..." x11
-logon@1.png "EN" x4
-logon@1.png "Reprise" x24
-logon@1.png "Verifying..." x1
 overview.png "My Documents" x3
 overview.png "Untitled - Notepad" x3
 path-complete.png "~/Do" x3
@@ -368,7 +363,6 @@ reprisekit-gallery.png "Default" x1
 reprisekit-gallery.png "Desktop" x5
 reprisekit-gallery.png "Disabled" x9
 reprisekit-gallery.png "Documents" x4
-reprisekit-gallery.png "EN" x1
 reprisekit-gallery.png "Field" x1
 reprisekit-gallery.png "File Folder" x4
 reprisekit-gallery.png "File and Folder Tasks" x1
@@ -378,7 +372,6 @@ reprisekit-gallery.png "Focused" x1
 reprisekit-gallery.png "Game controller" x1
 reprisekit-gallery.png "Group Box" x1
 reprisekit-gallery.png "Group" x1
-reprisekit-gallery.png "HU" x1
 reprisekit-gallery.png "Headphones" x1
 reprisekit-gallery.png "Help" x1
 reprisekit-gallery.png "Hot" x1
