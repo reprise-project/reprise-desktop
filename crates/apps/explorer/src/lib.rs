@@ -420,13 +420,15 @@ impl Explorer {
     fn new(start: Place, ctx: &mut Ctx) -> Explorer {
         let settings = Settings::load();
         let udisks = reprisefs::udisks::Udisks::system();
-        let mut ex = Explorer::with_settings(start, settings, AppIndex::default(), udisks, ctx);
+        let mut ex = Explorer::unopened(start.clone(), settings, AppIndex::default(), udisks, ctx);
         ex.follow_volumes(ctx.wake.clone());
         ex.follow_shares(ctx.wake.clone());
+        ex.first_show(start, ctx);
         ex
     }
 
     /// The window on `settings`, `app_index` and `udisks` as given, for tests that read nothing of the developer's own.
+    #[cfg(test)]
     fn with_settings(
         start: Place,
         settings: Settings,
@@ -927,9 +929,7 @@ impl Explorer {
     pub fn show(&mut self, place: Place, ctx: &mut Ctx) -> Reply {
         self.search.cancel();
         self.search_job = None;
-        if !self.sync_drives(ctx) && place == Place::Computer {
-            self.sync_volumes();
-        }
+        self.sync_drives(ctx);
         let key = (place, self.settings.show_hidden, ctx.icons.scale());
         if let Some(r) = self.reading.take_if(|r| r.key != key) {
             self.leave(r);
@@ -1239,7 +1239,7 @@ impl Explorer {
         self.sv.fields == shellview::details_fields()
     }
 
-    /// Rescan the drives and UDisks2 volumes when `/proc/mounts` changed: the
+    /// Rescan the drives when `/proc/mounts` changed: the
     /// tree and address drop follow the mounts. Returns whether it rescanned. The scan stats every
     /// mount on a listing thread; one that does not answer (a dead mount) lands through
     /// [`Explorer::take_drives`].
@@ -1275,7 +1275,7 @@ impl Explorer {
         self.drives = drives;
         self.drive_mounts = place::drive_mounts(&self.drives, &self.shares.shares);
         self.mounts_seen = mounts;
-        self.sync_volumes();
+        self.mark_volumes();
         if self.drive_mounts != before {
             self.refill_tree_node(&Place::Computer, ctx);
         }
@@ -1291,21 +1291,6 @@ impl Explorer {
             return Some(self.refresh(ctx));
         }
         Some(Reply::redraw())
-    }
-
-    /// Read UDisks2 again and mark the mounted drives it calls removable:
-    /// `/proc/mounts` alone takes an unlocked stick's cleartext volume for a fixed disk, and leaves
-    /// mounted disk images out.
-    fn sync_volumes(&mut self) {
-        if let Some(u) = &self.udisks {
-            self.volumes = u.snapshot();
-        }
-        for d in &mut self.drives {
-            if self.volumes.removable_device(&d.device) {
-                d.removable = true;
-            }
-        }
-        self.merge_image_drives();
     }
 
     pub(crate) fn selected_dir(&self) -> Option<Place> {

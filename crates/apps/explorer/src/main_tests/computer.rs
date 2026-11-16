@@ -176,6 +176,106 @@ fn computer_gains_and_loses_a_locked_stick_as_udisks_reports_it() {
 }
 
 #[test]
+fn a_udisks_snapshot_that_lands_after_the_drive_scan_marks_its_mounted_stick_removable() {
+    use reprisefs::udisks::{Disk, Snapshot, Volume};
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.drives = vec![reprisefs::places::Drive {
+        mount: "/run/media/u/STICK".into(),
+        device: "/dev/sdz1".into(),
+        fs: "vfat".into(),
+        label: Some("STICK".into()),
+        removable: false,
+        optical: false,
+        total: 1000,
+        free: 500,
+    }];
+    let snap = Snapshot {
+        disks: vec![Disk {
+            path: "/drives/stick".into(),
+            removable: true,
+            ..Default::default()
+        }],
+        volumes: vec![Volume {
+            path: "/block/sdz1".into(),
+            device: "/dev/sdz1".into(),
+            disk: Some("/drives/stick".into()),
+            mounts: vec!["/run/media/u/STICK".into()],
+            ..Default::default()
+        }],
+    };
+
+    ex.volumes_changed(snap, &mut ctx);
+    assert!(ex.drives[0].removable, "/dev/sdz1 is marked removable");
+}
+
+/// A UDisks2 that never answers GetManagedObjects: Computer still lists at once, since the
+/// window reads UDisks2 only through `follow_volumes`' thread.
+#[test]
+fn computer_lists_while_udisks_does_not_answer() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+
+    struct Silent;
+    #[zbus::interface(name = "org.freedesktop.DBus.ObjectManager")]
+    impl Silent {
+        async fn get_managed_objects(&self) -> u32 {
+            std::future::pending().await
+        }
+    }
+
+    let Ok(mut daemon) = Command::new("dbus-daemon")
+        .args(["--session", "--nofork", "--print-address"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        eprintln!("no dbus-daemon; skipped");
+        return;
+    };
+    let mut address = String::new();
+    BufReader::new(daemon.stdout.take().expect("stdout"))
+        .read_line(&mut address)
+        .expect("the bus address");
+    let address = address.trim();
+    let (_service, client) = zbus::block_on(async {
+        let service = zbus::connection::Builder::address(address)
+            .name("org.freedesktop.UDisks2")
+            .serve_at("/org/freedesktop/UDisks2", Silent)
+            .build()
+            .await
+            .expect("the service");
+        let client = zbus::connection::Builder::address(address)
+            .method_timeout(std::time::Duration::from_secs(2))
+            .build()
+            .await
+            .expect("the client");
+        (service, client)
+    });
+    let udisks = reprisefs::udisks::Udisks::on(client);
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let start = std::time::Instant::now();
+    let mut ex = Explorer::with_settings(
+        Place::Folder(dir.path().to_path_buf()),
+        Settings::default(),
+        Vec::new().into(),
+        Some(udisks),
+        &mut ctx,
+    );
+    ex.mounts_seen.clear();
+    ex.go(Place::Computer, &mut ctx);
+    let took = start.elapsed();
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    assert!(
+        took < std::time::Duration::from_secs(1),
+        "Computer lists within a second, took {took:?}"
+    );
+}
+
+#[test]
 fn computer_and_the_folders_tree_gain_and_lose_a_mounted_disk_image() {
     use reprisefs::udisks::{Image, Snapshot, Volume};
     let mut ctx = test_ctx();

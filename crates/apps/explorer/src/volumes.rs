@@ -45,7 +45,7 @@ impl Explorer {
         };
         let moved = mounts(&snap) != mounts(&self.volumes);
         self.volumes = snap;
-        if self.merge_image_drives() {
+        if self.mark_volumes() {
             self.refill_tree_node(&Place::Computer, ctx);
         }
         if self.place == Place::Computer || (moved && self.place == Place::RecycleBin) {
@@ -162,9 +162,15 @@ impl Explorer {
         }
     }
 
-    /// The mounted disk image volumes as drives beside what `/proc/mounts` gave, which leaves
-    /// out every loop device; whether the drives changed.
-    pub(crate) fn merge_image_drives(&mut self) -> bool {
+    /// Marks the mounted drives the last UDisks2 snapshot calls removable and adds its disk
+    /// images: `/proc/mounts` alone takes an unlocked stick's cleartext volume for a fixed disk,
+    /// and leaves out every loop device. Returns whether the drives' mounts changed.
+    pub(crate) fn mark_volumes(&mut self) -> bool {
+        for d in &mut self.drives {
+            if self.volumes.removable_device(&d.device) {
+                d.removable = true;
+            }
+        }
         let images = self.volumes.image_drives();
         let was = std::mem::take(&mut self.drive_mounts);
         self.drives.retain(|d| !d.device.starts_with("/dev/loop"));

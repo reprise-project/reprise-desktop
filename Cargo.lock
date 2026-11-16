@@ -4493,6 +4493,7 @@ dependencies = [
  "serde",
  "tempfile",
  "toml",
+ "zbus 6.2.1",
 ]
 
 [[package]]
