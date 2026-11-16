@@ -40,7 +40,9 @@ mod tree;
 mod volumes;
 mod window;
 
-use dialogs::{DIALOG, Dialog, PROGRAM_BROWSE};
+#[cfg(test)]
+use dialogs::DIALOG;
+use dialogs::{Dialog, PROGRAM_BROWSE, is_dialog};
 use menus::MenuState;
 use place::{Listed, Place, list, sort_order_grouped};
 use props_dialog::{PROPS, Props};
@@ -273,6 +275,11 @@ pub struct Explorer {
     /// The handler running took the box up to answer it, and nothing has taken its place yet
     /// ([`Explorer::take_up`]).
     answered: bool,
+    /// The window of the last box taken while `answered`, which a different box raised in its
+    /// place does not reuse.
+    answered_in: Option<WinId>,
+    /// Swaps the box windows [`repriseapp::asks::Queue::turn`] picks ([`Explorer::dialog_win`]).
+    flip: bool,
     /// The Properties sheet, in its own modeless window: it and a box can be up at once.
     pub props: Option<Props>,
     /// Recycle Bin Properties, in its own modeless window.
@@ -555,6 +562,8 @@ impl Explorer {
             send: sendreads::SendReads::default(),
             dialogs: Default::default(),
             answered: false,
+            answered_in: None,
+            flip: false,
             props: None,
             bin_props: None,
             props_due: None,
@@ -1659,7 +1668,11 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
     if win != MAIN {
         ex.alt_arm.interrupt();
     }
-    if win == DIALOG {
+    if is_dialog(win) {
+        // An event for a box that closed, such as a held Enter's repeat, is not the next box's.
+        if win != ex.dialog_win() {
+            return Reply::none();
+        }
         return ex.dialog_event(ev, ctx);
     }
     if win == PROGRAM_BROWSE {
@@ -1849,7 +1862,7 @@ impl App for Lazy {
             return;
         };
         ex.follow_forms(ctx);
-        if win == DIALOG {
+        if is_dialog(win) {
             ex.draw_dialog(c, ctx);
             return;
         }
@@ -1963,7 +1976,7 @@ impl repriseapp::Extended for Lazy {
     fn reader(&mut self, win: WinId, act: repriseapp::Reader, ctx: &Ctx) -> bool {
         match (win, &mut self.inner) {
             (MAIN, Some(ex)) => window::reader(ex, act, ctx),
-            (DIALOG, Some(ex)) => ex.chooser_reader(act),
+            (w, Some(ex)) if is_dialog(w) => ex.chooser_reader(act),
             _ => repriseapp::reader_forms(self, win, act, ctx),
         }
     }
@@ -2005,7 +2018,7 @@ impl repriseapp::Extended for Lazy {
         };
         ex.follow_forms(ctx);
         match win {
-            DIALOG => ex.access_dialog(tree, ctx),
+            w if is_dialog(w) => ex.access_dialog(tree, ctx),
             copydlg::COPY | copydlg::REMOVE | copydlg::EXTRACT => ex.access_progress(win, tree),
             PROGRAM_BROWSE => ex.access_program_browse(tree),
             browse::ERROR => ex.access_browse_error(tree),

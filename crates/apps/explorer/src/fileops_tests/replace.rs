@@ -1,7 +1,7 @@
 use super::*;
 
 /// Two files and a folder pasted into `dest` where all three names are taken: the replace prompt comes up before anything is written.
-fn paste_onto_taken_names(
+pub(super) fn paste_onto_taken_names(
     ctx: &mut repriseapp::Ctx,
 ) -> (tempfile::TempDir, std::path::PathBuf, Explorer) {
     let t = tempfile::tempdir().expect("a temp dir");
@@ -619,7 +619,7 @@ fn a_box_or_a_second_prompt_waits_for_the_prompt_up() {
         "the second batch asks next"
     );
     assert!(matches!(ex.dialog(), Some(Dialog::Replace(r)) if !r.fields.many));
-    ex.event(crate::DIALOG, key_event_alt('y'), &mut ctx);
+    ex.event(ex.dialog_win(), key_event_alt('y'), &mut ctx);
     match ex.dialog() {
         Some(Dialog::Message { text, .. }) => assert_eq!(text, "Cannot copy x"),
         _ => panic!("the waiting box comes last"),

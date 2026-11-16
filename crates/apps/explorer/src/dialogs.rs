@@ -1,4 +1,4 @@
-//! Explorer's modal dialogs in one child window: the error box, the delete and replace confirmations, the Open With chooser, the Properties sheet's Advanced Attributes, Confirm Attribute Changes and Change Icon, the Move and Copy folder picker (`browse`), Unlock Drive, and Connect to Server with its password and question boxes.
+//! Explorer's modal dialogs in a child window: the error box, the delete and replace confirmations, the Open With chooser, the Properties sheet's Advanced Attributes, Confirm Attribute Changes and Change Icon, the Move and Copy folder picker (`browse`), Unlock Drive, and Connect to Server with its password and question boxes.
 //!
 //! One child at a time: a box raised while another is up waits for it ([`Explorer::raise`]). Two stack instead: the chooser's Browse... opens the program picker (`PROGRAM_BROWSE`) over it, and a refused name in the Move/Copy picker raises its error box (`browse::ERROR`). The error and confirm boxes keep only their text and focused button, so their [`Form`] is rebuilt per event; the chooser keeps an `openwith` control that takes its own events ([`crate::openwith`]).
 
@@ -23,6 +23,14 @@ use std::path::PathBuf;
 
 /// The dialog's own window; each is modal and one at a time.
 pub const DIALOG: WinId = WinId::named("dialog");
+
+/// The box window's twin: a box that comes up after another takes the one the last is not in
+/// ([`Explorer::dialog_win`]).
+pub const NEXT_DIALOG: WinId = DIALOG.named_in("next");
+
+pub(crate) fn is_dialog(win: WinId) -> bool {
+    win == DIALOG || win == NEXT_DIALOG
+}
 
 pub const PROGRAM_BROWSE: WinId = WinId::named("program browse");
 
@@ -363,6 +371,10 @@ impl Explorer {
         let up = self.dialogs.is_empty() || self.answered;
         if std::mem::take(&mut self.answered) {
             self.dialogs.restore(d);
+            // `restore` gives back the window of the box taken; this one is another box.
+            if self.answered_in == Some(self.dialog_win()) {
+                self.flip = !self.flip;
+            }
         } else if d.held() {
             self.dialogs.raise_held(d);
         } else {
@@ -375,6 +387,22 @@ impl Explorer {
         }
     }
 
+    /// Puts back the box [`Explorer::take_up`] took to handle an event that leaves it up, in the
+    /// window it had.
+    pub(crate) fn put_back(&mut self, d: Dialog) {
+        if std::mem::take(&mut self.answered) {
+            self.dialogs.restore(d);
+        } else {
+            self.raise(d);
+        }
+    }
+
+    /// The window the box up shows in. The two windows take turns, so the compositor maps a box
+    /// that comes up after another afresh instead of retitling the last one's window.
+    pub(crate) fn dialog_win(&self) -> WinId {
+        [DIALOG, NEXT_DIALOG][self.dialogs.turn() ^ usize::from(self.flip)]
+    }
+
     /// The box up, unless the front of the queue is a paste's work, which shows nothing.
     pub(crate) fn dialog(&self) -> Option<&Dialog> {
         self.dialogs.up().filter(|d| d.shows())
@@ -382,11 +410,10 @@ impl Explorer {
 
     /// Takes the box up to answer it. Until the handler that took it returns
     /// ([`Explorer::answer_ends`]), the next box raised goes up in its place, ahead of those
-    /// waiting: the answer's own box, or the answered box put back.
+    /// waiting, in the other window: the answer's own box. A box that stays up goes back in its
+    /// own window ([`Explorer::put_back`]).
     pub(crate) fn take_up(&mut self) -> Option<Dialog> {
-        let d = self.dialogs.close();
-        self.answered |= d.is_some();
-        d
+        self.take_up_if(|_| true)
     }
 
     /// The handler that took a box returned: a box raised from here on waits its turn. A box's
@@ -394,13 +421,17 @@ impl Explorer {
     /// that can take a box ends its answer itself.
     pub(crate) fn answer_ends(&mut self) {
         self.answered = false;
+        self.answered_in = None;
     }
 
     /// The window `win` covers ([`repriseapp::Extended::parent`]).
     pub(crate) fn parent_of(&self, win: WinId) -> WinId {
         match win {
-            crate::browse::ERROR | PROGRAM_BROWSE => DIALOG,
-            DIALOG if self.props.is_some() && self.dialog().is_some_and(Dialog::of_sheet) => {
+            crate::browse::ERROR | PROGRAM_BROWSE => self.dialog_win(),
+            w if is_dialog(w)
+                && self.props.is_some()
+                && self.dialog().is_some_and(Dialog::of_sheet) =>
+            {
                 crate::props_dialog::PROPS
             }
             _ => repriseapp::MAIN,
@@ -430,9 +461,11 @@ impl Explorer {
 
     /// [`Explorer::take_up`] when the box up is one `is` picks.
     pub(crate) fn take_up_if(&mut self, is: impl FnOnce(&Dialog) -> bool) -> Option<Dialog> {
-        let d = self.dialogs.close_if(is);
-        self.answered |= d.is_some();
-        d
+        let win = self.dialog().is_some().then(|| self.dialog_win());
+        let d = self.dialogs.close_if(is)?;
+        self.answered = true;
+        self.answered_in = win.or(self.answered_in);
+        Some(d)
     }
 
     /// Raise a box titled `title` over `text` with the theme's error icon.
@@ -761,7 +794,9 @@ impl Explorer {
 
     pub fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
         match (win, self.dialogs.up()) {
-            (DIALOG, Some(Dialog::Browse(_))) => Some(browsefolder::min(&self.forms.controls())),
+            (w, Some(Dialog::Browse(_))) if is_dialog(w) => {
+                Some(browsefolder::min(&self.forms.controls()))
+            }
             (PROGRAM_BROWSE, Some(Dialog::ChooseProgram(cp))) => {
                 cp.browse.as_ref().map(|b| b.dlg.min_client())
             }
@@ -773,7 +808,7 @@ impl Explorer {
     /// The program Browse is a file dialog and keeps the plain caption, which tags it `file-dialog`.
     pub fn caption(&self, win: WinId) -> Caption {
         match win {
-            DIALOG => match self.dialogs.up() {
+            w if is_dialog(w) => match self.dialogs.up() {
                 Some(
                     Dialog::ChooseProgram(_)
                     | Dialog::Browse(_)
@@ -827,7 +862,7 @@ impl Explorer {
                 },
             };
             out.push(Child {
-                id: DIALOG,
+                id: self.dialog_win(),
                 title: d.title(),
                 size,
                 fixed: !matches!(d, Dialog::Browse(_)),

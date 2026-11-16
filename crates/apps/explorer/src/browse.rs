@@ -338,7 +338,7 @@ impl Explorer {
             }
             browsefolder::Event::NewFolder(p) => {
                 let Some(place) = foldertree::place_of(&b.bf.tree, &b.places, &p) else {
-                    return self.put_back(b, Reply::none());
+                    return self.put_back_picker(b, Reply::none());
                 };
                 let kids = self.kids_reader_in(&b.bf.tree, &b.places, &p, place.clone());
                 let at = place.clone();
@@ -392,14 +392,14 @@ impl Explorer {
                     }
                     Err(job) => {
                         b.making = Some(Making::Rename { from, path: p, job });
-                        return self.put_back(b, Reply::redraw());
+                        return self.put_back_picker(b, Reply::redraw());
                     }
                 }
             }
             browsefolder::Event::Accept(p) => {
                 let dir = foldertree::place_of(&b.bf.tree, &b.places, &p).and_then(|pl| pl.path());
                 let Some(dir) = dir else {
-                    return self.put_back(b, Reply::none());
+                    return self.put_back_picker(b, Reply::none());
                 };
                 let op = if b.mv { DropOp::Move } else { DropOp::Copy };
                 self.put_all(&b.items, &dir, &|_| Some(op), true, ctx);
@@ -411,7 +411,7 @@ impl Explorer {
         };
         // A click opens a row as it picks it without a `Selected`, so every event re-checks the pick.
         self.sync_browse_buttons(&mut b, ctx);
-        self.put_back(b, reply)
+        self.put_back_picker(b, reply)
     }
 
     /// Shows the folder Make New Folder made under `under` in its rename box, or the error.
@@ -423,7 +423,7 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Reply {
         let (made, kids) = match made {
-            None => return self.put_back(b, Reply::none()),
+            None => return self.put_back_picker(b, Reply::none()),
             Some(Ok(made)) => made,
             Some(Err(text)) => return self.message_box("Error Creating Folder", text, ctx),
         };
@@ -463,7 +463,7 @@ impl Explorer {
         }
         self.new_folder_made(under, made, ctx);
         self.sync_browse_buttons(&mut b, ctx);
-        self.put_back(b, Reply::redraw_all())
+        self.put_back_picker(b, Reply::redraw_all())
     }
 
     fn new_folder_made(&mut self, under: &Place, made: PathBuf, ctx: &mut Ctx) {
@@ -597,7 +597,7 @@ impl Explorer {
             return false;
         };
         let filled = self.refill_browse_in(&mut b, place, ctx);
-        self.raise(Dialog::Browse(b));
+        self.put_back(Dialog::Browse(b));
         filled
     }
 
@@ -718,14 +718,14 @@ impl Explorer {
             Some(Making::Rename { from, path, job }) => match job.take() {
                 Some(done) => {
                     self.renamed(&mut b, &from, path, done, ctx);
-                    self.raise(Dialog::Browse(b));
+                    self.put_back(Dialog::Browse(b));
                     return true;
                 }
                 None => b.making = Some(Making::Rename { from, path, job }),
             },
             None => {}
         }
-        self.raise(Dialog::Browse(b));
+        self.put_back(Dialog::Browse(b));
         landed
     }
 
@@ -807,8 +807,8 @@ impl Explorer {
         }
     }
 
-    fn put_back(&mut self, b: Browse, reply: Reply) -> Reply {
-        self.raise(Dialog::Browse(b));
+    fn put_back_picker(&mut self, b: Browse, reply: Reply) -> Reply {
+        self.put_back(Dialog::Browse(b));
         reply
     }
 
@@ -819,7 +819,7 @@ impl Explorer {
         press: Option<PointerInput>,
         ctx: &mut Ctx,
     ) -> Reply {
-        let reply = self.put_back(b, reply);
+        let reply = self.put_back_picker(b, reply);
         let Some(p) = press else {
             return reply;
         };

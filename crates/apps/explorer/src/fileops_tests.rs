@@ -32,6 +32,8 @@ mod recycle_bin;
 mod replace;
 #[path = "fileops_tests/send_to.rs"]
 mod send_to;
+#[path = "fileops_tests/turns.rs"]
+mod turns;
 
 fn key_event_escape() -> repriseapp::Event {
     repriseapp::Event::Key(repriseapp::KeyInput {

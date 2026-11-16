@@ -338,7 +338,7 @@ impl Explorer {
                     return Reply::none();
                 };
                 self.start_connection(addr, &mut b, ctx);
-                self.raise(Dialog::Connect(b));
+                self.put_back(Dialog::Connect(b));
                 Reply::redraw()
             }
             (Some(Dialog::Login(b)), form::Event::Pressed(nc::OK) | form::Event::Default) => {
@@ -477,16 +477,22 @@ impl Explorer {
                 let Some(c) = self.connection.take() else {
                     return Reply::none();
                 };
+                let up = matches!(self.dialogs.up(), Some(Dialog::Connect(_)));
                 let shown = self.take_connection_boxes();
                 match outcome {
                     Err(Failed::Error(e)) => {
                         let mut b = (shown.or(c.connect))
                             .unwrap_or_else(|| ConnectBox::open(&c.addr.uri(), ctx));
                         nc::set_busy(&mut b.form, false, &e);
-                        Reply {
-                            redraw_all: true,
-                            ..self.raise(Dialog::Connect(Box::new(b)))
+                        let b = Dialog::Connect(Box::new(b));
+                        // Up, it stays in its window; in place of the password box or a question it
+                        // maps afresh.
+                        if up {
+                            self.put_back(b);
+                        } else {
+                            self.raise(b);
                         }
+                        Reply::redraw_all()
                     }
                     done => {
                         let reply = match done {
@@ -653,7 +659,7 @@ pub(crate) mod tests {
             "the password box stays up"
         );
 
-        ex.event(crate::DIALOG, Event::CloseRequest, &mut ctx);
+        ex.event(ex.dialog_win(), Event::CloseRequest, &mut ctx);
         assert!(ex.connection.is_none(), "the connection is cancelled");
         assert!(
             matches!(ex.dialog(), Some(Dialog::Message { text, .. }) if text == "The disk is full."),
@@ -669,8 +675,10 @@ pub(crate) mod tests {
             "Failed to mount share: Connection refused".into(),
         ))))
         .unwrap();
+        let win = ex.dialog_win();
         ex.poll_connection(&mut ctx);
         assert!(ex.connection.is_none());
+        assert_eq!(ex.dialog_win(), win, "in the window it was in");
         let Some(Dialog::Connect(b)) = ex.dialog() else {
             panic!("Connect to Server stays up");
         };
