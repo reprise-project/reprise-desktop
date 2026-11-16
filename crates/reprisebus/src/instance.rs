@@ -10,6 +10,7 @@ use crate::peer::HostOnly;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
 use zbus::message::Header;
 use zbus::{Connection, OwnedVariant, Variant};
@@ -118,37 +119,43 @@ impl Requests {
 }
 
 /// Own `name`, or hand `action` (None: just raise the window) and this
-/// start's [`Handoff`] to the copy that owns it.
+/// start's [`Handoff`] to the copy that owns it. The first copy owns the name again on each
+/// session bus connection made after its own closes.
 pub fn claim(name: &str, action: Option<(String, Vec<String>)>) -> Claim {
-    let conn = match crate::session() {
+    claim_on(name, action, crate::session)
+}
+
+fn claim_on(
+    name: &str,
+    action: Option<(String, Vec<String>)>,
+    connect: impl Fn() -> zbus::Result<Connection> + Send + 'static,
+) -> Claim {
+    let conn = match connect() {
         Ok(c) => c,
         Err(e) => {
             log::info!("no session bus, so no single instance: {e}");
             return Claim::Alone;
         }
     };
-    let path = path(name);
     let (tx, rx) = channel();
     let wake = Wake::default();
-    // Served before the name is owned, so no caller finds the name without it.
     let app = Application {
         tx,
         wake: wake.clone(),
         host_only: HostOnly::default(),
     };
-    if let Err(e) = crate::wait(conn.object_server().at(path.as_str(), app)) {
-        log::warn!("could not serve {INTERFACE}: {e}");
-        return Claim::Alone;
-    }
-    match crate::wait(conn.request_name_with_flags(name, RequestNameFlags::DO_NOT_QUEUE)) {
-        Ok(RequestNameReply::PrimaryOwner) => return Claim::First(Requests { rx, wake }),
-        Ok(_) | Err(zbus::Error::NameTaken) => {}
+    match own(&conn, name, app.clone()) {
+        Ok(true) => {
+            keep(name.to_string(), conn, app, connect);
+            return Claim::First(Requests { rx, wake });
+        }
+        Ok(false) => {}
         Err(e) => {
             log::warn!("could not own {name}: {e}");
             return Claim::Alone;
         }
     }
-    let _ = crate::wait(conn.object_server().remove::<Application, _>(path.as_str()));
+    let path = path(name);
     let data = Handoff::from_env().platform_data();
     let sent = match action {
         Some((action, params)) => {
@@ -178,12 +185,65 @@ pub fn claim(name: &str, action: Option<(String, Vec<String>)>) -> Claim {
     }
 }
 
+/// Serves `app` on `conn`, then asks for `name`: whether this copy owns it. Served first, so no
+/// caller finds the name without it, and taken off again when another copy owns the name.
+fn own(conn: &Connection, name: &str, app: Application) -> zbus::Result<bool> {
+    let path = path(name);
+    crate::wait(conn.object_server().at(path.as_str(), app))?;
+    match crate::wait(conn.request_name_with_flags(name, RequestNameFlags::DO_NOT_QUEUE)) {
+        Ok(RequestNameReply::PrimaryOwner) => Ok(true),
+        Ok(_) | Err(zbus::Error::NameTaken) => {
+            let _ = crate::wait(conn.object_server().remove::<Application, _>(path.as_str()));
+            Ok(false)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Each time `conn` closes, owns `name` again serving `app` on the connection `connect` makes
+/// next, with [`crate::reconnect_pause`] between tries; stops once another copy owns the name.
+fn keep(
+    name: String,
+    conn: Connection,
+    app: Application,
+    connect: impl Fn() -> zbus::Result<Connection> + Send + 'static,
+) {
+    let spawned = std::thread::Builder::new()
+        .name("instance".into())
+        .spawn(move || {
+            let (mut conn, mut pause) = (conn, Duration::ZERO);
+            loop {
+                let up = Instant::now();
+                crate::wait(conn.closed());
+                log::warn!("{name}: lost the session bus connection");
+                pause = crate::reconnect_pause(pause, up.elapsed());
+                conn = loop {
+                    std::thread::sleep(pause);
+                    let owned = connect().and_then(|c| Ok((own(&c, &name, app.clone())?, c)));
+                    match owned {
+                        Ok((true, c)) => break c,
+                        Ok((false, _)) => {
+                            log::warn!("{name}: another copy owns the name now");
+                            return;
+                        }
+                        Err(e) => log::warn!("{name}: could not own the name again: {e}"),
+                    }
+                    pause = crate::reconnect_pause(pause, Duration::ZERO);
+                };
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("no thread to own a single-instance name again after a bus restart: {e}");
+    }
+}
+
 /// The object path `org.freedesktop.Application` names for a bus name:
 /// `/org/reprise/Settings` for `org.reprise.Settings`.
 fn path(name: &str) -> String {
     format!("/{}", name.replace('.', "/"))
 }
 
+#[derive(Clone)]
 struct Application {
     tx: Sender<Request>,
     wake: Wake,
@@ -351,6 +411,39 @@ mod tests {
             }
         });
         (reply, rx.try_iter().collect())
+    }
+
+    /// A first copy whose bus went away owns its name on the bus that replaced it, where a later
+    /// start hands it its request.
+    #[test]
+    fn the_first_copy_owns_its_name_again_on_a_restarted_bus() {
+        let Some(first) = crate::testbus::bus() else {
+            return;
+        };
+        let address = Arc::new(Mutex::new(first.1.clone()));
+        let at = address.clone();
+        let connect = move || {
+            let address = lock(&at).clone();
+            crate::connect(zbus::connection::Builder::address(address.as_str()))
+        };
+        let name = "org.example.Single";
+        let Claim::First(requests) = claim_on(name, None, connect.clone()) else {
+            panic!("the first start owns the name");
+        };
+        let Some(second) = crate::testbus::bus() else {
+            return;
+        };
+        *lock(&address) = second.1.clone();
+        drop(first);
+        let probe = connect().unwrap();
+        let dbus = crate::wait(zbus::fdo::DBusProxy::new(&probe)).unwrap();
+        let until = Instant::now() + Duration::from_secs(20);
+        while !crate::wait(dbus.name_has_owner(name.try_into().unwrap())).unwrap() {
+            assert!(Instant::now() < until, "the name is owned again");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(matches!(claim_on(name, None, connect), Claim::Handed));
+        assert_eq!(requests.next(), Some(Request::default()));
     }
 
     #[test]
