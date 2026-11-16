@@ -43,7 +43,10 @@ fn ellipsize_keeps_fitting_text_and_trims_the_rest() {
             "no space before the dots: {short}"
         );
     }
-    assert_eq!(r.ellipsize("abc", 0, false, 11), "...");
+    let dots = r.measure("...", false, 11);
+    assert_eq!(r.ellipsize("abc", dots, false, 11), "...");
+    assert_eq!(r.ellipsize("abc", dots - 1, false, 11), "..");
+    assert_eq!(r.ellipsize("abc", 0, false, 11), "");
 }
 use crate::raster::{Canvas, Rect};
 use crate::theme::{Color, FontConfig};

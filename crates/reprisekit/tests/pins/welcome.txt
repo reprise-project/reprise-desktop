@@ -10,9 +10,9 @@ Blue Ready 1 39a26946548b4789
 Blue Interface 2 ac2099df2d369306
 Blue Look 2 ba5f5eb3201cdfe3
 Blue Ready 2 8fd20420a6ed557a
-Glass Interface 1 647f1048ecbadc6b
-Glass Look 1 b0c322c5e729b8dc
+Glass Interface 1 657245452f2dfde9
+Glass Look 1 b7662d859188f146
 Glass Ready 1 1eacca0b69f45a6a
-Glass Interface 2 509c62f866588f55
-Glass Look 2 3b693b7b3ad703f5
+Glass Interface 2 9ec3c2c42c5a3533
+Glass Look 2 47f92103fca60da3
 Glass Ready 2 dfafa2acf6c1bed6

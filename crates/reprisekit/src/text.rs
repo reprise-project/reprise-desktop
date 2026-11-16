@@ -752,6 +752,7 @@ impl TextRenderer {
         (x, w, total)
     }
 
+    /// `text` cut to end in "..." within `width`; only the dots that fit when even "..." doesn't.
     pub fn ellipsize<'t>(
         &self,
         text: &'t str,
@@ -763,6 +764,10 @@ impl TextRenderer {
             return std::borrow::Cow::Borrowed(text);
         }
         let dots = self.measure("...", bold, size_px);
+        if dots > width {
+            let dot = self.advance('.', bold, size_px).max(1);
+            return ".".repeat((width / dot).clamp(0, 3) as usize).into();
+        }
         let mut kept = String::new();
         let mut used = 0;
         for ch in text.chars() {

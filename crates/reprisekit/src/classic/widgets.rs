@@ -837,10 +837,11 @@ pub fn draw_caption(
     let (left, right, ink) = caption_colors(cs, active);
     let n = buttons.len() as i32;
     caption_gradient(c, caption, n, left, right, s);
+    let room = caption_title_rect(caption, n, s);
     text.draw(
         c,
-        caption_title_rect(caption, n, s),
-        title,
+        room,
+        &text.ellipsize(title, room.width, true, px),
         true,
         ink,
         Align::Left,
