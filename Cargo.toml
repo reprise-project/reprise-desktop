@@ -69,12 +69,12 @@ futures-lite = "2"
 futures-util = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp"] }
 inotify = { version = "0.11", default-features = false }
-# Our fork's `patches` branch: upstream master plus the server, acceptor and
-# input fixes listed in `git log upstream/master..patches` there.
 # The pins hold libjxl 0.11.1 as the floor: jpegxl-sys refuses an older libjxl than its tag.
 jpegxl-rs = { version = "=0.13.0", default-features = false }
 jpegxl-sys = "=0.12.0"
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
+# Our fork's `patches` branch: upstream master plus the server, acceptor and
+# input fixes listed in `git log upstream/master..patches` there.
 ironrdp-acceptor = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
 ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
 ironrdp-async = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }

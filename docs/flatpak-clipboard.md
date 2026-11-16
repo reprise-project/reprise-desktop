@@ -37,15 +37,9 @@ password manager that copies through X11 the choice is:
   X11 window has the focus. It can then also read the clipboard in the
   background.
 
-X11 doesn't say which program took the clipboard, only which window it named
-as the owner, and a program may name any window. So while Proton Pass has the
-focus, another X11 program that names one of Proton Pass's X11 windows can
-replace or clear the clipboard too. While the clipboard holds an X11 copy,
-Proton Pass's included, any X11 program that takes the clipboard replaces
-what Wayland windows paste, whatever has the focus, while the paste still
-offers the earlier copy's types and the clipboard history keeps showing the
-earlier copy. See
-[security.md](security.md#x11-programs).
+X11 names only the window a program claims as the owner, so while Proton
+Pass has the focus another X11 program can replace or clear the clipboard
+too ([security.md](security.md#x11-programs) has the rules).
 
 ## Background access
 
