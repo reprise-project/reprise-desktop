@@ -166,6 +166,7 @@ impl State {
     }
 
     pub fn on_parent_changed(&mut self, w: WindowId) {
+        self.session.owe();
         if !self.refresh_owned().contains(&w) {
             self.reframe(w);
         }

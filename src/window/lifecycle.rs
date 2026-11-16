@@ -583,6 +583,7 @@ impl State {
 
     /// The one place that clears a `WindowId` from every holder outside `State::windows`.
     pub fn forget_window(&mut self, w: WindowId) {
+        self.session.owe();
         let was_focused = self.focused == Some(w);
         self.cancel_interaction_for(w);
         self.end_task_press_for(w);
@@ -628,6 +629,7 @@ impl State {
     }
 
     fn unmap(&mut self, w: WindowId) {
+        self.session.owe();
         // Before anything hides it: its still is taken as it shows.
         self.window_closing(w);
         let was_focused = self.focused == Some(w);

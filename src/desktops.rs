@@ -120,6 +120,7 @@ impl State {
     }
 
     fn bring_in_line(&mut self) {
+        self.session.owe();
         self.wm.snap.desktop = self.desktops.current;
         let desktops: Vec<(WindowId, Option<usize>)> = (self.windows.iter())
             .map(|w| (w.id, self.desktop_of(w.id)))

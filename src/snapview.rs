@@ -613,6 +613,7 @@ impl State {
     }
 
     pub fn snap_outputs_changed(&mut self) {
+        self.session.owe();
         self.hide_snap_outline();
         crate::snapbarview::end(self);
         if let Interaction::Move { snap, .. } = &mut self.interaction {

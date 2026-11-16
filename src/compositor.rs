@@ -889,6 +889,7 @@ impl State {
         self.refresh_toplevels();
         self.refresh_workspaces();
         crate::sessionend::tick(self);
+        crate::session::settle(self);
         crate::tray::publish_lock(self);
         self.ime_field_sync();
         self.decode_wanted_icons();

@@ -5,7 +5,7 @@
 //!
 //! The list is taken when Log Off, Turn Off or Restart starts, before the
 //! windows are asked to close (`sessionend`), when the loop stops for a
-//! signal, and every `SAVE_EVERY` while the session runs, so a crash leaves
+//! signal, and `SAVE_EVERY` after a change while the session runs, so a crash leaves
 //! a fresh one. It lives in the state file.
 //!
 //! Tab groups come back too: each saved group's windows, matched by app id
@@ -41,8 +41,13 @@ pub const RESTART_SETTLE: Duration = Duration::from_secs(4);
 /// takes can still move it.
 const GUESS_SETTLE: Duration = Duration::from_secs(10);
 
-/// How often the running session's list is taken again, written only when it changed.
-pub const SAVE_EVERY: Duration = Duration::from_secs(5);
+/// How long after a change (`Session::owe`) the running session's list is taken again, written
+/// only when it differs.
+pub const SAVE_EVERY: Duration = if cfg!(test) {
+    Duration::from_millis(20)
+} else {
+    Duration::from_secs(5)
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedApp {
@@ -627,10 +632,21 @@ pub struct Session {
     pub restore_marked: bool,
     /// `restore` ran, so the save timer may take the list.
     pub started: bool,
+    /// The save `settle` armed.
     pub save_timer: Option<RegistrationToken>,
+    /// Something the list is taken from changed since the last save.
+    pub owed: bool,
+    #[cfg(test)]
+    pub passes: usize,
 }
 
 impl Session {
+    /// A window mapped, unmapped, moved, resized, retitled or changed app id, desktop, owner, tab
+    /// group or snap group, or the outputs or the app index changed: `settle` arms a save.
+    pub fn owe(&mut self) {
+        self.owed = true;
+    }
+
     pub fn from_persisted(p: &crate::state::Persisted) -> Session {
         Session {
             apps: p.session.clone(),
@@ -647,6 +663,11 @@ impl Session {
 /// the next login (empty when `[session] restore` is off) and queue the
 /// state file's write. Lock mode keeps the last one: its places are on Remote outputs.
 pub fn save(state: &mut State) {
+    state.session.owed = false;
+    #[cfg(test)]
+    {
+        state.session.passes += 1;
+    }
     if crate::console::remote_side(state) {
         return;
     }
@@ -734,57 +755,63 @@ pub fn end(state: &mut State) {
     crate::state::flush();
 }
 
-/// Take the list again every `every` while the session runs and `[session] restore` is on. A tick
-/// passes while restored apps' first windows are still awaited, which would drop them, and once
-/// `end` kept the session; the first tick past the wait clears `session_restoring`.
-pub fn save_every(state: &mut State, every: Duration) {
-    if !state.config.session.restore || state.session.save_timer.is_some() {
+/// A turn's end: arm one save `SAVE_EVERY` after a change, while the session runs and
+/// `[session] restore` is on. Its tick passes while restored apps' first windows are still
+/// awaited, which would drop them; the first tick past the wait clears `session_restoring`.
+pub fn settle(state: &mut State) {
+    let s = &state.session;
+    if !s.owed || s.save_timer.is_some() || !s.started || s.kept || !state.config.session.restore {
         return;
     }
     let armed = state
         .handle
-        .insert_source(Timer::from_duration(every), move |_, _, state| {
-            let waiting = state.session.restoring.waiting(Instant::now());
-            if !waiting && state.session.restore_marked {
-                state.session.restore_marked = false;
+        .insert_source(Timer::from_duration(SAVE_EVERY), |_, _, state| {
+            if state.session.restoring.waiting(Instant::now()) {
+                return TimeoutAction::ToDuration(SAVE_EVERY);
+            }
+            state.session.save_timer = None;
+            if std::mem::take(&mut state.session.restore_marked) {
                 crate::state::save_session_restoring(false);
             }
-            if !state.session.kept && !waiting {
+            if !state.session.kept {
                 save(state);
             }
-            TimeoutAction::ToDuration(every)
+            TimeoutAction::Drop
         });
     match armed {
         Ok(token) => state.session.save_timer = Some(token),
         Err(e) => {
+            state.session.owed = false;
             log::warn!("session: no save timer: {e}; the list is taken at the session's end only")
         }
     }
 }
 
-/// `[session] restore` turned on or off by a reload: arm the save timer, or stop it and empty
-/// the saved list.
+/// `[session] restore` turned on or off by a reload: take the list soon, or stop the armed save
+/// and empty the saved list.
 pub fn restore_changed(state: &mut State) {
     if !state.session.started {
         return;
     }
     if state.config.session.restore {
-        save_every(state, SAVE_EVERY);
-    } else if let Some(token) = state.session.save_timer.take() {
-        state.handle.remove(token);
-        if std::mem::take(&mut state.session.restore_marked) {
-            crate::state::save_session_restoring(false);
-        }
-        save(state);
+        state.session.owe();
+        return;
     }
+    if let Some(token) = state.session.save_timer.take() {
+        state.handle.remove(token);
+    }
+    if std::mem::take(&mut state.session.restore_marked) {
+        crate::state::save_session_restoring(false);
+    }
+    save(state);
 }
 
 /// Start the apps the last session ended with, after autostart (which started `autostarted`),
-/// then keep the list fresh (`save_every`).
+/// then keep the list fresh (`settle`).
 pub fn restore(state: &mut State, autostarted: &[Entry]) {
     restore_now(state, autostarted);
     state.session.started = true;
-    save_every(state, SAVE_EVERY);
+    state.session.owe();
 }
 
 fn restore_now(state: &mut State, autostarted: &[Entry]) {
@@ -1548,7 +1575,8 @@ mod tests {
         h.map_toplevel(&mut c, "foot", 300, 200);
         let foot = saved("foot", "foot.desktop", 0);
         h.state.session.restoring = Pending::new(&[&foot], Instant::now());
-        save_every(&mut h.state, Duration::from_millis(20));
+        h.state.session.started = true;
+        h.state.session.owe();
         h.run_for(100);
         assert!(
             h.state.session.apps.is_empty(),
@@ -1571,16 +1599,45 @@ mod tests {
         let mut h = crate::harness::Harness::new();
         h.state.config.session.restore = false;
         restore(&mut h.state, &[]);
+        settle(&mut h.state);
         assert!(
             h.state.session.save_timer.is_none(),
             "restore off arms nothing"
         );
         h.state.config.session.restore = true;
         restore_changed(&mut h.state);
+        settle(&mut h.state);
         assert!(h.state.session.save_timer.is_some(), "turned on, it arms");
         h.state.config.session.restore = false;
+        let passes = h.state.session.passes;
         restore_changed(&mut h.state);
         assert!(h.state.session.save_timer.is_none(), "turned off, it stops");
+        assert_eq!(
+            h.state.session.passes,
+            passes + 1,
+            "turned off, the list is emptied at once"
+        );
+    }
+
+    #[test]
+    fn an_idle_session_takes_no_pass_and_a_mapped_window_takes_one() {
+        let mut h = crate::harness::Harness::new();
+        h.state.app_index = vec![app("foot", "foot", None)];
+        h.output("TEST-1", 1024, 768);
+        restore(&mut h.state, &[]);
+        h.run_for(100);
+        let passes = h.state.session.passes;
+        h.run_for(200);
+        assert_eq!(h.state.session.passes, passes, "idle turns take no pass");
+        assert!(h.state.session.save_timer.is_none(), "nothing is armed");
+
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "foot", 300, 200);
+        h.run_for(100);
+        assert_eq!(h.state.session.apps, vec![saved("foot", "foot.desktop", 0)]);
+        let passes = h.state.session.passes;
+        h.run_for(200);
+        assert_eq!(h.state.session.passes, passes, "idle again after the save");
     }
 
     #[test]
@@ -1609,7 +1666,8 @@ mod tests {
         let foot = saved("foot", "foot.desktop", 0);
         h.state.session.restoring = Pending::new(&[&foot], Instant::now());
         h.state.session.restore_marked = true;
-        save_every(&mut h.state, Duration::from_millis(20));
+        h.state.session.started = true;
+        h.state.session.owe();
         h.run_for(60);
         assert!(h.state.session.restore_marked, "kept while foot is awaited");
         h.state.session.restoring.mapped("foot");

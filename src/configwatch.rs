@@ -380,6 +380,9 @@ pub fn reload(state: &mut State, cfg: Config) {
     if old.session.restore != state.config.session.restore {
         crate::session::restore_changed(state);
     }
+    if old.session.exclude != state.config.session.exclude {
+        state.session.owe();
+    }
     crate::sandbox::set_trusted(&state.config.clipboard.trusted_apps);
     crate::idle::config_changed(state);
     crate::awaylock::config_changed(state);
