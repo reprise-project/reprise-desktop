@@ -1,6 +1,6 @@
 use crate::compositor::State;
 
-use super::{Window, WindowId};
+use super::{Handle, Window, WindowId};
 
 /// Visit windows below `root` owner-first, siblings in `children`'s order; iterative with a visited
 /// set so parent cycles (X11 transients) are safe.
@@ -67,6 +67,49 @@ impl State {
         self.windows.iter().find(|x| x.handle() == p).map(|x| x.id)
     }
 
+    /// The window that owns `w`: the first mapped one up its parent chain. An unmapped parent
+    /// stands in for its own, as xdg-shell has it; a parent Reprise doesn't manage owns nothing.
+    pub fn owner(&self, w: WindowId) -> Option<WindowId> {
+        self.owner_from(self.win(w)?.parent_handle())
+    }
+
+    /// [`State::owner`] of a window whose parent is `parent`.
+    pub(crate) fn owner_from(&self, mut parent: Option<Handle>) -> Option<WindowId> {
+        for _ in 0..=self.windows.len() {
+            let p = parent?;
+            let win = self.windows.iter().find(|x| x.handle() == p)?;
+            if win.mapped {
+                return Some(win.id);
+            }
+            parent = win.parent_handle();
+        }
+        None
+    }
+
+    /// Recompute every [`Window::owned`] after a window mapped, unmapped, went away or changed
+    /// parent. A window whose answer changed gets its chrome and capabilities again; returns
+    /// those windows.
+    pub(crate) fn refresh_owned(&mut self) -> Vec<WindowId> {
+        let changed: Vec<WindowId> = (self.windows.iter())
+            .filter(|x| self.owner(x.id).is_some() != x.owned)
+            .map(|x| x.id)
+            .collect();
+        for &k in &changed {
+            let Some(win) = self.win_mut(k) else {
+                continue;
+            };
+            win.owned = !win.owned;
+            if win.send_capabilities() == Some(true) {
+                self.send_configure(k);
+            }
+            self.reframe(k);
+        }
+        if !changed.is_empty() {
+            self.redraw_taskbars();
+        }
+        changed
+    }
+
     pub fn is_owner_of(&self, owner: WindowId, w: WindowId) -> bool {
         owner_chain_has(w, owner, |x| self.parent_window(x))
     }
@@ -123,6 +166,13 @@ impl State {
     }
 
     pub fn on_parent_changed(&mut self, w: WindowId) {
+        if !self.refresh_owned().contains(&w) {
+            self.reframe(w);
+        }
+    }
+
+    /// Lay mapped `w`'s frame out again around a client that stays where it is.
+    fn reframe(&mut self, w: WindowId) {
         if !self.win(w).is_some_and(|x| x.mapped) {
             return;
         }

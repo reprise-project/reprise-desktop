@@ -1853,3 +1853,61 @@ fn a_window_restoring_itself_comes_back_behind_another_programs_window() {
         "a window of the focused program's process takes the keyboard"
     );
 }
+
+fn listed(h: &crate::harness::Harness, w: super::WindowId) -> (bool, bool) {
+    (
+        h.state.task_windows().contains(&w),
+        h.state.switchable_windows().contains(&w),
+    )
+}
+
+fn can_minimize(h: &crate::harness::Harness, w: super::WindowId) -> bool {
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::WmCapabilities;
+    let t = h.state.win(w).unwrap().xdg().unwrap().clone();
+    t.with_pending_state(|s| s.capabilities.contains(WmCapabilities::Minimize))
+}
+
+#[test]
+fn a_child_whose_parent_is_unmapped_gets_a_task_button_until_the_parent_shows() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let main = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let d = h.map_dialog(&mut c, "test.app", Some(main), "", (200, 100));
+    assert_eq!(listed(&h, d.id), (false, false), "owned: no task button");
+    assert!(!can_minimize(&h, d.id));
+    unmap_self(&mut h, &mut c, main);
+    assert!(!h.state.win(d.id).unwrap().is_owned());
+    assert_eq!(
+        listed(&h, d.id),
+        (true, true),
+        "a task button and an Alt+Tab entry"
+    );
+    assert!(can_minimize(&h, d.id), "Minimize");
+    h.resize_self(&mut c, main, 300, 200);
+    assert_eq!(h.state.owner(d.id), Some(main.id));
+    assert_eq!(listed(&h, d.id), (false, false), "owned again");
+}
+
+#[test]
+fn a_child_whose_parent_is_gone_gets_a_task_button() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let main = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let d = h.map_dialog(&mut c, "test.app", Some(main), "", (200, 100));
+    c.destroy(main);
+    h.roundtrip(&mut c);
+    assert_eq!(h.state.owner(d.id), None);
+    assert_eq!(listed(&h, d.id), (true, true));
+    assert!(can_minimize(&h, d.id));
+}
+
+#[test]
+fn an_x11_parent_reprise_does_not_manage_owns_nothing() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let main = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let leader = super::Handle::X11(0x40_0001);
+    assert_eq!(h.state.owner_from(Some(leader)), None);
+    let handle = h.state.win(main.id).unwrap().handle();
+    assert_eq!(h.state.owner_from(Some(handle)), Some(main.id));
+}
