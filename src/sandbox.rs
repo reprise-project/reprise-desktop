@@ -374,6 +374,7 @@ pub fn may_take_raise(win: &crate::window::Window, app: &reprisefs::apps::Deskto
     }
     data.sandbox
         .flatpak_app()
+        .and_then(|id| reprisefs::apps::AppId::new(&id))
         .is_some_and(|id| app.matches_app_id(&id))
 }
 

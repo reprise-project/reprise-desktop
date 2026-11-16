@@ -253,7 +253,8 @@ impl State {
         let theme = self.config.theme.scaled(scale);
         let globals: Vec<(&GlobalShortcut, String)> = (self.config.global_shortcuts.iter())
             .map(|g| {
-                let name = reprisefs::apps::entry_for_app_id(&self.app_index, &g.app, |_| true)
+                let name = reprisefs::apps::AppId::new(&g.app)
+                    .and_then(|a| reprisefs::apps::entry_for_app_id(&self.app_index, &a, |_| true))
                     .map_or_else(|| g.app.clone(), |e| e.name.clone());
                 (g, name)
             })

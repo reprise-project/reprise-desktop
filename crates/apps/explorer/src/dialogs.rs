@@ -583,7 +583,7 @@ impl Explorer {
             0 => self.open_file(&path, true, open, reprisefs::program::Confirm::Allow, ctx),
             1 if notepad => Reply {
                 spawn: vec![reprisefs::program::notepad_argv(&path)],
-                spawn_app: Some("reprise-notepad".into()),
+                spawn_app: Some(reprisefs::apps::AppId::from_static("reprise-notepad")),
                 ..Reply::default()
             },
             _ => Reply::none(),

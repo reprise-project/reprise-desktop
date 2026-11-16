@@ -103,7 +103,7 @@ mod tests {
 
     fn app(id: &str) -> AppEntry {
         AppEntry {
-            name: reprisefs::apps::DesktopId::stem_of(id).into(),
+            name: id.parse::<DesktopId>().unwrap().stem().into(),
             exec_line: id.into(),
             terminal: false,
             id: id.parse().unwrap(),
@@ -146,6 +146,17 @@ mod tests {
         l.pin(&"a.desktop".parse().unwrap());
         l.pin(&"b.desktop".parse().unwrap());
         assert_eq!(l.pinned(&apps), [1, 0]);
+    }
+
+    #[test]
+    fn a_saved_name_no_desktop_file_can_have_is_dropped() {
+        let saved = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let l = Launches::from_saved(
+            &saved(&["a.desktop", "a"]),
+            &saved(&[".x.desktop", "b.desktop"]),
+        );
+        assert_eq!(l.pins, ["a.desktop"]);
+        assert_eq!(l.recent, ["b.desktop"]);
     }
 
     #[test]

@@ -1233,15 +1233,12 @@ pub fn terminal_argv(terminal: &str) -> Vec<OsString> {
     split_exec(terminal, |_| Vec::new())
 }
 
-/// The app scope `terminal` runs in: the id of the desktop entry its program names, else the
+/// The app scope `terminal` runs in: the app of the desktop entry its program names, else the
 /// program's file name.
-pub fn terminal_app(terminal: &str, apps: &[AppEntry]) -> Option<String> {
+pub fn terminal_app(terminal: &str, apps: &[AppEntry]) -> Option<AppId> {
     let argv = terminal_argv(terminal);
-    let name = Path::new(argv.first()?).file_name()?.to_string_lossy();
-    Some(
-        entry_for_app_id(apps, &name, |_| true)
-            .map_or_else(|| name.to_string(), |e| e.id.to_string()),
-    )
+    let name = AppId::new(&Path::new(argv.first()?).file_name()?.to_string_lossy())?;
+    Some(entry_for_app_id(apps, &name, |_| true).map_or(name, |e| e.id.app_id()))
 }
 
 pub fn default_dirs() -> Vec<PathBuf> {
@@ -1411,39 +1408,15 @@ pub fn group(apps: &[AppEntry]) -> Vec<Group> {
     folders
 }
 
-/// Icon name for a window's app_id: the entry whose id (minus `.desktop`)
-/// equals it, else the entry whose `StartupWMClass` equals it, both
-/// case-insensitive. Entries without an icon never match.
-pub fn icon_for_app_id<'a>(entries: &'a [AppEntry], app_id: &str) -> Option<&'a str> {
+/// The icon of the entry [`entry_for_app_id`] finds among those with one.
+pub fn icon_for_app_id<'a>(entries: &'a [AppEntry], app_id: &AppId) -> Option<&'a str> {
     entry_for_app_id(entries, app_id, |e| e.icon.is_some()).and_then(|e| e.icon.as_deref())
 }
 
-/// Matches the [`DesktopId::stem`], else `StartupWMClass`, both case-insensitively: a window's
-/// app id or X11 class often differs in case from its file's name.
-pub fn entry_for_app_id<'a>(
-    entries: &'a [AppEntry],
-    app_id: &str,
-    want: impl Fn(&AppEntry) -> bool,
-) -> Option<&'a AppEntry> {
-    if app_id.is_empty() {
-        return None;
-    }
-    let want_id = app_id.to_lowercase();
-    let by_id = entries
-        .iter()
-        .find(|e| want(e) && e.id.stem().to_lowercase() == want_id);
-    by_id.or_else(|| {
-        entries.iter().find(|e| {
-            want(e)
-                && e.startup_wm_class
-                    .as_deref()
-                    .is_some_and(|c| c.to_lowercase() == want_id)
-        })
-    })
-}
-
+mod appid;
 mod desktopid;
 mod trust;
+pub use appid::{AppId, entry_for_app_id};
 pub use desktopid::DesktopId;
 pub(crate) use trust::{TRUST_XATTR, set_trusted_fd, verifies};
 pub use trust::{allow_launching, is_trusted, set_trusted};

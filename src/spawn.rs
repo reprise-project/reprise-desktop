@@ -2,6 +2,7 @@
 
 use crate::mutex::lock;
 use reprisebus::units::SESSION_TARGET;
+use reprisefs::apps::AppId;
 use std::collections::BTreeSet;
 use std::os::unix::process::CommandExt;
 use std::sync::Mutex;
@@ -934,12 +935,12 @@ pub fn spawn(cmd: &str, env: &SessionEnv, launch: Option<&Launch>) -> bool {
 }
 
 /// `spawn` in an app scope, as [`spawn_argv_in`] does.
-pub fn spawn_in(cmd: &str, app: Option<&str>, env: &SessionEnv, launch: Option<&Launch>) -> bool {
+pub fn spawn_in(cmd: &str, app: Option<&AppId>, env: &SessionEnv, launch: Option<&Launch>) -> bool {
     let name = log_name(
         app,
         &crate::session::program(cmd).unwrap_or_else(|| "sh".into()),
     );
-    let argv = reprisefs::scope::in_scope(&["sh", "-c", cmd], Some(&name));
+    let argv = reprisefs::scope::in_scope(&["sh", "-c", cmd], AppId::new(&name).as_ref());
     let Some(c) = command_argv(&name, &argv[0], &argv[1..], env, launch) else {
         return false;
     };
@@ -962,18 +963,18 @@ pub fn spawn_argv<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
 }
 
 /// `spawn_argv` in `dir` (else, or when it is no folder, reprise's own) inside
-/// `app-reprise-<name>-*.scope`, which gives the portal its app id: `name` is `app`, the desktop
-/// entry id, else the program's name.
+/// `app-reprise-<name>-*.scope`, which gives the portal its app id: `name` is `app`, else the
+/// program's name.
 pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
-    app: Option<&str>,
+    app: Option<&AppId>,
     dir: Option<&std::path::Path>,
     env: &SessionEnv,
     launch: Option<&Launch>,
 ) {
     let program = argv.first().map(|p| p.as_ref().to_string_lossy());
-    let name = program.map(|p| log_name(app, &p));
-    if let Err(e) = try_spawn_argv_in(argv, name.as_deref(), dir, env, launch) {
+    let name = program.and_then(|p| AppId::new(&log_name(app, &p)));
+    if let Err(e) = try_spawn_argv_in(argv, name.as_ref(), dir, env, launch) {
         log::error!("spawn {argv:?}: {e}");
     }
 }
@@ -983,7 +984,7 @@ pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
 /// program on a hung mount blocks the caller. Without an `app` it starts unscoped.
 pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
-    app: Option<&str>,
+    app: Option<&AppId>,
     dir: Option<&std::path::Path>,
     env: &SessionEnv,
     launch: Option<&Launch>,
@@ -1000,25 +1001,27 @@ pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     start(c, &what, Some(&name)).map(Some)
 }
 
-/// [`try_spawn_argv_in`] in `app`'s scope without `systemd-run` in front, whose error would hide
-/// the exec's: the child waits before its exec until it is in the scope
+/// [`try_spawn_argv_in`] in `app`'s scope (unscoped without one) without `systemd-run` in front,
+/// whose error would hide the exec's: the child waits before its exec until it is in the scope
 /// ([`reprisefs::scope::hold`]), so this also waits on the session bus. For off the loop.
 pub fn try_spawn_held<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
-    app: &str,
+    app: Option<&AppId>,
     dir: Option<&std::path::Path>,
     env: &SessionEnv,
     launch: Option<&Launch>,
 ) -> std::io::Result<Option<u32>> {
     let what = first(argv)?.as_ref().to_string_lossy();
-    let name = log_name(Some(app), &what);
+    let name = log_name(app, &what);
     let Some(mut c) = command_argv(&name, &argv[0], &argv[1..], env, launch) else {
         return Ok(None);
     };
     if let Some(dir) = reprisefs::apps::start_dir(dir) {
         c.current_dir(dir);
     }
-    reprisefs::scope::hold(&mut c, app)?;
+    if let Some(app) = app {
+        reprisefs::scope::hold(&mut c, app)?;
+    }
     start_forked(c, &what, Some(&name)).map(Some)
 }
 
@@ -1081,32 +1084,33 @@ fn first<S>(argv: &[S]) -> std::io::Result<&S> {
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty command line"))
 }
 
-/// The journal identifier of a spawned program: its desktop entry id, else its file name.
-fn log_name(app: Option<&str>, program: &str) -> String {
+/// The journal identifier of a spawned program: its app id, else its file name.
+fn log_name(app: Option<&AppId>, program: &str) -> String {
     match app {
-        Some(app) => reprisefs::apps::DesktopId::stem_of(app).to_string(),
+        Some(app) => app.to_string(),
         None => program.rsplit('/').next().unwrap_or(program).to_string(),
     }
 }
 
-/// The app scope of shell command `cmd`: the id of the entry in `apps` named like the program it
+/// The app scope of shell command `cmd`: the app of the entry in `apps` named like the program it
 /// runs or whose `Exec` runs that program, else the program's own name (systemd's
 /// `basename(argv[0])` fallback). `gtk-launch <id>` takes the entry it names. None when it starts
 /// through another launcher such as `sh` or `env`.
-pub fn command_app(cmd: &str, apps: &[reprisefs::apps::AppEntry]) -> Option<String> {
+pub fn command_app(cmd: &str, apps: &[reprisefs::apps::AppEntry]) -> Option<AppId> {
     if let Some(id) = gtk_launch_id(cmd) {
-        return apps.iter().find(|e| e.id == id).map(|e| e.id.to_string());
+        return apps.iter().find(|e| e.id == id).map(|e| e.id.app_id());
     }
     let program = crate::session::program(cmd)?;
     let program = program.trim_matches('\'');
     if program.contains('=') {
         return None;
     }
-    let entry = reprisefs::apps::entry_for_app_id(apps, program, |_| true).or_else(|| {
+    let named = AppId::new(program)?;
+    let entry = reprisefs::apps::entry_for_app_id(apps, &named, |_| true).or_else(|| {
         apps.iter()
             .find(|e| crate::session::program(&e.exec_line).as_deref() == Some(program))
     });
-    Some(entry.map_or_else(|| program.to_string(), |e| e.id.to_string()))
+    Some(entry.map_or(named, |e| e.id.app_id()))
 }
 
 /// The folder a Run line names when the whole line is one path: absolute or under `~`, single-
@@ -1501,12 +1505,16 @@ mod tests {
 
     #[test]
     fn a_spawned_program_logs_under_its_entry_id_else_its_file_name() {
+        let sound: reprisefs::apps::DesktopId = "reprise-sound.desktop".parse().unwrap();
         assert_eq!(
-            log_name(Some("reprise-sound.desktop"), "/usr/bin/reprise-sound"),
+            log_name(Some(&sound.app_id()), "/usr/bin/reprise-sound"),
             "reprise-sound"
         );
         assert_eq!(
-            log_name(Some("org.gnome.Calculator"), "gnome-calculator"),
+            log_name(
+                Some(&AppId::from_static("org.gnome.Calculator")),
+                "gnome-calculator"
+            ),
             "org.gnome.Calculator"
         );
         assert_eq!(log_name(None, "/usr/bin/foot"), "foot");
@@ -1564,13 +1572,10 @@ mod tests {
             entry("foot.desktop", "foot"),
             entry("org.telegram.desktop.desktop", "telegram-desktop"),
         ];
-        let app = |cmd: &str| command_app(cmd, &apps);
-        assert_eq!(
-            app("deskflow").as_deref(),
-            Some("org.deskflow.deskflow.desktop")
-        );
-        assert_eq!(app("/usr/bin/foot -e top").as_deref(), Some("foot.desktop"));
-        assert_eq!(app("'/usr/bin/foot'").as_deref(), Some("foot.desktop"));
+        let app = |cmd: &str| command_app(cmd, &apps).map(|a| a.to_string());
+        assert_eq!(app("deskflow").as_deref(), Some("org.deskflow.deskflow"));
+        assert_eq!(app("/usr/bin/foot -e top").as_deref(), Some("foot"));
+        assert_eq!(app("'/usr/bin/foot'").as_deref(), Some("foot"));
         assert_eq!(
             app("firefox https://example.org").as_deref(),
             Some("firefox")
@@ -1578,11 +1583,11 @@ mod tests {
         assert_eq!(app("sh -c 'foot; foot'"), None);
         assert_eq!(
             app("gtk-launch org.deskflow.deskflow").as_deref(),
-            Some("org.deskflow.deskflow.desktop")
+            Some("org.deskflow.deskflow")
         );
         assert_eq!(
             app("/usr/bin/gtk-launch -v foot.desktop /tmp/a").as_deref(),
-            Some("foot.desktop")
+            Some("foot")
         );
         assert_eq!(app("gtk-launch missing"), None);
         assert_eq!(
@@ -1592,7 +1597,7 @@ mod tests {
         );
         assert_eq!(
             app("gtk-launch org.telegram.desktop.desktop").as_deref(),
-            Some("org.telegram.desktop.desktop")
+            Some("org.telegram.desktop")
         );
         assert_eq!(
             app("gtk-launch org.telegram.desktop").as_deref(),
@@ -2554,7 +2559,14 @@ mod tests {
             None
         );
         assert_eq!(
-            try_spawn_held(&argv, "true", None, &refusing, None).unwrap(),
+            try_spawn_held(
+                &argv,
+                Some(&AppId::from_static("true")),
+                None,
+                &refusing,
+                None
+            )
+            .unwrap(),
             None
         );
         assert!(command("true", &refusing, None).is_none());

@@ -323,11 +323,15 @@ fn the_terminal_runs_alone_in_the_scope_of_the_entry_naming_its_program() {
         ["/usr/bin/foot", "--hold"]
     );
     assert_eq!(
-        terminal_app("/usr/bin/foot --hold", &apps).as_deref(),
-        Some("org.codeberg.dnkl.foot.desktop")
+        terminal_app("/usr/bin/foot --hold", &apps)
+            .map(|a| a.to_string())
+            .as_deref(),
+        Some("org.codeberg.dnkl.foot")
     );
     assert_eq!(
-        terminal_app(DEFAULT_TERMINAL, &apps).as_deref(),
+        terminal_app(DEFAULT_TERMINAL, &apps)
+            .map(|a| a.to_string())
+            .as_deref(),
         Some("reprise-terminal"),
         "no entry: the program's name"
     );
@@ -513,18 +517,27 @@ fn icon_for_app_id_matches_id_then_wm_class() {
         .unwrap(),
     ];
     assert_eq!(
-        icon_for_app_id(&entries, "org.mozilla.firefox"),
+        icon_for_app_id(&entries, &AppId::new("org.mozilla.firefox").unwrap()),
         Some("firefox")
     );
     assert_eq!(
-        icon_for_app_id(&entries, "ORG.MOZILLA.FIREFOX"),
+        icon_for_app_id(&entries, &AppId::new("ORG.MOZILLA.FIREFOX").unwrap()),
         Some("firefox")
     );
-    assert_eq!(icon_for_app_id(&entries, "Code"), Some("vscode"));
-    assert_eq!(icon_for_app_id(&entries, "code"), Some("vscode"));
-    assert_eq!(icon_for_app_id(&entries, "x"), None);
-    assert_eq!(icon_for_app_id(&entries, "nothing"), None);
-    assert_eq!(icon_for_app_id(&entries, ""), None);
+    assert_eq!(
+        icon_for_app_id(&entries, &AppId::new("Code").unwrap()),
+        Some("vscode")
+    );
+    assert_eq!(
+        icon_for_app_id(&entries, &AppId::new("code").unwrap()),
+        Some("vscode")
+    );
+    assert_eq!(icon_for_app_id(&entries, &AppId::new("x").unwrap()), None);
+    assert_eq!(
+        icon_for_app_id(&entries, &AppId::new("nothing").unwrap()),
+        None
+    );
+    assert_eq!(AppId::new(""), None);
 }
 
 #[test]
@@ -541,7 +554,10 @@ fn icon_for_app_id_prefers_the_id_match_over_a_class_match() {
         )
         .unwrap(),
     ];
-    assert_eq!(icon_for_app_id(&entries, "code"), Some("vscode"));
+    assert_eq!(
+        icon_for_app_id(&entries, &AppId::new("code").unwrap()),
+        Some("vscode")
+    );
 }
 
 #[test]

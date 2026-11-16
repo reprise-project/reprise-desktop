@@ -297,7 +297,7 @@ impl Host {
             self.paste_image(win);
         }
         for argv in reply.spawn {
-            let argv = reprisefs::scope::in_scope(&argv, reply.spawn_app.as_deref());
+            let argv = reprisefs::scope::in_scope(&argv, reply.spawn_app.as_ref());
             self.start(win, argv, reply.spawn_dir.clone());
         }
         for (argv, dir) in reply.spawn_each {

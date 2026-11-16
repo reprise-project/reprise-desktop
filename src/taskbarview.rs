@@ -287,7 +287,7 @@ pub(crate) fn app_icon_name<'a>(
     if !app_id.contains('/') && icons.get_unread(app_id, px) != Some(None) {
         return Some(app_id);
     }
-    reprisefs::apps::icon_for_app_id(index, app_id)
+    reprisefs::apps::AppId::new(app_id).and_then(|a| reprisefs::apps::icon_for_app_id(index, &a))
 }
 
 /// An unpinned unit of the task row to anchor: its windows, its dialog's id and its new anchor.

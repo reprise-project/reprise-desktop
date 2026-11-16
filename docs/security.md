@@ -645,10 +645,11 @@ button. Under the lock no new window takes the keyboard.
 A program in the background can flag its task button but can't take the
 keyboard through `xdg_activation_v1`. The exception is a program you just
 asked to act (a search result you picked, a notification action's
-`desktop-entry`): for 30 s its first activation raises it, once. That match
-goes by app id, which a client picks itself, so a host program posing as
-that one could take the raise; a sandboxed window takes it only under its
-own Flatpak app id. A program trusted with foreign toplevel management can
+`desktop-entry`, else its app name): for 30 s its first activation raises it,
+once. That match goes by app id, ignoring ASCII case, which a client picks
+itself, so a host program posing as that one could take the raise; a
+sandboxed window takes it only under its own Flatpak app id, matched
+exactly. A program trusted with foreign toplevel management can
 focus any window anyway.
 
 A notification's signals go only to the connection that sent it, so no

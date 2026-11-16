@@ -48,7 +48,7 @@ impl State {
             .into_iter()
             .chain(paths.iter().map(|p| p.as_os_str()))
             .collect();
-        self.spawn_app_activated(&argv, EXPLORER, None);
+        self.spawn_app_activated(&argv, &EXPLORER_APP, None);
     }
 
     /// Take these `system_icons` names off the desktop and out of `config.toml`, which Reprise Settings shows so it can bring them back.
@@ -299,6 +299,7 @@ impl State {
 
 /// The program whose process shows an icon's Properties and Open With.
 const EXPLORER: &str = "reprise-explorer";
+const EXPLORER_APP: reprisefs::apps::AppId = reprisefs::apps::AppId::from_static(EXPLORER);
 
 /// The paths Properties on icon `index` of `entries` shows, `set` being its selection: the set's
 /// files, `index` first, when there are two or more; else the icon's own.

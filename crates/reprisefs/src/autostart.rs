@@ -177,9 +177,9 @@ fn read_dir(dir: &Path, user: bool) -> Vec<Entry> {
     paths
         .iter()
         .filter_map(|p| {
-            let id = p.file_name()?.to_str()?.strip_suffix(".desktop")?;
+            let id = crate::apps::DesktopId::from_file_name(p.file_name()?.to_str()?)?;
             let text = crate::apps::read_desktop_file(p).ok()?;
-            parse(id, &text, user)
+            parse(id.stem(), &text, user)
         })
         .collect()
 }

@@ -167,7 +167,8 @@ impl State {
                 let pin_of = apps
                     .iter()
                     .map(|a| {
-                        let id = reprisefs::apps::entry_for_app_id(index, a, |_| true);
+                        let id = reprisefs::apps::AppId::new(a)
+                            .and_then(|a| reprisefs::apps::entry_for_app_id(index, &a, |_| true));
                         crate::taskbar::pin_for(pins, a, id.map(|e| e.id.as_str()))
                     })
                     .collect();
