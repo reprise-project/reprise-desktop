@@ -1,0 +1,8 @@
+Rounded CaptionGroup 03fa4d81fd95cb22
+Rounded MaxCaptionGroup 0f648f8deaf334a4
+Rounded CloseButton d30df78dd893e09d
+Rounded HelpButton cb73d23606b4771c
+Square CaptionGroup 3cb94e7c833c9e95
+Square MaxCaptionGroup 09a4701befae49dd
+Square CloseButton cef0604d008a9cc5
+Square HelpButton 3b1e08d2f681b798

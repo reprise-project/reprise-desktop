@@ -403,50 +403,17 @@ mod tests {
 
     #[test]
     fn sheet_parts_pin_at_scale_1_and_2() {
-        let want: [(Part, [u64; 4]); 4] = [
-            (
-                Part::PushButton,
-                [
-                    0x4c9c_346e_30dc_c503,
-                    0x85a4_b986_230e_e620,
-                    0x6db4_b471_b795_c6f2,
-                    0xc92d_0807_3f3b_2fb0,
-                ],
-            ),
-            (
-                Part::GroupBox,
-                [
-                    0x1dbf_d782_3232_c55c,
-                    0xf60b_a2c0_bf67_6ee7,
-                    0xb0f0_f233_6e6a_6874,
-                    0x38a3_9e39_4b4f_998f,
-                ],
-            ),
-            (
-                Part::TabItem,
-                [
-                    0x79c6_6841_b0ce_7937,
-                    0xb3a9_7c7c_5ff2_2317,
-                    0x2d3f_0a5c_ad28_33c4,
-                    0x462d_db85_f6c1_32d7,
-                ],
-            ),
-            (
-                Part::TabPane,
-                [
-                    0xdbab_63d3_7ac9_cba4,
-                    0xcd7c_807e_b581_ea47,
-                    0x516e_2d86_a26b_9584,
-                    0x11cf_a3e4_b92b_5307,
-                ],
-            ),
-        ];
-        let got = PARTS.map(|p| {
-            let light = |d| fnv(&part(d, p).atlas);
-            let dark = |d| fnv(&crate::glass::dark::remap_part(part(d, p)).atlas);
-            (p, [light(1), light(2), dark(1), dark(2)])
-        });
-        assert_eq!(got, want, "{got:#x?}");
+        let mut got = Vec::new();
+        for p in PARTS {
+            for d in [1, 2] {
+                got.push((format!("{p:?} {d}"), fnv(&part(d, p).atlas)));
+            }
+            for d in [1, 2] {
+                let dark = crate::glass::dark::remap_part(part(d, p));
+                got.push((format!("{p:?} {d} dark"), fnv(&dark.atlas)));
+            }
+        }
+        crate::pins::check("glass/sheet_parts", &got);
     }
 
     #[test]

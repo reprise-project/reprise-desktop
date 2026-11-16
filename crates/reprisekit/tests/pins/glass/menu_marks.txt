@@ -1,0 +1,8 @@
+MenuCheckMark 1 f296ce72ada92351
+MenuRadioMark 1 fb031f0607ce72c5
+MenuBar 1 8fb9f523a087de68
+MenuBarItem 1 cf4eddf6cdc207ae
+MenuCheckMark 2 e204a1a40ddf7695
+MenuRadioMark 2 a09f4c420159ce4c
+MenuBar 2 f5d87b878e5c790b
+MenuBarItem 2 fb913e06d0d9bc23

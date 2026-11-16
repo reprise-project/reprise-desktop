@@ -1,0 +1,9 @@
+named Classic 175f6ce3e5c88b48
+named Blue 8384de64ca166860
+named Glass f350274c9b867d96
+empty Classic 667aef5cce7654be
+empty Blue f23a3bb9df410796
+empty Glass 8319f5382979e4ac
+greyed Classic ef8f79758ce43c65
+greyed Blue 761da2a50ec9ebd8
+greyed Glass 620c1f5c0d189658

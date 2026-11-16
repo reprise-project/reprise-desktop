@@ -374,16 +374,8 @@ fn a_note_pins_in_every_interface_at_scale_1_and_2() {
             got.push((format!("{i:?}@{scale}"), fnv(&long_note(i, scale))));
         }
     }
-    let want: [(&str, u64); 6] = [
-        ("Classic@1", 0xccda_0154_182f_3492),
-        ("Classic@2", 0xfccb_5921_1e93_be03),
-        ("Blue@1", 0xbd68_a98f_731c_29b8),
-        ("Blue@2", 0x60e1_3c78_823c_6490),
-        ("Glass@1", 0x481d_0ce1_6217_9a21),
-        ("Glass@2", 0xeed3_136e_3f2a_cfd9),
-    ];
-    let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
-    assert_eq!(got, want);
+    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/note.txt");
+    reprisekit::pins::check_file(std::path::Path::new(file), &got);
 }
 
 #[test]
@@ -492,14 +484,6 @@ fn a_wrapped_note_pins_in_every_interface_at_scale_1_and_2() {
             got.push((format!("{i:?}@{scale}"), fnv(&c)));
         }
     }
-    let want: [(&str, u64); 6] = [
-        ("Classic@1", 0x24b3_1ea8_8ad3_3711),
-        ("Classic@2", 0xafa8_456c_8166_99d1),
-        ("Blue@1", 0x51e4_cf72_4acf_1900),
-        ("Blue@2", 0xdbdf_b338_fde5_5d40),
-        ("Glass@1", 0x6372_a2e6_b1af_83d8),
-        ("Glass@2", 0x7787_d2ba_4502_af3f),
-    ];
-    let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
-    assert_eq!(got, want);
+    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/wrapped_note.txt");
+    reprisekit::pins::check_file(std::path::Path::new(file), &got);
 }

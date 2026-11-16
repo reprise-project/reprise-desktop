@@ -285,22 +285,13 @@ mod tests {
 
     #[test]
     fn size_grip_pins_at_scale_1_and_2() {
-        let got = GRIP_PINS.map(|(d, dark, _)| {
-            let g = if dark { remap_part(grip(d)) } else { grip(d) };
-            (d, dark, fnv(&g.atlas))
-        });
-        assert!(
-            got == GRIP_PINS,
-            "pins changed; now:\n{}",
-            got.map(|(d, dark, h)| format!("({d}, {dark}, {h:#018x}),"))
-                .join("\n")
-        );
+        let cases = [(1, false), (2, false), (1, true), (2, true)];
+        let got: Vec<_> = cases
+            .map(|(d, dark)| {
+                let g = if dark { remap_part(grip(d)) } else { grip(d) };
+                (format!("{d} dark={dark}"), fnv(&g.atlas))
+            })
+            .into();
+        crate::pins::check("glass/size_grip", &got);
     }
-
-    const GRIP_PINS: [(i32, bool, u64); 4] = [
-        (1, false, 0x8fe87ce460e87211),
-        (2, false, 0x505dc486efdc0989),
-        (1, true, 0x7cffaf4b0a75da35),
-        (2, true, 0x228b6a0bdc47ac6d),
-    ];
 }

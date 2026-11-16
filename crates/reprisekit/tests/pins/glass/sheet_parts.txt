@@ -1,0 +1,16 @@
+PushButton 1 4c9c346e30dcc503
+PushButton 2 85a4b986230ee620
+PushButton 1 dark 6db4b471b795c6f2
+PushButton 2 dark c92d08073f3b2fb0
+GroupBox 1 1dbfd7823232c55c
+GroupBox 2 f60ba2c0bf676ee7
+GroupBox 1 dark b0f0f2336e6a6874
+GroupBox 2 dark 38a39e394b4f998f
+TabItem 1 79c66841b0ce7937
+TabItem 2 b3a97c7c5ff22317
+TabItem 1 dark 2d3f0a5cad2833c4
+TabItem 2 dark 462ddb85f6c132d7
+TabPane 1 dbab63d37ac9cba4
+TabPane 2 cd7c807eb581ea47
+TabPane 1 dark 516e2d86a26b9584
+TabPane 2 dark 11cfa3e4b92b5307

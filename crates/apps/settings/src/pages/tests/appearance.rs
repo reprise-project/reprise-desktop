@@ -129,14 +129,7 @@ fn the_dark_hours_row_pins_its_pixels_in_every_look() {
         f.set_enabled(id, false);
     }
     let greyed = row_pins(&f, row);
-    assert_eq!(
-        [on, greyed],
-        [
-            [0xb4fcf7204ea63d7b, 0x323384d5b3200cfc, 0x1781092ffc19ffa8],
-            [0x5f51dddb632fa990, 0x3669d0d95b7e2026, 0x35300c73a2610fac],
-        ],
-        "set hours, greyed; Classic, Blue, Glass"
-    );
+    check_rows("dark_hours_row", &["set hours", "greyed"], &[on, greyed]);
 }
 
 #[test]

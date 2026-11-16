@@ -578,17 +578,19 @@ mod tests {
                 hashes[0], hashes[1],
                 "{i:?}: the combo greys with the files off"
             );
-            got.push(hashes);
+            let states = ["shown", "greyed"];
+            got.extend(
+                states
+                    .into_iter()
+                    .zip(hashes)
+                    .map(|(state, h)| (format!("{i:?} {state}"), h)),
+            );
         }
-        assert_eq!(
-            got,
-            [
-                [0xa9cc8b84ed350ffe, 0x66f605a354ffe528],
-                [0x058be053ad8eaf77, 0x9aebc2626f26bc70],
-                [0xf241b02b1fdb815c, 0x110665e0b085858e],
-            ],
-            "Classic, Blue, Glass: shown, greyed"
+        let file = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/pins/desktop_icons_group.txt"
         );
+        reprisekit::pins::check_file(std::path::Path::new(file), &got);
     }
 
     #[test]
@@ -676,17 +678,16 @@ mod tests {
                 hashes[0] != hashes[1] && hashes[0] != hashes[2],
                 "{i:?}: a desktop's name and the greyed row differ from all desktops"
             );
-            got.push(hashes);
+            let states = ["all", "Desktop 2", "greyed"];
+            got.extend(
+                states
+                    .into_iter()
+                    .zip(hashes)
+                    .map(|(state, h)| (format!("{i:?} {state}"), h)),
+            );
         }
-        assert_eq!(
-            got,
-            [
-                [0x2ac2b0dea059c84a, 0xaef6ac0e84b368c8, 0x8849be0e3abeae21],
-                [0xfbc4252134d4cfc4, 0xb25e3195d143dafe, 0xc524ec18713de715],
-                [0xf343c5d2f9bc2b17, 0xdfcf6be66dbe208a, 0xa5cda079c1ef2cba],
-            ],
-            "Classic, Blue, Glass: all, Desktop 2, greyed"
-        );
+        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/use_for_row.txt");
+        reprisekit::pins::check_file(std::path::Path::new(file), &got);
     }
 
     #[test]

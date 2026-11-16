@@ -877,19 +877,8 @@ mod tests {
             Part::PreviewFrame,
             Part::PreviewThumb,
         ]
-        .map(|part| fnv(two.part(part).unwrap()));
-        assert_eq!(
-            got,
-            [
-                0xED7EDB9C5DBF7AF2,
-                0xB23D752F0CB35FA5,
-                0x5742AB2DE12BD665,
-                0x63EF886C669EFE25,
-                0xFF2F93EC657C38E5,
-                0xFCB51D7DA210E3E5,
-            ],
-            "Alt+Tab's frame, selection, hot box and picture shadow, the popup's frame and lit cell: {got:#018X?}"
-        );
+        .map(|part| (format!("{part:?}"), fnv(two.part(part).unwrap())));
+        crate::pins::check("glass/popup_parts_at_2", &got);
     }
 
     fn popups() -> [(&'static str, Panel, i32, i32); 2] {

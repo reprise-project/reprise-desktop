@@ -210,13 +210,10 @@ fn the_program_switches_pin_their_pixels_in_every_look() {
     }
     notifypage::fill(&mut f, &programs, &s);
     let chat = row_pins(&f, row);
-    assert_eq!(
-        [none, chat],
-        [
-            [0x7271412745a72c79, 0xfd6a7e8ff001b3f9, 0xb31b2628785111f8],
-            [0xff6d03cb3a6174f0, 0xa243e9831ad6b73a, 0xc5e8178a57516dfb],
-        ],
-        "nothing picked, Chat picked; Classic, Blue, Glass"
+    check_rows(
+        "notify_programs",
+        &["nothing picked", "Chat picked"],
+        &[none, chat],
     );
 }
 
@@ -1647,14 +1644,7 @@ fn the_remote_logins_group_pins_its_pixels_in_every_look() {
     c.remote.enabled = true;
     show_login(&mut f, &c, &[], Some("3F:9A:01"), Default::default());
     let on = row_pins(&f, row);
-    assert_eq!(
-        [off, on],
-        [
-            [0xacb5b86e525def62, 0xa43cab3129b6a3ed, 0xc74f9e48b0f27025],
-            [0x2a0864c10b5a7905, 0x4b2cfd128d199ca1, 0x8610ba006abc8dfc],
-        ],
-        "off, on; Classic, Blue, Glass"
-    );
+    check_rows("remote_logins_group", &["off", "on"], &[off, on]);
 }
 
 /// The Login Screen group with the defaults, then Blue, no user list, no animation, an automatic
@@ -1677,14 +1667,7 @@ fn the_login_screen_group_pins_its_pixels_in_every_look() {
         .into();
     show_login(&mut f, &c, &["anna".into()], None, Default::default());
     let set = row_pins(&f, row);
-    assert_eq!(
-        [unset, set],
-        [
-            [0xa4ea0bd356eff28c, 0x91bdb278df887822, 0x1a36414692717af4],
-            [0x353fb018516f3728, 0xf4482b2e2f3faf6c, 0xdebe09ab3fb2e605],
-        ],
-        "defaults, set; Classic, Blue, Glass"
-    );
+    check_rows("login_screen_group", &["defaults", "set"], &[unset, set]);
 }
 
 /// The Remote Desktop page while the login manager runs remote logins, with its fingerprint
@@ -1695,10 +1678,10 @@ fn the_remote_desktop_page_under_the_login_manager_pins_its_pixels_in_every_look
     let mut page = remote_desktop(Area::MIN, None, false, machine);
     show_remote(&mut page, None, false, None, None, machine);
     let row = Rect::new(20, 44, 358, 435);
-    assert_eq!(
-        row_pins(&page, row),
-        [0x9c2c7bd2a545b901, 0x2528886f05025373, 0x6557f484fcea80a5],
-        "Classic, Blue, Glass"
+    check_rows(
+        "remote_desktop_under_login_manager",
+        &["page"],
+        &[row_pins(&page, row)],
     );
 }
 
@@ -1778,14 +1761,7 @@ fn the_proxy_rows_pin_their_pixels_in_every_look() {
         },
     );
     let auto = row_pins(&page, rows);
-    assert_eq!(
-        [manual, auto],
-        [
-            [0xe2bb947917f93155, 0x1beecf35c07dbd15, 0xef12460279098d42],
-            [0x429630567565d43e, 0x2ade9b99155cc5c3, 0xe1790665d56e9938],
-        ],
-        "manual, automatic; Classic, Blue, Glass"
-    );
+    check_rows("proxy_rows", &["manual", "automatic"], &[manual, auto]);
 }
 
 fn status(page: &Form) -> &str {
@@ -1830,14 +1806,10 @@ fn the_airplane_mode_rows_pin_their_pixels_in_every_look() {
     let none = row_pins(&page, row);
     show_airplane(&mut page, Some(airplane::Mode::Killed), false);
     let killed = row_pins(&page, row);
-    assert_eq!(
-        [on, none, killed],
-        [
-            [0xd4ab66947128ebfe, 0x4f341a8af31bcccb, 0x0bacf51ccd78cc46],
-            [0xd28c5f7b6e621d82, 0xe1aa3b114dbba873, 0xfa38d4ecfdf80291],
-            [0x90c13f02cc8fd8b6, 0xebb321a993ce7a0b, 0xfd2b81923554c4a7],
-        ],
-        "on, no radio, hardware kill; Classic, Blue, Glass"
+    check_rows(
+        "airplane_mode_rows",
+        &["on", "no radio", "hardware kill"],
+        &[on, none, killed],
     );
 }
 
@@ -1866,13 +1838,9 @@ fn the_region_pages_system_group_pins_its_pixels_in_every_look() {
         show_system(&mut f, &system, &locales, Some(&want), false);
         pins.push(row_pins(&f, group));
     }
-    assert_eq!(
-        pins,
-        [
-            [0xf684f71ab758c5bd, 0xa1c037a0759ebb84, 0x68ce43e3923b23e7],
-            [0x9674ae7b096b1e26, 0xe41dd6cc2f9e1126, 0x6e50971d9246f597],
-            [0xb2c85ad8c04f9c08, 0xcbafb2be0259fc92, 0x7d344ba12e7a3f4f],
-        ],
-        "lit, ask an administrator, no localed; Classic, Blue, Glass"
+    check_rows(
+        "region_system_group",
+        &["lit", "ask an administrator", "no localed"],
+        &pins,
     );
 }

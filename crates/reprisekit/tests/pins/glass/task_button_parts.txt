@@ -1,0 +1,16 @@
+buttons c898a3f2e8392891
+small buttons 312bcd0e711f590e
+stacks 5b07675d5b32f0ae
+small stacks 4c9876e0805d3649
+pager tiles 3ffe07462707e545
+small pager tiles 8c569a247e260cc2
+label e3b2dffd554fb7b9
+label edges 8e545716b56b8219
+lit buttons 0477101818ee3909
+lit buttons' gain dce9d0e7d01c01bd
+lit small buttons bf2d2339c661a608
+lit small buttons' gain 1c1498f0bc8575dd
+lit label 0966bc1cac7f8af3
+lit label's gain 4cd2d323e581f16d
+lit stacks 29bbc6371328b3f2
+lit stacks' gain e7a7a46814025435

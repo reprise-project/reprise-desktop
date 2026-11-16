@@ -547,31 +547,12 @@ mod tests {
                 let text = TextRenderer::load(&theme.fonts);
                 for (key, on) in [(LockKey::Caps, true), (LockKey::Num, false)] {
                     let c = draw_lock_key(&theme, &text, key, on);
-                    got.push((look, scale, key, on, fnv(&c)));
+                    got.push((format!("{look:?} {scale} {key:?} on={on}"), fnv(&c)));
                 }
             }
         }
-        assert_eq!(got, LOCK_PINS, "pins changed; now:\n{got:#x?}");
+        crate::pins::check("controls/lock_key_panels", &got);
     }
-
-    const LOCK_PINS: [(crate::interface::Interface, i32, LockKey, bool, u64); 12] = {
-        use crate::interface::Interface::{Blue, Classic, Glass};
-        use LockKey::{Caps, Num};
-        [
-            (Classic, 1, Caps, true, 0x3a10f8be06828114),
-            (Classic, 1, Num, false, 0x95078fc03c79a217),
-            (Classic, 2, Caps, true, 0xef3353dab172bd62),
-            (Classic, 2, Num, false, 0xd61f26da54a57440),
-            (Blue, 1, Caps, true, 0xa3220a8b3db3cc5e),
-            (Blue, 1, Num, false, 0x4caeee78092d8b8f),
-            (Blue, 2, Caps, true, 0x834487477c12d82a),
-            (Blue, 2, Num, false, 0x331c0af8ef624fa2),
-            (Glass, 1, Caps, true, 0xa26ba80c2891d195),
-            (Glass, 1, Num, false, 0xa68c4ab6187f0ede),
-            (Glass, 2, Caps, true, 0x7a4fcb21215308aa),
-            (Glass, 2, Num, false, 0xae425babd4292107),
-        ]
-    };
 
     #[test]
     #[ignore]

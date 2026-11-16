@@ -788,42 +788,22 @@ mod tests {
 
     #[test]
     fn the_bars_parts_at_scale_2_keep_their_pixels_at_sky() {
-        // Each of the bar's own parts at scale 2 as an FNV-1a hash, the
-        // 40 px bar's then the 30 px one's: the bar, the tray, the veil,
-        // the band, the edges, the foot light and the strip.
         let s = Settings::default();
-        let got = [(40, 60), (30, 44)].map(|(h, button)| {
-            [
-                taskbar(&s, h, 2),
-                tray_area(&s, h, 2),
-                label_row(&s, h, 2),
-                slot_band(&s, h, 2),
-                slot_edge(&s, h, 2),
-                slot_light(button, 2),
-                show_desktop(&s, h, 2),
-            ]
-            .map(|img| fnv(&img))
-        });
-        let want: [[u64; 7]; 2] = [
-            [
-                0x8B6C_3C1E_0008_98C5,
-                0xAA75_4ACD_F116_504D,
-                0x4FD3_CB86_E0D2_2B15,
-                0x3346_87F0_4F50_C88D,
-                0x63CA_E354_E03A_A51D,
-                0xDBD0_91E8_856F_93F5,
-                0x364F_0C29_AD81_54C7,
-            ],
-            [
-                0x6A49_FCD7_02BC_C825,
-                0x1084_5139_518A_6035,
-                0xF40B_D5AE_EB53_1BC5,
-                0xCB94_C4C1_FF3E_E68D,
-                0xE033_CE2C_76D0_5A05,
-                0xDE90_A15C_1F59_0BF5,
-                0x28B6_D09D_E28B_1733,
-            ],
-        ];
-        assert_eq!(got, want, "{got:#018X?}");
+        let mut got = Vec::new();
+        for (h, button) in [(40, 60), (30, 44)] {
+            let parts = [
+                ("taskbar", taskbar(&s, h, 2)),
+                ("tray", tray_area(&s, h, 2)),
+                ("veil", label_row(&s, h, 2)),
+                ("band", slot_band(&s, h, 2)),
+                ("edges", slot_edge(&s, h, 2)),
+                ("foot light", slot_light(button, 2)),
+                ("strip", show_desktop(&s, h, 2)),
+            ];
+            for (name, img) in parts {
+                got.push((format!("{h} px {name}"), fnv(&img)));
+            }
+        }
+        crate::pins::check("glass/bar_parts_at_2", &got);
     }
 }

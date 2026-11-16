@@ -227,6 +227,24 @@ fn every_dialog_fits_its_text_under_every_interface() {
     assert!(over.is_empty(), "{}", over.join("\n"));
 }
 
+/// Checks one [`row_pins`] per state in `states` against `tests/pins/<name>.txt`.
+#[track_caller]
+fn check_rows(name: &str, states: &[&str], rows: &[[u64; 3]]) {
+    assert_eq!(states.len(), rows.len(), "{name}: one state per row");
+    let got: Vec<_> = states
+        .iter()
+        .zip(rows)
+        .flat_map(|(state, row)| {
+            ["Classic", "Blue", "Glass"]
+                .into_iter()
+                .zip(row)
+                .map(move |(look, &h)| (format!("{state} {look}"), h))
+        })
+        .collect();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pins");
+    reprisekit::pins::check_file(&dir.join(format!("{name}.txt")), &got);
+}
+
 /// A hash of `row` of `form` drawn in each of Classic, Blue and Glass, with the test fonts.
 fn row_pins(form: &form::Form, row: Rect) -> [u64; 3] {
     row_pins_at(form, row, 1)

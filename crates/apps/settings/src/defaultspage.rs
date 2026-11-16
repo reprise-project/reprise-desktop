@@ -1154,17 +1154,16 @@ pub(crate) mod tests {
                 *hash = fnv(&c.copy_rect(row));
             }
             assert_ne!(hashes[0], hashes[1], "{i:?}: each choice shows its text");
-            got.push(hashes);
+            let states = ["keep open", "close"];
+            got.extend(
+                states
+                    .into_iter()
+                    .zip(hashes)
+                    .map(|(state, h)| (format!("{i:?} {state}"), h)),
+            );
         }
-        assert_eq!(
-            got,
-            [
-                [0xc3fdac5f80ffde45, 0xb27f9e19039ad678],
-                [0xe3854151f8c565c6, 0x3806333260ae309f],
-                [0xc874dd913e0019a3, 0x538adfb3d94f93ca],
-            ],
-            "Classic, Blue, Glass: keep open, close"
-        );
+        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/script_row.txt");
+        reprisekit::pins::check_file(std::path::Path::new(file), &got);
     }
 
     #[test]

@@ -637,27 +637,18 @@ mod tests {
 
     #[test]
     fn header_pins_at_scale_1_and_2() {
-        let got = PINS.map(|(d, dark, _)| {
-            let parts = header_parts(d).map(|p| if dark { remap_part(p) } else { p });
-            let h = parts
-                .iter()
-                .fold(0, |h, p| h ^ fnv(&p.atlas).rotate_left(7));
-            (d, dark, h)
-        });
-        assert!(
-            got == PINS,
-            "pins changed; now:\n{}",
-            got.map(|(d, dark, h)| format!("({d}, {dark}, {h:#018x}),"))
-                .join("\n")
-        );
+        let cases = [(1, false), (2, false), (1, true), (2, true)];
+        let got: Vec<_> = cases
+            .map(|(d, dark)| {
+                let parts = header_parts(d).map(|p| if dark { remap_part(p) } else { p });
+                let h = parts
+                    .iter()
+                    .fold(0, |h, p| h ^ fnv(&p.atlas).rotate_left(7));
+                (format!("{d} dark={dark}"), h)
+            })
+            .into();
+        crate::pins::check("glass/header", &got);
     }
-
-    const PINS: [(i32, bool, u64); 4] = [
-        (1, false, 0xc39bc66bd621e9ae),
-        (2, false, 0x71930e02f0405507),
-        (1, true, 0xf55b1e1587d3efe8),
-        (2, true, 0xa8a03cf481a5aea2),
-    ];
 
     #[test]
     fn the_scale_2_style_draws_the_arrow_at_its_design_size() {

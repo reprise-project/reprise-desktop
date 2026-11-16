@@ -83,16 +83,13 @@ fn every_part_has_its_size_and_frames() {
 
 #[test]
 fn sky_keeps_its_strips() {
-    let want = [
-        0x5B0D_EBB1_B8EE_73C9_u64,
-        0x9198_41FE_7005_B819,
-        0x77BA_F165_400B_3AB4,
-        0xDCAD_E5D2_11B7_3583,
-    ];
     let s = Settings::default();
     let p = parts(&s);
-    let got: Vec<u64> = p.iter().map(|(_, img)| fnv(img)).collect();
-    assert_eq!(got, want, "the atlases: {got:#018X?}");
+    let got: Vec<_> = p
+        .iter()
+        .map(|(name, img)| (name.to_string(), fnv(img)))
+        .collect();
+    crate::pins::check("glass/caption_strips", &got);
     let g = &p[0].1;
     for (st, n, x, y, want, what) in [
         (State::Normal, 0, 0, 10, 0xD0C0_C5C9, "the halo"),
@@ -764,37 +761,21 @@ fn a_strips_corners_at_scale_2_are_round_and_antialiased() {
 
 #[test]
 fn the_strips_at_scale_2_keep_their_pixels_at_sky() {
-    for (frame, want) in [
-        (
-            crate::glass::Frame::Rounded,
-            [
-                0x03FA_4D81_FD95_CB22_u64,
-                0x0F64_8F8D_EAF3_34A4,
-                0xD30D_F78D_D893_E09D,
-                0xCB73_D236_06B4_771C,
-            ],
-        ),
-        (
-            crate::glass::Frame::Square,
-            [
-                0x3CB9_4E7C_833C_9E95,
-                0x09A4_701B_EFAE_49DD,
-                0xCEF0_604D_008A_9CC5,
-                0x3B1E_08D2_F681_B798,
-            ],
-        ),
-    ] {
+    let mut got = Vec::new();
+    for frame in [crate::glass::Frame::Rounded, crate::glass::Frame::Square] {
         let style = crate::glass::style(&Settings {
             frame,
             ..Settings::default()
         })
         .at_scale(2);
-        let got = PARTS.map(|part| fnv(style.part(part).unwrap()));
-        assert_eq!(
-            got, want,
-            "{frame:?}: group, maximized group, close, ?, {got:#018X?}"
-        );
+        for part in PARTS {
+            got.push((
+                format!("{frame:?} {part:?}"),
+                fnv(style.part(part).unwrap()),
+            ));
+        }
     }
+    crate::pins::check("glass/caption_strips_at_2", &got);
 }
 
 #[test]

@@ -605,100 +605,12 @@ mod tests {
             for p in ALL {
                 let img = part(p, d);
                 for &s in states(p) {
-                    got.push(format!("{p:?} {s:?} {d}: {:#018x}", fnv(&frame(&img, s))));
+                    got.push((format!("{p:?} {s:?} {d}"), fnv(&frame(&img, s))));
                 }
             }
         }
-        let want: Vec<&str> = PINS
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .collect();
-        assert_eq!(got, want, "\n{}", got.join("\n"));
+        crate::pins::check("glass/scroll_parts", &got);
     }
-
-    const PINS: &str = "
-    ScrollArrowUp Normal 1: 0x31487496e2806f93
-    ScrollArrowUp Hot 1: 0xcded665a2d967e44
-    ScrollArrowUp Pressed 1: 0x4efb5d649380b91d
-    ScrollArrowUp Disabled 1: 0xb02b79b5f1891a87
-    ScrollArrowUp BarHot 1: 0x0f7c2d66263287b1
-    ScrollArrowDown Normal 1: 0x48a733c4fc8424da
-    ScrollArrowDown Hot 1: 0xd5d9f9cf779f3aeb
-    ScrollArrowDown Pressed 1: 0x7bb4ea99eef966cc
-    ScrollArrowDown Disabled 1: 0x181e5b333ecbd51d
-    ScrollArrowDown BarHot 1: 0x6052b5cc7669001b
-    ScrollArrowLeft Normal 1: 0x414f5fd2fe0c574b
-    ScrollArrowLeft Hot 1: 0x4b780cba8150e800
-    ScrollArrowLeft Pressed 1: 0x322b0ba1288bf7cd
-    ScrollArrowLeft Disabled 1: 0x7b8d518b2cbf3da7
-    ScrollArrowLeft BarHot 1: 0x2a8fa92a0e93e671
-    ScrollArrowRight Normal 1: 0xa7a6ffde8a7fc302
-    ScrollArrowRight Hot 1: 0x2c5f9f3adc05c353
-    ScrollArrowRight Pressed 1: 0xc616eae4632459b0
-    ScrollArrowRight Disabled 1: 0x15f6d51659619ce5
-    ScrollArrowRight BarHot 1: 0x3e9e6bf7faa9303f
-    ScrollThumbV Normal 1: 0x503d5a239c079b7a
-    ScrollThumbV Hot 1: 0x738ab2cfa5435dae
-    ScrollThumbV Pressed 1: 0xb74c9ea0ea48b89d
-    ScrollThumbV BarHot 1: 0xacdde03a27a1b1c7
-    ScrollThumbH Normal 1: 0x4fbdd8282590309e
-    ScrollThumbH Hot 1: 0x19dc3d999f2c0892
-    ScrollThumbH Pressed 1: 0x043cb2d6d148b081
-    ScrollThumbH BarHot 1: 0x49e12f1de4b6ad2b
-    ScrollGripV Normal 1: 0xdc675a90a841f00f
-    ScrollGripV Hot 1: 0x62848463278fd926
-    ScrollGripV Pressed 1: 0x62848463278fd926
-    ScrollGripV BarHot 1: 0xdc675a90a841f00f
-    ScrollGripH Normal 1: 0x5aa26d98c4ae44e7
-    ScrollGripH Hot 1: 0x95ab976d7d8173c6
-    ScrollGripH Pressed 1: 0x95ab976d7d8173c6
-    ScrollGripH BarHot 1: 0x5aa26d98c4ae44e7
-    ScrollTrackV Normal 1: 0x9ce7f7bbf63b6864
-    ScrollTrackV Pressed 1: 0x42c3161a9b1424a4
-    ScrollTrackH Normal 1: 0x20908199cea37f64
-    ScrollTrackH Pressed 1: 0xc66b9ff8737c3ba4
-    ScrollArrowUp Normal 2: 0xd6c1a54d6e86e234
-    ScrollArrowUp Hot 2: 0x18a2cf8b79d9ce9c
-    ScrollArrowUp Pressed 2: 0x852e6aa7fe67e810
-    ScrollArrowUp Disabled 2: 0x3c60ff1de2b72308
-    ScrollArrowUp BarHot 2: 0xf2b57d5fff18abd5
-    ScrollArrowDown Normal 2: 0x33bb0eae409ff4bd
-    ScrollArrowDown Hot 2: 0x9a809801c8241a29
-    ScrollArrowDown Pressed 2: 0x335b5561feda5a56
-    ScrollArrowDown Disabled 2: 0xf730194fd5d7823a
-    ScrollArrowDown BarHot 2: 0xf7d3666ee7818248
-    ScrollArrowLeft Normal 2: 0xe7490e06e50cd0c4
-    ScrollArrowLeft Hot 2: 0xff465de5f46c0dbc
-    ScrollArrowLeft Pressed 2: 0xa1ffdf03f81adbb0
-    ScrollArrowLeft Disabled 2: 0x0fda6c43bc375bc8
-    ScrollArrowLeft BarHot 2: 0xf559d45d00055235
-    ScrollArrowRight Normal 2: 0xba446d90a9e843fd
-    ScrollArrowRight Hot 2: 0x378bbf8bfe645a91
-    ScrollArrowRight Pressed 2: 0xef5563da974620ce
-    ScrollArrowRight Disabled 2: 0xc73a04ac49ba2c42
-    ScrollArrowRight BarHot 2: 0x39fcc9fd90c58f40
-    ScrollThumbV Normal 2: 0xae9bf746d47b23a6
-    ScrollThumbV Hot 2: 0xd6a1d1d08f9e1866
-    ScrollThumbV Pressed 2: 0x077bc79f6c796d59
-    ScrollThumbV BarHot 2: 0xba237caa512d7ceb
-    ScrollThumbH Normal 2: 0x0fde641db84ff3b6
-    ScrollThumbH Hot 2: 0xf142a8e8ca0bc6e2
-    ScrollThumbH Pressed 2: 0x6466130549b3bb75
-    ScrollThumbH BarHot 2: 0xb0f9b2ec6122d0ff
-    ScrollGripV Normal 2: 0x9bbbae1043751477
-    ScrollGripV Hot 2: 0x18574ec673d977df
-    ScrollGripV Pressed 2: 0x18574ec673d977df
-    ScrollGripV BarHot 2: 0x9bbbae1043751477
-    ScrollGripH Normal 2: 0x3eb1e56220b0ba13
-    ScrollGripH Hot 2: 0xfe2ae8ee0438521b
-    ScrollGripH Pressed 2: 0xfe2ae8ee0438521b
-    ScrollGripH BarHot 2: 0x3eb1e56220b0ba13
-    ScrollTrackV Normal 2: 0xbe3eae495b965d25
-    ScrollTrackV Pressed 2: 0x9fbf92cfeb122be5
-    ScrollTrackH Normal 2: 0xe0211d68391d3ac5
-    ScrollTrackH Pressed 2: 0xa34af9c4b6fd6b75
-";
 
     /// At 2 every frame is twice its scale-1 size; nine-grid insets and content margins stay in design pixels.
     #[test]

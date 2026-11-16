@@ -1658,13 +1658,11 @@ fn the_caption_mode_toolbar_pins_in_every_interface() {
         top.blit_canvas(0, 0, &c);
         got.push((format!("{i:?}"), fnv(&top)));
     }
-    let want: [(&str, u64); 3] = [
-        ("Classic", 0x30ba_a6b4_d116_ac75),
-        ("Blue", 0x4eda_45d7_f42f_2eba),
-        ("Glass", 0xa36d_f98e_ba6b_7591),
-    ];
-    let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
-    assert_eq!(got, want);
+    let file = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/pins/caption_mode_toolbar.txt"
+    );
+    reprisekit::pins::check_file(std::path::Path::new(file), &got);
 }
 
 #[test]

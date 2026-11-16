@@ -344,25 +344,6 @@ const CASES: [&str; 4] = [
     "reply row",
 ];
 
-const LOZENGE_PINS: [u64; 16] = [
-    0x841f8deb53b6c29b,
-    0x139b3f3dd55a2564,
-    0x8ece672977df1c73,
-    0x37440ad983172b73,
-    0x27f9c499ad78b0b4,
-    0x00fc97110915fe6c,
-    0xc15a3106b27fa121,
-    0x53ffc6ce7a94c962,
-    0xeb8e2b0c83168d0b,
-    0x6ee3b1fbd69cf289,
-    0x5cfa4f92b72ef9b1,
-    0x4ebec1f115eaee42,
-    0x966b629ca23c81cf,
-    0x610df1191f13fe17,
-    0x2c14f7725c032efd,
-    0xea888da36db493e6,
-];
-
 #[test]
 fn lozenge_pins() {
     crate::pins::fonts();
@@ -376,10 +357,7 @@ fn lozenge_pins() {
             }
         }
     }
-    let now: Vec<String> = got.iter().map(|(_, h)| format!("{h:#018x},")).collect();
-    for (i, (case, h)) in got.iter().enumerate() {
-        assert_eq!(*h, LOZENGE_PINS[i], "{case}; now:\n{}", now.join("\n"));
-    }
+    crate::pins::check("controls/notify_lozenge", &got);
 }
 
 #[test]

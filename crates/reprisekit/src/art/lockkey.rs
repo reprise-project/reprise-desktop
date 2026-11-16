@@ -159,22 +159,13 @@ mod tests {
 
     #[test]
     fn pins_each_state_at_scale_1_and_2() {
-        let got: Vec<(LockKey, bool, i32, u64)> = [LockKey::Caps, LockKey::Num]
+        let got: Vec<_> = [LockKey::Caps, LockKey::Num]
             .into_iter()
             .flat_map(|k| [true, false].map(|on| (k, on)))
-            .flat_map(|(k, on)| [1, 2].map(|d| (k, on, d, fnv(&draw(k, on, d)))))
+            .flat_map(|(k, on)| {
+                [1, 2].map(|d| (format!("{k:?} on={on} {d}"), fnv(&draw(k, on, d))))
+            })
             .collect();
-        assert_eq!(got, PINS, "pins changed; now:\n{got:#x?}");
+        crate::pins::check("art/lock_key", &got);
     }
-
-    const PINS: [(LockKey, bool, i32, u64); 8] = [
-        (LockKey::Caps, true, 1, 0xe50a23bf2a160491),
-        (LockKey::Caps, true, 2, 0x8d37bb93786938ca),
-        (LockKey::Caps, false, 1, 0x27bcf8ff37ce2d25),
-        (LockKey::Caps, false, 2, 0x3676155bcd26719e),
-        (LockKey::Num, true, 1, 0x9369ab95b2109df6),
-        (LockKey::Num, true, 2, 0x2cd4f584dfc7af38),
-        (LockKey::Num, false, 1, 0xb2982645b04c39a),
-        (LockKey::Num, false, 2, 0xe09e0aad50cfa8ac),
-    ];
 }

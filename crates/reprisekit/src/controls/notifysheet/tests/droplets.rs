@@ -669,33 +669,6 @@ const DROPLET_CASES: [&str; 6] = [
     "expanded, picture, hot close",
 ];
 
-const DROPLET_PINS: [u64; 24] = [
-    0x425bc144996b943f,
-    0x1b5e94833245fcf1,
-    0xb7ffd9c5ecc872c0,
-    0xb9b970e50ca4aeb3,
-    0x77a28eba7566d48d,
-    0x309fb736c325eb07,
-    0x7dd3e1fbb7ea804d,
-    0x5541d5a466e923f5,
-    0xd60ae18f4120a49b,
-    0x55ac48a5b7d76edf,
-    0xdd25fb326db09377,
-    0x8fcc436ede36624f,
-    0xdf9448f5843dc0db,
-    0x782d7e3e6ebd8bb2,
-    0x635209b4461c9ef5,
-    0x1374d93fde986aed,
-    0xe2695eb474531d93,
-    0x044298801479ee55,
-    0x4ea1de53291eb3c7,
-    0x3a2d8890877b5201,
-    0x54929f8ba950da9e,
-    0x7ce3739d49072a81,
-    0xd9ea5a9475d49e13,
-    0xdd1759115362f434,
-];
-
 #[test]
 fn droplet_pins() {
     crate::pins::fonts();
@@ -709,30 +682,21 @@ fn droplet_pins() {
             }
         }
     }
-    let now: Vec<String> = got.iter().map(|(_, h)| format!("{h:#018x},")).collect();
-    for (i, (case, h)) in got.iter().enumerate() {
-        assert_eq!(*h, DROPLET_PINS[i], "{case}; now:\n{}", now.join("\n"));
-    }
+    crate::pins::check("controls/notify_droplet", &got);
 }
-
-/// Light then dark, each at scale 1 and 2.
-const BEAD_PINS: [u64; 4] = [
-    0xc57c0479b1a5e635,
-    0xe326070904f5e5f3,
-    0xf58e8278f11aff6a,
-    0x96f63b889c79bf5f,
-];
 
 #[test]
 fn bead_pins() {
     let mut got = Vec::new();
     for dark in [false, true] {
         for s in [1, 2] {
-            got.push(fnv(&drip_bead(&glass(dark, s)).unwrap().0));
+            got.push((
+                format!("dark={dark} x{s}"),
+                fnv(&drip_bead(&glass(dark, s)).unwrap().0),
+            ));
         }
     }
-    let now: Vec<String> = got.iter().map(|h| format!("{h:#018x},")).collect();
-    assert_eq!(got, BEAD_PINS, "now:\n{}", now.join("\n"));
+    crate::pins::check("controls/notify_bead", &got);
 }
 
 #[test]

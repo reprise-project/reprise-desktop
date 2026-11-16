@@ -444,16 +444,11 @@ mod tests {
 
     #[test]
     fn a_boosted_volume_slider_is_shaded_past_100_in_every_look_at_scale_1_and_2() {
-        let pins = [
-            (Interface::Classic, [0x7e1b0487d120a40e, 0x1f1281fad1f4f9f5]),
-            (Interface::Blue, [0x0bd51e4d2ed21e42, 0x0103b9bb31134787]),
-            (Interface::Glass, [0xfc4d915bc32389c0, 0xf5b3c4f086ed8a09]),
-        ];
         let mut got = Vec::new();
-        for (look, want) in pins {
-            for (i, n) in [1, 2].into_iter().enumerate() {
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for n in [1, 2] {
                 let (c, lay) = boosted(look, n, true);
-                got.push((look, n, fnv(&c), want[i]));
+                got.push((format!("{look:?} {n}"), fnv(&c)));
                 let ch = lay.channel;
                 let (x, full) = (ch.x + 1, lay.ticks[20]);
                 let shade = c.get(x, ch.y + 6);
@@ -471,8 +466,6 @@ mod tests {
                 assert_ne!(grey.get(x, ch.y + 6), shade, "{look:?} x{n}: greyed");
             }
         }
-        for (look, n, hash, want) in got {
-            assert_eq!(hash, want, "{look:?} at scale {n}: {hash:#x}");
-        }
+        crate::pins::check("look/boosted_volume_slider", &got);
     }
 }

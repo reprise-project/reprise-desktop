@@ -198,15 +198,6 @@ fn at_the_largest_text_size_a_crowded_sheet_holds_every_part_whole() {
     }
 }
 
-const GROWN_PINS: [u64; 6] = [
-    0xb0390d13bf2bc07d,
-    0xf71993b8476645a7,
-    0xa76e87019232142b,
-    0xba5a2f2a3c6fea02,
-    0x23e2ff31f95c0c0f,
-    0x93c98c6fb07e7011,
-];
-
 /// The crowded sheet at 200% text on each shape, expanded, at scale 1 and 2.
 #[test]
 fn grown_text_pins() {
@@ -235,8 +226,5 @@ fn grown_text_pins() {
             got.push((format!("{shape:?} x{s}"), fnv(&drawn)));
         }
     }
-    let now: Vec<String> = got.iter().map(|(_, h)| format!("{h:#018x},")).collect();
-    for (i, (case, h)) in got.iter().enumerate() {
-        assert_eq!(*h, GROWN_PINS[i], "{case}; now:\n{}", now.join("\n"));
-    }
+    crate::pins::check("controls/notify_grown_text", &got);
 }

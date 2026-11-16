@@ -734,19 +734,20 @@ mod tests {
                 m[y * w + x] = 180;
             }
         }
-        let pins = [
-            (&GLOW, true, 1, 0x83ab99027f25b786),
-            (&GLOW, true, 2, 0x82ba80b9f956da60),
-            (&GLOW, false, 1, 0xf00edb05f30cb9a5),
-            (&GLOW, false, 2, 0x860999805b5335de),
-            (&EDGE, true, 1, 0xcaca423e4264463e),
-            (&EDGE, true, 2, 0x81ff1a6a36e333aa),
-            (&EDGE, false, 1, 0x4b4c08a6667ba05e),
-            (&EDGE, false, 2, 0xc60acb970c76a39e),
-            (&HALO, true, 1, 0x5e33b77d9b7bf04f),
-            (&HALO, true, 2, 0x058c3f450382a4da),
+        let cases = [
+            ("glow", &GLOW, true, 1),
+            ("glow", &GLOW, true, 2),
+            ("glow", &GLOW, false, 1),
+            ("glow", &GLOW, false, 2),
+            ("edge", &EDGE, true, 1),
+            ("edge", &EDGE, true, 2),
+            ("edge", &EDGE, false, 1),
+            ("edge", &EDGE, false, 2),
+            ("halo", &HALO, true, 1),
+            ("halo", &HALO, true, 2),
         ];
-        for (shape, active, scale, pin) in pins {
+        let mut got = Vec::new();
+        for (name, shape, active, scale) in cases {
             let g = glow_alpha(
                 shape,
                 &GlowMask {
@@ -761,12 +762,9 @@ mod tests {
             let fnv = g.iter().fold(0xcbf29ce484222325u64, |f, &b| {
                 (f ^ u64::from(b)).wrapping_mul(0x100000001b3)
             });
-            assert_eq!(
-                fnv, pin,
-                "spread {} active {active} scale {scale}",
-                shape.spread
-            );
+            got.push((format!("{name} active={active} {scale}"), fnv));
         }
+        crate::pins::check("glass/glow_far_apart", &got);
     }
 
     #[test]

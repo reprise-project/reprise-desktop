@@ -432,34 +432,11 @@ mod tests {
 
     #[test]
     fn bar_parts_pin_at_scale_1_and_2() {
-        let want: [(Part, [u64; 2]); 6] = [
-            (
-                Part::ProgressBar,
-                [0xff50_fa07_1f78_354a, 0xd273_b22c_6cdb_626b],
-            ),
-            (
-                Part::ProgressChunk,
-                [0xe39d_dcb1_02ef_7614, 0x7617_870a_2c67_01b7],
-            ),
-            (
-                Part::TrackbarTrack,
-                [0xf812_ed84_cccf_f700, 0xdfe0_f3fa_a2a2_1063],
-            ),
-            (
-                Part::TrackbarThumb,
-                [0x9530_e326_f21f_d8fa, 0x5476_fa2e_cd2d_8988],
-            ),
-            (
-                Part::TrackbarTrackV,
-                [0x0179_8908_5ead_4d8d, 0x90b5_0fb9_b45d_c403],
-            ),
-            (
-                Part::TrackbarThumbV,
-                [0xf287_2bea_527d_7043, 0x20a8_39f6_c091_a81b],
-            ),
-        ];
-        let got = PARTS.map(|p| (p, [1, 2].map(|d| fnv(&part(d, p).atlas))));
-        assert_eq!(got, want, "{got:#x?}");
+        let got: Vec<_> = PARTS
+            .into_iter()
+            .flat_map(|p| [1, 2].map(|d| (format!("{p:?} {d}"), fnv(&part(d, p).atlas))))
+            .collect();
+        crate::pins::check("glass/bar_parts", &got);
     }
 
     #[test]
@@ -1126,11 +1103,7 @@ mod tests {
 
     #[test]
     fn the_upright_thumb_in_the_volume_popups_rect_pins_at_scale_1_and_2() {
-        let got = [1, 2].map(|d| fnv(&thumb_v_in(25, 15, d)));
-        assert_eq!(
-            got,
-            [0x2522_b843_7459_39e3, 0x0095_cd52_39b7_8d03],
-            "{got:#x?}"
-        );
+        let got = [1, 2].map(|d| (format!("{d}"), fnv(&thumb_v_in(25, 15, d))));
+        crate::pins::check("glass/volume_thumb", &got);
     }
 }

@@ -827,34 +827,11 @@ mod tests {
     #[test]
     fn sky_keeps_its_pieces() {
         let all = parts(&Settings::default(), 1);
-        let got: Vec<(Part, u64)> = all.iter().map(|(p, img)| (*p, fnv(&img.atlas))).collect();
-        let want = [
-            (Part::StartPane, 0x544A6E607CED9508),
-            (Part::StartJumpPane, 0xD3A4E96BFCB874C2),
-            (Part::StartHotLeft, 0xAA034D21DD7E0B6F),
-            (Part::StartNewPin, 0xD4B21638B523539B),
-            (Part::StartHotAll, 0xB3A1B5EDAACA72BC),
-            (Part::StartHotSplit, 0x4D387B1E527EED8A),
-            (Part::StartHotJump, 0x7056990E3B349293),
-            (Part::StartLitResult, 0x889492F524D9CF09),
-            (Part::StartHotRight, 0x6F09C6DBF227EB5E),
-            (Part::StartRuleLeft, 0xAD208DCB7E0BAFC2),
-            (Part::StartRuleRight, 0xB0471F39865DD4EF),
-            (Part::StartJumpRule, 0x3EFD371CBD34EB26),
-            (Part::StartSearchRule, 0x8995D65A7C608E97),
-            (Part::StartShutdown, 0x4143E6CE7819454E),
-            (Part::StartShutdownArrow, 0x06C7A85E70B87A32),
-            (Part::StartShutdownLight, 0xBD0E28B65C05E584),
-            (Part::StartShutdownArrowLight, 0xDF3EAA40EB2C25B4),
-            (Part::StartSearchField, 0xEAF423D1C5EDE2EB),
-            (Part::StartMagnifier, 0xBA3472476B3D9692),
-            (Part::StartClear, 0xCB3E3A5441D037E5),
-            (Part::StartTriangleRight, 0x2AAE1B4A1AA170FE),
-            (Part::StartTriangleLeft, 0x54F4A166AE99E375),
-            (Part::StartRowArrow, 0xF426C0D0415635C6),
-            (Part::StartPictureFrame, 0xE79C46D27F497A74),
-        ];
-        assert_eq!(got, want, "the parts' atlases, hashed");
+        let got: Vec<_> = all
+            .iter()
+            .map(|(p, img)| (format!("{p:?}"), fnv(&img.atlas)))
+            .collect();
+        crate::pins::check("glass/start_parts", &got);
         for (p, x, y, want, what) in [
             (Part::StartPane, 7, 5, 0xFFFF_FFFFu32, "the pane's white"),
             (Part::StartPane, 7, 8, 0xFFCA_D6E9, "the band's rule"),
@@ -1182,35 +1159,12 @@ mod tests {
 
     #[test]
     fn sky_keeps_its_pieces_at_scale_2() {
-        let got: Vec<(Part, u64)> = crate::glass::startpanel::parts(&Settings::default(), 2)
+        let got: Vec<_> = crate::glass::startpanel::parts(&Settings::default(), 2)
             .iter()
             .filter(|(_, img)| img.scale == 2)
-            .map(|(p, img)| (*p, fnv(&img.atlas)))
+            .map(|(p, img)| (format!("{p:?}"), fnv(&img.atlas)))
             .collect();
-        let want = [
-            (Part::StartPanel, 0xC3F3B37D5AD0B999),
-            (Part::StartPane, 0x73BC18D20127D203),
-            (Part::StartJumpPane, 0xDED370D4D39A66E6),
-            (Part::StartHotLeft, 0x1D1A4F02473A9CCD),
-            (Part::StartNewPin, 0xC389537DB479EC69),
-            (Part::StartHotAll, 0xC6DDB7FCEEC19FD3),
-            (Part::StartHotSplit, 0x2051EC004C21C3E3),
-            (Part::StartHotJump, 0x5B3481A242D30755),
-            (Part::StartLitResult, 0x26CD6856171441F9),
-            (Part::StartHotRight, 0x25C03E5A8666E764),
-            (Part::StartShutdown, 0x5075CA8DCB1E8672),
-            (Part::StartShutdownArrow, 0xB2118744A9D8028F),
-            (Part::StartShutdownLight, 0xA0905F93840A71BA),
-            (Part::StartShutdownArrowLight, 0xC9944BFDC683030E),
-            (Part::StartSearchField, 0xB73B34BF1531AA5B),
-            (Part::StartMagnifier, 0xAD6FFDFCFEABBA3B),
-            (Part::StartClear, 0x703DE9DE6F81F83D),
-            (Part::StartTriangleRight, 0xE0AEB6AB5B97A9BF),
-            (Part::StartTriangleLeft, 0x77ABAFD65849821F),
-            (Part::StartRowArrow, 0x5E5ADFF370831EE3),
-            (Part::StartPictureFrame, 0x036214A0CF0451DB),
-        ];
-        assert_eq!(got, want, "the pieces' atlases at 2, hashed");
+        crate::pins::check("glass/start_parts_at_2", &got);
     }
 
     #[test]

@@ -291,15 +291,7 @@ fn the_desktop_names_rows_pin_their_pixels_in_every_look() {
         f.set_enabled(id, false);
     }
     pins.push(row_pins(&f, row));
-    assert_eq!(
-        pins,
-        [
-            [0x175f6ce3e5c88b48, 0x8384de64ca166860, 0xf350274c9b867d96],
-            [0x667aef5cce7654be, 0xf23a3bb9df410796, 0x8319f5382979e4ac],
-            [0xef8f79758ce43c65, 0x761da2a50ec9ebd8, 0x620c1f5c0d189658],
-        ],
-        "named, empty, greyed; Classic, Blue, Glass"
-    );
+    check_rows("desktop_names_rows", &["named", "empty", "greyed"], &pins);
 }
 
 #[test]
@@ -315,14 +307,10 @@ fn the_wheel_on_desktop_row_pins_its_pixels_in_every_look() {
     let on = row_pins(&f, row);
     f.set_enabled("wheel_on_desktop", false);
     let greyed = row_pins(&f, row);
-    assert_eq!(
-        [off, on, greyed],
-        [
-            [0x444d64fcbc043bf4, 0x8613c8d92bda6a23, 0x36ce02d14726ecc7],
-            [0x6008f30a911bdf3b, 0xb211584d4f8c711f, 0x78eb9868337e9a80],
-            [0xf69aabd6f21cade1, 0x356b03616b75d2fe, 0x6d40df75f8c1acfa],
-        ],
-        "off, ticked, greyed; Classic, Blue, Glass"
+    check_rows(
+        "wheel_on_desktop_row",
+        &["off", "ticked", "greyed"],
+        &[off, on, greyed],
     );
 }
 
@@ -879,14 +867,7 @@ fn the_hidden_frame_rate_row_pins_its_pixels_in_every_look() {
         u.set(30);
     }
     let capped = row_pins(&f, row);
-    assert_eq!(
-        [unlimited, capped],
-        [
-            [0xefbb89513c980f61, 0x1450e021f5145d89, 0x530a39ad8b385b30],
-            [0x98f9260bdd2b483a, 0x08c3c87d0287237a, 0x63689651eb9e351f],
-        ],
-        "0, 30; Classic, Blue, Glass"
-    );
+    check_rows("hidden_frame_rate_row", &["0", "30"], &[unlimited, capped]);
 }
 
 #[test]
@@ -1019,13 +1000,9 @@ fn the_program_results_list_pins_its_pixels_in_every_look() {
         fill(&mut page, shown, Some(0));
         pins.push(row_pins(&page, list));
     }
-    assert_eq!(
-        pins,
-        [
-            [0x95bd99d0525b3831, 0xae079bdf85da213c, 0xa1a00756fea47020],
-            [0x3ec3d1078e252aea, 0xc006d1f7f9afaf06, 0xefdca6950c706302],
-            [0xcf77c5ad52f5f3c5, 0x0b2b2fa2afc57407, 0xc743eb99a46edda1],
-        ],
-        "ticked, unticked and held rows, Loading..., no program; Classic, Blue, Glass"
+    check_rows(
+        "search_programs_list",
+        &["ticked, unticked and held", "Loading...", "no program"],
+        &pins,
     );
 }

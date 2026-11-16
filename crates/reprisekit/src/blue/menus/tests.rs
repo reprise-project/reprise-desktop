@@ -124,30 +124,14 @@ fn fnv(c: &Canvas) -> u64 {
 
 #[test]
 fn the_start_menus_pin_per_state_in_two_schemes_at_scale_1_and_2() {
-    let got: Vec<u64> = [Variant::Blue, Variant::Olive]
+    let got: Vec<_> = [Variant::Blue, Variant::Olive]
         .into_iter()
         .flat_map(|v| [1, 2].map(move |d| (v, d)))
-        .flat_map(|(v, d)| STATES.map(|lit| fnv(&scene(v, d, lit).0)))
+        .flat_map(|(v, d)| {
+            STATES.map(|lit| (format!("{v:?} {d} {lit:?}"), fnv(&scene(v, d, lit).0)))
+        })
         .collect();
-    let want: [u64; 16] = [
-        0x1ff33e6fb0e58ecd,
-        0xc9b0fe585706e33d,
-        0x27c85b08f8d3ee98,
-        0x4daa609cdb7a7bcd,
-        0xd25ab4f064a40ec5,
-        0x6ed6131dfedb9105,
-        0xa87760c824f7d88d,
-        0x8ad72cf2d8679cc5,
-        0xbe8e306d76d66569,
-        0xdf431e8f8859a9a9,
-        0x8390b592c1f90590,
-        0x7370b7c8bf014a29,
-        0x812f6c093054ab0d,
-        0xab9dc6adbd8e6b0d,
-        0xb162ed3b49c9291d,
-        0x7b28e47b31e9a40d,
-    ];
-    assert_eq!(got, want, "{got:#x?}");
+    crate::pins::check("blue/start_menus", &got);
 }
 
 #[test]

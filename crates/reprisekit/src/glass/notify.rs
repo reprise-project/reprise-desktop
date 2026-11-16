@@ -770,37 +770,28 @@ mod tests {
 
     const M: Insets = LOZENGE_MARGIN;
 
-    const PINS: [(bool, bool, i32, u64); 8] = [
-        (false, false, 1, 0x9331776ae3a0bcc8),
-        (false, true, 1, 0x23d347229ee5ada8),
-        (true, false, 1, 0x5b829a3629415131),
-        (true, true, 1, 0x76cd0f43c0bf2744),
-        (false, false, 2, 0xeb8d2248cb18d140),
-        (false, true, 2, 0x7f27cfe6e526cecc),
-        (true, false, 2, 0x9396a7e582db91be),
-        (true, true, 2, 0x349f5182db908002),
-    ];
-
     #[test]
     fn sheet_pins_per_state_mode_and_scale() {
-        let got = PINS.map(|(dark, hot, d, _)| {
-            let l = look(mode(dark));
-            let c = (l.sheet)(
-                &l,
-                &SheetSpec {
-                    hot_close: hot,
-                    ..spec(360, 96)
-                },
-                d,
-            );
-            (dark, hot, d, fnv(&c))
+        let cases = [1, 2].into_iter().flat_map(|d| {
+            [false, true]
+                .into_iter()
+                .flat_map(move |dark| [false, true].map(|hot| (dark, hot, d)))
         });
-        assert!(
-            got == PINS,
-            "pins changed; now:\n{}",
-            got.map(|(dark, hot, d, h)| format!("({dark}, {hot}, {d}, {h:#018x}),"))
-                .join("\n")
-        );
+        let got: Vec<_> = cases
+            .map(|(dark, hot, d)| {
+                let l = look(mode(dark));
+                let c = (l.sheet)(
+                    &l,
+                    &SheetSpec {
+                        hot_close: hot,
+                        ..spec(360, 96)
+                    },
+                    d,
+                );
+                (format!("dark={dark} hot_close={hot} {d}"), fnv(&c))
+            })
+            .collect();
+        crate::pins::check("glass/notify_sheet", &got);
     }
 
     #[test]
@@ -889,32 +880,26 @@ mod tests {
         }
     }
 
-    const PART_PINS: [(bool, i32, u64); 4] = [
-        (false, 1, 0xdb7bd97ebbf7a5dd),
-        (true, 1, 0xd5f64cc5f8a65915),
-        (false, 2, 0x7692b11b4f404a93),
-        (true, 2, 0x11383a947e2b3d50),
-    ];
-
     #[test]
     fn well_pill_close_and_chip_pins_per_mode_and_scale() {
         let states = [State::Normal, State::Hot, State::Pressed, State::Disabled];
-        let got = PART_PINS.map(|(dark, d, _)| {
-            let l = look(mode(dark));
-            let parts = [Well::Squircle, Well::Round, Well::Badge]
-                .map(|w| (l.well)(&l, w, 46, d))
-                .into_iter()
-                .chain(states.map(|s| (l.pill)(&l, (80, 26), s, d)))
-                .chain(states.map(|s| (l.close)(&l, s, d)))
-                .chain(states[..2].iter().map(|&s| (l.chip)(&l, (90, 28), s, d)));
-            (dark, d, parts.fold(0u64, |h, c| h.rotate_left(7) ^ fnv(&c)))
-        });
-        assert!(
-            got == PART_PINS,
-            "pins changed; now:\n{}",
-            got.map(|(dark, d, h)| format!("({dark}, {d}, {h:#018x}),"))
-                .join("\n")
-        );
+        let cases = [1, 2]
+            .into_iter()
+            .flat_map(|d| [false, true].map(|dark| (dark, d)));
+        let got: Vec<_> = cases
+            .map(|(dark, d)| {
+                let l = look(mode(dark));
+                let parts = [Well::Squircle, Well::Round, Well::Badge]
+                    .map(|w| (l.well)(&l, w, 46, d))
+                    .into_iter()
+                    .chain(states.map(|s| (l.pill)(&l, (80, 26), s, d)))
+                    .chain(states.map(|s| (l.close)(&l, s, d)))
+                    .chain(states[..2].iter().map(|&s| (l.chip)(&l, (90, 28), s, d)));
+                let h = parts.fold(0u64, |h, c| h.rotate_left(7) ^ fnv(&c));
+                (format!("dark={dark} {d}"), h)
+            })
+            .collect();
+        crate::pins::check("glass/notify_parts", &got);
     }
 
     #[test]

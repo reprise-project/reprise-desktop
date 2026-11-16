@@ -637,15 +637,32 @@ mod tests {
         }
     }
 
+    // The states places_tiles and rows_in draw, in order.
+    const TILE_STATES: [&str; 5] = ["plain", "hot", "selected", "selected hot", "held"];
+    const ROW_STATES: [&str; 6] = [
+        "bare",
+        "hot",
+        "selected",
+        "selected hot",
+        "inactive",
+        "focused",
+    ];
+
+    /// Each of `drawn` at scale `d` keyed by its state, for a pin file.
+    fn keyed(states: &[&str], d: i32, drawn: Vec<Canvas>) -> Vec<(String, u64)> {
+        assert_eq!(states.len(), drawn.len());
+        states
+            .iter()
+            .zip(drawn)
+            .map(|(s, c)| (format!("{s} {d}"), fnv(&c)))
+            .collect()
+    }
+
     /// The expanders keep their pixels at scale 1 and 2.
     #[test]
     fn expanders_pin_at_scale_1_and_2() {
-        let got: Vec<u64> = [1, 2].map(|d| fnv(&super::parts(d)[1].1.atlas)).to_vec();
-        assert_eq!(
-            got,
-            [0xa440_b690_e410_5295, 0x8808_50c4_7a5f_329d],
-            "{got:#x?}"
-        );
+        let got = [1, 2].map(|d| (format!("{d}"), fnv(&super::parts(d)[1].1.atlas)));
+        crate::pins::check("glass/expanders", &got);
     }
 
     /// A 59 px places tile in each state at scale `d`, over the bar's panel: the plain tile
@@ -738,27 +755,11 @@ mod tests {
     /// The places tiles keep their pixels at scale 1 and 2.
     #[test]
     fn places_tiles_pin_at_scale_1_and_2() {
-        let got: Vec<u64> = [1, 2]
+        let got: Vec<_> = [1, 2]
             .into_iter()
-            .flat_map(places_tiles)
-            .map(|c| fnv(&c))
+            .flat_map(|d| keyed(&TILE_STATES, d, places_tiles(d)))
             .collect();
-        assert_eq!(
-            got,
-            [
-                0x0c11_96a0_7783_8abb,
-                0x1958_c77f_3214_0ebd,
-                0xbb4f_1f1e_c673_ef84,
-                0x3759_03fa_c9b1_30cc,
-                0xa793_dba8_2f82_94b8,
-                0x0a73_de09_a9f5_b6a5,
-                0x7b05_21b7_205c_cdd1,
-                0x0a34_a3f3_44d4_f271,
-                0x8052_c5cb_e09c_6481,
-                0xa195_d9f4_6dea_5805,
-            ],
-            "{got:#x?}"
-        );
+        crate::pins::check("glass/places_tiles", &got);
     }
 
     /// In dark Glass the lit, selected and selected-and-lit tiles stand apart: each fill is
@@ -796,27 +797,11 @@ mod tests {
     /// The dark places tiles keep their pixels at scale 1 and 2.
     #[test]
     fn dark_places_tiles_pin_at_scale_1_and_2() {
-        let got: Vec<u64> = [1, 2]
+        let got: Vec<_> = [1, 2]
             .into_iter()
-            .flat_map(|d| tiles_in(&dark_glass(), d))
-            .map(|c| fnv(&c))
+            .flat_map(|d| keyed(&TILE_STATES, d, tiles_in(&dark_glass(), d)))
             .collect();
-        assert_eq!(
-            got,
-            [
-                0xd97b_6337_936e_14ee,
-                0xfc89_093a_9162_4708,
-                0x5568_f687_c81c_5f82,
-                0x3d8c_b3b7_1a17_4aec,
-                0xc381_206a_4271_525d,
-                0x3f3d_1b0d_8ae0_7615,
-                0xb88d_ba0b_f506_8301,
-                0xb03b_4cb9_ae51_bb05,
-                0xc626_ad8a_26c9_1159,
-                0x577b_c710_d045_ac31,
-            ],
-            "{got:#x?}"
-        );
+        crate::pins::check("glass/places_tiles_dark", &got);
     }
 
     /// A 120x20 row's box in each list state at scale `d` over the theme's window colour: the
@@ -889,29 +874,11 @@ mod tests {
     /// The dark list rows keep their pixels at scale 1 and 2.
     #[test]
     fn dark_list_items_pin_at_scale_1_and_2() {
-        let got: Vec<u64> = [1, 2]
+        let got: Vec<_> = [1, 2]
             .into_iter()
-            .flat_map(|d| rows_in(&dark_glass(), d))
-            .map(|c| fnv(&c))
+            .flat_map(|d| keyed(&ROW_STATES, d, rows_in(&dark_glass(), d)))
             .collect();
-        assert_eq!(
-            got,
-            [
-                0x0077_6fd3_bbb7_e749,
-                0x70bc_c80a_4150_d54d,
-                0x87a1_17e8_f96a_e1c1,
-                0xec02_fbff_d948_1f61,
-                0x4a6f_4c4c_a358_cab5,
-                0x7c72_9c2c_7142_8c31,
-                0x9fe5_67fb_8c0f_94dd,
-                0x547e_7428_0b3e_114d,
-                0xfe7b_df64_befc_681d,
-                0x6732_2bb3_0d35_a4dd,
-                0xc87e_bd39_c6de_424d,
-                0xcbe0_19d9_385a_0f3d,
-            ],
-            "{got:#x?}"
-        );
+        crate::pins::check("glass/list_items_dark", &got);
     }
 
     /// Writes target/glass-dark-places-preview.png: the dark places tiles plain, lit,
