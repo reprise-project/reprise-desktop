@@ -56,8 +56,8 @@ pub struct Dirs {
 impl Dirs {
     pub fn from_env() -> Dirs {
         Dirs {
-            data_home: repriseconf::xdg_home("XDG_DATA_HOME", ".local/share"),
-            config_home: repriseconf::xdg_home("XDG_CONFIG_HOME", ".config"),
+            data_home: reprisexdg::data_home().unwrap_or_default(),
+            config_home: reprisexdg::config_home().unwrap_or_default(),
             qt_tools: qt_tools_installed(),
         }
     }

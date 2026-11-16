@@ -4320,6 +4320,7 @@ dependencies = [
  "repriselogin",
  "reprisepam",
  "reprisescene",
+ "reprisexdg",
  "rustix 1.1.6",
  "serde",
  "smithay",
@@ -4490,6 +4491,7 @@ dependencies = [
  "repriseconf",
  "reprisefs",
  "reprisekit",
+ "reprisexdg",
  "serde",
  "tempfile",
  "toml",
@@ -4504,6 +4506,7 @@ dependencies = [
  "repriseapp",
  "reprisebus",
  "reprisekit",
+ "reprisexdg",
  "tempfile",
 ]
 
@@ -4604,6 +4607,7 @@ dependencies = [
  "reprisebus",
  "reprisefs",
  "reprisekit",
+ "reprisexdg",
  "tempfile",
 ]
 
@@ -4616,6 +4620,7 @@ dependencies = [
  "reprisebus",
  "reprisefs",
  "reprisekit",
+ "reprisexdg",
  "tempfile",
 ]
 
@@ -4630,6 +4635,7 @@ dependencies = [
  "repriseconf",
  "reprisefs",
  "reprisekit",
+ "reprisexdg",
  "tempfile",
  "toml_edit",
 ]
@@ -4685,6 +4691,7 @@ dependencies = [
  "repriseconf",
  "reprisefs",
  "reprisekit",
+ "reprisexdg",
  "serde",
  "tempfile",
  "toml",
@@ -4763,6 +4770,7 @@ dependencies = [
  "repriselogin",
  "reprisetls",
  "reprisevideo",
+ "reprisexdg",
  "serde",
  "tempfile",
  "tokio",
@@ -4806,6 +4814,7 @@ dependencies = [
  "reprisefs",
  "reprisekit",
  "repriselogin",
+ "reprisexdg",
  "tempfile",
  "toml_edit",
  "xcursor",
@@ -4841,6 +4850,7 @@ dependencies = [
  "repriseconf",
  "reprisefs",
  "reprisekit",
+ "reprisexdg",
  "serde",
  "tempfile",
  "toml",
@@ -4860,6 +4870,7 @@ dependencies = [
  "reprisebus",
  "repriseconf",
  "reprisekit",
+ "reprisexdg",
  "serde",
  "tempfile",
  "toml",
@@ -4881,6 +4892,7 @@ dependencies = [
  "reprisefs",
  "reprisekit",
  "reprisetray",
+ "reprisexdg",
  "zbus 6.2.1",
 ]
 
@@ -4894,6 +4906,7 @@ dependencies = [
  "reprisebus",
  "repriseconf",
  "reprisekit",
+ "reprisexdg",
  "serde",
  "tempfile",
  "toml",
@@ -4963,6 +4976,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "log",
+ "reprisexdg",
  "serde_json",
 ]
 
@@ -4977,6 +4991,7 @@ dependencies = [
  "jiff",
  "libc",
  "log",
+ "reprisexdg",
  "serde",
  "tempfile",
  "zbus 6.2.1",
@@ -4993,6 +5008,7 @@ dependencies = [
  "repriseapp-pins",
  "reprisefs",
  "reprisekit",
+ "reprisexdg",
  "serde",
  "toml",
  "toml_edit",
@@ -5011,6 +5027,7 @@ dependencies = [
  "md5",
  "png",
  "reprisebus",
+ "reprisexdg",
  "rustc-hash",
  "serde",
  "sha2 0.11.1",
@@ -5047,6 +5064,7 @@ dependencies = [
  "log",
  "png",
  "reprisekit-pins",
+ "reprisexdg",
  "resvg",
  "rustc-hash",
  "serde",
@@ -5171,6 +5189,10 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
 ]
+
+[[package]]
+name = "reprisexdg"
+version = "0.1.0"
 
 [[package]]
 name = "reqwest"

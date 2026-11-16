@@ -107,11 +107,7 @@ fn verifies_with(key: &Key, value: &[u8], id: &Ident) -> bool {
 /// `$XDG_STATE_HOME/reprise/trust.key`, else `~/.local/state/reprise/trust.key`.
 #[cfg(not(test))]
 fn key_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("reprise/trust.key"))
+    Some(reprisexdg::state_home()?.join("reprise/trust.key"))
 }
 
 #[cfg(not(test))]

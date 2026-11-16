@@ -12,7 +12,8 @@ use toml_edit::{Array, DocumentMut, value};
 pub const DEFAULT: (i32, i32) = (760, 680);
 
 pub fn path() -> PathBuf {
-    repriseconf::xdg_home("XDG_STATE_HOME", ".local/state")
+    reprisexdg::state_home()
+        .unwrap_or_default()
         .join("reprise")
         .join("settings.toml")
 }

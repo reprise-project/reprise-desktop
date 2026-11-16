@@ -572,9 +572,7 @@ pub fn find() -> Vec<(&'static str, Vec<Setting>)> {
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
         return Vec::new();
     };
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config"));
+    let config = reprisexdg::config_home().unwrap_or_else(|| home.join(".config"));
     let mut found = Vec::new();
     if let Some(dump) = dconf_dump() {
         let s = gnome::settings(&dump);

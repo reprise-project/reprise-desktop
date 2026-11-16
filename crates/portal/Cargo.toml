@@ -16,6 +16,7 @@ name = "reprise-portal"
 path = "src/main.rs"
 
 [dependencies]
+reprisexdg = { path = "../reprisexdg" }
 repriseapp = { path = "../repriseapp" }
 reprisekit = { path = "../reprisekit" }
 reprisefs = { path = "../reprisefs" }

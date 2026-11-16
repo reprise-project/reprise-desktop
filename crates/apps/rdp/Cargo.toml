@@ -16,6 +16,7 @@ name = "reprise-rdp"
 path = "src/main.rs"
 
 [dependencies]
+reprisexdg = { path = "../../reprisexdg" }
 repriseconf = { path = "../../repriseconf" }
 reprisebus = { path = "../../reprisebus" }
 repriseaudio = { path = "../../repriseaudio" }

@@ -32,14 +32,8 @@ fn safe_name(s: &str) -> bool {
 
 /// `sounds` under `$XDG_DATA_HOME` and each of `$XDG_DATA_DIRS`, in lookup order.
 pub fn sound_dirs() -> Vec<PathBuf> {
-    let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty());
-    let home = var("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| var("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-    let dirs = var("XDG_DATA_DIRS").unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-    home.into_iter()
-        .chain(std::env::split_paths(&dirs))
-        .filter(|d| d.is_absolute())
+    (reprisexdg::data_home().into_iter())
+        .chain(reprisexdg::data_dirs())
         .map(|d| d.join("sounds"))
         .collect()
 }

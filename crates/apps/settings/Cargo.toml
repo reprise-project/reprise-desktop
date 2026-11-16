@@ -17,6 +17,7 @@ path = "src/bin/reprise-settings.rs"
 test = false
 
 [dependencies]
+reprisexdg = { path = "../../reprisexdg" }
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisebus = { path = "../../reprisebus" }

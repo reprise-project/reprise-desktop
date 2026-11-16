@@ -40,7 +40,7 @@ struct Apart([Option<Vec<Key>>; 2]);
 
 impl SettingsApp {
     pub(crate) fn user_autostart(&self) -> PathBuf {
-        autostart::user_dir(&reprisefs::autostart::config_home())
+        autostart::user_dir(&reprisexdg::config_home().unwrap_or_default())
     }
 
     /// Re-read the autostart directories; unapplied checks are dropped, the files changed under them.
@@ -48,8 +48,8 @@ impl SettingsApp {
         // An entry a unit of the session starts is not listed: its check could not stop the unit.
         let units = reprisebus::units::session_programs();
         self.entries = reprisefs::autostart::scan(
-            &reprisefs::autostart::system_dirs(),
-            &reprisefs::autostart::config_home(),
+            &reprisexdg::config_dirs(),
+            &reprisexdg::config_home().unwrap_or_default(),
         );
         self.entries.retain(|e| {
             !reprisefs::autostart::left_to_systemd(e, &units, reprisefs::autostart::find_program)
@@ -244,7 +244,7 @@ impl SettingsApp {
             }
         }
         let dir = self.user_autostart();
-        let config_dirs = reprisefs::autostart::system_dirs();
+        let config_dirs = reprisexdg::config_dirs();
         let checks = self.checks();
         let mut changed = false;
         let mut failed_autostart = false;

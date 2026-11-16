@@ -27,11 +27,7 @@ pub(crate) fn system_database() -> Database {
 }
 
 fn cache_path() -> Option<PathBuf> {
-    let cache = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
-    Some(cache.join("reprise").join("fonts"))
+    Some(reprisexdg::cache_home()?.join("reprise").join("fonts"))
 }
 
 /// The variables `load_system_fonts` reads to find its config.
@@ -48,7 +44,7 @@ fn fontconfig() -> fontconfig_parser::FontConfig {
         let _ = config.merge_config(Path::new(&file));
         return config;
     }
-    if config_home().is_none_or(|c| {
+    if reprisexdg::config_home().is_none_or(|c| {
         config
             .merge_config(&c.join("fontconfig/fonts.conf"))
             .is_err()
@@ -57,12 +53,6 @@ fn fontconfig() -> fontconfig_parser::FontConfig {
     }
     let _ = config.merge_config(Path::new("/etc/fonts/fonts.conf"));
     config
-}
-
-fn config_home() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
 }
 
 /// What a scan depends on: the font directories `config` names (fontdb's fixed list without
@@ -95,7 +85,7 @@ fn watched(config: &fontconfig_parser::FontConfig) -> Watched {
         .map(PathBuf::from)
         .into();
     others.extend(
-        config_home()
+        reprisexdg::config_home()
             .iter()
             .flat_map(|c| [c.join("fontconfig"), c.join("fontconfig/conf.d")]),
     );
@@ -426,7 +416,7 @@ mod tests {
             "the scan is kept under the temp folder"
         );
         assert!(
-            config_home().is_some_and(|p| p.starts_with(&temp)),
+            reprisexdg::config_home().is_some_and(|p| p.starts_with(&temp)),
             "fontconfig reads its config under the temp folder"
         );
     }

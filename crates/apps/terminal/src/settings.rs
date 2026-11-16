@@ -77,7 +77,8 @@ pub struct Profile {
 }
 
 pub fn path() -> PathBuf {
-    repriseconf::xdg_home("XDG_CONFIG_HOME", ".config")
+    reprisexdg::config_home()
+        .unwrap_or_default()
         .join("reprise")
         .join("terminal.toml")
 }
@@ -119,7 +120,8 @@ pub struct State {
 }
 
 pub fn state_path() -> PathBuf {
-    repriseconf::xdg_home("XDG_STATE_HOME", ".local/state")
+    reprisexdg::state_home()
+        .unwrap_or_default()
         .join("reprise")
         .join("terminal.toml")
 }

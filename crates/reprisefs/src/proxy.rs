@@ -25,7 +25,8 @@ pub const NAMES: [&str; 11] = [
 pub const DEFAULT_IGNORE: &str = "localhost, 127.0.0.1, ::1";
 
 pub fn path() -> PathBuf {
-    crate::autostart::config_home()
+    reprisexdg::config_home()
+        .unwrap_or_default()
         .join("environment.d")
         .join(FILE)
 }

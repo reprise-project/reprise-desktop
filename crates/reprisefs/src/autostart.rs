@@ -168,25 +168,6 @@ pub fn parse(id: &str, text: &str, user: bool) -> Option<Entry> {
     })
 }
 
-pub fn system_dirs() -> Vec<PathBuf> {
-    std::env::var("XDG_CONFIG_DIRS")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "/etc/xdg".into())
-        .split(':')
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .collect()
-}
-
-pub fn config_home() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."))
-}
-
 fn read_dir(dir: &Path, user: bool) -> Vec<Entry> {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return Vec::new();

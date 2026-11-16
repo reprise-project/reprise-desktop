@@ -96,7 +96,9 @@ impl Wallpaper {
             return Ok(crate::RESPONSE_CANCELLED);
         }
         let name = file_name(&path);
-        let dir = repriseconf::xdg_home("XDG_DATA_HOME", ".local/share").join("reprise/wallpapers");
+        let dir = reprisexdg::data_home()
+            .unwrap_or_default()
+            .join("reprise/wallpapers");
         let config = repriseconf::config_path();
         match blocking::unblock(move || install(&dir, &name, &bytes, &config)).await {
             Ok(to) => {

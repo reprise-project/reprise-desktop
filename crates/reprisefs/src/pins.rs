@@ -17,7 +17,9 @@ pub const MAX_SHOWN: usize = 20;
 const MAX_BYTES: u64 = 1 << 20;
 
 pub fn bookmarks_file() -> PathBuf {
-    crate::autostart::config_home().join("gtk-3.0/bookmarks")
+    reprisexdg::config_home()
+        .unwrap_or_default()
+        .join("gtk-3.0/bookmarks")
 }
 
 /// A pinned folder as a places bar or a pane shows it.

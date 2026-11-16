@@ -110,7 +110,7 @@ impl SettingsApp {
         let page = &self.sheet.pages[Page::MagnifierFilters.index()];
         let on = page.checked(magnifierpage::READER_LOGON) == Some(true);
         let dir = self.user_autostart();
-        let config_dirs = reprisefs::autostart::system_dirs();
+        let config_dirs = reprisexdg::config_dirs();
         let set =
             autostart::set_reader_at_logon(&dir, &self.entries, on, &self.desktops, &config_dirs);
         if let Err(e) = set {

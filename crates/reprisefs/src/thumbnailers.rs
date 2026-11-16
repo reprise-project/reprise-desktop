@@ -160,19 +160,8 @@ impl Thumbnailers {
 
 /// `thumbnailers/` in `$XDG_DATA_HOME` (or `~/.local/share`), then in each of `$XDG_DATA_DIRS`.
 pub fn dirs() -> Vec<PathBuf> {
-    let home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-    let data_dirs =
-        std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-    (home.into_iter())
-        .chain(
-            data_dirs
-                .split(':')
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from),
-        )
+    (reprisexdg::data_home().into_iter())
+        .chain(reprisexdg::data_dirs())
         .map(|d| d.join("thumbnailers"))
         .collect()
 }

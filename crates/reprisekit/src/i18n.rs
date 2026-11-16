@@ -6,7 +6,7 @@ use fluent_bundle::concurrent::FluentBundle;
 use fluent_bundle::types::FluentNumberOptions;
 use fluent_bundle::{FluentArgs, FluentResource};
 use fluent_langneg::{NegotiationStrategy, negotiate_languages};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use unic_langid::LanguageIdentifier;
 
@@ -324,12 +324,8 @@ pub fn requested(env: impl Fn(&str) -> Option<String>) -> Vec<LanguageIdentifier
 
 /// `reprise/locale` under `$XDG_DATA_HOME`, then under each `$XDG_DATA_DIRS`.
 pub fn locale_dirs() -> Vec<PathBuf> {
-    let home = env("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env("HOME").map(|h| Path::new(&h).join(".local/share")));
-    let dirs = env("XDG_DATA_DIRS").unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-    home.into_iter()
-        .chain(dirs.split(':').filter(|d| !d.is_empty()).map(PathBuf::from))
+    (reprisexdg::data_home().into_iter())
+        .chain(reprisexdg::data_dirs())
         .map(|d| d.join("reprise/locale"))
         .collect()
 }

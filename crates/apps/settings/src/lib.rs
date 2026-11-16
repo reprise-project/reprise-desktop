@@ -157,23 +157,13 @@ fn qt_tools() -> bool {
 /// The GTK themes the Programs combo offers; the generated ones stay out, the Reprise row stands for them.
 fn gtk_themes() -> Vec<String> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let data_home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| home.clone().map(|h| h.join(".local/share")));
-    let data_dirs = std::env::var("XDG_DATA_DIRS")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-    let roots = data_home
-        .map(|d| d.join("themes"))
+    let user = reprisexdg::data_home().map(|d| d.join("themes"));
+    let system = reprisexdg::data_dirs()
         .into_iter()
+        .map(|d| d.join("themes"));
+    let roots = (user.into_iter())
         .chain(home.map(|h| h.join(".themes")))
-        .chain(
-            data_dirs
-                .split(':')
-                .filter(|s| !s.is_empty())
-                .map(|d| PathBuf::from(d).join("themes")),
-        );
+        .chain(system);
     let mut out = vec!["Adwaita".to_string()];
     for root in roots {
         let Ok(rd) = std::fs::read_dir(&root) else {

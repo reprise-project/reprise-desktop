@@ -23,7 +23,10 @@ pub fn path() -> PathBuf {
     if let Some(path) = lock(&SET).clone() {
         return path;
     }
-    path_from(std::env::var_os(ENV), crate::autostart::config_home())
+    path_from(
+        std::env::var_os(ENV),
+        reprisexdg::config_home().unwrap_or_default(),
+    )
 }
 
 fn path_from(env: Option<OsString>, config_home: PathBuf) -> PathBuf {

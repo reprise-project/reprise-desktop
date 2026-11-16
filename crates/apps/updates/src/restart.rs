@@ -84,7 +84,8 @@ pub fn boot_id() -> String {
 /// The restart balloon's once-a-boot mark, kept across logins: `$XDG_STATE_HOME/reprise/restart-notice`
 /// holds the boot id it was last shown in.
 pub fn mark_path() -> PathBuf {
-    repriseconf::xdg_home("XDG_STATE_HOME", ".local/state")
+    reprisexdg::state_home()
+        .unwrap_or_default()
         .join("reprise")
         .join("restart-notice")
 }

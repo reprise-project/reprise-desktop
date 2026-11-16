@@ -805,10 +805,7 @@ fn globs2_paths() -> Vec<PathBuf> {
 
 pub(crate) fn mime_dirs() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
-    if let Some(home) = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-    {
+    if let Some(home) = reprisexdg::data_home() {
         roots.push(home.join("mime"));
     }
     roots.push(PathBuf::from("/usr/share/mime"));
@@ -1235,19 +1232,16 @@ pub fn terminal_app(terminal: &str, apps: &[AppEntry]) -> Option<String> {
 
 pub fn default_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = user_applications_dir().into_iter().collect();
-    let data_dirs =
-        std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-    for d in data_dirs.split(':').filter(|s| !s.is_empty()) {
-        dirs.push(PathBuf::from(d).join("applications"));
-    }
+    dirs.extend(
+        reprisexdg::data_dirs()
+            .iter()
+            .map(|d| d.join("applications")),
+    );
     dirs
 }
 
 pub fn user_applications_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .map(|d| d.join("applications"))
+    reprisexdg::data_home().map(|d| d.join("applications"))
 }
 
 /// Folder levels below an applications directory that [`scan`] reads.

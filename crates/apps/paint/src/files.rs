@@ -59,10 +59,10 @@ pub fn with_ext(path: PathBuf, kind: Kind) -> PathBuf {
 }
 
 fn default_dir() -> PathBuf {
-    repriseconf::xdg_home("XDG_PICTURES_DIR", "Pictures")
-        .canonicalize()
-        .or_else(|_| std::env::current_dir())
-        .unwrap_or_else(|_| PathBuf::from("/"))
+    reprisefs::places::user_dir("PICTURES", "Pictures")
+        .and_then(|d| d.canonicalize().ok())
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 impl Paint {

@@ -12,6 +12,7 @@ description = "The file-system side of the shell: .desktop entries and MIME, nam
 workspace = true
 
 [dependencies]
+reprisexdg = { path = "../reprisexdg" }
 async-io = "2"
 futures-util.workspace = true
 # The launcher trust marker is an HMAC-SHA256 of the inode.

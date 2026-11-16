@@ -50,7 +50,8 @@ pub fn config_path() -> PathBuf {
 
 /// The compositor's state file, `$XDG_STATE_HOME/reprise/state.toml`.
 pub fn state_path() -> PathBuf {
-    xdg_home("XDG_STATE_HOME", ".local/state")
+    reprisexdg::state_home()
+        .unwrap_or_default()
         .join("reprise")
         .join("state.toml")
 }
@@ -266,18 +267,6 @@ pub fn watch_targets(path: &Path) -> Vec<(PathBuf, Vec<OsString>)> {
 pub fn hz_string(refresh_mhz: i32) -> String {
     let hz = format!("{:.3}", refresh_mhz as f64 / 1000.0);
     hz.trim_end_matches('0').trim_end_matches('.').to_string()
-}
-
-pub fn xdg_home(var: &str, fallback: &str) -> PathBuf {
-    xdg_home_from(std::env::var_os(var), std::env::var_os("HOME"), fallback)
-}
-
-fn xdg_home_from(value: Option<OsString>, home: Option<OsString>, fallback: &str) -> PathBuf {
-    value
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| home.map(|h| PathBuf::from(h).join(fallback)))
-        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Write `text` to `path` with `reprisefs::ops::write_atomic`; the compositor's watch sees the
@@ -776,19 +765,6 @@ external_thumbnailers = false
         );
         let back = with_auto_time_zone(&set, false).unwrap();
         assert!(!back.contains("time_zone"), "{back}");
-    }
-
-    #[test]
-    fn xdg_home_ignores_an_empty_or_relative_value() {
-        let home = || Some(OsString::from("/home/u"));
-        let pick = |v: &str| xdg_home_from(Some(v.into()), home(), ".local/state");
-        assert_eq!(pick("/x/state"), PathBuf::from("/x/state"));
-        assert_eq!(pick(""), PathBuf::from("/home/u/.local/state"));
-        assert_eq!(pick("rel/state"), PathBuf::from("/home/u/.local/state"));
-        assert_eq!(
-            xdg_home_from(None, home(), ".config"),
-            PathBuf::from("/home/u/.config")
-        );
     }
 
     #[test]

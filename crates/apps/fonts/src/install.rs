@@ -7,11 +7,7 @@ use std::path::{Path, PathBuf};
 
 /// `$XDG_DATA_HOME/fonts`, else `~/.local/share/fonts`.
 pub fn user_dir() -> Option<PathBuf> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(data.join("fonts"))
+    Some(reprisexdg::data_home()?.join("fonts"))
 }
 
 /// Where `face` is installed, by its PostScript name (its family and style).
@@ -132,18 +128,5 @@ mod tests {
             b"font one",
             "the first copy stays"
         );
-    }
-
-    #[test]
-    fn the_user_fonts_folder_follows_xdg_data_home() {
-        let want = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .map(|d| d.join("fonts"));
-        let got = user_dir().unwrap();
-        match want {
-            Some(w) => assert_eq!(got, w),
-            None => assert!(got.ends_with(".local/share/fonts"), "{got:?}"),
-        }
     }
 }

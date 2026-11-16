@@ -236,11 +236,7 @@ pub(crate) fn open_failed_text(path: &Path, e: &std::io::Error) -> String {
 
 /// Where `emergency` leaves unsaved text: `$XDG_STATE_HOME/reprise/notepad`.
 pub(crate) fn recovery_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("reprise").join("notepad"))
+    Some(reprisexdg::state_home()?.join("reprise").join("notepad"))
 }
 
 /// Write `lines` to `recovery-<pid>-<stem>.txt` in `dir`, made 0700 if missing.

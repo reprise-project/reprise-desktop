@@ -10,7 +10,8 @@ pub fn path() -> std::path::PathBuf {
     #[cfg(test)]
     return crate::harness::scratch().join("widgets.toml");
     #[cfg(not(test))]
-    repriseconf::xdg_home("XDG_STATE_HOME", ".local/state")
+    reprisexdg::state_home()
+        .unwrap_or_default()
         .join("reprise")
         .join("widgets.toml")
 }
