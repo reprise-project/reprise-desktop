@@ -88,6 +88,9 @@ pub struct Reply {
     pub spawn_app: Option<String>,
     /// The folder `spawn` runs in, a desktop entry's `Path=`; the program's own when None.
     pub spawn_dir: Option<PathBuf>,
+    /// Spawns [`Reply::and`] kept apart because they asked for different folders: each already in
+    /// its app scope, with its own folder.
+    pub spawn_each: Vec<(Vec<OsString>, Option<PathBuf>)>,
     pub copy_files: Option<FileClip>,
     /// Arrives as `Event::PastedFiles` on the window this reply is for.
     pub paste_files: bool,
@@ -208,6 +211,7 @@ impl Reply {
             spawn,
             spawn_app,
             spawn_dir,
+            spawn_each: then_each,
             copy_files,
             paste_files,
             copy_image,
@@ -225,6 +229,13 @@ impl Reply {
             fullscreen,
             bell,
         } = then;
+        let scoped = |argvs: Vec<Vec<OsString>>, app: Option<String>| {
+            argvs
+                .into_iter()
+                .map(move |argv| reprisefs::scope::in_scope(&argv, app.as_deref()))
+        };
+        let mut spawn_each = self.spawn_each;
+        spawn_each.extend(then_each);
         let (spawn, spawn_app, spawn_dir) = if spawn.is_empty() {
             (self.spawn, self.spawn_app, self.spawn_dir)
         } else if self.spawn.is_empty() {
@@ -232,16 +243,18 @@ impl Reply {
         } else if (&self.spawn_app, &self.spawn_dir) == (&spawn_app, &spawn_dir) {
             let both = self.spawn.into_iter().chain(spawn).collect();
             (both, spawn_app, spawn_dir)
-        } else {
-            // One folder per reply: spawns that asked for different ones start in the default.
-            let scoped = |argvs: Vec<Vec<OsString>>, app: Option<String>| {
-                argvs
-                    .into_iter()
-                    .map(move |argv| reprisefs::scope::in_scope(&argv, app.as_deref()))
-            };
+        } else if self.spawn_dir == spawn_dir {
             let mine = scoped(self.spawn, self.spawn_app);
-            let dir = spawn_dir.filter(|d| self.spawn_dir.as_ref() == Some(d));
-            (mine.chain(scoped(spawn, spawn_app)).collect(), None, dir)
+            (
+                mine.chain(scoped(spawn, spawn_app)).collect(),
+                None,
+                spawn_dir,
+            )
+        } else {
+            let (mine, my_dir) = (scoped(self.spawn, self.spawn_app), self.spawn_dir);
+            spawn_each.extend(mine.map(|argv| (argv, my_dir.clone())));
+            spawn_each.extend(scoped(spawn, spawn_app).map(|argv| (argv, spawn_dir.clone())));
+            (Vec::new(), None, None)
         };
         Reply {
             redraw: self.redraw || redraw,
@@ -254,6 +267,7 @@ impl Reply {
             spawn,
             spawn_app,
             spawn_dir,
+            spawn_each,
             copy_files: self.copy_files.or(copy_files),
             paste_files: self.paste_files || paste_files,
             copy_image: self.copy_image.or(copy_image),
