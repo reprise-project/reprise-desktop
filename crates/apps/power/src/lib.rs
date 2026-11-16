@@ -4,8 +4,8 @@
 //! and the Power Options Properties sheet behind it, which edits `config.toml`'s `[idle]`,
 //! `[idle.battery]` and `[power]` keys, and the battery charge limit, which acts at once. The sheet and
 //! the tray menu also switch power-profiles-daemon's profile, when the daemon is there, and the low battery
-//! saver holds its power saver profile while the charge is low. The menu's Keep Awake check holds an
-//! idle inhibitor. `--tray` starts
+//! saver holds its power saver profile while the charge is low. Keep Awake, a check on the menu and on
+//! the sheet, holds an idle inhibitor. `--tray` starts
 //! with the sheet hidden (the autostart entry); plain `reprise-power` shows it. Closing the sheet hides
 //! it; only Exit in the tray menu quits. The compositor does the acting: the timeouts, lid and buttons
 //! are its, read from the same file.
@@ -292,6 +292,7 @@ impl PowerApp {
         self.iconless = icon.is_none();
         let mut s = sheet::Sheet::new(&self.settings, &self.power, &self.profiles, icon.flatten());
         s.set_charging(self.charging.is_some());
+        s.set_awake(self.awake.is_some());
         if let Some(old) = &self.sheet {
             s.open_tab(old.sheet.tabs.open);
         }
@@ -351,18 +352,34 @@ impl PowerApp {
         ok
     }
 
-    /// Keep Awake on or off; a cookie the compositor will not give is told in a box.
-    fn toggle_awake(&mut self) {
-        let conn = match reprisebus::session() {
-            Ok(c) => c,
-            Err(e) => return self.fail(format!("Keep Awake cannot reach the session bus: {e}")),
-        };
-        match self.awake.take() {
-            Some(cookie) => awake::release(&conn, cookie),
-            None => match awake::hold(&conn) {
+    /// Keep Awake on or off, from the tray menu or the sheet.
+    fn set_awake(&mut self, on: bool) {
+        match reprisebus::session() {
+            Ok(conn) => self.switch_awake(&conn, on),
+            Err(e) => {
+                self.fail(format!("Keep Awake cannot reach the session bus: {e}"));
+                self.show_awake();
+            }
+        }
+    }
+
+    /// Take or give back Keep Awake's cookie over `conn`; a cookie the compositor will not give is
+    /// told in a box. Both checks then show the cookie held.
+    fn switch_awake(&mut self, conn: &zbus::Connection, on: bool) {
+        match (on, self.awake.take()) {
+            (false, Some(cookie)) => awake::release(conn, cookie),
+            (true, None) => match awake::hold(conn) {
                 Ok(cookie) => self.awake = Some(cookie),
                 Err(e) => self.fail(format!("Reprise could not keep the computer awake: {e}")),
             },
+            (_, held) => self.awake = held,
+        }
+        self.show_awake();
+    }
+
+    fn show_awake(&mut self) {
+        if let Some(s) = &mut self.sheet {
+            s.set_awake(self.awake.is_some());
         }
         self.push_state();
     }
@@ -453,6 +470,10 @@ impl PowerApp {
                 self.charge(device, on);
                 Reply::redraw()
             }
+            sheet::Outcome::KeepAwake(on) => {
+                self.set_awake(on);
+                Reply::redraw()
+            }
         }
     }
 
@@ -527,7 +548,7 @@ impl PowerApp {
                         ..Reply::none()
                     };
                 }
-                tray::TrayMsg::KeepAwake => self.toggle_awake(),
+                tray::TrayMsg::KeepAwake => self.set_awake(self.awake.is_none()),
                 tray::TrayMsg::Profile(i) => {
                     if let Some(p) = self.profiles.available.get(i).cloned() {
                         self.set_profile(p);
@@ -992,5 +1013,46 @@ mod tests {
         let (mut app, _tx) = toggled();
         app.build(Some(None));
         assert!(!check(&app).1);
+    }
+
+    /// The Keep Awake checks as (the sheet's, the tray menu's).
+    fn awake_checks(app: &PowerApp) -> (Option<bool>, Option<bool>) {
+        let sheet = &app.sheet.as_ref().unwrap().sheet.pages[sheet::TAB_SCHEMES];
+        let tray = app.tray_state.as_ref().and_then(|t| {
+            let row = t.nodes.iter().find(|n| n.label == "Keep Awake");
+            row.and_then(|n| n.toggle)
+        });
+        (sheet.checked(sheet::KEEP_AWAKE), tray)
+    }
+
+    #[test]
+    fn keep_awake_from_the_sheet_shows_in_the_menu_and_back() {
+        let Some(f) = awake::tests::fake() else {
+            return;
+        };
+        let mut app = PowerApp::default();
+        app.build(None);
+        let s = app.sheet.as_mut().unwrap();
+        s.sheet.pages[sheet::TAB_SCHEMES].set_check(sheet::KEEP_AWAKE, true);
+        let out = s.event(propsheet::Event::Page(
+            sheet::TAB_SCHEMES,
+            form::Event::Changed(sheet::KEEP_AWAKE),
+        ));
+        assert_eq!(out, sheet::Outcome::KeepAwake(true));
+        app.switch_awake(&f.me, true);
+        assert_eq!(app.awake, Some(7));
+        assert_eq!(awake_checks(&app), (Some(true), Some(true)));
+        app.switch_awake(&f.me, app.awake.is_none());
+        assert_eq!(app.awake, None, "the menu's click gave the cookie back");
+        assert_eq!(awake_checks(&app), (Some(false), Some(false)));
+        assert_eq!(*f.back.lock().unwrap(), [7]);
+        app.awake = Some(7);
+        app.sheet = None;
+        app.build(None);
+        assert_eq!(
+            awake_checks(&app).0,
+            Some(true),
+            "a new sheet shows the held cookie"
+        );
     }
 }

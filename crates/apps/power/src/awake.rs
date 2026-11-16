@@ -22,7 +22,7 @@ pub fn release(conn: &Connection, cookie: u32) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
@@ -40,11 +40,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn keep_awake_holds_a_cookie_and_gives_it_back() {
-        let Some(bus) = reprisebus::testbus::bus() else {
-            return;
-        };
+    /// A bus of the test's own with a fake screen saver on it: `me` calls it, `back` holds the
+    /// cookies it got back.
+    pub(crate) struct Fake {
+        pub me: Connection,
+        pub back: Arc<Mutex<Vec<u32>>>,
+        _saver: Connection,
+        _bus: reprisebus::testbus::Bus,
+    }
+
+    /// None when `dbus-daemon` cannot run.
+    pub(crate) fn fake() -> Option<Fake> {
+        let bus = reprisebus::testbus::bus()?;
         let connect = || {
             reprisebus::wait(zbus::connection::Builder::address(bus.1.as_str()).build())
                 .expect("connect")
@@ -53,9 +60,21 @@ mod tests {
         let saver = connect();
         reprisebus::wait(saver.object_server().at(PATH, Saver(back.clone()))).unwrap();
         reprisebus::wait(saver.request_name(NAME)).unwrap();
-        let me = connect();
-        assert_eq!(hold(&me).ok(), Some(7));
-        release(&me, 7);
-        assert_eq!(*back.lock().unwrap(), [7]);
+        Some(Fake {
+            me: connect(),
+            back,
+            _saver: saver,
+            _bus: bus,
+        })
+    }
+
+    #[test]
+    fn keep_awake_holds_a_cookie_and_gives_it_back() {
+        let Some(f) = fake() else {
+            return;
+        };
+        assert_eq!(hold(&f.me).ok(), Some(7));
+        release(&f.me, 7);
+        assert_eq!(*f.back.lock().unwrap(), [7]);
     }
 }
