@@ -140,12 +140,14 @@ fn a_failed_save_is_kept_pending_and_told_once() {
     if std::fs::File::create(dir.path().join("probe")).is_err() {
         n.event(win, typed("Buy milk"), &mut ctx);
         assert!(n.save_due(later()), "the failed save still waits");
-        assert!(n.error.is_shown(), "the box says the note was not saved");
-        assert_eq!(n.parent(n.error.win().expect("the box")), Some(win));
-        n.error.close();
+        let error = &mut n.notes[0].error;
+        assert!(error.is_shown(), "the box says the note was not saved");
+        let shown = error.win().expect("the box");
+        error.close();
+        assert_eq!(n.parent(shown), Some(win));
         assert!(n.save_due(later() + Autosave::DELAY));
         assert!(
-            !n.error.is_shown(),
+            !n.notes[0].error.is_shown(),
             "a second failure in a row is not told again"
         );
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -321,23 +323,55 @@ fn x_deletes_an_empty_note_at_once_and_asks_for_one_with_text() {
     assert_eq!(n.notes.len(), 1, "an empty note goes without a word");
     n.event(first, typed("keep me?"), &mut ctx);
     click(&mut n, first, x, &mut ctx);
-    assert!(n.confirm.is_some(), "a note with text asks");
-    assert_eq!(n.parent(CONFIRM), Some(first));
-    assert_eq!(n.caption(CONFIRM), Caption::Prompt);
+    let ask = n.notes[0].asks.win().expect("a note with text asks");
+    assert_eq!(n.parent(ask), Some(first));
+    assert_eq!(n.caption(ask), Caption::Prompt);
     let mut c = Canvas::new(400, 200);
-    n.draw(CONFIRM, &mut c, &ctx);
-    n.event(CONFIRM, sym_key(keysym::ESCAPE), &mut ctx);
-    assert!(n.confirm.is_none());
+    n.draw(ask, &mut c, &ctx);
+    n.event(ask, sym_key(keysym::ESCAPE), &mut ctx);
+    assert!(n.notes[0].asks.is_empty());
     assert_eq!(n.notes.len(), 1, "Escape keeps it");
     click(&mut n, first, x, &mut ctx);
-    n.draw(CONFIRM, &mut c, &ctx);
-    let reply = n.event(CONFIRM, sym_key(keysym::RETURN), &mut ctx);
+    let ask = n.notes[0].asks.win().expect("asked again");
+    n.draw(ask, &mut c, &ctx);
+    let reply = n.event(ask, sym_key(keysym::RETURN), &mut ctx);
     assert!(n.notes.is_empty());
     assert!(reply.quit, "the last note gone ends the program");
     assert!(
         std::fs::read_dir(dir.path()).unwrap().next().is_none(),
         "its files went too"
     );
+}
+
+#[test]
+fn a_delete_question_stays_on_its_note_and_answers_for_it_when_another_note_asks() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_ctx();
+    let mut n = started(dir.path());
+    let a = n.notes[0].win;
+    let b = n.new_note(Colour::Yellow);
+    let x = (NOTE_SIZE.0 - 8, 8);
+    for w in [a, b] {
+        n.event(w, typed("text"), &mut ctx);
+        click(&mut n, w, x, &mut ctx);
+    }
+    let ask_a = n.notes[0].asks.win().expect("A asks");
+    let ask_b = n.notes[1].asks.win().expect("B asks");
+    assert_ne!(ask_a, ask_b);
+    assert_eq!(n.parent(ask_a), Some(a), "A's question stays on A");
+    assert_eq!(n.parent(ask_b), Some(b));
+    let kids: Vec<WinId> = n.children().iter().map(|k| k.id).collect();
+    assert!(kids.contains(&ask_a) && kids.contains(&ask_b));
+    n.event(ask_a, sym_key(keysym::RETURN), &mut ctx);
+    assert_eq!(n.notes.len(), 1, "Yes on A's question deletes A");
+    assert_eq!(n.notes[0].win, b);
+    assert_eq!(
+        n.notes[0].asks.win(),
+        Some(ask_b),
+        "B's question is still up"
+    );
+    n.event(ask_b, sym_key(keysym::ESCAPE), &mut ctx);
+    assert_eq!(n.notes.len(), 1, "No on B's question keeps B");
 }
 
 #[test]
@@ -359,7 +393,7 @@ fn a_note_has_no_frame_and_its_strip_and_edges_move_and_resize_it() {
         None,
         "the menu takes the press"
     );
-    assert_eq!(n.grip(CONFIRM, (1, 1), NOTE_SIZE), None);
+    assert_eq!(n.grip(win.named_in("confirm"), (1, 1), NOTE_SIZE), None);
 }
 
 fn fnv(c: &Canvas) -> u64 {

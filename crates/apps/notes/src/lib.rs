@@ -6,7 +6,8 @@ mod store;
 
 reprisekit::strings!("notes");
 
-use repriseapp::oneshot::{ErrorBox, MsgBox, Outcome};
+use repriseapp::asks::{Answer, Asks};
+use repriseapp::oneshot::{ErrorBox, MsgBox};
 use repriseapp::{App, Caption, Child, Ctx, Event, Extended, MAIN, Reply, WinId};
 use reprisebus::instance::{self, Claim};
 use reprisekit::access::{ROOT, Tree};
@@ -32,7 +33,6 @@ use store::{Autosave, Saved};
 const BUS_NAME: &str = "org.reprise.Notes";
 /// What an autostart's start hands a copy already running: nothing to do.
 const RESTORE_ACTION: &str = "restore";
-const CONFIRM: WinId = WinId::named("confirm");
 /// A new note's client size, logical px.
 const NOTE_SIZE: (i32, i32) = (200, 180);
 const MIN_NOTE: (i32, i32) = (120, 80);
@@ -56,6 +56,10 @@ struct Note {
     /// The window has the keyboard: its caret shows.
     focused: bool,
     save: Autosave,
+    /// The delete question, over this note.
+    asks: Asks<()>,
+    /// Says this note could not be saved.
+    error: ErrorBox,
 }
 
 impl Note {
@@ -96,12 +100,7 @@ struct Notes {
     /// The right-click menu, open on note `menu_win`.
     menu: Option<editmenu::Menu>,
     menu_win: WinId,
-    /// The delete prompt and the note it asks about.
-    confirm: Option<(WinId, MsgBox)>,
-    /// Says a note could not be saved, over that note; once until a save goes through.
-    error: ErrorBox,
-    error_on: WinId,
-    /// The last save failed.
+    /// The last save failed: a note's error box shows once until a save goes through.
     failing: bool,
     requests: Option<instance::Requests>,
     /// Started by autostart: with no notes kept, end at once.
@@ -125,9 +124,6 @@ impl Notes {
             },
             menu: None,
             menu_win: MAIN,
-            confirm: None,
-            error: ErrorBox::default(),
-            error_on: MAIN,
             failing: false,
             requests: None,
             restoring,
@@ -159,8 +155,15 @@ impl Notes {
             clicks: DoubleClick::default(),
             focused: false,
             save: Autosave::default(),
+            asks: Asks::new(win.named_in("confirm")).over(win),
+            error: ErrorBox::new(win.named_in("error")).over(win),
         });
         win
+    }
+
+    /// The note whose question or error box is in window `win`.
+    fn asking(&self, win: WinId) -> Option<&Note> {
+        (self.notes.iter()).find(|n| n.asks.owns(win) || n.error.owns(win))
     }
 
     fn note(&self, win: WinId) -> Option<&Note> {
@@ -210,8 +213,9 @@ impl Notes {
                 if !std::mem::replace(&mut self.failing, true) {
                     let text = tr!("save-failed", error = e.to_string());
                     let icon = self.warn_icon.clone();
-                    self.error.show(&tr!("name"), text, icon);
-                    self.error_on = win;
+                    if let Some(n) = self.note_mut(win) {
+                        n.error.show(&tr!("name"), text, icon);
+                    }
                 }
             }
         }
@@ -253,13 +257,19 @@ impl Notes {
         if n.is_empty() {
             return self.delete(win);
         }
-        self.confirm = Some((
-            win,
+        if !n.asks.is_empty() {
+            return Reply::none();
+        }
+        let icon = self.warn_icon.clone();
+        let Some(n) = self.note_mut(win) else {
+            return Reply::none();
+        };
+        n.asks.ask(
             MsgBox::new(
                 tr!("name"),
                 msgbox::Fields {
                     text: tr!("confirm-delete"),
-                    icon: self.warn_icon.clone(),
+                    icon,
                     buttons: vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
                     default: 0,
                     min_text_h: None,
@@ -267,7 +277,8 @@ impl Notes {
                     max_w: repriseapp::dialog_max_w(),
                 },
             ),
-        ));
+            (),
+        );
         Reply::redraw_all()
     }
 
@@ -392,21 +403,26 @@ impl Notes {
         tree.set_focus(menu.unwrap_or(edit));
     }
 
-    fn confirm_event(&mut self, ev: Event) -> Reply {
-        let Some((win, b)) = &mut self.confirm else {
+    /// An event for a box over a note: its error, or its delete question.
+    fn ask_event(&mut self, win: WinId, ev: Event) -> Reply {
+        let Notes {
+            notes,
+            dialog_text: text,
+            forms,
+            ..
+        } = self;
+        let Some(n) = (notes.iter_mut()).find(|n| n.asks.owns(win) || n.error.owns(win)) else {
             return Reply::none();
         };
-        let win = *win;
-        match b.event(&ev, &self.dialog_text, &self.forms) {
-            Outcome::None => Reply::none(),
-            Outcome::Redraw => Reply::redraw(),
-            Outcome::Closed(pick) => {
-                self.confirm = None;
-                match pick {
-                    Some(0) => self.delete(win),
-                    _ => Reply::redraw_all(),
-                }
-            }
+        if n.error.owns(win) {
+            return n.error.event(win, &ev, text, forms);
+        }
+        let note = n.win;
+        match n.asks.event(win, &ev, text, forms) {
+            Answer::None => Reply::none(),
+            Answer::Redraw => Reply::redraw(),
+            Answer::Closed((), Some(0)) => self.delete(note),
+            Answer::Closed(..) => Reply::redraw_all(),
         }
     }
 }
@@ -434,10 +450,10 @@ impl App for Notes {
                 modal: false,
             })
             .collect();
-        if let Some((_, b)) = &self.confirm {
-            kids.push(b.child(CONFIRM, &self.dialog_text, &self.forms));
+        for n in &self.notes {
+            kids.extend(n.asks.child(&self.dialog_text, &self.forms));
+            kids.extend(n.error.child(&self.dialog_text, &self.forms));
         }
-        kids.extend(self.error.child(&self.dialog_text, &self.forms));
         kids
     }
 
@@ -463,10 +479,7 @@ impl App for Notes {
         }
         let reply = match (win, ev) {
             (_, Event::Wake) => self.requests(),
-            (CONFIRM, ev) => self.confirm_event(ev),
-            (w, ev) if self.error.owns(w) => {
-                self.error.event(w, &ev, &self.dialog_text, &self.forms)
-            }
+            (w, ev) if self.asking(w).is_some() => self.ask_event(w, ev),
             (MAIN, Event::CloseRequest) => Reply::redraw(),
             (_, Event::CloseRequest) => {
                 self.save_all();
@@ -487,14 +500,12 @@ impl App for Notes {
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         self.follow(ctx);
-        if win == CONFIRM {
-            if let Some((_, b)) = &self.confirm {
-                b.draw(c, &self.forms, &self.dialog_text);
+        if let Some(n) = self.asking(win) {
+            if n.asks.owns(win) {
+                n.asks.draw(c, &self.forms, &self.dialog_text);
+            } else {
+                n.error.draw(c, &self.forms, &self.dialog_text);
             }
-            return;
-        }
-        if self.error.owns(win) {
-            self.error.draw(c, &self.forms, &self.dialog_text);
             return;
         }
         self.draw_note(win, c, ctx);
@@ -507,18 +518,14 @@ impl Extended for Notes {
     }
 
     fn parent(&self, win: WinId) -> Option<WinId> {
-        match win {
-            CONFIRM => self.confirm.as_ref().map(|(w, _)| *w),
-            w if self.error.owns(w) => self.note(self.error_on).map(|n| n.win),
-            _ => None,
-        }
+        let n = self.asking(win)?;
+        n.asks.parent(win).or(n.error.parent(win))
     }
 
     fn caption(&self, win: WinId) -> Caption {
-        match win {
-            CONFIRM => Caption::Prompt,
-            w if self.error.owns(w) => Caption::Prompt,
-            _ => Caption::None,
+        match self.asking(win) {
+            Some(_) => Caption::Prompt,
+            None => Caption::None,
         }
     }
 
@@ -547,14 +554,12 @@ impl Extended for Notes {
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         self.follow(ctx);
-        if win == CONFIRM {
-            if let Some((_, b)) = &self.confirm {
-                b.access(tree, &self.dialog_text, &self.forms);
+        if let Some(n) = self.asking(win) {
+            if n.asks.owns(win) {
+                n.asks.access(tree, &self.dialog_text, &self.forms);
+            } else {
+                n.error.access(tree, &self.dialog_text, &self.forms);
             }
-            return;
-        }
-        if self.error.owns(win) {
-            self.error.access(tree, &self.dialog_text, &self.forms);
             return;
         }
         self.access_note(win, tree, ctx);
