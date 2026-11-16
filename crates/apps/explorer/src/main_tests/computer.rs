@@ -216,6 +216,8 @@ fn a_udisks_snapshot_that_lands_after_the_drive_scan_marks_its_mounted_stick_rem
 fn computer_lists_while_udisks_does_not_answer() {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
+    // A listing that waited on UDisks2 would take this long, so a loaded host stays well inside it.
+    const UNANSWERED: std::time::Duration = std::time::Duration::from_secs(30);
 
     struct Silent;
     #[zbus::interface(name = "org.freedesktop.DBus.ObjectManager")]
@@ -247,7 +249,7 @@ fn computer_lists_while_udisks_does_not_answer() {
             .await
             .expect("the service");
         let client = zbus::connection::Builder::address(address)
-            .method_timeout(std::time::Duration::from_secs(2))
+            .method_timeout(UNANSWERED)
             .build()
             .await
             .expect("the client");
@@ -270,8 +272,8 @@ fn computer_lists_while_udisks_does_not_answer() {
     let _ = daemon.kill();
     let _ = daemon.wait();
     assert!(
-        took < std::time::Duration::from_secs(1),
-        "Computer lists within a second, took {took:?}"
+        took < UNANSWERED / 2,
+        "Computer lists without waiting out the call, took {took:?}"
     );
 }
 
