@@ -261,6 +261,8 @@ pub struct State {
     pub buttons_down: u32,
     /// The buttons the seat was told went down and not yet up.
     pub seat_buttons: Vec<u32>,
+    /// The buttons whose press committed a keyboard move or size; their releases stay away.
+    pub commit_buttons: Vec<u32>,
     pub popups: PopupManager,
     /// What the pointer shows: a client's surface, a named cursor or nothing.
     pub cursor: CursorImageStatus,
@@ -701,6 +703,7 @@ impl State {
             press_at: (0.0, 0.0),
             buttons_down: 0,
             seat_buttons: Vec::new(),
+            commit_buttons: Vec::new(),
             popups: PopupManager::default(),
             cursor: CursorImageStatus::default_named(),
             cursors,
