@@ -26,11 +26,12 @@ mod tray;
 mod vpnsheet;
 mod wg;
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 
+use repriseapp::asks::{Answer, Asks};
 use repriseapp::filedlg::{Driven, Host};
 use repriseapp::keys::{form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
@@ -58,9 +59,6 @@ const VPN: WinId = WinId::named("vpn");
 const IMPORT: WinId = WinId::named("import");
 const HOTSPOT: WinId = WinId::named("hotspot");
 const NOTICE: WinId = WinId::named("notice");
-/// The window a queued notice opens in as the one before closes: a fresh window gets its own
-/// title and size.
-const NOTICE_NEXT: WinId = WinId::named("notice-next");
 const BROWSE_TITLE: &str = "Choose File";
 
 /// Where the sign-in balloon sends the browser when NetworkManager has no
@@ -102,15 +100,42 @@ impl VpnWin {
 /// The field a Browse... file dialog fills.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Browse {
-    Ovpn(&'static str),
+    /// A field of VPN sheet number `sheet` ([`NetApp::vpn_opened`]).
+    Ovpn {
+        field: &'static str,
+        sheet: u64,
+    },
     Eap(&'static str),
 }
 
-struct Notice {
-    msg: MsgBox,
-    /// The saved VPN Yes deletes.
-    delete: Option<String>,
-    win: WinId,
+/// What a notice box answers for.
+enum Notice {
+    /// An OK box, raised from VPN sheet number `sheet` when it names one.
+    Tell { sheet: Option<u64> },
+    /// Confirm Connection Delete: Yes deletes this saved connection.
+    Delete(String),
+}
+
+/// The notice boxes, in turn: a type of its own for `NetApp`'s `Default`.
+struct Notices(Asks<Notice>);
+
+impl Default for Notices {
+    fn default() -> Notices {
+        Notices(Asks::new(NOTICE))
+    }
+}
+
+impl std::ops::Deref for Notices {
+    type Target = Asks<Notice>;
+    fn deref(&self) -> &Asks<Notice> {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Notices {
+    fn deref_mut(&mut self) -> &mut Asks<Notice> {
+        &mut self.0
+    }
 }
 
 #[derive(Default)]
@@ -135,14 +160,14 @@ struct NetApp {
     speed: Option<speed::Ticker>,
     waker: Option<repriseapp::Waker>,
     vpn: Option<VpnWin>,
+    /// The VPN sheets opened so far: the number of the one in `vpn`.
+    vpn_opened: u64,
     import: Option<FileDlg>,
     import_host: Host,
     /// The file dialog is a Browse... for this field, not Import.
     browse_for: Option<Browse>,
     hotspot: Option<hotspot::HotspotDialog>,
-    notice: Option<Notice>,
-    /// Notices waiting for the open one to close, oldest first.
-    queued: VecDeque<Notice>,
+    notices: Notices,
     /// The message box's font, loaded in `start`: `children` sizes its window without a `Ctx`.
     dialog_text: Option<Rc<TextRenderer>>,
     /// `Ctx::forms` as of the last event, which `children` and `initial_size` size windows by.
@@ -294,31 +319,21 @@ impl NetApp {
     }
 
     fn tell(&mut self, title: &str, text: &str) {
-        self.show(Notice {
-            msg: MsgBox::new(
-                title,
-                msgbox::Fields {
-                    text: wrap(text),
-                    icon: None,
-                    buttons: vec!["OK".into()],
-                    default: 0,
-                    min_text_h: None,
-                    min_w: 0,
-                    max_w: repriseapp::dialog_max_w(),
-                },
-            ),
-            delete: None,
-            win: NOTICE,
-        });
+        self.notices
+            .ask(ok_box(title, text), Notice::Tell { sheet: None });
     }
 
-    /// Opens `n`, or queues it behind the notice that is open.
-    fn show(&mut self, n: Notice) {
-        if self.notice.is_some() {
-            self.queued.push_back(n);
-        } else {
-            self.notice = Some(n);
-        }
+    /// [`NetApp::tell`] for the VPN sheet open, which the box covers while that sheet stays.
+    fn tell_from_sheet(&mut self, title: &str, text: &str) {
+        let sheet = Some(self.vpn_opened);
+        self.notices
+            .ask(ok_box(title, text), Notice::Tell { sheet });
+    }
+
+    /// Opens `w` in the VPN sheet's window, in place of the sheet there.
+    fn show_vpn(&mut self, w: VpnWin) {
+        self.vpn_opened += 1;
+        self.vpn = Some(w);
     }
 
     fn ask_delete(&mut self, conn_path: &str) {
@@ -329,24 +344,21 @@ impl NetApp {
             .find(|v| v.conn_path == conn_path)
             .map(|v| v.name.clone())
             .unwrap_or_default();
-        self.show(Notice {
-            msg: MsgBox::new(
-                "Confirm Connection Delete",
-                msgbox::Fields {
-                    text: wrap(&format!(
-                        "Are you sure you want to delete the connection '{name}'?"
-                    )),
-                    icon: None,
-                    buttons: vec!["&Yes".into(), "&No".into()],
-                    default: 0,
-                    min_text_h: None,
-                    min_w: 0,
-                    max_w: repriseapp::dialog_max_w(),
-                },
-            ),
-            delete: Some(conn_path.to_string()),
-            win: NOTICE,
-        });
+        let b = MsgBox::new(
+            "Confirm Connection Delete",
+            msgbox::Fields {
+                text: wrap(&format!(
+                    "Are you sure you want to delete the connection '{name}'?"
+                )),
+                icon: None,
+                buttons: vec!["&Yes".into(), "&No".into()],
+                default: 0,
+                min_text_h: None,
+                min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
+            },
+        );
+        self.notices.ask(b, Notice::Delete(conn_path.to_string()));
     }
 
     fn toggle_vpn(&mut self, key: u64) {
@@ -394,7 +406,7 @@ impl NetApp {
     /// A Browse... for `to`: the file dialog opens where its file is.
     fn open_browse(&mut self, to: Browse, u: TextUnits) {
         let current = match to {
-            Browse::Ovpn(field) => match &self.vpn {
+            Browse::Ovpn { field, .. } => match &self.vpn {
                 Some(VpnWin::OpenVpn(s)) => s.path_of(field),
                 _ => return,
             },
@@ -446,7 +458,7 @@ impl NetApp {
         };
         match import::plan(&path, text.as_deref(), &import::installed_plugins()) {
             Ok(import::Plan::WireGuard(cfg)) => {
-                self.vpn = Some(VpnWin::WireGuard(vpnsheet::WgSheet::new(&cfg, None)));
+                self.show_vpn(VpnWin::WireGuard(vpnsheet::WgSheet::new(&cfg, None)));
             }
             Ok(import::Plan::Plugins(kinds)) => self.send(nm::Cmd::Import { path, kinds }),
             Err(why) => self.tell("Import", &why),
@@ -539,7 +551,7 @@ impl NetApp {
                     self.sync_refused();
                 }
                 nm::NmMsg::Vpn(edit) => {
-                    self.vpn = Some(match edit {
+                    self.show_vpn(match edit {
                         nm::VpnEdit::WireGuard { conn_path, cfg } => {
                             VpnWin::WireGuard(vpnsheet::WgSheet::new(&cfg, Some(conn_path)))
                         }
@@ -728,7 +740,7 @@ impl NetApp {
                 Reply::redraw_all()
             }
             folder::Outcome::NewWireGuard => {
-                self.vpn = Some(VpnWin::WireGuard(vpnsheet::WgSheet::fresh(
+                self.show_vpn(VpnWin::WireGuard(vpnsheet::WgSheet::fresh(
                     &self.snapshot.vpns,
                 )));
                 Reply::redraw_all()
@@ -776,7 +788,7 @@ impl NetApp {
             }
             vpnsheet::Outcome::Problem(text) => {
                 let title = self.vpn.as_ref().map(VpnWin::title).unwrap_or_default();
-                self.tell(&title, &text);
+                self.tell_from_sheet(&title, &text);
                 Reply::redraw_all()
             }
             vpnsheet::Outcome::Save(cfg) => {
@@ -810,7 +822,8 @@ impl NetApp {
                 Reply::redraw_all()
             }
             vpnsheet::Outcome::Browse(field) => {
-                self.open_browse(Browse::Ovpn(field), ctx.forms().text);
+                let sheet = self.vpn_opened;
+                self.open_browse(Browse::Ovpn { field, sheet }, ctx.forms().text);
                 Reply::redraw_all()
             }
         }
@@ -870,10 +883,19 @@ impl NetApp {
             Driven::Cancelled => None,
             Driven::Picked(path) => Some(path),
         };
+        self.picked(picked);
+        Reply::redraw_all()
+    }
+
+    /// The file dialog closed on `picked`: a Browse... fills its field in the sheet or dialog
+    /// that asked, Import imports.
+    fn picked(&mut self, picked: Option<PathBuf>) {
         self.import = None;
         match (picked, self.browse_for.take()) {
-            (Some(path), Some(Browse::Ovpn(field))) => {
-                if let Some(VpnWin::OpenVpn(s)) = &mut self.vpn {
+            (Some(path), Some(Browse::Ovpn { field, sheet })) => {
+                if let Some(VpnWin::OpenVpn(s)) = &mut self.vpn
+                    && sheet == self.vpn_opened
+                {
                     s.set_path(field, &path.to_string_lossy());
                 }
             }
@@ -885,29 +907,20 @@ impl NetApp {
             (Some(path), None) => self.import_file(path),
             (None, _) => {}
         }
-        Reply::redraw_all()
     }
 
     fn notice_event(&mut self, win: WinId, ev: Event) -> Reply {
         let Some(text) = &self.dialog_text else {
             return Reply::none();
         };
-        let Some(n) = self.notice.as_mut().filter(|n| n.win == win) else {
-            return Reply::none();
-        };
-        match n.msg.event(&ev, text, &self.forms) {
-            oneshot::Outcome::Closed(button) => {
-                if let (Some(conn), Some(0)) = (n.delete.take(), button) {
-                    self.send(nm::Cmd::DeleteVpn(conn));
-                }
-                self.notice = self.queued.pop_front().map(|mut next| {
-                    next.win = if win == NOTICE { NOTICE_NEXT } else { NOTICE };
-                    next
-                });
+        match self.notices.event(win, &ev, text, &self.forms) {
+            Answer::Closed(Notice::Delete(conn), Some(0)) => {
+                self.send(nm::Cmd::DeleteVpn(conn));
                 Reply::redraw_all()
             }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
+            Answer::Closed(..) => Reply::redraw_all(),
+            Answer::Redraw => Reply::redraw(),
+            Answer::None => Reply::none(),
         }
     }
 
@@ -1239,8 +1252,8 @@ impl App for NetApp {
                 modal: false,
             });
         }
-        if let (Some(n), Some(text)) = (&self.notice, &self.dialog_text) {
-            out.push(n.msg.child(n.win, text, &self.forms));
+        if let Some(text) = &self.dialog_text {
+            out.extend(self.notices.child(text, &self.forms));
         }
         out
     }
@@ -1301,7 +1314,7 @@ impl App for NetApp {
                 self.hotspot_event(ev, ctx).with_clipboard(clip)
             }
             IMPORT => self.import_event(ev, ctx),
-            NOTICE | NOTICE_NEXT => self.notice_event(win, ev),
+            w if self.notices.owns(w) => self.notice_event(w, ev),
             _ => self.folder_event(ev, ctx),
         }
     }
@@ -1411,11 +1424,7 @@ impl App for NetApp {
                     );
                 }
             }
-            NOTICE | NOTICE_NEXT => {
-                if let Some(n) = self.notice.as_ref().filter(|n| n.win == win) {
-                    n.msg.draw(c, &forms, &ctx.text);
-                }
-            }
+            w if self.notices.owns(w) => self.notices.draw(c, &forms, &ctx.text),
             // The folder's own size decides its last column's width and
             // whether the selection is still in view, and only its draw
             // has a `Ctx` that means the folder's window.
@@ -1433,6 +1442,20 @@ impl App for NetApp {
 impl repriseapp::Extended for NetApp {
     fn hidden(&self) -> bool {
         self.hidden
+    }
+
+    /// A notice raised from a VPN sheet, and a Browse... for one, cover that sheet while it is
+    /// open.
+    fn parent(&self, win: WinId) -> Option<WinId> {
+        let sheet = match (self.notices.up(), self.browse_for) {
+            (Some((_, Notice::Tell { sheet })), _) if self.notices.owns(win) => *sheet,
+            (_, Some(Browse::Ovpn { sheet, .. })) if win == IMPORT => Some(sheet),
+            _ => None,
+        };
+        match sheet {
+            Some(s) if self.vpn.is_some() && s == self.vpn_opened => Some(VPN),
+            _ => Some(repriseapp::MAIN),
+        }
     }
 
     /// The Import file dialog resizes, down to its opening size.
@@ -1483,11 +1506,7 @@ impl repriseapp::Extended for NetApp {
                     d.access(tree, r, &ctx.text, forms.fonts.size_px);
                 }
             }
-            NOTICE | NOTICE_NEXT => {
-                if let Some(n) = self.notice.as_ref().filter(|n| n.win == win) {
-                    n.msg.access(tree, &ctx.text, &forms);
-                }
-            }
+            w if self.notices.owns(w) => self.notices.access(tree, &ctx.text, &forms),
             _ => self.folder.access(tree, ctx),
         }
     }
@@ -1518,6 +1537,22 @@ impl repriseapp::Extended for NetApp {
     }
 }
 
+/// A notice with one OK button.
+fn ok_box(title: &str, text: &str) -> MsgBox {
+    MsgBox::new(
+        title,
+        msgbox::Fields {
+            text: wrap(text),
+            icon: None,
+            buttons: vec!["OK".into()],
+            default: 0,
+            min_text_h: None,
+            min_w: 0,
+            max_w: repriseapp::dialog_max_w(),
+        },
+    )
+}
+
 /// A message box's text wrapped to lines the box keeps narrow.
 fn wrap(text: &str) -> String {
     reprisekit::text::wrap_chars(text, 60).join("\n")
@@ -1546,7 +1581,7 @@ pub fn main(args: Vec<std::ffi::OsString>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use repriseapp::KeyInput;
+    use repriseapp::{Extended, KeyInput};
 
     /// A `Ctx` for a window of `size`: the default theme and font, an
     /// icon theme nothing carries.
@@ -1602,6 +1637,38 @@ mod tests {
         assert_eq!(app.event(KEY, ctrl(b'x'), &mut ctx).copy, None);
     }
 
+    /// The text of the notice up and its window.
+    fn shown(app: &NetApp) -> Option<(String, WinId)> {
+        let (b, _) = app.notices.up()?;
+        Some((b.fields.text.clone(), app.notices.win()?))
+    }
+
+    fn enter() -> Event {
+        Event::Key(KeyInput {
+            sym: reprisekit::textedit::keysym::RETURN,
+            utf8: None,
+            mods: repriseapp::Mods::default(),
+            edit: None,
+        })
+    }
+
+    /// An app with saved VPNs at `paths`, whose commands land on the receiver.
+    fn with_vpns(paths: &[&str]) -> (NetApp, async_channel::Receiver<nm::Cmd>) {
+        let (nm, sent) = nm::NmHandle::channel();
+        let mut app = NetApp {
+            nm: Some(nm),
+            ..NetApp::default()
+        };
+        for (i, p) in paths.iter().enumerate() {
+            app.snapshot.vpns.push(nm::Vpn {
+                conn_path: p.to_string(),
+                name: format!("VPN {i}"),
+                ..nm::Vpn::default()
+            });
+        }
+        (app, sent)
+    }
+
     #[test]
     fn a_notice_told_while_one_is_open_opens_in_a_fresh_window_when_it_closes() {
         let mut ctx = test_ctx(folder::CLIENT);
@@ -1609,15 +1676,92 @@ mod tests {
         app.event(repriseapp::MAIN, Event::Wake, &mut ctx);
         app.tell("Import", "first");
         app.tell("Import", "second");
-        let shown = |app: &NetApp| {
-            let n = app.notice.as_ref().expect("a notice");
-            (n.win, n.msg.fields.text.clone())
-        };
-        assert_eq!(shown(&app), (NOTICE, "first".to_string()));
-        app.event(NOTICE, Event::CloseRequest, &mut ctx);
-        assert_eq!(shown(&app), (NOTICE_NEXT, "second".to_string()));
-        app.event(NOTICE_NEXT, Event::CloseRequest, &mut ctx);
-        assert!(app.notice.is_none());
+        let (text, first) = shown(&app).expect("a notice");
+        assert_eq!(text, "first");
+        app.event(first, Event::CloseRequest, &mut ctx);
+        let (text, second) = shown(&app).expect("the queued notice");
+        assert_eq!(text, "second");
+        assert_ne!(second, first, "a fresh window");
+        app.event(second, Event::CloseRequest, &mut ctx);
+        assert!(app.notices.is_empty());
+    }
+
+    #[test]
+    fn a_notice_raised_under_confirm_delete_waits_and_comes_up_after_the_answer() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        let (mut app, sent) = with_vpns(&["/conn/a"]);
+        app.event(repriseapp::MAIN, Event::Wake, &mut ctx);
+        app.ask_delete("/conn/a");
+        app.tell("Import", "unreadable");
+        assert!(matches!(app.notices.up(), Some((_, Notice::Delete(p)))if p == "/conn/a"));
+        let (_, win) = shown(&app).unwrap();
+        app.event(win, Event::CloseRequest, &mut ctx);
+        assert!(
+            sent.try_recv().is_err(),
+            "closing the question deletes nothing"
+        );
+        assert_eq!(shown(&app).map(|(t, _)| t).as_deref(), Some("unreadable"));
+    }
+
+    #[test]
+    fn yes_on_confirm_delete_deletes_the_vpn_it_was_asked_about_with_a_notice_queued_behind() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        let (mut app, sent) = with_vpns(&["/conn/a", "/conn/b"]);
+        app.event(repriseapp::MAIN, Event::Wake, &mut ctx);
+        app.ask_delete("/conn/a");
+        app.tell("Import", "unreadable");
+        let (_, win) = shown(&app).unwrap();
+        app.event(win, enter(), &mut ctx);
+        assert_eq!(sent.try_recv(), Ok(nm::Cmd::DeleteVpn("/conn/a".into())));
+        let (_, win) = shown(&app).expect("the notice is up after the answer");
+        app.event(win, enter(), &mut ctx);
+        assert!(sent.try_recv().is_err(), "OK on the notice deletes nothing");
+    }
+
+    fn ovpn_sheet(conn: &str) -> VpnWin {
+        VpnWin::OpenVpn(vpnsheet::OvpnSheet::new(conn, &ovpn::Config::default()))
+    }
+
+    fn ca_of(app: &NetApp) -> Option<PathBuf> {
+        match &app.vpn {
+            Some(VpnWin::OpenVpn(s)) => s.path_of("ca"),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_browse_result_lands_in_the_sheet_that_asked() {
+        let u = Theme::default().text;
+        let mut app = NetApp::default();
+        app.show_vpn(ovpn_sheet("/conn/a"));
+        let sheet = app.vpn_opened;
+        app.open_browse(Browse::Ovpn { field: "ca", sheet }, u);
+        assert_eq!(app.parent(IMPORT), Some(VPN), "Browse covers its sheet");
+        app.picked(Some("/certs/a.crt".into()));
+        assert_eq!(ca_of(&app), Some("/certs/a.crt".into()));
+
+        app.open_browse(Browse::Ovpn { field: "ca", sheet }, u);
+        app.show_vpn(ovpn_sheet("/conn/b"));
+        assert_eq!(app.parent(IMPORT), Some(repriseapp::MAIN));
+        app.picked(Some("/certs/other.crt".into()));
+        assert_eq!(
+            ca_of(&app),
+            None,
+            "the sheet that replaced it keeps its field"
+        );
+    }
+
+    #[test]
+    fn a_problem_on_a_vpn_sheet_covers_that_sheet_while_it_is_open() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        let mut app = NetApp::default();
+        app.event(repriseapp::MAIN, Event::Wake, &mut ctx);
+        app.show_vpn(ovpn_sheet("/conn/a"));
+        app.tell_from_sheet("VPN", "The gateway is missing.");
+        let (_, win) = shown(&app).unwrap();
+        assert_eq!(app.parent(win), Some(VPN));
+        app.show_vpn(ovpn_sheet("/conn/b"));
+        assert_eq!(app.parent(win), Some(repriseapp::MAIN));
     }
 
     #[test]
