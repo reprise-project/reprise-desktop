@@ -287,16 +287,26 @@ const NUMBERED: u32 = 1 << 31;
 impl WinId {
     /// The window named `name`: an FNV-1a hash, so a program's distinct names are distinct ids.
     pub const fn named(name: &str) -> WinId {
-        let b = name.as_bytes();
-        let mut h: u32 = 0x811c_9dc5;
-        let mut i = 0;
-        while i < b.len() {
-            h ^= b[i] as u32;
-            h = h.wrapping_mul(0x0100_0193);
-            i += 1;
-        }
-        WinId(h & !NUMBERED)
+        WinId(fnv(0x811c_9dc5, name.as_bytes()) & !NUMBERED)
     }
+
+    /// The window named `name` that belongs to window `self`, such as the box over one of a
+    /// program's numbered windows: the hash of `self`'s id followed by `name`.
+    pub const fn named_in(self, name: &str) -> WinId {
+        let h = fnv(0x811c_9dc5, &self.0.to_le_bytes());
+        WinId(fnv(h, name.as_bytes()) & !NUMBERED)
+    }
+}
+
+/// FNV-1a over `b`, from hash `h`.
+const fn fnv(mut h: u32, b: &[u8]) -> u32 {
+    let mut i = 0;
+    while i < b.len() {
+        h ^= b[i] as u32;
+        h = h.wrapping_mul(0x0100_0193);
+        i += 1;
+    }
+    h
 }
 
 pub const MAIN: WinId = WinId::named("main");

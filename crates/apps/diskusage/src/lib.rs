@@ -11,7 +11,7 @@ mod model;
 use model::{Line, SHARE, SIZE};
 use repriseapp::ctxmenu::{Popup, Step, item};
 use repriseapp::detailslist::{List, Press};
-use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::oneshot::{self, ErrorBox, MsgBox};
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, MAIN, PointerInput, Poster, Reply, WinId,
 };
@@ -62,7 +62,6 @@ fn button_rows() -> [(&'static str, String, i32); 4] {
 const SCAN_THREADS: usize = 4;
 
 const CONFIRM: WinId = WinId::named("confirm");
-const NOTE: WinId = WinId::named("note");
 
 /// The rows the list draws: the folder's entries and the icons of each kind.
 #[derive(Default)]
@@ -115,7 +114,7 @@ struct DiskUsage {
     form: Form,
     popup: Option<Popup<Act>>,
     confirm: Option<(PathBuf, MsgBox)>,
-    note: Option<MsgBox>,
+    note: ErrorBox,
     trashed: Option<(Poster<Trashed>, Receiver<Trashed>)>,
     waker: Option<repriseapp::Waker>,
     trash_icon: Option<Canvas>,
@@ -168,7 +167,7 @@ impl DiskUsage {
             form,
             popup: None,
             confirm: None,
-            note: None,
+            note: ErrorBox::default(),
             trashed: None,
             waker: None,
             trash_icon: None,
@@ -345,7 +344,7 @@ impl DiskUsage {
                 }
                 Err(text) => {
                     log::warn!("disk usage: {text}");
-                    self.note = Some(note(&tr!("title-delete-failed"), text));
+                    self.note.show(&tr!("title-delete-failed"), text, None);
                 }
             }
         }
@@ -561,20 +560,6 @@ impl DiskUsage {
         }
     }
 
-    fn note_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
-        let Some(b) = &mut self.note else {
-            return Reply::none();
-        };
-        match b.event(&ev, &ctx.text, &ctx.forms()) {
-            oneshot::Outcome::Closed(_) => {
-                self.note = None;
-                Reply::redraw_all()
-            }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
-        }
-    }
-
     fn load_icons(&mut self, ctx: &mut Ctx) {
         let rows = &mut self.list.view.rows;
         if rows.folder.is_none() {
@@ -598,21 +583,6 @@ impl DiskUsage {
             p.draw(c, ctx);
         }
     }
-}
-
-fn note(title: &str, text: String) -> MsgBox {
-    MsgBox::new(
-        title,
-        Fields {
-            text,
-            icon: None,
-            buttons: vec![reprisekit::kit_tr!("ok")],
-            default: 0,
-            min_text_h: None,
-            min_w: 0,
-            max_w: repriseapp::dialog_max_w(),
-        },
-    )
 }
 
 /// Explorer on folder `path`, or on the folder holding file `path` with it picked.
@@ -647,9 +617,7 @@ impl App for DiskUsage {
         if let Some((_, b)) = &self.confirm {
             out.push(b.child(CONFIRM, &text, &forms));
         }
-        if let Some(b) = &self.note {
-            out.push(b.child(NOTE, &text, &forms));
-        }
+        out.extend(self.note.child(&text, &forms));
         out
     }
 
@@ -666,7 +634,7 @@ impl App for DiskUsage {
         self.load_icons(ctx);
         match win {
             CONFIRM => self.confirm_event(ev, ctx),
-            NOTE => self.note_event(ev, ctx),
+            w if self.note.owns(w) => self.note.event(w, &ev, &ctx.text, &ctx.forms()),
             _ => self.main_event(ev, ctx),
         }
     }
@@ -679,11 +647,7 @@ impl App for DiskUsage {
                     b.draw(c, &forms, &ctx.text);
                 }
             }
-            NOTE => {
-                if let Some(b) = &self.note {
-                    b.draw(c, &forms, &ctx.text);
-                }
-            }
+            w if self.note.owns(w) => self.note.draw(c, &forms, &ctx.text),
             _ => self.draw_main(c, ctx),
         }
     }
@@ -710,11 +674,7 @@ impl repriseapp::Extended for DiskUsage {
                     b.access(tree, &ctx.text, &forms);
                 }
             }
-            NOTE => {
-                if let Some(b) = &self.note {
-                    b.access(tree, &ctx.text, &forms);
-                }
-            }
+            w if self.note.owns(w) => self.note.access(tree, &ctx.text, &forms),
             _ => {
                 let focus = self
                     .form

@@ -181,8 +181,8 @@ impl App for WelcomeApp {
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         self.dialog = Some((ctx.text.clone(), ctx.forms()));
-        if win == ErrorBox::WIN {
-            return self.error.event(&ev, &ctx.text, &ctx.forms());
+        if self.error.owns(win) {
+            return self.error.event(win, &ev, &ctx.text, &ctx.forms());
         }
         let mut reply = self.dispatch(ev, ctx);
         let size = ctx.forms().text.size(welcome::CLIENT);
@@ -192,7 +192,7 @@ impl App for WelcomeApp {
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         let forms = ctx.forms();
-        if win == ErrorBox::WIN {
+        if self.error.owns(win) {
             self.error.draw(c, &forms, &ctx.text);
             return;
         }
@@ -215,7 +215,7 @@ impl repriseapp::Extended for WelcomeApp {
     }
 
     fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
-        let w = self.welcome.as_mut().filter(|_| win != ErrorBox::WIN)?;
+        let w = self.welcome.as_mut().filter(|_| !self.error.owns(win))?;
         let form = repriseapp::DropForm {
             form: &mut w.wizard.form,
             px: None,
@@ -225,7 +225,7 @@ impl repriseapp::Extended for WelcomeApp {
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let forms = ctx.forms();
-        if win == ErrorBox::WIN {
+        if self.error.owns(win) {
             self.error.access(tree, &ctx.text, &forms);
             return;
         }

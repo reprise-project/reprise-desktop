@@ -1030,9 +1030,9 @@ impl BtApp {
         }
     }
 
-    fn error_event(&mut self, ev: Event) -> Reply {
+    fn error_event(&mut self, win: WinId, ev: Event) -> Reply {
         let (text, forms) = self.text_forms();
-        self.error.event(&ev, &text, &forms)
+        self.error.event(win, &ev, &text, &forms)
     }
 }
 
@@ -1123,7 +1123,7 @@ impl App for BtApp {
             PROPS => self.props_event(ev, ctx),
             PAIR => self.pair_event(ev, ctx),
             REMOVE => self.remove_event(ev),
-            ErrorBox::WIN => self.error_event(ev),
+            w if self.error.owns(w) => self.error_event(w, ev),
             OFFER => self.offer_event(ev, ctx),
             _ => self.main_event(ev, ctx),
         }
@@ -1181,7 +1181,7 @@ impl App for BtApp {
                     b.draw(c, &forms, &ctx.text);
                 }
             }
-            ErrorBox::WIN => self.error.draw(c, &forms, &ctx.text),
+            w if self.error.owns(w) => self.error.draw(c, &forms, &ctx.text),
             OFFER => {
                 if let Some((_, b)) = &self.offer {
                     b.draw(c, &forms, &ctx.text);
@@ -1225,7 +1225,7 @@ impl repriseapp::Extended for BtApp {
                     b.access(tree, &ctx.text, &forms);
                 }
             }
-            ErrorBox::WIN => self.error.access(tree, &ctx.text, &forms),
+            w if self.error.owns(w) => self.error.access(tree, &ctx.text, &forms),
             _ => self.devices.access(tree, ctx),
         }
     }

@@ -912,9 +912,9 @@ impl AccountsApp {
         }
     }
 
-    fn error_event(&mut self, ev: Event) -> Reply {
+    fn error_event(&mut self, win: WinId, ev: Event) -> Reply {
         let text = self.text();
-        self.error.event(&ev, &text, &self.forms)
+        self.error.event(win, &ev, &text, &self.forms)
     }
 
     fn open_browse(&mut self, u: TextUnits) {
@@ -1139,7 +1139,7 @@ impl App for AccountsApp {
                     b.draw(c, &forms, &ctx.text);
                 }
             }
-            ErrorBox::WIN => self.error.draw(c, &forms, &ctx.text),
+            w if self.error.owns(w) => self.error.draw(c, &forms, &ctx.text),
             _ => self.users.draw(c, ctx, self.face.as_ref()),
         }
     }
@@ -1197,7 +1197,7 @@ impl repriseapp::Extended for AccountsApp {
                     b.access(tree, &ctx.text, &forms);
                 }
             }
-            ErrorBox::WIN => self.error.access(tree, &ctx.text, &forms),
+            w if self.error.owns(w) => self.error.access(tree, &ctx.text, &forms),
             _ => self.users.access(tree, ctx),
         }
     }
@@ -1241,7 +1241,7 @@ impl AccountsApp {
             CLEAR_FINGERS => self.clear_fingers_event(ev),
             BROWSE => self.browse_event(ev, ctx),
             REMOVE => self.remove_event(ev),
-            ErrorBox::WIN => self.error_event(ev),
+            w if self.error.owns(w) => self.error_event(w, ev),
             _ => self.main_event(ev, ctx),
         }
         .with_clipboard(clip)

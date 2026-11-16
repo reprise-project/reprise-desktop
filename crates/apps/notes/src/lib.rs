@@ -464,7 +464,9 @@ impl App for Notes {
         let reply = match (win, ev) {
             (_, Event::Wake) => self.requests(),
             (CONFIRM, ev) => self.confirm_event(ev),
-            (ErrorBox::WIN, ev) => self.error.event(&ev, &self.dialog_text, &self.forms),
+            (w, ev) if self.error.owns(w) => {
+                self.error.event(w, &ev, &self.dialog_text, &self.forms)
+            }
             (MAIN, Event::CloseRequest) => Reply::redraw(),
             (_, Event::CloseRequest) => {
                 self.save_all();
@@ -491,7 +493,7 @@ impl App for Notes {
             }
             return;
         }
-        if win == ErrorBox::WIN {
+        if self.error.owns(win) {
             self.error.draw(c, &self.forms, &self.dialog_text);
             return;
         }
@@ -507,14 +509,15 @@ impl Extended for Notes {
     fn parent(&self, win: WinId) -> Option<WinId> {
         match win {
             CONFIRM => self.confirm.as_ref().map(|(w, _)| *w),
-            ErrorBox::WIN => self.note(self.error_on).map(|n| n.win),
+            w if self.error.owns(w) => self.note(self.error_on).map(|n| n.win),
             _ => None,
         }
     }
 
     fn caption(&self, win: WinId) -> Caption {
         match win {
-            CONFIRM | ErrorBox::WIN => Caption::Prompt,
+            CONFIRM => Caption::Prompt,
+            w if self.error.owns(w) => Caption::Prompt,
             _ => Caption::None,
         }
     }
@@ -550,7 +553,7 @@ impl Extended for Notes {
             }
             return;
         }
-        if win == ErrorBox::WIN {
+        if self.error.owns(win) {
             self.error.access(tree, &self.dialog_text, &self.forms);
             return;
         }

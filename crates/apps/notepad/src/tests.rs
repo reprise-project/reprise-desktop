@@ -1308,7 +1308,10 @@ fn failed_save_on_the_prompt_raises_the_box_and_drops_the_action() {
             .shown()
             .is_some_and(|b| b.fields.text.starts_with("Cannot create the "))
     );
-    assert_eq!(np.children().last().expect("the box").id, ErrorBox::WIN);
+    assert_eq!(
+        np.children().last().expect("the box").id,
+        np.error.win().expect("the box")
+    );
 }
 
 #[test]

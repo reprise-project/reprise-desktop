@@ -30,7 +30,7 @@ use std::sync::mpsc::Receiver;
 
 use repriseapp::filedlg::{Driven, Host};
 use repriseapp::keys::{form_clipboard, form_input, sheet_input};
-use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::oneshot::{self, ErrorBox, MsgBox};
 use repriseapp::{
     App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, PointerInput, Reply, WinId,
 };
@@ -51,24 +51,8 @@ use worker::{Cmd, Msg};
 const WIZARD: WinId = WinId::named("wizard");
 const BROWSE: WinId = WinId::named("browse");
 const CONFIRM: WinId = WinId::named("confirm");
-const NOTE: WinId = WinId::named("note");
 
 const PRINTER_ICON: &str = "printer";
-
-fn note(title: &str, text: String, icon: Option<Canvas>) -> MsgBox {
-    MsgBox::new(
-        title,
-        Fields {
-            text,
-            icon,
-            buttons: vec!["OK".into()],
-            default: 0,
-            min_text_h: None,
-            min_w: 0,
-            max_w: repriseapp::dialog_max_w(),
-        },
-    )
-}
 
 /// The widest a question's text runs before it wraps, at 100% text size.
 const QUESTION_W: i32 = 360;
@@ -104,7 +88,7 @@ struct PrintersApp {
     wizard: Option<addwiz::AddWizard>,
     browse: Option<(Host, FileDlg)>,
     confirm: Option<(Ask, MsgBox)>,
-    note: Option<MsgBox>,
+    note: ErrorBox,
     icon16: Option<Canvas>,
     icon32: Option<Canvas>,
     doc_icon: Option<Canvas>,
@@ -179,7 +163,7 @@ impl PrintersApp {
 
     fn fail(&mut self, title: &str, body: String) {
         let icon = None;
-        self.note = Some(note(title, body, icon));
+        self.note.show(title, body, icon);
     }
 
     fn snapshot_in(&mut self, s: Snapshot) {
@@ -297,11 +281,11 @@ impl PrintersApp {
                     }
                 }
                 Msg::TestPage(p) => {
-                    self.note = Some(note(
+                    self.note.show(
                         "Print Test Page",
                         format!("A test page has been sent to {p}."),
                         None,
-                    ));
+                    );
                 }
             }
         }
@@ -831,20 +815,6 @@ impl PrintersApp {
         }
     }
 
-    fn note_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
-        let Some(b) = &mut self.note else {
-            return Reply::none();
-        };
-        match b.event(&ev, &ctx.text, &self.forms) {
-            oneshot::Outcome::None => Reply::none(),
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::Closed(_) => {
-                self.note = None;
-                Reply::redraw_all()
-            }
-        }
-    }
-
     fn focused_edit(&self, win: WinId) -> Option<form::FocusedEdit<'_>> {
         match win {
             WIZARD => self.wizard.as_ref()?.page.form.focused_edit(),
@@ -908,9 +878,7 @@ impl App for PrintersApp {
             if let Some((_, b)) = &self.confirm {
                 out.push(b.child(CONFIRM, text, &self.forms));
             }
-            if let Some(b) = &self.note {
-                out.push(b.child(NOTE, text, &self.forms));
-            }
+            out.extend(self.note.child(text, &self.forms));
         }
         out
     }
@@ -954,7 +922,7 @@ impl App for PrintersApp {
             WIZARD => self.wizard_event(ev, ctx),
             BROWSE => self.browse_event(ev, ctx),
             CONFIRM => self.confirm_event(ev, ctx),
-            NOTE => self.note_event(ev, ctx),
+            w if self.note.owns(w) => self.note.event(w, &ev, &ctx.text, &self.forms),
             _ => self.main_event(ev, ctx),
         }
         .with_clipboard(clip)
@@ -1005,11 +973,7 @@ impl App for PrintersApp {
                     b.draw(c, &forms, &ctx.text);
                 }
             }
-            NOTE => {
-                if let Some(b) = &self.note {
-                    b.draw(c, &forms, &ctx.text);
-                }
-            }
+            w if self.note.owns(w) => self.note.draw(c, &forms, &ctx.text),
             _ => {
                 if std::mem::take(&mut self.refit) {
                     self.folder.fit_columns(ctx);
@@ -1066,11 +1030,7 @@ impl repriseapp::Extended for PrintersApp {
                     b.access(tree, &ctx.text, &forms);
                 }
             }
-            NOTE => {
-                if let Some(b) = &self.note {
-                    b.access(tree, &ctx.text, &forms);
-                }
-            }
+            w if self.note.owns(w) => self.note.access(tree, &ctx.text, &forms),
             _ => self.folder.access(tree, ctx),
         }
     }
