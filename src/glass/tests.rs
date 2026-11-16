@@ -1198,6 +1198,7 @@ struct Laid {
 fn lay(l: &Layout, renderer: &mut GlesRenderer) -> Laid {
     let ctx = GlassCtx::new();
     ctx.set_renderer(renderer);
+    ctx.clock.set(Some(Instant::now()));
     let mut scene = DeskScene::new();
     let root = scene.root();
     let desktop = scene.tree_create(root);

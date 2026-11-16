@@ -68,6 +68,9 @@ pub struct GlassCtx {
     /// The elements being made are a backdrop of its own for glass above, this many output pixels
     /// per texel: glass draws into it at that resolution.
     drawing_beneath: Cell<Option<i32>>,
+    /// The time every update takes as now, so [`KEEP_IDLE`] never passes between a test's frames.
+    #[cfg(test)]
+    clock: Cell<Option<Instant>>,
 }
 
 struct Placed {
@@ -590,7 +593,7 @@ impl GlassCtx {
         let pass = self.pass.get();
         let mut beneath = self.beneath.borrow_mut();
         let mut used = Vec::new();
-        let now = Instant::now();
+        let now = self.now();
         let d = reprisefx::blur::backdrop_downscale(scale);
         let s = &pass.settings;
         let f = reprisefx::blur::texel(s.blur, s.material, pass.quality, scale);
@@ -657,6 +660,14 @@ impl GlassCtx {
         beneath.retain(|k, b| {
             k.0 != name || used.contains(k) || (b.reuse.kept(now) && b.glass.strong_count() > 0)
         });
+    }
+
+    fn now(&self) -> Instant {
+        #[cfg(test)]
+        if let Some(now) = self.clock.get() {
+            return now;
+        }
+        Instant::now()
     }
 
     /// Drop the private backdrops on `output` its glass did not draw from in the last update:
