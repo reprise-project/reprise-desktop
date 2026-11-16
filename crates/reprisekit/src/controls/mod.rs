@@ -15,6 +15,7 @@ pub mod cliphistory;
 pub mod colorbutton;
 pub mod colordlg;
 pub mod colorpick;
+mod columns;
 pub mod combo;
 pub mod copyprogress;
 pub mod deskwidget;

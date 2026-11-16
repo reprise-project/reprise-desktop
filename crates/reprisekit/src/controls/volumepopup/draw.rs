@@ -1,3 +1,4 @@
+use crate::controls::columns::Strip;
 use crate::controls::combo::{self, ComboLit};
 use crate::flyout;
 use crate::look::Paint;
@@ -20,7 +21,7 @@ use super::{
 /// The panel, top to bottom; the focus ring shows once a key was pressed, and an open device list draws last, over the columns.
 pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, vp: &VolumePopup, lay: &Layout) {
     let text = text.dialog(DialogFont::ShellDlg);
-    vp.styled.set(theme.look.lights_pointer());
+    vp.hover.styled.set(theme.look.lights_pointer());
     let p = &Paint {
         s: 1,
         ..theme.paint()

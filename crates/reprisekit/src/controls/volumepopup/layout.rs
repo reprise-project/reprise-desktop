@@ -1,4 +1,5 @@
 use crate::classic::widgets::{ScrollHit, ScrollParts, scrollbar_hit, scrollbar_parts};
+use crate::controls::columns::Strip;
 use crate::controls::combo;
 use crate::flyout;
 use crate::metrics::ControlMetrics;
