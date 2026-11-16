@@ -1,10 +1,10 @@
 //! The login screen's transitions a quarter of their way apart, a row each, then Glass's ring at
 //! five steps; written to `target/reprisekit-gallery-logon-motion@<scale>.png`.
 
+use crate::interfaces::{default_wallpaper, theme_with};
 use reprisekit::blue::Variant;
 use reprisekit::interface::Interface;
 use reprisekit::interfaces::logon::{Drawn, Transition, draw_logon, logon_layout};
-use reprisekit::interfaces::{default_wallpaper, theme_with};
 use reprisekit::logon::{Logon, LogonKey, Moves, Part};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;

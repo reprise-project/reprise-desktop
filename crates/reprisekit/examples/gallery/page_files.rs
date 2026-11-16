@@ -4,6 +4,7 @@ use super::cued;
 use super::popups::monitor_icon;
 use reprisekit::classic::frame::{Chrome, FrameGeometry, FrameState, Glow};
 // Classic helpers with no look::widgets twin.
+use crate::interfaces;
 use reprisekit::classic::widgets::{CheckState, draw_label};
 use reprisekit::controls::form::{self, Control, Item};
 use reprisekit::controls::iconview;
@@ -24,7 +25,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{Align, TextRenderer};
 use reprisekit::textedit::Caret;
 use reprisekit::theme::{Color, Theme};
-use reprisekit::{interfaces, trackbar};
+use reprisekit::trackbar;
 
 /// Switcher thumbnails, file property sheets, drag ghosts and the list view.
 pub fn page_files(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {

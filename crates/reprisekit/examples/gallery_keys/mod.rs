@@ -1,11 +1,11 @@
 //! The launcher finding open windows and the keyboard shortcut sheet in each look, written to
 //! `target/reprisekit-gallery-launcher-windows@<scale>.png` and `...-key-sheet@<scale>.png`.
 
+use crate::interfaces::{theme_for, theme_with};
 use reprisekit::controls::keysheet::{self, Binding, Group, KeySheet};
 use reprisekit::controls::launcher::{self, Key, Launcher, Row};
 use reprisekit::glass::{Mode, Settings};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces::{theme_for, theme_with};
 use reprisekit::look::panel;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;

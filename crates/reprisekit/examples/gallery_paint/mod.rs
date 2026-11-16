@@ -1,10 +1,10 @@
 //! A raster editor's tool box and colour box in Classic, Blue and Glass, written to
 //! `target/reprisekit-gallery-paint@<scale>.png`.
 
+use crate::interfaces::{self, theme_for};
 use reprisekit::controls::palette::{self, Palette};
 use reprisekit::controls::toolbox::{self, Choice, Tool, ToolBox};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces::theme_for;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::shape::{self, ellipse, polygon, rounded, stroke};
 use reprisekit::theme::{Color, Theme};
@@ -132,7 +132,7 @@ fn colours() -> Palette {
 /// Per look: the tool box with Brush current and Line hot, and the colour box beside it.
 pub fn render(scale: i32) -> Canvas {
     let looks: [Theme; 3] = [
-        Theme::default(),
+        interfaces::classic(),
         theme_for(Interface::Blue),
         theme_for(Interface::Glass),
     ];

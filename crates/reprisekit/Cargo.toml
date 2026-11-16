@@ -52,3 +52,8 @@ unic-langid = "0.9"
 # tests/layers.rs parses src; these features are already on through
 # reprisekit-pins, so the test adds no second syn build.
 syn = { version = "3", features = ["full", "visit-mut"] }
+
+# The gallery's clip test draws every page at 200% text.
+[[example]]
+name = "gallery"
+test = true

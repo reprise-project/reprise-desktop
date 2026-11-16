@@ -4,11 +4,11 @@
 mod glass;
 pub mod motion;
 
+use crate::interfaces::{default_wallpaper, theme_with};
 use reprisekit::art::userpic;
 use reprisekit::blue::Variant;
 use reprisekit::interface::Interface;
 use reprisekit::interfaces::logon::{draw_logon, logon_layout};
-use reprisekit::interfaces::{default_wallpaper, theme_with};
 use reprisekit::logon::{Logon, LogonKey, LogonUser, Part, PowerAction, UserNote, text};
 use reprisekit::pointer::Interaction;
 use reprisekit::raster::{Canvas, Rect};

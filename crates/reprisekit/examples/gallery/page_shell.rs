@@ -8,6 +8,7 @@ use reprisekit::classic::frame::{
     CaptionButton, Chrome, FrameGeometry, FrameState, Glow, draw_frame,
 };
 // Classic helpers with no look::widgets twin.
+use crate::interfaces;
 use reprisekit::classic::widgets::{ROW_H, draw_edit};
 use reprisekit::classic::{indicator, snapframe};
 use reprisekit::controls::form::{self, Control, Item};
@@ -24,10 +25,10 @@ use reprisekit::look::widgets::draw_sunken_field;
 use reprisekit::look::{self, Paint, sample};
 use reprisekit::pointer::Interaction;
 use reprisekit::raster::{Canvas, Rect};
+use reprisekit::schemes;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::{Caret, EditKey, Preedit, TextEdit};
 use reprisekit::theme::{Color, Theme};
-use reprisekit::{interfaces, schemes};
 
 /// Network icons, OSD panels, launcher, pickers, notifications, frames, menu bar and status bar.
 pub fn page_shell(mut c: Canvas, theme: &Theme, text: &TextRenderer, with_blue: bool) -> Canvas {

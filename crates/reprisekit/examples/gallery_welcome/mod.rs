@@ -1,9 +1,9 @@
 //! Welcome's three pages under Classic, Blue and Glass, written to
 //! `target/reprisekit-gallery-welcome@<scale>.png`.
 
+use crate::interfaces;
 use reprisekit::controls::welcome::{self, Link, Page, Picks, Welcome};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{Align, TextRenderer};
 use reprisekit::theme::{Color, FontConfig};

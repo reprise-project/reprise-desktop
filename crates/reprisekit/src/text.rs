@@ -55,6 +55,31 @@ struct Glyph {
 }
 
 impl Glyph {
+    /// This glyph's ink pixels, laid from device pixel (`x`, `y`), that fall outside `keep`: above
+    /// or below it, and beside it within its rows. Faint antialiased fringes don't count.
+    fn ink_cut(&self, x: i32, y: i32, keep: Rect) -> (u32, u32) {
+        let mut cut = (0, 0);
+        for (row, line) in self
+            .bitmap
+            .chunks(self.width.max(1))
+            .take(self.height)
+            .enumerate()
+        {
+            let py = y + row as i32;
+            for (col, &cov) in line.iter().enumerate() {
+                let px = x + col as i32;
+                if cov < 0x60 {
+                    continue;
+                } else if py < keep.y || py >= keep.bottom() {
+                    cut.0 += 1;
+                } else if px < keep.x || px >= keep.right() {
+                    cut.1 += 1;
+                }
+            }
+        }
+        cut
+    }
+
     const EMPTY: Glyph = Glyph {
         bitmap: Vec::new(),
         width: 0,
@@ -813,7 +838,9 @@ impl TextRenderer {
             Align::Center | Align::Right => self.measure(text, bold, size_px),
         };
         let pen = align.pen(rect, width);
-        self.draw_run(canvas, pen, baseline, clip, text, bold, color, size_px);
+        self.draw_line(
+            canvas, pen, baseline, clip, rect, text, bold, color, size_px,
+        );
     }
 
     /// Draw `label` with its access key underlined (`&File` underlines F), the underline `s` px
@@ -852,7 +879,7 @@ impl TextRenderer {
     pub fn draw_run(
         &self,
         canvas: &mut Canvas,
-        mut pen: i32,
+        pen: i32,
         baseline: i32,
         clip: Rect,
         text: &str,
@@ -860,16 +887,51 @@ impl TextRenderer {
         color: Color,
         size_px: u32,
     ) {
+        self.draw_line(
+            canvas, pen, baseline, clip, clip, text, bold, color, size_px,
+        );
+    }
+
+    /// [`TextRenderer::draw_run`], with ink outside `line`, the rect the text was laid in, noted
+    /// for [`crate::pins::clipped_ink`].
+    #[expect(clippy::too_many_arguments)]
+    fn draw_line(
+        &self,
+        canvas: &mut Canvas,
+        mut pen: i32,
+        baseline: i32,
+        clip: Rect,
+        line: Rect,
+        text: &str,
+        bold: bool,
+        color: Color,
+        size_px: u32,
+    ) {
         let s = canvas.scale();
+        let watch = crate::pins::watching_clips().then(|| line.scaled(s));
+        let mut cut = (0, 0);
         for ch in text.chars() {
             let logical = (s > 1).then(|| self.advance(ch, bold, size_px));
             let drawn = self.with_glyph(ch, bold, size_px, s as u32, |g| {
                 let gx = pen * s + g.left;
                 let gy = baseline * s - g.top;
+                if let Some(keep) = watch {
+                    let (rows, cols) = g.ink_cut(gx, gy, keep);
+                    cut = (cut.0 + rows, cut.1 + cols);
+                }
                 canvas.blit_mask(gx, gy, g.width, g.height, &g.bitmap, color, g.smooth, clip);
                 g.advance
             });
             pen += logical.or(drawn).unwrap_or(0);
+        }
+        if cut != (0, 0) {
+            crate::pins::clipped(crate::pins::Cut {
+                text: text.into(),
+                rect: line,
+                px: size_px,
+                rows: cut.0,
+                cols: cut.1,
+            });
         }
     }
 

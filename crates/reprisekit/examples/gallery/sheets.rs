@@ -1,12 +1,12 @@
 use super::cued;
 use super::popups::monitor_icon;
 // Classic helpers with no look::widgets twin.
+use crate::interfaces;
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
 use reprisekit::controls::form::{self, Item};
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::controls::{pagelist, tabstrip};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::look::Paint;
 use reprisekit::look::widgets::{
     ICON_BUTTON_W, draw_button, draw_group_box, draw_icon_button, draw_page,

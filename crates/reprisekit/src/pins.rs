@@ -6,6 +6,49 @@ use std::path::{Path, PathBuf};
 thread_local! {
     static ARMED: Cell<bool> = const { Cell::new(false) };
     static STRAYS: RefCell<Vec<Box<str>>> = const { RefCell::new(Vec::new()) };
+    static CUTS: RefCell<Option<Vec<Cut>>> = const { RefCell::new(None) };
+}
+
+/// Text drawn with ink cut off by the rect it was laid in, as [`clipped_ink`] lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Cut {
+    pub text: String,
+    /// The rect the line was laid in, logical px.
+    pub rect: crate::raster::Rect,
+    /// The font size, logical px.
+    pub px: u32,
+    /// Ink device pixels cut above or below `rect`.
+    pub rows: u32,
+    /// Ink device pixels cut beside `rect`, within its rows.
+    pub cols: u32,
+}
+
+/// Runs `f`, returning with its result every line of text this thread drew in it whose ink its
+/// rect cut. A line drawn in a rect too short for it shows up here; a line clipped only by a view
+/// scrolled past it, or shortened with an ellipsis, does not.
+pub fn clipped_ink<T>(f: impl FnOnce() -> T) -> (T, Vec<Cut>) {
+    let outer = CUTS.replace(Some(Vec::new()));
+    let r = f();
+    let cuts = CUTS.replace(outer).unwrap_or_default();
+    (r, cuts)
+}
+
+/// The lines [`clipped_ink`] has noted so far in the `f` it is running, handed over and forgotten,
+/// so a caller can tell which part of `f` cut them.
+pub fn take_clipped() -> Vec<Cut> {
+    CUTS.with_borrow_mut(|c| c.as_mut().map(std::mem::take).unwrap_or_default())
+}
+
+pub(crate) fn watching_clips() -> bool {
+    CUTS.with_borrow(Option::is_some)
+}
+
+pub(crate) fn clipped(cut: Cut) {
+    CUTS.with_borrow_mut(|c| {
+        if let Some(c) = c {
+            c.push(cut);
+        }
+    });
 }
 
 const STRAYS_KEPT: usize = 16;

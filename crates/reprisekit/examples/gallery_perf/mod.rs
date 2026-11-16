@@ -1,16 +1,19 @@
 //! The performance graph and meters in Classic, Blue and Glass light and dark, written to
 //! `target/reprisekit-gallery-perf@<scale>.png`.
 
+use crate::interfaces;
 use reprisekit::controls::perfgraph::{self, History};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
 
 fn looks() -> Vec<Theme> {
-    let mut out = vec![Theme::default(), interfaces::theme_for(Interface::Blue)];
+    let mut out = vec![
+        interfaces::classic(),
+        interfaces::theme_for(Interface::Blue),
+    ];
     for mode in [
         reprisekit::glass::Mode::Light,
         reprisekit::glass::Mode::Dark,

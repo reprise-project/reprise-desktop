@@ -64,6 +64,11 @@ still skip where those fonts aren't installed.
   deliberate drawing change, or a new Blue scheme,
   `REPRISE_BLESS=1 scripts/pin-env cargo test -p reprisekit` rewrites those
   files; review their diff like code.
+- **Text at 200%.** The gallery's `clip_test` draws every gallery page with
+  its themes at 200% text and lists each line whose rect cuts its ink in
+  `crates/reprisekit/tests/pins/text_clip_200.txt`. A line that newly clips
+  fails it: lay its row out from `theme.controls()` or `theme.text` instead
+  of a 100% size. Bless the list as above once a fix takes a line off it.
 - **UI strings.** A string a user reads goes through `tr!("id")` with its
   English text in the crate's `locale/en.ftl`; `cargo test -p reprisekit`
   runs `scripts/i18n-check`, which fails on an id missing from English or

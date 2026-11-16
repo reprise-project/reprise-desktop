@@ -1,15 +1,15 @@
 use super::glass::stretched;
 use super::{blurred_stripes, cued};
+use crate::interfaces;
 use reprisekit::classic::frame::{CaptionButton, Chrome, FrameGeometry, FrameState, Glow};
 use reprisekit::classic::indicator;
 use reprisekit::controls::{switcher, taskpreview};
 use reprisekit::glass::shadow;
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::look;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::{Color, FontConfig, Theme};
+use reprisekit::theme::{Color, FontConfig};
 
 /// [`render_glass`]'s frames, taskbars and flyout, 950x1120.
 pub fn render_glass_frames() -> Canvas {
@@ -251,7 +251,7 @@ pub fn render_glass_frames() -> Canvas {
             890 - fl.height - m.top,
             &trayflyout::draw(&glass_theme, &text, &fl, &icons, false),
         );
-        let classic = cued(Theme::default());
+        let classic = cued(interfaces::classic());
         let fl = FlyoutLayout::compute(&classic, icons.len());
         c.blit_canvas(
             15,

@@ -1,10 +1,10 @@
 //! Sticky notes in every colour under Classic, Blue and Glass, the first with its New button lit
 //! and the second with Delete held, written to `target/reprisekit-gallery-notes@<scale>.png`.
 
+use crate::interfaces;
 use reprisekit::controls::multiedit::{self, MultiEdit, View};
 use reprisekit::controls::stickynote::{self, Colour, Part, Strip};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::paint::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{Align, TextRenderer};

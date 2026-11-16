@@ -955,3 +955,77 @@ fn the_test_fonts_and_dejavu_are_the_test_set() {
     assert!(fonts::stray_note(&dir.join("tahoma.ttf"), "Tahoma", String::new).is_none());
     assert!(fonts::stray_note(dejavu, "DejaVu Sans", String::new).is_none());
 }
+
+#[test]
+fn ink_cut_by_a_line_too_short_for_it_is_listed_and_a_scrolled_view_cut_is_not() {
+    crate::pins::fonts();
+    let r = TextRenderer::load(&FontConfig::default());
+    let mut c = Canvas::new(200, 60);
+    let black = Color::rgb(0, 0, 0);
+    let ((), cuts) = crate::pins::clipped_ink(|| {
+        r.draw(
+            &mut c,
+            Rect::new(0, 0, 200, 13),
+            "Volume",
+            false,
+            black,
+            Align::Left,
+            11,
+        );
+        r.draw_clipped(
+            &mut c,
+            Rect::new(0, 20, 200, 13),
+            Rect::new(0, 26, 200, 30),
+            "Scrolled",
+            false,
+            black,
+            Align::Left,
+            11,
+        );
+    });
+    assert_eq!(
+        cuts,
+        [],
+        "11 px text fits a 13 px line, and a viewport cut is the view's"
+    );
+    let ((), cuts) = crate::pins::clipped_ink(|| {
+        r.draw(
+            &mut c,
+            Rect::new(0, 0, 200, 13),
+            "Volume",
+            false,
+            black,
+            Align::Left,
+            22,
+        );
+        r.draw(
+            &mut c,
+            Rect::new(0, 20, 20, 30),
+            "Wide",
+            false,
+            black,
+            Align::Left,
+            11,
+        );
+    });
+    let cut: Vec<_> = cuts
+        .iter()
+        .map(|c| (c.text.as_str(), c.rows > 0, c.cols > 0))
+        .collect();
+    assert_eq!(cut, [("Volume", true, false), ("Wide", false, true)]);
+    let ((), cuts) = crate::pins::clipped_ink(|| {});
+    assert_eq!(cuts, []);
+    r.draw(
+        &mut c,
+        Rect::new(0, 0, 200, 13),
+        "Volume",
+        false,
+        black,
+        Align::Left,
+        22,
+    );
+    assert!(
+        !crate::pins::watching_clips(),
+        "nothing is noted outside a watch"
+    );
+}

@@ -1,9 +1,9 @@
 //! A path box completing `~/Do` in each interface, the second match lit, written to
 //! `target/reprisekit-gallery-path-complete@<scale>.png`.
 
+use crate::interfaces;
 use reprisekit::controls::pathcomplete::{self, Entry, Key, PathComplete, Scope};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::look::widgets::{Interaction, draw_edit_field, draw_edit_text};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;

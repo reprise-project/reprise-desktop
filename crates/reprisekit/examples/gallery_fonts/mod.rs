@@ -2,9 +2,9 @@
 //! collection installed for every user, written to `target/reprisekit-gallery-fonts@<scale>.png`.
 //! The sample is the Tahoma `REPRISE_TEST_FONTS` holds; without it the wells stay empty.
 
+use crate::interfaces;
 use reprisekit::controls::fontview::{self, Install};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::fontfile::{self, FaceNames};
 use reprisekit::text::{Align, TextRenderer};
@@ -12,7 +12,7 @@ use reprisekit::theme::{Color, FontConfig, Theme};
 
 fn looks() -> Vec<(String, Theme)> {
     let mut out = vec![
-        ("Classic".to_string(), Theme::default()),
+        ("Classic".to_string(), interfaces::classic()),
         (
             "Blue".to_string(),
             interfaces::blue_theme(reprisekit::blue::Variant::ALL[0]),

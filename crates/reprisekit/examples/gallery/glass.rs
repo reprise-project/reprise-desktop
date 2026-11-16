@@ -9,12 +9,12 @@ use super::popups::{
 };
 use super::sheets::render_glass_sheet;
 use super::{blurred_stripes, cued};
+use crate::interfaces;
 use reprisekit::classic::frame::{CaptionButton, Chrome, FrameGeometry, FrameState, Glow};
 use reprisekit::classic::indicator;
 use reprisekit::controls::{switcher, taskpreview};
 use reprisekit::glass::shadow;
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::look;
 use reprisekit::pointer::Interaction;
 use reprisekit::raster::{Canvas, Rect};

@@ -50,10 +50,13 @@ mod gallery_welcome;
 mod gallery_widgets;
 
 use reprisekit::interface::Interface;
-use reprisekit::raster::{Canvas, Rect, write_preview};
+use reprisekit::raster::{Canvas, Rect};
+use reprisekit::schemes;
 use reprisekit::theme::{Color, Theme};
-use reprisekit::{interfaces, schemes};
 
+#[cfg(test)]
+#[path = "gallery/clip_test.rs"]
+mod clip_test;
 #[path = "gallery/dialogs.rs"]
 mod dialogs;
 #[path = "gallery/glass.rs"]
@@ -62,6 +65,8 @@ mod glass;
 mod glass_controls;
 #[path = "gallery/glass_shell.rs"]
 mod glass_shell;
+#[path = "gallery/interfaces.rs"]
+mod interfaces;
 #[path = "gallery/page.rs"]
 mod page;
 #[path = "gallery/page_files.rs"]
@@ -311,6 +316,24 @@ fn main() {
         let pct: u32 = pct
             .parse()
             .expect("REPRISE_GALLERY_TEXT_SIZE is a percentage");
+        write_text_size(pct);
+        return;
+    }
+    let with_blue = std::env::var("REPRISE_GALLERY_LOOK").as_deref() != Ok("classic");
+    let wanted = std::env::var("REPRISE_SCHEME").ok();
+    let names: Vec<Option<&str>> = match wanted.as_deref() {
+        None => vec![None],
+        Some("all") => std::iter::once(None)
+            .chain(schemes::names().map(Some))
+            .collect(),
+        Some(name) => vec![Some(name)],
+    };
+    write_pages(with_blue, &names);
+}
+
+/// The pages `REPRISE_GALLERY_TEXT_SIZE=<pct>` writes.
+fn write_text_size(pct: u32) {
+    {
         write_preview(
             &render_text_size(pct),
             &format!("reprisekit-gallery-text-size-{pct}.png"),
@@ -335,19 +358,14 @@ fn main() {
             &render_caption_tabs(pct),
             &format!("reprisekit-gallery-caption-tabs-{pct}.png"),
         );
-        return;
     }
-    let with_blue = std::env::var("REPRISE_GALLERY_LOOK").as_deref() != Ok("classic");
-    let wanted = std::env::var("REPRISE_SCHEME").ok();
-    let names: Vec<Option<&str>> = match wanted.as_deref() {
-        None => vec![None],
-        Some("all") => std::iter::once(None)
-            .chain(schemes::names().map(Some))
-            .collect(),
-        Some(name) => vec![Some(name)],
-    };
-    for name in names {
-        let mut theme = cued(Theme::default());
+}
+
+/// The default pages: the main page in each of `names`' schemes (`None` for the look's own),
+/// then every other page, the Blue and Glass ones `with_blue`.
+fn write_pages(with_blue: bool, names: &[Option<&str>]) {
+    for &name in names {
+        let mut theme = cued(interfaces::classic());
         let mut out = "reprisekit-gallery.png".to_string();
         if let Some(name) = name {
             theme.colors = schemes::scheme(name)
@@ -589,6 +607,27 @@ fn main() {
             "reprisekit-gallery-blue-variants.png",
         );
     }
+}
+
+/// What a test hands each page and its file name to instead of writing it.
+type Sink = Box<dyn FnMut(&Canvas, &str)>;
+
+thread_local! {
+    static SINK: std::cell::RefCell<Option<Sink>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Writes page `c` as `name`, or hands it to the sink a test set with [`collect_pages`].
+fn write_preview(c: &Canvas, name: &str) {
+    let taken = SINK.with_borrow_mut(|s| s.as_mut().map(|f| f(c, name)).is_some());
+    if !taken {
+        reprisekit::raster::write_preview(c, name);
+    }
+}
+
+/// Hands every page this thread writes to `sink` instead of a file, until `None`.
+#[cfg(test)]
+fn collect_pages(sink: Option<Sink>) {
+    SINK.set(sink);
 }
 
 /// `name` as a file-name part: ASCII alphanumerics lowercased, the rest '-'.
