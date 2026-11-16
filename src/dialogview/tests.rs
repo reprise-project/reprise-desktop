@@ -535,3 +535,41 @@ fn ctrl_tab_moves_a_dialogs_focus_as_tab_does() {
     h.state.dialog_key(&tab(0));
     assert_eq!(focused(&h), Some(1), "and Tab on to Cancel");
 }
+
+#[test]
+fn a_box_raised_under_a_welcome_panel_waits_until_the_panel_closes() {
+    let mut h = Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let power = h.state.config.power.clone();
+    h.state.open_dialog(Dialog::turn_off(&power, false));
+    let error = Dialog::error("Run", "Not found.".into());
+    h.state.open_dialog(error.clone());
+    h.state.open_dialog(error.clone());
+    assert_eq!(h.state.dialogs.views.len(), 1, "the panel alone is up");
+    assert!(h.state.dialog_is_modal(), "and keeps the keyboard");
+    assert_eq!(
+        h.state.dialogs.held,
+        std::slice::from_ref(&error),
+        "held once"
+    );
+    h.state.close_dialog_at(0);
+    let shown: Vec<&Dialog> = h.state.dialogs.views.iter().map(|v| &v.dialog).collect();
+    assert_eq!(shown, [&error], "up once the panel closed");
+    assert!(h.state.dialogs.held.is_empty());
+}
+
+#[test]
+fn two_errors_with_one_title_both_show_and_one_error_twice_shows_once() {
+    let mut h = Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let title = "Error Deleting File or Folder";
+    let denied = Dialog::error(title, "Access is denied.".into());
+    let busy = Dialog::error(title, "The file is in use.".into());
+    h.state.open_dialog(denied.clone());
+    h.state.open_dialog(busy.clone());
+    h.state.open_dialog(busy.clone());
+    let texts: Vec<&str> = (h.state.dialogs.views.iter())
+        .map(|v| v.dialog.text.as_str())
+        .collect();
+    assert_eq!(texts, [denied.text.as_str(), busy.text.as_str()]);
+}

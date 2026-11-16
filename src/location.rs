@@ -202,8 +202,14 @@ fn asked(state: &mut State, ask: Ask) {
         return;
     }
     // A prompt that never opened, with no output to show it on, left its callers; they are
-    // refused.
-    let open: Vec<String> = prompts(state).into_iter().map(|(_, id)| id).collect();
+    // refused. One waiting under a Welcome panel keeps them.
+    let held = (state.dialogs.held.iter()).filter_map(|d| match &d.form()?.kind {
+        crate::dialog::Kind::Location(id) => Some(id.clone()),
+        _ => None,
+    });
+    let open: Vec<String> = (prompts(state).into_iter().map(|(_, id)| id))
+        .chain(held)
+        .collect();
     state.location.pending.retain(|(id, _)| open.contains(id));
     match slot(&state.location.pending, &desktop_id) {
         Slot::Join(at) => {
@@ -315,6 +321,11 @@ pub fn dismissed(state: &mut State, desktop_id: &str) {
         log::info!("location for {desktop_id:?}: the prompt went unanswered, refused");
         reply(state, desktop_id, false);
     }
+}
+
+/// Whether a call waits on the prompt for `desktop_id`.
+pub fn waiting(state: &State, desktop_id: &str) -> bool {
+    (state.location.pending.iter()).any(|(id, replies)| id == desktop_id && !replies.is_empty())
 }
 
 /// A caller waiting on the prompt for `desktop_id`, as `asked` adds one.
