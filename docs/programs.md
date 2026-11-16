@@ -120,7 +120,8 @@ The file manager, and the default for folders.
   itself (PDFs, videos, fonts) get theirs from the freedesktop thumbnailers
   installed in `share/thumbnailers`, two at a time at idle priority, each
   in a bubblewrap jail capped at 512 MB and stopped after 10 seconds; a
-  file one fails on is not tried again until it changes. Without
+  file one fails on is not tried again until it changes, and one it ran
+  out of time on is tried again on the next visit. Without
   bubblewrap, or where it can't start, no thumbnailer runs and no file is
   marked failed. An entry Reprise writes names the UUID of
   the file system its file was on, so a different stick mounted at the same

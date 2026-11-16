@@ -198,10 +198,10 @@ fn past_the_deadline_the_whole_process_group_is_killed() {
         assert!(deadline < DEADLINE, "the script never started its sleep");
         let r = runner(dir.path(), deadline);
         let asked = Instant::now();
-        assert!(matches!(
+        assert_eq!(
             r.run(&t, Path::new("/home/u/a.mp4"), 128),
-            Err(RunError::Failed(_))
-        ));
+            Err(RunError::TimedOut)
+        );
         assert!(
             asked.elapsed() < deadline + Duration::from_secs(3),
             "{:?}",
@@ -352,6 +352,35 @@ fn fake_jail(dir: &Path, refuse: &str) -> Jail {
             &format!("for a; do case \"$a\" in *{refuse}*) exit 1;; esac; done\n{skip}"),
         ),
     }
+}
+
+#[test]
+fn a_jail_probe_that_times_out_is_tried_again_at_the_next_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let ran = dir.path().join("ran");
+    let fake = script(dir.path(), "f.sh", &format!("touch '{}'", ran.display()));
+    let t = Thumbnailer::parse(&entry(&format!("{} %i %o", fake.display()), "a/b"), "f").unwrap();
+    let input = dir.path().join("a.pdf");
+    std::fs::write(&input, b"%PDF").unwrap();
+    let slow = dir.path().join("slow");
+    let skip = "while [ \"$1\" != -- ]; do shift; done; shift; exec \"$@\"";
+    let first_slow = format!(
+        "[ -e '{slow}' ] || {{ touch '{slow}'; exec sleep 5; }}\n{skip}",
+        slow = slow.display()
+    );
+    let jail = Jail::Bwrap {
+        systemd_run: script(dir.path(), "systemd-run", &first_slow),
+        bwrap: script(dir.path(), "bwrap", skip),
+    };
+    let mut r = Runner::new(dir.path(), Duration::from_millis(500), jail);
+    assert_eq!(r.run(&t, &input, 128), Err(RunError::TimedOut));
+    assert!(!ran.exists());
+    r.deadline = DEADLINE;
+    assert!(matches!(r.run(&t, &input, 128), Err(RunError::Failed(_))));
+    assert!(
+        ran.exists(),
+        "the second run probes again and runs the thumbnailer"
+    );
 }
 
 #[test]
