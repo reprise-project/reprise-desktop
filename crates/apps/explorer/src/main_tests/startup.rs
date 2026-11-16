@@ -30,13 +30,14 @@ fn select_opens_the_folder_on_the_entry() {
     let args = |a: &[&std::ffi::OsStr]| parse_args(a.iter().map(|s| s.to_os_string()));
     let start = args(&["--select".as_ref(), last.as_os_str()]);
     assert_eq!(start.place, Place::Folder(dir.path().to_path_buf()));
-    assert_eq!(start.select.as_deref(), Some(last.as_path()));
+    assert_eq!(start.select, std::slice::from_ref(&last));
     assert_eq!(
         args(&["--select".as_ref(), "f59.txt".as_ref()]),
         Start {
             place: Place::Home,
             dir: None,
-            select: None,
+            select: Vec::new(),
+            sheet: None,
             connect: None,
         }
     );
@@ -114,4 +115,61 @@ fn a_start_folder_that_answers_opens_there_and_selects_its_entry() {
     let missing = open(&[dir.path().join("gone").as_os_str()], &mut ctx);
     assert_eq!(missing.place, Place::Home);
     assert!(missing.checking.is_none());
+}
+
+#[test]
+fn select_takes_every_entry_in_the_first_ones_folder() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+    for f in [&a, &b] {
+        std::fs::write(f, "x").expect("write");
+    }
+    let elsewhere = std::env::temp_dir().join("c.txt");
+    let args = [
+        std::ffi::OsString::from("--select"),
+        b.clone().into(),
+        a.clone().into(),
+        elsewhere.into(),
+    ];
+    let start = parse_args(args);
+    assert_eq!(start.select, [b.clone(), a.clone()]);
+
+    let mut ctx = test_ctx();
+    let ex = Explorer::open(start, |d| d.is_dir(), test_explorer, &mut ctx);
+    let (ia, ib) = (ex.index_of(&a).expect("a"), ex.index_of(&b).expect("b"));
+    let mut picked: Vec<usize> = ex.sv.selection.set.iter().copied().collect();
+    picked.sort();
+    assert_eq!(picked, [ia.min(ib), ia.max(ib)]);
+    assert_eq!(
+        ex.sv.selection.focus,
+        Some(ib),
+        "the first named entry has the focus"
+    );
+}
+
+#[test]
+fn properties_shows_the_sheet_alone_and_ends_with_it() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let file = dir.path().join("a.txt");
+    std::fs::write(&file, "x").expect("write");
+    let start = parse_args([
+        std::ffi::OsString::from("--properties"),
+        file.clone().into(),
+    ]);
+    assert_eq!(start.sheet.as_deref(), Some(file.as_path()));
+    let mut app = Lazy {
+        start,
+        inner: None,
+        units: TextUnits::ONE,
+    };
+    assert!(repriseapp::Extended::hidden(&app), "no folder window");
+
+    let mut ctx = test_ctx();
+    let _ = app.event(MAIN, Event::Wake, &mut ctx);
+    assert!(
+        app.children().iter().any(|c| c.id == PROPS),
+        "the sheet is up"
+    );
+    let reply = app.event(PROPS, Event::CloseRequest, &mut ctx);
+    assert!(reply.quit, "closing the sheet ends the process");
 }

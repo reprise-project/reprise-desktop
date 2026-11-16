@@ -164,7 +164,9 @@ sharing. It names no **Lockdown** backend, so GNOME's lockdown keys (location,
 camera, microphone, printing) don't apply and `[privacy] location` alone turns location off.
 
 Reprise also hosts `org.freedesktop.Notifications`, the StatusNotifierWatcher
-for the tray, `org.freedesktop.ScreenSaver` and the GeoClue2 agent. A tray
+for the tray, `org.freedesktop.ScreenSaver` and the GeoClue2 agent, and
+Explorer's `reprise-file-manager.service` hosts `org.freedesktop.FileManager1`
+(`ShowFolders`, `ShowItems`, `ShowItemProperties`). A tray
 item's `IconThemePath` is searched as the base of a `hicolor` tree
 (`hicolor/<size>/<context>/`), then as a flat folder. `ActionInvoked`,
 `ActivationToken`, `NotificationReplied` and

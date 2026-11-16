@@ -90,6 +90,14 @@ process that sees `/.flatpak-info`, or has exited, with AccessDenied, judged
 by the process a pidfd from the bus names. Remote Desktop does the same
 ([Remote Desktop](#remote-desktop)).
 
+Explorer's `org.freedesktop.FileManager1` (Show in folder, and a file's
+Properties sheet) refuses a Flatpak app the same way. Any program outside
+a sandbox can open Explorer windows and Properties sheets through it, as it
+could by running `reprise-explorer`; nothing changes until you act in them.
+A Flatpak app names paths inside its sandbox, so it asks the portal's
+`OpenDirectory` instead: xdg-desktop-portal resolves the file it hands over
+to the host path and calls `ShowItems` itself.
+
 `[clipboard] trusted_apps` gives the two data control globals back to the
 Flatpak apps it names, and nothing else. The app id is the one Flatpak put
 on the security context, not one the app chose, and only Flatpak's

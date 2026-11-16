@@ -103,6 +103,25 @@ impl Explorer {
         )
     }
 
+    /// `--properties PATH`'s sheet, for a path no listing shows: its name, a launcher's own
+    /// included, is read with the rest of the sheet.
+    pub(crate) fn open_path_properties(&mut self, path: &Path, ctx: &mut Ctx) -> Reply {
+        let path = path.to_path_buf();
+        let (apps, globs) = (self.app_index.clone(), self.globs.clone());
+        let scale = ctx.icons.scale();
+        let work = move |_: &Gate| {
+            let it = reprisefs::listing::item_at(&path, &globs);
+            let name = it.label().to_string();
+            (glance(&path, &name, &apps, &globs, scale), name)
+        };
+        self.act(
+            ctx,
+            Action::reads("Properties"),
+            work,
+            |ex, (glanced, name), ctx| ex.glanced(glanced, &name, &name, ctx),
+        )
+    }
+
     fn glanced(
         &mut self,
         glanced: std::io::Result<Glanced>,
@@ -492,6 +511,15 @@ impl Explorer {
             wear_picks(p, ctx);
         }
         landed
+    }
+
+    /// Whether a `--properties` process is done: its sheet is closed and no box or work is left.
+    pub(crate) fn sheet_closed(&self) -> bool {
+        self.props.is_none()
+            && self.props_due.is_none()
+            && self.dialog.is_none()
+            && self.waiting.is_empty()
+            && !self.busy()
     }
 
     /// The sheet's child window, while it is up.

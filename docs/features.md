@@ -1087,6 +1087,11 @@ dialogs. [More in programs.md](programs.md#explorer).
   mount's folders, showing them empty.
 - **Programs stuck on a dead mount** lose their windows once killed, without
   End Program (see [End Program](#windows)).
+- **Show in folder.** Explorer serves `org.freedesktop.FileManager1`: a
+  browser's "Show in folder" or an editor's "Reveal in file manager" opens
+  the folder with the file selected, and a program's file Properties opens
+  the sheet without a folder window. A Flatpak asks through the portal,
+  which passes the file on (see [security.md](security.md#sandboxed-programs)).
 
 ## Configuration
 

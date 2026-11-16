@@ -175,17 +175,22 @@ pub fn encode_files(paths: &[PathBuf], mime: &str) -> Option<Vec<u8>> {
     }
 }
 
+/// The path a `file:///p` or `file://localhost/p` URI names; None for another scheme or host.
+pub fn file_uri_path(uri: &str) -> Option<PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    let path = match rest.split_once('/') {
+        Some((host, p)) if host.is_empty() || host.eq_ignore_ascii_case("localhost") => {
+            format!("/{p}")
+        }
+        _ => return None,
+    };
+    let bytes = crate::trash::percent_decode(&path);
+    Some(PathBuf::from(OsStr::from_bytes(&bytes)))
+}
+
 fn entry(uri: &str, title: Option<String>) -> Option<Dropped> {
-    if let Some(rest) = uri.strip_prefix("file://") {
-        // `file:///p` or `file://localhost/p`; another host is not here.
-        let path = match rest.split_once('/') {
-            Some((host, p)) if host.is_empty() || host.eq_ignore_ascii_case("localhost") => {
-                format!("/{p}")
-            }
-            _ => return None,
-        };
-        let bytes = crate::trash::percent_decode(&path);
-        return Some(Dropped::File(PathBuf::from(OsStr::from_bytes(&bytes))));
+    if uri.starts_with("file://") {
+        return file_uri_path(uri).map(Dropped::File);
     }
     if !is_web_url(uri) {
         return None;

@@ -58,7 +58,8 @@ fn settings_changes_defer_the_write() {
         start: Start {
             place: ex.place.clone(),
             dir: None,
-            select: None,
+            select: Vec::new(),
+            sheet: None,
             connect: None,
         },
         inner: Some(ex),
@@ -100,7 +101,8 @@ fn the_window_opens_at_the_text_size_and_keeps_its_size_in_100_units() {
         start: Start {
             place: ex.place.clone(),
             dir: None,
-            select: None,
+            select: Vec::new(),
+            sheet: None,
             connect: None,
         },
         inner: Some(ex),
@@ -143,7 +145,8 @@ fn a_maximized_size_is_not_saved() {
         start: Start {
             place: ex.place.clone(),
             dir: None,
-            select: None,
+            select: Vec::new(),
+            sheet: None,
             connect: None,
         },
         inner: Some(ex),
@@ -180,7 +183,8 @@ fn a_held_opening_size_keeps_the_saved_size_and_a_users_size_is_saved() {
         start: Start {
             place: ex.place.clone(),
             dir: None,
-            select: None,
+            select: Vec::new(),
+            sheet: None,
             connect: None,
         },
         inner: Some(ex),

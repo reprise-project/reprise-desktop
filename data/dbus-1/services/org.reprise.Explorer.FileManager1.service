@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.freedesktop.FileManager1
+Exec=/usr/bin/reprise-explorer --file-manager
+SystemdService=reprise-file-manager.service

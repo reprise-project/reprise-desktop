@@ -1,0 +1,14 @@
+[Unit]
+Description=File manager service (Reprise Explorer)
+PartOf=graphical-session.target
+After=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.FileManager1
+ExecStart=/usr/bin/reprise-explorer --file-manager
+Restart=on-failure
+
+[Install]
+WantedBy=reprise-session.target

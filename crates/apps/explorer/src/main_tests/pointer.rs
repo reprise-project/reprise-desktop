@@ -313,7 +313,8 @@ fn a_covered_window_lets_go_of_its_marquee_and_column_divider() {
         start: Start {
             place: ex.place.clone(),
             dir: None,
-            select: None,
+            select: Vec::new(),
+            sheet: None,
             connect: None,
         },
         inner: Some(ex),

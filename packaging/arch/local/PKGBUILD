@@ -168,6 +168,11 @@ package() {
   install -Dm644 data/portal/org.freedesktop.impl.portal.desktop.reprise.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.reprise.service"
   install -Dm644 data/portal/reprise-portal.service "$pkgdir/usr/lib/systemd/user/reprise-portal.service"
   install -Dm644 data/systemd/reprise-session.target "$pkgdir/usr/lib/systemd/user/reprise-session.target"
+  install -Dm644 data/dbus-1/services/org.reprise.Explorer.FileManager1.service "$pkgdir/usr/share/dbus-1/services/org.reprise.Explorer.FileManager1.service"
+  install -Dm644 data/systemd/reprise-file-manager.service "$pkgdir/usr/lib/systemd/user/reprise-file-manager.service"
+  # Started with the session, so Reprise owns the name even beside another file manager's activation file.
+  install -d "$pkgdir/usr/lib/systemd/user/reprise-session.target.wants"
+  ln -s ../reprise-file-manager.service "$pkgdir/usr/lib/systemd/user/reprise-session.target.wants/reprise-file-manager.service"
   install -Dm644 data/reprise.desktop "$pkgdir/usr/share/wayland-sessions/reprise.desktop"
   for size in 16x16 24x24 32x32 48x48; do
     install -Dm644 "data/icons/hicolor/$size/apps/reprise.png" "$pkgdir/usr/share/icons/hicolor/$size/apps/reprise.png"
