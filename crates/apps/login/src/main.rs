@@ -470,8 +470,8 @@ fn follow_console(events: Events) {
     }
 }
 
-/// Feeds `AccountsChanged` after each write of `/etc/group` or `/etc/passwd`; without the watch,
-/// the front's list follows group changes only at the other reads security.md names.
+/// Feeds `AccountsChanged` after each write of `/etc/group` or `/etc/passwd`; without it, the
+/// front's list follows group changes only at a link, a reload, a set or a disagreeing check.
 fn follow_accounts(events: Events) {
     let written = move || events.send(Event::Input(Input::AccountsChanged)).is_ok();
     if let Err(e) = accountwatch::follow(Path::new("/etc"), accountwatch::FILES, written) {

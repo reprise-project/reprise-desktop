@@ -1,4 +1,15 @@
 //! Locking the session once the last logged-in client has left, so the computer is not left open.
+//!
+//! The last client shown the session leaving locks it through logind. One that left because its
+//! screen went waits `lock_grace_s` for a client to be shown the session again, from any address.
+//! Under `second_client = "replace"` a login that ends a shown client counts as shown from its
+//! login, so the replaced client's leave doesn't lock; any other counts from its first frame. A
+//! stop locks before a shown client's connection closes, at once during a grace. The marker is
+//! there from a client being shown the session until the lock after it, so a server that died in
+//! between locks at its next start. A lock logind refuses or doesn't answer is tried again every
+//! [`RELOCK`] until it takes or a client is shown the session again; one at a stop is tried at
+//! the next start. `lock_on_leave = false` turns every one of these off, and a lock-mode
+//! connection locks nothing, as the session stayed locked here all through it.
 
 use crate::listen::{End, Leave};
 use repriseconf::remote::RemoteDesktop;
@@ -203,7 +214,7 @@ async fn on_thread<T: Send + 'static>(
 }
 
 /// Locks once the last client shown the session ([`Leave`]) has left and the portal sessions are
-/// closed; docs/security.md has the rules (`lock_on_leave`, `lock_grace_s`, the marker).
+/// closed, by the module doc's rules.
 pub struct LockOnLeave<F> {
     marker: Option<PathBuf>,
     present: Rc<Cell<usize>>,
