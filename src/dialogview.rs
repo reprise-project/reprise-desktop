@@ -90,8 +90,8 @@ pub struct DialogView {
     still_canvas: Option<(Canvas, i32)>,
     /// Keyboard cues: a pointer-opened dialog starts without them ([`Cues::key`]), a key-opened one has them.
     pub cues: Cues,
-    /// A Welcome panel's fade-in timer, while it fades.
-    fade: Option<RegistrationToken>,
+    /// A Welcome panel's still fading in, and when the fade began.
+    fade: Option<(BufferId, std::time::Instant)>,
     /// A windowed dialog minimised from its task button: its tree is off and it sits at the
     /// bottom of the stack.
     pub minimized: bool,
@@ -107,8 +107,7 @@ impl DialogView {
     }
 }
 
-const FADE_STEPS: i32 = 25;
-const FADE_TICK: std::time::Duration = std::time::Duration::from_millis(40);
+const FADE: std::time::Duration = std::time::Duration::from_millis(1000);
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 

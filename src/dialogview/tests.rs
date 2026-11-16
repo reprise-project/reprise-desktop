@@ -568,3 +568,34 @@ fn a_delete_question_about_other_items_opens_over_an_unanswered_one() {
     );
     assert_eq!(shown(&h).len(), 3, "and not opened twice");
 }
+
+#[test]
+fn a_welcome_panels_still_fades_in_on_its_outputs_frames_over_its_time() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.state
+        .open_dialog(Dialog::turn_off(&h.state.config.power, false));
+    let (id, tree) = (h.state.dialogs.views[0].id, h.state.dialogs.views[0].tree);
+    let node = h.state.scene.buffer_create(tree);
+    let still = crate::raster::Canvas::new(64, 64);
+    (h.state.scene).buffer_set_canvas(node, &still.pixels, 64, 64);
+    h.state.fade_in_still(id, node);
+    let start = h.state.dialogs.views[0].fade.expect("the still fades").1;
+    crate::animclock::step(&mut h.state, start + super::FADE / 2);
+    assert_eq!(
+        h.state.scene.opacity(node),
+        Some(0.5),
+        "half way, half shown"
+    );
+    crate::animclock::assert_steps_until(
+        &mut h.state,
+        crate::animclock::Anim::DialogFade,
+        &["TEST-1"],
+        start + super::FADE,
+    );
+    assert_eq!(
+        h.state.scene.opacity(node),
+        Some(1.0),
+        "shown whole at its end"
+    );
+}

@@ -29,6 +29,12 @@ pub enum Anim {
     StartPanel,
     /// Notification balloons sliding and Droplet beads in motion (`notifyview`).
     Notify,
+    /// The wallpaper fading in over the picture before (`wallpaperview`).
+    Wallpaper,
+    /// The idle dim darkening the screens (`idle`).
+    IdleDim,
+    /// The greyed still under a Welcome panel fading in (`dialogview`).
+    DialogFade,
 }
 
 impl Anim {
@@ -42,6 +48,9 @@ impl Anim {
             Anim::MenuOpen => state.menu_open_step(now),
             Anim::StartPanel => state.start_panel_step(now),
             Anim::Notify => crate::notifyview::motion::step(state, now),
+            Anim::Wallpaper => state.wallpaper_fade_step(now),
+            Anim::IdleDim => crate::idle::dim_step(state, now),
+            Anim::DialogFade => state.dialog_fade_step(now),
         }
     }
 }

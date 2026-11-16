@@ -47,10 +47,9 @@ pub struct Wallpaper {
     staged: Vec<Staged>,
     nodes: Vec<(Output, WallpaperNode)>,
     /// The picture this one replaces, still on screen under it until this
-    /// one has faded in: its buffers, and the fade's timer and start once
-    /// it runs.
+    /// one has faded in: its buffers, and the fade's start once it runs.
     fading: Vec<BufferId>,
-    fade: Option<(RegistrationToken, Instant)>,
+    fade: Option<Instant>,
     /// How long this picture takes to fade in over the one before.
     fade_for: Duration,
     /// Its number in [`Jobs`]; a decode or drawing for a wallpaper since replaced is skipped.
@@ -223,10 +222,8 @@ pub enum LockWall {
     None,
 }
 
-/// How long a slideshow picture takes to fade into the next, and the
-/// step of that fade.
+/// How long a slideshow picture takes to fade into the next.
 const FADE: Duration = Duration::from_millis(1200);
-const FADE_TICK: Duration = Duration::from_millis(33);
 /// A desktop switch's fade to the next desktop's picture when no switch animation is set.
 const DESKTOP_FADE: Duration = Duration::from_millis(250);
 /// How long after a picture lands Alt+Tab's desktop still is composed: past `FADE`.
@@ -474,19 +471,16 @@ impl State {
             for (_, node) in w.nodes {
                 self.scene.destroy(node.buffer);
             }
-            self.end_fade(w.fading, w.fade);
+            self.end_fade(w.fading);
             self.water_configured();
             crate::lockview::refit(self);
             self.redraw_all();
         }
     }
 
-    fn end_fade(&mut self, fading: Vec<BufferId>, fade: Option<(RegistrationToken, Instant)>) {
+    fn end_fade(&mut self, fading: Vec<BufferId>) {
         for b in fading {
             self.scene.destroy(b);
-        }
-        if let Some((t, _)) = fade {
-            self.handle.remove(t);
         }
     }
 
@@ -507,7 +501,7 @@ impl State {
             false => fade_for,
         };
         if let Some(old) = self.wallpaper.take() {
-            self.end_fade(old.fading, old.fade);
+            self.end_fade(old.fading);
             next.fading = old.nodes.into_iter().map(|(_, n)| n.buffer).collect();
         }
         self.wallpaper = Some(next);
@@ -515,45 +509,38 @@ impl State {
     }
 
     fn start_fade(&mut self) {
-        let timer = self
-            .handle
-            .insert_source(Timer::from_duration(FADE_TICK), |_, _, state| {
-                let Some(w) = state.wallpaper.as_mut() else {
-                    return TimeoutAction::Drop;
-                };
-                let t = w.fade.map_or(1.0, |(_, at)| {
-                    at.elapsed().as_secs_f32() / w.fade_for.as_secs_f32().max(0.001)
-                });
-                let t = t.min(1.0);
-                for (_, n) in &w.nodes {
-                    state.scene.set_opacity(n.buffer, t);
-                }
-                let fading = if t < 1.0 {
-                    Vec::new()
-                } else {
-                    w.fade = None;
-                    std::mem::take(&mut w.fading)
-                };
-                let done = t >= 1.0;
-                state.water_fade(t);
-                for b in fading {
-                    state.scene.destroy(b);
-                }
-                state.redraw_all();
-                if done {
-                    TimeoutAction::Drop
-                } else {
-                    TimeoutAction::ToDuration(FADE_TICK)
-                }
-            });
-        match timer {
-            Ok(t) => {
-                if let Some(w) = self.wallpaper.as_mut() {
-                    w.fade = Some((t, Instant::now()));
-                }
-            }
-            Err(e) => log::warn!("wallpaper fade: {}", e.error),
+        if let Some(w) = self.wallpaper.as_mut() {
+            w.fade = Some(Instant::now());
+            self.animate(crate::animclock::Anim::Wallpaper);
         }
+    }
+
+    /// One frame of the fade from the picture before; whether it still runs.
+    pub(crate) fn wallpaper_fade_step(&mut self, now: Instant) -> bool {
+        let Some(w) = self.wallpaper.as_mut() else {
+            return false;
+        };
+        let Some(at) = w.fade else {
+            return false;
+        };
+        let since = now.saturating_duration_since(at);
+        let t = (since.as_secs_f32() / w.fade_for.as_secs_f32().max(0.001)).min(1.0);
+        for (_, n) in &w.nodes {
+            self.scene.set_opacity(n.buffer, t);
+        }
+        let done = t >= 1.0;
+        let fading = if done {
+            w.fade = None;
+            std::mem::take(&mut w.fading)
+        } else {
+            Vec::new()
+        };
+        self.water_fade(t);
+        for b in fading {
+            self.scene.destroy(b);
+        }
+        self.redraw_all();
+        !done
     }
 
     /// Follow `[wallpaper]`'s image and slideshow keys after a reload, and
@@ -1117,6 +1104,31 @@ mod tests {
 
     fn shown(h: &crate::harness::Harness) -> Option<&Path> {
         h.state.wallpaper.as_ref().map(|w| w.path.as_path())
+    }
+
+    #[test]
+    fn a_desktop_switchs_fade_steps_on_the_outputs_frames_over_its_time() {
+        let mut h = three_desktops();
+        h.state.switch_desktop(1);
+        h.until("the fade to the next picture runs", |s| {
+            s.wallpaper.as_ref().is_some_and(|w| w.fade.is_some())
+        });
+        let start = h.state.wallpaper.as_ref().unwrap().fade.unwrap();
+        let shown = |h: &crate::harness::Harness| {
+            let w = h.state.wallpaper.as_ref().unwrap();
+            h.state.scene.opacity(w.nodes[0].1.buffer)
+        };
+        crate::animclock::step(&mut h.state, start + DESKTOP_FADE / 2);
+        assert_eq!(shown(&h), Some(0.5), "half way, half shown");
+        crate::animclock::assert_steps_until(
+            &mut h.state,
+            crate::animclock::Anim::Wallpaper,
+            &["A-1"],
+            start + DESKTOP_FADE,
+        );
+        assert_eq!(shown(&h), Some(1.0), "shown whole at its end");
+        let w = h.state.wallpaper.as_ref().unwrap();
+        assert!(w.fading.is_empty(), "the picture before is gone");
     }
 
     #[test]

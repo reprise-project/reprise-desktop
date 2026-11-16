@@ -4,9 +4,6 @@ use std::sync::atomic::Ordering;
 
 use reprisekit::cues::Cues;
 use reprisekit::pointer::DoubleClick;
-use reprisescene::BufferId;
-use smithay::reexports::calloop::RegistrationToken;
-use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::compositor::{SceneOwner, State};
 use crate::dialog::{self, Dialog, DialogLayout, Placement, Style};
@@ -190,15 +187,19 @@ impl State {
             .buffer_set_canvas(node, &c.pixels, c.width as i32, c.height as i32);
         self.scene
             .buffer_set_dest_size(node, Some((b.width, b.height).into()));
-        let fade = match self.config.effects.reduce_motion {
-            true => None,
-            false => {
-                self.scene.set_opacity(node, 0.0);
-                self.fade_still(id, node)
-            }
-        };
+        self.fade_in_still(id, node);
+    }
+
+    /// Fade dialog `id`'s still `node` in over [`FADE`], or show it at once under reduce motion.
+    pub(super) fn fade_in_still(&mut self, id: u64, node: reprisescene::BufferId) {
+        if self.config.effects.reduce_motion {
+            return;
+        }
         if let Some(v) = self.dialogs.views.iter_mut().find(|v| v.id == id) {
-            v.fade = fade;
+            self.scene.set_opacity(node, 0.0);
+            v.fade = Some((node, std::time::Instant::now()));
+            self.animate(crate::animclock::Anim::DialogFade);
+            self.redraw_nodes(Vec::new(), &[node.into()]);
         }
     }
 
@@ -403,32 +404,27 @@ impl State {
         }
     }
 
-    fn fade_still(&mut self, id: u64, node: BufferId) -> Option<RegistrationToken> {
-        let mut step = 0;
-        let added =
-            self.handle
-                .insert_source(Timer::from_duration(FADE_TICK), move |_, _, state| {
-                    step += 1;
-                    state
-                        .scene
-                        .set_opacity(node, (step as f32 / FADE_STEPS as f32).min(1.0));
-                    state.redraw_nodes(Vec::new(), &[node.into()]);
-                    if step < FADE_STEPS {
-                        return TimeoutAction::ToDuration(FADE_TICK);
-                    }
-                    if let Some(v) = state.dialogs.views.iter_mut().find(|v| v.id == id) {
-                        v.fade = None;
-                    }
-                    TimeoutAction::Drop
-                });
-        match added {
-            Ok(t) => Some(t),
-            Err(e) => {
-                log::warn!("dialog: no fade timer: {}", e.error);
-                self.scene.set_opacity(node, 1.0);
-                None
+    /// One frame of every still fading in; whether one still fades.
+    pub(crate) fn dialog_fade_step(&mut self, now: std::time::Instant) -> bool {
+        let mut fading = false;
+        let (mut shown, mut on) = (Vec::new(), Vec::new());
+        for v in &mut self.dialogs.views {
+            let Some((node, at)) = v.fade else {
+                continue;
+            };
+            let t = (now.saturating_duration_since(at).as_secs_f32() / FADE.as_secs_f32()).min(1.0);
+            self.scene.set_opacity(node, t);
+            shown.push(node.into());
+            // A still faded to nothing yet shows on no output.
+            on.push(v.output.clone());
+            if t < 1.0 {
+                fading = true;
+            } else {
+                v.fade = None;
             }
         }
+        self.redraw_nodes(on, &shown);
+        fading
     }
 
     fn destroy_dialog(&mut self, mut v: DialogView) {
@@ -436,9 +432,6 @@ impl State {
             self.pickthumbs.forget(v.id);
         }
         self.switcher_forget(crate::switcherview::Entry::Dialog(v.id));
-        if let Some(t) = v.fade.take() {
-            self.handle.remove(t);
-        }
         if matches!(
             self.interaction,
             Interaction::DialogMove { .. }
