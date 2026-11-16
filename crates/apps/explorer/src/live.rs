@@ -230,6 +230,12 @@ impl Explorer {
         .flatten()
         .reduce(Reply::and)
         .filter(|r| *r != Reply::none());
+        // The picker, sheet, dialog and preview are their own windows, which only a redraw of all
+        // of them repaints, whichever return below is taken.
+        let put = match browsed {
+            true => Some(put.unwrap_or_default().and(Reply::redraw_all())),
+            false => put,
+        };
         if let Some(from) = self.watch.as_mut().and_then(|w| w.take_gone()) {
             let r = self.follow_gone(&from, ctx);
             return put.unwrap_or_default().and(r);
@@ -245,7 +251,6 @@ impl Explorer {
             self.refill_tree_node(&place, ctx);
             picker |= self.refill_browse_node(&place, ctx);
         }
-        // The picker is its own window, which only a redraw of all of them repaints.
         let put = match picker {
             true => Some(put.unwrap_or_default().and(Reply::redraw_all())),
             false => put,
@@ -285,8 +290,7 @@ impl Explorer {
             }
         }
         Reply {
-            redraw: dirty || browsed,
-            redraw_all: browsed,
+            redraw: dirty,
             ..Default::default()
         }
     }
