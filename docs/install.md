@@ -32,14 +32,9 @@ A session started from a login manager logs to the user journal under
 Each program Reprise starts (the tray helpers, autostart entries, launches)
 logs under its desktop entry id, such as `reprise-sound`, or under its
 program name when it has no entry. Each runs in an `app-reprise-*.scope` of
-the user manager, so journald's rate limit for a program that floods its log
-applies to `user@<uid>.service` and leaves the compositor's session lines
-alone. That budget (`RateLimitBurst=` lines per `RateLimitIntervalSec=` in
-journald.conf, counted per priority) is shared by every app scope and user
-service: a program flooding at one priority drops the other programs' lines
-at that priority until the interval ends, and the system journal says
-`Suppressed N messages from user@<uid>.service`. A unit's `LogRateLimit*=`
-settings don't apply to user units. Reprise's own programs mark their lines
+the user manager, so a program that floods its log uses up journald's rate
+limit for `user@<uid>.service` and leaves the compositor's session lines
+alone. Reprise's own programs mark their lines
 with the same priorities, so `-t reprise-sound -p warning` lists that
 program's warnings and errors. The apps and tray helpers log their own info
 lines and their libraries' warnings (`warn,reprise=info`) unless `RUST_LOG`
@@ -213,30 +208,13 @@ under `reprise` as it does under any login manager (`journalctl --user -b
 `reprise-session`.
 
 After upgrading the package, reboot, or run `sudo systemctl restart
-reprise-login` and have each remote user reconnect. Each running session's
-Software Updates says so: the package's upgrade leaves `/run/reboot-required`
-(a pacman hook on Arch, the postinst on Ubuntu), which raises its restart
-notice. The login manager, the
+reprise-login` and have each remote user reconnect; until then each
+session's Software Updates shows a restart notice. The login manager, the
 login screen, Settings, User Accounts and each session's `reprise-rdp
---hand-over` talk over sockets whose messages can change between versions: an
-older program can't talk to a newer daemon, and a hand-over server that
-started before the upgrade can't report its clients, so a background
-session it serves counts as having none and its disconnect time starts.
-Sessions started before the upgrade share no clipboard with Remote Desktop
-clients until they log off, and the journal says "the desktop's lock is
-unknown: GetActive ...". Log each session off once after upgrading: until
-then a password prompt cancelled in Date and Time, Network or Updates shows
-as a refusal. Sessions started before the upgrade keep the old X11 and input
-rules until they log off: X11 programs connect without the cookie, and an
-app's remote control shows no dot and still reaches the lock screen. A
-Settings window open across the upgrade can't save Login Manager: close it
-and open it again. After a Turn Off in a session started before the
-upgrade, the other session's remote clients are dropped without being told
-the computer is turning off. Launchers you allowed and programs you ran
-before the upgrade ask once more: the trust marker now covers the file's
-contents, so allow each launcher again. Update `reprise`, `reprise-portal`
-and `reprise-apps` together: an older portal or tray helper misses the
-notification clicks a newer compositor sends.
+--hand-over` talk over sockets whose messages can change between versions,
+so log each session off once after upgrading and reopen a Settings window
+left open across it. Update `reprise`, `reprise-portal` and `reprise-apps`
+together.
 
 ### Remote logins
 
@@ -292,6 +270,9 @@ user's server.
   built in; it needs no runtime library
 - Python 3, for the tests' string id check (`scripts/i18n-check`) and the
   packages' third-party notices (`packaging/third-party-notices`)
+- For the tests, besides Python: `bsdtar` (libarchive), `dbus-daemon`,
+  shared-mime-info and DejaVu fonts, and curl for `scripts/test-fonts.sh`.
+  `.github/ci-image/packages` lists CI's full set (Arch package names)
 - Translated strings come from the Fluent crates (`fluent-bundle`,
   `fluent-langneg`, `unic-langid`), built in; they need no runtime library
 - Text fields find grapheme clusters with the `unicode-segmentation` crate,
@@ -343,8 +324,7 @@ user's server.
   system user
   `reprise-login-rdp` and the group `reprise-remote` (sysusers), and Linux
   6.14 or later, whose kernel TLS follows TLS 1.3 key updates: on an older
-  kernel a TLS 1.3 connection ends at its first key update. The oldest
-  kernel remote logins have run on is 7.2.7
+  kernel a TLS 1.3 connection ends at its first key update
 - For remote logins, the kernel's `tls` module (`CONFIG_TLS`): each
   connection reaches the user's `reprise-rdp` in kernel TLS. The front's unit
   loads it; without it a login passes its check and then fails to reach its
@@ -372,7 +352,8 @@ user's server.
 - Xwayland, for X11 programs. Reprise starts it on the first X11 connection
   and stops it when X11 programs have gone quiet.
 - A UI font: Wine's Tahoma is recommended (`ttf-tahoma` on Arch, from the
-  AUR); without it, Reprise falls back to DejaVu Sans. See [Fonts](#fonts).
+  AUR); without it, Reprise falls back to DejaVu Sans. The other period
+  faces are picked up when installed ([assets](assets.md#fonts)).
 - An icon theme. A classic, early-2000s theme will look most at home; see
   [assets.md](assets.md#icons). Ubuntu's Adwaita has only symbolic icons, so
   the .deb recommends `adwaita-icon-theme-legacy` for the full-colour ones.
@@ -427,6 +408,14 @@ desktop and stays out of the way when it's missing.
 - tzdata, whose `zone1970.tab` places your time zone's city, for the night
   light's sunset and sunrise without a set location, and whose `zone.tab`
   picks the zone nearest your location for the automatic time zone
+- A VA-API driver with a video encoder, for hardware encoding in Remote
+  Desktop (H.264) and screen recordings (H.264, H.265 and AV1 where the GPU
+  codes them): `intel-media-driver` on Intel graphics, `libva-mesa-driver`
+  on AMD (Arch's `mesa` package provides it). On NVIDIA, `nvidia-utils`
+  (CUDA and NVENC), tried on a GeForce RTX 4080 SUPER with driver 615.78.
+  Without a hardware encoder, both encode on the CPU with FFmpeg's libx264,
+  libx265 and libsvtav1, which Arch's `ffmpeg` links; a Remote Desktop
+  client without H.264 gets RemoteFX bitmaps.
 
 **Network**
 
@@ -498,15 +487,6 @@ desktop and stays out of the way when it's missing.
 - dconf (`dconf-cli` on Ubuntu), for reading GNOME's settings in Import from
   Another Desktop; without it only Plasma's are found.
 
-- A VA-API driver with a video encoder, for hardware encoding in Remote
-  Desktop (H.264) and screen recordings (H.264, H.265 and AV1 where the GPU
-  codes them): `intel-media-driver` on Intel graphics, `libva-mesa-driver`
-  on AMD (Arch's `mesa` package provides it). On NVIDIA, `nvidia-utils`
-  (CUDA and NVENC), tried on a GeForce RTX 4080 SUPER with driver 615.78.
-  Without a hardware encoder, both encode on the CPU with FFmpeg's libx264,
-  libx265 and libsvtav1, which Arch's `ffmpeg` links; a Remote Desktop
-  client without H.264 gets RemoteFX bitmaps.
-
 **Portals and toolkits**
 
 - xdg-desktop-portal 1.19 or newer, which routes screen sharing,
@@ -557,11 +537,3 @@ desktop and stays out of the way when it's missing.
   with no network and only `/usr`, its input file and its output folder
   visible. Without bubblewrap only pictures other than JPEG XL get
   thumbnails and a font shows no sample.
-
-## Fonts
-
-Reprise ships no fonts. The UI is set in Tahoma; Wine's free version
-(LGPL) has the same metrics and is an optional dependency of the package. DejaVu Sans covers everything
-else. The other period faces (Trebuchet MS, Franklin Gothic Medium, Segoe
-UI and a wider dialog font) are picked up if you have a licensed copy. [assets.md](assets.md#fonts)
-has the table.
