@@ -1,5 +1,10 @@
-//! Mini views on the scene: a live picture of a window (`livepreview`) in `layers.minis`, drawn
-//! as `reprisekit::controls::miniview`; docs/features.md has the behaviour.
+//! Mini views on the scene: a live picture of a window (`livepreview`) in `layers.minis`, above
+//! every window on every desktop, drawn as `reprisekit::controls::miniview`. One opens `DEFAULT_W`
+//! wide in the lower-right of its window's output, narrowed to fit and stepped up past the others.
+//! A click brings up the window; a double-click does too and closes the view, as the close box
+//! does. A drag moves it, its corner sizes it at the window's aspect. It keeps following a
+//! minimized window and closes with it. One whose output is unplugged moves to the lower right of
+//! the usable area of the output under the pointer ([`output_gone`]).
 
 use reprisekit::controls::miniview::{self, Layout, Look, Part};
 use reprisescene::{BufferId, Input, TreeId};

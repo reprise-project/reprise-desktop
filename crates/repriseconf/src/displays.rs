@@ -1,5 +1,10 @@
 //! Saved monitor arrangements in `$XDG_STATE_HOME/reprise/displays.toml`, one per set of
-//! connected monitors; docs/features.md ("Displays") says when one is saved and when it wins.
+//! connected monitors (`monitor_ids`): which are on, their modes, places, scales, rotations and
+//! the primary. The compositor saves the connected set's layout each time `[[outputs]]` takes
+//! effect or the display switcher or output management changes the monitors, and puts it back
+//! over `[[outputs]]` when that set connects again. The file carries the `[[outputs]]` fingerprint
+//! it was saved under: a different one (an edit while Reprise was not running) hides every
+//! layout, and the next save drops them.
 
 use std::path::PathBuf;
 

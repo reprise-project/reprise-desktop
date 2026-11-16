@@ -93,6 +93,20 @@ theme installed, and the zombie test when another test's reaper wins.
   only the Arch package, so a missing `.deb` entry shows first in the
   Nightly build.
 
+## Debugging
+
+A main-loop turn that runs for 2 s writes the main thread's backtrace,
+state and system call to the journal, again at 10 s and every 30 s after,
+and how long it took once it ends. Nothing is stopped or restarted. Two
+variables in Reprise's environment provoke a stall to try it:
+
+- `REPRISE_STALL_ON_RELOAD=<ms>` holds the main loop `ms` each time a file
+  in the config folder is written (`touch` one).
+- `REPRISE_COMMIT_DELAY=<connector>:<ms>` makes every commit on that
+  connector wait `ms` first; `HDMI-A-1:5000:modeset` delays only its
+  modesets. Each monitor commits from its own thread, so input, programs,
+  the lock screen and VT switches carry on while one is held.
+
 ## How the code is laid out
 
 Everything drawn or interactive is a control in `crates/reprisekit`, in five

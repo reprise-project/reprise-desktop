@@ -18,6 +18,8 @@
 //! slot or missing outside window no start in flight will fill, so an app that
 //! brings back its own windows gets no extra one.
 //! Snap groups come back as well (`sessionsnap`).
+//! A start whose last restore never finished (`session_restoring` still set) restores nothing, so
+//! an app that brings Reprise down is not started into it again.
 
 use crate::compositor::State;
 use crate::sessionsnap::{PendingSnaps, SavedSnap};
