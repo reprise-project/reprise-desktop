@@ -187,6 +187,13 @@ that hangs is given up after 90 s. With `/etc/pam.d/reprise-fingerprint`
 installed, a second helper runs the fingerprint conversation. Reprise
 zeroes the password copies it holds.
 
+Wrong passwords typed at the computer are the PAM stack's to throttle, as
+at the console login: one check runs at a time, `pam_unix` waits about 2 s
+after a failure, and `pam_faillock`, where the distribution's stack has it
+(Arch), locks the account after a few. Ubuntu's stack has no
+`pam_faillock`, so there a guess costs those 2 s and no more. Passwords
+from a Remote Desktop viewer back off on their own ([Lock mode](#lock-mode)).
+
 The lock's power menu offers Restart and Turn Off only under reprise-login,
 while no other session holds someone's work and no `autologin_user` is set,
 so the lock never ends another user's work nor restarts into a desktop that
