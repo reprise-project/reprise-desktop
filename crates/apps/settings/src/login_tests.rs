@@ -963,10 +963,10 @@ fn with_screens_in(dir: &Path, config: &str) -> SettingsApp {
     a.display.layouts = dir.join("displays.toml");
     let mut dp = head("DP-1", (2560, 1440, 143_912), 1.25, (0, 0));
     dp.transform = repriseapp::heads::Transform::Rotate90;
-    a.heads_changed(vec![
-        dp,
-        head("eDP-1", (2880, 1800, 60_000), 2.0, (1440, 0)),
-    ]);
+    a.heads_changed(
+        vec![dp, head("eDP-1", (2880, 1800, 60_000), 2.0, (1440, 0))],
+        &mut Default::default(),
+    );
     a
 }
 
@@ -1302,7 +1302,7 @@ fn settings_the_helper_would_refuse_are_never_sent() {
     let mut a = with_screens_in(&dir, "");
     let mut heads = a.display.connected.clone();
     heads[0].name = "DP 1; reboot".into();
-    a.heads_changed(heads);
+    a.heads_changed(heads, &mut Default::default());
     press(&mut a, "login_use_displays");
     a.sheet_event(propsheet::Event::Apply);
     a.wake();

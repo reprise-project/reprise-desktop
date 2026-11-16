@@ -102,7 +102,7 @@ impl SettingsApp {
         displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
     }
 
-    pub(crate) fn heads_changed(&mut self, heads: Vec<Head>) -> Reply {
+    pub(crate) fn heads_changed(&mut self, heads: Vec<Head>, req: &mut HeadRequests) -> Reply {
         let primary = self.session_primary(&heads);
         self.display.model.set_primary_saved(primary);
         self.display.model.homes = self.display_homes(&heads);
@@ -110,7 +110,7 @@ impl SettingsApp {
         self.display.model.set_heads(heads);
         self.display.model.layouts_saved = self.display.layouts.exists();
         displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
-        let effects = self.display.flow.heads_changed(&self.display.model);
+        let effects = self.display.flow.heads_changed(&self.display.model, req);
         let mut r = self.display_effects(effects);
         self.sync_apply();
         r.redraw_all = true;
