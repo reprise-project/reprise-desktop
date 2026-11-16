@@ -166,9 +166,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   its task button, maximizing, snapping or going fullscreen brings it back.
 - **Mini view.** Mini View in the window menu (or a `mini-view` bind, unbound
   by default) opens a small live picture of the window, 320 pixels wide in
-  the lower-right corner of its screen, above every window and on every
-  desktop. Drag it to move it, drag its lower-right corner to size it (it
-  keeps the window's shape); a click brings the window up, and a
+  the lower-right corner of its screen (narrower when a tall window would
+  not fit), above every window and on every desktop. Drag it to move it,
+  drag its lower-right corner to size it (it keeps the window's shape and
+  stays on the screen); a click brings the window up, and a
   double-click or its close box closes it. It keeps following a minimized
   window. Several windows can each have one; Mini View again, or closing the
   window, closes it. Screenshots and screen sharing show it like anything
