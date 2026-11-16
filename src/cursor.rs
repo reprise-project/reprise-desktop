@@ -60,7 +60,8 @@ impl Cursors {
                     log::warn!("cursor: no {name:?} or default in the theme; drawing an arrow");
                     arrow(pixel_size)
                 });
-            self.loaded.insert(key.clone(), to_cursor(&image, scale));
+            self.loaded
+                .insert(key.clone(), to_cursor(&image, self.size));
         }
         &self.loaded[&key]
     }
@@ -84,8 +85,11 @@ fn drm_bytes(image: &Image) -> &[u8] {
     &image.pixels_rgba
 }
 
-fn to_cursor(image: &Image, scale: i32) -> CursorImage {
-    let scale = scale.max(1);
+/// `image` as a buffer drawn `base` logical px tall: its buffer scale is the image's nominal
+/// size over `base`, so a theme without a size for the output's scale draws its nearest one at
+/// the cursor's size, not at that image's.
+fn to_cursor(image: &Image, base: u32) -> CursorImage {
+    let scale = buffer_scale(image.size, base);
     let buffer = MemoryRenderBuffer::from_slice(
         drm_bytes(image),
         Fourcc::Argb8888,
@@ -98,6 +102,12 @@ fn to_cursor(image: &Image, scale: i32) -> CursorImage {
         buffer,
         hotspot: (image.xhot as i32 / scale, image.yhot as i32 / scale).into(),
     }
+}
+
+fn buffer_scale(image_size: u32, base: u32) -> i32 {
+    (f64::from(image_size) / f64::from(base.max(1)))
+        .round()
+        .max(1.0) as i32
 }
 
 fn arrow(size: u32) -> Image {
@@ -182,6 +192,28 @@ mod tests {
         assert_eq!(nearest(&images, 30).map(|i| i.size), Some(32));
         assert_eq!(nearest(&images, 64).map(|i| i.size), Some(48));
         assert_eq!(nearest(&[], 24).map(|i| i.size), None);
+    }
+
+    #[test]
+    fn a_cursor_is_scaled_by_the_size_the_theme_had_not_the_size_asked_for() {
+        assert_eq!(buffer_scale(48, 24), 2);
+        assert_eq!(
+            buffer_scale(24, 24),
+            1,
+            "no 48 px image: drawn 24 px at scale 2"
+        );
+        assert_eq!(buffer_scale(32, 24), 1);
+        assert_eq!(
+            buffer_scale(96, 24),
+            4,
+            "only a large image: drawn 24 px at scale 1"
+        );
+        assert_eq!(buffer_scale(16, 24), 1);
+        let mut big = image(48);
+        (big.xhot, big.yhot) = (10, 20);
+        big.pixels_rgba = vec![0; 48 * 48 * 4];
+        let c = to_cursor(&big, 24);
+        assert_eq!(c.hotspot, (5, 10).into());
     }
 
     #[test]
