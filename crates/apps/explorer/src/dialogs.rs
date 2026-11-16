@@ -1,6 +1,6 @@
 //! Explorer's modal dialogs in a child window: the error box, the delete and replace confirmations, the Open With chooser, the Properties sheet's Advanced Attributes, Confirm Attribute Changes and Change Icon, the Move and Copy folder picker (`browse`), Unlock Drive, and Connect to Server with its password and question boxes.
 //!
-//! One child at a time: a box raised while another is up waits for it ([`Explorer::raise`]). Two stack instead: the chooser's Browse... opens the program picker (`PROGRAM_BROWSE`) over it, and a refused name in the Move/Copy picker raises its error box (`browse::ERROR`). The error and confirm boxes keep only their text and focused button, so their [`Form`] is rebuilt per event; the chooser keeps an `openwith` control that takes its own events ([`crate::openwith`]).
+//! One child at a time: a box raised while another is up waits for it ([`Explorer::raise`]). Two stack instead: the chooser's Browse... opens the program picker (`PROGRAM_BROWSE`) over it, and a refused name or a failed Make New Folder in the Move/Copy picker raises its error box (`browse::ERROR`). The error and confirm boxes keep only their text and focused button, so their [`Form`] is rebuilt per event; the chooser keeps an `openwith` control that takes its own events ([`crate::openwith`]).
 
 use crate::icons::{IconSlot, land_picture};
 use crate::place;
@@ -882,12 +882,14 @@ impl Explorer {
                 modal: true,
             });
         }
-        // A name the picker's rename box was refused: the error box over
-        // the picker.
-        if let Some(f) = self.browse_error_fields() {
+        // A picker write that failed: the error box over the picker.
+        if let Some(f) = self.browse_error_fields()
+            && let Some(Dialog::Browse(b)) = self.dialogs.up()
+            && let Some(r) = &b.refused
+        {
             out.push(Child {
                 id: crate::browse::ERROR,
-                title: crate::browse::ERROR_TITLE.into(),
+                title: r.title.into(),
                 size: u.size(msgbox::client(&f, text, px, u)),
                 fixed: true,
                 modal: true,

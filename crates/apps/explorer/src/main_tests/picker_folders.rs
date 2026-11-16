@@ -472,3 +472,25 @@ fn a_double_click_on_a_picker_plus_box_turns_it_once() {
     ex.dialog_event(press_at(x, y, t + 2000), &mut ctx);
     assert!(open(&ex), "two clicks turn it twice");
 }
+
+/// Make New Folder that fails leaves the picker up, with the reason in its error box over it.
+#[test]
+fn a_pickers_new_folder_that_fails_keeps_the_picker_and_says_why() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = browse_fixture(&mut ctx);
+    std::os::unix::fs::symlink(dir.path().join("gone"), dir.path().join("New Folder"))
+        .expect("a dangling link where the new folder would go");
+    ex.open_browse(false, &mut ctx);
+    click_at(&mut ex, 60, 328, &mut ctx);
+    assert!(
+        matches!(ex.dialog(), Some(Dialog::Browse(_))),
+        "the picker stays up"
+    );
+    let (title, text) = picker_error(&ex).expect("the error box over the picker");
+    assert_eq!(title, "Error Creating Folder");
+    assert!(text.starts_with("Cannot create New Folder: "), "{text}");
+
+    ex.browse_error_event(Event::Key(key_in(keysym::RETURN)));
+    assert_eq!(picker_error(&ex), None, "OK closes the error box");
+    assert_eq!(picker_pick(&ex).1, None, "no rename box opens");
+}
