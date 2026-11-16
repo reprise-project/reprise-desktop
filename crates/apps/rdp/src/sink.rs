@@ -441,24 +441,25 @@ fn record_path() -> Option<PathBuf> {
 /// Give back what a server killed while a client listened left on its sink.
 pub fn recover() {
     if let Some(record) = record_path() {
-        recover_at(&record, repriseaudio::snapshot_now, put_wait);
+        start_mending(recover_at(&record, repriseaudio::snapshot_now, put_wait));
     }
 }
 
-fn recover_at(path: &Path, now: fn() -> Snapshot, put: fn(&[Write]) -> bool) {
+/// [`recover`] from the record at `path`; the programs it leaves [`owed`].
+fn recover_at(path: &Path, now: fn() -> Snapshot, put: fn(&[Write]) -> bool) -> Owed {
     let Ok(text) = fs::read_to_string(path) else {
-        return;
+        return Owed::new();
     };
     let record = Record::parse(&text);
     let now = now();
     if now.sinks.is_empty() {
-        return;
+        return Owed::new();
     }
     let mut writes = put_back(&now, &record);
     let default = (record.before.as_deref()).and_then(|b| left_behind(&now, b));
     writes.extend(default.map(Write::Default));
     if !put(&writes) {
-        return;
+        return Owed::new();
     }
     if default.is_some() {
         log::info!(
@@ -467,6 +468,7 @@ fn recover_at(path: &Path, now: fn() -> Snapshot, put: fn(&[Write]) -> bool) {
         );
     }
     let _ = fs::remove_file(path);
+    owed(&now, &record)
 }
 
 /// One PipeWire write.
@@ -501,50 +503,139 @@ fn put_wait(writes: &[Write]) -> bool {
     })
 }
 
-/// Moves each playback stream sent to another sink into ours while it lives, keeping the
-/// [`Record`] of where each played before.
-struct Follow {
+/// A thread handing `step` each state PipeWire reports, until `step` says it is done or
+/// [`Watcher::end`] stops it.
+struct Watcher<T> {
     /// `true` when PipeWire changed, `false` to stop.
     wake: mpsc::Sender<bool>,
-    thread: JoinHandle<Record>,
+    thread: JoinHandle<T>,
 }
 
-impl Follow {
-    fn start(id: u32, record: Record, path: Option<PathBuf>) -> io::Result<Follow> {
+impl<T: Send + 'static> Watcher<T> {
+    fn start(
+        name: &str,
+        state: T,
+        mut step: impl FnMut(&Snapshot, &mut T) -> bool + Send + 'static,
+    ) -> io::Result<Watcher<T>> {
         let (wake, woken) = mpsc::channel();
         let changed = wake.clone();
         let thread = std::thread::Builder::new()
-            .name("reprise-rdp-streams".into())
+            .name(name.into())
             .spawn(move || {
                 let watch = repriseaudio::watch(move || {
                     let _ = changed.send(true);
                 });
-                let mut record = record;
+                let mut state = state;
                 while woken.recv() == Ok(true) {
                     let Some(now) = std::iter::from_fn(|| watch.try_recv().ok()).last() else {
                         continue;
                     };
-                    let noted = record.clone();
-                    let Some((ours, moves)) = note(&now, id, &mut record) else {
-                        continue;
-                    };
-                    if let Some(p) = path.as_deref().filter(|_| record != noted) {
-                        keep_record(p, &record);
-                    }
-                    for stream in moves {
-                        repriseaudio::set_target(stream, Some(ours));
+                    if !step(&now, &mut state) {
+                        break;
                     }
                 }
-                record
+                state
             })?;
-        Ok(Follow { wake, thread })
+        Ok(Watcher { wake, thread })
     }
 
-    /// Stops moving streams; the record, unless the thread panicked.
-    fn end(self) -> Option<Record> {
+    /// Stops it; the state, unless the thread panicked.
+    fn end(self) -> Option<T> {
         let _ = self.wake.send(false);
         self.thread.join().ok()
     }
+}
+
+/// Moves each playback stream sent to another sink into ours, node `id`, while it lives,
+/// keeping the [`Record`] of where each played before at `path`.
+fn follow(id: u32, record: Record, path: Option<PathBuf>) -> io::Result<Watcher<Record>> {
+    Watcher::start("reprise-rdp-streams", record, move |now, record| {
+        let noted = record.clone();
+        let Some((ours, moves)) = note(now, id, record) else {
+            return true;
+        };
+        if let Some(p) = path.as_deref().filter(|_| *record != noted) {
+            keep_record(p, record);
+        }
+        for stream in moves {
+            repriseaudio::set_target(stream, Some(ours));
+        }
+        true
+    })
+}
+
+/// Programs owed their output, by [`repriseaudio::App::key`], with the sink each played to.
+type Owed = BTreeMap<String, String>;
+
+/// The programs a sink going away leaves owed: moved into it with an output picked, and with no
+/// stream there left to move back. WirePlumber remembers our sink for them, gone with it, so
+/// their next streams would follow the default.
+fn owed(now: &Snapshot, record: &Record) -> Owed {
+    let in_ours = |key: &str| {
+        (now.apps.iter().filter(|a| a.key == key))
+            .flat_map(|a| &a.streams)
+            .any(|s| s.target_serial.is_some() && s.target_serial == record.sink)
+    };
+    (record.apps.iter())
+        .filter_map(|(key, sink)| Some((key.clone(), sink.clone()?)))
+        .filter(|(key, _)| !in_ours(key))
+        .collect()
+}
+
+/// The moves that send each owed program's new streams back to its sink: those that follow
+/// the default, while that sink is there. A program seen playing is no longer owed; one already
+/// sent somewhere was given an output meanwhile.
+fn mend(now: &Snapshot, owed: &mut Owed) -> Vec<(u32, u64)> {
+    let mut moves = Vec::new();
+    for app in &now.apps {
+        let Some(sink) = owed.remove(&app.key) else {
+            continue;
+        };
+        let Some(serial) = now
+            .sinks
+            .iter()
+            .find(|d| d.name == sink)
+            .and_then(|d| d.serial)
+        else {
+            continue;
+        };
+        let following = |s: &&Stream| s.target_serial.is_none() && !s.named_target;
+        moves.extend(app.streams.iter().filter(following).map(|s| (s.id, serial)));
+    }
+    moves
+}
+
+/// The [`mend`]ing after the last sink, until each owed program played again or a new sink takes
+/// over what is left.
+static MENDING: Mutex<Option<Watcher<Owed>>> = Mutex::new(None);
+
+/// Mend `owed` on a thread of its own, along with whatever is owed already.
+fn start_mending(owed: Owed) {
+    let mut all = stop_mending();
+    all.extend(owed);
+    let owed = all;
+    if owed.is_empty() {
+        return;
+    }
+    let mending = Watcher::start("reprise-rdp-mend", owed, |now, owed| {
+        for (stream, sink) in mend(now, owed) {
+            repriseaudio::set_target(stream, Some(sink));
+        }
+        !owed.is_empty()
+    });
+    match mending {
+        Ok(m) => *MENDING.lock().unwrap_or_else(PoisonError::into_inner) = Some(m),
+        Err(e) => log::warn!("sound: programs that stopped while connected lose their output: {e}"),
+    }
+}
+
+/// Stops the mending; what was still owed.
+fn stop_mending() -> Owed {
+    let mending = MENDING
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    mending.and_then(Watcher::end).unwrap_or_default()
 }
 
 /// Gives the default and the moved streams back when dropped, by every way out of [`run`]. The
@@ -552,12 +643,13 @@ impl Follow {
 struct GiveBack {
     /// Our sink's node id.
     id: u32,
-    /// What there is to give back, while no [`Follow`] keeps it.
+    /// What there is to give back, while no [`follow`] keeps it.
     record: Record,
     path: Option<PathBuf>,
-    follow: Option<Follow>,
+    follow: Option<Watcher<Record>>,
     now: fn() -> Snapshot,
     put: fn(&[Write]) -> bool,
+    mend: fn(Owed),
 }
 
 impl Drop for GiveBack {
@@ -585,6 +677,7 @@ impl Drop for GiveBack {
             };
             writes.extend(default.map(Write::Default));
             if (self.put)(&writes) {
+                (self.mend)(owed(&now, &record));
                 break default;
             }
             // WirePlumber takes writes again a moment after PipeWire is back.
@@ -620,8 +713,9 @@ fn keep_record(path: &Path, record: &Record) {
 fn run(stopped: pipewire::channel::Receiver<()>, ready: &Mutex<Ready>) -> Result<(), String> {
     pipewire::init();
     let path = record_path();
+    let mut owed = stop_mending();
     if let Some(p) = &path {
-        recover_at(p, repriseaudio::snapshot_now, put_wait);
+        owed.extend(recover_at(p, repriseaudio::snapshot_now, put_wait));
     }
     let before = taken_over(&repriseaudio::snapshot_now());
     monitor::on_pipewire(stopped, |main_loop, core, stopping| {
@@ -654,8 +748,13 @@ fn run(stopped: pipewire::channel::Receiver<()>, ready: &Mutex<Ready>) -> Result
         }
         synced?;
         let id = id.get().ok_or("PipeWire did not make the sink")?;
+        // An owed program's next stream comes back into ours, WirePlumber's pick for it.
         let record = Record {
             before,
+            apps: owed
+                .into_iter()
+                .map(|(key, sink)| (key, Some(sink)))
+                .collect(),
             ..Record::default()
         };
         if let Some(p) = &path {
@@ -668,11 +767,12 @@ fn run(stopped: pipewire::channel::Receiver<()>, ready: &Mutex<Ready>) -> Result
             follow: None,
             now: repriseaudio::snapshot_now,
             put: put_wait,
+            mend: start_mending,
         };
         if !put_wait(&[Write::Default(id)]) {
             log::warn!("sound: \"{DESCRIPTION}\" did not become the default sink");
         }
-        match Follow::start(id, record, path) {
+        match follow(id, record, path) {
             Ok(follow) => guard.follow = Some(follow),
             Err(e) => log::warn!("sound: streams that picked an output stay on it: {e}"),
         }
@@ -965,6 +1065,7 @@ mod tests {
             follow: None,
             now,
             put,
+            mend: |_| {},
         }
     }
 
@@ -1157,6 +1258,74 @@ mod tests {
             [Write::Target(90, Some(41)), Write::Default(40)]
         );
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_program_whose_moved_streams_all_ended_is_owed_its_output() {
+        let remote = sink(77, NAME);
+        let record = Record {
+            sink: Some(77),
+            apps: BTreeMap::from([
+                ("player".into(), Some("speakers".into())),
+                ("browser".into(), None),
+                ("game".into(), Some("hdmi".into())),
+            ]),
+            ..Record::default()
+        };
+        let now = playing(vec![app("game", vec![stream(95, Some(&remote))])]);
+        assert_eq!(
+            owed(&now, &record),
+            Owed::from([("player".into(), "speakers".into())]),
+            "the game goes back with its stream; the browser followed the default"
+        );
+    }
+
+    #[test]
+    fn an_owed_programs_next_stream_goes_back_to_its_output() {
+        let hdmi = sink(41, "hdmi");
+        let mut owed = Owed::from([
+            ("player".into(), "speakers".into()),
+            ("game".into(), "hdmi".into()),
+            ("radio".into(), "headphones".into()),
+            ("idle".into(), "speakers".into()),
+        ]);
+        let now = Snapshot {
+            apps: vec![
+                app("player", vec![stream(90, None), stream(91, Some(&hdmi))]),
+                app("game", vec![stream(92, Some(&hdmi))]),
+                app("radio", vec![stream(93, None)]),
+            ],
+            ..now("speakers")
+        };
+        assert_eq!(
+            mend(&now, &mut owed),
+            [(90, 40)],
+            "91 and the game were sent somewhere meanwhile; the headphones are gone"
+        );
+        assert_eq!(owed, Owed::from([("idle".into(), "speakers".into())]));
+    }
+
+    thread_local! {
+        static MENDED: RefCell<Vec<Owed>> = const { RefCell::new(Vec::new()) };
+    }
+
+    #[test]
+    fn giving_back_mends_what_it_could_not_move_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sound-before");
+        let record = Record {
+            apps: BTreeMap::from([("player".into(), Some("hdmi".into()))]),
+            ..before("speakers")
+        };
+        keep_record(&path, &record);
+        let mut guard = give_back_guard(&path, ours);
+        guard.mend = |owed| MENDED.with_borrow_mut(|m| m.push(owed));
+        drop(guard);
+        assert_eq!(PUT.take(), [Write::Default(40)]);
+        assert_eq!(
+            MENDED.take(),
+            [Owed::from([("player".into(), "hdmi".into())])]
+        );
     }
 
     #[test]
