@@ -46,6 +46,8 @@ pub enum Page {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Picks {
     pub interface: Interface,
+    /// Kept while an interface without dark ([`dark_offered`]) is picked, so picking another
+    /// one brings it back.
     pub dark: bool,
     /// One of [`TEXT_SIZES`].
     pub text_size: u32,
@@ -309,7 +311,6 @@ impl Welcome {
                 let mut picks = self.picks;
                 if let Some((_, i, _)) = INTERFACES.iter().find(|i| i.0 == id) {
                     picks.interface = *i;
-                    picks.dark &= dark_offered(*i);
                 } else if id == LIGHT || id == DARK {
                     picks.dark = form.checked(DARK).unwrap_or(false);
                 } else if id == TEXT_SIZE {
@@ -449,15 +450,15 @@ mod tests {
     }
 
     #[test]
-    fn blue_greys_dark_and_drops_it() {
+    fn blue_greys_dark_and_keeps_it_for_the_next_interface() {
         let theme = Theme::default();
         let (mut w, text) = welcome(&theme);
         w.picks.dark = true;
         w.event(form::Event::Changed("blue"), &text, &theme);
         assert_eq!(
             (w.picks.interface, w.picks.dark),
-            (Interface::Blue, false),
-            "Blue is light only"
+            (Interface::Blue, true),
+            "the dark wish stays"
         );
         w.go(Page::Look, &text, &theme);
         assert!(matches!(
@@ -468,7 +469,19 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(w.wizard.form.checked(LIGHT), Some(true));
+        assert_eq!(
+            w.wizard.form.checked(LIGHT),
+            Some(true),
+            "Blue is light only"
+        );
+        w.go(Page::Interface, &text, &theme);
+        w.event(form::Event::Changed("glass"), &text, &theme);
+        w.go(Page::Look, &text, &theme);
+        assert_eq!(
+            w.wizard.form.checked(DARK),
+            Some(true),
+            "Glass shows dark again"
+        );
     }
 
     #[test]

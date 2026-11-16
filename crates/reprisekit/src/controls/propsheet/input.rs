@@ -549,7 +549,7 @@ impl PropSheet {
                 Some(Hit::Tab(_) | Hit::Link(_) | Hit::List | Hit::ListBar(_))
             )
         {
-            let moved = self.on_list(|list, lay| list.scroll(rows * pagelist::ROW_H, lay));
+            let moved = self.on_list(|list, lay| list.scroll(rows * lay.row_h, lay));
             return if moved { Event::Redraw } else { Event::None };
         }
         match hit {
