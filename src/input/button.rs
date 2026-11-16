@@ -51,6 +51,11 @@ impl State {
         if state == ButtonState::Pressed && self.interaction.is_keyboard() {
             self.end_interaction();
             self.repoint(pos, time);
+            self.commit_buttons.push(button);
+            return;
+        }
+        if state == ButtonState::Released && self.commit_buttons.contains(&button) {
+            self.commit_buttons.retain(|&b| b != button);
             return;
         }
         // Under the desktop's lock a press goes to the lock screen (`press`), never to what is
@@ -122,9 +127,12 @@ impl State {
         if state == ButtonState::Pressed {
             self.keys_saw_button();
         }
+        // A keyboard move or size outlives the release of the click that picked it from the
+        // window menu; the next press or Enter commits it.
         if state == ButtonState::Released
             && self.buttons_down == 0
             && self.interaction != Interaction::Idle
+            && !self.interaction.is_keyboard()
         {
             self.end_interaction();
             self.repoint(pos, time);

@@ -608,3 +608,101 @@ fn an_arrow_in_a_keyboard_move_asks_only_the_output_the_window_moves_on() {
     );
     assert_eq!(asked_outputs(), ["TEST-1"], "a lies on TEST-1");
 }
+
+/// Open `w`'s window menu at (`x`, `y`) and press and release the left button on row `label`.
+fn click_window_menu_row(
+    h: &mut crate::harness::Harness,
+    w: WindowId,
+    at: (i32, i32),
+    label: &str,
+) {
+    h.state.open_window_menu(w, at, false);
+    h.dispatch();
+    let m = &h.state.menus[0];
+    let row = (m.items.iter())
+        .position(|i| {
+            matches!(i, reprisekit::controls::menu::MenuItem::Entry { label: l, .. } if l.replace('&', "") == label)
+        })
+        .unwrap_or_else(|| panic!("the window menu has {label}"));
+    let (x, y) = (0..768)
+        .step_by(2)
+        .flat_map(|y| {
+            (0..1024)
+                .step_by(2)
+                .map(move |x| (f64::from(x), f64::from(y)))
+        })
+        .find(|&(x, y)| h.state.menu_row_at(0, x, y) == Some(row))
+        .unwrap_or_else(|| panic!("{label} lies on TEST-1"));
+    h.pointer_to(x, y);
+    h.button(BTN_LEFT, true);
+    h.button(BTN_LEFT, false);
+}
+
+#[test]
+fn a_move_picked_from_the_window_menu_follows_the_pointer_until_the_next_click() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let a = h.map_toplevel(&mut c, "a", 300, 200);
+    h.state.move_to(a.id, 100, 100);
+    h.dispatch();
+    click_window_menu_row(&mut h, a.id, (500, 500), "Move");
+    assert!(
+        matches!(
+            h.state.interaction,
+            Interaction::Move {
+                origin: Some(_),
+                ..
+            }
+        ),
+        "the move outlives the release that picked it: {:?}",
+        h.state.interaction
+    );
+    let before = h.state.win(a.id).expect("a").frame_rect();
+    let p = h.state.pointer_location();
+    h.pointer_to(p.x + 80.0, p.y + 60.0);
+    h.state.settle_moves();
+    let moved = h.state.win(a.id).expect("a").frame_rect();
+    assert_eq!(
+        (moved.x - before.x, moved.y - before.y),
+        (80, 60),
+        "a follows the pointer"
+    );
+    h.button(BTN_LEFT, true);
+    h.button(BTN_LEFT, false);
+    h.state.settle_moves();
+    assert_eq!(h.state.interaction, Interaction::Idle, "the click commits");
+    assert_eq!(
+        h.state.win(a.id).expect("a").frame_rect(),
+        moved,
+        "a stays where it was dropped"
+    );
+    assert_eq!(h.state.buttons_down, 0, "no button is counted down");
+    h.roundtrip(&mut c);
+    assert_eq!(c.side.buttons, [], "no client hears a button");
+}
+
+#[test]
+fn a_size_picked_from_the_window_menu_follows_the_pointer_until_the_next_click() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let a = h.map_toplevel(&mut c, "a", 300, 200);
+    h.state.move_to(a.id, 100, 100);
+    h.dispatch();
+    click_window_menu_row(&mut h, a.id, (500, 500), "Size");
+    assert!(
+        h.state.interaction.is_keyboard(),
+        "the size outlives the release that picked it: {:?}",
+        h.state.interaction
+    );
+    h.button(BTN_LEFT, true);
+    h.button(BTN_LEFT, false);
+    assert_eq!(h.state.interaction, Interaction::Idle, "the click commits");
+    h.roundtrip(&mut c);
+    assert_eq!(
+        c.side.buttons,
+        [],
+        "a under the cursor hears neither the commit press nor its release"
+    );
+}
