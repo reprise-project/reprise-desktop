@@ -137,7 +137,7 @@ fn move_to_recycle_bin_takes_the_entry_out_of_the_count() {
     let before = d.scan.as_ref().unwrap().tree().node(ROOT).size;
     pick(&mut d, "photo.jpg");
     d.ask_trash(r.join("photo.jpg"));
-    assert!(d.confirm.is_none(), "asked nothing");
+    assert!(d.confirm.is_empty(), "asked nothing");
     let until = Instant::now() + Duration::from_secs(10);
     while names(&d).contains(&"photo.jpg") {
         assert!(Instant::now() < until, "the move lands");
@@ -156,7 +156,7 @@ fn move_to_recycle_bin_takes_the_entry_out_of_the_count() {
     .unwrap();
     pick(&mut d, "notes.txt");
     d.ask_trash(r.join("notes.txt"));
-    let (path, b) = d.confirm.as_ref().expect("asks first");
+    let (b, path) = d.confirm.up().expect("asks first");
     assert_eq!(path, &r.join("notes.txt"));
     assert_eq!(
         b.fields.text,
