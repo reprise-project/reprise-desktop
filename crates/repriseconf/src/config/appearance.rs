@@ -80,17 +80,17 @@ pub fn resolve_gtk_theme<'a>(
 }
 
 /// `QT_QPA_PLATFORMTHEME` for `configured`: "reprise" is the `generated` tool,
-/// "auto" (or "reprise" with no tool) is the portal's under a dark look and None
-/// under a light one; else the named platform theme.
+/// "auto" (or "reprise" with no tool) is the portal's, or None to keep the value
+/// the session `inherited`; else the named platform theme.
 pub fn resolve_qt<'a>(
     configured: &'a str,
-    dark: bool,
     generated: Option<&'static str>,
+    inherited: bool,
 ) -> Option<&'a str> {
     match (configured, generated) {
         (TOOLKIT_REPRISE, Some(g)) => Some(g),
-        (TOOLKIT_AUTO | TOOLKIT_REPRISE, _) if dark => Some("xdgdesktopportal"),
-        (TOOLKIT_AUTO | TOOLKIT_REPRISE, _) => None,
+        (TOOLKIT_AUTO | TOOLKIT_REPRISE, _) if inherited => None,
+        (TOOLKIT_AUTO | TOOLKIT_REPRISE, _) => Some("xdgdesktopportal"),
         (t, _) => Some(t),
     }
 }

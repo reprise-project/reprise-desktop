@@ -71,8 +71,9 @@ theme = "hicolor"            # freedesktop icon theme for menus, taskbar, captio
 #                            # and Reprise-alt and rewritten when the look changes;
 #                            # libadwaita programs ignore it, see gtk4_colors
 # qt_platform_theme = "auto" # QT_QPA_PLATFORMTHEME for programs Reprise starts
-#                            # (xdgdesktopportal, qt6ct, qt5ct, kde, gtk3); "auto" is
-#                            # xdgdesktopportal under a dark look, else the session's own;
+#                            # (xdgdesktopportal, qt6ct, qt5ct, kde, gtk3); "auto" keeps
+#                            # the session's own, else xdgdesktopportal (Reprise's file
+#                            # dialog and dark scheme);
 #                            # "reprise" is qt6ct or qt5ct with Fusion in the look's
 #                            # colours (needs one of them; Reprise writes qt6ct.conf and
 #                            # qt5ct.conf only when they are absent or its own)

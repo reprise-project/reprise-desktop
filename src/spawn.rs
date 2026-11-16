@@ -135,13 +135,14 @@ pub struct SessionEnv {
     /// `XCURSOR_THEME` and `XCURSOR_SIZE`: the `[cursor]` theme and size, so clients draw the
     /// same pointer.
     pub cursor: (String, u32),
-    /// `[toolkits] qt_platform_theme`, resolved per launch against the colours
-    /// (`crate::config::resolve_qt`). Children only: a switch back to light leaves nothing to
-    /// unset in the activation environment.
+    /// `[toolkits] qt_platform_theme`, resolved per launch (`crate::config::resolve_qt`).
+    /// Children only: bus-activated services keep the activation environment's value.
     pub qt_platform_theme: String,
     /// The Qt tool that took the generated palette (`crate::toolkits`), which "reprise"
     /// resolves to.
     pub qt_generated: Option<&'static str>,
+    /// The compositor started with `QT_QPA_PLATFORMTHEME` set, which "auto" leaves alone.
+    pub qt_inherited: bool,
     pub renderer: &'static str,
     /// [`reprisefs::configfile::ENV`]: the config file the compositor reads.
     pub config: String,
@@ -221,6 +222,7 @@ impl SessionEnv {
             cursor,
             qt_platform_theme: crate::config::TOOLKIT_AUTO.into(),
             qt_generated: None,
+            qt_inherited: get("QT_QPA_PLATFORMTHEME").is_some(),
             renderer: "",
             config: reprisefs::configfile::path()
                 .into_os_string()
@@ -325,12 +327,12 @@ impl SessionEnv {
         v
     }
 
-    fn dark(&self) -> bool {
-        reprisekit::theme::ColorScheme::from_env(&self.colors).is_some_and(|c| c.is_dark())
-    }
-
     fn qt_platform_theme(&self) -> Option<&str> {
-        crate::config::resolve_qt(&self.qt_platform_theme, self.dark(), self.qt_generated)
+        crate::config::resolve_qt(
+            &self.qt_platform_theme,
+            self.qt_generated,
+            self.qt_inherited,
+        )
     }
 }
 
@@ -1431,6 +1433,7 @@ mod tests {
             cursor: ("default".into(), 24),
             qt_platform_theme: "auto".into(),
             qt_generated: None,
+            qt_inherited: false,
             renderer: "vulkan",
             config: "/srv/test/config.toml".into(),
             login: vec![("XDG_SEAT", "seat0".into())],
@@ -2220,14 +2223,27 @@ mod tests {
         );
     }
 
-    /// "auto" points Qt at the portal under a dark scheme and leaves it
-    /// alone under a light one; a named platform theme always stands. Never
-    /// in the activation environment.
+    /// Never in the activation environment.
     #[test]
-    fn qt_takes_the_portal_under_a_dark_look_or_the_configured_theme() {
+    fn qt_takes_the_portal_under_any_look_unless_the_session_names_a_theme() {
         use reprisekit::theme::{Color, ColorScheme};
         let light = command("true", &env(None), None).unwrap();
-        assert_eq!(env_of(&light, "QT_QPA_PLATFORMTHEME"), None);
+        assert_eq!(
+            env_of(&light, "QT_QPA_PLATFORMTHEME"),
+            Some(Some("xdgdesktopportal".into()))
+        );
+        let inherited = SessionEnv {
+            qt_inherited: true,
+            ..env(None)
+        };
+        assert_eq!(
+            env_of(
+                &command("true", &inherited, None).unwrap(),
+                "QT_QPA_PLATFORMTHEME"
+            ),
+            None,
+            "the child keeps the session's own value"
+        );
         let dark_scheme = ColorScheme {
             window: Color::rgb(32, 32, 32),
             ..ColorScheme::default()
