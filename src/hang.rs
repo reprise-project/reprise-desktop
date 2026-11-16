@@ -808,6 +808,18 @@ impl State {
         self.close_end_programs(|p| !live.contains(&p), "has no window left");
     }
 
+    /// An End Program for `pid` was cleared away unanswered: the next timed-out ping of its windows
+    /// offers it again.
+    pub(crate) fn end_program_due(&mut self, pid: i32) {
+        let ws: Vec<WindowId> = (self.windows.iter())
+            .map(|w| w.id)
+            .filter(|&w| self.client_pid(w) == Some(pid))
+            .collect();
+        for w in ws {
+            self.window_hang(w).close_asked = true;
+        }
+    }
+
     fn close_end_programs(&mut self, ends: impl Fn(i32) -> bool, why: &str) {
         let pids: Vec<Option<i32>> = self
             .dialogs
@@ -1404,6 +1416,28 @@ mod tests {
         assert_eq!(orphaned(&[20, 30]), vec![(0, 10), (3, 10)]);
         assert_eq!(orphaned(&[10, 20]), vec![]);
         assert_eq!(orphaned(&[]), vec![(0, 10), (2, 20), (3, 10)]);
+    }
+
+    #[test]
+    fn end_program_a_welcome_panel_cleared_is_due_again() {
+        const PID: i32 = i32::MAX - 813;
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut c = h.connect_as(PID);
+        let t = h.map_toplevel(&mut c, "app", 200, 100);
+        let target = h.state.ping_target(t.id).expect("ping target");
+        h.state.ping_on_close(t.id);
+        h.state.ping_timed_out(target);
+        let up = |h: &crate::harness::Harness| {
+            (h.state.dialogs.views.iter()).any(|v| v.dialog.end_program_pid() == Some(PID))
+        };
+        assert!(up(&h), "End Program for the hung window");
+        let power = h.state.config.power.clone();
+        h.state.open_dialog(Dialog::turn_off(&power, false));
+        h.state.close_dialog_at(0);
+        assert!(!up(&h), "the panel cleared it");
+        h.state.ping_timed_out(target);
+        assert!(up(&h), "the next timed-out ping offers it again");
     }
 
     #[test]

@@ -574,7 +574,7 @@ fn finish_cap(written: u64) -> Duration {
 }
 
 /// Signal `sig` to the process `pidfd` holds; `ESRCH` once it was reaped.
-fn signal(pidfd: &OwnedFd, sig: libc::c_int) -> std::io::Result<()> {
+pub(crate) fn signal(pidfd: &OwnedFd, sig: libc::c_int) -> std::io::Result<()> {
     // SAFETY: a null siginfo is allowed and sends the signal as kill(2) would.
     let r = unsafe {
         libc::syscall(
