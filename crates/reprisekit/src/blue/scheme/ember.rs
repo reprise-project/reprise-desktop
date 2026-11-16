@@ -96,7 +96,7 @@ pub const EMBER: Scheme = Scheme {
             task_group_header: 0.0,
         },
     },
-    caption: CaptionFaces {
+    caption: FrameFaces {
         normal: Face {
             rim: Color::rgb(0x25, 0x25, 0x25),
             inner: Color::rgb(0x85, 0x85, 0x85),
@@ -118,7 +118,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    max_caption: MaxCaptionFaces {
+    max_caption: FrameFaces {
         normal: Face {
             rim: Color::rgb(0x25, 0x25, 0x25),
             inner: Color::rgb(0x29, 0x29, 0x29),
@@ -139,7 +139,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    frame_left: FrameLeftFaces {
+    frame_left: FrameFaces {
         normal: Face {
             rim: Color::rgb(0x29, 0x29, 0x29),
             inner: Color::rgb(0x85, 0x85, 0x85),
@@ -157,7 +157,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    frame_right: FrameRightFaces {
+    frame_right: FrameFaces {
         normal: Face {
             rim: Color::rgb(0x1B, 0x1B, 0x1B),
             inner: Color::rgb(0x29, 0x29, 0x29),
@@ -175,7 +175,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    frame_bottom: FrameBottomFaces {
+    frame_bottom: FrameFaces {
         normal: Face {
             rim: Color::rgb(0x1B, 0x1B, 0x1B),
             inner: Color::rgb(0x85, 0x85, 0x85),
@@ -195,7 +195,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    min_button: MinButtonFaces {
+    min_button: CaptionButtonFaces {
         normal: Face {
             rim: Color::rgb(0x43, 0x43, 0x43),
             inner: Color::rgb(0x76, 0x76, 0x76),
@@ -253,7 +253,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0xFF, 0xFF, 0xFF)),
         },
     },
-    max_button: MaxButtonFaces {
+    max_button: CaptionButtonFaces {
         normal: Face {
             rim: Color::rgb(0x43, 0x43, 0x43),
             inner: Color::rgb(0x76, 0x76, 0x76),
@@ -321,7 +321,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    restore_button: RestoreButtonFaces {
+    restore_button: CaptionButtonFaces {
         normal: Face {
             rim: Color::rgb(0x43, 0x43, 0x43),
             inner: Color::rgb(0x76, 0x76, 0x76),
@@ -381,7 +381,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0xFF, 0xFF, 0xFF)),
         },
     },
-    close_button: CloseButtonFaces {
+    close_button: CaptionButtonFaces {
         normal: Face {
             rim: Color::rgb(0x43, 0x43, 0x43),
             inner: Color::rgb(0xF0, 0x8F, 0x78),
@@ -446,7 +446,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0xFF, 0xFF, 0xFF)),
         },
     },
-    taskbar: TaskbarFaces {
+    taskbar: RestFaces {
         normal: Face {
             rim: Color::rgb(0x25, 0x25, 0x25),
             inner: Color::rgb(0x6A, 0x6A, 0x6A),
@@ -457,7 +457,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    start_button: StartButtonFaces {
+    start_button: LitFaces {
         normal: Face {
             rim: Color::rgb(0x4E, 0x1F, 0x01),
             inner: Color::rgb(0xFF, 0xDA, 0xC3),
@@ -544,7 +544,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    tray_area: TrayAreaFaces {
+    tray_area: RestFaces {
         normal: Face {
             rim: Color::rgb(0x00, 0x00, 0x00),
             inner: Color::rgb(0x1D, 0x1D, 0x1D),
@@ -822,7 +822,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0xBA, 0xBA, 0xBA)),
         },
     },
-    group_box: GroupBoxFaces {
+    group_box: GreyedFaces {
         normal: Face {
             rim: Color::rgb(0xD6, 0xD5, 0xD9),
             inner: Color::rgb(0xD6, 0xD5, 0xD9),
@@ -840,7 +840,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    scroll_arrow_up: ScrollArrowUpFaces {
+    scroll_arrow_up: LitGreyedFaces {
         normal: Face {
             rim: Color::rgb(0xF0, 0xF0, 0xF0),
             inner: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -882,7 +882,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0xB7, 0xCB, 0xE3)),
         },
     },
-    scroll_arrow_down: ScrollArrowDownFaces {
+    scroll_arrow_down: LitGreyedFaces {
         normal: Face {
             rim: Color::rgb(0xF0, 0xF0, 0xF0),
             inner: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -924,7 +924,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0xB7, 0xCB, 0xE3)),
         },
     },
-    scroll_arrow_left: ScrollArrowLeftFaces {
+    scroll_arrow_left: LitGreyedFaces {
         normal: Face {
             rim: Color::rgb(0x9B, 0x9B, 0x9B),
             inner: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -964,7 +964,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0xB7, 0xCB, 0xE3)),
         },
     },
-    scroll_arrow_right: ScrollArrowRightFaces {
+    scroll_arrow_right: LitGreyedFaces {
         normal: Face {
             rim: Color::rgb(0x9B, 0x9B, 0x9B),
             inner: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -1004,7 +1004,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0xB7, 0xCB, 0xE3)),
         },
     },
-    scroll_thumb_v: ScrollThumbVFaces {
+    scroll_thumb_v: LitGreyedFaces {
         normal: Face {
             rim: Color::rgb(0xF0, 0xF0, 0xF0),
             inner: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -1047,7 +1047,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    scroll_thumb_h: ScrollThumbHFaces {
+    scroll_thumb_h: LitGreyedFaces {
         normal: Face {
             rim: Color::rgb(0x9B, 0x9B, 0x9B),
             inner: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -1090,7 +1090,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    scroll_grip_v: ScrollGripVFaces {
+    scroll_grip_v: ScrollGripFaces {
         normal: Face {
             rim: Color::rgb(0xFF, 0xFF, 0xFF),
             inner: Color::rgb(0x99, 0x99, 0x99),
@@ -1122,7 +1122,7 @@ pub const EMBER: Scheme = Scheme {
         },
         disabled: None,
     },
-    scroll_grip_h: ScrollGripHFaces {
+    scroll_grip_h: ScrollGripFaces {
         normal: Face {
             rim: Color::rgb(0xFF, 0xFF, 0xFF),
             inner: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -1152,7 +1152,7 @@ pub const EMBER: Scheme = Scheme {
         },
         disabled: None,
     },
-    scroll_track_v: ScrollTrackVFaces {
+    scroll_track_v: ScrollTrackFaces {
         normal: Face {
             rim: Color::rgb(0xFC, 0xFC, 0xFC),
             inner: Color::rgb(0xFC, 0xFC, 0xFC),
@@ -1179,7 +1179,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    scroll_track_h: ScrollTrackHFaces {
+    scroll_track_h: ScrollTrackFaces {
         normal: Face {
             rim: Color::rgb(0xFC, 0xFC, 0xFC),
             inner: Color::rgb(0xFC, 0xFC, 0xFC),
@@ -1206,7 +1206,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    edit_border: EditBorderFaces {
+    edit_border: GreyedFaces {
         normal: Face {
             rim: Color::rgb(0x96, 0x96, 0x96),
             inner: Color::rgb(0x96, 0x96, 0x96),
@@ -1226,7 +1226,7 @@ pub const EMBER: Scheme = Scheme {
         },
     },
     list_border: None,
-    combo_drop: ComboDropFaces {
+    combo_drop: LitGreyedFaces {
         normal: Face {
             rim: Color::rgb(0x9B, 0x9B, 0x9B),
             inner: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -1296,7 +1296,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0xE6, 0x8B, 0x2C)),
         },
     },
-    tab_pane: TabPaneFaces {
+    tab_pane: RestFaces {
         normal: Face {
             rim: Color::rgb(0x9D, 0x9D, 0x9D),
             inner: Color::rgb(0xFD, 0xFD, 0xFD),
@@ -1306,7 +1306,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    progress_bar: ProgressBarFaces {
+    progress_bar: GreyedFaces {
         normal: Face {
             rim: Color::rgb(0x68, 0x68, 0x68),
             inner: Color::rgb(0xBE, 0xBE, 0xBE),
@@ -1328,7 +1328,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    progress_chunk: ProgressChunkFaces {
+    progress_chunk: GreyedFaces {
         normal: Face {
             rim: Color::rgb(0xBE, 0x51, 0x0E),
             inner: Color::rgb(0xFF, 0xB1, 0x80),
@@ -1348,7 +1348,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    trackbar_track: TrackbarTrackFaces {
+    trackbar_track: GreyedFaces {
         normal: Face {
             rim: Color::rgb(0xF8, 0xF8, 0xF4),
             inner: Color::rgb(0xF7, 0xF6, 0xF1),
@@ -1369,7 +1369,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    trackbar_thumb: TrackbarThumbFaces {
+    trackbar_thumb: LitGreyedFaces {
         normal: Face {
             rim: Color::rgb(0xC1, 0xC1, 0xC1),
             inner: Color::rgb(0xDA, 0xDA, 0xDA),
@@ -1417,7 +1417,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    trackbar_track_v: TrackbarTrackVFaces {
+    trackbar_track_v: GreyedFaces {
         normal: Face {
             rim: Color::rgb(0xF8, 0xF8, 0xF4),
             inner: Color::rgb(0xF7, 0xF6, 0xF1),
@@ -1439,7 +1439,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    trackbar_thumb_v: TrackbarThumbVFaces {
+    trackbar_thumb_v: LitGreyedFaces {
         normal: Face {
             rim: Color::rgb(0xC1, 0xC1, 0xC1),
             inner: Color::rgb(0xDA, 0xDA, 0xDA),
@@ -1481,7 +1481,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    spin_up: SpinUpFaces {
+    spin_up: LitGreyedFaces {
         normal: Face {
             rim: Color::rgb(0x9B, 0x9B, 0x9B),
             inner: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -1521,7 +1521,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    spin_down: SpinDownFaces {
+    spin_down: LitGreyedFaces {
         normal: Face {
             rim: Color::rgb(0x9B, 0x9B, 0x9B),
             inner: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -1610,7 +1610,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0xFF, 0xFF, 0xFF)),
         },
     },
-    size_box: SizeBoxFaces {
+    size_box: RestFaces {
         normal: Face {
             rim: Color::rgb(0xD6, 0xD5, 0xD9),
             inner: Color::rgb(0xD6, 0xD5, 0xD9),
@@ -1622,7 +1622,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    calendar_band: CalendarBandFaces {
+    calendar_band: GreyedFaces {
         normal: Face {
             rim: Color::rgb(0x74, 0x74, 0x74),
             inner: Color::rgb(0x74, 0x74, 0x74),
@@ -1640,7 +1640,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    toolbar_button: ToolbarButtonFaces {
+    toolbar_button: ToolbarFaces {
         hot: Face {
             rim: Color::rgb(0xBE, 0xBE, 0xBE),
             inner: Color::rgb(0xF0, 0xF0, 0xF0),
@@ -1681,7 +1681,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    toolbar_drop: ToolbarDropFaces {
+    toolbar_drop: ToolbarFaces {
         hot: Face {
             rim: Color::rgb(0xBE, 0xBE, 0xBE),
             inner: Color::rgb(0xF0, 0xF0, 0xF0),
@@ -1721,7 +1721,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    toolbar_separator: ToolbarSeparatorFaces {
+    toolbar_separator: RestFaces {
         normal: Face {
             rim: Color::rgb(0xD6, 0xD5, 0xD9),
             inner: Color::rgb(0xD6, 0xD5, 0xD9),
@@ -1731,7 +1731,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    rebar: RebarFaces {
+    rebar: RestFaces {
         normal: Face {
             rim: Color::rgb(0xB6, 0xB6, 0xB6),
             inner: Color::rgb(0xDB, 0xDB, 0xDB),
@@ -1741,7 +1741,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    rebar_band: RebarBandFaces {
+    rebar_band: RestFaces {
         normal: Face {
             rim: Color::rgb(0xB4, 0xB4, 0xB4),
             inner: Color::rgb(0xB4, 0xB4, 0xB4),
@@ -1751,7 +1751,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    header_item: HeaderItemFaces {
+    header_item: LitFaces {
         normal: Face {
             rim: Color::rgb(0xDB, 0xDB, 0xDB),
             inner: Color::rgb(0xDB, 0xDB, 0xDB),
@@ -1779,7 +1779,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    header_filler: HeaderFillerFaces {
+    header_filler: RestFaces {
         normal: Face {
             rim: Color::rgb(0xDB, 0xDB, 0xDB),
             inner: Color::rgb(0xDB, 0xDB, 0xDB),
@@ -1807,7 +1807,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    status_bar: StatusBarFaces {
+    status_bar: RestFaces {
         normal: Face {
             rim: Color::rgb(0xF4, 0xF4, 0xF4),
             inner: Color::rgb(0xF4, 0xF4, 0xF4),
@@ -1817,7 +1817,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    status_pane: StatusPaneFaces {
+    status_pane: RestFaces {
         normal: Face {
             rim: Color::rgb(0xD7, 0xD7, 0xD7),
             inner: Color::rgb(0xD7, 0xD7, 0xD7),
@@ -1827,7 +1827,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    task_pane: TaskPaneFaces {
+    task_pane: RestFaces {
         normal: Face {
             rim: Color::rgb(0x7E, 0x7E, 0x7E),
             inner: Color::rgb(0x7E, 0x7E, 0x7E),
@@ -1837,7 +1837,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    task_group_header: TaskGroupHeaderFaces {
+    task_group_header: RestFaces {
         normal: Face {
             rim: Color::rgb(0xBE, 0x51, 0x0E),
             inner: Color::rgb(0xFF, 0xC4, 0x94),
@@ -1850,7 +1850,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    task_group_body: TaskGroupBodyFaces {
+    task_group_body: RestFaces {
         normal: Face {
             rim: Color::rgb(0xFF, 0xFF, 0xFF),
             inner: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -1860,7 +1860,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    task_collapse: TaskCollapseFaces {
+    task_collapse: LitFaces {
         normal: Face {
             rim: Color::rgb(0xBE, 0x51, 0x0E),
             inner: Color::rgb(0xFF, 0xC4, 0x94),
@@ -1892,7 +1892,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0xFF, 0xFF, 0xFF)),
         },
     },
-    task_expand: TaskExpandFaces {
+    task_expand: RestFaces {
         normal: Face {
             rim: Color::rgb(0xBE, 0x51, 0x0E),
             inner: Color::rgb(0xFF, 0xC4, 0x94),
@@ -1904,7 +1904,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0xFF, 0xED, 0xC8)),
         },
     },
-    explorer_bar_header: ExplorerBarHeaderFaces {
+    explorer_bar_header: RestFaces {
         normal: Face {
             rim: Color::rgb(0xB4, 0xB4, 0xB4),
             inner: Color::rgb(0xB4, 0xB4, 0xB4),
@@ -1914,7 +1914,7 @@ pub const EMBER: Scheme = Scheme {
             mark: None,
         },
     },
-    explorer_bar_close: ExplorerBarCloseFaces {
+    explorer_bar_close: LitFaces {
         normal: Face {
             rim: Color::rgb(0x00, 0x00, 0x00),
             inner: Color::rgb(0x00, 0x00, 0x00),
@@ -1943,7 +1943,7 @@ pub const EMBER: Scheme = Scheme {
             mark: Some(Color::rgb(0x00, 0x00, 0x00)),
         },
     },
-    places_bar: PlacesBarFaces {
+    places_bar: RestFaces {
         normal: Face {
             rim: Color::rgb(0xE3, 0xE2, 0xE6),
             inner: Color::rgb(0xFF, 0xFF, 0xFF),

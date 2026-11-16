@@ -248,102 +248,16 @@ pub struct Inks {
     pub track_tick: Color,
 }
 
+/// A window frame part, drawn `inactive` while its window is not active.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CaptionFaces {
+pub struct FrameFaces {
     pub normal: Face,
     pub inactive: Face,
 }
 
-impl CaptionFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("inactive", Some(&self.inactive)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
+/// A caption button, also drawn `inactive` while its window is not active.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MaxCaptionFaces {
-    pub normal: Face,
-    pub inactive: Face,
-}
-
-impl MaxCaptionFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("inactive", Some(&self.inactive)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// The left border, 4 px; `across` runs outside in.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FrameLeftFaces {
-    pub normal: Face,
-    pub inactive: Face,
-}
-
-impl FrameLeftFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("inactive", Some(&self.inactive)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// The right border, 4 px; `across` runs inside out.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FrameRightFaces {
-    pub normal: Face,
-    pub inactive: Face,
-}
-
-impl FrameRightFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("inactive", Some(&self.inactive)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// The bottom border, 4 rows; `down` runs top to bottom.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FrameBottomFaces {
-    pub normal: Face,
-    pub inactive: Face,
-}
-
-impl FrameBottomFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("inactive", Some(&self.inactive)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// The minimize caption button, 21x21; `mark` is the glyph.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MinButtonFaces {
+pub struct CaptionButtonFaces {
     pub normal: Face,
     pub hot: Face,
     pub pressed: Face,
@@ -351,128 +265,18 @@ pub struct MinButtonFaces {
     pub inactive: Face,
 }
 
-impl MinButtonFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-            ("inactive", Some(&self.inactive)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
+/// A part with one look.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RestFaces {
+    pub normal: Face,
 }
 
-/// The maximize caption button, 21x21; `mark` is the glyph.
+/// A part that lights under the pointer and shows pressed.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MaxButtonFaces {
+pub struct LitFaces {
     pub normal: Face,
     pub hot: Face,
     pub pressed: Face,
-    pub disabled: Face,
-    pub inactive: Face,
-}
-
-impl MaxButtonFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-            ("inactive", Some(&self.inactive)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// The restore caption button, 21x21; `mark` is the glyph.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RestoreButtonFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-    pub inactive: Face,
-}
-
-impl RestoreButtonFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-            ("inactive", Some(&self.inactive)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// The close caption button, 21x21, the red one; `mark` is the cross.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CloseButtonFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-    pub inactive: Face,
-}
-
-impl CloseButtonFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-            ("inactive", Some(&self.inactive)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TaskbarFaces {
-    pub normal: Face,
-}
-
-impl TaskbarFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StartButtonFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-}
-
-impl StartButtonFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -484,36 +288,6 @@ pub struct TaskButtonFaces {
     pub pressed: Face,
 }
 
-impl TaskButtonFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("checked", Some(&self.checked)),
-            ("checked_hot", Some(&self.checked_hot)),
-            ("pressed", Some(&self.pressed)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// The notification area: `down` is its band, `across` its 3 px left edge then the band.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TrayAreaFaces {
-    pub normal: Face,
-}
-
-impl TrayAreaFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PushButtonFaces {
     pub normal: Face,
@@ -522,22 +296,6 @@ pub struct PushButtonFaces {
     pub disabled: Face,
     pub default: Face,
     pub focused: Face,
-}
-
-impl PushButtonFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-            ("default", Some(&self.default)),
-            ("focused", Some(&self.focused)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
 }
 
 /// The 13 px check box; `mark` on a checked or mixed face is the tick or square.
@@ -557,28 +315,6 @@ pub struct CheckBoxFaces {
     pub disabled_mixed: Face,
 }
 
-impl CheckBoxFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-            ("normal_checked", Some(&self.normal_checked)),
-            ("hot_checked", Some(&self.hot_checked)),
-            ("pressed_checked", Some(&self.pressed_checked)),
-            ("disabled_checked", Some(&self.disabled_checked)),
-            ("normal_mixed", Some(&self.normal_mixed)),
-            ("hot_mixed", Some(&self.hot_mixed)),
-            ("pressed_mixed", Some(&self.pressed_mixed)),
-            ("disabled_mixed", Some(&self.disabled_mixed)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
 /// The 13 px radio; `mark` on a checked face is the dot.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RadioFaces {
@@ -592,323 +328,37 @@ pub struct RadioFaces {
     pub disabled_checked: Face,
 }
 
-impl RadioFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-            ("normal_checked", Some(&self.normal_checked)),
-            ("hot_checked", Some(&self.hot_checked)),
-            ("pressed_checked", Some(&self.pressed_checked)),
-            ("disabled_checked", Some(&self.disabled_checked)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
+/// A part that greys out and has no pointer states.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GroupBoxFaces {
+pub struct GreyedFaces {
     pub normal: Face,
     pub disabled: Face,
 }
 
-impl GroupBoxFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A scrollbar arrow button, 17x17; `mark` is the arrow.
+/// A [`LitFaces`] part that also greys out.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScrollArrowUpFaces {
+pub struct LitGreyedFaces {
     pub normal: Face,
     pub hot: Face,
     pub pressed: Face,
     pub disabled: Face,
 }
 
-impl ScrollArrowUpFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A scrollbar arrow button, 17x17; `mark` is the arrow.
+/// The grip lines on a scrollbar thumb; `disabled` is None where the scheme draws none.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScrollArrowDownFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-}
-
-impl ScrollArrowDownFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A scrollbar arrow button, 17x17; `mark` is the arrow.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScrollArrowLeftFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-}
-
-impl ScrollArrowLeftFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A scrollbar arrow button, 17x17; `mark` is the arrow.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScrollArrowRightFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-}
-
-impl ScrollArrowRightFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScrollThumbVFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-}
-
-impl ScrollThumbVFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScrollThumbHFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-}
-
-impl ScrollThumbHFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// The grip lines on a vertical thumb. None where a scheme draws nothing.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScrollGripVFaces {
+pub struct ScrollGripFaces {
     pub normal: Face,
     pub hot: Face,
     pub pressed: Face,
     pub disabled: Option<Face>,
 }
 
-impl ScrollGripVFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", self.disabled.as_ref()),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// The grip lines on a horizontal thumb. None where a scheme draws nothing.
+/// A scrollbar track; it has no hot state.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScrollGripHFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Option<Face>,
-}
-
-impl ScrollGripHFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", self.disabled.as_ref()),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A vertical scrollbar track; `across` runs left to right.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScrollTrackVFaces {
+pub struct ScrollTrackFaces {
     pub normal: Face,
     pub pressed: Face,
     pub disabled: Face,
-}
-
-impl ScrollTrackVFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A horizontal scrollbar track; `down` runs top to bottom.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScrollTrackHFaces {
-    pub normal: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-}
-
-impl ScrollTrackHFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct EditBorderFaces {
-    pub normal: Face,
-    pub disabled: Face,
-}
-
-impl EditBorderFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ListBorderFaces {
-    pub normal: Face,
-    pub disabled: Face,
-}
-
-impl ListBorderFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A combo box drop button, 15x17; `mark` is the arrow.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ComboDropFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-}
-
-impl ComboDropFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
 }
 
 /// A tab, 12x18, its top corners rounded over [`Radii::tab_item`]. `rim` is
@@ -922,197 +372,6 @@ pub struct TabItemFaces {
     pub checked: Face,
 }
 
-impl TabItemFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("checked", Some(&self.checked)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// The tab page under the tabs: `rim` is its border, `inner` the line inside
-/// it, `down` the body's fade over its height, `across` the soft shadow
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TabPaneFaces {
-    pub normal: Face,
-}
-
-impl TabPaneFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ProgressBarFaces {
-    pub normal: Face,
-    pub disabled: Face,
-}
-
-impl ProgressBarFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ProgressChunkFaces {
-    pub normal: Face,
-    pub disabled: Face,
-}
-
-impl ProgressChunkFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TrackbarTrackFaces {
-    pub normal: Face,
-    pub disabled: Face,
-}
-
-impl TrackbarTrackFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TrackbarThumbFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-}
-
-impl TrackbarThumbFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TrackbarTrackVFaces {
-    pub normal: Face,
-    pub disabled: Face,
-}
-
-impl TrackbarTrackVFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TrackbarThumbVFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-}
-
-impl TrackbarThumbVFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A spinner's up button, 15x8; `mark` is the arrow.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SpinUpFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-}
-
-impl SpinUpFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A spinner's down button, 15x8; `mark` is the arrow.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SpinDownFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-    pub disabled: Face,
-}
-
-impl SpinDownFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
 /// The caption help button, 21x21; `mark` is the question mark.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HelpButtonFaces {
@@ -1122,172 +381,13 @@ pub struct HelpButtonFaces {
     pub inactive: Face,
 }
 
-impl HelpButtonFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("inactive", Some(&self.inactive)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
+/// A toolbar button or drop-down segment: flat at rest, nothing drawn while normal or disabled.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SizeBoxFaces {
-    pub normal: Face,
-}
-
-impl SizeBoxFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CalendarBandFaces {
-    pub normal: Face,
-    pub disabled: Face,
-}
-
-impl CalendarBandFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("disabled", Some(&self.disabled)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A toolbar button; at rest it is flat. Clear (nothing drawn) when normal or disabled.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ToolbarButtonFaces {
+pub struct ToolbarFaces {
     pub hot: Face,
     pub pressed: Face,
     pub checked: Face,
     pub checked_hot: Face,
-}
-
-impl ToolbarButtonFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("checked", Some(&self.checked)),
-            ("checked_hot", Some(&self.checked_hot)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A toolbar drop-down arrow segment. Clear (nothing drawn) when normal or disabled.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ToolbarDropFaces {
-    pub hot: Face,
-    pub pressed: Face,
-    pub checked: Face,
-    pub checked_hot: Face,
-}
-
-impl ToolbarDropFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-            ("checked", Some(&self.checked)),
-            ("checked_hot", Some(&self.checked_hot)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ToolbarSeparatorFaces {
-    pub normal: Face,
-}
-
-impl ToolbarSeparatorFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RebarFaces {
-    pub normal: Face,
-}
-
-impl RebarFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RebarBandFaces {
-    pub normal: Face,
-}
-
-impl RebarBandFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct HeaderItemFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-}
-
-impl HeaderItemFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct HeaderFillerFaces {
-    pub normal: Face,
-}
-
-impl HeaderFillerFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
 }
 
 /// A header sort arrow; `mark` is the arrow.
@@ -1295,174 +395,6 @@ impl HeaderFillerFaces {
 pub struct HeaderSortArrowFaces {
     pub normal: Face,
     pub checked: Face,
-}
-
-impl HeaderSortArrowFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("checked", Some(&self.checked)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StatusBarFaces {
-    pub normal: Face,
-}
-
-impl StatusBarFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StatusPaneFaces {
-    pub normal: Face,
-}
-
-impl StatusPaneFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// The task pane background; `down` runs its height.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TaskPaneFaces {
-    pub normal: Face,
-}
-
-impl TaskPaneFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TaskGroupHeaderFaces {
-    pub normal: Face,
-}
-
-impl TaskGroupHeaderFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TaskGroupBodyFaces {
-    pub normal: Face,
-}
-
-impl TaskGroupBodyFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A task pane group's collapse button; `mark` is the chevron.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TaskCollapseFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-}
-
-impl TaskCollapseFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// A task pane group's expand button; `mark` is the chevron.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TaskExpandFaces {
-    pub normal: Face,
-}
-
-impl TaskExpandFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ExplorerBarHeaderFaces {
-    pub normal: Face,
-}
-
-impl ExplorerBarHeaderFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-/// The explorer bar close button; `mark` is the cross.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ExplorerBarCloseFaces {
-    pub normal: Face,
-    pub hot: Face,
-    pub pressed: Face,
-}
-
-impl ExplorerBarCloseFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![
-            ("normal", Some(&self.normal)),
-            ("hot", Some(&self.hot)),
-            ("pressed", Some(&self.pressed)),
-        ];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PlacesBarFaces {
-    pub normal: Face,
-}
-
-impl PlacesBarFaces {
-    pub fn all(&self) -> Vec<(&'static str, &Face)> {
-        let v = vec![("normal", Some(&self.normal))];
-        v.into_iter()
-            .filter_map(|(s, f)| f.map(|f| (s, f)))
-            .collect()
-    }
 }
 
 /// The Start menu's colours; rows lit and the left column take the [`System`] colours.
@@ -1499,67 +431,93 @@ pub struct Scheme {
     pub system: System,
     pub inks: Inks,
     pub metrics: Metrics,
-    pub caption: CaptionFaces,
-    pub max_caption: MaxCaptionFaces,
-    pub frame_left: FrameLeftFaces,
-    pub frame_right: FrameRightFaces,
-    pub frame_bottom: FrameBottomFaces,
-    pub min_button: MinButtonFaces,
-    pub max_button: MaxButtonFaces,
-    pub restore_button: RestoreButtonFaces,
-    pub close_button: CloseButtonFaces,
-    pub taskbar: TaskbarFaces,
-    pub start_button: StartButtonFaces,
+    pub caption: FrameFaces,
+    pub max_caption: FrameFaces,
+    /// The left border, 4 px; `across` runs outside in.
+    pub frame_left: FrameFaces,
+    /// The right border, 4 px; `across` runs inside out.
+    pub frame_right: FrameFaces,
+    /// The bottom border, 4 rows; `down` runs top to bottom.
+    pub frame_bottom: FrameFaces,
+    /// The minimize caption button, 21x21; `mark` is the glyph.
+    pub min_button: CaptionButtonFaces,
+    /// The maximize caption button, 21x21; `mark` is the glyph.
+    pub max_button: CaptionButtonFaces,
+    /// The restore caption button, 21x21; `mark` is the glyph.
+    pub restore_button: CaptionButtonFaces,
+    /// The close caption button, 21x21, the red one; `mark` is the cross.
+    pub close_button: CaptionButtonFaces,
+    pub taskbar: RestFaces,
+    pub start_button: LitFaces,
     pub task_button: TaskButtonFaces,
-    pub tray_area: TrayAreaFaces,
+    /// The notification area: `down` is its band, `across` its 3 px left edge then the band.
+    pub tray_area: RestFaces,
     pub push_button: PushButtonFaces,
     pub check_box: CheckBoxFaces,
     pub radio: RadioFaces,
-    pub group_box: GroupBoxFaces,
-    pub scroll_arrow_up: ScrollArrowUpFaces,
-    pub scroll_arrow_down: ScrollArrowDownFaces,
-    pub scroll_arrow_left: ScrollArrowLeftFaces,
-    pub scroll_arrow_right: ScrollArrowRightFaces,
-    pub scroll_thumb_v: ScrollThumbVFaces,
-    pub scroll_thumb_h: ScrollThumbHFaces,
-    pub scroll_grip_v: ScrollGripVFaces,
-    pub scroll_grip_h: ScrollGripHFaces,
-    pub scroll_track_v: ScrollTrackVFaces,
-    pub scroll_track_h: ScrollTrackHFaces,
-    pub edit_border: EditBorderFaces,
-    pub list_border: Option<ListBorderFaces>,
-    pub combo_drop: ComboDropFaces,
+    pub group_box: GreyedFaces,
+    /// A scrollbar arrow button, 17x17; `mark` is the arrow.
+    pub scroll_arrow_up: LitGreyedFaces,
+    /// A scrollbar arrow button, 17x17; `mark` is the arrow.
+    pub scroll_arrow_down: LitGreyedFaces,
+    /// A scrollbar arrow button, 17x17; `mark` is the arrow.
+    pub scroll_arrow_left: LitGreyedFaces,
+    /// A scrollbar arrow button, 17x17; `mark` is the arrow.
+    pub scroll_arrow_right: LitGreyedFaces,
+    pub scroll_thumb_v: LitGreyedFaces,
+    pub scroll_thumb_h: LitGreyedFaces,
+    /// The grip lines on a vertical thumb.
+    pub scroll_grip_v: ScrollGripFaces,
+    /// The grip lines on a horizontal thumb.
+    pub scroll_grip_h: ScrollGripFaces,
+    /// A vertical scrollbar track; `across` runs left to right.
+    pub scroll_track_v: ScrollTrackFaces,
+    /// A horizontal scrollbar track; `down` runs top to bottom.
+    pub scroll_track_h: ScrollTrackFaces,
+    pub edit_border: GreyedFaces,
+    pub list_border: Option<GreyedFaces>,
+    /// A combo box drop button, 15x17; `mark` is the arrow.
+    pub combo_drop: LitGreyedFaces,
     pub tab_item: TabItemFaces,
-    pub tab_pane: TabPaneFaces,
-    pub progress_bar: ProgressBarFaces,
-    pub progress_chunk: ProgressChunkFaces,
-    pub trackbar_track: TrackbarTrackFaces,
-    pub trackbar_thumb: TrackbarThumbFaces,
-    pub trackbar_track_v: TrackbarTrackVFaces,
-    pub trackbar_thumb_v: TrackbarThumbVFaces,
-    pub spin_up: SpinUpFaces,
-    pub spin_down: SpinDownFaces,
+    /// The tab page under the tabs: `rim` is its border, `inner` the line inside
+    /// it, `down` the body's fade over its height, `across` the soft shadow
+    pub tab_pane: RestFaces,
+    pub progress_bar: GreyedFaces,
+    pub progress_chunk: GreyedFaces,
+    pub trackbar_track: GreyedFaces,
+    pub trackbar_thumb: LitGreyedFaces,
+    pub trackbar_track_v: GreyedFaces,
+    pub trackbar_thumb_v: LitGreyedFaces,
+    /// A spinner's up button, 15x8; `mark` is the arrow.
+    pub spin_up: LitGreyedFaces,
+    /// A spinner's down button, 15x8; `mark` is the arrow.
+    pub spin_down: LitGreyedFaces,
     pub help_button: HelpButtonFaces,
-    pub size_box: SizeBoxFaces,
-    pub calendar_band: CalendarBandFaces,
-    pub toolbar_button: ToolbarButtonFaces,
-    pub toolbar_drop: ToolbarDropFaces,
-    pub toolbar_separator: ToolbarSeparatorFaces,
-    pub rebar: RebarFaces,
-    pub rebar_band: RebarBandFaces,
-    pub header_item: HeaderItemFaces,
-    pub header_filler: HeaderFillerFaces,
+    pub size_box: RestFaces,
+    pub calendar_band: GreyedFaces,
+    pub toolbar_button: ToolbarFaces,
+    /// The drop-down arrow segment beside a toolbar button.
+    pub toolbar_drop: ToolbarFaces,
+    pub toolbar_separator: RestFaces,
+    pub rebar: RestFaces,
+    pub rebar_band: RestFaces,
+    pub header_item: LitFaces,
+    pub header_filler: RestFaces,
     pub header_sort_arrow: HeaderSortArrowFaces,
-    pub status_bar: StatusBarFaces,
-    pub status_pane: StatusPaneFaces,
-    pub task_pane: TaskPaneFaces,
-    pub task_group_header: TaskGroupHeaderFaces,
-    pub task_group_body: TaskGroupBodyFaces,
-    pub task_collapse: TaskCollapseFaces,
-    pub task_expand: TaskExpandFaces,
-    pub explorer_bar_header: ExplorerBarHeaderFaces,
-    pub explorer_bar_close: ExplorerBarCloseFaces,
-    pub places_bar: PlacesBarFaces,
+    pub status_bar: RestFaces,
+    pub status_pane: RestFaces,
+    /// The task pane background; `down` runs its height.
+    pub task_pane: RestFaces,
+    pub task_group_header: RestFaces,
+    pub task_group_body: RestFaces,
+    /// A task pane group's collapse button; `mark` is the chevron.
+    pub task_collapse: LitFaces,
+    /// A task pane group's expand button; `mark` is the chevron.
+    pub task_expand: RestFaces,
+    pub explorer_bar_header: RestFaces,
+    /// The explorer bar close button; `mark` is the cross.
+    pub explorer_bar_close: LitFaces,
+    pub places_bar: RestFaces,
     pub tray_arrow: ArrowRecipe,
     pub start_menu: StartMenu,
     /// The welcome screen: its dark top and bottom bands, the field between them with its glow
@@ -1574,371 +532,91 @@ pub struct Scheme {
     pub welcome_tile_frame: Color,
 }
 
-impl Scheme {
-    pub fn faces(&self) -> Vec<(&'static str, &'static str, &Face)> {
-        let mut v = Vec::new();
-        v.extend(
-            self.caption
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("caption", s, f)),
-        );
-        v.extend(
-            self.max_caption
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("max_caption", s, f)),
-        );
-        v.extend(
-            self.frame_left
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("frame_left", s, f)),
-        );
-        v.extend(
-            self.frame_right
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("frame_right", s, f)),
-        );
-        v.extend(
-            self.frame_bottom
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("frame_bottom", s, f)),
-        );
-        v.extend(
-            self.min_button
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("min_button", s, f)),
-        );
-        v.extend(
-            self.max_button
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("max_button", s, f)),
-        );
-        v.extend(
-            self.restore_button
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("restore_button", s, f)),
-        );
-        v.extend(
-            self.close_button
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("close_button", s, f)),
-        );
-        v.extend(
-            self.taskbar
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("taskbar", s, f)),
-        );
-        v.extend(
-            self.start_button
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("start_button", s, f)),
-        );
-        v.extend(
-            self.task_button
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("task_button", s, f)),
-        );
-        v.extend(
-            self.tray_area
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("tray_area", s, f)),
-        );
-        v.extend(
-            self.push_button
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("push_button", s, f)),
-        );
-        v.extend(
-            self.check_box
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("check_box", s, f)),
-        );
-        v.extend(self.radio.all().into_iter().map(|(s, f)| ("radio", s, f)));
-        v.extend(
-            self.group_box
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("group_box", s, f)),
-        );
-        v.extend(
-            self.scroll_arrow_up
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("scroll_arrow_up", s, f)),
-        );
-        v.extend(
-            self.scroll_arrow_down
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("scroll_arrow_down", s, f)),
-        );
-        v.extend(
-            self.scroll_arrow_left
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("scroll_arrow_left", s, f)),
-        );
-        v.extend(
-            self.scroll_arrow_right
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("scroll_arrow_right", s, f)),
-        );
-        v.extend(
-            self.scroll_thumb_v
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("scroll_thumb_v", s, f)),
-        );
-        v.extend(
-            self.scroll_thumb_h
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("scroll_thumb_h", s, f)),
-        );
-        v.extend(
-            self.scroll_grip_v
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("scroll_grip_v", s, f)),
-        );
-        v.extend(
-            self.scroll_grip_h
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("scroll_grip_h", s, f)),
-        );
-        v.extend(
-            self.scroll_track_v
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("scroll_track_v", s, f)),
-        );
-        v.extend(
-            self.scroll_track_h
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("scroll_track_h", s, f)),
-        );
-        v.extend(
-            self.edit_border
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("edit_border", s, f)),
-        );
-        if let Some(p) = &self.list_border {
-            v.extend(p.all().into_iter().map(|(s, f)| ("list_border", s, f)));
-        }
-        v.extend(
-            self.combo_drop
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("combo_drop", s, f)),
-        );
-        v.extend(
-            self.tab_item
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("tab_item", s, f)),
-        );
-        v.extend(
-            self.tab_pane
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("tab_pane", s, f)),
-        );
-        v.extend(
-            self.progress_bar
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("progress_bar", s, f)),
-        );
-        v.extend(
-            self.progress_chunk
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("progress_chunk", s, f)),
-        );
-        v.extend(
-            self.trackbar_track
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("trackbar_track", s, f)),
-        );
-        v.extend(
-            self.trackbar_thumb
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("trackbar_thumb", s, f)),
-        );
-        v.extend(
-            self.trackbar_track_v
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("trackbar_track_v", s, f)),
-        );
-        v.extend(
-            self.trackbar_thumb_v
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("trackbar_thumb_v", s, f)),
-        );
-        v.extend(
-            self.spin_up
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("spin_up", s, f)),
-        );
-        v.extend(
-            self.spin_down
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("spin_down", s, f)),
-        );
-        v.extend(
-            self.help_button
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("help_button", s, f)),
-        );
-        v.extend(
-            self.size_box
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("size_box", s, f)),
-        );
-        v.extend(
-            self.calendar_band
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("calendar_band", s, f)),
-        );
-        v.extend(
-            self.toolbar_button
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("toolbar_button", s, f)),
-        );
-        v.extend(
-            self.toolbar_drop
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("toolbar_drop", s, f)),
-        );
-        v.extend(
-            self.toolbar_separator
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("toolbar_separator", s, f)),
-        );
-        v.extend(self.rebar.all().into_iter().map(|(s, f)| ("rebar", s, f)));
-        v.extend(
-            self.rebar_band
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("rebar_band", s, f)),
-        );
-        v.extend(
-            self.header_item
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("header_item", s, f)),
-        );
-        v.extend(
-            self.header_filler
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("header_filler", s, f)),
-        );
-        v.extend(
-            self.header_sort_arrow
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("header_sort_arrow", s, f)),
-        );
-        v.extend(
-            self.status_bar
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("status_bar", s, f)),
-        );
-        v.extend(
-            self.status_pane
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("status_pane", s, f)),
-        );
-        v.extend(
-            self.task_pane
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("task_pane", s, f)),
-        );
-        v.extend(
-            self.task_group_header
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("task_group_header", s, f)),
-        );
-        v.extend(
-            self.task_group_body
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("task_group_body", s, f)),
-        );
-        v.extend(
-            self.task_collapse
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("task_collapse", s, f)),
-        );
-        v.extend(
-            self.task_expand
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("task_expand", s, f)),
-        );
-        v.extend(
-            self.explorer_bar_header
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("explorer_bar_header", s, f)),
-        );
-        v.extend(
-            self.explorer_bar_close
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("explorer_bar_close", s, f)),
-        );
-        v.extend(
-            self.places_bar
-                .all()
-                .into_iter()
-                .map(|(s, f)| ("places_bar", s, f)),
-        );
-        v
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::blue::style_for;
     use crate::style::{Part, State};
+
+    /// Every face of a part, named by state.
+    trait States {
+        fn all(&self) -> Vec<(&'static str, &Face)>;
+    }
+
+    /// Destructures without `..`, so a state added to a type fails to build until it is listed.
+    macro_rules! states {
+        ($($t:ident { $($f:ident),* $(; $o:ident)? })*) => {$(
+            impl States for $t {
+                fn all(&self) -> Vec<(&'static str, &Face)> {
+                    let $t { $($f,)* $($o,)? } = self;
+                    #[allow(unused_mut)]
+                    let mut v = vec![$((stringify!($f), $f)),*];
+                    $(v.extend($o.as_ref().map(|f| (stringify!($o), f)));)?
+                    v
+                }
+            }
+        )*};
+    }
+
+    states! {
+        FrameFaces { normal, inactive }
+        CaptionButtonFaces { normal, hot, pressed, disabled, inactive }
+        RestFaces { normal }
+        LitFaces { normal, hot, pressed }
+        TaskButtonFaces { normal, hot, checked, checked_hot, pressed }
+        PushButtonFaces { normal, hot, pressed, disabled, default, focused }
+        CheckBoxFaces {
+            normal, hot, pressed, disabled, normal_checked, hot_checked, pressed_checked,
+            disabled_checked, normal_mixed, hot_mixed, pressed_mixed, disabled_mixed
+        }
+        RadioFaces {
+            normal, hot, pressed, disabled, normal_checked, hot_checked, pressed_checked,
+            disabled_checked
+        }
+        GreyedFaces { normal, disabled }
+        LitGreyedFaces { normal, hot, pressed, disabled }
+        ScrollGripFaces { normal, hot, pressed; disabled }
+        ScrollTrackFaces { normal, pressed, disabled }
+        TabItemFaces { normal, hot, checked }
+        HelpButtonFaces { normal, hot, pressed, inactive }
+        ToolbarFaces { hot, pressed, checked, checked_hot }
+        HeaderSortArrowFaces { normal, checked }
+    }
+
+    impl<T: States> States for Option<T> {
+        fn all(&self) -> Vec<(&'static str, &Face)> {
+            self.as_ref().map_or_else(Vec::new, T::all)
+        }
+    }
+
+    /// (part, state, face) for every face of `s`. Destructures without `..`, so a part added to
+    /// [`Scheme`] fails to build until it is listed here.
+    fn faces(s: &Scheme) -> Vec<(&'static str, &'static str, &Face)> {
+        macro_rules! parts {
+            ($($p:ident),*; $($skip:ident),*) => {{
+                let Scheme { $($p,)* $($skip: _,)* } = s;
+                [$((stringify!($p), $p.all())),*]
+            }};
+        }
+        parts![
+            caption, max_caption, frame_left, frame_right, frame_bottom, min_button, max_button,
+            restore_button, close_button, taskbar, start_button, task_button, tray_area,
+            push_button, check_box, radio, group_box, scroll_arrow_up, scroll_arrow_down,
+            scroll_arrow_left, scroll_arrow_right, scroll_thumb_v, scroll_thumb_h, scroll_grip_v,
+            scroll_grip_h, scroll_track_v, scroll_track_h, edit_border, list_border, combo_drop,
+            tab_item, tab_pane, progress_bar, progress_chunk, trackbar_track, trackbar_thumb,
+            trackbar_track_v, trackbar_thumb_v, spin_up, spin_down, help_button, size_box,
+            calendar_band, toolbar_button, toolbar_drop, toolbar_separator, rebar, rebar_band,
+            header_item, header_filler, header_sort_arrow, status_bar, status_pane, task_pane,
+            task_group_header, task_group_body, task_collapse, task_expand, explorer_bar_header,
+            explorer_bar_close, places_bar;
+            name, system, inks, metrics, tray_arrow, start_menu, welcome_band, welcome_field,
+            welcome_glow, welcome_rule, welcome_text, welcome_tile_hot, welcome_tile_frame
+        ]
+        .into_iter()
+        .flat_map(|(p, fs)| fs.into_iter().map(move |(st, f)| (p, st, f)))
+        .collect()
+    }
 
     fn style_inks(v: Variant) -> Vec<Color> {
         let st = style_for(v);
@@ -2021,7 +699,7 @@ mod tests {
     fn every_face_is_filled() {
         for v in Variant::ALL {
             let s = v.scheme();
-            let faces = s.faces();
+            let faces = faces(s);
             assert!(faces.len() > 150, "{v:?}: {} faces", faces.len());
             for (part, state, f) in faces {
                 for (axis, g) in [("down", f.down), ("across", f.across)] {
