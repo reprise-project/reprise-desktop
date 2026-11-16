@@ -582,7 +582,9 @@ impl Config {
             if let Some(p) = w.position {
                 cfg.wallpaper.position =
                     reprisekit::wallpaper::Position::parse(&p).ok_or_else(|| {
-                        format!("wallpaper.position {p:?} is not center, tile or stretch")
+                        format!(
+                            "wallpaper.position {p:?} is not fill, fit, stretch, tile or center"
+                        )
                     })?;
             }
             cfg.wallpaper.slideshow = w

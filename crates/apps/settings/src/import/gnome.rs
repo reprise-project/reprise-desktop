@@ -221,7 +221,9 @@ pub(super) fn settings(dump: &str) -> Vec<Setting> {
         let position = match options {
             Some("centered") => "center",
             Some("wallpaper") => "tile",
-            _ => "stretch",
+            Some("stretched") => "stretch",
+            Some("scaled") => "fit",
+            _ => "fill",
         };
         out.push(Setting::Wallpaper { path, position });
     }

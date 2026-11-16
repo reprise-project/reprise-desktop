@@ -133,11 +133,7 @@ fn a_gnome_dump_becomes_reprise_changes() {
     let p = plan("GNOME", &gnome::settings(DUMP), "", &fake());
     assert_eq!(
         cells(row(&p, "Wallpaper")),
-        (
-            "None",
-            "/home/sam/Pictures/Fjord Morning.jpg (Stretch)",
-            false
-        ),
+        ("None", "/home/sam/Pictures/Fjord Morning.jpg (Fill)", false),
         "the dark style's own picture is an SVG, so the light one, zoom read as Stretch"
     );
     assert_eq!(cells(row(&p, "Dark style")), ("Off", "On", false));
@@ -499,9 +495,59 @@ fn a_wallpaper_package_shows_its_largest_picture() {
         found.first(),
         Some(&Setting::Wallpaper {
             path: images.join("5120x2880.png").display().to_string(),
-            position: "stretch",
+            position: "fill",
         })
     );
+}
+
+#[test]
+fn gnome_picture_options_map_to_the_positions_alike() {
+    for (options, position) in [
+        ("zoom", "fill"),
+        ("spanned", "fill"),
+        ("scaled", "fit"),
+        ("stretched", "stretch"),
+        ("centered", "center"),
+        ("wallpaper", "tile"),
+    ] {
+        let dump = format!(
+            "[org/gnome/desktop/background]\npicture-options='{options}'\n\
+             picture-uri='file:///home/sam/a.jpg'\n"
+        );
+        assert_eq!(
+            gnome::settings(&dump).first(),
+            Some(&Setting::Wallpaper {
+                path: "/home/sam/a.jpg".into(),
+                position,
+            }),
+            "{options}"
+        );
+    }
+}
+
+#[test]
+fn plasma_fill_modes_map_to_the_positions_alike() {
+    let dir = scratch("fillmode");
+    for (mode, position) in [
+        ("FillMode=0\n", "stretch"),
+        ("FillMode=1\n", "fit"),
+        ("FillMode=2\n", "fill"),
+        ("", "fill"),
+    ] {
+        let applets = format!(
+            "[Containments][1][Wallpaper][org.kde.image][General]\n{mode}\
+             Image=file:///home/sam/a.png\n"
+        );
+        std::fs::write(dir.join("plasma-org.kde.plasma.desktop-appletsrc"), applets).unwrap();
+        assert_eq!(
+            plasma::settings(&dir, "/home/sam").first(),
+            Some(&Setting::Wallpaper {
+                path: "/home/sam/a.png".into(),
+                position,
+            }),
+            "{mode:?}"
+        );
+    }
 }
 
 #[test]

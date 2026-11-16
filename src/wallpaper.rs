@@ -1,5 +1,5 @@
 //! Wallpaper: decode an image file and compose it into an output's pixels
-//! per the Position setting (Center, Tile, Stretch) over the desktop colour.
+//! per the Position setting over the desktop colour.
 
 use crate::raster::Canvas;
 use std::path::Path;
@@ -40,7 +40,7 @@ pub fn limited<R: std::io::BufRead + std::io::Seek>(
 }
 
 /// The part of a picture the outputs can show. `w` x `h` is the largest output in buffer pixels
-/// for Stretch, and in layout pixels for Center and Tile.
+/// for Stretch, Fill and Fit, and in layout pixels for Center and Tile.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cut {
     pub position: Position,
@@ -133,8 +133,8 @@ pub struct Loaded {
 }
 
 /// Decode `path` (JPEG, PNG or BMP) to a premultiplied canvas reduced to `cut`
-/// (see `reduce`), or None with a log line. Under a Stretch cut a JPEG decodes at the smallest
-/// DCT scale covering it; Center and Tile show pixels 1:1, so they decode at full size.
+/// (see `reduce`), or None with a log line. Under a Stretch, Fill or Fit cut a JPEG decodes at the
+/// smallest DCT scale covering it; Center and Tile show pixels 1:1, so they decode at full size.
 pub fn load(path: &Path, cut: Option<Cut>) -> Option<Loaded> {
     if let Some(b) = builtin(path) {
         return Some(draw_builtin(b, cut));
@@ -151,6 +151,10 @@ fn decoded_for(path: &Path, cut: Option<Cut>) -> Option<Decoded> {
     match cut {
         Some(c) if c.position == Position::Stretch => {
             jpeg_scaled(path, |_, _| (c.w, c.h)).or_else(|| decoded(path))
+        }
+        Some(c) if matches!(c.position, Position::Fill | Position::Fit) => {
+            let cover = |sw, sh| reprisekit::wallpaper::cover_size(sw, sh, c.w, c.h);
+            jpeg_scaled(path, cover).or_else(|| decoded(path))
         }
         _ => decoded(path),
     }
@@ -257,13 +261,19 @@ fn jpeg_scaled(path: &Path, cover: impl FnOnce(u32, u32) -> (u32, u32)) -> Optio
 }
 
 /// Reduce a `sw` x `sh` picture (premultiplied ARGB via `px`) to `cut`: Stretch box-downscales,
-/// Tile keeps the top-left, Center keeps the middle, trimming an even count so `compose` centres alike.
+/// Fill and Fit box-downscale evenly to cover it, Tile keeps the top-left, Center keeps the middle,
+/// trimming an even count so `compose` centres alike.
 fn reduce(sw: u32, sh: u32, px: impl Fn(u32, u32) -> u32, cut: Option<Cut>) -> Loaded {
+    let even = cut
+        .filter(|c| matches!(c.position, Position::Fill | Position::Fit))
+        .map(|c| reprisekit::wallpaper::cover_size(sw, sh, c.w.max(1), c.h.max(1)))
+        .filter(|&(cw, ch)| cw < sw && ch < sh);
     let dim = |size: u32, want: u32| match cut {
         Some(c) if size > want.max(1) => {
             let want = want.max(1);
             match c.position {
                 Position::Stretch => (0, size, want),
+                Position::Fill | Position::Fit => (0, size, size),
                 Position::Tile => (0, want, want),
                 Position::Center => {
                     let kept = want + (size - want) % 2;
@@ -273,8 +283,13 @@ fn reduce(sw: u32, sh: u32, px: impl Fn(u32, u32) -> u32, cut: Option<Cut>) -> L
         }
         _ => (0, size, size),
     };
-    let (ox, kw, tw) = dim(sw, cut.map_or(0, |c| c.w));
-    let (oy, kh, th) = dim(sh, cut.map_or(0, |c| c.h));
+    let ((ox, kw, tw), (oy, kh, th)) = match even {
+        Some((ew, eh)) => ((0, sw, ew), (0, sh, eh)),
+        None => (
+            dim(sw, cut.map_or(0, |c| c.w)),
+            dim(sh, cut.map_or(0, |c| c.h)),
+        ),
+    };
     let image = if (kw, kh) == (tw, th) {
         let mut c = Canvas::new(tw, th);
         for y in 0..th {
@@ -377,6 +392,31 @@ mod tests {
             },
         );
         assert_eq!((stretched.image.width, stretched.image.height), (4, 3));
+    }
+
+    #[test]
+    fn fill_and_fit_cuts_keep_the_whole_picture_scaled_evenly_to_cover() {
+        let src = numbered();
+        for position in [Position::Fill, Position::Fit] {
+            let cut = Cut {
+                position,
+                w: 4,
+                h: 2,
+            };
+            let reduced = cut_of(&src, cut);
+            assert_eq!(
+                (reduced.image.width, reduced.image.height),
+                (4, 3),
+                "{position:?}: 11x9 covering 4x2"
+            );
+            assert_eq!(reduced.cut, Some(cut));
+            let whole = cut_of(&src, Cut { w: 20, ..cut });
+            assert_eq!(
+                whole.image.pixels, src.pixels,
+                "{position:?}: nothing to drop"
+            );
+            assert_eq!(whole.cut, None);
+        }
     }
 
     #[test]
@@ -514,6 +554,8 @@ mod tests {
         let quarter = size(cut(Position::Stretch, 16, 12));
         let wide = size(cut(Position::Stretch, 30, 6));
         let centred = size(cut(Position::Center, 16, 12));
+        let filled = size(cut(Position::Fill, 16, 8));
+        let fitted = size(cut(Position::Fit, 30, 6));
         let loaded = load(&path, cut(Position::Stretch, 16, 12)).unwrap();
         std::fs::remove_file(&path).unwrap();
         assert_eq!(quarter, Some((16, 12, (64, 48))), "16x12 from 1/4");
@@ -523,6 +565,16 @@ mod tests {
             "30 wide needs 1/2 though 6 high fits 1/8"
         );
         assert_eq!(centred, Some((64, 48, (64, 48))), "Center shows pixels 1:1");
+        assert_eq!(
+            filled,
+            Some((16, 12, (64, 48))),
+            "covering 16x8 evenly from 1/4"
+        );
+        assert_eq!(
+            fitted,
+            Some((32, 24, (64, 48))),
+            "covering 30x6 evenly from 1/2"
+        );
         assert_eq!((loaded.image.width, loaded.image.height), (16, 12));
         assert_eq!(
             loaded.cut,

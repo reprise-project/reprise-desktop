@@ -10,7 +10,7 @@ use reprisekit::text::TextRenderer;
 use reprisekit::theme::{Color, FontConfig, Theme};
 use reprisekit::wallpaper::{self, Position};
 
-/// One picture composed Center, Tile and Stretch on the monitor, then the Appearance sample of `sample_theme` per interface.
+/// One picture composed at every position on the monitor, then the Appearance sample of `sample_theme` per interface.
 pub fn render_backgrounds() -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let theme = cued(Theme::default());
@@ -29,6 +29,8 @@ pub fn render_backgrounds() -> Canvas {
         ("center", Position::Center),
         ("tile", Position::Tile),
         ("stretch", Position::Stretch),
+        ("fill", Position::Fill),
+        ("fit", Position::Fit),
     ];
     for (i, (id, pos)) in monitors.into_iter().enumerate() {
         let screen = wallpaper::compose(&pic, sw as u32, sh as u32, pos, teal, 0.5);

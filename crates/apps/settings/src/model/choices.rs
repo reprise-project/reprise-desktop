@@ -327,9 +327,11 @@ pub const SLIDE_INTERVALS: &[(i64, &str)] = &[
 /// The wallpaper Position combo's items. Mirrors `Position::parse` in
 /// reprisekit.
 pub const POSITIONS: &Choices = &[
-    ("center", "Center"),
-    ("tile", "Tile"),
+    ("fill", "Fill"),
+    ("fit", "Fit"),
     ("stretch", "Stretch"),
+    ("tile", "Tile"),
+    ("center", "Center"),
 ];
 
 /// Settings > Background's desktop water styles; unchecked is "off".
