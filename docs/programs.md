@@ -665,6 +665,7 @@ login above). Its profile is marked hidden so NetworkManager looks for it by nam
 
 Pair with the Add Bluetooth Device Wizard, connect and disconnect, rename a
 device, see its battery, and turn Bluetooth or discoverability on and off.
+Cancel in the wizard after the device has paired removes it again.
 Pairing requests from a device show up as a prompt naming it by name and
 address, one at a time. A request you didn't start (the Add wizard or a
 Connect) starts on "Do not allow it" or "No, they are different", and an
