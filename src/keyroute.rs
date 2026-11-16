@@ -77,7 +77,7 @@ pub struct Modes {
     pub menus_open: bool,
     /// The lock screen's power menu is open, the one menu under the lock.
     pub lock_menu: bool,
-    /// The top dialog has the keyboard (see `dialogview::has_keyboard`).
+    /// The top dialog has the keyboard (see `State::dialog_has_keyboard`).
     pub dialog_has_keyboard: bool,
     /// That dialog is a Welcome panel, which keeps even the switcher's
     /// bind.

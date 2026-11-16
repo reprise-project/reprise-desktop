@@ -6,7 +6,7 @@ use reprisekit::controls::traycustomize::Behaviour;
 use std::collections::{BTreeMap, HashMap};
 
 /// Tray overflow is on: `[taskbar] tray_overflow`, on by default under
-/// Glass. Off, Passive items stay off the bar and nothing shows them.
+/// Glass. Off, every item sits on the bar.
 pub fn overflow_enabled(config: &crate::config::Config) -> bool {
     config.taskbar.tray_overflow
 }

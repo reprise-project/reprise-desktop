@@ -20,10 +20,10 @@
 //! answering. [`polkit`] asks whether a password
 //! prompt was dismissed. [`launcher`] shows a program's progress on its
 //! task button. [`journal`] starts the logger with journal priorities.
-//! The last six share a program's one session bus connection ([`session`]),
-//! as do [`units`], which lists the programs the systemd user manager starts
-//! with the session, and [`remote`], which reads the Remote Desktop server and
-//! turns its user unit on or off. Synchronous callers [`wait`] on it.
+//! [`units`] lists the programs the systemd user manager starts with the
+//! session, and [`remote`] reads the Remote Desktop server and turns its user
+//! unit on or off. Every module on the session bus shares a program's one
+//! connection ([`session`]); synchronous callers [`wait`] on it.
 //! [`bluez`] lists BlueZ's paired devices and follows whether one is connected.
 //! [`bolt`] lists and follows boltd's Thunderbolt devices and authorizes, enrolls or forgets one.
 //! [`colord`] lists the display profile files colord knows.

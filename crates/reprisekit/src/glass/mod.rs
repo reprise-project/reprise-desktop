@@ -735,7 +735,7 @@ fn colors(mode: Mode) -> ColorScheme {
     }
 }
 
-/// A tooltip's text in `mode`: 575757, 999999 dark (575757 remapped).
+/// A tooltip's text in `mode`: `popups::TOOLTIP_INK`, remapped when dark.
 fn tooltip_ink(mode: Mode) -> Color {
     match mode {
         Mode::Light => popups::TOOLTIP_INK,
@@ -743,7 +743,7 @@ fn tooltip_ink(mode: Mode) -> Color {
     }
 }
 
-/// The trackbar's ticks in `mode`: C1C2C2, 606060 dark.
+/// The trackbar's ticks in `mode`.
 fn track_marks(mode: Mode) -> TrackMarks {
     match mode {
         Mode::Light => TRACK_MARKS,
@@ -777,7 +777,7 @@ pub const DIALOG_FACE: Color = Color::rgb(0xEF, 0xEE, 0xEF);
 /// stays etched, as in every look.
 pub const GREYED_CHOICE_TEXT: Color = Color::rgb(0x6B, 0x6B, 0x6B);
 
-/// A greyed push button's label: inked once, flat, in 838383.
+/// A greyed push button's label: inked once, flat.
 pub const GREYED_BUTTON_TEXT: Color = Color::rgb(0x7F, 0x80, 0x80);
 
 /// A greyed check box's, radio's, edit's or combo's text in `mode`: 6B6B6B, 878787 dark.
@@ -788,7 +788,7 @@ fn greyed_choice_text(mode: Mode) -> Color {
     }
 }
 
-/// A greyed push button's label in `mode`: 838383, 767777 dark.
+/// A greyed push button's label in `mode`.
 fn greyed_button_text(mode: Mode) -> Color {
     match mode {
         Mode::Light => GREYED_BUTTON_TEXT,
