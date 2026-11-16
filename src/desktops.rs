@@ -204,11 +204,13 @@ impl State {
             return;
         };
         if carry && let Some(f) = self.focused {
-            let home = self.home(f);
-            if let Some(h) = self.win_mut(home)
-                && !h.sticky
-            {
-                h.desktop = n;
+            for w in self.with_tab_groups(&[f]) {
+                let home = self.home(w);
+                if let Some(h) = self.win_mut(home)
+                    && !h.sticky
+                {
+                    h.desktop = n;
+                }
             }
         }
         self.switch_desktop(n);
@@ -401,6 +403,39 @@ mod tests {
         let tip =
             crate::tooltip::label_for(&h.state, bar, reprisekit::taskbar::TaskbarHit::Pager(0));
         assert_eq!(tip.as_deref(), Some("Work"));
+    }
+
+    #[test]
+    fn a_carried_window_takes_its_tabs_to_the_next_desktop() {
+        let config = crate::config::Config {
+            base: repriseconf::config::Config {
+                workspaces: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "test.a", 500, 300);
+        let b = h.map_toplevel(&mut c, "test.b", 500, 300);
+        h.state.join_tabs(b.id, a.id, usize::MAX, false);
+        h.roundtrip(&mut c);
+        h.state.focus_window(a.id);
+        h.state.step_desktop(Step::Next, true);
+        assert_eq!(h.state.desktops.current, 1, "the view follows");
+        for t in [a, b] {
+            assert_eq!(
+                h.state.win(t.id).expect("window").desktop,
+                1,
+                "{t:?} is carried"
+            );
+        }
+        let shown = h.state.task_windows();
+        assert!(
+            shown.len() == 2 && shown.contains(&a.id) && shown.contains(&b.id),
+            "desktop 2's taskbar lists both tabs: {shown:?}"
+        );
     }
 
     #[test]
