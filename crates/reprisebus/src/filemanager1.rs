@@ -153,7 +153,6 @@ mod tests {
     #[test]
     fn each_method_hands_its_uris_and_startup_id_on() {
         let Some(bus) = crate::peer::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let host = std::path::Path::new("/proc");
@@ -187,7 +186,6 @@ mod tests {
     #[test]
     fn a_sandboxed_peer_is_refused_every_method() {
         let Some(bus) = crate::peer::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let sandboxed = crate::peer::tests::sandboxed_proc();

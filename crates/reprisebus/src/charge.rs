@@ -136,8 +136,6 @@ pub fn set(device: &str, on: bool) -> Result<(), Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader};
-    use std::process::{Child, Command, Stdio};
     use std::sync::{Arc, Mutex};
     use zbus::Variant;
 
@@ -244,28 +242,7 @@ mod tests {
         ));
     }
 
-    struct Bus(Child, String);
-
-    impl Drop for Bus {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
-    fn bus() -> Option<Bus> {
-        let mut child = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let mut line = String::new();
-        BufReader::new(child.stdout.take()?)
-            .read_line(&mut line)
-            .ok()?;
-        Some(Bus(child, line.trim().to_string()))
-    }
+    use crate::testbus::bus;
 
     async fn connect(address: &str) -> Connection {
         zbus::connection::Builder::address(address)
@@ -323,7 +300,6 @@ mod tests {
     #[test]
     fn the_battery_s_limit_is_found_and_turned_on() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async move {

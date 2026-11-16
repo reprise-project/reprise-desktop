@@ -42,7 +42,7 @@
 //! [`mutex`] locks a mutex even when its holder panicked.
 //! [`login`] asks the system manager whether reprise-login runs.
 //! [`logind`] reads logind's session of a process and its user's display session.
-//! [`testsession`] gives a test binary a session of its own.
+//! [`testsession`] gives a test binary a session of its own, [`testbus`] a bus daemon.
 //! [`secrets`] looks up and stores passwords in the Secret Service.
 //! [`eds`] reads a day's events from evolution-data-server's calendars.
 //! [`bounded`] decodes what another peer sends within size caps, never as a `Variant` tree.
@@ -80,6 +80,7 @@ pub mod rfkill;
 pub mod searchprovider;
 pub mod secrets;
 pub mod sensorproxy;
+pub mod testbus;
 pub mod testsession;
 pub mod tray;
 pub mod units;

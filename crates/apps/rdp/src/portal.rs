@@ -557,7 +557,6 @@ pub(crate) mod tests {
     fn each_screen_gets_a_pipewire_remote_of_its_own() {
         use std::os::unix::fs::MetadataExt;
         let Some(bus) = crate::control::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let remotes = std::sync::Arc::default();

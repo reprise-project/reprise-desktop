@@ -1274,7 +1274,7 @@ mod tests {
     #[test]
     fn moving_a_window_damages_only_its_old_and_new_place() {
         let Ok(mut renderer) = reprisefx::headless::renderer() else {
-            eprintln!("skipped: no renderer");
+            reprisekit::pins::skipped("no renderer");
             return;
         };
         let mut h = Harness::new();

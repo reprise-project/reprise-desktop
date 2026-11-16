@@ -277,7 +277,7 @@ mod tests {
         let fifo = dir.path().join("pipe");
         let made = std::process::Command::new("mkfifo").arg(&fifo).status();
         if !made.is_ok_and(|s| s.success()) {
-            eprintln!("no mkfifo; skipped");
+            reprisekit::pins::skipped("no mkfifo");
             return;
         }
         let mut ctx = crate::tests::test_ctx();

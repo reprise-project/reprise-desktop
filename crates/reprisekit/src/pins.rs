@@ -99,7 +99,7 @@ pub(crate) fn stray(face: &str) {
 }
 
 /// Reports a test that cannot run on this machine: panics under `REPRISE_TEST_STRICT`, else
-/// prints `reason`.
+/// prints `reason`. `reprisebus::testbus::skipped` is the same for crates that link reprisebus.
 #[track_caller]
 pub fn skipped(reason: &str) {
     let strict = std::env::var_os("REPRISE_TEST_STRICT").is_some_and(|v| v != "0");

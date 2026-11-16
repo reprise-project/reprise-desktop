@@ -959,7 +959,7 @@ mod tests {
             renderer::{ImportMem, element::texture::TextureRenderElement},
         };
         let Some(mut r) = reprisefx::headless::renderer()
-            .map_err(|e| eprintln!("skipped: {e}"))
+            .map_err(|e| reprisekit::pins::skipped(&e))
             .ok()
         else {
             return;

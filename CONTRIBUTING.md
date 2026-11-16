@@ -53,9 +53,13 @@ keeps the test and gallery ones such as `REPRISE_BLESS`:
 A pixel test without `REPRISE_TEST_FONTS` fails, as does one that draws a
 glyph from a font outside that set; a painter that asks for another family
 takes its font as a parameter so its test can pass Tahoma. Under
-`REPRISE_TEST_STRICT=1` a skipped test fails too; only the tests for
+`REPRISE_TEST_STRICT=1` a test that skips for want of `dbus-daemon`, an EGL
+device or a font of the set fails instead (`reprisebus::testbus::skipped`,
+`reprisekit::pins::skipped`). Still skipping under it: the tests for
 Trebuchet MS, Franklin Gothic Medium, Segoe UI and Wine's `sserife.fon`
-still skip where those fonts aren't installed.
+where those fonts aren't installed, dma-buf uploads with no render node,
+kernel TLS without `REPRISE_KTLS_TESTS=1`, the icon theme check with no icon
+theme installed, and the zombie test when another test's reaper wins.
 
 - **Pixel-neutral changes.** If a change shouldn't move a pixel, prove it
   with `scripts/pixels-unchanged.sh [--with-blue] BASE`. It renders the

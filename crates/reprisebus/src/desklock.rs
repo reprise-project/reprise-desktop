@@ -234,7 +234,6 @@ mod tests {
     #[test]
     fn the_compositors_lock_is_followed_and_an_owner_leaving_is_unknown() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let first = owner(&bus.1, false);
@@ -258,7 +257,6 @@ mod tests {
     #[test]
     fn an_owner_that_is_not_the_compositor_is_unknown() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let compositor = Arc::new(AtomicU32::new(std::process::id()));
@@ -289,7 +287,6 @@ mod tests {
     #[test]
     fn an_owner_without_get_active_is_asked_again_only_once_the_name_changes_hands() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let _old = zbus::block_on(
@@ -315,7 +312,6 @@ mod tests {
     #[test]
     fn the_lock_is_unknown_until_the_compositor_can_be_checked() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let _owner = owner(&bus.1, false);

@@ -217,9 +217,7 @@ pub(crate) mod tests {
     use crate::remotedesktop::RemoteSession;
     use crate::wayland::{OutputInfo, Target};
     use crate::{SessionData, SessionKind};
-    use std::io::{BufRead, BufReader};
     use std::os::unix::net::UnixStream;
-    use std::process::{Child, Command, Stdio};
 
     const FIRST: [Monitor; 2] = [(0, 0, 2560, 1440, 100), (2560, 0, 1920, 1080, 150)];
     const SECOND: [Monitor; 1] = [(0, 0, 1280, 800, 100)];
@@ -237,29 +235,7 @@ pub(crate) mod tests {
     const UNAVAILABLE: u32 = 2;
     const REPLACED: u32 = 3;
 
-    pub(crate) struct Bus(Child, pub(crate) String);
-
-    impl Drop for Bus {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
-    /// A private session bus.
-    pub(crate) fn bus() -> Option<Bus> {
-        let mut child = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let mut line = String::new();
-        BufReader::new(child.stdout.take()?)
-            .read_line(&mut line)
-            .ok()?;
-        Some(Bus(child, line.trim().to_string()))
-    }
+    pub(crate) use reprisebus::testbus::{Bus, bus};
 
     pub(crate) async fn connect(bus: &Bus) -> zbus::Connection {
         zbus::connection::Builder::address(bus.1.as_str())
@@ -440,7 +416,6 @@ pub(crate) mod tests {
             true
         };
         let Some((pick, layouts)) = begun(&FIRST, std::process::id(), Trust::Own, answer) else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         assert_eq!(layouts, [words(&FIRST)], "the server's layout is asked for");
@@ -470,7 +445,6 @@ pub(crate) mod tests {
         let me = std::process::id();
         let never = |_: &mut UnixStream, _, _| panic!("no layout reaches the compositor");
         let Some((pick, layouts)) = begun(&[], me, Trust::Own, never) else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         assert_eq!(pick, Ok(Pick::All));
@@ -496,7 +470,6 @@ pub(crate) mod tests {
         let me = std::process::id();
         let never = |_: &mut UnixStream, _, _| panic!("no layout reaches the compositor");
         let Some((pick, _)) = begun(&FIRST, me + 1, Trust::HandOver, never) else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         assert_eq!(pick, Err(NotBegun), "another process owns the name");
@@ -527,7 +500,6 @@ pub(crate) mod tests {
         let me = std::process::id();
         let silent = |_: &mut UnixStream, _, _| true;
         let Some((pick, _)) = begun(&FIRST, me, Trust::Own, silent) else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         assert_eq!(pick, Err(NotBegun), "no screens within {SCREENS_WAIT:?}");
@@ -554,7 +526,6 @@ pub(crate) mod tests {
     #[test]
     fn a_layout_change_is_relayed_to_the_compositor() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let (ours, theirs) = UnixStream::pair().unwrap();
@@ -600,7 +571,6 @@ pub(crate) mod tests {
     #[test]
     fn ended_closes_the_remote_desktop_session() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         for reason in [CONSOLE_UNLOCKED, REPLACED] {
@@ -641,7 +611,6 @@ pub(crate) mod tests {
     #[test]
     fn a_changed_set_of_screens_closes_the_session() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let (ours, theirs) = UnixStream::pair().unwrap();

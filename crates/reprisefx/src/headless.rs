@@ -50,7 +50,7 @@ mod tests {
     #[test]
     fn the_display_outlives_every_renderer_made_on_it() {
         let Ok(renderer) = super::renderer() else {
-            eprintln!("skipped: no EGL display");
+            reprisekit::pins::skipped("no EGL display");
             return;
         };
         let display = Arc::downgrade(&renderer.egl_context().display().get_display_handle());

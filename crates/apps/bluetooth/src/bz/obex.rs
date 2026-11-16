@@ -479,32 +479,9 @@ fn not_received(a: Accepted, poster: &Poster) {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader};
-    use std::process::{Child, Command, Stdio};
     use std::sync::mpsc;
 
-    pub(crate) struct Bus(Child, pub(crate) String);
-
-    impl Drop for Bus {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
-    pub(crate) fn bus() -> Option<Bus> {
-        let mut child = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let mut line = String::new();
-        BufReader::new(child.stdout.take()?)
-            .read_line(&mut line)
-            .ok()?;
-        Some(Bus(child, line.trim().to_string()))
-    }
+    pub(crate) use reprisebus::testbus::{Bus, bus};
 
     pub(crate) async fn connect(address: &str) -> Connection {
         zbus::connection::Builder::address(address)
@@ -716,10 +693,7 @@ pub(super) mod tests {
         accept: bool,
         body: impl AsyncFnOnce(&str, &Connection, &Connection, &Obex) -> T,
     ) -> Option<(T, mpsc::Receiver<BzMsg>, mpsc::Receiver<String>, Bus)> {
-        let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
-            return None;
-        };
+        let bus = bus()?;
         let (poster, rx) = Poster::channel(repriseapp::Waker::noop());
         let posted = user(rx, accept);
         let (out, posted, registered) = zbus::block_on(async {
@@ -870,7 +844,6 @@ pub(super) mod tests {
     #[test]
     fn an_agent_not_receiving_never_registers_even_when_obexd_restarts() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let (poster, _rx) = Poster::channel(repriseapp::Waker::noop());

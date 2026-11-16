@@ -231,7 +231,7 @@ fn computer_lists_while_udisks_does_not_answer() {
         .stderr(Stdio::null())
         .spawn()
     else {
-        eprintln!("no dbus-daemon; skipped");
+        reprisebus::testbus::skipped("no dbus-daemon");
         return;
     };
     let mut address = String::new();

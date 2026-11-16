@@ -52,7 +52,7 @@ fn rig_turned(w: i32, h: i32, transform: Transform) -> Option<Rig> {
     let mut renderer = match headless::renderer() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("skipped: {e}");
+            reprisekit::pins::skipped(&e);
             return None;
         }
     };
@@ -1686,7 +1686,7 @@ fn a_fine_checker_drawn_at_a_quarter_size_is_an_even_grey() {
     let Some(mut r) = rig(64, 48) else { return };
     let fx = FlipFx::new(&mut r.renderer).expect("the card shader compiles");
     if !fx.trilinear() {
-        eprintln!("skipped: no GLES 3, cards sample without mipmaps");
+        reprisekit::pins::skipped("no GLES 3, cards sample without mipmaps");
         return;
     }
     let mut bytes = Vec::with_capacity(128 * 128 * 4);

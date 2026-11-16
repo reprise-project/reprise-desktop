@@ -309,35 +309,11 @@ pub(crate) mod tests {
     use super::*;
     use futures_util::StreamExt;
     use std::collections::HashMap;
-    use std::io::{BufRead, BufReader};
-    use std::process::{Child, Command, Stdio};
     use zbus::OwnedVariant;
     use zbus::fdo::PropertiesProxy;
     use zbus::names::InterfaceName;
 
-    pub(crate) struct Bus(Child, pub(crate) String);
-
-    impl Drop for Bus {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
-    /// A private session bus.
-    pub(crate) fn bus() -> Option<Bus> {
-        let mut child = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let mut line = String::new();
-        BufReader::new(child.stdout.take()?)
-            .read_line(&mut line)
-            .ok()?;
-        Some(Bus(child, line.trim().to_string()))
-    }
+    pub(crate) use reprisebus::testbus::{Bus, bus};
 
     fn client() -> Client {
         Client {
@@ -350,7 +326,6 @@ pub(crate) mod tests {
     #[test]
     fn the_status_is_served_and_each_change_is_signalled() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let (status, rx) = watch::channel(Status {
@@ -516,7 +491,6 @@ pub(crate) mod tests {
     #[test]
     fn session_ending_asks_to_end_every_client() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let (status, rx) = watch::channel(Status::default());
@@ -540,7 +514,6 @@ pub(crate) mod tests {
     #[test]
     fn a_session_ending_from_another_session_leaves_every_client_connected() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let (status, rx) = watch::channel(Status::default());
@@ -589,7 +562,6 @@ pub(crate) mod tests {
     #[test]
     fn a_hand_over_server_claims_the_name_alone_or_not_at_all() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let others =
@@ -614,7 +586,6 @@ pub(crate) mod tests {
     #[test]
     fn the_own_server_takes_the_name_and_never_gives_it_up() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let (regenerate, _) = mpsc::unbounded_channel();
@@ -636,7 +607,6 @@ pub(crate) mod tests {
     #[test]
     fn a_hand_over_server_leaves_the_certificate_to_the_login_manager() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let (status, claimed) = spawned(&bus, Server::HandOver);

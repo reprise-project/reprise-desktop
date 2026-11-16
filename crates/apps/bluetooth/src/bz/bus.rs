@@ -532,7 +532,6 @@ mod tests {
     #[test]
     fn changes_the_snapshot_does_not_show_cost_no_read_and_a_burst_costs_one() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let connected = Arc::new(Mutex::new(false));

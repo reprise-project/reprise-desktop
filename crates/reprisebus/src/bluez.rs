@@ -183,33 +183,10 @@ pub async fn follow(conn: &Connection, target: &str, mut seen: impl FnMut(bool))
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader};
-    use std::process::{Child, Command, Stdio};
     use std::sync::mpsc;
     use std::time::Duration;
 
-    struct Bus(Child, String);
-
-    impl Drop for Bus {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
-    fn bus() -> Option<Bus> {
-        let mut child = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let mut line = String::new();
-        BufReader::new(child.stdout.take()?)
-            .read_line(&mut line)
-            .ok()?;
-        Some(Bus(child, line.trim().to_string()))
-    }
+    use crate::testbus::bus;
 
     async fn connect(address: &str) -> Connection {
         zbus::connection::Builder::address(address)
@@ -288,7 +265,6 @@ mod tests {
     #[test]
     fn the_devices_carry_their_address_name_and_states() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let mut got = zbus::block_on(async {
@@ -322,7 +298,6 @@ mod tests {
     #[test]
     fn follow_reports_the_device_dropping_returning_and_vanishing() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let (tx, rx) = mpsc::channel();

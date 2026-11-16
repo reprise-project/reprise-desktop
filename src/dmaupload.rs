@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn a_canvas_or_its_bytes_filled_on_another_thread_read_back_through_the_renderer() {
         let Ok(mut renderer) = reprisefx::headless::renderer() else {
-            eprintln!("skipped: no renderer");
+            reprisekit::pins::skipped("no renderer");
             return;
         };
         let node = EGLDevice::device_for_display(renderer.egl_context().display())
@@ -358,7 +358,7 @@ mod tests {
             "a copy in pixel memory has no texture to hand back"
         );
         let Ok(mut renderer) = reprisefx::headless::renderer() else {
-            eprintln!("skipped: no renderer");
+            reprisekit::pins::skipped("no renderer");
             return;
         };
         let node = EGLDevice::device_for_display(renderer.egl_context().display())

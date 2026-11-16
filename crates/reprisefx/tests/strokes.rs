@@ -22,7 +22,7 @@ fn rig() -> Option<(GlesRenderer, StrokeFx)> {
     let mut r = match headless::renderer() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("skipped: {e}");
+            reprisekit::pins::skipped(&e);
             return None;
         }
     };

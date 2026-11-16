@@ -1761,7 +1761,6 @@ mod tests {
     /// `proc` (`/proc` when None).
     fn frontend_passes(proc: Option<&std::path::Path>) -> bool {
         let Some(bus) = crate::lockmode::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return proc.is_none();
         };
         zbus::block_on(async {
