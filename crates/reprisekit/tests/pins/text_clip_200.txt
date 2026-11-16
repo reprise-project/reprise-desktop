@@ -192,7 +192,6 @@ glass-dark.png "notepad" x4
 glass-dark.png "notes.txt" x3
 glass-dark.png "report.odt" x3
 glass-dark.png "setup.exe" x3
-glass-scale2.png "3:45 PM" x2
 glass.png " Desktop" x1
 glass.png "(None)" x6
 glass.png "0 KB" x2
@@ -261,7 +260,6 @@ overview.png "My Documents" x3
 overview.png "Untitled - Notepad" x3
 path-complete.png "~/Do" x3
 perf@1.png "42 %" x4
-quick-more.png "3:45 PM" x6
 reprisekit-gallery.png "#0A246A" x1
 reprisekit-gallery.png "00" x1
 reprisekit-gallery.png "1 KB" x1
@@ -402,8 +400,3 @@ reprisekit-gallery.png "say nihao to all" x2
 reprisekit-gallery.png "setup.e..." x1
 reprisekit-gallery.png "setup.exe" x3
 reprisekit-gallery.png "user@repris..." x1
-taskbar-cells.png "3:45 PM" x6
-taskbar-edges.png "3:45 PM" x4
-tray-arrow.png "3:45 PM" x4
-tray-arrow.png "Start" x2
-tray-arrow.png "start" x2

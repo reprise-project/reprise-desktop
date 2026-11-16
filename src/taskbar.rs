@@ -860,12 +860,30 @@ pub fn clock_now() -> i64 {
 }
 
 pub fn time_text(secs: i64) -> String {
-    let fmt = if reprisefs::locale::is_12h() {
+    local_text(secs, time_format())
+}
+
+fn time_format() -> &'static std::ffi::CStr {
+    if reprisefs::locale::is_12h() {
         c"%l:%M %p"
     } else {
         c"%H:%M"
-    };
-    local_text(secs, fmt)
+    }
+}
+
+/// The bar's one-line clock at 10:58 and 22:58, the widest times it shows: what a side bar's
+/// default width holds.
+pub fn widest_times() -> &'static [String; 2] {
+    static TIMES: std::sync::OnceLock<[String; 2]> = std::sync::OnceLock::new();
+    TIMES.get_or_init(|| {
+        [10, 22].map(|hour| {
+            let mut tm = reprisefs::locale::localtime(0);
+            (tm.tm_hour, tm.tm_min) = (hour, 58);
+            reprisefs::locale::strftime(&tm, time_format())
+                .trim()
+                .to_string()
+        })
+    })
 }
 
 fn local_text(secs: i64, fmt: &std::ffi::CStr) -> String {

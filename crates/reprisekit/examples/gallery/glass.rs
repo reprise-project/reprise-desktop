@@ -329,7 +329,7 @@ fn glass_popups_at_2(c: &mut Canvas, y0: i32, text: &TextRenderer) {
 /// How tall [`glass_scale2_bars`] is.
 const GLASS_SCALE2_BARS: i32 = 4 * 92 + 90 + 580;
 
-/// Glass taskbars at scale 2 into `c` from row `top`: a 640 px bar per setting in `rows` along the bottom, then 40 px and small bars as 70 px columns up the left of a 280 px output.
+/// Glass taskbars at scale 2 into `c` from row `top`: a 640 px bar per setting in `rows` along the bottom, then 40 px and small bars as columns at least 70 px wide up the left of a 280 px output.
 fn glass_scale2_bars(c: &mut Canvas, rows: &[reprisekit::glass::Settings], top: i32) {
     use reprisekit::taskbar::{
         Bands, BarSpan, ClockText, Edge, PagerButton, TaskEntry, TaskRow, TaskbarCounts,
@@ -446,8 +446,22 @@ fn glass_scale2_bars(c: &mut Canvas, rows: &[reprisekit::glass::Settings], top: 
     let below = top + 10 + 92 * rows.len() as i32;
     bar(c, &small, Edge::Bottom, 30, 640, (10, below));
     let side = below + 80;
-    bar(c, &themes[0], Edge::Left, 70, 280, (10, side));
-    bar(c, &small, Edge::Left, 70, 280, (170, side));
+    let clock = text.measure("3:45 PM", false, small.fonts.size_px);
+    let wide = |t: &Theme| {
+        t.taskbar_shape()
+            .side_width(&t.metrics, 0, 1920, clock)
+            .max(70)
+    };
+    let w = wide(&themes[0]);
+    bar(c, &themes[0], Edge::Left, w, 280, (10, side));
+    bar(
+        c,
+        &small,
+        Edge::Left,
+        wide(&small),
+        280,
+        (10 + 2 * w + 20, side),
+    );
 }
 
 /// Dark Glass's taskbar over the stripes with two windows lacking icons: each shows the light window glyph.
