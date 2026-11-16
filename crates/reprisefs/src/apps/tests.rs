@@ -271,27 +271,6 @@ fn excludes_hidden_nodisplay_wrong_type_and_showin() {
         )
         .is_none()
     );
-    assert!(
-        parse_desktop(
-            "[Desktop Entry]\nType=Application\nName=x\nExec=x\nOnlyShowIn=GNOME;\n",
-            "a"
-        )
-        .is_none()
-    );
-    assert!(
-        parse_desktop(
-            "[Desktop Entry]\nType=Application\nName=x\nExec=x\nOnlyShowIn=reprise;GNOME;\n",
-            "a"
-        )
-        .is_some()
-    );
-    assert!(
-        parse_desktop(
-            "[Desktop Entry]\nType=Application\nName=x\nExec=x\nNotShowIn=reprise;\n",
-            "a"
-        )
-        .is_none()
-    );
     assert!(parse_desktop("[Desktop Entry]\nType=Application\nName=x\n", "a").is_none());
     assert!(parse_desktop("[Other]\nType=Application\nName=x\nExec=x\n", "a").is_none());
 }
@@ -1152,4 +1131,34 @@ fn a_quoted_program_a_literal_percent_and_escapes_keep_their_old_reading() {
         Ok(vec![OsString::from("tool"), "50off".into(), "\\%f".into()]),
         "a percent before no code, and an escaped one, are no field codes"
     );
+}
+
+#[test]
+fn an_entry_shows_by_every_desktop_name_and_only_with_its_try_exec_program() {
+    let on = |extra: &str, desktops: &[&str], installed: bool| {
+        let text = format!("[Desktop Entry]\nType=Application\nName=x\nExec=x\n{extra}\n");
+        let desktops: Vec<String> = desktops.iter().map(|d| d.to_string()).collect();
+        parse_desktop_on(&text, "a", &desktops, |_| installed).is_some()
+    };
+    let reprise = ["reprise"];
+    assert!(!on("OnlyShowIn=GNOME;", &reprise, true));
+    assert!(on("OnlyShowIn=reprise;GNOME;", &reprise, true));
+    assert!(!on("NotShowIn=reprise;", &reprise, true));
+    assert!(on("NotShowIn=GNOME;", &reprise, true));
+    assert!(
+        on("OnlyShowIn=wlroots;", &["reprise", "wlroots"], true),
+        "any name in XDG_CURRENT_DESKTOP"
+    );
+    assert!(!on("NotShowIn=wlroots;", &["reprise", "wlroots"], true));
+    assert!(on("TryExec=x", &reprise, true));
+    assert!(
+        !on("TryExec=gone", &reprise, false),
+        "a program uninstalled but for its entry"
+    );
+    assert!(on("TryExec=", &reprise, false), "an empty TryExec");
+    let found = parse_desktop_any(
+        "[Desktop Entry]\nType=Application\nName=x\nExec=x\nTryExec=/nonexistent/reprise-x\n",
+        "a",
+    );
+    assert!(found.is_none(), "TryExec is looked up on disk");
 }

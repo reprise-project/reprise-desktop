@@ -54,8 +54,6 @@ impl AppEntry {
 
 const BROWSED_PREFIX: &str = "reprise-userapp-";
 
-const DESKTOP_NAME: &str = "reprise";
-
 /// Remove %-field codes ("%%" becomes "%"). Whitespace between arguments
 /// collapses to one space; inside double quotes it stays.
 pub fn strip_field_codes(exec: &str) -> String {
@@ -273,10 +271,6 @@ fn refuse_quoted_codes(entry: &AppEntry) -> Result<(), ExecRefused> {
     Ok(())
 }
 
-fn list_contains(value: &str, needle: &str) -> bool {
-    value.split(';').any(|s| s.trim() == needle)
-}
-
 const DESKTOP_FILE_MAX: u64 = 64 * 1024;
 
 /// The text of the `.desktop` file at `path`, following symlinks. Only a
@@ -301,8 +295,25 @@ pub fn parse_desktop(text: &str, id: &str) -> Option<AppEntry> {
 }
 
 /// [`parse_desktop`], keeping a `NoDisplay` entry with `shown` false: the
-/// index [`scan`] builds holds those too, as programs that open files.
+/// index [`scan`] builds holds those too, as programs that open files. An entry
+/// `OnlyShowIn` / `NotShowIn` keeps off every name in `XDG_CURRENT_DESKTOP`, or
+/// whose `TryExec` program is missing, is none.
 pub fn parse_desktop_any(text: &str, id: &str) -> Option<AppEntry> {
+    let desktops =
+        crate::autostart::desktop_names(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref());
+    parse_desktop_on(text, id, &desktops, |p| {
+        crate::autostart::find_program(p).is_some()
+    })
+}
+
+/// [`parse_desktop_any`] on a desktop announcing `desktops`, `installed` saying whether a
+/// `TryExec` program is there.
+fn parse_desktop_on(
+    text: &str,
+    id: &str,
+    desktops: &[String],
+    installed: impl Fn(&str) -> bool,
+) -> Option<AppEntry> {
     let kv = desktop_entry_kv(text);
     let get = |k: &str| kv.get(k).map(|v| v.as_ref());
     if get("Type") != Some("Application") {
@@ -311,13 +322,13 @@ pub fn parse_desktop_any(text: &str, id: &str) -> Option<AppEntry> {
     if get("Hidden") == Some("true") {
         return None;
     }
-    if let Some(only) = get("OnlyShowIn")
-        && !list_contains(only, DESKTOP_NAME)
-    {
+    let (only, not) = (split_list(get("OnlyShowIn")), split_list(get("NotShowIn")));
+    if !crate::autostart::shown_on(&only, &not, desktops) {
         return None;
     }
-    if let Some(not) = get("NotShowIn")
-        && list_contains(not, DESKTOP_NAME)
+    if get("TryExec")
+        .map(str::trim)
+        .is_some_and(|t| !t.is_empty() && !installed(t))
     {
         return None;
     }
@@ -803,14 +814,13 @@ fn globs2_paths() -> Vec<PathBuf> {
     mime_dirs().into_iter().map(|d| d.join("globs2")).collect()
 }
 
+/// The shared-mime-info database folders, most important first: the user's, then each of
+/// `XDG_DATA_DIRS` in its order.
 pub(crate) fn mime_dirs() -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = Vec::new();
-    if let Some(home) = reprisexdg::data_home() {
-        roots.push(home.join("mime"));
-    }
-    roots.push(PathBuf::from("/usr/share/mime"));
-    roots.push(PathBuf::from("/usr/local/share/mime"));
-    roots
+    (reprisexdg::data_home().into_iter())
+        .chain(reprisexdg::data_dirs())
+        .map(|d| d.join("mime"))
+        .collect()
 }
 
 fn read_globs(paths: &[PathBuf]) -> MimeDb {

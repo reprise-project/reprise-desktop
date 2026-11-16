@@ -78,21 +78,21 @@ pub fn desktop_names(xdg_current_desktop: Option<&str>) -> Vec<String> {
     }
 }
 
+/// Whether a desktop entry with these `OnlyShowIn` and `NotShowIn` lists (empty: no such key)
+/// belongs on a desktop announcing `desktops` ([`desktop_names`]).
+pub fn shown_on(only_show_in: &[String], not_show_in: &[String], desktops: &[String]) -> bool {
+    let named = |list: &[String]| list.iter().any(|d| desktops.contains(d));
+    if !only_show_in.is_empty() {
+        return named(only_show_in);
+    }
+    !named(not_show_in)
+}
+
 impl Entry {
     /// Whether this entry would start on a desktop announcing `desktops`:
     /// never when hidden, else `OnlyShowIn` / `NotShowIn` against any name.
     pub fn runs_on(&self, desktops: &[String]) -> bool {
-        if self.hidden {
-            return false;
-        }
-        let named = |list: &[String]| list.iter().any(|d| desktops.iter().any(|x| x == d));
-        if !self.only_show_in.is_empty() {
-            return named(&self.only_show_in);
-        }
-        if !self.not_show_in.is_empty() {
-            return !named(&self.not_show_in);
-        }
-        true
+        !self.hidden && shown_on(&self.only_show_in, &self.not_show_in, desktops)
     }
 
     pub fn runs_in(&self, desktop: &str) -> bool {

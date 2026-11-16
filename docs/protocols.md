@@ -243,3 +243,5 @@ An entry marked `X-systemd-skip=true` or `X-GNOME-HiddenUnderSystemd=true`
 whose program a user unit of the session runs (one `reprise-session.target`
 pulls in, such as `spice-vdagent.service`) is left to that unit and not listed
 on the Startup page; with no such unit it starts like any other entry.
+The Start menu and Open With honour `OnlyShowIn`, `NotShowIn` and `TryExec`
+the same way, matching every name in `XDG_CURRENT_DESKTOP`.
