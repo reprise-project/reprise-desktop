@@ -8,7 +8,7 @@ use reprisekit::pointer::Interaction;
 use reprisekit::powerpanel::{First, Leave, Panel, Part, layout};
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::{Color, TextUnits};
+use reprisekit::theme::Color;
 
 const GAP: i32 = 10;
 
@@ -61,7 +61,7 @@ pub fn render(scale: i32) -> Canvas {
         (Variant::Silver, None),
         (Variant::Blue, Some(&classic)),
     ];
-    let (w, h) = layout(&cases[0].0, TextUnits::ONE).size;
+    let (w, h) = layout(&cases[0].0, theme.text).size;
     let cols = cases.len() as i32;
     let rows = schemes.len() as i32;
     let mut c = Canvas::new(
@@ -71,7 +71,7 @@ pub fn render(scale: i32) -> Canvas {
     c.fill_rect(c.bounds(), Color::rgb(0x60, 0x60, 0x60));
     for (row, (v, cancel)) in schemes.into_iter().enumerate() {
         for (col, (p, lit, cues)) in cases.iter().enumerate() {
-            let lay = layout(p, TextUnits::ONE);
+            let lay = layout(p, theme.text);
             let mut panel = Canvas::new((w * scale) as u32, (h * scale) as u32);
             draw_power_panel(
                 &mut panel,
