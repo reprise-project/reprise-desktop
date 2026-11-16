@@ -117,15 +117,19 @@ pub fn hold_pkg(text: &str) -> Vec<String> {
     names
 }
 
-/// A package's name, depends and groups from its pacman local db `desc` file.
+/// A package from its pacman local db `desc` file. `depends` holds bare names; `provides` and
+/// `conflicts` keep their versions (`libfoo.so=1-64`, `foo<2`).
 #[derive(Debug, Default, PartialEq, Eq)]
-struct Desc {
-    name: String,
+pub(crate) struct Desc {
+    pub name: String,
+    pub version: String,
     depends: Vec<String>,
     groups: Vec<String>,
+    pub provides: Vec<String>,
+    pub conflicts: Vec<String>,
 }
 
-fn desc(text: &str) -> Desc {
+pub(crate) fn desc(text: &str) -> Desc {
     let mut d = Desc::default();
     let mut field = "";
     for line in text.lines() {
@@ -138,6 +142,9 @@ fn desc(text: &str) -> Desc {
         }
         match field {
             "%NAME%" => d.name = line.into(),
+            "%VERSION%" => d.version = line.into(),
+            "%PROVIDES%" => d.provides.push(line.into()),
+            "%CONFLICTS%" => d.conflicts.push(line.into()),
             "%DEPENDS%" => {
                 let name = line.split(['<', '>', '=', ':']).next().unwrap_or(line);
                 d.depends.push(name.trim().into());
@@ -207,6 +214,15 @@ fn set(pattern: &[u8], c: u8) -> Option<(bool, &[u8])> {
     }
 }
 
+/// The `desc` files of the packages pacman's local db holds; none without one.
+pub(crate) fn pacman_installed() -> impl Iterator<Item = String> {
+    std::fs::read_dir(PACMAN_LOCAL)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| std::fs::read_to_string(e.path().join("desc")).ok())
+}
+
 /// What pacman marks essential, from pacman.conf `conf` and the local db's `desc` files: HoldPkg's
 /// names and the installed packages its patterns match, the `base` package, what it depends on,
 /// and the members of the `base` group.
@@ -248,12 +264,7 @@ fn dpkg_essential(out: &str) -> BTreeSet<String> {
 pub fn essential(set: &[&str]) -> BTreeSet<String> {
     if Path::new(PACMAN_LOCAL).is_dir() {
         let conf = std::fs::read_to_string(PACMAN_CONF).unwrap_or_default();
-        let descs = std::fs::read_dir(PACMAN_LOCAL)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|e| std::fs::read_to_string(e.path().join("desc")).ok());
-        return pacman_essential(&conf, descs);
+        return pacman_essential(&conf, pacman_installed());
     }
     let out = std::process::Command::new("dpkg-query")
         .args(["-W", "-f", DPKG_FORMAT])

@@ -377,7 +377,8 @@ Software (`reprise-updates --install FILE`, `reprise-updates --uninstall
 DESKTOP-FILE`). The sheet shows the name, version, size and who built it, and
 lists any other package that comes along or goes too. A change that would
 remove one of Reprise's own packages or one the system marks essential is
-refused. Nothing changes until you click Install or Uninstall; polkit asks
+refused, and so is an Arch package that conflicts with an installed one
+(pacman would have to remove it). Nothing changes until you click Install or Uninstall; polkit asks
 for an administrator's password where the system's rules want one. A
 packager reads "(unverified)" unless pacman will check a `.sig` beside the
 package. Cancel stops a Flatpak run at any point, and a PackageKit run while
