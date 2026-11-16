@@ -2,6 +2,7 @@
 //! for Settings, and Disconnect, SessionEnding, DisconnectClient and RegenerateCertificate.
 
 use reprisebus::peer::HostOnly;
+use reprisebus::remote;
 use tokio::sync::{mpsc, oneshot, watch};
 use zbus::connection::Builder;
 use zbus::message::Header;
@@ -246,10 +247,12 @@ impl RemoteDesktop {
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] header: Header<'_>,
         address: String,
-    ) -> zbus::fdo::Result<()> {
+    ) -> Result<(), zbus::BoxDBusError> {
         HostOnly::default().check(conn, &header).await?;
         let (tx, rx) = oneshot::channel();
-        let none = || zbus::fdo::Error::Failed(format!("no client at {address}"));
+        let none = || -> zbus::BoxDBusError {
+            Box::new(remote::Error::NoClient(format!("no client at {address}")))
+        };
         let _ = self.disconnect.send(Request::Client(address.clone(), tx));
         rx.await.unwrap_or(false).then_some(()).ok_or_else(none)
     }
@@ -464,10 +467,14 @@ pub(crate) mod tests {
             let missed =
                 (conn.call_method(Some(NAME), PATH, Some(NAME), method, &"192.0.2.8:1")).await;
             answer.join().unwrap();
-            assert!(
-                matches!(&missed, Err(zbus::Error::FDO(e))
-                    if matches!(&**e, zbus::fdo::Error::Failed(m) if m == "no client at 192.0.2.8:1")),
-                "{missed:?}"
+            let missed = missed.unwrap_err();
+            assert_eq!(
+                reprisebus::error::name(&missed).as_deref(),
+                Some(remote::NO_CLIENT)
+            );
+            assert_eq!(
+                reprisebus::error::message(&missed),
+                Some("no client at 192.0.2.8:1")
             );
 
             let answer = std::thread::spawn(move || {
