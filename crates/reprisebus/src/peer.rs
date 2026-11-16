@@ -645,32 +645,9 @@ fn shows_flatpak_info(proc: &Path, pid: u32) -> bool {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader};
-    use std::process::{Child, Command, Stdio};
+    use std::process::{Child, Command};
 
-    /// A private bus daemon, killed on drop, and its address.
-    pub(crate) struct Bus(Child, pub(crate) String);
-
-    impl Drop for Bus {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
-    pub(crate) fn bus() -> Option<Bus> {
-        let mut child = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let mut line = String::new();
-        BufReader::new(child.stdout.take()?)
-            .read_line(&mut line)
-            .ok()?;
-        Some(Bus(child, line.trim().to_string()))
-    }
+    pub(crate) use crate::testbus::{Bus, bus};
 
     /// A `proc` folder in which this process shows a `/.flatpak-info`.
     pub(crate) fn sandboxed_proc() -> tempfile::TempDir {
@@ -720,7 +697,6 @@ pub(crate) mod tests {
     #[test]
     fn a_flatpak_peer_is_the_app_its_flatpak_info_names() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let proc = proc_showing(&[
@@ -743,7 +719,6 @@ pub(crate) mod tests {
     #[test]
     fn a_host_peer_is_the_app_whose_scope_it_runs_in() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let scoped = proc_showing(&[
@@ -768,7 +743,6 @@ pub(crate) mod tests {
     #[test]
     fn a_peer_gone_from_the_bus_or_its_process_is_unknown() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let connect =
@@ -876,7 +850,6 @@ pub(crate) mod tests {
     #[test]
     fn a_flatpak_peers_files_are_under_its_sandboxs_root() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let app = [
@@ -891,7 +864,6 @@ pub(crate) mod tests {
     #[test]
     fn a_proxied_flatpak_peers_files_are_its_sandboxs_not_the_proxys() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let proxied = format!("{APP_INFO}session-bus-proxy=true\n");
@@ -914,7 +886,6 @@ pub(crate) mod tests {
     #[test]
     fn a_flatpak_sandbox_that_doesnt_check_out_names_no_files() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let child = sleeper();
@@ -991,7 +962,6 @@ pub(crate) mod tests {
     #[test]
     fn a_snap_peers_files_are_its_snaps() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let proc = proc_showing(&[
@@ -1010,7 +980,6 @@ pub(crate) mod tests {
     #[test]
     fn a_host_peers_files_are_the_users_and_a_gone_ones_none() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let host = proc_showing(&[("cgroup", USER), ("status", "NSpid:\t4242\n")]);
@@ -1049,7 +1018,6 @@ pub(crate) mod tests {
     #[test]
     fn an_identity_is_kept_until_its_name_is_forgotten() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let connect =
@@ -1075,7 +1043,6 @@ pub(crate) mod tests {
     #[test]
     fn a_flatpak_info_that_cant_be_read_still_marks_a_sandbox() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let proc = proc_showing(&[("cgroup", USER), ("status", "NSpid:\t4242\n")]);
@@ -1296,7 +1263,6 @@ pub(crate) mod tests {
     #[test]
     fn a_peer_is_judged_by_the_process_its_pidfd_names() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let connect =
@@ -1317,7 +1283,6 @@ pub(crate) mod tests {
     #[test]
     fn a_peer_is_matched_to_the_process_its_pidfd_names() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let connect =

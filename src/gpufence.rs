@@ -407,7 +407,7 @@ mod tests {
     fn a_renderer_refuses_renders_while_one_it_issued_is_lost() {
         let r = match reprisefx::headless::renderer() {
             Ok(r) => r,
-            Err(e) => return eprintln!("skipped: {e}"),
+            Err(e) => return reprisekit::pins::skipped(&e),
         };
         assert_eq!(ready(&r), Ok(()));
         let mut h = held(true);

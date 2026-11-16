@@ -1124,7 +1124,6 @@ mod tests {
     #[test]
     fn the_remote_sides_lock_reads_active() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {
@@ -1141,7 +1140,6 @@ mod tests {
     #[test]
     fn an_unverified_owner_reads_logind_locked_hint() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {
@@ -1159,7 +1157,6 @@ mod tests {
     #[test]
     fn a_logind_that_answers_late_still_stands_in() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {
@@ -1174,7 +1171,6 @@ mod tests {
     #[test]
     fn a_verified_compositor_wins_over_locked_hint() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {
@@ -1196,7 +1192,6 @@ mod tests {
     #[test]
     fn a_lock_while_the_session_ends_keeps_query_end() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {
@@ -1216,7 +1211,6 @@ mod tests {
     fn a_monitor_first_hears_locked_before_any_reading() {
         use futures_lite::StreamExt;
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {

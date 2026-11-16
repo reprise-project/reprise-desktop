@@ -313,34 +313,11 @@ pub fn carry_out(d: &Device, change: Change) -> Result<(), Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader};
-    use std::process::{Child, Command, Stdio};
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    struct Bus(Child, String);
-
-    impl Drop for Bus {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
-    fn bus() -> Option<Bus> {
-        let mut child = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let mut line = String::new();
-        BufReader::new(child.stdout.take()?)
-            .read_line(&mut line)
-            .ok()?;
-        Some(Bus(child, line.trim().to_string()))
-    }
+    use crate::testbus::bus;
 
     async fn connect(address: &str) -> Connection {
         zbus::connection::Builder::address(address)
@@ -573,7 +550,6 @@ mod tests {
     #[test]
     fn the_list_leaves_out_the_host_and_counts_the_domains() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let calls = Calls::default();
@@ -603,7 +579,6 @@ mod tests {
     #[test]
     fn an_iommu_device_is_auto_only_while_the_domains_report_the_iommu_on() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let calls = Calls::default();
@@ -629,7 +604,6 @@ mod tests {
     #[test]
     fn follow_reports_changes_and_none_without_bolt_and_never_starts_it() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let (tx, rx) = mpsc::channel();
@@ -690,7 +664,6 @@ mod tests {
     #[test]
     fn each_change_makes_its_calls() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let calls = Calls::default();

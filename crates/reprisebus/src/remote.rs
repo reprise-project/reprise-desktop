@@ -334,7 +334,6 @@ mod tests {
     #[test]
     fn the_status_is_read_from_the_server_and_none_while_it_is_off() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async move {
@@ -375,7 +374,6 @@ mod tests {
     #[test]
     fn power_ending_on_a_server_without_it_ends_the_session_instead() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async move {
@@ -394,7 +392,6 @@ mod tests {
     #[test]
     fn a_sandboxed_owner_of_the_name_is_not_the_server() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async move {

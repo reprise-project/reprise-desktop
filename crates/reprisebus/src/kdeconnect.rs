@@ -208,34 +208,11 @@ pub async fn share(conn: &Connection, id: &str, urls: &[String]) -> zbus::Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader};
-    use std::process::{Child, Command, Stdio};
     use std::sync::{Arc, Mutex, mpsc};
     use std::time::Duration;
     use zbus::object_server::SignalEmitter;
 
-    struct Bus(Child, String);
-
-    impl Drop for Bus {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
-    fn bus() -> Option<Bus> {
-        let mut child = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let mut line = String::new();
-        BufReader::new(child.stdout.take()?)
-            .read_line(&mut line)
-            .ok()?;
-        Some(Bus(child, line.trim().to_string()))
-    }
+    use crate::testbus::bus;
 
     fn connect(address: &str) -> Connection {
         crate::connect(zbus::connection::Builder::address(address)).expect("connect")
@@ -387,7 +364,6 @@ mod tests {
     #[test]
     fn read_lists_reachable_paired_devices_with_battery_and_plugins() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let calls = Calls::default();
@@ -434,7 +410,6 @@ mod tests {
     #[test]
     fn ring_and_share_reach_the_devices_plugins() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let calls = Calls::default();
@@ -455,7 +430,6 @@ mod tests {
     #[test]
     fn follow_hears_the_daemon_come_change_and_go() {
         let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let (tx, rx) = mpsc::channel();

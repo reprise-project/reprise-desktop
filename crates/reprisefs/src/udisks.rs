@@ -1248,32 +1248,9 @@ pub(crate) mod tests {
     /// A fake UDisks2 on a private bus: the calls `mount_image` and `eject_image` make, in order.
     mod bus {
         use super::*;
-        use std::io::{BufRead, BufReader};
-        use std::process::{Child, Command, Stdio};
         use std::sync::{Arc, Mutex};
 
-        struct Bus(Child, String);
-
-        impl Drop for Bus {
-            fn drop(&mut self) {
-                let _ = self.0.kill();
-                let _ = self.0.wait();
-            }
-        }
-
-        fn bus() -> Option<Bus> {
-            let mut child = Command::new("dbus-daemon")
-                .args(["--session", "--nofork", "--print-address"])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .ok()?;
-            let mut line = String::new();
-            BufReader::new(child.stdout.take()?)
-                .read_line(&mut line)
-                .ok()?;
-            Some(Bus(child, line.trim().to_string()))
-        }
+        use reprisebus::testbus::{Bus, bus};
 
         #[derive(Clone, Copy, PartialEq)]
         enum Image {
@@ -1394,10 +1371,7 @@ pub(crate) mod tests {
         }
 
         fn fake(image: Image, set_up: bool) -> Option<Fake> {
-            let Some(bus) = bus() else {
-                eprintln!("no dbus-daemon; skipped");
-                return None;
-            };
+            let bus = bus()?;
             let dir = tempfile::tempdir().unwrap();
             let file = dir.path().join("disk.img");
             std::fs::write(&file, b"image").unwrap();

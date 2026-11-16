@@ -356,7 +356,6 @@ mod tests {
     #[test]
     fn a_sandboxed_peer_is_refused_every_application_method() {
         let Some(bus) = crate::peer::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let sandboxed = crate::peer::tests::sandboxed_proc();

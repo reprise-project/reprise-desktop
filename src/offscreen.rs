@@ -200,7 +200,7 @@ mod tests {
         match reprisefx::headless::renderer() {
             Ok(r) => Some(r),
             Err(e) => {
-                eprintln!("skipped: {e}");
+                reprisekit::pins::skipped(&e);
                 None
             }
         }

@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn a_capture_of_a_copy_of_another_size_shows_the_fitted_frame_on_black() {
         let Ok(mut renderer) = reprisefx::headless::renderer() else {
-            eprintln!("skipped: no renderer");
+            reprisekit::pins::skipped("no renderer");
             return;
         };
         let (mut h, _, b) = copied((1280, 1024));

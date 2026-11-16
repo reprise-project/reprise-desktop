@@ -1262,7 +1262,7 @@ mod tests {
     }
 
     mod logind {
-        use crate::testbus::bus;
+        use reprisebus::testbus::bus;
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::{Arc, Mutex};
         use std::time::{Duration, Instant};
@@ -1300,7 +1300,6 @@ mod tests {
         #[test]
         fn a_refused_sleep_delay_is_asked_for_again() {
             let Some(bus) = bus() else {
-                eprintln!("no dbus-daemon; skipped");
                 return;
             };
             let asked = Arc::new(AtomicU32::new(0));
@@ -1371,7 +1370,6 @@ mod tests {
         #[test]
         fn a_refused_locked_hint_is_sent_again() {
             let Some(bus) = bus() else {
-                eprintln!("no dbus-daemon; skipped");
                 return;
             };
             const SESSION: &str = "/org/freedesktop/login1/session/_31";

@@ -320,31 +320,8 @@ pub async fn add_on(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader};
-    use std::process::{Child, Command, Stdio};
 
-    struct Bus(Child, String);
-
-    impl Drop for Bus {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
-    fn bus() -> Option<Bus> {
-        let mut child = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let mut line = String::new();
-        BufReader::new(child.stdout.take()?)
-            .read_line(&mut line)
-            .ok()?;
-        Some(Bus(child, line.trim().to_string()))
-    }
+    use crate::testbus::bus;
 
     async fn connect(address: &str) -> Connection {
         zbus::connection::Builder::address(address)
@@ -378,10 +355,7 @@ mod tests {
     }
 
     fn ask(fingers: Option<&[&str]>, user: &str) -> Option<bool> {
-        let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
-            return None;
-        };
+        let bus = bus()?;
         Some(zbus::block_on(async move {
             let _fprintd = match fingers {
                 Some(fingers) => {
@@ -525,10 +499,7 @@ mod tests {
 
     /// `test` against `reader` served as fprintd's default device on a bus of its own.
     fn with_reader<T>(reader: &Reader, test: impl AsyncFnOnce(&Connection) -> T) -> Option<T> {
-        let Some(bus) = bus() else {
-            eprintln!("no dbus-daemon; skipped");
-            return None;
-        };
+        let bus = bus()?;
         Some(zbus::block_on(async move {
             let c = connect(&bus.1).await;
             c.object_server().at(MANAGER_PATH, Manager).await.unwrap();

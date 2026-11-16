@@ -391,7 +391,16 @@ mod tests {
 </busconfig>
 "#;
 
+    /// A bus daemon, the session's or a bare one, or None after `testbus::skipped`.
     fn bus(session: bool, env: &[(&str, &Path)]) -> Option<(Bus, tempfile::TempDir)> {
+        let bus = spawn(session, env);
+        if bus.is_none() {
+            crate::testbus::skipped("no dbus-daemon");
+        }
+        bus
+    }
+
+    fn spawn(session: bool, env: &[(&str, &Path)]) -> Option<(Bus, tempfile::TempDir)> {
         let dir = tempfile::tempdir().ok()?;
         let config = dir.path().join("bus.conf");
         std::fs::write(&config, BARE).ok()?;
@@ -514,7 +523,6 @@ mod tests {
     #[test]
     fn dragged_files_go_as_path_fds_under_a_key_and_come_back_as_paths() {
         let Some((bus, _portal, seen)) = fake() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let dir = tempfile::tempdir().unwrap();
@@ -544,7 +552,6 @@ mod tests {
     #[test]
     fn a_path_that_cannot_go_is_left_out_and_a_refusal_stops_the_transfer() {
         let Some((bus, _portal, seen)) = fake() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let ft = FileTransfer::on(connect(&bus.1)).unwrap();
@@ -596,7 +603,6 @@ mod tests {
     #[test]
     fn a_drag_sends_a_few_keys_and_stops_the_untraded_ones_when_it_ends() {
         let Some((bus, _portal, seen)) = fake() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         let ft = FileTransfer::on(connect(&bus.1)).unwrap();
@@ -647,7 +653,6 @@ mod tests {
     #[test]
     fn no_portal_on_the_bus_is_no_file_transfer() {
         let Some((bus, _dir)) = bus(false, &[]) else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         assert!(FileTransfer::on(connect(&bus.1)).is_err());

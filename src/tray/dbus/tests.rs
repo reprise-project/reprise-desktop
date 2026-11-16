@@ -1155,8 +1155,7 @@ async fn screensaver_owned_by(conn: &Connection, want: &Connection) -> bool {
 
 #[test]
 fn a_later_session_takes_the_screensaver_name_and_hands_it_back_when_it_leaves() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     zbus::block_on(async {
@@ -1176,8 +1175,7 @@ fn a_later_session_takes_the_screensaver_name_and_hands_it_back_when_it_leaves()
 
 #[test]
 fn a_session_gets_the_screensaver_name_once_a_holder_allowing_no_replacement_leaves() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     zbus::block_on(async {
@@ -1197,8 +1195,7 @@ fn a_session_gets_the_screensaver_name_once_a_holder_allowing_no_replacement_lea
 
 #[test]
 fn get_active_and_active_changed_follow_the_desktops_lock() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     zbus::block_on(async {
@@ -1253,8 +1250,7 @@ fn get_active_and_active_changed_follow_the_desktops_lock() {
 
 #[test]
 fn get_active_reads_locked_before_the_first_lock_report() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     zbus::block_on(async {
@@ -1293,8 +1289,7 @@ async fn owner_of(conn: &Connection, name: &str) -> Option<String> {
 
 #[test]
 fn a_session_taking_its_names_back_takes_only_free_ones_and_a_later_session_replaces_them() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     zbus::block_on(async {
@@ -1332,8 +1327,7 @@ fn a_session_taking_its_names_back_takes_only_free_ones_and_a_later_session_repl
 
 #[test]
 fn a_session_that_joined_another_watcher_hosts_its_own_once_it_takes_the_name_back() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     zbus::block_on(async {
@@ -1417,7 +1411,7 @@ fn flatpak_sandbox(name: &str, app_id: &str) -> (std::path::PathBuf, std::path::
 /// What a server reading its senders from `proc` (`/proc` when None) shows of a notification a
 /// peer on `bus` sends as `app_name` with the `desktop-entry` hint `entry`.
 fn notified(
-    bus: &crate::testbus::Bus,
+    bus: &reprisebus::testbus::Bus,
     proc: Option<&std::path::Path>,
     app_name: &str,
     entry: &str,
@@ -1466,8 +1460,7 @@ fn notified(
 
 #[test]
 fn a_sandboxed_senders_notification_goes_under_its_own_app() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     let proc = flatpak_proc("notify", "org.example.Spoofer");
@@ -1478,8 +1471,7 @@ fn a_sandboxed_senders_notification_goes_under_its_own_app() {
 
 #[test]
 fn a_host_senders_notification_keeps_the_app_it_names() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     // The notification portal forwards a sandboxed app's notification this way: as a host
@@ -1507,14 +1499,14 @@ impl Spoofing {
 
 /// [`Spoofing`] served by a peer on `bus`, as read by a host reading its owner from `proc`
 /// (`/proc` when None).
-fn spoofing_item(bus: &crate::testbus::Bus, proc: Option<&std::path::Path>) -> TrayItem {
+fn spoofing_item(bus: &reprisebus::testbus::Bus, proc: Option<&std::path::Path>) -> TrayItem {
     let identities = proc.map_or_else(Identities::default, Identities::under);
     served_item(bus, identities, Spoofing)
 }
 
 /// `item` served by a peer on `bus`, as read by a host placing its owner through `identities`.
 fn served_item(
-    bus: &crate::testbus::Bus,
+    bus: &reprisebus::testbus::Bus,
     identities: Identities,
     item: impl zbus::object_server::Interface,
 ) -> TrayItem {
@@ -1539,8 +1531,7 @@ fn served_item(
 
 #[test]
 fn a_sandboxed_apps_tray_icon_is_kept_and_listed_under_its_own_app() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     let proc = flatpak_proc("item", "org.example.Spoofer");
@@ -1629,7 +1620,7 @@ fn write_svg(path: &std::path::Path, fill: &str) {
 /// `icon` under `theme_path` as read from a peer placed through `identities`, at 16 px: the
 /// colour at its centre, None when nothing decoded.
 fn named_colour(
-    bus: &crate::testbus::Bus,
+    bus: &reprisebus::testbus::Bus,
     identities: Identities,
     icon: &str,
     theme_path: &str,
@@ -1647,8 +1638,7 @@ const BLUE: u32 = 0xFF00_00FF;
 
 #[test]
 fn a_flatpak_items_icon_path_opens_inside_its_sandbox() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     let (proc, runtime) = flatpak_sandbox("icon-root", "org.example.App");
@@ -1679,8 +1669,7 @@ fn a_flatpak_items_icon_path_opens_inside_its_sandbox() {
 
 #[test]
 fn an_unknown_or_snapped_items_host_path_is_dropped() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     let host = crate::harness::scratch().join("icon-host");
@@ -2006,8 +1995,7 @@ async fn becomes(mut f: impl AsyncFnMut() -> bool) -> bool {
 
 #[test]
 fn an_item_flooding_change_signals_is_dropped_at_the_bus_until_it_is_heard_again() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     let (muted, heard) = zbus::block_on(async {
@@ -2277,7 +2265,7 @@ struct Relayed {
 }
 
 impl Relayed {
-    fn on(bus: &crate::testbus::Bus) -> Relayed {
+    fn on(bus: &reprisebus::testbus::Bus) -> Relayed {
         let relay = Relay::to(&bus.1);
         let (events, heard) = std::sync::mpsc::channel();
         let (commands, rx) = async_channel::unbounded();
@@ -2340,7 +2328,7 @@ impl Relayed {
     }
 }
 
-async fn observer(bus: &crate::testbus::Bus) -> Connection {
+async fn observer(bus: &reprisebus::testbus::Bus) -> Connection {
     zbus::connection::Builder::address(bus.1.as_str())
         .build()
         .await
@@ -2360,8 +2348,7 @@ async fn new_owner(observer: &Connection, name: &str, not: Option<&str>) -> Opti
 
 #[test]
 fn a_tray_dropped_by_the_bus_connects_again_and_takes_its_names_back() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     let tray = Relayed::on(&bus);
@@ -2382,8 +2369,7 @@ fn a_tray_dropped_by_the_bus_connects_again_and_takes_its_names_back() {
 
 #[test]
 fn what_a_peer_left_behind_while_the_tray_was_off_the_bus_goes_once_it_is_back() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     let tray = Relayed::on(&bus);
@@ -2455,8 +2441,7 @@ fn what_a_peer_left_behind_while_the_tray_was_off_the_bus_goes_once_it_is_back()
 
 #[test]
 fn a_tray_whose_first_try_back_on_the_bus_fails_tries_again() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     let tray = Relayed::on(&bus);
@@ -2509,8 +2494,7 @@ fn a_tray_whose_first_try_back_on_the_bus_fails_tries_again() {
 
 #[test]
 fn an_item_registered_once_comes_back_after_the_tray_connects_again() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     let tray = Relayed::on(&bus);
@@ -2552,7 +2536,10 @@ fn an_item_registered_once_comes_back_after_the_tray_connects_again() {
 
 /// The error names `CriticalTurnOff` and `Restart` from another peer on `bus` answer (None for a
 /// reply), and how many tray events they sent, with the tray reading processes under `proc`.
-fn shell_calls(bus: &crate::testbus::Bus, proc: &std::path::Path) -> (Vec<Option<String>>, usize) {
+fn shell_calls(
+    bus: &reprisebus::testbus::Bus,
+    proc: &std::path::Path,
+) -> (Vec<Option<String>>, usize) {
     let (events, received) = std::sync::mpsc::channel();
     // SAFETY: eventfd takes no pointers; the result is checked below.
     let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
@@ -2600,8 +2587,7 @@ fn shell_calls(bus: &crate::testbus::Bus, proc: &std::path::Path) -> (Vec<Option
 
 #[test]
 fn a_sandboxed_peer_cannot_turn_the_computer_off_or_restart_it() {
-    let Some(bus) = crate::testbus::bus() else {
-        eprintln!("no dbus-daemon; skipped");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
     let proc = std::env::temp_dir().join(format!("reprise-tray-sandbox-{}", std::process::id()));

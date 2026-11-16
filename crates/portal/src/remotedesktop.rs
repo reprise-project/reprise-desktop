@@ -1150,7 +1150,6 @@ mod tests {
     #[test]
     fn an_app_keeps_one_balloon_which_closes_with_its_last_session() {
         let Some(bus) = crate::lockmode::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {
@@ -1184,7 +1183,6 @@ mod tests {
     #[test]
     fn a_start_from_a_remembered_grant_shows_one_critical_balloon_from_reprise() {
         let Some(bus) = crate::lockmode::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {
@@ -1199,7 +1197,6 @@ mod tests {
     #[test]
     fn a_start_the_dialog_allowed_shows_no_balloon() {
         let Some(bus) = crate::lockmode::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {
@@ -1218,7 +1215,6 @@ mod tests {
     #[test]
     fn stop_and_forget_ends_the_session_and_deletes_the_grant() {
         let Some(bus) = crate::lockmode::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {
@@ -1270,7 +1266,6 @@ mod tests {
     #[test]
     fn a_remembered_grant_restores_its_screen_past_select_sources() {
         let Some(bus) = crate::lockmode::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {
@@ -1300,7 +1295,6 @@ mod tests {
     #[test]
     fn the_share_picker_offers_remember_when_the_grant_is_remembered() {
         let Some(bus) = crate::lockmode::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {
@@ -1326,7 +1320,6 @@ mod tests {
     #[test]
     fn a_granted_pointer_moves_clicks_and_scrolls_through_notify() {
         let Some(bus) = crate::lockmode::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {
@@ -1386,7 +1379,6 @@ mod tests {
     #[test]
     fn before_v12_notify_pointer_is_not_supported() {
         let Some(bus) = crate::lockmode::tests::bus() else {
-            eprintln!("no dbus-daemon; skipped");
             return;
         };
         zbus::block_on(async {

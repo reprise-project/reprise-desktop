@@ -390,7 +390,7 @@ fn red_over_a_caption(blur_frames: bool) -> Option<u32> {
     let mut renderer = match reprisefx::headless::renderer() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("skipped: {e}");
+            reprisekit::pins::skipped(&e);
             return None;
         }
     };
@@ -445,7 +445,7 @@ fn closed_glass_leaves_the_placed_list_with_blur_frames_off() {
     let mut renderer = match reprisefx::headless::renderer() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("skipped: {e}");
+            reprisekit::pins::skipped(&e);
             return;
         }
     };
@@ -496,7 +496,7 @@ impl CustomNode<GlesRenderer> for Counted {
 #[test]
 fn the_outputs_backdrop_walks_the_scene_once_for_pieces_apart() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let ctx = GlassCtx::new();
@@ -582,7 +582,7 @@ fn red_at(
 fn glass_over_other_glass_shows_that_glass_and_not_what_it_covers() {
     for material in [Material::Frosted, Material::Smoked, Material::Molten] {
         let Ok(mut renderer) = reprisefx::headless::renderer() else {
-            eprintln!("skipped: no renderer");
+            reprisekit::pins::skipped("no renderer");
             return;
         };
         let ctx = GlassCtx::new();
@@ -703,7 +703,7 @@ fn the_outputs_blur_reads_only_for_glass_drawn_from_it() {
 #[test]
 fn glass_beneath_other_glass_blurs_a_backdrop_without_the_windows_above_it() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let ctx = GlassCtx::new();
@@ -753,7 +753,7 @@ fn glass_beneath_other_glass_blurs_a_backdrop_without_the_windows_above_it() {
 #[test]
 fn glass_beneath_other_glass_draws_its_own_backdrop_into_it() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let ctx = GlassCtx::new();
@@ -783,7 +783,7 @@ fn glass_beneath_other_glass_draws_its_own_backdrop_into_it() {
 #[test]
 fn a_change_away_from_glass_is_blurred_once_glass_reads_it() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let scene_with = |ctx: &Rc<GlassCtx>| {
@@ -864,7 +864,7 @@ fn overlapping_feeds_join_into_one_piece_and_apart_ones_stay_apart() {
 #[test]
 fn glass_far_apart_leaves_the_backdrop_between_undrawn() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let ctx = GlassCtx::new();
@@ -900,7 +900,7 @@ fn glass_far_apart_leaves_the_backdrop_between_undrawn() {
 #[test]
 fn the_outputs_backdrop_draws_only_what_its_glass_reads() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let ctx = GlassCtx::new();
@@ -931,7 +931,7 @@ fn the_outputs_backdrop_draws_only_what_its_glass_reads() {
 #[test]
 fn a_held_frame_leaves_the_backdrop_undrawn_until_the_next_blur() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let ctx = GlassCtx::new();
@@ -976,7 +976,7 @@ fn a_held_frame_leaves_the_backdrop_undrawn_until_the_next_blur() {
 #[test]
 fn a_frame_held_for_the_cursor_alone_leaves_nothing_to_blur_later() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let ctx = GlassCtx::new();
@@ -1010,7 +1010,7 @@ fn a_frame_held_for_the_cursor_alone_leaves_nothing_to_blur_later() {
 #[test]
 fn a_frame_held_for_a_commit_away_from_glass_leaves_nothing_to_blur_later() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let ctx = GlassCtx::new();
@@ -1052,7 +1052,7 @@ fn a_frame_held_for_a_commit_away_from_glass_leaves_nothing_to_blur_later() {
 #[test]
 fn a_frame_held_for_a_commit_in_a_glass_window_owes_a_blur_only_to_other_glass() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let ctx = GlassCtx::new();
@@ -1096,7 +1096,7 @@ fn a_frame_held_for_a_commit_in_a_glass_window_owes_a_blur_only_to_other_glass()
 #[test]
 fn a_frame_held_for_a_commit_in_its_own_glass_owes_that_glass_a_catch_up() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let ctx = GlassCtx::new();
@@ -1253,7 +1253,7 @@ fn frame(renderer: &mut GlesRenderer, laid: &Laid, material: Material) -> Vec<u3
 #[test]
 fn glass_over_glass_draws_each_frame_as_a_fresh_start_would() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let mut l = Layout {
@@ -1319,7 +1319,7 @@ fn glass_over_glass_draws_each_frame_as_a_fresh_start_would() {
 #[test]
 fn an_output_that_stops_rendering_drops_the_private_backdrops_not_drawn_from() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let mut l = Layout {
@@ -1363,7 +1363,7 @@ fn an_output_that_stops_rendering_drops_the_private_backdrops_not_drawn_from() {
 #[test]
 fn a_removed_output_drops_its_backdrops() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let l = Layout {
@@ -1387,7 +1387,7 @@ fn a_removed_output_drops_its_backdrops() {
 #[test]
 fn glass_kept_while_hidden_resumes_its_private_backdrop_in_a_new_tree() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let l = Layout {
@@ -1446,7 +1446,7 @@ fn glass_kept_while_hidden_resumes_its_private_backdrop_in_a_new_tree() {
 #[test]
 fn what_lies_in_the_overlay_layer_does_not_blur_into_glass_beneath_it() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     let ctx = GlassCtx::new();
@@ -1505,7 +1505,7 @@ fn glass_in_a_faded_tree_blurs_in_proportion_to_the_trees_opacity() {
     for material in [Material::Frosted, Material::Smoked, Material::Molten] {
         for over_glass in [false, true] {
             let Some((blurred, _)) = faded_edge(material, 1.0, over_glass) else {
-                eprintln!("skipped: no renderer");
+                reprisekit::pins::skipped("no renderer");
                 return;
             };
             let (half, _) = faded_edge(material, 0.5, over_glass).unwrap();
@@ -1527,7 +1527,7 @@ fn glass_in_a_faded_tree_blurs_in_proportion_to_the_trees_opacity() {
 #[test]
 fn glass_in_a_tree_at_opacity_0_makes_no_element() {
     let Some((red, made)) = faded_edge(Material::Molten, 0.0, false) else {
-        eprintln!("skipped: no renderer");
+        reprisekit::pins::skipped("no renderer");
         return;
     };
     assert_eq!(made, 0, "no glass element");

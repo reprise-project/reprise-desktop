@@ -19,14 +19,14 @@ fn rig() -> Option<(GlesRenderer, FluidFx)> {
     let mut r = match headless::renderer() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("skipped: {e}");
+            reprisekit::pins::skipped(&e);
             return None;
         }
     };
     match FluidFx::new(&mut r) {
         Ok(fx) => Some((r, fx)),
         Err(e) => {
-            eprintln!("skipped: no fluid on this device: {e}");
+            reprisekit::pins::skipped(&format!("no fluid on this device: {e}"));
             None
         }
     }

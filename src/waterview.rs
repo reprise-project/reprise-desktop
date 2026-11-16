@@ -1472,7 +1472,7 @@ mod tests {
     fn a_pane_handed_the_wallpapers_texture_draws_it_without_an_import() {
         use smithay::backend::renderer::Offscreen;
         let Ok(mut renderer) = reprisefx::headless::renderer() else {
-            eprintln!("skipped: no renderer");
+            reprisekit::pins::skipped("no renderer");
             return;
         };
         let texture: GlesTexture = renderer
@@ -1545,7 +1545,7 @@ mod tests {
     #[test]
     fn a_step_says_whether_it_moved_what_the_pane_draws() {
         let Ok(mut renderer) = reprisefx::headless::renderer() else {
-            eprintln!("skipped: no renderer");
+            reprisekit::pins::skipped("no renderer");
             return;
         };
         let ctx = ctx_with(&["DP-1"]);
