@@ -248,8 +248,6 @@ pub struct State {
     pub fading_frames: Vec<WindowId>,
     /// The Glass shadow's pieces, shared by every window's shadow nodes.
     pub shadows: crate::window::ShadowCache,
-    /// The fade timer, while something fades.
-    pub hover_timer: Option<smithay::reexports::calloop::RegistrationToken>,
     pub text: TextRenderer,
     pub caption_text: Rc<TextRenderer>,
     /// The move, size or caption button press the pointer is in.
@@ -466,6 +464,8 @@ pub struct State {
     pub snap_bar: crate::snapbarview::SnapBarView,
     /// Each bar's auto-hide (`autohideview`).
     pub bar_hide: crate::autohideview::BarHide,
+    /// Shell animations stepped on the frame clock (`animclock`).
+    pub anim_clock: crate::animclock::AnimClock,
     pub attention_flash: crate::attention::Flash,
     pub peek: crate::peek::Peek,
     pub titles: crate::retitle::Flush,
@@ -695,7 +695,6 @@ impl State {
             hot_frame: None,
             fading_frames: Vec::new(),
             shadows: Default::default(),
-            hover_timer: None,
             text,
             caption_text,
             interaction: Interaction::Idle,
@@ -857,6 +856,7 @@ impl State {
             projector: Default::default(),
             snap_bar: Default::default(),
             bar_hide: Default::default(),
+            anim_clock: Default::default(),
             attention_flash: Default::default(),
             peek: Default::default(),
             titles: Default::default(),

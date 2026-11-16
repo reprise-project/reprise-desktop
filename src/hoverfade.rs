@@ -1,17 +1,15 @@
 //! Hover fades: caption buttons and Start light and go dark over `[effects] hover_in_ms` /
-//! `hover_out_ms`; a timer ticks every `TICK_MS` while anything is fading.
+//! `hover_out_ms`, stepped on the frame clock (`animclock`) while anything is fading.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use reprisekit::frame::CaptionButton;
-use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use reprisescene::TreeId;
 
+use crate::animclock::Anim;
 use crate::compositor::State;
 use crate::window::WindowId;
-
-const TICK_MS: u64 = 16;
 
 impl State {
     pub fn glow_to_hot(&mut self, w: WindowId) {
@@ -36,7 +34,7 @@ impl State {
         if settled || self.fading_frames.contains(&w) {
             return;
         }
-        self.arm_hover_timer();
+        self.animate(Anim::Hover);
         self.fading_frames.push(w);
     }
 
@@ -46,26 +44,12 @@ impl State {
         if !fading || self.fading_bars.contains(&tree) {
             return;
         }
-        self.arm_hover_timer();
+        self.animate(Anim::Hover);
         self.fading_bars.push(tree);
     }
 
-    fn arm_hover_timer(&mut self) {
-        if self.hover_timer.is_some() {
-            return;
-        }
-        let token = self.handle.insert_source(
-            Timer::from_duration(Duration::from_millis(TICK_MS)),
-            |_, _, state| state.hover_tick(),
-        );
-        match token {
-            Ok(t) => self.hover_timer = Some(t),
-            Err(e) => log::warn!("hover timer: {}", e.error),
-        }
-    }
-
-    fn hover_tick(&mut self) -> TimeoutAction {
-        let now = Instant::now();
+    /// One frame of every fade; whether any still fades.
+    pub(crate) fn hover_step(&mut self, now: Instant) -> bool {
         let frames = std::mem::take(&mut self.fading_frames);
         for &w in &frames {
             self.redraw_caption(w);
@@ -80,15 +64,9 @@ impl State {
         let bars = std::mem::take(&mut self.fading_bars);
         self.fading_bars = bars
             .into_iter()
-            .filter(|&t| self.start_fade_tick(t))
+            .filter(|&t| self.start_fade_step(t, now))
             .collect();
-        if self.fading_frames.is_empty() && self.fading_bars.is_empty() {
-            log::debug!("hover fades settled; the timer stops");
-            self.hover_timer = None;
-            TimeoutAction::Drop
-        } else {
-            TimeoutAction::ToDuration(Duration::from_millis(TICK_MS))
-        }
+        !self.fading_frames.is_empty() || !self.fading_bars.is_empty()
     }
 }
 
@@ -108,6 +86,26 @@ mod tests {
         assert!(
             asked.iter().all(|(o, _)| o == "TEST-1"),
             "only TEST-1, which shows the window: {asked:?}"
+        );
+    }
+
+    #[test]
+    fn a_caption_fade_steps_on_its_outputs_frames_until_it_settles() {
+        let mut config = crate::config::Config::default();
+        config.effects.hover_fade = true;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.state.win_mut(t.id).unwrap().hot = Some(reprisekit::frame::CaptionButton::Close);
+        h.state.glow_to_hot(t.id);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        crate::animclock::assert_steps_until(
+            &mut h.state,
+            crate::animclock::Anim::Hover,
+            &["TEST-1"],
+            end,
         );
     }
 }

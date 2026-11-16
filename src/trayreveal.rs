@@ -7,8 +7,8 @@
 //! pointer elsewhere (from the keyboard) stays out until the pointer has
 //! passed over the area and left it, or under auto-hide until the
 //! keyboard leaves the bar (`keys_gone`). Each bar keeps its own run
-//! (`Bar::tray_open`, `Bar::tray_reveal`); a timer ticks every `TICK_MS`
-//! while any run moves. Looks without the arrow keep the ^ flyout
+//! (`Bar::tray_open`, `Bar::tray_reveal`), stepped on the frame clock
+//! (`animclock`) while any run moves. Looks without the arrow keep the ^ flyout
 //! (`trayflyout`).
 
 use std::time::{Duration, Instant};
@@ -18,11 +18,11 @@ use reprisekit::{
     taskbar::{TaskbarHit, TaskbarShape},
 };
 use reprisescene::TreeId;
+use smithay::output::Output;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
-use crate::{compositor::State, input::Interaction, taskbarview::Bar};
+use crate::{animclock::Anim, compositor::State, input::Interaction, taskbarview::Bar};
 
-const TICK_MS: u64 = 16;
 /// How long a run takes to open or shut on a Bottom or Top bar. A side
 /// bar's run opens and shuts at once.
 const SLIDE_MS: u32 = 150;
@@ -181,7 +181,7 @@ fn set(state: &mut State, tree: TreeId, open: bool) {
     let from = bar.tray_reveal.x(now);
     bar.tray_reveal = Slide::new(from, if open { full } else { 0 }, now, ms, Ease::Out);
     state.redraw_taskbar(tree);
-    arm_tick(state);
+    state.animate(Anim::TrayReveal);
 }
 
 /// Shut every open run at once: the bar moved, or the session locked.
@@ -209,7 +209,7 @@ pub fn collapse_all(state: &mut State) {
 pub fn follow_layout(state: &mut State, bar: &mut Bar, now: Instant) {
     let full = bar.layout.run_width;
     if follow(&mut bar.tray_open, &mut bar.tray_reveal, full, now) {
-        arm_tick(state);
+        state.animate(Anim::TrayReveal);
     }
 }
 
@@ -363,33 +363,18 @@ pub fn holds(bar: &Bar) -> bool {
     bar.tray_open || !bar.tray_reveal.settled(Instant::now())
 }
 
-fn arm_tick(state: &mut State) {
-    if state.bar_shared.reveal_tick.is_some() {
-        return;
-    }
-    let token = state.handle.insert_source(
-        Timer::from_duration(Duration::from_millis(TICK_MS)),
-        |_, _, state| tick(state),
-    );
-    match token {
-        Ok(t) => state.bar_shared.reveal_tick = Some(t),
-        Err(e) => log::warn!("tray reveal timer: {}", e.error),
-    }
-}
-
-/// Whether the tick redraws a bar whose run is `slide` and was last drawn
+/// Whether a step redraws a bar whose run is `slide` and was last drawn
 /// open `drawn` px: while it moves, and once more at its end.
-fn tick_redraws(slide: &Slide, drawn: i32, now: Instant) -> bool {
+fn step_redraws(slide: &Slide, drawn: i32, now: Instant) -> bool {
     !slide.settled(now) || drawn != slide.x(now)
 }
 
-/// One frame of every moving run: redraw its bar, and tick again while
-/// any still moves. A run that settled since its bar's last draw gets one
-/// more, at its end.
-fn tick(state: &mut State) -> TimeoutAction {
-    let now = Instant::now();
+/// One frame of every moving run: redraw its bar; whether any still
+/// moves. A run that settled since its bar's last draw gets one more, at
+/// its end.
+pub fn step(state: &mut State, now: Instant) -> bool {
     let due: Vec<TreeId> = (state.bars.iter())
-        .filter(|b| tick_redraws(&b.tray_reveal, b.tray_reveal_drawn, now))
+        .filter(|b| step_redraws(&b.tray_reveal, b.tray_reveal_drawn, now))
         .map(|b| b.tree)
         .collect();
     for t in due {
@@ -400,15 +385,19 @@ fn tick(state: &mut State) -> TimeoutAction {
     for t in trees {
         relight(state, t);
     }
-    if state.bars.iter().any(|b| !b.tray_reveal.settled(now)) {
-        TimeoutAction::ToDuration(Duration::from_millis(TICK_MS))
-    } else {
-        state.bar_shared.reveal_tick = None;
-        // The last frame may have drawn the end already; auto-hide still
-        // has to hear that the run settled.
-        crate::autohideview::poke(state);
-        TimeoutAction::Drop
+    let moving: Vec<Output> = (state.bars.iter())
+        .filter(|b| !b.tray_reveal.settled(now))
+        .map(|b| b.output.clone())
+        .collect();
+    if !moving.is_empty() {
+        // A step that moves nothing a whole px still asks the next frame.
+        crate::backend::schedule_on(state, &moving, crate::backend::Ask::Scene);
+        return true;
     }
+    // The last frame may have drawn the end already; auto-hide still has
+    // to hear that the run settled.
+    crate::autohideview::poke(state);
+    false
 }
 
 #[cfg(test)]
@@ -564,16 +553,16 @@ mod tests {
     }
 
     #[test]
-    fn the_tick_redraws_a_moving_run_and_a_settled_one_once_more() {
+    fn a_step_redraws_a_moving_run_and_a_settled_one_once_more() {
         let now = Instant::now();
         let moving = Slide::new(0, 60, now, SLIDE_MS, Ease::Out);
-        assert!(tick_redraws(&moving, 0, now), "a moving run");
+        assert!(step_redraws(&moving, 0, now), "a moving run");
         let settled = opened(60, now);
         assert!(
-            tick_redraws(&settled, 40, now),
+            step_redraws(&settled, 40, now),
             "settled since its last draw"
         );
-        assert!(!tick_redraws(&settled, 60, now), "drawn at its end");
+        assert!(!step_redraws(&settled, 60, now), "drawn at its end");
     }
 
     #[test]
@@ -716,6 +705,32 @@ mod tests {
         );
         h.click(x2, y);
         assert!(!open(&h, tree));
+    }
+
+    #[test]
+    fn an_opening_run_steps_on_its_bars_frames_until_it_settles() {
+        let (mut h, tree) = hidden_two();
+        let (x, y) = arrow(&h, tree);
+        h.click(x, y);
+        assert!(open(&h, tree));
+        crate::backend::take_asks();
+        crate::animclock::step(&mut h.state, Instant::now());
+        assert_eq!(
+            crate::backend::take_asked_outputs(),
+            ["TEST-1"],
+            "a frame asks the next"
+        );
+        // Its bar draws the run at the wall clock's time, so the end is waited for.
+        h.until("the run settles", |s| {
+            !s.anim_clock.running(Anim::TrayReveal)
+        });
+        crate::backend::take_asks();
+        crate::animclock::step(&mut h.state, Instant::now());
+        assert_eq!(
+            crate::backend::take_asks(),
+            [],
+            "a frame after its end asks none"
+        );
     }
 
     #[test]

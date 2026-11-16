@@ -448,7 +448,7 @@ impl State {
                 changed,
             });
             bar.drawn = None;
-            self.redraw_start(bar);
+            self.redraw_start(bar, Instant::now());
             true
         } else {
             bar.start_mix = None;
@@ -553,9 +553,8 @@ impl State {
         crate::barplace::on_output(&p, self.layout_box(Some(&bar.output)))
     }
 
-    fn redraw_start(&mut self, bar: &mut Bar) {
+    fn redraw_start(&mut self, bar: &mut Bar, now: Instant) {
         let Some(m) = &bar.start_mix else { return };
-        let now = Instant::now();
         let l = bar.start_glow.level(now);
         let mut canvas = m.dark.0.clone();
         canvas.mix(&m.lit.0, m.changed, l);
@@ -582,10 +581,15 @@ impl State {
         }
     }
 
-    pub fn start_fade_tick(&mut self, tree: TreeId) -> bool {
+    pub fn start_fade_step(&mut self, tree: TreeId, now: Instant) -> bool {
         self.with_bar(tree, |s, bar| {
-            s.redraw_start(bar);
-            bar.start_mix.is_some()
+            s.redraw_start(bar, now);
+            let fading = bar.start_mix.is_some();
+            // A step that changes no pixel still asks the next frame.
+            if fading {
+                crate::backend::schedule(s, &bar.output);
+            }
+            fading
         })
         .unwrap_or(false)
     }
