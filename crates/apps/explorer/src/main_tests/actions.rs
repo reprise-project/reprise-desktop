@@ -60,6 +60,70 @@ fn a_search_lists_matches_below_the_folder_until_escape_or_a_navigation() {
     assert_eq!(names(&ex), ["b"]);
 }
 
+/// Search results list several folders: renaming a hit to a name another folder's hit wears is
+/// no clash, inline or in the Rename dialog.
+#[test]
+fn a_hit_renamed_to_another_folders_hits_name_is_not_refused() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    for d in ["a", "b"] {
+        std::fs::create_dir(dir.path().join(d)).expect("mkdir");
+    }
+    std::fs::write(dir.path().join("a/x.txt"), "x").expect("write");
+    std::fs::write(dir.path().join("b/y.txt"), "y").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.search_run = find_search;
+    ex.run(Command::SearchFocus, &mut ctx);
+    ex.search_field
+        .key(reprisekit::textedit::EditKey::Insert(".txt".into()));
+    press(&mut ex, keysym::RETURN, &mut ctx);
+    let x = ex
+        .items
+        .iter()
+        .position(|it| it.name == "x.txt")
+        .expect("x.txt");
+
+    ex.sv.selection.set_only(Some(x));
+    ex.run(Command::SelectAll, &mut ctx);
+    ex.run(Command::Rename, &mut ctx);
+    use reprisekit::controls::batchrename::{FIND, OK, WITH};
+    use reprisekit::controls::form::Control;
+    for (id, text) in [(FIND, "x"), (WITH, "y")] {
+        let Some(crate::dialogs::Dialog::BatchRename(b)) = ex.dialog.as_mut() else {
+            panic!("the Rename dialog is up");
+        };
+        if let Some(Control::Edit { edit, .. }) = b.form.item_mut(id).map(|i| &mut i.control) {
+            *edit = reprisekit::textedit::TextEdit::new(text, false);
+        }
+        ex.dialog_outcome(reprisekit::controls::form::Event::Changed(id), &mut ctx);
+    }
+    let Some(crate::dialogs::Dialog::BatchRename(b)) = ex.dialog.as_ref() else {
+        panic!("the Rename dialog is up");
+    };
+    let ok = b.form.item(OK);
+    assert!(
+        matches!(
+            ok.map(|i| &i.control),
+            Some(reprisekit::controls::form::Control::Button { enabled: true, .. })
+        ),
+        "y.txt is free in a"
+    );
+    ex.dialog = None;
+
+    ex.sv.selection.set_only(Some(x));
+    ex.run(Command::Rename, &mut ctx);
+    if let Some((_, ed)) = ex.sv.edit.as_mut() {
+        *ed = reprisekit::textedit::TextEdit::new("y.txt", false);
+    }
+    ex.commit_rename(&mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(ex.dialog.is_none(), "no clash box");
+    assert!(
+        dir.path().join("a/y.txt").exists(),
+        "the rename was written"
+    );
+}
+
 #[test]
 fn extract_to_lands_a_zip_in_a_folder_named_after_it_and_selects_it() {
     let dir = tempfile::tempdir().expect("a temp dir");

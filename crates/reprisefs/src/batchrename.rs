@@ -43,16 +43,19 @@ impl Row {
     }
 }
 
-/// The rows for `items` (name and whether it is a folder) in the order given. `others` are the
-/// folder's names that are not being renamed.
-pub fn plan(items: &[(&str, bool)], others: &[String], opts: &Options) -> Vec<Row> {
+/// The rows for `items` (path and whether it is a folder) in the order given. `others` are the
+/// paths listed beside them that are not being renamed. A name is taken only by another in the
+/// same folder.
+pub fn plan(items: &[(&Path, bool)], others: &[&Path], opts: &Options) -> Vec<Row> {
+    let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned());
     let mut rows: Vec<Row> = items
         .iter()
         .enumerate()
-        .map(|(i, &(old, is_dir))| {
+        .map(|(i, &(path, is_dir))| {
+            let old = name(path).unwrap_or_default();
             let (stem, ext) = match opts.keep_ext && !is_dir {
-                true => split_ext(old),
-                false => (old, ""),
+                true => split_ext(&old),
+                false => (old.as_str(), ""),
             };
             let stem = match &opts.scheme {
                 Scheme::Replace {
@@ -63,27 +66,27 @@ pub fn plan(items: &[(&str, bool)], others: &[String], opts: &Options) -> Vec<Ro
                 Scheme::Number { base } => format!("{base} ({})", i + 1),
             };
             Row {
-                old: old.to_string(),
                 new: stem + ext,
+                old,
                 problem: None,
             }
         })
         .collect();
-    let kept: Vec<&str> = rows
-        .iter()
-        .filter(|r| !r.changes())
-        .map(|r| r.old.as_str())
-        .chain(others.iter().map(String::as_str))
+    let folder = |i: usize| items[i].0.parent();
+    let kept: Vec<(Option<&Path>, String)> = (rows.iter().enumerate())
+        .filter(|(_, r)| !r.changes())
+        .map(|(i, r)| (folder(i), r.old.clone()))
+        .chain(others.iter().filter_map(|p| Some((p.parent(), name(p)?))))
         .collect();
-    let problems: Vec<Option<Problem>> = rows
-        .iter()
-        .map(|r| {
+    let problems: Vec<Option<Problem>> = (rows.iter().enumerate())
+        .map(|(i, r)| {
+            let here = |(j, o): (usize, &Row)| folder(j) == folder(i) && o.new == r.new;
             if !r.changes() {
                 None
             } else if !valid(&r.new) {
                 Some(Problem::Invalid)
-            } else if kept.contains(&r.new.as_str())
-                || rows.iter().filter(|o| o.new == r.new).count() > 1
+            } else if kept.iter().any(|(f, n)| *f == folder(i) && *n == r.new)
+                || rows.iter().enumerate().filter(|&o| here(o)).count() > 1
             {
                 Some(Problem::Taken)
             } else {
@@ -251,6 +254,10 @@ mod tests {
         }
     }
 
+    fn at<'a>(items: &[(&'a str, bool)]) -> Vec<(&'a Path, bool)> {
+        items.iter().map(|&(n, d)| (Path::new(n), d)).collect()
+    }
+
     fn news(rows: &[Row]) -> Vec<&str> {
         rows.iter().map(|r| r.new.as_str()).collect()
     }
@@ -258,26 +265,26 @@ mod tests {
     #[test]
     fn numbering_follows_the_order_given_and_keeps_extensions() {
         let items = [("b.jpg", false), ("a.png", false), ("Notes", true)];
-        let rows = plan(&items, &[], &number("Photo", true));
+        let rows = plan(&at(&items), &[], &number("Photo", true));
         assert_eq!(news(&rows), ["Photo (1).jpg", "Photo (2).png", "Photo (3)"]);
         assert!(ready(&rows));
-        let rows = plan(&items, &[], &number("Photo", false));
+        let rows = plan(&at(&items), &[], &number("Photo", false));
         assert_eq!(news(&rows), ["Photo (1)", "Photo (2)", "Photo (3)"]);
     }
 
     #[test]
     fn a_folder_keeps_its_dots_and_a_dot_file_has_no_extension() {
         let items = [("v1.2", true), (".bashrc", false), ("Mr. Smith", false)];
-        let rows = plan(&items, &[], &replace(".", "_", false, true));
+        let rows = plan(&at(&items), &[], &replace(".", "_", false, true));
         assert_eq!(news(&rows), ["v1_2", "_bashrc", "Mr_ Smith"]);
     }
 
     #[test]
     fn find_and_replace_works_on_the_stem_unless_extensions_are_off() {
         let items = [("draft.txt", false), ("txt notes.txt", false)];
-        let rows = plan(&items, &[], &replace("txt", "md", false, true));
+        let rows = plan(&at(&items), &[], &replace("txt", "md", false, true));
         assert_eq!(news(&rows), ["draft.txt", "md notes.txt"]);
-        let rows = plan(&items, &[], &replace("txt", "md", false, false));
+        let rows = plan(&at(&items), &[], &replace("txt", "md", false, false));
         assert_eq!(news(&rows), ["draft.md", "md notes.md"]);
     }
 
@@ -288,18 +295,18 @@ mod tests {
             ("img_002.jpg", false),
             ("Straße img", false),
         ];
-        let rows = plan(&items, &[], &replace("img_", "Holiday ", true, true));
+        let rows = plan(&at(&items), &[], &replace("img_", "Holiday ", true, true));
         assert_eq!(
             news(&rows),
             ["Holiday 001.JPG", "Holiday 002.jpg", "Straße img"]
         );
-        let rows = plan(&items, &[], &replace("img_", "Holiday ", false, true));
+        let rows = plan(&at(&items), &[], &replace("img_", "Holiday ", false, true));
         assert_eq!(
             news(&rows),
             ["IMG_001.JPG", "Holiday 002.jpg", "Straße img"]
         );
         let rows = plan(
-            &[("STRASSE", false)],
+            &at(&[("STRASSE", false)]),
             &[],
             &replace("straße", "x", true, true),
         );
@@ -313,7 +320,7 @@ mod tests {
     #[test]
     fn an_empty_find_changes_nothing_and_is_not_ready() {
         let rows = plan(
-            &[("a", false), ("b", false)],
+            &at(&[("a", false), ("b", false)]),
             &[],
             &replace("", "x", false, true),
         );
@@ -324,36 +331,51 @@ mod tests {
 
     #[test]
     fn a_name_kept_elsewhere_or_given_twice_is_taken() {
-        let others = vec!["Photo (2).jpg".to_string()];
+        let others = [Path::new("Photo (2).jpg")];
         let items = [("a.jpg", false), ("b.jpg", false)];
-        let rows = plan(&items, &others, &number("Photo", true));
+        let rows = plan(&at(&items), &others, &number("Photo", true));
         assert_eq!(rows[0].problem, None);
         assert_eq!(rows[1].problem, Some(Problem::Taken));
         assert!(!ready(&rows));
 
         let items = [("a1.txt", false), ("a2.txt", false), ("a", false)];
-        let rows = plan(&items, &[], &replace("1", "2", false, true));
+        let rows = plan(&at(&items), &[], &replace("1", "2", false, true));
         assert_eq!(rows[0].problem, Some(Problem::Taken), "a2.txt stays");
         assert_eq!(rows[1].problem, None, "unchanged");
-        let rows = plan(&items, &[], &replace("a", "", false, false));
+        let rows = plan(&at(&items), &[], &replace("a", "", false, false));
         assert_eq!(news(&rows), ["1.txt", "2.txt", ""]);
         assert_eq!(rows[2].problem, Some(Problem::Invalid));
 
         let items = [("x.a", false), ("x.b", false)];
-        let rows = plan(&items, &[], &replace("x", "y", false, false));
+        let rows = plan(&at(&items), &[], &replace("x", "y", false, false));
         assert!(ready(&rows));
-        let rows = plan(&items, &[], &replace(".a", ".b", false, false));
+        let rows = plan(&at(&items), &[], &replace(".a", ".b", false, false));
         assert_eq!(rows[0].problem, Some(Problem::Taken), "x.b keeps its name");
+    }
+
+    #[test]
+    fn a_name_is_taken_only_within_its_own_folder() {
+        let items = [
+            (Path::new("/a/x.txt"), false),
+            (Path::new("/b/x.txt"), false),
+        ];
+        let others = [Path::new("/c/y.txt")];
+        let rows = plan(&items, &others, &replace("x", "y", false, true));
+        assert!(ready(&rows), "y.txt is free in /a and /b");
+        let others = [Path::new("/b/y.txt")];
+        let rows = plan(&items, &others, &replace("x", "y", false, true));
+        assert_eq!(rows[0].problem, None);
+        assert_eq!(rows[1].problem, Some(Problem::Taken), "/b keeps a y.txt");
     }
 
     #[test]
     fn slashes_dots_and_long_names_are_not_valid() {
         let items = [("a", false), ("b", false), ("c", false)];
         for with in ["x/y", ".", "..", &"n".repeat(256)] {
-            let rows = plan(&items[..1], &[], &replace("a", with, false, true));
+            let rows = plan(&at(&items[..1]), &[], &replace("a", with, false, true));
             assert_eq!(rows[0].problem, Some(Problem::Invalid), "{with:?}");
         }
-        let rows = plan(&items, &[], &replace("b", "\0", false, true));
+        let rows = plan(&at(&items), &[], &replace("b", "\0", false, true));
         assert_eq!(rows[1].problem, Some(Problem::Invalid));
     }
 
@@ -362,7 +384,7 @@ mod tests {
         let dir = PathBuf::from("/home/u/Pictures");
         let paths = vec![dir.join("a"), dir.join("b"), dir.join("c")];
         let items = [("a", false), ("b", false), ("c", false)];
-        let rows = plan(&items, &[], &number("x", true));
+        let rows = plan(&at(&items), &[], &number("x", true));
         assert_eq!(
             steps(&paths, &rows, "t"),
             vec![
@@ -371,7 +393,7 @@ mod tests {
                 (dir.join("c"), dir.join("x (3)")),
             ]
         );
-        let rows = plan(&items[..2], &[], &replace("", "", false, true));
+        let rows = plan(&at(&items[..2]), &[], &replace("", "", false, true));
         assert!(steps(&paths[..2], &rows, "t").is_empty());
         let rows = vec![
             Row {
@@ -431,10 +453,10 @@ mod tests {
     #[test]
     fn a_rotation_among_the_items_is_not_a_clash() {
         let items = [("Photo (1)", false), ("Photo (2)", false)];
-        let rows = plan(&items, &[], &replace("Photo", "Photo", false, true));
+        let rows = plan(&at(&items), &[], &replace("Photo", "Photo", false, true));
         assert!(!ready(&rows), "nothing changes");
         let items = [("Photo (2)", false), ("Photo (1)", false)];
-        let rows = plan(&items, &[], &number("Photo", true));
+        let rows = plan(&at(&items), &[], &number("Photo", true));
         assert_eq!(news(&rows), ["Photo (1)", "Photo (2)"]);
         assert!(ready(&rows), "each name is freed by the other's rename");
     }
