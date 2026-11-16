@@ -6,7 +6,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use zbus::OwnedVariant;
 use zbus::{Connection, Proxy};
 
-use reprisebus::follow::{Feed, Run, follow};
+use reprisebus::follow::{self, Feed, Run, follow};
 
 /// Bus names with object paths, current first; older daemons own only
 /// `net.hadess.PowerProfiles`. Each name is also the interface at its path.
@@ -110,9 +110,13 @@ async fn run(feed: &mut Feed<Profiles>) -> Run {
         return feed.unavailable();
     };
     let Some((name, path, props, mut store)) = find(&conn).await else {
-        return feed.unavailable_because(format_args!(
+        if feed.unavailable_because(format_args!(
             "power-profiles-daemon is not answering; no profiles to show"
-        ));
+        )) == Run::Closed
+        {
+            return Run::Closed;
+        }
+        return follow::until_owned(&conn, &DAEMONS.map(|(name, _)| name)).await;
     };
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)

@@ -2,7 +2,7 @@
 
 use futures_util::stream::StreamExt;
 use reprisebus::charge::{self, ChargeLimit};
-use reprisebus::follow::{Feed, Run, follow};
+use reprisebus::follow::{self, Feed, Run, follow};
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, channel};
 use zbus::OwnedVariant;
@@ -184,8 +184,13 @@ async fn run(feed: &mut Feed<Power>) -> Run {
             Err(_) => return feed.unavailable(),
         },
         Err(e) => {
-            return feed
-                .unavailable_because(format_args!("UPower unavailable ({e}); no battery to show"));
+            if feed
+                .unavailable_because(format_args!("UPower unavailable ({e}); no battery to show"))
+                == Run::Closed
+            {
+                return Run::Closed;
+            }
+            return follow::until_owned(&conn, &[NAME]).await;
         }
     };
     let limit = charge::find(&conn).await;
