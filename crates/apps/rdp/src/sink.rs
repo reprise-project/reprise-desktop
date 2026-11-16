@@ -24,6 +24,8 @@ const DESCRIPTION: &str = "Remote client";
 const APP: &str = "Remote Desktop";
 /// How long one default switch may take before the sink goes on regardless.
 const GIVE_BACK: Duration = Duration::from_secs(2);
+/// How often a give-back after PipeWire took the sink away is tried again, within [`GIVE_BACK`].
+const RETRY: Duration = Duration::from_millis(250);
 /// How long a sink's thread may take to end: a switch back, plus the PipeWire teardown. A new
 /// sink waits as long for the last one's turn, then takes it regardless.
 const JOIN: Duration = Duration::from_secs(3);
@@ -567,16 +569,30 @@ impl Drop for GiveBack {
             },
             None => std::mem::take(&mut self.record),
         };
-        let now = (self.now)();
-        if now.sinks.is_empty() || superseded(&now, self.id) {
-            return;
-        }
-        let mut writes = put_back(&now, &record);
-        let default = give_back(&now, record.before.as_deref());
-        writes.extend(default.map(Write::Default));
-        if !(self.put)(&writes) {
-            return;
-        }
+        let until = Instant::now() + GIVE_BACK;
+        let default = loop {
+            let now = (self.now)();
+            if now.sinks.is_empty() || superseded(&now, self.id) {
+                return;
+            }
+            let mut writes = put_back(&now, &record);
+            let before = record.before.as_deref();
+            // Gone with a PipeWire restart, our sink may still be the configured default.
+            let gone = !now.sinks.iter().any(|d| d.name == NAME);
+            let default = match gone {
+                false => give_back(&now, before),
+                true => before.and_then(|b| left_behind(&now, b)),
+            };
+            writes.extend(default.map(Write::Default));
+            if (self.put)(&writes) {
+                break default;
+            }
+            // WirePlumber takes writes again a moment after PipeWire is back.
+            if !gone || Instant::now() >= until {
+                return;
+            }
+            std::thread::sleep(RETRY);
+        };
         if default.is_some() {
             log::info!(
                 "sound: {} is the default sink again",
@@ -1150,5 +1166,34 @@ mod tests {
         let blank = Record::parse("\n\napp\tfoo/bar\t\n");
         assert_eq!(blank.before, None);
         assert_eq!(blank.apps["foo/bar"], None);
+    }
+
+    thread_local! {
+        static REFUSED: Cell<u32> = const { Cell::new(0) };
+    }
+
+    /// [`put`] after failing as many times as [`REFUSED`] says, as WirePlumber does while it
+    /// comes back.
+    fn put_after_refusals(writes: &[Write]) -> bool {
+        match REFUSED.get() {
+            0 => put(writes),
+            n => {
+                REFUSED.set(n - 1);
+                false
+            }
+        }
+    }
+
+    #[test]
+    fn a_sink_pipewire_took_away_gives_back_the_configured_default_still_naming_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = dir.path().join("sound-before");
+        keep_record(&record, &before("speakers"));
+        REFUSED.set(2);
+        let mut guard = give_back_guard(&record, || configured(Some(NAME)));
+        guard.put = put_after_refusals;
+        drop(guard);
+        assert_eq!(PUT.take(), [Write::Default(40)]);
+        assert!(!record.exists(), "the record goes once the default is back");
     }
 }
