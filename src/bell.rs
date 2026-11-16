@@ -67,10 +67,13 @@ impl State {
             .filter(|&w| self.focused != Some(w))
     }
 
-    /// A ring for `surface` at `now`: flags its window, flashes, and says whether the bell sounds.
+    /// A ring for `surface` at `now`: flags its window unless its button still flashes from an
+    /// earlier ask, flashes, and says whether the bell sounds.
     fn ring_at(&mut self, surface: Option<WlSurface>, now: Instant) -> bool {
         let ringing = surface.as_ref().and_then(|s| self.ringing_window(s));
-        if let Some(w) = surface.and_then(|s| self.bell_window(&s)) {
+        if let Some(w) = surface.and_then(|s| self.bell_window(&s))
+            && !self.attention_flashing(w, now)
+        {
             self.ask_attention(w);
             self.redraw_taskbars();
         }
@@ -139,5 +142,33 @@ mod tests {
         let sa = h.state.win(a.id).unwrap().wl_surface().clone();
         assert!(!h.state.ring_at(Some(sa), Instant::now()), "no sound");
         assert!(h.state.win(a.id).unwrap().attention.is_some(), "a flashes");
+    }
+
+    #[test]
+    fn a_ring_while_its_button_flashes_asks_nothing_and_one_after_flashes_again() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "test.a", 300, 200);
+        h.map_toplevel(&mut c, "test.b", 300, 200);
+        h.dispatch();
+        let sa = h.state.win(a.id).unwrap().wl_surface().clone();
+        let asked = |h: &Harness| h.state.win(a.id).unwrap().attention;
+        let t = Instant::now();
+        h.state.ring_at(Some(sa.clone()), t);
+        let first = asked(&h).expect("the first ring asks");
+        h.state.ring_at(Some(sa.clone()), t + MIN_GAP * 3);
+        assert_eq!(
+            asked(&h),
+            Some(first),
+            "the flash runs on from the first ask"
+        );
+        let flash_for = crate::attention::flash_for(&h.state);
+        h.state.win_mut(a.id).unwrap().attention = Some(first - flash_for);
+        h.state.ring_at(Some(sa), t + MIN_GAP * 6);
+        assert!(
+            asked(&h).is_some_and(|t| t > first),
+            "a ring after the flash ended flashes again"
+        );
     }
 }
