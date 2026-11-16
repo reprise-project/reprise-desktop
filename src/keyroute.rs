@@ -584,11 +584,13 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         });
     }
     // The dialog with the keyboard takes every press (its field wants the
-    // text), except binds that move no focus (`passes_dialog`) and the
-    // switchers' binds: Alt+Tab leaves a dialog as it leaves a window, and
-    // so does Super+Tab.
+    // text), except binds that move no focus (`passes_dialog`), the close
+    // bind, which closes the dialog as Escape does, and the switchers' binds:
+    // Alt+Tab leaves a dialog as it leaves a window, and so does Super+Tab.
     if modes.dialog_has_keyboard && k.pressed {
-        let passing: Vec<Action> = bound(k, binds).into_iter().filter(passes_dialog).collect();
+        let passing: Vec<Action> = (bound(k, binds).into_iter())
+            .filter(|a| passes_dialog(a) || *a == Action::Close)
+            .collect();
         if !passing.is_empty() {
             return with(KeyRoute::Binds(passing));
         }

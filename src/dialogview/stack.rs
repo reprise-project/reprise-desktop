@@ -319,6 +319,13 @@ impl State {
         blur_cues_without_keyboard(self.dialogs.views.iter_mut().map(|v| &mut v.cues), keyboard)
     }
 
+    /// The close bind on the top dialog: it answers as its close box does ([`Dialog::dismiss`]).
+    pub fn dismiss_dialog(&mut self) {
+        if let Some(out) = self.dialogs.views.last().map(|v| v.dialog.dismiss()) {
+            self.apply_dialog(out);
+        }
+    }
+
     pub(super) fn close_dialog(&mut self) {
         if let Some(i) = self.dialogs.views.len().checked_sub(1) {
             self.close_dialog_at(i);

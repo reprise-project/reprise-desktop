@@ -387,6 +387,14 @@ impl Harness {
         self.button(LEFT, false);
     }
 
+    /// A click on dialog `i`'s close box.
+    pub fn click_dialog_close(&mut self, i: usize) {
+        let v = &self.state.dialogs.views[i];
+        let r = v.layout.close.expect("a close box");
+        let (x, y) = (v.x + r.x + r.width / 2, v.y + r.y + r.height / 2);
+        self.click(f64::from(x), f64::from(y));
+    }
+
     /// Key `code` (an evdev code) down or up on the seat's keyboard.
     pub fn key(&mut self, code: u32, pressed: bool) {
         self.from(InputSource::Physical, |s| {

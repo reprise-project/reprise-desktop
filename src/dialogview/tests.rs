@@ -3,7 +3,9 @@ use super::{
     to_local,
 };
 use crate::dialog::Dialog;
+use crate::harness::Harness;
 use crate::raster::Rect;
+use reprisekit::controls::form::Key;
 use reprisekit::powerpanel::Leave;
 
 #[test]
@@ -347,6 +349,122 @@ fn a_welcome_panels_still_fades_in_on_its_outputs_frames_over_its_time() {
         h.state.scene.opacity(node),
         Some(1.0),
         "shown whole at its end"
+    );
+}
+
+/// One box from each constructor in `dialog/build.rs`, named after it.
+fn every_dialog(h: &Harness) -> Vec<(&'static str, Dialog)> {
+    use reprisefs::program::{Program, ScriptOpen};
+    use reprisekit::controls::traycustomize::{TrayCustomize, Wording};
+    use reprisekit::controls::{endsession, locationprompt};
+    let t = &h.state.config.theme;
+    let (text, px, u) = (&h.state.text, t.fonts.size_px, t.text);
+    let ending = endsession::Fields {
+        goal: endsession::Goal::LogOff,
+        rows: Vec::new(),
+        icon: None,
+    };
+    let maps = locationprompt::Fields {
+        program: "Maps".into(),
+        icon: None,
+    };
+    let tray = TrayCustomize::new(
+        Wording::of(t),
+        Vec::new(),
+        Vec::new(),
+        None,
+        t.look.controls_at_100(),
+    );
+    let tool = std::path::PathBuf::from("/srv/tool");
+    vec![
+        ("end_session", Dialog::end_session(&ending, text, px, u)),
+        (
+            "location_prompt",
+            Dialog::location_prompt(&maps, MAPS.into(), text, px, u),
+        ),
+        ("run", Dialog::run(&["notepad".into()])),
+        ("rename_desktop", Dialog::rename_desktop(1, None)),
+        ("tray_customize", Dialog::tray_customize(tray)),
+        (
+            "confirm_hide",
+            Dialog::confirm_hide(crate::desktop::Place::Documents, "Documents"),
+        ),
+        (
+            "confirm_delete_icons",
+            Dialog::confirm_delete_icons(vec!["computer".into()], Vec::new()),
+        ),
+        (
+            "key_aid_prompt",
+            Dialog::key_aid_prompt(crate::keyfilter::Aid::StickyKeys, true),
+        ),
+        ("end_program", Dialog::end_program("foot", 4321)),
+        (
+            "ask_run",
+            Dialog::ask_run(tool.clone(), ScriptOpen::Run, Program::Script),
+        ),
+        ("ask_open", Dialog::ask_open(tool.clone(), None, false)),
+        ("ask_mount", Dialog::ask_mount(tool.clone())),
+        ("error", Dialog::error("Run", "Not found.".into())),
+        ("run_not_found", Dialog::run_not_found("nothing")),
+        ("not_utf8_program", Dialog::not_utf8_program("Run", &tool)),
+        (
+            "log_off",
+            Dialog::log_off(Leave::SwitchUser { live: false }),
+        ),
+        ("turn_off", Dialog::turn_off(&h.state.config.power, false)),
+        ("greeter_turn_off", Dialog::greeter_turn_off()),
+    ]
+}
+
+const MAPS: &str = "org.example.Maps";
+
+#[test]
+fn every_dialog_holds_one_box_per_constructor() {
+    let source = include_str!("../dialog/build.rs");
+    let constructor = |f: &&str| {
+        let sig = f.split('{').next().unwrap();
+        sig.trim_end().ends_with("-> Dialog") && !sig.contains("self")
+    };
+    let mut built: Vec<&str> = (source.split("pub fn ").skip(1))
+        .filter(constructor)
+        .map(|f| f.split('(').next().unwrap())
+        .collect();
+    let h = Harness::new();
+    let mut tabled: Vec<&str> = every_dialog(&h).into_iter().map(|(n, _)| n).collect();
+    built.sort_unstable();
+    tabled.sort_unstable();
+    assert_eq!(tabled, built);
+}
+
+#[test]
+fn closing_any_box_answers_what_escape_answers() {
+    let h = Harness::new();
+    for (name, d) in every_dialog(&h) {
+        assert_eq!(d.dismiss(), d.clone().key(Key::Escape), "{name}");
+    }
+}
+
+#[test]
+fn alt_f4_closes_the_box_with_the_keyboard() {
+    const ALT: u32 = 56;
+    const F4: u32 = 62;
+    let mut h = Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let alt_f4 = |h: &mut Harness| {
+        h.key(ALT, true);
+        h.key(F4, true);
+        h.key(F4, false);
+        h.key(ALT, false);
+    };
+    h.state
+        .open_dialog(Dialog::error("Run", "Not found.".into()));
+    alt_f4(&mut h);
+    assert!(h.state.dialogs.views.is_empty(), "the error box closes");
+    h.state.open_dialog(Dialog::run(&["notepad".into()]));
+    alt_f4(&mut h);
+    assert!(
+        h.state.dialogs.views.is_empty(),
+        "Run closes instead of dropping its list"
     );
 }
 

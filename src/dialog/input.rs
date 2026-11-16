@@ -120,6 +120,14 @@ impl Dialog {
         }
     }
 
+    /// What the close box and the Close bind answer: what Escape answers on the box as it opens.
+    pub fn dismiss(&self) -> Outcome {
+        match &self.style {
+            Style::Form(f) => f.event(reprisekit::controls::form::Event::Cancel),
+            _ => Outcome::Close,
+        }
+    }
+
     /// The pointer let go over `over`. A form's held push button acts now (on the release, not
     /// the press), and a held thumb lets go.
     pub fn release(&mut self, over: Option<DialogHit>) -> Outcome {
