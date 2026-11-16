@@ -18,7 +18,8 @@ use super::motion::{Motion, destroy, drop_leaving, leave, restack};
 use super::paint::paint;
 use super::{
     BURST_AFTER, BURST_LINES, BURST_WINDOW, Balloon, DEFAULT_MS, MAX_QUEUED, NotifyView, OWN_ID,
-    REASON_EXPIRED, cap, close_transient, droplets, overlay_tree, sheets, take_down, timeout_ms,
+    REASON_EXPIRED, REASON_UNDEFINED, cap, close_transient, droplets, overlay_tree, sheets,
+    take_down, timeout_ms,
 };
 
 #[derive(Clone, Debug)]
@@ -238,6 +239,7 @@ impl Arrivals {
 pub(super) fn fold(state: &mut State, n: Notification) {
     let key = n.key.clone();
     let mut expired_ids = Vec::new();
+    let mut dropped = Vec::new();
     if n.transient {
         expired_ids.push(n.id);
     }
@@ -283,15 +285,14 @@ pub(super) fn fold(state: &mut State, n: Notification) {
         } else {
             let q = &mut state.notify.queue;
             q.insert(at.unwrap_or(q.len()), Item::Burst(burst));
-            while q.len() > MAX_QUEUED {
-                q.pop_front();
-            }
+            dropped = trim_queue(q);
         }
         display_next(state);
     }
     for id in expired_ids {
         crate::tray::notification_closed(state, id, REASON_EXPIRED);
     }
+    close_dropped(state, dropped);
 }
 
 /// Takes the `taken` indices (ascending) out of `stack` and puts `burst` in the slot of the last.
@@ -343,9 +344,15 @@ pub(super) fn display_next(state: &mut State) {
     paint(state);
 }
 
-/// Returns the ids of the single balloons dropped past `MAX_QUEUED`; a burst's are in the history.
+/// Queues `item` last; returns what [`trim_queue`] dropped.
 pub(super) fn enqueue(queue: &mut VecDeque<Item>, item: Item) -> Vec<u32> {
     queue.push_back(item);
+    trim_queue(queue)
+}
+
+/// Drops the oldest past `MAX_QUEUED`. Returns the ids of the single balloons dropped; a burst's
+/// are in the history.
+fn trim_queue(queue: &mut VecDeque<Item>) -> Vec<u32> {
     let mut dropped = Vec::new();
     while queue.len() > MAX_QUEUED {
         if let Some(Item::Note(old)) = queue.pop_front() {
@@ -353,6 +360,15 @@ pub(super) fn enqueue(queue: &mut VecDeque<Item>, item: Item) -> Vec<u32> {
         }
     }
     dropped
+}
+
+/// The queue dropped `ids`: each one the history does not keep (a transient one) is closed.
+pub(super) fn close_dropped(state: &mut State, ids: Vec<u32>) {
+    for id in ids {
+        if state.notify.log.get(id).is_none() {
+            crate::tray::notification_closed(state, id, REASON_UNDEFINED);
+        }
+    }
 }
 
 /// A balloon for `item`, its clock started (and held if the pointer is on the sheets); `None`

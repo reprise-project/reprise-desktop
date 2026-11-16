@@ -45,7 +45,10 @@ use motion::{Motion, destroy, drop_leaving, leave};
 pub(crate) use paint::icons_landed;
 use paint::paint;
 use reply::start_reply;
-use stack::{Arrivals, Item, display_next, enqueue, fold, foldable, in_burst, slot_of, take_all};
+use stack::{
+    Arrivals, Item, close_dropped, display_next, enqueue, fold, foldable, in_burst, slot_of,
+    take_all,
+};
 
 /// Default and clamp for how long a balloon stays up (ms). A request of 0 ("never") is held to
 /// `MAX_MS`; a critical notification stays until dealt with unless it asks for a time.
@@ -376,11 +379,8 @@ pub fn show(state: &mut State, n: Notification) {
             return;
         }
     }
-    for id in enqueue(&mut state.notify.queue, Item::Note(n)) {
-        if state.notify.log.get(id).is_none() {
-            crate::tray::notification_closed(state, id, REASON_UNDEFINED);
-        }
-    }
+    let dropped = enqueue(&mut state.notify.queue, Item::Note(n));
+    close_dropped(state, dropped);
     display_next(state);
     changed(state);
 }
