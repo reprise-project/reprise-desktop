@@ -214,8 +214,11 @@ impl State {
                     let d = Dialog::ask_open(path, with.map(|e| e.id), recent);
                     return state.open_dialog(d);
                 }
-                let terminal = &state.config.terminal;
-                match reprisefs::props::open_file(&path, with.as_ref(), terminal) {
+                let Some(app) = &with else {
+                    let d = state.choose_program(&path, false);
+                    return state.open_dialog(d);
+                };
+                match reprisefs::props::open_file(&path, app, &state.config.terminal) {
                     Ok(opening) => state.spawn_opening_activated(&opening),
                     Err(refused) => return state.exec_refused(&refused),
                 }
@@ -398,7 +401,7 @@ impl State {
     }
 
     /// Print each of `paths` (files, not folders) with `lp`, or open it in the text/plain
-    /// default whatever its own type.
+    /// default whatever its own type; without one, Open With asks for a program.
     pub(crate) fn print_or_edit(&mut self, paths: Vec<PathBuf>, print: bool) {
         let editor = reprisefs::props::default_app_entry("text/plain", &self.app_index).cloned();
         for path in paths {
@@ -409,7 +412,12 @@ impl State {
                     dir: None,
                 }
             } else {
-                match reprisefs::props::open_file(&path, editor.as_ref(), &self.config.terminal) {
+                let Some(editor) = &editor else {
+                    let d = self.choose_program(&path, false);
+                    self.open_dialog(d);
+                    continue;
+                };
+                match reprisefs::props::open_file(&path, editor, &self.config.terminal) {
                     Ok(open) => open,
                     Err(refused) => return self.exec_refused(&refused),
                 }

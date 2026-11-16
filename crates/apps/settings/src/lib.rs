@@ -868,7 +868,16 @@ impl SettingsApp {
     fn edit_file(&self) -> Reply {
         let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
         let globs = reprisefs::apps::mime_globs();
-        match reprisefs::props::open_in(&self.path, &globs, &apps, &self.want.terminal) {
+        let open = reprisefs::props::open_in(&self.path, &globs, &apps, &self.want.terminal);
+        // Settings has no Open With: a type with no program goes to xdg-open.
+        let open = open.map(|open| {
+            open.unwrap_or_else(|| reprisefs::props::Opening {
+                argv: reprisefs::apps::open_argv_for(&self.path),
+                app: None,
+                dir: None,
+            })
+        });
+        match open {
             Ok(open) => Reply {
                 redraw: true,
                 spawn: vec![open.argv],

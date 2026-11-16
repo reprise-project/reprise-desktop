@@ -105,6 +105,13 @@ pub(crate) fn test_explorer(start: Place, ctx: &mut Ctx) -> Explorer {
     Explorer::with_settings(start, Settings::default(), Vec::new().into(), None, ctx)
 }
 
+/// One program that opens text, pictures and `.exe` files, for tests that open a file.
+pub(crate) fn opener_index() -> AppIndex {
+    let text = "[Desktop Entry]\nType=Application\nName=Opener\nExec=opener %f\n\
+                MimeType=text/plain;image/png;application/x-msdownload;\n";
+    vec![reprisefs::apps::parse_desktop(text, "opener.desktop").expect("an entry")].into()
+}
+
 fn press(ex: &mut Explorer, sym: u32, ctx: &mut Ctx) -> Reply {
     ex.key(
         repriseapp::KeyInput {

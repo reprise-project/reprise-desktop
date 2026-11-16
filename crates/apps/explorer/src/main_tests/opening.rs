@@ -18,6 +18,7 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
     let plain = put("d.sh", b"#!/bin/sh\ntouch ran\n", 0o644);
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.app_index = opener_index();
     let names: Vec<&str> = ex.sv.entries.iter().map(|e| e.name.as_str()).collect();
     assert_eq!(names, ["a.sh", "b.sh", "c.png", "d.sh"]);
     let mut open_as = |i: usize, how, ex: &mut Explorer| {
@@ -236,6 +237,7 @@ fn opening_a_runnable_type_asks_before_its_program_opens_it() {
         ex.globs = Arc::new(reprisefs::apps::MimeDb::parse([
             "50:application/x-msdownload:*.exe\n",
         ]));
+        ex.app_index = opener_index();
         ex.sv.selection.set_only(Some(0));
 
         let reply = ex.open_selected(&mut ctx);
@@ -255,10 +257,40 @@ fn opening_a_runnable_type_asks_before_its_program_opens_it() {
 
         ex.open_selected(&mut ctx);
         let reply = ex.dialog_outcome(Event::Pressed(BUTTON_IDS[0]), &mut ctx);
-        assert!(
-            opens(&reply, &exe),
-            "Run opens it in its program: {reply:?}"
-        );
+        if name == "invoice" {
+            assert!(reply.spawn.is_empty(), "a file with no type has no program");
+            assert!(
+                matches!(&ex.dialog, Some(crate::dialogs::Dialog::ChooseProgram(_))),
+                "Run asks which program opens it"
+            );
+        } else {
+            assert!(
+                opens(&reply, &exe),
+                "Run opens it in its program: {reply:?}"
+            );
+        }
+    }
+}
+
+/// A file whose type no program opens puts up Open With for it, with Always use unticked.
+#[test]
+fn opening_a_file_no_program_takes_asks_open_with() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let data = dir.path().join("data.qqz");
+    std::fs::write(&data, [0u8, 0xff, 7, 0x80]).expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.app_index = opener_index();
+    ex.sv.selection.set_only(Some(0));
+
+    let reply = ex.open_selected(&mut ctx);
+    assert!(reply.spawn.is_empty(), "nothing runs: {reply:?}");
+    match &ex.dialog {
+        Some(crate::dialogs::Dialog::ChooseProgram(c)) => {
+            assert_eq!(c.path, data);
+            assert!(!c.ow.always.on, "Always use starts unticked");
+        }
+        _ => panic!("Open With is up"),
     }
 }
 
@@ -311,6 +343,7 @@ fn a_file_opened_late_still_opens_when_the_window_closes_first() {
     std::fs::write(&p, "text").expect("write");
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.app_index = opener_index();
     ex.sv.selection.set_only(Some(0));
 
     let gate = Arc::new(std::sync::RwLock::new(()));
@@ -344,6 +377,7 @@ fn a_file_opened_late_opens_when_another_answer_lands_in_the_same_wake() {
     let mut ctx = test_ctx();
     let here = Place::Folder(dir.path().to_path_buf());
     let mut ex = test_explorer(here.clone(), &mut ctx);
+    ex.app_index = opener_index();
     let at = ex
         .items
         .iter()

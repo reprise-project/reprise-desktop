@@ -477,6 +477,7 @@ mod tests {
         std::fs::write(dir.path().join("a.txt"), "x").expect("write");
         let mut ctx = test_ctx();
         let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        ex.app_index = crate::tests::opener_index();
         ex.sv.selection.set_only(Some(0));
 
         ex.key_inner(key(ALT_L, None, false, false, true), &mut ctx);

@@ -984,24 +984,17 @@ pub fn default_app_entry<'a>(mime: &str, apps: &'a [AppEntry]) -> Option<&'a App
     default_app(mime, apps).map(|i| &apps[i])
 }
 
-/// How a `path` the caller knows is a file opens in `default`, else `xdg-open`, with no stat.
+/// How a `path` the caller knows is a file opens in `app`, with no stat.
 pub fn open_file(
     path: &Path,
-    default: Option<&AppEntry>,
+    app: &AppEntry,
     terminal: &str,
 ) -> Result<Opening, apps::ExecRefused> {
-    Ok(match default {
-        Some(app) => Opening::of(app, apps::open_argv(app, terminal, path)?),
-        None => Opening {
-            argv: vec!["xdg-open".into(), path.into()],
-            app: None,
-            dir: None,
-        },
-    })
+    Ok(Opening::of(app, apps::open_argv(app, terminal, path)?))
 }
 
 /// A command that opens a path, and the desktop entry id it runs as (its app scope): the default
-/// program's, None for Explorer or `xdg-open`.
+/// program's, None for Explorer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Opening {
     pub argv: Vec<std::ffi::OsString>,
@@ -1021,24 +1014,27 @@ impl Opening {
     }
 }
 
-/// How `path` opens, with its default program looked up from `globs` and `apps`. Everything that
-/// opens a file on its own comes here.
+/// How `path` opens: a folder in Explorer, a file in its type's default program looked up from
+/// `globs` and `apps`. None for a file whose type has no program, for which the host offers its
+/// Open With chooser. Everything that opens a file on its own comes here.
 pub fn open_in(
     path: &Path,
     globs: &MimeDb,
     apps: &[AppEntry],
     terminal: &str,
-) -> Result<Opening, apps::ExecRefused> {
-    let mime = apps::mime_of_in(globs, path);
-    let default = mime.as_deref().and_then(|m| default_app_entry(m, apps));
-    Ok(match default.filter(|_| !path.is_dir()) {
-        Some(app) => Opening::of(app, apps::open_argv(app, terminal, path)?),
-        None => Opening {
-            argv: apps::open_argv_for(path),
+) -> Result<Option<Opening>, apps::ExecRefused> {
+    if path.is_dir() {
+        return Ok(Some(Opening {
+            argv: apps::open_folder_argv(path),
             app: None,
             dir: None,
-        },
-    })
+        }));
+    }
+    let mime = apps::mime_of_in(globs, path);
+    let default = mime.as_deref().and_then(|m| default_app_entry(m, apps));
+    default
+        .map(|app| open_file(path, app, terminal))
+        .transpose()
 }
 
 pub fn default_app(mime: &str, apps: &[AppEntry]) -> Option<usize> {

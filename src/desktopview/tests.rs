@@ -1468,6 +1468,28 @@ fn opening_a_disk_image_asks_before_mounting_it_and_starts_nothing() {
     assert_eq!(crate::spawn::recorded(), Vec::<String>::new());
 }
 
+#[test]
+fn opening_a_file_no_program_takes_asks_open_with_and_starts_nothing() {
+    use reprisefs::program::Confirm;
+    crate::spawn::record();
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let dir = crate::harness::scratch().join("open-unknown");
+    std::fs::create_dir_all(&dir).unwrap();
+    let data = dir.join("data.qqz");
+    std::fs::write(&data, [0u8, 0xff, 7, 0x80]).unwrap();
+    h.state.open_document(&data, None, Confirm::Ask, true);
+    let d = &h.state.dialogs.views.last().expect("a dialog").dialog;
+    match &d.style {
+        crate::dialog::Style::Chooser(c) => {
+            assert_eq!(c.path, data);
+            assert!(!c.ow.always.on, "Always use starts unticked");
+        }
+        _ => panic!("Open With is up, not {:?}", d.title),
+    }
+    assert_eq!(crate::spawn::recorded(), Vec::<String>::new());
+}
+
 /// The question `open_document` raised, as the actions of its buttons.
 fn asked(h: &crate::harness::Harness) -> Vec<crate::dialog::DialogAction> {
     let d = &h

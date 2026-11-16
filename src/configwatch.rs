@@ -348,11 +348,12 @@ pub fn announce(state: &mut State, notice: Option<Notice>) {
     if n.edit {
         let editor = reprisefs::props::default_app_entry("text/plain", &state.app_index);
         let path = std::path::absolute(&state.config_path).unwrap_or(state.config_path.clone());
-        match reprisefs::props::open_file(&path, editor, &state.config.terminal) {
-            Ok(open) => {
+        let open = editor.map(|e| reprisefs::props::open_file(&path, e, &state.config.terminal));
+        match open {
+            Some(Ok(open)) => {
                 crate::notifyview::notice_opening(state, "Configuration", &n.body, open.argv)
             }
-            Err(_) => crate::notifyview::notice(state, "Configuration", &n.body),
+            _ => crate::notifyview::notice(state, "Configuration", &n.body),
         }
     } else {
         crate::notifyview::notice(state, "Configuration", &n.body);
