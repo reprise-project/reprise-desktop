@@ -1405,7 +1405,7 @@ mod tests {
         })
     }
 
-    /// The host's `parse_node` reads `(i, a{sv}, av)` children with these exact property names; pin the serialized shape.
+    /// The host's `parse_layout` reads `(i, a{sv}, av)` children with these exact property names; pin the serialized shape.
     #[test]
     fn nodes_serialize_as_dbusmenu_children() {
         let mute = node_value(&Node::toggle(2, "Mute", true));

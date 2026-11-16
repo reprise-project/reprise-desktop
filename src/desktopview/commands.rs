@@ -390,8 +390,6 @@ impl State {
         self.open_dialog(crate::dialog::Dialog::error(what, text));
     }
 
-    /// Run a desktop-menu command; `aim` is the icon it was aimed at, which may have
-    /// since gone.
     /// Open each of `paths` in program `app` (a desktop-file id).
     pub(crate) fn open_files_with(&mut self, paths: Vec<PathBuf>, app: &str) {
         let Some(app) = self.app_index.iter().find(|a| a.id == app).cloned() else {
@@ -432,6 +430,8 @@ impl State {
         }
     }
 
+    /// Run a desktop-menu command; `aim` is the icon it was aimed at, which may have
+    /// since gone.
     pub fn desktop_command(&mut self, cmd: DesktopCommand, aim: Option<IconId>) {
         use DesktopCommand as Dc;
         let target = match &aim {

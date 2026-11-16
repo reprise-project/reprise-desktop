@@ -66,7 +66,7 @@ const LABEL_GAP: i32 = 2;
 const EXPLORER_LABEL_GAP: i32 = 5;
 const ROOT_ICON_X: i32 = 4;
 const PICKER_ROOT_ICON_X: i32 = 3;
-/// `Style::Plain`'s row pitch, icon inset and label gap, for the Open With dialog's list.
+/// `Style::Plain`'s row pitch, icon inset and label gap, for the share dialog's tree of screens and windows.
 const PLAIN_ROW_H: i32 = 18;
 const PLAIN_ICON_X: i32 = 3;
 const PLAIN_LABEL_GAP: i32 = 5;
@@ -87,7 +87,7 @@ pub enum Style {
     Explorer,
     /// The Move/Copy picker's tree: `Explorer`'s, roots' icons 3 px in.
     Picker,
-    /// The Open With dialog's list: no boxes or lines, 18 px rows, icon 3 px in, label 5 px after it.
+    /// The share dialog's tree of screens and windows: no boxes or lines, 18 px rows, icon 3 px in, label 5 px after it.
     Plain,
 }
 

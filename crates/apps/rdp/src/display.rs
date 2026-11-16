@@ -42,10 +42,10 @@ pub const UNSHARED: DesktopSize = DesktopSize {
     width: 1024,
     height: 768,
 };
-/// The most monitors a client's Display Control layout may give, as many as its Client Monitor
-/// Data holds.
 /// What PipeWire's screen streams name the program.
 const APP: &str = "Remote Desktop";
+/// The most monitors a client's Display Control layout may give, as many as its Client Monitor
+/// Data holds.
 const MAX_MONITORS: u32 = 16;
 /// The largest pointer a client takes without the large pointer capability.
 const MAX_POINTER: usize = 96;

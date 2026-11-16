@@ -1,5 +1,6 @@
 //! Desktop icons: entries from the desktop directory, the system icons,
 //! names and clipboard rules. The grid, the cell drawing and the rename box
+//! live in `reprisekit::controls::iconview`.
 
 use reprisefs::apps::{self, AppEntry};
 use reprisefs::program::Program;
