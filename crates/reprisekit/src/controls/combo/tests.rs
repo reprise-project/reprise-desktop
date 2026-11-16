@@ -141,17 +141,17 @@ fn layout_puts_the_button_inside_the_edge_and_the_list_under_the_field() {
     assert_eq!(hit(&many, &l, 10, 10), Some(Hit::Field));
     assert!(many.toggle());
     assert_eq!(hit(&many, &l, 10, 22 + 13 + 3), Some(Hit::Row(1)));
-    assert_eq!(hit(&many, &l, 90, 25), Some(Hit::ScrollUp));
-    assert_eq!(hit(&many, &l, 90, 122), Some(Hit::ScrollDown));
+    assert_eq!(hit(&many, &l, 90, 25), Some(Hit::Bar(BarHit::Back)));
+    assert_eq!(hit(&many, &l, 90, 122), Some(Hit::Bar(BarHit::Forward)));
     // 30 items, 8 in view: a 19 px thumb at the top of a 72 px
     // track, and the rest of the track pages.
-    assert_eq!(hit(&many, &l, 90, 45), Some(Hit::Thumb(7)));
-    assert_eq!(hit(&many, &l, 90, 70), Some(Hit::PageDown));
+    assert_eq!(hit(&many, &l, 90, 45), Some(Hit::Bar(BarHit::Thumb(7))));
+    assert_eq!(hit(&many, &l, 90, 70), Some(Hit::Bar(BarHit::PageForward)));
     // Dragging the thumb by that grab point walks the whole range.
     assert_eq!(top_at(&many, &l, 45, 7), 0);
     assert_eq!(top_at(&many, &l, 98, 7), 22);
     many.top = 22;
-    assert_eq!(hit(&many, &l, 90, 45), Some(Hit::PageUp));
+    assert_eq!(hit(&many, &l, 90, 45), Some(Hit::Bar(BarHit::PageBack)));
 }
 
 /// Blue's combo at the Themes tab's 192x21: a 15 px drop button with

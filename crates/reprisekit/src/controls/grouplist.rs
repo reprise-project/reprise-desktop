@@ -2,11 +2,9 @@
 //! behaves as a listview: a header takes the selection like any row, and the highlight covers the
 //! label only.
 
-use crate::classic::widgets::{
-    BarHit, ScrollHit, ScrollParts, draw_focus_ring_screen, scrollbar_hit, scrollbar_parts,
-    scrollbar_pos_at,
-};
+use crate::classic::widgets::{BarHit, draw_focus_ring_screen};
 use crate::controls::metrics::ControlMetrics;
+use crate::controls::scrollbar::RowScroll;
 use crate::look::Paint;
 use crate::look::widgets::{draw_field_frame, draw_scrollbar};
 use crate::raster::{Canvas, Rect};
@@ -131,13 +129,18 @@ impl<T> GroupList<T> {
 
     /// Scroll by whole rows. Returns whether the view moved.
     pub fn scroll(&mut self, rows: i32, visible: usize) -> bool {
-        let max_top = self.rows.len().saturating_sub(visible);
-        let top = (self.top as i32 + rows).clamp(0, max_top as i32) as usize;
-        if top == self.top {
-            return false;
-        }
+        let top = self.at(visible).scrolled(rows);
+        let moved = top != self.top;
         self.top = top;
-        true
+        moved
+    }
+
+    fn at(&self, visible: usize) -> RowScroll {
+        RowScroll {
+            top: self.top,
+            visible,
+            total: self.rows.len(),
+        }
     }
 }
 
@@ -179,23 +182,7 @@ pub fn layout<T>(list: &GroupList<T>, frame: Rect, cm: &ControlMetrics) -> Layou
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Row(usize),
-    ScrollUp,
-    ScrollDown,
-    PageUp,
-    PageDown,
-    Thumb(i32),
-}
-
-fn scroll_parts<T>(list: &GroupList<T>, lay: &Layout, sb: Rect) -> ScrollParts {
-    scrollbar_parts(
-        sb,
-        1,
-        list.top,
-        lay.visible,
-        list.rows.len(),
-        false,
-        lay.thumb_min,
-    )
+    Bar(BarHit),
 }
 
 /// Row `i`'s box while it is in view, in the layout's coordinates: the list's inside across, one
@@ -211,14 +198,10 @@ pub fn row_rect<T>(list: &GroupList<T>, lay: &Layout, i: usize) -> Option<Rect> 
 /// What a point lands on: a row in view, or a part of the scrollbar.
 pub fn hit<T>(list: &GroupList<T>, lay: &Layout, x: i32, y: i32) -> Option<Hit> {
     if let Some(sb) = lay.scrollbar.filter(|sb| sb.contains(x, y)) {
-        let p = scroll_parts(list, lay, sb);
-        return match scrollbar_hit(&p, x, y, false)? {
-            ScrollHit::Back => Some(Hit::ScrollUp),
-            ScrollHit::Forward => Some(Hit::ScrollDown),
-            ScrollHit::PageBack => Some(Hit::PageUp),
-            ScrollHit::PageForward => Some(Hit::PageDown),
-            ScrollHit::Thumb => Some(Hit::Thumb(y - p.thumb.map_or(0, |t| t.y))),
-        };
+        return list
+            .at(lay.visible)
+            .hit(sb, lay.thumb_min, x, y)
+            .map(Hit::Bar);
     }
     if !lay.inner.contains(x, y) {
         return None;
@@ -232,11 +215,7 @@ impl Hit {
     /// The part of the scrollbar this is on; `None` for a row.
     pub fn bar(self) -> Option<BarHit> {
         match self {
-            Hit::ScrollUp => Some(BarHit::Back),
-            Hit::ScrollDown => Some(BarHit::Forward),
-            Hit::PageUp => Some(BarHit::PageBack),
-            Hit::PageDown => Some(BarHit::PageForward),
-            Hit::Thumb(grab) => Some(BarHit::Thumb(grab)),
+            Hit::Bar(b) => Some(b),
             Hit::Row(_) => None,
         }
     }
@@ -244,13 +223,9 @@ impl Hit {
 
 /// The top row a thumb grabbed `grab` px below its own top scrolls to when the pointer sits at `y`.
 pub fn top_at<T>(list: &GroupList<T>, lay: &Layout, y: i32, grab: i32) -> usize {
-    match lay.scrollbar {
-        Some(sb) => {
-            let p = scroll_parts(list, lay, sb);
-            scrollbar_pos_at(&p, y - grab, lay.visible, list.rows.len(), false)
-        }
-        None => list.top,
-    }
+    lay.scrollbar.map_or(list.top, |sb| {
+        list.at(lay.visible).top_at(sb, lay.thumb_min, y, grab)
+    })
 }
 
 /// How the pick shows: whether the list has the focus, and the keyboard cues.
@@ -414,7 +389,7 @@ mod tests {
         assert_eq!(hit(&list(12), &l, 100, 104 + 3 * 18 + 5), Some(Hit::Row(3)));
         assert_eq!(hit(&list(12), &l, 100, 104 + 10 * 18), Some(Hit::Row(10)));
         assert_eq!(hit(&list(12), &l, 100, 104 + 11 * 18 + 2), None);
-        assert_eq!(hit(&list(12), &l, 355, 106), Some(Hit::ScrollUp));
+        assert_eq!(hit(&list(12), &l, 355, 106), Some(Hit::Bar(BarHit::Back)));
         assert!(
             layout(&list(3), frame, &ControlMetrics::CLASSIC)
                 .scrollbar

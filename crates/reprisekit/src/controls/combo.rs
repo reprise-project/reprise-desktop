@@ -6,12 +6,12 @@
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{
-    BarHit, FIELD_PAD, LINE_H, ROW_H, RingInk, ScrollHit, ScrollParts, access_edit,
-    draw_edit_drop_point, draw_focus_ring_screen, edit_first_visible, scrollbar_hit,
-    scrollbar_parts, scrollbar_pos_at,
+    BarHit, FIELD_PAD, LINE_H, ROW_H, RingInk, ScrollHit, access_edit, draw_edit_drop_point,
+    draw_focus_ring_screen, edit_first_visible,
 };
 use crate::controls::hosted::{Anchor, Hosted, Spot};
 use crate::controls::metrics::ControlMetrics;
+use crate::controls::scrollbar::RowScroll;
 use crate::controls::scrollbar::ThumbDrag;
 use crate::look::Paint;
 use crate::look::widgets::{
@@ -357,13 +357,18 @@ impl Combo {
     }
 
     pub fn scroll(&mut self, rows: i32) -> bool {
-        let max_top = self.items.len().saturating_sub(self.visible());
-        let top = (self.top as i32 + rows).clamp(0, max_top as i32) as usize;
-        if top == self.top {
-            return false;
-        }
+        let top = self.at().scrolled(rows);
+        let moved = top != self.top;
         self.top = top;
-        true
+        moved
+    }
+
+    fn at(&self) -> RowScroll {
+        RowScroll {
+            top: self.top,
+            visible: self.visible(),
+            total: self.items.len(),
+        }
     }
 }
 
@@ -592,24 +597,14 @@ pub enum Hit {
     Field,
     Drop,
     Row(usize),
-    ScrollUp,
-    ScrollDown,
-    PageUp,
-    PageDown,
-    Thumb(i32),
+    /// A part of the open list's scrollbar, a thumb with its grab offset.
+    Bar(BarHit),
 }
 
 pub fn hit(combo: &Combo, lay: &Layout, x: i32, y: i32) -> Option<Hit> {
     if combo.open.is_some() && lay.list.contains(x, y) {
         if let Some(sb) = lay.scrollbar.filter(|sb| sb.contains(x, y)) {
-            let p = scroll_parts(combo, lay, sb);
-            return match scrollbar_hit(&p, x, y, false)? {
-                ScrollHit::Back => Some(Hit::ScrollUp),
-                ScrollHit::Forward => Some(Hit::ScrollDown),
-                ScrollHit::PageBack => Some(Hit::PageUp),
-                ScrollHit::PageForward => Some(Hit::PageDown),
-                ScrollHit::Thumb => Some(Hit::Thumb(y - p.thumb.map_or(0, |t| t.y))),
-            };
+            return combo.at().hit(sb, lay.thumb_min, x, y).map(Hit::Bar);
         }
         // The frame's bottom pixel sits under the last row in view: no
         // row, rather than the hidden one after it.
@@ -623,29 +618,16 @@ pub fn hit(combo: &Combo, lay: &Layout, x: i32, y: i32) -> Option<Hit> {
     lay.field.contains(x, y).then_some(Hit::Field)
 }
 
-fn scroll_parts(combo: &Combo, lay: &Layout, sb: Rect) -> ScrollParts {
-    let (top, visible, total) = (combo.top, combo.visible(), combo.items.len());
-    scrollbar_parts(sb, 1, top, visible, total, false, lay.thumb_min)
-}
-
 pub fn top_at(combo: &Combo, lay: &Layout, y: i32, grab: i32) -> usize {
-    match lay.scrollbar {
-        Some(sb) => {
-            let p = scroll_parts(combo, lay, sb);
-            scrollbar_pos_at(&p, y - grab, combo.visible(), combo.items.len(), false)
-        }
-        None => combo.top,
-    }
+    lay.scrollbar.map_or(combo.top, |sb| {
+        combo.at().top_at(sb, lay.thumb_min, y, grab)
+    })
 }
 
 impl Hit {
     pub fn bar(self) -> Option<BarHit> {
         match self {
-            Hit::ScrollUp => Some(BarHit::Back),
-            Hit::ScrollDown => Some(BarHit::Forward),
-            Hit::PageUp => Some(BarHit::PageBack),
-            Hit::PageDown => Some(BarHit::PageForward),
-            Hit::Thumb(grab) => Some(BarHit::Thumb(grab)),
+            Hit::Bar(b) => Some(b),
             Hit::Field | Hit::Drop | Hit::Row(_) => None,
         }
     }

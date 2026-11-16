@@ -2,10 +2,9 @@
 //! vertical scrollbar once the rows outgrow the box.
 
 use crate::access::{self, Tree, accesskit};
-use crate::classic::widgets::{
-    BarHit, ScrollHit, ScrollParts, scrollbar_hit, scrollbar_parts, scrollbar_pos_at,
-};
+use crate::classic::widgets::{BarHit, ScrollHit, ScrollParts};
 use crate::controls::metrics::ControlMetrics;
+use crate::controls::scrollbar::RowScroll;
 use crate::look::Paint;
 use crate::look::widgets::item::{self, Mark};
 use crate::look::widgets::{draw_field_frame, draw_list_check, draw_scrollbar};
@@ -99,13 +98,18 @@ impl ListBox {
     }
 
     pub fn scroll(&mut self, rows: i32, visible: usize) -> bool {
-        let max_top = self.items.len().saturating_sub(visible.max(1));
-        let top = (self.top as i32 + rows).clamp(0, max_top as i32) as usize;
-        if top == self.top {
-            return false;
-        }
+        let top = self.at(visible).scrolled(rows);
+        let moved = top != self.top;
         self.top = top;
-        true
+        moved
+    }
+
+    fn at(&self, visible: usize) -> RowScroll {
+        RowScroll {
+            top: self.top,
+            visible,
+            total: self.items.len(),
+        }
     }
 }
 
@@ -152,13 +156,8 @@ pub fn layout(lb: &ListBox, frame: Rect, cm: &ControlMetrics) -> Layout {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Row(usize),
-    ScrollUp,
-    ScrollDown,
-    PageUp,
-    PageDown,
-    /// The thumb, carrying the grab offset from its top so a drag keeps
-    /// hold of the point it was grabbed by.
-    Thumb(i32),
+    /// A part of the scrollbar, a thumb with its grab offset.
+    Bar(BarHit),
     Check(usize),
 }
 
@@ -173,37 +172,16 @@ pub fn check_box(lb: &ListBox, lay: &Layout, i: usize) -> Option<Rect> {
 }
 
 pub fn scroll_parts(lb: &ListBox, lay: &Layout) -> Option<ScrollParts> {
-    lay.scrollbar.map(|sb| {
-        scrollbar_parts(
-            sb,
-            1,
-            lb.top,
-            lay.visible,
-            lb.items.len(),
-            false,
-            lay.thumb_min,
-        )
-    })
+    lay.scrollbar
+        .map(|sb| lb.at(lay.visible).parts(sb, lay.thumb_min))
 }
 
 pub fn hit(lb: &ListBox, lay: &Layout, x: i32, y: i32) -> Option<Hit> {
     if let Some(sb) = lay.scrollbar.filter(|sb| sb.contains(x, y)) {
-        let p = scrollbar_parts(
-            sb,
-            1,
-            lb.top,
-            lay.visible,
-            lb.items.len(),
-            false,
-            lay.thumb_min,
-        );
-        return match scrollbar_hit(&p, x, y, false)? {
-            ScrollHit::Back => Some(Hit::ScrollUp),
-            ScrollHit::Forward => Some(Hit::ScrollDown),
-            ScrollHit::PageBack => Some(Hit::PageUp),
-            ScrollHit::PageForward => Some(Hit::PageDown),
-            ScrollHit::Thumb => Some(Hit::Thumb(y - p.thumb.map_or(0, |t| t.y))),
-        };
+        return lb
+            .at(lay.visible)
+            .hit(sb, lay.thumb_min, x, y)
+            .map(Hit::Bar);
     }
     if !lay.inner.contains(x, y) {
         return None;
@@ -218,11 +196,7 @@ pub fn hit(lb: &ListBox, lay: &Layout, x: i32, y: i32) -> Option<Hit> {
 impl Hit {
     pub fn bar(self) -> Option<BarHit> {
         match self {
-            Hit::ScrollUp => Some(BarHit::Back),
-            Hit::ScrollDown => Some(BarHit::Forward),
-            Hit::PageUp => Some(BarHit::PageBack),
-            Hit::PageDown => Some(BarHit::PageForward),
-            Hit::Thumb(grab) => Some(BarHit::Thumb(grab)),
+            Hit::Bar(b) => Some(b),
             Hit::Row(_) | Hit::Check(_) => None,
         }
     }
@@ -231,10 +205,9 @@ impl Hit {
 /// The top row a thumb grabbed `grab` px below its own top scrolls to
 /// when the pointer sits at `y`.
 pub fn top_at(lb: &ListBox, lay: &Layout, y: i32, grab: i32) -> usize {
-    match scroll_parts(lb, lay) {
-        Some(p) => scrollbar_pos_at(&p, y - grab, lay.visible, lb.items.len(), false),
-        None => lb.top,
-    }
+    lay.scrollbar.map_or(lb.top, |sb| {
+        lb.at(lay.visible).top_at(sb, lay.thumb_min, y, grab)
+    })
 }
 
 /// A row's icon x: after its check box in a checked list.
@@ -430,16 +403,16 @@ mod tests {
         assert_eq!(l.visible, 6);
         assert_eq!(l.scrollbar, Some(Rect::new(277, 259, 16, 109)));
         assert_eq!(hit(&lb, &l, 100, 259 + 17 * 2 + 3), Some(Hit::Row(2)));
-        assert_eq!(hit(&lb, &l, 285, 262), Some(Hit::ScrollUp));
-        assert_eq!(hit(&lb, &l, 285, 360), Some(Hit::ScrollDown));
-        assert_eq!(hit(&lb, &l, 285, 280), Some(Hit::Thumb(5)));
-        assert_eq!(hit(&lb, &l, 285, 320), Some(Hit::PageDown));
+        assert_eq!(hit(&lb, &l, 285, 262), Some(Hit::Bar(BarHit::Back)));
+        assert_eq!(hit(&lb, &l, 285, 360), Some(Hit::Bar(BarHit::Forward)));
+        assert_eq!(hit(&lb, &l, 285, 280), Some(Hit::Bar(BarHit::Thumb(5))));
+        assert_eq!(hit(&lb, &l, 285, 320), Some(Hit::Bar(BarHit::PageForward)));
         assert_eq!(top_at(&lb, &l, 280, 5), 0);
         assert_eq!(top_at(&lb, &l, 334, 5), 14);
         assert_eq!(top_at(&lb, &l, 999, 5), 14);
         let mut end = ListBox::new(names(20), Some(0));
         end.top = 14;
-        assert_eq!(hit(&end, &l, 285, 280), Some(Hit::PageUp));
+        assert_eq!(hit(&end, &l, 285, 280), Some(Hit::Bar(BarHit::PageBack)));
         let short = ListBox::new(names(3), None);
         assert!(
             layout(&short, Rect::new(0, 0, 100, 100), &ControlMetrics::CLASSIC)

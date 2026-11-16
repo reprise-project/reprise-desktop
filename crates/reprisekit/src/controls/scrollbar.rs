@@ -14,7 +14,9 @@
 
 use std::time::{Duration, Instant};
 
-use crate::classic::widgets::{BarHit, LINE_H, ScrollParts, scrollbar_parts, scrollbar_pos_at};
+use crate::classic::widgets::{
+    BarHit, LINE_H, ScrollParts, scrollbar_hit, scrollbar_parts, scrollbar_pos_at,
+};
 use crate::pointer::{Axis, Interaction, Lit, Pointer, ScrollHit};
 use crate::raster::Rect;
 
@@ -244,6 +246,47 @@ impl RowBar {
             (true, Some((step, true))) => step,
             _ => 0,
         }
+    }
+}
+
+/// Where a list scrolled by whole rows stands: `top` of `total` rows, `visible` in view. Its
+/// vertical bar's parts, hit and thumb drag, which every row list lays out the same way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowScroll {
+    pub top: usize,
+    pub visible: usize,
+    pub total: usize,
+}
+
+impl RowScroll {
+    /// The bar laid out in `sb` with the look's shortest thumb `thumb_min`.
+    pub fn parts(self, sb: Rect, thumb_min: i32) -> ScrollParts {
+        scrollbar_parts(sb, 1, self.top, self.visible, self.total, false, thumb_min)
+    }
+
+    /// The part of bar `sb` under (`x`, `y`), a thumb with its grab offset from the thumb's top;
+    /// `None` on the track where no part is.
+    pub fn hit(self, sb: Rect, thumb_min: i32, x: i32, y: i32) -> Option<BarHit> {
+        let p = self.parts(sb, thumb_min);
+        Some(match scrollbar_hit(&p, x, y, false)? {
+            ScrollHit::Back => BarHit::Back,
+            ScrollHit::Forward => BarHit::Forward,
+            ScrollHit::PageBack => BarHit::PageBack,
+            ScrollHit::PageForward => BarHit::PageForward,
+            ScrollHit::Thumb => BarHit::Thumb(y - p.thumb.map_or(0, |t| t.y)),
+        })
+    }
+
+    /// The top row a thumb grabbed `grab` px below its own top scrolls to with the pointer at `y`.
+    pub fn top_at(self, sb: Rect, thumb_min: i32, y: i32, grab: i32) -> usize {
+        let p = self.parts(sb, thumb_min);
+        scrollbar_pos_at(&p, y - grab, self.visible, self.total, false)
+    }
+
+    /// `top` moved by `rows`, held so the last row stays at the bottom of the view or below.
+    pub fn scrolled(self, rows: i32) -> usize {
+        let max_top = self.total.saturating_sub(self.visible.max(1));
+        (self.top as i32 + rows).clamp(0, max_top as i32) as usize
     }
 }
 

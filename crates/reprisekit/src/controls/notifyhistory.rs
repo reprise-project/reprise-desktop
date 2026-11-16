@@ -963,7 +963,12 @@ mod tests {
         let (x, y) = (sb.x + 3, sb.y + sb.width + 2);
         let press = hit(&h, x, y, &cm);
         assert!(
-            matches!(press, Hit::List(grouplist::Hit::Thumb(_))),
+            matches!(
+                press,
+                Hit::List(grouplist::Hit::Bar(crate::classic::widgets::BarHit::Thumb(
+                    _
+                )))
+            ),
             "{press:?}"
         );
         h.press(press);
@@ -985,7 +990,12 @@ mod tests {
         let mut h = many(30);
         let sb = h.list_layout(&cm).scrollbar.unwrap();
         let down = hit(&h, sb.x + 3, sb.bottom() - 3, &cm);
-        assert_eq!(down, Hit::List(grouplist::Hit::ScrollDown));
+        assert_eq!(
+            down,
+            Hit::List(grouplist::Hit::Bar(
+                crate::classic::widgets::BarHit::Forward
+            ))
+        );
         assert_eq!(h.press(down), Event::Redraw);
         assert_eq!(h.list.top, 1);
         let t0 = Instant::now();

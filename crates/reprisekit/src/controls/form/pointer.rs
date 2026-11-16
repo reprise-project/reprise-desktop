@@ -73,19 +73,11 @@ impl Form {
             (Control::Combo(c), Part::Combo(ch)) if c.enabled => match ch {
                 combo::Hit::Field if c.edit.is_some() => Light::Field,
                 combo::Hit::Drop | combo::Hit::Field => Light::Drop,
-                combo::Hit::ScrollUp => Light::Bar(ScrollHit::Back),
-                combo::Hit::ScrollDown => Light::Bar(ScrollHit::Forward),
-                combo::Hit::PageUp => Light::Bar(ScrollHit::PageBack),
-                combo::Hit::PageDown => Light::Bar(ScrollHit::PageForward),
-                combo::Hit::Thumb(_) => Light::Bar(ScrollHit::Thumb),
+                combo::Hit::Bar(b) => Light::Bar(b.part()?),
                 combo::Hit::Row(_) => return None,
             },
             (Control::ListBox { .. }, Part::List(lh)) => match lh {
-                listbox::Hit::ScrollUp => Light::Bar(ScrollHit::Back),
-                listbox::Hit::ScrollDown => Light::Bar(ScrollHit::Forward),
-                listbox::Hit::PageUp => Light::Bar(ScrollHit::PageBack),
-                listbox::Hit::PageDown => Light::Bar(ScrollHit::PageForward),
-                listbox::Hit::Thumb(_) => Light::Bar(ScrollHit::Thumb),
+                listbox::Hit::Bar(b) => Light::Bar(b.part()?),
                 listbox::Hit::Row(_) | listbox::Hit::Check(_) => return None,
             },
             (Control::Tree(_), Part::Tree(treeview::Hit::VBar(b))) => Light::Bar(b.part()?),
@@ -535,15 +527,9 @@ impl Form {
                         Event::Redraw
                     }
                 }
-                combo::Hit::ScrollUp
-                | combo::Hit::ScrollDown
-                | combo::Hit::PageUp
-                | combo::Hit::PageDown
-                | combo::Hit::Thumb(_) => {
+                combo::Hit::Bar(bar) => {
                     let mut thumb = ThumbDrag::default();
-                    if let Some(bar) = ch.bar() {
-                        c.press_bar(bar, &mut thumb);
-                    }
+                    c.press_bar(bar, &mut thumb);
                     self.grab_bar(i, thumb);
                     Event::Redraw
                 }
@@ -563,16 +549,10 @@ impl Form {
                         list.toggle(r);
                         Event::Changed(id)
                     }
-                    listbox::Hit::ScrollUp
-                    | listbox::Hit::ScrollDown
-                    | listbox::Hit::PageUp
-                    | listbox::Hit::PageDown
-                    | listbox::Hit::Thumb(_) => {
+                    listbox::Hit::Bar(bar) => {
                         let mut thumb = ThumbDrag::default();
-                        if let Some(bar) = lh.bar() {
-                            let by = thumb.press(Axis::Vertical, bar).by(1, visible as i64);
-                            list.scroll(by as i32, visible);
-                        }
+                        let by = thumb.press(Axis::Vertical, bar).by(1, visible as i64);
+                        list.scroll(by as i32, visible);
                         self.grab_bar(i, thumb);
                         Event::Redraw
                     }

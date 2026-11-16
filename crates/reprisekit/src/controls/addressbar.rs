@@ -2,6 +2,7 @@
 //! in the rebar's third band ([`rebar`](crate::controls::rebar)).
 
 use crate::access::{self, Tree, accesskit};
+use crate::classic::widgets::BarHit;
 use crate::controls::combo::{self, Combo, ListItem};
 use crate::controls::form::Key;
 use crate::controls::metrics::ControlMetrics;
@@ -119,15 +120,15 @@ impl AddressBar {
                 Event::Redraw
             }
             Hit::Combo(combo::Hit::Row(i)) => self.take(i),
-            Hit::Combo(combo::Hit::ScrollUp) | Hit::Combo(combo::Hit::PageUp) => {
+            Hit::Combo(combo::Hit::Bar(BarHit::Back | BarHit::PageBack)) => {
                 self.combo.scroll(-1);
                 Event::Redraw
             }
-            Hit::Combo(combo::Hit::ScrollDown) | Hit::Combo(combo::Hit::PageDown) => {
+            Hit::Combo(combo::Hit::Bar(BarHit::Forward | BarHit::PageForward)) => {
                 self.combo.scroll(1);
                 Event::Redraw
             }
-            Hit::Combo(combo::Hit::Thumb(_)) => Event::Redraw,
+            Hit::Combo(combo::Hit::Bar(BarHit::Thumb(_) | BarHit::Track)) => Event::Redraw,
             Hit::Completion(i) => {
                 if let Some(edit) = self.combo.edit.as_mut() {
                     self.complete.take(edit, i);
@@ -166,15 +167,7 @@ impl AddressBar {
     pub fn press_outside(&mut self, hit: Hit) -> bool {
         let inside = matches!(
             hit,
-            Hit::Combo(
-                combo::Hit::Drop
-                    | combo::Hit::Row(_)
-                    | combo::Hit::ScrollUp
-                    | combo::Hit::ScrollDown
-                    | combo::Hit::PageUp
-                    | combo::Hit::PageDown
-                    | combo::Hit::Thumb(_)
-            )
+            Hit::Combo(combo::Hit::Drop | combo::Hit::Row(_) | combo::Hit::Bar(_))
         );
         if matches!(hit, Hit::Completion(_)) {
             return false;
@@ -671,7 +664,11 @@ mod tests {
         assert!(!ab.hover(Hit::Nothing));
         assert!(ab.hover(Hit::Combo(combo::Hit::Row(0))));
         assert_eq!(ab.combo.open, Some(0), "the row under the pointer lights");
-        for on_list in [combo::Hit::Row(2), combo::Hit::Drop, combo::Hit::ScrollDown] {
+        for on_list in [
+            combo::Hit::Row(2),
+            combo::Hit::Drop,
+            combo::Hit::Bar(BarHit::Forward),
+        ] {
             assert!(
                 !ab.press_outside(Hit::Combo(on_list)),
                 "{on_list:?} is the list's"
