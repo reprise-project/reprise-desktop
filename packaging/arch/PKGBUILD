@@ -55,7 +55,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'fprintd: fingerprint unlock on the lock screen, adding fingers in User Accounts, and the admin password prompt when the polkit-1 PAM stack has pam_fprintd'
             'ddcutil: external monitors'\'' brightness over DDC/CI'
             'at-spi2-core: screen readers (Orca) in Reprise and its programs'
-            'orca: the screen reader Super+Alt+S and Settings start and stop'
+            'orca: the screen reader Super+Alt+S and Settings start and stop, on the login screen too'
             'plocate: file search in the launcher and Explorer (its updatedb timer builds the database)'
             'fd: file search where plocate has no database, and files changed since its last update'
             'localsearch: files found by their contents in the launcher and Start menu search'

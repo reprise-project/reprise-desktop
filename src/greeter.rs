@@ -56,9 +56,10 @@ fn run(link: GreeterLink, greeting: Greeting, socket: bool) -> Result<bool, Box<
     link.register(&event_loop.handle())?;
     event_loop.handle().insert_source(
         Generic::new(crate::spawn::sigchld_fd()?, Interest::READ, Mode::Level),
-        |_, fd, _| {
+        |_, fd, state| {
             crate::spawn::drain_signalfd(fd);
             crate::spawn::reap_children();
+            state.reap_greeter_reader();
             Ok(PostAction::Continue)
         },
     )?;
@@ -80,6 +81,7 @@ fn run(link: GreeterLink, greeting: Greeting, socket: bool) -> Result<bool, Box<
         false => log::info!("greeter: running with no Wayland socket"),
     }
     event_loop.run(None, &mut state, State::turn_end)?;
+    state.stop_greeter_reader();
     Ok(state.greeter.lost)
 }
 

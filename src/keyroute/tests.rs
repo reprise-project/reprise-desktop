@@ -1945,7 +1945,7 @@ fn the_greeters_open_menu_takes_its_presses() {
 }
 
 #[test]
-fn the_screen_reader_switch_works_at_the_lock_and_no_other_bind_does() {
+fn the_screen_reader_switch_works_at_the_lock_and_the_login_screen_and_no_other_bind_does() {
     let reader = Keybind {
         mods: MOD_LOGO | MOD_ALT,
         keysym: KEY_s,
@@ -1957,16 +1957,18 @@ fn the_screen_reader_switch_works_at_the_lock_and_no_other_bind_does() {
         locked: true,
         ..Modes::default()
     };
-    let at = |k: &KeyPress| route(&locked, k, &b, &[]).route;
-    assert_eq!(
-        at(&press(KEY_s, MOD_LOGO | MOD_ALT)),
-        KeyRoute::Binds(vec![Action::ScreenReader])
-    );
-    assert_eq!(at(&release(KEY_s)), KeyRoute::Lock);
-    assert_eq!(
-        at(&press(KEY_s, 0)),
-        KeyRoute::Lock,
-        "a letter of the password"
-    );
-    assert_eq!(at(&press(KEY_Tab, MOD_ALT)), KeyRoute::Lock);
+    let greeter = Modes {
+        greeter: true,
+        ..Modes::default()
+    };
+    for (modes, screen) in [(locked, KeyRoute::Lock), (greeter, KeyRoute::Greeter)] {
+        let at = |k: &KeyPress| route(&modes, k, &b, &[]).route;
+        assert_eq!(
+            at(&press(KEY_s, MOD_LOGO | MOD_ALT)),
+            KeyRoute::Binds(vec![Action::ScreenReader])
+        );
+        assert_eq!(at(&release(KEY_s)), screen);
+        assert_eq!(at(&press(KEY_s, 0)), screen, "a letter of the password");
+        assert_eq!(at(&press(KEY_Tab, MOD_ALT)), screen);
+    }
 }

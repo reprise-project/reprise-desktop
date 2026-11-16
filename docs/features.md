@@ -261,6 +261,8 @@ the screen takes the interface of the last session used at this computer.
   PAM says otherwise (a locked account, `/run/nologin`) shows in its words.
 - **Motion.** On Glass a picked tile's picture flies into place; Blue
   crossfades (`[login] animation`).
+- **A screen reader.** Super+Alt+S starts Orca on the login screen and
+  stops it; logging in stops it too. Without Orca the keys do nothing.
 - **Caps Lock and layouts.** "Caps Lock is on." shows under the password,
   and a badge shows and switches the keyboard layout.
 - **Autologin.** `[login] autologin_user` logs one user in when the computer
@@ -322,9 +324,10 @@ the screen takes the interface of the last session used at this computer.
 ## Accessibility
 
 - **Screen readers.** Reprise's programs, taskbar, menus, dialogs, lock
-  screen and window frames speak AT-SPI. They're tested with Orca.
+  and login screens and window frames speak AT-SPI. They're tested with
+  Orca.
 - **Screen reader on and off without looking.** Super+Alt+S starts or stops
-  Orca from anywhere, the lock screen included.
+  Orca from anywhere, the lock and login screens included.
 - **Magnifier** from 1x to 8x (Super+= and Super+-) that follows the pointer,
   the caret and the keyboard focus.
 - **Colour filters:** grayscale, inverted, and corrections for three kinds of

@@ -1,6 +1,6 @@
-//! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history, the balloons, the shortcut sheet, the colour picker's loupe, each framed window's caption and the lock screen, speaking AT-SPI on the session's accessibility bus.
+//! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history, the balloons, the shortcut sheet, the colour picker's loupe, each framed window's caption, the lock screen and reprise-login's login screen, speaking AT-SPI on the session's accessibility bus (the greeter user's at the login screen).
 //! `accesskit_unix` runs its D-Bus side on its own thread and calls the handlers (`reprisekit::access::Handler`) there; they post a `Msg` to a calloop channel, so the loop never waits on the bus. Trees are built on the loop, in an idle pass [`touch`] queues, only for adapters a reader holds.
-//! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). Under the desktop's lock only the lock screen and its power menu publish a tree, and no key is echoed ([`key_note`]).
+//! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). Under the desktop's lock only the lock screen and its power menu publish a tree; there and at the login screen no key is echoed ([`key_note`]).
 //! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths, a client's flyout over the node closed first; focusing a taskbar item gives the bar the keyboard (`barkeys`), a switcher, overview or launcher row takes the selection, a dialog's button or a Start panel spot takes it unpressed; ScrollIntoView on a row out of view scrolls its list ([`reveal`]); any other action there scrolls it in, then acts on it.
 //! The same idle pass moves the seat's keyboard for the menus, Glass Start menu, launcher and overview, reader or not: they take it from the window while open and give it back on close ([`move_keyboard`]).
 
@@ -58,6 +58,8 @@ pub enum Surface {
     Frame(WindowId),
     /// The desktop's lock screen (`lockview::access`).
     Lock,
+    /// reprise-login's login screen (`greeterview::access`).
+    Greeter,
 }
 
 type Msg = reprisekit::access::Msg<Surface>;
@@ -196,6 +198,8 @@ pub struct Keyboard {
     pub dialog: Option<u64>,
     pub calendar: bool,
     pub client: bool,
+    /// The login screen takes the keys no dialog or menu takes.
+    pub greeter: bool,
 }
 
 /// The surface whose tree has the focus, in `keyroute::route`'s order.
@@ -241,6 +245,8 @@ pub fn focus_of(k: &Keyboard) -> Option<Surface> {
         Some(Surface::Taskbar(t))
     } else if let Some(id) = k.dialog {
         Some(Surface::Dialog(id))
+    } else if k.greeter {
+        Some(Surface::Greeter)
     } else if k.calendar && !k.client {
         Some(Surface::Calendar)
     } else {
@@ -273,6 +279,7 @@ fn keyboard(state: &State) -> Keyboard {
         dialog: state.active_dialog_id(),
         calendar: crate::calendarview::is_open(state),
         client: state.focused.is_some() || state.layers_shell.focused.is_some(),
+        greeter: state.greeter.login.is_some(),
     }
 }
 
@@ -354,6 +361,7 @@ fn surfaces(state: &State) -> Vec<Surface> {
         (state.panels.region.is_some(), Surface::Region),
         (true, Surface::Balloons),
         (state.widgets_shown(), Surface::Widgets),
+        (state.greeter.login.is_some(), Surface::Greeter),
     ];
     v.extend(open.into_iter().filter_map(|(on, x)| on.then_some(x)));
     v.extend(state.mini_views.ids().map(Surface::MiniView));
@@ -424,6 +432,7 @@ fn tree(state: &State, surface: Surface) -> Option<Tree> {
         Surface::Widgets => state.widgets_access(),
         Surface::Frame(w) => frame_tree(state, w),
         Surface::Lock => crate::lockview::access(state),
+        Surface::Greeter => crate::greeterview::access(state),
     }
 }
 
@@ -632,8 +641,9 @@ fn lands_on(state: &State, surface: Surface, hit: &Hit) -> bool {
 /// ([`reveal`]); after anything but ScrollIntoView the trees are published
 /// again and `req` acts on the row in view.
 fn act(state: &mut State, surface: Surface, req: Request) {
-    // Any program in the session could send these: the lock takes none.
-    if surface == Surface::Lock {
+    // Any program in the session could send these: the lock takes none. The login screen takes
+    // only keys, like the lock it draws.
+    if matches!(surface, Surface::Lock | Surface::Greeter) {
         return;
     }
     // A move publishes nothing on its own: aim at where the frame stands now.
@@ -838,10 +848,12 @@ pub fn echo_key(state: &mut State, code: Keycode, k: &KeyPress, time: u32) {
         .send(note);
 }
 
-/// What `echo_key` reports, or None. Never under the desktop's lock: every key typed then goes to
-/// the lock. The computer's own keys in lock mode never get here (`console::keys`).
+/// What `echo_key` reports, or None. Never under the desktop's lock or at the login screen: every
+/// key typed there goes to its fields. The computer's own keys in lock mode never get here
+/// (`console::keys`).
 fn key_note(state: &mut State, code: Keycode, k: &KeyPress, time: u32) -> Option<KeyNote> {
-    if state.desktop_locked() || focus_of(&keyboard(state)).is_none() {
+    let greeter = state.host == crate::compositor::Host::Greeter;
+    if state.desktop_locked() || greeter || focus_of(&keyboard(state)).is_none() {
         return None;
     }
     let kb = state.seat.get_keyboard()?;
@@ -1093,6 +1105,46 @@ mod tests {
             .expect("the message");
         assert_eq!(msg.value(), Some(crate::lock::INCORRECT));
         assert_eq!(msg.live(), Some(Live::Polite), "spoken when it changes");
+    }
+
+    #[test]
+    fn the_login_screen_is_published_with_the_masked_password_focused_and_echoes_no_key() {
+        let g = repriselogin::greeter::Greeting {
+            interface: repriselogin::Interface::Classic,
+            show_users: false,
+            users: Vec::new(),
+            last_user: Some("anna".into()),
+            keyboard: Default::default(),
+            notice: None,
+            outputs: Vec::new(),
+            background: None,
+            animation: false,
+        };
+        let config = crate::greeter::config_from(&g);
+        let mut h = crate::harness::Harness::with_host(config, crate::compositor::Host::Greeter);
+        h.output("TEST-1", 1024, 768);
+        crate::greeterview::setup(&mut h.state, g);
+        assert!(surfaces(&h.state).contains(&Surface::Greeter));
+        assert_eq!(focus_of(&keyboard(&h.state)), Some(Surface::Greeter));
+        for code in [25, 17] {
+            h.key(code, true);
+            h.key(code, false);
+        }
+        let t = tree(&h.state, Surface::Greeter).expect("the login screen's tree");
+        let (pw, n) = (t.nodes())
+            .find(|(_, n)| n.role() == Role::PasswordInput)
+            .expect("the password field");
+        assert_eq!(
+            n.value(),
+            Some("\u{25cf}\u{25cf}"),
+            "bullets, never the value"
+        );
+        assert_eq!(t.focus(), pw, "the password has the focus");
+        let a = crate::keyboard::key_press(vec![u32::from('a')], 0, true);
+        assert!(
+            key_note(&mut h.state, Keycode::new(38), &a, 0).is_none(),
+            "a key typed at the login screen is not echoed"
+        );
     }
 
     #[test]

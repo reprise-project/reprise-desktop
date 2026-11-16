@@ -527,7 +527,8 @@ desktop and stays out of the way when it's missing.
 - libx11's Compose files, for dead keys and the Compose key in the lock
   screen's password field
 - at-spi2-core, for screen readers. Orca is the one Reprise is tested with,
-  and the one Super+Alt+S and Settings start and stop.
+  and the one Super+Alt+S and Settings start and stop. At reprise-login's
+  login screen Super+Alt+S starts `/usr/bin/orca` as `reprise-greeter`.
 - A CJK font such as Noto Sans CJK, for Chinese, Japanese and Korean text,
   and a bitmap one such as WenQuanYi Bitmap Song for crisp Chinese with
   `antialias = false`

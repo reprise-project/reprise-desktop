@@ -22,6 +22,8 @@ pub struct GreeterView {
     /// The link to reprise-login closed; the greeter exits 1.
     pub lost: bool,
     pub login: Option<Greeter>,
+    /// The screen reader Super+Alt+S started (`screenreader`).
+    pub reader: Option<std::process::Child>,
     #[cfg(test)]
     pub heard: Vec<Heard>,
 }
@@ -258,6 +260,11 @@ fn open_power_menu(state: &mut State) {
     ];
     let kind = MenuKind::GreeterPower(vec![PowerAction::Reboot, PowerAction::PowerOff]);
     logonview::open_power_menu(state, &HOST, items, kind);
+}
+
+/// The login screen as a reader sees it, while it shows.
+pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
+    state.greeter.login.as_ref()?.view.access()
 }
 
 /// Cover every output, clear over a background or Glass's wallpaper, with the screen on the
