@@ -1,0 +1,11 @@
+# Sessions started before an upgrade run the old binaries until they log off;
+# /run/reboot-required makes Software Updates show its restart notice.
+[Trigger]
+Operation = Upgrade
+Type = Path
+Target = usr/bin/reprise
+
+[Action]
+Description = Asking running Reprise sessions to restart...
+When = PostTransaction
+Exec = /usr/bin/touch /run/reboot-required

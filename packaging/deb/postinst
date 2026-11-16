@@ -6,4 +6,10 @@ if [ "$1" = configure ]; then
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
   fi
+  # An upgrade: sessions started before it run the old binaries until they
+  # log off, so Software Updates shows its restart notice.
+  if [ -n "$2" ] && [ -d /run/systemd/system ]; then
+    touch /run/reboot-required
+    grep -qsx reprise /run/reboot-required.pkgs || echo reprise >>/run/reboot-required.pkgs
+  fi
 fi

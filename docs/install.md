@@ -207,7 +207,10 @@ it), and `reprise-rdp-handover.socket` and `.service` in
 systemctl --global enable reprise-rdp-handover.socket`).
 
 After upgrading the package, reboot, or run `sudo systemctl restart
-reprise-login` and have each remote user reconnect. The login manager, the
+reprise-login` and have each remote user reconnect. Each running session's
+Software Updates says so: the package's upgrade leaves `/run/reboot-required`
+(a pacman hook on Arch, the postinst on Ubuntu), which raises its restart
+notice. The login manager, the
 login screen, Settings, User Accounts and each session's `reprise-rdp
 --hand-over` talk over sockets whose messages can change between versions: an
 older program can't talk to a newer daemon, and a hand-over server that

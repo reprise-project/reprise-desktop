@@ -1,8 +1,9 @@
 //! Both PKGBUILDs build reprise-apps, link every program crate to it (or build and install it on
 //! its own) and install every desktop entry and polkit file, CI installs their dependencies, the
-//! .deb's postinst applies every sysusers and tmpfiles file, its password stacks never reach a
-//! fingerprint reader, the time zone polkit rule allows one action only, and the desktop entries
-//! file only programs with a settings window under Settings.
+//! .deb's postinst applies every sysusers and tmpfiles file, an upgrade of either package raises
+//! the restart notice, the .deb's password stacks never reach a fingerprint reader, the time zone
+//! polkit rule allows one action only, and the desktop entries file only programs with a settings
+//! window under Settings.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -354,6 +355,55 @@ fn the_deb_postinst_applies_every_sysusers_and_tmpfiles_file() {
             );
         }
     }
+}
+
+/// The flag Software Updates watches for a restart the system needs.
+const RESTART_FLAG: &str = "/run/reboot-required";
+
+#[test]
+fn an_upgrade_of_either_package_raises_the_restart_notice() {
+    let hook = "data/libalpm/hooks/reprise-upgrade.hook";
+    let text = std::fs::read_to_string(root().join(hook)).unwrap();
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    for line in [
+        "Operation = Upgrade",
+        "Type = Path",
+        "Target = usr/bin/reprise",
+        "When = PostTransaction",
+        &format!("Exec = /usr/bin/touch {RESTART_FLAG}"),
+    ] {
+        assert!(lines.contains(&line), "{hook} has {line:?}");
+    }
+    for path in PKGBUILDS {
+        let text = std::fs::read_to_string(root().join(path)).expect("PKGBUILD reads");
+        let install = format!(
+            r#"install -Dm644 {hook} "$pkgdir/usr/share/libalpm/hooks/reprise-upgrade.hook""#
+        );
+        assert!(
+            text.lines().any(|l| l.trim() == install),
+            "{path} installs {hook}"
+        );
+    }
+    let build = std::fs::read_to_string(root().join("packaging/deb/build.sh")).unwrap();
+    assert!(
+        build
+            .lines()
+            .any(|l| l.trim() == r#"rm -r "$root/usr/share/libalpm""#),
+        "the .deb leaves pacman's hook out"
+    );
+    let postinst = std::fs::read_to_string(root().join("packaging/deb/postinst")).unwrap();
+    let upgrade = postinst
+        .split(r#"if [ -n "$2" ]"#)
+        .nth(1)
+        .expect("the postinst has a branch for an upgrade");
+    assert!(
+        upgrade.contains(&format!("touch {RESTART_FLAG}")),
+        "the postinst raises {RESTART_FLAG} on an upgrade"
+    );
+    assert!(
+        upgrade.contains(&format!("{RESTART_FLAG}.pkgs")),
+        "and names the package"
+    );
 }
 
 #[test]
