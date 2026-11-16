@@ -434,15 +434,7 @@ pub fn row_drop_slot(
     at: i32,
 ) -> usize {
     let units = row_units(pins, runs);
-    let span = |u: &std::ops::Range<usize>| {
-        let first = *tasks.get(u.start)?;
-        Some(
-            tasks[u.start..u.end.min(tasks.len())]
-                .iter()
-                .fold(first, |a, r| a.union(r)),
-        )
-    };
-    let rects: Vec<Rect> = units.iter().filter_map(span).collect();
+    let rects = unit_rects(tasks, &units);
     let (Some(d), Some(grabbed)) = (
         units.iter().position(|u| u.contains(&from)),
         tasks.get(from),
@@ -463,6 +455,62 @@ pub fn row_drop_slot(
         0 => d,
         after => d + 1 + after,
     }
+}
+
+/// The span each of `units` takes among `tasks`, for the units laid out (the row may leave some out).
+fn unit_rects(tasks: &[Rect], units: &[std::ops::Range<usize>]) -> Vec<Rect> {
+    let span = |u: &std::ops::Range<usize>| {
+        let first = *tasks.get(u.start)?;
+        Some(
+            tasks[u.start..u.end.min(tasks.len())]
+                .iter()
+                .fold(first, |a, r| a.union(r)),
+        )
+    };
+    units.iter().filter_map(span).collect()
+}
+
+/// The gap among [`row_units`] that a launcher dropped `at` px along the row pins into: before a
+/// unit while `at` is short of its centre, after it from there on. `tasks` in along/across form.
+pub fn pin_drop_gap(
+    tasks: &[Rect],
+    pins: &[Option<usize>],
+    runs: &[Option<String>],
+    at: i32,
+) -> usize {
+    slot_at(&unit_rects(tasks, &row_units(pins, runs)), at)
+}
+
+/// The row once `n` new pins go into `gap` among its [`row_units`]: the Quick Launch index the
+/// first takes, and each unpinned unit's buttons with the pins then before it, anchored as
+/// [`reorder_row`] anchors them.
+pub fn insert_pins(
+    pins: &[Option<usize>],
+    runs: &[Option<String>],
+    gap: usize,
+    n: usize,
+) -> (usize, Vec<(std::ops::Range<usize>, usize)>) {
+    let units = row_units(pins, runs);
+    let gap = gap.min(units.len());
+    let pinned = |u: &&std::ops::Range<usize>| pins[u.start].is_some();
+    let at = units[..gap].iter().filter(pinned).count();
+    let pin_count = units.iter().filter(pinned).count();
+    let mut before = 0;
+    let mut anchors = Vec::new();
+    for (i, u) in units.into_iter().enumerate() {
+        if i == gap {
+            before += n;
+        }
+        match pins[u.start] {
+            Some(_) => before += 1,
+            None => anchors.push((u, before)),
+        }
+    }
+    let total = pin_count + n;
+    for (_, a) in anchors.iter_mut().filter(|(_, a)| *a == total) {
+        *a = usize::MAX;
+    }
+    (at, anchors)
 }
 
 /// A reordered row: the pins' old indices in new order, and each unpinned unit's buttons with their new anchor.

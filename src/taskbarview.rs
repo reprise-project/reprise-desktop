@@ -293,6 +293,26 @@ pub(crate) fn app_icon_name<'a>(
     reprisefs::apps::icon_for_app_id(index, app_id)
 }
 
+/// An unpinned unit of the task row to anchor: its windows, its dialog's id and its new anchor.
+pub(crate) type Anchored = (Vec<WindowId>, Option<u64>, usize);
+
+/// The windows and dialog behind each of `anchors`' button ranges on `bar` as last drawn, with
+/// their anchors; a window or dialog may have closed since.
+fn anchored(bar: &Bar, anchors: &[(std::ops::Range<usize>, usize)]) -> Vec<Anchored> {
+    anchors
+        .iter()
+        .map(|(u, anchor)| {
+            let wins = u
+                .clone()
+                .filter_map(|b| bar.buttons.get(b))
+                .flatten()
+                .copied()
+                .collect();
+            (wins, bar.dialogs.get(u.start).copied().flatten(), *anchor)
+        })
+        .collect()
+}
+
 /// A Quick Launch item's or pin's icon at `px`, its file never read on the loop.
 pub(crate) fn quick_icon(icons: &mut IconCache, q: &QuickItem, px: i32) -> Option<Arc<Canvas>> {
     (q.entry.icon.as_deref()).and_then(|n| crate::icon::unread(icons, n, px))

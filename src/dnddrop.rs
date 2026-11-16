@@ -84,7 +84,7 @@ impl Spot {
         match target {
             DropTarget::Desktop(_) | DropTarget::Folder(_) => Spot::Place,
             DropTarget::Trash => Spot::Trash,
-            DropTarget::Quick(_) => Spot::Quick,
+            DropTarget::Quick(_) | DropTarget::Pin { .. } => Spot::Quick,
         }
     }
 }
@@ -529,7 +529,7 @@ impl State {
         let dir = match &target {
             DropTarget::Folder(dir) => Some(dir.clone()),
             DropTarget::Desktop(_) => self.desktop.as_ref().map(|v| v.dir.clone()),
-            DropTarget::Quick(_) | DropTarget::Trash => None,
+            DropTarget::Quick(_) | DropTarget::Pin { .. } | DropTarget::Trash => None,
         };
         self.spawn_fs_job(move || {
             let got = reprisefs::pipe::read_bounded(&read, MAX_BYTES, READ_TIMEOUT)

@@ -1243,3 +1243,70 @@ fn move_button_lands_in_the_slot_and_ignores_no_ops() {
     assert!(!move_button(&mut v, 9, 0));
     assert!(!move_button(&mut v, 0, 9));
 }
+
+#[test]
+fn a_launcher_dropped_on_the_row_pins_at_the_gap_nearest_the_pointer() {
+    let tasks = [
+        Rect::new(0, 0, 60, 40),
+        Rect::new(62, 0, 60, 40),
+        Rect::new(124, 0, 60, 40),
+        Rect::new(186, 0, 60, 40),
+    ];
+    let pins = [Some(0), Some(0), Some(1), None];
+    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 10), 0);
+    assert_eq!(
+        pin_drop_gap(&tasks, &pins, &[], 60),
+        0,
+        "pin 0 spans 0..122"
+    );
+    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 61), 1);
+    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 153), 1);
+    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 154), 2);
+    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 215), 2);
+    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 216), 3);
+    assert_eq!(pin_drop_gap(&tasks, &pins, &[], 400), 3, "past the row");
+    assert_eq!(
+        pin_drop_gap(&tasks[..3], &pins, &[], 400),
+        2,
+        "a button the row left out takes no gap"
+    );
+}
+
+#[test]
+fn a_pin_dropped_between_pins_takes_the_quick_launch_slot_between_them() {
+    let pins = [Some(0), Some(0), Some(1), None];
+    assert_eq!(insert_pins(&pins, &[], 0, 1), (0, vec![(3..4, usize::MAX)]));
+    assert_eq!(insert_pins(&pins, &[], 1, 1), (1, vec![(3..4, usize::MAX)]));
+    assert_eq!(insert_pins(&pins, &[], 2, 2), (2, vec![(3..4, usize::MAX)]));
+}
+
+#[test]
+fn a_pin_dropped_on_an_unpinned_button_takes_its_place() {
+    let place = |anchor| Place { anchor, seq: 1 };
+    let row = |pins: &[Option<usize>], gap| {
+        let (at, anchors) = insert_pins(pins, &[], gap, 1);
+        let anchor = anchors[0].1;
+        let slots = merge_row(vec![vec![0]], 3, &[None], &[place(anchor)], &[]);
+        (at, order(&slots))
+    };
+    assert_eq!(
+        row(&[Some(0), Some(1), None], 2),
+        (2, vec!["p0".into(), "p1".into(), "p2".into(), "w0".into()]),
+        "before the window"
+    );
+    assert_eq!(
+        row(&[Some(0), Some(1), None], 3),
+        (2, vec!["p0".into(), "p1".into(), "w0".into(), "p2".into()]),
+        "past the window"
+    );
+    assert_eq!(
+        row(&[Some(0), None, Some(1)], 1),
+        (1, vec!["p0".into(), "p1".into(), "w0".into(), "p2".into()]),
+        "the new pin 1 before the window"
+    );
+    assert_eq!(
+        row(&[Some(0), None, Some(1)], 2),
+        (1, vec!["p0".into(), "w0".into(), "p1".into(), "p2".into()]),
+        "the new pin 1 after the window"
+    );
+}
