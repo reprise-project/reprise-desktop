@@ -276,7 +276,7 @@ pub fn click(state: &mut State, host: &Host, pos: Point<f64, Logical>) {
     };
     let action = v.model.click(part);
     act(state, host, action);
-    redraw(state, host);
+    update(state, host);
 }
 
 /// The pointer moved over the login screen: no client has it, and the part under it lights.
@@ -289,7 +289,7 @@ pub fn motion(state: &mut State, host: &Host, pos: Point<f64, Logical>, time: In
     let lit = v.part_at(pos).map(|p| (p, Interaction::Hot));
     if v.model.lit != lit {
         v.model.lit = lit;
-        redraw(state, host);
+        update(state, host);
     }
 }
 
@@ -319,7 +319,7 @@ pub fn wheel(state: &mut State, host: &Host, frame: &AxisFrame) {
     for _ in 0..notches.unsigned_abs() {
         v.model.key(key.clone());
     }
-    redraw(state, host);
+    update(state, host);
 }
 
 fn act(state: &mut State, host: &Host, action: Option<LogonAction>) {
