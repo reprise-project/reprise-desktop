@@ -35,10 +35,6 @@ fn helper_beside(server: &Path) -> PathBuf {
 /// The helper's environment: what PAM modules and their messages read. Everything else is dropped.
 const KEPT_ENV: [&str; 5] = ["PATH", "LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"];
 
-/// The time a connection has to log in. A password check in flight when it runs out is finished
-/// first.
-pub const HANDSHAKE: Duration = Duration::from_secs(10);
-
 /// How long the helper has to give its verdict before it is killed and the check fails.
 const HELPER_LIMIT: Duration = Duration::from_secs(30);
 
@@ -132,8 +128,8 @@ pub trait Login: CredentialValidator + Send + Sync + 'static {
 /// Makes the login of each new connection.
 pub trait Logins {
     type Check: Login;
-    /// `peer`'s login as `admission` asks and the time it has to log in.
-    fn check(&self, peer: SocketAddr, admission: Admission) -> (Arc<Self::Check>, Duration);
+    /// `peer`'s login as `admission` asks.
+    fn check(&self, peer: SocketAddr, admission: Admission) -> Arc<Self::Check>;
     /// How long connections from `peer` are still refused after failed logins.
     fn backoff(&self, peer: IpAddr) -> Duration;
 }
@@ -166,10 +162,10 @@ impl PasswordLogins {
 impl Logins for PasswordLogins {
     type Check = PasswordCheck;
 
-    fn check(&self, peer: SocketAddr, _: Admission) -> (Arc<PasswordCheck>, Duration) {
+    fn check(&self, peer: SocketAddr, _: Admission) -> Arc<PasswordCheck> {
         let check =
             PasswordCheck::new(self.user.clone(), &self.helper, peer, self.throttle.clone());
-        (Arc::new(check), HANDSHAKE)
+        Arc::new(check)
     }
 
     fn backoff(&self, peer: IpAddr) -> Duration {
@@ -421,7 +417,7 @@ impl HandedOverLogins {
 impl Logins for HandedOverLogins {
     type Check = HandedOverCheck;
 
-    fn check(&self, peer: SocketAddr, admission: Admission) -> (Arc<HandedOverCheck>, Duration) {
+    fn check(&self, peer: SocketAddr, admission: Admission) -> Arc<HandedOverCheck> {
         let admitted = match admission {
             Admission::HandedOver { user } if user == self.user => true,
             Admission::HandedOver { user } => {
@@ -441,7 +437,7 @@ impl Logins for HandedOverLogins {
             admitted,
             logged_in: watch::Sender::new(false),
         };
-        (Arc::new(check), HANDSHAKE)
+        Arc::new(check)
     }
 
     fn backoff(&self, _: IpAddr) -> Duration {
@@ -908,8 +904,7 @@ pub(crate) mod tests {
         let admission = Admission::HandedOver {
             user: "anna".into(),
         };
-        let (check, budget) = logins.check(B, admission);
-        assert_eq!(budget, HANDSHAKE);
+        let check = logins.check(B, admission);
         assert_eq!(logins.backoff(A), Duration::ZERO);
         assert!(!check.accepted(), "not before the replay reaches its check");
         assert!(!check.settled().await);
@@ -938,7 +933,7 @@ pub(crate) mod tests {
         let admission = Admission::HandedOver {
             user: "anna".into(),
         };
-        let (check, _) = logins.check(B, admission);
+        let check = logins.check(B, admission);
         for other in ["bert@host", "@host", "annabel@host"] {
             assert_eq!(
                 decide(&check, other, "").await,
@@ -962,7 +957,7 @@ pub(crate) mod tests {
             user: "bert".into(),
         };
         for admission in [other, Admission::Password] {
-            let (check, _) = logins.check(B, admission.clone());
+            let check = logins.check(B, admission.clone());
             assert!(!check.accepted(), "{admission:?}");
             assert!(!check.settled().await, "{admission:?}");
             assert!(

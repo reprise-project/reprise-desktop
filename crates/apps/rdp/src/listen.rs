@@ -23,10 +23,12 @@ use ironrdp_server::{
 };
 use repriseconf::remote::{RemoteDesktop, SecondClient};
 use repriselogin::handover::{HandOver, Step};
+use repriselogin::{RDP_HANDSHAKE, RDP_HELLO};
 use reprisetls::cert::Identity;
 use reprisetls::ktls::{self, KtlsStream};
 use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
+use std::fmt;
 use std::io;
 use std::net::SocketAddr;
 use std::os::fd::AsFd;
@@ -39,6 +41,7 @@ use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, watch};
+use tokio::time::Instant;
 
 /// What follows a connection being shown the session, and what follows once its display and
 /// input are dropped; each called once per connection shown it, so several may be at a time.
@@ -305,7 +308,7 @@ pub async fn serve<D, I, L>(
                         continue;
                     }
                 };
-                let (check, budget) = logins.check(peer, admission);
+                let check = logins.check(peer, admission);
                 let (shown, on_shown) = watch::channel(false);
                 let ending = Ending::new(replaces);
                 let tls = match &incoming {
@@ -318,10 +321,10 @@ pub async fn serve<D, I, L>(
                 let shared = shared.clone();
                 match incoming {
                     Incoming::Fresh(stream, _) => tokio::task::spawn_local(run(
-                        rdp, stream, None, viewer, check, budget, on_shown, shared,
+                        rdp, stream, None, viewer, check, on_shown, shared,
                     )),
                     Incoming::Resumed { stream, resumed, .. } => tokio::task::spawn_local(run(
-                        rdp, stream, Some(resumed), viewer, check, budget, on_shown, shared,
+                        rdp, stream, Some(resumed), viewer, check, on_shown, shared,
                     )),
                 };
             }
@@ -478,14 +481,12 @@ struct Viewer {
 }
 
 /// Runs one connection from its first byte, or from the end of `resumed`'s replay.
-#[expect(clippy::too_many_arguments, reason = "each is one connection's own")]
 async fn run<L: Leave + 'static, C: Login, S>(
     mut server: RdpServer,
     stream: S,
     resumed: Option<Resumed>,
     viewer: Viewer,
     check: Arc<C>,
-    budget: Duration,
     on_shown: watch::Receiver<bool>,
     shared: Rc<Shared<L>>,
 ) where
@@ -569,8 +570,8 @@ async fn run<L: Leave + 'static, C: Login, S>(
             stopped = kick == Kick::Stopped;
             None
         }
-        () = login_expired(&*check, budget) => {
-            log::warn!("{peer}: dropped; no login within {} s", budget.as_secs());
+        expired = login_expired(&*check, &seen) => {
+            log::warn!("{peer}: dropped; {expired}");
             None
         }
         () = ending.0.gone.wait() => {
@@ -683,11 +684,43 @@ async fn tell_and_end(
     let _ = tokio::time::timeout(TOLD, connection).await;
 }
 
-/// Ends once `budget` has passed and no check is in flight, unless the connection has logged in.
-async fn login_expired(check: &impl Login, budget: Duration) {
-    tokio::time::sleep(budget).await;
+/// Ends once [`RDP_HELLO`] has passed with no TLS ClientHello seen, or [`RDP_HANDSHAKE`] since
+/// it, and no check is in flight, unless the connection has logged in.
+async fn login_expired(check: &impl Login, seen: &Mutex<Seen>) -> Expired {
+    tokio::time::sleep(RDP_HELLO).await;
+    let expired = loop {
+        let Some(at) = seen.lock().unwrap().hello else {
+            break Expired::NoHello;
+        };
+        if Instant::now() >= at + RDP_HANDSHAKE {
+            break Expired::NoLogin;
+        }
+        tokio::time::sleep_until(at + RDP_HANDSHAKE).await;
+    };
     if check.settled().await {
         std::future::pending::<()>().await;
+    }
+    expired
+}
+
+/// Why a connection's login time ran out.
+enum Expired {
+    NoHello,
+    NoLogin,
+}
+
+impl fmt::Display for Expired {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Expired::NoHello => {
+                write!(f, "no TLS ClientHello within {} s", RDP_HELLO.as_secs())
+            }
+            Expired::NoLogin => write!(
+                f,
+                "no login within {} s of its TLS ClientHello",
+                RDP_HANDSHAKE.as_secs()
+            ),
+        }
     }
 }
 
@@ -699,15 +732,31 @@ const HEAD: usize = 512;
 /// RDP_NEG_CORRELATION_INFO (MS-RDPBCGR 2.2.1.1.2), which may follow the RDP_NEG_REQ, opens with
 /// these bytes: its type, flags and length (36).
 const CORRELATION_INFO: [u8; 4] = [6, 0, 36, 0];
+/// The content type of a TLS handshake record (RFC 8446 5.1), which opens a ClientHello.
+const TLS_HANDSHAKE: u8 = 0x16;
 
-/// The start of what a client sent and how much it sent in all.
+/// The start of what a client sent, how much it sent in all and when its TLS ClientHello began.
 #[derive(Default)]
 struct Seen {
     head: Vec<u8>,
     total: usize,
+    hello: Option<Instant>,
 }
 
 impl Seen {
+    fn read(&mut self, read: &[u8]) {
+        self.total += read.len();
+        let room = HEAD.saturating_sub(self.head.len()).min(read.len());
+        self.head.extend_from_slice(&read[..room]);
+        if room > 0
+            && self.hello.is_none()
+            && let Some((_, len)) = self.request()
+            && self.head.get(len) == Some(&TLS_HANDSHAKE)
+        {
+            self.hello = Some(Instant::now());
+        }
+    }
+
     /// The `requestedProtocols` of the X.224 Connection Request that opens the stream (MS-RDPBCGR
     /// 2.2.1.1), and the request's length.
     fn request(&self) -> Option<(u32, usize)> {
@@ -748,11 +797,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for Recorded<S> {
         let before = buf.filled().len();
         let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
         if let Poll::Ready(Ok(())) = polled {
-            let read = &buf.filled()[before..];
-            let mut seen = self.seen.lock().unwrap();
-            seen.total += read.len();
-            let room = HEAD.saturating_sub(seen.head.len()).min(read.len());
-            seen.head.extend_from_slice(&read[..room]);
+            self.seen.lock().unwrap().read(&buf.filled()[before..]);
         }
         polled
     }

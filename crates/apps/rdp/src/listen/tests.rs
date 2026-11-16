@@ -1,7 +1,7 @@
 //! Tests of the accept loop.
 
 use super::*;
-use crate::auth::{self, HANDSHAKE, PasswordCheck, PasswordLogins, Throttle};
+use crate::auth::{self, PasswordCheck, PasswordLogins, Throttle};
 use crate::intake::{Admission, TcpIntake};
 use ironrdp_server::{CredentialDecision, CredentialValidator};
 use repriseconf::remote::SecondClient;
@@ -85,8 +85,8 @@ impl Login for Admitted {
 
 impl Logins for Admitted {
     type Check = Admitted;
-    fn check(&self, _: SocketAddr, _: Admission) -> (Arc<Admitted>, Duration) {
-        (Arc::new(Admitted), HANDSHAKE)
+    fn check(&self, _: SocketAddr, _: Admission) -> Arc<Admitted> {
+        Arc::new(Admitted)
     }
     fn backoff(&self, _: IpAddr) -> Duration {
         Duration::ZERO
@@ -292,6 +292,7 @@ fn seen(head: &[u8], total: usize) -> Seen {
     Seen {
         head: head.to_vec(),
         total,
+        hello: None,
     }
 }
 
@@ -330,11 +331,50 @@ async fn a_stalled_handshake_is_dropped_after_10_s() {
             let mut stalled = TcpStream::connect(addr).await.unwrap();
             let started = tokio::time::Instant::now();
             assert_eq!(until_closed(&mut stalled).await, 0);
-            assert!(started.elapsed() >= HANDSHAKE);
+            assert!(started.elapsed() >= RDP_HELLO);
             let mut next = TcpStream::connect(addr).await.unwrap();
             assert!(confirmed(&mut next).await, "the next client is served");
         })
         .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_handshake_past_its_client_hello_has_60_s_from_it_to_log_in() {
+    let local = LocalSet::new();
+    local
+        .run_until(async {
+            let addr = start(&local).await;
+            let mut client = TcpStream::connect(addr).await.unwrap();
+            let started = tokio::time::Instant::now();
+            assert!(confirmed(&mut client).await);
+            tokio::time::sleep(Duration::from_secs(9)).await;
+            client
+                .write_all(&[TLS_HANDSHAKE, 3, 1, 0, 200, 1])
+                .await
+                .unwrap();
+            assert_eq!(until_closed(&mut client).await, 0);
+            let waited = started.elapsed();
+            assert!(
+                waited >= Duration::from_secs(69) && waited < Duration::from_secs(70),
+                "closed 60 s after the ClientHello began, not {waited:?} after the accept"
+            );
+        })
+        .await;
+}
+
+#[test]
+fn the_client_hello_is_marked_by_a_tls_record_right_after_the_request() {
+    let mut hello = Seen::default();
+    hello.read(&connection_request(SSL));
+    assert_eq!(hello.hello, None, "not before the ClientHello");
+    hello.read(&[TLS_HANDSHAKE, 3, 1]);
+    assert!(hello.hello.is_some());
+    let mut other = Seen::default();
+    other.read(&[connection_request(SSL), vec![0x17, 3, 3]].concat());
+    assert_eq!(
+        other.hello, None,
+        "only a handshake record opens a ClientHello"
+    );
 }
 
 #[tokio::test]
@@ -789,7 +829,7 @@ async fn a_check_in_flight_when_the_login_time_ends_is_finished_and_counted() {
         throttle.clone(),
     );
     let login = async {
-        tokio::time::sleep(HANDSHAKE - Duration::from_secs(1)).await;
+        tokio::time::sleep(RDP_HELLO - Duration::from_secs(1)).await;
         let credentials = auth::tests::credentials("alice", "guess");
         let validate = check.validate(&credentials);
         tokio::pin!(validate);
@@ -800,10 +840,11 @@ async fn a_check_in_flight_when_the_login_time_ends_is_finished_and_counted() {
         tokio::time::advance(Duration::from_secs(2)).await;
         validate.await.unwrap()
     };
+    let nothing_seen = Mutex::default();
     let decision = tokio::select! {
         biased;
         d = login => Some(d),
-        () = login_expired(&check, HANDSHAKE) => None,
+        _ = login_expired(&check, &nothing_seen) => None,
     };
     assert_eq!(decision, Some(CredentialDecision::Reject));
     assert_eq!(throttle.lock().unwrap().failures(peer.ip()), 1);
@@ -1068,7 +1109,6 @@ async fn session(
                     alive: mpsc::channel(1).0,
                 },
                 check.clone(),
-                HANDSHAKE,
                 on_shown,
                 shared.clone()
             ),
@@ -1427,7 +1467,6 @@ async fn an_accepted_connection_that_never_arrived_does_not_leave() {
                 None,
                 viewer,
                 check,
-                HANDSHAKE,
                 watch::channel(false).1,
                 shared,
             );
@@ -1635,8 +1674,7 @@ async fn a_handed_over_connection_runs_to_the_session_at_the_size_its_client_ask
             let admission = Admission::HandedOver {
                 user: "alice".into(),
             };
-            let (check, budget) =
-                auth::HandedOverLogins::new("alice".into()).check(peer, admission);
+            let check = auth::HandedOverLogins::new("alice".into()).check(peer, admission);
             let handlers = (
                 crate::Grey,
                 crate::input::Input::new(Default::default()).0,
@@ -1673,7 +1711,6 @@ async fn a_handed_over_connection_runs_to_the_session_at_the_size_its_client_ask
                 Some(resumed),
                 viewer,
                 check,
-                budget,
                 on_shown,
                 shared,
             ));
