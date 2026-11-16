@@ -28,3 +28,4 @@ log.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+zbus.workspace = true
