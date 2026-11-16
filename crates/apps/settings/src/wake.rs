@@ -155,11 +155,14 @@ impl SettingsApp {
         }
         if let Some(close) = self.proxy_done() {
             changed = true;
-            quit |= close && self.login_job.is_none();
+            quit |= close;
         }
-        if quit && self.proxy.job.is_some() {
+        if let Some(close) = self.language_done() {
+            changed = true;
+            quit |= close;
+        }
+        if quit && self.hold_quit() {
             quit = false;
-            self.proxy.quit = true;
         }
         if quit {
             self.save_window();
@@ -218,6 +221,21 @@ impl SettingsApp {
         reply.activate = activate;
         reply.quit = quit;
         reply
+    }
+
+    /// Hand a quit to the first job the sheet waits on before it closes: a login save, the
+    /// proxy's or the language's call. False when none runs.
+    pub(crate) fn hold_quit(&mut self) -> bool {
+        if let Some(s) = &mut self.login_job {
+            s.quit = true;
+        } else if self.proxy.job.is_some() {
+            self.proxy.quit = true;
+        } else if self.language_set.is_some() {
+            self.quit_after_language = true;
+        } else {
+            return false;
+        }
+        true
     }
 
     pub(crate) fn request(&mut self, req: &instance::Request) -> bool {

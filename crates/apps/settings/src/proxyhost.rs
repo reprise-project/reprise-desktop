@@ -15,9 +15,11 @@ pub(crate) struct Proxy {
     pub(crate) file: PathBuf,
     /// The file's variables as last read or written.
     pub(crate) vars: Vec<(String, String)>,
-    /// The variables last handed to the manager: what the next change unsets when it stops
-    /// setting them.
+    /// The variables the manager last took: what the next change unsets when it stops setting
+    /// them.
     pub(crate) sent: Vec<(String, String)>,
+    /// The variables the call under way hands over, `sent` once the manager takes them.
+    sending: Vec<(String, String)>,
     pub(crate) loaded: proxy::Proxy,
     pub(crate) want: proxy::Proxy,
     pub(crate) publish: Publish,
@@ -36,6 +38,7 @@ impl Proxy {
         Proxy {
             file,
             sent: vars.clone(),
+            sending: Vec::new(),
             vars,
             want: loaded.clone(),
             loaded,
@@ -132,10 +135,10 @@ impl SettingsApp {
             .map(|(k, v)| (k.as_str(), v.clone()))
             .collect();
         let change = proxy::change(&self.proxy.sent, &new);
-        self.proxy.sent = self.proxy.vars.clone();
         if change.is_empty() {
             return;
         }
+        self.proxy.sending = self.proxy.vars.clone();
         let publish = self.proxy.publish;
         let job = move || (publish)(&change).map_err(|e| refused(&change, &e));
         self.proxy.job = Some(self.start_publish(job));
@@ -169,11 +172,14 @@ impl SettingsApp {
             Err(()) => Err("the user manager call ended without a result".into()),
         };
         self.proxy.job = None;
+        let sending = std::mem::take(&mut self.proxy.sending);
         if let Err(e) = done {
             log::warn!("{e}");
             if !self.proxy.quit {
                 self.fail("The proxy settings were saved and take effect at the next log on; this session could not take them.");
             }
+        } else {
+            self.proxy.sent = sending;
         }
         if std::mem::take(&mut self.proxy.again) {
             self.publish_proxy();

@@ -453,6 +453,9 @@ struct SettingsApp {
     region_conf: PathBuf,
     region_read: Option<Receiver<regionhost::Reading>>,
     region_set: Option<Receiver<regionhost::Set>>,
+    /// AccountsService taking the language Apply wrote; the sheet closes once it ends.
+    language_set: Option<Receiver<()>>,
+    quit_after_language: bool,
     /// The page showed at the last look, so an opening is told from a stay.
     region_open: bool,
     contents: contentshost::Contents,
@@ -740,6 +743,8 @@ impl SettingsApp {
             region_conf: reprisefs::region::user_conf(),
             region_read: None,
             region_set: None,
+            language_set: None,
+            quit_after_language: false,
             region_open: false,
             contents: contentshost::Contents::default(),
             events: eventshost::Events::default(),
@@ -1081,15 +1086,8 @@ impl App for SettingsApp {
         reply.redraw |= self.ensure_providers();
         reply.redraw |= self.ensure_away_devices();
         self.prime_icons(ctx);
-        if reply.quit
-            && let Some(s) = &mut self.login_job
-        {
+        if reply.quit && self.hold_quit() {
             reply.quit = false;
-            s.quit = true;
-        }
-        if reply.quit && self.proxy.job.is_some() {
-            reply.quit = false;
-            self.proxy.quit = true;
         }
         if reply.quit {
             self.save_window();

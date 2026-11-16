@@ -144,6 +144,34 @@ fn a_refused_change_says_so_and_logs_only_the_variable_names() {
 }
 
 #[test]
+fn a_change_the_manager_refused_is_sent_whole_with_the_next_apply() {
+    let dir = tmp("proxy-resend");
+    let file = dir.join(proxy::FILE);
+    let mut a = app("proxy-resend-app");
+    a.take_proxy(Proxy::open(file, refuse));
+    pick(&mut a, pages::PROXY_MANUAL);
+    type_in(&mut a, pages::PROXY_HOSTS[0], "one.lan");
+    set_port(&mut a, 0, 3128);
+    assert!(a.apply());
+    assert_eq!(published(&mut a).len(), 1);
+    a.error = None;
+    a.proxy.publish = record;
+    type_in(&mut a, pages::PROXY_HOSTS[0], "two.lan");
+    assert!(a.apply());
+    let sent = published(&mut a);
+    assert_eq!(
+        sent[0].set,
+        [
+            "http_proxy=http://two.lan:3128",
+            "HTTP_PROXY=http://two.lan:3128",
+            "no_proxy=localhost,127.0.0.1,::1",
+            "NO_PROXY=localhost,127.0.0.1,::1"
+        ],
+        "the variables the session never took go again"
+    );
+}
+
+#[test]
 fn the_page_shows_the_file_and_greys_the_modes_not_picked() {
     let dir = tmp("proxy-show");
     let file = dir.join(proxy::FILE);
