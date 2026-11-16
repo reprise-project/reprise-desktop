@@ -12,7 +12,7 @@ use crate::sizing::{
 };
 use crate::windows::{
     Placement, decoration_mode, decorations, flyout_wanted, main_wanted, output_containing,
-    placement, reconcile,
+    placement, reconcile, reparent_to,
 };
 use reprisefs::pipe::PasteBuf;
 use reprisekit::icontheme::{IconCache, IconTheme};
@@ -683,6 +683,33 @@ fn a_child_waits_for_its_parents_first_frame() {
         "a hidden main window parents nothing"
     );
     assert_eq!(placement(None, Some(false)), Placement::Alone);
+}
+
+#[test]
+fn a_child_opened_while_the_main_window_is_hidden_goes_under_it_once_it_maps() {
+    let set = None;
+    assert_eq!(
+        reparent_to(set, Some(MAIN), None),
+        None,
+        "hidden: it stays unparented, with no request"
+    );
+    assert_eq!(
+        reparent_to(set, Some(MAIN), Some(false)),
+        None,
+        "shown, not mapped yet"
+    );
+    let set = reparent_to(set, Some(MAIN), Some(true)).expect("mapped: it moves");
+    assert_eq!(set, Some(MAIN));
+    assert_eq!(
+        reparent_to(set, Some(MAIN), Some(true)),
+        None,
+        "under it already"
+    );
+    assert_eq!(
+        reparent_to(set, None, None),
+        Some(None),
+        "no parent wanted: unparented"
+    );
 }
 
 #[test]

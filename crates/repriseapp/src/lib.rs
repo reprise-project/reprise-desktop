@@ -176,7 +176,8 @@ struct Slot {
     glass_top: (i32, i32),
     /// The window's keyboard cues; `keys` is drawn as `Theme::access_keys`.
     cues: Cues,
-    /// The child's [`Extended::parent`] as the host last set it; none for the main window.
+    /// The window the host set as the toplevel's xdg parent: none for the main window, or while
+    /// its [`Extended::parent`] has no window.
     parent: Option<WinId>,
     /// The focused field the last frame drew.
     spot: Option<TextSpot>,
