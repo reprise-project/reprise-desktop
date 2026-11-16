@@ -138,6 +138,14 @@ pub fn end_gently(
     term();
 }
 
+/// Asks `tx`'s sampler for a snapshot once `delay` is up, whatever its interval.
+pub fn sample_after(tx: Sender<Cmd>, delay: Duration) {
+    std::thread::spawn(move || {
+        std::thread::sleep(delay);
+        let _ = tx.send(Cmd::Now);
+    });
+}
+
 /// A pidfd for `pid` while `/proc` still shows it started at `start`; a pid reused since is refused.
 pub fn open_process(pid: i32, start: u64) -> std::io::Result<OwnedFd> {
     let gone = || std::io::Error::from_raw_os_error(libc::ESRCH);
@@ -224,6 +232,14 @@ mod tests {
             Some(libc::ESRCH),
             "a reaped process takes no signal"
         );
+    }
+
+    #[test]
+    fn a_wait_asks_for_a_sample_once_it_is_up() {
+        let (tx, rx) = channel();
+        sample_after(tx, Duration::ZERO);
+        let got = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(got, Cmd::Now));
     }
 
     #[test]

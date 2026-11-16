@@ -701,7 +701,12 @@ impl TaskMgr {
         Reply::redraw()
     }
 
+    /// Waits on `target` and samples again once [`END_WAIT`] is up, so End Now is offered with
+    /// Update Speed paused or the window minimized too.
     fn wait_for(&mut self, target: Target, name: String) {
+        if let Some(w) = &self.worker {
+            worker::sample_after(w.tx.clone(), END_WAIT);
+        }
         self.ending.retain(|e| e.target != target);
         self.ending.push(Ending {
             target,
