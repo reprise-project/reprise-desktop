@@ -451,6 +451,10 @@ fn read_file(path: &Path, signed: bool, conn: Option<&Connection>) -> (Found, Pl
                     Plan::Nothing
                 }
                 (Ok(facts), conn) => {
+                    let conflicts = match kind {
+                        pkgfile::Kind::Pacman => pkgfile::pacman_conflicts(&facts),
+                        _ => Vec::new(),
+                    };
                     found.name = facts.name.clone();
                     found.facts = vec![
                         fact("Package:", facts.name.clone()),
@@ -468,7 +472,7 @@ fn read_file(path: &Path, signed: bool, conn: Option<&Connection>) -> (Found, Pl
                     ];
                     match conn {
                         _ if kind == pkgfile::Kind::Pacman => {
-                            pacman_plan(path, &facts.name, &mut found)
+                            pacman_plan(path, &facts.name, &conflicts, &mut found)
                         }
                         Some(c) if zbus::block_on(packagekit_takes_debs(c)) => {
                             zbus::block_on(simulate_file(c, &arg, &facts.name, &mut found))
@@ -498,8 +502,21 @@ async fn packagekit_takes_debs(c: &Connection) -> bool {
         .is_ok_and(|t| t.iter().any(|t| wanted.contains(&t.as_str())))
 }
 
-/// An Arch package: pacman lists what it pulls in, and installs it.
-fn pacman_plan(path: &Path, name: &str, found: &mut Found) -> Plan {
+/// An Arch package: pacman lists what it pulls in, and installs it unless it `conflicts` with
+/// installed packages. `pacman -U --noconfirm` declines to remove those, so the sheet refuses up
+/// front, worded as the guard words it when one of them is kept.
+fn pacman_plan(path: &Path, name: &str, conflicts: &[String], found: &mut Found) -> Plan {
+    if !conflicts.is_empty() {
+        let names: Vec<&str> = conflicts.iter().map(String::as_str).collect();
+        let blocks = guard::blocks(&names, &guard::essential(&names));
+        found.note = if blocks.is_empty() {
+            conflict_note(conflicts)
+        } else {
+            guard::refusal(Verb::Install, &blocks)
+        };
+        found.refused = true;
+        return Plan::Nothing;
+    }
     match pkgfile::pacman_targets(path) {
         Ok(targets) => {
             let others: Vec<String> = targets.into_iter().filter(|t| t != name).collect();
@@ -512,6 +529,16 @@ fn pacman_plan(path: &Path, name: &str, found: &mut Found) -> Plan {
             Plan::Nothing
         }
     }
+}
+
+/// "It conflicts with 1 installed package: foo. Uninstall it first."
+fn conflict_note(names: &[String]) -> String {
+    let (n, list) = named(names);
+    let them = if n == 1 { "it" } else { "them" };
+    format!(
+        "It conflicts with {n} installed {}: {list}. Uninstall {them} first.",
+        packages(n)
+    )
 }
 
 async fn simulate_file(c: &Connection, file: &str, name: &str, found: &mut Found) -> Plan {
@@ -1384,6 +1411,27 @@ mod tests {
             .sheet
             .choice(&reprisekit::controls::form::Event::Default);
         assert_eq!(close, Some(Choice::Close));
+    }
+
+    #[test]
+    fn an_arch_package_that_conflicts_with_an_installed_one_is_refused_up_front() {
+        let path = Path::new("/home/u/Downloads/x-1-1-any.pkg.tar.zst");
+        let mut found = Found::default();
+        let plan = pacman_plan(path, "x", &["less".into()], &mut found);
+        assert_eq!(plan, Plan::Nothing);
+        assert!(found.refused && !found.ready);
+        assert_eq!(
+            found.note,
+            "It conflicts with 1 installed package: less. Uninstall it first."
+        );
+        let mut found = Found::default();
+        let plan = pacman_plan(path, "x", &["less".into(), "reprise".into()], &mut found);
+        assert_eq!(plan, Plan::Nothing);
+        assert!(found.refused);
+        assert_eq!(
+            found.note,
+            "Installing it would remove reprise (part of Reprise)."
+        );
     }
 
     #[test]

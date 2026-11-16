@@ -154,6 +154,9 @@ pub struct Facts {
     pub version: String,
     pub size: Option<u64>,
     pub packager: String,
+    /// A pacman package's `Provides` and `Conflicts With`, versions kept (`sh`, `foo<2`).
+    pub provides: Vec<String>,
+    pub conflicts: Vec<String>,
 }
 
 /// A size as `pacman` or GLib writes it ("812.18 KiB", "34.2 MB" with a no-break space), in bytes.
@@ -186,10 +189,92 @@ fn parse_pacman(out: &str) -> Facts {
             "Version" => f.version = v.into(),
             "Installed Size" => f.size = size_bytes(v),
             "Packager" => f.packager = v.into(),
+            "Provides" => f.provides = listed(v),
+            "Conflicts With" => f.conflicts = listed(v),
             _ => {}
         }
     }
     f
+}
+
+/// A `pacman -Qi` list: words two spaces apart, or `None`.
+fn listed(v: &str) -> Vec<String> {
+    match v {
+        "None" => Vec::new(),
+        v => v.split_whitespace().map(String::from).collect(),
+    }
+}
+
+/// The installed packages `pacman -U` of the package `new` describes would have to remove: those
+/// it conflicts with and those conflicting with it. `pacman -Up --print` skips this check.
+pub fn pacman_conflicts(new: &Facts) -> Vec<String> {
+    let installed = crate::guard::pacman_installed().map(|t| crate::guard::desc(&t));
+    conflicting(new, installed, &vercmp)
+}
+
+/// [`pacman_conflicts`] over `installed`, comparing versions with `cmp`, sorted. Like libalpm, a
+/// package of `new`'s own name is the one it upgrades, never a conflict.
+fn conflicting(
+    new: &Facts,
+    installed: impl IntoIterator<Item = crate::guard::Desc>,
+    cmp: &dyn Fn(&str, &str) -> Option<std::cmp::Ordering>,
+) -> Vec<String> {
+    let mut out: Vec<String> = (installed.into_iter())
+        .filter(|old| old.name != new.name)
+        .filter(|old| {
+            let by_new = (new.conflicts.iter())
+                .any(|c| satisfies(c, &old.name, &old.version, &old.provides, cmp));
+            let by_old = (old.conflicts.iter())
+                .any(|c| satisfies(c, &new.name, &new.version, &new.provides, cmp));
+            by_new || by_old
+        })
+        .map(|old| old.name)
+        .collect();
+    out.sort();
+    out
+}
+
+/// Whether dependency `dep` (`foo`, `foo>=2`) names the package `name` at `version` or one of its
+/// `provides` (`foo`, `foo=2`). An unversioned provision meets only an unversioned dep, and a
+/// version `cmp` cannot order counts as met.
+fn satisfies(
+    dep: &str,
+    name: &str,
+    version: &str,
+    provides: &[String],
+    cmp: &dyn Fn(&str, &str) -> Option<std::cmp::Ordering>,
+) -> bool {
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    let at = dep.find(['<', '>', '=']).unwrap_or(dep.len());
+    let (dep_name, bound) = dep.split_at(at);
+    let (op, wanted) = bound.split_at(bound.rfind(['<', '>', '=']).map_or(0, |i| i + 1));
+    let meets = |v: &str| {
+        let Some(o) = cmp(v, wanted) else {
+            return true;
+        };
+        match op {
+            "=" => o == Equal,
+            ">=" => o != Less,
+            "<=" => o != Greater,
+            ">" => o == Greater,
+            "<" => o == Less,
+            _ => true,
+        }
+    };
+    if name == dep_name && (op.is_empty() || meets(version)) {
+        return true;
+    }
+    provides.iter().any(|p| match p.split_once('=') {
+        Some((n, v)) => n == dep_name && (op.is_empty() || meets(v)),
+        None => p == dep_name && op.is_empty(),
+    })
+}
+
+/// pacman's own version order, from its `vercmp`.
+fn vercmp(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let out = output("vercmp", &[OsStr::new(a), OsStr::new(b)]).ok()?;
+    let n: i32 = out.trim().parse().ok()?;
+    Some(n.cmp(&0))
 }
 
 /// `dpkg-deb --field`'s `Key: value` lines; `Installed-Size` is in KiB.
@@ -582,6 +667,7 @@ pub fn pacman_install(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::guard::Desc;
 
     #[test]
     fn the_name_says_what_kind_of_file_it_is() {
@@ -797,6 +883,7 @@ mod tests {
                 version: "1.28.0-2".into(),
                 size: Some(831_672),
                 packager: "CachyOS <admin@cachyos.org>".into(),
+                ..Facts::default()
             }
         );
         let deb = "Package: hello\nVersion: 2.10-3\nInstalled-Size: 280\n\
@@ -808,8 +895,67 @@ mod tests {
                 version: "2.10-3".into(),
                 size: Some(280 * 1024),
                 packager: "Santiago Vila <sanvila@debian.org>".into(),
+                ..Facts::default()
             }
         );
+    }
+
+    #[test]
+    fn pacman_lists_provisions_and_conflicts() {
+        let f = parse_pacman(
+            "Name            : x\n\
+             Provides        : sh  libx.so=1-64\n\
+             Conflicts With  : None\n",
+        );
+        assert_eq!(f.provides, ["sh", "libx.so=1-64"]);
+        assert!(f.conflicts.is_empty());
+    }
+
+    fn installed(name: &str, version: &str, provides: &[&str], conflicts: &[&str]) -> Desc {
+        let words = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        crate::guard::desc(&format!(
+            "%NAME%\n{name}\n\n%VERSION%\n{version}\n\n%PROVIDES%\n{}\n\n%CONFLICTS%\n{}\n",
+            words(provides).join("\n"),
+            words(conflicts).join("\n"),
+        ))
+    }
+
+    /// Plain numbers stand in for pacman's version order.
+    fn numeric(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+        Some(a.parse::<u32>().ok()?.cmp(&b.parse().ok()?))
+    }
+
+    #[test]
+    fn conflicts_match_names_provisions_and_versions_either_way() {
+        let new = Facts {
+            name: "x".into(),
+            version: "3".into(),
+            provides: vec!["editor=3".into()],
+            conflicts: vec!["less".into(), "sh".into(), "old<2".into(), "new>=5".into()],
+            ..Facts::default()
+        };
+        let system = [
+            installed("less", "1", &[], &[]),
+            installed("bash", "5", &["sh"], &[]),
+            installed("old", "1", &[], &[]),
+            installed("new", "4", &[], &[]),
+            installed("vim", "9", &[], &["editor>2"]),
+            installed("nano", "8", &[], &["editor<3"]),
+            installed("x", "2", &[], &["x"]),
+            installed("foot", "1", &[], &[]),
+        ];
+        assert_eq!(
+            conflicting(&new, system, &numeric),
+            ["bash", "less", "old", "vim"]
+        );
+    }
+
+    #[test]
+    fn an_unversioned_provision_meets_only_an_unversioned_conflict() {
+        let provides = ["sh".to_string()];
+        assert!(satisfies("sh", "bash", "5", &provides, &numeric));
+        assert!(!satisfies("sh>=1", "bash", "5", &provides, &numeric));
+        assert!(satisfies("bash=5", "bash", "5", &provides, &numeric));
     }
 
     #[test]
