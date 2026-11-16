@@ -32,6 +32,7 @@ use crate::input::{BTN_LEFT, Hit, Interaction};
 use crate::lock;
 use crate::lockfinger;
 use crate::logonview::{self, Fit, Host, LogonView};
+use crate::popups::Popup;
 use crate::sessionlock::{ClientLock, SessionLock};
 use crate::wallpaperview::LockWall;
 use crate::waterview::{Pane, Picture};
@@ -572,24 +573,15 @@ pub fn engage(state: &mut State) {
 pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     state.app_input_release_held();
     state.vk_release_held();
-    state.close_menu();
     state.release_capture();
-    state.switcher_cancel();
-    state.close_overview();
-    crate::taskpreview::hide(state);
-    crate::snappickerview::hide(state);
-    crate::projectorview::hide(state);
-    crate::trayflyout::close(state);
+    // Under the lock cover the launcher's caret would keep redrawing it, and after unlock the
+    // emoji picker and clipboard history would type or paste into whatever has the keyboard.
+    for p in Popup::ALL {
+        p.close(state);
+    }
     crate::trayreveal::collapse_all(state);
-    crate::notifycenter::close(state);
-    crate::calendarview::close(state);
-    crate::displaysview::close(state);
-    // The panel would sit under the lock cover but its caret timer would keep redrawing it.
-    state.close_launcher();
     state.hide_key_sheet();
-    state.close_start_panel();
-    // The emoji picker and clipboard history would type or paste into whatever has the keyboard after
-    // unlock; the region overlay would take the pointer from the lock screen.
+    // The region overlay would take the pointer from the lock screen.
     state.close_panels();
     // A client popup grab the drag holds would be set again at its end, under the lock.
     state.dnd.dismiss_held_popup();
