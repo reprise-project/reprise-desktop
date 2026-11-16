@@ -85,7 +85,7 @@ fn main() -> ExitCode {
         log::info!("reprise-login takes this computer's remote connections; this server stays off");
         return ExitCode::SUCCESS;
     }
-    let cfg = repriseconf::remote::remote_desktop();
+    let cfg = repriseconf::current().remote_desktop;
     let dir = cert_dir();
     let identity = match hand_over {
         Some(_) => None,
@@ -436,7 +436,7 @@ fn follow_config(
     };
     tokio::task::spawn_local(async move {
         while woken.recv().await.is_some() {
-            let new = repriseconf::remote::reread_remote_desktop(*config.borrow());
+            let new = repriseconf::current().remote_desktop;
             let old = config.send_replace(new);
             if (old.quality, old.frame_rate) != (new.quality, new.frame_rate) {
                 log::info!(
