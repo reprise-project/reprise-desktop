@@ -15,6 +15,17 @@ use crate::theme::{Color, TextUnits, Theme};
 pub const CELL: i32 = 75;
 pub const ICON_TOP: i32 = 2;
 pub const ICON_PX: i32 = 32;
+/// An unselected wallpaper label's shadow offset, down and right, in logical px.
+pub const LABEL_SHADOW: i32 = 1;
+
+/// What a cell's label is drawn over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ground {
+    /// The wallpaper: `desktop_text` over a [`LABEL_SHADOW`] shadow, so it reads on any picture.
+    Wallpaper,
+    /// A folder view's `window`: `window_text`, no shadow.
+    Window,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cell {
@@ -412,6 +423,7 @@ pub fn draw_cell(
         shortcut,
         selected,
         rename,
+        Ground::Wallpaper,
     );
     c
 }
@@ -429,6 +441,7 @@ pub fn draw_cell_at(
     shortcut: bool,
     selected: Option<Selection>,
     rename: Option<(&TextEdit, Caret)>,
+    ground: Ground,
 ) {
     let (x0, y0) = pos;
     let s = theme.scale.max(1);
@@ -542,23 +555,27 @@ pub fn draw_cell_at(
     let label = label_layout(text, name, font, s, cell.w);
     let l = label.rect;
     let rect = Rect::new(x0 + l.x, y0 + l.y, l.width, l.height);
-    let fg = if selected.is_some() {
-        c.fill_rect(rect, cs.hilight);
-        cs.hilight_text
-    } else {
-        cs.desktop_text
+    let (fg, shadow) = match (selected, ground) {
+        (Some(_), _) => {
+            c.fill_rect(rect, cs.hilight);
+            (cs.hilight_text, None)
+        }
+        (None, Ground::Wallpaper) => (cs.desktop_text, Some(label_shadow(cs.desktop_text))),
+        (None, Ground::Window) => (cs.window_text, None),
     };
     for (i, line) in label.lines.iter().enumerate() {
-        let y = rect.y + i as i32 * label.step;
-        text.draw(
-            c,
-            Rect::new(x0 + line.x, y, line.width, line_h),
-            &line.text,
-            false,
-            fg,
-            Align::Left,
-            font,
+        let r = Rect::new(
+            x0 + line.x,
+            rect.y + i as i32 * label.step,
+            line.width,
+            line_h,
         );
+        if let Some(ink) = shadow {
+            let off = LABEL_SHADOW * s;
+            let under = Rect::new(r.x + off, r.y + off, r.width, r.height);
+            text.draw(c, under, &line.text, false, ink, Align::Left, font);
+        }
+        text.draw(c, r, &line.text, false, fg, Align::Left, font);
     }
     if let Some(Selection {
         ring: true,
@@ -568,6 +585,16 @@ pub fn draw_cell_at(
         let dot = cs.hilight.inverted();
         let origin = (ox - x0 / s, oy - y0 / s);
         crate::classic::widgets::draw_focus_ring_screen(c, rect, s, dot, origin);
+    }
+}
+
+/// Black under a light label, white under a dark one.
+fn label_shadow(ink: Color) -> Color {
+    let (black, white) = (Color::rgb(0, 0, 0), Color::rgb(0xFF, 0xFF, 0xFF));
+    if ink.contrast(black) >= ink.contrast(white) {
+        black
+    } else {
+        white
     }
 }
 
@@ -732,7 +759,17 @@ pub fn drag_image(
     for g in shown.into_iter().map(|i| &ghosts[i]) {
         let pos = ((g.at.0 - r.x) * s, (g.at.1 - r.y) * s);
         draw_cell_at(
-            &mut c, pos, cell, theme, text, g.name, g.icon, g.shortcut, None, None,
+            &mut c,
+            pos,
+            cell,
+            theme,
+            text,
+            g.name,
+            g.icon,
+            g.shortcut,
+            None,
+            None,
+            Ground::Wallpaper,
         );
     }
     c.fade(1, 2);
@@ -980,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn draw_cell_unselected_uses_desktop_text_and_fallback_icon() {
+    fn draw_cell_unselected_uses_desktop_text_over_black_and_fallback_icon() {
         let theme = Theme::default();
         let t = text();
         let c = draw_cell(&theme, &t, "Notes", None, false, None, None, None);
@@ -988,15 +1025,118 @@ mod tests {
         assert_eq!(c.height, CELL as u32);
         let ix = (CELL - ICON_PX + 1) / 2;
         assert_eq!(c.get(ix, ICON_TOP), theme.colors.button_dk_shadow.argb());
-        let label = label_pixels(&c, 1);
-        assert!(!label.is_empty());
-        assert!(
-            label
-                .iter()
-                .all(|&(_, _, p)| p == theme.colors.desktop_text.argb())
-        );
+        let label: Vec<u32> = label_pixels(&c, 1).iter().map(|&(_, _, p)| p).collect();
+        let (ink, black) = (theme.colors.desktop_text.argb(), 0xFF00_0000);
+        assert!(label.contains(&ink) && label.contains(&black));
+        assert!(label.iter().all(|&p| p == ink || p == black));
         assert_eq!(c.get(0, 0), 0);
         assert_eq!(c.get(CELL - 1, CELL - 1), 0);
+    }
+
+    /// "Recycle Bin" unselected over a light picture at scale `s`, in look `i`, on `ground`
+    /// with white text.
+    fn on_cream(i: crate::interface::Interface, s: i32, ground: Ground) -> (Canvas, Theme) {
+        let mut theme = crate::interfaces::theme_for(i).scaled(s);
+        theme.colors.desktop_text = Color::rgb(0xFF, 0xFF, 0xFF);
+        theme.colors.window_text = theme.colors.desktop_text;
+        let mut c = Canvas::new((CELL * s) as u32, (CELL * s) as u32);
+        c.fill_rect(c.bounds(), CREAM);
+        let (t, cell) = (text(), Cell::square(CELL));
+        let name = "Recycle Bin";
+        draw_cell_at(
+            &mut c,
+            (0, 0),
+            cell,
+            &theme,
+            &t,
+            name,
+            None,
+            false,
+            None,
+            None,
+            ground,
+        );
+        (c, theme)
+    }
+
+    const CREAM: Color = Color::rgb(0xEB, 0xE5, 0xD9);
+    const LOOKS: [crate::interface::Interface; 3] = [
+        crate::interface::Interface::Classic,
+        crate::interface::Interface::Blue,
+        crate::interface::Interface::Glass,
+    ];
+
+    fn fnv(c: &Canvas) -> u64 {
+        c.pixels
+            .iter()
+            .flat_map(|p| p.to_le_bytes())
+            .fold(0xcbf2_9ce4_8422_2325, |h, b| {
+                (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+            })
+    }
+
+    fn dark(p: u32) -> bool {
+        let [b, g, r, _] = p.to_le_bytes();
+        r.max(g).max(b) < 0x40
+    }
+
+    #[test]
+    fn a_wallpaper_label_lays_a_dark_shadow_down_and_right_of_its_glyphs() {
+        crate::pins::fonts();
+        let mut got = Vec::new();
+        for i in LOOKS {
+            for s in [1, 2] {
+                let (c, theme) = on_cream(i, s, Ground::Wallpaper);
+                got.push((format!("{i:?} @{s}"), fnv(&c)));
+                let ink = theme.colors.desktop_text.argb();
+                let glyphs: Vec<(i32, i32)> = label_pixels(&c, s)
+                    .into_iter()
+                    .filter(|&(_, _, p)| p == ink)
+                    .map(|(x, y, _)| (x, y))
+                    .collect();
+                assert!(!glyphs.is_empty(), "{i:?} @{s}: white glyphs");
+                let off = LABEL_SHADOW * s;
+                let under = |&(x, y): &(i32, i32)| c.get(x + off, y + off);
+                assert!(
+                    glyphs.iter().map(under).all(|p| p != CREAM.argb()),
+                    "{i:?} @{s}: no glyph pixel has the picture down and right of it"
+                );
+                let shaded = glyphs.iter().map(under).filter(|&p| dark(p)).count();
+                assert!(
+                    shaded * 2 > glyphs.len(),
+                    "{i:?} @{s}: most glyph pixels have dark down and right, {shaded} of {}",
+                    glyphs.len()
+                );
+            }
+        }
+        crate::pins::check("controls/desktop_label", &got);
+    }
+
+    #[test]
+    fn a_folder_view_label_has_no_shadow() {
+        for i in LOOKS {
+            for s in [1, 2] {
+                let (c, _) = on_cream(i, s, Ground::Window);
+                let label = label_pixels(&c, s);
+                assert!(label.iter().any(|&(_, _, p)| p == 0xFFFF_FFFF));
+                assert!(
+                    !label.iter().any(|&(_, _, p)| dark(p)),
+                    "{i:?} @{s}: nothing dark under the label"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_dark_wallpaper_label_takes_a_white_shadow() {
+        assert_eq!(
+            label_shadow(Color::rgb(0, 0, 0)),
+            Color::rgb(0xFF, 0xFF, 0xFF)
+        );
+        assert_eq!(
+            label_shadow(Color::rgb(0xFF, 0xFF, 0xFF)),
+            Color::rgb(0, 0, 0)
+        );
     }
 
     #[test]
@@ -1194,6 +1334,7 @@ mod tests {
                 true,
                 sel,
                 rename,
+                Ground::Wallpaper,
             );
             assert!(got.pixels == want.pixels, "rename {}", rename.is_some());
         }
@@ -1701,6 +1842,7 @@ mod tests {
                     g.shortcut,
                     None,
                     None,
+                    Ground::Wallpaper,
                 );
                 one.fade(1, 2);
                 assert!(holds(&img, &one, (0, k as i32 * cell.h)), "{pct}%: {k}");
@@ -1758,6 +1900,7 @@ mod tests {
                 false,
                 None,
                 None,
+                Ground::Wallpaper,
             );
             one.fade(1, 2);
             let origin = (pointer.0 - grab.0, pointer.1 - grab.1);
