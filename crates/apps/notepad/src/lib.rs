@@ -14,7 +14,7 @@ mod window;
 
 reprisekit::strings!("notepad");
 
-use dialogs::{FormStep, form_event, goto_form, ok_box};
+use dialogs::{Ask, FormStep, form_event, goto_form, ok_box};
 use document::{
     ENCODINGS, Format, Stamp, Undecodable, encode, encoding_name, load, open_failed_text,
     read_text, recovered_in, recovery_dir, write_recovery,
@@ -22,10 +22,11 @@ use document::{
 use drop::Hover;
 use menu::menus;
 use pending::{Pending, PendingAction};
+use repriseapp::asks::{Answer, Asks};
 use repriseapp::filedlg::{Driven, Host, taken};
 use repriseapp::keys::AltArm;
 use repriseapp::keys::{dialog_key, form_clipboard};
-use repriseapp::oneshot::{self, ErrorBox, MsgBox};
+use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, Extended, FileDrop, KeyInput, MAIN,
     PointerInput, Reply, WinId,
@@ -60,15 +61,10 @@ const GOTO: WinId = WinId::named("goto");
 const GOTO_CLIENT: (i32, i32) = (268, 95);
 
 const FIND: WinId = WinId::named("find");
-const NOTFOUND: WinId = WinId::named("notfound");
 
 const REPLACE_WIN: WinId = WinId::named("replace");
 const ABOUT: WinId = WinId::named("about");
-const SAVECHANGES: WinId = WinId::named("savechanges");
-const OVERWRITE: WinId = WinId::named("overwrite");
-const LOSSY: WinId = WinId::named("lossy");
-const RECOVERED: WinId = WinId::named("recovered");
-const CHANGED: WinId = WinId::named("changed");
+const ASK: WinId = WinId::named("ask");
 const OPEN: WinId = WinId::named("open");
 const SAVEAS: WinId = WinId::named("saveas");
 
@@ -81,8 +77,6 @@ struct Notepad {
     path: Option<std::path::PathBuf>,
     /// `path` as it was opened or last saved; a save asks first when the file no longer matches.
     stamp: Option<Stamp>,
-    /// The prompt a save raises when the file changed on disk.
-    changed: Option<MsgBox>,
     /// The encoding, BOM and line end the file was opened or last saved with; a save writes them.
     format: Format,
     /// Where the held selection drag's pointer last was; ticks scroll from there.
@@ -96,8 +90,6 @@ struct Notepad {
     status_bar: bool,
     goto: Option<Form>,
     find: Option<Form>,
-    notfound: Option<MsgBox>,
-    error: ErrorBox,
     replace: Option<Form>,
     last_query: Option<(String, multiedit::FindOpts)>,
     info_icon: Option<Canvas>,
@@ -110,18 +102,10 @@ struct Notepad {
     /// Any edit sets it; undoing back to the saved text does not clear it.
     dirty: bool,
     pending: Pending,
-    savechanges: bool,
-    savechanges_focus: usize,
-    savechanges_shown: oneshot::Shown,
-    overwrite: Option<PathBuf>,
-    overwrite_focus: usize,
-    overwrite_shown: oneshot::Shown,
-    lossy: Option<(MsgBox, String)>,
+    /// The message boxes, in turn: questions, Not found and errors.
+    asks: Asks<Ask>,
     /// Where `emergency` leaves unsaved text and the next start finds it.
     rescue_dir: Option<PathBuf>,
-    /// The prompt for one recovery file, and the files offered after it.
-    recovered: Option<(MsgBox, PathBuf)>,
-    recover_queue: Vec<PathBuf>,
     /// The recovery file the open document came from, deleted once it is saved or discarded.
     rescued: Option<PathBuf>,
     /// Kept here because `children(&self)` has no `Ctx`.
@@ -162,7 +146,6 @@ impl Notepad {
             mono,
             bar,
             stamp: path.as_deref().and_then(Stamp::of),
-            changed: None,
             path,
             dragging: None,
             thumb: ThumbDrag::default(),
@@ -171,8 +154,6 @@ impl Notepad {
             status_bar: false,
             goto: None,
             find: None,
-            notfound: None,
-            error: ErrorBox::default(),
             replace: None,
             last_query: None,
             info_icon: None,
@@ -182,16 +163,8 @@ impl Notepad {
             warn_icon: None,
             dirty: false,
             pending: Pending::default(),
-            savechanges: false,
-            savechanges_focus: 0,
-            savechanges_shown: oneshot::Shown::default(),
-            overwrite: None,
-            overwrite_focus: 1,
-            overwrite_shown: oneshot::Shown::default(),
-            lossy: None,
+            asks: Asks::new(ASK),
             rescue_dir: recovery_dir(),
-            recovered: None,
-            recover_queue: Vec::new(),
             rescued: None,
             dialog_text: repriseapp::start_text(),
             dialog_px: Theme::default().fonts.size_px,
@@ -259,12 +232,13 @@ impl Notepad {
         if self.warn_icon.is_none() {
             self.warn_icon = ctx.icons.get("dialog-warning", 32);
         }
-        let raised = (self.error.shown_mut().into_iter())
-            .chain(self.lossy.iter_mut().map(|(b, _)| b))
-            .chain(self.recovered.iter_mut().map(|(b, _)| b))
-            .chain(self.changed.iter_mut());
-        for b in raised.filter(|b| b.fields.icon.is_none()) {
-            b.fields.icon = self.warn_icon.clone();
+        for (b, ask) in self.asks.iter_mut() {
+            if b.fields.icon.is_none() {
+                b.fields.icon = match ask {
+                    Ask::NotFound => self.info_icon.clone(),
+                    _ => self.warn_icon.clone(),
+                };
+            }
         }
         self.host.icons.prime(&mut ctx.icons);
     }
@@ -310,25 +284,11 @@ impl App for Notepad {
                 modal: false,
             });
         }
-        if let Some(b) = &self.notfound {
-            kids.push(b.child(NOTFOUND, &self.dialog_text, &self.forms));
-        }
-        kids.extend(self.error.child(&self.dialog_text, &self.forms));
         if self.about {
             kids.push(Child {
                 id: ABOUT,
                 title: tr!("title-about"),
                 size: self.forms.text.size(aboutbox::CLIENT),
-                fixed: true,
-                modal: true,
-            });
-        }
-        if self.savechanges {
-            let fields = self.savechanges_fields();
-            kids.push(Child {
-                id: SAVECHANGES,
-                title: tr!("name"),
-                size: self.msgbox_size(&fields),
                 fixed: true,
                 modal: true,
             });
@@ -351,25 +311,7 @@ impl App for Notepad {
                 modal: true,
             });
         }
-        if let Some((b, _)) = &self.lossy {
-            kids.push(b.child(LOSSY, &self.dialog_text, &self.forms));
-        }
-        if let Some((b, _)) = &self.recovered {
-            kids.push(b.child(RECOVERED, &self.dialog_text, &self.forms));
-        }
-        if let Some(b) = &self.changed {
-            kids.push(b.child(CHANGED, &self.dialog_text, &self.forms));
-        }
-        if let Some(path) = &self.overwrite {
-            let fields = self.overwrite_fields(path);
-            kids.push(Child {
-                id: OVERWRITE,
-                title: tr!("title-save-as"),
-                size: self.msgbox_size(&fields),
-                fixed: true,
-                modal: true,
-            });
-        }
+        kids.extend(self.asks.child(&self.dialog_text, &self.forms));
         kids
     }
 
@@ -392,14 +334,8 @@ impl App for Notepad {
             GOTO => self.goto_event(ev, ctx),
             FIND => self.find_event(ev, ctx),
             REPLACE_WIN => self.replace_event(ev, ctx),
-            NOTFOUND => self.notfound_event(ev),
-            w if self.error.owns(w) => self.error.event(w, &ev, &self.dialog_text, &self.forms),
+            w if self.asks.owns(w) => self.ask_event(w, ev),
             ABOUT => self.about_event(ev),
-            SAVECHANGES => self.savechanges_event(ev),
-            OVERWRITE => self.overwrite_event(ev),
-            LOSSY => self.lossy_event(ev),
-            RECOVERED => self.recovered_event(ev),
-            CHANGED => self.changed_event(ev),
             OPEN => self.open_event(ev, ctx),
             SAVEAS => self.saveas_event(ev, ctx),
             _ => self.main_event(ev, ctx),
@@ -450,27 +386,7 @@ impl App for Notepad {
                     );
                 }
             }
-            NOTFOUND => {
-                if let Some(b) = &self.notfound {
-                    b.draw(c, &self.forms, &self.dialog_text);
-                }
-            }
-            w if self.error.owns(w) => self.error.draw(c, &self.forms, &self.dialog_text),
-            LOSSY => {
-                if let Some((b, _)) = &self.lossy {
-                    b.draw(c, &self.forms, &self.dialog_text);
-                }
-            }
-            RECOVERED => {
-                if let Some((b, _)) = &self.recovered {
-                    b.draw(c, &self.forms, &self.dialog_text);
-                }
-            }
-            CHANGED => {
-                if let Some(b) = &self.changed {
-                    b.draw(c, &self.forms, &self.dialog_text);
-                }
-            }
+            w if self.asks.owns(w) => self.asks.draw(c, &self.forms, &self.dialog_text),
             ABOUT => {
                 c.fill_rect(c.bounds(), cs.button_face);
                 let f = self.about_form();
@@ -485,28 +401,6 @@ impl App for Notepad {
                     true,
                     self.forms.fonts.size_px,
                 );
-            }
-            SAVECHANGES => {
-                let f = msgbox::form(
-                    &self.savechanges_fields(),
-                    &self.dialog_text,
-                    self.forms.fonts.size_px,
-                    self.forms.text,
-                );
-                self.savechanges_shown
-                    .draw(c, &self.forms, &self.dialog_text, f);
-            }
-            OVERWRITE => {
-                if let Some(path) = &self.overwrite {
-                    let f = msgbox::form(
-                        &self.overwrite_fields(path),
-                        &self.dialog_text,
-                        self.forms.fonts.size_px,
-                        self.forms.text,
-                    );
-                    self.overwrite_shown
-                        .draw(c, &self.forms, &self.dialog_text, f);
-                }
             }
             OPEN | SAVEAS => {
                 if let Some(d) = self.file_dlg(win) {
@@ -535,6 +429,16 @@ impl Extended for Notepad {
     fn draw_failed(&mut self, error: &str) -> Reply {
         self.fail(&tr!("draw-failed", error = error));
         Reply::redraw()
+    }
+
+    /// The overwrite question covers Save As.
+    fn parent(&self, win: WinId) -> Option<WinId> {
+        match self.asks.up() {
+            Some((_, Ask::Overwrite(_))) if self.asks.owns(win) && self.saveas.is_some() => {
+                Some(SAVEAS)
+            }
+            _ => Some(MAIN),
+        }
     }
 
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
@@ -592,43 +496,9 @@ impl Extended for Notepad {
                     oneshot::access_form(f, tree, &ctx.text, fpx);
                 }
             }
-            NOTFOUND => {
-                if let Some(b) = &self.notfound {
-                    b.access(tree, dt, forms);
-                }
-            }
-            w if self.error.owns(w) => self.error.access(tree, dt, forms),
-            LOSSY => {
-                if let Some((b, _)) = &self.lossy {
-                    b.access(tree, dt, forms);
-                }
-            }
-            RECOVERED => {
-                if let Some((b, _)) = &self.recovered {
-                    b.access(tree, dt, forms);
-                }
-            }
-            CHANGED => {
-                if let Some(b) = &self.changed {
-                    b.access(tree, dt, forms);
-                }
-            }
+            w if self.asks.owns(w) => self.asks.access(tree, dt, forms),
             ABOUT => {
                 built(&self.about_form(), tree);
-            }
-            SAVECHANGES => {
-                built(
-                    &msgbox::form(&self.savechanges_fields(), dt, fpx, forms.text),
-                    tree,
-                );
-            }
-            OVERWRITE => {
-                if let Some(path) = &self.overwrite {
-                    built(
-                        &msgbox::form(&self.overwrite_fields(path), dt, fpx, forms.text),
-                        tree,
-                    );
-                }
             }
             OPEN | SAVEAS => {
                 if let Some(d) = self.file_dlg(win) {
