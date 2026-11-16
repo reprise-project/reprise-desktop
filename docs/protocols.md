@@ -99,7 +99,8 @@ confinement holds, every motion goes through as it comes.
   client's monitors while the session stays locked on the computer's own),
   and since version 10 the app a libei sender or keys object serves
   (`connect_app_sender`, `create_app_keys`), which the screen-sharing dot
-  names; from version 10 `create_keys` is the remote desktop server's alone
+  names; from version 10 `create_keys` is the remote desktop server's alone;
+  since version 12 a keys object drives the pointer too (NotifyPointer)
 
 ## Portals
 

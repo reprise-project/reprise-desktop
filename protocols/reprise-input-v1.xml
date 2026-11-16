@@ -4,14 +4,14 @@
     reprise private protocol: input injection and capture for reprise-portal.
   </copyright>
 
-  <interface name="reprise_input_v1" version="11">
+  <interface name="reprise_input_v1" version="12">
     <description summary="EIS sockets and pointer barriers for the portal">
       One global. connect_eis hands the compositor one end of a socketpair
       to run libei's EIS side on; create_capture makes an object that owns
       pointer barriers and reports when the pointer crosses one.
       create_shortcuts makes an object that receives one program's global
-      shortcuts. create_keys makes an object that presses keys for one
-      RemoteDesktop session. watch_sandboxed makes an object that lists
+      shortcuts. create_keys makes an object that presses keys and, from
+      version 12, drives the pointer for one RemoteDesktop session. watch_sandboxed makes an object that lists
       the sandboxed apps with a window. pick_color opens the colour picker.
       remote_capture marks a capture connection as the remote desktop
       server's, recorder_capture as the screen recorder's.
@@ -82,7 +82,8 @@
       <description summary="press keys for one RemoteDesktop session">
         The portal makes one for a session granted the keyboard, and sends
         the session's NotifyKeyboardKeycode and NotifyKeyboardKeysym calls
-        through it.
+        through it. From version 12 it makes one for a session granted the
+        pointer too, and sends its NotifyPointer calls through it.
       </description>
       <arg name="id" type="new_id" interface="reprise_keys_v1"/>
     </request>
@@ -244,11 +245,17 @@
     <request name="destroy" type="destructor"/>
   </interface>
 
-  <interface name="reprise_keys_v1" version="1">
-    <description summary="one session's keyboard, without libei">
-      Keys go to this desktop the way a sender's libei keys do. Destroying
-      it releases every key it holds.
+  <interface name="reprise_keys_v1" version="12">
+    <description summary="one session's keyboard and pointer, without libei">
+      Keys and pointer input go to this desktop the way a sender's libei
+      input does. Destroying it releases every key and button it holds.
+      The object has the version of the reprise_input_v1 that made it.
     </description>
+
+    <enum name="axis" since="12">
+      <entry name="vertical" value="0"/>
+      <entry name="horizontal" value="1"/>
+    </enum>
 
     <enum name="key_state">
       <entry name="released" value="0"/>
@@ -272,6 +279,39 @@
     </request>
 
     <request name="destroy" type="destructor"/>
+
+    <request name="pointer_motion" since="12">
+      <description summary="move the pointer by a delta, in logical pixels"/>
+      <arg name="dx" type="fixed"/>
+      <arg name="dy" type="fixed"/>
+    </request>
+
+    <request name="pointer_motion_absolute" since="12">
+      <description summary="move the pointer to a point of an output">
+        x and y are in the output's logical coordinates, clamped to the
+        output. A name no output on the desktop has drops the motion.
+      </description>
+      <arg name="output" type="string" summary="the wl_output's name"/>
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
+    </request>
+
+    <request name="pointer_button" since="12">
+      <arg name="button" type="uint" summary="an evdev button code"/>
+      <arg name="state" type="uint" enum="key_state"/>
+    </request>
+
+    <request name="pointer_axis" since="12">
+      <description summary="scroll by a delta, as wl_pointer.axis values"/>
+      <arg name="dx" type="fixed"/>
+      <arg name="dy" type="fixed"/>
+    </request>
+
+    <request name="pointer_axis_discrete" since="12">
+      <description summary="scroll by wheel notches, positive down or right"/>
+      <arg name="axis" type="uint" enum="axis"/>
+      <arg name="steps" type="int"/>
+    </request>
   </interface>
 
   <interface name="reprise_input_capture_v1" version="1">

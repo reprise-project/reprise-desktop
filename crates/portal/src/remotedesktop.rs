@@ -1,7 +1,7 @@
 //! `org.freedesktop.impl.portal.RemoteDesktop` v2 over libei: input granted by the permit dialog,
-//! or without it to the enabled server (`trusted`); keycode and keysym Notify use reprise_keys_v1.
+//! or without it to the enabled server (`trusted`); keyboard and pointer Notify use reprise_keys_v1.
 
-use crate::inputlink::{Link, LockScreenHandle, Owner, live};
+use crate::inputlink::{Link, LockScreenHandle, Owner, Pointer, live};
 use crate::inputproto::reprise_input_v1::Device;
 use crate::wayland::Target;
 use crate::{
@@ -362,49 +362,76 @@ impl RemoteDesktop {
 
     async fn notify_pointer_motion(
         &self,
-        _s: ObjectPath<'_>,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        session_handle: ObjectPath<'_>,
         _o: HashMap<String, Variant<'_>>,
-        _dx: f64,
-        _dy: f64,
+        dx: f64,
+        dy: f64,
     ) -> zbus::fdo::Result<()> {
-        Err(unsupported())
+        self.frontend.check(&hdr).await?;
+        finite(&[dx, dy])?;
+        self.with_pointer(&session_handle, |_| Ok(Pointer::Motion(dx, dy)))
     }
     async fn notify_pointer_motion_absolute(
         &self,
-        _s: ObjectPath<'_>,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        session_handle: ObjectPath<'_>,
         _o: HashMap<String, Variant<'_>>,
-        _stream: u32,
-        _x: f64,
-        _y: f64,
+        stream: u32,
+        x: f64,
+        y: f64,
     ) -> zbus::fdo::Result<()> {
-        Err(unsupported())
+        self.frontend.check(&hdr).await?;
+        finite(&[x, y])?;
+        self.with_pointer(&session_handle, |s| {
+            match s.screencast.casts.iter().find(|c| c.node_id == stream) {
+                Some(c) => match &c.target {
+                    Target::Output(name) => Ok(Pointer::MotionAbsolute(name.clone(), x, y)),
+                    Target::Toplevel(_) => Err(invalid("a window stream takes no absolute motion")),
+                },
+                None => Err(invalid("no such stream in the session")),
+            }
+        })
     }
     async fn notify_pointer_button(
         &self,
-        _s: ObjectPath<'_>,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        session_handle: ObjectPath<'_>,
         _o: HashMap<String, Variant<'_>>,
-        _button: i32,
-        _state: u32,
+        button: i32,
+        state: u32,
     ) -> zbus::fdo::Result<()> {
-        Err(unsupported())
+        self.frontend.check(&hdr).await?;
+        let button = u32::try_from(button).map_err(|_| invalid("a negative button"))?;
+        self.with_pointer(&session_handle, |_| Ok(Pointer::Button(button, state != 0)))
     }
     async fn notify_pointer_axis(
         &self,
-        _s: ObjectPath<'_>,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        session_handle: ObjectPath<'_>,
         _o: HashMap<String, Variant<'_>>,
-        _dx: f64,
-        _dy: f64,
+        dx: f64,
+        dy: f64,
     ) -> zbus::fdo::Result<()> {
-        Err(unsupported())
+        self.frontend.check(&hdr).await?;
+        finite(&[dx, dy])?;
+        self.with_pointer(&session_handle, |_| Ok(Pointer::Axis(dx, dy)))
     }
     async fn notify_pointer_axis_discrete(
         &self,
-        _s: ObjectPath<'_>,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        session_handle: ObjectPath<'_>,
         _o: HashMap<String, Variant<'_>>,
-        _axis: u32,
-        _steps: i32,
+        axis: u32,
+        steps: i32,
     ) -> zbus::fdo::Result<()> {
-        Err(unsupported())
+        self.frontend.check(&hdr).await?;
+        let vertical = match axis {
+            0 => true,
+            1 => false,
+            _ => return Err(invalid("axis is 0 or 1")),
+        };
+        self.with_pointer(&session_handle, |_| Ok(Pointer::Wheel { vertical, steps }))
     }
     async fn notify_keyboard_keycode(
         &self,
@@ -415,7 +442,9 @@ impl RemoteDesktop {
         state: u32,
     ) -> zbus::fdo::Result<()> {
         self.frontend.check(&hdr).await?;
-        self.with_keys(&session_handle, |k| k.key(keycode as u32, state != 0))
+        self.with_keys(&session_handle, DEVICE_KEYBOARD, |k| {
+            k.key(keycode as u32, state != 0)
+        })
     }
     async fn notify_keyboard_keysym(
         &self,
@@ -426,7 +455,9 @@ impl RemoteDesktop {
         state: u32,
     ) -> zbus::fdo::Result<()> {
         self.frontend.check(&hdr).await?;
-        self.with_keys(&session_handle, |k| k.keysym(keysym as u32, state != 0))
+        self.with_keys(&session_handle, DEVICE_KEYBOARD, |k| {
+            k.keysym(keysym as u32, state != 0)
+        })
     }
     async fn notify_touch_down(
         &self,
@@ -462,11 +493,11 @@ impl RemoteDesktop {
 
 impl RemoteSession {
     /// Granted, holding `lock` while it casts lock mode, with a keys object from `link` if the
-    /// keyboard was granted and lock mode has not already ended.
+    /// keyboard or the pointer was granted and lock mode has not already ended.
     pub(crate) fn grant(&mut self, link: Option<&Link>, lock: Option<Arc<LockScreenHandle>>) {
         self.granted = true;
         self.lock = lock;
-        if self.devices & DEVICE_KEYBOARD != 0 && !self.lock_ended() {
+        if self.devices != 0 && !self.lock_ended() {
             self.keys = link.and_then(|l| l.create_keys(self.owner()));
         }
     }
@@ -506,33 +537,81 @@ impl RemoteDesktop {
         Ok(theirs)
     }
 
+    /// Run `f` on the keys object of `session_handle`, a session granted `device`.
     fn with_keys(
         &self,
         session_handle: &ObjectPath<'_>,
+        device: u32,
         f: impl FnOnce(&crate::inputlink::KeysHandle),
+    ) -> zbus::fdo::Result<()> {
+        self.with_session(session_handle, device, |s| {
+            f(s.keys.as_ref().expect("with_session checked the keys"));
+            Ok(())
+        })
+    }
+
+    /// Send the pointer request `input` makes of `session_handle`, a session granted the pointer.
+    fn with_pointer(
+        &self,
+        session_handle: &ObjectPath<'_>,
+        input: impl FnOnce(&RemoteSession) -> zbus::fdo::Result<Pointer>,
+    ) -> zbus::fdo::Result<()> {
+        if !live(&self.link).is_some_and(Link::has_pointer) {
+            return Err(zbus::fdo::Error::NotSupported(
+                "the compositor takes no pointer without libei; use ConnectToEIS".into(),
+            ));
+        }
+        self.with_session(session_handle, DEVICE_POINTER, |s| {
+            let input = input(s)?;
+            s.keys
+                .as_ref()
+                .expect("with_session checked the keys")
+                .pointer(input);
+            Ok(())
+        })
+    }
+
+    fn with_session(
+        &self,
+        session_handle: &ObjectPath<'_>,
+        device: u32,
+        f: impl FnOnce(&RemoteSession) -> zbus::fdo::Result<()>,
     ) -> zbus::fdo::Result<()> {
         if live(&self.link).is_none() {
             return Err(zbus::fdo::Error::Failed("no input link".into()));
         }
         let mut sessions = self.sessions.lock().unwrap();
-        let keys = sessions
+        let session = sessions
             .get_mut(session_handle.as_str())
             .and_then(SessionData::remote_mut)
-            .and_then(|s| s.keys.as_ref());
-        match keys {
-            Some(k) => {
-                f(k);
-                Ok(())
-            }
-            None => Err(zbus::fdo::Error::Failed(
-                "no session granted the keyboard".into(),
-            )),
+            .filter(|s| s.devices & device != 0 && s.keys.is_some());
+        let name = if device == DEVICE_POINTER {
+            "pointer"
+        } else {
+            "keyboard"
+        };
+        match session {
+            Some(s) => f(s),
+            None => Err(zbus::fdo::Error::Failed(format!(
+                "no session granted the {name}"
+            ))),
         }
     }
 }
 
 fn unsupported() -> zbus::fdo::Error {
     zbus::fdo::Error::NotSupported("use ConnectToEIS".into())
+}
+
+fn invalid(why: &str) -> zbus::fdo::Error {
+    zbus::fdo::Error::InvalidArgs(why.into())
+}
+
+fn finite(values: &[f64]) -> zbus::fdo::Result<()> {
+    match values.iter().all(|v| v.is_finite()) {
+        true => Ok(()),
+        false => Err(invalid("a coordinate is not finite")),
+    }
 }
 
 fn empty() -> StartResults {
@@ -789,14 +868,39 @@ mod tests {
         noted: Noted,
         closed: Closed,
         table: Table,
+        /// Each request on a keys object: opcode and body.
+        keys_heard: KeysHeard,
     }
+
+    type KeysHeard = Arc<Mutex<Vec<(u32, Vec<u8>)>>>;
 
     impl Desk {
         async fn on(bus: crate::lockmode::tests::Bus, ask: Ask, table: &[(&str, &str)]) -> Desk {
+            Desk::at(10, bus, ask, table).await
+        }
+
+        /// As [`Desk::on`], with the compositor's `reprise_input_v1` at `version`.
+        async fn at(
+            version: u32,
+            bus: crate::lockmode::tests::Bus,
+            ask: Ask,
+            table: &[(&str, &str)],
+        ) -> Desk {
             let (ours, mut theirs) = UnixStream::pair().unwrap();
+            let keys_heard = KeysHeard::default();
+            let heard = keys_heard.clone();
             std::thread::spawn(move || {
-                fake_compositor(&mut theirs, 2, 10);
-                while request(&mut theirs).is_ok() {}
+                const CREATE_KEYS: u32 = 4;
+                const CREATE_APP_KEYS: u32 = 10;
+                let input = fake_compositor(&mut theirs, 2, version);
+                let mut keys = Vec::new();
+                while let Ok((object, opcode, body)) = request(&mut theirs) {
+                    if object == input && matches!(opcode, CREATE_KEYS | CREATE_APP_KEYS) {
+                        keys.push(u32::from_ne_bytes(body[..4].try_into().unwrap()));
+                    } else if keys.contains(&object) {
+                        heard.lock().unwrap().push((opcode, body));
+                    }
+                }
             });
             let (noted, closed) = (Noted::default(), Closed::default());
             let table: Table = Arc::new(Mutex::new(
@@ -869,6 +973,7 @@ mod tests {
                 noted,
                 closed,
                 table,
+                keys_heard,
             }
         }
 
@@ -885,17 +990,39 @@ mod tests {
             B: serde::Serialize + zbus::zvariant::DynamicType,
             R: serde::de::DeserializeOwned + zbus::zvariant::Type,
         {
+            (self.try_call(iface, method, body).await)
+                .unwrap()
+                .body()
+                .deserialize()
+                .unwrap()
+        }
+
+        async fn try_call<B>(
+            &self,
+            iface: &str,
+            method: &str,
+            body: &B,
+        ) -> zbus::Result<zbus::Message>
+        where
+            B: serde::Serialize + zbus::zvariant::DynamicType,
+        {
             let dest = self.portal.unique_name().unwrap().to_string();
             let iface = format!("org.freedesktop.impl.portal.{iface}");
             let iface = Some(iface.as_str());
-            (self
-                .client
-                .call_method(Some(dest.as_str()), crate::PATH, iface, method, body))
-            .await
-            .unwrap()
-            .body()
-            .deserialize()
-            .unwrap()
+            (self.client)
+                .call_method(Some(dest.as_str()), crate::PATH, iface, method, body)
+                .await
+        }
+
+        /// The keys object's requests, once `n` have come or after 5 s.
+        async fn keys_heard(&self, n: usize) -> Vec<(u32, Vec<u8>)> {
+            for _ in 0..500 {
+                if self.keys_heard.lock().unwrap().len() >= n {
+                    break;
+                }
+                async_io::Timer::after(Duration::from_millis(10)).await;
+            }
+            self.keys_heard.lock().unwrap().clone()
         }
 
         /// CreateSession, SelectDevices (with `restore` for a remembered grant) and Start for
@@ -1186,6 +1313,93 @@ mod tests {
                 Desk::on(crate::lockmode::tests::bus().unwrap(), allowed_once, &[]).await;
             assert_eq!(desk_once.start(1, APP, false).await, RESPONSE_OK);
             assert_eq!(desk_once.cast_state(1).1, 0, "allowed without Remember");
+        });
+    }
+
+    fn error_name(r: zbus::Result<zbus::Message>) -> String {
+        match r {
+            Err(zbus::Error::FDO(e)) => zbus::DBusError::name(&*e).to_string(),
+            other => panic!("expected a D-Bus error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_granted_pointer_moves_clicks_and_scrolls_through_notify() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let desk = Desk::at(12, bus, allowed, &[]).await;
+            assert_eq!(desk.start(1, APP, false).await, RESPONSE_OK);
+            let s =
+                ObjectPath::try_from("/org/freedesktop/portal/desktop/session/1_99/s1").unwrap();
+            let none: HashMap<&str, Variant<'_>> = HashMap::new();
+            let rd = "RemoteDesktop";
+            let calls = [
+                desk.try_call(rd, "NotifyPointerMotion", &(&s, &none, 1.5f64, -2.0f64))
+                    .await,
+                desk.try_call(rd, "NotifyPointerButton", &(&s, &none, 0x110i32, 1u32))
+                    .await,
+                desk.try_call(rd, "NotifyPointerAxis", &(&s, &none, 0.0f64, 10.0f64))
+                    .await,
+                desk.try_call(rd, "NotifyPointerAxisDiscrete", &(&s, &none, 1u32, -1i32))
+                    .await,
+            ];
+            assert!(calls.iter().all(Result::is_ok), "{calls:?}");
+            let words = |ws: &[i32]| ws.iter().flat_map(|w| w.to_ne_bytes()).collect::<Vec<u8>>();
+            assert_eq!(
+                desk.keys_heard(4).await,
+                [
+                    (3, words(&[384, -512])),
+                    (5, words(&[0x110, 1])),
+                    (6, words(&[0, 2560])),
+                    (7, words(&[1, -1])),
+                ],
+                "motion, button, axis and wheel on the keys object"
+            );
+            let absolute = (&s, &none, 77u32, 10.0f64, 10.0f64);
+            let r = desk
+                .try_call(rd, "NotifyPointerMotionAbsolute", &absolute)
+                .await;
+            assert_eq!(
+                error_name(r),
+                "org.freedesktop.DBus.Error.InvalidArgs",
+                "no such stream"
+            );
+            let key = s.to_string();
+            (desk.sessions.lock().unwrap().get_mut(&key))
+                .and_then(SessionData::remote_mut)
+                .unwrap()
+                .devices = DEVICE_KEYBOARD;
+            let r = desk
+                .try_call(rd, "NotifyPointerMotion", &(&s, &none, 1.0f64, 1.0f64))
+                .await;
+            assert_eq!(
+                error_name(r),
+                "org.freedesktop.DBus.Error.Failed",
+                "keyboard only"
+            );
+        });
+    }
+
+    #[test]
+    fn before_v12_notify_pointer_is_not_supported() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let desk = Desk::at(11, bus, allowed, &[]).await;
+            assert_eq!(desk.start(1, APP, false).await, RESPONSE_OK);
+            let s =
+                ObjectPath::try_from("/org/freedesktop/portal/desktop/session/1_99/s1").unwrap();
+            let none: HashMap<&str, Variant<'_>> = HashMap::new();
+            let motion = (&s, &none, 1.0f64, 1.0f64);
+            let r = desk
+                .try_call("RemoteDesktop", "NotifyPointerMotion", &motion)
+                .await;
+            assert_eq!(error_name(r), "org.freedesktop.DBus.Error.NotSupported");
         });
     }
 

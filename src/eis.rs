@@ -1002,7 +1002,7 @@ pub(crate) fn sealed_memfd(bytes: &[u8]) -> Option<OwnedFd> {
 }
 
 pub(crate) const KEYS: RangeInclusive<u32> = 0..=0x2ff;
-const BUTTONS: RangeInclusive<u32> = 0x100..=0x117;
+pub(crate) const BUTTONS: RangeInclusive<u32> = 0x100..=0x117;
 const MAX_HELD: usize = 32;
 
 pub(crate) fn track(
@@ -1064,6 +1064,7 @@ fn device_plan(caps: BitFlags<DeviceCapability>) -> DevicePlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remotekeys::Pointer;
 
     fn send_byte(sock: &UnixStream, fd: Option<c_int>) -> std::io::Result<()> {
         let mut byte = [0u8; 1];
@@ -1583,6 +1584,9 @@ mod tests {
         click(&mut h, &peer, &device);
         h.state.keys_key(keys, 30, true);
         h.state.keys_key(keys, 30, false);
+        h.state.keys_pointer(keys, Pointer::Motion(40.0, 30.0));
+        h.state.keys_pointer(keys, Pointer::Button(0x110, true));
+        h.state.keys_pointer(keys, Pointer::Button(0x110, false));
         h.roundtrip(&mut c);
         assert_eq!(h.state.pointer_location(), before, "the pointer stays");
         assert_eq!(c.side.buttons, [], "no click reaches the lock");

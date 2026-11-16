@@ -51,7 +51,7 @@ pub mod proto {
     wayland_scanner::generate_server_code!("protocols/reprise-input-v1.xml");
 }
 
-const VERSION: u32 = 11;
+const VERSION: u32 = 12;
 
 pub const DEVICE_KEYBOARD: u32 = 1;
 pub const DEVICE_POINTER: u32 = 2;
@@ -534,13 +534,28 @@ impl Dispatch2<RepriseKeysV1, State> for KeysData {
         _dh: &DisplayHandle,
         _data_init: &mut DataInit<'_, State>,
     ) {
-        use reprise_keys_v1::{KeyState, Request};
+        use crate::remotekeys::Pointer;
+        use reprise_keys_v1::{Axis, KeyState, Request};
         let down = |s: WEnum<KeyState>| s == WEnum::Value(KeyState::Pressed);
-        match request {
-            Request::Key { key, state: s } => state.keys_key(self.0, key, down(s)),
-            Request::Keysym { keysym, state: s } => state.keys_keysym(self.0, keysym, down(s)),
-            Request::Destroy => {}
-        }
+        let pointer = match request {
+            Request::Key { key, state: s } => return state.keys_key(self.0, key, down(s)),
+            Request::Keysym { keysym, state: s } => {
+                return state.keys_keysym(self.0, keysym, down(s));
+            }
+            Request::Destroy => return,
+            Request::PointerMotion { dx, dy } => Pointer::Motion(dx, dy),
+            Request::PointerMotionAbsolute { output, x, y } => {
+                Pointer::MotionAbsolute(output, x, y)
+            }
+            Request::PointerButton { button, state: s } => Pointer::Button(button, down(s)),
+            Request::PointerAxis { dx, dy } => Pointer::Axis(dx, dy),
+            Request::PointerAxisDiscrete { axis, steps } => match axis {
+                WEnum::Value(Axis::Vertical) => Pointer::Wheel(0, steps),
+                WEnum::Value(Axis::Horizontal) => Pointer::Wheel(steps, 0),
+                _ => return,
+            },
+        };
+        state.keys_pointer(self.0, pointer);
     }
 
     fn destroyed(&self, state: &mut State, _client: ClientId, _resource: &RepriseKeysV1) {
