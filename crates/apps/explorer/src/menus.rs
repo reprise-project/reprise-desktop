@@ -592,8 +592,15 @@ fn pin_row(m: &mut Menu, pinned: Option<bool>, cmd: fn(bool) -> Command) {
 
 /// The right-click menu of a row in the Folders tree. Its first row is the
 /// node's default action: Collapse, Expand, or greyed when nothing is to show. A node with a
-/// folder behind it pins it as `pinned` says, as [`item_menu`] does.
-pub fn tree_menu(expanded: bool, has_children: bool, folder: bool, pinned: Option<bool>) -> Menu {
+/// folder behind it pins it as `pinned` says, as [`item_menu`] does. Properties is live for a
+/// plain folder and, with `bin`, for the Recycle Bin's own sheet.
+pub fn tree_menu(
+    expanded: bool,
+    has_children: bool,
+    folder: bool,
+    bin: bool,
+    pinned: Option<bool>,
+) -> Menu {
     let mut m = Menu::default();
     let label = if expanded { "&Collapse" } else { "&Expand" };
     m.row(bold(label, has_children), Command::ToggleNode);
@@ -613,7 +620,7 @@ pub fn tree_menu(expanded: bool, has_children: bool, folder: bool, pinned: Optio
     // Rename needs the tree's own label editor, which nothing draws yet.
     m.row(row("Rena&me", false), Command::Nothing);
     m.sep();
-    m.row(row("P&roperties", folder), Command::NodeProperties);
+    m.row(row("P&roperties", folder || bin), Command::NodeProperties);
     m
 }
 

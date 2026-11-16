@@ -32,6 +32,18 @@ pub(crate) struct BinProps {
     /// The tab reads still out. A drive that never answers keeps its read, and no second one
     /// starts.
     reads: Vec<(PathBuf, Job<Option<Drive>>)>,
+    /// Some bin held an item as the sheet opened, so its window wears the full bin.
+    full: bool,
+}
+
+impl BinProps {
+    pub(crate) fn icon(&self) -> &'static str {
+        if self.full {
+            "user-trash-full"
+        } else {
+            "user-trash"
+        }
+    }
 }
 
 impl Explorer {
@@ -44,10 +56,11 @@ impl Explorer {
         let work = |_: &Gate| {
             let bins = Bins::system()?;
             let home = home_drive(&bins);
-            Some((bins, home))
+            let full = (bins.files_dirs().iter()).any(|f| !reprisefs::places::trash_empty(f));
+            Some((bins, home, full))
         };
         self.act(ctx, Action::reads(TITLE), work, |ex, read, ctx| {
-            let Some((bins, home)) = read else {
+            let Some((bins, home, full)) = read else {
                 return Reply::none();
             };
             let mut sheet =
@@ -60,6 +73,7 @@ impl Explorer {
                 home,
                 tabs: HashMap::new(),
                 reads: Vec::new(),
+                full,
             });
             ex.rescan_send_drives(ctx);
             ex.read_bin_tabs(ctx);

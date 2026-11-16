@@ -405,3 +405,25 @@ fn a_welcome_panels_still_fades_in_on_its_outputs_frames_over_its_time() {
         "shown whole at its end"
     );
 }
+
+#[test]
+fn ctrl_tab_moves_a_dialogs_focus_as_tab_does() {
+    use crate::dialogview::DialogKey;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.state.open_dialog(Dialog::end_program("foot", 4321));
+    let focused = |h: &crate::harness::Harness| {
+        let d = &h.state.dialogs.views.last().expect("the box").dialog;
+        d.buttons.iter().position(|b| b.default)
+    };
+    assert_eq!(focused(&h), Some(1), "Cancel has the focus at first");
+    let tab = |mods| DialogKey {
+        syms: vec![crate::keys::KEY_Tab],
+        mods,
+        edit: None,
+    };
+    h.state.dialog_key(&tab(crate::keys::MOD_CTRL));
+    assert_eq!(focused(&h), Some(0), "Ctrl+Tab wraps round to End Now");
+    h.state.dialog_key(&tab(0));
+    assert_eq!(focused(&h), Some(1), "and Tab on to Cancel");
+}

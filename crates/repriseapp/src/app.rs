@@ -97,6 +97,11 @@ pub trait Extended {
     fn place_tag(&self, _win: WinId) -> Option<String> {
         None
     }
+    /// The icon theme name window `win` shows in its caption and on its task button in place of
+    /// the program's, sent through xdg-toplevel-icon when the window is made.
+    fn window_icon(&self, _win: WinId) -> Option<&'static str> {
+        None
+    }
     /// The window that takes the compositor's shortcuts while it has the
     /// keyboard (Super, Alt+Tab and every bind reach it as keys), such as
     /// a dialog whose hot-key field has the focus. Read after every

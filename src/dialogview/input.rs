@@ -536,15 +536,11 @@ impl State {
         }
         let ctrl = k.mods & MOD_CTRL != 0;
         let shift = k.mods & MOD_SHIFT != 0;
-        // The table every repriseapp program reads; Ctrl+Tab turns no page in these one-page
-        // dialogs.
+        // The table every repriseapp program reads, so Ctrl+Tab moves the focus as Tab does.
         let special = k
             .syms
             .iter()
             .find_map(|&sym| reprisekit::controls::form::special_key(sym, shift, alt));
-        if let (Some(Key::Tab { .. }), true) = (&special, ctrl) {
-            return;
-        }
         // Everything else is an editing key. Alt+letter is an access key even in a field; bare Backspace
         // stays its own key so a form can route it to the focused item.
         let key = match special.or_else(|| {

@@ -81,6 +81,7 @@ impl Host {
         );
     }
 
+    /// Sends window `id`'s xdg-toplevel-tag and xdg-toplevel-icon, before its first commit.
     fn send_tag(&mut self, window: &Window, id: WinId, caption: Caption) {
         let tag = match self.tag_of(id, caption) {
             "" if matches!(caption, Caption::Window | Caption::None) => {
@@ -90,6 +91,12 @@ impl Host {
         };
         if !tag.is_empty() {
             send_tag(self.tag_manager.as_ref(), window, &tag);
+        }
+        if let (Some(m), Some(name)) = (&self.icon_manager, self.app.window_icon(id)) {
+            let icon = m.create_icon(&self.qh, NoEvents);
+            icon.set_name(wire::text(name).into());
+            m.set_icon(window.xdg_toplevel(), Some(&icon));
+            icon.destroy();
         }
     }
 

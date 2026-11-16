@@ -214,7 +214,12 @@ impl Explorer {
         let pinned =
             (self.node_pin_dir()).map(|dir| reprisefs::pins::is_pinned(&self.pinned(), &dir));
         let folder = self.node_folder().is_some();
-        crate::menus::tree_menu(expanded, has_children, folder, pinned)
+        crate::menus::tree_menu(expanded, has_children, folder, self.node_is_bin(), pinned)
+    }
+
+    pub fn node_is_bin(&self) -> bool {
+        let selected = self.tree.selected.as_ref();
+        selected.and_then(|p| self.place_of(p)) == Some(Place::RecycleBin)
     }
 
     pub fn node_folder(&self) -> Option<(PathBuf, String)> {
