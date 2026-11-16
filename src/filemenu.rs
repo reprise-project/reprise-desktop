@@ -14,7 +14,6 @@ use crate::compositor::State;
 use crate::desktop::{self, Target};
 use crate::desktopview::{DesktopCommand, IconMenu, entry, icon_menu};
 use crate::dragview::{DragSource, DropOp, DropTarget};
-use crate::fsjobs::Action;
 
 /// The menu of a folder (`m.is_dir`) or of a file of type `mime`, with `m`'s
 /// launcher rows; the file verbs come from `mime`.
@@ -135,22 +134,7 @@ impl State {
             Dc::Print | Dc::Edit => self.print_or_edit(vec![path], cmd == Dc::Print),
             Dc::OpenWithApp(app) => self.open_files_with(vec![path], &app),
             Dc::ChooseProgram => self.choose_program(&path),
-            Dc::SendToDest(row) => {
-                // The names beside the file, which a Send To to the same folder numbers past.
-                let dir = path.parent().map(Path::to_path_buf);
-                self.spawn_fs_action(Action::reads("Send To"), move |_| {
-                    let existing: Vec<String> = dir
-                        .and_then(|d| std::fs::read_dir(d).ok())
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|e| e.ok()?.file_name().into_string().ok())
-                        .collect();
-                    Box::new(move |state: &mut State| {
-                        let source = vec![DragSource::file(path)];
-                        state.send_sources_to(row, &source, &existing, None);
-                    })
-                });
-            }
+            Dc::SendToDest(row) => self.send_sources_to(row, &[DragSource::file(path)], None),
             Dc::Cut | Dc::Copy => {
                 if self.desktop_locked() {
                     return;
@@ -174,10 +158,7 @@ impl State {
                     self.perform_all(&source(), &DropTarget::Folder(dir), DropOp::Shortcut);
                 }
             }
-            Dc::Trash => {
-                let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
-                self.ask_delete(vec![path], name, false);
-            }
+            Dc::Trash => self.delete_files(vec![path], false),
             Dc::IconProperties => self.show_properties(&[path]),
             _ => {}
         }

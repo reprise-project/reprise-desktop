@@ -87,13 +87,7 @@ fn layout_stacks_text_field_and_buttons() {
         None
     );
     assert!(l.help.is_some() && l.drop.is_some());
-    let c = Dialog::confirm_delete(
-        "New Text Document",
-        std::path::Path::new("/x"),
-        false,
-        false,
-        false,
-    );
+    let c = yes_no("New Text Document");
     let l = DialogLayout::compute(&theme, &text, &c);
     assert_eq!(l.size.0, 419);
     assert_eq!(l.icon.unwrap(), Rect::new(17, 38, 32, 32));
@@ -102,16 +96,6 @@ fn layout_stacks_text_field_and_buttons() {
     assert_eq!(l.buttons[0], Rect::new(239, 96, 80, 23));
     assert_eq!(l.buttons[1], Rect::new(326, 96, 80, 23));
     assert_eq!(l.size.1, 133);
-    let dir = std::env::temp_dir();
-    let f = Dialog::confirm_delete("New Folder", &dir, true, false, false);
-    assert_eq!(f.title, "Confirm Folder Delete");
-    assert!(
-        f.text
-            .starts_with("Are you sure you want to remove the folder 'New Folder'")
-    );
-    let l = DialogLayout::compute(&theme, &text, &f);
-    assert_eq!(l.buttons[0].y, 115);
-    assert_eq!(l.size, (419, 152));
 }
 
 #[test]
@@ -218,198 +202,6 @@ fn confirm_hide_fits_its_text() {
 }
 
 #[test]
-fn confirm_delete_trashes_on_yes_only() {
-    let path = std::path::Path::new("/home/u/Desktop/it's mine.txt");
-    let mut d = Dialog::confirm_delete("it's mine.txt", path, false, false, false);
-    assert_eq!(d.placement, Placement::Center);
-    assert!(d.text.contains("'it's mine.txt'"));
-    let yes = Outcome::Delete {
-        paths: vec![path.to_path_buf()],
-        erase: false,
-    };
-    assert_eq!(d.key(Key::Enter), yes);
-    assert_eq!(d.key(Key::Edit(EditKey::Insert("y".into()))), yes);
-    assert_eq!(
-        d.key(Key::Edit(EditKey::Insert("n".into()))),
-        Outcome::Close
-    );
-    assert_eq!(d.key(Key::Escape), Outcome::Close);
-    assert_eq!(d.press(1), Outcome::Close);
-    let mut e = Dialog::confirm_delete("it's mine.txt", path, false, true, false);
-    assert_eq!(e.text, "Are you sure you want to delete 'it's mine.txt'?");
-    assert_eq!(e.icon.as_deref(), Some("folder"));
-    assert!(matches!(
-        e.style,
-        Style::Classic {
-            delete_badge: true,
-            ..
-        }
-    ));
-    assert_eq!(
-        e.key(Key::Enter),
-        Outcome::Close,
-        "Enter keeps what Yes would erase"
-    );
-    assert_eq!(
-        e.key(Key::Edit(EditKey::Insert("y".into()))),
-        Outcome::Delete {
-            paths: vec![path.to_path_buf()],
-            erase: true,
-        }
-    );
-    let dir = std::env::temp_dir();
-    let f = Dialog::confirm_delete("New Folder", &dir, true, true, false);
-    assert_eq!(f.title, "Confirm Folder Delete");
-    assert_eq!(
-        f.text,
-        "Are you sure you want to remove the folder 'New Folder' and all its contents?"
-    );
-}
-
-#[test]
-fn too_big_asks_with_the_batch_buttons() {
-    use reprisefs::bincap::{Measured, TooBig};
-    use reprisefs::replace::Answer;
-    let big = std::path::PathBuf::from("/d/big.iso");
-    let too_big = Some(Measured::unstamped(2, 1));
-    let asker = TooBig::new(vec!["/d/a".into(), big.clone()], vec![None, too_big]);
-    let mut d = Dialog::too_big(&big, false, asker.clone());
-    assert_eq!(d.title, "Confirm File Delete");
-    assert_eq!(
-        d.text,
-        "'big.iso' is too big for the Recycle Bin. Do you want to delete it permanently?"
-    );
-    let labels: Vec<&str> = d.buttons.iter().map(|b| b.label.as_str()).collect();
-    assert_eq!(labels, ["&Yes", "Yes to &All", "&No", "Cancel"]);
-    let answer = |answer| Outcome::TooBig {
-        asker: Box::new(asker.clone()),
-        answer,
-    };
-    assert_eq!(d.key(Key::Enter), answer(Answer::No));
-    assert_eq!(d.press(0), answer(Answer::Yes));
-    assert_eq!(d.press(1), answer(Answer::YesToAll));
-    assert_eq!(d.press(2), answer(Answer::No));
-    assert_eq!(d.press(3), Outcome::Close);
-    let theme = Theme::default();
-    let text = TextRenderer::load(&FontConfig::default());
-    let l = DialogLayout::compute(&theme, &text, &d);
-    assert_eq!(l.size.0, 419);
-    assert_eq!(l.buttons.len(), 4);
-    assert_eq!(l.buttons[3].right(), 419 - 13);
-    for w in l.buttons.windows(2) {
-        assert_eq!((w[0].width, w[1].x - w[0].right()), (80, 7));
-    }
-
-    let one = TooBig::new(vec![big.clone()], vec![too_big]);
-    let d = Dialog::too_big(&big, true, one);
-    assert_eq!(d.title, "Confirm Folder Delete");
-    let labels: Vec<&str> = d.buttons.iter().map(|b| b.label.as_str()).collect();
-    assert_eq!(labels, ["&Yes", "&No"]);
-}
-
-#[test]
-fn confirm_delete_many_counts_the_items_and_trashes_them_all() {
-    let paths = vec![
-        std::path::PathBuf::from("/d/New Folder"),
-        std::path::PathBuf::from("/d/a b.txt"),
-    ];
-    let mut d = Dialog::confirm_delete_many(&paths, false, BinLack::None);
-    assert_eq!(d.title, "Confirm Multiple File Delete");
-    assert_eq!(
-        d.text,
-        "Are you sure you want to send these 2 items to the Recycle Bin?"
-    );
-    assert_eq!(
-        d.key(Key::Enter),
-        Outcome::Delete {
-            paths: paths.clone(),
-            erase: false,
-        }
-    );
-    let theme = Theme::default();
-    let text = TextRenderer::load(&FontConfig::default());
-    let l = DialogLayout::compute(&theme, &text, &d);
-    assert_eq!(l.size, (419, 135));
-    assert_eq!(l.icon.map(|r| r.y), Some(38));
-    assert_eq!(l.lines[0].0.y, 45);
-    assert_eq!(l.buttons[0], Rect::new(224, 96, 87, BUTTON_H));
-    assert_eq!(l.buttons[1], Rect::new(318, 96, 87, BUTTON_H));
-    let mut e = Dialog::confirm_delete_many(&paths, true, BinLack::None);
-    assert_eq!(e.text, "Are you sure you want to delete these 2 items?");
-    assert!(matches!(
-        e.style,
-        Style::Classic {
-            delete_badge: true,
-            ..
-        }
-    ));
-    assert_eq!(e.key(Key::Enter), Outcome::Close);
-    assert_eq!(
-        e.key(Key::Edit(EditKey::Insert("y".into()))),
-        Outcome::Delete { paths, erase: true }
-    );
-}
-
-/// Yes deletes the path by its bytes: a name that is not UTF-8 reaches
-/// the host as it is, not with U+FFFD in place of the stray byte.
-#[test]
-fn confirm_delete_keeps_a_name_that_is_not_utf8() {
-    use std::os::unix::ffi::OsStrExt;
-    let path = std::path::PathBuf::from(std::ffi::OsStr::from_bytes(b"/d/a\xffb.txt"));
-    let mut d = Dialog::confirm_delete("a\u{fffd}b.txt", &path, false, false, false);
-    assert_eq!(
-        d.key(Key::Enter),
-        Outcome::Delete {
-            paths: vec![path.clone()],
-            erase: false,
-        }
-    );
-    let paths = vec![path, std::path::PathBuf::from("/d/c.txt")];
-    let mut m = Dialog::confirm_delete_many(&paths, true, BinLack::None);
-    assert_eq!(
-        m.key(Key::Edit(EditKey::Insert("y".into()))),
-        Outcome::Delete { paths, erase: true }
-    );
-}
-
-#[test]
-fn a_delete_off_a_drive_with_no_bin_says_so_first() {
-    let one = Dialog::confirm_delete("d.txt", std::path::Path::new("/m/d.txt"), false, true, true);
-    assert_eq!(
-        one.text,
-        "This drive has no Recycle Bin. Are you sure you want to delete 'd.txt'?"
-    );
-    let paths = vec!["/m/a".into(), "/m/b".into()];
-    let all = Dialog::confirm_delete_many(&paths, true, BinLack::All);
-    assert_eq!(
-        all.text,
-        "None of these items can go to the Recycle Bin. Are you sure you want to delete \
-         these 2 items?"
-    );
-    let some = Dialog::confirm_delete_many(&paths, true, BinLack::Some);
-    assert_eq!(
-        some.text,
-        "Some of these items cannot go to the Recycle Bin. Are you sure you want to \
-         delete these 2 items?"
-    );
-}
-
-#[test]
-fn confirm_empty_bin_names_one_item_or_counts_them() {
-    let one = Dialog::confirm_empty_bin(1, Some("notes.txt"));
-    assert_eq!(one.title, "Confirm File Delete");
-    assert_eq!(one.text, "Are you sure you want to delete 'notes.txt'?");
-    let mut many = Dialog::confirm_empty_bin(3, Some("a"));
-    assert_eq!(many.title, "Confirm Multiple File Delete");
-    assert_eq!(many.text, "Are you sure you want to delete these 3 items?");
-    assert_eq!(many.key(Key::Enter), Outcome::Close, "Enter keeps the bin");
-    assert_eq!(
-        many.key(Key::Edit(EditKey::Insert("y".into()))),
-        Outcome::EmptyBin
-    );
-}
-
-#[test]
 fn disabled_button_is_inert() {
     let mut d = log_off();
     assert!(!d.buttons[0].enabled);
@@ -505,14 +297,11 @@ fn end_program_lays_out_its_template() {
 }
 
 #[test]
-fn end_program_and_windowed_dialogs_have_a_taskbar_button() {
+fn only_end_program_has_a_taskbar_button() {
     assert!(Dialog::end_program("foot", 4321).on_taskbar());
-    assert!(!Dialog::end_program("foot", 4321).windowed());
     assert!(!Dialog::run(&[]).on_taskbar());
     assert!(!log_off().on_taskbar());
     assert!(!Dialog::error("Title", "Text".into()).on_taskbar());
-    assert!(!Dialog::run(&[]).windowed());
-    assert!(!Dialog::error("Title", "Text".into()).windowed());
 }
 
 #[test]

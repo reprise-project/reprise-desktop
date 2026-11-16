@@ -12,7 +12,6 @@ use crate::raster::Canvas;
 use crate::text::{split_mnemonic, wrap};
 use crate::textedit::EditKey;
 use crate::theme::Color;
-use reprisefs::bincap::BinLack;
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, BarHit, LINE_H};
 use reprisekit::controls::combo;
 use reprisekit::controls::form::Key;
@@ -30,6 +29,28 @@ mod welcome;
 use crate::theme::FontConfig;
 
 /// The test fonts' UI face, for tests that pin exact pixels.
+/// A two-button message box over a file named `name`, Yes the default: the plain prompt the
+/// frame and fit tests draw in every look.
+fn yes_no(name: &str) -> Dialog {
+    Dialog {
+        icon: Some("user-trash-full".into()),
+        text: format!("Are you sure you want to send '{name}' to the Recycle Bin?"),
+        buttons: vec![
+            button("&Yes", DialogAction::Cancel, true),
+            button("&No", DialogAction::Cancel, false),
+        ],
+        ..Dialog::new(
+            "Confirm File Delete",
+            Style::Classic {
+                template: Template::MessageBox,
+                text_h: None,
+                delete_badge: false,
+            },
+            Placement::Center,
+        )
+    }
+}
+
 fn tahoma() -> TextRenderer {
     reprisekit::pins::fonts();
     TextRenderer::load(&FontConfig::default())

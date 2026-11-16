@@ -767,7 +767,7 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
             false
         }
         TrayEvent::EmptyRecycleBin => {
-            state.ask_empty_bin();
+            state.empty_bin();
             false
         }
         TrayEvent::Identify(names) => {

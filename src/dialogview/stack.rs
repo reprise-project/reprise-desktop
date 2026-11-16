@@ -102,7 +102,7 @@ impl State {
             }
         };
         let welcome = matches!(d.style, Style::Welcome(_));
-        let tree = self.scene.tree_create(dialog_layer(&d, &self.layers));
+        let tree = self.scene.tree_create(self.layers.menu);
         self.scene
             .set_data(tree, Some(SceneOwner::Dialog(self.dialogs.views.len())));
         // Only `content` shows in the backdrop.
@@ -136,7 +136,6 @@ impl State {
             still_canvas: None,
             cues: Cues::opened(self.key_input.last_key_input),
             fade: None,
-            minimized: false,
         };
         self.dialogs.views.push(view);
         self.activate_dialogs();
@@ -199,19 +198,10 @@ impl State {
     }
 
     /// Raise dialog `index` with its family (`raise_order`) and give the keyboard to the top one,
-    /// or to the window standing over it (`window_over_dialog`); a minimised one is restored first.
+    /// or to the window standing over it (`window_over_dialog`).
     pub(crate) fn raise_dialog(&mut self, index: usize) {
-        let Some(v) = self.dialogs.views.get_mut(index) else {
+        if index >= self.dialogs.views.len() {
             return;
-        };
-        let restored = std::mem::take(&mut v.minimized);
-        let (tree, windowed) = (v.tree, v.dialog.windowed());
-        if restored {
-            self.scene.set_enabled(tree, true);
-        }
-        // Over the windows even when it already tops the dialogs' stack.
-        if windowed {
-            self.scene.raise_to_top(tree);
         }
         let links: Vec<(u64, Option<u64>)> = self
             .dialogs
@@ -228,23 +218,16 @@ impl State {
                 .collect();
             self.dialogs.views = order.iter().filter_map(|&i| old[i].take()).collect();
             self.renumber_dialogs();
-            // A windowed dialog that moved down keeps its place among the windows.
             for i in first..self.dialogs.views.len() {
-                let v = &self.dialogs.views[i];
-                if !v.dialog.windowed() {
-                    self.scene.raise_to_top(v.tree);
-                }
+                self.scene.raise_to_top(self.dialogs.views[i].tree);
             }
         }
         let activated = self.activate_dialogs();
         let blurred = self.blur_dialogs_without_keyboard();
-        if activated || blurred || first_moved.is_some() || restored {
+        if activated || blurred || first_moved.is_some() {
             self.restart_caret();
             self.redraw_dialogs();
             self.sync_dialog_tasks(false);
-        }
-        if restored {
-            self.redraw_all();
         }
         self.raise_windows_over_dialogs();
         if let Some(id) = self.dialogs.views.last().map(|v| v.id)
@@ -266,42 +249,10 @@ impl State {
         }
     }
 
-    /// Minimise windowed dialog `id`: its tree goes off and it drops to the bottom of the stack,
-    /// so the keyboard passes to the dialog now on top or, with none shown, to the top window.
-    pub fn minimize_dialog(&mut self, id: u64) {
-        let Some(i) = self.dialog_index(id) else {
-            return;
-        };
-        if self.dialogs.views[i].minimized || !self.dialogs.views[i].dialog.windowed() {
-            return;
-        }
-        let mut v = self.dialogs.views.remove(i);
-        v.minimized = true;
-        self.scene.set_enabled(v.tree, false);
-        self.dialogs.views.insert(0, v);
-        self.settle_dialogs();
-        self.blur_dialogs_without_keyboard();
-        self.redraw_dialogs();
-        self.sync_dialog_tasks(false);
-        self.redraw_all();
-    }
-
-    /// A left click on dialog `id`'s task button: an active windowed dialog minimises, any other
-    /// comes up with the keyboard.
-    pub fn task_dialog_click(&mut self, id: u64) {
-        let windowed = (self.dialogs.views.iter()).any(|v| v.id == id && v.dialog.windowed());
-        if windowed && self.active_dialog_id() == Some(id) {
-            self.minimize_dialog(id);
-        } else {
-            self.focus_dialog(id);
-        }
-    }
-
-    /// Whether the top dialog has the keyboard; a Welcome panel always does, a minimised one never.
+    /// Whether the top dialog has the keyboard; a Welcome panel always does.
     pub fn dialog_has_keyboard(&self) -> bool {
-        self.dialogs.views.last().is_some_and(|v| {
-            !v.minimized && (self.dialogs.active || matches!(v.dialog.style, Style::Welcome(_)))
-        })
+        (self.dialogs.views.last())
+            .is_some_and(|v| self.dialogs.active || matches!(v.dialog.style, Style::Welcome(_)))
     }
 
     /// The active dialog: the top one while it has the keyboard. Its task button draws pushed in.
@@ -382,11 +333,11 @@ impl State {
         self.sync_dialog_tasks(on_taskbar);
     }
 
-    /// After dialogs left the stack or went minimised: redraw the new top, or return the keyboard
-    /// to the windows when no dialog is shown.
+    /// After dialogs left the stack: redraw the new top, or return the keyboard to the windows
+    /// when no dialog is left.
     fn settle_dialogs(&mut self) {
         self.renumber_dialogs();
-        if self.dialogs.views.last().is_none_or(|v| v.minimized) {
+        if self.dialogs.views.is_empty() {
             self.stop_caret();
             if self.dialogs.active {
                 self.dialogs.active = false;

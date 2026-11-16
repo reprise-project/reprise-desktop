@@ -7,23 +7,6 @@ impl State {
         match outcome {
             Outcome::Nothing => {}
             Outcome::Redraw => self.redraw_top_dialog(),
-            Outcome::Relayout => self.relayout_top_dialog(),
-            Outcome::Close | Outcome::CopyCancel
-                if self
-                    .dialogs
-                    .views
-                    .last()
-                    .is_some_and(|v| v.dialog.copy().is_some()) =>
-            {
-                let id = self.dialogs.views[self.dialogs.views.len() - 1].id;
-                self.cancel_put(id);
-            }
-            Outcome::CopyCancel => {}
-            Outcome::CopyPause(on) => {
-                if let Some(id) = self.dialogs.views.last().map(|v| v.id) {
-                    self.pause_put(id, on);
-                }
-            }
             Outcome::Close => self.close_dialog(),
             Outcome::Spawn(cmd) => {
                 self.close_dialog();
@@ -44,14 +27,6 @@ impl State {
             Outcome::SessionEnd(choice) => crate::sessionend::answer(self, choice),
             Outcome::Location { desktop_id, answer } => {
                 crate::location::answer(self, &desktop_id, answer)
-            }
-            Outcome::Delete { paths, erase } => {
-                self.close_dialog();
-                self.delete_paths(paths, erase);
-            }
-            Outcome::EmptyBin => {
-                self.close_dialog();
-                self.empty_bin();
             }
             Outcome::GreeterPower(a) => {
                 self.close_dialog();
@@ -120,15 +95,6 @@ impl State {
             Outcome::TrayChoices(c) => {
                 self.close_dialog();
                 crate::tray::apply_choices(self, c);
-            }
-            Outcome::Replace { batch, answer } => {
-                self.close_dialog();
-                self.replace_answered(*batch, answer);
-            }
-            Outcome::TooBig { mut asker, answer } => {
-                self.close_dialog();
-                asker.answer(answer);
-                self.too_big_step(*asker);
             }
         }
     }

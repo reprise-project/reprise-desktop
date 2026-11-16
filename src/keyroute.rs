@@ -82,9 +82,6 @@ pub struct Modes {
     /// That dialog is a Welcome panel, which keeps even the switcher's
     /// bind.
     pub dialog_modal: bool,
-    /// That dialog stands among the windows (`Dialog::windowed`), so Show
-    /// Desktop reaches past it.
-    pub dialog_windowed: bool,
     pub launcher_open: bool,
     /// The window overview is open, and whether it is snap assist, which
     /// lets the snap binds through.
@@ -589,14 +586,11 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     // The dialog with the keyboard takes every press (its field wants the
     // text), except binds that move no focus (`passes_dialog`) and the
     // switchers' binds: Alt+Tab leaves a dialog as it leaves a window, and
-    // so does Super+Tab. A windowed dialog lets Show Desktop through as well.
+    // so does Super+Tab.
     if modes.dialog_has_keyboard && k.pressed {
         let passing: Vec<Action> = bound(k, binds).into_iter().filter(passes_dialog).collect();
         if !passing.is_empty() {
             return with(KeyRoute::Binds(passing));
-        }
-        if modes.dialog_windowed && own(Action::ShowDesktop) {
-            return with(KeyRoute::Binds(vec![Action::ShowDesktop]));
         }
         return with(switch().unwrap_or(KeyRoute::Dialog));
     }
@@ -1038,9 +1032,7 @@ pub fn chord_allowed(modes: &Modes, a: &Action) -> bool {
         && !modes.shortcuts_inhibited
         && !modes.dragging
         && (!(modes.locked || modes.greeter) || *a == Action::NextLayout)
-        && (!modes.dialog_has_keyboard
-            || passes_dialog(a)
-            || (modes.dialog_windowed && *a == Action::ShowDesktop))
+        && (!modes.dialog_has_keyboard || passes_dialog(a))
 }
 
 /// The VT a press of `XF86Switch_VT_n` asks for, when the seat can switch.

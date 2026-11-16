@@ -7,10 +7,11 @@
 //! drops on the desktop's own targets still end in [`State::perform_all`] or the drop menu. A system icon's
 //! drag stays on the desktop and ends in [`State::drag_finish`].
 //!
-//! File work runs on a put job (`putview`), one batch per folder at a time. A name the target already holds
-//! asks first (Confirm File/Folder Replace); a failed drop says why in an error box.
+//! Files and folders go to Explorer (`filejobs`), which asks about a taken name, shows the progress and says
+//! why a drop failed. The launchers a drop makes of what is no file (a Start menu program's copy, a shortcut to
+//! a system icon) are written here.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use reprisefs::apps::AppEntry;
@@ -186,14 +187,6 @@ pub struct Drags {
     /// Reprise's own target under the seat's drag of the desktop's icons, and its answer (`dndsource`).
     pub over: Option<(DropTarget, Answer)>,
     pub pending_drop: Option<(Vec<DragSource>, DropTarget)>,
-    /// Batches waiting per folder; a folder with a batch running has an entry (empty when none waits).
-    pub(crate) put_queues: HashMap<PathBuf, VecDeque<QueuedPut>>,
-    /// The batch running per folder.
-    pub(crate) running: HashMap<PathBuf, crate::putview::Running>,
-    /// Deletes and Empty Recycle Bin running, by a number of their own.
-    pub(crate) removals: HashMap<u64, crate::putview::Removing>,
-    /// Send To > Compressed (zipped) Folder runs, by the same numbers.
-    pub(crate) zips: HashMap<u64, crate::putview::Zipping>,
 }
 
 /// What a left drop of `grabbed` on `target` does with no modifier: move an icon about the desktop or
@@ -240,57 +233,6 @@ fn desktop_entry_named(entries: &[desktop::DesktopEntry], name: &str) -> Option<
 /// or with auto-arrange) and the place a shortcut to a system icon opens.
 pub(crate) type Put = (DragSource, Option<(i32, i32)>, Option<PlaceLink>);
 
-/// A drop's file work into one folder, held while the replace prompt asks about clashing names (`reprisefs::replace`).
-#[derive(Clone, Debug, PartialEq)]
-pub struct Batch {
-    dir: PathBuf,
-    op: DropOp,
-    puts: Vec<Put>,
-    existing: Vec<String>,
-    asker: reprisefs::replace::Asker,
-    /// This batch's own name: its prompt's dialog identity, so a second drop's prompt is never taken for the first's.
-    token: PathBuf,
-}
-
-impl Batch {
-    fn new(dir: PathBuf, op: DropOp, puts: Vec<Put>, existing: Vec<String>) -> Batch {
-        let clashes = reprisefs::replace::clashes(
-            puts.iter()
-                .map(|(s, _, _)| (s.path(), op, matches!(s, DragSource::App { .. }))),
-            &dir,
-        );
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Batch {
-            asker: reprisefs::replace::Asker::new(clashes),
-            token: PathBuf::from(format!("replace-batch-{n}")),
-            dir,
-            op,
-            puts,
-            existing,
-        }
-    }
-
-    pub fn identity(&self) -> &Path {
-        &self.token
-    }
-
-    #[cfg(test)]
-    pub fn asking(&self) -> Option<&Path> {
-        match self.asker.step() {
-            reprisefs::replace::Step::Ask { index, .. } => Some(self.puts.get(index)?.0.path()),
-            _ => None,
-        }
-    }
-}
-
-pub struct QueuedPut {
-    pub(crate) dir: PathBuf,
-    pub(crate) op: DropOp,
-    pub(crate) puts: Vec<(Put, Option<reprisefs::replace::Replacing>)>,
-    pub(crate) existing: Vec<String>,
-}
-
 pub(crate) type Failure = (&'static str, String);
 
 /// The launcher text of a shortcut named `name` to `source`; a shortcut to a system icon opens
@@ -327,21 +269,19 @@ pub(crate) fn shortcut_text(
     }
 }
 
-/// Copy, move or make a shortcut to `source` inside `dir`, named past `existing`, over a name `dir`
-/// holds only with `replace`, as a put's job does. A Start menu program is always copied (its file
-/// belongs to the system).
-#[cfg(test)]
+/// Copy a Start menu program's file into `dir`, or make a shortcut to `source` there, named past
+/// `existing` and numbered past a name `dir` holds. A program's file is copied whatever `op` says,
+/// since it belongs to the system.
 fn put_in(
     source: &DragSource,
     dir: &Path,
     op: DropOp,
     existing: &[String],
     link: Option<&PlaceLink>,
-    replace: Option<reprisefs::replace::Seen>,
 ) -> Result<String, reprisefs::ops::PutError> {
     let is_app = matches!(source, DragSource::App { .. });
     let shortcut = |name: &str| shortcut_text(source, link, name);
-    reprisefs::ops::put_in_with(
+    reprisefs::ops::put_in(
         source.path(),
         source.name(),
         is_app,
@@ -349,12 +289,6 @@ fn put_in(
         op,
         existing,
         &shortcut,
-        replace
-            .map(|seen| reprisefs::replace::Replacing {
-                seen,
-                files: Default::default(),
-            })
-            .as_ref(),
     )
     .map(|landed| landed.to_string_lossy().into_owned())
 }
@@ -869,9 +803,8 @@ impl State {
     }
 
     /// Do the drop of `sources` (the grabbed one first): a drag's, or a Paste's, Send To's or Create
-    /// Shortcut's. File work runs on a put job; the desktop's watch redraws once a file lands, and the
-    /// chosen cell is recorded when its name comes back. The first failure stops the batch. On a desktop
-    /// cell the grabbed icon lands there and the others keep their grid offsets, falling to the next free cell if taken.
+    /// Shortcut's, its file work in Explorer ([`Self::put_into`]). On a desktop cell the grabbed icon
+    /// lands there and the others keep their grid offsets, falling to the next free cell if taken.
     pub fn perform_all(&mut self, sources: &[DragSource], target: &DropTarget, op: DropOp) {
         if self.desktop_locked() {
             log::info!("desktop: a drop under the lock is refused");
@@ -933,12 +866,12 @@ impl State {
                         self.trash_selection(index);
                     }
                 }
-                Some(BinDrop::Files(paths)) => self.trash_paths(paths),
+                Some(BinDrop::Files(paths)) => self.trash_files(paths),
                 None => {}
             },
             DropTarget::Folder(dir) => {
                 let puts = sources.iter().map(|s| (s.clone(), None, None)).collect();
-                self.scan_then_ask(dir.clone(), op, puts, Vec::new());
+                self.put_into(dir.clone(), op, puts, Vec::new(), here);
             }
             DropTarget::Desktop(saved) => {
                 let area = self.desktop_area();
@@ -1033,9 +966,84 @@ impl State {
                 if puts.is_empty() {
                     return;
                 }
-                self.scan_then_ask(dir, op, puts, existing);
+                self.put_into(dir, op, puts, existing, here);
             }
         }
+    }
+
+    /// Carry out `puts` into `dir`: files and folders go to Explorer, and launchers of what is no
+    /// file ([`Self::write_launchers`]) are written here, all named past `existing`, the desktop's
+    /// names. A put with a cell lands its icon there once the desktop shows it; `here` holds the
+    /// sources that sit in the desktop folder.
+    fn put_into(
+        &mut self,
+        dir: PathBuf,
+        op: DropOp,
+        puts: Vec<Put>,
+        existing: Vec<String>,
+        here: &HashSet<PathBuf>,
+    ) {
+        let (launchers, files): (Vec<Put>, Vec<Put>) = puts
+            .into_iter()
+            .partition(|(s, _, link)| link.is_some() || matches!(s, DragSource::App { .. }));
+        if !files.is_empty() {
+            let same_dir = |p: &Path| here.contains(p) || p.parent() == Some(dir.as_path());
+            let landings = (files.iter())
+                .filter_map(|(s, cell, _)| {
+                    let name =
+                        crate::filejobs::landing_name(s.path(), op, same_dir(s.path()), &existing);
+                    Some((name?, (*cell)?))
+                })
+                .collect();
+            let sources: Vec<PathBuf> = files
+                .into_iter()
+                .map(|(s, ..)| s.path().to_path_buf())
+                .collect();
+            if op == DropOp::Move {
+                self.cut_moved(&sources);
+            }
+            self.put_files(&dir, op, sources, landings);
+        }
+        if !launchers.is_empty() {
+            self.write_launchers(dir, op, launchers, existing);
+        }
+    }
+
+    /// Write the launchers of `puts` into `dir` off the loop: a Start menu program's file copied
+    /// and allowed to launch, a shortcut to one, or a shortcut to a system icon, which is never
+    /// copied. One with a cell lands there; the first failure stops the rest and says why.
+    fn write_launchers(&mut self, dir: PathBuf, op: DropOp, puts: Vec<Put>, existing: Vec<String>) {
+        let action = Action::changes(op.failure_title(), State::rescan_desktop);
+        self.spawn_fs_action(action, move |gate| {
+            if !gate.change(&dir) {
+                return Box::new(|_| {});
+            }
+            let mut taken = existing;
+            let mut landed = Vec::new();
+            let mut failed = None;
+            for (source, cell, link) in &puts {
+                let op = if link.is_some() { DropOp::Shortcut } else { op };
+                match put_in(source, &dir, op, &taken, link.as_ref()) {
+                    Ok(name) => {
+                        taken.push(name.clone());
+                        landed.push((name, *cell));
+                    }
+                    Err(e) => {
+                        log::warn!("drop into {}: {e}", dir.display());
+                        failed = Some(op.failure(source.name(), &e));
+                        break;
+                    }
+                }
+            }
+            Box::new(move |state: &mut State| {
+                for (name, cell) in landed {
+                    if let Some(cell) = cell {
+                        state.land_icon(&name, cell);
+                    }
+                }
+                state.show_drop_failure(failed);
+            })
+        });
     }
 
     /// Make a web link file for each of `links` (URL, page title) another program dropped on `target`:
@@ -1105,138 +1113,6 @@ impl State {
                 state.show_drop_failure(failed);
             })
         });
-    }
-
-    /// Look for the names a drop would land on off the loop (a hung network mount cannot stall the desktop), then carry it out ([`Self::ask_then_put`]).
-    fn scan_then_ask(&mut self, dir: PathBuf, op: DropOp, puts: Vec<Put>, existing: Vec<String>) {
-        self.spawn_fs_action(Action::reads(op.failure_title()), move |_| {
-            let batch = Batch::new(dir, op, puts, existing);
-            Box::new(move |state| state.ask_then_put(batch))
-        });
-    }
-
-    /// Carry out `batch` once every name it would land on is settled, the file work on a put job. A clash
-    /// asks first: sizes and dates are read off the loop, then the replace prompt answers via [`Self::replace_answered`].
-    fn ask_then_put(&mut self, batch: Batch) {
-        use reprisefs::replace::{Clash, Step, Verdict};
-        let verdicts = match batch.asker.step() {
-            Step::Cancelled => return,
-            Step::Ask {
-                index,
-                clash,
-                inside,
-            } => {
-                let item = batch.puts[index].0.path();
-                let mut dest = batch.dir.join(item.file_name().unwrap_or_default());
-                let mut src = item.to_path_buf();
-                if let Some(under) = &inside {
-                    src.push(under);
-                    dest.push(under);
-                }
-                let action = Action::reads(batch.op.failure_title());
-                self.spawn_fs_action(action, move |_| {
-                    let is_12h = reprisefs::locale::is_12h();
-                    let facts = (clash == Clash::File).then(|| {
-                        (
-                            reprisefs::replace::facts(&dest, is_12h),
-                            reprisefs::replace::facts(&src, is_12h),
-                        )
-                    });
-                    Box::new(move |state| {
-                        let d = state.replace_prompt(batch, &src, facts);
-                        state.open_dialog(d);
-                    })
-                });
-                return;
-            }
-            Step::Done(v) => v,
-        };
-        let Batch {
-            dir,
-            op,
-            puts,
-            existing,
-            ..
-        } = batch;
-        let puts: Vec<(Put, Option<reprisefs::replace::Replacing>)> = puts
-            .into_iter()
-            .zip(verdicts)
-            .filter_map(|(p, v)| match v {
-                Verdict::Skip => None,
-                Verdict::Replace(r) => Some((p, Some(r))),
-                Verdict::Put => Some((p, None)),
-            })
-            .collect();
-        if puts.is_empty() {
-            return;
-        }
-        let q = QueuedPut {
-            dir,
-            op,
-            puts,
-            existing,
-        };
-        match self.drags.put_queues.get_mut(&q.dir) {
-            Some(waiting) => waiting.push_back(q),
-            None => {
-                self.drags
-                    .put_queues
-                    .insert(q.dir.clone(), Default::default());
-                self.spawn_put(q);
-            }
-        }
-    }
-
-    /// The replace prompt over `batch` was answered: on to its next clash, or the file work.
-    pub fn replace_answered(&mut self, mut batch: Batch, answer: reprisefs::replace::Answer) {
-        batch.asker.answer(answer);
-        self.ask_then_put(batch);
-    }
-
-    /// Confirm File (or Folder) Replace for `src`, an item of `batch` or a file inside one it merges:
-    /// both files with their icon and, with `facts`, their (size, date) lines, existing then
-    /// incoming; None asks about a folder.
-    fn replace_prompt(
-        &mut self,
-        batch: Batch,
-        src: &Path,
-        facts: Option<((String, String), (String, String))>,
-    ) -> crate::dialog::Dialog {
-        use reprisekit::controls::replacebox::{Fields, Side, Subject};
-        let name = src.file_name().unwrap_or_default().to_string_lossy();
-        let icon = self.icons.get(reprisefs::icons::icon_for_file(src), 32);
-        let side = |(size, modified): (String, String)| Side {
-            size,
-            modified,
-            icon: icon.clone(),
-        };
-        let subject = match facts {
-            Some((existing, incoming)) => Subject::File {
-                existing: Box::new(side(existing)),
-                incoming: Box::new(side(incoming)),
-            },
-            None => Subject::Folder,
-        };
-        let folder = match batch.asker.step() {
-            reprisefs::replace::Step::Ask {
-                index,
-                inside: Some(under),
-                ..
-            } => batch
-                .puts
-                .get(index)
-                .map(|(s, _, _)| reprisefs::replace::merge_folder(s.path(), &under)),
-            _ => None,
-        };
-        let fields = Fields {
-            name: name.into_owned(),
-            many: batch.puts.len() > 1 || folder.is_some(),
-            folder,
-            subject,
-            icon: self.icons.get("folder", 32),
-        };
-        let t = &self.config.theme;
-        crate::dialog::Dialog::confirm_replace(fields, batch, &self.text, t.fonts.size_px, t.text)
     }
 
     pub(crate) fn show_drop_failure(&mut self, failed: Option<Failure>) {
@@ -1557,35 +1433,11 @@ mod tests {
     }
 
     #[test]
-    fn put_in_moves_copies_and_makes_shortcuts() {
+    fn a_program_is_copied_and_allowed_to_launch_whatever_the_op() {
         let base = fixture("putin");
         let _c = Cleanup(base.clone());
         let desk = base.join("Desktop");
-        let folder = desk.join("Reports");
-        std::fs::create_dir_all(&folder).unwrap();
-        let notes = desk.join("notes.txt");
-        std::fs::write(&notes, "hi").unwrap();
-        let icon = DragSource::Icon {
-            id: desktop::IconId::File(notes.clone()),
-            path: notes.clone(),
-            name: "notes.txt".into(),
-        };
-        let existing = vec!["notes.txt".to_string()];
-        assert_eq!(
-            put_in(&icon, &desk, DropOp::Copy, &existing, None, None).unwrap(),
-            "Copy of notes.txt"
-        );
-        assert!(desk.join("Copy of notes.txt").exists());
-        let name = put_in(&icon, &desk, DropOp::Shortcut, &existing, None, None).unwrap();
-        assert_eq!(name, "Shortcut to notes.txt.desktop");
-        let text = std::fs::read_to_string(desk.join("Shortcut to notes.txt.desktop")).unwrap();
-        assert!(text.contains("Exec=xdg-open "));
-        assert!(text.contains("Icon=text-x-generic"));
-        assert_eq!(
-            put_in(&icon, &folder, DropOp::Move, &[], None, None).unwrap(),
-            "notes.txt"
-        );
-        assert!(folder.join("notes.txt").exists() && !notes.exists());
+        std::fs::create_dir_all(&desk).unwrap();
         let app_file = base.join("firefox.desktop");
         std::fs::write(
             &app_file,
@@ -1601,47 +1453,19 @@ mod tests {
             file: app_file.clone(),
         };
         assert_eq!(
-            put_in(&app, &desk, DropOp::Move, &[], None, None).unwrap(),
+            put_in(&app, &desk, DropOp::Move, &[], None).unwrap(),
             "firefox.desktop"
         );
         assert!(app_file.exists() && desk.join("firefox.desktop").exists());
         assert_eq!(
-            put_in(&app, &desk, DropOp::Copy, &[], None, None).unwrap(),
+            put_in(&app, &desk, DropOp::Copy, &[], None).unwrap(),
             "firefox (2).desktop"
         );
         assert!(desk.join("firefox (2).desktop").exists());
-        // A folder is copied with its contents; on its own desktop it is "Copy of" too.
-        let dir_src = DragSource::Icon {
-            id: desktop::IconId::File(folder.clone()),
-            path: folder.clone(),
-            name: "Reports".into(),
-        };
-        std::fs::create_dir(folder.join("2026")).unwrap();
-        std::fs::write(folder.join("2026").join("q3.txt"), "x").unwrap();
-        assert_eq!(
-            put_in(&dir_src, &base, DropOp::Copy, &[], None, None).unwrap(),
-            "Reports"
-        );
-        assert!(base.join("Reports").join("2026").join("q3.txt").exists());
-        assert!(base.join("Reports").join("notes.txt").exists());
-        assert_eq!(
-            put_in(
-                &dir_src,
-                &desk,
-                DropOp::Copy,
-                &["Reports".to_string()],
-                None,
-                None,
-            )
-            .unwrap(),
-            "Copy of Reports"
-        );
-        assert!(desk.join("Copy of Reports").join("notes.txt").exists());
-        let name = put_in(&dir_src, &desk, DropOp::Shortcut, &[], None, None).unwrap();
-        assert_eq!(name, "Shortcut to Reports.desktop");
-        let text = std::fs::read_to_string(desk.join("Shortcut to Reports.desktop")).unwrap();
-        assert!(text.contains("Exec=reprise-explorer "));
-        assert!(text.contains("Icon=folder"));
+        let name = put_in(&app, &desk, DropOp::Shortcut, &[], None).unwrap();
+        assert_eq!(name, "Shortcut to Firefox.desktop");
+        let text = std::fs::read_to_string(desk.join(&name)).unwrap();
+        assert!(text.contains("Exec=firefox"), "{text}");
     }
 
     #[test]
@@ -1662,7 +1486,7 @@ mod tests {
             icon: "user-trash-full".into(),
             command: desktop::place_command(&desktop::recycle_bin(bin.clone(), false)),
         };
-        let name = put_in(&source, &desk, DropOp::Shortcut, &[], Some(&link), None).unwrap();
+        let name = put_in(&source, &desk, DropOp::Shortcut, &[], Some(&link)).unwrap();
         assert_eq!(name, "Shortcut to Recycle Bin.desktop");
         let text = std::fs::read_to_string(desk.join("Shortcut to Recycle Bin.desktop")).unwrap();
         assert!(
@@ -1684,14 +1508,6 @@ mod tests {
         let _c = Cleanup(base.clone());
         let desk = base.join("Desktop");
         std::fs::create_dir_all(&desk).unwrap();
-        let notes = base.join("notes.txt");
-        std::fs::write(&notes, "hi").unwrap();
-        let icon = DragSource::Icon {
-            id: desktop::IconId::File(notes.clone()),
-            path: notes.clone(),
-            name: "notes.txt".into(),
-        };
-        put_in(&icon, &desk, DropOp::Shortcut, &[], None, None).unwrap();
         let app_file = base.join("firefox.desktop");
         std::fs::write(
             &app_file,
@@ -1707,13 +1523,14 @@ mod tests {
             .unwrap(),
             file: app_file.clone(),
         };
-        put_in(&app, &desk, DropOp::Copy, &[], None, None).unwrap();
+        put_in(&app, &desk, DropOp::Copy, &[], None).unwrap();
+        put_in(&app, &desk, DropOp::Shortcut, &[], None).unwrap();
         let entries = desktop::scan(
             &desk,
             &reprisefs::apps::MimeDb::empty(),
             reprisefs::names::Extensions::Hide,
         );
-        for name in ["Shortcut to notes.txt.desktop", "firefox.desktop"] {
+        for name in ["Shortcut to Firefox.desktop", "firefox.desktop"] {
             let e = entries.iter().find(|e| e.name == name);
             assert!(
                 e.is_some_and(|e| matches!(e.target, desktop::Target::Launch(_))),
@@ -1722,136 +1539,6 @@ mod tests {
         }
         let mode = std::fs::metadata(&app_file).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o644, "the program's own file stays 0644");
-    }
-
-    /// A drop onto a name the folder holds asks first: Yes replaces, Put numbers past it; a drop into the file's own folder never asks.
-    #[test]
-    fn a_batch_asks_about_a_taken_name_and_a_yes_replaces_it() {
-        use reprisefs::replace::{Answer, Step, Verdict};
-        let base = fixture("replace");
-        let _c = Cleanup(base.clone());
-        let dest = base.join("dest");
-        std::fs::create_dir_all(&dest).unwrap();
-        let notes = base.join("notes.txt");
-        std::fs::write(&notes, "new").unwrap();
-        std::fs::write(dest.join("notes.txt"), "old").unwrap();
-        let icon = DragSource::Icon {
-            id: desktop::IconId::File(notes.clone()),
-            path: notes.clone(),
-            name: "notes.txt".into(),
-        };
-        let mut batch = Batch::new(
-            dest.clone(),
-            DropOp::Copy,
-            vec![(icon.clone(), None, None)],
-            Vec::new(),
-        );
-        assert_eq!(batch.asking(), Some(notes.as_path()));
-        assert!(matches!(
-            batch.asker.answer(Answer::Yes).clone(),
-            Step::Done(v) if matches!(v[..], [Verdict::Replace(_)])
-        ));
-        assert_eq!(
-            put_in(&icon, &dest, DropOp::Copy, &[], None, None).unwrap(),
-            "notes (2).txt",
-            "without the answer it lands numbered"
-        );
-        assert_eq!(
-            std::fs::read_to_string(dest.join("notes.txt")).unwrap(),
-            "old"
-        );
-        assert_eq!(
-            put_in(
-                &icon,
-                &dest,
-                DropOp::Copy,
-                &[],
-                None,
-                reprisefs::replace::Seen::of(&dest.join("notes.txt"))
-            )
-            .unwrap(),
-            "notes.txt"
-        );
-        assert_eq!(
-            std::fs::read_to_string(dest.join("notes.txt")).unwrap(),
-            "new"
-        );
-        let home = Batch::new(
-            base.clone(),
-            DropOp::Copy,
-            vec![(icon, None, None)],
-            Vec::new(),
-        );
-        assert_eq!(home.asking(), None, "a copy into its own folder is Copy of");
-        assert_ne!(
-            home.identity(),
-            batch.identity(),
-            "two batches' prompts are two windows"
-        );
-    }
-
-    /// The replace prompt hands the same batch back with its answer, so the drop resumes where it stopped.
-    #[test]
-    fn the_replace_prompt_answers_for_its_batch() {
-        use crate::dialog::{Dialog, Outcome};
-        use reprisefs::replace::Answer;
-        use reprisekit::controls::form::Key;
-        use reprisekit::controls::replacebox::{Fields, Subject};
-        let base = fixture("prompt");
-        let _c = Cleanup(base.clone());
-        let dest = base.join("dest");
-        std::fs::create_dir_all(&dest).unwrap();
-        std::fs::write(base.join("a.txt"), "new").unwrap();
-        std::fs::write(dest.join("a.txt"), "old").unwrap();
-        let src = DragSource::file(base.join("a.txt"));
-        let batch = Batch::new(dest, DropOp::Copy, vec![(src, None, None)], Vec::new());
-        let id = batch.identity().to_path_buf();
-        let fields = Fields {
-            name: "a.txt".into(),
-            folder: None,
-            subject: Subject::Folder,
-            icon: None,
-            many: false,
-        };
-        let text = crate::text::TextRenderer::load(&crate::theme::FontConfig::default());
-        let mut d = Dialog::confirm_replace(fields, batch, &text, 11, crate::theme::TextUnits::ONE);
-        match d.key(Key::Enter) {
-            Outcome::Replace { batch, answer } => {
-                assert_eq!(answer, Answer::Yes, "Enter is the Yes");
-                assert_eq!(batch.identity(), id.as_path());
-            }
-            other => panic!("expected the prompt's answer, got {other:?}"),
-        }
-    }
-
-    /// A No on the prompt skips that source; the others still land.
-    #[test]
-    fn a_skipped_clash_leaves_the_file_there_alone() {
-        use reprisefs::replace::{Answer, Step, Verdict};
-        let base = fixture("skip");
-        let _c = Cleanup(base.clone());
-        let dest = base.join("dest");
-        std::fs::create_dir_all(&dest).unwrap();
-        for name in ["a.txt", "b.txt"] {
-            std::fs::write(base.join(name), "new").unwrap();
-        }
-        std::fs::write(dest.join("a.txt"), "old").unwrap();
-        let icon = |name: &str| DragSource::Icon {
-            id: desktop::IconId::File(base.join(name)),
-            path: base.join(name),
-            name: name.into(),
-        };
-        let mut batch = Batch::new(
-            dest.clone(),
-            DropOp::Move,
-            vec![(icon("a.txt"), None, None), (icon("b.txt"), None, None)],
-            Vec::new(),
-        );
-        assert!(matches!(batch.asker.step(), Step::Ask { index: 0, .. }));
-        assert!(matches!(
-            batch.asker.answer(Answer::No).clone(),
-            Step::Done(v) if matches!(v[..], [Verdict::Skip, Verdict::Put])
-        ));
     }
 
     fn desktop_entry(

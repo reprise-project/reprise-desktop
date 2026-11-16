@@ -10,10 +10,9 @@ fn an_open_dialog_lays_out_again_at_a_new_text_size() {
     let big = Theme::default().with_text_size(200);
     let opened = |theme: &Theme| {
         let (px, u) = (theme.fonts.size_px, theme.text);
-        let path = std::path::Path::new("/tmp/a.txt");
         let mut ds = vec![
             Dialog::run(&history()),
-            Dialog::confirm_delete("a.txt", path, false, false, false),
+            yes_no("a.txt"),
             Dialog::location_prompt(
                 &locationprompt::Fields {
                     program: "Maps".into(),
@@ -40,28 +39,8 @@ fn an_open_dialog_lays_out_again_at_a_new_text_size() {
 }
 
 fn measured_forms() -> Vec<Measured> {
-    use reprisekit::controls::{endsession, locationprompt, replacebox};
-    let side = |size: &str| replacebox::Side {
-        size: size.into(),
-        modified: "modified: Monday, September 14, 2026, 3:43:53 PM".into(),
-        icon: None,
-    };
-    let replace = |subject, many| replacebox::Fields {
-        name: "Quarterly report for the board.txt".into(),
-        folder: None,
-        subject,
-        icon: None,
-        many,
-    };
+    use reprisekit::controls::{endsession, locationprompt};
     vec![
-        Measured::Replace(replace(
-            replacebox::Subject::File {
-                existing: Box::new(side("size: 8 bytes")),
-                incoming: Box::new(side("size: 12.4 KB")),
-            },
-            false,
-        )),
-        Measured::Replace(replace(replacebox::Subject::Folder, true)),
         Measured::EndSession(endsession::Fields {
             goal: Goal::Restart,
             rows: vec![endsession::Row {
@@ -126,7 +105,6 @@ fn a_measured_dialog_built_again_keeps_what_its_controls_hold() {
         match m {
             Measured::Location(_) => form.set_check(locationprompt::REMEMBER, false),
             Measured::EndSession(_) => assert!(endsession::set_rows(form, &rows)),
-            _ => {}
         }
         let last = form.items.iter().rev().find_map(|it| match it.control {
             Control::Button { .. } => Some(it.id),
@@ -150,7 +128,7 @@ fn a_measured_dialog_built_again_keeps_what_its_controls_hold() {
 const AREA_1080P: (i32, i32) = (1920, 1040);
 
 /// The tray's Customize dialog in `theme`'s words over three items, as the tray opens it.
-fn tray_dialog(theme: &Theme) -> Dialog {
+pub(super) fn tray_dialog(theme: &Theme) -> Dialog {
     use reprisekit::controls::traycustomize::{Behaviour, Entry, Wording};
     let entry = |key: &str, name: &str| Entry {
         key: key.into(),
@@ -271,26 +249,14 @@ fn form_dialogs(theme: &Theme, text: &TextRenderer) -> Vec<Dialog> {
 
 /// Every compositor dialog drawn from a template or as a Welcome panel.
 fn template_dialogs() -> Vec<Dialog> {
-    let path = std::path::Path::new("/home/u/Desktop/Quarterly report.txt");
     let paths: Vec<std::path::PathBuf> = vec!["/d/a".into(), "/d/b".into()];
-    let too_big = reprisefs::bincap::TooBig::new(
-        vec!["/d/big.iso".into()],
-        vec![Some(reprisefs::bincap::Measured::unstamped(2, 1))],
-    );
     let mut ds = vec![
         Dialog::run(&history()),
         log_off(),
         turn_off(),
-        Dialog::confirm_delete("Quarterly report.txt", path, false, false, false),
-        Dialog::confirm_delete("Reports", path, true, true, true),
-        Dialog::confirm_delete_many(&paths, false, BinLack::None),
-        Dialog::confirm_delete_many(&paths, true, BinLack::All),
-        Dialog::too_big(std::path::Path::new("/d/big.iso"), false, too_big),
         Dialog::confirm_delete_icons(vec!["computer".into()], paths.clone()),
         Dialog::end_program("Text Editor", 42),
         Dialog::error("Run", "Reprise cannot find 'frobnicate'.".into()),
-        Dialog::confirm_empty_bin(3, None),
-        Dialog::confirm_empty_bin(1, Some("Quarterly report.txt")),
     ];
     ds.extend(
         [
@@ -430,13 +396,7 @@ fn prompts_and_form_dialogs_grow_with_the_text_size() {
     let text = tahoma();
     let theme = Theme::default().with_text_size(150);
     let u = theme.text;
-    let d = Dialog::confirm_delete(
-        "a.txt",
-        std::path::Path::new("/tmp/a.txt"),
-        false,
-        false,
-        false,
-    );
+    let d = yes_no("a.txt");
     let l = DialogLayout::compute(&theme, &text, &d);
     let base = DialogLayout::compute(&Theme::default(), &text, &d);
     assert_eq!(l.size.0, 6 + u.len(base.size.0 - 6));
