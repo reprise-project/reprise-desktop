@@ -521,12 +521,7 @@ pub(super) mod tests {
 
     pub(crate) use reprisebus::testbus::{Bus, bus};
 
-    pub(crate) async fn connect(address: &str) -> Connection {
-        zbus::connection::Builder::address(address)
-            .build()
-            .await
-            .expect("connect")
-    }
+    pub(crate) use reprisebus::testbus::connect;
 
     const ADAPTER: &str = "00:AA:01:00:00:00";
     const PAIRED: &str = "AA:BB:CC:DD:EE:01";
@@ -640,34 +635,29 @@ pub(super) mod tests {
         from: &'static str,
     ) -> (Connection, Connection, mpsc::Receiver<String>) {
         let bluez = connect(address).await;
-        let server = bluez.object_server();
-        server.at("/", zbus::fdo::ObjectManager).await.unwrap();
-        server.at("/org/bluez/hci0", FakeAdapter).await.unwrap();
+        reprisebus::testbus::serve(&bluez, "/", zbus::fdo::ObjectManager).await;
+        reprisebus::testbus::serve(&bluez, "/org/bluez/hci0", FakeAdapter).await;
         for (address, paired) in [(PAIRED, true), (STRANGER, false)] {
             let path = format!("/org/bluez/hci0/dev_{}", address.replace(':', "_"));
-            server
-                .at(path, FakeDevice { address, paired })
-                .await
-                .unwrap();
+            reprisebus::testbus::serve(&bluez, path, FakeDevice { address, paired }).await;
         }
         bluez.request_name(super::super::bus::NAME).await.unwrap();
         let obexd = connect(address).await;
         let (tx, registered) = mpsc::channel();
-        let server = obexd.object_server();
-        server.at("/", zbus::fdo::ObjectManager).await.unwrap();
-        server.at(MANAGER_PATH, FakeManager(tx)).await.unwrap();
+        reprisebus::testbus::serve(&obexd, "/", zbus::fdo::ObjectManager).await;
+        reprisebus::testbus::serve(&obexd, MANAGER_PATH, FakeManager(tx)).await;
         let root = root_for(name);
         std::fs::create_dir_all(&root).unwrap();
         let session = FakeSession {
             destination: from,
             root: root.to_string_lossy().into_owned(),
         };
-        server.at(SESSION, session).await.unwrap();
+        reprisebus::testbus::serve(&obexd, SESSION, session).await;
         let transfer = FakeTransfer {
             name: name.into(),
             status: "queued".into(),
         };
-        server.at(TRANSFER, transfer).await.unwrap();
+        reprisebus::testbus::serve(&obexd, TRANSFER, transfer).await;
         obexd.request_name(NAME).await.unwrap();
         (bluez, obexd, registered)
     }
@@ -887,8 +877,7 @@ pub(super) mod tests {
             obexd.release_name(NAME).await.unwrap();
             let again = connect(&bus.1).await;
             let (tx, second) = mpsc::channel();
-            let server = again.object_server();
-            server.at(MANAGER_PATH, FakeManager(tx)).await.unwrap();
+            reprisebus::testbus::serve(&again, MANAGER_PATH, FakeManager(tx)).await;
             again.request_name(NAME).await.unwrap();
             (first, second, obex, (bluez, obexd, again))
         });
@@ -923,7 +912,7 @@ pub(super) mod tests {
                 name: "second.txt".into(),
                 status: "queued".into(),
             };
-            obexd.object_server().at(SECOND, second).await.unwrap();
+            reprisebus::testbus::serve(&obexd, SECOND, second).await;
             let conn = connect(&bus.1).await;
             let obex = serve(conn.clone(), conn.clone(), poster)
                 .await

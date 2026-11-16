@@ -52,13 +52,14 @@ pub(crate) mod tests {
     /// None when `dbus-daemon` cannot run.
     pub(crate) fn fake() -> Option<Fake> {
         let bus = reprisebus::testbus::bus()?;
-        let connect = || {
-            reprisebus::wait(zbus::connection::Builder::address(bus.1.as_str()).build())
-                .expect("connect")
-        };
+        let connect = || reprisebus::wait(reprisebus::testbus::connect(&bus.1));
         let back = Arc::new(Mutex::new(Vec::new()));
         let saver = connect();
-        reprisebus::wait(saver.object_server().at(PATH, Saver(back.clone()))).unwrap();
+        reprisebus::wait(reprisebus::testbus::serve(
+            &saver,
+            PATH,
+            Saver(back.clone()),
+        ));
         reprisebus::wait(saver.request_name(NAME)).unwrap();
         Some(Fake {
             me: connect(),

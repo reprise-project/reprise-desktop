@@ -252,11 +252,10 @@ mod tests {
         let Some(bus) = bus() else {
             return;
         };
-        let connect =
-            |a: &str| crate::wait(zbus::connection::Builder::address(a).build()).expect("connect");
+        let connect = |a: &str| crate::wait(crate::testbus::connect(a));
         let service = connect(&bus.1);
         let (shown, up) = mpsc::channel();
-        crate::wait(service.object_server().at(PROMPT_PATH, Silent(shown))).unwrap();
+        crate::wait(crate::testbus::serve(&service, PROMPT_PATH, Silent(shown)));
         crate::wait(service.request_name(NAME)).unwrap();
         let secrets = Secrets {
             conn: connect(&bus.1),

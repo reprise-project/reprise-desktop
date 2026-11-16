@@ -658,7 +658,7 @@ mod tests {
                 connected: connected.clone(),
                 reads: reads.clone(),
             };
-            bluez.object_server().at("/", manager).await.unwrap();
+            reprisebus::testbus::serve(&bluez, "/", manager).await;
             bluez.request_name(NAME).await.unwrap();
             let conn = connect(&bus.1).await;
             let (tx, rx) = async_channel::unbounded();
@@ -788,7 +788,7 @@ mod tests {
                 calls: calls_tx.clone(),
                 powered: true,
             };
-            server.at("/org/bluez/hci0", adapter).await.unwrap();
+            reprisebus::testbus::serve(&bluez, "/org/bluez/hci0", adapter).await;
             for (path, hang) in [(DEVICE, true), (OTHER, false)] {
                 let calls = calls_tx.clone();
                 let device = FakeDevice {
@@ -797,7 +797,7 @@ mod tests {
                     trusted: false,
                     calls,
                 };
-                server.at(path, device).await.unwrap();
+                reprisebus::testbus::serve(&bluez, path, device).await;
             }
             bluez.request_name(NAME).await.unwrap();
             let conn = connect(&bus.1).await;
@@ -847,19 +847,18 @@ mod tests {
         let (poster, posted) = Poster::channel(repriseapp::Waker::noop());
         zbus::block_on(async {
             let bluez = connect(&bus.1).await;
-            let server = bluez.object_server();
             let adapter = FakeAdapter {
                 calls: calls_tx.clone(),
                 powered: true,
             };
-            server.at("/org/bluez/hci0", adapter).await.unwrap();
+            reprisebus::testbus::serve(&bluez, "/org/bluez/hci0", adapter).await;
             let device = FakeDevice {
                 path: DEVICE,
                 hang: false,
                 trusted: false,
                 calls: calls_tx,
             };
-            server.at(DEVICE, device).await.unwrap();
+            reprisebus::testbus::serve(&bluez, DEVICE, device).await;
             bluez.request_name(NAME).await.unwrap();
             let conn = connect(&bus.1).await;
             let (cmds_tx, cmds) = async_channel::unbounded();
@@ -895,14 +894,14 @@ mod tests {
         zbus::block_on(async {
             let bluez = connect(&bus.1).await;
             let server = bluez.object_server();
-            server.at("/", zbus::fdo::ObjectManager).await.unwrap();
+            reprisebus::testbus::serve(&bluez, "/", zbus::fdo::ObjectManager).await;
             for path in ADAPTERS {
                 let (calls, _) = std::sync::mpsc::channel();
                 let adapter = FakeAdapter {
                     calls,
                     powered: true,
                 };
-                server.at(path, adapter).await.unwrap();
+                reprisebus::testbus::serve(&bluez, path, adapter).await;
             }
             bluez.request_name(NAME).await.unwrap();
             let conn = connect(&bus.1).await;

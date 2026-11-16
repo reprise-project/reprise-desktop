@@ -344,11 +344,11 @@ mod tests {
             return;
         };
         zbus::block_on(async move {
-            let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
-            let conn = connect().await.unwrap();
+            let connect = || crate::testbus::connect(&bus.1);
+            let conn = connect().await;
             assert_eq!(read(&conn).await, None, "nothing owns the name");
-            let server = connect().await.unwrap();
-            server.object_server().at(PATH, FakeServer).await.unwrap();
+            let server = connect().await;
+            crate::testbus::serve(&server, PATH, FakeServer).await;
             server.request_name(NAME).await.unwrap();
             let status = read(&conn).await.expect("the server answers");
             assert_eq!(status.listening, "0.0.0.0:3389");
@@ -396,12 +396,12 @@ mod tests {
             return;
         };
         zbus::block_on(async move {
-            let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
-            let conn = connect().await.unwrap();
-            let server = connect().await.unwrap();
+            let connect = || crate::testbus::connect(&bus.1);
+            let conn = connect().await;
+            let server = connect().await;
             let told = std::sync::Arc::default();
             let older = OlderServer(std::sync::Arc::clone(&told));
-            server.object_server().at(PATH, older).await.unwrap();
+            crate::testbus::serve(&server, PATH, older).await;
             server.request_name(NAME).await.unwrap();
             assert_eq!(power_ending_on(&conn).await, Ok(()));
             assert!(told.load(std::sync::atomic::Ordering::SeqCst));
@@ -414,9 +414,9 @@ mod tests {
             return;
         };
         zbus::block_on(async move {
-            let connect = || zbus::connection::Builder::address(bus.1.as_str()).build();
-            let conn = connect().await.unwrap();
-            let server = connect().await.unwrap();
+            let connect = || crate::testbus::connect(&bus.1);
+            let conn = connect().await;
+            let server = connect().await;
             server.request_name(NAME).await.unwrap();
             let proc = sandboxed_proc();
             assert!(server_under(&conn, proc.path()).await.is_err());

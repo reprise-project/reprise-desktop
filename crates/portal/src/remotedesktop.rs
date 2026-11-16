@@ -925,14 +925,12 @@ mod tests {
                 .request_name("org.freedesktop.impl.portal.PermissionStore")
                 .await
                 .unwrap();
-            fakes
-                .object_server()
-                .at(
-                    "/org/freedesktop/impl/portal/PermissionStore",
-                    FakeStore(table.clone()),
-                )
-                .await
-                .unwrap();
+            reprisebus::testbus::serve(
+                &fakes,
+                "/org/freedesktop/impl/portal/PermissionStore",
+                FakeStore(table.clone()),
+            )
+            .await;
             let client = crate::lockmode::tests::connect(&bus).await;
             let frontend = crate::Frontend::default();
             frontend.set(client.unique_name().map(|n| n.to_string()));

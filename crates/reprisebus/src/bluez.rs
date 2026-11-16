@@ -179,12 +179,7 @@ mod tests {
 
     use crate::testbus::bus;
 
-    async fn connect(address: &str) -> Connection {
-        zbus::connection::Builder::address(address)
-            .build()
-            .await
-            .expect("connect")
-    }
+    use crate::testbus::connect;
 
     const PHONE: &str = "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_01";
     const HEADSET: &str = "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_02";
@@ -218,8 +213,7 @@ mod tests {
 
     async fn fake_bluez(address: &str) -> Connection {
         let c = connect(address).await;
-        let server = c.object_server();
-        server.at(ROOT, zbus::fdo::ObjectManager).await.unwrap();
+        crate::testbus::serve(&c, ROOT, zbus::fdo::ObjectManager).await;
         let phone = FakeDevice {
             address: "AA:BB:CC:DD:EE:01",
             alias: "Phone",
@@ -232,8 +226,8 @@ mod tests {
             paired: false,
             connected: false,
         };
-        server.at(PHONE, phone).await.unwrap();
-        server.at(HEADSET, headset).await.unwrap();
+        crate::testbus::serve(&c, PHONE, phone).await;
+        crate::testbus::serve(&c, HEADSET, headset).await;
         c.request_name(NAME).await.unwrap();
         c
     }
