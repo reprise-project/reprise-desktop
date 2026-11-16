@@ -14,8 +14,11 @@ use std::path::{Path, PathBuf};
 /// The Flatpak installations: the system one, the user's, and those `/etc/flatpak/installations.d`
 /// adds.
 pub fn installations() -> Vec<PathBuf> {
-    let mut out = vec![PathBuf::from("/var/lib/flatpak")];
-    out.extend(reprisexdg::data_home().map(|d| d.join("flatpak")));
+    let mut out = own_installations(|k| {
+        std::env::var_os(k)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    });
     if let Ok(dir) = std::fs::read_dir("/etc/flatpak/installations.d") {
         let mut confs: Vec<PathBuf> = dir.flatten().map(|e| e.path()).collect();
         confs.sort();
@@ -28,6 +31,15 @@ pub fn installations() -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// The system and user installations, which `FLATPAK_SYSTEM_DIR` and `FLATPAK_USER_DIR` move as
+/// they move Flatpak's; `var` reads the environment.
+fn own_installations(var: impl Fn(&str) -> Option<PathBuf>) -> Vec<PathBuf> {
+    let system = var("FLATPAK_SYSTEM_DIR").unwrap_or_else(|| "/var/lib/flatpak".into());
+    let user =
+        var("FLATPAK_USER_DIR").or_else(|| reprisexdg::data_home().map(|d| d.join("flatpak")));
+    std::iter::once(system).chain(user).collect()
 }
 
 /// The `Path` of each `[Installation "..."]` group in an `installations.d` file.
@@ -178,6 +190,26 @@ mod tests {
         assert_eq!(
             added_paths(conf),
             [PathBuf::from("/run/media/extra/flatpak")]
+        );
+    }
+
+    #[test]
+    fn the_flatpak_dir_variables_move_the_system_and_user_installations() {
+        let moved = own_installations(|k| match k {
+            "FLATPAK_SYSTEM_DIR" => Some("/srv/flatpak".into()),
+            "FLATPAK_USER_DIR" => Some("/data/user-flatpak".into()),
+            _ => None,
+        });
+        assert_eq!(
+            moved,
+            [
+                PathBuf::from("/srv/flatpak"),
+                PathBuf::from("/data/user-flatpak")
+            ]
+        );
+        assert_eq!(
+            own_installations(|_| None).first(),
+            Some(&PathBuf::from("/var/lib/flatpak"))
         );
     }
 

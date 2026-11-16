@@ -445,7 +445,7 @@ fn watch_flatpak(jobs: Jobs) {
     if !flatpak::present() {
         return;
     }
-    let mut watch = match flatpak::Watch::new(flatpak::installations()) {
+    let mut watch = match flatpak::Watch::new(reprisefs::flatpak::installations()) {
         Ok(w) => w,
         Err(e) => {
             log::warn!("could not watch the Flatpak installations: {e}");
