@@ -337,7 +337,7 @@ suspend_after = 0            # run [power] standby
 # record_sound = false       # screen recordings (Videos/Screencasts) also carry what plays
 
 # [recording]                # how screen recordings are coded, read as each one starts (Settings > Screen Capture);
-#                            # an invalid key takes its default and the journal names it. Recordings are MP4 files
+#                            # an invalid key takes its default and the config notice names it. Recordings are MP4 files
 # codec = "h264"             # "h264", "h265" (tagged hvc1, which QuickTime and Safari play) or "av1"; with no
 #                            # encoder for it here, the recording fails with a notice; no other codec stands in
 # encoder = "auto"           # "auto", "vaapi", "nvenc", "vulkan" or "software" (x264, x265 or SVT-AV1)

@@ -159,8 +159,8 @@ format's compression.
 state of its user unit, which Settings > Remote Desktop turns on and off
 ([remote-desktop.md](remote-desktop.md)). The server reads the section
 again on every save. A missing key takes its default. An invalid key keeps
-the value it had before the save (its default at startup), and the journal
-names the invalid ones. A save it can't read (its permissions, or bytes that
+the value it had before the save (its default at startup), and the config
+notice names it. A save it can't read (its permissions, or bytes that
 aren't UTF-8) or that isn't TOML keeps the settings from before, so the port
 and the connected computers stay, and the journal says why. A removed file
 gives the defaults; at startup so does an unreadable one.

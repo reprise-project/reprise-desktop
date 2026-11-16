@@ -198,55 +198,14 @@ impl Default for RemoteDesktop {
     }
 }
 
-/// `[remote_desktop]`, read now. A missing, unreadable or non-TOML file gives the defaults; the
-/// keys that fell back are logged in one warning.
-pub fn remote_desktop() -> RemoteDesktop {
-    read_file(&crate::config_path(), None).unwrap_or_else(|e| {
-        log::warn!("{e}; remote desktop uses its defaults");
-        RemoteDesktop::default()
-    })
-}
-
-/// `[remote_desktop]` read again after the file changed. A file that cannot be read or is not
-/// TOML keeps `previous`, and so does each invalid key; a missing file or key gives the default.
-pub fn reread_remote_desktop(previous: RemoteDesktop) -> RemoteDesktop {
-    reread(&crate::config_path(), previous)
-}
-
-fn reread(path: &std::path::Path, previous: RemoteDesktop) -> RemoteDesktop {
-    read_file(path, Some(previous)).unwrap_or_else(|e| {
-        log::warn!("{e}; remote desktop keeps its settings");
-        previous
-    })
-}
-
-/// The file's `[remote_desktop]`; an invalid key takes its value in `kept`, else its default.
-fn read_file(path: &std::path::Path, kept: Option<RemoteDesktop>) -> Result<RemoteDesktop, String> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("{}: {e}", path.display())),
-    };
-    let table =
-        toml::from_str::<toml::Table>(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    let invalid = kept.unwrap_or_default();
-    let (rd, bad) = match table.get("remote_desktop") {
-        None => (RemoteDesktop::default(), Vec::new()),
-        Some(toml::Value::Table(t)) => read(t, invalid),
-        Some(_) => (invalid, vec!["remote_desktop"]),
-    };
-    if !bad.is_empty() {
-        log::warn!(
-            "{}: [remote_desktop] {} invalid, {}",
-            path.display(),
-            bad.join(", "),
-            match kept {
-                Some(_) => "keeping the previous value",
-                None => "using the default",
-            }
-        );
+/// `[remote_desktop]` as `Config::from_file` reads it: an error naming the keys it can't read.
+/// Programs read it through [`crate::current`].
+pub(crate) fn checked(v: &toml::Value) -> Result<RemoteDesktop, String> {
+    let t = v.as_table().ok_or("[remote_desktop] is not a table")?;
+    match read(t, RemoteDesktop::default()) {
+        (rd, bad) if bad.is_empty() => Ok(rd),
+        (_, bad) => Err(format!("[remote_desktop] {} is not valid", bad.join(", "))),
     }
-    Ok(rd)
 }
 
 /// The `[remote_desktop]` table's settings, each invalid key at its default.
@@ -415,108 +374,6 @@ mod tests {
                 LaptopScreen::Lock
             )
         );
-    }
-
-    /// A fresh directory for `tag`'s config file.
-    fn scratch(tag: &str) -> std::path::PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("repriseconf-remote-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    fn on_port(port: u16) -> RemoteDesktop {
-        RemoteDesktop {
-            port,
-            ..RemoteDesktop::default()
-        }
-    }
-
-    #[test]
-    fn a_reread_that_cannot_read_the_file_keeps_the_previous_port() {
-        let dir = scratch("unreadable");
-        let path = dir.join("config.toml");
-        std::fs::write(&path, b"[remote_desktop]\nport = 4000\n\xff\n").unwrap();
-        assert_eq!(reread(&path, on_port(4000)).port, 4000, "invalid UTF-8");
-        std::fs::write(&path, "[remote_desktop]\nport = 4001\n").unwrap();
-        assert_eq!(
-            reread(&path, on_port(4000)).port,
-            4001,
-            "a good file is read"
-        );
-        std::fs::remove_file(&path).unwrap();
-        std::fs::create_dir(&path).unwrap();
-        assert_eq!(
-            reread(&path, on_port(4000)).port,
-            4000,
-            "a directory in its place"
-        );
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_reread_of_a_file_that_is_not_toml_keeps_the_previous_settings() {
-        let dir = scratch("not-toml");
-        let path = dir.join("config.toml");
-        let previous = RemoteDesktop {
-            max_viewers: 2,
-            sound: false,
-            ..on_port(4000)
-        };
-        std::fs::write(&path, "[remote_desktop]\nport = \n").unwrap();
-        assert_eq!(reread(&path, previous), previous);
-        std::fs::write(&path, "[remote_desktop\nport = 4001\n").unwrap();
-        assert_eq!(reread(&path, previous), previous, "a broken header");
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_reread_keeps_the_previous_value_of_an_invalid_key() {
-        let dir = scratch("invalid-key");
-        let path = dir.join("config.toml");
-        let previous = RemoteDesktop {
-            max_viewers: 2,
-            frame_rate: 30,
-            ..on_port(4000)
-        };
-        std::fs::write(
-            &path,
-            "[remote_desktop]\nport = 70000\nmax_viewers = 3\nframe_rate = \"fast\"\n",
-        )
-        .unwrap();
-        let rd = reread(&path, previous);
-        assert_eq!(
-            (rd.port, rd.max_viewers, rd.frame_rate, rd.sound),
-            (4000, 3, 30, true),
-            "invalid port and frame_rate keep 4000 and 30, max_viewers reads 3, sound defaults"
-        );
-        std::fs::write(&path, "remote_desktop = 5\n").unwrap();
-        assert_eq!(
-            reread(&path, previous),
-            previous,
-            "a section that is not a table"
-        );
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_first_read_of_a_missing_file_or_an_invalid_key_gives_the_defaults() {
-        let dir = scratch("first-read");
-        let path = dir.join("config.toml");
-        assert_eq!(read_file(&path, None), Ok(RemoteDesktop::default()));
-        std::fs::write(&path, "[remote_desktop]\nport = 70000\nmax_viewers = 3\n").unwrap();
-        let rd = read_file(&path, None).unwrap();
-        assert_eq!((rd.port, rd.max_viewers), (3389, 3));
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_reread_of_a_missing_file_gives_the_defaults() {
-        let dir = scratch("missing");
-        let path = dir.join("config.toml");
-        assert_eq!(reread(&path, on_port(4000)), RemoteDesktop::default());
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

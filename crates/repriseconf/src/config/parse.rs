@@ -973,8 +973,11 @@ impl Config {
                 cfg.capture_border = v;
             }
         }
-        if let Some(toml::Value::Table(t)) = &file.remote_desktop {
-            cfg.remote_desktop = crate::remote::from_table(t);
+        if let Some(v) = &file.remote_desktop {
+            cfg.remote_desktop = crate::remote::checked(v)?;
+        }
+        if let Some(v) = &file.recording {
+            cfg.recording = crate::recording::checked(v)?;
         }
         if let Some(v) = file.updates.and_then(|u| u.restart_notice) {
             cfg.restart_notice = v;

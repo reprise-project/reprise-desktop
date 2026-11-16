@@ -126,7 +126,7 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<Outcome, String> {
     let into = movie_url(args.fd)?;
     ffmpeg::init().map_err(|e| format!("FFmpeg: {e}"))?;
     ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Error);
-    let settings = repriseconf::recording::recording();
+    let settings = repriseconf::current().recording;
     let codec = settings.codec;
     let sound = args
         .sound

@@ -151,36 +151,14 @@ impl Default for Recording {
     }
 }
 
-/// `[recording]`, read now. A missing, unreadable or non-TOML file gives the defaults; the keys
-/// that fell back are logged in one warning.
-pub fn recording() -> Recording {
-    read_file(&crate::config_path()).unwrap_or_else(|e| {
-        log::warn!("{e}; recordings use their defaults");
-        Recording::default()
-    })
-}
-
-fn read_file(path: &std::path::Path) -> Result<Recording, String> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("{}: {e}", path.display())),
-    };
-    let table =
-        toml::from_str::<toml::Table>(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    let (r, bad) = match table.get("recording") {
-        None => (Recording::default(), Vec::new()),
-        Some(toml::Value::Table(t)) => read(t),
-        Some(_) => (Recording::default(), vec!["recording"]),
-    };
-    if !bad.is_empty() {
-        log::warn!(
-            "{}: [recording] {} invalid, using the default",
-            path.display(),
-            bad.join(", ")
-        );
+/// `[recording]` as `Config::from_file` reads it: an error naming the keys it can't read.
+/// reprise-record reads it through [`crate::current`].
+pub(crate) fn checked(v: &toml::Value) -> Result<Recording, String> {
+    let t = v.as_table().ok_or("[recording] is not a table")?;
+    match read(t) {
+        (r, bad) if bad.is_empty() => Ok(r),
+        (_, bad) => Err(format!("[recording] {} is not valid", bad.join(", "))),
     }
-    Ok(r)
 }
 
 /// The `[recording]` table's settings, each invalid key at its default.
@@ -323,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bad_key_falls_back_alone_and_the_compositor_still_parses_the_file() {
+    fn a_bad_key_falls_back_alone_and_the_config_notice_names_it() {
         let t: toml::Table = toml::from_str(
             "codec = \"vp9\"\nencoder = \"none\"\nframe_rate = 1000\nbitrate = 3000\n",
         )
@@ -335,6 +313,20 @@ mod tests {
         );
         assert_eq!(bad, ["codec", "encoder", "frame_rate"]);
         assert!(crate::config::Config::parse("[recording]\ncodec = \"av1\"\n").is_ok());
+        let (c, dropped) =
+            crate::config::Config::parse_lenient("[recording]\ncodec = \"vp9\"\nbitrate = 3000\n")
+                .unwrap();
+        assert_eq!(
+            (c.recording.codec, c.recording.bitrate),
+            (Codec::H264, 3000)
+        );
+        assert_eq!(
+            dropped,
+            [(
+                "recording.codec".to_string(),
+                "[recording] codec is not valid".to_string()
+            )]
+        );
     }
 
     #[test]

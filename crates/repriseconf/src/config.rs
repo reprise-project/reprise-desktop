@@ -83,8 +83,10 @@ pub struct Config {
     pub recent_files: bool,
     pub location: bool,
     pub capture_border: bool,
-    /// `[remote_desktop]`; the compositor reads its `capture_border`.
+    /// `[remote_desktop]`: reprise-rdp's settings; the compositor reads its `capture_border`.
     pub remote_desktop: crate::remote::RemoteDesktop,
+    /// `[recording]`: reprise-record's settings.
+    pub recording: crate::recording::Recording,
     /// `[updates] restart_notice`: Software Updates says when the running system needs a restart.
     pub restart_notice: bool,
     /// `[drives] on_insert`: what reprise-drives does with a plugged-in drive.
@@ -190,6 +192,7 @@ impl Default for Config {
             location: true,
             capture_border: true,
             remote_desktop: crate::remote::RemoteDesktop::default(),
+            recording: crate::recording::Recording::default(),
             restart_notice: true,
             drives_on_insert: crate::DRIVES_ON_INSERT.into(),
             low_space_percent: crate::LOW_SPACE_PERCENT,

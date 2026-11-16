@@ -56,28 +56,70 @@ pub fn state_path() -> PathBuf {
         .join("state.toml")
 }
 
-/// The config file read as the compositor reads it ([`config::Config::parse_lenient`]): a key
-/// that fails is left at its default, and a file that is absent or not TOML reads as all
-/// defaults. Read again on this thread only once the file's size, time or inode changes.
+/// The config file read as the compositor reads it ([`config::lenient_over`]): a key that fails
+/// keeps its value from this thread's last read, or its default on the first, and a file that
+/// can't be read or isn't TOML keeps the last read whole; an absent file reads as all defaults.
+/// Read again on this thread only once the file's size, time or inode changes.
 pub fn current() -> std::rc::Rc<config::Config> {
     current_at(config_path())
 }
 
+/// [`current`]'s last read on a thread.
+struct Last {
+    path: PathBuf,
+    stamp: Option<FileStamp>,
+    cfg: std::rc::Rc<config::Config>,
+    /// The table `cfg` was built from, the base of the next read.
+    table: toml::Table,
+}
+
 fn current_at(path: PathBuf) -> std::rc::Rc<config::Config> {
-    type Last = Option<(PathBuf, Option<FileStamp>, std::rc::Rc<config::Config>)>;
     thread_local! {
-        static LAST: std::cell::RefCell<Last> = const { std::cell::RefCell::new(None) };
+        static LAST: std::cell::RefCell<Option<Last>> = const { std::cell::RefCell::new(None) };
     }
     let stamp = FileStamp::of(&path);
-    LAST.with_borrow_mut(|last| match last {
-        Some((p, s, cfg)) if *p == path && *s == stamp => cfg.clone(),
-        _ => {
-            let text = std::fs::read_to_string(&path).unwrap_or_default();
-            let cfg = std::rc::Rc::new(read(&text));
-            *last = Some((path, stamp, cfg.clone()));
-            cfg
+    LAST.with_borrow_mut(|last| {
+        let last_here = last.as_ref().filter(|l| l.path == path);
+        if let Some(l) = last_here.filter(|l| l.stamp == stamp) {
+            return l.cfg.clone();
         }
+        let base = last_here.map(|l| (l.cfg.clone(), l.table.clone()));
+        let (cfg, table) = read_file(&path, base);
+        let next = Last {
+            path,
+            stamp,
+            cfg: cfg.clone(),
+            table,
+        };
+        *last = Some(next);
+        cfg
     })
+}
+
+/// `path` read over `last`, the config and table of the last read of it.
+fn read_file(
+    path: &Path,
+    last: Option<(std::rc::Rc<config::Config>, toml::Table)>,
+) -> (std::rc::Rc<config::Config>, toml::Table) {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(e.to_string()),
+    };
+    let base = last.as_ref().map(|(_, t)| t.clone()).unwrap_or_default();
+    let read = text.and_then(|text| config::lenient_over(&text, &base, config::Config::from_file));
+    match (read, last) {
+        (Ok((cfg, _, table)), _) => (std::rc::Rc::new(cfg), table),
+        (Err(e), Some(last)) => {
+            log::warn!("{}: {e}; keeping the settings read before", path.display());
+            last
+        }
+        (Err(e), None) => {
+            log::warn!("{}: {e}; every key reads at its default", path.display());
+            let (cfg, _) = config::Config::parse_lenient("").expect("an empty file reads");
+            (std::rc::Rc::new(cfg), toml::Table::new())
+        }
+    }
 }
 
 /// What [`current`] compares to learn the file changed.
@@ -99,18 +141,6 @@ impl FileStamp {
             len: m.len(),
             mtime: (m.mtime(), m.mtime_nsec()),
         })
-    }
-}
-
-fn read(text: &str) -> config::Config {
-    match config::Config::parse_lenient(text) {
-        Ok((cfg, _)) => cfg,
-        Err(e) => {
-            log::warn!("config.toml is not TOML ({e}); every key reads at its default");
-            config::Config::parse_lenient("")
-                .expect("an empty file reads")
-                .0
-        }
     }
 }
 
@@ -666,6 +696,58 @@ external_thumbnailers = false
         write_atomic(&path, "terminal = \"st\"\n").unwrap();
         assert_eq!(current_at(path.clone()).terminal, "st");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_reread_keeps_what_it_cannot_read_from_the_last_read() {
+        let dir = scratch("reread");
+        let path = dir.join("config.toml");
+        let read = || current_at(path.clone()).remote_desktop;
+        write_atomic(&path, "[remote_desktop]\nport = 4000\nmax_viewers = 2\n").unwrap();
+        assert_eq!((read().port, read().max_viewers), (4000, 2));
+        write_atomic(&path, "[remote_desktop]\nport = 70000\nmax_viewers = 3\n").unwrap();
+        assert_eq!(
+            (read().port, read().max_viewers),
+            (4000, 3),
+            "the bad port keeps 4000"
+        );
+        write_atomic(&path, "[remote_desktop\nport = 4001\n").unwrap();
+        assert_eq!((read().port, read().max_viewers), (4000, 3), "not TOML");
+        std::fs::write(&path, b"[remote_desktop]\nport = 4002\n\xff\n").unwrap();
+        assert_eq!(read().port, 4000, "not UTF-8");
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(read(), remote::RemoteDesktop::default(), "an absent file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_first_read_gives_a_bad_key_its_default() {
+        let dir = scratch("first-read");
+        let path = dir.join("config.toml");
+        write_atomic(&path, "[remote_desktop]\nport = 70000\nmax_viewers = 3\n").unwrap();
+        let rd = current_at(path).remote_desktop;
+        assert_eq!((rd.port, rd.max_viewers), (3389, 3));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// [`current`]'s first read of a file holding `text`.
+    fn read(text: &str) -> std::rc::Rc<config::Config> {
+        static FILES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = FILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = scratch(&format!("read-{n}"));
+        let path = dir.join("config.toml");
+        std::fs::write(&path, text).unwrap();
+        let cfg = current_at(path);
+        let _ = std::fs::remove_dir_all(&dir);
+        cfg
+    }
+
+    /// A fresh directory for test `tag`.
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("repriseconf-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[test]
