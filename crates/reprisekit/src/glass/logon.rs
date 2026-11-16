@@ -226,7 +226,10 @@ fn geometry(m: &Logon, theme: &Theme, output: Rect, button_w: i32) -> Geometry {
     let top = |h: i32| output.y + (output.height - h) / 2 - LIFT;
 
     match m.screen {
-        _ if m.busy => g.busy = Some(centred(text_w, top(SPINNER), SPINNER)),
+        _ if m.busy => {
+            let h = u.len(SPINNER);
+            g.busy = Some(centred(text_w, top(h), h));
+        }
         Screen::Tile(i) => {
             let h = frame + PICTURE_GAP + name_h + note_h + ROW_GAP + field_h + note_h;
             let mut y = top(h + SWITCH_GAP + button_h);
@@ -316,7 +319,8 @@ fn geometry(m: &Logon, theme: &Theme, output: Rect, button_w: i32) -> Geometry {
         let badge = Rect::new(output.x + EDGE, bottom - POWER_H, BADGE_W, POWER_H);
         g.parts.push((Part::Layout, badge));
     }
-    g.mark = Rect::new(output.x, bottom - MARK, output.width, MARK);
+    let mark_h = u.len(MARK);
+    g.mark = Rect::new(output.x, bottom - mark_h, output.width, mark_h);
     g
 }
 
@@ -925,7 +929,12 @@ fn busy_row(
     let px = theme.text.px(BUSY_PX) * s as u32;
     let word = m.busy_text();
     let w = (SPINNER + ICON_GAP) * s + text.measure(&word, false, px);
-    let ring = Rect::new(r.x + (r.width - w) / 2, r.y, SPINNER * s, SPINNER * s);
+    let ring = Rect::new(
+        r.x + (r.width - w) / 2,
+        r.y + (r.height - SPINNER * s) / 2,
+        SPINNER * s,
+        SPINNER * s,
+    );
     Some(Busy {
         ring,
         row: r,

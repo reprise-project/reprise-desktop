@@ -294,7 +294,8 @@ pub fn draw(
         text.draw(c, r, line, false, cs.button_text, Align::Left, px);
     }
     if let Some(short) = &m.layout {
-        let b = indicator::draw_layout(text, cs, short, badge.width, px);
+        // The badge is the taskbar's picture: its label keeps the 100% size.
+        let b = indicator::draw_layout(text, cs, short, badge.width, theme.text.base_px(px));
         c.blit_canvas(badge.x, badge.y, &b);
     }
 

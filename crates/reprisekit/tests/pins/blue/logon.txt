@@ -20,10 +20,10 @@ Blue remote note @1 9a6425c17f9a0f08
 Blue remote note @2 b6f8ceab9b4130c1
 Blue tiles over a picture @1 f9bcbeff7031b8e9
 Blue tiles over a picture @2 6fde16cad8d0ea9d
-Blue admin shut down caps lock 125% @1 daab3b0cdd39d762
-Blue admin shut down caps lock 125% @2 d5a8236e8ee95d43
-Blue admin shut down caps lock 150% @1 747cdfc39d9e6557
-Blue admin shut down caps lock 150% @2 d0fe7fb8186826c4
+Blue admin shut down caps lock 125% @1 15ddf065fa304cde
+Blue admin shut down caps lock 125% @2 5e94379d207e77f1
+Blue admin shut down caps lock 150% @1 788fc0aa79a17f73
+Blue admin shut down caps lock 150% @2 b9acb10611b24c17
 Olive tiles at rest @1 a943cd0dfc05257f
 Olive tiles at rest @2 f8287d0b8e05afac
 Olive tile hot @1 b5db2678070540ca
@@ -46,10 +46,10 @@ Olive remote note @1 9fa2340916b7d4f0
 Olive remote note @2 4b2e8cd6c58cd9cb
 Olive tiles over a picture @1 a0c3bcb4497120fc
 Olive tiles over a picture @2 4925161717f311da
-Olive admin shut down caps lock 125% @1 02fe5a7340936aed
-Olive admin shut down caps lock 125% @2 a8ad92a6b791cf2a
-Olive admin shut down caps lock 150% @1 bc1af8d6e86227d7
-Olive admin shut down caps lock 150% @2 bc8de08fba18a926
+Olive admin shut down caps lock 125% @1 af9542e9d5071994
+Olive admin shut down caps lock 125% @2 1deddc9fb76dd392
+Olive admin shut down caps lock 150% @1 5c66fb6587cb1cff
+Olive admin shut down caps lock 150% @2 8a48a2ea9cb42a5f
 Silver tiles at rest @1 69f31525c3bad533
 Silver tiles at rest @2 ab14b9f5f8321603
 Silver tile hot @1 41d96df0bb91c1a1
@@ -72,10 +72,10 @@ Silver remote note @1 524a7fb4d46370b8
 Silver remote note @2 e154293f1ab67bd9
 Silver tiles over a picture @1 3d9c0047a90ddcda
 Silver tiles over a picture @2 f429878aa10adaac
-Silver admin shut down caps lock 125% @1 b2cc2a75a0e511cf
-Silver admin shut down caps lock 125% @2 dc63fb77740fff87
-Silver admin shut down caps lock 150% @1 bbdcd0de3029c97b
-Silver admin shut down caps lock 150% @2 fbec5423656dad1f
+Silver admin shut down caps lock 125% @1 0061c86182e2b3a4
+Silver admin shut down caps lock 125% @2 15323dcfe93e1fc7
+Silver admin shut down caps lock 150% @1 3128852746f72ceb
+Silver admin shut down caps lock 150% @2 b24a9e076694028d
 Slate tiles at rest @1 ccc5e2243716f656
 Slate tiles at rest @2 a97e261ee772f7ec
 Slate tile hot @1 65ea2e6fa3ea862c
@@ -98,10 +98,10 @@ Slate remote note @1 b20233d8b567b3fd
 Slate remote note @2 7b400ac994363744
 Slate tiles over a picture @1 b3132895ec50e2fb
 Slate tiles over a picture @2 19f2be0a3dc27ca3
-Slate admin shut down caps lock 125% @1 117e70c92d2bcf64
-Slate admin shut down caps lock 125% @2 9f359bd69d74113d
-Slate admin shut down caps lock 150% @1 c3247c71fb2357d3
-Slate admin shut down caps lock 150% @2 bf83a00b55c2ab61
+Slate admin shut down caps lock 125% @1 f37cc98fd6c937c5
+Slate admin shut down caps lock 125% @2 c9c30e31805be103
+Slate admin shut down caps lock 150% @1 2f8ba00eb3ddd8f3
+Slate admin shut down caps lock 150% @2 d24c1690fbc5d365
 Sapphire tiles at rest @1 f488e35f1d427efb
 Sapphire tiles at rest @2 71e7ba2bba3b917d
 Sapphire tile hot @1 222b04a4faaae1ca
@@ -124,10 +124,10 @@ Sapphire remote note @1 515f16c0933d1a3d
 Sapphire remote note @2 6d422c29759cca39
 Sapphire tiles over a picture @1 5726f8bfdefe9a1e
 Sapphire tiles over a picture @2 196fcd400350974e
-Sapphire admin shut down caps lock 125% @1 10aff7d6f5dc5b64
-Sapphire admin shut down caps lock 125% @2 4b930c22332ad089
-Sapphire admin shut down caps lock 150% @1 dd8f8993b9903bfc
-Sapphire admin shut down caps lock 150% @2 20d1cbfb7dbc4d60
+Sapphire admin shut down caps lock 125% @1 56b73f82c37c3d00
+Sapphire admin shut down caps lock 125% @2 205354ea367bac78
+Sapphire admin shut down caps lock 150% @1 37919de8e56b1a08
+Sapphire admin shut down caps lock 150% @2 370619f394de5fe0
 Obsidian tiles at rest @1 135ec7815b0a1ec2
 Obsidian tiles at rest @2 0d233aaa3ea21f5c
 Obsidian tile hot @1 d60f91d2ab2bf6a6
@@ -150,10 +150,10 @@ Obsidian remote note @1 55056935c462ac0c
 Obsidian remote note @2 0b6e3e4d642463bd
 Obsidian tiles over a picture @1 56e7359fa1501a8a
 Obsidian tiles over a picture @2 d86ccd98e7f2757f
-Obsidian admin shut down caps lock 125% @1 7c95ee2d5ccf40d5
-Obsidian admin shut down caps lock 125% @2 17526cab9e42f531
-Obsidian admin shut down caps lock 150% @1 0046ff518e86d84a
-Obsidian admin shut down caps lock 150% @2 6b57400bb4642872
+Obsidian admin shut down caps lock 125% @1 90ebaeb26b3840ba
+Obsidian admin shut down caps lock 125% @2 d6c08147a17604fb
+Obsidian admin shut down caps lock 150% @1 36ba93248a0fd713
+Obsidian admin shut down caps lock 150% @2 7ae8c56ed3eae6bc
 Ember tiles at rest @1 7054d3cd52741dba
 Ember tiles at rest @2 f30ef269dcb3972d
 Ember tile hot @1 58913011e570e8ea
@@ -176,10 +176,10 @@ Ember remote note @1 6b173e3a25a498da
 Ember remote note @2 f230b4736369a006
 Ember tiles over a picture @1 95b057c75f78589c
 Ember tiles over a picture @2 d041782f1915a3a7
-Ember admin shut down caps lock 125% @1 bbd573c92dd9ca42
-Ember admin shut down caps lock 125% @2 38f332037b29ef78
-Ember admin shut down caps lock 150% @1 6f53b6228fe81f69
-Ember admin shut down caps lock 150% @2 0a6062ba22a9e87e
+Ember admin shut down caps lock 125% @1 0d288cd8a938774d
+Ember admin shut down caps lock 125% @2 403368f03a63cf36
+Ember admin shut down caps lock 150% @1 9798c0080f872189
+Ember admin shut down caps lock 150% @2 a469548fae9d5372
 Cobalt tiles at rest @1 f74a175d1dca8eaa
 Cobalt tiles at rest @2 a1c7637ed39556cb
 Cobalt tile hot @1 f6f885758b88b040
@@ -202,10 +202,10 @@ Cobalt remote note @1 b7d7b581f5105c09
 Cobalt remote note @2 f86feaecbcd434df
 Cobalt tiles over a picture @1 ac49e8b9a2be5b90
 Cobalt tiles over a picture @2 82b75fbee2daf31b
-Cobalt admin shut down caps lock 125% @1 3ead19a0ff2615b4
-Cobalt admin shut down caps lock 125% @2 5c3b4a23224111d1
-Cobalt admin shut down caps lock 150% @1 635e393597dfcb23
-Cobalt admin shut down caps lock 150% @2 c428f3514f36d30a
+Cobalt admin shut down caps lock 125% @1 a531e925a6390382
+Cobalt admin shut down caps lock 125% @2 3303a4cfd5c02223
+Cobalt admin shut down caps lock 150% @1 564a2d9c54022713
+Cobalt admin shut down caps lock 150% @2 537ab82f8be611fa
 Carbon tiles at rest @1 bcc65175fe56636a
 Carbon tiles at rest @2 95420ded3adf4ca0
 Carbon tile hot @1 a862faf33d3f2079
@@ -228,10 +228,10 @@ Carbon remote note @1 1899a8443330e3c4
 Carbon remote note @2 787c7bf8119000cd
 Carbon tiles over a picture @1 fa76e315a7d8a6f6
 Carbon tiles over a picture @2 95e014c97445ed41
-Carbon admin shut down caps lock 125% @1 e0fe715269599a72
-Carbon admin shut down caps lock 125% @2 34e0dd4dab2d163a
-Carbon admin shut down caps lock 150% @1 aa1c533231989f60
-Carbon admin shut down caps lock 150% @2 556e115ea7b09c7e
+Carbon admin shut down caps lock 125% @1 ce98f6074b06ca3a
+Carbon admin shut down caps lock 125% @2 a8c96276c0da8694
+Carbon admin shut down caps lock 150% @1 6431f97ca9826cd8
+Carbon admin shut down caps lock 150% @2 68ac79879f59c8a3
 Steel tiles at rest @1 560b6ce0bbebf2f9
 Steel tiles at rest @2 0efe0f047b845bab
 Steel tile hot @1 a4a26a4081efacbd
@@ -254,7 +254,7 @@ Steel remote note @1 fa3abf5fa89fca2e
 Steel remote note @2 638898f8287e9a09
 Steel tiles over a picture @1 1af3cc48ae6c4563
 Steel tiles over a picture @2 1c7bfa94fdb3f299
-Steel admin shut down caps lock 125% @1 d4b932be6c3ff740
-Steel admin shut down caps lock 125% @2 18952b2fd4290a09
-Steel admin shut down caps lock 150% @1 ae377ac6a606d806
-Steel admin shut down caps lock 150% @2 8959440a6f200554
+Steel admin shut down caps lock 125% @1 d61c8ce31017a6cc
+Steel admin shut down caps lock 125% @2 73f925bc196002a4
+Steel admin shut down caps lock 150% @1 88e78ce8727a15b2
+Steel admin shut down caps lock 150% @2 4670292bd75f60d2
