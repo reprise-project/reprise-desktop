@@ -133,6 +133,29 @@ impl Host {
         self.loop_handle
             .insert_idle(move |host| host.heads_out(outs));
     }
+
+    /// An ending signal's [`Extended::emergency_outputs`](crate::Extended::emergency_outputs): its
+    /// configurations go out now, and the compositor has read them before this returns. One that
+    /// waits behind a configuration in flight is lost.
+    pub(crate) fn send_last_outputs(&mut self, conn: &Connection) {
+        let qh = self.qh.clone();
+        let Some(o) = self.outputs.as_mut() else {
+            return;
+        };
+        self.app.emergency_outputs(&mut self.ctx.heads);
+        let mut sent = false;
+        for (serial, heads) in self.ctx.heads.take() {
+            for out in o.model.configure_all(serial, heads) {
+                if let Out::Configure(c) = out {
+                    o.send(c, &qh);
+                    sent = true;
+                }
+            }
+        }
+        if sent {
+            crate::hangup::read_through(conn);
+        }
+    }
 }
 
 struct ManagerData;

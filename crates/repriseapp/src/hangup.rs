@@ -6,6 +6,7 @@ use smithay_client_toolkit::reexports::calloop::{
 };
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::sync::atomic::{AtomicI32, Ordering};
+use wayland_client::Connection;
 
 static SOCKET: AtomicI32 = AtomicI32::new(-1);
 /// The write end of the pipe that hands an ending signal to the run loop, or -1.
@@ -83,6 +84,15 @@ pub(crate) fn route_to<D>(handle: &LoopHandle<'_, D>, mut rescue: impl FnMut(&mu
     }
 }
 
+/// Waits until the compositor has read every request sent so far, so a rescue's last requests are
+/// not lost to the hang-up. The sync goes on a queue of its own: the loop's queue may not be
+/// dispatched from inside a rescue.
+pub(crate) fn read_through(conn: &Connection) {
+    if let Err(e) = conn.new_event_queue::<()>().roundtrip(&mut ()) {
+        log::warn!("the last requests may not have reached the compositor: {e}");
+    }
+}
+
 /// Hangs up `socket` whoever else holds it: the compositor reads the end of the connection.
 pub(crate) fn hang_up(socket: BorrowedFd) {
     SOCKET.store(-1, Ordering::Release);
@@ -144,7 +154,7 @@ fn end_by(sig: libc::c_int) {
 mod tests {
     use super::*;
     use std::io::Read;
-    use std::os::fd::AsFd;
+    use std::os::fd::{AsFd, AsRawFd, FromRawFd};
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
 
@@ -295,6 +305,125 @@ mod tests {
             "the program ends by SIGTERM: {:?}",
             out.status
         );
+    }
+
+    const SOCKET_FD: &str = "REPRISE_HANGUP_SOCKET";
+
+    struct Probe;
+
+    impl wayland_client::Dispatch<wayland_client::protocol::wl_registry::WlRegistry, ()> for Probe {
+        fn event(
+            _: &mut Probe,
+            _: &wayland_client::protocol::wl_registry::WlRegistry,
+            _: wayland_client::protocol::wl_registry::Event,
+            _: &(),
+            _: &Connection,
+            _: &wayland_client::QueueHandle<Probe>,
+        ) {
+        }
+    }
+
+    /// A compositor that answers `wl_display.sync` and names the requests it reads, then "end".
+    fn compositor(mut s: UnixStream) -> Vec<&'static str> {
+        use std::io::Write;
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let word = |b: &[u8]| u32::from_ne_bytes(b[..4].try_into().unwrap());
+        let mut heard = Vec::new();
+        loop {
+            let mut head = [0u8; 8];
+            if let Err(e) = s.read_exact(&mut head) {
+                heard.push(match e.kind() {
+                    std::io::ErrorKind::UnexpectedEof => "end",
+                    _ => "silence",
+                });
+                return heard;
+            }
+            let (object, op) = (word(&head), word(&head[4..]));
+            let mut args = vec![0u8; (op >> 16) as usize - 8];
+            if s.read_exact(&mut args).is_err() {
+                heard.push("cut");
+                return heard;
+            }
+            match (object, op & 0xffff) {
+                (1, 0) => {
+                    heard.push("sync");
+                    let callback = word(&args);
+                    let mut answer = Vec::new();
+                    for w in [callback, 12 << 16, 0, 1, 12 << 16 | 1, callback] {
+                        answer.extend(w.to_ne_bytes());
+                    }
+                    let _ = s.write_all(&answer);
+                }
+                (1, 1) => heard.push("get_registry"),
+                _ => heard.push("other"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_request_the_rescue_sends_is_read_by_the_compositor_before_the_hang_up() {
+        use smithay_client_toolkit::reexports::calloop::EventLoop;
+        use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
+        use std::os::fd::RawFd;
+        use std::os::unix::process::CommandExt;
+        if let Some(fd) = std::env::var_os(SOCKET_FD) {
+            let fd: RawFd = fd.to_str().unwrap().parse().unwrap();
+            // SAFETY: the parent left this end of its socket pair open across exec for this process.
+            let stream = unsafe { UnixStream::from_raw_fd(fd) };
+            let conn = Connection::from_socket(stream).unwrap();
+            on_signals(conn.backend().poll_fd());
+            let queue = conn.new_event_queue::<Probe>();
+            let qh = queue.handle();
+            let mut event_loop: EventLoop<Probe> = EventLoop::try_new().unwrap();
+            WaylandSource::new(conn.clone(), queue)
+                .insert(event_loop.handle())
+                .unwrap();
+            let last = conn.clone();
+            route_to(&event_loop.handle(), move |_: &mut Probe| {
+                last.display().get_registry(&qh, ());
+                read_through(&last);
+            });
+            // SAFETY: raise on this process.
+            unsafe { libc::raise(libc::SIGTERM) };
+            for _ in 0..50 {
+                event_loop
+                    .dispatch(Duration::from_millis(20), &mut Probe)
+                    .unwrap();
+            }
+            println!("SURVIVED");
+            return;
+        }
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let fd = theirs.as_raw_fd();
+        let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+        cmd.args([
+            "--exact",
+            "hangup::tests::a_request_the_rescue_sends_is_read_by_the_compositor_before_the_hang_up",
+            "--nocapture",
+        ])
+        .env(SOCKET_FD, fd.to_string())
+        .stdout(std::process::Stdio::piped());
+        // SAFETY: fcntl is async-signal-safe; it clears close-on-exec in the forked child only, so
+        // no other test's child inherits the socket.
+        unsafe {
+            cmd.pre_exec(move || match libc::fcntl(fd, libc::F_SETFD, 0) {
+                0 => Ok(()),
+                _ => Err(std::io::Error::last_os_error()),
+            });
+        }
+        let child = cmd.spawn().unwrap();
+        drop(theirs);
+        let heard = compositor(ours);
+        let out = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(
+            heard,
+            ["get_registry", "sync", "end"],
+            "the rescue's request, a sync answered, then the end: {stdout}"
+        );
+        assert!(!stdout.contains("SURVIVED"), "the program ends: {stdout}");
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(out.status.signal(), Some(libc::SIGTERM), "{:?}", out.status);
     }
 
     #[test]

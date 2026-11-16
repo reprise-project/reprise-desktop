@@ -1,5 +1,6 @@
 //! What a program implements: the [`App`] trait and the windows it names.
 
+use crate::heads::HeadRequests;
 use crate::{Ctx, DropForm, Event, FileDrop, Reader, ReaderForm, Reply, Waker};
 use reprisekit::access::Tree;
 use reprisekit::controls::hosted::Hosted;
@@ -113,6 +114,11 @@ pub trait Extended {
     /// an event or draw panicked and left the state half-updated, or SIGTERM, SIGINT or SIGHUP
     /// arrived (then it has 10 s). Save what the user would lose.
     fn emergency(&mut self) {}
+    /// An ending signal arrived and [`emergency`](Extended::emergency) has run: the output
+    /// configurations to set before the process ends, such as a mode on trial put back. The host
+    /// sends them at once and waits until the compositor has read them, inside the 10 s. Asked
+    /// only with [`output_management`](Extended::output_management).
+    fn emergency_outputs(&mut self, _heads: &mut HeadRequests) {}
     /// The windows have not drawn for a few seconds: no shared memory for their frames (out of
     /// memory or file descriptors). The host keeps trying; the program may say
     /// so, in a message box. Called once per run of failures.
