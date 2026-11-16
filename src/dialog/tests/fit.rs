@@ -118,9 +118,7 @@ fn a_measured_dialog_built_again_keeps_what_its_controls_hold() {
     let big = Theme::default().with_text_size(200);
     for m in measured_forms() {
         let mut d = opened_measured(&m, &Theme::default(), &text);
-        let Some(form) = d.form_mut().and_then(|f| f.open_page_mut()) else {
-            panic!("a plain form");
-        };
+        let form = d.form_mut().expect("a form").open_page_mut();
         let rows = vec![endsession::Row {
             name: "Mail".into(),
             reason: String::new(),
@@ -137,7 +135,7 @@ fn a_measured_dialog_built_again_keeps_what_its_controls_hold() {
         form.focus_id(last.expect("a button"));
         let before = form.clone();
         d.fit(&big, &text);
-        let after = d.form().and_then(|f| f.open_page()).unwrap();
+        let after = d.form().map(|f| f.open_page()).unwrap();
         let focused = |f: &reprisekit::controls::form::Form| f.focus().map(|i| f.items[i].id);
         assert_eq!(focused(after), focused(&before));
         for a in &after.items {
@@ -265,22 +263,10 @@ fn the_tray_customize_dialog_fits_a_small_output_at_200() {
 
 /// Every compositor dialog laid out as a form, under each interface, at each text size.
 fn form_dialogs(theme: &Theme, text: &TextRenderer) -> Vec<Dialog> {
-    let bin = crate::binprops::BinSheet::new(
-        reprisefs::bincap::Policy::default(),
-        vec![crate::binprops::Drive {
-            key: "home".into(),
-            label: "Local Disk (/home)".into(),
-            size: 21_365_735_424,
-        }],
-    );
-    let mut ds = vec![crate::binprops::dialog(bin, (0, 0), "user-trash")];
-    ds.iter_mut().for_each(|d| d.fit(theme, text));
-    ds.extend(
-        measured_forms()
-            .iter()
-            .map(|m| opened_measured(m, theme, text)),
-    );
-    ds
+    measured_forms()
+        .iter()
+        .map(|m| opened_measured(m, theme, text))
+        .collect()
 }
 
 /// Every compositor dialog drawn from a template or as a Welcome panel.
@@ -346,10 +332,8 @@ fn every_dialog_fits_its_text_under_every_interface() {
                     over.push(format!("{family}, {}, {pct}%, {title}: {what}", i.as_str()))
                 };
                 for d in form_dialogs(&theme, &text) {
-                    for (n, page) in d.form().unwrap().pages().iter().enumerate() {
-                        for (id, by) in page.overflows(&text, px) {
-                            put(&d.title, format!("page {n}, {id} {by} px over"));
-                        }
+                    for (id, by) in d.form().unwrap().open_page().overflows(&text, px) {
+                        put(&d.title, format!("{id} {by} px over"));
                     }
                 }
                 for mut d in template_dialogs() {
@@ -472,12 +456,7 @@ fn prompts_and_form_dialogs_grow_with_the_text_size() {
         let mut d = Dialog::location_prompt(&fields, "maps.desktop".into(), &text, px, u);
         d.fit(theme, &text);
         let l = DialogLayout::compute(theme, &text, &d);
-        let deny = d
-            .form()
-            .unwrap()
-            .open_page()
-            .unwrap()
-            .rect(locationprompt::DENY);
+        let deny = d.form().unwrap().open_page().rect(locationprompt::DENY);
         (d, l, deny.unwrap())
     };
     let (_, one, one_deny) = at(&Theme::default());

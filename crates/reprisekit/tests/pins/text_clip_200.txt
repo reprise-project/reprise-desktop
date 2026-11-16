@@ -1,4 +1,6 @@
 backgrounds.png "Message Box" x1
+bin-sheet.png "Configure drives indepe..." x3
+bin-sheet.png "Use one setting for all..." x3
 blue-variants.png " Desktop" x10
 blue-variants.png "Apply" x10
 blue-variants.png "Blue: common controls" x1

@@ -9,6 +9,26 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::mpsc::{Sender, channel};
 
+/// Recycle Bin settings from the state file, before `[recycle_bin]`: read once and moved into
+/// `config.toml` (`dialogview::setup`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct OldBinSettings {
+    pub no_bin: bool,
+    pub no_confirm: bool,
+}
+
+impl OldBinSettings {
+    pub fn policy(self) -> reprisefs::bincap::Policy {
+        let mut p = reprisefs::bincap::Policy {
+            confirm: !self.no_confirm,
+            ..Default::default()
+        };
+        p.global.remove_immediately = self.no_bin;
+        p
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Persisted {
@@ -33,7 +53,7 @@ pub struct Persisted {
     pub system_icon_names: BTreeMap<String, String>,
     /// Recycle Bin Properties as an older session kept it here: moved once into `[recycle_bin]` in
     /// `config.toml`, then dropped (`dialogview::setup`).
-    pub bin: Option<crate::binprops::OldBinSettings>,
+    pub bin: Option<OldBinSettings>,
     /// The apps open when the last session ended, started again at login.
     pub session: Vec<crate::session::SavedApp>,
     /// The tab groups open when the last session ended, regrouped at login.
@@ -420,6 +440,22 @@ fn run(job: Job) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_old_state_file_settings_become_a_policy_for_every_drive() {
+        let p = OldBinSettings {
+            no_bin: true,
+            no_confirm: true,
+        }
+        .policy();
+        assert!(!p.confirm && !p.independent);
+        assert!(p.global.remove_immediately);
+        assert_eq!(p.global.max_percent, 10);
+        assert_eq!(
+            OldBinSettings::default().policy(),
+            reprisefs::bincap::Policy::default()
+        );
+    }
+
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("reprise-state-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -609,7 +645,7 @@ mod tests {
         let back = load_from(&path);
         assert_eq!(
             back.bin,
-            Some(crate::binprops::OldBinSettings {
+            Some(OldBinSettings {
                 no_bin: true,
                 no_confirm: false
             })

@@ -1,38 +1,11 @@
 use super::*;
 use crate::textedit::EditKey;
 use crate::theme::TextUnits;
-use reprisekit::controls::form::Key;
-use reprisekit::controls::propsheet::{Event as SheetEvent, PropSheet, StripKey};
-
-/// What a form dialog holds: a property sheet (tabs over one page each,
-/// the sheet's buttons along the bottom), or one plain form.
-#[derive(Clone, Debug, PartialEq)]
-pub enum FormBody {
-    Sheet(Box<PropSheet>),
-    Plain(Box<reprisekit::controls::form::Form>),
-}
-
-impl FormBody {
-    pub fn pages(&self) -> &[reprisekit::controls::form::Form] {
-        match self {
-            FormBody::Sheet(s) => &s.pages,
-            FormBody::Plain(f) => std::slice::from_ref(&**f),
-        }
-    }
-
-    pub fn pages_mut(&mut self) -> &mut [reprisekit::controls::form::Form] {
-        match self {
-            FormBody::Sheet(s) => &mut s.pages,
-            FormBody::Plain(f) => std::slice::from_mut(&mut **f),
-        }
-    }
-}
+use reprisekit::controls::form::{Form, Key};
 
 /// Which dialog a `FormDialog` is, so its events reach the right code.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
-    /// Recycle Bin Properties; `binprops::event`.
-    RecycleBin(crate::binprops::BinSheet),
     /// Confirm File/Folder Replace over a drop's batch; `replace_event`.
     Replace(Box<crate::dragview::Batch>),
     /// Programs Log Off, Turn Off or Restart waits for; `session_end_event`.
@@ -41,12 +14,12 @@ pub enum Kind {
     Location(String),
 }
 
-/// A form dialog: its size at 100% text, what it holds, and which dialog it is. The client sits
-/// at `FORM_CLIENT` plus `frame_d`, which is the sheet's or the form's origin.
+/// A form dialog: its size at 100% text, its form, and which dialog it is. The client sits
+/// at `FORM_CLIENT` plus `frame_d`, which is the form's origin.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FormDialog {
     pub size: (i32, i32),
-    pub body: FormBody,
+    pub form: Box<Form>,
     pub kind: FormKind,
     /// Offset of the look's frame from the built client area (`client_shift`); set by
     /// [`FormDialog::fit_frame`].
@@ -91,19 +64,6 @@ impl Measured {
 }
 
 impl FormDialog {
-    pub fn from_sheet(mut sheet: PropSheet, kind: FormKind) -> FormDialog {
-        let (x, y) = FORM_CLIENT;
-        sheet.place(FORM_CLIENT);
-        let (w, h) = sheet.size;
-        FormDialog {
-            size: (w + 2 * x, h + x + y),
-            body: FormBody::Sheet(Box::new(sheet)),
-            kind,
-            frame_d: (0, 0),
-            measured: None,
-        }
-    }
-
     /// The form `m` builds for text set at `px` that grows by `u`.
     pub fn measured(
         m: Measured,
@@ -122,15 +82,15 @@ impl FormDialog {
     /// Build a measured form again for text set at `px` that grows by `u`, keeping what its
     /// controls hold; the frame is fitted again after.
     pub(super) fn remeasure(&mut self, text: &TextRenderer, px: u32, u: TextUnits) {
-        let (Some(m), FormBody::Plain(old)) = (&self.measured, &self.body) else {
+        let Some(m) = &self.measured else {
             return;
         };
         let ((w, h), mut form) = m.build(text, px, u);
-        form.carry(old);
+        form.carry(&self.form);
         let (x, y) = FORM_CLIENT;
         form.origin = FORM_CLIENT;
         self.size = (w + 2 * x, h + x + y);
-        self.body = FormBody::Plain(Box::new(form));
+        *self.form = form;
         self.frame_d = (0, 0);
     }
 
@@ -152,7 +112,7 @@ impl FormDialog {
     ) -> FormDialog {
         FormDialog {
             size,
-            body: FormBody::Plain(Box::new(form)),
+            form: Box::new(form),
             kind,
             frame_d: (0, 0),
             measured: None,
@@ -173,33 +133,6 @@ impl FormDialog {
         (2 * (x + dx), x + y + dx + dy)
     }
 
-    /// Fit a sheet to an outer `area` at the text size `u` ([`PropSheet::fit`]): one larger
-    /// shows what fits and scrolls its page; one that fits shows whole. Idempotent.
-    pub(super) fn fit_area(
-        &mut self,
-        u: TextUnits,
-        text: &TextRenderer,
-        px: u32,
-        area: (i32, i32),
-    ) {
-        let pad = self.pad();
-        if let FormBody::Sheet(s) = &mut self.body {
-            s.fit((u.within(area.0 - pad.0), u.within(area.1 - pad.1)));
-            self.fit_tabs(text, px);
-        }
-    }
-
-    /// Make room for tabs that wrap onto more rows, the sheet growing unless it was cut;
-    /// idempotent.
-    pub fn fit_tabs(&mut self, text: &TextRenderer, px: u32) {
-        let pad = self.pad();
-        if let FormBody::Sheet(s) = &mut self.body {
-            s.fit_tabs(text, px);
-            let (w, h) = s.shown();
-            self.size = (w + pad.0, h + pad.1);
-        }
-    }
-
     /// Fit the dialog to a frame whose client area sits `d` from where it was built; idempotent.
     pub fn fit_frame(&mut self, d: (i32, i32)) {
         let (dx, dy) = (d.0 - self.frame_d.0, d.1 - self.frame_d.1);
@@ -209,54 +142,23 @@ impl FormDialog {
         self.size.0 += 2 * dx;
         self.size.1 += dx + dy;
         self.frame_d = d;
-        match &mut self.body {
-            FormBody::Sheet(s) => s.place((FORM_CLIENT.0 + d.0, FORM_CLIENT.1 + d.1)),
-            FormBody::Plain(f) => f.origin = (f.origin.0 + dx, f.origin.1 + dy),
-        }
+        let f = &mut self.form;
+        f.origin = (f.origin.0 + dx, f.origin.1 + dy);
     }
 
-    pub fn sheet(&self) -> Option<&PropSheet> {
-        match &self.body {
-            FormBody::Sheet(s) => Some(&**s),
-            FormBody::Plain(_) => None,
-        }
+    pub fn open_page(&self) -> &Form {
+        &self.form
     }
 
-    pub fn sheet_mut(&mut self) -> Option<&mut PropSheet> {
-        match &mut self.body {
-            FormBody::Sheet(s) => Some(&mut **s),
-            FormBody::Plain(_) => None,
-        }
+    pub fn open_page_mut(&mut self) -> &mut Form {
+        &mut self.form
     }
 
-    pub fn pages(&self) -> &[reprisekit::controls::form::Form] {
-        self.body.pages()
-    }
-
-    pub fn pages_mut(&mut self) -> &mut [reprisekit::controls::form::Form] {
-        self.body.pages_mut()
-    }
-
-    pub fn open_index(&self) -> usize {
-        self.sheet().map_or(0, |s| s.tabs.open)
-    }
-
-    pub fn open_page(&self) -> Option<&reprisekit::controls::form::Form> {
-        self.pages().get(self.open_index())
-    }
-
-    pub fn open_page_mut(&mut self) -> Option<&mut reprisekit::controls::form::Form> {
-        let i = self.open_index();
-        self.pages_mut().get_mut(i)
-    }
-
-    /// Puts `icon` in the open page's "icon" picture, for an icon that landed after the form was
+    /// Puts `icon` in the form's "icon" picture, for an icon that landed after the form was
     /// built. True when the picture changed.
     pub fn set_icon(&mut self, icon: crate::raster::Canvas) -> bool {
         use reprisekit::controls::form::Control;
-        let Some(form) = self.open_page_mut() else {
-            return false;
-        };
+        let form = &mut self.form;
         match form.item("icon").map(|i| &i.control) {
             Some(Control::Picture { canvas, .. }) if canvas.as_ref() != Some(&icon) => {}
             _ => return false,
@@ -266,50 +168,14 @@ impl FormDialog {
     }
 
     pub(crate) fn event(&mut self, ev: reprisekit::controls::form::Event) -> Outcome {
-        let page = self.open_index();
         match self.kind {
-            FormKind::RecycleBin(_) => crate::binprops::event(self, page, ev),
             FormKind::Replace(_) => replace_event(self, ev),
             FormKind::EndSession => session_end_event(ev),
             FormKind::Location(ref id) => location_event(self, id.clone(), ev),
         }
     }
 
-    /// The strip's answer as the dialog's; `None` for a key the page takes.
-    fn strip_outcome(&mut self, sk: StripKey) -> Option<Outcome> {
-        Some(match sk {
-            StripKey::Pass => return None,
-            StripKey::None => Outcome::Nothing,
-            StripKey::Moved => Outcome::Redraw,
-            StripKey::Turned => Outcome::Relayout,
-        })
-    }
-
-    pub(super) fn cycle_page(&mut self, back: bool) -> Outcome {
-        let Some(s) = self.sheet_mut() else {
-            return Outcome::Nothing;
-        };
-        let sk = s.strip_key(&Key::Tab { back }, Some(back));
-        self.strip_outcome(sk).unwrap_or(Outcome::Nothing)
-    }
-
-    /// A key for the open page, the strip's first; a sheet cut to its output scrolls the
-    /// focused control into view.
     pub(super) fn key(&mut self, key: Key) -> Outcome {
-        let out = self.page_key(key);
-        match self.sheet_mut().map(|s| s.reveal_focus()) {
-            Some(true) if out == Outcome::Nothing => Outcome::Redraw,
-            _ => out,
-        }
-    }
-
-    fn page_key(&mut self, key: Key) -> Outcome {
-        if let Some(s) = self.sheet_mut() {
-            let sk = s.strip_key(&key, None);
-            if let Some(out) = self.strip_outcome(sk) {
-                return out;
-            }
-        }
         // Backspace goes in as an edit key; the form turns it back into
         // `Key::Backspace` (and an insert into `Char` or `Space`) when no
         // edit field has the focus.
@@ -317,44 +183,17 @@ impl FormDialog {
             Key::Backspace => Key::Edit(EditKey::Backspace { word: false }),
             k => k,
         };
-        let Some(form) = self.open_page_mut() else {
-            return Outcome::Nothing;
-        };
-        let ev = form.key(k);
+        let ev = self.form.key(k);
         self.event(ev)
     }
 
     pub(super) fn click(&mut self, hit: Option<DialogHit>) -> Outcome {
-        match hit {
-            Some(DialogHit::Tab(i)) => {
-                let Some(s) = self.sheet_mut() else {
-                    return Outcome::Nothing;
-                };
-                let sk = s.tab_click(i);
-                self.strip_outcome(sk).unwrap_or(Outcome::Nothing)
-            }
-            Some(DialogHit::Control(h)) => {
-                let Some(form) = self.open_page_mut() else {
-                    return Outcome::Nothing;
-                };
-                let ev = form.click(Some(h));
-                if let Some(s) = self.sheet_mut() {
-                    s.page_clicked();
-                }
-                self.event(ev)
-            }
-            Some(DialogHit::PageBar(h)) => match self.sheet_mut() {
-                Some(s) => redraw_if(s.click(Some(h)) != SheetEvent::None),
-                None => Outcome::Nothing,
-            },
-            _ => {
-                let Some(form) = self.open_page_mut() else {
-                    return Outcome::Nothing;
-                };
-                let ev = form.click(None);
-                self.event(ev)
-            }
-        }
+        let h = match hit {
+            Some(DialogHit::Control(h)) => Some(h),
+            _ => None,
+        };
+        let ev = self.form.click(h);
+        self.event(ev)
     }
 }
 
@@ -401,9 +240,7 @@ fn location_event(
 ) -> Outcome {
     use reprisekit::controls::form::Event;
     use reprisekit::controls::locationprompt;
-    let answer = fd
-        .open_page()
-        .and_then(|form| locationprompt::answer(form, &ev));
+    let answer = locationprompt::answer(&fd.form, &ev);
     match answer {
         Some(answer) => Outcome::Location { desktop_id, answer },
         None if ev == Event::None => Outcome::Nothing,

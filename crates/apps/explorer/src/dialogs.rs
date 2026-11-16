@@ -694,7 +694,7 @@ impl Explorer {
                 ) => Caption::Help,
                 _ => Caption::Prompt,
             },
-            crate::props_dialog::PROPS => Caption::Help,
+            crate::props_dialog::PROPS | crate::bin_props::BIN_PROPS => Caption::Help,
             crate::browse::ERROR => Caption::Prompt,
             crate::copydlg::COPY | crate::copydlg::REMOVE | crate::copydlg::EXTRACT => {
                 Caption::Prompt
@@ -768,6 +768,7 @@ impl Explorer {
             });
         }
         out.extend(self.props_child());
+        out.extend(self.bin_props_child());
         out.extend(self.preview_child());
         out.extend(self.progress_children());
         out

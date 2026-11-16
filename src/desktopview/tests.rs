@@ -348,67 +348,6 @@ fn a_drive_mounted_again_where_a_stuck_one_left_is_read_afresh() {
 }
 
 #[test]
-fn a_drive_tab_read_still_out_starts_no_second_and_known_tabs_keep_mount_order() {
-    let (a, b, c) = (
-        PathBuf::from("/media/A"),
-        PathBuf::from("/media/B"),
-        PathBuf::from("/media/C"),
-    );
-    let tops = [a.clone(), b.clone(), c.clone()];
-    let mut bins = DriveBins::default();
-    let (first, read) = bins.start_tab_reads(&tops);
-    assert_eq!(read, tops);
-    assert!(bins.tabs(&tops).is_empty(), "no read has landed");
-    bins.land_tab(c.clone(), first, Some(drive_tab("C")));
-    bins.land_tab(a.clone(), first, Some(drive_tab("A")));
-    let (second, read) = bins.start_tab_reads(&tops);
-    assert_eq!(
-        read,
-        [a.clone(), c.clone()],
-        "B never answered: its read is still out"
-    );
-    assert_eq!(bins.tabs(&tops), [drive_tab("A"), drive_tab("C")]);
-    bins.land_tab(a.clone(), second, None);
-    bins.land_tab(b, first, Some(drive_tab("B")));
-    assert_eq!(
-        bins.tabs(&tops),
-        [drive_tab("B"), drive_tab("C")],
-        "A has no bin now"
-    );
-    assert_eq!(
-        bins.tabs(&[c]),
-        [drive_tab("C")],
-        "only drives still mounted"
-    );
-}
-
-#[test]
-fn a_drive_mounted_again_where_a_stuck_one_left_gets_its_tab_read_afresh() {
-    let a = PathBuf::from("/media/A");
-    let mut bins = DriveBins::default();
-    let (stuck, _) = bins.start_tab_reads(std::slice::from_ref(&a));
-    bins.drives_listed(&[]);
-    bins.drives_listed(std::slice::from_ref(&a));
-    let (back, read) = bins.start_tab_reads(std::slice::from_ref(&a));
-    assert_eq!(read, std::slice::from_ref(&a), "the new A is read");
-    bins.land_tab(a.clone(), stuck, Some(drive_tab("old")));
-    assert!(
-        bins.tabs(std::slice::from_ref(&a)).is_empty(),
-        "the old A's late answer is dropped"
-    );
-    bins.land_tab(a.clone(), back, Some(drive_tab("A")));
-    assert_eq!(bins.tabs(&[a]), [drive_tab("A")]);
-}
-
-fn drive_tab(label: &str) -> crate::binprops::Drive {
-    crate::binprops::Drive {
-        key: label.into(),
-        label: label.into(),
-        size: 1,
-    }
-}
-
-#[test]
 fn a_drive_top_the_user_cannot_read_is_not_watched() {
     use std::os::unix::fs::PermissionsExt;
     let top = std::env::temp_dir().join(format!("reprise-drive-tops-{}", std::process::id()));
@@ -1616,4 +1555,17 @@ fn a_new_folder_takes_the_next_name_when_a_stale_listing_missed_one() {
     h.state.desktop_command(DesktopCommand::NewFolder, None);
     assert!(desk.join("New Folder (2)").is_dir());
     assert!(h.state.dialogs.views.is_empty());
+}
+
+#[test]
+fn recycle_bin_properties_start_explorer_and_open_no_dialog() {
+    crate::spawn::record();
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.state.desktop_command(DesktopCommand::BinProperties, None);
+    assert!(
+        h.state.dialogs.views.is_empty(),
+        "no dialog of the desktop's own"
+    );
+    assert_eq!(crate::spawn::recorded(), ["reprise-explorer"]);
 }

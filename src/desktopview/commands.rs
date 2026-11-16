@@ -608,11 +608,7 @@ impl State {
                     self.open_icon_chooser(i);
                 }
             }
-            Dc::BinProperties => {
-                if let Some(i) = target {
-                    self.open_bin_properties(i);
-                }
-            }
+            Dc::BinProperties => self.open_bin_properties(),
             Dc::EmptyBin => self.ask_empty_bin(),
         }
     }

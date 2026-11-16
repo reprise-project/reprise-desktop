@@ -201,7 +201,7 @@ fn start(
         mode: Mode::new(critical),
         password,
     });
-    // The compositor's own dialogs (Run, a Properties sheet) go first.
+    // The compositor's own dialogs (Run, a delete question) go first.
     // The windows are asked once the end is under way, so a program
     // already known to hang gets no End Program of its own.
     state.close_all_dialogs();
@@ -1249,7 +1249,7 @@ mod tests {
     fn picture(h: &crate::harness::Harness) -> Option<crate::raster::Canvas> {
         use reprisekit::controls::form::Control;
         let i = prompt_index(&h.state).expect("the prompt");
-        let page = h.state.dialogs.views[i].dialog.form()?.open_page()?;
+        let page = h.state.dialogs.views[i].dialog.form()?.open_page();
         match &page.item("icon")?.control {
             Control::Picture { canvas, .. } => canvas.clone(),
             _ => None,

@@ -136,7 +136,7 @@ impl State {
             return;
         };
         // A form's focused edit field draws its caret on the blink's shown half.
-        if let Some(page) = v.dialog.form_mut().and_then(|f| f.open_page_mut()) {
+        if let Some(page) = v.dialog.form_mut().map(|f| f.open_page_mut()) {
             page.caret = caret_on;
         }
         let mut canvas = dialog::draw(

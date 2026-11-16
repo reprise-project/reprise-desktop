@@ -34,8 +34,7 @@ pub struct DialogLayout {
     /// rows of the look's `combo_row` inside a 1 px border.
     pub list: Option<Rect>,
     pub buttons: Vec<Rect>,
-    /// A form dialog's tab rects and its page, or a control dialog's client area.
-    pub tabs: Vec<Rect>,
+    /// A control dialog's client area.
     pub page: Option<Rect>,
     /// The look's control sizes it was laid out with, which `hit`,
     /// `scrollbar` and `access` lay the Run list out with.
@@ -60,11 +59,8 @@ pub enum DialogHit {
     ListBar(BarHit),
     Drop,
     Row(usize),
-    Tab(usize),
     Control(reprisekit::controls::form::Hit),
     Tray(traycustomize::Hit),
-    /// A sheet's page scrollbar, while a sheet cut to its output scrolls its page.
-    PageBar(reprisekit::controls::propsheet::Hit),
     /// The copy progress dialog's More/Fewer details toggle.
     CopyDetails,
 }
@@ -143,7 +139,7 @@ impl DialogLayout {
                 Self::compute_welcome_glass(d)
             }
             Style::Welcome(w) => return Self::compute_welcome(w, theme.text),
-            Style::Form(f) => return Self::compute_form(theme, text, d, f),
+            Style::Form(f) => return Self::compute_form(theme, d, f),
             Style::TrayCustomize(t) => {
                 return Self::compute_client(t.client()).framed(theme, d.help);
             }
@@ -210,7 +206,7 @@ impl DialogLayout {
         ];
         rects.into_iter().flatten().for_each(mv);
         self.lines.iter_mut().for_each(|(r, _)| mv(r));
-        self.buttons.iter_mut().chain(&mut self.tabs).for_each(mv);
+        self.buttons.iter_mut().for_each(mv);
         let f = DIALOG_FRAME;
         let (w, h) = (self.size.0 - 2 * f, self.size.1 - 2 * f - CAPTION_H);
         let g = FrameGeometry::layout(&theme.metrics, w, h, false, chrome);
@@ -324,34 +320,17 @@ impl DialogLayout {
         }
     }
 
-    /// A form dialog: the caption, the tab strip's rects when it has one,
-    /// and its fixed size; the controls carry their own rects.
-    fn compute_form(
-        theme: &Theme,
-        text: &TextRenderer,
-        d: &Dialog,
-        f: &FormDialog,
-    ) -> DialogLayout {
-        let px = theme.fonts.size_px;
+    /// A form dialog: the caption and its fixed size; the controls carry their own rects.
+    fn compute_form(theme: &Theme, d: &Dialog, f: &FormDialog) -> DialogLayout {
         let (tw, th) = f.grown_size(theme.text);
         let (w, h) =
             FrameGeometry::client_size_for_total(&theme.metrics, tw, th, false, Chrome::DIALOG);
         let g = FrameGeometry::layout(&theme.metrics, w, h, false, Chrome::DIALOG);
-        let (tabs, page) = match f.sheet() {
-            Some(s) => {
-                let l = s.layout(text, px);
-                (l.tabs, Some(l.page))
-            }
-            None => (Vec::new(), None),
-        };
         // The dialog's icon (a message box's question mark, Power Options'
-        // plug) sits where the open page's "icon" picture is; a page
-        // without one shows none.
-        let icon = f.open_page().and_then(|p| p.rect("icon"));
+        // plug) sits where the form's "icon" picture is; a form without
+        // one shows none.
         DialogLayout {
-            icon,
-            tabs,
-            page,
+            icon: f.form.rect("icon"),
             ..Default::default()
         }
         .with_frame(g, d.help)
@@ -404,16 +383,7 @@ impl DialogLayout {
             return Some(DialogHit::Caption);
         }
         if let Some(f) = d.form() {
-            use reprisekit::controls::propsheet::Hit;
-            return match &f.body {
-                FormBody::Sheet(s) => s.hit(x, y, text, px).and_then(|h| match h {
-                    Hit::Tab(i) => Some(DialogHit::Tab(i)),
-                    Hit::Control(h) => Some(DialogHit::Control(h)),
-                    h @ (Hit::PageBar(_) | Hit::PageHBar(_)) => Some(DialogHit::PageBar(h)),
-                    Hit::ListBar(_) | Hit::List | Hit::Link(_) | Hit::Search(_) => None,
-                }),
-                FormBody::Plain(form) => form.hit(x, y, text, px).map(DialogHit::Control),
-            };
+            return f.form.hit(x, y, text, px).map(DialogHit::Control);
         }
         if let (Some(t), Some(client)) = (d.tray(), self.page) {
             let lay = t.layout(text, px, (client.x, client.y));

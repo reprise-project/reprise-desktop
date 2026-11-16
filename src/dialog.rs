@@ -28,8 +28,7 @@ mod tests;
 mod welcome;
 
 pub use self::draw::{access, access_copy, draw, draw_copy, draw_field};
-pub use self::form::{FormBody, FormDialog, Kind, Measured};
-use self::input::redraw_if;
+pub use self::form::{FormDialog, Kind, Measured};
 pub(crate) use self::input::tray_part;
 pub(crate) use self::layout::FORM_CLIENT;
 use self::layout::{CAPTION_H, DIALOG_FRAME, client_shift};
@@ -168,8 +167,8 @@ pub enum Style {
     /// Log Off or Turn off computer: the Blue `powerpanel`, or under glass a framed dialog with
     /// push buttons unless the panel is to be Blue there too.
     Welcome(Box<Welcome>),
-    /// Form controls at fixed positions, optionally with a tab strip over a page: Properties sheets
-    /// and similar.
+    /// A form laid out around its measured text: Replace, the session-end prompt, the location
+    /// prompt.
     Form(Box<FormDialog>),
     /// End Program: classic dialog on a fixed 354x243 template (see `EP_PARA_Y`).
     EndProgram,
@@ -208,9 +207,6 @@ pub enum Placement {
     /// Flush with the usable area's corner by the Start button
     /// ([`by_start`]), for Run.
     ByStart,
-    /// Top-left corner at a layout point (an icon's cell), pulled inside
-    /// the usable area, for a Properties sheet.
-    At(i32, i32),
 }
 
 /// Top-left of a dialog `size` in the corner of `area` nearest the Start button of a bar along
@@ -282,8 +278,7 @@ impl Dialog {
     }
 
     /// [`Dialog::fit`] on an output whose usable area is `area` big: the tray's Customize page
-    /// lays itself out in the client a frame that size leaves, and a sheet larger than that
-    /// client scrolls its page through the rest.
+    /// lays itself out in the client a frame that size leaves.
     pub fn fit_in(&mut self, theme: &Theme, text: &TextRenderer, area: (i32, i32)) {
         if let Style::TrayCustomize(t) = &mut self.style {
             let pad = DialogLayout::compute_client((0, 0))
@@ -292,20 +287,16 @@ impl Dialog {
             t.room = Some((area.0 - pad.0, area.1 - pad.1));
         }
         self.fit(theme, text);
-        if let Style::Form(f) = &mut self.style {
-            f.fit_area(theme.text, text, theme.fonts.size_px, area);
-        }
     }
 
-    /// Fit a form dialog to `theme`: a form laid out around measured text is built again, and
-    /// wrapped tabs and a larger frame grow it.
+    /// Fit a form dialog to `theme`: a form laid out around measured text is built again, and a
+    /// larger frame grows it.
     pub fn fit(&mut self, theme: &Theme, text: &TextRenderer) {
         match &mut self.style {
             Style::Form(f) => {
                 f.remeasure(text, theme.fonts.size_px, theme.text);
                 let p = theme.paint();
-                f.body.pages().iter().for_each(|page| page.drawn_with(&p));
-                f.fit_tabs(text, theme.fonts.size_px);
+                f.form.drawn_with(&p);
                 f.fit_frame(client_shift(theme));
             }
             Style::TrayCustomize(t) => {
@@ -487,10 +478,6 @@ pub enum Outcome {
     RenameDesktop(usize, String),
     Act(Action),
     BrowseRun,
-    BinSettings {
-        settings: reprisefs::bincap::Policy,
-        close: bool,
-    },
     /// Close the question about an item too big for the Recycle Bin and
     /// carry on with its batch.
     TooBig {

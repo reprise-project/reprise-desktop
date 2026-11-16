@@ -46,12 +46,15 @@ The file manager, and the default for folders.
   programs, Flatpaks included. A right-drag asks whether to copy, move or
   make a shortcut.
 - **Recycle Bin** on the freedesktop trash, shared with other programs, with
-  Restore. Recycle Bin Properties can empty items older than a number of days.
+  Restore. Recycle Bin Properties (Properties in the Recycle Bin with nothing
+  selected, or on the desktop's Recycle Bin) sets each drive's bin size and can
+  empty items older than a number of days.
 - **Properties** (Alt+Enter): size, dates, Read-only, Hidden and Executable, a
   Summary tab, a Checksums tab (SHA-256 and MD5, with Compare with) and a
   Shortcut tab for launchers. Several files share one sheet. The desktop's,
-  the Start menu's and search results' Properties and Open With are
-  Explorer's too, each in a process of its own without a folder window.
+  the Start menu's and search results' Properties and Open With, and Recycle
+  Bin Properties, are Explorer's too, each in a process of its own without a
+  folder window.
 - **Show in folder** from other programs: Explorer answers
   `org.freedesktop.FileManager1`, so a browser's "Show in folder" opens the
   file's folder with the file selected.

@@ -56,7 +56,7 @@ impl State {
             .views
             .last()
             .and_then(|v| v.dialog.form())
-            .and_then(|f| f.open_page())
+            .map(|f| f.open_page())
             .is_some_and(|p| p.tip_waiting());
         if !waiting || self.dialogs.tip_timer.is_some() {
             return;
@@ -76,7 +76,7 @@ impl State {
         let top = self.dialogs.views.len().checked_sub(1);
         let page = top
             .and_then(|i| self.dialogs.views[i].dialog.form_mut())
-            .and_then(|f| f.open_page_mut());
+            .map(|f| f.open_page_mut());
         let (changed, waiting) = match page {
             Some(p) => (p.tip_tick(), p.tip_waiting()),
             None => (false, false),
@@ -333,14 +333,13 @@ impl State {
         let Some(v) = self.dialogs.views.last_mut() else {
             return out;
         };
-        let page = v.dialog.form().and_then(|f| f.open_page());
+        let page = v.dialog.form().map(|f| f.open_page());
         if page.is_some_and(|p| p.drag.is_some()) || v.dialog.holding_thumb() {
             self.interaction = Interaction::FieldDrag {
                 editor: crate::caret::Editor::Dialog,
             };
         } else if page.is_some_and(|p| p.holding())
             || v.dialog.tray().is_some_and(|t| t.holding())
-            || v.dialog.holding_page_bar()
             || v.dialog.copy().is_some_and(|c| c.cp.form.holding())
             || v.dialog.field_lit.holding()
         {
@@ -350,7 +349,7 @@ impl State {
         out
     }
 
-    /// Tick dialog `id` while its page arrow is held (a sheet's or the tray's Customize page):
+    /// Tick dialog `id` while an arrow of the tray's Customize page is held:
     /// the page steps as the arrow repeats.
     fn tick_page(&mut self, id: u64) {
         let every = reprisekit::controls::scrollbar::REPEAT_EVERY;
@@ -386,12 +385,8 @@ impl State {
         };
         let outcome = if let Some(fd) = v.dialog.form_mut() {
             let (x, y) = to_local(lx, ly, (v.x, v.y));
-            let over = fd.open_page().and_then(|p| p.hit(x, y, text, px));
-            let ev = fd
-                .open_page_mut()
-                .map_or(reprisekit::controls::form::Event::None, |p| {
-                    p.motion(x, y, over)
-                });
+            let over = fd.form.hit(x, y, text, px);
+            let ev = fd.form.motion(x, y, over);
             fd.event(ev)
         } else if v.dialog.holding_thumb() {
             let y = to_local(lx, ly, (v.x, v.y)).1;
@@ -455,21 +450,11 @@ impl State {
             return;
         }
         let (x, y) = to_local(pos.x, pos.y, (v.x, v.y));
-        if v.dialog.holding_page_bar() {
-            if v.dialog.drag_page_bar(x, y, text, px) {
-                self.redraw_dialog(i);
-            }
-            return;
-        }
         let Some(fd) = v.dialog.form_mut() else {
             return;
         };
-        let on = fd.open_page().and_then(|p| p.hit(x, y, text, px));
-        let ev = fd
-            .open_page_mut()
-            .map_or(reprisekit::controls::form::Event::None, |p| {
-                p.motion(x, y, on)
-            });
+        let on = fd.form.hit(x, y, text, px);
+        let ev = fd.form.motion(x, y, on);
         let outcome = fd.event(ev);
         self.apply_dialog(outcome);
     }
@@ -551,18 +536,13 @@ impl State {
         }
         let ctrl = k.mods & MOD_CTRL != 0;
         let shift = k.mods & MOD_SHIFT != 0;
-        // The table every repriseapp program reads; Ctrl+Tab cycles pages.
+        // The table every repriseapp program reads; Ctrl+Tab turns no page in these one-page
+        // dialogs.
         let special = k
             .syms
             .iter()
             .find_map(|&sym| reprisekit::controls::form::special_key(sym, shift, alt));
-        if let (Some(Key::Tab { back }), true) = (&special, ctrl) {
-            let back = *back;
-            let outcome = match self.dialogs.views.last_mut() {
-                Some(v) => v.dialog.cycle_page(back),
-                None => return,
-            };
-            self.apply_dialog(outcome);
+        if let (Some(Key::Tab { .. }), true) = (&special, ctrl) {
             return;
         }
         // Everything else is an editing key. Alt+letter is an access key even in a field; bare Backspace
