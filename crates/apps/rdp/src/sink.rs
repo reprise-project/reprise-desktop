@@ -1,11 +1,13 @@
-//! The "Remote client" sink: one PipeWire null sink made the default while any viewer listens,
-//! its monitor captured once per viewer at that viewer's rate.
+//! The "Remote client" sink: one PipeWire null sink made the default, with the playback streams
+//! sent to other sinks moved into it, while any viewer listens; its monitor captured once per
+//! viewer at that viewer's rate.
 
 use pipewire::properties::properties;
 use pipewire::proxy::ProxyT;
-use repriseaudio::Snapshot;
+use repriseaudio::{Snapshot, Stream};
 use reprisevideo::monitor;
 use std::cell::Cell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -151,8 +153,8 @@ impl Drop for Sink {
     }
 }
 
-/// Keeps the shared sink the default with nothing captured from it, so what plays in the session
-/// goes nowhere rather than to this computer's speakers.
+/// Keeps the shared sink the default and every playback stream in it with nothing captured from
+/// it, so what plays in the session goes nowhere rather than to this computer's speakers.
 pub struct Silence {
     _shared: Arc<Shared>,
 }
@@ -321,8 +323,112 @@ fn left_behind(now: &Snapshot, recorded: &str) -> Option<u32> {
     now.sinks.iter().find(|d| d.name == recorded).map(|d| d.id)
 }
 
-/// `$XDG_RUNTIME_DIR/reprise/rdp/sound-before`: the default a sink took over, kept until it is
-/// given back so a server killed meanwhile can be made good.
+/// What a sink changed and gives back as it goes, kept in [`record_path`] meanwhile so a server
+/// killed meanwhile can be made good. A sink named here is a `node.name`; `None` is the default.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Record {
+    /// The default taken over.
+    before: Option<String>,
+    /// Our sink's `object.serial`, which each moved stream's `target.object` names.
+    sink: Option<u64>,
+    /// Where each moved stream still playing played before, by its `object.serial`.
+    streams: BTreeMap<u64, Option<String>>,
+    /// Where each program's moved streams played before, by [`repriseaudio::App::key`], for its
+    /// streams that started since.
+    apps: BTreeMap<String, Option<String>>,
+}
+
+impl Record {
+    /// `before` and `sink` on a line each, then a tab-separated line per stream and program; an
+    /// absent value is an empty field.
+    fn to_text(&self) -> String {
+        let field = |v: &Option<String>| v.clone().unwrap_or_default();
+        let mut text = format!(
+            "{}\n{}\n",
+            field(&self.before),
+            self.sink.map(|s| s.to_string()).unwrap_or_default()
+        );
+        for (serial, sink) in &self.streams {
+            text += &format!("stream\t{serial}\t{}\n", field(sink));
+        }
+        for (key, sink) in &self.apps {
+            text += &format!("app\t{key}\t{}\n", field(sink));
+        }
+        text
+    }
+
+    fn parse(text: &str) -> Record {
+        let mut lines = text.lines();
+        let field = |v: &str| Some(v.trim()).filter(|v| !v.is_empty()).map(str::to_string);
+        let mut record = Record {
+            before: lines.next().and_then(field),
+            sink: lines.next().and_then(|l| l.trim().parse().ok()),
+            ..Record::default()
+        };
+        for line in lines {
+            let mut parts = line.splitn(3, '\t');
+            match (parts.next(), parts.next(), parts.next()) {
+                (Some("stream"), Some(serial), Some(sink)) => {
+                    if let Ok(serial) = serial.parse() {
+                        record.streams.insert(serial, field(sink));
+                    }
+                }
+                (Some("app"), Some(key), Some(sink)) => {
+                    record.apps.insert(key.into(), field(sink));
+                }
+                _ => {}
+            }
+        }
+        record
+    }
+}
+
+/// Notes in `record` where each stream `now` shows sent to a sink other than `id` plays, and
+/// forgets ended ones. Returns our sink's serial and the streams to move into it.
+fn note(now: &Snapshot, id: u32, record: &mut Record) -> Option<(u64, Vec<u32>)> {
+    let ours = now.sinks.iter().find(|d| d.id == id)?.serial?;
+    record.sink = Some(ours);
+    let playing: BTreeSet<u64> = (now.apps.iter().flat_map(|a| &a.streams))
+        .filter_map(|s| s.serial)
+        .collect();
+    record.streams.retain(|serial, _| playing.contains(serial));
+    // One following the default, ours, stays: a move could hide WirePlumber restoring its pick.
+    let elsewhere = |s: &&Stream| s.target_serial.map_or(s.named_target, |t| t != ours);
+    let mut moves = Vec::new();
+    for app in &now.apps {
+        for stream in app.streams.iter().filter(elsewhere) {
+            let Some(serial) = stream.serial else {
+                continue;
+            };
+            let from = stream.target.clone().filter(|t| t != NAME);
+            record.streams.insert(serial, from.clone());
+            record.apps.insert(app.key.clone(), from);
+            moves.push(stream.id);
+        }
+    }
+    Some((ours, moves))
+}
+
+/// The moves back as our sink goes: each stream still playing to it goes where `record` says it,
+/// or else its program, played before while that sink is there, and otherwise follows the default.
+fn put_back(now: &Snapshot, record: &Record) -> Vec<Write> {
+    let Some(ours) = record.sink else {
+        return Vec::new();
+    };
+    let mut writes = Vec::new();
+    for app in &now.apps {
+        for stream in app.streams.iter().filter(|s| s.target_serial == Some(ours)) {
+            let by_stream = stream.serial.and_then(|s| record.streams.get(&s));
+            let before = by_stream.or_else(|| record.apps.get(&app.key));
+            let sink = (before.and_then(Option::as_deref))
+                .and_then(|b| now.sinks.iter().find(|d| d.name == b)?.serial);
+            writes.push(Write::Target(stream.id, sink));
+        }
+    }
+    writes
+}
+
+/// `$XDG_RUNTIME_DIR/reprise/rdp/sound-before`: the [`Record`] of the live sink.
 fn record_path() -> Option<PathBuf> {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -330,88 +436,176 @@ fn record_path() -> Option<PathBuf> {
         .map(|d| d.join("reprise/rdp/sound-before"))
 }
 
-/// Give back a default that a server killed while a client listened left on its sink.
+/// Give back what a server killed while a client listened left on its sink.
 pub fn recover() {
     if let Some(record) = record_path() {
-        recover_at(&record, repriseaudio::snapshot_now, set_default_wait);
+        recover_at(&record, repriseaudio::snapshot_now, put_wait);
     }
 }
 
-fn recover_at(record: &Path, now: fn() -> Snapshot, set: fn(u32) -> bool) {
-    let Ok(recorded) = fs::read_to_string(record) else {
+fn recover_at(path: &Path, now: fn() -> Snapshot, put: fn(&[Write]) -> bool) {
+    let Ok(text) = fs::read_to_string(path) else {
         return;
     };
+    let record = Record::parse(&text);
     let now = now();
     if now.sinks.is_empty() {
         return;
     }
-    if let Some(id) = left_behind(&now, recorded.trim()) {
-        if !set(id) {
-            return;
-        }
-        log::info!("sound: {} is the default sink again", recorded.trim());
+    let mut writes = put_back(&now, &record);
+    let default = (record.before.as_deref()).and_then(|b| left_behind(&now, b));
+    writes.extend(default.map(Write::Default));
+    if !put(&writes) {
+        return;
     }
-    let _ = fs::remove_file(record);
+    if default.is_some() {
+        log::info!(
+            "sound: {} is the default sink again",
+            record.before.as_deref().unwrap_or_default()
+        );
+    }
+    let _ = fs::remove_file(path);
 }
 
-/// Switch the default to `id`, waiting up to [`GIVE_BACK`] for it to take.
-fn set_default_wait(id: u32) -> bool {
+/// One PipeWire write.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Write {
+    /// Make node `id` the default sink.
+    Default(u32),
+    /// Move stream `id` to the sink with this serial, or back to the default.
+    Target(u32, Option<u64>),
+}
+
+/// Queue `writes` in order and wait up to [`GIVE_BACK`] for all of them to take.
+fn put_wait(writes: &[Write]) -> bool {
     let (done, given) = mpsc::channel();
-    repriseaudio::set_default_then(id, move |ok| {
-        let _ = done.send(ok);
-    }) && given.recv_timeout(GIVE_BACK) == Ok(true)
+    for write in writes {
+        let done = done.clone();
+        let then = move |ok| {
+            let _ = done.send(ok);
+        };
+        let queued = match *write {
+            Write::Default(id) => repriseaudio::set_default_then(id, then),
+            Write::Target(id, sink) => repriseaudio::set_target_then(id, sink, then),
+        };
+        if !queued {
+            return false;
+        }
+    }
+    let until = Instant::now() + GIVE_BACK;
+    writes.iter().all(|_| {
+        let left = until.saturating_duration_since(Instant::now());
+        given.recv_timeout(left) == Ok(true)
+    })
 }
 
-/// Gives the default back when dropped, so every way out of [`run`] after the switch does.
-/// The record stays while PipeWire cannot be asked or the switch fails, for [`recover`].
+/// Moves each playback stream sent to another sink into ours while it lives, keeping the
+/// [`Record`] of where each played before.
+struct Follow {
+    /// `true` when PipeWire changed, `false` to stop.
+    wake: mpsc::Sender<bool>,
+    thread: JoinHandle<Record>,
+}
+
+impl Follow {
+    fn start(id: u32, record: Record, path: Option<PathBuf>) -> io::Result<Follow> {
+        let (wake, woken) = mpsc::channel();
+        let changed = wake.clone();
+        let thread = std::thread::Builder::new()
+            .name("reprise-rdp-streams".into())
+            .spawn(move || {
+                let watch = repriseaudio::watch(move || {
+                    let _ = changed.send(true);
+                });
+                let mut record = record;
+                while woken.recv() == Ok(true) {
+                    let Some(now) = std::iter::from_fn(|| watch.try_recv().ok()).last() else {
+                        continue;
+                    };
+                    let noted = record.clone();
+                    let Some((ours, moves)) = note(&now, id, &mut record) else {
+                        continue;
+                    };
+                    if let Some(p) = path.as_deref().filter(|_| record != noted) {
+                        keep_record(p, &record);
+                    }
+                    for stream in moves {
+                        repriseaudio::set_target(stream, Some(ours));
+                    }
+                }
+                record
+            })?;
+        Ok(Follow { wake, thread })
+    }
+
+    /// Stops moving streams; the record, unless the thread panicked.
+    fn end(self) -> Option<Record> {
+        let _ = self.wake.send(false);
+        self.thread.join().ok()
+    }
+}
+
+/// Gives the default and the moved streams back when dropped, by every way out of [`run`]. The
+/// record stays while PipeWire cannot be asked or a write fails, for [`recover`].
 struct GiveBack {
     /// Our sink's node id.
     id: u32,
-    before: Option<String>,
-    record: Option<PathBuf>,
+    /// What there is to give back, while no [`Follow`] keeps it.
+    record: Record,
+    path: Option<PathBuf>,
+    follow: Option<Follow>,
     now: fn() -> Snapshot,
-    set: fn(u32) -> bool,
+    put: fn(&[Write]) -> bool,
 }
 
 impl Drop for GiveBack {
     fn drop(&mut self) {
+        let record = match self.follow.take() {
+            Some(follow) => match follow.end() {
+                Some(record) => record,
+                None => return,
+            },
+            None => std::mem::take(&mut self.record),
+        };
         let now = (self.now)();
         if now.sinks.is_empty() || superseded(&now, self.id) {
             return;
         }
-        if let Some(back) = give_back(&now, self.before.as_deref()) {
-            if !(self.set)(back) {
-                return;
-            }
+        let mut writes = put_back(&now, &record);
+        let default = give_back(&now, record.before.as_deref());
+        writes.extend(default.map(Write::Default));
+        if !(self.put)(&writes) {
+            return;
+        }
+        if default.is_some() {
             log::info!(
                 "sound: {} is the default sink again",
-                self.before.as_deref().unwrap_or_default()
+                record.before.as_deref().unwrap_or_default()
             );
         }
-        if let Some(r) = &self.record {
-            let _ = fs::remove_file(r);
+        if let Some(p) = &self.path {
+            let _ = fs::remove_file(p);
         }
     }
 }
 
-/// Write `before` to `record` ahead of the switch.
-fn keep_record(record: &Path, before: &str) {
-    let written = record
+fn keep_record(path: &Path, record: &Record) {
+    let written = path
         .parent()
         .map_or(Ok(()), fs::create_dir_all)
-        .and_then(|()| fs::write(record, before));
+        .and_then(|()| fs::write(path, record.to_text()));
     if let Err(e) = written {
-        log::warn!("sound: {}: {e}", record.display());
+        log::warn!("sound: {}: {e}", path.display());
     }
 }
 
-/// The shared sink's thread: make the sink the default, report it `ready`, and give the default
-/// back once stopped.
+/// The shared sink's thread: make the sink the default, move the streams sent elsewhere into it,
+/// report it `ready`, and give both back once stopped.
 fn run(stopped: pipewire::channel::Receiver<()>, ready: &Mutex<Ready>) -> Result<(), String> {
     pipewire::init();
-    let record = record_path();
-    if let Some(r) = &record {
-        recover_at(r, repriseaudio::snapshot_now, set_default_wait);
+    let path = record_path();
+    if let Some(p) = &path {
+        recover_at(p, repriseaudio::snapshot_now, put_wait);
     }
     let before = taken_over(&repriseaudio::snapshot_now());
     monitor::on_pipewire(stopped, |main_loop, core, stopping| {
@@ -444,18 +638,27 @@ fn run(stopped: pipewire::channel::Receiver<()>, ready: &Mutex<Ready>) -> Result
         }
         synced?;
         let id = id.get().ok_or("PipeWire did not make the sink")?;
-        if let (Some(r), Some(b)) = (&record, &before) {
-            keep_record(r, b);
-        }
-        let _give_back = GiveBack {
-            id,
+        let record = Record {
             before,
-            record,
-            now: repriseaudio::snapshot_now,
-            set: set_default_wait,
+            ..Record::default()
         };
-        if !set_default_wait(id) {
+        if let Some(p) = &path {
+            keep_record(p, &record);
+        }
+        let mut guard = GiveBack {
+            id,
+            record: record.clone(),
+            path: path.clone(),
+            follow: None,
+            now: repriseaudio::snapshot_now,
+            put: put_wait,
+        };
+        if !put_wait(&[Write::Default(id)]) {
             log::warn!("sound: \"{DESCRIPTION}\" did not become the default sink");
+        }
+        match Follow::start(id, record, path) {
+            Ok(follow) => guard.follow = Some(follow),
+            Err(e) => log::warn!("sound: streams that picked an output stay on it: {e}"),
         }
         report(ready, true);
         main_loop.run();
@@ -495,7 +698,8 @@ fn roundtrip(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use repriseaudio::{Channels, Device};
+    use repriseaudio::{App, Channels, Device};
+    use std::cell::RefCell;
 
     fn sink(id: u32, name: &str) -> Device {
         Device {
@@ -718,16 +922,34 @@ mod tests {
     }
 
     thread_local! {
-        static SET: Cell<Option<u32>> = const { Cell::new(None) };
+        static PUT: RefCell<Vec<Write>> = const { RefCell::new(Vec::new()) };
     }
 
     fn ours() -> Snapshot {
         now(NAME)
     }
 
-    fn set(id: u32) -> bool {
-        SET.set(Some(id));
+    fn put(writes: &[Write]) -> bool {
+        PUT.with_borrow_mut(|p| p.extend_from_slice(writes));
         true
+    }
+
+    fn before(name: &str) -> Record {
+        Record {
+            before: Some(name.into()),
+            ..Record::default()
+        }
+    }
+
+    fn give_back_guard(record: &Path, now: fn() -> Snapshot) -> GiveBack {
+        GiveBack {
+            id: 77,
+            record: Record::parse(&fs::read_to_string(record).unwrap()),
+            path: Some(record.into()),
+            follow: None,
+            now,
+            put,
+        }
     }
 
     fn capture_failing_after_the_switch(guard: GiveBack) -> Result<(), String> {
@@ -739,16 +961,10 @@ mod tests {
     fn the_default_comes_back_when_capture_fails_after_the_switch() {
         let dir = tempfile::tempdir().unwrap();
         let record = dir.path().join("sound-before");
-        keep_record(&record, "speakers");
-        let guard = GiveBack {
-            id: 77,
-            before: Some("speakers".into()),
-            record: Some(record.clone()),
-            now: ours,
-            set,
-        };
+        keep_record(&record, &before("speakers"));
+        let guard = give_back_guard(&record, ours);
         assert!(capture_failing_after_the_switch(guard).is_err());
-        assert_eq!(SET.get(), Some(40));
+        assert_eq!(PUT.take(), [Write::Default(40)]);
         assert!(!record.exists(), "the record goes once the default is back");
     }
 
@@ -756,15 +972,9 @@ mod tests {
     fn the_record_stays_while_pipewire_is_away() {
         let dir = tempfile::tempdir().unwrap();
         let record = dir.path().join("sound-before");
-        keep_record(&record, "speakers");
-        drop(GiveBack {
-            id: 77,
-            before: Some("speakers".into()),
-            record: Some(record.clone()),
-            now: Snapshot::default,
-            set,
-        });
-        assert_eq!(SET.get(), None);
+        keep_record(&record, &before("speakers"));
+        drop(give_back_guard(&record, Snapshot::default));
+        assert_eq!(PUT.take(), []);
         assert!(record.exists(), "kept for recovery");
     }
 
@@ -778,15 +988,9 @@ mod tests {
     fn a_sink_the_next_connection_replaced_leaves_the_default_and_record_alone() {
         let dir = tempfile::tempdir().unwrap();
         let record = dir.path().join("sound-before");
-        keep_record(&record, "speakers");
-        drop(GiveBack {
-            id: 77,
-            before: Some("speakers".into()),
-            record: Some(record.clone()),
-            now: ours_and_the_next_connections,
-            set,
-        });
-        assert_eq!(SET.get(), None, "the default stays on the live sink");
+        keep_record(&record, &before("speakers"));
+        drop(give_back_guard(&record, ours_and_the_next_connections));
+        assert_eq!(PUT.take(), [], "the default stays on the live sink");
         assert!(record.exists(), "the record is the live sink's");
     }
 
@@ -794,11 +998,157 @@ mod tests {
     fn recovery_puts_the_recorded_default_back_and_forgets_it() {
         let dir = tempfile::tempdir().unwrap();
         let record = dir.path().join("sound-before");
-        keep_record(&record, "speakers");
-        recover_at(&record, Snapshot::default, set);
+        keep_record(&record, &before("speakers"));
+        recover_at(&record, Snapshot::default, put);
         assert!(record.exists(), "kept while PipeWire is away");
-        recover_at(&record, || configured(Some(NAME)), set);
-        assert_eq!(SET.get(), Some(40));
+        recover_at(&record, || configured(Some(NAME)), put);
+        assert_eq!(PUT.take(), [Write::Default(40)]);
         assert!(!record.exists());
+    }
+
+    fn stream(id: u32, target: Option<&Device>) -> Stream {
+        Stream {
+            id,
+            serial: Some(u64::from(id) * 10),
+            channels: Channels::default(),
+            target: target.map(|d| d.name.clone()),
+            target_serial: target.and_then(|d| d.serial),
+            named_target: false,
+        }
+    }
+
+    fn app(key: &str, streams: Vec<Stream>) -> App {
+        App {
+            key: key.into(),
+            label: key.into(),
+            icon_hints: Vec::new(),
+            binary: None,
+            pids: Vec::new(),
+            streams,
+            volume: 1.0,
+            mute: false,
+        }
+    }
+
+    /// `apps` playing while our sink 77 is the default.
+    fn playing(apps: Vec<App>) -> Snapshot {
+        Snapshot { apps, ..ours() }
+    }
+
+    #[test]
+    fn every_stream_sent_elsewhere_is_moved_in_and_where_it_played_noted() {
+        let (speakers, remote) = (sink(40, "speakers"), sink(77, NAME));
+        let named = Stream {
+            named_target: true,
+            ..stream(91, None)
+        };
+        let now = playing(vec![
+            app("player", vec![stream(90, Some(&speakers))]),
+            app(
+                "browser",
+                vec![named, stream(92, Some(&remote)), stream(93, None)],
+            ),
+        ]);
+        let mut record = before("hdmi");
+        let (serial, moves) = note(&now, 77, &mut record).expect("our sink is up");
+        assert_eq!(serial, 77);
+        assert_eq!(
+            moves,
+            [90, 91],
+            "the one already in ours and the one following the default stay"
+        );
+        assert_eq!(record.sink, Some(77));
+        let streams = [(900, Some("speakers".into())), (910, None)];
+        assert_eq!(record.streams, BTreeMap::from(streams));
+        let apps = [
+            ("player".into(), Some("speakers".into())),
+            ("browser".into(), None),
+        ];
+        assert_eq!(record.apps, BTreeMap::from(apps));
+        assert_eq!(note(&Snapshot::default(), 77, &mut record), None);
+    }
+
+    #[test]
+    fn a_stream_that_ended_is_forgotten_but_its_program_is_not() {
+        let speakers = sink(40, "speakers");
+        let mut record = Record::default();
+        let then = playing(vec![app("player", vec![stream(90, Some(&speakers))])]);
+        note(&then, 77, &mut record).unwrap();
+        note(&playing(Vec::new()), 77, &mut record).unwrap();
+        assert!(record.streams.is_empty());
+        assert_eq!(record.apps["player"].as_deref(), Some("speakers"));
+    }
+
+    #[test]
+    fn moved_streams_go_back_where_they_or_their_program_played() {
+        let remote = sink(77, NAME);
+        let hdmi = sink(41, "hdmi");
+        let record = Record {
+            sink: Some(77),
+            streams: BTreeMap::from([(900, Some("speakers".into())), (910, None)]),
+            apps: BTreeMap::from([("player".into(), Some("hdmi".into()))]),
+            ..Record::default()
+        };
+        let now = playing(vec![
+            app(
+                "player",
+                vec![
+                    stream(90, Some(&remote)),
+                    stream(91, Some(&remote)),
+                    stream(93, Some(&remote)),
+                    stream(94, Some(&hdmi)),
+                ],
+            ),
+            app("game", vec![stream(95, Some(&remote))]),
+        ]);
+        assert_eq!(
+            put_back(&now, &record),
+            [
+                Write::Target(90, Some(40)),
+                Write::Target(91, None),
+                Write::Target(93, Some(41)),
+                Write::Target(95, None),
+            ],
+            "94 was moved again meanwhile; 93 started since and goes where its program played"
+        );
+        let mut unplugged = now.clone();
+        unplugged.sinks.retain(|d| d.name != "speakers");
+        assert_eq!(put_back(&unplugged, &record)[0], Write::Target(90, None));
+    }
+
+    #[test]
+    fn a_killed_servers_record_moves_its_streams_back_once_its_sink_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sound-before");
+        let record = Record {
+            before: Some("speakers".into()),
+            sink: Some(77),
+            streams: BTreeMap::from([(900, Some("hdmi".into()))]),
+            ..Record::default()
+        };
+        keep_record(&path, &record);
+        assert_eq!(Record::parse(&fs::read_to_string(&path).unwrap()), record);
+        recover_at(
+            &path,
+            || Snapshot {
+                apps: vec![app("player", vec![stream(90, Some(&sink(77, NAME)))])],
+                ..configured(Some(NAME))
+            },
+            put,
+        );
+        assert_eq!(
+            PUT.take(),
+            [Write::Target(90, Some(41)), Write::Default(40)]
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_record_of_a_default_alone_reads_as_one() {
+        assert_eq!(Record::parse("speakers"), before("speakers"));
+        assert_eq!(Record::parse("speakers\n"), before("speakers"));
+        let blank = Record::parse("\n\napp\tfoo/bar\t\n");
+        assert_eq!(blank.before, None);
+        assert_eq!(blank.apps["foo/bar"], None);
     }
 }

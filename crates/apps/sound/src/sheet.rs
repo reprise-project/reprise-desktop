@@ -1609,8 +1609,11 @@ mod tests {
                 .iter()
                 .map(|&id| crate::pipewire::Stream {
                     id,
+                    serial: None,
                     channels: Default::default(),
                     target: None,
+                    target_serial: None,
+                    named_target: false,
                 })
                 .collect(),
             volume,

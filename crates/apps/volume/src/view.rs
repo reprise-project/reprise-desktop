@@ -225,12 +225,15 @@ mod tests {
     fn snap() -> Snapshot {
         let stream = |id, levels: &[f64]| Stream {
             id,
+            serial: None,
             channels: Channels {
                 map: vec!["FL".into(), "FR".into()],
                 levels: levels.to_vec(),
                 shares: Vec::new(),
             },
             target: None,
+            target_serial: None,
+            named_target: false,
         };
         Snapshot {
             sinks: vec![

@@ -170,15 +170,22 @@ password.
   here, or else a copy made here during the lock reaches the client.
 - **Sound.** With Play sound on the remote computer on (`sound`), this
   computer's sound plays on every connected client and not here. A "Remote
-  client" output becomes the default while a client is connected; the one
-  before comes back when the last leaves, unless you picked another
-  meanwhile, and also when the server stops or, after a crash, when it next
-  starts. A change while connected applies at once. Sound goes as Opus when
-  the client takes it, else as 16-bit PCM at 44.1 kHz. The client's own
+  client" output becomes the default while a client is connected, and every
+  program plays to it, also one sent to another output. When the last client
+  leaves, the default before comes back unless you picked another meanwhile,
+  and each program plays where it did before, or where you sent it
+  meanwhile; a program that stopped playing while connected follows the
+  default until you pick its output again. Both also come back when the
+  server stops or, after a crash, when it next starts. A change while
+  connected applies at once. Sound goes as Opus when the client takes it,
+  else as 16-bit PCM at 44.1 kHz. The client's own
   buffering sets most of the delay: with FreeRDP's default it is about 110
   ms, and `/sound:latency:20` brings it to about 65 ms. In lock mode the
-  "Remote client" output is the default also with sound off or a client
-  that doesn't take it, so the session is never heard here while locked.
+  "Remote client" output is the default and takes every program also with
+  sound off or a client that doesn't take it, so the session is never heard
+  here while locked. A program sent to another output that starts a sound
+  while connected can play its first few hundredths of a second here
+  before it moves.
 
 ## Encoders and picture quality
 
