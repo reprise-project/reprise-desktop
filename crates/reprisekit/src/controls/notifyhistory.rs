@@ -599,13 +599,6 @@ impl History {
     pub fn row_rect(&self, i: usize, cm: &ControlMetrics) -> Option<Rect> {
         grouplist::row_rect(&self.list, &self.list_layout(cm), i)
     }
-
-    pub fn row_at(&self, x: i32, y: i32, cm: &ControlMetrics) -> Option<usize> {
-        match hit(self, x, y, cm) {
-            Hit::List(grouplist::Hit::Row(i)) => Some(i),
-            _ => None,
-        }
-    }
 }
 
 /// The row of the first group after `app` in `order` that `row_of` still finds, else of the

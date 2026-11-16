@@ -29,10 +29,6 @@ impl Interface {
     pub fn from_env_value(v: Option<&str>) -> Interface {
         v.and_then(Interface::parse).unwrap_or_default()
     }
-
-    pub fn from_process_env() -> Interface {
-        Interface::from_env_value(std::env::var(ENV).ok().as_deref())
-    }
 }
 
 #[cfg(test)]
