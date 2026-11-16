@@ -68,6 +68,10 @@ const RECOUNT_GAP: Duration = Duration::from_millis(250);
 /// loop wakes the compositor five times a second at most.
 const BELL_GAP: Duration = Duration::from_millis(200);
 
+/// The most `_NET_WM_ICON` CARDINALs read (8 MiB): a 1024x1024 image, which `best_icon` skips,
+/// and every size up to `MAX_CLIENT_ICON` after it.
+const MAX_ICON_LEN: u32 = 1 << 21;
+
 pub struct Helper {
     tx: mpsc::Sender<Req>,
 }
@@ -313,7 +317,7 @@ fn run(
                         net_wm_icon,
                         AtomEnum::CARDINAL,
                         0,
-                        u32::MAX / 4,
+                        MAX_ICON_LEN,
                     )?
                     .reply();
                 // A window gone by now answers with an error: no icon.
