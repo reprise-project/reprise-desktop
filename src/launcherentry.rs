@@ -86,7 +86,7 @@ pub struct Entries {
 /// The app key of `uri` (`application://<id>.desktop`).
 fn app_key(uri: &str) -> Option<String> {
     let id = uri.strip_prefix("application://")?;
-    let id = id.strip_suffix(".desktop").unwrap_or(id);
+    let id = reprisefs::apps::DesktopId::stem_of(id);
     (!id.is_empty() && id.len() <= 255).then(|| id.to_ascii_lowercase())
 }
 
@@ -223,10 +223,7 @@ impl Entries {
 pub fn app_keys(app_id: &str, desktop_id: Option<&str>, index: &[AppEntry]) -> Vec<String> {
     let mut keys = Vec::new();
     let mut add = |id: &str| {
-        let key = id
-            .strip_suffix(".desktop")
-            .unwrap_or(id)
-            .to_ascii_lowercase();
+        let key = reprisefs::apps::DesktopId::stem_of(id).to_ascii_lowercase();
         if !key.is_empty() && !keys.contains(&key) {
             keys.push(key);
         }

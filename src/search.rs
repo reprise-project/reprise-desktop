@@ -1036,7 +1036,7 @@ mod tests {
             },
             name: "Calculator".into(),
             icon: None,
-            app: "org.example.Calc.desktop".into(),
+            app: reprisefs::apps::DesktopId::from_file_name("org.example.Calc.desktop").unwrap(),
         })
     }
 

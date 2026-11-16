@@ -19,6 +19,7 @@ use smithay::{
 };
 
 use crate::compositor::State;
+use reprisefs::apps::DesktopId;
 
 const TOKEN_LIFETIME: Duration = Duration::from_secs(30);
 
@@ -56,17 +57,17 @@ fn drop_target_trusted<C: PartialEq>(
 /// provider call carries none, and some programs drop a notification action's. The next
 /// activation a window of one asks for within [`TOKEN_LIFETIME`] is trusted, once.
 #[derive(Default)]
-pub struct Raises(Vec<(String, Instant)>);
+pub struct Raises(Vec<(DesktopId, Instant)>);
 
 impl Raises {
-    pub fn grant(&mut self, app: &str, now: Instant) {
+    pub fn grant(&mut self, app: DesktopId, now: Instant) {
         self.0
-            .retain(|(a, at)| a != app && now.saturating_duration_since(*at) < TOKEN_LIFETIME);
-        self.0.push((app.to_string(), now));
+            .retain(|(a, at)| *a != app && now.saturating_duration_since(*at) < TOKEN_LIFETIME);
+        self.0.push((app, now));
     }
 
-    /// Uses up the live grant for desktop id `app`; false when there is none.
-    fn take(&mut self, app: Option<&str>, now: Instant) -> bool {
+    /// Uses up the live grant for `app`; false when there is none.
+    fn take(&mut self, app: Option<&DesktopId>, now: Instant) -> bool {
         self.0
             .retain(|(_, at)| now.saturating_duration_since(*at) < TOKEN_LIFETIME);
         let Some(i) = app.and_then(|app| self.0.iter().position(|(a, _)| a == app)) else {
@@ -141,10 +142,10 @@ impl XdgActivationHandler for State {
         };
         let app = (self.win(w)).and_then(|win| {
             reprisefs::apps::entry_for_app_id(&self.app_index, &win.app_id(), |_| true)
-                .map(|e| e.id.clone())
+                .and_then(|e| DesktopId::from_file_name(&e.id))
                 .filter(|id| crate::sandbox::may_take_raise(win, id))
         });
-        let trusted = minted_trusted || live && self.raises.take(app.as_deref(), Instant::now());
+        let trusted = minted_trusted || live && self.raises.take(app.as_ref(), Instant::now());
         let Some(win) = self.win_mut(w) else {
             return;
         };
@@ -463,18 +464,19 @@ mod tests {
     fn a_raise_grant_lasts_a_tokens_lifetime() {
         let at = Instant::now();
         let mut r = Raises::default();
-        r.grant("calc.desktop", at);
-        assert!(!r.take(Some("chars.desktop"), at), "another program");
+        let id = |n: &str| DesktopId::from_file_name(n).unwrap();
+        r.grant(id("calc.desktop"), at);
+        assert!(!r.take(Some(&id("chars.desktop")), at), "another program");
         assert!(!r.take(None, at), "a window of no known program");
         assert!(
-            !r.take(Some("calc.desktop"), at + TOKEN_LIFETIME),
+            !r.take(Some(&id("calc.desktop")), at + TOKEN_LIFETIME),
             "expired"
         );
-        r.grant("calc.desktop", at);
-        r.grant("calc.desktop", at);
-        assert!(r.take(Some("calc.desktop"), at + Duration::from_secs(1)));
+        r.grant(id("calc.desktop"), at);
+        r.grant(id("calc.desktop"), at);
+        assert!(r.take(Some(&id("calc.desktop")), at + Duration::from_secs(1)));
         assert!(
-            !r.take(Some("calc.desktop"), at + Duration::from_secs(1)),
+            !r.take(Some(&id("calc.desktop")), at + Duration::from_secs(1)),
             "a second pick of the same program renews its grant, it doesn't add one"
         );
     }

@@ -4,6 +4,7 @@
 
 use crate::raster::Canvas;
 use repriseaudio::sounds::Sound;
+use reprisefs::apps::DesktopId;
 use reprisefs::names::shown_line;
 use reprisekit::icon::IconSource;
 use serde::de::{self, Deserialize, Deserializer, IgnoredAny, SeqAccess, Visitor};
@@ -379,25 +380,11 @@ fn decode_picture(bytes: Vec<u8>) -> image::ImageResult<image::DynamicImage> {
 /// A [`program_key`]'s limit, as long as a desktop id may be.
 pub const KEY_CHARS: usize = 255;
 
-/// The desktop files a `desktop-entry` hint or app id may name, best first: `<hint>.desktop`
-/// (an app id may end in `.desktop`), then `hint` itself when it carries the suffix.
-pub fn desktop_ids(hint: &str) -> Vec<String> {
-    let ok = !hint.is_empty() && hint.len() <= 255 && !hint.contains('/') && !hint.starts_with('.');
-    let mut ids = Vec::new();
-    if ok {
-        ids.push(format!("{hint}.desktop"));
-        if hint.len() > ".desktop".len() && hint.ends_with(".desktop") {
-            ids.push(hint.to_string());
-        }
-    }
-    ids
-}
-
-/// What names the program sending a notification: the `desktop-entry` hint without `.desktop`
-/// when it is a usable id, else `app_name`.
+/// What names the program sending a notification: the `desktop-entry` hint as sent when a desktop
+/// file can be named after it ([`DesktopId::for_app_id`]), else `app_name`.
 pub fn program_key(hint: Option<&str>, app_name: &str) -> String {
-    match hint.filter(|h| !desktop_ids(h).is_empty()) {
-        Some(h) => h.trim_end_matches(".desktop").to_string(),
+    match hint.filter(|h| !DesktopId::for_app_id(h).is_empty()) {
+        Some(h) => h.to_string(),
         None => app_name.to_string(),
     }
 }
@@ -821,34 +808,17 @@ mod tests {
     }
 
     #[test]
-    fn an_app_id_ending_in_desktop_names_its_own_desktop_file() {
-        assert_eq!(
-            desktop_ids("org.telegram.desktop"),
-            ["org.telegram.desktop.desktop", "org.telegram.desktop"]
-        );
-    }
-
-    #[test]
-    fn a_desktop_entry_hint_names_a_file_in_the_data_dirs() {
-        assert_eq!(desktop_ids("firefox"), ["firefox.desktop"]);
-        assert_eq!(
-            desktop_ids("org.gnome.Nautilus.desktop")
-                .last()
-                .map(String::as_str),
-            Some("org.gnome.Nautilus.desktop")
-        );
-        assert!(desktop_ids("../etc/passwd").is_empty());
-        assert!(desktop_ids("").is_empty());
-    }
-
-    #[test]
     fn a_program_is_its_desktop_entry_hint_else_its_app_name() {
         let key = |hint, app| program_key(hint, app);
         assert_eq!(
             key(Some("org.mozilla.Thunderbird"), "Thunderbird"),
             "org.mozilla.Thunderbird"
         );
-        assert_eq!(key(Some("discord.desktop"), "Discord"), "discord");
+        assert_eq!(
+            key(Some("org.telegram.desktop"), "Telegram"),
+            "org.telegram.desktop",
+            "an app id ending in .desktop stays whole"
+        );
         assert_eq!(key(None, "notify-send"), "notify-send");
         assert_eq!(
             key(Some("../x"), "Mail"),

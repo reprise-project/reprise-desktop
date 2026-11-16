@@ -427,7 +427,7 @@ pub fn plan(name: &'static str, found: &[Setting], config: &str, sys: &dyn Syste
                 };
                 let Some((app, file)) = app else {
                     let value = match l {
-                        Launcher::Id(id) => id.trim_end_matches(".desktop").to_string(),
+                        Launcher::Id(id) => reprisefs::apps::DesktopId::stem_of(id).to_string(),
                         Launcher::Default(mime) => format!("the default program for {mime}"),
                     };
                     greyed.push(grey(what, "not installed", value));

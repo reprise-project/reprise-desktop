@@ -381,7 +381,7 @@ pub fn window_app(win: &crate::window::Window) -> Result<Option<String>, ()> {
 
 /// Whether `win` may take a raise granted to desktop id `app`. A sandboxed Wayland client picks
 /// its window's app id itself, so only its own Flatpak id counts; host and X11 windows pass.
-pub fn may_take_raise(win: &crate::window::Window, app: &str) -> bool {
+pub fn may_take_raise(win: &crate::window::Window, app: &reprisefs::apps::DesktopId) -> bool {
     let Some(client) = win.wl_client() else {
         return true;
     };
@@ -393,7 +393,7 @@ pub fn may_take_raise(win: &crate::window::Window, app: &str) -> bool {
     }
     data.sandbox
         .flatpak_app()
-        .is_some_and(|id| app.strip_suffix(".desktop") == Some(id.as_str()))
+        .is_some_and(|id| app.matches_app_id(&id))
 }
 
 pub fn resource_sandboxed(resource: &impl Resource) -> bool {

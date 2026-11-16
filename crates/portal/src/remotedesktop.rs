@@ -656,11 +656,12 @@ pub(crate) fn display_name(app_id: &str) -> String {
     app_entry(app_id).map_or_else(|| app_id.to_string(), |a| a.name)
 }
 
-/// The desktop entry of `app_id`, with or without its `.desktop`.
+/// The desktop entry of `app_id`, best first ([`reprisefs::apps::DesktopId::for_app_id`]).
 pub(crate) fn app_entry(app_id: &str) -> Option<reprisefs::apps::AppEntry> {
-    let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
-    apps.into_iter()
-        .find(|a| a.id == app_id || a.id.strip_suffix(".desktop") == Some(app_id))
+    let mut apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
+    let at = (reprisefs::apps::DesktopId::for_app_id(app_id).iter())
+        .find_map(|id| apps.iter().position(|a| a.id == id.as_str()))?;
+    Some(apps.swap_remove(at))
 }
 
 #[cfg(test)]

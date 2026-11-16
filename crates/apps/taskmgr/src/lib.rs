@@ -1137,7 +1137,7 @@ pub fn not_responding(
 pub fn window_of(app: &str, entries: &[AppEntry], window: &str) -> bool {
     window.eq_ignore_ascii_case(app)
         || reprisefs::apps::entry_for_app_id(entries, window, |_| true)
-            .is_some_and(|e| e.id.strip_suffix(".desktop").unwrap_or(&e.id) == app)
+            .is_some_and(|e| reprisefs::apps::DesktopId::stem_of(&e.id) == app)
 }
 
 /// A size in KiB as a task manager writes it: "12,345 K".
