@@ -155,8 +155,8 @@ pub(crate) fn apply(
         true => head.to_string(),
         false => format!("{head}\n\n{why}"),
     };
-    // The helper's exits are in docs/programs.md; pkexec's 126 is a dismissed prompt, 127 a
-    // refusal or its own failure.
+    // The helper's exits are in crates/apps/login/src/bin/settings.rs; pkexec's 126 is a
+    // dismissed prompt, 127 a refusal or its own failure.
     let why = match out.status.code() {
         Some(0) => return Ok(()),
         Some(3) => return Err(Unsaved::Changed),

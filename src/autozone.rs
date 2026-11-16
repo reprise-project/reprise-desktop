@@ -1,5 +1,10 @@
 //! Automatic time zone (`[time_zone] automatic`): a thread asks geoclue where the machine is and
-//! sets the zone of the nearest town (`tzcity`) through timedated; docs/programs.md has the pace.
+//! sets the zone of the nearest town (`tzcity`) through timedated.
+//!
+//! A look runs when the switch turns on, session start included. A resume, or NetworkManager
+//! coming up or taking a new primary connection, asks for one no sooner than an hour after the
+//! last look, or five minutes after one that found no place; time asleep counts. A look started
+//! before the switch last turned sets nothing.
 
 use std::collections::HashMap;
 use std::sync::Arc;
