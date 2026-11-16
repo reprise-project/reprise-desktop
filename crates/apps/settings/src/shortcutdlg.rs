@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(
             note(&d),
             [
-                "Super + Q is already used for",
+                "Super+Q is already used for",
                 "\"Close the window\". Press other keys."
             ]
         );
@@ -409,7 +409,7 @@ mod tests {
         assert_eq!(
             note(&d),
             [
-                "Super + T is already used for",
+                "Super+T is already used for",
                 "\"Run foot\". Press other keys."
             ]
         );
@@ -526,7 +526,7 @@ mod tests {
         );
         assert_eq!(d.value().keys, "Ctrl+Alt+F1");
         assert!(!d.valid());
-        assert_eq!(note(&d)[0], "Ctrl + Alt + F1 is kept by the desktop.");
+        assert_eq!(note(&d)[0], "Ctrl+Alt+F1 is kept by the desktop.");
         let mut d = ShortcutDialog::new(None, Vec::new());
         chord(&mut d, &[(CTRL_L, "Control_L"), (SHIFT_L, "Shift_L")]);
         assert!(d.valid(), "a bind of modifiers alone fires on release");

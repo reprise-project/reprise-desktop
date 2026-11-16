@@ -64,6 +64,35 @@ fn the_permission_list_takes_its_tab_stop_after_its_check_on_the_privacy_page() 
     );
 }
 
+#[test]
+fn the_shortcut_list_takes_its_tab_stop_after_the_delay_on_the_keyboard_page() {
+    let mut a = app("keyboard-tab");
+    let ctx = test_ctx();
+    a.open_page(Page::Keyboard, None);
+    assert!(a.shortcuts_focus, "the page opens on its shortcut list");
+
+    tab(&mut a, &ctx, false);
+    assert!(!a.shortcuts_focus);
+    assert_eq!(focused_id(&a), Some(pages::SC_ADD), "Tab goes on to Add...");
+
+    tab(&mut a, &ctx, true);
+    assert!(a.shortcuts_focus, "Shift+Tab comes back into the list");
+    tab(&mut a, &ctx, true);
+    assert!(!a.shortcuts_focus);
+    assert_eq!(
+        focused_id(&a),
+        Some(pages::SC_OVERLAY_MS),
+        "Shift+Tab leaves it for the delay"
+    );
+
+    tab(&mut a, &ctx, false);
+    assert!(
+        a.shortcuts_focus && a.shortcuts.focus_ring,
+        "Tab from the delay enters the list"
+    );
+    assert_eq!(a.sheet.open().focus(), None, "one dotted rectangle");
+}
+
 const FIELD: [bool; 4] = [true, false, false, false];
 
 fn ctrl_key(a: &mut SettingsApp, ctx: &Ctx, sym: u32, shift: bool) {

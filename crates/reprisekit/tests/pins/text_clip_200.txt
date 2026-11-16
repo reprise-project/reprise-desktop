@@ -341,7 +341,7 @@ reprisekit-gallery.png "5 KB" x1
 reprisekit-gallery.png "6 KB" x1
 reprisekit-gallery.png ":" x5
 reprisekit-gallery.png "Active Window" x4
-reprisekit-gallery.png "Alt + F4" x1
+reprisekit-gallery.png "Alt+F4" x1
 reprisekit-gallery.png "Always ask" x1
 reprisekit-gallery.png "Always use the selected program to open this kind of file" x1
 reprisekit-gallery.png "Applicati..." x1
@@ -362,7 +362,7 @@ reprisekit-gallery.png "Computer" x1
 reprisekit-gallery.png "Computer..." x1
 reprisekit-gallery.png "Connected" x1
 reprisekit-gallery.png "Connected, battery 80%" x1
-reprisekit-gallery.png "Ctrl + Alt + " x1
+reprisekit-gallery.png "Ctrl+Alt+" x1
 reprisekit-gallery.png "Date Mo..." x1
 reprisekit-gallery.png "Default" x1
 reprisekit-gallery.png "Desktop" x5
@@ -448,7 +448,7 @@ reprisekit-gallery.png "Sounds good" x1
 reprisekit-gallery.png "Speaker" x1
 reprisekit-gallery.png "Spin" x1
 reprisekit-gallery.png "Stuff" x1
-reprisekit-gallery.png "Super + Shift + B" x1
+reprisekit-gallery.png "Super+Shift+B" x1
 reprisekit-gallery.png "System Folder" x1
 reprisekit-gallery.png "Tab" x1
 reprisekit-gallery.png "Text Do..." x1

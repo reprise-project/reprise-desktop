@@ -6,8 +6,9 @@
 use std::time::Duration;
 
 use repriseconf::keybind::{
-    self, ACCESSIBILITY, DESKTOPS, LAUNCH, MEDIA, PROGRAMS, SCREENSHOTS, SYSTEM, WINDOWS, key_text,
+    self, ACCESSIBILITY, DESKTOPS, LAUNCH, MEDIA, PROGRAMS, SCREENSHOTS, SYSTEM, WINDOWS,
 };
+use reprisekit::controls::hotkey;
 use reprisekit::controls::keysheet::{self, Binding, Group, KeySheet};
 use reprisekit::look::panel;
 use reprisescene::{Input, TreeId};
@@ -115,22 +116,15 @@ fn named(name: &str) -> (&'static str, String) {
     keybind::describe(name).map_or((SYSTEM, name.to_string()), |(g, w)| (g, w.to_string()))
 }
 
-/// A chord as the sheet lists it: "Super+Ctrl+Alt+Shift+" then the key.
+/// A chord as the sheet lists it ([`hotkey::chord_text`]).
 pub fn chord_text(mods: u32, sym: u32) -> String {
-    let mut out = String::new();
-    for (bit, name) in [
-        (MOD_LOGO, "Super"),
-        (MOD_CTRL, "Ctrl"),
-        (MOD_ALT, "Alt"),
-        (MOD_SHIFT, "Shift"),
-    ] {
-        if mods & bit != 0 {
-            out.push_str(name);
-            out.push('+');
-        }
-    }
-    out.push_str(&key_text(sym));
-    out
+    let held = hotkey::Mods {
+        logo: mods & MOD_LOGO != 0,
+        ctrl: mods & MOD_CTRL != 0,
+        alt: mods & MOD_ALT != 0,
+        shift: mods & MOD_SHIFT != 0,
+    };
+    hotkey::chord_text(held, sym)
 }
 
 /// The sheet for `binds` and the programs' `globals` (each with its program's name): every bound
@@ -333,6 +327,7 @@ impl State {
 mod tests {
     use super::*;
     use crate::keys;
+    use repriseconf::keybind::key_text;
 
     const KEY_A: u32 = 30;
     const KEY_LEFTMETA: u32 = 125;
