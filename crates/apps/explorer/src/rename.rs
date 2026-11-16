@@ -9,7 +9,7 @@ use reprisefs::names::{Verdict, failed_text, verdict};
 use reprisekit::controls::batchrename as renamebox;
 use reprisekit::controls::form::{self, Form};
 use reprisekit::textedit::{TextEdit, keysym};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 impl Explorer {
     pub(crate) fn after_rename(
@@ -118,7 +118,11 @@ impl Explorer {
         if it.shortcut.is_some() {
             return self.rename_shortcut(&it, ed.text.trim(), ctx);
         }
-        let existing: Vec<String> = self.items.iter().map(|x| x.name.clone()).collect();
+        // Search results list several folders: only the item's own holds a clash.
+        let existing: Vec<String> = (self.items.iter())
+            .filter(|x| x.path.parent() == it.path.parent())
+            .map(|x| x.name.clone())
+            .collect();
         match verdict(&it.name, &ed.text, &existing) {
             Verdict::Cancel => Reply::redraw(),
             Verdict::Refuse(text) => self.message_box("Rename", text, ctx),
@@ -201,8 +205,8 @@ impl Explorer {
 pub struct BatchRename {
     pub form: Form,
     paths: Vec<PathBuf>,
-    items: Vec<(String, bool)>,
-    others: Vec<String>,
+    dirs: Vec<bool>,
+    others: Vec<PathBuf>,
 }
 
 impl BatchRename {
@@ -222,8 +226,11 @@ impl BatchRename {
     }
 
     fn plan(&self) -> Vec<batchrename::Row> {
-        let items: Vec<(&str, bool)> = self.items.iter().map(|(n, d)| (n.as_str(), *d)).collect();
-        batchrename::plan(&items, &self.others, &self.options())
+        let items: Vec<(&Path, bool)> = (self.paths.iter().map(PathBuf::as_path))
+            .zip(self.dirs.iter().copied())
+            .collect();
+        let others: Vec<&Path> = self.others.iter().map(PathBuf::as_path).collect();
+        batchrename::plan(&items, &others, &self.options())
     }
 
     /// The preview and OK follow the fields.
@@ -270,15 +277,12 @@ impl Explorer {
                 .map_or_else(|| first.name.clone(), |s| s.to_string_lossy().into_owned()),
         };
         let paths: Vec<PathBuf> = picked.iter().map(|it| it.path.clone()).collect();
-        let items = picked
-            .iter()
-            .map(|it| (it.name.clone(), it.is_dir))
-            .collect();
+        let dirs = picked.iter().map(|it| it.is_dir).collect();
         let others = self
             .items
             .iter()
             .filter(|it| !paths.contains(&it.path))
-            .map(|it| it.name.clone())
+            .map(|it| it.path.clone())
             .collect();
         let form = renamebox::form(&renamebox::Fields {
             number: false,
@@ -293,7 +297,7 @@ impl Explorer {
         let mut b = BatchRename {
             form,
             paths,
-            items,
+            dirs,
             others,
         };
         b.replan();
@@ -324,7 +328,7 @@ impl Explorer {
                 };
                 let tag = format!("reprise-rename-{}", std::process::id());
                 let steps = batchrename::steps(&b.paths, &rows, &tag);
-                let dirs = b.items.iter().any(|(_, d)| *d);
+                let dirs = b.dirs.iter().any(|d| *d);
                 let landed: Vec<PathBuf> = b
                     .paths
                     .iter()
