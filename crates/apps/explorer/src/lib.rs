@@ -118,6 +118,13 @@ pub struct Tip {
 }
 
 /// What opening a file came to: a program run, or the opening of a file in its program.
+/// Where [`Explorer::open_folder`] opens a folder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Follow {
+    Here,
+    NewTab,
+}
+
 pub(crate) enum Opened {
     Ran(std::io::Result<()>),
     /// A file `confirm_scripts` asks about first, as [`Asked`] says; a script runs as the
@@ -379,6 +386,9 @@ pub struct Explorer {
     /// The place shown when its folder went and the check of what is left
     /// ([`Explorer::follow_gone`]), still unanswered.
     going: Option<(Place, Job<live::Gone>)>,
+    /// The place shown when a symlinked folder was opened, and its target's resolve
+    /// ([`Explorer::open_folder`]), still unanswered.
+    following: Option<(Place, Follow, Job<PathBuf>)>,
     /// Opened files whose opening ([`Explorer::open_file`]) has not answered.
     opening: Vec<(PathBuf, Job<Opened>)>,
     /// The `--select` entries or a renamed item, and their folder, waiting on that folder's listing.
@@ -610,6 +620,7 @@ impl Explorer {
             dims_asked: HashSet::new(),
             checking: None,
             going: None,
+            following: None,
             opening: Vec::new(),
             selecting: None,
             pins: (!cfg!(test)).then(|| {
@@ -1317,9 +1328,40 @@ impl Explorer {
         Some(Reply::redraw())
     }
 
-    pub(crate) fn selected_dir(&self) -> Option<Place> {
+    /// The one selected item, when it opens as a folder.
+    pub(crate) fn selected_folder(&self) -> Option<&Item> {
         let i = self.sv.selection.single()?;
-        folder_place(self.items.get(i)?)
+        self.items.get(i).filter(|it| it.is_dir)
+    }
+
+    /// Opens folder item `it` here or in a new tab. A symlink opens its target, resolved on a
+    /// listing thread since the link's mount may be dead; a late answer lands on a wake
+    /// ([`Explorer::take_followed`]), dropped if the window has moved on by then.
+    pub(crate) fn open_folder(&mut self, it: &Item, to: Follow, ctx: &mut Ctx) -> Reply {
+        if !it.is_link {
+            return self.followed(Place::from_path(&it.path), to, ctx);
+        }
+        let path = it.path.clone();
+        match self.read_job(ctx, move || std::fs::canonicalize(&path).unwrap_or(path)) {
+            Ok(target) => self.followed(Place::from_path(&target), to, ctx),
+            Err(job) => {
+                self.following = Some((self.place.clone(), to, job));
+                Reply::none()
+            }
+        }
+    }
+
+    pub(crate) fn take_followed(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let target = self.following.as_ref()?.2.take()?;
+        let (from, to, _) = self.following.take()?;
+        (from == self.place).then(|| self.followed(Place::from_path(&target), to, ctx))
+    }
+
+    fn followed(&mut self, place: Place, to: Follow, ctx: &mut Ctx) -> Reply {
+        match to {
+            Follow::Here => self.go(place, ctx),
+            Follow::NewTab => self.open_in_new_tab(place),
+        }
     }
 
     /// In the Recycle Bin an item opens its Properties (its menu's default
@@ -1356,8 +1398,8 @@ impl Explorer {
         if self.selected_disk_image().is_some() {
             return self.ask_mount_image(ctx);
         }
-        if let Some(place) = folder_place(&it) {
-            return self.go(place, ctx);
+        if it.is_dir {
+            return self.open_folder(&it, Follow::Here, ctx);
         }
         if let Some(shortcut) = it.shortcut.as_deref() {
             return self.opened(&it.path, Opened::Open(self.open_for(shortcut)), ctx);
@@ -1365,15 +1407,19 @@ impl Explorer {
         self.open_file(&it.path, it.exec, open, how, ctx)
     }
 
-    /// Starts the configured terminal in `dir`, in its program's app scope.
-    pub(crate) fn open_terminal(&self, dir: &Path) -> Reply {
+    /// Starts the configured terminal in `dir`, in its program's app scope. The spawn runs on a
+    /// listing thread: it waits for the child's chdir, which never returns on a dead mount.
+    pub(crate) fn open_terminal(&self, dir: &Path, ctx: &Ctx) -> Reply {
         let terminal = repriseconf::current().terminal.clone();
         let app = reprisefs::apps::terminal_app(&terminal, &self.app_index);
         let argv = reprisefs::apps::terminal_argv(&terminal);
         let argv = reprisefs::scope::in_scope(&argv, app.as_deref());
-        if let Err(e) = repriseapp::spawn_in(&argv, Some(dir), None) {
-            log::warn!("explorer: terminal {terminal:?} in {}: {e}", dir.display());
-        }
+        let dir = dir.to_path_buf();
+        drop(self.spawn_read(ctx, move || {
+            if let Err(e) = repriseapp::spawn_in(&argv, Some(&dir), None) {
+                log::warn!("explorer: terminal {terminal:?} in {}: {e}", dir.display());
+            }
+        }));
         Reply::none()
     }
 
@@ -2037,17 +2083,6 @@ pub fn main(args: Vec<std::ffi::OsString>) {
 }
 
 /// A folder itself, or the folder a symlink to one points at; None for anything else.
-fn folder_place(it: &Item) -> Option<Place> {
-    if !it.is_dir {
-        return None;
-    }
-    let to = match it.is_link {
-        true => std::fs::canonicalize(&it.path).unwrap_or_else(|_| it.path.clone()),
-        false => it.path.clone(),
-    };
-    Some(Place::from_path(&to))
-}
-
 #[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;

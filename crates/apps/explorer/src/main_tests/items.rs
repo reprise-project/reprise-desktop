@@ -69,6 +69,38 @@ fn a_symlink_to_a_folder_lists_as_a_file_and_opens_the_folder() {
     assert_eq!(ex.place, Place::Folder(target));
 }
 
+/// Opening a symlinked folder resolves its target on a listing thread: while that read is held
+/// the window stays put, and the target opens on the wake that takes the answer.
+#[test]
+fn a_symlinked_folders_target_is_resolved_off_the_loop() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let real = std::fs::canonicalize(dir.path()).expect("canonical");
+    std::fs::create_dir(real.join("mfolder")).expect("mkdir");
+    std::os::unix::fs::symlink("mfolder", real.join("b link")).expect("symlink");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(real.clone()), &mut ctx);
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    let i = ex
+        .items
+        .iter()
+        .position(|it| it.name == "b link")
+        .expect("the link");
+    ex.sv.selection.set_only(Some(i));
+    ex.open_selected(&mut ctx);
+    assert_eq!(
+        ex.place,
+        Place::Folder(real.clone()),
+        "nothing is read on the loop"
+    );
+
+    drop(closed);
+    ex.held = None;
+    let target = Place::Folder(real.join("mfolder"));
+    wake_until(&mut ex, &mut ctx, |ex| ex.place == target);
+}
+
 #[test]
 fn a_shortcut_whose_read_answers_late_puts_its_location_up_on_a_later_wake() {
     let dir = tempfile::tempdir().expect("a temp dir");

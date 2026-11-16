@@ -216,6 +216,7 @@ impl Explorer {
             self.take_checked(ctx),
             opened,
             self.take_gone(ctx),
+            self.take_followed(ctx),
             self.take_drives(ctx),
             clashed,
             self.take_asking(ctx),

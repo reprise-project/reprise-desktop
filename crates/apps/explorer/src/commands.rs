@@ -282,8 +282,8 @@ impl Explorer {
             Command::NewTab => self.new_tab(ctx),
             Command::CloseTab => self.close_tab(self.tabs.strip.open, ctx),
             Command::NextTab { back } => self.cycle_tab(back, ctx),
-            Command::OpenInNewTab => match self.selected_dir() {
-                Some(p) => self.open_in_new_tab(p),
+            Command::OpenInNewTab => match self.selected_folder().cloned() {
+                Some(it) => self.open_folder(&it, crate::Follow::NewTab, ctx),
                 None => Reply::none(),
             },
             Command::About => self.about_box(ctx),
@@ -351,19 +351,18 @@ impl Explorer {
                 if let Some(d) = self.selected_unmounted_device() {
                     return self.mount_device_and_open(d, ctx);
                 }
-                let dir = self.selected_dir();
-                match dir {
-                    Some(p) => self.go(p, ctx),
+                match self.selected_folder().cloned() {
+                    Some(it) => self.open_folder(&it, crate::Follow::Here, ctx),
                     None => Reply::none(),
                 }
             }
 
-            Command::OpenTerminal => match self.selected_dir().and_then(|p| p.path()) {
-                Some(dir) => self.open_terminal(&dir),
+            Command::OpenTerminal => match self.selected_folder().map(|it| it.path.clone()) {
+                Some(dir) => self.open_terminal(&dir, ctx),
                 None => Reply::none(),
             },
             Command::Pin(pin) => {
-                if let Some(dir) = self.selected_dir().and_then(|p| p.path()) {
+                if let Some(dir) = self.selected_folder().map(|it| it.path.clone()) {
                     self.set_pinned(&dir, pin);
                 }
                 Reply::none()
@@ -374,7 +373,7 @@ impl Explorer {
                 }
                 Reply::none()
             }
-            Command::DiskUsage => match self.selected_dir().and_then(|p| p.path()) {
+            Command::DiskUsage => match self.selected_folder().map(|it| it.path.clone()) {
                 Some(dir) => Reply {
                     spawn: vec![vec!["reprise-diskusage".into(), dir.into()]],
                     ..Reply::none()
@@ -382,7 +381,7 @@ impl Explorer {
                 None => Reply::none(),
             },
             Command::OpenTerminalHere => match self.place.path() {
-                Some(dir) if !self.place.read_only() => self.open_terminal(&dir),
+                Some(dir) if !self.place.read_only() => self.open_terminal(&dir, ctx),
                 _ => Reply::none(),
             },
             Command::Mode(m) => {
