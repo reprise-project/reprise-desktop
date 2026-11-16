@@ -282,9 +282,12 @@ Downloads. The check box is greyed when obexd (`bluez-obex`) isn't installed.
 Power profile, monitor and standby timeouts on mains and on battery, low and
 critical battery alarms, a Power Meter for each battery, the battery charge
 limit, and what the lid, power button and sleep button do. The battery icon's
-menu switches profile. While the charge limit holds a plugged-in battery, the
-icon's tooltip and the Power Meter say "Charging limited to 80%" (or wherever
-the limit stops).
+menu switches profile. Its Keep Awake check holds off the screen saver, the
+lock, screen off and idle standby until you clear it or Power Options exits;
+while it is on the icon shows, on a machine without a battery too, and its
+tooltip says "Keep Awake is on". While the charge limit holds a plugged-in
+battery, the icon's tooltip and the Power Meter say "Charging limited to 80%"
+(or wherever the limit stops).
 
 ## Printers
 
