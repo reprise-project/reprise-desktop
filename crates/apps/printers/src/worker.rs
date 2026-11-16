@@ -94,6 +94,13 @@ impl Handle {
     pub fn send(&self, cmd: Cmd) {
         let _ = self.0.send(cmd);
     }
+
+    /// A handle with no thread behind it, and what it is sent.
+    #[cfg(test)]
+    pub fn channel() -> (Handle, Receiver<Cmd>) {
+        let (tx, rx) = channel();
+        (Handle(tx), rx)
+    }
 }
 
 pub fn start(waker: repriseapp::Waker) -> (Receiver<Msg>, Handle) {
