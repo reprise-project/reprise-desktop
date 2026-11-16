@@ -5,15 +5,21 @@ WirePlumber, NetworkManager. There's no period-correct driver CD to lose.
 
 ## Build and run
 
-    cargo build --release
+    cargo build --release --workspace
 
-Once it's installed, pick "Reprise" in your login manager, or run `reprise`
-from a TTY.
+The workspace's root package is the compositor alone, so without
+`--workspace` the programs, the portal and the Remote Desktop server aren't
+built.
 
 To try it without committing your afternoon, run it nested inside another
 Wayland session:
 
-    ./target/release/reprise --startup alacritty
+    PATH="$PWD/target/release:$PATH" ./target/release/reprise --startup alacritty
+
+Reprise starts its programs by name, so without `target/release` on `PATH`
+Computer and Documents on the desktop open nothing. The Start menu lists the
+desktop entries installed under `applications` in `XDG_DATA_DIRS`, so
+Reprise's own programs show there once [installed](#install-by-hand).
 
 ### Logs
 
@@ -50,6 +56,11 @@ The log names windows and programs by app id, window id and pid. It does
 not record window titles, notification text, clipboard contents, what is
 typed or what is playing.
 
+## Packages
+
+Once installed, "Reprise" is a session in your login manager, or run
+`reprise` from a TTY.
+
 On Arch, `packaging/arch/PKGBUILD` packages the compositor, the programs, the
 session file, the PAM files, the portal backend and the login manager
 ([below](#login-manager)). The programs are one
@@ -58,10 +69,7 @@ names are symlinks to it. The Remote Desktop server is a binary of its own,
 `/usr/bin/reprise-rdp`, run by the user unit
 `app-org.reprise.RemoteDesktop.service` with the desktop entry
 `org.reprise.RemoteDesktop.desktop` beside it; the unit is installed but
-not enabled. A build installed by hand needs all three: the portal skips
-its prompt only for that unit running `/usr/bin/reprise-rdp` or
-`/usr/local/bin/reprise-rdp`, and the server checks passwords with the
-`reprise` in the same directory.
+not enabled.
 
 The PAM files are `reprise` (the lock screen's password),
 `reprise-fingerprint` (its fingerprint) and `reprise-rdp` (Remote Desktop
@@ -69,10 +77,7 @@ logins and lock mode's remote lock screen). `reprise-rdp` runs `pam_unix` alone,
 Remote Desktop passwords never reach pam_faillock and never lock the account
 locally. The Remote Desktop server throttles them instead: a growing back-off
 per address after three failures, during which its connections are refused, and a 10 minute pause of every login after 10
-failures within 10 minutes (see [security](security.md#remote-desktop)). A
-build installed by hand needs `data/pam.d/reprise-rdp` in `/etc/pam.d/`;
-without it PAM falls back to the `other` service, which on Arch refuses
-every login and elsewhere may run the full system stack.
+failures within 10 minutes (see [security](security.md#remote-desktop)).
 
 Every push to main also publishes a package as the
 [Nightly release](https://github.com/reprise-project/reprise-desktop/releases/tag/nightly).
@@ -133,6 +138,25 @@ Debian 13 comes closer. Its FFmpeg is 7.1, so everything builds except
 Remote Desktop. Its 6.12 kernel also rules out remote logins and libei
 input. It gets no package for now.
 
+### Install by hand
+
+On another distribution, build as above and install the files `package()`
+in `packaging/arch/local/PKGBUILD` installs, from `target/release/` and
+`data/`, to the same paths. Keep the prefix `/usr`: the units, the polkit
+action and the portal name those paths, and Remote Desktop checks passwords
+with the `reprise` beside `reprise-rdp`. Then run what a package's install
+runs:
+
+    sudo systemd-sysusers reprise-login.conf
+    sudo systemd-tmpfiles --create reprise-login.conf
+    sudo update-mime-database /usr/share/mime
+    sudo systemctl daemon-reload
+
+A missing PAM file isn't an error: PAM falls back to the `other` service,
+which on Arch refuses every login and elsewhere may run the full system
+stack. Leave `reprise-login-rdp.socket` disabled; reprise-login enables and
+disables it.
+
 ## Login manager
 
 The package also installs Reprise's own login manager, `reprise-login`,
@@ -187,24 +211,6 @@ screen itself. In a session reprise-login starts, the compositor logs
 under `reprise` as it does under any login manager (`journalctl --user -b
 -t reprise`); output written before its log opens goes under
 `reprise-session`.
-
-A build installed by hand needs `/usr/bin/reprise-login` (the unit's
-`ExecStart`), the unit in `/usr/lib/systemd/system/`, the six
-`reprise-login*` PAM files from `data/pam.d/` in `/etc/pam.d/`
-(`reprise-login-check` also checks the administrator password for Shut Down
-and Restart on the login screen), the polkit action and
-`50-reprise-login.rules` from `data/polkit-1/` under `/usr/share/polkit-1/` (the rule keeps every session
-that isn't on screen, Switch User's included, from switching the console),
-`/usr/lib/reprise/reprise-login-settings` (the path the polkit action names;
-Settings > Login Manager saves through it), and the files from
-`data/sysusers.d/` and `data/tmpfiles.d/` applied once with
-`systemd-sysusers` and `systemd-tmpfiles --create`. A package's install runs
-those two for you. Remote logins also need `/usr/bin/reprise-login-rdp`
-with `reprise-login-rdp.service` and `reprise-login-rdp.socket` beside the
-other unit (leave the socket disabled: reprise-login enables and disables
-it), and `reprise-rdp-handover.socket` and `.service` in
-`/usr/lib/systemd/user/`, with the socket enabled for every user (`sudo
-systemctl --global enable reprise-rdp-handover.socket`).
 
 After upgrading the package, reboot, or run `sudo systemctl restart
 reprise-login` and have each remote user reconnect. Each running session's
@@ -464,8 +470,7 @@ desktop and stays out of the way when it's missing.
   on screen, Switch User's and background ones alike, from switching the
   console. The package's `50-reprise-timezone.rules` lets a local, active
   administrator (group `wheel` or `sudo`) set the time zone without a
-  password, for the automatic time zone; a build installed by hand copies
-  it from `data/polkit-1/rules.d/` to `/usr/share/polkit-1/rules.d/`
+  password, for the automatic time zone
 - gnome-keyring, for saved passwords, the Secret portal and a network
   share's remembered password. The login
   manager's PAM file (SDDM's or `reprise-login`) unlocks it at login, and the
