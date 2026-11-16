@@ -763,9 +763,10 @@ impl State {
                     h: 0,
                 };
                 for (_, b, scale, _) in &shown {
-                    let scale = match position {
-                        Position::Stretch => *scale,
-                        _ => 1,
+                    let scale = if position.scales_to_screen() {
+                        *scale
+                    } else {
+                        1
                     };
                     want.w = want.w.max((b.width * scale) as u32);
                     want.h = want.h.max((b.height * scale) as u32);

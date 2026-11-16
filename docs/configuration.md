@@ -80,7 +80,7 @@ while an editor saves it doesn't.
 | Key | Values | Default |
 | --- | --- | --- |
 | `image` | a picture file, or a built-in as `reprise:design/variant` (below); `""` shows `[colors] background` alone | Classic none, Blue `reprise:tarn/blue`, Glass `reprise:flow/glass` |
-| `position` | `center`, `tile` or `stretch`; a built-in always fills the screen | `stretch` |
+| `position` | `fill` (cover the screen evenly, cropping the overflow), `fit` (the whole picture on the colour), `stretch`, `tile` or `center`; a built-in always fills the screen | `fill` |
 | `slideshow` | a folder whose pictures take turns, fading into each other | none |
 | `interval` | minutes per picture, 1 to 1440 | 30 |
 | `shuffle` | random order instead of by name | `false` |

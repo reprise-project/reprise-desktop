@@ -173,10 +173,14 @@ fn wallpaper(applets: &KConfig, dark: bool) -> Option<Setting> {
             .into_owned(),
         false => path,
     };
+    // Plasma's FillMode: 0 stretched, 1 scaled, 2 scaled and cropped (its default), 3 to 5
+    // tiled, 6 centred.
     let position = match mode.and_then(|m| m.trim().parse::<u32>().ok()) {
+        Some(0) => "stretch",
+        Some(1) => "fit",
         Some(3..=5) => "tile",
         Some(6) => "center",
-        _ => "stretch",
+        _ => "fill",
     };
     Some(Setting::Wallpaper { path, position })
 }

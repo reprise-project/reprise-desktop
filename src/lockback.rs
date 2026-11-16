@@ -133,7 +133,7 @@ fn compose(
     let pictures = (want.iter())
         .filter_map(|&((w, h), scale)| {
             let cut = Cut {
-                position: Position::Stretch,
+                position: Position::Fill,
                 w,
                 h,
             };
@@ -143,7 +143,7 @@ fn compose(
                 &loaded.image,
                 w,
                 h,
-                Position::Stretch,
+                Position::Fill,
                 black,
                 scale as f32,
                 None,

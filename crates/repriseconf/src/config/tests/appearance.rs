@@ -726,13 +726,12 @@ fn desktop_pictures_are_checked_like_the_main_one() {
 }
 
 #[test]
-fn wallpaper_defaults_to_none_stretched() {
+fn wallpaper_defaults_to_none_filled() {
     let c = Config::default();
     assert_eq!(c.wallpaper.image, None);
-    assert_eq!(
-        c.wallpaper.position,
-        reprisekit::wallpaper::Position::Stretch
-    );
+    assert_eq!(c.wallpaper.position, reprisekit::wallpaper::Position::Fill);
+    let c = Config::parse("[wallpaper]\nimage = \"/p.jpg\"\nposition = \"fit\"\n").unwrap();
+    assert_eq!(c.wallpaper.position, reprisekit::wallpaper::Position::Fit);
 }
 
 #[test]
@@ -878,7 +877,7 @@ fn an_old_wallpaper_lock_screen_key_still_loads() {
 
 #[test]
 fn wallpaper_rejects_an_unknown_position() {
-    assert!(Config::parse("[wallpaper]\nposition = \"fill\"\n").is_err());
+    assert!(Config::parse("[wallpaper]\nposition = \"zoom\"\n").is_err());
 }
 
 #[test]
