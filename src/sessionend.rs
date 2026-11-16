@@ -201,15 +201,17 @@ fn start(
         mode: Mode::new(critical),
         password,
     });
-    // The compositor's own dialogs (Run, a delete question) go first.
+    // The compositor's own dialogs (Run, a hide question) go first.
     // The windows are asked once the end is under way, so a program
-    // already known to hang gets no End Program of its own.
+    // already known to hang gets no End Program of its own. A desktop
+    // file job is not asked: closing its progress dialog would cancel it.
     state.close_all_dialogs();
     let open: Vec<WindowId> = state
         .windows
         .iter()
         .filter(|w| w.mapped && !w.override_redirect)
         .map(|w| w.id)
+        .filter(|&w| !state.filejobs.holds(state.client_pid(w)))
         .collect();
     for w in open {
         state.close(w);
@@ -247,7 +249,8 @@ fn run_step(state: &mut State, step: Step) {
 /// `override_inhibitors`: End Now, after the prompt showed the inhibitors,
 /// or a critical battery, which takes the power anyway.
 fn end_now(state: &mut State, override_inhibitors: bool) {
-    let pids: Vec<i32> = programs(state).iter().filter_map(|p| p.pid).collect();
+    let mut pids: Vec<i32> = programs(state).iter().filter_map(|p| p.pid).collect();
+    pids.extend(state.filejobs.pids());
     for pid in pids {
         log::info!("session end: ending pid {pid}");
         state.end_process(pid);
@@ -845,11 +848,13 @@ fn drop_sources(state: &mut State, e: &mut Ending) {
     }
 }
 
+/// The programs whose windows are open; a desktop file job is the prompt's Files row instead.
 fn programs(state: &State) -> Vec<Program> {
     let open: Vec<Shown<WindowId>> = state
         .windows
         .iter()
         .filter(|w| w.mapped && !w.override_redirect)
+        .filter(|w| !state.filejobs.holds(state.client_pid(w.id)))
         .map(|w| Shown {
             id: w.id,
             pid: state.client_pid(w.id),
@@ -1402,30 +1407,11 @@ mod tests {
 
     #[test]
     fn a_desktop_copy_under_way_holds_the_end_and_is_listed() {
-        use crate::dragview::{DragSource, QueuedPut};
+        use reprisefs::ops::DropOp;
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
-        let dir = std::env::temp_dir().join(format!("reprise-end-copy-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let to = dir.join("to");
-        std::fs::create_dir_all(&to).unwrap();
-        std::fs::write(dir.join("a.txt"), "a").unwrap();
-        h.state.spawn_put(QueuedPut {
-            dir: to,
-            op: reprisefs::ops::DropOp::Copy,
-            puts: vec![(
-                (
-                    DragSource::File {
-                        path: dir.join("a.txt"),
-                        name: "a.txt".into(),
-                    },
-                    None,
-                    None,
-                ),
-                None,
-            )],
-            existing: Vec::new(),
-        });
+        let job = crate::filejobs::FakeJob::start();
+        (h.state.filejobs).started(job.pid(), crate::filejobs::What::Put(DropOp::Copy));
         h.state.ending = Some(Ending {
             goal: Goal::LogOff,
             cmd: None,
@@ -1446,10 +1432,12 @@ mod tests {
             reason: "Copying files".into(),
         };
         assert!(!endsession::set_rows(form, &[row]), "its one row");
-        h.until("the copy ends", |s| s.drags.running.is_empty());
+        drop(job);
         tick(&mut h.state);
-        assert!(h.state.ending.is_none(), "it ends once the copy has landed");
-        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            h.state.ending.is_none(),
+            "it ends once the copy's process has"
+        );
     }
 
     #[test]

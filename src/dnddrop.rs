@@ -1141,6 +1141,7 @@ mod tests {
 
     #[test]
     fn a_sandboxed_x11_programs_uri_list_of_host_files_is_refused_on_the_desktop() {
+        crate::spawn::record();
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
         crate::fsjobs::setup(&mut h.state);
@@ -1180,18 +1181,20 @@ mod tests {
                 },
             );
             h.until("the drop ends", |_| !list.heard.lock().unwrap().is_empty());
-            let moved = desk.join("id_ed25519");
             if sandboxed {
                 assert_eq!(*list.heard.lock().unwrap(), ["cancel"]);
-                assert!(key.exists(), "the host file stays where it is");
-                assert!(!moved.exists(), "nothing lands on the desktop");
+                assert!(h.state.filejobs.jobs.is_empty(), "nothing goes to Explorer");
             } else {
                 assert_eq!(*list.heard.lock().unwrap(), ["finished"]);
-                // The source hears the drop end before the move runs on a file job.
-                h.until("a host X11 program's file moves to the desktop", |_| {
-                    moved.exists()
+                // The source hears the drop end before the move goes to Explorer.
+                h.until("a host X11 program's file is put on the desktop", |s| {
+                    !s.filejobs.jobs.is_empty()
                 });
-                std::fs::remove_file(moved).unwrap();
+                let args: Vec<String> = (h.state.filejobs.jobs[0].args.iter())
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .collect();
+                let (desk, key) = (desk.display().to_string(), key.display().to_string());
+                assert_eq!(args, ["--put", "move", &desk, "--", &key]);
             }
         }
     }

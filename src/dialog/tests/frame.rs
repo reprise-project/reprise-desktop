@@ -4,7 +4,7 @@ use super::*;
 fn classic_dialog_has_a_close_button_and_a_focus_ring() {
     let theme = Theme::default();
     let text = TextRenderer::load(&FontConfig::default());
-    let d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
+    let d = yes_no("x");
     let l = DialogLayout::compute(&theme, &text, &d);
     let close = l.close.unwrap();
     assert_eq!(
@@ -286,7 +286,7 @@ fn a_blue_dialog_is_framed_by_the_style() {
     let blue = blue();
     let text = TextRenderer::load(&FontConfig::default());
     let px = blue.fonts.size_px;
-    let d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
+    let d = yes_no("x");
     let cl = DialogLayout::compute(&classic, &text, &d);
     let bl = DialogLayout::compute(&blue, &text, &d);
     assert_eq!(bl.caption, Rect::new(3, 3, cl.caption.width, 26));
@@ -343,7 +343,7 @@ fn a_glass_dialog_wears_the_window_frame_with_a_lone_close_box() {
     let glass = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
     let text = TextRenderer::load(&FontConfig::default());
     let px = glass.fonts.size_px;
-    let d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
+    let d = yes_no("x");
     let cl = DialogLayout::compute(&classic, &text, &d);
     let gl = DialogLayout::compute(&glass, &text, &d);
     let (w, h) = gl.size;
@@ -399,7 +399,7 @@ fn a_blue_dialogs_close_box_draws_hot() {
     use reprisekit::style::{Part, State};
     let blue = blue();
     let text = TextRenderer::load(&FontConfig::default());
-    let mut d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
+    let mut d = yes_no("x");
     d.caption_hot = Some(CaptionButton::Close);
     let l = DialogLayout::compute(&blue, &text, &d);
     let c = draw(
@@ -454,7 +454,7 @@ fn a_held_close_box_draws_pushed_only_while_the_pointer_is_on_it() {
     let classic = Theme::default();
     let glass = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
     for theme in [&classic, &blue(), &glass] {
-        let mut d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
+        let mut d = yes_no("x");
         d.caption_hot = Some(CaptionButton::Close);
         let l = DialogLayout::compute(theme, &text, &d);
         let shot = |d: &Dialog| {
@@ -500,7 +500,7 @@ fn a_held_close_box_draws_pushed_only_while_the_pointer_is_on_it() {
             theme.look
         );
     }
-    let mut d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
+    let mut d = yes_no("x");
     let l = DialogLayout::compute(&classic, &text, &d);
     d.press_caption(CaptionButton::Close);
     let c = draw(
@@ -574,89 +574,13 @@ fn a_form_dialog_fits_the_frame_it_is_shown_in() {
 
 #[test]
 fn a_blue_client_area_starts_under_the_styles_caption() {
-    use reprisekit::controls::copyprogress::{CopyProgress, Kind};
     let text = TextRenderer::load(&FontConfig::default());
     let at = |theme: &Theme| {
-        let cp = CopyProgress::new(Kind::Copy, "Downloads", "KINGSTON", Color::rgb(0, 0, 0));
-        let mut d = Dialog::copy_progress(cp, "/media/KINGSTON".into());
+        let mut d = super::fit::tray_dialog(theme);
         d.fit(theme, &text);
         DialogLayout::compute(theme, &text, &d)
     };
     let (classic, blue) = (at(&Theme::default()), at(&blue()));
     assert_eq!(blue.page.map(|p| (p.x, p.y)), Some((3, 29)));
     assert_eq!(blue.size, (classic.size.0, classic.size.1 + 8));
-}
-
-#[test]
-fn the_copy_dialog_answers_its_keys_and_close_box_as_the_put_controls() {
-    use reprisekit::controls::copyprogress::{CopyProgress, Kind};
-    let theme = Theme::default();
-    let text = TextRenderer::load(&FontConfig::default());
-    let cp = CopyProgress::new(Kind::Copy, "Downloads", "KINGSTON", Color::rgb(0, 0, 0));
-    let mut d = Dialog::copy_progress(cp, "/media/KINGSTON".into());
-    d.fit(&theme, &text);
-    assert_eq!(d.title, "Copying...");
-    assert_eq!(d.key(Key::Access('p')), Outcome::CopyPause(true));
-    assert_eq!(d.key(Key::Escape), Outcome::CopyCancel);
-
-    let layout = DialogLayout::compute(&theme, &text, &d);
-    let client = layout.page.expect("a client");
-    assert_eq!((client.width, client.height), d.copy().unwrap().cp.client());
-    let px = theme.fonts.size_px;
-    let cancel = (client.right() - 20, client.bottom() - 15);
-    let hit = layout.hit(&d, cancel.0, cancel.1, &text, px);
-    assert!(matches!(hit, Some(DialogHit::Control(_))), "{hit:?}");
-    d.click(hit);
-    assert_eq!(d.release(hit), Outcome::CopyCancel);
-}
-
-#[test]
-fn a_windowed_dialog_minimizes_from_the_box_left_of_close() {
-    use reprisekit::controls::copyprogress::{CopyProgress, Kind};
-    let text = TextRenderer::load(&FontConfig::default());
-    let glass = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
-    for theme in [Theme::default(), glass] {
-        let cp = CopyProgress::new(Kind::Copy, "Downloads", "KINGSTON", Color::rgb(0, 0, 0));
-        let mut d = Dialog::copy_progress(cp, "/media/KINGSTON".into());
-        d.fit(&theme, &text);
-        let l = DialogLayout::compute(&theme, &text, &d);
-        let g = l.frame.expect("a frame");
-        let min = l.minimize.expect("a minimize box");
-        assert_eq!(min, g.button_rect(CaptionButton::Minimize));
-        assert!(min.right() <= l.close.unwrap().x + 1, "left of close");
-        let px = theme.fonts.size_px;
-        let hit = l.hit(&d, min.x + 2, min.y + 2, &text, px);
-        assert_eq!(hit, Some(DialogHit::Minimize));
-        d.press_caption(CaptionButton::Minimize);
-        assert!(d.drag_caption(None), "dragged off");
-        assert!(d.drag_caption(hit), "back on");
-        assert_eq!(d.release_caption(), Some(CaptionButton::Minimize));
-
-        let run = DialogLayout::compute(&theme, &text, &Dialog::run(&[]));
-        assert_eq!(
-            run.minimize, None,
-            "a dialog over the windows has no minimize box"
-        );
-    }
-}
-
-#[test]
-fn the_copy_dialog_is_a_windowed_task_with_the_jobs_progress() {
-    use reprisekit::controls::copyprogress::{CopyProgress, Kind, Phase, Status};
-    let mut cp = CopyProgress::new(Kind::Copy, "Downloads", "KINGSTON", Color::rgb(0, 0, 0));
-    let st = Status {
-        phase: Phase::Copying,
-        paused: true,
-        bytes: 25,
-        total_bytes: 100,
-        ..Status::default()
-    };
-    cp.update(st, 0);
-    let d = Dialog::copy_progress(cp, "/media/KINGSTON".into());
-    assert!(d.windowed());
-    assert!(d.on_taskbar());
-    assert_eq!(d.task_icon(), Some("system-file-manager"));
-    let p = d.task_progress().expect("a copy's progress");
-    assert_eq!((p.fraction, p.paused), (0.25, true));
-    assert_eq!(Dialog::end_program("foot", 4321).task_progress(), None);
 }

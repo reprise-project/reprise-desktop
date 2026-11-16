@@ -3,8 +3,7 @@
 use super::*;
 use crate::config::PowerConfig;
 use crate::theme::TextUnits;
-use reprisekit::controls::copyprogress;
-use reprisekit::controls::dlgtemplate::{KEY_AID_TEXT_H, NO, YES, delete_default};
+use reprisekit::controls::dlgtemplate::KEY_AID_TEXT_H;
 use reprisekit::controls::pathcomplete::Scope;
 
 pub(super) fn button(label: &str, action: DialogAction, default: bool) -> DialogButton {
@@ -18,33 +17,7 @@ pub(super) fn button(label: &str, action: DialogAction, default: bool) -> Dialog
     }
 }
 
-/// A delete prompt's button, the default when it is [`delete_default`]'s for `erase`.
-fn delete_button(label: &str, action: DialogAction, erase: bool) -> DialogButton {
-    button(label, action, label == delete_default(erase))
-}
-
 impl Dialog {
-    /// Confirm File/Folder Replace over `batch`; buttons answer for the item the batch asks about.
-    pub fn confirm_replace(
-        fields: reprisekit::controls::replacebox::Fields,
-        batch: crate::dragview::Batch,
-        text: &TextRenderer,
-        px: u32,
-        u: TextUnits,
-    ) -> Dialog {
-        Dialog::new(
-            fields.title(),
-            Style::Form(Box::new(FormDialog::measured(
-                Measured::Replace(fields),
-                FormKind::Replace(Box::new(batch)),
-                text,
-                px,
-                u,
-            ))),
-            Placement::Center,
-        )
-    }
-
     /// The session-end prompt: programs Log Off, Turn Off or Restart waits for, with End Now and
     /// Cancel.
     pub fn end_session(
@@ -171,26 +144,6 @@ impl Dialog {
         }
     }
 
-    pub fn copy_progress(cp: CopyProgress, dir: std::path::PathBuf) -> Dialog {
-        let title = cp.title();
-        let c = CopyDialog {
-            cp,
-            dir,
-            units: Default::default(),
-        };
-        Dialog::new(title, Style::Copy(Box::new(c)), Placement::Center)
-    }
-
-    pub(super) fn copy_outcome(o: copyprogress::Outcome) -> Outcome {
-        match o {
-            copyprogress::Outcome::None => Outcome::Nothing,
-            copyprogress::Outcome::Redraw => Outcome::Redraw,
-            copyprogress::Outcome::Resized => Outcome::Relayout,
-            copyprogress::Outcome::Pause(on) => Outcome::CopyPause(on),
-            copyprogress::Outcome::Cancel => Outcome::CopyCancel,
-        }
-    }
-
     pub fn tray_customize(t: TrayCustomize) -> Dialog {
         Dialog {
             help: true,
@@ -208,129 +161,6 @@ impl Dialog {
             traycustomize::Event::Redraw => Outcome::Redraw,
             traycustomize::Event::Cancel => Outcome::Close,
             traycustomize::Event::Accept(c) => Outcome::TrayChoices(c),
-        }
-    }
-
-    /// "Confirm File Delete" ("Folder" for a folder, whose template reserves four text lines): Yes
-    /// trashes `path`, No/Escape leave it. With `erase` Yes removes it outright, with a folder icon
-    /// under a red badge; `no_bin` says its drive has no Recycle Bin.
-    pub fn confirm_delete(
-        name: &str,
-        path: &std::path::Path,
-        is_dir: bool,
-        erase: bool,
-        no_bin: bool,
-    ) -> Dialog {
-        let yes = DialogAction::Delete {
-            paths: vec![path.to_path_buf()],
-            erase,
-        };
-        let kind = reprisefs::bincap::ConfirmKind::of(1, is_dir);
-        let lack = match no_bin {
-            true => reprisefs::bincap::BinLack::All,
-            false => reprisefs::bincap::BinLack::None,
-        };
-        let (title, text) = reprisefs::bincap::delete_prompt(kind, name, 1, erase, lack);
-        let icon = if erase { "folder" } else { "user-trash-full" };
-        Dialog {
-            icon: Some(icon.into()),
-            text,
-            buttons: vec![
-                delete_button(YES, yes, erase),
-                delete_button(NO, DialogAction::Cancel, erase),
-            ],
-            ..Dialog::new(
-                title,
-                Style::Classic {
-                    template: Template::MessageBox,
-                    text_h: is_dir.then_some(51),
-                    delete_badge: erase,
-                },
-                Placement::Center,
-            )
-        }
-    }
-
-    /// "Confirm Multiple File Delete" for a selection of `paths`: "send
-    /// these N items to the Recycle Bin", or "delete these N items" with
-    /// `erase`, led by the missing Recycle Bin for `no_bin` of them. Yes trashes
-    /// (or erases) every one of them.
-    pub fn confirm_delete_many(
-        paths: &[std::path::PathBuf],
-        erase: bool,
-        no_bin: reprisefs::bincap::BinLack,
-    ) -> Dialog {
-        use reprisefs::bincap::{ConfirmKind, delete_prompt};
-        let count = paths.len();
-        let yes = DialogAction::Delete {
-            paths: paths.to_vec(),
-            erase,
-        };
-        let (title, text) = delete_prompt(ConfirmKind::Multiple, "", count, erase, no_bin);
-        let icon = if erase { "folder" } else { "user-trash-full" };
-        Dialog {
-            icon: Some(icon.into()),
-            text,
-            buttons: vec![
-                delete_button(YES, yes, erase),
-                delete_button(NO, DialogAction::Cancel, erase),
-            ],
-            ..Dialog::new(
-                title,
-                Style::Classic {
-                    template: Template::MultiDelete,
-                    text_h: None,
-                    delete_badge: erase,
-                },
-                Placement::Center,
-            )
-        }
-    }
-
-    /// The question `asker` asks next, about `path` (a folder with
-    /// `is_dir`): it is too big for its Recycle Bin, so delete it for
-    /// good? Yes erases it, No leaves it; a batch of more than one item
-    /// adds Yes to All and Cancel. Escape and the close box drop the
-    /// batch, as Cancel does.
-    pub fn too_big(
-        path: &std::path::Path,
-        is_dir: bool,
-        asker: reprisefs::bincap::TooBig,
-    ) -> Dialog {
-        use reprisefs::replace::Answer;
-        let asker = Box::new(asker);
-        let answer = |label: &str, answer: Answer| {
-            let action = DialogAction::TooBig {
-                asker: asker.clone(),
-                answer,
-            };
-            delete_button(label, action, true)
-        };
-        let mut buttons = vec![answer(YES, Answer::Yes)];
-        if asker.many() {
-            buttons.push(answer("Yes to &All", Answer::YesToAll));
-        }
-        buttons.push(answer(NO, Answer::No));
-        if asker.many() {
-            buttons.push(button("Cancel", DialogAction::Cancel, false));
-        }
-        let title = match is_dir {
-            true => "Confirm Folder Delete",
-            false => "Confirm File Delete",
-        };
-        Dialog {
-            icon: Some(if is_dir { "folder" } else { "text-x-generic" }.into()),
-            text: reprisefs::bincap::too_big_text(&reprisefs::bincap::label(path)),
-            buttons,
-            ..Dialog::new(
-                title,
-                Style::Classic {
-                    template: Template::MessageBox,
-                    text_h: None,
-                    delete_badge: true,
-                },
-                Placement::Center,
-            )
         }
     }
 
@@ -623,34 +453,6 @@ impl Dialog {
                 path.display()
             ),
         )
-    }
-
-    /// The question before the Recycle Bin is emptied: "Confirm File
-    /// Delete" naming the one item, or "Confirm Multiple File Delete" with
-    /// the count. Yes empties it.
-    pub fn confirm_empty_bin(count: usize, first: Option<&str>) -> Dialog {
-        use reprisefs::bincap::{BinLack, ConfirmKind, delete_prompt};
-        let (title, text) = match (count, first) {
-            (1, Some(name)) => delete_prompt(ConfirmKind::File, name, 1, true, BinLack::None),
-            _ => delete_prompt(ConfirmKind::Multiple, "", count, true, BinLack::None),
-        };
-        Dialog {
-            icon: Some("user-trash-full".into()),
-            text,
-            buttons: vec![
-                delete_button(YES, DialogAction::EmptyBin, true),
-                delete_button(NO, DialogAction::Cancel, true),
-            ],
-            ..Dialog::new(
-                title,
-                Style::Classic {
-                    template: Template::MessageBox,
-                    text_h: None,
-                    delete_badge: false,
-                },
-                Placement::Center,
-            )
-        }
     }
 
     /// The Log Off panel: `leave` (Switch User or Disconnect), and Log Off, which runs the

@@ -51,15 +51,6 @@ impl State {
         self.redraw_nodes(Vec::new(), &[tree.into()]);
     }
 
-    /// Recompute the top dialog's layout and redraw it; the open tab grows, so rects go stale on tab change.
-    pub(super) fn relayout_top_dialog(&mut self) {
-        let Some(i) = self.dialogs.views.len().checked_sub(1) else {
-            return;
-        };
-        self.refit_dialog(i);
-        self.redraw_dialog(i);
-    }
-
     /// Fit dialog `index` to the theme and its output's usable area and lay it out again, after
     /// a tab or theme change; one whose new size runs past the area's edge moves back inside.
     pub fn refit_dialog(&mut self, index: usize) {
@@ -152,18 +143,6 @@ impl State {
             active,
             preedit.as_ref(),
         );
-        if let (Some(c), Some(client)) = (v.dialog.copy(), v.layout.page) {
-            dialog::draw_copy(
-                &mut canvas,
-                &base,
-                text,
-                c,
-                client,
-                scale,
-                active,
-                v.cues.keys,
-            );
-        }
         // An ellipsized label's tip, over everything the dialog drew.
         reprisekit::controls::form::draw_tip(&mut canvas, text.for_output(scale), &theme);
         // What the backdrop sees: the client area.
@@ -311,10 +290,6 @@ impl State {
             n.set_modal();
         }
         let px = self.config.theme.fonts.size_px;
-        if let (Some(c), Some(client)) = (v.dialog.copy(), v.layout.page) {
-            dialog::access_copy(c, client, &self.config.theme, &self.text, &mut tree);
-            return Some(tree);
-        }
         let focus = dialog::access(&v.dialog, &v.layout, &self.text, px, &mut tree);
         tree.set_focus(focus);
         Some(tree)

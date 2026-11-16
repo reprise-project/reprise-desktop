@@ -251,13 +251,7 @@ impl State {
                     .dialog
                     .and_then(|id| dialogs.iter().find(|d| d.id == id))
                 {
-                    let icon =
-                        (d.icon.as_deref()).and_then(|n| crate::icon::unread(icons, n, task_px));
-                    return TaskEntry {
-                        glow: glow_of(&icon),
-                        icon,
-                        ..crate::taskbar::dialog_entry(&d.title, d.active)
-                    };
+                    return crate::taskbar::dialog_entry(&d.title, d.active);
                 }
                 if group.is_empty() {
                     let name = slot.pin.and_then(|k| pin_icons.get(k).cloned().flatten());
@@ -327,8 +321,8 @@ impl State {
         };
         let task_progress = (bar.slots.iter())
             .map(|s| {
-                if let Some(id) = s.dialog {
-                    return (dialogs.iter().find(|d| d.id == id)).and_then(|d| d.progress);
+                if s.dialog.is_some() {
+                    return None;
                 }
                 if !any_shown {
                     return None;

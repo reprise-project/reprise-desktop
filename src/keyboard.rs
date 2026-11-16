@@ -623,7 +623,6 @@ impl State {
             lock_menu: crate::lockpower::menu_open(self),
             dialog_has_keyboard: self.dialog_has_keyboard(),
             dialog_modal: self.dialog_is_modal(),
-            dialog_windowed: (self.dialogs.views.last()).is_some_and(|v| v.dialog.windowed()),
             snap_assist_open: self.snap_assist_open(),
             snap_picker_keys: self.snap_picker.has_keys(),
             notify_reply_focused: crate::notifyview::reply_focused(self),

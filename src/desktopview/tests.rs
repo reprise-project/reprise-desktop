@@ -1569,3 +1569,80 @@ fn recycle_bin_properties_start_explorer_and_open_no_dialog() {
     );
     assert_eq!(crate::spawn::recorded(), ["reprise-explorer"]);
 }
+
+/// The command line after the program's name of each file job started.
+fn job_args(h: &crate::harness::Harness) -> Vec<Vec<String>> {
+    (h.state.filejobs.jobs.iter())
+        .map(|j| {
+            (j.args.iter())
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn a_drop_of_files_runs_in_explorer_and_an_icon_put_on_a_cell_lands_there() {
+    use crate::dragview::{DragSource, DropOp, DropTarget};
+    crate::spawn::record();
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let desk = crate::harness::scratch().join("desktop-drop-cell");
+    std::fs::create_dir_all(&desk).unwrap();
+    create(&mut h.state, desk.clone(), Default::default(), None);
+    let report = PathBuf::from("/srv/report.txt");
+    let none = HashSet::new();
+    let file = [DragSource::file(report.clone())];
+    let folder = DropTarget::Folder(PathBuf::from("/srv/Reports"));
+    h.state.put_all(&file, &folder, DropOp::Move, &none);
+    h.state
+        .put_all(&file, &DropTarget::Desktop((3, 2)), DropOp::Copy, &none);
+    let d = desk.display().to_string();
+    assert_eq!(
+        job_args(&h),
+        [
+            vec!["--put", "move", "/srv/Reports", "--", "/srv/report.txt"],
+            vec!["--put", "copy", &d, "--", "/srv/report.txt"],
+        ]
+    );
+    assert!(
+        h.state.dialogs.views.is_empty(),
+        "Explorer asks, not the desktop"
+    );
+    h.state.land_job_icons(&["other.txt".into()]);
+    let pinned = |h: &crate::harness::Harness, name: &str| {
+        (h.state.desktop.as_ref()).and_then(|v| v.positions.get(name).copied())
+    };
+    assert_eq!(pinned(&h, "other.txt"), None, "only the job's own icon");
+    h.state.land_job_icons(&["report.txt".into()]);
+    assert_eq!(
+        pinned(&h, "report.txt"),
+        Some((3, 2)),
+        "the copy takes the drop cell"
+    );
+}
+
+#[test]
+fn a_start_menu_program_dropped_on_the_desktop_is_copied_there_without_explorer() {
+    use crate::dragview::{DragSource, DropOp, DropTarget};
+    crate::spawn::record();
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    crate::fsjobs::setup(&mut h.state);
+    let root = crate::harness::scratch().join("desktop-drop-program");
+    let desk = root.join("Desktop");
+    std::fs::create_dir_all(&desk).unwrap();
+    let file = root.join("vim.desktop");
+    let text = "[Desktop Entry]\nType=Application\nName=Vim\nExec=vim\n";
+    std::fs::write(&file, text).unwrap();
+    create(&mut h.state, desk.clone(), Default::default(), None);
+    let app = DragSource::App {
+        entry: reprisefs::apps::parse_desktop(text, "vim.desktop").unwrap(),
+        file,
+    };
+    let target = DropTarget::Desktop((0, 0));
+    h.state
+        .put_all(&[app], &target, DropOp::Copy, &HashSet::new());
+    h.until("the launcher lands", |_| desk.join("vim.desktop").exists());
+    assert!(h.state.filejobs.jobs.is_empty(), "no Explorer job");
+}

@@ -187,32 +187,21 @@ impl State {
         }
     }
 
-    /// Show Desktop: with any task window or windowed dialog shown, minimise them all; with none,
-    /// restore them all in the stacking order they had.
+    /// Show Desktop: with any task window shown, minimise them all; with none, restore them all
+    /// in the stacking order they had.
     pub fn toggle_show_desktop(&mut self) {
         crate::peek::leave(self);
-        let mut items: Vec<(TreeId, Shown)> = (self.task_windows().into_iter())
-            .filter_map(|w| Some((self.win(w)?.tree, Shown::Window(w))))
+        let mut items: Vec<(TreeId, WindowId)> = (self.task_windows().into_iter())
+            .filter_map(|w| Some((self.win(w)?.tree, w)))
             .collect();
-        let dialogs = self.dialogs.views.iter().filter(|v| v.dialog.windowed());
-        items.extend(dialogs.map(|v| (v.tree(), Shown::Dialog(v.id))));
-        let any_visible = items.iter().any(|&(_, it)| match it {
-            Shown::Window(w) => self.win(w).is_some_and(|x| !x.hidden()),
-            Shown::Dialog(id) => (self.dialogs.views.iter()).any(|v| v.id == id && !v.minimized),
-        });
+        let any_visible = (items.iter()).any(|&(_, w)| self.win(w).is_some_and(|x| !x.hidden()));
         if !any_visible {
             items = restore_order(self.scene.children(self.layers.windows), items);
         }
-        for (_, it) in items {
-            match it {
-                Shown::Window(w) => {
-                    let minimized = self.win(w).is_some_and(|x| x.minimized);
-                    if minimized != any_visible {
-                        self.set_minimized(w, any_visible);
-                    }
-                }
-                Shown::Dialog(id) if any_visible => self.minimize_dialog(id),
-                Shown::Dialog(id) => self.focus_dialog(id),
+        for (_, w) in items {
+            let minimized = self.win(w).is_some_and(|x| x.minimized);
+            if minimized != any_visible {
+                self.set_minimized(w, any_visible);
             }
         }
     }

@@ -90,8 +90,6 @@ struct TaskDialog {
     place: Place,
     title: String,
     active: bool,
-    icon: Option<String>,
-    progress: Option<reprisekit::taskbar::TaskProgress>,
 }
 
 impl TaskWindows {
@@ -124,8 +122,6 @@ impl TaskWindows {
                 },
                 title: v.dialog.title.clone(),
                 active: top == Some(v.id),
-                icon: v.dialog.task_icon().map(String::from),
-                progress: v.dialog.task_progress(),
             })
             .collect();
         TaskWindows {
