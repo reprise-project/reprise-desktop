@@ -130,6 +130,25 @@ pub fn reload_remembered() -> zbus::Result<()> {
     Ok(())
 }
 
+/// Ask the windows of the processes `pids` (host pids) to close, as their X button does, and
+/// return how many were asked: Task Manager's End Task. Blocks for at most
+/// [`crate::METHOD_TIMEOUT`].
+pub fn close_windows(pids: &[i32]) -> zbus::Result<u32> {
+    windows_call("CloseWindows", pids)
+}
+
+/// How many windows the processes `pids` (host pids) still show. Blocks for at most
+/// [`crate::METHOD_TIMEOUT`].
+pub fn count_windows(pids: &[i32]) -> zbus::Result<u32> {
+    windows_call("CountWindows", pids)
+}
+
+fn windows_call(method: &str, pids: &[i32]) -> zbus::Result<u32> {
+    let conn = crate::session()?;
+    let reply = crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), method, &(pids,)))?;
+    reply.body().deserialize()
+}
+
 /// The icon of the window a program plays sound from, as `WindowIcon` finds it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowIcon {

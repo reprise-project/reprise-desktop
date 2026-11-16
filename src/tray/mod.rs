@@ -144,6 +144,12 @@ pub enum TrayEvent {
     ScreenSaverInhibited(bool),
     /// Whether any caller of `org.reprise.Tray.WatchResponding` is still on the bus.
     WatchResponding(bool),
+    /// `org.reprise.Tray.CloseWindows` (`close`) or `CountWindows`, answered on `reply`.
+    WindowsOf {
+        pids: Vec<i32>,
+        close: bool,
+        reply: async_channel::Sender<u32>,
+    },
     /// `org.reprise.Tray.WindowIcon`, answered on `reply`.
     WindowIcon {
         lineages: Vec<Vec<crate::streamwindow::Step>>,
@@ -795,6 +801,11 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
             log::debug!("tray: screensaver inhibited: {on}");
             state.idle.bus_inhibited = on;
             crate::idle::inhibition_changed(state);
+            false
+        }
+        TrayEvent::WindowsOf { pids, close, reply } => {
+            let n = state.end_task_windows(&pids, close);
+            let _ = reply.try_send(u32::try_from(n).unwrap_or(u32::MAX));
             false
         }
         TrayEvent::WindowIcon {
