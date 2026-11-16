@@ -500,9 +500,9 @@ first) still reaches its lock screen.
 
 While any session holding someone's work runs (counted as the lock counts
 them), Shut Down and Restart on the login screen ask for an administrator's
-name and password, checked through the `reprise-login-check` PAM service; the account must be in `wheel`. That
+name and password, checked through the `reprise-login-check` PAM service; the account must be in `wheel` or `sudo`. That
 stack refuses root before it asks for a password. Every refusal, a wrong
-password or an account outside `wheel`, comes 3 s after the last answer, so
+password or an account outside both groups, comes 3 s after the last answer, so
 the reply doesn't tell who is an administrator. Shutting down ends every
 session, unsaved work included. A session that isn't on screen can't take
 the screen from the user in front of it: polkit refuses it logind's activation and VT switch,

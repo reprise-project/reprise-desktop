@@ -37,18 +37,22 @@ pub fn real_name(e: &PasswdEntry) -> String {
     if full.is_empty() { &e.name } else { full }.to_string()
 }
 
-/// `user`'s uid and whether `group` is among its groups, the primary one included; `None`
-/// when there is no such account. A group that does not exist has no members.
-pub fn member_of(user: &str, group: &str) -> io::Result<Option<(u32, bool)>> {
+/// `user`'s uid and whether any of `groups` is among its groups, the primary one included;
+/// `None` when there is no such account. A group that does not exist has no members.
+pub fn member_of_any(user: &str, groups: &[String]) -> io::Result<Option<(u32, bool)>> {
     let Some(account) = lookup(user)? else {
         return Ok(None);
     };
-    let Some(gid) = group_id(group)? else {
+    let mut gids = Vec::new();
+    for g in groups {
+        gids.extend(group_id(g)?);
+    }
+    if gids.is_empty() {
         return Ok(Some((account.uid, false)));
-    };
+    }
     let cuser = CString::new(user).map_err(|_| io::ErrorKind::InvalidInput)?;
-    let groups = group_list(&cuser, account.gid)?;
-    Ok(Some((account.uid, groups.contains(&gid))))
+    let theirs = group_list(&cuser, account.gid)?;
+    Ok(Some((account.uid, gids.iter().any(|g| theirs.contains(g)))))
 }
 
 /// The gid of group `name` through NSS.
@@ -157,12 +161,21 @@ mod tests {
     }
 
     #[test]
-    fn member_of_reads_the_account_and_its_groups() {
-        assert_eq!(member_of("root", "root").unwrap(), Some((0, true)));
+    fn member_of_any_reads_the_account_and_its_groups() {
+        let groups = |g: &[&str]| g.iter().map(|g| g.to_string()).collect::<Vec<_>>();
+        let root = groups(&["root"]);
+        assert_eq!(member_of_any("root", &root).unwrap(), Some((0, true)));
+        let missing = groups(&["no-such-group-for-reprise"]);
+        assert_eq!(member_of_any("root", &missing).unwrap(), Some((0, false)));
+        let either = groups(&["no-such-group-for-reprise", "root"]);
         assert_eq!(
-            member_of("root", "no-such-group-for-reprise").unwrap(),
-            Some((0, false))
+            member_of_any("root", &either).unwrap(),
+            Some((0, true)),
+            "a missing group does not hide the other"
         );
-        assert_eq!(member_of("no-such-user-for-reprise", "root").unwrap(), None);
+        assert_eq!(
+            member_of_any("no-such-user-for-reprise", &root).unwrap(),
+            None
+        );
     }
 }

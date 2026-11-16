@@ -735,7 +735,7 @@ impl Runtime {
             Effect::Disallocate(vt) => vt::disallocate(vt),
             Effect::Log(level, text) => log::log!(level, "{text}"),
             Effect::ToFront(event) => self.front.borrow_mut().send(&event),
-            Effect::LookUp { key, user, group } => {
+            Effect::LookUp { key, user, groups } => {
                 let events = self.events.clone();
                 let hold = match key {
                     LookUpKey::Listed { uid, .. } => match self.listing_jobs.hold(uid) {
@@ -757,7 +757,7 @@ impl Runtime {
                 tokio::task::spawn_local(async move {
                     let job = move || {
                         let _hold = hold;
-                        users::member_of(&user, &group)
+                        users::member_of_any(&user, &groups)
                     };
                     let member = look_up(key, LOOKUP_WAIT, job).await;
                     let _ = events.send(Event::Input(member));

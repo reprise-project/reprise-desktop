@@ -367,7 +367,7 @@ impl Daemon {
                     generation: l.generation,
                 },
                 user: p.user.clone(),
-                group: self.config.remote.group.clone(),
+                groups: vec![self.config.remote.group.clone()],
             });
         }
     }
@@ -764,7 +764,7 @@ impl Daemon {
         out.push(Effect::LookUp {
             key: LookUpKey::Conn(conn),
             user,
-            group: self.config.remote.group.clone(),
+            groups: vec![self.config.remote.group.clone()],
         });
     }
 
@@ -1466,7 +1466,7 @@ impl Daemon {
             out.push(Effect::LookUp {
                 key: LookUpKey::Link(uid),
                 user,
-                group: self.config.remote.group.clone(),
+                groups: vec![self.config.remote.group.clone()],
             });
         }
     }

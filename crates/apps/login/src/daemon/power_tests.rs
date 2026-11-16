@@ -29,11 +29,11 @@ fn check_spawn(user: &str) -> Vec<Effect> {
     effects
 }
 
-fn wheel(user: &str) -> Vec<Effect> {
+fn admin_groups(user: &str) -> Vec<Effect> {
     vec![Effect::LookUp {
         key: LookUpKey::Admin(CHECK),
         user: user.into(),
-        group: "wheel".into(),
+        groups: vec!["wheel".into(), "sudo".into()],
     }]
 }
 
@@ -97,7 +97,7 @@ fn an_administrators_password_shuts_down() {
             msg: ToWorker::Answer(Some(Zeroizing::new("pw".into()))),
         }]
     );
-    assert_eq!(run.worker(2, authed("anna", 1000)), wheel("anna"));
+    assert_eq!(run.worker(2, authed("anna", 1000)), admin_groups("anna"));
     assert_eq!(run.exited(2), vec![], "the check worker ends by itself");
     assert_eq!(
         run.on(member(Some(1000), true)),
@@ -177,7 +177,7 @@ fn a_non_administrator_is_refused_like_a_wrong_password() {
         let mut run = answered_as("bert");
         assert_eq!(
             after(&mut run, Duration::from_millis(100)).worker(2, authed("bert", 1001)),
-            wheel("bert")
+            admin_groups("bert")
         );
         let effects = run.on(member(uid, is_member));
         assert_held(&effects);
@@ -260,7 +260,7 @@ fn power_with_no_other_session_needs_no_administrator() {
 #[test]
 fn a_cancelled_administrator_check_turns_nothing_off() {
     let mut run = asked_as("anna", PowerAction::PowerOff);
-    assert_eq!(run.worker(2, authed("anna", 1000)), wheel("anna"));
+    assert_eq!(run.worker(2, authed("anna", 1000)), admin_groups("anna"));
     assert_eq!(
         run.greeter(GreeterRequest::CancelSession),
         vec![Effect::Kill(CHECK), Effect::Reply(GreeterReply::Success)]
@@ -271,7 +271,7 @@ fn a_cancelled_administrator_check_turns_nothing_off() {
 #[test]
 fn an_administrator_check_never_starts_a_session() {
     let mut run = asked_as("anna", PowerAction::PowerOff);
-    assert_eq!(run.worker(2, authed("anna", 1000)), wheel("anna"));
+    assert_eq!(run.worker(2, authed("anna", 1000)), admin_groups("anna"));
     let effects = run.greeter(GreeterRequest::StartSession);
     assert!(
         matches!(
@@ -293,14 +293,14 @@ fn a_check_takes_no_second_request() {
         [refused(BUSY)]
     );
     assert_eq!(run.greeter(create("bert")), [refused(BUSY)]);
-    assert_eq!(run.worker(2, authed("anna", 1000)), wheel("anna"));
+    assert_eq!(run.worker(2, authed("anna", 1000)), admin_groups("anna"));
     assert_eq!(run.greeter(create("bert")), [refused(BUSY)]);
 }
 
 #[test]
 fn a_greeter_gone_mid_check_turns_nothing_off() {
     let mut run = asked_as("anna", PowerAction::PowerOff);
-    assert_eq!(run.worker(2, authed("anna", 1000)), wheel("anna"));
+    assert_eq!(run.worker(2, authed("anna", 1000)), admin_groups("anna"));
     run.exited(1);
     assert!(run.d.conversation.is_none());
     assert_eq!(run.on(member(Some(1000), true)), []);
