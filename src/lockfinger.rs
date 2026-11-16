@@ -315,26 +315,28 @@ pub fn password_main(user: &str, purpose: PasswordFor) -> i32 {
         libc::sigemptyset(&mut set);
         libc::pthread_sigmask(libc::SIG_SETMASK, &set, std::ptr::null_mut());
     }
-    let (Ok(input), Ok(out)) = (
-        std::io::stdin().as_fd().try_clone_to_owned(),
-        std::io::stdout().as_fd().try_clone_to_owned(),
-    ) else {
+    let (Ok(input), Some(out)) = (std::io::stdin().as_fd().try_clone_to_owned(), lines_out())
+    else {
         return 1;
     };
-    // The lines go out on a copy of stdout and fd 1 points at /dev/null, so nothing a module
-    // prints can pass for a line.
-    if let Ok(null) = std::fs::File::options().write(true).open("/dev/null") {
-        // SAFETY: both fds are open; dup2 replaces fd 1, which nothing here holds a borrow of.
-        unsafe { libc::dup2(null.as_raw_fd(), libc::STDOUT_FILENO) };
-    }
     // `File`, not `Stdin`: stdin's buffer would keep a copy of the password nobody zeroes.
-    password_conversation(
-        &purpose.verifier(),
-        user,
-        std::fs::File::from(input),
-        std::fs::File::from(out),
-    );
+    password_conversation(&purpose.verifier(), user, std::fs::File::from(input), out);
     0
+}
+
+/// A copy of stdout for a child's lines, with fd 1 pointed at /dev/null so nothing a PAM module
+/// prints can pass for a line.
+fn lines_out() -> Option<std::fs::File> {
+    let out = std::io::stdout().as_fd().try_clone_to_owned().ok()?;
+    let null = std::fs::File::options()
+        .write(true)
+        .open("/dev/null")
+        .ok()?;
+    // SAFETY: both fds are open; dup2 replaces fd 1, which nothing here holds a borrow of.
+    if unsafe { libc::dup2(null.as_raw_fd(), libc::STDOUT_FILENO) } < 0 {
+        return None;
+    }
+    Some(out.into())
 }
 
 /// Read the password, verify it with `v` and write the verdict's lines to `out`. A further prompt goes
@@ -407,20 +409,24 @@ pub fn child_main(user: &str) -> i32 {
         libc::sigaddset(&mut set, libc::SIGINT);
         libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
     }
-    let rc = if service_installed() && reprisebus::fprint::has_finger(user) {
-        authenticate(user)
-    } else {
-        ffi::PAM_AUTHINFO_UNAVAIL
+    let Some(mut out) = lines_out() else {
+        return 1;
     };
-    let mut out = std::io::stdout().lock();
+    let rc = match out.try_clone() {
+        Ok(lines) if service_installed() && reprisebus::fprint::has_finger(user) => {
+            authenticate(user, lines)
+        }
+        _ => ffi::PAM_AUTHINFO_UNAVAIL,
+    };
     let _ = writeln!(out, "= {rc}");
     let _ = out.flush();
     0
 }
 
-/// `pam_authenticate` on `SERVICE` for `user`; a prompt fails it, as there is no password in this conversation.
-fn authenticate(user: &str) -> c_int {
-    let mut pam = match Pam::start(SERVICE, user, Box::new(FingerLines)) {
+/// `pam_authenticate` on `SERVICE` for `user`, its messages written to `out`; a prompt fails it, as
+/// there is no password in this conversation.
+fn authenticate(user: &str, out: std::fs::File) -> c_int {
+    let mut pam = match Pam::start(SERVICE, user, Box::new(FingerLines(out))) {
         Ok(pam) => pam,
         Err(e) => {
             log::error!("pam: cannot start service {SERVICE}: {e}");
@@ -439,7 +445,7 @@ fn authenticate(user: &str) -> c_int {
 }
 
 /// The child's conversation: text lines go out as `I` or `E` lines; a prompt ends the conversation, since there is nothing to answer it with.
-struct FingerLines;
+struct FingerLines(std::fs::File);
 
 impl Converse for FingerLines {
     fn prompt(&mut self, kind: AuthKind, text: &str) -> Option<zeroize::Zeroizing<String>> {
@@ -448,11 +454,8 @@ impl Converse for FingerLines {
             AuthKind::Error => 'E',
             AuthKind::Visible | AuthKind::Secret => return None,
         };
-        let mut out = std::io::stdout().lock();
-        for l in text.lines() {
-            let _ = writeln!(out, "{tag} {l}");
-        }
-        let _ = out.flush();
+        let lines: String = text.lines().map(|l| format!("{tag} {l}\n")).collect();
+        let _ = self.0.write_all(lines.as_bytes());
         None
     }
 }
@@ -599,6 +602,28 @@ pub(crate) mod tests {
                 _ => Err(Vec::new()),
             }
         }
+    }
+
+    #[test]
+    fn what_a_module_prints_on_stdout_never_reaches_the_lines() {
+        const ALONE: &str = "REPRISE_LINES_OUT_TEST_ALONE";
+        if std::env::var_os(ALONE).is_none() {
+            let name = "lockfinger::tests::what_a_module_prints_on_stdout_never_reaches_the_lines";
+            let out = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--quiet", "--test-threads=1"])
+                .env(ALONE, "1")
+                .output()
+                .unwrap();
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert!(out.status.success(), "the child passes: {text}");
+            assert!(text.contains("= 0\n"), "the line arrives: {text}");
+            assert!(!text.contains("stray"), "fd 1 goes nowhere: {text}");
+            return;
+        }
+        let mut out = lines_out().unwrap();
+        // SAFETY: writes a static buffer to fd 1, as a module's printf would.
+        unsafe { libc::write(libc::STDOUT_FILENO, b"stray\n".as_ptr().cast(), 6) };
+        out.write_all(b"= 0\n").unwrap();
     }
 
     #[test]
