@@ -186,6 +186,7 @@ fn a_paste_whose_second_file_fails_keeps_the_first_and_names_the_second() {
     assert!(text.starts_with("Cannot move gone.txt: "), "{text}");
     assert_eq!(ex.undo, Some("Move"));
     ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
     assert!(from.join("a.txt").is_file(), "the one move is undone");
     assert_eq!(ex.undo, None, "and that was the whole batch");
 }
@@ -368,6 +369,7 @@ fn undo_after_the_source_folder_vanished_keeps_the_batch_for_a_retry() {
 
     std::fs::remove_dir_all(&from).expect("rmdir");
     ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
     match ex.dialog.as_ref().expect("the failure is reported") {
         Dialog::Message { title, text } => {
             assert_eq!(title, "Error");
@@ -381,6 +383,7 @@ fn undo_after_the_source_folder_vanished_keeps_the_batch_for_a_retry() {
     ex.dialog = None;
     std::fs::create_dir_all(&from).expect("mkdir");
     ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
     assert!(from.join("a.txt").is_file() && from.join("b.txt").is_file());
     assert_eq!(ex.undo, None);
 }
@@ -413,8 +416,50 @@ fn undo_of_a_move_lists_a_hidden_item_again() {
     assert_eq!(list(), "", "the move let go of the line");
 
     ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
     assert!(from.join("a.txt").is_file() && from.join("b.txt").is_file());
     assert_eq!(list(), "a.txt\n");
+}
+
+#[test]
+fn undo_of_a_move_runs_on_a_job_after_the_handler_returns() {
+    let home = tempfile::tempdir().expect("a temp dir");
+    let (from, dir) = (home.path().join("from"), home.path().join("to"));
+    std::fs::create_dir_all(&from).expect("mkdir");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(from.join("a.txt"), "a").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
+    ex.run(Command::Paste, &mut ctx);
+    ex.pasted(
+        FileClip {
+            cut: true,
+            paths: vec![from.join("a.txt")],
+        },
+        &mut ctx,
+    );
+    ex.finish_puts(&mut ctx);
+
+    ex.run(Command::Undo, &mut ctx);
+    assert!(
+        dir.join("a.txt").is_file(),
+        "the handler moves nothing back"
+    );
+    assert!(ex.busy(), "the undo is work a close waits for");
+    assert_eq!(ex.undo, None, "its entry left the stack");
+    while ex.removing.is_none() {
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        ex.poll_jobs(&mut ctx);
+    }
+    let progress = &ex.removing.as_ref().expect("the undo's job").progress;
+    assert_eq!(
+        (progress.kind, &*progress.from, &*progress.to),
+        (reprisekit::controls::copyprogress::Kind::Move, "to", "from"),
+        "its dialog moves from where the item is back to where it was"
+    );
+    ex.finish_puts(&mut ctx);
+    assert!(from.join("a.txt").is_file() && !dir.join("a.txt").exists());
+    assert_eq!(ex.undo, None);
 }
 
 #[test]

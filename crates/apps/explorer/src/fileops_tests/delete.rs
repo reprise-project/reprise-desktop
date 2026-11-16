@@ -158,6 +158,7 @@ fn delete_trashes_the_selection_and_undo_restores_it() {
     assert!(ex.items.is_empty(), "the view re-listed without it");
 
     ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
 
     assert_eq!(
         std::fs::read_to_string(dir.join("a.txt")).expect("read"),
@@ -197,7 +198,9 @@ fn a_delete_that_purges_the_bin_drops_the_purged_items_undo() {
     assert!(!trashed.iter().any(|n| n == "a.iso"));
 
     ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
     ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
 
     assert!(dir.join("b.iso").exists() && dir.join("c.iso").exists());
     assert_eq!(ex.undo, None, "a.iso's undo went with it");
@@ -313,6 +316,7 @@ fn undo_of_a_copy_on_a_remove_immediately_drive_asks_then_erases() {
     ex.sync_undo();
 
     ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
     let Some(Dialog::Confirm(c)) = &ex.dialog else {
         panic!("the question is up")
     };
@@ -328,7 +332,9 @@ fn undo_of_a_copy_on_a_remove_immediately_drive_asks_then_erases() {
     assert_eq!(ex.undo, Some("Copy"), "and the Undo row");
 
     ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
     ex.dialog_outcome(form::Event::Default, &mut ctx);
+    ex.finish_puts(&mut ctx);
     assert!(ex.dialog.is_none());
     assert!(!copy.exists(), "Yes erases it");
     assert!(!home.path().join("Trash/files").exists(), "nothing trashed");

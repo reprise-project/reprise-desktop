@@ -504,6 +504,7 @@ mod tests {
         assert_eq!(ex.undo, Some("Rename"));
 
         ex.run(Command::Undo, &mut ctx);
+        ex.finish_puts(&mut ctx);
         assert_eq!(names(dir.path()), ["a.png", "b.jpg", "c.jpg", "keep.txt"]);
         assert_eq!(ex.undo, None, "one undo restores the whole batch");
     }
