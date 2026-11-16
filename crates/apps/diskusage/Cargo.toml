@@ -11,11 +11,6 @@ description = "Disk Usage: what takes a folder's or a drive's space"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-diskusage"
-path = "src/bin/reprise-diskusage.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

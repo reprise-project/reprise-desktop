@@ -11,11 +11,6 @@ description = "Paint: a raster picture editor"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-paint"
-path = "src/bin/reprise-paint.rs"
-test = false
-
 [dependencies]
 reprisexdg = { path = "../../reprisexdg" }
 repriseapp = { path = "../../repriseapp" }

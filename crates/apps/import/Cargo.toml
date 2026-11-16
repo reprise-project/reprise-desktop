@@ -11,11 +11,6 @@ description = "Import from Another Desktop: GNOME's and Plasma's settings, picke
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-import"
-path = "src/bin/reprise-import.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

@@ -11,11 +11,6 @@ description = "The polkit authentication agent: a Run As dialog for actions that
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-polkit"
-path = "src/bin/reprise-polkit.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisebus = { path = "../../reprisebus" }

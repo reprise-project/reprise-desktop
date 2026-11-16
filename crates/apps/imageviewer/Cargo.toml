@@ -11,11 +11,6 @@ description = "Image Viewer: pictures one at a time, zoomed, turned, full screen
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-imageviewer"
-path = "src/bin/reprise-imageviewer.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

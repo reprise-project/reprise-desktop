@@ -11,11 +11,6 @@ description = "Sticky Notes: small coloured notes on the desktop"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-notes"
-path = "src/bin/reprise-notes.rs"
-test = false
-
 [dependencies]
 reprisexdg = { path = "../../reprisexdg" }
 repriseapp = { path = "../../repriseapp" }

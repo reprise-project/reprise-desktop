@@ -11,11 +11,6 @@ description = "Calculator: standard and scientific arithmetic"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-calc"
-path = "src/bin/reprise-calc.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

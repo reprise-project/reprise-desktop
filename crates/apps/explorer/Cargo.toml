@@ -11,11 +11,6 @@ description = "Explorer: browses the files and folders on your computer"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-explorer"
-path = "src/bin/reprise-explorer.rs"
-test = false
-
 [dependencies]
 reprisexdg = { path = "../../reprisexdg" }
 repriseapp = { path = "../../repriseapp" }

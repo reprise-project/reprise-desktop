@@ -11,11 +11,6 @@ description = "Power Options: the Reprise battery icon and power settings"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-power"
-path = "src/bin/reprise-power.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

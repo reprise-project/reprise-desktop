@@ -11,11 +11,6 @@ description = "Welcome: the interface, light or dark and the text size at a new 
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-welcome"
-path = "src/bin/reprise-welcome.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

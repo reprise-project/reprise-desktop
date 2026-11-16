@@ -11,11 +11,6 @@ description = "Printers: the CUPS printers, their queues and settings, the Add P
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-printers"
-path = "src/bin/reprise-printers.rs"
-test = false
-
 [dependencies]
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }

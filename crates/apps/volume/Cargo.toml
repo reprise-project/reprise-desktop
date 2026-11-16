@@ -11,11 +11,6 @@ description = "Volume Control: the Reprise mixer window"
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-volume"
-path = "src/bin/reprise-volume.rs"
-test = false
-
 [dependencies]
 reprisexdg = { path = "../../reprisexdg" }
 repriseapp = { path = "../../repriseapp" }

@@ -11,11 +11,6 @@ description = "Software Updates: system updates through PackageKit, Flatpak upda
 [lints]
 workspace = true
 
-[[bin]]
-name = "reprise-updates"
-path = "src/bin/reprise-updates.rs"
-test = false
-
 [dependencies]
 reprisexdg = { path = "../../reprisexdg" }
 repriseapp = { path = "../../repriseapp" }
