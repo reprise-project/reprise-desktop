@@ -196,17 +196,19 @@ impl Default for MachineRemote {
 }
 
 impl MachineConfig {
-    /// Reads the settings, returning a warning for each value it could not use.
+    /// Reads the settings, returning a warning for each value it could not use. Text that
+    /// isn't TOML gives the defaults and its error as the one warning.
     pub fn parse(text: &str) -> (MachineConfig, Vec<String>) {
+        Self::parse_toml(text).unwrap_or_else(|e| (MachineConfig::default(), vec![e]))
+    }
+
+    /// [`MachineConfig::parse`], failing with the error when `text` isn't TOML.
+    pub fn parse_toml(text: &str) -> Result<(MachineConfig, Vec<String>), String> {
         let mut config = MachineConfig::default();
         let mut warnings = Vec::new();
-        let table = match text.parse::<toml::Table>() {
-            Ok(table) => table,
-            Err(e) => {
-                warnings.push(one_line(&e.to_string()));
-                return (config, warnings);
-            }
-        };
+        let table = text
+            .parse::<toml::Table>()
+            .map_err(|e| one_line(&e.to_string()))?;
         if let Some(login) = section(&table, "login", &mut warnings) {
             for (key, value) in login {
                 if let Err(w) = config.login.set(key, value) {
@@ -224,7 +226,7 @@ impl MachineConfig {
         if let Some(outputs) = table.get("outputs") {
             config.outputs = outputs::parse(outputs, &mut warnings);
         }
-        (config, warnings)
+        Ok((config, warnings))
     }
 
     pub fn to_toml(&self) -> String {

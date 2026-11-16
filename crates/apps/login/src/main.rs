@@ -292,8 +292,9 @@ async fn run() -> Result<(), String> {
             Event::Save => rt.saver.save(),
             Event::Reload => {
                 log::info!("reading {MACHINE_CONFIG} again");
-                let config = config::load(Path::new(MACHINE_CONFIG));
-                rt.input(Input::ConfigReloaded(config)).await;
+                if let Some(config) = config::reload(Path::new(MACHINE_CONFIG)) {
+                    rt.input(Input::ConfigReloaded(config)).await;
+                }
             }
             Event::Stop => {
                 log::info!("stopping; user sessions keep running");
