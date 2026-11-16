@@ -64,7 +64,7 @@ fn a_save_that_fails_shows_why_and_does_not_quit() {
         displayflow::Effect::Quit,
     ]);
     assert!(!r.quit, "the error stays on screen");
-    let text = app.error.as_ref().map(|b| b.fields.text.clone());
+    let text = app.error.shown().map(|b| b.fields.text.clone());
     assert_eq!(
         text.as_deref(),
         Some("config.toml does not parse; the display setting was not saved.")

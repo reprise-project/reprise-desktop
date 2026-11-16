@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use repriseapp::filedlg::{Host, Resolved, Step, type_keep};
 use repriseapp::keys::{dialog_key, form_clipboard, form_input, sheet_input};
-use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::oneshot::{self, ErrorBox, MsgBox};
 use repriseapp::{
     App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, PointerInput, Reply, WinId,
 };
@@ -45,7 +45,7 @@ const PROPS: WinId = WinId::named("props");
 const ADD: WinId = WinId::named("add");
 const BROWSE: WinId = WinId::named("browse");
 const REMOVE: WinId = WinId::named("remove");
-const ERROR: WinId = WinId::named("error");
+
 const RD_PASSWORD: WinId = WinId::named("rd_password");
 const ADD_FINGER: WinId = WinId::named("add_finger");
 const CLEAR_FINGERS: WinId = WinId::named("clear_fingers");
@@ -80,7 +80,7 @@ struct AccountsApp {
     browse: Option<FileDlg>,
     browse_host: Host,
     remove: Option<(u32, MsgBox)>,
-    error: Option<MsgBox>,
+    error: ErrorBox,
     job: Option<(Receiver<Answer>, After)>,
     waker: Option<repriseapp::Waker>,
     face: Option<Canvas>,
@@ -110,7 +110,7 @@ impl AccountsApp {
             browse: None,
             browse_host: Host::default(),
             remove: None,
-            error: None,
+            error: ErrorBox::default(),
             job: None,
             waker: None,
             face: None,
@@ -509,18 +509,7 @@ impl AccountsApp {
     }
 
     fn fail(&mut self, text: String) {
-        self.error = Some(MsgBox::new(
-            TITLE,
-            Fields {
-                text,
-                icon: None,
-                buttons: vec!["OK".into()],
-                default: 0,
-                min_text_h: None,
-                min_w: 0,
-                max_w: repriseapp::dialog_max_w(),
-            },
-        ));
+        self.error.show(TITLE, text, None);
     }
 
     fn user(&self, uid: u32) -> Option<&User> {
@@ -927,17 +916,7 @@ impl AccountsApp {
 
     fn error_event(&mut self, ev: Event) -> Reply {
         let text = self.text();
-        let Some(b) = &mut self.error else {
-            return Reply::none();
-        };
-        match b.event(&ev, &text, &self.forms) {
-            oneshot::Outcome::None => Reply::none(),
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::Closed(_) => {
-                self.error = None;
-                Reply::redraw_all()
-            }
-        }
+        self.error.event(&ev, &text, &self.forms)
     }
 
     fn open_browse(&mut self, u: TextUnits) {
@@ -1121,9 +1100,7 @@ impl App for AccountsApp {
             if let Some(b) = &self.clear_fingers {
                 out.push(b.child(CLEAR_FINGERS, text, &self.forms));
             }
-            if let Some(b) = &self.error {
-                out.push(b.child(ERROR, text, &self.forms));
-            }
+            out.extend(self.error.child(text, &self.forms));
         }
         out
     }
@@ -1207,11 +1184,7 @@ impl App for AccountsApp {
                     b.draw(c, &forms, &ctx.text);
                 }
             }
-            ERROR => {
-                if let Some(b) = &self.error {
-                    b.draw(c, &forms, &ctx.text);
-                }
-            }
+            ErrorBox::WIN => self.error.draw(c, &forms, &ctx.text),
             _ => self.users.draw(c, ctx, self.face.as_ref()),
         }
     }
@@ -1269,11 +1242,7 @@ impl repriseapp::Extended for AccountsApp {
                     b.access(tree, &ctx.text, &forms);
                 }
             }
-            ERROR => {
-                if let Some(b) = &self.error {
-                    b.access(tree, &ctx.text, &forms);
-                }
-            }
+            ErrorBox::WIN => self.error.access(tree, &ctx.text, &forms),
             _ => self.users.access(tree, ctx),
         }
     }
@@ -1317,7 +1286,7 @@ impl AccountsApp {
             CLEAR_FINGERS => self.clear_fingers_event(ev),
             BROWSE => self.browse_event(ev, ctx),
             REMOVE => self.remove_event(ev),
-            ERROR => self.error_event(ev),
+            ErrorBox::WIN => self.error_event(ev),
             _ => self.main_event(ev, ctx),
         }
         .with_clipboard(clip)
@@ -1390,7 +1359,7 @@ mod tests {
     }
 
     fn error_text(app: &AccountsApp) -> Option<String> {
-        app.error.as_ref().map(|b| b.fields.text.clone())
+        app.error.shown().map(|b| b.fields.text.clone())
     }
 
     #[test]

@@ -15,7 +15,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use repriseapp::keys::{dialog_key, sheet_input};
-use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::oneshot::{self, ErrorBox};
 use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, PointerInput, Reply, WinId};
 use repriseaudio as pipewire;
 use reprisekit::access::{ROOT, Tree};
@@ -28,7 +28,6 @@ use reprisekit::taskbar::Edge;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
 
-const ERROR_WIN: WinId = WinId::named("error");
 const VOLUME_CONTROL: &str = "reprise-volume";
 const FLYOUT_WIN: WinId = WinId::named("flyout");
 /// Master's icon in the popup, as the Volume Control window shows it.
@@ -51,7 +50,7 @@ struct Sound {
     /// `--tray` was given: the sheet starts hidden and the tray item is
     /// the only way to it, so a tray that will not start is fatal.
     tray_only: bool,
-    error: Option<MsgBox>,
+    error: ErrorBox,
     /// The renderer and forms theme the box and window are sized with:
     /// `children` and `initial_size` have no `Ctx`, so they are kept from
     /// `start` and the last event.
@@ -341,33 +340,12 @@ impl Sound {
         if let Some(s) = &mut self.sheet {
             s.unapplied(&self.snapshot);
         }
-        self.error = Some(MsgBox::new(
+        self.error.show(
             "Sounds and Audio Devices",
-            reprisekit::controls::msgbox::Fields {
-                text: format!("{program} could not be run, so nothing was changed."),
-                icon: None,
-                buttons: vec!["OK".into()],
-                default: 0,
-                min_text_h: None,
-                min_w: 0,
-                max_w: repriseapp::dialog_max_w(),
-            },
-        ));
+            format!("{program} could not be run, so nothing was changed."),
+            None,
+        );
         false
-    }
-
-    fn error_event(&mut self, ev: Event) -> Reply {
-        let (Some(b), Some(text)) = (&mut self.error, &self.dialog_text) else {
-            return Reply::none();
-        };
-        match b.event(&ev, text, &self.forms) {
-            oneshot::Outcome::Closed(_) => {
-                self.error = None;
-                Reply::redraw_all()
-            }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
-        }
     }
 
     fn flyout_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
@@ -654,10 +632,10 @@ impl App for Sound {
     }
 
     fn children(&self) -> Vec<Child> {
-        match (&self.error, &self.dialog_text) {
-            (Some(b), Some(text)) => vec![b.child(ERROR_WIN, text, &self.forms)],
-            _ => Vec::new(),
-        }
+        (self.dialog_text.as_ref())
+            .and_then(|text| self.error.child(text, &self.forms))
+            .into_iter()
+            .collect()
     }
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
@@ -708,10 +686,8 @@ impl App for Sound {
             return;
         }
         let forms = ctx.forms();
-        if win == ERROR_WIN {
-            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
-                b.draw(c, &forms, text);
-            }
+        if win == ErrorBox::WIN {
+            self.error.draw(c, &forms, &ctx.text);
             return;
         }
         self.build(None);
@@ -753,7 +729,7 @@ impl repriseapp::Extended for Sound {
         let s = self
             .sheet
             .as_mut()
-            .filter(|_| win != ERROR_WIN && win != FLYOUT_WIN)?;
+            .filter(|_| win != ErrorBox::WIN && win != FLYOUT_WIN)?;
         Some(repriseapp::ReaderForm::Sheet(&mut s.sheet))
     }
 
@@ -778,11 +754,7 @@ impl repriseapp::Extended for Sound {
                     tree.set_focus(focus);
                 }
             }
-            ERROR_WIN => {
-                if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
-                    b.access(tree, text, &forms);
-                }
-            }
+            ErrorBox::WIN => self.error.access(tree, &ctx.text, &forms),
             _ => {
                 if let Some(s) = &self.sheet {
                     oneshot::access_sheet(&s.sheet, tree, &ctx.text, forms.fonts.size_px);
@@ -797,8 +769,11 @@ impl Sound {
         if matches!(ev, Event::Wake) {
             return self.wake(ctx);
         }
-        if win == ERROR_WIN {
-            return self.error_event(ev);
+        if win == ErrorBox::WIN {
+            let Some(text) = &self.dialog_text else {
+                return Reply::none();
+            };
+            return self.error.event(&ev, text, &self.forms);
         }
         if win == FLYOUT_WIN {
             return self.flyout_event(ev, ctx);

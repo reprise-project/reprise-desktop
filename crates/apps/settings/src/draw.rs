@@ -1,6 +1,6 @@
 use crate::registry::Page;
 use crate::{
-    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN,
+    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, ErrorBox, LAYOUT_WIN, RENAME_WIN,
     SAVER_WIN, SHORTCUT_WIN, SettingsApp, defaultspage, displayhost, pages,
 };
 use repriseapp::oneshot;
@@ -37,10 +37,9 @@ impl SettingsApp {
         let cs = &ctx.theme.colors;
         let forms = ctx.forms();
         let form_px = forms.fonts.size_px;
-        if win == ERROR_WIN {
-            if let Some(b) = &self.error {
-                b.draw(c, &self.dialog_theme(&ctx.theme), &self.dialog_text);
-            }
+        if win == ErrorBox::WIN {
+            self.error
+                .draw(c, &self.dialog_theme(&ctx.theme), &self.dialog_text);
             return;
         }
         if win == ASK_WIN {
@@ -191,10 +190,9 @@ impl SettingsApp {
         let px = ctx.theme.fonts.size_px;
         let drawn = |f: &form::Form| f.units().px(px);
         match win {
-            ERROR_WIN => {
-                if let Some(b) = &self.error {
-                    b.access(tree, &self.dialog_text, &self.dialog_theme(&ctx.theme));
-                }
+            ErrorBox::WIN => {
+                self.error
+                    .access(tree, &self.dialog_text, &self.dialog_theme(&ctx.theme))
             }
             ASK_WIN => {
                 if let Some(a) = &self.asking {

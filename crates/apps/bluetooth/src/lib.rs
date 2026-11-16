@@ -31,7 +31,7 @@ use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 
 use repriseapp::keys::{dialog_key, form_clipboard, form_input, sheet_input};
-use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::oneshot::{self, ErrorBox, MsgBox};
 use repriseapp::{App, BTN_LEFT, Child, Ctx, DropForm, Event, PointerInput, Reply, WinId};
 use reprisebus::airplane::Mode;
 use reprisekit::access::Tree;
@@ -48,7 +48,7 @@ const WIZARD: WinId = WinId::named("wizard");
 const PROPS: WinId = WinId::named("props");
 const PAIR: WinId = WinId::named("pair");
 const REMOVE: WinId = WinId::named("remove");
-const ERROR: WinId = WinId::named("error");
+
 const OFFER: WinId = WinId::named("offer");
 
 struct BtApp {
@@ -65,7 +65,7 @@ struct BtApp {
     /// Requests that came while the Pairing Request box was open, shown one after another.
     pair_queue: VecDeque<bz::AgentRequest>,
     remove: Option<(String, MsgBox)>,
-    error: Option<MsgBox>,
+    error: ErrorBox,
     /// The file offer on screen, and the ones that came while it was.
     offer: Option<(bz::Offer, MsgBox)>,
     offer_queue: VecDeque<bz::Offer>,
@@ -106,7 +106,7 @@ impl BtApp {
             pair: None,
             pair_queue: VecDeque::new(),
             remove: None,
-            error: None,
+            error: ErrorBox::default(),
             offer: None,
             offer_queue: VecDeque::new(),
             received: HashMap::new(),
@@ -308,18 +308,7 @@ impl BtApp {
 
     fn failed(&mut self, title: String, body: String) {
         log::warn!("{title}: {body}");
-        self.error = Some(MsgBox::new(
-            title,
-            Fields {
-                text: body,
-                icon: None,
-                buttons: vec!["OK".into()],
-                default: 0,
-                min_text_h: None,
-                min_w: 0,
-                max_w: repriseapp::dialog_max_w(),
-            },
-        ));
+        self.error.show(&title, body, None);
     }
 
     /// Drains the bus thread's and tray's channels, and redraws when either had something. Quits
@@ -1045,17 +1034,7 @@ impl BtApp {
 
     fn error_event(&mut self, ev: Event) -> Reply {
         let (text, forms) = self.text_forms();
-        let Some(b) = &mut self.error else {
-            return Reply::none();
-        };
-        match b.event(&ev, &text, &forms) {
-            oneshot::Outcome::None => Reply::none(),
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::Closed(_) => {
-                self.error = None;
-                Reply::redraw_all()
-            }
-        }
+        self.error.event(&ev, &text, &forms)
     }
 }
 
@@ -1109,9 +1088,7 @@ impl App for BtApp {
             if let Some((_, b)) = &self.remove {
                 out.push(b.child(REMOVE, text, &self.forms));
             }
-            if let Some(b) = &self.error {
-                out.push(b.child(ERROR, text, &self.forms));
-            }
+            out.extend(self.error.child(text, &self.forms));
             if let Some((_, b)) = &self.offer {
                 out.push(b.child(OFFER, text, &self.forms));
             }
@@ -1148,7 +1125,7 @@ impl App for BtApp {
             PROPS => self.props_event(ev, ctx),
             PAIR => self.pair_event(ev, ctx),
             REMOVE => self.remove_event(ev),
-            ERROR => self.error_event(ev),
+            ErrorBox::WIN => self.error_event(ev),
             OFFER => self.offer_event(ev, ctx),
             _ => self.main_event(ev, ctx),
         }
@@ -1210,11 +1187,7 @@ impl App for BtApp {
                     b.draw(c, &forms, &ctx.text);
                 }
             }
-            ERROR => {
-                if let Some(b) = &self.error {
-                    b.draw(c, &forms, &ctx.text);
-                }
-            }
+            ErrorBox::WIN => self.error.draw(c, &forms, &ctx.text),
             OFFER => {
                 if let Some((_, b)) = &self.offer {
                     b.draw(c, &forms, &ctx.text);
@@ -1258,11 +1231,7 @@ impl repriseapp::Extended for BtApp {
                     b.access(tree, &ctx.text, &forms);
                 }
             }
-            ERROR => {
-                if let Some(b) = &self.error {
-                    b.access(tree, &ctx.text, &forms);
-                }
-            }
+            ErrorBox::WIN => self.error.access(tree, &ctx.text, &forms),
             _ => self.devices.access(tree, ctx),
         }
     }
@@ -1511,7 +1480,7 @@ mod tests {
         assert_eq!(connects(&rx), 1, "the second waits on the first");
         a.connected("/a/cans".into(), None);
         assert!(
-            a.error.is_none(),
+            !a.error.is_shown(),
             "a Connect that went through shows no box"
         );
         a.toggle("/a/cans");
@@ -1528,14 +1497,14 @@ mod tests {
         a.snapshot_in(s);
         a.toggle("/a/cans");
         a.connected("/a/cans".into(), Some("canceled".into()));
-        assert!(a.error.is_none(), "the user asked to disconnect it");
+        assert!(!a.error.is_shown(), "the user asked to disconnect it");
 
         let mut a = app();
         a.snapshot_in(snap(true));
         a.toggle("/a/cans");
         a.connected("/a/cans".into(), Some("timed out".into()));
         assert_eq!(
-            a.error.as_ref().map(|b| b.title.as_str()),
+            a.error.shown().map(|b| b.title.as_str()),
             Some("Could not connect"),
             "a Connect failing on its own shows a box"
         );

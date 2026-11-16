@@ -16,7 +16,7 @@ use load::{Job, Msg, Picture, RenderKey, Timer};
 use menu::menus;
 use repriseapp::filedlg::Host;
 use repriseapp::keys::AltArm;
-use repriseapp::oneshot::MsgBox;
+use repriseapp::oneshot::{ErrorBox, MsgBox};
 use repriseapp::{App, Child, Ctx, Event, Extended, FileDrop, MAIN, Poster, Reply, WinId};
 use reprisekit::access::Tree;
 use reprisekit::controls::filedlg::{CLIENT, FileDlg};
@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 
 const NAME: &str = "Image Viewer";
 const DELETE: WinId = WinId::named("delete");
-const ERRORBOX: WinId = WinId::named("error");
+
 const OPEN: WinId = WinId::named("open");
 
 /// How long each picture of a slideshow shows.
@@ -81,7 +81,7 @@ struct Viewer {
     clicks: DoubleClick<()>,
     /// The delete prompt, the file it asks about and whether Yes erases it.
     delete: Option<(MsgBox, PathBuf, bool)>,
-    error: Option<MsgBox>,
+    error: ErrorBox,
     open: Option<FileDlg>,
     host: Host,
     dialog_text: Rc<TextRenderer>,
@@ -118,7 +118,7 @@ impl Viewer {
             alt_arm: AltArm::default(),
             clicks: DoubleClick::default(),
             delete: None,
-            error: None,
+            error: ErrorBox::default(),
             open: None,
             host: Host::default(),
             dialog_text: repriseapp::start_text(),
@@ -306,9 +306,9 @@ impl Viewer {
         };
         if let Err(e) = set_wallpaper(&self.config, &path) {
             log::warn!("set {} as the background: {e}", path.display());
-            self.error = Some(self.error_box(&format!(
+            self.fail(&format!(
                 "The picture could not be set as the desktop background.\n\n{e}"
-            )));
+            ));
             return Reply::redraw_all();
         }
         Reply::none()
@@ -389,9 +389,7 @@ impl App for Viewer {
         if let Some((b, _, _)) = &self.delete {
             kids.push(b.child(DELETE, &self.dialog_text, &self.forms));
         }
-        if let Some(b) = &self.error {
-            kids.push(b.child(ERRORBOX, &self.dialog_text, &self.forms));
-        }
+        kids.extend(self.error.child(&self.dialog_text, &self.forms));
         if let Some(d) = &self.open {
             kids.push(Child {
                 id: OPEN,
@@ -411,7 +409,7 @@ impl App for Viewer {
         }
         let reply = match win {
             DELETE => self.delete_event(ev),
-            ERRORBOX => self.error_event(ev),
+            ErrorBox::WIN => self.error.event(&ev, &self.dialog_text, &self.forms),
             OPEN => self.open_event(ev, ctx),
             _ => self.main_event(ev, ctx),
         };
@@ -426,11 +424,7 @@ impl App for Viewer {
                     b.draw(c, &self.forms, &self.dialog_text);
                 }
             }
-            ERRORBOX => {
-                if let Some(b) = &self.error {
-                    b.draw(c, &self.forms, &self.dialog_text);
-                }
-            }
+            ErrorBox::WIN => self.error.draw(c, &self.forms, &self.dialog_text),
             OPEN => {
                 if let Some(d) = &self.open {
                     let (w, h) = d.client();
@@ -491,11 +485,7 @@ impl Extended for Viewer {
                     b.access(tree, dt, forms);
                 }
             }
-            ERRORBOX => {
-                if let Some(b) = &self.error {
-                    b.access(tree, dt, forms);
-                }
-            }
+            ErrorBox::WIN => self.error.access(tree, dt, forms),
             OPEN => {
                 if let Some(d) = &self.open {
                     let (w, h) = d.client();

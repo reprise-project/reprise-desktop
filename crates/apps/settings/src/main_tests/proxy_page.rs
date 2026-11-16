@@ -99,7 +99,7 @@ fn a_wrong_field_fails_apply_and_writes_nothing() {
     a.take_proxy(Proxy::open(file.clone(), record));
     pick(&mut a, pages::PROXY_AUTO);
     assert!(!a.apply());
-    assert!(a.error.is_some());
+    assert!(a.error.is_shown());
     assert!(a.dirty(), "the sheet keeps the change");
     assert!(!file.exists());
     assert!(published(&mut a).is_empty());
@@ -136,7 +136,7 @@ fn a_refused_change_says_so_and_logs_only_the_variable_names() {
     set_port(&mut a, 0, 3128);
     assert!(a.apply());
     let sent = published(&mut a);
-    assert!(a.error.is_some(), "the session could not take it");
+    assert!(a.error.is_shown(), "the session could not take it");
     let line = crate::proxyhost::refused(&sent[0], "Invalid environment assignments");
     assert!(line.contains("http_proxy HTTP_PROXY"), "{line}");
     assert!(!line.contains("s3cret"), "{line}");
@@ -154,7 +154,7 @@ fn a_change_the_manager_refused_is_sent_whole_with_the_next_apply() {
     set_port(&mut a, 0, 3128);
     assert!(a.apply());
     assert_eq!(published(&mut a).len(), 1);
-    a.error = None;
+    a.error.close();
     a.proxy.publish = record;
     type_in(&mut a, pages::PROXY_HOSTS[0], "two.lan");
     assert!(a.apply());

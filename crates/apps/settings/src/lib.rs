@@ -75,7 +75,7 @@ use filepick::Pick;
 use permissions::{PermissionAnswer, PermissionList};
 use repriseapp::decode::Decoded;
 use repriseapp::filedlg::Host;
-use repriseapp::oneshot::MsgBox;
+use repriseapp::oneshot::ErrorBox;
 use repriseapp::openwith::ChooserInput;
 use reprisebus::instance::{self, Claim};
 use repriseconf::pages::Entry;
@@ -111,7 +111,6 @@ const SAVER_WIN: WinId = WinId::named("saver");
 
 const CHOOSER_WIN: WinId = WinId::named("openwith");
 
-const ERROR_WIN: WinId = WinId::named("error");
 const ASK_WIN: WinId = WinId::named("ask");
 
 struct Chooser {
@@ -505,7 +504,7 @@ struct SettingsApp {
     add_host: Host,
     add_for: Pick,
 
-    error: Option<MsgBox>,
+    error: ErrorBox,
     asking: Option<backuphost::Ask>,
     dialog_text: Rc<TextRenderer>,
     dialog_px: u32,
@@ -801,7 +800,7 @@ impl SettingsApp {
             add: None,
             add_host: Host::default(),
             add_for: Pick::Autostart,
-            error: None,
+            error: ErrorBox::default(),
             asking: None,
             dialog_text,
             dialog_px,
@@ -1026,13 +1025,10 @@ impl App for SettingsApp {
                 &self.dialog_theme(&Theme::default()),
             ));
         }
-        if let Some(b) = &self.error {
-            kids.push(b.child(
-                ERROR_WIN,
-                &self.dialog_text,
-                &self.dialog_theme(&Theme::default()),
-            ));
-        }
+        kids.extend(
+            self.error
+                .child(&self.dialog_text, &self.dialog_theme(&Theme::default())),
+        );
         kids
     }
 

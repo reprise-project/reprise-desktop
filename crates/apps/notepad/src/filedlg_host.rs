@@ -108,7 +108,7 @@ impl Notepad {
             }
             Driven::Failed(msg) => {
                 log::warn!("open: {msg}");
-                self.error = Some(self.error_box(&msg));
+                self.fail(&msg);
                 return Reply::redraw_all();
             }
         };
@@ -152,7 +152,7 @@ impl Notepad {
             }
             Driven::Failed(msg) => {
                 log::warn!("save as: {msg}");
-                self.error = Some(self.error_box(&msg));
+                self.fail(&msg);
                 return Reply::redraw_all();
             }
         };

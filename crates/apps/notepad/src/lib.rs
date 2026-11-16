@@ -25,7 +25,7 @@ use pending::{Pending, PendingAction};
 use repriseapp::filedlg::{Driven, Host, taken};
 use repriseapp::keys::AltArm;
 use repriseapp::keys::{dialog_key, form_clipboard};
-use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::oneshot::{self, ErrorBox, MsgBox};
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, Extended, FileDrop, KeyInput, MAIN,
     PointerInput, Reply, WinId,
@@ -61,7 +61,7 @@ const GOTO_CLIENT: (i32, i32) = (268, 95);
 
 const FIND: WinId = WinId::named("find");
 const NOTFOUND: WinId = WinId::named("notfound");
-const ERRORBOX: WinId = WinId::named("error");
+
 const REPLACE_WIN: WinId = WinId::named("replace");
 const ABOUT: WinId = WinId::named("about");
 const SAVECHANGES: WinId = WinId::named("savechanges");
@@ -97,7 +97,7 @@ struct Notepad {
     goto: Option<Form>,
     find: Option<Form>,
     notfound: Option<MsgBox>,
-    error: Option<MsgBox>,
+    error: ErrorBox,
     replace: Option<Form>,
     last_query: Option<(String, multiedit::FindOpts)>,
     info_icon: Option<Canvas>,
@@ -172,7 +172,7 @@ impl Notepad {
             goto: None,
             find: None,
             notfound: None,
-            error: None,
+            error: ErrorBox::default(),
             replace: None,
             last_query: None,
             info_icon: None,
@@ -259,9 +259,7 @@ impl Notepad {
         if self.warn_icon.is_none() {
             self.warn_icon = ctx.icons.get("dialog-warning", 32);
         }
-        let raised = self
-            .error
-            .iter_mut()
+        let raised = (self.error.shown_mut().into_iter())
             .chain(self.lossy.iter_mut().map(|(b, _)| b))
             .chain(self.recovered.iter_mut().map(|(b, _)| b))
             .chain(self.changed.iter_mut());
@@ -315,9 +313,7 @@ impl App for Notepad {
         if let Some(b) = &self.notfound {
             kids.push(b.child(NOTFOUND, &self.dialog_text, &self.forms));
         }
-        if let Some(b) = &self.error {
-            kids.push(b.child(ERRORBOX, &self.dialog_text, &self.forms));
-        }
+        kids.extend(self.error.child(&self.dialog_text, &self.forms));
         if self.about {
             kids.push(Child {
                 id: ABOUT,
@@ -397,7 +393,7 @@ impl App for Notepad {
             FIND => self.find_event(ev, ctx),
             REPLACE_WIN => self.replace_event(ev, ctx),
             NOTFOUND => self.notfound_event(ev),
-            ERRORBOX => self.error_event(ev),
+            ErrorBox::WIN => self.error.event(&ev, &self.dialog_text, &self.forms),
             ABOUT => self.about_event(ev),
             SAVECHANGES => self.savechanges_event(ev),
             OVERWRITE => self.overwrite_event(ev),
@@ -459,11 +455,7 @@ impl App for Notepad {
                     b.draw(c, &self.forms, &self.dialog_text);
                 }
             }
-            ERRORBOX => {
-                if let Some(b) = &self.error {
-                    b.draw(c, &self.forms, &self.dialog_text);
-                }
-            }
+            ErrorBox::WIN => self.error.draw(c, &self.forms, &self.dialog_text),
             LOSSY => {
                 if let Some((b, _)) = &self.lossy {
                     b.draw(c, &self.forms, &self.dialog_text);
@@ -541,7 +533,7 @@ impl Extended for Notepad {
     }
 
     fn draw_failed(&mut self, error: &str) -> Reply {
-        self.error = Some(self.error_box(&tr!("draw-failed", error = error)));
+        self.fail(&tr!("draw-failed", error = error));
         Reply::redraw()
     }
 
@@ -605,11 +597,7 @@ impl Extended for Notepad {
                     b.access(tree, dt, forms);
                 }
             }
-            ERRORBOX => {
-                if let Some(b) = &self.error {
-                    b.access(tree, dt, forms);
-                }
-            }
+            ErrorBox::WIN => self.error.access(tree, dt, forms),
             LOSSY => {
                 if let Some((b, _)) = &self.lossy {
                     b.access(tree, dt, forms);

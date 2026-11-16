@@ -3,7 +3,7 @@
 use crate::backuphost::Then;
 use crate::registry::Page;
 use crate::{
-    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN,
+    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, ErrorBox, LAYOUT_WIN, RENAME_WIN,
     SAVER_WIN, SHORTCUT_WIN, SettingsApp, additem, appearancepage, backgroundpage, defaultspage,
     displayhost, displaypage, filepick::Pick, layoutdlg, magnifierpage, menupage, notifypage,
     pages, quickpage, regionpage, renamedlg, saverdlg, saverpage,
@@ -384,7 +384,7 @@ impl SettingsApp {
         if let Some(reason) = self.open_error.take() {
             self.fail(&reason);
         }
-        if win == ERROR_WIN {
+        if win == ErrorBox::WIN {
             return self.error_event(ev, ctx);
         }
         if win == ASK_WIN {
