@@ -73,6 +73,7 @@ use crate::pages::Area;
 use crate::registry::Page;
 use filepick::Pick;
 use permissions::{PermissionAnswer, PermissionList};
+use repriseapp::asks::Asks;
 use repriseapp::decode::Decoded;
 use repriseapp::filedlg::Host;
 use repriseapp::oneshot::ErrorBox;
@@ -506,7 +507,7 @@ struct SettingsApp {
     add_for: Pick,
 
     error: ErrorBox,
-    asking: Option<backuphost::Ask>,
+    asking: Asks<backuphost::Then>,
     dialog_text: Rc<TextRenderer>,
     dialog_px: u32,
     err_icon: Option<Canvas>,
@@ -652,6 +653,26 @@ impl SettingsApp {
         t.text = self.units;
         t.fonts.size_px = self.units.px(self.dialog_px);
         t
+    }
+
+    /// The dialog an error box covers: the question, then Browse... over the chooser, then the
+    /// one dialog the main window opened.
+    fn dialog_up(&self) -> Option<WinId> {
+        let open = [
+            (self.add.is_some(), ADD_WIN),
+            (self.chooser.is_some(), CHOOSER_WIN),
+            (
+                self.display.flow.question.is_some(),
+                displayhost::MONITOR_WIN,
+            ),
+            (self.color_dlg.is_some(), COLOR_WIN),
+            (self.shortcut.is_some(), SHORTCUT_WIN),
+            (self.add_layout.is_some(), LAYOUT_WIN),
+            (self.add_item.is_some(), ADD_ITEM_WIN),
+            (self.rename.is_some(), RENAME_WIN),
+            (self.saver_dlg.is_some(), SAVER_WIN),
+        ];
+        (self.asking.win()).or_else(|| open.into_iter().find(|&(up, _)| up).map(|(_, w)| w))
     }
 
     fn save_window(&mut self) {
@@ -803,7 +824,7 @@ impl SettingsApp {
             add_host: Host::default(),
             add_for: Pick::Autostart,
             error: ErrorBox::default(),
-            asking: None,
+            asking: Asks::new(ASK_WIN),
             dialog_text,
             dialog_px,
             err_icon: None,
@@ -1023,13 +1044,10 @@ impl App for SettingsApp {
                 modal: true,
             });
         }
-        if let Some(a) = &self.asking {
-            kids.push(a.msg.child(
-                ASK_WIN,
-                &self.dialog_text,
-                &self.dialog_theme(&Theme::default()),
-            ));
-        }
+        kids.extend(
+            self.asking
+                .child(&self.dialog_text, &self.dialog_theme(&Theme::default())),
+        );
         kids.extend(
             self.error
                 .child(&self.dialog_text, &self.dialog_theme(&Theme::default())),
@@ -1137,6 +1155,17 @@ impl repriseapp::Extended for SettingsApp {
     /// (`units().px(theme px)`); a theme already at the text size would grow them twice.
     fn text_sized(&self) -> bool {
         false
+    }
+
+    /// Browse... covers the chooser it came from, and an error the dialog that is up.
+    fn parent(&self, win: WinId) -> Option<WinId> {
+        if win == ADD_WIN && self.add_for == Pick::Program && self.chooser.is_some() {
+            return Some(CHOOSER_WIN);
+        }
+        if self.error.owns(win) {
+            return self.dialog_up().or(Some(repriseapp::MAIN));
+        }
+        Some(repriseapp::MAIN)
     }
 
     /// Smallest sizes: the sheet's pages at their smallest, the file dialog's opening size.

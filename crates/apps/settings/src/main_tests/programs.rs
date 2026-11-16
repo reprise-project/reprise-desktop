@@ -103,6 +103,61 @@ fn browse_in_the_chooser_picks_a_program_file_into_its_list() {
     assert_eq!(picked.as_deref(), Some("/opt/view"));
 }
 
+/// The chooser up, and its Browse... file dialog over it.
+fn browsing_from_the_chooser(tag: &str, ctx: &mut Ctx) -> SettingsApp {
+    let mut a = app(tag);
+    a.open_page(Page::DefaultPrograms, None);
+    a.defaults = Some(defaultspage::tests::defaults());
+    a.refill_defaults();
+    press_side_row(&mut a, ctx, 1, 1000);
+    plain_key(&mut a, ctx, keysym::RETURN);
+    let alt = Mods {
+        alt: true,
+        ..Mods::default()
+    };
+    a.event(
+        CHOOSER_WIN,
+        Event::Key(key_input('b' as u32, alt, Some("b"))),
+        ctx,
+    );
+    assert!(a.chooser.is_some() && a.add.is_some());
+    a
+}
+
+#[test]
+fn a_box_raised_from_the_chooser_names_the_chooser_as_its_parent() {
+    let mut ctx = test_ctx();
+    let mut a = browsing_from_the_chooser("browse-parent", &mut ctx);
+    assert_eq!(
+        a.parent(ADD_WIN),
+        Some(CHOOSER_WIN),
+        "Browse... covers the chooser"
+    );
+    a.fail("The folder cannot be read.");
+    let error = a.error.win().expect("the error is up");
+    assert_eq!(
+        a.parent(error),
+        Some(ADD_WIN),
+        "an error covers the file dialog that was up"
+    );
+    a.add = None;
+    assert_eq!(a.parent(error), Some(CHOOSER_WIN));
+    a.chooser = None;
+    assert_eq!(a.parent(error), Some(MAIN));
+}
+
+#[test]
+fn the_chooser_closing_takes_its_browse_dialog_with_it() {
+    let mut ctx = test_ctx();
+    let mut a = browsing_from_the_chooser("browse-chooser-closes", &mut ctx);
+    a.event(CHOOSER_WIN, Event::CloseRequest, &mut ctx);
+    assert!(a.chooser.is_none());
+    assert!(
+        a.add.is_none(),
+        "no file dialog is left to pick a program for a chooser that is gone"
+    );
+}
+
 #[test]
 fn a_bind_on_a_none_rows_keys_takes_that_row() {
     let mut a = app("shortcut-none-row");
