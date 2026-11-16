@@ -444,6 +444,7 @@ pub fn close(state: &mut State) {
         state.handle.remove(t);
     }
     state.destroy_redrawn(v.tree);
+    reprisekit::interfaces::forget_clock_faces();
     crate::access::touch(state);
     crate::autohideview::poke(state);
 }
