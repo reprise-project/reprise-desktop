@@ -360,8 +360,8 @@ impl Transition {
         d.draw_within(c, d.after(), shown_under(flight.as_ref()), dev);
         let now = held(c);
         let under = base.as_ref().or(was.as_ref())?;
-        let mut rect = (flight.iter()).fold(also, |r, f| {
-            r.join(&f.from.reach(d.s)).join(&f.to.reach(d.s))
+        let mut rect = flight.as_ref().map_or(also, |f| {
+            also.join(&f.from.reach(d.s)).join(&f.to.reach(d.s))
         });
         for (i, r) in dev.iter().enumerate() {
             let on = |x: Rect| match x.is_empty() {
