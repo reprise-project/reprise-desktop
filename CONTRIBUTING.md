@@ -79,7 +79,13 @@ still skip where those fonts aren't installed.
   `crates/reprisekit-pins`, or to `crates/repriseapp-pins` when the crate
   is outside reprisekit's own dependency graph.
   A new dependency also goes into the Requirements section of
-  docs/install.md and the PKGBUILDs under `packaging/arch/`.
+  docs/install.md, the PKGBUILDs under `packaging/arch/`, and
+  `packaging/deb`: its Ubuntu `-dev` package into `build-depends` when the
+  build links it, its runtime package into `Depends` in `build.sh` (or
+  `Recommends`, for an optional one) when it's used without linking (a
+  daemon, a program, a library loaded at run time). Pull requests build
+  only the Arch package, so a missing `.deb` entry shows first in the
+  Nightly build.
 
 ## How the code is laid out
 
@@ -98,15 +104,22 @@ file system. The hosts are glue: `src/*view.rs` in the compositor and
 goes into reprisekit. Extend an existing control before writing a new one.
 Code for one look lives in its interface module (`classic`, `blue`,
 `glass`); `crates/reprisekit/tests/layers.rs` checks which modules may
-reach which.
+reach which. Controls and hosts draw buttons, edges and scrollbars through
+`reprisekit::look::widgets` with the `look::Paint` from `theme.paint()`, so
+each interface draws its own; only Classic's painters call
+`classic::widgets` directly. layers.rs doesn't catch that one: a control
+calling `classic::widgets` passes and draws Classic bevels under Blue and
+Glass.
 
 Each program in `crates/apps` is a library with a thin binary, so
 `cargo run -p reprise-notepad` runs one alone; packages install them all as
 one binary, `reprise-apps`, which runs the program named by the symlink it
 was started through.
 
-A control is done when a unit test pins its pixels and
-`cargo run -p reprisekit --example gallery` draws it.
+A control is done when a unit test pins its pixels,
+`cargo run -p reprisekit --example gallery` draws it on a page of one of the
+`crates/reprisekit/examples/gallery_*` modules, and one host (a
+`src/*view.rs` or a program) shows it.
 
 ## Art
 
