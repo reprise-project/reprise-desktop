@@ -1753,6 +1753,26 @@ fn the_folder_shown_renamed_lists_under_its_new_name() {
     assert!(has(&dlg, "inside"));
 }
 
+#[test]
+fn the_folder_shown_deleted_lists_the_nearest_folder_above_it() {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("a").join("b");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = host_in(&dir);
+    let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+    let mut dlg = open_dlg(&mut h);
+    h.thumbs_on(&crate::Waker::noop());
+    h.ensure_listed(&mut dlg, &mut icons, &|_: &Item| true);
+    until_watched(&dir);
+    until_watched(&t.path().join("a"));
+
+    let old = dlg.folder();
+    std::fs::remove_dir_all(t.path().join("a")).unwrap();
+    until(&mut h, &mut dlg, &mut icons, |d| d.folder() != old);
+    let shown = h.folders.path(dlg.folder().unwrap()).unwrap().to_path_buf();
+    assert_eq!(shown, t.path());
+}
+
 fn press(sym: u32, ctrl: bool, shift: bool, utf8: Option<&str>) -> Event {
     Event::Key(crate::KeyInput {
         sym,

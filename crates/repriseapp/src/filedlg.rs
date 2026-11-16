@@ -544,6 +544,9 @@ pub struct Host {
     /// anew.
     again: Option<(ReadKey, PathBuf, StartRead)>,
     watch: Option<reprisefs::folderwatch::Watch>,
+    /// The folder shown when `watch` saw it go, and the nearest folder at or above where it went
+    /// that is still there ([`Host::follow_gone`]).
+    climbing: Option<(PathBuf, Job<Option<PathBuf>>)>,
     /// The folder `watch` is on.
     watched: Option<PathBuf>,
     relist: Option<reprisefs::listing::Relist>,
@@ -1494,15 +1497,28 @@ impl Host {
     }
 
     /// Once the folder shown, or one above it, was renamed, moved or deleted: lists it where it
-    /// went, else the nearest folder above its old path that is still there.
+    /// went, else the nearest folder above its old path that is still there. Which folders are
+    /// still there is asked on a listing thread, since a stat blocks on a mount that stopped
+    /// answering; an answer the dialog moved on from meanwhile is dropped.
     fn follow_gone(&mut self) {
-        let Some(gone) = self.watch.as_mut().and_then(|w| w.take_gone()) else {
+        if let Some(gone) = self.watch.as_mut().and_then(|w| w.take_gone())
+            && let Some((_, shown, _)) = &self.again
+        {
+            let climb = Job::spawn(self.wake.as_ref(), move || {
+                gone.ancestors().find(|p| p.is_dir()).map(Path::to_path_buf)
+            });
+            self.climbing = Some((shown.clone(), climb));
+        }
+        let Some(nearest) = self.climbing.as_ref().and_then(|(_, j)| j.take()) else {
             return;
         };
-        let Some(dir) = gone.ancestors().find(|p| p.is_dir()).map(Path::to_path_buf) else {
+        let Some((from, _)) = self.climbing.take() else {
             return;
         };
-        let Some((key, _, start)) = self.again.take() else {
+        let Some(dir) = nearest else {
+            return;
+        };
+        let Some((key, _, start)) = self.again.take_if(|(_, shown, _)| *shown == from) else {
             return;
         };
         let key = ReadKey {
