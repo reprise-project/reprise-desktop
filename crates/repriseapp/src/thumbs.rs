@@ -1,14 +1,15 @@
 //! Thumbnails for Thumbnails and Tiles, made off the event loop by one worker thread through the
-//! freedesktop thumbnail cache: pictures by the built-in decoders, other types by an installed
-//! thumbnailer ([`reprisefs::thumbnailers`]). Explorer and the file dialog host share it; Explorer's
-//! [`serve_stdio`] decodes for the compositor's Browse dialog in a process of its own. Navigation
-//! bumps a generation counter and the worker drops requests older than the newest it has seen.
-//! A file that does not answer within [`WITHIN`] keeps its icon, and the worker moves on.
+//! freedesktop thumbnail cache: pictures by the built-in decoders, a JPEG XL by [`serve_jxl`] and
+//! other types by an installed thumbnailer, both in [`reprisefs::thumbnailers`]' jail. Explorer and
+//! the file dialog host share it; Explorer's [`serve_stdio`] decodes for the compositor's Browse
+//! dialog in a process of its own. Navigation bumps a generation counter and the worker drops
+//! requests older than the newest it has seen. A file that does not answer within [`WITHIN`] keeps
+//! its icon, and the worker moves on.
 
 use crate::Waker;
 use crate::decode::Decoders;
 use reprisefs::apps::MimeGlobs;
-use reprisefs::thumbnailers::{RunError, Runner, Thumbnailers};
+use reprisefs::thumbnailers::{RunError, Runner, Thumbnailer, Thumbnailers};
 use reprisefs::thumbnails::{Cleared, Rgba, Thumbnails, edge_for};
 use reprisefs::thumbpipe;
 use reprisekit::controls::shellview;
@@ -269,17 +270,17 @@ pub fn clear_cache() -> Cleared {
 const PROGRAM_PREFIX: &str = "reprise-";
 const PROGRAM: &str = concat!("reprise-", env!("CARGO_PKG_VERSION"));
 
-/// How the worker makes a thumbnail: the built-in decoders, and the installed thumbnailers unless
-/// `[thumbnail_cache] external_thumbnailers` is off or bubblewrap is missing.
+/// How the worker makes a thumbnail: the built-in decoders in-process, a JPEG XL by [`JXL_FLAG`]
+/// in the thumbnailers' jail, and the installed thumbnailers there unless `[thumbnail_cache]
+/// external_thumbnailers` is off.
 struct Make<'a> {
     decoders: &'a Decoders,
     globs: MimeGlobs,
-    external: Option<External>,
-}
-
-struct External {
-    runner: Runner,
-    installed: Box<dyn Fn() -> Arc<Thumbnailers> + Send>,
+    /// None without bubblewrap: then neither a JPEG XL nor a thumbnailer's type gets a thumbnail.
+    runner: Option<Runner>,
+    /// The program run with [`JXL_FLAG`].
+    helper: PathBuf,
+    installed: Option<Box<dyn Fn() -> Arc<Thumbnailers> + Send>>,
 }
 
 impl<'a> Make<'a> {
@@ -287,15 +288,57 @@ impl<'a> Make<'a> {
         Make {
             decoders,
             globs: MimeGlobs::new(),
-            external: external
-                .then(Runner::jailed)
-                .flatten()
-                .map(|runner| External {
-                    runner,
-                    installed: Box::new(reprisefs::thumbnailers::installed),
-                }),
+            runner: Runner::jailed(),
+            helper: thumbpipe::PROGRAM.into(),
+            installed: external
+                .then(|| Box::new(reprisefs::thumbnailers::installed) as Box<dyn Fn() -> _ + Send>),
         }
     }
+
+    /// The helper run as a thumbnailer: [`JXL_FLAG`] for the square, the input and the output.
+    fn jxl(&self) -> Option<Thumbnailer> {
+        let exe = reprisefs::apps::exec_quote(self.helper.to_str()?);
+        Some(Thumbnailer::command(
+            "jxl",
+            format!("{exe} {JXL_FLAG} %s %i %o"),
+        ))
+    }
+}
+
+/// The thumbnail helper's mode `--jxl-thumbnail EDGE INPUT OUTPUT`: the JPEG XL at INPUT fitted
+/// inside an EDGE square, written to OUTPUT as a PNG carrying the picture's size. libjxl runs
+/// under [`Budget::THUMBNAIL`](crate::decode::Budget::THUMBNAIL) here as in-process.
+pub const JXL_FLAG: &str = "--jxl-thumbnail";
+
+/// [`JXL_FLAG`] with the arguments after the flag.
+pub fn serve_jxl(args: &[std::ffi::OsString]) -> Result<(), String> {
+    use crate::decode::{Budget, ImageDecoder, JxlDecoder};
+    let [edge, input, output] = args else {
+        return Err(format!("usage: {JXL_FLAG} EDGE INPUT OUTPUT"));
+    };
+    let edge = (edge.to_str().and_then(|e| e.parse::<u32>().ok()))
+        .ok_or("EDGE is a number")?
+        .clamp(1, reprisefs::thumbnailers::MAX_SIDE);
+    let budget = Budget::THUMBNAIL;
+    let bytes = std::fs::File::open(input)
+        .and_then(|f| crate::decode::read_capped_from(f, budget.file))
+        .map_err(|e| e.to_string())?;
+    let img = JxlDecoder
+        .decode(&bytes, (edge, edge), budget)
+        .map_err(|e| format!("{e:?}"))?;
+    let (width, height) = img.canvas.device_size();
+    let pixels = straight_rgba(&img.canvas);
+    let thumb = Rgba {
+        width,
+        height,
+        pixels: &pixels,
+    };
+    let text = [
+        ("Thumb::Image::Width", img.width.to_string()),
+        ("Thumb::Image::Height", img.height.to_string()),
+    ];
+    let png = reprisefs::thumbnails::encode(&thumb, &text).map_err(|e| e.to_string())?;
+    std::fs::write(output, png).map_err(|e| e.to_string())
 }
 
 struct Made {
@@ -306,7 +349,7 @@ struct Made {
 
 /// `path`'s thumbnail at `edge` and its size, from `cache` or made into it. A picture (by its
 /// name's MIME type, or an unknown type) goes to the decoders first; anything else, or a picture
-/// they cannot decode, goes to its thumbnailer. The stat comes before the read, so a file changed
+/// they cannot decode, goes to its thumbnailer; a JPEG XL goes to [`JXL_FLAG`]. The stat comes before the read, so a file changed
 /// in between is kept under its old stamp and simply misses next time. Anything but a regular file
 /// (a named pipe, a device) is never opened, since the open or the read may never return. A file
 /// whose open or read `fs` gives up on, or that waits out every thumbnailer slot, is not marked
@@ -333,10 +376,11 @@ fn thumbnail(
     let name = path.file_name().map(|n| n.to_string_lossy());
     let mime = name.and_then(|n| make.globs.current().mime_of_name(&n));
     let picture = mime.as_deref().is_none_or(|m| m.starts_with("image/"));
-    let thumbnailer = (make.external.as_ref()).and_then(|x| {
-        mime.as_deref()
-            .and_then(|m| (x.installed)().for_mime(m).cloned())
-    });
+    let thumbnailer =
+        (make.installed.as_ref().filter(|_| make.runner.is_some())).and_then(|installed| {
+            mime.as_deref()
+                .and_then(|m| installed().for_mime(m).cloned())
+        });
     if !picture && thumbnailer.is_none() {
         return None;
     }
@@ -359,12 +403,18 @@ fn thumbnail(
             return None;
         }
     }
+    let mut jxl = None;
     let decoded = if picture {
         let budget = crate::decode::Budget::THUMBNAIL;
         match fs.run(move || crate::decode::read_capped_from(file, budget.file)) {
             Err(e) if e.kind() == io::ErrorKind::TimedOut => {
                 log::debug!("thumbnail {}: {e}", path.display());
                 return None;
+            }
+            Ok(b) if crate::decode::is_jxl(&b) => {
+                // A JPEG XL is never decoded here, only in the jail; no jail, no thumbnail.
+                jxl = Some(make.runner.as_ref().and_then(|_| make.jxl())?);
+                None
             }
             bytes => (bytes.ok()).and_then(|b| {
                 // A decoder that panics counts as one that failed, so the file is marked failed.
@@ -398,8 +448,8 @@ fn thumbnail(
             sized: true,
         });
     }
-    let made = match (&make.external, &thumbnailer) {
-        (Some(x), Some(t)) => match x.runner.run(t, path, edge) {
+    let made = match (&make.runner, jxl.as_ref().or(thumbnailer.as_ref())) {
+        (Some(runner), Some(t)) => match runner.run(t, path, edge) {
             Err(RunError::Busy) => return None,
             Err(RunError::TimedOut) => {
                 log::debug!("thumbnail {}: none within the deadline", path.display());
@@ -435,11 +485,11 @@ fn thumbnail(
     made
 }
 
-/// Log, once per process, that the jail does not start, so only the built-in decoders run.
+/// Log, once per process, that the jail does not start, so only the in-process decoders run.
 fn no_jail(why: &str) {
     static LOGGED: std::sync::Once = std::sync::Once::new();
     LOGGED.call_once(|| {
-        log::warn!("thumbnailers: bubblewrap does not start here ({why}); built-in decoders only");
+        log::warn!("thumbnailers: bubblewrap does not start here ({why}); no JPEG XL or thumbnailer thumbnails");
     });
 }
 
@@ -1064,14 +1114,13 @@ mod tests {
         Make {
             decoders,
             globs: MimeGlobs::at(vec![dir.join("globs2")]),
-            external: Some(External {
-                runner: Runner::new(
-                    dir,
-                    Duration::from_secs(5),
-                    reprisefs::thumbnailers::Jail::Bare,
-                ),
-                installed: Box::new(move || list.clone()),
-            }),
+            runner: Some(Runner::new(
+                dir,
+                Duration::from_secs(5),
+                reprisefs::thumbnailers::Jail::Bare,
+            )),
+            helper: dir.join("no-helper"),
+            installed: Some(Box::new(move || list.clone())),
         }
     }
 
@@ -1152,7 +1201,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let decoders = Decoders::default_set();
         let mut make = with_thumbnailer(&decoders, dir.path(), "exec sleep 5");
-        make.external.as_mut().unwrap().runner.deadline = Duration::from_millis(300);
+        make.runner.as_mut().unwrap().deadline = Duration::from_millis(300);
         let doc = dir.path().join("film.pdf");
         std::fs::write(&doc, b"%PDF").unwrap();
         let mut cache = Thumbnails::at(dir.path().join("cache"), PROGRAM, 1 << 20);
@@ -1175,12 +1224,167 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let decoders = Decoders::default_set();
         let mut make = with_thumbnailer(&decoders, dir.path(), "exit 1");
-        make.external = None;
+        make.installed = None;
         let doc = dir.path().join("report.pdf");
         std::fs::write(&doc, b"%PDF").unwrap();
         let mut cache = Thumbnails::at(dir.path().join("cache"), PROGRAM, 1 << 20);
         assert!(thumbnail(&mut make, 128, Some(&mut cache), &doc, &fs()).is_none());
         assert_eq!(runs(dir.path()), 0);
         assert!(!cache.failed(&doc, &std::fs::metadata(&doc).unwrap()));
+    }
+
+    /// [`with_thumbnailer`] whose [`JXL_FLAG`] helper is a script running `body`, counting its
+    /// runs in `dir/jxl-runs`, beside a decoder that counts every in-process JPEG XL decode.
+    fn with_jxl_helper<'a>(
+        decoders: &'a mut Decoders,
+        dir: &std::path::Path,
+        body: &str,
+    ) -> (Make<'a>, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::os::unix::fs::PermissionsExt;
+        struct InProcess(Arc<std::sync::atomic::AtomicUsize>);
+        impl crate::decode::ImageDecoder for InProcess {
+            fn probe(&self, bytes: &[u8]) -> bool {
+                crate::decode::is_jxl(bytes)
+            }
+            fn decode(
+                &self,
+                _: &[u8],
+                _: (u32, u32),
+                _: crate::decode::Budget,
+            ) -> Result<crate::decode::Decoded, crate::decode::Unread> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Err(crate::decode::Unread::Unreadable)
+            }
+        }
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        decoders.register(Box::new(InProcess(count.clone())));
+        let helper = dir.join("fake-helper");
+        let runs = dir.join("jxl-runs");
+        let text = format!("#!/bin/sh\necho \"$@\" >> '{}'\n{body}\n", runs.display());
+        std::fs::write(&helper, text).unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut make = with_thumbnailer(decoders, dir, "exit 1");
+        make.helper = helper;
+        (make, count)
+    }
+
+    fn jxl_runs(dir: &std::path::Path) -> Vec<String> {
+        let runs = std::fs::read_to_string(dir.join("jxl-runs")).unwrap_or_default();
+        runs.lines().map(str::to_string).collect()
+    }
+
+    /// A codestream signature and nothing a decoder could read.
+    const JXL_BYTES: &[u8] = &[0xff, 0x0a, 0, 0];
+
+    #[test]
+    fn a_jpeg_xl_is_decoded_by_the_jailed_helper_and_cached_with_its_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let sized = dir.path().join("sized.png");
+        let px = vec![0xff; 64 * 48 * 4];
+        let thumb = Rgba {
+            width: 64,
+            height: 48,
+            pixels: &px,
+        };
+        let text = [
+            ("Thumb::Image::Width", "800".to_string()),
+            ("Thumb::Image::Height", "600".to_string()),
+        ];
+        std::fs::write(
+            &sized,
+            reprisefs::thumbnails::encode(&thumb, &text).unwrap(),
+        )
+        .unwrap();
+        let mut decoders = Decoders::default_set();
+        let body = format!("cp '{}' \"$4\"", sized.display());
+        let (mut make, in_process) = with_jxl_helper(&mut decoders, dir.path(), &body);
+        make.installed = None;
+        // A JPEG XL is told by its bytes, whatever its name.
+        let photo = dir.path().join("photo.png");
+        std::fs::write(&photo, JXL_BYTES).unwrap();
+        let mut cache = Thumbnails::at(dir.path().join("cache"), PROGRAM, 1 << 20);
+        let made = thumbnail(&mut make, 128, Some(&mut cache), &photo, &fs()).expect("made");
+        assert_eq!(made.thumb.device_size(), (64, 48));
+        assert_eq!((made.dims, made.sized), ((800, 600), true));
+        let again = thumbnail(&mut make, 128, Some(&mut cache), &photo, &fs()).expect("cached");
+        assert_eq!(again.dims, (800, 600));
+        let want = format!("{JXL_FLAG} 128 {} ", photo.display());
+        let runs = jxl_runs(dir.path());
+        assert_eq!(runs.len(), 1, "the second ask is a cache hit");
+        assert!(runs[0].starts_with(&want), "{runs:?} runs {want}OUTPUT");
+        assert_eq!(in_process.load(Ordering::SeqCst), 0, "no in-process decode");
+    }
+
+    #[test]
+    fn a_jpeg_xl_the_helper_cannot_read_is_marked_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut decoders = Decoders::default_set();
+        let (mut make, in_process) = with_jxl_helper(&mut decoders, dir.path(), "exit 1");
+        let photo = dir.path().join("photo.jxl");
+        std::fs::write(&photo, JXL_BYTES).unwrap();
+        let mut cache = Thumbnails::at(dir.path().join("cache"), PROGRAM, 1 << 20);
+        assert!(thumbnail(&mut make, 128, Some(&mut cache), &photo, &fs()).is_none());
+        assert!(cache.failed(&photo, &std::fs::metadata(&photo).unwrap()));
+        assert_eq!(
+            (
+                jxl_runs(dir.path()).len(),
+                in_process.load(Ordering::SeqCst)
+            ),
+            (1, 0)
+        );
+    }
+
+    #[test]
+    fn without_a_jail_a_jpeg_xl_keeps_its_icon_and_is_not_marked_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut decoders = Decoders::default_set();
+        let (mut make, in_process) = with_jxl_helper(&mut decoders, dir.path(), "exit 1");
+        let photo = dir.path().join("photo.jxl");
+        std::fs::write(&photo, JXL_BYTES).unwrap();
+        let meta = std::fs::metadata(&photo).unwrap();
+        let mut cache = Thumbnails::at(dir.path().join("cache"), PROGRAM, 1 << 20);
+        let refused = PathBuf::from("/bin/false");
+        let jails = [
+            None,
+            Some(reprisefs::thumbnailers::Jail::Bwrap {
+                bwrap: refused.clone(),
+                systemd_run: refused,
+            }),
+        ];
+        for jail in jails {
+            make.runner = jail.map(|j| Runner::new(dir.path(), Duration::from_secs(5), j));
+            assert!(thumbnail(&mut make, 128, Some(&mut cache), &photo, &fs()).is_none());
+            assert!(!cache.failed(&photo, &meta), "not marked failed");
+        }
+        assert_eq!(
+            (
+                jxl_runs(dir.path()).len(),
+                in_process.load(Ordering::SeqCst)
+            ),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn the_jpeg_xl_helper_writes_the_fitted_picture_with_its_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("a.jxl");
+        let px: Vec<u8> = (0..40 * 30).flat_map(|_| [200, 100, 50, 255]).collect();
+        std::fs::write(&src, crate::decode::encode_jxl(40, 30, &[&px], false)).unwrap();
+        let out = dir.path().join("out.png");
+        let args = [
+            "20".into(),
+            src.into_os_string(),
+            out.clone().into_os_string(),
+        ];
+        serve_jxl(&args).expect("a thumbnail");
+        let png = std::fs::read(&out).unwrap();
+        let c = reprisekit::icontheme::png_to_canvas(&png, 4096).unwrap();
+        assert_eq!(c.device_size(), (20, 15));
+        assert_eq!(reprisefs::thumbnails::image_dims(&png), Some((40, 30)));
+        let broken = dir.path().join("b.jxl");
+        std::fs::write(&broken, JXL_BYTES).unwrap();
+        let args = ["20".into(), broken.into_os_string(), out.into_os_string()];
+        assert!(serve_jxl(&args).is_err());
     }
 }

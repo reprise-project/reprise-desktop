@@ -10,6 +10,8 @@ use reprisekit::icon::premultiply;
 use reprisekit::raster::Canvas;
 
 mod jxl;
+#[cfg(test)]
+pub(crate) use jxl::tests::encode as encode_jxl;
 
 /// A decoded image: `canvas` already fitted to the caller's `max` (never
 /// upscaled, box-filtered down), `width`/`height` the source's own
@@ -194,6 +196,11 @@ impl ImageDecoder for ImageCrateDecoder {
 /// libjxl would hold more than four times them, or the decode runs past [`JXL_TIME_LIMIT`].
 pub struct JxlDecoder;
 
+/// Whether `bytes` start as a JPEG XL codestream or container.
+pub fn is_jxl(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xff, 0x0a]) || bytes.starts_with(reprisefs::imagesize::JXL_CONTAINER)
+}
+
 /// How long one JPEG XL may decode: twice a slow core's time for a lossless picture at
 /// [`MAX_DECODED_BYTES`] (effort 9), where a few bytes a layer can keep libjxl composing layers
 /// for hours.
@@ -201,7 +208,7 @@ pub const JXL_TIME_LIMIT: std::time::Duration = std::time::Duration::from_secs(6
 
 impl ImageDecoder for JxlDecoder {
     fn probe(&self, bytes: &[u8]) -> bool {
-        bytes.starts_with(&[0xff, 0x0a]) || bytes.starts_with(reprisefs::imagesize::JXL_CONTAINER)
+        is_jxl(bytes)
     }
 
     fn decode(&self, bytes: &[u8], max: (u32, u32), budget: Budget) -> Result<Decoded, Unread> {

@@ -804,10 +804,10 @@ ends, so stop the share first.
   their installed `.thumbnailer` with no click, so each runs under
   bubblewrap: new namespaces, `/usr` and the input file read-only, a scratch
   folder its one writable place, no home, session bus or display socket, a
-  memory cap and a deadline. Without bubblewrap no thumbnailer runs. The
-  built-in decoders, libjxl included, run unjailed in the process showing
-  the folder: Explorer and every Open and Save dialog, the portal's file
-  chooser among them. A decoder that panics marks its file failed.
+  memory cap and a deadline. JPEG XL thumbnails decode in the same jail;
+  Image Viewer decodes JPEG XL in-process. Without bubblewrap neither runs
+  and the file keeps its icon. The other built-in decoders run in the
+  process showing the folder, and one that panics marks its file failed.
 - **App scopes.** A program started from a desktop entry runs in a systemd
   scope `app-reprise-<app id>-<n>.scope`, for identification and cleanup,
   not confinement. polkit judges a scoped program by the user's display

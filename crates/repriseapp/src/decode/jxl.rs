@@ -224,12 +224,7 @@ pub(super) mod tests {
 
     /// A lossless JPEG XL of `frames` (`w`x`h` RGBA each), an animation of 1-tick frames when
     /// there are more than one; `premultiplied` stores the samples as already multiplied by alpha.
-    pub(in crate::decode) fn encode(
-        w: u32,
-        h: u32,
-        frames: &[&[u8]],
-        premultiplied: bool,
-    ) -> Vec<u8> {
+    pub(crate) fn encode(w: u32, h: u32, frames: &[&[u8]], premultiplied: bool) -> Vec<u8> {
         let timed: Vec<_> = frames.iter().map(|f| (*f, 1)).collect();
         encode_with(w, h, &timed, premultiplied, &[])
     }
