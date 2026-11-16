@@ -76,6 +76,7 @@ impl Color {
         0.2126 * lin(self.r) + 0.7152 * lin(self.g) + 0.0722 * lin(self.b)
     }
 
+    /// The WCAG 2 contrast ratio of the two colours, 1 to 21.
     pub fn contrast(self, other: Color) -> f64 {
         let (a, b) = (self.luminance(), other.luminance());
         (a.max(b) + 0.05) / (a.min(b) + 0.05)

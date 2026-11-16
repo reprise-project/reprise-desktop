@@ -6,7 +6,7 @@ use crate::theme::Color;
 pub const SLATE: Scheme = Scheme {
     name: "slate",
     system: System {
-        active_title: Color::rgb(0x3E, 0x9D, 0xE8),
+        active_title: Color::rgb(0x30, 0x79, 0xB3),
         gradient_active_title: Color::rgb(0x70, 0xB1, 0xEB),
         inactive_title: Color::rgb(0x6F, 0xA1, 0xD9),
         gradient_inactive_title: Color::rgb(0x83, 0xB7, 0xE3),
@@ -22,7 +22,7 @@ pub const SLATE: Scheme = Scheme {
         window: Color::rgb(0xFF, 0xFF, 0xFF),
         window_frame: Color::rgb(0x00, 0x00, 0x00),
         window_text: Color::rgb(0x00, 0x00, 0x00),
-        hilight: Color::rgb(0x3E, 0x9D, 0xE8),
+        hilight: Color::rgb(0x30, 0x79, 0xB3),
         hilight_text: Color::rgb(0xFF, 0xFF, 0xFF),
         gray_text: Color::rgb(0xB5, 0xB4, 0xB8),
         menu: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -30,7 +30,7 @@ pub const SLATE: Scheme = Scheme {
         desktop_text: Color::rgb(0xFF, 0xFF, 0xFF),
         info_bk: Color::rgb(0xFF, 0xFF, 0xE1),
         info_text: Color::rgb(0x00, 0x00, 0x00),
-        menu_hilight: Color::rgb(0x3E, 0x9D, 0xE8),
+        menu_hilight: Color::rgb(0x30, 0x79, 0xB3),
         menu_bar: Color::rgb(0xEB, 0xE9, 0xED),
         hot_light: Color::rgb(0x00, 0x00, 0x80),
         menu_band: Color::rgb(0x1E, 0x5A, 0x9E),

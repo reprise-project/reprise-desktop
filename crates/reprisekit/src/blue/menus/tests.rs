@@ -139,13 +139,13 @@ fn the_start_menus_pin_per_state_in_two_schemes_at_scale_1_and_2() {
         0xa87760c824f7d88d,
         0x8ad72cf2d8679cc5,
         0xbe8e306d76d66569,
-        0x2aae9e27876600c9,
-        0xd4bd0e02e8ed2660,
-        0xd46fd250a0ecb1d9,
+        0xdf431e8f8859a9a9,
+        0x8390b592c1f90590,
+        0x7370b7c8bf014a29,
         0x812f6c093054ab0d,
-        0xde83a85be2c1a5cd,
-        0x1ab8edbe26915f5d,
-        0xb36d6df0cdc4854d,
+        0xab9dc6adbd8e6b0d,
+        0xb162ed3b49c9291d,
+        0x7b28e47b31e9a40d,
     ];
     assert_eq!(got, want, "{got:#x?}");
 }

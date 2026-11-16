@@ -6,7 +6,7 @@ use crate::theme::Color;
 pub const OBSIDIAN: Scheme = Scheme {
     name: "obsidian",
     system: System {
-        active_title: Color::rgb(0x5E, 0x81, 0xBC),
+        active_title: Color::rgb(0x54, 0x74, 0xA9),
         gradient_active_title: Color::rgb(0x70, 0xB1, 0xEB),
         inactive_title: Color::rgb(0x6F, 0xA1, 0xD9),
         gradient_inactive_title: Color::rgb(0x83, 0xB7, 0xE3),
@@ -22,7 +22,7 @@ pub const OBSIDIAN: Scheme = Scheme {
         window: Color::rgb(0xFF, 0xFF, 0xFF),
         window_frame: Color::rgb(0x00, 0x00, 0x00),
         window_text: Color::rgb(0x00, 0x00, 0x00),
-        hilight: Color::rgb(0x5E, 0x81, 0xBC),
+        hilight: Color::rgb(0x54, 0x74, 0xA9),
         hilight_text: Color::rgb(0xFF, 0xFF, 0xFF),
         gray_text: Color::rgb(0xA7, 0xA6, 0xAA),
         menu: Color::rgb(0xFF, 0xFF, 0xFF),
@@ -30,7 +30,7 @@ pub const OBSIDIAN: Scheme = Scheme {
         desktop_text: Color::rgb(0xFF, 0xFF, 0xFF),
         info_bk: Color::rgb(0xFF, 0xFF, 0xE1),
         info_text: Color::rgb(0x00, 0x00, 0x00),
-        menu_hilight: Color::rgb(0x5E, 0x81, 0xBC),
+        menu_hilight: Color::rgb(0x54, 0x74, 0xA9),
         menu_bar: Color::rgb(0xEB, 0xE9, 0xED),
         hot_light: Color::rgb(0x00, 0x00, 0x80),
         menu_band: Color::rgb(0x24, 0x36, 0x5A),
