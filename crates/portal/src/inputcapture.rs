@@ -223,6 +223,10 @@ impl InputCapture {
                 },
             )
             .await?;
+        let (owner, key) = (crate::sender(&hdr), session_handle.as_str());
+        if crate::frontend_left(conn, &self.frontend, &self.sessions, &owner, key).await {
+            return Ok((RESPONSE_OTHER, HashMap::new()));
+        }
         let mut r = HashMap::new();
         r.insert(
             "capabilities".into(),

@@ -931,24 +931,26 @@ mod tests {
         fn close_notification(&self, _id: u32) {}
     }
 
-    /// Round trip on a real session bus; needs one: `dbus-run-session cargo test -- --ignored`.
     #[test]
-    #[ignore]
-    fn round_trip_on_a_session_bus() {
+    fn round_trip_on_a_private_bus() {
         use futures_lite::StreamExt;
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
         zbus::block_on(async {
             let got = Arc::new(Mutex::new(Vec::new()));
-            let server = zbus::connection::Builder::session()
+            let server = zbus::connection::Builder::address(bus.1.as_str())
                 .name(SERVER)
                 .serve_at(SERVER_PATH, FakeServer { got: got.clone() })
                 .build()
                 .await
                 .unwrap();
             let book = Shared::default();
-            let client = zbus::Connection::session().await.unwrap();
+            let client = crate::lockmode::tests::connect(&bus).await;
             let frontend = crate::Frontend::default();
             frontend.set(client.unique_name().map(|n| n.to_string()));
-            let portal = zbus::connection::Builder::session()
+            let portal = zbus::connection::Builder::address(bus.1.as_str())
                 .serve_at(
                     crate::PATH,
                     Notification {
