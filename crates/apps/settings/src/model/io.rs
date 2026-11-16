@@ -1,6 +1,6 @@
 //! Reading `config.toml` into [`Settings`] and writing it back.
 
-use super::fields::{Field, INTERFACE, fields, list_to_text, words};
+use super::fields::{INTERFACE, fields};
 use super::shortcuts::{
     DENIED, GLOBALS, KEYBINDS, keybind_entries, merge_denied, merge_programs, program_tables,
     read_programs, read_shortcuts, shortcut_tables,
@@ -10,6 +10,7 @@ use super::{
     glass_swatch,
 };
 use repriseconf::config::parse_hhmm;
+use repriseconf::fields::words;
 use repriseconf::{Key, get, key as k, remove, remove_table_if_empty, set};
 use toml_edit::{Array, DocumentMut, Item, Value};
 
@@ -29,64 +30,7 @@ pub fn load(text: &str) -> Settings {
         return Settings::default();
     };
     let mut s = defaults_in(&doc);
-    for f in fields() {
-        let Some(item) = get(&doc, f.key()) else {
-            continue;
-        };
-        match &f {
-            Field::Text(_, at) => {
-                if let Some(v) = item.as_str() {
-                    *at.get_mut(&mut s) = v.to_string();
-                }
-            }
-            Field::Int(_, at) => {
-                if let Some(v) = item.as_integer() {
-                    *at.get_mut(&mut s) = v;
-                }
-            }
-            Field::Flag(_, at) => {
-                if let Some(v) = item.as_bool() {
-                    *at.get_mut(&mut s) = v;
-                }
-            }
-            Field::List(_, at) => {
-                if let Some(v) = list_to_text(item) {
-                    *at.get_mut(&mut s) = v;
-                }
-            }
-            Field::Words(_, at) => {
-                if let Some(arr) = item.as_array() {
-                    let w: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
-                    *at.get_mut(&mut s) = w.join(" ");
-                }
-            }
-            Field::Tenths(_, at, (lo, hi)) => {
-                // `speed = 1` is a valid float to the compositor too.
-                let v = item
-                    .as_float()
-                    .or_else(|| item.as_integer().map(|i| i as f64));
-                if let Some(v) = v {
-                    *at.get_mut(&mut s) = ((v * 10.0).round() as i64).clamp(*lo, *hi);
-                }
-            }
-            Field::Strings(_, at) => {
-                if let Some(arr) = item.as_array() {
-                    *at.get_mut(&mut s) = arr
-                        .iter()
-                        .map(|v| v.as_str().unwrap_or_default().to_string())
-                        .collect();
-                }
-            }
-            // An older file's icon names read as the current ones.
-            Field::Names(_, at) => {
-                if let Some(arr) = item.as_array() {
-                    *at.get_mut(&mut s) = repriseconf::system_icons::current_list(
-                        arr.iter().filter_map(|v| v.as_str()),
-                    );
-                }
-            }
-        }
-    }
+    repriseconf::fields::load(&doc, &fields(), &mut s);
     if let Some(list) = get(&doc, &KEYBINDS).and_then(read_shortcuts) {
         use repriseconf::keybind::{NONE, layered, same};
         // A default's "none" stays a row, shown and re-enabled from the list:
@@ -144,27 +88,8 @@ pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, Stri
     } else {
         &have.interface
     });
-    // The tables a key was removed from.
-    let mut shrunk: Vec<&'static str> = Vec::new();
-    let mut drop_key = |doc: &mut DocumentMut, key: &Key| {
-        if get(doc, key).is_some() {
-            remove(doc, key);
-            shrunk.push(key.table);
-        }
-    };
-    for f in fields() {
-        if f.same(want, base) || f.same(want, &have) {
-            continue;
-        }
-        if f.same(want, &def) {
-            drop_key(&mut doc, f.key());
-        } else {
-            set(&mut doc, f.key(), f.value(want)).map_err(|e| e.to_string())?;
-        }
-    }
-    for table in shrunk {
-        remove_table_if_empty(&mut doc, table);
-    }
+    repriseconf::fields::save(&mut doc, &fields(), want, base, &have, &def)
+        .map_err(|e| e.to_string())?;
     // The list is written whole or not at all: a table's comments do not
     // survive a rewrite anyway.
     if want.shortcuts != base.shortcuts && want.shortcuts != have.shortcuts {
