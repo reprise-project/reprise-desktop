@@ -1,5 +1,6 @@
 # Sessions started before an upgrade run the old binaries until they log off;
-# /run/reboot-required makes Software Updates show its restart notice.
+# /run/reboot-required makes Software Updates show its restart notice, and
+# reprise in /run/reboot-required.pkgs says logging off is enough.
 [Trigger]
 Operation = Upgrade
 Type = Path
@@ -8,4 +9,4 @@ Target = usr/bin/reprise
 [Action]
 Description = Asking running Reprise sessions to restart...
 When = PostTransaction
-Exec = /usr/bin/touch /run/reboot-required
+Exec = /bin/sh -c 'touch /run/reboot-required && { grep -qsx reprise /run/reboot-required.pkgs || echo reprise >>/run/reboot-required.pkgs; }'
