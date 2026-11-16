@@ -866,7 +866,9 @@ fn key_note(state: &mut State, code: Keycode, k: &KeyPress, time: u32) -> Option
     let typed = typed.filter(|t| t.as_str().chars().all(|c| !c.is_control()));
     let text = match &typed {
         Some(t) => t.as_str().to_string(),
-        None => crate::winmenu::keysym_name(keysym),
+        None => smithay::input::keyboard::xkb::keysym_get_name(
+            smithay::input::keyboard::Keysym::new(keysym),
+        ),
     };
     Some(KeyNote {
         pressed: k.pressed,
