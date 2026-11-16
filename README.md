@@ -111,12 +111,14 @@ rest.
 
 Install the [requirements](docs/install.md#requirements), then:
 
-    cargo build --release
-    ./target/release/reprise --startup alacritty   # nested in your current Wayland session
+    cargo build --release --workspace
+    PATH="$PWD/target/release:$PATH" ./target/release/reprise --startup alacritty   # nested in your current Wayland session
 
-On Arch, `packaging/arch/PKGBUILD` packages the whole thing. Once it's
-installed, pick "Reprise" in your login manager. [docs/install.md](docs/install.md)
-has the details.
+On Arch, `packaging/arch/PKGBUILD` packages the whole thing, and the Nightly
+release carries a package for Arch and a .deb for Ubuntu 26.04. Elsewhere,
+[install by hand](docs/install.md#install-by-hand). Once it's installed, pick
+"Reprise" in your login manager. [docs/install.md](docs/install.md) has the
+details.
 
 Reprise reads `~/.config/reprise/config.toml` and applies an edit the moment
 you save. Most of it is also in Reprise Settings, which writes your changes
