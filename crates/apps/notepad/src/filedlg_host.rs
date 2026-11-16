@@ -140,19 +140,24 @@ impl Notepad {
             Driven::Reply(r) => return *r,
             Driven::Picked(path) => path,
             Driven::Cancelled => {
-                self.saveas = None;
+                self.close_saveas();
                 self.pending.cancelled();
                 return Reply::redraw_all();
             }
         };
         // Ask before writing over another file; the document's own path is what Save As opened on, so it is not "another".
         if taken(&path) && self.path.as_deref() != Some(&path) {
-            self.overwrite = Some(path);
-            self.overwrite_focus = 1;
-            self.overwrite_shown = oneshot::Shown::default();
+            let b = self.overwrite_box(&path);
+            self.asks.ask(b, Ask::Overwrite(path));
             return Reply::redraw_all();
         }
         self.saveas_write(path)
+    }
+
+    /// Save As goes, and the overwrite question it raised with it.
+    fn close_saveas(&mut self) {
+        self.saveas = None;
+        self.asks.withdraw(|ask| matches!(ask, Ask::Overwrite(_)));
     }
 
     /// Write the document to `path` in the encoding picked in Save As and adopt both: Save As's
@@ -169,7 +174,7 @@ impl Notepad {
                 self.path = Some(path);
                 self.dirty = false;
                 self.forget_rescued();
-                self.saveas = None;
+                self.close_saveas();
                 match self.pending.saved(true) {
                     Some(action) => self.run_pending(action),
                     None => Reply::redraw_all(),
@@ -183,61 +188,23 @@ impl Notepad {
     }
 
     /// The "already exists" prompt: warning triangle, full path, Yes / No with No the default and
-    /// neither carrying an access key; the default follows the focus Tab and the arrows move.
-    pub(crate) fn overwrite_fields(&self, path: &Path) -> msgbox::Fields {
-        msgbox::Fields {
-            text: tr!("overwrite", path = path.display().to_string()),
-            icon: self.warn_icon.clone(),
-            buttons: vec![
-                reprisekit::kit_tr!("yes-bare"),
-                reprisekit::kit_tr!("no-bare"),
-            ],
-            default: self.overwrite_focus,
-            min_text_h: None,
-            min_w: 0,
-            max_w: repriseapp::dialog_max_w(),
-        }
-    }
-
-    /// The replace prompt's loop: Yes writes over the file, No (also the close box and Escape) goes back
-    /// to Save As. Enter and Space press the focused button, which `msgbox_event` keeps across the per-event forms.
-    pub(crate) fn overwrite_event(&mut self, ev: Event) -> Reply {
-        let Some(path) = self.overwrite.clone() else {
-            return Reply::none();
-        };
-        let mut fields = self.overwrite_fields(&path);
-        let step = oneshot::msgbox_event(
-            &ev,
-            &self.dialog_text,
-            &self.forms,
-            &mut fields,
-            &self.overwrite_shown,
-        );
-        self.overwrite_focus = fields.default;
-        match step {
-            FormStep::Closed => self.overwrite_outcome(form::Event::Cancel),
-            FormStep::Redraw => Reply::redraw(),
-            FormStep::None => Reply::none(),
-            FormStep::Out(out) => self.overwrite_outcome(out),
-        }
-    }
-
-    /// Yes writes over the file; No, Escape and the close box go back to Save As with the file untouched.
-    pub(crate) fn overwrite_outcome(&mut self, out: form::Event) -> Reply {
-        let Some(path) = self.overwrite.clone() else {
-            return Reply::none();
-        };
-        match out {
-            form::Event::Pressed(id) if id == msgbox::button_id(0) => {
-                self.overwrite = None;
-                self.saveas_write(path)
-            }
-            form::Event::Default | form::Event::Cancel | form::Event::Pressed(_) => {
-                self.overwrite = None;
-                Reply::redraw_all()
-            }
-            form::Event::None => Reply::none(),
-            _ => Reply::redraw(),
-        }
+    /// neither carrying an access key. Yes writes over the file; No, Escape and the close box go
+    /// back to Save As with the file untouched.
+    pub(crate) fn overwrite_box(&self, path: &Path) -> MsgBox {
+        MsgBox::new(
+            tr!("title-save-as"),
+            msgbox::Fields {
+                text: tr!("overwrite", path = path.display().to_string()),
+                icon: self.warn_icon.clone(),
+                buttons: vec![
+                    reprisekit::kit_tr!("yes-bare"),
+                    reprisekit::kit_tr!("no-bare"),
+                ],
+                default: 1,
+                min_text_h: None,
+                min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
+            },
+        )
     }
 }

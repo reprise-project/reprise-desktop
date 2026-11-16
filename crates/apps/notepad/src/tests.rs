@@ -208,7 +208,7 @@ fn find_next_selects_a_match_and_reports_a_miss() {
             multiedit::Pos { line: 0, col: 17 },
         )
     );
-    assert!(np.notfound.is_none(), "a hit raises no box");
+    assert!(np.asks.is_empty(), "a hit raises no box");
 
     np.last_query = Some((
         "zzz".into(),
@@ -219,7 +219,7 @@ fn find_next_selects_a_match_and_reports_a_miss() {
     ));
     assert!(!np.find_next());
     assert_eq!(
-        np.notfound.as_ref().map(|b| b.fields.text.as_str()),
+        np.asks.up().map(|(b, _)| b.fields.text.as_str()),
         Some("Cannot find \"zzz\""),
         "a miss names the query"
     );
@@ -819,14 +819,15 @@ fn the_not_found_box_is_its_own_child() {
         match_case: false,
         down: true,
     }));
-    np.notfound = Some(np.notfound_box("zzz"));
+    let b = np.notfound_box("zzz");
+    np.asks.ask(b, Ask::NotFound);
     let ids: Vec<_> = np.children().iter().map(|c| c.id).collect();
     assert!(ids.contains(&FIND));
-    assert!(ids.contains(&NOTFOUND));
+    assert!(ids.contains(&np.asks.win().unwrap()));
     let box_child = np
         .children()
         .into_iter()
-        .find(|c| c.id == NOTFOUND)
+        .find(|c| Some(c.id) == np.asks.win())
         .expect("the box");
     assert!(box_child.modal, "the box is modal");
     let find_child = np
@@ -900,7 +901,7 @@ fn replace_all_rewrites_the_document() {
     );
     assert_eq!(n, 3);
     assert_eq!(np.edit.text(), "bb bb\nbb");
-    assert!(np.notfound.is_none());
+    assert!(np.asks.is_empty());
 }
 
 #[test]
@@ -1007,19 +1008,18 @@ fn new_on_a_dirty_document_prompts() {
     let mut np = Notepad::new(None);
     np.dirty = true;
     let kids_before = np.children().len();
-    np.pending = Pending::waiting(PendingAction::New);
-    np.savechanges = true;
+    np.confirm_then(PendingAction::New);
     assert_eq!(np.children().len(), kids_before + 1);
-    assert_eq!(np.children().last().expect("the prompt").id, SAVECHANGES);
+    box_win(&np);
+    assert!(matches!(np.asks.up(), Some((_, Ask::SaveChanges))));
 }
 
 #[test]
 fn no_discards_and_runs_the_pending_action() {
     let mut np = Notepad::new(None);
     np.dirty = true;
-    np.pending = Pending::waiting(PendingAction::Quit);
-    np.savechanges = true;
-    let reply = np.savechanges_outcome(form::Event::Pressed(msgbox::button_id(1)));
+    np.confirm_then(PendingAction::Quit);
+    let reply = np.answer_box(Some(1));
     assert!(reply.quit);
     assert!(!np.pending.is_waiting());
 }
@@ -1029,6 +1029,7 @@ fn arrows_move_the_save_prompt_s_focus_and_enter_presses_it() {
     let mut np = Notepad::new(None);
     np.dirty = true;
     np.confirm_then(PendingAction::Quit);
+    let win = box_win(&np);
     let key = |sym, edit| KeyInput {
         sym,
         utf8: None,
@@ -1042,25 +1043,13 @@ fn arrows_move_the_save_prompt_s_focus_and_enter_presses_it() {
         })
     };
     let mut ctx = test_ctx();
-    np.event(
-        SAVECHANGES,
-        Event::Key(key(keysym::RIGHT, right())),
-        &mut ctx,
-    );
-    assert_eq!(np.savechanges_focus, 1, "Right moves from Yes to No");
-    np.event(
-        SAVECHANGES,
-        Event::Key(key(keysym::RIGHT, right())),
-        &mut ctx,
-    );
-    np.event(
-        SAVECHANGES,
-        Event::Key(key(keysym::RIGHT, right())),
-        &mut ctx,
-    );
-    assert_eq!(np.savechanges_focus, 2, "Right stops at Cancel");
-    np.event(SAVECHANGES, Event::Key(key(keysym::RETURN, None)), &mut ctx);
-    assert!(!np.savechanges, "Enter on Cancel closed the prompt");
+    np.event(win, Event::Key(key(keysym::RIGHT, right())), &mut ctx);
+    assert_eq!(focus(&np), 1, "Right moves from Yes to No");
+    np.event(win, Event::Key(key(keysym::RIGHT, right())), &mut ctx);
+    np.event(win, Event::Key(key(keysym::RIGHT, right())), &mut ctx);
+    assert_eq!(focus(&np), 2, "Right stops at Cancel");
+    np.event(win, Event::Key(key(keysym::RETURN, None)), &mut ctx);
+    assert!(np.asks.is_empty(), "Enter on Cancel closed the prompt");
     assert!(np.dirty, "Cancel kept the changes");
     assert!(!np.pending.is_waiting(), "Cancel abandoned the quit");
 }
@@ -1069,9 +1058,8 @@ fn arrows_move_the_save_prompt_s_focus_and_enter_presses_it() {
 fn cancel_on_the_prompt_abandons_the_action() {
     let mut np = Notepad::new(None);
     np.dirty = true;
-    np.pending = Pending::waiting(PendingAction::Quit);
-    np.savechanges = true;
-    let reply = np.savechanges_outcome(form::Event::Pressed(msgbox::button_id(2)));
+    np.confirm_then(PendingAction::Quit);
+    let reply = np.answer_box(Some(2));
     assert!(!reply.quit);
     assert!(np.dirty, "still dirty");
     assert!(!np.pending.is_waiting());
@@ -1127,7 +1115,7 @@ fn a_typed_path_into_a_missing_folder_shows_a_box_and_keeps_the_dialog() {
             .asking()
             .expect("a box over the dialog says the folder is missing");
         assert_eq!(msg.title, sample_filedlg().title());
-        assert!(!np.error.is_shown(), "not one over the main window");
+        assert!(np.asks.is_empty(), "not one over the main window");
     }
 }
 
@@ -1297,20 +1285,19 @@ fn failed_save_on_the_prompt_raises_the_box_and_drops_the_action() {
     let mut np = Notepad::new(None);
     np.path = Some(std::env::temp_dir().join("reprise-no-such-dir/x.txt"));
     np.dirty = true;
-    np.pending = Pending::waiting(PendingAction::Quit);
-    np.savechanges = true;
-    let reply = np.savechanges_yes();
+    np.confirm_then(PendingAction::Quit);
+    let reply = np.answer_box(Some(0));
     assert!(!reply.quit);
     assert!(!np.pending.is_waiting());
     assert!(np.dirty);
     assert!(
-        np.error
-            .shown()
-            .is_some_and(|b| b.fields.text.starts_with("Cannot create the "))
+        np.asks
+            .up()
+            .is_some_and(|(b, _)| b.fields.text.starts_with("Cannot create the "))
     );
     assert_eq!(
         np.children().last().expect("the box").id,
-        np.error.win().expect("the box")
+        np.asks.win().expect("the box")
     );
 }
 
@@ -1323,7 +1310,8 @@ fn a_file_that_is_not_utf8_opens_as_an_untitled_copy() {
     let mut np = Notepad::new(Some(latin1.clone()));
     assert_eq!(np.path, None);
     assert_eq!(np.edit.text(), "");
-    assert_eq!(np.children().last().expect("the prompt").id, LOSSY);
+    let win = box_win(&np);
+    assert!(matches!(np.asks.up(), Some((_, Ask::Lossy(_)))));
     let enter = KeyInput {
         sym: keysym::RETURN,
         utf8: None,
@@ -1331,8 +1319,8 @@ fn a_file_that_is_not_utf8_opens_as_an_untitled_copy() {
         edit: None,
     };
     let mut ctx = test_ctx();
-    np.event(LOSSY, Event::Key(enter), &mut ctx);
-    assert!(np.lossy.is_none(), "Yes closed the prompt");
+    np.event(win, Event::Key(enter), &mut ctx);
+    assert!(np.asks.is_empty(), "Yes closed the prompt");
     assert_eq!(np.edit.text(), "caf\u{fffd}");
     assert_eq!(np.path, None);
     assert_eq!(std::fs::read(&latin1).expect("read"), b"caf\xe9");
@@ -1348,7 +1336,7 @@ fn a_device_or_folder_on_the_command_line_raises_the_box() {
         let np = Notepad::new(Some(PathBuf::from(p)));
         assert_eq!(np.path, None);
         assert_eq!(np.edit.text(), "");
-        let text = &np.error.shown().expect("the box").fields.text;
+        let text = &np.asks.up().expect("the box").0.fields.text;
         assert_eq!(text, &format!("Cannot open {p}.\nIt is not a file."));
     }
 }
@@ -1358,7 +1346,7 @@ fn a_draw_failure_raises_the_box_with_the_systems_error() {
     let mut np = Notepad::new(None);
     np.draw_failed("Too many open files");
     assert_eq!(
-        np.error.shown().expect("the box").fields.text,
+        np.asks.up().expect("the box").0.fields.text,
         "Notepad cannot draw its window: Too many open files.\nClose some programs and try again."
     );
 }
@@ -1377,7 +1365,7 @@ fn a_failed_open_from_the_dialog_raises_the_box_over_it() {
     assert!(np.open.is_some(), "the dialog stays up");
     assert_eq!(np.path, None);
     assert_eq!(
-        np.error.shown().expect("the box").fields.text,
+        np.asks.up().expect("the box").0.fields.text,
         format!(
             "{}\nFile not found.\nPlease verify the correct file name was given.",
             missing.display()
@@ -1472,20 +1460,20 @@ fn save_as_onto_an_existing_file_asks_before_replacing() {
         reprisekit::controls::filedlg::Event::Accept(vec![name.clone()]),
         &mut test_icons(),
     );
-    assert_eq!(np.overwrite.as_deref(), Some(taken.as_path()));
+    assert_eq!(overwriting(&np), Some(taken.as_path()));
     assert_eq!(
         std::fs::read_to_string(&taken).unwrap(),
         "old",
         "nothing written yet"
     );
     assert!(np.saveas.is_some(), "Save As stays open behind the prompt");
-    assert_eq!(np.children().last().expect("the prompt").id, OVERWRITE);
-    let f = np.overwrite_fields(&taken);
+    box_win(&np);
+    let f = &np.asks.up().unwrap().0.fields;
     assert_eq!(f.buttons, ["Yes", "No"]);
     assert_eq!(f.default, 1, "defaults to No");
 
-    np.overwrite_outcome(form::Event::Default);
-    assert!(np.overwrite.is_none());
+    np.answer_box(Some(1));
+    assert!(np.asks.is_empty());
     assert_eq!(std::fs::read_to_string(&taken).unwrap(), "old");
     assert!(np.saveas.is_some());
 
@@ -1493,10 +1481,10 @@ fn save_as_onto_an_existing_file_asks_before_replacing() {
         reprisekit::controls::filedlg::Event::Accept(vec![name]),
         &mut test_icons(),
     );
-    np.overwrite_outcome(form::Event::Pressed(msgbox::button_id(0)));
+    np.answer_box(Some(0));
     assert_eq!(std::fs::read_to_string(&taken).unwrap(), "new");
     assert_eq!(np.path.as_deref(), Some(taken.as_path()));
-    assert!(np.overwrite.is_none());
+    assert!(np.asks.is_empty());
     assert!(np.saveas.is_none());
     let _ = std::fs::remove_file(&taken);
 }
@@ -1531,12 +1519,13 @@ fn an_arrow_moves_the_replace_prompt_s_focus_and_enter_presses_it() {
         })
     };
     let mut ctx = test_ctx();
-    np.event(OVERWRITE, key(keysym::LEFT, left()), &mut ctx);
-    assert_eq!(np.overwrite_focus, 0, "Left moves from No to Yes");
-    np.event(OVERWRITE, key(keysym::LEFT, left()), &mut ctx);
-    assert_eq!(np.overwrite_focus, 0, "Left stops at Yes");
-    np.event(OVERWRITE, key(keysym::RETURN, None), &mut ctx);
-    assert!(np.overwrite.is_none(), "Enter closed the prompt");
+    let win = box_win(&np);
+    np.event(win, key(keysym::LEFT, left()), &mut ctx);
+    assert_eq!(focus(&np), 0, "Left moves from No to Yes");
+    np.event(win, key(keysym::LEFT, left()), &mut ctx);
+    assert_eq!(focus(&np), 0, "Left stops at Yes");
+    np.event(win, key(keysym::RETURN, None), &mut ctx);
+    assert!(np.asks.is_empty(), "Enter closed the prompt");
     assert_eq!(
         std::fs::read_to_string(&taken).unwrap(),
         "new",
@@ -1559,7 +1548,7 @@ fn save_as_onto_a_dangling_symlink_asks_before_replacing() {
         reprisekit::controls::filedlg::Event::Accept(vec![name]),
         &mut test_icons(),
     );
-    assert_eq!(np.overwrite.as_deref(), Some(link.as_path()));
+    assert_eq!(overwriting(&np), Some(link.as_path()));
     let _ = std::fs::remove_file(&link);
 }
 
@@ -1588,8 +1577,11 @@ fn cancelling_save_as_abandons_the_pending_quit() {
     np.edit = MultiEdit::new("hello");
     np.dirty = true;
     np.confirm_then(PendingAction::Quit);
-    assert!(np.savechanges, "the save prompt opened first");
-    let reply = np.savechanges_outcome(form::Event::Default);
+    assert!(
+        matches!(np.asks.up(), Some((_, Ask::SaveChanges))),
+        "the save prompt opened first"
+    );
+    let reply = np.answer_box(Some(0));
     assert!(np.saveas.is_some(), "an untitled document opens Save As");
     assert!(np.pending.is_waiting(), "still pending, waiting on Save As");
     assert!(!reply.quit);
@@ -1723,7 +1715,7 @@ fn a_typed_wildcard_filters_the_open_dialog() {
         &mut ctx,
     );
     np.open_event(key(keysym::RETURN), &mut ctx);
-    assert!(!np.error.is_shown(), "no box");
+    assert!(np.asks.is_empty(), "no box");
     let dlg = np.open.as_ref().expect("the dialog stays open");
     assert_eq!(dlg.file_name(), "*");
     let mut names: Vec<&str> = dlg.entries().iter().map(|e| e.name.as_str()).collect();
@@ -1836,10 +1828,10 @@ fn a_rescued_document_is_offered_at_the_next_start_and_its_file_goes_once_saved(
     let mut next = Notepad::new(None);
     next.rescue_dir = Some(dir.clone());
     next.offer_recovered();
-    assert_eq!(next.children().last().expect("the prompt").id, RECOVERED);
+    let win = box_win(&next);
     let mut ctx = test_ctx();
-    next.event(RECOVERED, typed(keysym::RETURN, None, false), &mut ctx);
-    assert!(next.recovered.is_none(), "Yes closed the prompt");
+    next.event(win, typed(keysym::RETURN, None, false), &mut ctx);
+    assert!(next.asks.is_empty(), "Yes closed the prompt");
     assert_eq!(next.edit.text(), "unsaved");
     assert_eq!(next.path, None);
     assert!(next.dirty);
@@ -1863,11 +1855,15 @@ fn declining_a_recovered_document_deletes_it_and_offers_the_next() {
     np.rescue_dir = Some(dir.clone());
     np.offer_recovered();
     let mut ctx = test_ctx();
-    np.recovered.as_mut().expect("the prompt").0.fields.default = 1;
-    np.event(RECOVERED, typed(keysym::RETURN, None, false), &mut ctx);
+    np.asks.up_mut().expect("the prompt").fields.default = 1;
+    np.event(
+        np.asks.win().unwrap(),
+        typed(keysym::RETURN, None, false),
+        &mut ctx,
+    );
     assert!(!first.exists(), "No deletes the file");
     assert_eq!(
-        np.recovered.as_ref().map(|(_, f)| f),
+        recovered_file(&np),
         Some(&second),
         "the next file is offered"
     );
@@ -1891,14 +1887,19 @@ fn a_save_over_a_file_changed_on_disk_asks_first() {
     np.dirty = true;
 
     assert!(!np.save());
-    assert_eq!(np.children().last().expect("the prompt").id, CHANGED);
+    box_win(&np);
+    assert!(matches!(np.asks.up(), Some((_, Ask::Changed))));
     assert_eq!(std::fs::read_to_string(&path).expect("read"), "theirs");
     assert!(np.dirty);
 
     let mut ctx = test_ctx();
-    np.changed.as_mut().expect("the prompt").fields.default = 0;
-    np.event(CHANGED, typed(keysym::RETURN, None, false), &mut ctx);
-    assert!(np.changed.is_none(), "Yes closed the prompt");
+    np.asks.up_mut().expect("the prompt").fields.default = 0;
+    np.event(
+        np.asks.win().unwrap(),
+        typed(keysym::RETURN, None, false),
+        &mut ctx,
+    );
+    assert!(np.asks.is_empty(), "Yes closed the prompt");
     assert_eq!(std::fs::read_to_string(&path).expect("read"), "edited");
     assert!(!np.dirty);
     assert!(np.save(), "the save took the file's new stamp");
@@ -1984,4 +1985,128 @@ fn time_date_writes_the_time_then_the_locales_short_date() {
         "21:05"
     };
     assert_eq!(time, Some(want), "{stamp:?}");
+}
+
+/// The window of the box up, which is the last child.
+fn box_win(np: &Notepad) -> WinId {
+    let win = np.asks.win().expect("a box is up");
+    assert_eq!(np.children().last().map(|c| c.id), Some(win));
+    win
+}
+
+/// The button the box up has the focus on.
+fn focus(np: &Notepad) -> usize {
+    np.asks.up().expect("a box is up").0.fields.default
+}
+
+fn overwriting(np: &Notepad) -> Option<&Path> {
+    match np.asks.up() {
+        Some((_, Ask::Overwrite(p))) => Some(p),
+        _ => None,
+    }
+}
+
+fn recovered_file(np: &Notepad) -> Option<&PathBuf> {
+    match np.asks.up() {
+        Some((_, Ask::Recovered(f))) => Some(f),
+        _ => None,
+    }
+}
+
+impl Notepad {
+    /// Answers the box up with `button`, `None` for Escape and the close box.
+    pub(crate) fn answer_box(&mut self, button: Option<usize>) -> Reply {
+        let ask = self.asks.close().expect("a box is up");
+        self.answered(ask, button)
+    }
+}
+
+#[test]
+fn save_changes_with_an_error_raised_behind_it_keeps_the_pending_action_and_yes_runs_it() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("notes.txt");
+    std::fs::write(&path, "old").expect("write");
+    let mut np = Notepad::new(Some(path.clone()));
+    np.edit = MultiEdit::new("new");
+    np.dirty = true;
+    np.confirm_then(PendingAction::Quit);
+    np.confirm_then(PendingAction::Quit);
+    assert_eq!(np.asks.len(), 1, "Save changes is asked once");
+    np.draw_failed("Too many open files");
+    assert!(
+        matches!(np.asks.up(), Some((_, Ask::SaveChanges))),
+        "the error waits behind Save changes"
+    );
+    let mut ctx = test_ctx();
+    let win = box_win(&np);
+    let reply = np.event(win, typed(keysym::RETURN, None, false), &mut ctx);
+    assert!(reply.quit, "Yes saved and ran the pending quit");
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "new");
+    assert!(matches!(np.asks.up(), Some((_, Ask::Error))));
+}
+
+#[test]
+fn two_recovered_files_ask_in_turn() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().to_path_buf();
+    write_recovery(&dir, 1, "a", &["a"], Format::default()).expect("write");
+    write_recovery(&dir, 2, "b", &["b"], Format::default()).expect("write");
+    let mut ctx = test_ctx();
+    let mut np = Notepad::new(None);
+    np.rescue_dir = Some(dir.clone());
+    np.offer_recovered();
+    assert_eq!(np.asks.len(), 2, "the second waits behind the first");
+    let (first, win) = (recovered_file(&np).cloned().unwrap(), box_win(&np));
+    np.asks.up_mut().unwrap().fields.default = 1;
+    np.event(win, typed(keysym::RETURN, None, false), &mut ctx);
+    assert!(!first.exists(), "No deleted the first");
+    let second = recovered_file(&np).cloned().expect("the second is up");
+    assert_ne!(box_win(&np), win, "in a fresh window");
+    np.answer_box(None);
+    assert!(np.asks.is_empty());
+    assert!(second.exists(), "closing the box keeps the file");
+
+    write_recovery(&dir, 3, "c", &["c"], Format::default()).expect("write");
+    let mut np = Notepad::new(None);
+    np.rescue_dir = Some(dir.clone());
+    np.offer_recovered();
+    np.answer_box(Some(0));
+    assert!(np.asks.is_empty(), "Yes on one offers no more");
+    assert_eq!(recovered_in(&dir).len(), 2, "and keeps both files");
+}
+
+#[test]
+fn the_overwrite_question_is_withdrawn_when_save_as_closes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let taken = tmp.path().join("taken.txt");
+    std::fs::write(&taken, "old").expect("write");
+    let mut np = Notepad::new(None);
+    np.edit = MultiEdit::new("new");
+    np.saveas = Some(sample_filedlg());
+    np.host.folder = Some(np.host.folders.id(tmp.path()));
+    np.saveas_accept("taken.txt", &mut test_icons());
+    let win = box_win(&np);
+    assert_eq!(np.parent(win), Some(SAVEAS), "the question covers Save As");
+    np.saveas_outcome(FileEvent::Cancel, &mut test_icons());
+    assert!(np.saveas.is_none());
+    assert!(np.asks.is_empty(), "the question went with Save As");
+    assert_eq!(std::fs::read_to_string(&taken).unwrap(), "old");
+}
+
+#[test]
+fn an_icon_that_decodes_late_reaches_a_waiting_box() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().to_path_buf();
+    write_recovery(&dir, 1, "a", &["a"], Format::default()).expect("write");
+    write_recovery(&dir, 2, "b", &["b"], Format::default()).expect("write");
+    let mut np = Notepad::new(None);
+    np.rescue_dir = Some(dir);
+    np.offer_recovered();
+    assert!(np.asks.iter().all(|(b, _)| b.fields.icon.is_none()));
+    np.warn_icon = Some(Canvas::new(32, 32));
+    np.prime(&mut test_ctx());
+    assert!(
+        np.asks.iter().all(|(b, _)| b.fields.icon.is_some()),
+        "the box up and the one waiting both have the icon"
+    );
 }

@@ -47,7 +47,8 @@ impl Notepad {
                 true
             }
             None => {
-                self.notfound = Some(self.notfound_box(&query));
+                let b = self.notfound_box(&query);
+                self.asks.ask(b, Ask::NotFound);
                 false
             }
         }
@@ -245,20 +246,6 @@ impl Notepad {
             }
             form::Event::None => Reply::none(),
             _ => Reply::redraw(),
-        }
-    }
-
-    pub(crate) fn notfound_event(&mut self, ev: Event) -> Reply {
-        let Some(b) = &mut self.notfound else {
-            return Reply::none();
-        };
-        match b.event(&ev, &self.dialog_text, &self.forms) {
-            oneshot::Outcome::Closed(_) => {
-                self.notfound = None;
-                Reply::redraw_all()
-            }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
         }
     }
 }

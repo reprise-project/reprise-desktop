@@ -1,6 +1,23 @@
-//! Go To, About and the error box, and the event loop the form dialogs share.
+//! Go To, About, the message boxes and what their answers do, and the event loop the form
+//! dialogs share.
 
 use super::*;
+
+/// What a box in `Notepad::asks` asks, and what its answer acts on.
+pub(crate) enum Ask {
+    /// Save changes; the action waiting on it is `Notepad::pending`.
+    SaveChanges,
+    /// The file changed on disk since it was opened or saved; Yes writes over it.
+    Changed,
+    /// The file did not decode; Yes shows this lossy copy.
+    Lossy(String),
+    /// A recovery file; Yes opens its text.
+    Recovered(PathBuf),
+    /// Save As picked a name another file has; Yes writes over it.
+    Overwrite(PathBuf),
+    NotFound,
+    Error,
+}
 
 const GOTO_LINE: &str = "line";
 const GOTO_OK: &str = "ok";
@@ -202,10 +219,39 @@ impl Notepad {
         }
     }
 
-    /// Shows `text` in the error box.
+    /// Shows `text` in an error box once the boxes before it are answered. An error equal to one
+    /// up or waiting is shown once.
     pub(crate) fn fail(&mut self, text: &str) {
-        let icon = self.warn_icon.clone();
-        self.error.show(&tr!("name"), text.into(), icon);
+        let shown = |(b, ask): (&MsgBox, &Ask)| matches!(ask, Ask::Error) && b.fields.text == text;
+        if !self.asks.iter().any(shown) {
+            let b = ok_box(text.into(), self.warn_icon.clone());
+            self.asks.ask(b, Ask::Error);
+        }
+    }
+
+    pub(crate) fn ask_event(&mut self, win: WinId, ev: Event) -> Reply {
+        match self.asks.event(win, &ev, &self.dialog_text, &self.forms) {
+            Answer::None => Reply::none(),
+            Answer::Redraw => Reply::redraw(),
+            Answer::Closed(ask, button) => self.answered(ask, button),
+        }
+    }
+
+    /// `ask` closed on `button`, `None` for Escape and the close box.
+    pub(crate) fn answered(&mut self, ask: Ask, button: Option<usize>) -> Reply {
+        match ask {
+            Ask::SaveChanges => self.savechanges_answered(button),
+            Ask::Changed => self.changed_answered(button),
+            Ask::Lossy(text) => {
+                if button == Some(0) {
+                    self.show_lossy(&text);
+                }
+                Reply::redraw_all()
+            }
+            Ask::Recovered(file) => self.recovered_answered(file, button),
+            Ask::Overwrite(path) if button == Some(0) => self.saveas_write(path),
+            Ask::Overwrite(_) | Ask::NotFound | Ask::Error => Reply::redraw_all(),
+        }
     }
 
     pub(crate) fn about_fields(&self) -> aboutbox::Fields {
@@ -220,16 +266,6 @@ impl Notepad {
         let w = u.len(aboutbox::CLIENT.0);
         f.set_picture("banner", aboutbox::banner_wide(text, px, w, u));
         f
-    }
-
-    pub(crate) fn msgbox_size(&self, fields: &msgbox::Fields) -> (i32, i32) {
-        let u = self.forms.text;
-        u.size(msgbox::client(
-            fields,
-            &self.dialog_text,
-            self.forms.fonts.size_px,
-            u,
-        ))
     }
 
     /// About's own loop.

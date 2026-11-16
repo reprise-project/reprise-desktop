@@ -9,13 +9,14 @@ impl Notepad {
     }
 
     /// False when there is nowhere to write yet (the caller opens Save As), when the write failed,
-    /// or when the file changed on disk and `changed` now asks whether to write anyway.
+    /// or when the file changed on disk and a box now asks whether to write anyway.
     pub(crate) fn save(&mut self) -> bool {
         let Some(p) = self.path.clone() else {
             return false;
         };
         if Stamp::of(&p) != self.stamp {
-            self.changed = Some(self.changed_box(&p));
+            let b = self.changed_box(&p);
+            self.asks.ask(b, Ask::Changed);
             return false;
         }
         self.save_anyway()
@@ -42,25 +43,15 @@ impl Notepad {
 
     /// Yes writes over the other program's change and runs the action waiting on the save; No
     /// keeps the file and drops the action.
-    pub(crate) fn changed_event(&mut self, ev: Event) -> Reply {
-        let Some(b) = &mut self.changed else {
-            return Reply::none();
-        };
-        match b.event(&ev, &self.dialog_text, &self.forms) {
-            oneshot::Outcome::Closed(answer) => {
-                self.changed = None;
-                if answer != Some(0) {
-                    self.pending.cancelled();
-                    return Reply::redraw_all();
-                }
-                let ok = self.save_anyway();
-                match self.pending.saved(ok) {
-                    Some(action) => self.run_pending(action),
-                    None => Reply::redraw_all(),
-                }
-            }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
+    pub(crate) fn changed_answered(&mut self, answer: Option<usize>) -> Reply {
+        if answer != Some(0) {
+            self.pending.cancelled();
+            return Reply::redraw_all();
+        }
+        let ok = self.save_anyway();
+        match self.pending.saved(ok) {
+            Some(action) => self.run_pending(action),
+            None => Reply::redraw_all(),
         }
     }
 
@@ -113,34 +104,21 @@ impl Notepad {
                     max_w: repriseapp::dialog_max_w(),
                 },
             );
-            self.lossy = Some((prompt, text));
+            self.asks.ask(prompt, Ask::Lossy(text));
             return;
         }
         self.fail(&open_failed_text(path, e));
     }
 
-    /// Yes shows the copy as Untitled, so a save cannot write the replaced characters over the
-    /// file.
-    pub(crate) fn lossy_event(&mut self, ev: Event) -> Reply {
-        let Some((b, _)) = &mut self.lossy else {
-            return Reply::none();
+    /// The lossy copy's Yes: shown as Untitled, so a save cannot write the replaced characters
+    /// over the file.
+    pub(crate) fn show_lossy(&mut self, text: &str) {
+        let line_end = document::LineEnd::of(text);
+        let format = Format {
+            line_end,
+            ..Format::default()
         };
-        match b.event(&ev, &self.dialog_text, &self.forms) {
-            oneshot::Outcome::Closed(answer) => {
-                let (_, text) = self.lossy.take().expect("checked above");
-                if answer == Some(0) {
-                    let line_end = document::LineEnd::of(&text);
-                    let format = Format {
-                        line_end,
-                        ..Format::default()
-                    };
-                    self.show_document(&text, format, None);
-                }
-                Reply::redraw_all()
-            }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
-        }
+        self.show_document(text, format, None);
     }
 
     /// Leaves unsaved text in the recovery dir, in place of the recovery file it was opened from.
@@ -173,20 +151,17 @@ impl Notepad {
 
     /// Offers the recovery files left in the recovery dir, one prompt at a time.
     pub(crate) fn offer_recovered(&mut self) {
-        self.recover_queue = self
-            .rescue_dir
-            .as_deref()
+        let files = (self.rescue_dir.as_deref())
             .map(recovered_in)
             .unwrap_or_default();
-        self.offer_next_recovered();
+        for file in files {
+            let prompt = self.recovered_box();
+            self.asks.ask(prompt, Ask::Recovered(file));
+        }
     }
 
-    fn offer_next_recovered(&mut self) {
-        if self.recover_queue.is_empty() {
-            return;
-        }
-        let file = self.recover_queue.remove(0);
-        let prompt = MsgBox::new(
+    fn recovered_box(&self) -> MsgBox {
+        MsgBox::new(
             tr!("name"),
             msgbox::Fields {
                 text: tr!("recovered"),
@@ -200,44 +175,35 @@ impl Notepad {
                 min_w: 0,
                 max_w: repriseapp::dialog_max_w(),
             },
-        );
-        self.recovered = Some((prompt, file));
+        )
     }
 
-    /// Yes opens the text as an unsaved Untitled document and offers no more files; No deletes
-    /// the file and offers the next. Closing the prompt keeps the files for the next start.
-    pub(crate) fn recovered_event(&mut self, ev: Event) -> Reply {
-        let Some((b, _)) = &mut self.recovered else {
-            return Reply::none();
-        };
-        match b.event(&ev, &self.dialog_text, &self.forms) {
-            oneshot::Outcome::Closed(answer) => {
-                let (_, file) = self.recovered.take().expect("checked above");
-                match answer {
-                    Some(0) => {
-                        self.recover_queue.clear();
-                        match read_text(&file) {
-                            Ok((text, format)) => {
-                                self.show_document(&text, format, None);
-                                self.dirty = true;
-                                self.rescued = Some(file);
-                            }
-                            Err(e) => self.open_failed(&file, &e),
-                        }
+    /// Yes opens the text of `file` as an unsaved Untitled document and offers no more files; No
+    /// deletes the file and the next is offered. Closing the prompt keeps the files for the next
+    /// start.
+    pub(crate) fn recovered_answered(&mut self, file: PathBuf, answer: Option<usize>) -> Reply {
+        match answer {
+            Some(0) => {
+                self.asks.withdraw(|ask| matches!(ask, Ask::Recovered(_)));
+                match read_text(&file) {
+                    Ok((text, format)) => {
+                        self.show_document(&text, format, None);
+                        self.dirty = true;
+                        self.rescued = Some(file);
                     }
-                    Some(_) => {
-                        if let Err(e) = std::fs::remove_file(&file) {
-                            log::warn!("remove {}: {e}", file.display());
-                        }
-                        self.offer_next_recovered();
-                    }
-                    None => self.recover_queue.clear(),
+                    Err(e) => self.open_failed(&file, &e),
                 }
-                Reply::redraw_all()
             }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
+            Some(_) => {
+                if let Err(e) = std::fs::remove_file(&file) {
+                    log::warn!("remove {}: {e}", file.display());
+                }
+            }
+            None => {
+                self.asks.withdraw(|ask| matches!(ask, Ask::Recovered(_)));
+            }
         }
+        Reply::redraw_all()
     }
 
     /// The recovered document was saved or discarded: its recovery file goes.
@@ -249,38 +215,42 @@ impl Notepad {
         }
     }
 
-    pub(crate) fn savechanges_fields(&self) -> msgbox::Fields {
+    fn savechanges_box(&self) -> MsgBox {
         let name = self
             .path
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| tr!("untitled"));
-        msgbox::Fields {
-            text: tr!("save-changes", name = name),
-            icon: self.warn_icon.clone(),
-            buttons: vec![
-                reprisekit::kit_tr!("yes"),
-                reprisekit::kit_tr!("no"),
-                reprisekit::kit_tr!("cancel"),
-            ],
-            default: self.savechanges_focus,
-            min_text_h: None,
-            min_w: 0,
-            max_w: repriseapp::dialog_max_w(),
-        }
+        MsgBox::new(
+            tr!("name"),
+            msgbox::Fields {
+                text: tr!("save-changes", name = name),
+                icon: self.warn_icon.clone(),
+                buttons: vec![
+                    reprisekit::kit_tr!("yes"),
+                    reprisekit::kit_tr!("no"),
+                    reprisekit::kit_tr!("cancel"),
+                ],
+                default: 0,
+                min_text_h: None,
+                min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
+            },
+        )
     }
 
+    /// Runs `action` on a clean document; on a dirty one it waits on Save changes, which is
+    /// asked once however often the action is.
     pub(crate) fn confirm_then(&mut self, action: PendingAction) -> Reply {
-        match self.pending.ask(action, self.dirty) {
-            Some(action) => self.run_pending(action),
-            None => {
-                self.savechanges = true;
-                self.savechanges_focus = 0;
-                self.savechanges_shown = oneshot::Shown::default();
-                Reply::redraw_all()
+        let Some(action) = self.pending.ask(action, self.dirty) else {
+            if !(self.asks.iter()).any(|(_, ask)| matches!(ask, Ask::SaveChanges)) {
+                let b = self.savechanges_box();
+                self.asks.ask(b, Ask::SaveChanges);
             }
-        }
+            return Reply::redraw_all();
+        };
+        self.run_pending(action)
     }
 
     pub(crate) fn run_pending(&mut self, action: PendingAction) -> Reply {
@@ -313,13 +283,12 @@ impl Notepad {
 
     /// With nowhere to write yet, Save As opens and the action keeps waiting on it.
     pub(crate) fn savechanges_yes(&mut self) -> Reply {
-        self.savechanges = false;
         if self.path.is_none() {
             self.saveas_dialog();
             return Reply::redraw_all();
         }
         let ok = self.save();
-        if self.changed.is_some() {
+        if (self.asks.iter()).any(|(_, ask)| matches!(ask, Ask::Changed)) {
             return Reply::redraw_all();
         }
         match self.pending.saved(ok) {
@@ -328,34 +297,12 @@ impl Notepad {
         }
     }
 
-    pub(crate) fn savechanges_event(&mut self, ev: Event) -> Reply {
-        let mut fields = self.savechanges_fields();
-        let step = oneshot::msgbox_event(
-            &ev,
-            &self.dialog_text,
-            &self.forms,
-            &mut fields,
-            &self.savechanges_shown,
-        );
-        self.savechanges_focus = fields.default;
-        match step {
-            FormStep::Closed => {
-                self.savechanges = false;
-                self.pending.cancelled();
-                Reply::redraw_all()
-            }
-            FormStep::Redraw => Reply::redraw(),
-            FormStep::None => Reply::none(),
-            FormStep::Out(out) => self.savechanges_outcome(out),
-        }
-    }
-
-    pub(crate) fn savechanges_outcome(&mut self, out: form::Event) -> Reply {
-        match out {
-            form::Event::Default => self.savechanges_yes(),
-            form::Event::Pressed(id) if id == msgbox::button_id(0) => self.savechanges_yes(),
-            form::Event::Pressed(id) if id == msgbox::button_id(1) => {
-                self.savechanges = false;
+    /// Yes saves, No discards the changes, and either runs the action waiting; Cancel, Escape and
+    /// the close box drop it.
+    pub(crate) fn savechanges_answered(&mut self, button: Option<usize>) -> Reply {
+        match button {
+            Some(0) => self.savechanges_yes(),
+            Some(1) => {
                 self.dirty = false;
                 self.forget_rescued();
                 match self.pending.discarded() {
@@ -363,13 +310,10 @@ impl Notepad {
                     None => Reply::redraw_all(),
                 }
             }
-            form::Event::Cancel | form::Event::Pressed(_) => {
-                self.savechanges = false;
+            _ => {
                 self.pending.cancelled();
                 Reply::redraw_all()
             }
-            form::Event::None => Reply::none(),
-            _ => Reply::redraw(),
         }
     }
 }

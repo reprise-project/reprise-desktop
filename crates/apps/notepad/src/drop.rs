@@ -173,10 +173,8 @@ impl Notepad {
 #[cfg(test)]
 mod tests {
     use crate::tests::test_ctx;
-    use crate::{MAIN, Notepad};
+    use crate::{Ask, MAIN, Notepad};
     use repriseapp::{Actions, App, DragAction, DropKind, Dropped, Event, Offered};
-    use reprisekit::controls::form;
-    use reprisekit::controls::msgbox;
     use std::path::PathBuf;
 
     fn enter(offered: Offered) -> Event {
@@ -394,9 +392,12 @@ mod tests {
             drop(Dropped::Files(vec![p.clone()]), DragAction::Copy),
             &mut ctx,
         );
-        assert!(np.savechanges, "the save prompt is up");
+        assert!(
+            matches!(np.asks.up(), Some((_, Ask::SaveChanges))),
+            "the save prompt is up"
+        );
         assert_eq!(np.edit.text(), "mine");
-        np.savechanges_outcome(form::Event::Pressed(msgbox::button_id(1)));
+        np.answer_box(Some(1));
         assert_eq!(np.edit.text(), "theirs", "No opens the dropped file");
         let _ = std::fs::remove_file(p);
     }
