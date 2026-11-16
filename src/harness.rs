@@ -732,6 +732,33 @@ impl Harness {
         surface
     }
 
+    /// A full-width panel on the bottom layer (under the windows) of the output under the
+    /// pointer, anchored to its top and reserving `zone` px, configured and mapped.
+    pub fn map_reserving_panel(&mut self, c: &mut TestClient, zone: i32) -> WlSurface {
+        use zwlr_layer_surface_v1::Anchor;
+        let qh = c.qh();
+        let surface = (c.side.compositor.as_ref())
+            .expect("wl_compositor")
+            .create_surface(&qh, ());
+        let layer = (c.side.layer_shell.as_ref())
+            .expect("zwlr_layer_shell_v1")
+            .get_layer_surface(
+                &surface,
+                None,
+                zwlr_layer_shell_v1::Layer::Bottom,
+                "test.panel".into(),
+                &qh,
+                surface.clone(),
+            );
+        layer.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
+        layer.set_size(0, zone as u32);
+        layer.set_exclusive_zone(zone);
+        surface.commit();
+        self.roundtrip(c);
+        self.roundtrip(c);
+        surface
+    }
+
     /// A `w`x`h` xdg popup on a fresh top-layer panel in the output's top-left corner, both
     /// mapped with their first buffers, as a panel's menu opens.
     pub fn map_layer_popup(&mut self, c: &mut TestClient, w: i32, h: i32) -> Popup {

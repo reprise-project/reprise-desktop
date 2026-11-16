@@ -174,6 +174,9 @@ pub enum Target {
 }
 
 pub fn edge_zone(work: Rect, zones: &[Rect], left: bool, y: i32) -> Option<usize> {
+    if work.width <= 0 || work.height <= 0 {
+        return None;
+    }
     let y = y.clamp(work.y, work.bottom() - 1);
     zones.iter().position(|z| {
         let on_edge = if left {
@@ -926,6 +929,15 @@ mod tests {
         assert_eq!(on_a(5, 5), Some(Target::Corner { quarter: 0 }));
         assert_eq!(on_b(3835, 1385), Some(Target::Corner { quarter: 3 }));
         assert_eq!(outer_sides(a, &[a], 5, 5), EVERY_SIDE, "a lone output");
+    }
+
+    #[test]
+    fn an_empty_work_area_snaps_no_side_edge() {
+        let work = Rect::new(0, 100, 1920, 0);
+        let halves = [Rect::new(0, 100, 960, 0), Rect::new(960, 100, 960, 0)];
+        let outer = Edges::LEFT | Edges::TOP;
+        assert_eq!(edge_target(work, &halves, BAND, outer, 0, 500), None);
+        assert_eq!(edge_zone(work, &halves, true, 500), None);
     }
 
     #[test]
