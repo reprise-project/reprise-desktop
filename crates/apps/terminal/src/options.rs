@@ -23,7 +23,7 @@ const TAB_POSITIONS: [(&str, TabPosition); 2] = [
     ("Below the toolbar", TabPosition::Below),
     ("In the title bar", TabPosition::Caption),
 ];
-const SIZE_PX: (i32, i32) = (6, 48);
+const SIZE_PX: (i32, i32) = (crate::ZOOM.0 as i32, crate::ZOOM.1 as i32);
 /// The trackbar's first position is this opacity, in percent.
 const OPACITY_MIN: usize = 10;
 const OPACITY_STEPS: usize = 91;
@@ -448,6 +448,17 @@ mod tests {
     fn the_fields_read_back_the_settings_they_were_built_from() {
         for s in [Settings::default(), other()] {
             assert_eq!(Options::new(&s).settings(), s);
+        }
+    }
+
+    #[test]
+    fn the_size_spin_holds_every_size_zoom_reaches() {
+        for size_px in [crate::ZOOM.0, crate::ZOOM.1] {
+            let s = Settings {
+                size_px,
+                ..Settings::default()
+            };
+            assert_eq!(Options::new(&s).settings().size_px, size_px);
         }
     }
 
