@@ -1407,7 +1407,8 @@ pub fn icon_for_app_id<'a>(entries: &'a [AppEntry], app_id: &str) -> Option<&'a 
     entry_for_app_id(entries, app_id, |e| e.icon.is_some()).and_then(|e| e.icon.as_deref())
 }
 
-/// Matches the id without `.desktop`, else `StartupWMClass`, both case-insensitively.
+/// Matches the [`DesktopId::stem`], else `StartupWMClass`, both case-insensitively: a window's
+/// app id or X11 class often differs in case from its file's name.
 pub fn entry_for_app_id<'a>(
     entries: &'a [AppEntry],
     app_id: &str,
@@ -1417,14 +1418,9 @@ pub fn entry_for_app_id<'a>(
         return None;
     }
     let want_id = app_id.to_lowercase();
-    let by_id = entries.iter().find(|e| {
-        want(e)
-            && e.id
-                .strip_suffix(".desktop")
-                .unwrap_or(&e.id)
-                .to_lowercase()
-                == want_id
-    });
+    let by_id = entries
+        .iter()
+        .find(|e| want(e) && DesktopId::stem_of(&e.id).to_lowercase() == want_id);
     by_id.or_else(|| {
         entries.iter().find(|e| {
             want(e)
@@ -1435,7 +1431,9 @@ pub fn entry_for_app_id<'a>(
     })
 }
 
+mod desktopid;
 mod trust;
+pub use desktopid::DesktopId;
 pub(crate) use trust::{TRUST_XATTR, set_trusted_fd, verifies};
 pub use trust::{allow_launching, is_trusted, set_trusted};
 

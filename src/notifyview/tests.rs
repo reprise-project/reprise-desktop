@@ -1600,8 +1600,9 @@ fn a_notification_click_hands_its_program_a_token_that_raises_its_window() {
     );
 }
 
-#[test]
-fn a_notification_click_lets_its_program_raise_its_window_without_the_token() {
+/// Clicks a notification with `desktop-entry` `hint`, then activates the `app_id` window of entry
+/// `desktop_id` twice with its own tokens: whether each activation focused it.
+fn raise_without_token(desktop_id: &str, app_id: &str, hint: &str) -> (bool, bool) {
     use crate::tray::TrayEvent;
     use std::os::fd::AsRawFd;
     let mut h = crate::harness::Harness::new();
@@ -1610,7 +1611,7 @@ fn a_notification_click_lets_its_program_raise_its_window_without_the_token() {
         name: "Mail".into(),
         exec_line: String::new(),
         terminal: false,
-        id: "org.example.Mail.desktop".into(),
+        id: desktop_id.into(),
         icon: None,
         startup_wm_class: None,
         categories: Vec::new(),
@@ -1620,9 +1621,9 @@ fn a_notification_click_lets_its_program_raise_its_window_without_the_token() {
     }];
     let (tx, wake, _heard) = crate::tray::headless(&mut h.state);
     let mut c = h.connect();
-    let mail = h.map_toplevel(&mut c, "org.example.Mail", 300, 200);
+    let mail = h.map_toplevel(&mut c, app_id, 300, 200);
     let other = h.map_toplevel(&mut c, "other", 300, 200);
-    let mut n = note(7, "org.example.Mail");
+    let mut n = note(7, &crate::tray::notify::program_key(Some(hint), "Mail"));
     n.actions = vec![("default".into(), "Open".into())];
     tx.send(TrayEvent::Notify(n)).expect("send");
     // SAFETY: `wake` is an open eventfd and the buffer a live 8-byte local.
@@ -1634,16 +1635,32 @@ fn a_notification_click_lets_its_program_raise_its_window_without_the_token() {
     let (own_token, _) = h.state.activation.create_external_token(None);
     c.activate(own_token, mail);
     h.roundtrip(&mut c);
-    assert_eq!(
-        h.state.focused,
-        Some(mail.id),
-        "a token the program minted itself raises the window"
-    );
+    let first = h.state.focused == Some(mail.id);
     h.state.focus_window(other.id);
     let (own_token, _) = h.state.activation.create_external_token(None);
     c.activate(own_token, mail);
     h.roundtrip(&mut c);
-    assert_eq!(h.state.focused, Some(other.id), "once");
+    (first, h.state.focused == Some(mail.id))
+}
+
+#[test]
+fn a_notification_click_lets_its_program_raise_its_window_without_the_token() {
+    let raised = raise_without_token(
+        "org.example.Mail.desktop",
+        "org.example.Mail",
+        "org.example.Mail",
+    );
+    assert_eq!(raised, (true, false), "raised once");
+}
+
+#[test]
+fn a_notification_from_an_app_id_ending_in_desktop_grants_its_own_file_the_raise() {
+    let raised = raise_without_token(
+        "org.telegram.desktop.desktop",
+        "org.telegram.desktop",
+        "org.telegram.desktop",
+    );
+    assert_eq!(raised, (true, false), "raised once");
 }
 
 #[test]

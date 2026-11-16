@@ -310,10 +310,10 @@ pub(super) fn as_sent_by(
 }
 
 pub(super) fn desktop_entry(hint: &str) -> Option<reprisefs::apps::AppEntry> {
-    let (path, id) = (notify::desktop_ids(hint).into_iter())
-        .find_map(|id| Some((reprisefs::apps::find_file(&id)?, id)))?;
+    let (path, id) = (reprisefs::apps::DesktopId::for_app_id(hint).into_iter())
+        .find_map(|id| Some((reprisefs::apps::find_file(id.as_str())?, id)))?;
     let text = reprisefs::apps::read_desktop_file(&path).ok()?;
-    reprisefs::apps::parse_desktop(&text, &id)
+    reprisefs::apps::parse_desktop(&text, id.as_str())
 }
 
 /// How long a notification's files get to be read and decoded; past it the notification shows

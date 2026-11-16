@@ -90,7 +90,7 @@ mod tests {
 
     fn app(id: &str) -> AppEntry {
         AppEntry {
-            name: id.trim_end_matches(".desktop").into(),
+            name: reprisefs::apps::DesktopId::stem_of(id).into(),
             exec_line: id.into(),
             terminal: false,
             id: id.into(),

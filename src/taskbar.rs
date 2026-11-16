@@ -244,10 +244,8 @@ pub fn pin_for(pins: &[QuickItem], app_id: &str, desktop_id: Option<&str>) -> Op
         })
     };
     let by_stem = || {
-        pins.iter().position(|p| {
-            let stem = p.file.strip_suffix(".desktop").unwrap_or(&p.file);
-            same(stem, app_id)
-        })
+        pins.iter()
+            .position(|p| same(reprisefs::apps::DesktopId::stem_of(&p.file), app_id))
     };
     by_file().or_else(by_class).or_else(by_stem)
 }

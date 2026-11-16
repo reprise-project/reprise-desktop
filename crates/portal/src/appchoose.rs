@@ -8,7 +8,7 @@ use crate::appchooser::{Input, Output, Update};
 use crate::dialog;
 use repriseapp::openwith::ChooserInput;
 use repriseapp::{App, Ctx, Event, Reply, Waker, WinId};
-use reprisefs::apps::AppEntry;
+use reprisefs::apps::{AppEntry, DesktopId};
 use reprisekit::access::Tree;
 use reprisekit::controls::openwith::{self, Check, OpenWith, Program};
 use reprisekit::icontheme::IconCache;
@@ -16,16 +16,6 @@ use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
-
-/// `id` as a desktop-file name: the caller may send it with or without
-/// its `.desktop`.
-fn desktop_file(id: &str) -> String {
-    if id.ends_with(".desktop") {
-        id.to_string()
-    } else {
-        format!("{id}.desktop")
-    }
-}
 
 /// The caller's ids as chooser rows: those whose desktop entry opens
 /// `content_type` or is its `default` (a desktop-file id) are recommended,
@@ -43,8 +33,9 @@ pub fn group(
         .unwrap_or_default();
     let (mut rec, mut oth) = (Vec::new(), Vec::new());
     for id in choices {
-        let full = desktop_file(id);
-        let at = apps.iter().position(|a| a.id == full);
+        let full = DesktopId::named(id);
+        let full = full.as_ref().map(DesktopId::as_str);
+        let at = apps.iter().position(|a| Some(a.id.as_str()) == full);
         let p = match at {
             Some(i) => Program {
                 id: id.clone(),
@@ -59,7 +50,7 @@ pub fn group(
         };
         let recommended = content_type.is_none()
             || at.is_some_and(|i| opens.contains(&i))
-            || default == Some(full.as_str());
+            || default.is_some_and(|d| Some(d) == full);
         if recommended {
             rec.push(p)
         } else {
@@ -78,7 +69,10 @@ fn chooser(input: &Input, apps: &[AppEntry], default: Option<&str>) -> OpenWith 
     let (rec, oth) = group(&input.choices, apps, input.content_type.as_deref(), default);
     let mut ow = OpenWith::new(&input.file, rec, oth);
     if let Some(d) = default
-        && let Some(id) = input.choices.iter().find(|c| desktop_file(c) == d)
+        && let Some(id) = input
+            .choices
+            .iter()
+            .find(|c| DesktopId::named(c).is_some_and(|f| f.as_str() == d))
     {
         ow.select_id(id);
     }
@@ -143,11 +137,12 @@ impl Choose {
     /// OK on `id`: with the box ticked it becomes the type's default
     /// program, then it is the answer.
     fn choose(&mut self, id: String, always: bool) -> Reply {
-        if always && let Some(mime) = &self.input.content_type {
-            let full = desktop_file(&id);
-            if let Err(e) = reprisefs::props::set_default_app(mime, &full) {
-                log::warn!("appchoose: cannot make {full} the default for {mime}: {e}");
-            }
+        if always
+            && let Some(mime) = &self.input.content_type
+            && let Some(full) = DesktopId::named(&id)
+            && let Err(e) = reprisefs::props::set_default_app(mime, full.as_str())
+        {
+            log::warn!("appchoose: cannot make {full} the default for {mime}: {e}");
         }
         *self.out.lock().unwrap() = Output { choice: Some(id) };
         Self::quit()
@@ -434,12 +429,6 @@ mod tests {
             Some("vim"),
             "an unoffered default leaves the first pick"
         );
-    }
-
-    #[test]
-    fn a_desktop_file_name_gets_its_suffix_once() {
-        assert_eq!(desktop_file("vim"), "vim.desktop");
-        assert_eq!(desktop_file("vim.desktop"), "vim.desktop");
     }
 
     #[test]

@@ -26,8 +26,7 @@ pub struct Provider {
     pub name: String,
     /// Its program's icon, for a result that names none.
     pub icon: Option<String>,
-    /// Its program's desktop id.
-    pub app: String,
+    pub app: reprisefs::apps::DesktopId,
 }
 
 impl Provider {
@@ -67,6 +66,7 @@ pub fn enabled(
         })
         .filter_map(|(p, _)| {
             let e = entry(p)?;
+            let app = reprisefs::apps::DesktopId::from_file_name(&e.id)?;
             Some(Arc::new(Provider {
                 addr: Address {
                     bus_name: p.bus_name.clone(),
@@ -74,7 +74,7 @@ pub fn enabled(
                 },
                 name: e.name.clone(),
                 icon: e.icon.clone(),
-                app: e.id.clone(),
+                app,
             }))
         })
         .collect()
@@ -211,7 +211,7 @@ impl State {
     /// The loop's part of [`State::open_provider`]: a result with clipboard text puts it on the
     /// clipboard, which its program leaves to the search that shows it.
     fn picked_provider(&mut self, p: &Provider, what: &Open) {
-        self.raises.grant(&p.app, std::time::Instant::now());
+        self.raises.grant(p.app.clone(), std::time::Instant::now());
         if let Open::Result(m) = what
             && let Some(text) = &m.clipboard_text
         {
@@ -252,7 +252,7 @@ mod tests {
     fn file(id: &str, default_disabled: bool) -> reprisefs::searchproviders::Provider {
         reprisefs::searchproviders::Provider {
             desktop_id: id.into(),
-            bus_name: format!("org.example.{}", id.trim_end_matches(".desktop")),
+            bus_name: format!("org.example.{}", reprisefs::apps::DesktopId::stem_of(id)),
             object_path: "/".into(),
             default_disabled,
         }
@@ -343,7 +343,7 @@ mod tests {
             },
             name: "Characters".into(),
             icon: None,
-            app: "org.example.Chars.desktop".into(),
+            app: reprisefs::apps::DesktopId::from_file_name("org.example.Chars.desktop").unwrap(),
         }
     }
 

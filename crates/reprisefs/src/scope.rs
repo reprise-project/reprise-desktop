@@ -204,7 +204,7 @@ pub fn is_app_scope(unit: &str, app: &str) -> bool {
 /// `app-reprise-<app>-<suffix>`; the id is unit-escaped so its dashes stay apart from the
 /// launcher and suffix (systemd's app naming).
 fn unit_name(app: &str, suffix: &str) -> String {
-    let app = app.strip_suffix(".desktop").unwrap_or(app);
+    let app = crate::apps::DesktopId::stem_of(app);
     format!("app-reprise-{}-{suffix}", unit_escape(app))
 }
 

@@ -1039,7 +1039,7 @@ fn first<S>(argv: &[S]) -> std::io::Result<&S> {
 /// The journal identifier of a spawned program: its desktop entry id, else its file name.
 fn log_name(app: Option<&str>, program: &str) -> String {
     match app {
-        Some(app) => app.strip_suffix(".desktop").unwrap_or(app).to_string(),
+        Some(app) => reprisefs::apps::DesktopId::stem_of(app).to_string(),
         None => program.rsplit('/').next().unwrap_or(program).to_string(),
     }
 }
@@ -1050,7 +1050,10 @@ fn log_name(app: Option<&str>, program: &str) -> String {
 /// through another launcher such as `sh` or `env`.
 pub fn command_app(cmd: &str, apps: &[reprisefs::apps::AppEntry]) -> Option<String> {
     if let Some(id) = gtk_launch_id(cmd) {
-        return reprisefs::apps::entry_for_app_id(apps, &id, |_| true).map(|e| e.id.clone());
+        return apps
+            .iter()
+            .find(|e| e.id == id.as_str())
+            .map(|e| e.id.clone());
     }
     let program = crate::session::program(cmd)?;
     let program = program.trim_matches('\'');
@@ -1165,15 +1168,15 @@ pub fn xdg_open_document(argv: &[std::ffi::OsString]) -> Option<std::path::PathB
         .map(std::path::Path::to_path_buf)
 }
 
-/// The entry id `gtk-launch [options] <id> [uris]` names, `.desktop` optional.
-fn gtk_launch_id(cmd: &str) -> Option<String> {
+/// The desktop file `gtk-launch [options] <id> [uris]` starts, by gtk-launch's own rule.
+fn gtk_launch_id(cmd: &str) -> Option<reprisefs::apps::DesktopId> {
     let argv = reprisefs::apps::exec_argv(cmd);
     let (program, args) = argv.split_first()?;
     if program.rsplit('/').next() != Some("gtk-launch") {
         return None;
     }
     let id = args.iter().find(|a| !a.starts_with('-'))?;
-    Some(id.strip_suffix(".desktop").unwrap_or(id).to_string())
+    reprisefs::apps::DesktopId::named(id)
 }
 
 /// Start `c` detached, hand its pid to `reap_children` and record the launch for `mapfocus`;
@@ -1515,6 +1518,7 @@ mod tests {
             entry("org.deskflow.deskflow.desktop", "deskflow"),
             entry("foot-server.desktop", "foot --server"),
             entry("foot.desktop", "foot"),
+            entry("org.telegram.desktop.desktop", "telegram-desktop"),
         ];
         let app = |cmd: &str| command_app(cmd, &apps);
         assert_eq!(
@@ -1537,6 +1541,20 @@ mod tests {
             Some("foot.desktop")
         );
         assert_eq!(app("gtk-launch missing"), None);
+        assert_eq!(
+            app("gtk-launch FOOT").as_deref(),
+            None,
+            "gtk-launch names files case-sensitively"
+        );
+        assert_eq!(
+            app("gtk-launch org.telegram.desktop.desktop").as_deref(),
+            Some("org.telegram.desktop.desktop")
+        );
+        assert_eq!(
+            app("gtk-launch org.telegram.desktop").as_deref(),
+            None,
+            "a name ending in .desktop is the file gtk-launch opens"
+        );
         assert_eq!(app("GDK_BACKEND=x11 foot"), None);
         assert_eq!(app(""), None);
     }
