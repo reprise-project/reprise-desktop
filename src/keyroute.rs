@@ -334,6 +334,10 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         return plain(KeyRoute::VtSwitch(n));
     }
     if modes.locked {
+        // The lock screen publishes a tree: the reader may start and stop there too.
+        if k.pressed && bound(k, binds).contains(&Action::ScreenReader) {
+            return plain(KeyRoute::Binds(vec![Action::ScreenReader]));
+        }
         return plain(match modes.lock_menu && k.pressed {
             true => lock_menu_key(k),
             false => KeyRoute::Lock,

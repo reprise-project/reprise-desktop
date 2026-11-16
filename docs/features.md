@@ -866,13 +866,14 @@ the screen takes the interface of the last session used at this computer.
   switcher, launcher, dialogs, notification balloons and history, shortcut
   sheet and colour picker speak AT-SPI, and so do window frames: a reader can
   press a caption's Minimize, Maximize, Close and window menu, and pick or
-  close its tabs. A balloon is announced when it appears, a task button reads
+  close its tabs. The lock screen reads its fields and buttons and speaks a
+  wrong password or the Caps Lock notice, as a dialog speaks its own error
+  line. A balloon is announced when it appears, a task button reads
   its unread count ("Mail, 3 unread") and the colour picker its colour as
   `#rrggbb`. They're tested with Orca.
 - **Screen reader on and off without looking.** Super+Alt+S starts Orca or
-  stops it from anywhere, dialogs included, but not at the lock screen, which
-  has nothing for it to read; a rising or falling sound and an on-screen line
-  say which. Settings > Magnifier & Filters has the same switch
+  stops it from anywhere, dialogs and the lock screen included; a rising or
+  falling sound and an on-screen line say which. Settings > Magnifier & Filters has the same switch
   and starts the reader at log on (an autostart entry it hides, never
   deletes, when unchecked). Without Orca installed the switches grey with a
   note.

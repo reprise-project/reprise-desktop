@@ -1,6 +1,6 @@
-//! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history, the balloons, the shortcut sheet, the colour picker's loupe and each framed window's caption, speaking AT-SPI on the session's accessibility bus.
+//! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history, the balloons, the shortcut sheet, the colour picker's loupe, each framed window's caption and the lock screen, speaking AT-SPI on the session's accessibility bus.
 //! `accesskit_unix` runs its D-Bus side on its own thread and calls the handlers (`reprisekit::access::Handler`) there; they post a `Msg` to a calloop channel, so the loop never waits on the bus. Trees are built on the loop, in an idle pass [`touch`] queues, only for adapters a reader holds.
-//! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). The lock screen has no tree, so its password field's text stays here.
+//! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). Under the desktop's lock only the lock screen and its power menu publish a tree, and no key is echoed ([`key_note`]).
 //! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths, a client's flyout over the node closed first; focusing a taskbar item gives the bar the keyboard (`barkeys`), a switcher, overview or launcher row takes the selection, a dialog's button or a Start panel spot takes it unpressed; ScrollIntoView on a row out of view scrolls its list ([`reveal`]); any other action there scrolls it in, then acts on it.
 //! The same idle pass moves the seat's keyboard for the menus, Glass Start menu, launcher and overview, reader or not: they take it from the window while open and give it back on close ([`move_keyboard`]).
 
@@ -56,6 +56,8 @@ pub enum Surface {
     /// A framed window's caption: its buttons, window menu and tabs. It never claims the
     /// focus; the client's own tree has it.
     Frame(WindowId),
+    /// The desktop's lock screen (`lockview::access`).
+    Lock,
 }
 
 type Msg = reprisekit::access::Msg<Surface>;
@@ -170,6 +172,8 @@ impl Access {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Keyboard {
+    /// The lock screen shows and takes every key, its power menu's too.
+    pub lock: bool,
     /// The colour picker takes every key while open.
     pub color_pick: bool,
     /// So does the region overlay.
@@ -198,7 +202,12 @@ pub struct Keyboard {
 /// The calendar takes no keys but Escape, so it claims the focus only
 /// while no client has the keyboard.
 pub fn focus_of(k: &Keyboard) -> Option<Surface> {
-    if k.color_pick {
+    if k.lock {
+        Some(match k.menus {
+            true => Surface::Menus,
+            false => Surface::Lock,
+        })
+    } else if k.color_pick {
         Some(Surface::ColorPick)
     } else if k.region {
         Some(Surface::Region)
@@ -241,6 +250,7 @@ pub fn focus_of(k: &Keyboard) -> Option<Surface> {
 
 fn keyboard(state: &State) -> Keyboard {
     Keyboard {
+        lock: state.desktop_locked() && crate::lockview::desk_screen_shows(state),
         color_pick: state.panels.colorpick.is_some(),
         region: state.panels.region.is_some(),
         elsewhere: state.desktop_locked()
@@ -321,7 +331,16 @@ fn surface_of(p: Popup) -> Surface {
     }
 }
 
+/// The surfaces with a tree. Under the desktop's lock only the lock's own: its screen while it
+/// shows (a locker client publishes its own) and the power menu it opens, all the seal left open.
 fn surfaces(state: &State) -> Vec<Surface> {
+    if state.desktop_locked() {
+        let shown = [
+            crate::lockview::desk_screen_shows(state).then_some(Surface::Lock),
+            Popup::Menu.is_open(state).then_some(Surface::Menus),
+        ];
+        return shown.into_iter().flatten().collect();
+    }
     let mut v: Vec<Surface> = state
         .bars
         .iter()
@@ -404,6 +423,7 @@ fn tree(state: &State, surface: Surface) -> Option<Tree> {
         Surface::Balloons => Some(crate::notifyview::access(state)),
         Surface::Widgets => state.widgets_access(),
         Surface::Frame(w) => frame_tree(state, w),
+        Surface::Lock => crate::lockview::access(state),
     }
 }
 
@@ -612,6 +632,10 @@ fn lands_on(state: &State, surface: Surface, hit: &Hit) -> bool {
 /// ([`reveal`]); after anything but ScrollIntoView the trees are published
 /// again and `req` acts on the row in view.
 fn act(state: &mut State, surface: Surface, req: Request) {
+    // Any program in the session could send these: the lock takes none.
+    if surface == Surface::Lock {
+        return;
+    }
     // A move publishes nothing on its own: aim at where the frame stands now.
     if let Surface::Frame(_) = surface {
         sync(state);
@@ -1007,6 +1031,71 @@ mod tests {
     }
 
     #[test]
+    fn under_the_lock_only_its_screen_is_published_with_the_masked_password_focused() {
+        use reprisekit::access::accesskit::{Live, Node};
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_titled(&mut c, "mail", "Inbox - private", (300, 200));
+        let before = surfaces(&h.state);
+        assert!(before.contains(&Surface::Balloons), "{before:?}");
+        assert!(
+            before.iter().any(|s| matches!(s, Surface::Frame(_))),
+            "{before:?}"
+        );
+        h.state.lock.helpers = crate::lockview::Helpers {
+            password: |_, _| {
+                let mut c = std::process::Command::new("sh");
+                c.arg("-c").arg("read p; echo '= 7'");
+                c
+            },
+            finger: |_| None,
+            ..Default::default()
+        };
+        crate::lockview::lock(&mut h.state);
+        assert_eq!(
+            surfaces(&h.state),
+            [Surface::Lock],
+            "nothing behind the lock"
+        );
+        assert_eq!(focus_of(&keyboard(&h.state)), Some(Surface::Lock));
+
+        let l = h.state.lock.console.as_mut().expect("locked");
+        l.set_input("pw");
+        let t = tree(&h.state, Surface::Lock).expect("the lock's tree");
+        let said = |n: &Node| {
+            [n.label(), n.value(), n.description()]
+                .into_iter()
+                .flatten()
+                .any(|s| s.contains("Inbox"))
+        };
+        assert!(!t.nodes().any(|(_, n)| said(n)), "no window's title");
+        let (pw, n) = (t.nodes())
+            .find(|(_, n)| n.role() == Role::PasswordInput)
+            .expect("the password field");
+        assert_eq!(
+            n.value(),
+            Some("\u{25cf}\u{25cf}"),
+            "bullets, never the value"
+        );
+        assert_eq!(t.focus(), pw, "the password has the focus");
+
+        h.key(28, true);
+        h.key(28, false);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while (h.state.lock.console.as_ref()).is_some_and(|l| l.verifying()) {
+            assert!(std::time::Instant::now() < end, "the check ends");
+            h.run_for(5);
+        }
+        let t = tree(&h.state, Surface::Lock).expect("still locked");
+        let (_, msg) = (t.nodes())
+            .find(|(_, n)| n.role() == Role::Label)
+            .expect("the message");
+        assert_eq!(msg.value(), Some(crate::lock::INCORRECT));
+        assert_eq!(msg.live(), Some(Live::Polite), "spoken when it changes");
+    }
+
+    #[test]
     fn the_keyboards_holder_has_the_focus_in_route_order() {
         let none = Keyboard::default();
         assert_eq!(focus_of(&none), None, "nothing of ours is open");
@@ -1027,7 +1116,23 @@ mod tests {
             menus: true,
             ..Keyboard::default()
         };
-        assert_eq!(focus_of(&locked), None, "the lock screen has no tree");
+        assert_eq!(
+            focus_of(&locked),
+            None,
+            "a locker client or a capture has the keys"
+        );
+        let screen = Keyboard {
+            lock: true,
+            elsewhere: true,
+            dialog: Some(3),
+            ..Keyboard::default()
+        };
+        assert_eq!(focus_of(&screen), Some(Surface::Lock));
+        let power_menu = Keyboard {
+            menus: true,
+            ..screen
+        };
+        assert_eq!(focus_of(&power_menu), Some(Surface::Menus));
         let picking = Keyboard {
             color_pick: true,
             elsewhere: true,

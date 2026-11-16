@@ -847,6 +847,7 @@ fn unlock_side(state: &mut State, side: Side, fade: bool) {
     if !state.desktop_locked() {
         refocus(state, prev);
     }
+    crate::access::touch(state);
     state.redraw_all();
     match side {
         Side::Console => {
@@ -1424,6 +1425,20 @@ pub fn key_with(state: &mut State, pressed: bool, xkb: &xkb::State, code: Keycod
 
 pub(crate) fn screen_shows(state: &State, side: Side) -> bool {
     state.lock.on(side).is_some_and(Lock::screen_shown)
+}
+
+/// The desktop's lock shows its own screen, which takes the seat's keys.
+pub fn desk_screen_shows(state: &State) -> bool {
+    screen_shows(state, desk_side(state))
+}
+
+/// The desktop's lock screen as a reader sees it, while it shows.
+pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
+    let l = state
+        .lock
+        .on(desk_side(state))
+        .filter(|l| l.screen_shown())?;
+    l.view.access()
 }
 
 /// The key `code` under `xkb`, through `side`'s compose sequence; None while it types nothing.
