@@ -104,6 +104,9 @@ struct AccountsApp {
     fingers: fingers::Fingers,
     finger_sources: fingers::Sources,
     add_finger: Option<AddFinger>,
+    /// The main window closed while a job was out: it is gone, and Accounts ends once the jobs
+    /// landed and any error they brought is read.
+    closing: bool,
 }
 
 impl AccountsApp {
@@ -130,7 +133,14 @@ impl AccountsApp {
             fingers: fingers::Fingers::default(),
             finger_sources: fingers::Sources::default(),
             add_finger: None,
+            closing: false,
         }
+    }
+
+    /// Whether an AccountsService job (your own password's `passwd` run among them) or a
+    /// fingerprint add or delete is out.
+    fn working(&self) -> bool {
+        self.job.is_some() || self.fingers.add.is_some() || self.fingers.deleting.is_some()
     }
 
     /// Run `job` off the loop, waking it when done; tests run it at once.
@@ -756,6 +766,12 @@ impl AccountsApp {
         let mut reply = match out {
             users::Outcome::None => Reply::none(),
             users::Outcome::Redraw => Reply::redraw(),
+            users::Outcome::Close if self.working() => {
+                self.closing = true;
+                self.close_props();
+                self.add = None;
+                Reply::redraw_all()
+            }
             users::Outcome::Close => Reply {
                 quit: true,
                 ..Reply::none()
@@ -1063,6 +1079,7 @@ impl App for AccountsApp {
             self.regrow();
         }
         let mut reply = self.dispatch(win, ev, ctx);
+        reply.quit |= self.closing && !self.working() && !self.error.is_shown();
         let size = self.forms.text.size(users::CLIENT);
         if reply.ask_size(&mut self.asked, size) {
             reply.redraw_all = true;
@@ -1125,6 +1142,10 @@ impl App for AccountsApp {
 impl repriseapp::Extended for AccountsApp {
     fn fixed(&self) -> bool {
         true
+    }
+
+    fn hidden(&self) -> bool {
+        self.closing
     }
 
     /// The dialogs and the question raised from the Properties sheet cover it.
@@ -1329,6 +1350,54 @@ mod tests {
             error_text(&app).as_deref(),
             Some("The account jo:\n\nNot authorized.")
         );
+    }
+
+    #[test]
+    fn a_close_while_your_password_changes_waits_for_passwd_and_says_why_it_failed() {
+        use repriseapp::Extended;
+        const WRONG: &str = "The current password is not correct.";
+        let rows = vec![user(1000, "jo", true, true), user(1001, "al", false, false)];
+        for failed in [false, true] {
+            let mut app = AccountsApp::new();
+            app.users.refresh(rows.clone(), vec![None, None]);
+            app.open_props(1000);
+            let (tx, rx) = channel();
+            let after = After::Props {
+                close: true,
+                sheet: app.sheets,
+                uid: 1000,
+            };
+            app.job = Some((rx, after));
+            let mut ctx = test_ctx();
+            assert!(
+                !app.event(MAIN, Event::CloseRequest, &mut ctx).quit,
+                "failed {failed}: the close waits for passwd"
+            );
+            assert!(
+                app.hidden(),
+                "failed {failed}: the window is gone meanwhile"
+            );
+            let done = match failed {
+                true => Err(acct::Failure::Text(WRONG.into())),
+                false => Ok(()),
+            };
+            tx.send((done, Ok(rows.clone()))).unwrap();
+            let r = app.event(MAIN, Event::Wake, &mut ctx);
+            if !failed {
+                assert!(r.quit, "the password changed: Accounts ends");
+                continue;
+            }
+            assert!(!r.quit, "the failure is read first");
+            assert_eq!(
+                error_text(&app).as_deref(),
+                Some("The account jo:\n\nThe current password is not correct.")
+            );
+            let win = app.error.win().unwrap();
+            assert!(
+                app.event(win, Event::CloseRequest, &mut ctx).quit,
+                "the box closed: Accounts ends"
+            );
+        }
     }
 
     #[test]
