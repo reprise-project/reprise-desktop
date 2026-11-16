@@ -49,6 +49,8 @@ pub(crate) fn pause(state: &mut State) {
         }
     }
     state.aids_reset();
+    // The releases of keypad keys held now come only after resume.
+    state.mousekeys_forget();
     crate::lockview::seat_away(state, true);
     // Under reprise-login, Switch User or another VT hands the screen to someone else.
     if state.login_link.is_some() && !state.console_locked() {
