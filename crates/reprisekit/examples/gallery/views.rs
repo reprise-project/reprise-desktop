@@ -211,7 +211,6 @@ pub fn render_file_preview(scale: i32) -> Canvas {
     use reprisekit::controls::filepreview::{self, Body, Facts, FilePreview};
     use reprisekit::controls::multiedit::{Metrics, MultiEdit};
     let text = TextRenderer::load(&FontConfig::default());
-    let mono = TextRenderer::monospace(13);
     let (cell_w, cell_h) = (380, 220);
     let mut out = Canvas::with_scale(3 * cell_w as u32, 3 * cell_h as u32, scale);
     out.fill_rect(out.bounds(), Color::rgb(0x40, 0x40, 0x40));
@@ -222,9 +221,11 @@ pub fn render_file_preview(scale: i32) -> Canvas {
         let mut theme = interfaces::theme_for(i);
         theme.look = theme.look.at_scale(scale);
         let p = theme.paint();
+        let mono_px = theme.text.px(13);
+        let mono = TextRenderer::monospace(mono_px);
         let mut m = Metrics {
             bars_always: false,
-            ..Metrics::default()
+            ..Metrics::for_font(&mono, mono_px)
         };
         m.follow_look(&theme.look.controls_at_100());
         let (pw, ph) = (180 * scale as u32, 120 * scale as u32);
