@@ -196,11 +196,11 @@ fn a_grown_tip_pitches_its_lines_with_the_text() {
     assert!(g > 0, "a 200% line outgrows the 100% one");
     let (_, h100) = tip_size(&text, &base, label);
     let (w, h) = tip_size(&text, &grown, label);
-    let px = (grown.fonts.size_px - base.fonts.size_px) as i32;
+    let first = INFO_LINE_H - base.fonts.size_px as i32;
     assert_eq!(
         h,
-        h100 + px + g,
-        "the first line grows with the font, the next by the pitch"
+        h100 + first + 2 * g,
+        "the first line, a font size tall at 100%, takes the grown pitch as the next does"
     );
     let c = draw_tip(&grown, &text, label);
     let has_ink = |y: i32| (1..w - 1).any(|x| c.get(x, y) == TIP_INK.argb());

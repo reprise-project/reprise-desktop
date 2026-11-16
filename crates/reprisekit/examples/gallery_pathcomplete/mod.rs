@@ -24,7 +24,7 @@ pub fn render(scale: i32) -> Canvas {
         let (mut pc, edit) = completing("~/Do");
         let p = theme.paint();
         let px = theme.fonts.size_px;
-        let field = Rect::new(10, 10, 220, 21);
+        let field = Rect::new(10, 10, 220, theme.text.len(21));
         let inner = draw_edit_field(
             &mut cell,
             &p,

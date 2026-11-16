@@ -413,10 +413,11 @@ pub fn draw_perf_meter(
     let look = perf_look(p);
     let inner = r.inset(2);
     let d = p.s * c.scale();
-    let art = (look.meter)(fraction, p.cs, inner.width, inner.height, d).at_scale(c.scale());
+    let band = p.text.len(crate::perfart::METER_LABEL_H);
+    let art = (look.meter)(fraction, p.cs, inner.width, inner.height, band, d);
+    let art = art.at_scale(c.scale());
     draw_field_frame(c, p, r, p.cs.window);
     c.blit_over(inner.x * p.s, inner.y * p.s, &art);
-    let band = crate::perfart::METER_LABEL_H;
     let label = Rect::new(inner.x, inner.bottom() - band, inner.width, band);
     let ink = (look.meter_ink)(p.cs);
     text.draw(c, label, value, false, ink, Align::Center, px);

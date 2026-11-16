@@ -83,7 +83,7 @@ mod tests {
     fn sample(selected: usize, hot: Option<usize>, scale: i32) -> (Canvas, OverviewLayout) {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
-        let l = OverviewLayout::compute(3, Rect::new(0, 0, 1280, 720)).scaled(scale);
+        let l = OverviewLayout::compute(3, Rect::new(0, 0, 1280, 720), 0).scaled(scale);
         let red = Color::rgb(255, 0, 0);
         let mut icon = Canvas::new((ICON_PX * scale) as u32, (ICON_PX * scale) as u32);
         icon.fill_rect(icon.bounds(), red);

@@ -131,7 +131,7 @@ pub fn render_overview() -> Canvas {
         let mut dim = Canvas::new(w as u32, h as u32);
         dim.fill_rect(dim.bounds(), Color::rgb(0, 0, 0));
         c.blit_over_faded(x0, 0, &dim, 153, 255);
-        let l = OverviewLayout::compute(5, Rect::new(0, 0, w, h));
+        let l = OverviewLayout::compute(5, Rect::new(0, 0, w, h), theme.line_growth());
         let mut icon = Canvas::new(16, 16);
         icon.fill_rect(icon.bounds(), Color::rgb(0x31, 0x6A, 0xC5));
         let titles = [

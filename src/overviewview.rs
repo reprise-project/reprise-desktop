@@ -168,7 +168,7 @@ impl State {
     /// pictures like the usable area the zone is part of.
     fn overview_grid(&self, count: usize, area: Rect, assist: bool) -> OverviewLayout {
         if !assist {
-            return OverviewLayout::compute(count, area);
+            return OverviewLayout::compute(count, area, self.config.theme.line_growth());
         }
         let (cx, cy) = (area.x + area.width / 2, area.y + area.height / 2);
         let work = self.usable_area(self.output_at(f64::from(cx), f64::from(cy)).as_ref());
@@ -234,7 +234,12 @@ impl State {
         let grids: Vec<(Output, OverviewLayout)> = outputs
             .into_iter()
             .zip(counts)
-            .map(|((output, b), n)| (output, OverviewLayout::compute(n, b)))
+            .map(|((output, b), n)| {
+                (
+                    output,
+                    OverviewLayout::compute(n, b, self.config.theme.line_growth()),
+                )
+            })
             .collect();
         let mut model = Overview::new(windows.len());
         if let Some(first) = order.first() {
@@ -394,7 +399,11 @@ impl State {
             let grid = self.overview_grid_nodes(tree, output, b, false);
             self.scene.set_enabled(grid.cells, false);
             grids.push(grid);
-            layouts.push(OverviewLayout::compute(n, b));
+            layouts.push(OverviewLayout::compute(
+                n,
+                b,
+                self.config.theme.line_growth(),
+            ));
         }
         let mut model = Overview::new(windows.len());
         if let Some(first) = order.first() {
@@ -1056,7 +1065,7 @@ mod tests {
 
     #[test]
     fn grids_take_no_hits_while_they_slide() {
-        let layout = OverviewLayout::compute(2, Rect::new(0, 0, 1000, 600));
+        let layout = OverviewLayout::compute(2, Rect::new(0, 0, 1000, 600), 0);
         let c = layout.cells[0];
         let (x, y) = (c.x + c.width / 2, c.y + c.height / 2);
         let layouts = [layout];

@@ -1,7 +1,7 @@
 //! The performance graphs as a lit monitor: green lines over a dark green grid on black, and a
 //! meter of green segments, dark where unlit.
 
-use crate::perfart::{self, Graph, GraphInk, METER_LABEL_H, PerfLook};
+use crate::perfart::{self, Graph, GraphInk, PerfLook};
 use crate::raster::Canvas;
 use crate::shape::{self, premul};
 use crate::theme::{Color, ColorScheme};
@@ -40,13 +40,13 @@ pub fn graph(g: &Graph, _cs: &ColorScheme, w: i32, h: i32, d: i32) -> Canvas {
 }
 
 /// Two columns of segments rising from the foot, over the label band.
-pub fn meter(fraction: f64, _cs: &ColorScheme, w: i32, h: i32, d: i32) -> Canvas {
+pub fn meter(fraction: f64, _cs: &ColorScheme, w: i32, h: i32, label_h: i32, d: i32) -> Canvas {
     let (dw, dh) = (w.max(1) * d, h.max(1) * d);
     let mut c = Canvas::new(dw as u32, dh as u32);
     let black = shape::pack(premul(BLACK, 255));
     c.pixels.fill(black);
     let pitch = SEGMENT + SEGMENT_GAP;
-    let bottom = h - METER_LABEL_H;
+    let bottom = h - label_h;
     let slots = ((bottom - MARGIN) / pitch).max(0);
     let lit = perfart::lit_segments(fraction, slots);
     let col_w = ((w - 2 * MARGIN - COLUMN_GAP) / 2).max(1);
@@ -111,10 +111,10 @@ mod tests {
     #[test]
     fn the_meter_lights_its_share_from_the_foot() {
         let cs = ColorScheme::default();
-        let c = meter(0.5, &cs, 40, 60, 1);
+        let c = meter(0.5, &cs, 40, 60, perfart::METER_LABEL_H, 1);
         let lit = shape::pack(premul(LINE, 255));
         let dark = shape::pack(premul(UNLIT, 255));
-        let foot = 60 - METER_LABEL_H - 2;
+        let foot = 60 - perfart::METER_LABEL_H - 2;
         assert_eq!(c.get(MARGIN, foot), lit, "the lowest segment is lit");
         assert_eq!(c.get(MARGIN, MARGIN + 1), dark, "the top one is not");
     }
@@ -133,7 +133,10 @@ mod tests {
             };
             got.push((format!("graph @{d}"), fnv(&graph(&g, &cs, 200, 90, d))));
             for f in [0.0, 0.37, 1.0] {
-                got.push((format!("meter {f} @{d}"), fnv(&meter(f, &cs, 60, 90, d))));
+                got.push((
+                    format!("meter {f} @{d}"),
+                    fnv(&meter(f, &cs, 60, 90, perfart::METER_LABEL_H, d)),
+                ));
             }
         }
         crate::pins::check("classic/perf_graph", &got);

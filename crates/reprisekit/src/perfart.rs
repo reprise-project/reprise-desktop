@@ -21,11 +21,11 @@ pub struct Graph<'a> {
 /// Paints a graph `w` x `h` design px at `d` device px per design px.
 pub type GraphPainter = fn(&Graph, &ColorScheme, i32, i32, i32) -> Canvas;
 
-/// Paints a meter filled to `fraction`, `w` x `h` design px at `d`, leaving [`METER_LABEL_H`]
-/// at its foot for the value the control writes there.
-pub type MeterPainter = fn(f64, &ColorScheme, i32, i32, i32) -> Canvas;
+/// Paints a meter filled to `fraction`, `w` x `h` design px at `d`, leaving a band `label_h` px
+/// tall at its foot for the value the control writes there: `(fraction, cs, w, h, label_h, d)`.
+pub type MeterPainter = fn(f64, &ColorScheme, i32, i32, i32, i32) -> Canvas;
 
-/// The band under a meter that holds its value.
+/// The band under a meter that holds its value, at 100% text.
 pub const METER_LABEL_H: i32 = 16;
 
 /// A look's graph and meter painters and the ink of the meter's value.

@@ -118,12 +118,10 @@ blue-variants.png "Steel: status bar" x1
 blue-variants.png "Steel: task pane" x1
 blue-variants.png "Steel: toolbar" x1
 blue-variants.png "Steel: tooltip" x1
-blue-variants.png "Tuesday, September 29, 2026" x10
 blue-variants.png "Type" x30
 blue-variants.png "folder to" x20
 blue-variants.png "new folder" x20
 blue-variants.png "the Web" x20
-file-dialog.png "Files of type:" x1
 glass-dark.png " Desktop" x1
 glass-dark.png "(None)" x6
 glass-dark.png "0 KB" x2
@@ -247,12 +245,6 @@ glass.png "notepad" x4
 glass.png "notes.txt" x3
 glass.png "report.odt" x3
 glass.png "setup.exe" x3
-label-ellipsis.png "HP LaserJet 4250" x2
-label-ellipsis.png "PostScript Printer" x2
-overview.png "My Documents" x3
-overview.png "Untitled - Notepad" x3
-path-complete.png "~/Do" x3
-perf@1.png "42 %" x4
 reprisekit-gallery.png "#0A246A" x1
 reprisekit-gallery.png "00" x1
 reprisekit-gallery.png "1 KB" x1
@@ -282,7 +274,6 @@ reprisekit-gallery.png "Calendar" x1
 reprisekit-gallery.png "Caption ?" x1
 reprisekit-gallery.png "Check Box" x1
 reprisekit-gallery.png "Choose the program you want to use to open this file:" x1
-reprisekit-gallery.png "Click here to begin" x1
 reprisekit-gallery.png "Closed" x1
 reprisekit-gallery.png "Collapsed Tasks" x1
 reprisekit-gallery.png "Combo Drop" x1
@@ -301,7 +292,6 @@ reprisekit-gallery.png "Field" x1
 reprisekit-gallery.png "File Folder" x4
 reprisekit-gallery.png "File and Folder Tasks" x1
 reprisekit-gallery.png "File:" x1
-reprisekit-gallery.png "Files of type:" x3
 reprisekit-gallery.png "Focused" x1
 reprisekit-gallery.png "Game controller" x1
 reprisekit-gallery.png "Group Box" x1
@@ -360,7 +350,6 @@ reprisekit-gallery.png "Recommended Programs:" x2
 reprisekit-gallery.png "Reprise Settings" x1
 reprisekit-gallery.png "Reprise" x1
 reprisekit-gallery.png "Reprise..." x3
-reprisekit-gallery.png "Screenshot: drag an area or click a window. Press V to record instead." x1
 reprisekit-gallery.png "Scroll Bar" x1
 reprisekit-gallery.png "Scroll Lit" x1
 reprisekit-gallery.png "Search" x1
