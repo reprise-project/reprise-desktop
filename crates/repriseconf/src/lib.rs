@@ -1,6 +1,6 @@
-//! `config.toml`: [`config`] reads and validates it with every default, and the rest edits it in
-//! place: `toml_edit` keeps comments, key order and unknown tables, so a program editing a few keys
-//! leaves the rest of the file byte-identical.
+//! `config.toml`: [`config`] reads and validates it with every default, [`current`] is a
+//! program's read of it, and the rest edits it in place: `toml_edit` keeps comments, key order and
+//! unknown tables, so a program editing a few keys leaves the rest of the file byte-identical.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -71,220 +71,66 @@ pub fn state_path() -> PathBuf {
         .join("state.toml")
 }
 
-/// `text` parsed, the last parse on this thread reused while the file reads the same: a program
-/// starting up asks for several keys, each reading the file anew.
-fn parsed(text: &str) -> Option<std::rc::Rc<DocumentMut>> {
-    type Last = Option<(String, Option<std::rc::Rc<DocumentMut>>)>;
+/// The config file read as the compositor reads it ([`config::Config::parse_lenient`]): a key
+/// that fails is left at its default, and a file that is absent or not TOML reads as all
+/// defaults. Read again on this thread only once the file's size, time or inode changes.
+pub fn current() -> std::rc::Rc<config::Config> {
+    current_at(config_path())
+}
+
+fn current_at(path: PathBuf) -> std::rc::Rc<config::Config> {
+    type Last = Option<(PathBuf, Option<FileStamp>, std::rc::Rc<config::Config>)>;
     thread_local! {
         static LAST: std::cell::RefCell<Last> = const { std::cell::RefCell::new(None) };
     }
+    let stamp = FileStamp::of(&path);
     LAST.with_borrow_mut(|last| match last {
-        Some((t, doc)) if t == text => doc.clone(),
+        Some((p, s, cfg)) if *p == path && *s == stamp => cfg.clone(),
         _ => {
-            let doc = text.parse::<DocumentMut>().ok().map(std::rc::Rc::new);
-            *last = Some((text.to_string(), doc.clone()));
-            doc
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let cfg = std::rc::Rc::new(read(&text));
+            *last = Some((path, stamp, cfg.clone()));
+            cfg
         }
     })
 }
 
-/// Whether `[privacy] recent_files` lets Reprise show recently used files (true unless `false`),
-/// read now.
-pub fn recent_files() -> bool {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    recent_files_in(&text)
+/// What [`current`] compares to learn the file changed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileStamp {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    mtime: (i64, i64),
 }
 
-fn recent_files_in(text: &str) -> bool {
-    let Some(doc) = parsed(text) else {
-        return true;
-    };
-    get(&doc, &key("privacy", "recent_files"))
-        .and_then(Item::as_bool)
-        .unwrap_or(true)
-}
-
-/// `[glass] color` as written (a colour's name or "#RRGGBB"), read now; `None` when unset.
-pub fn glass_color() -> Option<String> {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    let doc = parsed(&text)?;
-    get(&doc, &key("glass", "color"))
-        .and_then(Item::as_str)
-        .map(String::from)
-}
-
-/// The config keys a program's look follows on top of its interface, from one read of the file.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LookKeys {
-    /// `[fonts] shell_dlg`; `None` when unset or blank.
-    pub shell_dlg: Option<String>,
-    /// `[fonts] family`; `None` when unset, empty or not a list of strings.
-    pub font_family: Option<Vec<String>>,
-    /// `[fonts] antialias`; `None` when unset or not a boolean.
-    pub antialias: Option<bool>,
-    /// `[accessibility] text_size` in percent, 100 unless one of 100..=200 in steps of 25.
-    pub text_size: u32,
-    /// `[metrics] double_click_ms`; `None` when unset or outside 0..=10000, which leaves the
-    /// interface's own time.
-    pub double_click_ms: Option<i32>,
-}
-
-/// [`LookKeys`], read now.
-pub fn look_keys() -> LookKeys {
-    look_keys_in(&std::fs::read_to_string(config_path()).unwrap_or_default())
-}
-
-fn look_keys_in(text: &str) -> LookKeys {
-    let doc = parsed(text);
-    let doc = doc.as_deref();
-    LookKeys {
-        shell_dlg: doc.and_then(shell_dlg_of),
-        font_family: doc.and_then(font_family_of),
-        antialias: doc.and_then(|d| get(d, &key("fonts", "antialias"))?.as_bool()),
-        text_size: doc.map_or(100, text_size_of),
-        double_click_ms: doc.and_then(double_click_ms_of),
+impl FileStamp {
+    fn of(path: &Path) -> Option<FileStamp> {
+        use std::os::unix::fs::MetadataExt;
+        let m = std::fs::metadata(path).ok()?;
+        Some(FileStamp {
+            dev: m.dev(),
+            ino: m.ino(),
+            len: m.len(),
+            mtime: (m.mtime(), m.mtime_nsec()),
+        })
     }
 }
 
-fn shell_dlg_of(doc: &DocumentMut) -> Option<String> {
-    get(doc, &key("fonts", "shell_dlg"))
-        .and_then(Item::as_str)
-        .filter(|s| !s.trim().is_empty())
-        .map(String::from)
-}
-
-fn font_family_of(doc: &DocumentMut) -> Option<Vec<String>> {
-    let list = get(doc, &key("fonts", "family"))?.as_array()?;
-    let families: Option<Vec<String>> = list.iter().map(|v| v.as_str().map(String::from)).collect();
-    families.filter(|f| !f.is_empty())
-}
-
-pub fn text_size() -> u32 {
-    look_keys().text_size
-}
-
-fn text_size_of(doc: &DocumentMut) -> u32 {
-    get(doc, &key("accessibility", "text_size"))
-        .and_then(Item::as_integer)
-        .and_then(|v| u32::try_from(v).ok())
-        .filter(|v| (100..=200).contains(v) && v % 25 == 0)
-        .unwrap_or(100)
-}
-
-fn double_click_ms_of(doc: &DocumentMut) -> Option<i32> {
-    get(doc, &key("metrics", "double_click_ms"))?
-        .as_integer()
-        .and_then(|v| i32::try_from(v).ok())
-        .filter(|v| (0..=config::METRIC_MAX).contains(v))
-}
-
-/// `[taskbar] position`, read now: "bottom" when unset, not a string or unparsable. Tray applets
-/// ask each time a popup opens.
-pub fn taskbar_position() -> String {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    taskbar_position_in(&text)
-}
-
-fn taskbar_position_in(text: &str) -> String {
-    parsed(text)
-        .and_then(|doc| {
-            get(&doc, &key("taskbar", "position"))
-                .and_then(Item::as_str)
-                .map(String::from)
-        })
-        .unwrap_or_else(|| "bottom".into())
-}
-
-/// `[drives] on_insert`, read now: what reprise-drives does with a plugged-in drive, "ask" when unset
-/// or not a string.
-pub fn drives_on_insert() -> String {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    drives_on_insert_in(&text)
-}
-
-fn drives_on_insert_in(text: &str) -> String {
-    parsed(text)
-        .and_then(|doc| {
-            get(&doc, &key("drives", "on_insert"))
-                .and_then(Item::as_str)
-                .map(String::from)
-        })
-        .unwrap_or_else(|| DRIVES_ON_INSERT.into())
+fn read(text: &str) -> config::Config {
+    match config::Config::parse_lenient(text) {
+        Ok((cfg, _)) => cfg,
+        Err(e) => {
+            log::warn!("config.toml is not TOML ({e}); every key reads at its default");
+            config::Config::parse_lenient("")
+                .expect("an empty file reads")
+                .0
+        }
+    }
 }
 
 /// `[drives] on_insert`'s default.
 pub const DRIVES_ON_INSERT: &str = "ask";
-
-/// Whether `[power] locker` names a locker of its own, read now; Remote Desktop's lock mode is off
-/// while it does.
-pub fn locker_set() -> bool {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    locker_set_in(&text)
-}
-
-fn locker_set_in(text: &str) -> bool {
-    parsed(text)
-        .as_deref()
-        .and_then(|d| get(d, &key("power", "locker"))?.as_str())
-        .is_some_and(|cmd| !cmd.trim().is_empty())
-}
-
-/// The top-level `terminal`, read now: the command a program in a terminal runs under.
-pub fn terminal() -> String {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    terminal_in(&text)
-}
-
-fn terminal_in(text: &str) -> String {
-    parsed(text)
-        .as_deref()
-        .and_then(|d| get(d, &key("", "terminal"))?.as_str())
-        .unwrap_or(reprisefs::apps::DEFAULT_TERMINAL)
-        .to_string()
-}
-
-/// The top-level `script_terminal`, read now: "stay" when unset or invalid.
-pub fn script_terminal() -> reprisefs::program::ScriptEnd {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    script_terminal_in(&text)
-}
-
-fn script_terminal_in(text: &str) -> reprisefs::program::ScriptEnd {
-    top_parsed(
-        text,
-        "script_terminal",
-        reprisefs::program::ScriptEnd::parse,
-    )
-}
-
-/// The top-level `script_open`, read now: "run" when unset or invalid.
-pub fn script_open() -> reprisefs::program::ScriptOpen {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    script_open_in(&text)
-}
-
-fn script_open_in(text: &str) -> reprisefs::program::ScriptOpen {
-    top_parsed(text, "script_open", reprisefs::program::ScriptOpen::parse)
-}
-
-/// The top-level `confirm_scripts`, read now: true unless `false`.
-pub fn confirm_scripts() -> bool {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    confirm_scripts_in(&text)
-}
-
-fn confirm_scripts_in(text: &str) -> bool {
-    parsed(text)
-        .and_then(|d| get(&d, &key("", "confirm_scripts"))?.as_bool())
-        .unwrap_or(true)
-}
-
-/// The top-level string `name` read by `parse`, its default when unset or invalid.
-fn top_parsed<T: Default>(text: &str, name: &'static str, parse: fn(&str) -> Option<T>) -> T {
-    parsed(text)
-        .and_then(|d| get(&d, &key("", name))?.as_str().and_then(parse))
-        .unwrap_or_default()
-}
 
 /// `[thumbnail_cache]`: whether pictures' thumbnails are kept in `$XDG_CACHE_HOME/thumbnails`,
 /// shared with other file managers, and how much room they may take.
@@ -313,55 +159,10 @@ impl ThumbnailCache {
     }
 }
 
-/// `[thumbnail_cache]`, read now: a key unset or not a bool or integer keeps its default, and
-/// `max_mb` is clamped to [`ThumbnailCache::MAX_MB`].
-pub fn thumbnail_cache() -> ThumbnailCache {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    thumbnail_cache_in(&text)
-}
-
-fn thumbnail_cache_in(text: &str) -> ThumbnailCache {
-    let d = ThumbnailCache::DEFAULT;
-    let Some(doc) = parsed(text) else {
-        return d;
-    };
-    let mb = ThumbnailCache::MAX_MB;
-    ThumbnailCache {
-        enabled: get(&doc, &key("thumbnail_cache", "enabled"))
-            .and_then(Item::as_bool)
-            .unwrap_or(d.enabled),
-        max_mb: get(&doc, &key("thumbnail_cache", "max_mb"))
-            .and_then(Item::as_integer)
-            .map_or(d.max_mb, |v| {
-                v.clamp(i64::from(*mb.start()), i64::from(*mb.end())) as u32
-            }),
-        external_thumbnailers: get(&doc, &key("thumbnail_cache", "external_thumbnailers"))
-            .and_then(Item::as_bool)
-            .unwrap_or(d.external_thumbnailers),
-    }
-}
-
 /// `[storage] low_space_percent`: reprise-drives warns when the disk of `$HOME` or `/` has less
 /// free than this share of its size; 0 turns the warning off.
 pub const LOW_SPACE_PERCENT: u8 = 5;
 pub const LOW_SPACE_MAX: u8 = 50;
-
-/// `[storage] low_space_percent`, read now: unset or not an integer keeps
-/// [`LOW_SPACE_PERCENT`], and it is clamped to 0..=[`LOW_SPACE_MAX`].
-pub fn low_space_percent() -> u8 {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    low_space_percent_in(&text)
-}
-
-fn low_space_percent_in(text: &str) -> u8 {
-    parsed(text)
-        .and_then(|doc| {
-            get(&doc, &key("storage", "low_space_percent"))
-                .and_then(Item::as_integer)
-                .map(|v| v.clamp(0, i64::from(LOW_SPACE_MAX)) as u8)
-        })
-        .unwrap_or(LOW_SPACE_PERCENT)
-}
 
 /// `[bluetooth] battery_warning`: reprise-bluetooth warns once when a connected device's battery
 /// drops to this percent, again after it charges [`BT_BATTERY_REARM`] points past it; 0 turns the
@@ -370,23 +171,6 @@ pub const BT_BATTERY_WARNING: u8 = 15;
 pub const BT_BATTERY_MAX: u8 = 50;
 pub const BT_BATTERY_REARM: u8 = 5;
 
-/// `[bluetooth] battery_warning`, read now: unset or not an integer keeps
-/// [`BT_BATTERY_WARNING`], and it is clamped to 0..=[`BT_BATTERY_MAX`].
-pub fn bt_battery_warning() -> u8 {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    bt_battery_warning_in(&text)
-}
-
-fn bt_battery_warning_in(text: &str) -> u8 {
-    parsed(text)
-        .and_then(|doc| {
-            get(&doc, &key("bluetooth", "battery_warning"))
-                .and_then(Item::as_integer)
-                .map(|v| v.clamp(0, i64::from(BT_BATTERY_MAX)) as u8)
-        })
-        .unwrap_or(BT_BATTERY_WARNING)
-}
-
 /// Write `[bluetooth] battery_warning = percent` into the config file, the default as no key (and
 /// no table once it is empty).
 pub fn save_bt_battery_warning(percent: u8) -> Result<(), String> {
@@ -394,19 +178,6 @@ pub fn save_bt_battery_warning(percent: u8) -> Result<(), String> {
         "battery_warning",
         (percent != BT_BATTERY_WARNING).then(|| Value::from(i64::from(percent))),
     )
-}
-
-/// `[bluetooth] receive_files`, read now: whether a paired device may offer files over
-/// Bluetooth (false unless `true`).
-pub fn bt_receive_files() -> bool {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    bt_receive_files_in(&text)
-}
-
-fn bt_receive_files_in(text: &str) -> bool {
-    parsed(text)
-        .and_then(|doc| get(&doc, &key("bluetooth", "receive_files")).and_then(Item::as_bool))
-        .unwrap_or(false)
 }
 
 /// Write `[bluetooth] receive_files = on` into the config file, off as no key (and no table once
@@ -434,25 +205,6 @@ fn with_bt_key(text: &str, name: &'static str, value: Option<Value>) -> Result<S
         }
     }
     Ok(doc.to_string())
-}
-
-/// `[time_zone] automatic` and `[privacy] location`, read now: whether the zone follows the
-/// location (off unless set), and whether the location may be read at all (on unless `false`).
-pub fn auto_time_zone() -> (bool, bool) {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    auto_time_zone_in(&text)
-}
-
-fn auto_time_zone_in(text: &str) -> (bool, bool) {
-    let flag = |k: Key, default: bool| {
-        parsed(text)
-            .and_then(|doc| get(&doc, &k).and_then(Item::as_bool))
-            .unwrap_or(default)
-    };
-    (
-        flag(key("time_zone", "automatic"), false),
-        flag(key("privacy", "location"), true),
-    )
 }
 
 /// Write `[time_zone] automatic = on` into the config file, off as no key (and no table once it
@@ -524,31 +276,6 @@ pub fn watch_targets(path: &Path) -> Vec<(PathBuf, Vec<OsString>)> {
         }
     }
     targets
-}
-
-/// `[sounds] allow_boost`, read now: whether playback volumes may go past 100 %.
-pub fn allow_boost() -> bool {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    allow_boost_in(&text)
-}
-
-fn allow_boost_in(text: &str) -> bool {
-    parsed(text)
-        .and_then(|doc| get(&doc, &key("sounds", "allow_boost")).and_then(Item::as_bool))
-        .unwrap_or(false)
-}
-
-/// `[updates] restart_notice`, read now: whether Software Updates says when the system needs a
-/// restart (true unless `false`).
-pub fn restart_notice() -> bool {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    restart_notice_in(&text)
-}
-
-fn restart_notice_in(text: &str) -> bool {
-    parsed(text)
-        .and_then(|doc| get(&doc, &key("updates", "restart_notice")).and_then(Item::as_bool))
-        .unwrap_or(true)
 }
 
 /// A refresh in Hz with the decimals it needs: `60`, `59.94`.
@@ -904,33 +631,110 @@ pub mod system_icons {
 mod tests {
     use super::*;
 
+    /// Each key programs read, set wrong or out of range beside one that reads.
+    const BAD_VALUES: &str = r##"
+terminal = "foot -o x=1"
+script_terminal = "later"
+script_open = "terminal"
+confirm_scripts = "no"
+[privacy]
+recent_files = false
+location = 3
+[glass]
+color = "#102030"
+[fonts]
+shell_dlg = " "
+family = ["A", 3]
+antialias = "yes"
+[accessibility]
+text_size = 140
+[metrics]
+double_click_ms = -1
+[taskbar]
+position = 1
+[drives]
+on_insert = "open"
+[power]
+locker = "  "
+[storage]
+low_space_percent = 90
+[bluetooth]
+battery_warning = -3
+receive_files = "yes"
+[time_zone]
+automatic = true
+[sounds]
+allow_boost = 1
+[updates]
+restart_notice = false
+[thumbnail_cache]
+max_mb = 100000
+external_thumbnailers = false
+"##;
+
     #[test]
-    fn the_same_text_is_parsed_once_and_new_text_again() {
-        let a = parsed("[fonts]\nantialias = true\n").expect("parses");
-        let again = parsed("[fonts]\nantialias = true\n").expect("parses");
-        assert!(
-            std::rc::Rc::ptr_eq(&a, &again),
-            "the same text reuses its parse"
-        );
-        let b = parsed("[fonts]\nantialias = false\n").expect("parses");
-        assert!(!std::rc::Rc::ptr_eq(&a, &b), "new text is parsed anew");
+    fn a_program_reads_each_key_as_the_compositor_does() {
+        use reprisefs::program::{ScriptEnd, ScriptOpen};
+        let c = read(BAD_VALUES);
+        let d = read("");
+        assert_eq!(c.terminal, "foot -o x=1");
+        assert_eq!(c.script_terminal, ScriptEnd::Stay);
+        assert_eq!(c.script_open, ScriptOpen::Terminal);
+        assert!(c.confirm_scripts);
+        assert!(!c.recent_files);
+        assert!(c.location);
         assert_eq!(
-            look_keys_in("[fonts]\nantialias = false\n").antialias,
-            Some(false)
+            c.glass.color,
+            reprisekit::theme::Color::rgb(0x10, 0x20, 0x30)
         );
-        assert!(parsed("[fonts").is_none());
-        assert!(
-            parsed("[fonts").is_none(),
-            "a text that does not parse stays unparsed"
-        );
+        assert_eq!(c.theme.fonts.shell_dlg, None);
+        assert_eq!(c.theme.fonts.family, d.theme.fonts.family);
+        assert_eq!(c.theme.fonts.antialias, d.theme.fonts.antialias);
+        assert_eq!(c.accessibility.text_size, 100);
+        assert_eq!(c.theme.metrics.double_click_ms, 500);
+        assert_eq!(c.taskbar.position, reprisekit::taskbar::Edge::Bottom);
+        assert_eq!(c.drives_on_insert, "open");
+        assert!(c.power.locker.trim().is_empty());
+        assert_eq!(c.low_space_percent, LOW_SPACE_MAX);
+        assert_eq!(c.bluetooth.battery_warning, 0);
+        assert!(!c.bluetooth.receive_files);
+        assert!(c.auto_time_zone);
+        assert!(!c.sounds.allow_boost);
+        assert!(!c.restart_notice);
+        let cache = ThumbnailCache {
+            max_mb: *ThumbnailCache::MAX_MB.end(),
+            external_thumbnailers: false,
+            ..ThumbnailCache::DEFAULT
+        };
+        assert_eq!(c.thumbnail_cache, cache);
+        assert_eq!(read("[fonts").terminal, d.terminal, "not TOML: defaults");
     }
 
     #[test]
-    fn recent_files_is_on_unless_privacy_turns_it_off() {
-        assert!(recent_files_in(""));
-        assert!(recent_files_in("[privacy]\n"));
-        assert!(!recent_files_in("[privacy]\nrecent_files = false\n"));
-        assert!(recent_files_in("[privacy]\nrecent_files = true\n"));
+    fn the_defaults_programs_read_stay_as_documented() {
+        let d = read("");
+        assert_eq!(d.drives_on_insert, DRIVES_ON_INSERT);
+        assert_eq!(d.low_space_percent, LOW_SPACE_PERCENT);
+        assert_eq!(d.bluetooth.battery_warning, BT_BATTERY_WARNING);
+        assert_eq!(d.thumbnail_cache, ThumbnailCache::DEFAULT);
+        assert_eq!(ThumbnailCache::DEFAULT.max_bytes(), 512 << 20);
+    }
+
+    #[test]
+    fn the_file_is_read_again_only_once_it_changes() {
+        let dir = std::env::temp_dir().join(format!("repriseconf-current-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let absent = current_at(path.clone());
+        assert!(std::rc::Rc::ptr_eq(&absent, &current_at(path.clone())));
+        write_atomic(&path, "terminal = \"foot\"\n").unwrap();
+        let first = current_at(path.clone());
+        assert_eq!(first.terminal, "foot");
+        assert!(std::rc::Rc::ptr_eq(&first, &current_at(path.clone())));
+        write_atomic(&path, "terminal = \"st\"\n").unwrap();
+        assert_eq!(current_at(path.clone()).terminal, "st");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -950,180 +754,6 @@ mod tests {
     }
 
     #[test]
-    fn the_second_dialog_font_is_read_when_set() {
-        assert_eq!(look_keys_in("").shell_dlg, None);
-        assert_eq!(look_keys_in("[fonts]\nshell_dlg = \" \"\n").shell_dlg, None);
-        assert_eq!(look_keys_in("[fonts]\nshell_dlg = 3\n").shell_dlg, None);
-        assert_eq!(look_keys_in("[fonts\n").shell_dlg, None);
-        assert_eq!(
-            look_keys_in("[fonts]\nshell_dlg = \"Some Sans\"\n")
-                .shell_dlg
-                .as_deref(),
-            Some("Some Sans")
-        );
-    }
-
-    #[test]
-    fn the_font_family_is_read_when_a_list_of_names() {
-        assert_eq!(look_keys_in("").font_family, None);
-        assert_eq!(look_keys_in("[fonts]\nfamily = []\n").font_family, None);
-        assert_eq!(
-            look_keys_in("[fonts]\nfamily = \"DejaVu Sans\"\n").font_family,
-            None
-        );
-        assert_eq!(
-            look_keys_in("[fonts]\nfamily = [\"A\", 3]\n").font_family,
-            None
-        );
-        assert_eq!(
-            look_keys_in("[fonts]\nfamily = [\"DejaVu Sans\", \"Noto Sans\"]\n").font_family,
-            Some(vec!["DejaVu Sans".into(), "Noto Sans".into()])
-        );
-    }
-
-    #[test]
-    fn font_antialias_is_read_when_a_boolean() {
-        assert_eq!(look_keys_in("").antialias, None);
-        assert_eq!(
-            look_keys_in("[fonts]\nantialias = \"yes\"\n").antialias,
-            None
-        );
-        assert_eq!(
-            look_keys_in("[fonts]\nantialias = true\n").antialias,
-            Some(true)
-        );
-        assert_eq!(
-            look_keys_in("[fonts]\nantialias = false\n").antialias,
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn the_text_size_is_read_or_100() {
-        assert_eq!(look_keys_in("").text_size, 100);
-        assert_eq!(
-            look_keys_in("[accessibility]\ntext_size = 150\n").text_size,
-            150
-        );
-        assert_eq!(
-            look_keys_in("[accessibility]\ntext_size = 140\n").text_size,
-            100
-        );
-        assert_eq!(
-            look_keys_in("[accessibility]\ntext_size = \"150\"\n").text_size,
-            100
-        );
-    }
-
-    #[test]
-    fn the_double_click_time_is_read_or_left_to_the_interface() {
-        assert_eq!(look_keys_in("").double_click_ms, None);
-        assert_eq!(
-            look_keys_in("[metrics]\ndouble_click_ms = 900\n").double_click_ms,
-            Some(900)
-        );
-        assert_eq!(
-            look_keys_in("[metrics]\ndouble_click_ms = -1\n").double_click_ms,
-            None
-        );
-        assert_eq!(
-            look_keys_in("[metrics]\ndouble_click_ms = \"900\"\n").double_click_ms,
-            None
-        );
-    }
-
-    #[test]
-    fn the_drive_insert_mode_is_read_or_ask() {
-        assert_eq!(drives_on_insert_in(""), "ask");
-        assert_eq!(
-            drives_on_insert_in("[drives]\non_insert = \"open\"\n"),
-            "open"
-        );
-        assert_eq!(drives_on_insert_in("[drives]\non_insert = true\n"), "ask");
-    }
-
-    #[test]
-    fn a_locker_is_set_by_a_command_that_is_not_blank() {
-        assert!(!locker_set_in(""));
-        assert!(!locker_set_in("[power]\nlocker = \"  \"\n"));
-        assert!(locker_set_in("[power]\nlocker = \"swaylock -f\"\n"));
-        assert!(!locker_set_in("[power]\nlocker = 1\n"));
-    }
-
-    #[test]
-    fn a_script_runs_in_the_terminal_key_and_stays_unless_set_to_close() {
-        use reprisefs::program::ScriptEnd;
-        assert_eq!(terminal_in(""), "reprise-terminal");
-        assert_eq!(script_terminal_in(""), ScriptEnd::Stay);
-        let text = "terminal = \"foot -o x=1\"\nscript_terminal = \"close\"\n[drives]\nterminal = \"st\"\n";
-        assert_eq!(terminal_in(text), "foot -o x=1");
-        assert_eq!(script_terminal_in(text), ScriptEnd::Close);
-        assert_eq!(
-            terminal_in("[drives]\nterminal = \"st\"\n"),
-            "reprise-terminal",
-            "top-level keys only"
-        );
-        assert_eq!(
-            script_terminal_in("script_terminal = \"later\"\n"),
-            ScriptEnd::Stay
-        );
-    }
-
-    #[test]
-    fn a_script_runs_bare_unless_script_open_says_terminal() {
-        use reprisefs::program::ScriptOpen;
-        assert_eq!(script_open_in(""), ScriptOpen::Run);
-        assert_eq!(
-            script_open_in("script_open = \"terminal\"\n"),
-            ScriptOpen::Terminal
-        );
-        assert_eq!(script_open_in("script_open = \"x\"\n"), ScriptOpen::Run);
-    }
-
-    #[test]
-    fn scripts_ask_first_unless_confirm_scripts_is_false() {
-        assert!(confirm_scripts_in(""));
-        assert!(!confirm_scripts_in("confirm_scripts = false\n"));
-        assert!(confirm_scripts_in("confirm_scripts = \"no\"\n"));
-    }
-
-    #[test]
-    fn low_space_warns_below_5_percent_unless_set() {
-        let pct = |v: &str| low_space_percent_in(&format!("[storage]\nlow_space_percent = {v}\n"));
-        assert_eq!(low_space_percent_in(""), 5);
-        assert_eq!(pct("10"), 10);
-        assert_eq!(pct("0"), 0, "0 turns it off");
-        assert_eq!(pct("-1"), 0);
-        assert_eq!(pct("90"), 50);
-        assert_eq!(pct("\"low\""), 5);
-    }
-
-    #[test]
-    fn boost_is_off_unless_set_true() {
-        assert!(!allow_boost_in(""));
-        assert!(allow_boost_in("[sounds]\nallow_boost = true\n"));
-        assert!(!allow_boost_in("[sounds]\nallow_boost = 1\n"));
-    }
-
-    #[test]
-    fn the_restart_notice_is_on_unless_turned_off() {
-        assert!(restart_notice_in(""));
-        assert!(!restart_notice_in("[updates]\nrestart_notice = false\n"));
-        assert!(restart_notice_in("not toml ["));
-    }
-
-    #[test]
-    fn bt_battery_warns_at_15_percent_unless_set() {
-        let pct = |v: &str| bt_battery_warning_in(&format!("[bluetooth]\nbattery_warning = {v}\n"));
-        assert_eq!(bt_battery_warning_in(""), 15);
-        assert_eq!(pct("20"), 20);
-        assert_eq!(pct("0"), 0, "0 turns it off");
-        assert_eq!(pct("-3"), 0);
-        assert_eq!(pct("80"), 50);
-        assert_eq!(pct("\"low\""), 15);
-    }
-
-    #[test]
     fn saving_the_bt_battery_warning_drops_the_default() {
         let warn = |text: &str, pct: u8| {
             with_bt_key(
@@ -1133,7 +763,7 @@ mod tests {
             )
         };
         let set = warn("# mine\n[taskbar]\nheight = 30\n", 25).unwrap();
-        assert_eq!(bt_battery_warning_in(&set), 25);
+        assert_eq!(read(&set).bluetooth.battery_warning, 25);
         assert!(
             set.contains("# mine\n[taskbar]\nheight = 30\n"),
             "the rest of the file stays"
@@ -1144,78 +774,24 @@ mod tests {
     }
 
     #[test]
-    fn bt_receive_files_is_off_unless_turned_on() {
-        assert!(!bt_receive_files_in(""));
-        assert!(bt_receive_files_in("[bluetooth]\nreceive_files = true\n"));
-        assert!(!bt_receive_files_in("[bluetooth]\nreceive_files = false\n"));
-        assert!(!bt_receive_files_in(
-            "[bluetooth]\nreceive_files = \"yes\"\n"
-        ));
+    fn saving_bt_receive_files_writes_only_on() {
         let on = with_bt_key("", "receive_files", Some(Value::from(true))).unwrap();
-        assert!(bt_receive_files_in(&on));
+        assert!(read(&on).bluetooth.receive_files);
         let back = with_bt_key(&on, "receive_files", None).unwrap();
-        assert!(!bt_receive_files_in(&back));
+        assert!(!read(&back).bluetooth.receive_files);
         assert!(!back.contains("bluetooth"), "off is no key: {back}");
     }
 
     #[test]
-    fn the_automatic_time_zone_is_off_and_the_location_on_unless_set() {
-        assert_eq!(auto_time_zone_in(""), (false, true));
-        assert_eq!(
-            auto_time_zone_in("[time_zone]\nautomatic = true\n[privacy]\nlocation = false\n"),
-            (true, false)
-        );
+    fn saving_the_automatic_time_zone_writes_only_on() {
         let set = with_auto_time_zone("# mine\n[taskbar]\nheight = 30\n", true).unwrap();
-        assert_eq!(auto_time_zone_in(&set), (true, true));
+        assert!(read(&set).auto_time_zone);
         assert!(
             set.contains("# mine\n[taskbar]\nheight = 30\n"),
             "the rest of the file stays"
         );
         let back = with_auto_time_zone(&set, false).unwrap();
         assert!(!back.contains("time_zone"), "{back}");
-    }
-
-    #[test]
-    fn the_thumbnail_cache_is_on_at_512_mb_unless_set() {
-        assert_eq!(thumbnail_cache_in(""), ThumbnailCache::DEFAULT);
-        assert_eq!(
-            thumbnail_cache_in("[thumbnail_cache]\nenabled = false\n"),
-            ThumbnailCache {
-                enabled: false,
-                ..ThumbnailCache::DEFAULT
-            }
-        );
-        assert!(
-            !thumbnail_cache_in("[thumbnail_cache]\nexternal_thumbnailers = false\n")
-                .external_thumbnailers
-        );
-        let cap =
-            |v: &str| thumbnail_cache_in(&format!("[thumbnail_cache]\nmax_mb = {v}\n")).max_mb;
-        assert_eq!(cap("64"), 64);
-        assert_eq!(cap("0"), 1);
-        assert_eq!(cap("-5"), 1);
-        assert_eq!(cap("100000"), 4096);
-        assert_eq!(cap("\"big\""), 512);
-        assert_eq!(ThumbnailCache::DEFAULT.max_bytes(), 512 << 20);
-    }
-
-    #[test]
-    fn the_taskbar_position_is_read_or_bottom() {
-        assert_eq!(taskbar_position_in(""), "bottom");
-        assert_eq!(
-            taskbar_position_in("[taskbar]\nposition = \"top\"\n"),
-            "top"
-        );
-        assert_eq!(taskbar_position_in("[taskbar]\nposition = 1\n"), "bottom");
-        assert_eq!(
-            taskbar_position_in("[taskbar]\nposition = \"left\"\nside_width = 90\n"),
-            "left"
-        );
-        assert_eq!(
-            taskbar_position_in("[taskbar\nposition = \"top\"\n"),
-            "bottom",
-            "a file that does not parse"
-        );
     }
 
     #[test]

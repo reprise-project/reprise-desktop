@@ -87,6 +87,12 @@ pub struct Config {
     pub remote_desktop: crate::remote::RemoteDesktop,
     /// `[updates] restart_notice`: Software Updates says when the running system needs a restart.
     pub restart_notice: bool,
+    /// `[drives] on_insert`: what reprise-drives does with a plugged-in drive.
+    pub drives_on_insert: String,
+    /// `[storage] low_space_percent`, clamped to 0..=[`crate::LOW_SPACE_MAX`].
+    pub low_space_percent: u8,
+    pub bluetooth: BluetoothConfig,
+    pub thumbnail_cache: crate::ThumbnailCache,
     /// `[time_zone] automatic`: the compositor sets the time zone from the location.
     pub auto_time_zone: bool,
     pub debug: DebugConfig,
@@ -185,6 +191,10 @@ impl Default for Config {
             capture_border: true,
             remote_desktop: crate::remote::RemoteDesktop::default(),
             restart_notice: true,
+            drives_on_insert: crate::DRIVES_ON_INSERT.into(),
+            low_space_percent: crate::LOW_SPACE_PERCENT,
+            bluetooth: BluetoothConfig::default(),
+            thumbnail_cache: crate::ThumbnailCache::DEFAULT,
             auto_time_zone: false,
             debug: DebugConfig::default(),
             shortcut_overlay: ShortcutOverlay::default(),

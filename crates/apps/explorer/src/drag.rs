@@ -443,7 +443,7 @@ impl Explorer {
         let kind = match (&self.menu_paste, item.and_then(|it| it.program)) {
             (Some(PasteTo::Folder(_)), _) => ItemKind::Folder,
             (Some(PasteTo::App(_)), _) => ItemKind::Launcher,
-            (_, Some(Program::Script)) => ItemKind::Script(repriseconf::script_open()),
+            (_, Some(Program::Script)) => ItemKind::Script(repriseconf::current().script_open),
             _ => ItemKind::File,
         };
         let mut waits = repriseapp::iconjobs::IconWaits::default();

@@ -210,7 +210,7 @@ fn work(rx: Receiver<Msg>, to_loop: LoopSender<OnLoop>) {
                 Ok(msg) => queue.take(msg),
                 Err(_) => return,
             }
-            cache = cache_for(repriseconf::thumbnail_cache());
+            cache = cache_for(repriseconf::current().thumbnail_cache);
         }
         while let Ok(msg) = rx.try_recv() {
             queue.take(msg);

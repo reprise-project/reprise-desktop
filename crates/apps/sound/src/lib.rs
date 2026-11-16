@@ -458,7 +458,7 @@ impl Sound {
     /// Reread `[sounds] allow_boost`; turned off, every playback node past 100 % comes back to it.
     /// Returns whether it changed.
     fn reread_boost(&mut self) -> bool {
-        let was = std::mem::replace(&mut self.boost, repriseconf::allow_boost());
+        let was = std::mem::replace(&mut self.boost, repriseconf::current().sounds.allow_boost);
         if was && !self.boost {
             for id in over_full(&self.snapshot) {
                 pipewire::set_volume(&self.snapshot, id, 1.0);
@@ -596,7 +596,7 @@ impl Sound {
             let mix = self.popup_mix();
             self.flyout = Some(Open {
                 at,
-                edge: Edge::from_name(&repriseconf::taskbar_position()).unwrap_or_default(),
+                edge: repriseconf::current().taskbar.position,
                 popup: VolumePopup::new(&mix),
             });
         }
@@ -677,7 +677,7 @@ impl App for Sound {
             Err(code) => return repriseapp::Start::Exit(code),
         }
         self.players = Some(mpris::watch(waker.clone()));
-        self.boost = repriseconf::allow_boost();
+        self.boost = repriseconf::current().sounds.allow_boost;
         let w = waker.clone();
         self.config = repriseconf::watch(move || w.wake());
         self.snapshots = Some(pipewire::watch(move || waker.wake()));

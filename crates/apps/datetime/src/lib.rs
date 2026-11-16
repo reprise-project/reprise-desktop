@@ -227,7 +227,7 @@ impl App for DateTimeApp {
                         s.split_once("zoneinfo/").map(|(_, z)| z.to_string())
                     })
                     .unwrap_or_else(|| "UTC".into());
-                self.system.auto_zone = repriseconf::auto_time_zone().0;
+                self.system.auto_zone = repriseconf::current().auto_time_zone;
             }
         }
         start_ticker(waker.clone());

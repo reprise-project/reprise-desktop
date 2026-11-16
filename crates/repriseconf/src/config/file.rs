@@ -281,6 +281,33 @@ pub struct FileSounds {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub struct FileDrives {
+    pub on_insert: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct FileBluetooth {
+    pub battery_warning: Option<i64>,
+    pub receive_files: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct FileStorage {
+    pub low_space_percent: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct FileThumbnailCache {
+    pub enabled: Option<bool>,
+    pub max_mb: Option<i64>,
+    pub external_thumbnailers: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FileUpdates {
     pub restart_notice: Option<bool>,
 }
@@ -718,18 +745,10 @@ pub struct FileConfig {
     /// `[recycle_bin]` is read by `reprisefs::bincap::Policy`; accepted here so the file parses.
     #[allow(dead_code)]
     pub recycle_bin: Option<serde::de::IgnoredAny>,
-    /// `[drives]` is read by reprise-drives; accepted here so the file parses.
-    #[allow(dead_code)]
-    pub drives: Option<serde::de::IgnoredAny>,
-    /// `[bluetooth]` is read by `crate::bt_battery_warning`; accepted here so the file parses.
-    #[allow(dead_code)]
-    pub bluetooth: Option<serde::de::IgnoredAny>,
-    /// `[storage]` is read by `crate::low_space_percent`; accepted here so the file parses.
-    #[allow(dead_code)]
-    pub storage: Option<serde::de::IgnoredAny>,
-    /// `[thumbnail_cache]` is read by `crate::thumbnail_cache`; accepted here so the file parses.
-    #[allow(dead_code)]
-    pub thumbnail_cache: Option<serde::de::IgnoredAny>,
+    pub drives: Option<FileDrives>,
+    pub bluetooth: Option<FileBluetooth>,
+    pub storage: Option<FileStorage>,
+    pub thumbnail_cache: Option<FileThumbnailCache>,
     pub startmenu: Option<Vec<FileMenuEntry>>,
     pub quicklaunch: Option<Vec<FileQuickLaunch>>,
     pub startmenu_banner: Option<String>,

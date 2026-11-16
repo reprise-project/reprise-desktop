@@ -205,7 +205,7 @@ const ICON_AT: (i32, i32) = (12, 12);
 /// The theme a prompt's form draws with, for building it before `repriseapp::run`: what
 /// `Ctx::forms` gives once it runs.
 pub fn start_forms() -> Theme {
-    repriseapp::start_theme().with_form_text(repriseconf::text_size())
+    repriseapp::start_theme().with_form_text(repriseconf::current().accessibility.text_size)
 }
 
 /// The icon theme repriseapp loads. A prompt resolves its icons before its

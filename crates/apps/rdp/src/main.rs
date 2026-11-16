@@ -210,7 +210,7 @@ fn main() -> ExitCode {
         let console = console::Console::new(
             status.clone(),
             config_rx.clone(),
-            repriseconf::locker_set,
+            || !repriseconf::current().power.locker.trim().is_empty(),
             seat_away,
         );
         let tcp_status = status.clone();

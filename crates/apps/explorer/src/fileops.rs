@@ -230,7 +230,7 @@ impl Explorer {
         let (dir, shortcut) = match self.paste.take() {
             None => return Reply::none(),
             Some(PasteTo::App(app)) => {
-                let terminal = repriseconf::terminal();
+                let terminal = repriseconf::current().terminal.clone();
                 let spawn = (clip.paths.iter())
                     .map(|p| reprisefs::apps::open_argv(&app, &terminal, p))
                     .collect();
@@ -1086,9 +1086,10 @@ impl Explorer {
     ) -> Result<reprisefs::props::Opening, apps::ExecRefused> {
         use reprisefs::props::Opening;
         Ok(match shortcut {
-            apps::Shortcut::App(app) => {
-                Opening::of(app, apps::launch_argv(app, &repriseconf::terminal())?)
-            }
+            apps::Shortcut::App(app) => Opening::of(
+                app,
+                apps::launch_argv(app, &repriseconf::current().terminal)?,
+            ),
             apps::Shortcut::Link(link) => Opening {
                 argv: vec!["xdg-open".into(), link.url.clone().into()],
                 app: None,
@@ -1158,7 +1159,7 @@ impl Explorer {
         else {
             return Reply::none();
         };
-        match reprisefs::apps::open_argv(app, &repriseconf::terminal(), &path) {
+        match reprisefs::apps::open_argv(app, &repriseconf::current().terminal, &path) {
             Ok(argv) => Reply {
                 redraw: true,
                 spawn: vec![argv],
@@ -1281,7 +1282,7 @@ impl Explorer {
             self.props_set_opens_with(app.name.clone(), app.icon.clone(), ctx);
             return Reply::redraw_all();
         }
-        match reprisefs::apps::open_argv(&app, &repriseconf::terminal(), &c.path) {
+        match reprisefs::apps::open_argv(&app, &repriseconf::current().terminal, &c.path) {
             Ok(argv) => Reply {
                 redraw_all: true,
                 spawn: vec![argv],

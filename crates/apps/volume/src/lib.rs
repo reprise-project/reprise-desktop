@@ -149,7 +149,7 @@ impl Volume {
         let opts = Options {
             hidden: state.hidden,
             advanced: state.advanced,
-            boost: repriseconf::allow_boost(),
+            boost: repriseconf::current().sounds.allow_boost,
             ..Options::new(view)
         };
         let lines = view::lines(&snapshot, &opts, &Recent::default());
@@ -287,7 +287,7 @@ impl Volume {
             self.snapshot = s;
         }
         if moved {
-            self.opts.boost = repriseconf::allow_boost();
+            self.opts.boost = repriseconf::current().sounds.allow_boost;
         }
         Reply {
             size: (moved || refused).then(|| self.resync(ctx)).flatten(),

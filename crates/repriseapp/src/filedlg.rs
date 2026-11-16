@@ -38,7 +38,7 @@ use reprisekit::raster::Canvas;
 use reprisekit::theme::{Metrics, TextUnits, Theme};
 
 fn dialog_places(pins: &[Pin]) -> Vec<DialogPlace> {
-    reprisefs::places::dialog_places_with(repriseconf::recent_files(), pins)
+    reprisefs::places::dialog_places_with(repriseconf::current().recent_files, pins)
 }
 
 /// The built-in tiles, without icons or pinned folders.
@@ -635,7 +635,7 @@ impl Host {
             w.clear();
             w.take_changed();
         }
-        self.follow_cache(repriseconf::thumbnail_cache());
+        self.follow_cache(repriseconf::current().thumbnail_cache);
         self.start_pins();
         let tiles = self.tiles();
         let mut dlg = self.icons.dialog_with(fields, &tiles);
@@ -832,7 +832,9 @@ impl Host {
         if self.thumbs.is_some() {
             return;
         }
-        let cache = *self.cache.get_or_insert_with(repriseconf::thumbnail_cache);
+        let cache = *self
+            .cache
+            .get_or_insert_with(|| repriseconf::current().thumbnail_cache);
         self.thumbs = Some(Thumbs::new(
             std::sync::Arc::new(crate::decode::Decoders::default_set()),
             thumbs::cache_for(cache),

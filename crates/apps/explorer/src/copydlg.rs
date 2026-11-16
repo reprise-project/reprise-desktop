@@ -52,11 +52,9 @@ pub(crate) fn status(s: Snapshot, waiting: usize) -> Status {
     }
 }
 
-/// The glass colour `[glass] color` names, for the graph; the first swatch when unset or unknown.
+/// The glass colour `[glass] color` names, for the graph.
 fn accent() -> Color {
-    repriseconf::glass_color()
-        .and_then(|name| reprisekit::glass::color_named(&name))
-        .unwrap_or(reprisekit::glass::SWATCHES[0].color)
+    repriseconf::current().glass.color
 }
 
 impl Progress {

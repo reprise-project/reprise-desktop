@@ -214,7 +214,7 @@ fn compose(mail: &Mail, token: Option<&str>) -> Result<String, Failure> {
     let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
     let entry = reprisefs::props::default_app_entry(MAILTO, &apps).ok_or(Failure::NoProgram)?;
     let (argv, as_uri) =
-        compose_argv(entry, mail, &repriseconf::terminal()).map_err(Failure::Refused)?;
+        compose_argv(entry, mail, &repriseconf::current().terminal).map_err(Failure::Refused)?;
     let started = match start(&argv, &entry.id, token) {
         // Without xdg-utils the program gets the mailto: URI itself.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && argv[0] == "xdg-email" => {
