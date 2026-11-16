@@ -25,7 +25,8 @@ pub enum Show {
 pub struct Request {
     pub show: Show,
     pub uris: Vec<String>,
-    /// The call's `startup_id` as the activation token, when it carried one.
+    /// The activation token: the compositor's when the caller holds the keyboard (a browser sends
+    /// none it would trust), else the call's `startup_id` when it carried one.
     pub handoff: Handoff,
 }
 
@@ -62,8 +63,12 @@ impl FileManager {
         startup_id: String,
     ) -> zbus::fdo::Result<()> {
         self.host_only.check(conn, header).await?;
+        let minted = match header.sender() {
+            Some(caller) => crate::tray::activation_for(conn, caller).await,
+            None => None,
+        };
         let handoff = Handoff {
-            token: Some(startup_id).filter(|t| !t.is_empty()),
+            token: minted.or(Some(startup_id).filter(|t| !t.is_empty())),
             by_key: false,
         };
         let _ = self.tx.send(Request {

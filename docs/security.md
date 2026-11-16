@@ -624,7 +624,11 @@ A new window takes the keyboard when it maps if any of these holds:
 - it presents a trusted activation token, which Reprise mints when it
   starts a program or you click a tray icon or a notification, and which a
   program can mint only from an input event in its own focused window, or
-  within 3 s of a drop on one of its windows
+  within 3 s of a drop on one of its windows. Explorer's
+  `org.freedesktop.FileManager1` gets one for the window it opens when the
+  caller's process is, descends from or sits in the session of the focused
+  window's (a browser's "Show in folder" sends no token Reprise trusts); the
+  compositor mints it only for the installed `reprise-explorer`
 - Reprise started its program within the last 30 s
 - it shares a Wayland connection or a process with the focused window, its
   process descends from it or sits in the session it leads, or the focused

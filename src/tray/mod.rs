@@ -151,6 +151,13 @@ pub enum TrayEvent {
         close: bool,
         reply: async_channel::Sender<u32>,
     },
+    /// `org.reprise.Tray.ActivationFor` from Explorer's FileManager1: a token on `reply` when the
+    /// caller, by its process `lineage` and `session`, holds the keyboard; else an empty one.
+    ActivationFor {
+        lineage: Vec<i32>,
+        session: Option<i32>,
+        reply: async_channel::Sender<String>,
+    },
     /// `org.reprise.Tray.WindowIcon`, answered on `reply`.
     WindowIcon {
         lineages: Vec<Vec<crate::streamwindow::Step>>,
@@ -807,6 +814,24 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
         TrayEvent::WindowsOf { pids, close, reply } => {
             let n = state.end_task_windows(&pids, close);
             let _ = reply.try_send(u32::try_from(n).unwrap_or(u32::MAX));
+            false
+        }
+        TrayEvent::ActivationFor {
+            lineage,
+            session,
+            reply,
+        } => {
+            let token = state.token_for_focus_holder(&lineage, session);
+            log::info!(
+                "activation for pid {:?}: {}",
+                lineage.first(),
+                if token.is_some() {
+                    "minted"
+                } else {
+                    "not the focus holder"
+                }
+            );
+            let _ = reply.try_send(token.unwrap_or_default());
             false
         }
         TrayEvent::WindowIcon {

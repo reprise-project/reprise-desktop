@@ -219,6 +219,26 @@ impl State {
         takes
     }
 
+    /// A trusted token for a window opened for the process `lineage` and `session` describe while
+    /// it holds the keyboard ([`crate::mapfocus::holds_focus`]); None under the lock.
+    pub fn token_for_focus_holder(
+        &mut self,
+        lineage: &[i32],
+        session: Option<i32>,
+    ) -> Option<String> {
+        let reprise = self.dialogs.active || self.bar_shared.keys.is_some();
+        let window = (self.focused)
+            .filter(|&f| self.win(f).is_some_and(|f| f.mapped && !f.hidden()))
+            .map(|f| crate::mapfocus::Holder {
+                pid: self.client_pid(f),
+                ..Default::default()
+            });
+        let holder = crate::mapfocus::holder(reprise, window);
+        let holds =
+            !self.desktop_locked() && crate::mapfocus::holds_focus(lineage, session, holder);
+        holds.then(|| self.new_activation_token())
+    }
+
     /// Stack `w` just under the focused window and everything it owns, and next
     /// after it in `focus_order`, so `w` is focused when that one goes.
     pub fn place_behind_focus(&mut self, w: WindowId) {
@@ -355,6 +375,44 @@ mod tests {
             Next::Window(1)
         );
         assert_eq!(next_focus(false, false, &[1, 2], |_| false), Next::Nobody);
+    }
+
+    #[test]
+    fn a_token_for_the_focus_holder_raises_another_programs_window_and_none_goes_to_others() {
+        use crate::tray::TrayEvent;
+        use std::os::fd::AsRawFd;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (tx, wake, _heard) = crate::tray::headless(&mut h.state);
+        let mut c = h.connect();
+        let explorer = h.map_toplevel(&mut c, "explorer", 300, 200);
+        let browser = h.map_toplevel(&mut c, "browser", 300, 200);
+        assert_eq!(h.state.focused, Some(browser.id));
+        let ask = |h: &mut crate::harness::Harness, lineage: Vec<i32>| {
+            let (reply, answer) = async_channel::bounded(1);
+            let ev = TrayEvent::ActivationFor {
+                lineage,
+                session: None,
+                reply,
+            };
+            tx.send(ev).expect("send");
+            // SAFETY: `wake` is an open eventfd and the buffer a live 8-byte local.
+            let wrote = unsafe { libc::write(wake.as_raw_fd(), (&1u64 as *const u64).cast(), 8) };
+            assert_eq!(wrote, 8);
+            h.dispatch();
+            answer.try_recv().expect("answered")
+        };
+        assert_eq!(
+            ask(&mut h, vec![i32::MAX - 637]),
+            "",
+            "a stranger gets none"
+        );
+        let own = i32::try_from(std::process::id()).unwrap();
+        let token = ask(&mut h, vec![own]);
+        assert!(!token.is_empty(), "the focused program's process gets one");
+        c.activate(&token, explorer);
+        h.roundtrip(&mut c);
+        assert_eq!(h.state.focused, Some(explorer.id), "the token raises");
     }
 }
 
