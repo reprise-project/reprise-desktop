@@ -28,6 +28,7 @@ use std::rc::Rc;
 
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::term::TermMode;
+use repriseapp::asks::{Answer, Asks};
 use repriseapp::keys::{form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{App, Child, Ctx, Event, KeyInput, MAIN, Reply, WinId};
@@ -58,13 +59,11 @@ pub const FONTS: [&str; 3] = ["Lucida Console", "Liberation Mono", "DejaVu Sans 
 const OPEN_CELLS: (i32, i32) = (80, 24);
 /// The text sizes zoom stays between, px.
 const ZOOM: (u32, u32) = (6, 72);
-const CONFIRM: WinId = WinId::named("confirm");
 const OPTIONS: WinId = WinId::named("options");
 const PROFILE: WinId = WinId::named("profile");
 const FIND: WinId = WinId::named("find");
-const NOTFOUND: WinId = WinId::named("notfound");
 
-/// What a confirm box is asking about.
+/// What a box over a window is asking about or telling.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Asking {
     /// Closing the tab whose program has this pid.
@@ -75,13 +74,15 @@ enum Asking {
         pid: u32,
         text: String,
     },
+    /// Find's search found nothing.
+    NotFound,
 }
 
 impl Asking {
     fn pid(&self) -> Option<u32> {
         match *self {
             Asking::Tab(pid) | Asking::Paste { pid, .. } => Some(pid),
-            Asking::Window(_) => None,
+            Asking::Window(_) | Asking::NotFound => None,
         }
     }
 }
@@ -112,10 +113,13 @@ struct Pane {
     leader: Option<WinId>,
     /// The client size last drawn at, logical px: what a window opened from this one takes.
     size: (i32, i32),
+    /// The boxes over this window.
+    asks: Asks<Asking>,
 }
 
 impl Pane {
-    fn new(caption: bool, leader: Option<WinId>) -> Pane {
+    /// The pane of window `id`.
+    fn new(id: WinId, caption: bool, leader: Option<WinId>) -> Pane {
         let black = Color::rgb(0, 0, 0);
         Pane {
             tabs: Tabs::new(),
@@ -131,6 +135,7 @@ impl Pane {
             caption,
             leader,
             size: (0, 0),
+            asks: Asks::new(id.named_in("confirm")).over(id),
         }
     }
 }
@@ -152,8 +157,7 @@ struct Terminal {
     order: Vec<WinId>,
     /// The compositor joins windows into caption tab groups (`repriseapp::tab_groups`).
     tab_groups: bool,
-    confirm: Option<(Asking, MsgBox)>,
-    /// The last event's text and form theme, which the confirm box is sized with.
+    /// The last event's text and form theme, which the boxes are sized with.
     forms: Option<(Rc<TextRenderer>, Theme)>,
     options: Option<Options>,
     options_on: WinId,
@@ -161,7 +165,6 @@ struct Terminal {
     /// The window Find searches and sits over.
     find_on: WinId,
     last_find: find::Query,
-    notfound: Option<MsgBox>,
     config: PathBuf,
     /// The settings file's mtime when last loaded or written.
     loaded: Option<std::time::SystemTime>,
@@ -264,19 +267,17 @@ impl Terminal {
             font,
             px,
             metrics: ((1, px), metrics),
-            w: Pane::new(false, None),
+            w: Pane::new(MAIN, false, None),
             cur: MAIN,
             parked: Vec::new(),
             order: vec![MAIN],
             tab_groups: false,
-            confirm: None,
             forms: None,
             options: None,
             options_on: MAIN,
             find: None,
             find_on: MAIN,
             last_find: find::Query::default(),
-            notfound: None,
             config: settings::path(),
             loaded: None,
             window: State::load(&state_path).window,
@@ -448,7 +449,7 @@ impl Terminal {
             .map(repriseapp::window_id)
             .find(|id| !self.order.contains(id))
             .expect("a free window id");
-        let mut pane = Pane::new(true, Some(leader));
+        let mut pane = Pane::new(id, true, Some(leader));
         (pane.size, pane.fitted) = (self.w.size, self.w.fitted);
         self.parked.push((id, pane));
         let at = self
@@ -514,8 +515,8 @@ impl Terminal {
         })
     }
 
-    /// Close the window at hand: another one comes to hand and takes over the dialogs it had.
-    /// True when it was the last.
+    /// Close the window at hand, and the boxes over it: another one comes to hand and takes over
+    /// its Find and Options. True when it was the last.
     fn drop_pane(&mut self) -> bool {
         let gone = self.cur;
         self.order.retain(|&w| w != gone);
@@ -534,15 +535,7 @@ impl Terminal {
             self.options_on = next;
         }
         if self.find_on == gone {
-            (self.find, self.notfound, self.find_on) = (None, None, next);
-        }
-        let asked = match &self.confirm {
-            Some((Asking::Window(w), _)) => *w != gone,
-            Some((what, _)) => what.pid().and_then(|p| self.pane_of_pid(p)).is_some(),
-            None => true,
-        };
-        if !asked {
-            self.confirm = None;
+            (self.find, self.find_on) = (None, next);
         }
         false
     }
@@ -611,6 +604,7 @@ impl Terminal {
         if self.w.tabs.close(i) {
             return self.close_pane();
         }
+        self.withdraw_gone();
         self.switched()
     }
 
@@ -633,10 +627,10 @@ impl Terminal {
         self.w.tabs.strip.hot_adder = None;
     }
 
-    /// Ask about `what` with `yes` beside Cancel, unless a box is already up: the first question
-    /// stands.
+    /// Ask about `what` with `yes` beside Cancel, over the window at hand. A question equal to
+    /// one up or waiting there is asked once.
     fn ask(&mut self, what: Asking, text: &str, yes: &str, ctx: &mut Ctx) {
-        if self.confirm.is_some() {
+        if self.w.asks.iter().any(|(_, k)| *k == what) {
             return;
         }
         let fields = Fields {
@@ -648,20 +642,32 @@ impl Terminal {
             min_w: 0,
             max_w: repriseapp::dialog_max_w(),
         };
-        self.confirm = Some((what, MsgBox::new("Terminal", fields)));
+        self.w.asks.ask(MsgBox::new("Terminal", fields), what);
     }
 
-    fn confirm_event(&mut self, ev: Event) -> Reply {
-        let (Some((_, b)), Some((text, forms))) = (&mut self.confirm, &self.forms) else {
+    /// The window whose boxes include box window `win`.
+    fn asker(&self, win: WinId) -> Option<WinId> {
+        let mut roots = self.order.iter().copied();
+        roots.find(|&id| self.pane(id).is_some_and(|p| p.asks.owns(win)))
+    }
+
+    /// The boxes over window `root`.
+    fn asks(&self, root: WinId) -> Option<&Asks<Asking>> {
+        self.pane(root).map(|p| &p.asks)
+    }
+
+    /// An event for box window `win` over window `root`.
+    fn confirm_event(&mut self, root: WinId, win: WinId, ev: Event) -> Reply {
+        if !self.enter(root) {
+            return Reply::none();
+        }
+        let Some((text, forms)) = &self.forms else {
             return Reply::none();
         };
-        match b.event(&ev, text, forms) {
-            oneshot::Outcome::None => Reply::none(),
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::Closed(button) => {
-                let Some((what, _)) = self.confirm.take() else {
-                    return Reply::none();
-                };
+        match self.w.asks.event(win, &ev, text, forms) {
+            Answer::None => Reply::none(),
+            Answer::Redraw => Reply::redraw(),
+            Answer::Closed(what, button) => {
                 let reply = match (button, what) {
                     (Some(0), Asking::Window(w)) if self.enter(w) => self.close_pane(),
                     (Some(0), Asking::Paste { pid, text }) => {
@@ -754,12 +760,15 @@ impl Terminal {
                 self.w.chrome.dirty = true;
             }
         }
-        if let Some(pid) = self.confirm.as_ref().and_then(|(what, _)| what.pid())
-            && self.pane_of_pid(pid).is_none()
-        {
-            self.confirm = None;
-        }
+        self.withdraw_gone();
         out
+    }
+
+    /// Takes down the questions about tabs of the window at hand that are gone.
+    fn withdraw_gone(&mut self) {
+        let tabs = &self.w.tabs.list;
+        let gone = |p: u32| !tabs.iter().any(|t| t.pid() == p);
+        self.w.asks.withdraw(|what| what.pid().is_some_and(gone));
     }
 
     /// Paste `text` into the open tab; one holding a line end asks first while the program has
@@ -1029,12 +1038,8 @@ impl App for Terminal {
                 modal: false,
             });
         }
-        if let Some(b) = &self.notfound {
-            out.push(b.child(NOTFOUND, text, forms));
-        }
-        if let Some((_, b)) = &self.confirm {
-            out.push(b.child(CONFIRM, text, forms));
-        }
+        let roots = self.order.iter().filter_map(|&id| self.asks(id));
+        out.extend(roots.filter_map(|a| a.child(text, forms)));
         out
     }
 
@@ -1068,20 +1073,12 @@ impl App for Terminal {
             self.draw_options(win, c, ctx);
             return;
         }
-        if win == NOTFOUND {
-            if let Some(b) = &self.notfound {
-                b.draw(c, &ctx.forms(), &ctx.text);
-            }
+        if let Some(a) = self.asker(win).and_then(|root| self.asks(root)) {
+            a.draw(c, &ctx.forms(), &ctx.text);
             return;
         }
         if win == FIND {
             self.draw_find(c, ctx);
-            return;
-        }
-        if win == CONFIRM {
-            if let Some((_, b)) = &self.confirm {
-                b.draw(c, &ctx.forms(), &ctx.text);
-            }
             return;
         }
         if self.enter(win) {
@@ -1097,16 +1094,9 @@ impl repriseapp::Extended for Terminal {
 
     fn parent(&self, win: WinId) -> Option<WinId> {
         match win {
-            FIND | NOTFOUND => Some(self.find_on),
+            FIND => Some(self.find_on),
             OPTIONS | PROFILE => Some(self.options_on),
-            CONFIRM => match &self.confirm {
-                Some((Asking::Window(w), _)) => Some(*w),
-                Some((what, _)) => what
-                    .pid()
-                    .and_then(|p| self.pane_of_pid(p))
-                    .or(Some(self.cur)),
-                None => Some(self.cur),
-            },
+            _ if let Some(a) = self.asker(win).and_then(|root| self.asks(root)) => a.parent(win),
             _ if self.order.contains(&win) => None,
             _ => Some(MAIN),
         }
@@ -1156,20 +1146,12 @@ impl repriseapp::Extended for Terminal {
             self.access_options(win, tree, ctx);
             return;
         }
-        if win == NOTFOUND {
-            if let Some(b) = &self.notfound {
-                b.access(tree, &ctx.text, &ctx.forms());
-            }
+        if let Some(a) = self.asker(win).and_then(|root| self.asks(root)) {
+            a.access(tree, &ctx.text, &ctx.forms());
             return;
         }
         if win == FIND {
             self.access_find(tree, ctx);
-            return;
-        }
-        if win == CONFIRM {
-            if let Some((_, b)) = &self.confirm {
-                b.access(tree, &ctx.text, &ctx.forms());
-            }
             return;
         }
         if !self.enter(win) {
@@ -1195,14 +1177,11 @@ impl Terminal {
         if !matches!(ev, Event::Wake) || self.forms.is_none() {
             self.forms = Some((ctx.text.clone(), ctx.forms()));
         }
-        if win == CONFIRM {
-            return self.confirm_event(ev);
+        if let Some(root) = self.asker(win) {
+            return self.confirm_event(root, win, ev);
         }
         if win == OPTIONS || win == PROFILE {
             return self.options_event(win, ev, ctx);
-        }
-        if win == NOTFOUND {
-            return self.notfound_event(ev);
         }
         if win == FIND {
             self.enter(self.find_on);

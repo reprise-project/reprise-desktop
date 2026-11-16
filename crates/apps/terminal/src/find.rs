@@ -16,7 +16,7 @@ use reprisekit::controls::msgbox::Fields;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 
-use crate::Terminal;
+use crate::{Asking, Terminal};
 
 /// What the Find dialog holds.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -226,7 +226,7 @@ impl Terminal {
             .tabs
             .current()
             .is_some_and(|t| t.find(&q.text, q.match_case, !q.up));
-        if !found && self.notfound.is_none() {
+        if !found && !self.w.asks.iter().any(|(_, k)| *k == Asking::NotFound) {
             let fields = Fields {
                 text: format!("Cannot find \"{}\"", q.text),
                 icon: ctx.icons.get("dialog-information", 32),
@@ -236,7 +236,7 @@ impl Terminal {
                 min_w: 0,
                 max_w: repriseapp::dialog_max_w(),
             };
-            self.notfound = Some(MsgBox::new("Terminal", fields));
+            (self.w.asks).ask(MsgBox::new("Terminal", fields), Asking::NotFound);
         }
         self.w.snap.dirty.fill(true);
         Reply::redraw_all()
@@ -269,20 +269,6 @@ impl Terminal {
             copy: clip.copy,
             paste: clip.paste,
             ..reply
-        }
-    }
-
-    pub(crate) fn notfound_event(&mut self, ev: Event) -> Reply {
-        let (Some(b), Some((text, forms))) = (&mut self.notfound, &self.forms) else {
-            return Reply::none();
-        };
-        match b.event(&ev, text, forms) {
-            oneshot::Outcome::Closed(_) => {
-                self.notfound = None;
-                Reply::redraw_all()
-            }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
         }
     }
 
