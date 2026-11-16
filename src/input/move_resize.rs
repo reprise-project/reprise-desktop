@@ -195,7 +195,7 @@ impl State {
                 ..
             } => {
                 self.end_move(window, snap, start.restore_rect(was_snapped));
-                self.remember_file_dialog(window);
+                self.remember_file_dialog(window, true);
             }
             Interaction::Resize { window, .. } => {
                 // `resize_anchor` deliberately survives the release: the

@@ -573,3 +573,34 @@ fn two_errors_with_one_title_both_show_and_one_error_twice_shows_once() {
         .collect();
     assert_eq!(texts, [denied.text.as_str(), busy.text.as_str()]);
 }
+
+#[test]
+fn a_browse_dialog_opens_over_run_on_runs_output_past_a_place_kept_on_another() {
+    use super::browse::Browsing;
+    const PID: i32 = 0x7EAD_0200;
+    let mut h = Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let two = h.output("TEST-2", 1280, 1024);
+    let area = h.state.usable_area(Some(&two));
+    h.pointer_to(f64::from(area.x + 600), f64::from(area.y + 500));
+    h.state.open_dialog(Dialog::run(&[]));
+    let (run, r) = (h.state.dialogs.views[0].id, h.state.dialogs.views[0].rect());
+    assert!(area.contains(r.x, r.y), "Run opens on TEST-2");
+    let kept = repriseconf::filedialog::Geometry {
+        at: Some((100, 100)),
+        width: 600,
+        height: 400,
+    };
+    (h.state.wm.file_dialog.geometry).insert(crate::filedlggeom::OWN_APP.into(), kept);
+    h.state.browse_started(Browsing {
+        pid: PID,
+        over: run,
+        pidfd: None,
+    });
+    let mut c = h.connect_as(PID);
+    let tag = crate::window::FILE_DIALOG_TAG;
+    let t = h.map_dialog(&mut c, crate::filedlggeom::OWN_APP, None, tag, (600, 400));
+    let f = h.state.win(t.id).unwrap().frame_rect();
+    let want = crate::window::centre_on(r, (f.width, f.height), area);
+    assert_eq!((f.x, f.y), want, "centred over Run inside TEST-2");
+}

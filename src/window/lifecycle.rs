@@ -248,7 +248,7 @@ impl State {
             && let Some(win) = self.win_mut(w)
         {
             win.resize_anchor = None;
-            self.remember_file_dialog(w);
+            self.remember_file_dialog(w, false);
         }
         self.refit_scale(w);
     }
@@ -652,7 +652,7 @@ impl State {
             });
         }
         self.remember_window(w, true);
-        self.remember_file_dialog(w);
+        self.remember_file_dialog(w, false);
         let over = self.win(w).and_then(|x| x.over_dialog);
         self.forget_window(w);
         self.reset_state(w);
@@ -689,7 +689,7 @@ impl State {
         let refocus = self.focused == Some(w) || !self.win(w).is_some_and(|x| x.override_redirect);
         if self.win(w).is_some_and(|x| x.mapped) {
             self.remember_window(w, true);
-            self.remember_file_dialog(w);
+            self.remember_file_dialog(w, false);
             self.window_closing(w);
         }
         self.finish_window_anim(w);

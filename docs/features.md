@@ -154,8 +154,10 @@ shake, the dim, the hidden frame rate and window memory.
   trusted (Allow Launching), so a download can't pose as a program.
 - **Programs and scripts.** A file with its Executable box ticked runs when
   opened, asking the first time (`confirm_scripts`, `script_open`).
-- **File dialogs remember** their folder, view, sort, size and place, per
-  program, and list changes to the folder as they happen.
+- **File dialogs remember** their folder, view, sort and size per program,
+  and the place you last dragged one to while it is on the program
+  window's display; otherwise one opens over the program's window. They
+  list changes to the folder as they happen.
 - **File dialog keys and menu.** F5, Ctrl+H, Alt+arrows, Ctrl+Shift+N, F2
   and Delete, and a right-click menu with Pin to Places, Rename and Delete.
 - **Pinned folders.** Pin to Places on a folder's menu adds it to every file

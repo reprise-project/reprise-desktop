@@ -96,24 +96,22 @@ fn merged(old: &str, app: &str, lines: &str, now: u64) -> String {
     all.to_string()
 }
 
-/// Where an app's last file dialog was left: its frame's top-left in layout pixels and its client
-/// size at 100% text size, the restored size when it was maximized.
+/// An app's last file dialog: the frame's top-left in layout pixels where the user last moved
+/// one, and its client size at 100% text size, the restored size when it was maximized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Geometry {
-    pub x: i32,
-    pub y: i32,
+    pub at: Option<(i32, i32)>,
     pub width: i32,
     pub height: i32,
 }
 
 impl Geometry {
-    /// A dialog at `at` with client `size` at `text_size` percent.
-    pub fn kept(at: (i32, i32), size: (i32, i32), text_size: u32) -> Geometry {
+    /// A dialog moved to `at` (None: never moved) with client `size` at `text_size` percent.
+    pub fn kept(at: Option<(i32, i32)>, size: (i32, i32), text_size: u32) -> Geometry {
         let ts = i64::from(text_size.max(1));
         let unscale = |v: i32| ((i64::from(v) * 100 + ts / 2) / ts) as i32;
         Geometry {
-            x: at.0,
-            y: at.1,
+            at,
             width: unscale(size.0),
             height: unscale(size.1),
         }
@@ -126,15 +124,16 @@ impl Geometry {
         (scale(self.width), scale(self.height))
     }
 
-    /// `x`, `y`, `width` and `height` as TOML lines.
+    /// `x` and `y` when moved, `width` and `height`, as TOML lines.
     pub fn text(&self) -> String {
-        format!(
-            "x = {}\ny = {}\nwidth = {}\nheight = {}\n",
-            self.x, self.y, self.width, self.height
-        )
+        let at = self
+            .at
+            .map_or(String::new(), |(x, y)| format!("x = {x}\ny = {y}\n"));
+        format!("{at}width = {}\nheight = {}\n", self.width, self.height)
     }
 
-    /// Reads [`Geometry::text`]'s lines; None unless all four are there and the size is positive.
+    /// Reads [`Geometry::text`]'s lines; None unless the size is there and positive, and `at`
+    /// only when both `x` and `y` are.
     pub fn parse(text: &str) -> Option<Geometry> {
         let value = |name: &str| {
             text.lines()
@@ -143,8 +142,7 @@ impl Geometry {
                 .and_then(|(_, v)| v.trim().parse::<i32>().ok())
         };
         let g = Geometry {
-            x: value("x")?,
-            y: value("y")?,
+            at: value("x").zip(value("y")),
             width: value("width")?,
             height: value("height")?,
         };
@@ -232,16 +230,30 @@ mod tests {
     #[test]
     fn geometry_text_round_trips_and_a_partial_or_bad_entry_reads_as_none() {
         let g = Geometry {
-            x: -40,
-            y: 120,
+            at: Some((-40, 120)),
             width: 700,
             height: 520,
         };
         assert_eq!(Geometry::parse(&g.text()), Some(g));
+        let unmoved = Geometry { at: None, ..g };
+        assert_eq!(Geometry::parse(&unmoved.text()), Some(unmoved));
+        assert_eq!(
+            Geometry::parse("x = 1\nwidth = 3\nheight = 4\n"),
+            Some(Geometry {
+                at: None,
+                width: 3,
+                height: 4
+            }),
+            "half a place is none"
+        );
         let view = "view = \"details\"\nsort = \"size\"\nascending = false\n";
         assert_eq!(Geometry::parse(&format!("{view}{}", g.text())), Some(g));
         assert_eq!(Geometry::parse(view), None, "no geometry yet");
-        assert_eq!(Geometry::parse("x = 1\ny = 2\nwidth = 3\n"), None);
+        assert_eq!(
+            Geometry::parse("x = 1\ny = 2\nwidth = 3\n"),
+            None,
+            "no height"
+        );
         assert_eq!(
             Geometry::parse("x = 1\ny = 2\nwidth = big\nheight = 4\n"),
             None
@@ -254,12 +266,12 @@ mod tests {
 
     #[test]
     fn geometry_keeps_the_size_in_100_percent_units() {
-        let g = Geometry::kept((10, 20), (800, 600), 150);
+        let g = Geometry::kept(Some((10, 20)), (800, 600), 150);
         assert_eq!((g.width, g.height), (533, 400));
         assert_eq!(g.size_at(150), (800, 600));
         assert_eq!(g.size_at(100), (533, 400));
         assert_eq!(
-            Geometry::kept((0, 0), (563, 419), 100).size_at(100),
+            Geometry::kept(None, (563, 419), 100).size_at(100),
             (563, 419)
         );
     }
