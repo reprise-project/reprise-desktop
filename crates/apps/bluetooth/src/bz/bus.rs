@@ -3,9 +3,12 @@
 //! so a `CancelPair` behind them is not stuck in the queue.
 
 use super::*;
+use futures_util::future;
 use futures_util::stream::StreamExt;
 use std::collections::HashMap;
+use std::pin::pin;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use zbus::Connection;
 use zbus::{ObjectPath, OwnedVariant, Variant};
@@ -248,6 +251,43 @@ pub(crate) fn error_of(e: &zbus::Error) -> String {
     }
 }
 
+/// The pairings in flight by device, each under a serial of its own. Dropping a pairing's sender
+/// tells its task the user cancelled it.
+#[derive(Clone, Default)]
+struct Pairings(Arc<Mutex<InFlight>>);
+
+#[derive(Default)]
+struct InFlight {
+    serial: u64,
+    by_device: HashMap<String, (u64, async_channel::Sender<()>)>,
+}
+
+impl Pairings {
+    fn lock(&self) -> std::sync::MutexGuard<'_, InFlight> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn start(&self, device: &str) -> (u64, async_channel::Receiver<()>) {
+        let (tx, rx) = async_channel::bounded(1);
+        let mut m = self.lock();
+        m.serial += 1;
+        let serial = m.serial;
+        m.by_device.insert(device.to_string(), (serial, tx));
+        (serial, rx)
+    }
+
+    fn cancel(&self, device: &str) {
+        self.lock().by_device.remove(device);
+    }
+
+    fn end(&self, device: &str, serial: u64) {
+        let mut m = self.lock();
+        if m.by_device.get(device).is_some_and(|(s, _)| *s == serial) {
+            m.by_device.remove(device);
+        }
+    }
+}
+
 fn commands(
     conn: &Connection,
     cmds: async_channel::Receiver<Cmd>,
@@ -256,16 +296,25 @@ fn commands(
     obex: Option<super::obex::Obex>,
 ) -> zruntime::Task<(), zruntime::Shared> {
     let bus = conn.clone();
+    let pairings = Pairings::default();
     zruntime::spawn(async move {
         while let Ok(cmd) = cmds.recv().await {
+            if let Cmd::CancelPair(device) = &cmd {
+                pairings.cancel(device);
+            }
             match cmd {
                 Cmd::Quit => {
                     let _ = wakes.send(Wake::Quit).await;
                     return;
                 }
                 Cmd::Pair(device) => {
-                    let (b, p) = (bus.clone(), poster.clone());
-                    zruntime::spawn(async move { pair(&b, &device, &p).await }).detach();
+                    let (b, p, all) = (bus.clone(), poster.clone(), pairings.clone());
+                    let (serial, cancelled) = all.start(&device);
+                    zruntime::spawn(async move {
+                        pair(&b, &device, &p, &cancelled).await;
+                        all.end(&device, serial);
+                    })
+                    .detach();
                 }
                 Cmd::Receive(on) => {
                     if let Some(o) = &obex {
@@ -308,7 +357,14 @@ fn commands(
     })
 }
 
-async fn pair(conn: &Connection, device: &str, poster: &Poster) {
+/// Pairs, trusts, then connects `device`. Once `cancelled` closes, a device that paired anyway
+/// is removed, so a cancelled wizard leaves it neither paired nor trusted.
+async fn pair(
+    conn: &Connection,
+    device: &str,
+    poster: &Poster,
+    cancelled: &async_channel::Receiver<()>,
+) {
     if let Err(e) = call0(conn, device, DEVICE_IFACE, "Pair").await {
         poster.post(BzMsg::PairFailed {
             device: device.into(),
@@ -316,17 +372,45 @@ async fn pair(conn: &Connection, device: &str, poster: &Poster) {
         });
         return;
     }
-    if let Err(e) = set(conn, device, DEVICE_IFACE, "Trusted", Variant::from(true)).await {
-        log::warn!("could not trust {device}: {e}");
-    }
-    let connect_error = call0(conn, device, DEVICE_IFACE, "Connect")
-        .await
-        .err()
-        .map(|e| error_of(&e));
+    let connected = async {
+        if let Err(e) = set(conn, device, DEVICE_IFACE, "Trusted", Variant::from(true)).await {
+            log::warn!("could not trust {device}: {e}");
+        }
+        call0(conn, device, DEVICE_IFACE, "Connect").await
+    };
+    let cancel = cancelled.recv();
+    let connected = match cancelled.is_closed() {
+        true => None,
+        false => match future::select(pin!(connected), pin!(cancel)).await {
+            future::Either::Left((r, _)) if !cancelled.is_closed() => Some(r),
+            _ => None,
+        },
+    };
+    let Some(connected) = connected else {
+        log::info!("pairing {device} was cancelled after it paired; removing it");
+        let adapter = device.rsplit_once('/').map_or("", |(a, _)| a);
+        if let Err(e) = remove(conn, adapter, device).await {
+            log::warn!("could not remove {device}: {e}");
+        }
+        return;
+    };
     poster.post(BzMsg::Paired {
         device: device.into(),
-        connect_error,
+        connect_error: connected.err().map(|e| error_of(&e)),
     });
+}
+
+async fn remove(conn: &Connection, adapter: &str, device: &str) -> zbus::Result<()> {
+    let dev = ObjectPath::try_from(device)?;
+    conn.call_method(
+        Some(NAME),
+        adapter,
+        Some(ADAPTER_IFACE),
+        "RemoveDevice",
+        &(dev,),
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn command(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
@@ -367,18 +451,7 @@ async fn command(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
             )
             .await
         }
-        Cmd::Remove { adapter, device } => {
-            let dev = ObjectPath::try_from(device.as_str())?;
-            conn.call_method(
-                Some(NAME),
-                adapter.as_str(),
-                Some(ADAPTER_IFACE),
-                "RemoveDevice",
-                &(dev,),
-            )
-            .await
-            .map(|_| ())
-        }
+        Cmd::Remove { adapter, device } => remove(conn, adapter, device).await,
         Cmd::Pair(_) | Cmd::Connect(_) | Cmd::Receive(_) | Cmd::Airplane(_) | Cmd::Quit => Ok(()),
     }
 }
@@ -477,7 +550,6 @@ mod tests {
     use super::*;
     use crate::bz::obex::tests::{bus, connect};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
 
     const DEVICE: &str = "/org/bluez/hci0/dev_AA";
 
@@ -606,6 +678,111 @@ mod tests {
             })
             .collect();
         assert_eq!(shown, [false, true], "one snapshot per change");
+    }
+
+    /// A device whose `Connect` never answers when `hang`, reporting it on `calls`.
+    struct FakeDevice {
+        path: &'static str,
+        hang: bool,
+        trusted: bool,
+        calls: std::sync::mpsc::Sender<String>,
+    }
+
+    #[zbus::interface(name = "org.bluez.Device1")]
+    impl FakeDevice {
+        fn pair(&self) {}
+        fn cancel_pairing(&self) -> zbus::fdo::Result<()> {
+            Err(zbus::fdo::Error::Failed("no pairing in progress".into()))
+        }
+        async fn connect(&self) {
+            let _ = self.calls.send(format!("Connect {}", self.path));
+            if self.hang {
+                std::future::pending::<()>().await;
+            }
+        }
+        #[zbus(property)]
+        fn trusted(&self) -> bool {
+            self.trusted
+        }
+        #[zbus(property)]
+        fn set_trusted(&mut self, on: bool) {
+            self.trusted = on;
+        }
+    }
+
+    struct FakeAdapter {
+        calls: std::sync::mpsc::Sender<String>,
+    }
+
+    #[zbus::interface(name = "org.bluez.Adapter1")]
+    impl FakeAdapter {
+        fn remove_device(&self, device: zbus::OwnedObjectPath) {
+            let _ = self.calls.send(format!("RemoveDevice {}", device.as_str()));
+        }
+    }
+
+    #[test]
+    fn a_wizard_cancelled_after_pairing_removes_the_device() {
+        let Some(bus) = bus() else {
+            return;
+        };
+        let (calls_tx, calls) = std::sync::mpsc::channel();
+        let (poster, posted) = Poster::channel(repriseapp::Waker::noop());
+        const OTHER: &str = "/org/bluez/hci0/dev_BB";
+        zbus::block_on(async {
+            let bluez = connect(&bus.1).await;
+            let server = bluez.object_server();
+            let adapter = FakeAdapter {
+                calls: calls_tx.clone(),
+            };
+            server.at("/org/bluez/hci0", adapter).await.unwrap();
+            for (path, hang) in [(DEVICE, true), (OTHER, false)] {
+                let calls = calls_tx.clone();
+                let device = FakeDevice {
+                    path,
+                    hang,
+                    trusted: false,
+                    calls,
+                };
+                server.at(path, device).await.unwrap();
+            }
+            bluez.request_name(NAME).await.unwrap();
+            let conn = connect(&bus.1).await;
+            let (cmds_tx, cmds) = async_channel::unbounded();
+            let (wakes, _wakes_rx) = async_channel::unbounded();
+            let _commands = commands(&conn, cmds, wakes, poster, None);
+            cmds_tx.send(Cmd::Pair(DEVICE.into())).await.unwrap();
+            let rt = zruntime::SharedRuntime::current().unwrap();
+            let connecting = rt.timeout(Duration::from_secs(5), async {
+                while calls.try_recv() != Ok(format!("Connect {DEVICE}")) {
+                    pause(20).await;
+                }
+            });
+            connecting.await.expect("Connect called");
+            cmds_tx.send(Cmd::CancelPair(DEVICE.into())).await.unwrap();
+            cmds_tx.send(Cmd::Pair(OTHER.into())).await.unwrap();
+            pause(500).await;
+            let other = server.interface::<_, FakeDevice>(OTHER).await.unwrap();
+            assert!(other.get().await.trusted, "the paired device is trusted");
+        });
+        let mut seen: Vec<String> = calls.try_iter().collect();
+        seen.sort();
+        assert_eq!(
+            seen,
+            [format!("Connect {OTHER}"), format!("RemoveDevice {DEVICE}")],
+            "the cancelled device goes and the other stays"
+        );
+        let paired: Vec<String> = std::iter::from_fn(|| posted.try_recv().ok())
+            .filter_map(|m| match m {
+                BzMsg::Paired { device, .. } => Some(device),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            paired,
+            [OTHER],
+            "only the pairing left alone reports Paired"
+        );
     }
 
     #[test]
