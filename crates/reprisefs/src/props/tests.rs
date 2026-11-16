@@ -889,8 +889,13 @@ fn times_name_today_and_carry_seconds() {
     let today = format_time(now, crate::locale::is_12h());
     assert!(today.starts_with("Today, "), "{today}");
     assert_eq!(today.matches(':').count(), 2, "{today}");
-    let old = format_time(now - 10 * 86_400, crate::locale::is_12h());
-    assert!(!old.starts_with("Today"), "{old}");
+    let then = now - 10 * 86_400;
+    let old = format_time(then, crate::locale::is_12h());
+    let long = crate::locale::long_date(&crate::locale::localtime(then));
+    assert!(
+        old.starts_with(&format!("{long}, ")),
+        "{old} is the locale's {long}"
+    );
 }
 
 #[test]
