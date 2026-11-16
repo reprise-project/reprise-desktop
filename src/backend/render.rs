@@ -926,6 +926,19 @@ pub(crate) fn send_frame_callbacks(state: &mut State, output: &Output) {
     (state.scene).send_frames(&pass, now, Some(Duration::from_secs(1)));
     crate::surfaceproto::frame_done(state, output);
     if let smithay::input::pointer::CursorImageStatus::Surface(s) = &state.cursor {
+        let at = state.pointer_location();
+        if state.output_at(at.x, at.y).as_ref() == Some(output) {
+            let scale = output.current_scale().integer_scale();
+            // The pointer is drawn upright in layout space, so its buffer is best left unturned.
+            smithay::wayland::compositor::with_states(s, |d| {
+                smithay::wayland::compositor::send_surface_state(
+                    s,
+                    d,
+                    scale,
+                    smithay::utils::Transform::Normal,
+                )
+            });
+        }
         smithay::desktop::utils::send_frames_surface_tree(
             s,
             output,
