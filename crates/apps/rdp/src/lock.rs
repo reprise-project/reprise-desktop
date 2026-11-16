@@ -27,21 +27,29 @@ const HINT_WAIT: Duration = Duration::from_millis(500);
 const HINT_POLL: Duration = Duration::from_millis(50);
 
 /// The user's display session, through logind: `GetUser(uid)`, its `Display`, `Session.Lock`;
-/// no `Lock` once `given_up` is set, as the display session may be a newer one by then.
+/// no `Lock` once `given_up` is set, as the display session may be a newer one by then. A sent
+/// `Lock` can't be recalled, so one that lands after `given_up` is logged.
 pub async fn lock_session(conn: &Connection, given_up: &AtomicBool) -> zbus::Result<()> {
     let session = display_session(conn).await?;
     if given_up.load(Ordering::SeqCst) {
         return Err(zbus::Error::Failure("given up on".into()));
     }
-    conn.call_method(
-        Some(LOGIN1),
-        &session,
-        Some("org.freedesktop.login1.Session"),
-        "Lock",
-        &(),
-    )
-    .await?;
-    Ok(())
+    let locked = conn
+        .call_method(
+            Some(LOGIN1),
+            &session,
+            Some("org.freedesktop.login1.Session"),
+            "Lock",
+            &(),
+        )
+        .await;
+    if locked.is_ok() && given_up.load(Ordering::SeqCst) {
+        log::warn!(
+            "logind locked the session more than {} s after it was asked to",
+            LOCK_WAIT.as_secs()
+        );
+    }
+    locked.map(drop)
 }
 
 /// The user's display session's object path: logind's `GetUser(uid)`, then its `Display`.
