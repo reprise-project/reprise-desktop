@@ -295,36 +295,82 @@ impl<'a> Make<'a> {
         }
     }
 
-    /// The helper run as a thumbnailer: [`JXL_FLAG`] for the square, the input and the output.
     fn jxl(&self) -> Option<Thumbnailer> {
-        let exe = reprisefs::apps::exec_quote(self.helper.to_str()?);
-        Some(Thumbnailer::command(
-            "jxl",
-            format!("{exe} {JXL_FLAG} %s %i %o"),
-        ))
+        jxl_helper(&self.helper)
     }
 }
 
+/// `helper` run as a thumbnailer: [`JXL_FLAG`] for the square, the input and the output.
+fn jxl_helper(helper: &std::path::Path) -> Option<Thumbnailer> {
+    let exe = reprisefs::apps::exec_quote(helper.to_str()?);
+    Some(Thumbnailer::command(
+        "jxl",
+        format!("{exe} {JXL_FLAG} %s %i %o"),
+    ))
+}
+
+/// The picture file at `path` an app named, fitted inside `max`: a JPEG XL by [`JXL_FLAG`] in the
+/// thumbnailers' jail (none without one), anything else by [`Decoders::without_jxl`].
+pub fn picture(path: &std::path::Path, max: (u32, u32)) -> Option<Canvas> {
+    picture_with(
+        Runner::jailed().as_ref(),
+        thumbpipe::PROGRAM.as_ref(),
+        path,
+        max,
+    )
+}
+
+fn picture_with(
+    runner: Option<&Runner>,
+    helper: &std::path::Path,
+    path: &std::path::Path,
+    max: (u32, u32),
+) -> Option<Canvas> {
+    let budget = crate::decode::Budget::THUMBNAIL;
+    let bytes = std::fs::File::open(path)
+        .and_then(|f| crate::decode::read_capped_from(f, budget.file))
+        .ok()?;
+    if !crate::decode::is_jxl(&bytes) {
+        let d = Decoders::without_jxl().decode(&bytes, max, budget).ok()?;
+        return Some(d.canvas);
+    }
+    let png = (runner?.run(&jxl_helper(helper)?, path, max.0.max(max.1)))
+        .map_err(|e| log::debug!("JPEG XL {}: {e:?}", path.display()))
+        .ok()?;
+    let c = reprisekit::icontheme::png_to_canvas(&png, reprisefs::thumbnailers::MAX_SIDE).ok()?;
+    let (w, h) = reprisekit::raster::fit_size(c.width, c.height, max);
+    Some(if (w, h) == (c.width, c.height) {
+        c
+    } else {
+        c.resample_box(w, h)
+    })
+}
+
 /// The thumbnail helper's mode `--jxl-thumbnail EDGE INPUT OUTPUT`: the JPEG XL at INPUT fitted
-/// inside an EDGE square, written to OUTPUT as a PNG carrying the picture's size. libjxl runs
-/// under [`Budget::THUMBNAIL`](crate::decode::Budget::THUMBNAIL) here as in-process.
+/// inside an EDGE square, written to OUTPUT as a PNG carrying the picture's size.
 pub const JXL_FLAG: &str = "--jxl-thumbnail";
+
+/// What libjxl may hold in the jail: [`MEMORY_MAX`](reprisefs::thumbnailers::MEMORY_MAX) less the
+/// file, the decoded picture and the program, so libjxl refuses before the scope is killed.
+const JAIL_JXL_ALLOC: u64 = reprisefs::thumbnailers::MEMORY_MAX
+    - crate::decode::MAX_FILE_BYTES
+    - crate::decode::MAX_DECODED_BYTES
+    - (32 << 20);
 
 /// [`JXL_FLAG`] with the arguments after the flag.
 pub fn serve_jxl(args: &[std::ffi::OsString]) -> Result<(), String> {
-    use crate::decode::{Budget, ImageDecoder, JxlDecoder};
     let [edge, input, output] = args else {
         return Err(format!("usage: {JXL_FLAG} EDGE INPUT OUTPUT"));
     };
     let edge = (edge.to_str().and_then(|e| e.parse::<u32>().ok()))
         .ok_or("EDGE is a number")?
         .clamp(1, reprisefs::thumbnailers::MAX_SIDE);
-    let budget = Budget::THUMBNAIL;
+    let budget = crate::decode::Budget::THUMBNAIL;
     let bytes = std::fs::File::open(input)
         .and_then(|f| crate::decode::read_capped_from(f, budget.file))
         .map_err(|e| e.to_string())?;
-    let img = JxlDecoder
-        .decode(&bytes, (edge, edge), budget)
+    let alloc = JAIL_JXL_ALLOC as usize;
+    let img = crate::decode::decode_jxl(&bytes, (edge, edge), budget.pixels, alloc)
         .map_err(|e| format!("{e:?}"))?;
     let (width, height) = img.canvas.device_size();
     let pixels = straight_rgba(&img.canvas);
@@ -1386,5 +1432,38 @@ mod tests {
         std::fs::write(&broken, JXL_BYTES).unwrap();
         let args = ["20".into(), broken.into_os_string(), out.into_os_string()];
         assert!(serve_jxl(&args).is_err());
+    }
+
+    #[test]
+    fn an_apps_jpeg_xl_decodes_only_by_the_jailed_helper_and_none_without_a_jail() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let wide = dir.path().join("wide.png");
+        std::fs::write(&wide, png(300, 150)).unwrap();
+        let helper = dir.path().join("fake-helper");
+        let runs = dir.path().join("jxl-runs");
+        let script = format!(
+            "#!/bin/sh\necho \"$@\" >> '{}'\ncp '{}' \"$4\"\n",
+            runs.display(),
+            wide.display()
+        );
+        std::fs::write(&helper, script).unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let photo = dir.path().join("photo.jxl");
+        let px: Vec<u8> = (0..4 * 3).flat_map(|_| [9, 9, 9, 255]).collect();
+        std::fs::write(&photo, crate::decode::encode_jxl(4, 3, &[&px], false)).unwrap();
+        let runner = Runner::new(
+            dir.path(),
+            Duration::from_secs(5),
+            reprisefs::thumbnailers::Jail::Bare,
+        );
+        let c = picture_with(Some(&runner), &helper, &photo, (60, 60)).expect("the helper's");
+        assert_eq!((c.width, c.height), (60, 30));
+        let asked = std::fs::read_to_string(&runs).unwrap();
+        assert!(asked.starts_with(&format!("{JXL_FLAG} 60 {} ", photo.display())));
+        assert!(picture_with(None, &helper, &photo, (60, 60)).is_none());
+        let c = picture_with(None, &helper, &wide, (60, 60)).expect("decoded here");
+        assert_eq!((c.width, c.height), (60, 30));
+        assert_eq!(std::fs::read_to_string(&runs).unwrap().lines().count(), 1);
     }
 }
