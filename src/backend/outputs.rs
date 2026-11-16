@@ -505,7 +505,6 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             track: commit::Track::default(),
             flight: None,
             presenting: None,
-            lit_at: None,
             commit_times: Vec::new(),
             needs_redraw: true,
             scene_changed: true,

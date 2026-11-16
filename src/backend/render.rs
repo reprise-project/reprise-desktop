@@ -596,7 +596,6 @@ pub(super) fn committed(state: &mut State, head: Head, done: commit::Done<Out>) 
     let mut flight = s.flight.take().filter(|_| flipped_frame);
     let feedback = flight.as_mut().and_then(|f| f.feedback.take());
     if ok && flipped_frame {
-        s.lit_at = Some(done.started);
         s.hw.unlit = false;
         s.presenting = feedback;
     } else if let Some(mut f) = feedback {

@@ -10,81 +10,9 @@ use std::{
 use smithay::{
     backend::drm::DrmDeviceFd,
     reexports::drm::control::{
-        AtomicCommitFlags, Device as _, RawResourceHandle, ResourceHandle, atomic::AtomicModeReq,
-        connector, crtc, plane, property,
+        AtomicCommitFlags, Device as _, ResourceHandle, atomic::AtomicModeReq, property,
     },
 };
-
-/// An output left lit through the reset: a frame of ours took on its CRTC since the return, so
-/// no other master changed it after.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Keep {
-    pub crtc: crtc::Handle,
-    pub connector: connector::Handle,
-    pub primary: plane::Handle,
-}
-
-/// The device's routing as read before the reset.
-#[derive(Debug, Default)]
-pub struct Snapshot {
-    /// Each connector's CRTC.
-    pub connectors: Vec<(connector::Handle, Option<crtc::Handle>)>,
-    /// Each CRTC's ACTIVE.
-    pub crtcs: Vec<(crtc::Handle, bool)>,
-    /// Each plane's CRTC and whether it shows a framebuffer.
-    pub planes: Vec<(plane::Handle, Option<crtc::Handle>, bool)>,
-}
-
-/// What the reset turns off, and the CRTCs it leaves lit.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Plan {
-    pub connectors: Vec<connector::Handle>,
-    pub crtcs: Vec<crtc::Handle>,
-    pub planes: Vec<plane::Handle>,
-    pub kept: Vec<crtc::Handle>,
-}
-
-/// Everything off but the `keep` entries `now` confirms: the CRTC active, driving that
-/// connector alone, its primary plane showing a framebuffer. Their other planes go off too.
-pub fn plan(now: &Snapshot, keep: &[Keep]) -> Plan {
-    let kept: Vec<Keep> = keep
-        .iter()
-        .copied()
-        .filter(|k| {
-            let active = now.crtcs.contains(&(k.crtc, true));
-            let mut driven = now
-                .connectors
-                .iter()
-                .filter(|(_, c)| *c == Some(k.crtc))
-                .map(|(conn, _)| *conn);
-            let alone = driven.next() == Some(k.connector) && driven.next().is_none();
-            let shown = now.planes.contains(&(k.primary, Some(k.crtc), true));
-            active && alone && shown
-        })
-        .collect();
-    let on_kept = |c: &Option<crtc::Handle>| kept.iter().any(|k| Some(k.crtc) == *c);
-    Plan {
-        connectors: now
-            .connectors
-            .iter()
-            .filter(|(_, c)| !on_kept(c))
-            .map(|(conn, _)| *conn)
-            .collect(),
-        crtcs: now
-            .crtcs
-            .iter()
-            .map(|(c, _)| *c)
-            .filter(|c| !kept.iter().any(|k| k.crtc == *c))
-            .collect(),
-        planes: now
-            .planes
-            .iter()
-            .map(|(p, ..)| *p)
-            .filter(|p| !kept.iter().any(|k| k.primary == *p))
-            .collect(),
-        kept: kept.iter().map(|k| k.crtc).collect(),
-    }
-}
 
 /// How long a return's reset waits for DRM master before it is sent anyway.
 const MASTER_WAIT: Duration = Duration::from_secs(1);
@@ -144,11 +72,6 @@ impl Return {
             .map_or(Duration::MAX, |s| now.saturating_duration_since(s));
         (!master && waited < MASTER_WAIT).then_some(MASTER_POLL)
     }
-
-    /// A commit that started at `at` went in after the latest return.
-    pub fn after_return(&self, at: Instant) -> bool {
-        self.since.is_some_and(|s| at >= s)
-    }
 }
 
 /// The `commit-device` thread's side: the device fd.
@@ -158,18 +81,14 @@ pub struct Device {
 }
 
 impl super::commit::Committer for Device {
-    type Payload = Vec<Keep>;
-    type Output = Vec<crtc::Handle>;
+    type Payload = ();
+    type Output = ();
 
-    fn commit(
-        &mut self,
-        _: super::commit::Kind,
-        keep: Vec<Keep>,
-    ) -> Result<Vec<crtc::Handle>, String> {
+    fn commit(&mut self, _: super::commit::Kind, (): ()) -> Result<(), String> {
         if self.atomic {
-            reset_atomic(&self.fd, &keep)
+            reset_atomic(&self.fd)
         } else {
-            reset_legacy(&self.fd).map(|()| Vec::new())
+            reset_legacy(&self.fd)
         }
     }
 }
@@ -201,13 +120,6 @@ fn props<H: ResourceHandle>(
     Ok(out)
 }
 
-fn object<H: From<RawResourceHandle>>(value: u64) -> Option<H> {
-    u32::try_from(value)
-        .ok()
-        .and_then(RawResourceHandle::new)
-        .map(H::from)
-}
-
 fn handle_of(props: &Props, name: &str) -> Result<property::Handle, String> {
     props
         .get(name)
@@ -215,61 +127,35 @@ fn handle_of(props: &Props, name: &str) -> Result<property::Handle, String> {
         .ok_or_else(|| format!("no {name} property"))
 }
 
-/// One ALLOW_MODESET commit turning off what `plan` picks (as Smithay's `reset_state`, minus
-/// what `keep` leaves lit). Returns the kept CRTCs.
-fn reset_atomic(fd: &DrmDeviceFd, keep: &[Keep]) -> Result<Vec<crtc::Handle>, String> {
+/// One ALLOW_MODESET commit turning every connector, plane and CRTC off, as Smithay's
+/// `reset_state` does.
+fn reset_atomic(fd: &DrmDeviceFd) -> Result<(), String> {
     let res = fd
         .resource_handles()
         .map_err(|e| format!("resources: {e}"))?;
     let planes = fd.plane_handles().map_err(|e| format!("planes: {e}"))?;
     let mut names = HashMap::new();
-    let value = |p: &Props, name: &str| p.get(name).map_or(0, |(_, v)| *v);
-    let mut now = Snapshot::default();
-    let mut conns = HashMap::new();
+    let mut req = AtomicModeReq::new();
     for &c in res.connectors() {
         let p = props(fd, c, &mut names)?;
-        now.connectors.push((c, object(value(&p, "CRTC_ID"))));
-        conns.insert(c, p);
+        req.add_property(c, handle_of(&p, "CRTC_ID")?, property::Value::CRTC(None));
     }
-    let mut crtcs = HashMap::new();
-    for &c in res.crtcs() {
-        let p = props(fd, c, &mut names)?;
-        now.crtcs.push((c, value(&p, "ACTIVE") != 0));
-        crtcs.insert(c, p);
-    }
-    let mut planes_props = HashMap::new();
     for &pl in &planes {
         let p = props(fd, pl, &mut names)?;
-        now.planes
-            .push((pl, object(value(&p, "CRTC_ID")), value(&p, "FB_ID") != 0));
-        planes_props.insert(pl, p);
-    }
-    let plan = plan(&now, keep);
-    let mut req = AtomicModeReq::new();
-    for c in &plan.connectors {
+        req.add_property(pl, handle_of(&p, "CRTC_ID")?, property::Value::CRTC(None));
         req.add_property(
-            *c,
-            handle_of(&conns[c], "CRTC_ID")?,
-            property::Value::CRTC(None),
-        );
-    }
-    for pl in &plan.planes {
-        let p = &planes_props[pl];
-        req.add_property(*pl, handle_of(p, "CRTC_ID")?, property::Value::CRTC(None));
-        req.add_property(
-            *pl,
-            handle_of(p, "FB_ID")?,
+            pl,
+            handle_of(&p, "FB_ID")?,
             property::Value::Framebuffer(None),
         );
     }
-    for c in &plan.crtcs {
-        let p = &crtcs[c];
-        req.add_property(*c, handle_of(p, "ACTIVE")?, property::Value::Boolean(false));
-        req.add_property(*c, handle_of(p, "MODE_ID")?, property::Value::Unknown(0));
+    for &c in res.crtcs() {
+        let p = props(fd, c, &mut names)?;
+        req.add_property(c, handle_of(&p, "ACTIVE")?, property::Value::Boolean(false));
+        req.add_property(c, handle_of(&p, "MODE_ID")?, property::Value::Unknown(0));
     }
     fd.atomic_commit(AtomicCommitFlags::ALLOW_MODESET, req)
-        .map_err(|e| format!("disable all: {e}"))?;
-    Ok(plan.kept)
+        .map_err(|e| format!("disable all: {e}"))
 }
 
 /// Every CRTC off through the legacy API, as Smithay's legacy `reset_state` does.
@@ -305,79 +191,6 @@ mod tests {
             None,
             "after the wait the reset goes anyway and logs its failure"
         );
-    }
-
-    fn h<H: From<RawResourceHandle>>(id: u32) -> H {
-        H::from(RawResourceHandle::new(id).unwrap())
-    }
-
-    /// CRTC 50 drives connector 10 with primary 70 and cursor 71 lit; CRTC 51 is off.
-    fn one_lit() -> Snapshot {
-        Snapshot {
-            connectors: vec![(h(10), Some(h(50))), (h(11), None)],
-            crtcs: vec![(h(50), true), (h(51), false)],
-            planes: vec![
-                (h(70), Some(h(50)), true),
-                (h(71), Some(h(50)), true),
-                (h(72), None, false),
-            ],
-        }
-    }
-
-    fn keep_50() -> Keep {
-        Keep {
-            crtc: h(50),
-            connector: h(10),
-            primary: h(70),
-        }
-    }
-
-    #[test]
-    fn with_nothing_kept_everything_goes_off() {
-        let p = plan(&one_lit(), &[]);
-        assert_eq!(p.connectors, vec![h(10), h(11)]);
-        assert_eq!(p.crtcs, vec![h(50), h(51)]);
-        assert_eq!(p.planes, vec![h(70), h(71), h(72)]);
-        assert!(p.kept.is_empty());
-    }
-
-    #[test]
-    fn a_crtc_our_modeset_lit_keeps_its_connector_and_primary_only() {
-        let p = plan(&one_lit(), &[keep_50()]);
-        assert_eq!(p.kept, vec![h(50)]);
-        assert_eq!(p.connectors, vec![h(11)]);
-        assert_eq!(p.crtcs, vec![h(51)]);
-        assert_eq!(p.planes, vec![h(71), h(72)], "the cursor plane goes off");
-    }
-
-    #[test]
-    fn a_kept_crtc_driving_another_connector_too_goes_off() {
-        let mut now = one_lit();
-        now.connectors[1].1 = Some(h(50));
-        assert!(plan(&now, &[keep_50()]).kept.is_empty());
-    }
-
-    #[test]
-    fn a_kept_crtc_whose_connector_moved_goes_off() {
-        let mut now = one_lit();
-        now.connectors = vec![(h(10), Some(h(51))), (h(11), Some(h(50)))];
-        now.crtcs[1].1 = true;
-        let p = plan(&now, &[keep_50()]);
-        assert!(p.kept.is_empty());
-        assert_eq!(p.crtcs, vec![h(50), h(51)]);
-    }
-
-    #[test]
-    fn a_kept_crtc_that_is_off_or_shows_no_frame_goes_off() {
-        let mut off = one_lit();
-        off.crtcs[0].1 = false;
-        assert!(plan(&off, &[keep_50()]).kept.is_empty());
-        let mut blank = one_lit();
-        blank.planes[0].2 = false;
-        assert!(plan(&blank, &[keep_50()]).kept.is_empty());
-        let mut moved = one_lit();
-        moved.planes[0].1 = Some(h(51));
-        assert!(plan(&moved, &[keep_50()]).kept.is_empty());
     }
 
     #[test]
@@ -416,18 +229,5 @@ mod tests {
         r.sent();
         assert!(!r.done(false));
         assert!(r.pending() && r.ready());
-    }
-
-    #[test]
-    fn only_a_commit_after_the_latest_return_counts() {
-        let mut r = Return::default();
-        let before = Instant::now();
-        assert!(!r.after_return(before), "no return yet");
-        r.activated(Instant::now());
-        assert!(!r.after_return(before));
-        assert!(r.after_return(Instant::now()));
-        let lit = Instant::now();
-        r.activated(Instant::now());
-        assert!(!r.after_return(lit), "a later return makes it stale");
     }
 }
