@@ -258,6 +258,10 @@ impl State {
                 crate::notifycenter::release(self, pos.x, pos.y);
             }
             Interaction::DisplaysSlide => crate::displaysview::release(self),
+            Interaction::PanelBar => {
+                self.clipview_release();
+                self.emoji_release();
+            }
             Interaction::DialogMove { index, .. } | Interaction::DialogResize { index, .. } => {
                 self.remember_browse(index)
             }
@@ -329,6 +333,10 @@ impl State {
                 crate::notifycenter::cancel_press(self);
             }
             Interaction::DisplaysSlide => crate::displaysview::release(self),
+            Interaction::PanelBar => {
+                self.clipview_release();
+                self.emoji_release();
+            }
             Interaction::FieldDrag { .. } => {}
             // A moved or sized mini view stays as it is, and no click lands.
             Interaction::MiniMove { .. } | Interaction::MiniResize { .. } => {}

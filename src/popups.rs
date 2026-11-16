@@ -316,10 +316,10 @@ mod tests {
             },
             Hit::StartPanel { spot: None },
             Hit::ClipView {
-                hit: reprisekit::controls::cliphistory::Hit::ScrollUp,
+                hit: reprisekit::controls::cliphistory::Hit::Panel,
             },
             Hit::EmojiView {
-                hit: reprisekit::controls::emojipicker::Hit::ScrollUp,
+                hit: reprisekit::controls::emojipicker::Hit::Panel,
             },
             Hit::Switcher { cell: None },
             Hit::Overview { cell: None },

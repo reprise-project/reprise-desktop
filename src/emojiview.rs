@@ -11,6 +11,7 @@ use smithay::output::Output;
 use crate::compositor::{SceneOwner, State};
 use crate::dialogview::DialogKey;
 use crate::glass::{self, Backdrop};
+use crate::input::Interaction;
 use crate::keys;
 use crate::output::upload_scaled;
 
@@ -216,8 +217,45 @@ impl State {
             return;
         };
         let event = v.model.click(hit);
+        if v.model.holding() {
+            self.interaction = Interaction::PanelBar;
+            self.repeat_panel_bar(|state, now| {
+                let Some(v) = state.panels.emojiview.as_mut() else {
+                    return false;
+                };
+                if v.model.tick(now) {
+                    state.redraw_emoji();
+                }
+                state
+                    .panels
+                    .emojiview
+                    .as_ref()
+                    .is_some_and(|v| v.model.holding())
+            });
+        }
         self.restart_caret();
         self.apply_emoji(event);
+    }
+
+    /// The pointer at layout (`lx`, `ly`) with the panel's scrollbar held.
+    pub fn emoji_drag(&mut self, lx: f64, ly: f64) {
+        let cm = self.config.theme.look.controls();
+        let Some(v) = self.panels.emojiview.as_mut() else {
+            return;
+        };
+        let (x, y) = (
+            lx.floor() as i32 - v.origin.0,
+            ly.floor() as i32 - v.origin.1,
+        );
+        if v.model.drag(x, y, &cm) {
+            self.redraw_emoji();
+        }
+    }
+
+    pub fn emoji_release(&mut self) {
+        if let Some(v) = self.panels.emojiview.as_mut() {
+            v.model.release();
+        }
     }
 
     /// The wheel over the panel: `discrete` in 120ths of a notch, down positive, or a `continuous`

@@ -271,6 +271,21 @@ pub fn press(state: &mut State, x: f64, y: f64, button: u32, time: u32) -> bool 
         .and_then(|i| v.model.note_at(i));
     let event = v.model.press(h);
     let holding = v.model.holding();
+    if matches!(h, Hit::List(l) if l.bar().is_some()) && holding {
+        state.repeat_panel_bar(|state, now| {
+            let Some(v) = state.notify.center.as_mut() else {
+                return false;
+            };
+            if v.model.tick(now) {
+                redraw(state);
+            }
+            state
+                .notify
+                .center
+                .as_ref()
+                .is_some_and(|v| v.model.holding())
+        });
+    }
     apply(state, event);
     if let Some(id) = invoke {
         apply(state, Event::Invoke(id));
@@ -284,7 +299,8 @@ pub fn drag(state: &mut State, x: f64, y: f64) {
         return;
     };
     let over = hit(v, x, y, &cm);
-    if v.model.motion(over) {
+    let (lx, ly) = (x.floor() as i32 - v.at.0, y.floor() as i32 - v.at.1);
+    if v.model.motion(over) | v.model.drag(lx, ly, &cm) {
         redraw(state);
     }
 }

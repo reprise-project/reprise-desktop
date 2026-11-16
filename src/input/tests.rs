@@ -150,6 +150,7 @@ fn a_second_press_ends_every_gesture_a_button_holds() {
         Interaction::Marquee,
         Interaction::Stir,
         Interaction::DisplaysSlide,
+        Interaction::PanelBar,
         Interaction::BarWidth { bar, grab: 0 },
         Interaction::Drag {
             x0: 0.0,

@@ -8,8 +8,9 @@
 //! lights under the pointer is [`crate::pointer::Pointer`]'s. A control
 //! keeps a [`ThumbDrag`] next to the position it scrolls, or hands one
 //! to its host, which feeds it the press, every motion and the release.
-//! A held arrow repeats on the host's ticks ([`ArrowRepeat`]). A page
-//! that shows through a shorter view scrolls under a [`PageScroll`].
+//! A held arrow repeats on the host's ticks ([`ArrowRepeat`]); a list
+//! scrolled by rows keeps both in a [`RowBar`]. A page that shows
+//! through a shorter view scrolls under a [`PageScroll`].
 
 use std::time::{Duration, Instant};
 
@@ -179,6 +180,73 @@ impl ThumbDrag {
     }
 }
 
+/// The pointer's hold on the vertical bar of a list scrolled by whole rows: a grabbed thumb
+/// follows the pointer, a held arrow repeats on the host's ticks while the pointer is on it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RowBar {
+    drag: ThumbDrag,
+    repeat: ArrowRepeat,
+    /// The held arrow's step in rows, and whether the pointer is on it.
+    arrow: Option<(i64, bool)>,
+}
+
+impl RowBar {
+    /// A press on part `hit` of a bar that pages `page` rows: the rows the view scrolls now.
+    pub fn press(&mut self, hit: BarHit, page: i64) -> i64 {
+        self.repeat.press(hit);
+        self.arrow = match hit {
+            BarHit::Back => Some((-1, true)),
+            BarHit::Forward => Some((1, true)),
+            _ => None,
+        };
+        self.drag.press(Axis::Vertical, hit).by(1, page)
+    }
+
+    /// The pointer moved onto `hit` of the bar, `None` off it.
+    pub fn hover(&mut self, hit: Option<BarHit>) {
+        if let Some((step, on)) = &mut self.arrow {
+            *on = match hit {
+                Some(BarHit::Back) => *step < 0,
+                Some(BarHit::Forward) => *step > 0,
+                _ => false,
+            };
+        }
+    }
+
+    /// The top row the held thumb asks for with the pointer at `y` on a bar laid out as `parts`
+    /// over `visible` of `total` rows; `None` unless the thumb is held.
+    pub fn drag(&self, parts: &ScrollParts, y: i32, visible: usize, total: usize) -> Option<usize> {
+        self.drag.pos(Axis::Vertical, parts, (0, y), visible, total)
+    }
+
+    /// The held thumb's grab offset, which a list's `top_at` takes.
+    pub fn grab(&self) -> Option<i32> {
+        self.drag.grab(Axis::Vertical)
+    }
+
+    pub fn holding(&self) -> bool {
+        self.drag.holding() || self.repeat.held()
+    }
+
+    /// The pointer let go. True when the thumb or an arrow was held.
+    pub fn release(&mut self) -> bool {
+        let held = self.holding();
+        self.drag.release();
+        self.repeat.release();
+        self.arrow = None;
+        held
+    }
+
+    /// A host tick at `now`: the rows a held arrow steps now, 0 before it repeats or with the
+    /// pointer off it.
+    pub fn tick(&mut self, now: Instant) -> i64 {
+        match (self.repeat.due(now), self.arrow) {
+            (true, Some((step, true))) => step,
+            _ => 0,
+        }
+    }
+}
+
 /// A page taller (or, [`PageScroll::across`], wider) than the view it shows through, scrolled in
 /// its 100% px under a bar down the view's side (along its bottom): how much it is cut and
 /// scrolled, the held thumb, the lit part and a held arrow. The owner holds `top` to its range
@@ -310,6 +378,41 @@ mod tests {
     /// the 77 px track between the arrows.
     fn bar(top: usize) -> ScrollParts {
         scrollbar_parts(Rect::new(0, 0, 16, 109), 1, top, 6, 20, false, 8)
+    }
+
+    #[test]
+    fn a_row_bars_held_arrow_repeats_only_while_the_pointer_is_on_it() {
+        let mut b = RowBar::default();
+        let t0 = Instant::now();
+        assert_eq!(b.press(BarHit::Forward, 6), 1, "the press steps a row");
+        assert!(b.holding());
+        assert_eq!(b.tick(t0), 0, "the first tick sets the pause");
+        assert_eq!(b.tick(t0 + REPEAT_AFTER), 1);
+        b.hover(Some(BarHit::PageForward));
+        assert_eq!(b.tick(t0 + REPEAT_AFTER + REPEAT_EVERY), 0, "off the arrow");
+        b.hover(Some(BarHit::Forward));
+        assert_eq!(b.tick(t0 + REPEAT_AFTER + 2 * REPEAT_EVERY), 1);
+        assert!(b.release());
+        assert!(!b.holding());
+        assert_eq!(b.tick(t0 + REPEAT_AFTER + 3 * REPEAT_EVERY), 0);
+        assert_eq!(b.press(BarHit::PageBack, 6), -6, "the track pages");
+        assert!(!b.holding(), "the track holds nothing");
+    }
+
+    #[test]
+    fn a_row_bars_grabbed_thumb_scrolls_to_the_last_row_at_the_bars_end() {
+        let p = bar(0);
+        let thumb = p.thumb.unwrap();
+        let mut b = RowBar::default();
+        assert_eq!(b.press(bar_hit(&p, 8, thumb.y + 5, false), 6), 0);
+        assert_eq!(
+            b.drag(&p, 500, 6, 20),
+            Some(14),
+            "past the end holds the last page"
+        );
+        assert_eq!(b.drag(&p, -500, 6, 20), Some(0));
+        assert!(b.release());
+        assert_eq!(b.drag(&p, 500, 6, 20), None, "released");
     }
 
     #[test]
