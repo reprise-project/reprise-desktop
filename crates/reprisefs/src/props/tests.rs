@@ -942,3 +942,90 @@ fn the_task_panes_date_names_yesterday_and_drops_the_seconds() {
         assert!(yesterday.starts_with("Yesterday, "), "{yesterday}");
     }
 }
+
+/// Runs the test `name` again with `env` set, in a process of its own in a new user and mount
+/// namespace (as root there); skipped where the host allows none.
+fn in_own_namespace(name: &str, env: &str) {
+    let probe = std::process::Command::new("unshare")
+        .args(["--user", "--map-root-user", "--mount", "true"])
+        .status();
+    if !probe.is_ok_and(|s| s.success()) {
+        eprintln!("skipped: no user and mount namespace here");
+        return;
+    }
+    let status = std::process::Command::new("unshare")
+        .args(["--user", "--map-root-user", "--mount"])
+        .arg(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--quiet"])
+        .env(env, "1")
+        .status()
+        .unwrap();
+    assert!(status.success(), "{name} passes in its own namespace");
+}
+
+#[test]
+fn applying_to_subfolders_leaves_a_drive_mounted_inside_alone() {
+    use std::os::unix::fs::PermissionsExt;
+    const INSIDE: &str = "REPRISE_PROPS_MOUNT_TEST";
+    if std::env::var_os(INSIDE).is_none() {
+        in_own_namespace(
+            "props::tests::applying_to_subfolders_leaves_a_drive_mounted_inside_alone",
+            INSIDE,
+        );
+        return;
+    }
+    let t = tempfile::tempdir().unwrap();
+    let top = t.path().join("top");
+    let (sub, mnt) = (top.join("sub"), top.join("sub/drive"));
+    std::fs::create_dir_all(&mnt).unwrap();
+    std::fs::write(sub.join("mine"), "").unwrap();
+    let c = |p: &Path| std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: NUL-terminated strings that outlive the call; the mount is this namespace's own.
+    let mounted = unsafe {
+        libc::mount(
+            c"tmpfs".as_ptr(),
+            c(&mnt).as_ptr(),
+            c"tmpfs".as_ptr(),
+            0,
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(mounted, 0, "{}", std::io::Error::last_os_error());
+    std::fs::create_dir(mnt.join("folder")).unwrap();
+    std::fs::write(mnt.join("theirs"), "").unwrap();
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    let drive_modes = [mode(&mnt), mode(&mnt.join("theirs"))];
+
+    set_read_only_tree(&top, true).unwrap();
+    assert_eq!(mode(&sub.join("mine")) & 0o222, 0, "the folder's own file");
+    assert_eq!([mode(&mnt), mode(&mnt.join("theirs"))], drive_modes);
+    set_read_only_tree(&top, false).unwrap();
+
+    set_hidden_tree(&top, true).unwrap();
+    assert!(sub.join(".hidden").exists());
+    assert!(
+        !mnt.join(".hidden").exists(),
+        "no list written on the drive"
+    );
+
+    let index = AttrMoves {
+        index: Some(false),
+        ..Default::default()
+    };
+    write_attrs(&top, &index, true).unwrap();
+    assert_eq!(
+        crate::meta::robots(&sub.join("mine"), crate::meta::INDEX),
+        Some(false)
+    );
+    for p in [&mnt, &mnt.join("folder"), &mnt.join("theirs")] {
+        assert_ne!(
+            crate::meta::robots(p, crate::meta::INDEX),
+            Some(false),
+            "{}",
+            p.display()
+        );
+    }
+    // SAFETY: a NUL-terminated path that outlives the call.
+    unsafe { libc::umount2(c(&mnt).as_ptr(), 0) };
+}
+
