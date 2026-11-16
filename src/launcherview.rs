@@ -12,6 +12,7 @@ use reprisekit::controls::launcher::{self, Event, Hit, Key, Launcher, Pick, Row,
 use reprisekit::fuzzy;
 use reprisekit::look::panel;
 use reprisescene::{BufferId, Input, TreeId};
+use smithay::output::Output;
 use smithay::utils::Rectangle;
 
 use crate::compositor::{SceneOwner, State};
@@ -40,6 +41,8 @@ pub struct LauncherView {
     pub search: FileSearch,
     area: Rect,
     at: (i32, i32),
+    /// The output it opened on; None with no output.
+    output: Option<Output>,
     tree: TreeId,
     glass_tree: TreeId,
     backdrop: Backdrop,
@@ -64,6 +67,10 @@ fn key_of(k: &DialogKey) -> Option<Key> {
         _ => None,
     });
     special.or_else(|| k.edit.clone().map(Key::Char))
+}
+
+pub fn open_on(state: &State) -> Option<Output> {
+    state.launcher.as_ref()?.output.clone()
 }
 
 fn panel_origin(area: Rect, (width, height): (i32, i32)) -> (i32, i32) {
@@ -103,6 +110,7 @@ impl State {
             search: self.new_search(),
             area,
             at: (area.x, area.y),
+            output: out,
             tree,
             glass_tree,
             backdrop: Backdrop::new(&self.glass),

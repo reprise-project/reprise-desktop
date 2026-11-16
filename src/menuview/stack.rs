@@ -530,16 +530,6 @@ impl State {
         }
     }
 
-    pub fn close_menus_off_scene(&mut self) {
-        let gone = self
-            .menus
-            .first()
-            .is_some_and(|m| !self.scene.outputs().contains(&m.output));
-        if gone {
-            self.close_menu();
-        }
-    }
-
     fn arm_menu_fade(&mut self) {
         if self.menu_fade_timer.is_some() {
             return;

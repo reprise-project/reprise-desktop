@@ -126,11 +126,8 @@ pub fn hide(state: &mut State) {
 }
 
 /// The outputs changed: a switcher whose output left closes.
-pub fn output_gone(state: &mut State) {
-    let outputs = state.scene.outputs();
-    if (state.projector.shown.as_ref()).is_some_and(|s| !outputs.contains(&s.output)) {
-        hide(state);
-    }
+pub fn open_on(state: &State) -> Option<Output> {
+    Some(state.projector.shown.as_ref()?.output.clone())
 }
 
 fn redraw(state: &mut State) {

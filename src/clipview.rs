@@ -8,6 +8,7 @@
 use reprisekit::controls::cliphistory::{self, ClipHistory, Event, Hit, Key, Row};
 use reprisescene::{BufferId, TreeId};
 use smithay::input::keyboard::{Keycode, xkb};
+use smithay::output::Output;
 
 use crate::compositor::{SceneOwner, State};
 use crate::dialogview::DialogKey;
@@ -22,10 +23,16 @@ pub struct ClipView {
     /// The scale of the output it opened on; rows' thumbnails are sized
     /// for it.
     pub scale: i32,
+    /// The output it opened on; None with no output.
+    output: Option<Output>,
     tree: TreeId,
     glass_tree: TreeId,
     glass: Backdrop,
     buffer: BufferId,
+}
+
+pub fn open_on(state: &State) -> Option<Output> {
+    state.panels.clipview.as_ref()?.output.clone()
 }
 
 fn panel_size(model: &ClipHistory, theme: &reprisekit::theme::Theme) -> (i32, i32) {
@@ -115,6 +122,7 @@ impl State {
             model,
             origin,
             scale,
+            output: out,
             tree,
             glass_tree,
             glass: Backdrop::new(&self.glass),

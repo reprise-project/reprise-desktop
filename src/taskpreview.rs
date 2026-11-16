@@ -195,17 +195,13 @@ pub fn forget_window(state: &mut State, w: WindowId) {
     }
 }
 
-pub fn output_gone(state: &mut State) {
-    let outputs = state.scene.outputs();
+/// The output the panel is on, or the one the bar of the button waiting for one is on.
+pub fn open_on(state: &State) -> Option<Output> {
     let v = &state.task_preview;
-    let gone = v
-        .shown
-        .as_ref()
-        .is_some_and(|p| !outputs.contains(&p.output))
-        || v.pending
-            .is_some_and(|(bar, _)| state.bar(bar).is_none_or(|b| !outputs.contains(&b.output)));
-    if gone {
-        hide(state);
+    match (v.shown_on(), v.pending) {
+        (Some(o), _) => Some(o.clone()),
+        (None, Some((bar, _))) => state.bar(bar).map(|b| b.output.clone()),
+        (None, None) => None,
     }
 }
 

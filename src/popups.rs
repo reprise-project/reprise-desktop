@@ -1,5 +1,7 @@
 //! Reprise's own popups: what a press off one closes, what a motion off one
-//! unhovers, and which are up while a finger or the pointer is routed.
+//! unhovers, which go with their output, and which are up while input is routed.
+
+use smithay::output::Output;
 
 use crate::{compositor::State, input::Hit, taskbar::TaskbarHit};
 
@@ -31,7 +33,7 @@ pub struct PressAt {
 }
 
 impl Popup {
-    /// Every popup, in the order a press closes them.
+    /// Every popup, in the order a press or a lost output closes them.
     pub const ALL: [Popup; 14] = [
         Popup::TrayFlyout,
         Popup::TaskPreview,
@@ -70,6 +72,39 @@ impl Popup {
             Popup::EmojiView => state.panels.emojiview.is_some(),
             Popup::Switcher => state.switcher.is_open(),
             Popup::Overview => state.overview.view.is_some(),
+        }
+    }
+
+    /// The output the popup is kept on; None while it is down, and always for the overview, which
+    /// covers every output.
+    pub fn output(self, state: &State) -> Option<Output> {
+        match self {
+            Popup::TrayFlyout => crate::trayflyout::open_on(state),
+            Popup::TaskPreview => crate::taskpreview::open_on(state),
+            Popup::SnapPicker => crate::snappickerview::open_on(state),
+            Popup::Projector => crate::projectorview::open_on(state),
+            Popup::NotifyCenter => crate::notifycenter::open_on(state),
+            Popup::Calendar => crate::calendarview::open_on(state),
+            Popup::Displays => crate::displaysview::open_on(state),
+            Popup::Menu => state.menus.first().map(|m| m.output.clone()),
+            Popup::Launcher => crate::launcherview::open_on(state),
+            Popup::StartPanel => crate::startpanelview::open_on(state),
+            Popup::ClipView => crate::clipview::open_on(state),
+            Popup::EmojiView => crate::emojiview::open_on(state),
+            Popup::Switcher => state.switcher.open_on(),
+            Popup::Overview => None,
+        }
+    }
+
+    /// Close every popup kept on an output the scene no longer has, in `ALL`'s order: it would
+    /// stay at stale coordinates, taking the keys.
+    pub fn close_off_scene(state: &mut State) {
+        for p in Self::ALL {
+            if p.output(state)
+                .is_some_and(|o| !state.scene.outputs().contains(&o))
+            {
+                p.close(state);
+            }
         }
     }
 
@@ -293,6 +328,88 @@ mod tests {
             for (j, h) in hits.iter().enumerate() {
                 assert_eq!(p.hit_is(h), i == j, "{p:?} on {h:?}");
             }
+        }
+    }
+
+    /// Opens `p` on `two`, the output under the pointer, as its bind or its cell does; the task
+    /// preview waits for its delay.
+    fn open_on(h: &mut crate::harness::Harness, p: Popup, two: &Output) {
+        use crate::input::BTN_LEFT;
+        let bar = (h.state.bars.iter().find(|b| &b.output == two))
+            .expect("TEST-2's bar")
+            .tree;
+        let r = h.state.layout_box(Some(two));
+        let cell = crate::raster::Rect::new(r.x + r.width - 24, r.y + r.height - 28, 16, 28);
+        let s = &mut h.state;
+        match p {
+            Popup::TrayFlyout => {
+                let item = crate::tray::TrayItem {
+                    id: "probe".into(),
+                    key: "probe".into(),
+                    ..Default::default()
+                };
+                s.tray.as_mut().expect("the tray").hidden.push(item);
+                crate::trayflyout::chevron_press(s, bar, BTN_LEFT, None);
+            }
+            Popup::TaskPreview => crate::taskpreview::hover(s, bar, TaskbarHit::Task(0)),
+            Popup::SnapPicker => crate::snappickerview::toggle(s),
+            Popup::Projector => crate::projectorview::bind(s, crate::keys::MOD_LOGO),
+            Popup::NotifyCenter => crate::notifycenter::toggle(s, two, cell),
+            Popup::Calendar => crate::calendarview::clock_press(s, bar, (cell.x, cell.y), 0, false),
+            Popup::Displays => crate::displaysview::toggle(s, two, cell),
+            Popup::Menu => {
+                let w = s.focused.expect("a focused window");
+                s.open_window_menu_below(w, false);
+            }
+            Popup::Launcher => s.toggle_launcher(),
+            Popup::StartPanel => s.toggle_start_panel(bar),
+            Popup::ClipView => s.toggle_clipview(),
+            Popup::EmojiView => s.toggle_emoji(),
+            Popup::Switcher => s.open_switcher(crate::keys::MOD_ALT),
+            Popup::Overview => s.open_overview(),
+        }
+        h.dispatch();
+    }
+
+    #[test]
+    fn removing_an_output_closes_every_popup_on_it_and_keys_reach_the_window_again() {
+        for p in Popup::ALL {
+            let mut h = crate::harness::Harness::new();
+            h.output("TEST-1", 1024, 768);
+            let two = h.output("TEST-2", 1024, 768);
+            let r = h.state.layout_box(Some(&two));
+            let _tray = crate::tray::headless(&mut h.state);
+            let mut c = h.connect();
+            for app in ["one", "two"] {
+                let w = h.map_toplevel(&mut c, app, 300, 200);
+                h.state.move_to(w.id, r.x + 100, r.y + 100);
+            }
+            h.pointer_to(f64::from(r.x + 700), f64::from(r.y + 400));
+            open_on(&mut h, p, &two);
+            if p == Popup::Overview {
+                assert!(p.is_open(&h.state), "the overview opened");
+            } else {
+                assert_eq!(
+                    p.output(&h.state).as_ref(),
+                    Some(&two),
+                    "{p:?} is on TEST-2"
+                );
+            }
+            h.state.scene.remove_output(&two);
+            h.state.output_removed(&two);
+            h.dispatch();
+            assert!(!p.is_open(&h.state), "{p:?} closed with TEST-2");
+            assert_eq!(p.output(&h.state), None, "{p:?} keeps no output");
+            h.roundtrip(&mut c);
+            c.side.keys.clear();
+            h.key(30, true);
+            h.key(30, false);
+            h.roundtrip(&mut c);
+            assert_eq!(
+                c.side.keys,
+                [(30, true), (30, false)],
+                "after {p:?}: the window hears A"
+            );
         }
     }
 }

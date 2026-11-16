@@ -52,7 +52,7 @@ pub struct Stack {
     pub entries: Vec<Entry>,
     pub selected: usize,
     pub mods: u32,
-    output: Output,
+    pub output: Output,
     pub area: Rect,
     /// In `layers.overlay` at the output's corner, tagged
     /// `SceneOwner::Switcher`: the dim, which takes the pointer for the

@@ -333,11 +333,8 @@ pub fn forget_window(state: &mut State, w: WindowId) {
     }
 }
 
-pub fn output_gone(state: &mut State) {
-    let outputs = state.scene.outputs();
-    if (state.snap_picker.shown.as_ref()).is_some_and(|p| !outputs.contains(&p.output)) {
-        hide(state);
-    }
+pub fn open_on(state: &State) -> Option<Output> {
+    Some(state.snap_picker.shown.as_ref()?.output.clone())
 }
 
 /// Icon files landed: the open picker takes its windows' icons again.

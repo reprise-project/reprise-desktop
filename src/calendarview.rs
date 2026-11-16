@@ -598,17 +598,6 @@ fn popup_tree(
 }
 
 /// The layout changed: a popup whose output went away goes with it.
-pub fn output_gone(state: &mut State) {
-    let gone = state
-        .calendar
-        .view
-        .as_ref()
-        .is_some_and(|v| !state.scene.outputs().contains(&v.output));
-    if gone {
-        close(state);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

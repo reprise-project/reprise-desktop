@@ -6,6 +6,7 @@
 use reprisekit::controls::emojipicker::{self, EmojiPicker, Event, Hit, Key, RECENT};
 use reprisekit::emoji::{EmojiFont, Entry};
 use reprisescene::{BufferId, TreeId};
+use smithay::output::Output;
 
 use crate::compositor::{SceneOwner, State};
 use crate::dialogview::DialogKey;
@@ -50,10 +51,16 @@ pub struct EmojiView {
     pub origin: (i32, i32),
     /// The scale of the output it opened on.
     pub scale: i32,
+    /// The output it opened on; None with no output.
+    output: Option<Output>,
     tree: TreeId,
     glass_tree: TreeId,
     glass: Backdrop,
     buffer: BufferId,
+}
+
+pub fn open_on(state: &State) -> Option<Output> {
+    state.panels.emojiview.as_ref()?.output.clone()
 }
 
 /// The picker's key for a press the filter caught: Enter, Escape, the arrows and pages, or an edit
@@ -146,6 +153,7 @@ impl State {
             model,
             origin,
             scale,
+            output: out,
             tree,
             glass_tree,
             glass: Backdrop::new(&self.glass),

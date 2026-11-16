@@ -789,26 +789,6 @@ fn a_user_picture_read_stuck_on_a_dead_home_lets_a_later_open_read_again() {
 }
 
 #[test]
-fn the_panel_outlives_its_output_once_the_scene_drops_it() {
-    let out = |name: &str| {
-        Output::new(
-            name.into(),
-            smithay::output::PhysicalProperties {
-                size: (0, 0).into(),
-                subpixel: smithay::output::Subpixel::Unknown,
-                make: "Reprise".into(),
-                model: "Test".into(),
-                serial_number: "0".into(),
-            },
-        )
-    };
-    let (a, b) = (out("A-1"), out("B-1"));
-    assert!(!outlived(&a, &[a.clone(), b.clone()]));
-    assert!(outlived(&a, &[b]), "A-1 was removed");
-    assert!(outlived(&a, &[]));
-}
-
-#[test]
 fn the_pointer_takes_the_panel_and_the_picture_only() {
     let l = layout::layout(&StartPanel::new());
     let t = takes_pointer(&l);
