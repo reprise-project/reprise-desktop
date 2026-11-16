@@ -182,7 +182,7 @@ impl SettingsApp {
     fn start_remote(&mut self, _: impl FnOnce() -> Reading + Send + 'static) {}
 
     /// The address of the client selected on the page, which shows `self.remote`.
-    fn selected_client(&self) -> Option<String> {
+    pub(crate) fn selected_client(&self) -> Option<String> {
         let page = &self.sheet.pages[Page::RemoteDesktop.index()];
         pages::selected_client(page, self.remote.status.as_ref()).map(str::to_owned)
     }

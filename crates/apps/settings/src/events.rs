@@ -60,6 +60,10 @@ impl SettingsApp {
                     self.remote_toggled();
                     return Reply::redraw();
                 }
+                if id == pages::REMOTE_PRINT {
+                    self.show_remote(self.selected_client());
+                    return Reply::redraw();
+                }
                 if id == magnifierpage::READER {
                     self.reader_toggled();
                     return Reply::redraw();

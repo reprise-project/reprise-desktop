@@ -81,7 +81,8 @@ or the `tailscale0` interface).
 - **Clients.** xfreerdp3, Remmina and mstsc have been tried. mstsc
   logs in with NLA, so it needs reprise-login and a Remote Desktop password.
   Its certificate prompt shows the SHA-1 thumbprint: compare it with the
-  Thumbprint line on the Login Manager page.
+  Thumbprint line on the Login Manager page, or with SHA-1 thumbprint
+  picked beside the fingerprint on the Remote Desktop page.
 - **FreeRDP before 3.32.2.** On x86 its full-colour decoder puts the
   auxiliary colour samples one column left, so coloured edges show dotted
   fringes when the screen width is not a multiple of 32 or the server codes
@@ -358,7 +359,7 @@ them, asked on each save.
   computer's screen, `second_client`, `max_viewers`, picture and sound)
   apply as they do to your own server. Your Remote Desktop page shows no
   port and greys New Certificate...: the computer has one certificate for
-  every user, its fingerprint on both pages.
+  every user, its fingerprint and thumbprint on both pages.
 - **A session in the background.** If you're not logged in, your session
   starts on a VT of its own and this computer's screen stays as it was, on
   the login screen or someone else's session. The session is locked here

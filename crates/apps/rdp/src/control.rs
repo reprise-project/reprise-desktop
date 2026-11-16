@@ -20,6 +20,7 @@ pub struct Status {
     /// The `[remote_desktop] encoder` values that work here besides `auto`.
     pub encoders: Vec<String>,
     pub fingerprint: String,
+    pub thumbprint: String,
     /// The monitors of lock mode's first viewer, primary first; empty in show mode.
     pub console_layout: Vec<crate::console::Monitor>,
 }
@@ -138,6 +139,9 @@ async fn serve(
         if now.fingerprint != sent.fingerprint {
             signalled(server.fingerprint_changed(emitter).await);
         }
+        if now.thumbprint != sent.thumbprint {
+            signalled(server.thumbprint_changed(emitter).await);
+        }
         if now.console_layout != sent.console_layout {
             signalled(server.console_layout_changed(emitter).await);
         }
@@ -196,6 +200,12 @@ impl RemoteDesktop {
     #[zbus(property)]
     fn fingerprint(&self) -> String {
         self.status.borrow().fingerprint.clone()
+    }
+
+    /// The certificate's SHA-1, 40 lowercase hex digits, as certificate viewers show it.
+    #[zbus(property)]
+    fn thumbprint(&self) -> String {
+        self.status.borrow().thumbprint.clone()
     }
 
     /// x, y, width, height and scale percent of each monitor of lock mode's first viewer,
@@ -336,6 +346,7 @@ pub(crate) mod tests {
             encoder: "RemoteFX (no H.264 encoder)".into(),
             encoders: vec!["software".into(), "none".into()],
             fingerprint: "AB:CD".into(),
+            thumbprint: "abcd".into(),
             ..Status::default()
         });
         let (disconnect, mut disconnected) = mpsc::unbounded_channel();
@@ -375,6 +386,7 @@ pub(crate) mod tests {
             assert_eq!(text(&all, "Listening"), "0.0.0.0:3389");
             assert_eq!(text(&all, "Encoder"), "RemoteFX (no H.264 encoder)");
             assert_eq!(text(&all, "Fingerprint"), "AB:CD");
+            assert_eq!(text(&all, "Thumbprint"), "abcd");
             assert_eq!(all["Clients"].value_signature(), "a(sst)");
             assert_eq!(all["ConsoleLayout"].value_signature(), "a(iiiiu)");
             assert_eq!(

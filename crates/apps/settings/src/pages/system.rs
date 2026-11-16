@@ -475,10 +475,14 @@ pub(super) const REMOTE_SECOND_REPLACE: &str = "second_client_replace";
 /// Stands in for [`REMOTE_ALLOW`] while the login manager runs remote logins.
 const MANAGED_NOTE: &str = "managed_note";
 pub(super) const LOCKER_NOTE: &str = "Lock mode is off while an external screen locker is set.";
-/// The certificate's fingerprint: a read-only edit, so it can be selected and copied.
+/// Which print of the certificate [`REMOTE_FINGERPRINT`] shows, a row of [`PRINTS`].
+pub const REMOTE_PRINT: &str = "print";
+/// The certificate's print [`REMOTE_PRINT`] picks: a read-only edit, so it can be selected and
+/// copied.
 const REMOTE_FINGERPRINT: &str = "fingerprint";
-/// The login manager's certificate's SHA-1 thumbprint, on a [`managed`] page.
-const REMOTE_THUMBPRINT: &str = "thumbprint";
+/// [`REMOTE_PRINT`]'s rows, each also the print's access name.
+const PRINTS: [&str; 2] = ["SHA-256 fingerprint", "SHA-1 thumbprint"];
+const PRINT_W: i32 = 120;
 pub const REMOTE_REGENERATE: &str = "regenerate";
 const CLIENTS: &str = "clients";
 pub const REMOTE_DISCONNECT: &str = "disconnect";
@@ -489,7 +493,7 @@ const RD_PASSWORD_Y: i32 = 62;
 const ACCOUNTS_W: i32 = 110;
 
 /// What greys with the switch off; New Certificate and Disconnect also need the server answering.
-const REMOTE_CONTROLS: [&str; 26] = [
+const REMOTE_CONTROLS: [&str; 24] = [
     REMOTE_STATUS,
     ENCODER,
     "port_label",
@@ -509,10 +513,8 @@ const REMOTE_CONTROLS: [&str; 26] = [
     "remote_screen_label",
     REMOTE_SCREEN_SHOW,
     REMOTE_SCREEN_LOCK,
-    "fingerprint_label",
+    REMOTE_PRINT,
     REMOTE_FINGERPRINT,
-    "thumbprint_label",
-    REMOTE_THUMBPRINT,
     "second_client_label",
     REMOTE_SECOND_JOIN,
     REMOTE_SECOND_REPLACE,
@@ -522,10 +524,9 @@ const REMOTE_CONTROLS: [&str; 26] = [
 const PORT_CONTROLS: [&str; 2] = ["port_label", REMOTE_PORT];
 
 const NEW_CERTIFICATE_W: i32 = 110;
-/// On a [`managed`] page, which has no Allow rows: how much higher the fingerprint sits, and how
-/// much lower the rows under the thumbprint row sit.
-const MANAGED_FINGERPRINT_DY: i32 = -12;
-const MANAGED_ROWS_DY: i32 = 6;
+/// How much higher the rows from the fingerprint's down sit on a [`managed`] page, which has no
+/// Allow rows.
+const MANAGED_DY: i32 = -12;
 /// Where the second client's radios start, right of their label.
 const SECOND_CLIENT_X: i32 = X + 182;
 const LOCK_GRACE_W: i32 = 96;
@@ -597,41 +598,30 @@ pub fn remote_desktop(
             Item::label_at(REMOTE_STATUS, X, 80, a.w - 18, "").under_check(),
         ]);
     }
-    let (fy, dy) = match machine {
-        Some(_) => (MANAGED_FINGERPRINT_DY, MANAGED_ROWS_DY),
-        None => (0, 0),
+    let dy = match machine {
+        Some(_) => MANAGED_DY,
+        None => 0,
     };
+    let print_x = X + PRINT_W + 4;
     items.extend([
-        Item::label_at(
-            "fingerprint_label",
-            X,
-            104 + fy,
-            126,
-            "&Fingerprint (SHA-256):",
-        ),
+        Item::combo(REMOTE_PRINT, X, 100 + dy, PRINT_W, &PRINTS, PRINTS.len()).named("Certificate"),
         edit(
             REMOTE_FINGERPRINT,
-            X + 130,
-            100 + fy,
-            a.w - 130 - NEW_CERTIFICATE_W - 6,
+            print_x,
+            100 + dy,
+            a.right() - print_x - NEW_CERTIFICATE_W - 6,
         )
-        .read_only(),
+        .read_only()
+        .named(PRINTS[0]),
         Item::button_at(
             REMOTE_REGENERATE,
             a.right() - NEW_CERTIFICATE_W,
-            98 + fy,
+            98 + dy,
             NEW_CERTIFICATE_W,
             "&New Certificate...",
             true,
         ),
     ]);
-    // NLA clients connect through the login manager, and some show a certificate by thumbprint.
-    if machine.is_some() {
-        items.extend([
-            Item::label_at("thumbprint_label", X, 126 + fy, 126, "&Thumbprint (SHA-1):"),
-            edit(REMOTE_THUMBPRINT, X + 130, 122 + fy, a.w - 130).read_only(),
-        ]);
-    }
     items.push(Item::label_at(
         "quality_label",
         X,
@@ -814,13 +804,16 @@ pub fn show_remote(
         s.encoders.iter().map(String::as_str).collect()
     });
     grey_choices(page, REMOTE_ENCODER, REMOTE_ENCODERS, &offered, &["auto"]);
-    let fingerprint = match machine {
-        Some(m) => m.fingerprint.as_str(),
-        None => shown.map_or("", |s| s.fingerprint.as_str()),
+    let sha1 = page.combo_selected(REMOTE_PRINT) == Some(1);
+    let print = match (machine, sha1) {
+        (Some(m), false) => m.fingerprint.as_str(),
+        (Some(m), true) => m.thumbprint.as_str(),
+        (None, false) => shown.map_or("", |s| s.fingerprint.as_str()),
+        (None, true) => shown.map_or("", |s| s.thumbprint.as_str()),
     };
-    page.show_edit_text(REMOTE_FINGERPRINT, fingerprint);
-    if let Some(m) = machine {
-        page.show_edit_text(REMOTE_THUMBPRINT, &m.thumbprint);
+    page.show_edit_text(REMOTE_FINGERPRINT, print);
+    if let Some(it) = page.item_mut(REMOTE_FINGERPRINT) {
+        it.name = Some(PRINTS[usize::from(sha1)]);
     }
     let clients = shown.map_or(&[][..], |s| s.clients.as_slice());
     let items: Vec<String> = clients
