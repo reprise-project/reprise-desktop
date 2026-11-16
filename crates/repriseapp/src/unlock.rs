@@ -141,7 +141,8 @@ impl Unlock {
                 "status",
                 Rect::new(LABEL_X, STATUS_Y, CLIENT.0 - LABEL_X - 16, LINE_H),
                 "",
-            ),
+            )
+            .live(),
             Item::button(
                 "ok",
                 Rect::new(OK_X, BTN_Y, BUTTON_W, BUTTON_H),

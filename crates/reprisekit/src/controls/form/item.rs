@@ -31,6 +31,8 @@ pub struct Item {
     pub grows: bool,
     /// Drawn on the window colour, not the face ([`Item::on_window`]).
     pub on_window: bool,
+    /// A label a reader speaks each time its text changes ([`Item::live`]).
+    pub live: bool,
 }
 
 /// How an item's rect is anchored. `UnderCheck`: under a check box's label, starting
@@ -58,6 +60,7 @@ impl Item {
             name: None,
             grows: false,
             on_window: false,
+            live: false,
         }
     }
 
@@ -85,6 +88,11 @@ impl Item {
             on_window: true,
             ..self
         }
+    }
+
+    /// A label or lines carrying a status or error line, published as a polite live region.
+    pub fn live(self) -> Item {
+        Item { live: true, ..self }
     }
 
     pub fn under_check(self) -> Item {

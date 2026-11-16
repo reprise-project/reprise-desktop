@@ -168,7 +168,8 @@ impl RunAs {
                     2 * LINE_H,
                 ),
                 &[],
-            ),
+            )
+            .live(),
             Item::button(
                 "ok",
                 Rect::new(OK_X, BTN_Y + extra, BUTTON_W, BUTTON_H),

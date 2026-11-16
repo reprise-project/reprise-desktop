@@ -53,12 +53,13 @@ impl Form {
                 Control::Label {
                     text: t, enabled, ..
                 } => {
-                    label = Some(tree.push(up, key, access::label(r, t, *enabled)));
+                    label = Some(tree.push(up, key, said(it, access::label(r, t, *enabled))));
                     continue;
                 }
                 Control::Lines(lines) | Control::GreyedLines(lines) => {
-                    let live = matches!(it.control, Control::Lines(_));
-                    label = Some(tree.push(up, key, access::label(r, &lines.join(" "), live)));
+                    let enabled = matches!(it.control, Control::Lines(_));
+                    let n = access::label(r, &lines.join(" "), enabled);
+                    label = Some(tree.push(up, key, said(it, n)));
                     continue;
                 }
                 Control::GroupTitle(t) => {
@@ -242,4 +243,12 @@ impl Form {
         }
         focus
     }
+}
+
+/// `n` as a polite live region when `it` is [`live`](super::Item::live).
+fn said(it: &super::Item, mut n: accesskit::Node) -> accesskit::Node {
+    if it.live {
+        n.set_live(accesskit::Live::Polite);
+    }
+    n
 }
