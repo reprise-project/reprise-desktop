@@ -126,14 +126,6 @@ blue-variants.png "new folder" x20
 blue-variants.png "the Web" x20
 caption-tabs-200.png "..." x6
 caption-tabs.png "..." x6
-desk-widgets@1.png "15:39" x3
-desk-widgets@1.png "28%" x3
-desk-widgets@1.png "42%" x3
-desk-widgets@1.png "CPU 28%" x3
-desk-widgets@1.png "CPU" x3
-desk-widgets@1.png "Memory 42%" x3
-desk-widgets@1.png "Memory" x3
-desk-widgets@1.png "Monday, Novem..." x3
 doc-tabs@1.png "htop" x104
 doc-tabs@1.png "s..." x144
 doc-tabs@1.png "ssh b..." x84
@@ -442,28 +434,6 @@ reprisekit-gallery.png "say nihao to all" x2
 reprisekit-gallery.png "setup.e..." x1
 reprisekit-gallery.png "setup.exe" x3
 reprisekit-gallery.png "user@repris..." x1
-snap-layouts.png "1" x12
-snap-layouts.png "2" x12
-snap-layouts.png "Duplic..." x3
-snap-layouts.png "Only 1" x3
-snap-layouts.png "Only 2" x3
-stats-panel.png "1.4 ms avg..." x3
-stats-panel.png "16.7 ms av..." x3
-stats-panel.png "3.2 rects,..." x3
-stats-panel.png "37" x3
-stats-panel.png "4" x3
-stats-panel.png "58" x3
-stats-panel.png "84.2 MB" x3
-stats-panel.png "9" x3
-stats-panel.png "CPU/re..." x3
-stats-panel.png "Clients" x3
-stats-panel.png "DP-1 (1920x1080..." x3
-stats-panel.png "Damage" x3
-stats-panel.png "Flip int..." x3
-stats-panel.png "Memory" x3
-stats-panel.png "Render..." x3
-stats-panel.png "Surfaces" x3
-stats-panel.png "Windows" x3
 taskbar-cells.png "3:45 PM" x6
 taskbar-edges.png "3:45 PM" x4
 tray-arrow.png "3:45 PM" x4

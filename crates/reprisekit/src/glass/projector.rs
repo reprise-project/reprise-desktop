@@ -48,7 +48,7 @@ pub fn draw(
         draw_picture(
             &mut t,
             text,
-            size_px,
+            layout.units.base_px(size_px),
             local(layout.picture(i)),
             choice,
             &ink,

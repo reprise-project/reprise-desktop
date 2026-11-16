@@ -89,7 +89,7 @@ fn open(state: &mut State, mods: u32) {
     };
     let (now, connected) = state.projection();
     let model = Projector::new(now, connected);
-    let layout = ProjectorLayout::compute();
+    let layout = ProjectorLayout::compute(state.config.theme.text);
     let at = place(
         state.usable_area(Some(&output)),
         (layout.width, layout.height),

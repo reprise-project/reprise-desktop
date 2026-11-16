@@ -306,8 +306,9 @@ fn tick(state: &mut State) {
             title: title(o),
             rows: rows(&stats, secs, own, pixels, &totals),
         };
-        let corner = panel_origin(state.usable_area(Some(o)), statspanel::W);
-        let below = statspanel::height(want.rows.len()) + GAP;
+        let (w, h) = statspanel::size(want.rows.len(), state.config.theme.text);
+        let corner = panel_origin(state.usable_area(Some(o)), w);
+        let below = h + GAP;
         let origin = match stacks.iter_mut().find(|(c, _)| *c == corner) {
             Some((_, next)) => {
                 let at = (corner.0, *next);
@@ -362,11 +363,11 @@ fn draw(state: &mut State, p: &mut Panel, want: StatsPanel) {
     let theme = state.config.theme.scaled(scale);
     let canvas = statspanel::draw(&theme, state.text.for_output(theme.scale), &want);
     let m = panel::margin(&state.config.theme);
-    let h = statspanel::height(want.rows.len());
+    let (w, h) = statspanel::size(want.rows.len(), state.config.theme.text);
     let pane = match state.config.theme.glass() {
         Some(g) if crate::glass::wanted(&state.config) => Some(Pane {
             shapes: vec![PaneShape {
-                rect: Rect::new(0, 0, statspanel::W, h),
+                rect: Rect::new(0, 0, w, h),
                 corner: g.panel.corner,
                 square_bottom: false,
                 square_top: false,
@@ -526,8 +527,9 @@ mod tests {
         let s = &h.state;
         let panel = |o: &Output| s.debug.panels.iter().find(|p| &p.output == o).unwrap();
         let at = |o: &Output| s.scene.position(panel(o).tree).unwrap();
-        let first = panel_origin(s.usable_area(Some(&a)), statspanel::W);
-        let below = first.1 + statspanel::height(panel(&a).shown.rows.len()) + GAP;
+        let (w, h) = statspanel::size(panel(&a).shown.rows.len(), s.config.theme.text);
+        let first = panel_origin(s.usable_area(Some(&a)), w);
+        let below = first.1 + h + GAP;
         assert_eq!(at(&a), first.into());
         assert_eq!(at(&b), (first.0, below).into(), "DP-2's panel under DP-1's");
     }

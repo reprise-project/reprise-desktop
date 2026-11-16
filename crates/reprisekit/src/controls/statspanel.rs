@@ -1,17 +1,17 @@
-//! The debug overlay's panel: a bold title and label/value rows in a box of fixed width [`W`], so
-//! it keeps still while numbers change. Under a glass look the box is glass and the text white. It
+//! The debug overlay's panel: a bold title and label/value rows in a box of fixed width ([`W`] at
+//! 100% text, grown with the text size), so it keeps still while numbers change. Under a glass look the box is glass and the text white. It
 //! takes no clicks: [`hit`] only says which row a point is on.
 
 use crate::access::{self, Tree, accesskit};
 use crate::look::{Paint, panel};
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::text::{Align, TextRenderer};
-use crate::theme::{Color, Theme};
+use crate::theme::{Color, TextUnits, Theme};
 use accesskit::{NodeId, Role};
 
 pub const W: i32 = 236;
 const PAD: i32 = 8;
-pub const LINE_H: i32 = 15;
+const LINE_H: i32 = 15;
 const LABEL_W: i32 = 92;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,8 +35,9 @@ pub struct StatsPanel {
     pub rows: Vec<Row>,
 }
 
-pub fn height(rows: usize) -> i32 {
-    2 * PAD + LINE_H * (rows as i32 + 1)
+/// The panel's size with `rows` rows at text size `u`.
+pub fn size(rows: usize, u: TextUnits) -> (i32, i32) {
+    u.size((W, 2 * PAD + LINE_H * (rows as i32 + 1)))
 }
 
 pub struct Layout {
@@ -44,16 +45,21 @@ pub struct Layout {
     pub rows: Vec<(Rect, Rect)>,
 }
 
-pub fn layout(p: &StatsPanel, r: Rect) -> Layout {
-    let inner = r.width - 2 * PAD;
-    let line = |i: i32| r.y + PAD + LINE_H * i;
+/// The parts of a panel at `(x, y)` at text size `u`.
+pub fn layout(p: &StatsPanel, (x, y): (i32, i32), u: TextUnits) -> Layout {
+    let inner = W - 2 * PAD;
+    let line = |i: i32| PAD + LINE_H * i;
+    let at = |r: Rect| {
+        let r = u.rect(r);
+        Rect::new(x + r.x, y + r.y, r.width, r.height)
+    };
     Layout {
-        title: Rect::new(r.x + PAD, line(0), inner, LINE_H),
+        title: at(Rect::new(PAD, line(0), inner, LINE_H)),
         rows: (1..=p.rows.len() as i32)
             .map(|i| {
-                let label = Rect::new(r.x + PAD, line(i), LABEL_W, LINE_H);
+                let label = Rect::new(PAD, line(i), LABEL_W, LINE_H);
                 let value = Rect::new(label.right(), line(i), inner - LABEL_W, LINE_H);
-                (label, value)
+                (at(label), at(value))
             })
             .collect(),
     }
@@ -62,13 +68,14 @@ pub fn layout(p: &StatsPanel, r: Rect) -> Layout {
 pub fn draw(theme: &Theme, text: &TextRenderer, p: &StatsPanel) -> Canvas {
     let paint = &theme.paint();
     let (cs, s) = (paint.cs, paint.s);
-    let h = height(p.rows.len());
+    let u = theme.text;
+    let (w, h) = size(p.rows.len(), u);
     if let Some((style, spec)) = panel::glass(theme) {
-        return panel::draw_inked(style, spec, W, h, s, |c| {
+        return panel::draw_inked(style, spec, w, h, s, |c| {
             body(c, paint, text, theme.fonts.size_px, p, Some(panel::INK))
         });
     }
-    let mut c = Canvas::new((W * s) as u32, (h * s) as u32);
+    let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
     c.fill_rect(c.bounds(), cs.button_face);
     c.edge_t(c.bounds(), EdgeStyle::WindowRaised, cs, s);
     body(&mut c, paint, text, theme.fonts.size_px, p, None);
@@ -84,7 +91,7 @@ fn body(
     ink: Option<Color>,
 ) {
     let s = paint.s;
-    let lay = layout(p, Rect::new(0, 0, W, height(p.rows.len())));
+    let lay = layout(p, (0, 0), paint.text);
     let mut put = |r: Rect, t: &str, bold: bool| {
         let r = r.scaled(s);
         let t = text.ellipsize(t, r.width, bold, px);
@@ -103,16 +110,24 @@ fn body(
     }
 }
 
-pub fn hit(p: &StatsPanel, r: Rect, x: i32, y: i32) -> Option<usize> {
-    layout(p, r)
+pub fn hit(p: &StatsPanel, at: (i32, i32), u: TextUnits, x: i32, y: i32) -> Option<usize> {
+    layout(p, at, u)
         .rows
         .iter()
         .position(|(l, v)| l.contains(x, y) || v.contains(x, y))
 }
 
-pub fn access(p: &StatsPanel, r: Rect, tree: &mut Tree, parent: NodeId) -> NodeId {
+pub fn access(
+    p: &StatsPanel,
+    at: (i32, i32),
+    u: TextUnits,
+    tree: &mut Tree,
+    parent: NodeId,
+) -> NodeId {
+    let (w, h) = size(p.rows.len(), u);
+    let r = Rect::new(at.0, at.1, w, h);
     let id = tree.push(parent, "stats", access::named(Role::Group, r, &p.title));
-    for (i, (row, (l, v))) in p.rows.iter().zip(layout(p, r).rows).enumerate() {
+    for (i, (row, (l, v))) in p.rows.iter().zip(layout(p, at, u).rows).enumerate() {
         let line = format!("{}: {}", row.label, row.value);
         tree.push(id, i, access::static_text(l.union(&v), &line, true));
     }
@@ -137,8 +152,8 @@ mod tests {
     #[test]
     fn the_rows_stack_under_the_title_label_then_value() {
         let p = sample();
-        let lay = layout(&p, Rect::new(0, 0, W, height(2)));
-        assert_eq!(height(2), 61);
+        let lay = layout(&p, (0, 0), TextUnits::ONE);
+        assert_eq!(size(2, TextUnits::ONE), (W, 61));
         assert_eq!(lay.title, Rect::new(8, 8, 220, 15));
         assert_eq!(
             lay.rows,
@@ -147,8 +162,19 @@ mod tests {
                 (Rect::new(8, 38, 92, 15), Rect::new(100, 38, 128, 15)),
             ]
         );
-        assert_eq!(hit(&p, Rect::new(0, 0, W, 61), 150, 40), Some(1));
-        assert_eq!(hit(&p, Rect::new(0, 0, W, 61), 150, 10), None, "the title");
+        assert_eq!(hit(&p, (0, 0), TextUnits::ONE, 150, 40), Some(1));
+        assert_eq!(hit(&p, (0, 0), TextUnits::ONE, 150, 10), None, "the title");
+    }
+
+    #[test]
+    fn at_200_percent_text_every_part_doubles() {
+        let p = sample();
+        let u = TextUnits::new(22, 11);
+        assert_eq!(size(2, u), (2 * W, 122));
+        let (one, two) = (layout(&p, (0, 0), TextUnits::ONE), layout(&p, (5, 7), u));
+        let grown = |r: Rect| Rect::new(5 + 2 * r.x, 7 + 2 * r.y, 2 * r.width, 2 * r.height);
+        assert_eq!(two.title, grown(one.title));
+        assert_eq!(two.rows[1].1, grown(one.rows[1].1));
     }
 
     #[test]
@@ -165,7 +191,7 @@ mod tests {
         let ink = cs.button_text.argb();
         let inked =
             |r: Rect| (r.y..r.bottom()).any(|y| (r.x..r.right()).any(|x| c.get(x, y) == ink));
-        let lay = layout(&p, Rect::new(0, 0, W, 61));
+        let lay = layout(&p, (0, 0), TextUnits::ONE);
         assert!(inked(lay.title));
         for (l, v) in lay.rows {
             assert!(inked(l) && inked(v), "{l:?} and {v:?} hold text");
