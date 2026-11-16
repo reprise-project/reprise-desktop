@@ -100,6 +100,37 @@ fn the_questions_close_box_puts_the_old_mode_back_and_keeps_the_sheet() {
 }
 
 #[test]
+fn an_ending_signal_under_the_question_puts_the_old_mode_back() {
+    let (mut app, _) = question_up("question-ending", displayhost::Press::Apply);
+    let mut heads = repriseapp::heads::HeadRequests::default();
+    app.emergency_outputs(&mut heads);
+    let back = heads.take();
+    assert_eq!(
+        back.iter().map(|b| b.1.clone()).collect::<Vec<_>>(),
+        vec![vec![(
+            "DP-1".to_string(),
+            displaypage::test_head("DP-1").state()
+        )]],
+        "one request putting DP-1 back as it ran"
+    );
+}
+
+#[test]
+fn an_ending_signal_with_no_question_up_sets_no_output() {
+    let mut app = app("ending-no-question");
+    let mut ctx = test_ctx();
+    app.event(
+        MAIN,
+        Event::Heads(vec![displaypage::test_head("DP-1")]),
+        &mut ctx,
+    );
+    app.display.model.pick_resolution(1);
+    let mut heads = repriseapp::heads::HeadRequests::default();
+    app.emergency_outputs(&mut heads);
+    assert_eq!(heads.take(), vec![], "a pick not applied is left alone");
+}
+
+#[test]
 fn yes_after_ok_writes_the_output_and_quits() {
     let (mut app, mut ctx) = question_up("question-yes", displayhost::Press::Ok);
     let q = app.display.flow.question.as_ref().expect("the question");
