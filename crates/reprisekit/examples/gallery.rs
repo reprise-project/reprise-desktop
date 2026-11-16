@@ -91,7 +91,7 @@ use glass::{render_glass, render_glass_dark, render_glass_scale2};
 use glass_shell::{render_glass_preview, render_glass_switcher};
 use page::render;
 use popups::{
-    render_calendar_events, render_glass_clock_popup, render_glass_launcher,
+    render_calendar_events, render_desktop_labels, render_glass_clock_popup, render_glass_launcher,
     render_glass_notify_sheets, render_glass_popups, render_launchers, render_now_playing,
     write_volume_popups,
 };
@@ -262,6 +262,10 @@ fn main() {
             &format!("reprisekit-gallery-label-ellipsis@{}.png", n.max(1)),
         );
         write_preview(
+            &render_desktop_labels(n.max(1)),
+            &format!("reprisekit-gallery-desktop-labels@{}.png", n.max(1)),
+        );
+        write_preview(
             &render_blue_start_panel(n.max(1)),
             &format!("reprisekit-gallery-blue-start-menu@{}.png", n.max(1)),
         );
@@ -363,6 +367,10 @@ fn main() {
     write_preview(
         &render_label_ellipsis(1),
         "reprisekit-gallery-label-ellipsis.png",
+    );
+    write_preview(
+        &render_desktop_labels(1),
+        "reprisekit-gallery-desktop-labels.png",
     );
     write_preview(
         &gallery_pathcomplete::render(1),

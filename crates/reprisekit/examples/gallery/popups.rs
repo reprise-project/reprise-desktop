@@ -502,7 +502,59 @@ pub fn render_glass_items(theme: &Theme) -> Canvas {
             false,
             Some(pick),
             None,
+            iconview::Ground::Wallpaper,
         );
+    }
+    c
+}
+
+/// Desktop labels at `scale` in Classic, Blue and Glass (one row each) over the default teal,
+/// a cream paper, a pale sky and white: unselected over their shadow, then selected.
+pub fn render_desktop_labels(scale: i32) -> Canvas {
+    let text = TextRenderer::load(&FontConfig::default());
+    let grounds = [
+        Color::rgb(0x3A, 0x6E, 0xA5),
+        Color::rgb(0xEB, 0xE5, 0xD9),
+        Color::rgb(0xC1, 0xD5, 0xFA),
+        Color::rgb(0xFF, 0xFF, 0xFF),
+    ];
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let (w, h) = (2 * iconview::CELL + 10, iconview::CELL + 10);
+    let mut c = Canvas::new(
+        (w * grounds.len() as i32 * scale) as u32,
+        (h * looks.len() as i32 * scale) as u32,
+    );
+    for (row, look) in looks.into_iter().enumerate() {
+        let theme = interfaces::theme_for(look).scaled(scale);
+        for (col, ground) in grounds.into_iter().enumerate() {
+            let at = Rect::new(col as i32 * w, row as i32 * h, w, h);
+            let at = Rect::new(at.x * scale, at.y * scale, w * scale, h * scale);
+            c.fill_rect(at, ground);
+            for (k, (name, picked)) in [("Recycle Bin", false), ("My Documents", true)]
+                .into_iter()
+                .enumerate()
+            {
+                let x = at.x + (5 + k as i32 * iconview::CELL) * scale;
+                let y = at.y + 5 * scale;
+                let sel = picked.then_some(Selection {
+                    ring: false,
+                    origin: (x / scale, y / scale),
+                });
+                iconview::draw_cell_at(
+                    &mut c,
+                    (x, y),
+                    iconview::Cell::square(iconview::CELL),
+                    &theme,
+                    &text,
+                    name,
+                    None,
+                    false,
+                    sel,
+                    None,
+                    iconview::Ground::Wallpaper,
+                );
+            }
+        }
     }
     c
 }

@@ -547,6 +547,7 @@ mod tests {
                 false,
                 pick,
                 None,
+                iconview::Ground::Wallpaper,
             );
             d
         };
@@ -967,6 +968,7 @@ mod tests {
                 false,
                 Some(pick),
                 None,
+                iconview::Ground::Wallpaper,
             );
             out.blit_over(220 + i as i32 * 100, 200, &d);
         }

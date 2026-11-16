@@ -317,6 +317,7 @@ pub fn page_files(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
             &ghosts,
             iconview::Cell::square(iconview::CELL),
             (37, 37),
+            iconview::Ground::Wallpaper,
         ) {
             c.blit_over(420, 9843, &img);
         }
