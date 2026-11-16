@@ -71,7 +71,7 @@ use smithay_client_toolkit::reexports::protocols::wp::{
     viewporter::client::{wp_viewport, wp_viewporter},
 };
 use smithay_client_toolkit::reexports::protocols::xdg::{
-    dialog::v1::client::xdg_wm_dialog_v1,
+    dialog::v1::client::{xdg_dialog_v1, xdg_wm_dialog_v1},
     foreign::{zv1::client::zxdg_importer_v1, zv2::client::zxdg_importer_v2},
     system_bell::v1::client::xdg_system_bell_v1,
     toplevel_icon::v1::client::xdg_toplevel_icon_manager_v1,
@@ -172,6 +172,8 @@ struct Slot {
     frame_pending: bool,
     mapped: bool,
     modal: bool,
+    /// The child's xdg-dialog object, made the first time it is modal.
+    dialog: Option<xdg_dialog_v1::XdgDialogV1>,
     caption: Caption,
     access: access::SlotAccess,
     /// The window's blur region object and the glass rows across its width it last set.
@@ -208,6 +210,9 @@ impl Drop for Slot {
         }
         if let Some(g) = self.glass.take() {
             g.destroy();
+        }
+        if let Some(d) = self.dialog.take() {
+            d.destroy();
         }
     }
 }

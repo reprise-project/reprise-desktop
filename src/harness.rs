@@ -563,6 +563,26 @@ impl Harness {
         })
     }
 
+    /// [`Harness::map_toplevel`] for a child of `parent` that xdg-dialog marks modal before it
+    /// maps.
+    pub fn map_modal(
+        &mut self,
+        c: &mut TestClient,
+        app_id: &str,
+        parent: Toplevel,
+        (w, h): (i32, i32),
+    ) -> Toplevel {
+        use wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1;
+        self.map_toplevel_after(c, app_id, w, h, |hs, c, t| {
+            let owner = c.side.shells[parent.shell].toplevel.clone();
+            let toplevel = c.side.shells[t.shell].toplevel.clone();
+            toplevel.set_parent(Some(&owner));
+            let wm: XdgWmDialogV1 = c.bind("xdg_wm_dialog_v1", 1);
+            wm.get_xdg_dialog(&toplevel, &c.qh(), ()).set_modal();
+            hs.roundtrip(c);
+        })
+    }
+
     /// [`Harness::map_toplevel`] running `setup` between the initial commit and the first
     /// buffer.
     pub fn map_toplevel_after(
@@ -1924,6 +1944,8 @@ impl wc::Dispatch<input_client::reprise_sandboxed_v1::RepriseSandboxedV1, ()> fo
 }
 
 wc::delegate_noop!(ClientSide: ignore ZwlrForeignToplevelHandleV1);
+wc::delegate_noop!(ClientSide: ignore wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1);
+wc::delegate_noop!(ClientSide: ignore wayland_protocols::xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1);
 wc::delegate_noop!(ClientSide: ignore WlCompositor);
 wc::delegate_noop!(ClientSide: ignore wp_alpha_modifier_v1::WpAlphaModifierV1);
 wc::delegate_noop!(ClientSide: ignore wp_alpha_modifier_surface_v1::WpAlphaModifierSurfaceV1);

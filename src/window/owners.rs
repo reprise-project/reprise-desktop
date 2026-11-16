@@ -25,23 +25,6 @@ pub(super) fn walk_owned<T: Copy + Eq + std::hash::Hash, S: Copy>(
     }
 }
 
-/// Follow `modal` from `root` to the end of the chain: the window that takes focus in `root`'s
-/// place. Stops at a revisited window.
-pub(super) fn modal_end<T: Copy + Eq + std::hash::Hash>(
-    root: T,
-    mut modal: impl FnMut(T) -> Option<T>,
-) -> T {
-    let mut seen = std::collections::HashSet::from([root]);
-    let mut w = root;
-    while let Some(k) = modal(w) {
-        if !seen.insert(k) {
-            break;
-        }
-        w = k;
-    }
-    w
-}
-
 pub(super) fn owner_chain_has<T: Copy + Eq + std::hash::Hash>(
     w: T,
     owner: T,
@@ -156,13 +139,16 @@ impl State {
             .collect()
     }
 
+    /// The window that takes the focus in `w`'s place: the newest mapped modal dialog of `w`'s
+    /// family (the windows under its [`State::home`]) that is neither `w` nor an owner of it, else
+    /// `w`. A dialog covers its family, siblings included, as programs gate their input.
     pub fn modal_target(&self, w: WindowId) -> WindowId {
-        modal_end(w, |x| {
-            self.owned_by(x)
-                .into_iter()
-                .rev()
-                .find(|&k| self.win(k).is_some_and(Window::is_modal))
-        })
+        let home = self.home(w);
+        (self.windows.iter().rev())
+            .filter(|x| x.mapped && x.id != w && x.is_modal())
+            .map(|x| x.id)
+            .find(|&d| self.home(d) == home && !self.is_owner_of(d, w))
+            .unwrap_or(w)
     }
 
     pub fn on_parent_changed(&mut self, w: WindowId) {

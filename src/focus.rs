@@ -95,8 +95,9 @@ impl State {
         self.sync_vrr();
     }
 
-    /// Focus and raise `w`, showing its desktop first. A window under a modal
-    /// dialog comes up with it, and the dialog takes the focus.
+    /// Focus and raise `w`, showing its desktop first. A window a modal dialog covers
+    /// ([`State::modal_target`]) brings its family up with the dialog on top, and the dialog
+    /// takes the focus.
     pub fn focus_window(&mut self, owner: WindowId) {
         self.redraw_changed(|s| {
             s.raise_and_focus(owner);
@@ -123,10 +124,16 @@ impl State {
         let cleared = self.clear_attention(owner);
         let w = self.modal_target(owner);
         if w != owner {
-            if let Some(tree) = self.win(owner).map(|x| x.tree) {
+            let home = self.home(owner);
+            if let Some(tree) = self.win(home).map(|x| x.tree) {
                 self.scene.raise_to_top(tree);
             }
-            self.raise_children(owner);
+            self.raise_children(home);
+            // The dialog's owner takes the focus back when the dialog closes (`focus_top`).
+            if let Some(o) = self.owner(w) {
+                self.focus_order.retain(|p| *p != o && *p != w);
+                self.focus_order.extend([o, w]);
+            }
         }
         let Some(tree) = self.win(w).map(|x| x.tree) else {
             return;
