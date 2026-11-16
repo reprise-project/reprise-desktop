@@ -26,7 +26,7 @@ md5 = "0.8"
 png.workspace = true
 reprisebus = { path = "../reprisebus" }
 rustc-hash = "2"
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 # The trust marker, and Properties' Checksums tab.
 sha2 = "0.11"
 # `[recycle_bin]` in config.toml, which every host's Delete reads.

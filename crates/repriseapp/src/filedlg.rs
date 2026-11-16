@@ -281,9 +281,16 @@ fn picks(
 }
 
 /// Folder `id`'s `read` as the dialog lists it. Entries wear Explorer's icons at every size (a
-/// cold SVG a blank stand-in until it lands) and its Tiles lines; a picture's thumbnail arrives
-/// later ([`take_thumbs`]). Every subfolder gets its own handle in `folders`.
-fn listing(folders: &mut FolderTable, id: FolderId, read: Read, icons: &mut IconCache) -> Listing {
+/// cold SVG a blank stand-in until it lands), with `exec_icon` a file with an execute bit the
+/// program icon, and its Tiles lines; a picture's thumbnail arrives later ([`take_thumbs`]). Every
+/// subfolder gets its own handle in `folders`.
+fn listing(
+    folders: &mut FolderTable,
+    id: FolderId,
+    read: Read,
+    icons: &mut IconCache,
+    exec_icon: bool,
+) -> Listing {
     let Read {
         path,
         rows,
@@ -295,10 +302,11 @@ fn listing(folders: &mut FolderTable, id: FolderId, read: Read, icons: &mut Icon
     let names: Vec<String> = rows
         .iter()
         .zip(&read_icons.own)
-        .map(|(r, own)| {
-            reprisefs::icons::item_icon_with(&r.item, own.as_deref(), &specials, &|n| {
+        .map(|(r, own)| match &r.item {
+            it if exec_icon && it.exec && !it.is_dir => "application-x-executable".to_string(),
+            it => reprisefs::icons::item_icon_with(it, own.as_deref(), &specials, &|n| {
                 icons.has_unread(n)
-            })
+            }),
         })
         .collect();
     let mut shared = ListingIcons::default().with_list(list).unread();
@@ -570,6 +578,8 @@ pub struct Host {
     /// The bookmarks file a test reads instead of the user's; this crate's tests without one
     /// show no pinned folders.
     pins_at: Option<PathBuf>,
+    /// Every file with an execute bit wears the program icon, whatever its type.
+    pub exec_icon: bool,
 }
 
 /// How long the dialog waits for a listing before it goes on. Tests wait as long as it takes.
@@ -1527,7 +1537,7 @@ impl Host {
 
     fn show_read(&mut self, dlg: &mut FileDlg, id: FolderId, read: Read, icons: &mut IconCache) {
         let path = read.path.clone();
-        let mut l = listing(&mut self.folders, id, read, icons);
+        let mut l = listing(&mut self.folders, id, read, icons, self.exec_icon);
         for c in &mut l.folder.crumbs {
             c.icon = self.icons.folder.clone();
         }
@@ -1571,7 +1581,7 @@ impl Host {
         if self.folders.path(id) != Some(read.path.as_path()) {
             return;
         }
-        let l = listing(&mut self.folders, id, read, icons);
+        let l = listing(&mut self.folders, id, read, icons, self.exec_icon);
         let fresh: HashMap<&str, &Entry> = l
             .folder
             .entries

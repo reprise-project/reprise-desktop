@@ -1,46 +1,36 @@
 //! A FileChooser call's file filters (`a(sa(us))`: a label and patterns, each a glob (0) or a MIME type (1)) and the Files of type list built from them.
 
+pub use reprisefs::filechild::{Filter, Pattern};
+use reprisefs::listing::Item;
 use reprisefs::mimetree::MimeTree;
-use serde::{Deserialize, Serialize};
 use zbus::{OwnedVariant, Variant};
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub enum Pattern {
-    Glob(String),
-    Mime(String),
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct Filter {
-    pub label: String,
-    pub patterns: Vec<Pattern>,
-}
 
 const UNKNOWN: &str = "application/octet-stream";
 
-impl Filter {
-    /// Whether a file named `name`, of type `mime` when known, is listed: a glob matches its name, or its type is a kind of a pattern's type in `tree` (a subclass, an alias, or under `major/*`).
-    pub fn keeps(&self, name: &str, mime: Option<&str>, tree: &MimeTree) -> bool {
-        let mime = mime.unwrap_or(UNKNOWN);
-        self.patterns.iter().any(|p| match p {
-            Pattern::Glob(g) => reprisekit::glob::matches(g, name),
-            Pattern::Mime(m) => tree.is_a(mime, m),
-        })
-    }
+/// Whether `item` is listed by `f`: a glob matches its name, its type is a kind of a pattern's
+/// type in `tree` (a subclass, an alias, or under `major/*`), or it has an execute bit for
+/// [`Pattern::Exec`].
+pub fn keeps(f: &Filter, item: &Item, tree: &MimeTree) -> bool {
+    let mime = item.mime.as_deref().unwrap_or(UNKNOWN);
+    f.patterns.iter().any(|p| match p {
+        Pattern::Glob(g) => reprisekit::glob::matches(g, &item.name),
+        Pattern::Mime(m) => tree.is_a(mime, m),
+        Pattern::Exec => item.exec,
+    })
+}
 
-    pub fn to_value(&self) -> OwnedVariant {
-        let pats: Vec<(u32, String)> = self
-            .patterns
-            .iter()
-            .map(|p| match p {
-                Pattern::Glob(g) => (0, g.clone()),
-                Pattern::Mime(m) => (1, m.clone()),
-            })
-            .collect();
-        Variant::new((self.label.clone(), pats))
-            .try_to_owned()
-            .expect("plain strings")
-    }
+/// `f` as its `(sa(us))` value; a [`Pattern::Exec`], which the bus type cannot carry, is left out.
+pub fn to_value(f: &Filter) -> OwnedVariant {
+    let pats: Vec<(u32, String)> = (f.patterns.iter())
+        .filter_map(|p| match p {
+            Pattern::Glob(g) => Some((0, g.clone())),
+            Pattern::Mime(m) => Some((1, m.clone())),
+            Pattern::Exec => None,
+        })
+        .collect();
+    Variant::new((f.label.clone(), pats))
+        .try_to_owned()
+        .expect("plain strings")
 }
 
 /// One filter from its `(sa(us))` value; None, logged, when it has no label or no usable pattern.
@@ -115,6 +105,30 @@ mod tests {
         }
     }
 
+    fn item(name: &str, mime: Option<&str>, exec: bool) -> Item {
+        Item {
+            name: name.into(),
+            path: std::path::Path::new("/tmp").join(name),
+            is_dir: false,
+            is_link: false,
+            exec,
+            program: None,
+            hidden: false,
+            size: 0,
+            modified: None,
+            mime: mime.map(str::to_string),
+            kind: String::new(),
+            drive: None,
+            mount_root: false,
+            trashed: None,
+            shortcut: None,
+        }
+    }
+
+    fn kept(f: &Filter, name: &str, mime: Option<&str>, t: &MimeTree) -> bool {
+        keeps(f, &item(name, mime, false), t)
+    }
+
     #[test]
     fn filters_parse_from_the_bus_type() {
         let v = Variant::new(vec![
@@ -160,21 +174,21 @@ mod tests {
     fn keeps_globs_exact_and_wildcard_mime_types() {
         let t = MimeTree::default();
         let img = f("Images", vec![Pattern::Mime("image/*".into())]);
-        assert!(img.keeps("a.png", Some("image/png"), &t));
-        assert!(!img.keeps("a.txt", Some("text/plain"), &t));
+        assert!(kept(&img, "a.png", Some("image/png"), &t));
+        assert!(!kept(&img, "a.txt", Some("text/plain"), &t));
         let jpeg = f("JPEG", vec![Pattern::Mime("image/jpeg".into())]);
-        assert!(!jpeg.keeps("a.png", Some("image/png"), &t));
+        assert!(!kept(&jpeg, "a.png", Some("image/png"), &t));
         let glob = f("C", vec![Pattern::Glob("*.[ch]".into())]);
-        assert!(glob.keeps("main.C", None, &t));
+        assert!(kept(&glob, "main.C", None, &t));
         let bin = f(
             "Binary",
             vec![Pattern::Mime("application/octet-stream".into())],
         );
         assert!(
-            bin.keeps("blob", None, &t),
+            kept(&bin, "blob", None, &t),
             "an unknown type counts as octet-stream"
         );
-        assert!(!jpeg.keeps("blob", None, &t));
+        assert!(!kept(&jpeg, "blob", None, &t));
     }
 
     #[test]
@@ -184,13 +198,13 @@ mod tests {
             ["application/x-shellscript text/plain\nimage/svg+xml application/xml\n"],
         );
         let text = f("Text", vec![Pattern::Mime("text/plain".into())]);
-        assert!(text.keeps("run.sh", Some("application/x-shellscript"), &t));
-        assert!(text.keeps("a.c", Some("text/x-csrc"), &t));
+        assert!(kept(&text, "run.sh", Some("application/x-shellscript"), &t));
+        assert!(kept(&text, "a.c", Some("text/x-csrc"), &t));
         let xml = f("XML", vec![Pattern::Mime("application/xml".into())]);
-        assert!(xml.keeps("a.svg", Some("image/svg+xml"), &t));
+        assert!(kept(&xml, "a.svg", Some("image/svg+xml"), &t));
         let pdf = f("PDF", vec![Pattern::Mime("application/x-pdf".into())]);
-        assert!(pdf.keeps("a.pdf", Some("application/pdf"), &t));
-        assert!(!pdf.keeps("a.svg", Some("image/svg+xml"), &t));
+        assert!(kept(&pdf, "a.pdf", Some("application/pdf"), &t));
+        assert!(!kept(&pdf, "a.svg", Some("image/svg+xml"), &t));
     }
 
     #[test]
@@ -221,8 +235,30 @@ mod tests {
                 Pattern::Glob("*.png".into()),
                 Pattern::Mime("image/jpeg".into()),
             ],
-        )
-        .to_value();
-        assert_eq!(v.value_signature().to_string(), "(sa(us))");
+        );
+        assert_eq!(to_value(&v).value_signature().to_string(), "(sa(us))");
+    }
+
+    #[test]
+    fn an_exec_pattern_keeps_files_with_an_execute_bit_whatever_their_name() {
+        let t = MimeTree::default();
+        let programs = f("Programs", vec![Pattern::Exec]);
+        assert!(keeps(&programs, &item("tool", None, true), &t));
+        assert!(keeps(
+            &programs,
+            &item("notes.txt", Some("text/plain"), true),
+            &t
+        ));
+        assert!(!keeps(&programs, &item("tool", None, false), &t));
+    }
+
+    #[test]
+    fn an_exec_pattern_stays_off_the_bus() {
+        let v = to_value(&f(
+            "Programs",
+            vec![Pattern::Exec, Pattern::Glob("*.sh".into())],
+        ));
+        let (_, pats): (String, Vec<(u32, String)>) = v.try_into().unwrap();
+        assert_eq!(pats, [(0, "*.sh".to_string())]);
     }
 }

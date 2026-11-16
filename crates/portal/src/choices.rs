@@ -12,13 +12,7 @@ use reprisekit::text::TextRenderer;
 use reprisekit::theme::TextUnits;
 use zbus::Variant;
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct Choice {
-    pub id: String,
-    pub label: String,
-    pub options: Vec<(String, String)>,
-    pub initial: String,
-}
+pub use reprisefs::filechild::Choice;
 
 /// The form ids of the rows shown: at most eight (a form id is `'static`); more
 /// choices are dropped.

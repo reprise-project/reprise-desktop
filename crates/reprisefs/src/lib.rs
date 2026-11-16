@@ -24,6 +24,7 @@ pub mod dirchange;
 pub mod drawncache;
 pub mod dropdata;
 pub mod extract;
+pub mod filechild;
 pub mod fileclip;
 pub mod flatpak;
 pub mod folders;
