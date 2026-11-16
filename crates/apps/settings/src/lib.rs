@@ -359,6 +359,10 @@ struct SettingsApp {
 
     entries: Vec<reprisefs::autostart::Entry>,
     applied_checks: Vec<bool>,
+    /// The programs the session's units start, whose entries the Startup list leaves out; read
+    /// once off the loop at start (`units_reading`).
+    session_units: std::collections::HashSet<PathBuf>,
+    units_reading: Option<Receiver<std::collections::HashSet<PathBuf>>>,
     /// What the compositor filters `OnlyShowIn` / `NotShowIn` against.
     desktops: Vec<String>,
     /// The list's own `checks` are the pending state.
@@ -417,6 +421,7 @@ struct SettingsApp {
     /// the page opens, `notify_fresh`) and those the config lists.
     notify_programs: Vec<notifypage::Program>,
     notify_seen: Vec<(String, String)>,
+    notify_reading: Option<Receiver<Vec<(String, String)>>>,
     /// The installed desktop entries' names of the listed programs not seen this session.
     notify_names: HashMap<String, String>,
     notify_fresh: bool,
@@ -481,7 +486,9 @@ struct SettingsApp {
     /// BlueZ's paired devices, listed each time the Screen Saver & Lock page opens.
     away_devices: Vec<reprisebus::bluez::Device>,
     away_fresh: bool,
-    saver_photos: Option<(String, Receiver<Vec<PathBuf>>)>,
+    away_reading: Option<Receiver<Vec<reprisebus::bluez::Device>>>,
+    /// The Photos preview's folder and its pictures, listed once while the page stays open.
+    saver_photos: Option<(String, saverhost::Photos)>,
     /// The Photos preview's next picture, decoding.
     saver_photo: Option<Receiver<Option<(PathBuf, Canvas)>>>,
     add_to_quick: bool,
@@ -692,6 +699,8 @@ impl SettingsApp {
             search_hits: Vec::new(),
             entries: Vec::new(),
             applied_checks: Vec::new(),
+            session_units: Default::default(),
+            units_reading: None,
             desktops: reprisefs::autostart::desktop_names(
                 std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
             ),
@@ -716,6 +725,7 @@ impl SettingsApp {
             notify_seen: Vec::new(),
             notify_names: HashMap::new(),
             notify_fresh: false,
+            notify_reading: None,
             remote: remotehost::Remote::default(),
             remote_job: None,
             remote_acting: false,
@@ -774,6 +784,7 @@ impl SettingsApp {
             saver_ticking: false,
             away_devices: Vec::new(),
             away_fresh: false,
+            away_reading: None,
             saver_photos: None,
             saver_photo: None,
             menu_icons_due: true,
@@ -895,7 +906,10 @@ impl SettingsApp {
         };
         match autostart::remove(&self.user_autostart(), &e) {
             Ok(()) => self.rescan(),
-            Err(err) => log::warn!("remove {}: {err}", e.id),
+            Err(err) => {
+                log::warn!("remove {}: {err}", e.id);
+                self.fail(&format!("Cannot remove '{}': {err}.", e.name));
+            }
         }
         self.sync_apply();
         Reply::redraw()
@@ -1108,6 +1122,7 @@ impl App for SettingsApp {
             Err(e) => log::warn!("the slideshow folder is not watched: {e}"),
         }
         self.waker = Some(waker);
+        self.units_reading = Some(self.spawn(reprisebus::units::session_programs));
         let had = self.wallpapers.clone();
         self.scan = Some(
             self.spawn(move || wallpapers::merge(wallpapers::scan(&wallpapers::dirs()), &had)),

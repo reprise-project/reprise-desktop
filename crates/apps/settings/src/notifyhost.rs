@@ -1,5 +1,5 @@
 use crate::registry::Page;
-use crate::{SettingsApp, notifypage, registry};
+use crate::{SettingsApp, notifypage, registry, take};
 use repriseapp::Reply;
 
 impl SettingsApp {
@@ -14,16 +14,14 @@ impl SettingsApp {
             self.notify_fresh = true;
             // Tests leave the session bus alone.
             if !cfg!(test) {
-                self.notify_seen = reprisebus::tray::notification_programs().unwrap_or_else(|e| {
-                    log::warn!("notification programs: {e}");
-                    Vec::new()
-                });
+                self.notify_reading = Some(self.spawn(|| {
+                    reprisebus::tray::notification_programs().unwrap_or_else(|e| {
+                        log::warn!("notification programs: {e}");
+                        Vec::new()
+                    })
+                }));
             }
-            let w = &self.want;
-            self.notify_names = (w.notify_no_balloons.iter().chain(&w.notify_no_sounds))
-                .filter(|k| !self.notify_seen.iter().any(|(s, _)| s == *k))
-                .filter_map(|k| Some((k.clone(), entry_name(k)?)))
-                .collect();
+            self.name_unseen();
         }
         let names = &self.notify_names;
         let programs =
@@ -33,6 +31,30 @@ impl SettingsApp {
         let page = &mut self.sheet.pages[Page::Notifications.index()];
         notifypage::fill(page, &self.notify_programs, &self.want);
         changed
+    }
+
+    /// The compositor said which programs sent notifications; the next event lists them.
+    pub(crate) fn notify_seen_done(&mut self) -> bool {
+        let Some(rx) = &self.notify_reading else {
+            return false;
+        };
+        self.notify_seen = match take(rx) {
+            Ok(None) => return false,
+            Ok(Some(seen)) => seen,
+            Err(()) => Vec::new(),
+        };
+        self.notify_reading = None;
+        self.name_unseen();
+        true
+    }
+
+    /// Name the programs the config lists that this session has not seen.
+    fn name_unseen(&mut self) {
+        let w = &self.want;
+        self.notify_names = (w.notify_no_balloons.iter().chain(&w.notify_no_sounds))
+            .filter(|k| !self.notify_seen.iter().any(|(s, _)| s == *k))
+            .filter_map(|k| Some((k.clone(), entry_name(k)?)))
+            .collect();
     }
 
     pub(crate) fn notify_changed(&mut self, id: &str) -> Reply {

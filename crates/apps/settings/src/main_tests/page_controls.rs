@@ -1024,3 +1024,99 @@ fn the_capture_status_reads_checking_then_the_codec_missing() {
         "one probe a run"
     );
 }
+
+#[test]
+fn paired_devices_and_notifying_programs_show_once_their_read_answers() {
+    let mut a = app("page-reads");
+    let mut ctx = test_ctx();
+    a.sheet.tabs.open = Page::ScreenSaverLock.index();
+    a.event(MAIN, Event::Blink, &mut ctx);
+    let (tx, rx) = std::sync::mpsc::channel();
+    a.away_reading = Some(rx);
+    let phone = reprisebus::bluez::Device {
+        path: "/org/bluez/hci0/dev_00_11".into(),
+        address: "00:11:22:33:44:55".into(),
+        name: "Phone".into(),
+        paired: true,
+        connected: false,
+    };
+    tx.send(vec![phone]).unwrap();
+    assert!(a.event(MAIN, Event::Wake, &mut ctx).redraw);
+    let away = &a.sheet.pages[Page::ScreenSaverLock.index()];
+    let rows = match &away.item(saverpage::AWAY).unwrap().control {
+        form::Control::Combo(c) => c.items.iter().map(|i| i.text.clone()).collect::<Vec<_>>(),
+        c => panic!("the away device is a combo, not {c:?}"),
+    };
+    assert_eq!(rows[1..], ["Phone"]);
+
+    a.sheet.tabs.open = Page::Notifications.index();
+    a.event(MAIN, Event::Blink, &mut ctx);
+    let (tx, rx) = std::sync::mpsc::channel();
+    a.notify_reading = Some(rx);
+    tx.send(vec![("org.example.Mail".into(), "Mail".into())])
+        .unwrap();
+    assert!(a.event(MAIN, Event::Wake, &mut ctx).redraw);
+    let names: Vec<&str> = a.notify_programs.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["Mail"]);
+}
+
+#[test]
+fn a_rescan_keeps_an_unapplied_startup_check_on_its_entry() {
+    let mut a = app("startup-pending");
+    let parse = |id, text| reprisefs::autostart::parse(id, text, true).unwrap();
+    let one = parse("one", "[Desktop Entry]\nName=One\nExec=one\n");
+    let two = parse("two", "[Desktop Entry]\nName=Two\nExec=two\n");
+    a.entries = vec![one.clone(), two.clone()];
+    a.applied_checks = vec![true, true];
+    pages::fill_list(&mut a.list, &a.entries, &[true, false]);
+    let pending = a.pending_checks();
+    assert_eq!(pending, [("two".to_string(), false)]);
+    let new = parse("new", "[Desktop Entry]\nName=New\nExec=new\n");
+    a.entries = vec![new, one, two];
+    a.applied_checks = vec![true, true, true];
+    a.show_startup(&pending);
+    assert_eq!(a.list.checks, Some(vec![true, true, false]));
+    assert!(a.dirty(), "Apply stays lit for it");
+}
+
+#[test]
+fn a_startup_remove_that_fails_says_why() {
+    let mut a = app("startup-remove");
+    let system = "[Desktop Entry]\nName=Volume\nExec=vol\n";
+    a.entries = vec![reprisefs::autostart::parse("vol", system, false).unwrap()];
+    a.applied_checks = vec![true];
+    pages::fill_list(&mut a.list, &a.entries, &[true]);
+    a.list.selection.focus = Some(0);
+    a.remove_selected();
+    let text = a.error.as_ref().map(|b| b.fields.text.clone());
+    assert_eq!(
+        text.as_deref(),
+        Some("Cannot remove 'Volume': a system entry has no user file to remove.")
+    );
+    assert_eq!(a.entries.len(), 1, "the row stays");
+}
+
+#[test]
+fn an_empty_photos_folder_is_listed_once_while_the_page_stays_open() {
+    let mut a = app("saver-photos");
+    let ctx = test_ctx();
+    let folder = tmp("saver-photos-empty");
+    a.want.saver = "photos".into();
+    a.want.blank_after = 10;
+    a.want.saver_folder = folder.display().to_string();
+    a.sheet.tabs.open = Page::ScreenSaverLock.index();
+    let listed = |a: &SettingsApp| {
+        matches!(
+            &a.saver_photos,
+            Some((_, crate::saverhost::Photos::Listed(p))) if p.is_empty()
+        )
+    };
+    let started = std::time::Instant::now();
+    while !listed(&a) {
+        assert!(started.elapsed().as_secs() < 5, "the folder is listed");
+        a.saver_tick(&ctx);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    a.saver_tick(&ctx);
+    assert!(listed(&a), "an empty listing is kept, not listed again");
+}
