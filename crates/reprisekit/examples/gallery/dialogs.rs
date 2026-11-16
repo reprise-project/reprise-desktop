@@ -69,7 +69,7 @@ pub fn render_monitors(with_blue: bool) -> Canvas {
             px,
         );
         c.blit_canvas(x, 0, &face);
-        c.blit_canvas(x + ww + 25, 10, &arrange::draw_badge(theme, &text, 2));
+        c.blit_canvas(x + ww + 25, 10, &arrange::draw_badge(theme, &text, &[1, 3]));
     }
     c
 }

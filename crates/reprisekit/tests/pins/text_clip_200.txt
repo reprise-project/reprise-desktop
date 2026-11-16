@@ -307,7 +307,6 @@ logon-motion@1.png "Verifying..." x11
 logon@1.png "EN" x4
 logon@1.png "Reprise" x24
 logon@1.png "Verifying..." x1
-monitors.png "2" x3
 overview.png "My Documents" x3
 overview.png "Untitled - Notepad" x3
 path-complete.png "~/Do" x3
