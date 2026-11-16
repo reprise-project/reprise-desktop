@@ -40,7 +40,8 @@ pub struct DeskWidgets {
     /// The meter's samples, kept while it is hidden or removed.
     meter: Meter,
     cpu_before: Option<(Instant, CpuTimes)>,
-    timer: Option<RegistrationToken>,
+    /// The timer, and whether it ticks each second rather than each minute.
+    timer: Option<(RegistrationToken, bool)>,
     /// The config theme the widgets were drawn from, and whether glass lay under them; a change
     /// redraws them all.
     drawn_theme: Option<(Theme, bool)>,
@@ -73,9 +74,6 @@ pub struct Held {
 
 /// Samples `/proc` at most this often, however often the timer runs.
 const SAMPLE: Duration = Duration::from_millis(900);
-
-/// The timer's wait while every widget's desktop is covered: how soon one shows its news again.
-const COVERED_POLL: Duration = Duration::from_secs(1);
 
 fn since_epoch() -> Duration {
     SystemTime::now()
@@ -251,14 +249,17 @@ impl State {
             let s = self.widgets.shown.remove(i);
             self.drop_widget(s);
         }
+        if wanted.is_empty() {
+            self.arm_widget_timer();
+            return;
+        }
         let ids = self.monitor_ids();
         let Some(primary) = self.first_output() else {
             return;
         };
         let icon_cells = self.icon_cells();
         let grid = self.desktop_grid();
-        let theme = self.config.theme.clone();
-        let cm = theme.controls();
+        let cm = self.config.theme.controls();
         let mut saved_any = false;
         for (out, id) in &ids {
             let area = self.usable_area(Some(out));
@@ -295,9 +296,10 @@ impl State {
         if saved_any {
             self.widgets.store.save();
         }
-        let look = (theme, crate::glass::wanted(&self.config));
-        if self.widgets.drawn_theme.as_ref() != Some(&look) {
-            self.widgets.drawn_theme = Some(look);
+        let glass = crate::glass::wanted(&self.config);
+        let drawn = self.widgets.drawn_theme.as_ref();
+        if drawn.is_none_or(|(t, g)| *t != self.config.theme || *g != glass) {
+            self.widgets.drawn_theme = Some((self.config.theme.clone(), glass));
             for i in 0..self.widgets.shown.len() {
                 self.widgets.shown[i].drawn = None;
                 let p = self.widgets.shown[i].panel;
@@ -442,24 +444,38 @@ impl State {
         w.meter.push(cpu, memory);
     }
 
-    fn arm_widget_timer(&mut self) {
-        if let Some(t) = self.widgets.timer.take() {
-            self.handle.remove(t);
-        }
+    /// A lock, the screen saver or a window may have covered or bared a widget's desktop: draw
+    /// what it missed and tick as what shows needs.
+    pub fn widgets_cover_changed(&mut self) {
         if self.widgets.shown.is_empty() {
             return;
         }
+        self.refresh_widgets();
+        self.arm_widget_timer();
+    }
+
+    /// Tick each second while a meter or a clock's seconds show, else each minute, covered
+    /// desktops included: a cover change redraws at once (`widgets_cover_changed`), and the
+    /// minute bounds what one missed would leave stale. A timer that already ticks so is kept.
+    fn arm_widget_timer(&mut self) {
         let showing = (self.widgets.shown.iter()).any(|s| !self.desktop_covered(&s.output));
-        let each_second = self.widgets.shown.iter().any(|s| match s.kind {
-            Kind::Meter => true,
-            Kind::Clock => self.widgets.store.seconds,
-            Kind::Calendar => false,
-        });
-        let wait = if showing {
-            deskwidget::next_tick(each_second, since_epoch())
-        } else {
-            COVERED_POLL
+        let each_second = showing
+            && self.widgets.shown.iter().any(|s| match s.kind {
+                Kind::Meter => true,
+                Kind::Clock => self.widgets.store.seconds,
+                Kind::Calendar => false,
+            });
+        let want = (!self.widgets.shown.is_empty()).then_some(each_second);
+        if self.widgets.timer.as_ref().map(|t| t.1) == want {
+            return;
+        }
+        if let Some((t, _)) = self.widgets.timer.take() {
+            self.handle.remove(t);
+        }
+        let Some(each_second) = want else {
+            return;
         };
+        let wait = deskwidget::next_tick(each_second, since_epoch());
         let token = self
             .handle
             .insert_source(Timer::from_duration(wait), |_, _, state| {
@@ -470,7 +486,7 @@ impl State {
                 TimeoutAction::Drop
             });
         match token {
-            Ok(t) => self.widgets.timer = Some(t),
+            Ok(t) => self.widgets.timer = Some((t, each_second)),
             Err(e) => log::warn!("desktop widgets: no timer: {}", e.error),
         }
     }

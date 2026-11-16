@@ -279,8 +279,10 @@ fn saver_ms(state: &State) -> Option<u64> {
 /// the last inhibitor goes away (time spent inhibited does not count).
 /// Called when an inhibitor comes or goes, when a window maps, unmaps or
 /// minimizes, when the desktop shown changes, and when the session locks
-/// or unlocks, since those change which inhibitors count.
+/// or unlocks, since those change which inhibitors count. The same changes
+/// cover or bare the desktop widgets, which hear of them here.
 pub fn inhibition_changed(state: &mut State) {
+    state.widgets_cover_changed();
     let held = saver_held(state);
     if held != state.idle.was_saver_held {
         log::info!(
