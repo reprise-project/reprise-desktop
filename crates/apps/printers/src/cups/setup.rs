@@ -488,11 +488,31 @@ fn rename_by_peer(
             log::warn!("moving job {} to {new}: {e:?}", j.id);
         }
     }
+    let mut steps = Vec::new();
     if s.default.as_deref() == Some(old) {
-        set_default(c, new)?;
+        steps.push(("made the default printer", set_default(c, new)));
     }
     if p.paused() {
-        pause(c, new)?;
+        steps.push(("paused", pause(c, new)));
     }
-    delete(c, old)
+    finish_rename(old, new, steps, || delete(c, old))
+}
+
+/// The end of a rename once queue `new` holds `old`'s jobs: `old` goes even when a follow-up
+/// `steps` failed, and the first failed step is the error, since `new` stays either way.
+pub(super) fn finish_rename(
+    old: &str,
+    new: &str,
+    steps: Vec<(&str, Result<()>)>,
+    delete: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    delete()?;
+    let Some((step, e)) = steps.into_iter().find_map(|(s, r)| Some((s, r.err()?))) else {
+        return Ok(());
+    };
+    let told = format!("{old} is now called {new}, but {new} could not be {step}.");
+    Err(Error::Refused(match e.text() {
+        why if why.is_empty() => told,
+        why => format!("{told} {why}"),
+    }))
 }

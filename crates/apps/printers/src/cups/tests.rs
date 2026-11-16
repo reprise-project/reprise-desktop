@@ -778,3 +778,36 @@ fn a_queue_lists_its_jobs_and_aborted_ones_by_number() {
     assert_eq!(s.documents_of("Laser").count(), 2);
     assert_eq!(s.jobs_of("Laser").count(), 1);
 }
+
+#[test]
+fn a_rename_deletes_the_old_queue_when_a_follow_up_step_fails() {
+    let deleted = std::cell::Cell::new(false);
+    let steps = vec![
+        ("made the default printer", Err(Error::NotAuthorized)),
+        ("paused", Err(Error::Refused("Printer busy.".into()))),
+    ];
+    let r = finish_rename("Laser", "Office", steps, || {
+        deleted.set(true);
+        Ok(())
+    });
+    assert!(deleted.get());
+    assert_eq!(
+        r,
+        Err(Error::Refused(format!(
+            "Laser is now called Office, but Office could not be made the default printer. {}",
+            Error::NotAuthorized.text()
+        )))
+    );
+
+    let dismissed = vec![("paused", Err(Error::Dismissed))];
+    assert_eq!(
+        finish_rename("Laser", "Office", dismissed, || Ok(())),
+        Err(Error::Refused(
+            "Laser is now called Office, but Office could not be paused.".into()
+        ))
+    );
+    assert_eq!(
+        finish_rename("Laser", "Office", vec![("paused", Ok(()))], || Ok(())),
+        Ok(())
+    );
+}
