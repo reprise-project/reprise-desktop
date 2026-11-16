@@ -1,4 +1,5 @@
 use super::cued;
+use crate::interfaces;
 use reprisekit::art::viewsicon;
 use reprisekit::classic::frame::{Chrome, FrameGeometry, FrameState, Glow};
 use reprisekit::controls::form::{self, Control, Item};
@@ -7,7 +8,6 @@ use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::controls::treeview::{self, Node, TreeView};
 use reprisekit::controls::{listbox, listview, menubar, msgbox, shellview, toolbar};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::look;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;

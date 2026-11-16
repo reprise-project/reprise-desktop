@@ -11,8 +11,8 @@ mod taskpane;
 mod toolbar;
 mod tooltip;
 
+use crate::interfaces;
 use reprisekit::blue::Variant;
-use reprisekit::interfaces;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{Align, TextRenderer};
 use reprisekit::theme::{Color, FontConfig, Theme};

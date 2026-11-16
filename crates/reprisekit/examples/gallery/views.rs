@@ -1,19 +1,19 @@
 use super::{blurred_stripes, cued};
+use crate::interfaces;
 use reprisekit::classic::indicator;
 use reprisekit::controls::form::{self, Control, Item};
 use reprisekit::controls::shellview;
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::look;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::{Color, FontConfig, Theme};
+use reprisekit::theme::{Color, FontConfig};
 use reprisekit::wallpaper::{self, Position};
 
 /// One picture composed at every position on the monitor, then the Appearance sample of `sample_theme` per interface.
 pub fn render_backgrounds() -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
-    let theme = cued(Theme::default());
+    let theme = cued(interfaces::classic());
     let px = theme.fonts.size_px;
     let mut c = Canvas::new(1090, 396);
     c.fill_rect(c.bounds(), theme.colors.button_face);
@@ -99,7 +99,7 @@ pub fn render_backgrounds() -> Canvas {
 pub fn render_savers() -> Canvas {
     use reprisekit::saver::{Kind, Options, Saver};
     let text = TextRenderer::load(&FontConfig::default());
-    let theme = cued(Theme::default());
+    let theme = cued(interfaces::classic());
     let (_, _, sw, sh) = reprisekit::classic::assets::MONITOR_SCREEN;
     let mut c = Canvas::new(10 + 211 * 4, 188);
     c.fill_rect(c.bounds(), theme.colors.button_face);
@@ -426,7 +426,7 @@ pub fn render_termgrid(scale: i32) -> Canvas {
 /// A Tiles and a Thumbnails drag of three entries pressed near the second's left edge, each image
 /// over the view's window colour.
 pub fn render_grid_drag(scale: i32) -> Canvas {
-    let theme = cued(Theme::default()).scaled(scale);
+    let theme = cued(interfaces::classic()).scaled(scale);
     let text = TextRenderer::load(&theme.fonts);
     let mut c = Canvas::new((600 * scale) as u32, (330 * scale) as u32);
     c.fill_rect(c.bounds(), theme.colors.window);

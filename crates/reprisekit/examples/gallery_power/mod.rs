@@ -8,12 +8,12 @@ use reprisekit::pointer::Interaction;
 use reprisekit::powerpanel::{First, Leave, Panel, Part, layout};
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::{Color, TextUnits, Theme};
+use reprisekit::theme::{Color, TextUnits};
 
 const GAP: i32 = 10;
 
 pub fn render(scale: i32) -> Canvas {
-    let theme = Theme::default().scaled(scale);
+    let theme = crate::interfaces::classic().scaled(scale);
     let text = TextRenderer::load(&theme.fonts);
     let mut shifted = Panel::turn_off(First::StandBy {
         live: false,

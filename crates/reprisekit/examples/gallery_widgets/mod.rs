@@ -1,10 +1,10 @@
 //! The desktop widgets in each look: the analog and digital clock, the month calendar and the
 //! system meter's bars and graph, written to `target/reprisekit-gallery-desk-widgets@<scale>.png`.
 
+use crate::interfaces::theme_for;
 use reprisekit::controls::calendar::Calendar;
 use reprisekit::controls::deskwidget::{self, Clock, Content, Face, Meter, MeterStyle};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces::theme_for;
 use reprisekit::look::panel;
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;

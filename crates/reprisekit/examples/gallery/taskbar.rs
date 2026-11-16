@@ -1,7 +1,7 @@
 use super::{blurred_stripes, cued};
+use crate::interfaces;
 use reprisekit::classic::{indicator, snapframe};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::look;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;

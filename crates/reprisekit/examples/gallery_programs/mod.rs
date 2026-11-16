@@ -2,16 +2,16 @@
 //! written to `target/reprisekit-gallery-calculator@<scale>.png`, `-charmap@<scale>.png` and
 //! `-colordlg@<scale>.png`.
 
+use crate::interfaces;
 use reprisekit::controls::calculator::{self, Calc, Input, Mode};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{Align, TextRenderer};
 use reprisekit::theme::{Color, FontConfig, Theme};
 
 fn looks() -> Vec<(String, Theme)> {
     let mut out = vec![
-        ("Classic".to_string(), Theme::default()),
+        ("Classic".to_string(), interfaces::classic()),
         (
             "Blue".to_string(),
             interfaces::blue_theme(reprisekit::blue::Variant::ALL[0]),

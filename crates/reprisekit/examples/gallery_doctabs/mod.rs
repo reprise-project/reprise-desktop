@@ -1,9 +1,9 @@
 //! Document tab strips in every look, Blue scheme and state, Glass light and dark, written to
 //! `target/reprisekit-gallery-doc-tabs@<scale>.png`.
 
+use crate::interfaces;
 use reprisekit::controls::tabstrip::{self, AdderPart, Drag, TabStrip};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::look;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{Align, TextRenderer};
@@ -70,7 +70,7 @@ fn states() -> Vec<(&'static str, TabStrip)> {
 }
 
 fn looks() -> Vec<(String, Theme, bool)> {
-    let mut out = vec![("Classic".to_string(), Theme::default(), false)];
+    let mut out = vec![("Classic".to_string(), interfaces::classic(), false)];
     for v in reprisekit::blue::Variant::ALL {
         out.push((v.name().to_string(), interfaces::blue_theme(v), false));
     }

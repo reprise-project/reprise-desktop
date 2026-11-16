@@ -1,12 +1,12 @@
 use super::{blurred_stripes, cued};
+use crate::interfaces;
 use reprisekit::classic::frame::{Chrome, FrameGeometry, FrameState, Glow};
 use reprisekit::controls::taskpreview;
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::look;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::{Color, FontConfig, Theme};
+use reprisekit::theme::{Color, FontConfig};
 
 /// The snap layouts panel in Classic, Blue and Glass over a 1920x1050 work area, the display switcher (Extend lit, Only 1 hot, Only 2 greyed), then snap assist in the right half of a half-screen desktop. Glass's panels lie on mid-grey so the translucent sheet shows.
 pub fn render_snap_layouts() -> Canvas {
@@ -174,7 +174,7 @@ pub fn render_caption_tabs(pct: u32) -> Canvas {
         ..Default::default()
     };
     let themes = [
-        (cued(Theme::default()), 1),
+        (cued(interfaces::classic()), 1),
         (cued(interfaces::theme_for(Interface::Blue)), 1),
         (
             cued(interfaces::blue_theme(reprisekit::blue::Variant::Silver)),
@@ -189,7 +189,7 @@ pub fn render_caption_tabs(pct: u32) -> Canvas {
             )),
             1,
         ),
-        (cued(Theme::default()), 2),
+        (cued(interfaces::classic()), 2),
     ];
     let text = TextRenderer::load(&FontConfig::default());
     let mut c = blurred_stripes(950, 72 * themes.len() as i32 + 40);

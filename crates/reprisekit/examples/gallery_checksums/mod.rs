@@ -1,17 +1,17 @@
 //! A file's Checksums page in Classic, Blue and Glass light and dark, calculating and done with a
 //! matching hash pasted, written to `target/reprisekit-gallery-checksums@<scale>.png`.
 
+use crate::interfaces;
 use reprisekit::controls::filesheet::{self, SumsState};
 use reprisekit::controls::form;
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{Align, TextRenderer};
 use reprisekit::theme::{Color, FontConfig, Theme};
 
 fn looks() -> Vec<(String, Theme)> {
     let mut out = vec![
-        ("Classic".to_string(), Theme::default()),
+        ("Classic".to_string(), interfaces::classic()),
         (
             "Blue".to_string(),
             interfaces::blue_theme(reprisekit::blue::Variant::ALL[0]),

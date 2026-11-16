@@ -1,17 +1,17 @@
 //! The Rename dialog for several items in Classic, Blue and Glass light and dark, replacing with
 //! a clash and numbering, written to `target/reprisekit-gallery-rename@<scale>.png`.
 
+use crate::interfaces;
 use reprisekit::controls::batchrename::{self, Fields, Row};
 use reprisekit::controls::form;
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{Align, TextRenderer};
 use reprisekit::theme::{Color, FontConfig, Theme};
 
 fn looks() -> Vec<(String, Theme)> {
     let mut out = vec![
-        ("Classic".to_string(), Theme::default()),
+        ("Classic".to_string(), interfaces::classic()),
         (
             "Blue".to_string(),
             interfaces::blue_theme(reprisekit::blue::Variant::ALL[0]),

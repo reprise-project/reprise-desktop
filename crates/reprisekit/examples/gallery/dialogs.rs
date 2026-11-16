@@ -1,11 +1,11 @@
 use super::{blurred_stripes, cued};
+use crate::interfaces;
 use reprisekit::classic::frame::{CaptionButton, Chrome, FrameGeometry, FrameState, Glow};
 use reprisekit::controls::form::{self};
 use reprisekit::controls::{
     aboutbox, endsession, filedlg, importsheet, installsheet, locationprompt, shellview,
 };
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::look;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
@@ -26,7 +26,7 @@ pub fn render_monitors(with_blue: bool) -> Canvas {
         tile(2, (1920, 0), (1280, 1024)),
         tile(3, (0, 1080), (1080, 1920)),
     ];
-    let mut themes = vec![cued(Theme::default())];
+    let mut themes = vec![cued(interfaces::classic())];
     if with_blue {
         themes.push(cued(interfaces::theme_for(Interface::Blue)));
         themes.push(cued(interfaces::theme_for(Interface::Glass)));
@@ -90,7 +90,7 @@ pub fn render_end_session(with_blue: bool) -> Canvas {
         ],
         icon: None,
     };
-    let mut themes = vec![cued(Theme::default())];
+    let mut themes = vec![cued(interfaces::classic())];
     if with_blue {
         themes.push(cued(interfaces::theme_for(Interface::Blue)));
         themes.push(cued(interfaces::theme_for(Interface::Glass)));
@@ -150,7 +150,7 @@ pub fn render_install_sheet(with_blue: bool) -> Canvas {
             ..sheet(Stage::Refused)
         },
     ];
-    let mut themes = vec![cued(Theme::default())];
+    let mut themes = vec![cued(interfaces::classic())];
     if with_blue {
         themes.push(cued(interfaces::theme_for(Interface::Blue)));
         themes.push(cued(interfaces::theme_for(Interface::Glass)));
@@ -226,7 +226,7 @@ pub fn render_import_sheet(with_blue: bool) -> Canvas {
             },
         ]
     };
-    let mut themes = vec![cued(Theme::default())];
+    let mut themes = vec![cued(interfaces::classic())];
     if with_blue {
         themes.push(cued(interfaces::theme_for(Interface::Blue)));
         themes.push(cued(interfaces::theme_for(Interface::Glass)));
@@ -263,7 +263,7 @@ pub fn render_location_prompt(with_blue: bool) -> Canvas {
         program: "Maps".into(),
         icon: Some(icon),
     };
-    let mut themes = vec![cued(Theme::default())];
+    let mut themes = vec![cued(interfaces::classic())];
     if with_blue {
         themes.push(cued(interfaces::theme_for(Interface::Blue)));
         themes.push(cued(interfaces::theme_for(Interface::Glass)));
@@ -316,12 +316,42 @@ pub fn render_copy_progress(with_blue: bool, scale: i32) -> Canvas {
         },
     ));
     let mut boxes: Vec<(Theme, Kind, Phase, bool)> = vec![
-        (cued(Theme::default()), Kind::Move, Phase::Preparing, true),
-        (cued(Theme::default()), Kind::Move, Phase::Copying, true),
-        (cued(Theme::default()), Kind::Move, Phase::Finishing, true),
-        (cued(Theme::default()), Kind::Delete, Phase::Copying, true),
-        (cued(Theme::default()), Kind::Empty, Phase::Copying, true),
-        (cued(Theme::default()), Kind::Restore, Phase::Copying, true),
+        (
+            cued(interfaces::classic()),
+            Kind::Move,
+            Phase::Preparing,
+            true,
+        ),
+        (
+            cued(interfaces::classic()),
+            Kind::Move,
+            Phase::Copying,
+            true,
+        ),
+        (
+            cued(interfaces::classic()),
+            Kind::Move,
+            Phase::Finishing,
+            true,
+        ),
+        (
+            cued(interfaces::classic()),
+            Kind::Delete,
+            Phase::Copying,
+            true,
+        ),
+        (
+            cued(interfaces::classic()),
+            Kind::Empty,
+            Phase::Copying,
+            true,
+        ),
+        (
+            cued(interfaces::classic()),
+            Kind::Restore,
+            Phase::Copying,
+            true,
+        ),
     ];
     if with_blue {
         for v in [
@@ -395,7 +425,7 @@ pub fn render_label_ellipsis(scale: i32) -> Canvas {
     use reprisekit::controls::form::{self, Form, Item};
     let text = TextRenderer::load(&FontConfig::default());
     let looks = [
-        cued(Theme::default()),
+        cued(interfaces::classic()),
         cued(interfaces::blue_theme(reprisekit::blue::Variant::Blue)),
         cued(interfaces::theme_for(Interface::Glass)),
     ];
@@ -444,7 +474,7 @@ pub fn render_windowed_dialog(scale: i32) -> Canvas {
         ))
     };
     let looks = [
-        cued(Theme::default()),
+        cued(interfaces::classic()),
         cued(interfaces::blue_theme(Variant::Blue)),
         cued(interfaces::blue_theme(Variant::Olive)),
         cued(interfaces::blue_theme(Variant::Silver)),
@@ -509,7 +539,7 @@ pub fn render_stats_panel(with_blue: bool) -> Canvas {
             Row::new("Memory", "84.2 MB"),
         ],
     };
-    let mut themes = vec![cued(Theme::default())];
+    let mut themes = vec![cued(interfaces::classic())];
     if with_blue {
         themes.push(cued(interfaces::theme_for(Interface::Blue)));
         themes.push(cued(interfaces::theme_for(Interface::Glass)));
@@ -563,7 +593,7 @@ pub fn render_about_system(with_blue: bool, pct: u32) -> Canvas {
             g("Session:", &["Jo Doe (jo)", "Up 3 hours, 12 minutes"]),
         ],
     };
-    let mut themes = vec![cued(Theme::default()).with_text_size(pct)];
+    let mut themes = vec![cued(interfaces::classic()).with_text_size(pct)];
     if with_blue {
         themes.push(cued(interfaces::theme_for(Interface::Blue)).with_text_size(pct));
         themes.push(cued(interfaces::theme_for(Interface::Glass)).with_text_size(pct));
@@ -589,7 +619,7 @@ pub fn render_about_system(with_blue: bool, pct: u32) -> Canvas {
 /// The Open dialog enlarged, in Details, sorted by Size twice: files first, largest first, then folders Z to A.
 pub fn render_file_dialog() -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
-    let theme = cued(Theme::default());
+    let theme = cued(interfaces::classic());
     let mut d = filedlg::FileDlg::new(
         filedlg::Fields {
             title: "Open".into(),

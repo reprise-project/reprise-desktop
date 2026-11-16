@@ -2,9 +2,9 @@
 //! (close box shown), over a stand-in picture, written to
 //! `target/reprisekit-gallery-mini-view@<scale>.png`.
 
+use crate::interfaces;
 use reprisekit::controls::miniview;
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::theme::{Color, Theme};
 
@@ -13,7 +13,7 @@ const SIZE: (i32, i32) = (240, 186);
 
 fn looks() -> Vec<Theme> {
     let mut out = vec![
-        Theme::default(),
+        interfaces::classic(),
         interfaces::blue_theme(reprisekit::blue::Variant::ALL[0]),
     ];
     for mode in [

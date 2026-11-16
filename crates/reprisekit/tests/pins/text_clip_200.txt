@@ -1,0 +1,630 @@
+backgrounds.png "Message Box" x1
+blue-variants.png " Desktop" x10
+blue-variants.png "Apply" x10
+blue-variants.png "Blue: common controls" x1
+blue-variants.png "Blue: explorer bar" x1
+blue-variants.png "Blue: frames and taskbar" x1
+blue-variants.png "Blue: list header" x1
+blue-variants.png "Blue: menus" x1
+blue-variants.png "Blue: rebar" x1
+blue-variants.png "Blue: status bar" x1
+blue-variants.png "Blue: task pane" x1
+blue-variants.png "Blue: toolbar" x1
+blue-variants.png "Blue: tooltip" x1
+blue-variants.png "Carbon: common controls" x1
+blue-variants.png "Carbon: explorer bar" x1
+blue-variants.png "Carbon: frames and taskbar" x1
+blue-variants.png "Carbon: list header" x1
+blue-variants.png "Carbon: menus" x1
+blue-variants.png "Carbon: rebar" x1
+blue-variants.png "Carbon: status bar" x1
+blue-variants.png "Carbon: task pane" x1
+blue-variants.png "Carbon: toolbar" x1
+blue-variants.png "Carbon: tooltip" x1
+blue-variants.png "Closed" x10
+blue-variants.png "Cobalt: common controls" x1
+blue-variants.png "Cobalt: explorer bar" x1
+blue-variants.png "Cobalt: frames and taskbar" x1
+blue-variants.png "Cobalt: list header" x1
+blue-variants.png "Cobalt: menus" x1
+blue-variants.png "Cobalt: rebar" x1
+blue-variants.png "Cobalt: status bar" x1
+blue-variants.png "Cobalt: task pane" x1
+blue-variants.png "Cobalt: toolbar" x1
+blue-variants.png "Cobalt: tooltip" x1
+blue-variants.png "Combo" x30
+blue-variants.png "Date Mo..." x30
+blue-variants.png "Direction" x10
+blue-variants.png "Edit" x10
+blue-variants.png "Ember: common controls" x1
+blue-variants.png "Ember: explorer bar" x1
+blue-variants.png "Ember: frames and taskbar" x1
+blue-variants.png "Ember: list header" x1
+blue-variants.png "Ember: menus" x1
+blue-variants.png "Ember: rebar" x1
+blue-variants.png "Ember: status bar" x1
+blue-variants.png "Ember: task pane" x1
+blue-variants.png "Ember: toolbar" x1
+blue-variants.png "Ember: tooltip" x1
+blue-variants.png "File and Folder Tasks" x20
+blue-variants.png "Greyed" x10
+blue-variants.png "Help" x20
+blue-variants.png "Hot" x10
+blue-variants.png "List" x10
+blue-variants.png "Make a" x20
+blue-variants.png "Match case" x10
+blue-variants.png "Name" x30
+blue-variants.png "Obsidian: common controls" x1
+blue-variants.png "Obsidian: explorer bar" x1
+blue-variants.png "Obsidian: frames and taskbar" x1
+blue-variants.png "Obsidian: list header" x1
+blue-variants.png "Obsidian: menus" x1
+blue-variants.png "Obsidian: rebar" x1
+blue-variants.png "Obsidian: status bar" x1
+blue-variants.png "Obsidian: task pane" x1
+blue-variants.png "Obsidian: toolbar" x1
+blue-variants.png "Obsidian: tooltip" x1
+blue-variants.png "Olive Green: common controls" x1
+blue-variants.png "Olive Green: explorer bar" x1
+blue-variants.png "Olive Green: frames and taskbar" x1
+blue-variants.png "Olive Green: list header" x1
+blue-variants.png "Olive Green: menus" x1
+blue-variants.png "Olive Green: rebar" x1
+blue-variants.png "Olive Green: status bar" x1
+blue-variants.png "Olive Green: task pane" x1
+blue-variants.png "Olive Green: toolbar" x1
+blue-variants.png "Olive Green: tooltip" x1
+blue-variants.png "Open" x10
+blue-variants.png "Publish this" x20
+blue-variants.png "Reprise" x10
+blue-variants.png "S  M  T  W  T  F  S" x20
+blue-variants.png "Sapphire: common controls" x1
+blue-variants.png "Sapphire: explorer bar" x1
+blue-variants.png "Sapphire: frames and taskbar" x1
+blue-variants.png "Sapphire: list header" x1
+blue-variants.png "Sapphire: menus" x1
+blue-variants.png "Sapphire: rebar" x1
+blue-variants.png "Sapphire: status bar" x1
+blue-variants.png "Sapphire: task pane" x1
+blue-variants.png "Sapphire: toolbar" x1
+blue-variants.png "Sapphire: tooltip" x1
+blue-variants.png "Silver: common controls" x1
+blue-variants.png "Silver: explorer bar" x1
+blue-variants.png "Silver: frames and taskbar" x1
+blue-variants.png "Silver: list header" x1
+blue-variants.png "Silver: menus" x1
+blue-variants.png "Silver: rebar" x1
+blue-variants.png "Silver: status bar" x1
+blue-variants.png "Silver: task pane" x1
+blue-variants.png "Silver: toolbar" x1
+blue-variants.png "Silver: tooltip" x1
+blue-variants.png "Size" x30
+blue-variants.png "Slate: common controls" x1
+blue-variants.png "Slate: explorer bar" x1
+blue-variants.png "Slate: frames and taskbar" x1
+blue-variants.png "Slate: list header" x1
+blue-variants.png "Slate: menus" x1
+blue-variants.png "Slate: rebar" x1
+blue-variants.png "Slate: status bar" x1
+blue-variants.png "Slate: task pane" x1
+blue-variants.png "Slate: toolbar" x1
+blue-variants.png "Slate: tooltip" x1
+blue-variants.png "Steel: common controls" x1
+blue-variants.png "Steel: explorer bar" x1
+blue-variants.png "Steel: frames and taskbar" x1
+blue-variants.png "Steel: list header" x1
+blue-variants.png "Steel: menus" x1
+blue-variants.png "Steel: rebar" x1
+blue-variants.png "Steel: status bar" x1
+blue-variants.png "Steel: task pane" x1
+blue-variants.png "Steel: toolbar" x1
+blue-variants.png "Steel: tooltip" x1
+blue-variants.png "Tuesday, September 29, 2026" x10
+blue-variants.png "Type" x30
+blue-variants.png "folder to" x20
+blue-variants.png "new folder" x20
+blue-variants.png "the Web" x20
+calculator@1.png "Degrees" x4
+caption-tabs-200.png "..." x6
+caption-tabs.png "..." x6
+desk-widgets@1.png "15:39" x3
+desk-widgets@1.png "28%" x3
+desk-widgets@1.png "42%" x3
+desk-widgets@1.png "CPU 28%" x3
+desk-widgets@1.png "CPU" x3
+desk-widgets@1.png "Memory 42%" x3
+desk-widgets@1.png "Memory" x3
+desk-widgets@1.png "Monday, Novem..." x3
+desktop-labels.png "My" x16
+desktop-labels.png "Recy..." x24
+doc-tabs@1.png "htop" x104
+doc-tabs@1.png "s..." x144
+doc-tabs@1.png "ssh b..." x84
+doc-tabs@1.png "ssh box" x12
+doc-tabs@1.png "~/pr..." x91
+doc-tabs@1.png "~/pro..." x13
+file-dialog.png "Files of type:" x1
+filepreview.png "# Space shows a file;" x3
+filepreview.png "[appearance]" x3
+filepreview.png "interface = \"glass\"" x3
+fingerprints@1.png "Index finger" x4
+fingerprints@1.png "Little finger" x4
+fingerprints@1.png "Middle finger" x4
+fingerprints@1.png "Ring finger" x4
+fonts@1.png "1234567890.:,;(\"*!?')" x8
+fonts@1.png "ABCDEFGHIJKLMNOPQRSTUVWXYZ" x8
+fonts@1.png "The quick brown fox jumps over the lazy dog. 1234567890" x40
+fonts@1.png "abcdefghijklmnopqrstuvwxyz" x8
+glass-dark.png " Desktop" x1
+glass-dark.png "(None)" x6
+glass-dark.png "..." x2
+glass-dark.png "0 KB" x2
+glass-dark.png "1 KB" x5
+glass-dark.png "10" x2
+glass-dark.png "14/09/20..." x15
+glass-dark.png "2 KB" x2
+glass-dark.png "28 KB" x3
+glass-dark.png "3 KB" x2
+glass-dark.png "3 new messages" x1
+glass-dark.png "3:58 PM" x1
+glass-dark.png "4 KB" x2
+glass-dark.png "412..." x3
+glass-dark.png "4:12 PM" x1
+glass-dark.png "5 KB" x2
+glass-dark.png "6 KB" x2
+glass-dark.png "Active Window" x1
+glass-dark.png "Application" x3
+glass-dark.png "Calendar (1)" x1
+glass-dark.png "Clear All" x1
+glass-dark.png "Clear" x3
+glass-dark.png "Default" x1
+glass-dark.png "Desktop" x1
+glass-dark.png "Disabled" x3
+glass-dark.png "Do not disturb" x1
+glass-dark.png "Documents" x1
+glass-dark.png "Edit" x3
+glass-dark.png "File Folder" x6
+glass-dark.png "First" x1
+glass-dark.png "Focused" x1
+glass-dark.png "Greyed radio" x1
+glass-dark.png "Group box" x1
+glass-dark.png "Help" x2
+glass-dark.png "Image, 1920x1080" x1
+glass-dark.png "Inactive Window" x1
+glass-dark.png "Inactive" x1
+glass-dark.png "Item 0" x2
+glass-dark.png "Item 1" x2
+glass-dark.png "Item 2" x2
+glass-dark.png "Item 3" x2
+glass-dark.png "Item 4" x2
+glass-dark.png "Item 5" x2
+glass-dark.png "Item 6" x2
+glass-dark.png "Letters" x1
+glass-dark.png "Lunch on Friday?" x1
+glass-dark.png "Mail (2)" x1
+glass-dark.png "Message Text" x1
+glass-dark.png "Music" x1
+glass-dark.png "My Music" x3
+glass-dark.png "My Pictures" x3
+glass-dark.png "My" x4
+glass-dark.png "Name" x5
+glass-dark.png "New message" x3
+glass-dark.png "Normal" x1
+glass-dark.png "On the page" x1
+glass-dark.png "OpenDocu..." x3
+glass-dark.png "Other..." x1
+glass-dark.png "Pictures" x1
+glass-dark.png "Pressed" x1
+glass-dark.png "Replied, 1:05 PM" x1
+glass-dark.png "Reply" x2
+glass-dark.png "Reprise" x1
+glass-dark.png "Second" x1
+glass-dark.png "Selected" x1
+glass-dark.png "Size" x5
+glass-dark.png "Sounds good" x1
+glass-dark.png "Text Docu..." x3
+glass-dark.png "Third" x1
+glass-dark.png "Thumbs up" x1
+glass-dark.png "Type" x3
+glass-dark.png "Updates (1)" x1
+glass-dark.png "Updates are r..." x1
+glass-dark.png "Updates are ready" x1
+glass-dark.png "Window Text" x1
+glass-dark.png "before.txt - Notepad" x7
+glass-dark.png "cargo build --release" x1
+glass-dark.png "hello world" x1
+glass-dark.png "hills.j..." x1
+glass-dark.png "notepad" x4
+glass-dark.png "notes.txt" x3
+glass-dark.png "repo..." x1
+glass-dark.png "report.odt" x3
+glass-dark.png "setup.exe" x3
+glass-dark.png "😮\u{200d}💨" x1
+glass-dark.png "😴" x1
+glass-dark.png "😶\u{200d}🌫\u{fe0f}" x1
+glass-dark.png "🙂\u{200d}↔\u{fe0f}" x1
+glass-dark.png "🙂\u{200d}↕\u{fe0f}" x1
+glass-popups.png "100%" x1
+glass-popups.png "40%" x1
+glass-popups.png "45%" x2
+glass-popups.png "60%" x1
+glass-popups.png "Brightne..." x1
+glass-popups.png "Brightness" x1
+glass-popups.png "Built-in di..." x1
+glass-popups.png "DELL U27..." x1
+glass-popups.png "LG 27GL8..." x1
+glass-popups.png "Music Player: N..." x1
+glass-popups.png "Muted" x1
+glass-popups.png "Not adjustable" x1
+glass-popups.png "Volume" x1
+glass-scale2.png "3:45 PM" x2
+glass-scale2.png "Notes" x3
+glass-scale2.png "before.txt - Notepad" x8
+glass.png " Desktop" x1
+glass.png "(None)" x6
+glass.png "..." x2
+glass.png "0 KB" x2
+glass.png "1 KB" x5
+glass.png "10" x2
+glass.png "14/09/20..." x15
+glass.png "2 KB" x2
+glass.png "28 KB" x3
+glass.png "3 KB" x2
+glass.png "3 new messages" x1
+glass.png "3:45 PM" x1
+glass.png "3:58 PM" x1
+glass.png "4 KB" x2
+glass.png "412..." x3
+glass.png "4:12 PM" x1
+glass.png "5 KB" x2
+glass.png "6 KB" x2
+glass.png "A title too long to sit centred in so narrow a window" x1
+glass.png "Active Window" x1
+glass.png "Application" x3
+glass.png "Calendar (1)" x1
+glass.png "Clear All" x1
+glass.png "Clear" x3
+glass.png "Default" x1
+glass.png "Desktop" x1
+glass.png "Disabled" x3
+glass.png "Do not disturb" x1
+glass.png "Documents" x1
+glass.png "Edit" x3
+glass.png "File Folder" x6
+glass.png "First" x1
+glass.png "Focused" x1
+glass.png "Greyed radio" x1
+glass.png "Group box" x1
+glass.png "Help" x2
+glass.png "Image, 1920x1080" x1
+glass.png "Inactive Window" x1
+glass.png "Inactive" x1
+glass.png "Item 0" x2
+glass.png "Item 1" x2
+glass.png "Item 2" x2
+glass.png "Item 3" x2
+glass.png "Item 4" x2
+glass.png "Item 5" x2
+glass.png "Item 6" x2
+glass.png "Letters" x1
+glass.png "Lunch on Friday?" x1
+glass.png "Mail (2)" x1
+glass.png "Message Text" x1
+glass.png "Music" x1
+glass.png "My Music" x3
+glass.png "My Pictures" x3
+glass.png "My" x4
+glass.png "Name" x5
+glass.png "New message" x3
+glass.png "Normal" x1
+glass.png "On the page" x1
+glass.png "OpenDocu..." x3
+glass.png "Other..." x1
+glass.png "Pictures" x1
+glass.png "Pressed" x1
+glass.png "Replied, 1:05 PM" x1
+glass.png "Reply" x2
+glass.png "Reprise" x1
+glass.png "Second" x1
+glass.png "Selected" x1
+glass.png "Size" x5
+glass.png "Sounds good" x1
+glass.png "Text Docu..." x3
+glass.png "Third" x1
+glass.png "Thumbs up" x1
+glass.png "Type" x3
+glass.png "Updates (1)" x1
+glass.png "Updates are r..." x1
+glass.png "Updates are ready" x1
+glass.png "Window Text" x1
+glass.png "before.txt - Notepad" x5
+glass.png "cargo build --release" x1
+glass.png "hello world" x1
+glass.png "hills.j..." x1
+glass.png "notepad" x4
+glass.png "notes.txt" x3
+glass.png "repo..." x1
+glass.png "report.odt" x3
+glass.png "setup.exe" x3
+glass.png "😮\u{200d}💨" x1
+glass.png "😴" x1
+glass.png "😶\u{200d}🌫\u{fe0f}" x1
+glass.png "🙂\u{200d}↔\u{fe0f}" x1
+glass.png "🙂\u{200d}↕\u{fe0f}" x1
+grid-drag.png "JPEG Image" x1
+grid-drag.png "My Music" x1
+grid-drag.png "My Pictures" x2
+grid-drag.png "hills.jpg" x1
+label-ellipsis.png "HP LaserJet 4250" x2
+label-ellipsis.png "PostScript Printer" x2
+logon-motion@1.png "Reprise" x50
+logon-motion@1.png "Verifying..." x11
+logon@1.png "EN" x4
+logon@1.png "Reprise" x24
+logon@1.png "Verifying..." x1
+monitors.png "2" x3
+overview.png "My Documents" x3
+overview.png "Untitled - Notepad" x3
+path-complete.png "~/Do" x3
+perf@1.png "42 %" x4
+power@1.png "Cancel" x32
+power@1.png "Disconnect" x8
+power@1.png "Hibernate" x4
+power@1.png "Log Off" x16
+power@1.png "Stand By" x8
+power@1.png "Switch User" x12
+power@1.png "Turn Off" x16
+quick-more.png "3:45 PM" x6
+rename@1.png "Replace text" x8
+reprisekit-gallery.png "#0A246A" x1
+reprisekit-gallery.png "00" x1
+reprisekit-gallery.png "1 KB" x1
+reprisekit-gallery.png "10" x4
+reprisekit-gallery.png "11" x2
+reprisekit-gallery.png "14/09/20..." x11
+reprisekit-gallery.png "2026" x3
+reprisekit-gallery.png "21" x1
+reprisekit-gallery.png "24" x2
+reprisekit-gallery.png "28 KB" x1
+reprisekit-gallery.png "3 KB" x1
+reprisekit-gallery.png "3 new messages" x1
+reprisekit-gallery.png "3:45 PM" x1
+reprisekit-gallery.png "3:58 PM" x1
+reprisekit-gallery.png "4 KB" x1
+reprisekit-gallery.png "40%" x1
+reprisekit-gallery.png "41" x1
+reprisekit-gallery.png "412..." x1
+reprisekit-gallery.png "4:12 PM" x1
+reprisekit-gallery.png "5 KB" x1
+reprisekit-gallery.png "6 KB" x1
+reprisekit-gallery.png "60%" x1
+reprisekit-gallery.png ":" x5
+reprisekit-gallery.png "Active Window" x4
+reprisekit-gallery.png "Alt + F4" x1
+reprisekit-gallery.png "Always ask" x1
+reprisekit-gallery.png "Always use the selected program to open this kind of file" x1
+reprisekit-gallery.png "Applicati..." x1
+reprisekit-gallery.png "Application" x1
+reprisekit-gallery.png "Brightness" x1
+reprisekit-gallery.png "Browse..." x3
+reprisekit-gallery.png "Built-in di..." x1
+reprisekit-gallery.png "Button" x1
+reprisekit-gallery.png "Bytes" x1
+reprisekit-gallery.png "Calendar (1)" x1
+reprisekit-gallery.png "Calendar" x1
+reprisekit-gallery.png "Caps Lock On" x1
+reprisekit-gallery.png "Caption ?" x1
+reprisekit-gallery.png "Check Box" x1
+reprisekit-gallery.png "Choose the program you want to use to open this file:" x1
+reprisekit-gallery.png "Clear All" x1
+reprisekit-gallery.png "Clear" x3
+reprisekit-gallery.png "Click here to begin" x1
+reprisekit-gallery.png "Closed" x1
+reprisekit-gallery.png "Collapsed Tasks" x1
+reprisekit-gallery.png "Combo Drop" x1
+reprisekit-gallery.png "Computer with..." x1
+reprisekit-gallery.png "Computer" x1
+reprisekit-gallery.png "Computer..." x1
+reprisekit-gallery.png "Connected" x1
+reprisekit-gallery.png "Connected, battery 80%" x1
+reprisekit-gallery.png "Ctrl + Alt + " x1
+reprisekit-gallery.png "DELL U27..." x1
+reprisekit-gallery.png "Date Mo..." x1
+reprisekit-gallery.png "Default" x1
+reprisekit-gallery.png "Desktop" x5
+reprisekit-gallery.png "Disabled" x9
+reprisekit-gallery.png "Do not disturb" x1
+reprisekit-gallery.png "Documents" x4
+reprisekit-gallery.png "EN" x1
+reprisekit-gallery.png "Field" x1
+reprisekit-gallery.png "File Folder" x4
+reprisekit-gallery.png "File and Folder Tasks" x1
+reprisekit-gallery.png "File:" x1
+reprisekit-gallery.png "Files of type:" x3
+reprisekit-gallery.png "Focused" x1
+reprisekit-gallery.png "Game controller" x1
+reprisekit-gallery.png "Group Box" x1
+reprisekit-gallery.png "Group" x1
+reprisekit-gallery.png "HU" x1
+reprisekit-gallery.png "Headphones" x1
+reprisekit-gallery.png "Help" x1
+reprisekit-gallery.png "Hot" x1
+reprisekit-gallery.png "Image Editor" x1
+reprisekit-gallery.png "Image Viewer" x1
+reprisekit-gallery.png "Image, 1920x1080" x1
+reprisekit-gallery.png "Inactive Window" x1
+reprisekit-gallery.png "Input" x1
+reprisekit-gallery.png "JPEG Im..." x1
+reprisekit-gallery.png "JPEG Image" x1
+reprisekit-gallery.png "LG 27GL8..." x1
+reprisekit-gallery.png "Line 2: the quick brown fox jumps over the lazy dog" x1
+reprisekit-gallery.png "Line 3: the quick brown fox jumps over the lazy dog" x1
+reprisekit-gallery.png "Line 4: the quick brown fox jumps over the lazy dog" x1
+reprisekit-gallery.png "Line 5: the quick brown fox jumps over the lazy dog" x1
+reprisekit-gallery.png "Line 6: the quick brown fox jumps over the lazy dog" x1
+reprisekit-gallery.png "Lunch on Friday?" x1
+reprisekit-gallery.png "Mail (2)" x1
+reprisekit-gallery.png "Make New Folder" x1
+reprisekit-gallery.png "Make a new" x1
+reprisekit-gallery.png "Message Box" x2
+reprisekit-gallery.png "Message Text" x2
+reprisekit-gallery.png "Music Player: N..." x1
+reprisekit-gallery.png "Music" x2
+reprisekit-gallery.png "Muted" x1
+reprisekit-gallery.png "My Music" x6
+reprisekit-gallery.png "My Pictures" x5
+reprisekit-gallery.png "My Recent" x1
+reprisekit-gallery.png "My" x4
+reprisekit-gallery.png "Name" x2
+reprisekit-gallery.png "New Folder" x2
+reprisekit-gallery.png "New Text Document.txt" x1
+reprisekit-gallery.png "None" x1
+reprisekit-gallery.png "Normal" x4
+reprisekit-gallery.png "Not adjustable" x1
+reprisekit-gallery.png "Not connected" x2
+reprisekit-gallery.png "Notepad" x2
+reprisekit-gallery.png "Nowhere (disable..." x2
+reprisekit-gallery.png "Open" x1
+reprisekit-gallery.png "Open:" x1
+reprisekit-gallery.png "OpenDo..." x1
+reprisekit-gallery.png "OpenDocu..." x1
+reprisekit-gallery.png "Other Programs:" x2
+reprisekit-gallery.png "Other..." x1
+reprisekit-gallery.png "PM" x2
+reprisekit-gallery.png "Pictures" x2
+reprisekit-gallery.png "Program 1" x1
+reprisekit-gallery.png "Program 2" x1
+reprisekit-gallery.png "Program 3" x1
+reprisekit-gallery.png "Program 4" x1
+reprisekit-gallery.png "Program 5" x1
+reprisekit-gallery.png "Program 6" x1
+reprisekit-gallery.png "Program 7" x1
+reprisekit-gallery.png "Programs" x1
+reprisekit-gallery.png "Progress" x1
+reprisekit-gallery.png "Proj..." x1
+reprisekit-gallery.png "Publish this" x1
+reprisekit-gallery.png "Pushed" x1
+reprisekit-gallery.png "Radio" x1
+reprisekit-gallery.png "Read-only" x1
+reprisekit-gallery.png "Recommended Programs:" x2
+reprisekit-gallery.png "Replied, 1:05 PM" x1
+reprisekit-gallery.png "Reprise Settings" x1
+reprisekit-gallery.png "Reprise" x1
+reprisekit-gallery.png "Reprise..." x3
+reprisekit-gallery.png "Run" x4
+reprisekit-gallery.png "Screenshot: drag an area or click a window. Press V to record instead." x1
+reprisekit-gallery.png "Scroll Bar" x1
+reprisekit-gallery.png "Scroll Lit" x1
+reprisekit-gallery.png "Search" x1
+reprisekit-gallery.png "Selected" x4
+reprisekit-gallery.png "Share this" x1
+reprisekit-gallery.png "Size" x2
+reprisekit-gallery.png "Slightly smiling face" x1
+reprisekit-gallery.png "Sounds good" x1
+reprisekit-gallery.png "Speaker" x1
+reprisekit-gallery.png "Spin" x1
+reprisekit-gallery.png "Stuff" x1
+reprisekit-gallery.png "Super + Shift + B" x1
+reprisekit-gallery.png "System Folder" x1
+reprisekit-gallery.png "Tab" x1
+reprisekit-gallery.png "Text Do..." x1
+reprisekit-gallery.png "Text Docu..." x1
+reprisekit-gallery.png "This folder only" x1
+reprisekit-gallery.png "Trackbar" x1
+reprisekit-gallery.png "Type" x2
+reprisekit-gallery.png "Untitled - Notepad" x1
+reprisekit-gallery.png "Updates (1)" x1
+reprisekit-gallery.png "Updates are ready" x1
+reprisekit-gallery.png "Volume" x1
+reprisekit-gallery.png "Web" x1
+reprisekit-gallery.png "Window Text" x4
+reprisekit-gallery.png "cargo build --release" x1
+reprisekit-gallery.png "folder to the" x1
+reprisekit-gallery.png "folder" x2
+reprisekit-gallery.png "hello world" x1
+reprisekit-gallery.png "hills.j..." x1
+reprisekit-gallery.png "hills.jpg" x4
+reprisekit-gallery.png "notepad readme.txt" x1
+reprisekit-gallery.png "notepad" x1
+reprisekit-gallery.png "notes.txt" x3
+reprisekit-gallery.png "repo..." x1
+reprisekit-gallery.png "report" x1
+reprisekit-gallery.png "report...." x1
+reprisekit-gallery.png "report.odt" x4
+reprisekit-gallery.png "say nihao to all" x2
+reprisekit-gallery.png "setup.e..." x1
+reprisekit-gallery.png "setup.exe" x3
+reprisekit-gallery.png "user@repris..." x1
+reprisekit-gallery.png "😮\u{200d}💨" x1
+reprisekit-gallery.png "😴" x1
+reprisekit-gallery.png "😶\u{200d}🌫\u{fe0f}" x1
+reprisekit-gallery.png "🙂\u{200d}↔\u{fe0f}" x1
+reprisekit-gallery.png "🙂\u{200d}↕\u{fe0f}" x1
+snap-layouts.png "1" x12
+snap-layouts.png "2" x12
+snap-layouts.png "Duplic..." x3
+snap-layouts.png "Only 1" x3
+snap-layouts.png "Only 2" x3
+stats-panel.png "1.4 ms avg..." x3
+stats-panel.png "16.7 ms av..." x3
+stats-panel.png "3.2 rects,..." x3
+stats-panel.png "37" x3
+stats-panel.png "4" x3
+stats-panel.png "58" x3
+stats-panel.png "84.2 MB" x3
+stats-panel.png "9" x3
+stats-panel.png "CPU/re..." x3
+stats-panel.png "Clients" x3
+stats-panel.png "DP-1 (1920x1080..." x3
+stats-panel.png "Damage" x3
+stats-panel.png "Flip int..." x3
+stats-panel.png "Memory" x3
+stats-panel.png "Render..." x3
+stats-panel.png "Surfaces" x3
+stats-panel.png "Windows" x3
+taskbar-cells.png "3:45 PM" x6
+taskbar-edges.png "3:45 PM" x4
+text-size-200.png "JPEG Image" x3
+text-size-200.png "Large icons" x3
+text-size-200.png "My Music" x9
+text-size-200.png "My Pictures" x9
+text-size-200.png "hills.jpg" x9
+text-size-200.png "report.odt" x3
+text-size-200.png "setup.exe" x3
+tray-arrow.png "3:45 PM" x4
+tray-arrow.png "Start" x2
+tray-arrow.png "start" x2
+tray-customize.png "A hidden icon and its notifications won't tell you about changes. To see hidden icons at any time, click the arrow beside the notification area." x1
+tray-customize.png "Always h..." x2
+tray-customize.png "Always s..." x2
+tray-customize.png "Always show all icons and notifications on the taskbar" x1
+tray-customize.png "Always..." x2
+tray-customize.png "Behavior" x1
+tray-customize.png "Choose which icons and notifications appear on the taskbar" x1
+tray-customize.png "Hide wh..." x2
+tray-customize.png "Name" x1
+tray-customize.png "Network" x2
+tray-customize.png "Only show notifications" x1
+tray-customize.png "Reprise keeps the icons of busy" x2
+tray-customize.png "Restore Defaults" x2
+tray-customize.png "Select an item, then choose how it behaves:" x2
+tray-customize.png "Sticky Keys" x3
+tray-customize.png "Sticky Keys: all is well" x1
+tray-customize.png "Volume" x2
+tray-customize.png "and keeps the idle ones behind" x2
+tray-customize.png "and urgent items on the taskbar" x2
+tray-customize.png "for any item below." x2
+tray-customize.png "the arrow. Pick another behavior" x2
+welcome@1.png "Active Window" x6
+welcome@1.png "Disabled" x12
+welcome@1.png "Inactive Window" x4
+welcome@1.png "Light" x3
+welcome@1.png "Message Box" x4
+welcome@1.png "Message Text" x6
+welcome@1.png "Normal" x6
+welcome@1.png "Reprise Classic" x3
+welcome@1.png "Reprise is ready" x3
+welcome@1.png "Reprise..." x3
+welcome@1.png "Selected" x6
+welcome@1.png "Window Text" x6
+windowed-dialog.png "Copying..." x33

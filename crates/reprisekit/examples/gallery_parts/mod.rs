@@ -5,10 +5,10 @@
 //! Each part is a row of frames labelled by state, at their own size (at most
 //! [`MAX_W`] x [`MAX_H`] design px).
 
+use crate::interfaces;
 use reprisekit::blue::Variant;
 use reprisekit::glass::{Material, Mode, Settings};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::raster::{Canvas, Rect, write_preview};
 use reprisekit::style::{Check, Part, State, Style};
 use reprisekit::text::{Align, TextRenderer};

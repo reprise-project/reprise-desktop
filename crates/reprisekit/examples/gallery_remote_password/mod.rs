@@ -2,10 +2,10 @@
 //! Classic, Blue and Glass light and dark, written to
 //! `target/reprisekit-gallery-remote-password@<scale>.png`.
 
+use crate::interfaces;
 use reprisekit::controls::form::{self, Form};
 use reprisekit::controls::remotepassword::{self, Access, Answer, Facts, Manager};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{Align, TextRenderer};
 use reprisekit::theme::{Color, FontConfig, Theme};
@@ -17,7 +17,7 @@ const M: i32 = 8;
 
 fn looks() -> Vec<(String, Theme)> {
     let mut out = vec![
-        ("Classic".to_string(), Theme::default()),
+        ("Classic".to_string(), interfaces::classic()),
         (
             "Blue".to_string(),
             interfaces::blue_theme(reprisekit::blue::Variant::ALL[0]),

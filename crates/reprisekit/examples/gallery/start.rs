@@ -1,7 +1,7 @@
 use super::cued;
+use crate::interfaces;
 use reprisekit::controls::menu::MenuItem;
 use reprisekit::interface::Interface;
-use reprisekit::interfaces;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::EditKey;

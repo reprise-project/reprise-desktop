@@ -1,4 +1,6 @@
 use super::{blurred_stripes, cued};
+use crate::interfaces;
+use crate::write_preview;
 use reprisekit::controls::iconview::{self, Selection};
 use reprisekit::controls::treeview::{self, Node, TreeView};
 use reprisekit::controls::{
@@ -7,11 +9,11 @@ use reprisekit::controls::{
 };
 use reprisekit::interface::Interface;
 use reprisekit::look::widgets::BUTTON_ICON;
-use reprisekit::raster::{Canvas, Rect, write_preview};
+use reprisekit::raster::{Canvas, Rect};
+use reprisekit::schemes;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::{Caret, EditKey, Preedit, TextEdit};
 use reprisekit::theme::{Color, FontConfig, Theme};
-use reprisekit::{interfaces, schemes};
 
 /// Glass notification sheets over the stripes: Lozenge, Halo and Droplet, each in its states and in
 /// a stack with its chip; the Droplet also half open and in three arrival frames.
