@@ -345,6 +345,28 @@ pub fn device_at(objects: &Objects, adapter: &str, address: &str) -> Option<Devi
     })
 }
 
+/// How the prompts and balloons name a device: its alias on one line, with the address when they
+/// differ. The alias is the device's own name, so line breaks and bidi marks become spaces.
+pub fn label(alias: &str, address: &str) -> String {
+    let alias = one_line(alias);
+    if alias.is_empty() || alias == address {
+        address.to_string()
+    } else {
+        format!("{alias} ({address})")
+    }
+}
+
+/// A device-chosen name with control characters and bidi marks as spaces, trimmed.
+pub fn one_line(name: &str) -> String {
+    let clean: String = (name.chars())
+        .map(|c| match c.is_control() || reprisefs::names::invisible(c) {
+            true => ' ',
+            false => c,
+        })
+        .collect();
+    clean.trim().to_string()
+}
+
 pub fn by_group<'a>(devs: impl IntoIterator<Item = &'a Device>) -> Vec<Device> {
     let mut out: Vec<Device> = devs.into_iter().cloned().collect();
     out.sort_by(|a, b| {
@@ -607,6 +629,17 @@ mod tests {
 
     fn path(p: &str) -> OwnedObjectPath {
         OwnedObjectPath::try_from(p.to_string()).unwrap()
+    }
+
+    #[test]
+    fn a_device_name_stays_on_one_line_in_the_prompt() {
+        let a = "AA:BB:CC:DD:EE:FF";
+        assert_eq!(
+            label("Phone\n\nFile: \u{202e}evil", a),
+            format!("Phone  File:  evil ({a})")
+        );
+        assert_eq!(label("\n\t", a), a);
+        assert_eq!(label("Phone", a), format!("Phone ({a})"));
     }
 
     #[test]

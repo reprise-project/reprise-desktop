@@ -122,7 +122,14 @@ impl AddWizard {
     fn target_name(&self) -> String {
         self.target
             .as_ref()
-            .map_or_else(|| "The device".to_string(), |d| d.alias.clone())
+            .map(|d| (crate::bz::one_line(&d.alias), &d.address))
+            .map_or_else(
+                || "The device".to_string(),
+                |(alias, address)| match alias.is_empty() {
+                    true => address.clone(),
+                    false => alias,
+                },
+            )
     }
 
     pub fn reason(&self) -> Option<&str> {

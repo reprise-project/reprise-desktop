@@ -249,10 +249,8 @@ impl BtApp {
             last.strip_prefix("dev_").unwrap_or(last).replace('_', ":")
         };
         let name = match self.device(&req.device) {
-            Some(d) if !d.address.is_empty() && d.alias != d.address => {
-                format!("{} ({})", d.alias, d.address)
-            }
-            Some(d) => d.alias.clone(),
+            Some(d) if !d.address.is_empty() => bz::label(&d.alias, &d.address),
+            Some(d) => bz::label(&d.alias, &address),
             None => address,
         };
         let started = self.connecting.contains(&req.device);
@@ -1433,6 +1431,30 @@ mod tests {
         assert!(
             said.contains("Cans") && said.contains("AA:BB:CC:DD:EE:FF"),
             "{said}"
+        );
+    }
+
+    #[test]
+    fn a_line_break_in_the_device_name_adds_no_line_to_the_box() {
+        let mut a = app();
+        let mut s = snap(true);
+        s.devices[0].address = "AA:BB:CC:DD:EE:FF".into();
+        s.devices[0].alias = "Cans\n999999\u{202e}".into();
+        a.snapshot_in(s);
+        let (done, _wait) = async_channel::bounded(1);
+        a.agent(bz::AgentRequest {
+            device: "/a/cans".into(),
+            ask: Ask::Authorize,
+            done: Some(done),
+        });
+        let f = &a.pair.as_ref().unwrap().form;
+        let lines = match &f.item("sentence").unwrap().control {
+            form::Control::Lines(l) => l.clone(),
+            other => panic!("sentence is {other:?}"),
+        };
+        assert!(
+            lines[0].starts_with("Cans 999999 (AA:BB:CC:DD:EE:FF)"),
+            "{lines:?}"
         );
     }
 
