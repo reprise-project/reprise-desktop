@@ -20,6 +20,7 @@
 use crate::config::{Action, Keybind};
 use crate::desktop::IconMove;
 use crate::keys::*;
+use crate::popups::Popup;
 
 /// One key event, decoded: every keysym the key produces, the same
 /// keysyms lowercased (binds and the switcher match on those), the
@@ -125,6 +126,30 @@ pub struct Modes {
     pub desktop_has_keyboard: bool,
     pub has_icons: bool,
     pub selected_icon: Option<usize>,
+}
+
+impl Modes {
+    /// Mark popup `p` up, in the flag `route` reads for it.
+    pub fn popup_up(&mut self, p: Popup) {
+        let flag = match p {
+            Popup::TrayFlyout => &mut self.tray_flyout_open,
+            // It takes no keys.
+            Popup::TaskPreview => return,
+            Popup::SnapPicker => &mut self.snap_picker_open,
+            Popup::Projector => &mut self.projector_open,
+            Popup::NotifyCenter => &mut self.notify_center_open,
+            Popup::Calendar => &mut self.calendar_open,
+            Popup::Displays => &mut self.displays_open,
+            Popup::Menu => &mut self.menus_open,
+            Popup::Launcher => &mut self.launcher_open,
+            Popup::StartPanel => &mut self.start_panel_open,
+            Popup::ClipView => &mut self.clipview_open,
+            Popup::EmojiView => &mut self.emojiview_open,
+            Popup::Switcher => &mut self.switcher_open,
+            Popup::Overview => &mut self.overview_open,
+        };
+        *flag = true;
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

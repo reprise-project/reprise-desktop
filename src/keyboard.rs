@@ -606,7 +606,7 @@ impl State {
     /// closed.
     pub fn key_modes(&self) -> Modes {
         let desktop = self.desktop.as_ref();
-        Modes {
+        let mut modes = Modes {
             // In lock mode only the computer's own keys switch VTs (`console::keys`).
             can_switch_vt: self.backend.is_some() && !crate::console::remote_side(self),
             greeter: self.host == crate::compositor::Host::Greeter,
@@ -620,36 +620,28 @@ impl State {
             ),
             pointer_move: matches!(self.interaction, Interaction::Move { origin: None, .. })
                 && self.buttons_down > 0,
-            switcher_open: self.switcher.is_open(),
             super_tap_armed: self.key_input.super_tap_armed,
-            menus_open: !self.menus.is_empty(),
             lock_menu: crate::lockpower::menu_open(self),
             dialog_has_keyboard: self.dialog_has_keyboard(),
             dialog_modal: self.dialog_is_modal(),
             dialog_windowed: (self.dialogs.views.last()).is_some_and(|v| v.dialog.windowed()),
-            launcher_open: self.launcher.is_some(),
-            overview_open: self.overview.view.is_some(),
             snap_assist_open: self.snap_assist_open(),
-            snap_picker_open: self.snap_picker.is_shown(),
             snap_picker_keys: self.snap_picker.has_keys(),
-            projector_open: self.projector.is_open(),
-            start_panel_open: self.start_panel.is_some(),
-            notify_center_open: crate::notifycenter::is_open(self),
             notify_reply_focused: crate::notifyview::reply_focused(self),
-            clipview_open: self.panels.clipview.is_some(),
-            emojiview_open: self.panels.emojiview.is_some(),
             region_open: self.panels.takes_pointer(),
-            calendar_open: crate::calendarview::is_open(self),
-            displays_open: crate::displaysview::is_open(self),
             dragging: self.drag_running(),
-            tray_flyout_open: crate::trayflyout::open_on(self).is_some(),
             taskbar_keys: self.bar_shared.keys.is_some(),
             renaming: self.is_renaming(),
             shortcuts_inhibited: self.key_input.inhibit.active(),
             desktop_has_keyboard: self.desktop_has_keyboard(),
             has_icons: desktop.is_some_and(|d| !d.entries.is_empty()),
             selected_icon: desktop.and_then(|d| d.selection.focus),
+            ..Modes::default()
+        };
+        for p in crate::popups::Popup::open(self) {
+            modes.popup_up(p);
         }
+        modes
     }
 
     /// Whether the desktop holds the keyboard: no window and no layer

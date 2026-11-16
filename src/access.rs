@@ -19,6 +19,7 @@ use zeroize::Zeroizing;
 use crate::compositor::State;
 use crate::input::{Hit, Interaction};
 use crate::keyroute::KeyPress;
+use crate::popups::Popup;
 use crate::raster::Rect;
 use crate::window::WindowId;
 use smithay::backend::input::InputTime;
@@ -301,6 +302,25 @@ pub fn touch(state: &mut State) {
     });
 }
 
+fn surface_of(p: Popup) -> Surface {
+    match p {
+        Popup::TrayFlyout => Surface::TrayFlyout,
+        Popup::TaskPreview => Surface::TaskPreview,
+        Popup::SnapPicker => Surface::SnapPicker,
+        Popup::Projector => Surface::Projector,
+        Popup::NotifyCenter => Surface::NotifyCenter,
+        Popup::Calendar => Surface::Calendar,
+        Popup::Displays => Surface::Displays,
+        Popup::Menu => Surface::Menus,
+        Popup::Launcher => Surface::Launcher,
+        Popup::StartPanel => Surface::StartPanel,
+        Popup::ClipView => Surface::ClipView,
+        Popup::EmojiView => Surface::EmojiView,
+        Popup::Switcher => Surface::Switcher,
+        Popup::Overview => Surface::Overview,
+    }
+}
+
 fn surfaces(state: &State) -> Vec<Surface> {
     let mut v: Vec<Surface> = state
         .bars
@@ -308,24 +328,8 @@ fn surfaces(state: &State) -> Vec<Surface> {
         .filter(|b| state.layout_box(Some(&b.output)).width > 0)
         .map(|b| Surface::Taskbar(b.tree))
         .collect();
+    v.extend(Popup::open(state).map(surface_of));
     let open = [
-        (!state.menus.is_empty(), Surface::Menus),
-        (state.switcher.is_open(), Surface::Switcher),
-        (state.overview.view.is_some(), Surface::Overview),
-        (state.launcher.is_some(), Surface::Launcher),
-        (state.start_panel.is_some(), Surface::StartPanel),
-        (state.panels.clipview.is_some(), Surface::ClipView),
-        (state.panels.emojiview.is_some(), Surface::EmojiView),
-        (crate::calendarview::is_open(state), Surface::Calendar),
-        (crate::displaysview::is_open(state), Surface::Displays),
-        (
-            crate::trayflyout::open_on(state).is_some(),
-            Surface::TrayFlyout,
-        ),
-        (state.task_preview.is_shown(), Surface::TaskPreview),
-        (state.snap_picker.is_shown(), Surface::SnapPicker),
-        (state.projector.is_open(), Surface::Projector),
-        (crate::notifycenter::is_open(state), Surface::NotifyCenter),
         (crate::keysheetview::is_shown(state), Surface::KeySheet),
         (state.panels.colorpick.is_some(), Surface::ColorPick),
         (state.panels.region.is_some(), Surface::Region),

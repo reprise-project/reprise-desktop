@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn each_popup_but_the_task_preview_sets_a_mode_of_its_own() {
+    let mut seen: Vec<Modes> = Vec::new();
+    for p in Popup::ALL {
+        let mut m = Modes::default();
+        m.popup_up(p);
+        if p == Popup::TaskPreview {
+            assert_eq!(m, Modes::default(), "the task preview takes no keys");
+            continue;
+        }
+        assert!(!seen.contains(&m), "{p:?} sets a flag no other popup sets");
+        seen.push(m);
+    }
+}
+
+#[test]
 fn every_media_key_is_reserved_for_the_desktop() {
     // The XF86 keysym block.
     for sym in 0x1008_ff00u32..=0x1008_ffff {
