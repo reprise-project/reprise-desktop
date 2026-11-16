@@ -114,6 +114,30 @@ pub struct CopyProgress {
     pub form: Form,
 }
 
+/// The end balloon's summary and body for a `kind` job from `from` to `to` that dealt with
+/// `landed` items, whether or not its dialog is still up.
+pub fn ended_note(kind: Kind, from: &str, to: &str, landed: usize) -> (String, String) {
+    let noun = if landed == 1 { "item" } else { "items" };
+    let (verb, place) = match kind {
+        Kind::Copy => ("Copied", format!("to {to}")),
+        Kind::Move => ("Moved", format!("to {to}")),
+        Kind::Delete | Kind::Erase => ("Deleted", format!("from {from}")),
+        Kind::Restore => ("Restored", format!("from {from}")),
+        Kind::Extract => ("Extracted", format!("to {to}")),
+        Kind::Compress => ("Compressed", format!("into {to}")),
+        Kind::Empty => {
+            return (
+                "Emptied the Recycle Bin".into(),
+                format!("Deleted {landed} {noun}"),
+            );
+        }
+    };
+    (
+        format!("{verb} {landed} {noun}"),
+        format!("{verb} {landed} {noun} {place}"),
+    )
+}
+
 impl CopyProgress {
     pub fn new(kind: Kind, from: &str, to: &str, accent: Color) -> CopyProgress {
         let mut cp = CopyProgress {
@@ -419,25 +443,7 @@ impl CopyProgress {
 
     /// The balloon's summary and body for a job that dealt with `landed` items.
     pub fn ended_note(&self, landed: usize) -> (String, String) {
-        let noun = if landed == 1 { "item" } else { "items" };
-        let (verb, place) = match self.kind {
-            Kind::Copy => ("Copied", format!("to {}", self.to)),
-            Kind::Move => ("Moved", format!("to {}", self.to)),
-            Kind::Delete | Kind::Erase => ("Deleted", format!("from {}", self.from)),
-            Kind::Restore => ("Restored", format!("from {}", self.from)),
-            Kind::Extract => ("Extracted", format!("to {}", self.to)),
-            Kind::Compress => ("Compressed", format!("into {}", self.to)),
-            Kind::Empty => {
-                return (
-                    "Emptied the Recycle Bin".into(),
-                    format!("Deleted {landed} {noun}"),
-                );
-            }
-        };
-        (
-            format!("{verb} {landed} {noun}"),
-            format!("{verb} {landed} {noun} {place}"),
-        )
+        ended_note(self.kind, &self.from, &self.to, landed)
     }
 
     pub fn draw(&self, c: &mut Canvas, text: &TextRenderer, p: &Paint, px: u32) {
