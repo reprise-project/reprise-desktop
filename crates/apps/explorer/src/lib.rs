@@ -317,11 +317,8 @@ pub struct Explorer {
         std::collections::VecDeque<(fileops::PendingPut, reprisefs::replace::Asker)>,
     pub(crate) messages_waiting: std::collections::VecDeque<(String, String)>,
     /// Jobs held on a failed item ([`Explorer::ask_failed`]) whose box waits for the one up.
-    pub(crate) failed_waiting: std::collections::VecDeque<(
-        std::sync::Arc<reprisefs::progress::Meter>,
-        &'static str,
-        String,
-    )>,
+    pub(crate) failed_waiting:
+        std::collections::VecDeque<(reprisefs::progress::Asked, &'static str, String)>,
     /// A replace prompt whose two files are still being read, on a listing thread.
     pub(crate) asking: Option<fileops::ReadingSides>,
     /// Finished background jobs (deletes, the bin's Empty) waiting for a wake.

@@ -605,7 +605,7 @@ impl Explorer {
         }
         if let Some((title, text)) = ask {
             let meter = put.progress.meter.clone();
-            return Some(self.ask_failed(meter, title, text, ctx));
+            return Some(self.ask_failed(reprisefs::progress::Asked::new(meter), title, text, ctx));
         }
         if !finished {
             return Some(Reply::none());
@@ -702,15 +702,10 @@ impl Explorer {
     /// as do the pastes waiting behind it, and the rest is put.
     pub fn close(&mut self, ctx: &mut Ctx) -> Reply {
         self.flush_settings();
-        if let Some(Dialog::Confirm(c)) = &self.dialog
-            && let Some(job) = &c.job
-        {
-            job.decide(reprisefs::progress::Decision::Abort);
+        if self.holds_a_job() {
             self.dialog = None;
         }
-        for (job, ..) in self.failed_waiting.drain(..) {
-            job.decide(reprisefs::progress::Decision::Abort);
-        }
+        self.failed_waiting.clear();
         if let Some(Dialog::Replace(r)) = self.dialog.take() {
             self.closing = true;
             self.ask_replace(r.pending, r.asker, ctx);

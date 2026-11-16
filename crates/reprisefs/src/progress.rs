@@ -32,6 +32,31 @@ pub enum Decision {
     Abort,
 }
 
+/// The host's hold on the question a failed item asks: [`Asked::answer`] decides it, and dropping
+/// it unanswered decides [`Decision::Abort`], so a box lost on the way ends its job.
+#[derive(Debug)]
+pub struct Asked(Option<Arc<Meter>>);
+
+impl Asked {
+    pub fn new(meter: Arc<Meter>) -> Self {
+        Asked(Some(meter))
+    }
+
+    pub fn answer(mut self, d: Decision) {
+        if let Some(m) = self.0.take() {
+            m.decide(d);
+        }
+    }
+}
+
+impl Drop for Asked {
+    fn drop(&mut self) {
+        if let Some(m) = self.0.take() {
+            m.decide(Decision::Abort);
+        }
+    }
+}
+
 /// The counts a [`Meter`] held at one moment.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Snapshot {
@@ -571,6 +596,18 @@ mod tests {
         let cancelled = Meter::default();
         cancelled.cancel();
         assert_eq!(walk(&d, true, &cancelled), None);
+    }
+
+    #[test]
+    fn an_asked_question_dropped_unanswered_aborts_and_an_answer_stands() {
+        let m = Arc::new(Meter::default());
+        m.ask_on_failure();
+        m.ask();
+        drop(Asked::new(m.clone()));
+        assert_eq!(m.decision(), Decision::Abort);
+        m.ask();
+        Asked::new(m.clone()).answer(Decision::Skip);
+        assert_eq!(m.decision(), Decision::Skip);
     }
 
     #[test]

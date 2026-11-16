@@ -177,7 +177,7 @@ impl Explorer {
         }
         if let Some((title, text)) = ask {
             let meter = r.progress.meter.clone();
-            return Some(self.ask_failed(meter, title, text, ctx));
+            return Some(self.ask_failed(reprisefs::progress::Asked::new(meter), title, text, ctx));
         }
         if !finished {
             return Some(Reply::none());
