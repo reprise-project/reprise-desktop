@@ -173,8 +173,16 @@ enum Taker {
     Pid(i32),
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The takers looked up on this thread.
+    static TAKERS_READ: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 impl Taker {
     fn of(pid: i32) -> Taker {
+        #[cfg(test)]
+        TAKERS_READ.set(TAKERS_READ.get() + 1);
         std::fs::read_link(format!("/proc/{pid}/exe")).map_or(Taker::Pid(pid), Taker::Exe)
     }
 }
@@ -1212,6 +1220,19 @@ mod tests {
             crate::notifyview::balloon_up(&h.state),
             "the held balloon shows once the dot goes"
         );
+    }
+
+    #[test]
+    fn a_wlr_recordings_frames_past_its_second_look_up_no_taker() {
+        let mut h = capturing();
+        let mut c = h.connect_capture(SIZE);
+        TAKERS_READ.set(0);
+        for _ in 0..6 {
+            c.wlr_shot(&mut h);
+            h.run_for(40);
+        }
+        assert!(h.state.privacy.sharing_shown(), "a recording");
+        assert_eq!(TAKERS_READ.get(), 2, "the first two frames make it one");
     }
 
     #[test]

@@ -849,6 +849,16 @@ impl GlassCtx {
                 .any(|g| g.is_stale())
     }
 
+    /// What a capture of `output` keeps of the last blur: what its screen's last frame held,
+    /// still waiting for the next blur, it holds too.
+    pub fn capture_hold(&self, output: &Output) -> Hold {
+        let held = (self.backdrops.borrow().get(&output.name())).is_some_and(|b| b.skipped);
+        match held {
+            true => Hold::Keep(Under::Anywhere),
+            false => Hold::No,
+        }
+    }
+
     /// Whether a held frame left `output`'s glass behind its own window's program.
     pub fn owes(&self, output: &Output) -> bool {
         (self.backdrops.borrow().get(&output.name())).is_some_and(|b| !b.hidden && b.owed)

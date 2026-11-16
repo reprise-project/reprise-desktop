@@ -328,18 +328,19 @@ fn render_scene_into(
     let cursor = crate::saverview::cursor(saver, cursor);
     let b = backend.as_mut().ok_or("no backend")?;
     crate::gpufence::ready(&b.renderer)?;
-    // A capture shows the backdrop as it is now: nothing to hold.
+    // A capture shows the blur its screen shows: one the screen held for `[glass] blur_rate` is
+    // kept, the rest drawn as it is now.
     let drawn_from = fitted.as_ref().unwrap_or(output);
     glass.begin(
         drawn_from,
         config.glass,
         crate::glass::quality(interaction, &config.glass),
-        crate::glass::Hold::No,
+        glass.capture_hold(drawn_from),
     );
     let renderer = &mut b.renderer;
     let clear = clear_color(&config.theme.colors);
     let wanted = crate::glass::wanted(config);
-    glass.update_backdrop(renderer, scene, drawn_from, clear, wanted);
+    glass.update_screen_backdrop(renderer, scene, drawn_from, clear, wanted);
     let parts = Parts {
         scene,
         cursor,
@@ -1049,6 +1050,7 @@ fn session_damage(session: &SessionRef) -> &RefCell<SessionDamage> {
 impl ScreencopyHandler for State {
     fn screencopy_frame(&mut self, screencopy: Screencopy) {
         let key = wlr_key(&screencopy);
+        let was_live = crate::captureborder::wlr_live(self, &key);
         let client = screencopy.wl_client();
         if screencopy.with_damage && screencopy.info.output.current_mode().is_some() {
             let output = screencopy.info.output.clone();
@@ -1061,8 +1063,13 @@ impl ScreencopyHandler for State {
         } else {
             fill_wlr(self, screencopy);
         }
+        crate::captureborder::wlr_frame(self, key.clone());
+        // A recording already bordered and lighting the dot changes neither with its frames.
+        if was_live && crate::captureborder::wlr_live(self, &key) {
+            return;
+        }
         crate::privacy::frame_taken(self, client.as_ref(), false);
-        crate::captureborder::wlr_frame(self, key);
+        crate::captureborder::refresh(self);
         crate::privacy::captures_changed(self);
     }
 }
