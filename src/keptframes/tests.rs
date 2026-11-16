@@ -206,13 +206,57 @@ fn each_set_of_screens_keeps_its_own_place() {
     );
 }
 
+#[test]
+fn a_monitor_back_on_another_connector_keeps_its_programs_places() {
+    let mut h = Harness::new();
+    h.monitor("eDP-1", "panel", 1920, 1080);
+    let dock = h.monitor("DP-5", "dock", 1280, 1024);
+    let mut c = h.connect();
+    let b = h.state.layout_box(Some(&dock));
+    leave_at(&mut h, &mut c, (b.x + 100, b.y + 80), (500, 400));
+    let set = h.state.output_set();
+    h.state.scene.remove_output(&dock);
+    h.state.output_removed(&dock);
+    let dock = h.monitor("DP-7", "dock", 1280, 1024);
+    assert_eq!(h.state.output_set(), set, "the same set of monitors");
+    let b = h.state.layout_box(Some(&dock));
+    h.pointer_to(10.0, 10.0);
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    let r = frame_of(&h, t);
+    assert_eq!(
+        (r.x, r.y),
+        (b.x + 100, b.y + 80),
+        "where it was left, on DP-7"
+    );
+}
+
+#[test]
+fn twin_monitors_have_one_id_wherever_it_is_asked() {
+    let mut h = Harness::new();
+    let one = h.output("TEST-1", 1920, 1080);
+    let two = h.output("TEST-2", 1280, 1024);
+    let ids: Vec<_> = [&one, &two]
+        .map(|o| h.state.monitor_id(o).expect("in the layout"))
+        .into();
+    assert_ne!(ids[0], ids[1], "serial-less twins told apart");
+    for (o, id) in [&one, &two].into_iter().zip(&ids) {
+        assert_eq!(h.state.output_of_monitor(id).as_ref(), Some(o));
+    }
+    let set: Vec<String> = ids.iter().map(|id| id.0.clone()).collect();
+    assert_eq!(h.state.output_set(), crate::outputset::fingerprint(set));
+}
+
+/// Keeps a frame for `APP` at (`x`, `y`) on the monitor on connector `output`.
 fn keep(h: &mut Harness, output: &str, x: i32, y: i32) {
     let set = h.state.output_set();
+    let monitor = (h.state.monitors().into_iter())
+        .find_map(|(o, id)| (o.name() == output).then_some(id))
+        .unwrap_or_else(|| output.into());
     h.state.wm.kept.store(
         &set,
         APP,
         Remembered {
-            output: output.into(),
+            output: monitor,
             x,
             y,
             width: 500,

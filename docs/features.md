@@ -207,7 +207,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   dialog uses (each sticky note does) keeps a place of its own under that
   name. Docked and undocked layouts each keep their own places
   (per set of connected screens, by make, model and serial), in
-  `$XDG_STATE_HOME/reprise/windows.toml`. A place left off every screen opens
+  `$XDG_STATE_HOME/reprise/windows.toml`; a screen back on another
+  connector keeps its places. A place left off every screen opens
   at the default place instead. Window rules that set a size or position
   win. Forget Positions on the Window Behavior page of Reprise Settings drops them
   all (`[windows] remember`).

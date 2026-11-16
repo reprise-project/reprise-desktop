@@ -223,22 +223,22 @@ impl State {
         (want != Want::default()).then_some(want)
     }
 
-    /// Kept frame `m` relative to the output its title bar lands on; None when its output is
+    /// Kept frame `m` relative to the output its title bar lands on; None when its monitor is
     /// gone or its title bar is on no output.
     fn kept_on_screen(&self, m: &Remembered) -> Option<Remembered> {
-        let boxes: Vec<(crate::raster::Rect, Output)> = (self.scene.outputs().iter())
-            .map(|o| (self.layout_box(Some(o)), o.clone()))
+        let monitors = self.monitors();
+        let boxes: Vec<(crate::raster::Rect, Output)> = (monitors.iter())
+            .map(|(o, _)| (self.layout_box(Some(o)), o.clone()))
             .collect();
-        let (b, _) = boxes
-            .iter()
-            .find(|(b, o)| o.name() == m.output && b.width > 0)?;
-        let (x, y) = (b.x + m.x, b.y + m.y);
+        let i = monitors.iter().position(|(_, id)| *id == m.output)?;
+        let (x, y) = (boxes[i].0.x + m.x, boxes[i].0.y + m.y);
         let metrics = &self.config.theme.metrics;
         let bar =
             crate::raster::Rect::new(x, y, m.width, metrics.caption_height + metrics.frame_width);
         let (on, out) = crate::window::landing(bar, &boxes)?;
+        let output = (monitors.into_iter()).find_map(|(o, id)| (o == *out).then_some(id))?;
         Some(Remembered {
-            output: out.name(),
+            output,
             x: x - on.x,
             y: y - on.y,
             ..m.clone()
@@ -250,12 +250,7 @@ impl State {
     /// says so, so a state the first configure planned is not kept.
     fn regroup_want(&self, f: &Remembered) -> Want {
         let mut want = f.want(true, self.config.accessibility.text_size);
-        let present = self
-            .scene
-            .outputs()
-            .iter()
-            .any(|o| o.name() == f.output && self.layout_box(Some(o)).width > 0);
-        if !present {
+        if self.output_of_monitor(&f.output).is_none() {
             want.output = self.first_output().map(|o| o.name());
         }
         if !f.maximized {
@@ -271,7 +266,7 @@ impl State {
             (self.scene.outputs().iter())
                 .find(|o| o.name() == name && self.layout_box(Some(o)).width > 0)
                 .cloned()
-                .or_else(|| self.output_of_monitor(name))
+                .or_else(|| self.output_of_monitor(&name.into()))
         });
         let p = self.pointer_location();
         let found = named.or_else(|| self.output_at(p.x, p.y));
@@ -410,8 +405,8 @@ impl State {
         self.save_remembered();
     }
 
-    /// Where `w` is: its normal frame rect relative to the output under it,
-    /// and whether it is maximized. A snapped window's frame is its zone.
+    /// Where `w` is: its normal frame rect relative to the output under it, that output's
+    /// monitor, and whether it is maximized. A snapped window's frame is its zone.
     pub fn frame_of(&self, w: WindowId) -> Option<Remembered> {
         let win = self.win(w)?;
         let normal = win.normal_frame();
@@ -419,7 +414,7 @@ impl State {
         let out = self.output_at(cx as f64, cy as f64)?;
         let b = self.layout_box(Some(&out));
         Some(Remembered {
-            output: out.name(),
+            output: self.monitor_id(&out)?,
             x: normal.x - b.x,
             y: normal.y - b.y,
             width: normal.width,
@@ -428,15 +423,6 @@ impl State {
             text_size: self.config.accessibility.text_size,
             client: false,
         })
-    }
-
-    /// The monitor id (`outputlayouts::monitor_ids`) of the laid-out output named `name`.
-    fn monitor_of_output(&self, name: &str) -> Option<String> {
-        let outs: Vec<&Output> = (self.scene.outputs().iter())
-            .filter(|o| self.layout_box(Some(o)).width > 0)
-            .collect();
-        let ids = crate::outputlayouts::monitor_ids(&outs);
-        (outs.into_iter().zip(ids)).find_map(|(o, m)| (o.name() == name).then_some(m))
     }
 
     /// Always Open Here's row in `w`'s window menu; greyed in lock mode, where `w` is on a Remote
@@ -471,14 +457,17 @@ impl State {
                 let Some(at) = self.frame_of(w) else {
                     return;
                 };
-                let Some(monitor) = self.monitor_of_output(&at.output) else {
-                    return;
-                };
                 let (on_top, sticky) = (
                     self.stays_on_top(w),
                     self.win(self.home(w)).is_some_and(|h| h.sticky),
                 );
-                Some(WindowRule::open_here(&app, monitor, &at, on_top, sticky))
+                Some(WindowRule::open_here(
+                    &app,
+                    at.output.0.clone(),
+                    &at,
+                    on_top,
+                    sticky,
+                ))
             }
             OpenHereState::Absent | OpenHereState::Greyed => return,
         };

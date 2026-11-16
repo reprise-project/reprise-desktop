@@ -272,6 +272,26 @@ impl Harness {
     /// [`Harness::output`] asking for its place at `at`, the turn left running, as each monitor
     /// of one connector scan comes.
     pub fn add_output(&mut self, name: &str, w: i32, h: i32, at: Option<(i32, i32)>) -> Output {
+        self.add_monitor(name, "0", w, h, at)
+    }
+
+    /// [`Harness::output`] for a monitor whose EDID carries `serial`, so its monitor id is
+    /// `Reprise|Test|<serial>` on any connector.
+    pub fn monitor(&mut self, name: &str, serial: &str, w: i32, h: i32) -> Output {
+        let output = self.add_monitor(name, serial, w, h, None);
+        self.dispatch();
+        self.until_wallpaper_shown(&output);
+        output
+    }
+
+    fn add_monitor(
+        &mut self,
+        name: &str,
+        serial: &str,
+        w: i32,
+        h: i32,
+        at: Option<(i32, i32)>,
+    ) -> Output {
         let output = Output::new(
             name.into(),
             PhysicalProperties {
@@ -279,7 +299,7 @@ impl Harness {
                 subpixel: Subpixel::Unknown,
                 make: "Reprise".into(),
                 model: "Test".into(),
-                serial_number: "0".into(),
+                serial_number: serial.into(),
             },
         );
         let mode = Mode {
