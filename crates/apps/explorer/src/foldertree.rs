@@ -346,6 +346,7 @@ pub fn read_kids(
                     drives: inp.drives,
                     volumes: inp.volumes,
                     shares: inp.shares,
+                    portable: &[],
                 },
             )));
         }
@@ -480,6 +481,7 @@ fn subfolders(place: &Place, inp: &Inputs) -> Vec<(String, Place)> {
             drives: inp.drives,
             volumes: inp.volumes,
             shares: inp.shares,
+            portable: &[],
         },
     );
     place::tree_subfolders(&listed, inp.drive_mounts)

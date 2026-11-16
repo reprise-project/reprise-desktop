@@ -266,6 +266,9 @@ impl Explorer {
         if let Some(r) = self.poll_volumes(ctx) {
             return put.unwrap_or_default().and(r);
         }
+        if let Some(r) = self.poll_portable(ctx) {
+            return put.unwrap_or_default().and(r);
+        }
         if let Some(r) = put {
             return r;
         }

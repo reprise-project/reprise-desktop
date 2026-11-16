@@ -9,6 +9,7 @@ use repriseapp::Ctx;
 use repriseapp::iconjobs::IconWaits;
 use repriseapp::listjob::Job;
 use reprisefs::listing::Item;
+use reprisefs::places::{DriveKind, Gadget};
 use reprisekit::art::viewsicon;
 use reprisekit::controls::addressbar::AddressBar;
 use reprisekit::controls::combo::ListItem;
@@ -109,8 +110,12 @@ impl Explorer {
                     shell.push((d.name(), Place::Folder(d.mount.clone()), 2, d.kind().icon()));
                 }
                 for sh in &self.shares.shares {
-                    let icon = reprisefs::places::DriveKind::Network.icon();
-                    shell.push((sh.name.clone(), Place::Folder(sh.path.clone()), 2, icon));
+                    let kind = match sh.is_portable() {
+                        true => DriveKind::Portable(Gadget::from_icon(&sh.icon)),
+                        false => DriveKind::Network,
+                    };
+                    let place = Place::Folder(sh.path.clone());
+                    shell.push((sh.name.clone(), place, 2, kind.icon()));
                 }
             }
         }

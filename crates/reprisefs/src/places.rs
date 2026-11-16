@@ -457,6 +457,29 @@ pub enum DriveKind {
     Network,
     /// A server listing its shares.
     Server,
+    /// A phone or camera gvfs reaches over MTP or PTP ([`crate::portable`]).
+    Portable(Gadget),
+}
+
+/// What a portable device is, read off the icon gvfs gives it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Gadget {
+    Phone,
+    Camera,
+    /// A media player, and an Android phone, which udev's rules mark as one.
+    Player,
+}
+
+impl Gadget {
+    pub fn from_icon(icon: &str) -> Gadget {
+        if icon.contains("phone") {
+            Gadget::Phone
+        } else if icon.starts_with("camera") {
+            Gadget::Camera
+        } else {
+            Gadget::Player
+        }
+    }
 }
 
 impl DriveKind {
@@ -467,6 +490,9 @@ impl DriveKind {
             DriveKind::Optical => "CD Drive",
             DriveKind::Network => "Network Drive",
             DriveKind::Server => "Server",
+            DriveKind::Portable(Gadget::Phone) => "Mobile Phone",
+            DriveKind::Portable(Gadget::Camera) => "Digital Camera",
+            DriveKind::Portable(Gadget::Player) => "Portable Device",
         }
     }
 
@@ -477,6 +503,9 @@ impl DriveKind {
             DriveKind::Optical => "media-optical",
             DriveKind::Network => "folder-remote",
             DriveKind::Server => "network-server",
+            DriveKind::Portable(Gadget::Phone) => "phone",
+            DriveKind::Portable(Gadget::Camera) => "camera-photo",
+            DriveKind::Portable(Gadget::Player) => "multimedia-player",
         }
     }
 }

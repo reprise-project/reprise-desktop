@@ -400,6 +400,10 @@ desktop and stays out of the way when it's missing.
   files) and phones in Send To
 - UDisks2, for mounting drives as they're plugged in, Safely Remove
   Hardware, unmounted drives and Eject in Computer, and mounting disk images
+- gvfs's MTP and PTP backends (gvfs-mtp and gvfs-gphoto2 on Arch, part of
+  gvfs-backends on Ubuntu), for phones, media players and cameras plugged in
+  by USB: Computer lists them under Portable Devices, opening one mounts it,
+  and Eject or Safely Remove Hardware unmounts it
 - bolt, for the balloon asking to authorize a new Thunderbolt or USB4 device
   and Settings > Thunderbolt; without it the page is greyed
 - iio-sensor-proxy, for the built-in screen turning with a convertible or

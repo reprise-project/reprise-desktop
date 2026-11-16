@@ -197,6 +197,13 @@ pub struct Explorer {
     pub(crate) shares: reprisefs::netshare::Snapshot,
     /// [`reprisefs::netshare::follow`]'s snapshots, each with a wake.
     share_changes: Option<std::sync::mpsc::Receiver<reprisefs::netshare::Snapshot>>,
+    /// The phones and cameras gvfs's volume monitors list, without their mounts.
+    pub(crate) portable: Vec<reprisefs::portable::Device>,
+    /// [`reprisefs::portable::follow`]'s lists, each with a wake.
+    portable_changes: Option<std::sync::mpsc::Receiver<Vec<reprisefs::portable::Device>>>,
+    /// A mount holding the place arrived after the tree followed it there: the tree follows the
+    /// place again once Computer's node is read.
+    pub(crate) refollow: bool,
     /// A connection to a server under way ([`shares`]).
     pub(crate) connection: Option<shares::Connection>,
     /// The address last typed into Connect to Server, offered again.
@@ -427,6 +434,7 @@ impl Explorer {
         let mut ex = Explorer::unopened(start.clone(), settings, AppIndex::default(), udisks, ctx);
         ex.follow_volumes(ctx.wake.clone());
         ex.follow_shares(ctx.wake.clone());
+        ex.follow_portable(ctx.wake.clone());
         ex.first_show(start, ctx);
         ex
     }
@@ -483,6 +491,9 @@ impl Explorer {
             volume_changes: None,
             shares: Default::default(),
             share_changes: None,
+            portable: Vec::new(),
+            portable_changes: None,
+            refollow: false,
             connection: None,
             last_server: String::new(),
             udisks,
@@ -992,6 +1003,7 @@ impl Explorer {
         let (globs, show_hidden) = (self.globs.clone(), self.settings.show_hidden);
         let (drives, volumes) = (self.drives.clone(), self.volumes.clone());
         let shares = self.shares.shares.clone();
+        let portable = self.portable.clone();
         let mounts = self.drive_mounts.clone();
         let to_fill = foldertree::to_fill(&self.tree, &self.tree_places, &place, &mounts);
         let scale = ctx.icons.scale();
@@ -1002,6 +1014,7 @@ impl Explorer {
                 drives: &drives,
                 volumes: &volumes,
                 shares: &shares,
+                portable: &portable,
             };
             let listed = list(&place, &globs, show_hidden, devices);
             let sizes = reprisekit::icontheme::listing_px(list_px);
@@ -1334,6 +1347,9 @@ impl Explorer {
         }
         if let Some(v) = self.selected_unmounted() {
             return self.mount_and_open(v, ctx);
+        }
+        if let Some(d) = self.selected_unmounted_device() {
+            return self.mount_device_and_open(d, ctx);
         }
         if self.selected_disk_image().is_some() {
             return self.ask_mount_image(ctx);

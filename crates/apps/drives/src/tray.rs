@@ -1,7 +1,7 @@
 //! The Safely Remove Hardware icon: what reprise-drives shows on its
 //! `reprisetray` item and what a click means. A left click opens the menu as a
 //! flyout; a right click gets the same rows through the dbusmenu. Up only while a
-//! removable drive is mounted.
+//! removable drive, phone or camera is mounted.
 
 use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
@@ -14,7 +14,7 @@ pub const TIP: &str = "Safely Remove Hardware";
 pub enum TrayMsg {
     /// Left click at its click point (`Msg::Activate`): the menu.
     Open(i32, i32),
-    /// The dbusmenu's row `i`: safely remove that drive.
+    /// The dbusmenu's row `i`: safely remove that drive or device.
     Remove(usize),
     /// A clickable balloon, by its tag.
     Balloon(u32),
@@ -70,16 +70,17 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::Target;
 
     #[test]
     fn menu_rows_map_back_to_their_drive() {
         let entries = vec![
             Entry {
-                disk: "a".into(),
+                target: Target::Disk("a".into()),
                 label: "Safely remove A - X".into(),
             },
             Entry {
-                disk: "b".into(),
+                target: Target::Disk("b".into()),
                 label: "Safely remove B - Y".into(),
             },
         ];
@@ -100,7 +101,7 @@ mod tests {
     fn the_icon_shows_only_with_a_drive_to_remove() {
         assert!(!shown(&[]).active);
         let one = [Entry {
-            disk: "a".into(),
+            target: Target::Disk("a".into()),
             label: "x".into(),
         }];
         assert!(shown(&one).active);

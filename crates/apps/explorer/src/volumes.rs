@@ -1,8 +1,9 @@
 //! Computer's removable drives through UDisks2: opening an unmounted volume
 //! mounts it first (a locked one asks for its passphrase and unlocks it
 //! before that), and Eject safely removes the row's drive. A disk image
-//! opens by mounting it and shows in Computer until ejected. The calls can
-//! wait on a polkit prompt, so they run as jobs and finish at a wake.
+//! opens by mounting it and shows in Computer until ejected. Phones and
+//! cameras mount and unmount through gvfs. The calls can wait on a polkit
+//! prompt or the device, so they run as jobs and finish at a wake.
 
 use crate::Explorer;
 use crate::dialogs::Dialog;
@@ -10,6 +11,8 @@ use crate::place::{self, Place};
 use repriseapp::unlock::{self, Outcome, Unlock};
 use repriseapp::{Ctx, Event, Reply};
 use reprisefs::listing::Item;
+use reprisefs::netshare::Unmount;
+use reprisefs::portable::{self, Device};
 use reprisefs::udisks::{Error, ErrorKind, Snapshot, Volume};
 
 impl Explorer {
@@ -65,10 +68,93 @@ impl Explorer {
 
     pub(crate) fn ejectable(&self, i: usize) -> bool {
         self.place == Place::Computer
-            && self
-                .items
-                .get(i)
-                .is_some_and(|it| place::eject_target(&self.volumes, it).is_some())
+            && self.items.get(i).is_some_and(|it| {
+                place::eject_target(&self.volumes, it).is_some()
+                    || self.row_device(it).is_some_and(|d| d.mount.is_some())
+            })
+    }
+
+    /// Take the volume monitors' phones and cameras as they come and go.
+    pub(crate) fn follow_portable(&mut self, wake: repriseapp::Waker) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        reprisefs::portable::follow(move |devices| {
+            if tx.send(devices).is_ok() {
+                wake.wake();
+            }
+        });
+        self.portable_changes = Some(rx);
+    }
+
+    /// The latest list `follow_portable` posted, if any arrived: Computer re-lists when it
+    /// differs, and a mounted device's folder takes its name.
+    pub(crate) fn poll_portable(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let devices = self.portable_changes.as_ref()?.try_iter().last()?;
+        if devices == self.portable {
+            return Some(Reply::none());
+        }
+        self.portable = devices;
+        let mut shares = self.shares.clone();
+        portable::dress(&mut shares.shares, &self.portable);
+        if shares != self.shares {
+            return Some(self.shares_changed(shares, ctx));
+        }
+        Some(match self.place == Place::Computer {
+            true => self.refresh(ctx),
+            false => Reply::none(),
+        })
+    }
+
+    /// The phone or camera behind Computer's row `it`, with its mount.
+    fn row_device(&self, it: &Item) -> Option<Device> {
+        let joined = portable::with_mounts(&self.portable, &self.shares.shares);
+        place::row_device(&joined, it).cloned()
+    }
+
+    pub(crate) fn selected_unmounted_device(&self) -> Option<Device> {
+        if self.place != Place::Computer {
+            return None;
+        }
+        let it = self.items.get(self.sv.selection.single()?)?;
+        self.row_device(it).filter(|d| d.mount.is_none())
+    }
+
+    /// Mount `d` through gvfs on a job, then go into its folder; a refusal raises a box.
+    pub(crate) fn mount_device_and_open(&mut self, d: Device, ctx: &mut Ctx) -> Reply {
+        self.spawn_job(ctx, move || {
+            let mounted = portable::mount(&d.uri);
+            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| match mounted {
+                Ok(at) => ex.go(Place::Folder(at), ctx),
+                Err(e) => ex.message_box(&format!("Could not open {}", d.name), e, ctx),
+            })
+        });
+        Reply::redraw()
+    }
+
+    /// Eject on a mounted phone or camera: gvfs unmounts it, and Computer shows it unmounted when
+    /// gvfs says so.
+    fn eject_device(&mut self, d: Device, ctx: &mut Ctx) -> Reply {
+        let Some(at) = d.mount else {
+            return Reply::none();
+        };
+        self.spawn_job(ctx, move || {
+            let done = reprisefs::netshare::unmount(&at, false);
+            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
+                let title = format!("Problem Ejecting {}", d.name);
+                match done {
+                    Ok(()) => Reply::none(),
+                    Err(Unmount::Busy) => {
+                        let text = format!(
+                            "'{}' is in use. Close any program or window using it, and then try \
+                             again.",
+                            d.name
+                        );
+                        ex.message_box(&title, text, ctx)
+                    }
+                    Err(Unmount::Error(e)) => ex.message_box(&title, e, ctx),
+                }
+            })
+        });
+        Reply::redraw()
     }
 
     /// Mount `v`, then go into where it landed; a locked `v` raises Unlock Drive instead. A refusal raises a box titled after the volume; a dismissed prompt raises nothing.
@@ -257,12 +343,15 @@ impl Explorer {
     }
 
     /// Eject: safely remove the drive under the single selected row, or unmount and detach the
-    /// disk image, then re-read the drives.
+    /// disk image, then re-read the drives; or unmount the phone or camera.
     pub(crate) fn eject_selected(&mut self, ctx: &mut Ctx) -> Reply {
-        let Some(udisks) = self.udisks.clone() else {
+        let Some(it) = self.sv.selection.single().and_then(|i| self.items.get(i)) else {
             return Reply::none();
         };
-        let Some(it) = self.sv.selection.single().and_then(|i| self.items.get(i)) else {
+        if let Some(d) = self.row_device(it) {
+            return self.eject_device(d, ctx);
+        }
+        let Some(udisks) = self.udisks.clone() else {
             return Reply::none();
         };
         let Some((v, disk)) = place::eject_target(&self.volumes, it) else {

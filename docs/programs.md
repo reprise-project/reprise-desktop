@@ -41,7 +41,10 @@ The file manager, and the default for folders.
   remove it safely. Network and FUSE mounts from `/proc/mounts` stay out of
   that list, so a slow server can't stall it; the shares gvfs mounted are
   listed under Network Locations from gvfs's own list, without reading the
-  share, and Disconnect on one unmounts it. A disk image (`.iso`, raw
+  share, and Disconnect on one unmounts it. A phone, media player or camera
+  plugged in by USB (gvfs-mtp, gvfs-gphoto2) shows under Portable Devices
+  with the name and icon gvfs gives it: open it to mount it and go into its
+  folder, Eject to unmount it. A disk image (`.iso`, raw
   `.img`) opens by mounting it read-only, Mount being its default row: the
   whole image's file system, or each partition's when it has none, then
   Explorer goes into the first. A double-click or Enter asks Mount / Cancel
@@ -961,7 +964,8 @@ page all open it. Reading GNOME's settings needs the `dconf` command.
 
 - **Safely Remove Hardware.** Handles drives as you plug them in, whatever
   their file system, unless UDisks2 marks them hidden or internal, and shows a
-  tray icon while there's something to eject. What a plugged-in drive does is
+  tray icon while there's something to eject: a mounted drive, or a phone or
+  camera opened in Computer, which its row unmounts. What a plugged-in drive does is
   `[drives] on_insert`, set on Settings > Default Programs:
   - `"ask"` (the default): a "New drive" balloon with Mount and Open and
     Mount buttons (Unlock and Open and Unlock for an encrypted drive, which

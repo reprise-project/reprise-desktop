@@ -181,17 +181,24 @@ impl Explorer {
         Some(self.shares_changed(snap, ctx))
     }
 
-    pub(crate) fn shares_changed(&mut self, snap: Snapshot, ctx: &mut Ctx) -> Reply {
+    /// Takes gvfs's mounts, its phones and cameras named after their devices.
+    pub(crate) fn shares_changed(&mut self, mut snap: Snapshot, ctx: &mut Ctx) -> Reply {
+        reprisefs::portable::dress(&mut snap.shares, &self.portable);
         if snap == self.shares {
             return Reply::none();
         }
         let here = self.place.path();
+        let holds = |s: &netshare::Share| here.as_ref().is_some_and(|h| h.starts_with(&s.path));
         let left = (self.shares.shares.iter())
             .filter(|s| snap.share_at(&s.path).is_none())
-            .any(|s| here.as_ref().is_some_and(|h| h.starts_with(&s.path)));
+            .any(holds);
+        let arrived = (snap.shares.iter())
+            .filter(|s| self.shares.share_at(&s.path).is_none())
+            .any(holds);
         self.shares = snap;
         place::set_share_names(&self.shares.shares);
         self.drive_mounts = place::drive_mounts(&self.drives, &self.shares.shares);
+        self.refollow |= arrived;
         self.refill_tree_node(&Place::Computer, ctx);
         self.build_address(ctx);
         if left {
@@ -714,6 +721,8 @@ mod tests {
             name: "public on nas".into(),
             icon: "folder-remote".into(),
             path: "/run/user/1000/gvfs/smb-share:server=nas,share=public".into(),
+            backend: "smb-share".into(),
+            host: "nas".into(),
         };
         let snap = Snapshot {
             gio: true,

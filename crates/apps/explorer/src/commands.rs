@@ -348,6 +348,9 @@ impl Explorer {
                 if let Some(v) = self.selected_unmounted() {
                     return self.mount_and_open(v, ctx);
                 }
+                if let Some(d) = self.selected_unmounted_device() {
+                    return self.mount_device_and_open(d, ctx);
+                }
                 let dir = self.selected_dir();
                 match dir {
                     Some(p) => self.go(p, ctx),
