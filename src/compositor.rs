@@ -636,7 +636,7 @@ impl State {
         let clip = crate::clipboard::Clip::new(&dh);
 
         Ok(State {
-            compositor_state: CompositorState::new::<State>(&dh),
+            compositor_state: CompositorState::new_v6::<State>(&dh),
             shm_state: ShmState::new::<State>(&dh, vec![]),
             xdg_shell_state: XdgShellState::new::<State>(&dh),
             kde_decoration_state: KdeDecorationState::new::<State>(&dh, KdeDefaultMode::Server),
@@ -1482,6 +1482,46 @@ mod tests {
         surface.commit();
         h.roundtrip(&mut c);
         assert_eq!(crate::backend::take_asks(), vec![]);
+    }
+
+    #[test]
+    fn a_surface_hears_the_scale_and_turn_of_the_output_it_shows_on() {
+        use smithay::output::Scale;
+        use smithay::utils::Transform;
+        let mut h = crate::harness::Harness::new();
+        let out = h.output("TEST-1", 1024, 768);
+        out.change_current_state(None, Some(Transform::_90), Some(Scale::Integer(2)), None);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "app", 300, 200);
+        h.show_frames();
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.preferred_scales, [2]);
+        let turned = smithay::reexports::wayland_server::protocol::wl_output::Transform::_90;
+        assert_eq!(c.side.preferred_transforms, [turned as u32]);
+    }
+
+    #[test]
+    fn a_cursor_surface_hears_the_scale_of_the_output_under_the_pointer_upright() {
+        use smithay::output::Scale;
+        use smithay::utils::Transform;
+        let mut h = crate::harness::Harness::new();
+        let a = h.output("TEST-1", 1024, 768);
+        let b = h.output("TEST-2", 1024, 768);
+        b.change_current_state(None, Some(Transform::_90), Some(Scale::Integer(2)), None);
+        let mut c = h.connect();
+        let cursor = h.bare_surface(&mut c);
+        let b_at = reprisescene::output_rect(&b).expect("TEST-2's place").loc;
+        h.pointer_to(f64::from(b_at.x + 100), f64::from(b_at.y + 100));
+        h.state.cursor = CursorImageStatus::Surface(cursor);
+        crate::backend::send_frame_callbacks(&mut h.state, &a);
+        crate::backend::send_frame_callbacks(&mut h.state, &b);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            c.side.preferred_scales,
+            [2],
+            "only TEST-2 holds the pointer"
+        );
+        assert_eq!(c.side.preferred_transforms, [] as [u32; 0]);
     }
 
     #[test]

@@ -1517,6 +1517,9 @@ pub struct ClientSide {
     pub shells: Vec<Shell>,
     /// Each key event the keyboard heard: its evdev code and whether it went down.
     pub keys: Vec<(u32, bool)>,
+    /// Each `wl_surface.preferred_buffer_scale` and `preferred_buffer_transform` any surface heard.
+    pub preferred_scales: Vec<i32>,
+    pub preferred_transforms: Vec<u32>,
     /// The layout group the last `wl_keyboard.modifiers` named.
     pub group: u32,
     /// Each key and modifiers event the keyboard heard, in order.
@@ -2095,7 +2098,25 @@ impl wc::Dispatch<ExtDataControlSourceV1, Answers> for ClientSide {
 
 wc::delegate_noop!(ClientSide: ignore ExtDataControlManagerV1);
 wc::delegate_noop!(ClientSide: ignore ExtDataControlOfferV1);
-wc::delegate_noop!(ClientSide: ignore WlSurface);
+impl wc::Dispatch<WlSurface, ()> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &WlSurface,
+        ev: wc::protocol::wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        use wc::protocol::wl_surface::Event;
+        match ev {
+            Event::PreferredBufferScale { factor } => st.preferred_scales.push(factor),
+            Event::PreferredBufferTransform { transform } => {
+                st.preferred_transforms.push(transform.into())
+            }
+            _ => {}
+        }
+    }
+}
 wc::delegate_noop!(ClientSide: wc::protocol::wl_region::WlRegion);
 wc::delegate_noop!(ClientSide: ignore ZwpInputPopupSurfaceV2);
 wc::delegate_noop!(ClientSide: ignore wl_shm::WlShm);
