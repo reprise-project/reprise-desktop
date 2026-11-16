@@ -532,6 +532,12 @@ impl State {
                 crate::displaysview::drag(self, pos.x);
                 return;
             }
+            Interaction::PanelBar => {
+                self.pointer_motion(None, pos, time);
+                self.clipview_drag(pos.x, pos.y);
+                self.emoji_drag(pos.x, pos.y);
+                return;
+            }
             Interaction::Idle => {}
         }
         let hit = self.scene_hit(pos);

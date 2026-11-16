@@ -6,9 +6,12 @@
 //! Delete removes it, Escape closes. Pure: the host owns the history and
 //! acts on the events, which name a row by the `id` it was given.
 
-use crate::classic::widgets::{ROW_H as FIELD_H, edit_first_visible};
+use std::time::Instant;
+
+use crate::classic::widgets::{BarHit, ROW_H as FIELD_H, edit_first_visible};
 use crate::controls::listbox::{self, ListBox};
 use crate::controls::metrics::ControlMetrics;
+use crate::controls::scrollbar::RowBar;
 use crate::flyout;
 use crate::look::widgets::{Interaction, draw_edit_field, draw_edit_text};
 use crate::raster::{Canvas, Rect};
@@ -43,6 +46,7 @@ pub struct ClipHistory {
     pub list: ListBox,
     /// Parallel to `list.items`.
     icons: Vec<Option<Canvas>>,
+    bar: RowBar,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,6 +78,7 @@ impl ClipHistory {
             shown: Vec::new(),
             list: ListBox::default(),
             icons: Vec::new(),
+            bar: RowBar::default(),
         };
         m.refilter();
         m
@@ -188,10 +193,10 @@ impl ClipHistory {
                 self.list.select(i, VISIBLE);
                 self.selected().map_or(Event::None, Event::Pick)
             }
-            Hit::ScrollUp => self.scroll(-1),
-            Hit::ScrollDown => self.scroll(1),
-            Hit::PageUp => self.scroll(-page),
-            Hit::PageDown => self.scroll(page),
+            Hit::Bar(b) => {
+                let rows = self.bar.press(b, page.into());
+                self.scroll(rows as i32)
+            }
             _ => Event::None,
         }
     }
@@ -212,6 +217,38 @@ impl ClipHistory {
     /// the view moved.
     pub fn reveal(&mut self, i: usize) -> bool {
         self.list.reveal(i, VISIBLE)
+    }
+
+    /// The pointer at (`x`, `y`) with the bar held: the list follows a held thumb wherever the
+    /// pointer goes, and a held arrow repeats only while the pointer is on it. True when the
+    /// list moved.
+    pub fn drag(&mut self, x: i32, y: i32, cm: &ControlMetrics) -> bool {
+        let ll = listbox::layout(&self.list, layout(self, cm).list, cm);
+        self.bar
+            .hover(listbox::hit(&self.list, &ll, x, y).and_then(listbox::Hit::bar));
+        let Some(grab) = self.bar.grab() else {
+            return false;
+        };
+        let top = listbox::top_at(&self.list, &ll, y, grab);
+        let moved = top != self.list.top;
+        self.list.top = top;
+        moved
+    }
+
+    /// Whether the thumb or an arrow is held: the host sends motion, ticks and the release.
+    pub fn holding(&self) -> bool {
+        self.bar.holding()
+    }
+
+    /// The pointer let go. True when the bar was held.
+    pub fn release(&mut self) -> bool {
+        self.bar.release()
+    }
+
+    /// A host tick at `now`: a held arrow steps once it repeats. True when the list moved.
+    pub fn tick(&mut self, now: Instant) -> bool {
+        let rows = self.bar.tick(now) as i32;
+        rows != 0 && self.list.scroll(rows, VISIBLE)
     }
 }
 
@@ -253,10 +290,7 @@ pub fn layout(m: &ClipHistory, cm: &ControlMetrics) -> Layout {
 pub enum Hit {
     /// A row, as an index into the list as shown.
     Row(usize),
-    ScrollUp,
-    ScrollDown,
-    PageUp,
-    PageDown,
+    Bar(BarHit),
     Field,
     /// Anywhere else on the panel.
     Panel,
@@ -270,11 +304,8 @@ pub fn hit(m: &ClipHistory, x: i32, y: i32, cm: &ControlMetrics) -> Hit {
     let ll = listbox::layout(&m.list, lay.list, cm);
     match listbox::hit(&m.list, &ll, x, y) {
         Some(listbox::Hit::Row(i) | listbox::Hit::Check(i)) => Hit::Row(i),
-        Some(listbox::Hit::ScrollUp) => Hit::ScrollUp,
-        Some(listbox::Hit::ScrollDown) => Hit::ScrollDown,
-        Some(listbox::Hit::PageUp) => Hit::PageUp,
-        Some(listbox::Hit::PageDown) => Hit::PageDown,
-        Some(listbox::Hit::Thumb(_)) | None => Hit::Panel,
+        Some(h) => h.bar().map_or(Hit::Panel, Hit::Bar),
+        None => Hit::Panel,
     }
 }
 
@@ -526,18 +557,62 @@ mod tests {
             lay.list.y + 5,
             &ControlMetrics::CLASSIC,
         );
-        assert_eq!(arrow, Hit::ScrollUp);
+        assert_eq!(arrow, Hit::Bar(BarHit::Back));
         let down = hit(
             &m,
             lay.list.right() - 6,
             lay.list.bottom() - 5,
             &ControlMetrics::CLASSIC,
         );
-        assert_eq!(down, Hit::ScrollDown);
+        assert_eq!(down, Hit::Bar(BarHit::Forward));
         assert_eq!(m.click(down), Event::None);
         assert_eq!(m.list.top, 1);
         assert_eq!(m.click(Hit::Row(3)), Event::Pick(103));
         assert_eq!(m.click(Hit::Row(99)), Event::None);
+    }
+
+    #[test]
+    fn a_thumb_dragged_to_the_bars_end_shows_the_last_row_and_the_release_lets_go() {
+        let cm = ControlMetrics::CLASSIC;
+        let labels: Vec<String> = (0..25).map(|i| format!("entry {i}")).collect();
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let mut m = ClipHistory::new(rows(&refs));
+        let lay = layout(&m, &cm);
+        let ll = listbox::layout(&m.list, lay.list, &cm);
+        let sb = ll.scrollbar.unwrap();
+        let (x, y) = (sb.x + 3, sb.y + sb.width + 2);
+        let press = hit(&m, x, y, &cm);
+        assert!(matches!(press, Hit::Bar(BarHit::Thumb(_))), "{press:?}");
+        assert_eq!(m.click(press), Event::None);
+        assert!(m.holding());
+        assert!(
+            m.drag(x - 300, sb.bottom() + 40, &cm),
+            "off the bar it still steers"
+        );
+        assert_eq!(m.list.top, 25 - VISIBLE, "the last row shows");
+        assert!(m.release());
+        assert!(!m.drag(x, y, &cm), "released: the list stays");
+        assert_eq!(m.list.top, 25 - VISIBLE);
+    }
+
+    #[test]
+    fn a_held_arrow_steps_on_the_hosts_ticks_while_the_pointer_is_on_it() {
+        let cm = ControlMetrics::CLASSIC;
+        let labels: Vec<String> = (0..25).map(|i| format!("entry {i}")).collect();
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let mut m = ClipHistory::new(rows(&refs));
+        let lay = layout(&m, &cm);
+        let (x, y) = (lay.list.right() - 6, lay.list.bottom() - 5);
+        m.click(hit(&m, x, y, &cm));
+        assert_eq!(m.list.top, 1);
+        let t0 = Instant::now();
+        let later = t0 + crate::controls::scrollbar::REPEAT_AFTER;
+        assert!(!m.tick(t0));
+        m.drag(1, 1, &cm);
+        assert!(!m.tick(later), "off the arrow");
+        m.drag(x, y, &cm);
+        assert!(m.tick(later + crate::controls::scrollbar::REPEAT_EVERY));
+        assert_eq!(m.list.top, 2);
     }
 
     #[test]

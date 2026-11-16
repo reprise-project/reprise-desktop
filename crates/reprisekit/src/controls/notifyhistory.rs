@@ -20,10 +20,12 @@
 
 use std::collections::BTreeSet;
 use std::rc::Rc;
+use std::time::Instant;
 
 use crate::classic::widgets::{BUTTON_H, BUTTON_W, draw_arrow_h, draw_arrow_v, draw_label};
 use crate::controls::grouplist::{self, GroupList, ROW_H, Row, Shown};
 use crate::controls::metrics::ControlMetrics;
+use crate::controls::scrollbar::RowBar;
 use crate::flyout;
 use crate::look::widgets::{draw_button, draw_checkbox, draw_disabled_label};
 use crate::pointer::{Interaction, Pointer};
@@ -99,6 +101,7 @@ pub struct History {
     folded: BTreeSet<String>,
     /// The check box, Clear All or a group's Clear the pointer holds down.
     pointer: Pointer<Held>,
+    bar: RowBar,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -241,6 +244,7 @@ impl History {
             entries: Vec::new(),
             folded: BTreeSet::new(),
             pointer: Pointer::new(),
+            bar: RowBar::default(),
         }
     }
 
@@ -486,15 +490,9 @@ impl History {
                 }
                 None => Event::None,
             },
-            Hit::List(bar) => {
-                let by = match bar {
-                    grouplist::Hit::ScrollUp => -1,
-                    grouplist::Hit::ScrollDown => 1,
-                    grouplist::Hit::PageUp => -ROWS,
-                    grouplist::Hit::PageDown => ROWS,
-                    _ => 0,
-                };
-                if self.list.scroll(by, ROWS as usize) {
+            Hit::List(h) => {
+                let by = h.bar().map_or(0, |b| self.bar.press(b, ROWS.into()));
+                if self.list.scroll(by as i32, ROWS as usize) {
                     Event::Redraw
                 } else {
                     Event::None
@@ -510,7 +508,30 @@ impl History {
     }
 
     pub fn holding(&self) -> bool {
-        self.pointer.holding()
+        self.pointer.holding() || self.bar.holding()
+    }
+
+    /// The pointer at (`x`, `y`) with the list's bar held: the list follows a held thumb
+    /// wherever the pointer goes, and a held arrow repeats only while the pointer is on it. True
+    /// when the list moved.
+    pub fn drag(&mut self, x: i32, y: i32, cm: &ControlMetrics) -> bool {
+        let ll = self.list_layout(cm);
+        let on = grouplist::hit(&self.list, &ll, x, y).and_then(grouplist::Hit::bar);
+        self.bar.hover(on);
+        let Some(grab) = self.bar.grab() else {
+            return false;
+        };
+        let top = grouplist::top_at(&self.list, &ll, y, grab);
+        let moved = top != self.list.top;
+        self.list.top = top;
+        moved
+    }
+
+    /// A host tick at `now`: a held arrow of the list's bar steps once it repeats. True when the
+    /// list moved.
+    pub fn tick(&mut self, now: Instant) -> bool {
+        let rows = self.bar.tick(now) as i32;
+        rows != 0 && self.list.scroll(rows, ROWS as usize)
     }
 
     /// The pointer moved onto `hit` while holding a part, which draws
@@ -523,7 +544,7 @@ impl History {
     /// Clear clears, when the release lands on it; off it, it pops back
     /// up.
     pub fn release(&mut self, hit: Hit) -> Event {
-        if !self.pointer.holding() {
+        if self.bar.release() || !self.pointer.holding() {
             return Event::None;
         }
         self.pointer.motion(Held::of(hit));
@@ -544,6 +565,7 @@ impl History {
     }
 
     pub fn cancel_press(&mut self) -> bool {
+        self.bar.release();
         self.pointer.clear()
     }
 
@@ -873,6 +895,67 @@ mod tests {
         assert_eq!(h.note_at(0), None);
         assert_eq!(h.list.trail[0], GROUP_TRAIL);
         assert_eq!(h.list.trail[1], TIME_W);
+    }
+
+    fn many(n: u32) -> History {
+        let mut h = History::new();
+        h.set_entries(
+            (0..n)
+                .map(|i| Entry {
+                    id: i,
+                    key: "mail".into(),
+                    app: "Mail".into(),
+                    icon: None,
+                    message: format!("note {i}"),
+                    time: "1:00 PM".into(),
+                    live: true,
+                    replied: false,
+                })
+                .collect(),
+        );
+        h
+    }
+
+    #[test]
+    fn the_lists_thumb_dragged_to_the_bars_end_shows_the_last_row_and_the_release_lets_go() {
+        let cm = ControlMetrics::CLASSIC;
+        let mut h = many(30);
+        let last = h.list.rows.len() - ROWS as usize;
+        let sb = h.list_layout(&cm).scrollbar.unwrap();
+        let (x, y) = (sb.x + 3, sb.y + sb.width + 2);
+        let press = hit(&h, x, y, &cm);
+        assert!(
+            matches!(press, Hit::List(grouplist::Hit::Thumb(_))),
+            "{press:?}"
+        );
+        h.press(press);
+        assert!(h.holding());
+        assert!(
+            h.drag(x + 200, sb.bottom() + 40, &cm),
+            "off the bar it still steers"
+        );
+        assert_eq!(h.list.top, last, "the last row shows");
+        assert_eq!(h.release(hit(&h, x, y, &cm)), Event::None);
+        assert!(!h.holding());
+        assert!(!h.drag(x, y, &cm), "released: the list stays");
+        assert_eq!(h.list.top, last);
+    }
+
+    #[test]
+    fn a_held_arrow_of_the_list_steps_on_the_hosts_ticks() {
+        let cm = ControlMetrics::CLASSIC;
+        let mut h = many(30);
+        let sb = h.list_layout(&cm).scrollbar.unwrap();
+        let down = hit(&h, sb.x + 3, sb.bottom() - 3, &cm);
+        assert_eq!(down, Hit::List(grouplist::Hit::ScrollDown));
+        assert_eq!(h.press(down), Event::Redraw);
+        assert_eq!(h.list.top, 1);
+        let t0 = Instant::now();
+        assert!(!h.tick(t0));
+        assert!(h.tick(t0 + crate::controls::scrollbar::REPEAT_AFTER));
+        assert_eq!(h.list.top, 2);
+        assert!(h.cancel_press() || !h.holding());
+        assert!(!h.holding());
     }
 
     #[test]

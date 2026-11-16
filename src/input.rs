@@ -281,10 +281,14 @@ pub enum Interaction {
     /// pointer is on it and acts on the release over it.
     DialogPress,
     /// A notification balloon's action button, or the history's check box
-    /// or Clear All, held down: it acts on the release over it.
+    /// or Clear All, held down: it acts on the release over it. The history's
+    /// held scrollbar follows the pointer until the release.
     NotifyPress,
     /// A slider on the displays panel held: it follows the pointer until the release.
     DisplaysSlide,
+    /// The clipboard history's or the emoji picker's scrollbar thumb or arrow held: the thumb
+    /// follows the pointer until the release.
+    PanelBar,
     /// Mini view `id` held by its picture, `dx`/`dy` from its top-left: it follows the pointer
     /// once `moved` past `desktop::DRAG_PX` from `press`; a release that never moved is a click.
     MiniMove {
@@ -334,6 +338,7 @@ impl Interaction {
             | Interaction::DialogPress
             | Interaction::NotifyPress
             | Interaction::DisplaysSlide
+            | Interaction::PanelBar
             | Interaction::MiniMove { .. }
             | Interaction::MiniResize { .. }
             | Interaction::Idle => false,

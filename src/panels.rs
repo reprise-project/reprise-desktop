@@ -1,3 +1,7 @@
+use std::time::Instant;
+
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+
 use crate::compositor::State;
 use crate::raster::Rect;
 
@@ -36,6 +40,25 @@ impl State {
             self.restart_caret();
         } else {
             self.stop_caret();
+        }
+    }
+
+    /// Tick a panel's held scrollbar arrow every [`REPEAT_EVERY`] while `step`, which steps the
+    /// panel's model and redraws it, says the bar is still held.
+    ///
+    /// [`REPEAT_EVERY`]: reprisekit::controls::scrollbar::REPEAT_EVERY
+    pub fn repeat_panel_bar(&mut self, step: fn(&mut State, Instant) -> bool) {
+        let every = reprisekit::controls::scrollbar::REPEAT_EVERY;
+        let added =
+            self.handle.insert_source(
+                Timer::from_duration(every),
+                move |now, _, state| match step(state, now) {
+                    true => TimeoutAction::ToDuration(every),
+                    false => TimeoutAction::Drop,
+                },
+            );
+        if let Err(e) = added {
+            log::warn!("panel: no scroll timer: {}", e.error);
         }
     }
 

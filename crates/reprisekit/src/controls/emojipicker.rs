@@ -4,12 +4,15 @@
 //! name or shortcode has a word starting with each word typed, whole words first. Arrows and Page
 //! Up/Down move the highlight, Enter picks, Escape closes. Pure: the host types the pick.
 
+use std::time::Instant;
+
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{
-    FIELD_PAD, ROW_H as FIELD_H, ScrollHit, access_edit, edit_first_visible, scrollbar_hit,
+    BarHit, FIELD_PAD, ROW_H as FIELD_H, ScrollParts, access_edit, bar_hit, edit_first_visible,
     scrollbar_parts,
 };
 use crate::controls::metrics::ControlMetrics;
+use crate::controls::scrollbar::RowBar;
 use crate::emoji::{EmojiFont, Entry};
 use crate::flyout;
 use crate::look::widgets::{
@@ -40,6 +43,7 @@ pub struct EmojiPicker {
     shown: Vec<usize>,
     pub selected: Option<usize>,
     pub top: usize,
+    bar: RowBar,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,6 +79,7 @@ impl EmojiPicker {
             shown: Vec::new(),
             selected: None,
             top: 0,
+            bar: RowBar::default(),
         };
         m.refilter();
         m
@@ -187,24 +192,63 @@ impl EmojiPicker {
         }
     }
 
-    /// A left click on `hit`: a cell picks it, the scroll arrows and track scroll.
+    /// A left press on `hit`: a cell picks it, the scroll arrows and track scroll, and the thumb
+    /// or an arrow stays held for [`EmojiPicker::drag`] and [`EmojiPicker::tick`].
     pub fn click(&mut self, hit: Hit) -> Event {
         match hit {
             Hit::Cell(i) if i < self.shown.len() => {
                 self.select(i);
                 self.pick()
             }
-            Hit::ScrollUp => self.scroll_by(-1),
-            Hit::ScrollDown => self.scroll_by(1),
-            Hit::PageUp => self.scroll_by(-(ROWS as i64)),
-            Hit::PageDown => self.scroll_by(ROWS as i64),
+            Hit::Bar(b) => {
+                let rows = self.bar.press(b, ROWS as i64);
+                self.scroll(rows);
+                Event::None
+            }
             _ => Event::None,
         }
     }
 
-    fn scroll_by(&mut self, rows: i64) -> Event {
+    fn bar_parts(&self, lay: &Layout) -> ScrollParts {
+        let (top, rows) = (self.top, self.rows());
+        scrollbar_parts(lay.scrollbar, 1, top, ROWS, rows, false, lay.thumb_min)
+    }
+
+    /// The pointer at (`x`, `y`) with the bar held: the grid follows a held thumb wherever the
+    /// pointer goes, and a held arrow repeats only while the pointer is on it. True when the grid
+    /// moved.
+    pub fn drag(&mut self, x: i32, y: i32, cm: &ControlMetrics) -> bool {
+        let lay = layout(cm);
+        let p = self.bar_parts(&lay);
+        let on = lay
+            .scrollbar
+            .contains(x, y)
+            .then(|| bar_hit(&p, x, y, false));
+        self.bar.hover(on);
+        match self.bar.drag(&p, y, ROWS, self.rows()) {
+            Some(top) if top != self.top => {
+                self.top = top;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the thumb or an arrow is held: the host sends motion, ticks and the release.
+    pub fn holding(&self) -> bool {
+        self.bar.holding()
+    }
+
+    /// The pointer let go. True when the bar was held.
+    pub fn release(&mut self) -> bool {
+        self.bar.release()
+    }
+
+    /// A host tick at `now`: a held arrow steps once it repeats. True when the grid moved.
+    pub fn tick(&mut self, now: Instant) -> bool {
+        let (top, rows) = (self.top, self.bar.tick(now));
         self.scroll(rows);
-        Event::None
+        self.top != top
     }
 }
 
@@ -314,10 +358,7 @@ fn cell_place(m: &EmojiPicker, lay: &Layout, i: usize) -> Rect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Cell(usize),
-    ScrollUp,
-    ScrollDown,
-    PageUp,
-    PageDown,
+    Bar(BarHit),
     Field,
     Panel,
 }
@@ -328,22 +369,7 @@ pub fn hit(m: &EmojiPicker, x: i32, y: i32, cm: &ControlMetrics) -> Hit {
         return Hit::Field;
     }
     if lay.scrollbar.contains(x, y) {
-        let p = scrollbar_parts(
-            lay.scrollbar,
-            1,
-            m.top,
-            ROWS,
-            m.rows(),
-            false,
-            lay.thumb_min,
-        );
-        return match scrollbar_hit(&p, x, y, false) {
-            Some(ScrollHit::Back) => Hit::ScrollUp,
-            Some(ScrollHit::Forward) => Hit::ScrollDown,
-            Some(ScrollHit::PageBack) => Hit::PageUp,
-            Some(ScrollHit::PageForward) => Hit::PageDown,
-            Some(ScrollHit::Thumb) | None => Hit::Panel,
-        };
+        return Hit::Bar(bar_hit(&m.bar_parts(&lay), x, y, false));
     }
     if !lay.cells.contains(x, y) {
         return Hit::Panel;
@@ -542,6 +568,43 @@ mod tests {
         m.key(Key::Char(EditKey::Insert(s.into())))
     }
 
+    #[test]
+    fn a_thumb_dragged_to_the_bars_end_shows_the_last_row_and_the_release_lets_go() {
+        let cm = ControlMetrics::CLASSIC;
+        let mut m = EmojiPicker::new(Vec::new(), catalog(None));
+        let lay = layout(&cm);
+        let thumb = m.bar_parts(&lay).thumb.unwrap();
+        let (x, y) = (lay.scrollbar.x + 3, thumb.y + 2);
+        let press = hit(&m, x, y, &cm);
+        assert_eq!(press, Hit::Bar(BarHit::Thumb(2)));
+        assert_eq!(m.click(press), Event::None);
+        assert!(m.holding());
+        assert!(
+            m.drag(x + 200, lay.scrollbar.bottom() + 50, &cm),
+            "off the bar it still steers"
+        );
+        assert_eq!(m.top, m.rows() - ROWS, "the last row shows");
+        assert!(m.release());
+        assert!(!m.drag(x, y, &cm), "released: the grid stays");
+        assert_eq!(m.top, m.rows() - ROWS);
+    }
+
+    #[test]
+    fn a_held_arrow_steps_on_the_hosts_ticks() {
+        let cm = ControlMetrics::CLASSIC;
+        let mut m = EmojiPicker::new(Vec::new(), catalog(None));
+        let lay = layout(&cm);
+        let down = hit(&m, lay.scrollbar.x + 3, lay.scrollbar.bottom() - 3, &cm);
+        m.click(down);
+        assert_eq!(m.top, 1);
+        let t0 = Instant::now();
+        assert!(!m.tick(t0));
+        assert!(m.tick(t0 + crate::controls::scrollbar::REPEAT_AFTER));
+        assert_eq!(m.top, 2);
+        m.release();
+        assert!(!m.holding());
+    }
+
     fn shown(m: &EmojiPicker) -> Vec<&'static str> {
         m.shown().map(|e| e.emoji).collect()
     }
@@ -643,7 +706,7 @@ mod tests {
             lay.scrollbar.bottom() - 3,
             &ControlMetrics::CLASSIC,
         );
-        assert_eq!(down, Hit::ScrollDown);
+        assert_eq!(down, Hit::Bar(BarHit::Forward));
         m.click(down);
         assert_eq!(m.top, 1);
         assert_eq!(
