@@ -117,7 +117,7 @@ impl State {
                     position: Some(w.position),
                     transform: h.output.current_transform(),
                     scale: w.scale,
-                    adaptive_sync: h.vrr_on,
+                    adaptive_sync: None,
                 };
                 (h, req)
             })

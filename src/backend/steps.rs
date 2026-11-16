@@ -229,6 +229,9 @@ impl Backend {
 /// no turn holds clients' round trips for all of it. A step that sends a blocking job leaves
 /// the rest for its `Done`.
 pub(super) fn on_quiet(state: &mut State) {
+    if state.vrr_stale {
+        state.sync_vrr();
+    }
     let outman = state.outputs_mgmt.holds();
     let Some(b) = state.backend.as_mut() else {
         return;

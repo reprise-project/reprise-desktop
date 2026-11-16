@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{OutputConfig, OutputMode, Transform};
+use crate::config::{OutputConfig, OutputMode, Transform, VrrPolicy};
 
 pub fn path() -> PathBuf {
     reprisexdg::state_home()
@@ -274,11 +274,17 @@ pub fn outputs_fingerprint(outputs: &[OutputConfig]) -> String {
     let mut text = String::new();
     for o in outputs {
         let mode = o.mode.map(|m| m.to_string()).unwrap_or_default();
+        // Written as the `Option<bool>` it once was, so a file saved before "fullscreen" matches.
+        let vrr = match o.adaptive_sync {
+            None => "None",
+            Some(VrrPolicy::Off) => "Some(false)",
+            Some(VrrPolicy::On) => "Some(true)",
+            Some(VrrPolicy::Fullscreen) => "Some(fullscreen)",
+        };
         text += &format!(
-            "{}|{}|{mode}|{:?}|{}|{:?}|{}\n",
+            "{}|{}|{mode}|{vrr}|{}|{:?}|{}\n",
             o.name,
             o.scale,
-            o.adaptive_sync,
             o.transform.name(),
             o.position,
             o.primary
@@ -545,5 +551,34 @@ transform = "normal"
         };
         assert_ne!(f, outputs_fingerprint(&[moved]));
         assert_ne!(f, outputs_fingerprint(&[]));
+    }
+
+    #[test]
+    fn adaptive_sync_on_fingerprints_as_the_bool_it_was_written_as() {
+        let vrr = |v| OutputConfig {
+            name: "DP-1".into(),
+            scale: 1.0,
+            mode: None,
+            adaptive_sync: v,
+            transform: Transform::Normal,
+            position: None,
+            primary: false,
+            icc_profile: None,
+        };
+        assert_eq!(
+            outputs_fingerprint(&[vrr(Some(VrrPolicy::On))]),
+            "3ae9c146d83c6377",
+            "the hash of DP-1|1||Some(true)|normal|None|false"
+        );
+        let all = [
+            None,
+            Some(VrrPolicy::Off),
+            Some(VrrPolicy::On),
+            Some(VrrPolicy::Fullscreen),
+        ]
+        .map(|v| outputs_fingerprint(&[vrr(v)]));
+        for (i, a) in all.iter().enumerate() {
+            assert!(!all[..i].contains(a), "{i} differs from the ones before");
+        }
     }
 }

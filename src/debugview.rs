@@ -515,7 +515,7 @@ mod tests {
             position: Some((0, 0)),
             transform: smithay::utils::Transform::Normal,
             scale: 1.0,
-            adaptive_sync: false,
+            adaptive_sync: None,
         };
         for o in [&a, &b] {
             assert!(h.state.apply_head(o, &req));

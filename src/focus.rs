@@ -92,6 +92,7 @@ impl State {
         }
         crate::autohideview::poke(self);
         crate::notifyview::suppress_changed(self);
+        self.sync_vrr();
     }
 
     /// Focus and raise `w`, showing its desktop first. A window under a modal

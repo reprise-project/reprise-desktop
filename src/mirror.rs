@@ -221,7 +221,7 @@ mod tests {
             position: Some(place),
             transform: Transform::Normal,
             scale: 1.0,
-            adaptive_sync: false,
+            adaptive_sync: None,
         };
         assert!(h.state.apply_head(o, &req));
         h.state.update_layout();

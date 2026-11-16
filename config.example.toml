@@ -10,7 +10,7 @@ startmenu_banner = "Reprise Desktop"   # text of the vertical band on the Start 
 desktop_icons = true          # icons for the files in ~/Desktop (XDG_DESKTOP_DIR); false hides them and the desktop takes no files, the system icons stay
 # desktop_extensions = "hide"  # file name extensions in desktop labels: "hide" (every registered type's), "hide_launchers" (only .desktop) or "show"; report.pdf.sh always shows in full
 start_icon = false            # the Start button's logo: the icon theme's start-here (true) or the Reprise mark (false)
-adaptive_sync = false         # variable refresh rate on every output that supports it; an [[outputs]] entry overrides it, and the Display page of Reprise Settings sets that one
+adaptive_sync = false         # variable refresh rate on every output that supports it: true, false, or "fullscreen" for only while the focused window is fullscreen on the output (games and videos, without flicker on the desktop); an [[outputs]] entry overrides it, and the Display page of Reprise Settings sets that one
 system_icons = ["documents", "computer", "home", "recycle-bin"]   # the desktop's system icons, in order; home is your home folder
 # desktop_widgets = ["clock", "calendar", "meter"] # widgets standing on the desktop, each once; default none; the desktop menu's Widgets and Settings > Background set it; places and options are kept in $XDG_STATE_HOME/reprise/widgets.toml
 
@@ -324,7 +324,7 @@ suspend_after = 0            # run [power] standby
 # scale = 1.5                # 1 to 4 in steps of 0.25; drawn at the next whole scale, then scaled down
 # mode = "2560x1440@59.95"   # WIDTHxHEIGHT[@HZ]; the preferred mode when left out or not offered
 # transform = "90"           # normal, 90, 180, 270, flipped, flipped-90, flipped-180, flipped-270
-# adaptive_sync = true       # overrides the top-level adaptive_sync for this output
+# adaptive_sync = "fullscreen"  # true, false or "fullscreen"; overrides the top-level adaptive_sync for this output
 # icc_profile = "~/.local/share/icc/studio.icc"  # an ICC profile whose calibration curves (vcgt) go into this output's gamma table, night light on top; the Display page's Color profile list sets it
 
 # [screenshot]               # every screenshot goes to the clipboard; Settings > Screen Capture sets these

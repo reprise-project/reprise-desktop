@@ -299,11 +299,17 @@ pub struct State {
     pub launcher_entries: crate::launcherentry::Entries,
     /// The DRM session, GPU and connectors; None only while starting.
     pub backend: Option<Backend>,
+    /// `adaptive_sync` set by output management, by output name, until the config names it again.
+    pub vrr_policy: std::collections::HashMap<String, crate::config::VrrPolicy>,
+    /// A VRR change waits for the display to go quiet (`sync_vrr`).
+    pub vrr_stale: bool,
     /// A test's connectors, standing in for `backend` (`backend::fake`).
     #[cfg(test)]
     pub test_heads: Vec<smithay::output::Output>,
     #[cfg(test)]
     pub test_modes: crate::backend::fake::Modes,
+    #[cfg(test)]
+    pub test_vrr: crate::backend::fake::Vrr,
     /// Mode changes `backend::retry_mode` queued on `test_heads`.
     #[cfg(test)]
     pub test_mode_retries: Vec<(smithay::output::Output, usize)>,
@@ -746,10 +752,14 @@ impl State {
                 Default::default()
             },
             backend: None,
+            vrr_policy: Default::default(),
+            vrr_stale: false,
             #[cfg(test)]
             test_heads: Vec::new(),
             #[cfg(test)]
             test_modes: Default::default(),
+            #[cfg(test)]
+            test_vrr: Default::default(),
             #[cfg(test)]
             test_mode_retries: Vec::new(),
             #[cfg(test)]

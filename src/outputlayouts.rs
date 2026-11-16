@@ -104,7 +104,6 @@ pub fn head_request(
     modes: &[ModeInfo],
     current: Option<usize>,
     driven: bool,
-    adaptive_sync: bool,
 ) -> HeadRequest {
     let mode = pick_mode(modes, m.mode.as_ref()).filter(|&i| !driven || Some(i) != current);
     HeadRequest {
@@ -113,7 +112,7 @@ pub fn head_request(
         position: Some(m.position),
         transform: transform(m.transform),
         scale: f64::from(m.scale),
-        adaptive_sync,
+        adaptive_sync: None,
     }
 }
 
@@ -151,8 +150,7 @@ impl State {
             let Some((_, m)) = active.iter().find(|(c, _)| *c == name) else {
                 continue;
             };
-            let vrr = self.config.adaptive_sync_for_output_name(&name);
-            let req = head_request(m, &head.modes, head.current, head.enabled, vrr);
+            let req = head_request(m, &head.modes, head.current, head.enabled);
             if self.apply_head(&head.output, &req) {
                 continue;
             }
@@ -399,13 +397,7 @@ mod tests {
 
     #[test]
     fn a_saved_monitor_asks_its_mode_place_scale_and_turn() {
-        let r = head_request(
-            &saved("2560x1440@143.912", 1920),
-            &modes(),
-            Some(0),
-            true,
-            true,
-        );
+        let r = head_request(&saved("2560x1440@143.912", 1920), &modes(), Some(0), true);
         assert_eq!(
             r,
             HeadRequest {
@@ -414,38 +406,26 @@ mod tests {
                 position: Some((1920, 0)),
                 transform: Transform::_90,
                 scale: 1.25,
-                adaptive_sync: true,
+                adaptive_sync: None,
             }
         );
     }
 
     #[test]
     fn a_driven_monitor_already_in_the_saved_mode_asks_no_modeset() {
-        let r = head_request(
-            &saved("2560x1440@59.951", 0),
-            &modes(),
-            Some(0),
-            true,
-            false,
-        );
+        let r = head_request(&saved("2560x1440@59.951", 0), &modes(), Some(0), true);
         assert_eq!(r.mode, None);
     }
 
     #[test]
     fn a_parked_monitor_always_asks_a_mode() {
-        let r = head_request(
-            &saved("2560x1440@59.951", 0),
-            &modes(),
-            Some(0),
-            false,
-            false,
-        );
+        let r = head_request(&saved("2560x1440@59.951", 0), &modes(), Some(0), false);
         assert_eq!(r.mode, Some(0));
     }
 
     #[test]
     fn a_saved_mode_the_connector_lacks_takes_the_preferred_one() {
-        let r = head_request(&saved("3840x2160@60", 0), &modes(), Some(2), true, false);
+        let r = head_request(&saved("3840x2160@60", 0), &modes(), Some(2), true);
         assert_eq!(r.mode, Some(0));
     }
 
@@ -456,7 +436,7 @@ mod tests {
             mode: None,
             ..saved("1920x1080", 0)
         };
-        assert!(!head_request(&off, &modes(), Some(0), true, false).enabled);
+        assert!(!head_request(&off, &modes(), Some(0), true).enabled);
     }
 
     #[test]
@@ -550,7 +530,7 @@ mod tests {
             position: None,
             transform: Transform::Normal,
             scale: 1.0,
-            adaptive_sync: false,
+            adaptive_sync: None,
         };
         assert!(h.state.apply_head(&panel, &req));
         assert_eq!(
@@ -679,7 +659,7 @@ mod tests {
             position: None,
             transform: Transform::Normal,
             scale: 1.0,
-            adaptive_sync: false,
+            adaptive_sync: None,
         };
         assert!(h.state.apply_head(&out, &req(false)), "turned off");
         assert!(

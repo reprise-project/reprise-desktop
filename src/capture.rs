@@ -1466,7 +1466,7 @@ mod tests {
                 position: None,
                 transform,
                 scale,
-                adaptive_sync: false,
+                adaptive_sync: None,
             };
             assert!(h.state.apply_head(&output, &req), "{transform:?} applies");
             client.roundtrip(&mut h);

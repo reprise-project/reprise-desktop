@@ -69,18 +69,42 @@ fn outputs_section_parses_and_validates_scale() {
 #[test]
 fn adaptive_sync_is_global_with_a_per_output_override() {
     let c = Config::default();
-    assert!(!c.adaptive_sync_for_output_name("DP-1"));
+    assert_eq!(c.adaptive_sync_for_output_name("DP-1"), VrrPolicy::Off);
     let c = Config::parse(
-        "adaptive_sync = true\n\n[[outputs]]\nname = \"DP-1\"\nadaptive_sync = false\n\n[[outputs]]\nname = \"DP-2\"\n",
+        "adaptive_sync = true\n\n[[outputs]]\nname = \"DP-1\"\nadaptive_sync = false\n\n\
+         [[outputs]]\nname = \"DP-2\"\n\n[[outputs]]\nname = \"DP-3\"\nadaptive_sync = \"fullscreen\"\n",
     )
     .unwrap();
-    assert!(c.adaptive_sync);
-    assert!(!c.adaptive_sync_for_output_name("DP-1"));
-    assert!(c.adaptive_sync_for_output_name("DP-2"));
-    assert!(c.adaptive_sync_for_output_name("HDMI-A-1"));
-    let c = Config::parse("[[outputs]]\nname = \"DP-1\"\nadaptive_sync = true\n").unwrap();
-    assert!(c.adaptive_sync_for_output_name("DP-1"));
-    assert!(!c.adaptive_sync_for_output_name("DP-2"));
+    assert_eq!(c.adaptive_sync, VrrPolicy::On);
+    assert_eq!(c.adaptive_sync_for_output_name("DP-1"), VrrPolicy::Off);
+    assert_eq!(c.adaptive_sync_for_output_name("DP-2"), VrrPolicy::On);
+    assert_eq!(
+        c.adaptive_sync_for_output_name("DP-3"),
+        VrrPolicy::Fullscreen
+    );
+    assert_eq!(c.adaptive_sync_for_output_name("HDMI-A-1"), VrrPolicy::On);
+    let c = Config::parse("adaptive_sync = \"fullscreen\"\n").unwrap();
+    assert_eq!(
+        c.adaptive_sync_for_output_name("DP-1"),
+        VrrPolicy::Fullscreen
+    );
+}
+
+#[test]
+fn adaptive_sync_takes_a_bool_or_fullscreen_and_nothing_else() {
+    for bad in ["\"on\"", "\"auto\"", "1"] {
+        assert!(
+            Config::parse(&format!("adaptive_sync = {bad}\n")).is_err(),
+            "{bad} at the top"
+        );
+        assert!(
+            Config::parse(&format!(
+                "[[outputs]]\nname = \"DP-1\"\nadaptive_sync = {bad}\n"
+            ))
+            .is_err(),
+            "{bad} on an output"
+        );
+    }
 }
 
 #[test]

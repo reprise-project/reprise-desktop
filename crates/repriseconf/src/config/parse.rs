@@ -6,8 +6,8 @@ use super::{
     FontSmoothing, HIDDEN_FRAME_RATE_MAX, HotCorner, IdleOverrides, MAX_POSITION, MenuAnimation,
     OutputConfig, OutputMode, PREVIEW_FPS_MAX, PointerConfig, PowerAction, REPEAT_RATE_MAX,
     SNAP_DISTANCE_MAX, SWITCH_MS_MAX, ShortcutOverlay, StartMenuStyle, SwitchStyle, SwitcherConfig,
-    TabletConfig, TaskbarButtons, TaskbarConfig, TitleDoubleClick, Transform, WORKSPACES_MAX,
-    quarter_scale, switcher_size,
+    TabletConfig, TaskbarButtons, TaskbarConfig, TitleDoubleClick, Transform, VrrPolicy,
+    WORKSPACES_MAX, quarter_scale, switcher_size,
 };
 use reprisekit::interface::Interface;
 use reprisekit::theme::{Color, FontConfig};
@@ -85,6 +85,15 @@ pub(super) fn wallpaper_image(
 
 /// A glass-tinted built-in resolves to a concrete variant, so a new glass colour
 /// or mode is a new path and the wallpaper redraws.
+/// `adaptive_sync` as `key` gives it: true, false or "fullscreen".
+fn vrr_policy(v: AutoFlag, key: &str) -> Result<VrrPolicy, String> {
+    match v {
+        AutoFlag::Flag(on) => Ok(VrrPolicy::of(on)),
+        AutoFlag::Word(w) => VrrPolicy::word(&w)
+            .ok_or_else(|| format!("{key} = {w:?} is not true, false or \"fullscreen\"")),
+    }
+}
+
 fn builtin_path(
     b: reprisekit::wallpapers::Builtin,
     glass: &reprisekit::glass::Settings,
@@ -718,7 +727,7 @@ impl Config {
             }
         }
         if let Some(v) = file.adaptive_sync {
-            cfg.adaptive_sync = v;
+            cfg.adaptive_sync = vrr_policy(v, "adaptive_sync")?;
         }
         if let Some(s) = file.window_snapping {
             if let Some(v) = s.enabled {
@@ -1304,11 +1313,14 @@ impl Config {
                                 .map_err(|e| format!("outputs.{}.icc_profile {e}", o.name))?,
                         ),
                     };
+                    let adaptive_sync = (o.adaptive_sync)
+                        .map(|v| vrr_policy(v, &format!("outputs.{}.adaptive_sync", o.name)))
+                        .transpose()?;
                     Ok(OutputConfig {
                         name: o.name,
                         scale,
                         mode,
-                        adaptive_sync: o.adaptive_sync,
+                        adaptive_sync,
                         transform,
                         position,
                         primary: o.primary.unwrap_or(false),

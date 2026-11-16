@@ -149,6 +149,7 @@ mod toplevelsdrag;
 mod touch;
 mod virtualout;
 mod virtualpointer;
+mod vrr;
 mod warp;
 mod workspaces;
 mod xdgforeign;
