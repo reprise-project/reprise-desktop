@@ -1623,6 +1623,49 @@ fn a_drop_of_files_runs_in_explorer_and_an_icon_put_on_a_cell_lands_there() {
 }
 
 #[test]
+fn a_cut_file_leaves_the_clipboard_once_its_move_has_ended_and_only_if_it_moved() {
+    use crate::clipboard::{FileClip, file_offers};
+    use crate::dragview::{DragSource, DropOp, DropTarget};
+    crate::spawn::record();
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let root = crate::harness::scratch().join("desktop-move-cut");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("dest")).unwrap();
+    let (moved, kept) = (root.join("a.txt"), root.join("b.txt"));
+    std::fs::write(&moved, "a").unwrap();
+    std::fs::write(&kept, "b").unwrap();
+    let cut = FileClip {
+        cut: true,
+        paths: vec![moved.clone(), kept.clone()],
+    };
+    h.state.clip_offer_each(file_offers(&cut).unwrap());
+    let files = [
+        DragSource::file(moved.clone()),
+        DragSource::file(kept.clone()),
+    ];
+    let folder = DropTarget::Folder(root.join("dest"));
+    h.state
+        .put_all(&files, &folder, DropOp::Move, &HashSet::new());
+    assert_eq!(job_args(&h).len(), 1, "one move in Explorer");
+    assert_eq!(
+        h.state.own_file_clip(),
+        Some(cut),
+        "the clipboard is left alone while the move runs"
+    );
+    std::fs::rename(&moved, root.join("dest/a.txt")).unwrap();
+    h.state.file_jobs_ended();
+    assert_eq!(
+        h.state.own_file_clip(),
+        Some(FileClip {
+            cut: true,
+            paths: vec![kept],
+        }),
+        "the file the move left in place stays cut"
+    );
+}
+
+#[test]
 fn a_start_menu_program_dropped_on_the_desktop_is_copied_there_without_explorer() {
     use crate::dragview::{DragSource, DropOp, DropTarget};
     crate::spawn::record();

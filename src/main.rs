@@ -432,9 +432,10 @@ fn run(
     xwayland::start(&mut state);
     event_loop.handle().insert_source(
         Generic::new(spawn::sigchld_fd()?, Interest::READ, Mode::Level),
-        |_, fd, _| {
+        |_, fd, state| {
             spawn::drain_signalfd(fd);
             spawn::reap_children();
+            state.file_jobs_ended();
             Ok(PostAction::Continue)
         },
     )?;

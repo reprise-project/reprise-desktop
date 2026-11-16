@@ -3,7 +3,8 @@
 //! delete (`--delete`), Empty Recycle Bin (`--empty-bin`) and Send To's zip (`--zip`).
 //!
 //! The desktop keeps the processes it started. A put onto a desktop cell names the icons it will
-//! land, and each takes its cell when the desktop's scan first finds it.
+//! land, and each takes its cell when the desktop's scan first finds it. A move's cut files leave
+//! the clipboard once its process has ended, those it moved only.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -46,6 +47,8 @@ pub struct Job {
     pub args: Vec<OsString>,
     /// The desktop icons the job lands by name, each with its 100% cell (`desktop::to_saved`).
     landings: Vec<(String, (i32, i32))>,
+    /// A move's sources, handed to [`State::cut_moved`] once the process has ended.
+    moving: Vec<PathBuf>,
     /// When the desktop first saw the process gone.
     ended: Option<Instant>,
 }
@@ -99,8 +102,12 @@ impl State {
         let mut args: Vec<OsString> = ["--put", op.arg()].map(OsString::from).into();
         args.push(dir.into());
         args.push("--".into());
-        args.extend(sources.into_iter().map(OsString::from));
-        self.file_job(What::Put(op), args, landings);
+        args.extend(sources.iter().map(OsString::from));
+        let moving = match op {
+            DropOp::Move => sources,
+            _ => Vec::new(),
+        };
+        self.file_job(What::Put(op), args, landings, moving);
     }
 
     /// Delete on `paths` in Explorer, asked first as the Recycle Bin settings say; Shift+Delete
@@ -114,7 +121,7 @@ impl State {
             args.push("--erase".into());
         }
         args.extend(paths.into_iter().map(OsString::from));
-        self.file_job(What::Delete, args, Vec::new());
+        self.file_job(What::Delete, args, Vec::new(), Vec::new());
     }
 
     /// Empty Recycle Bin in Explorer, which asks first. While one runs, its window comes to the
@@ -131,7 +138,12 @@ impl State {
             }
             return;
         }
-        self.file_job(What::Empty, vec!["--empty-bin".into()], Vec::new());
+        self.file_job(
+            What::Empty,
+            vec!["--empty-bin".into()],
+            Vec::new(),
+            Vec::new(),
+        );
     }
 
     /// Send To > Compressed (zipped) Folder on `paths` in Explorer.
@@ -142,10 +154,16 @@ impl State {
         let args = std::iter::once("--zip".into())
             .chain(paths.into_iter().map(OsString::from))
             .collect();
-        self.file_job(What::Zip, args, Vec::new());
+        self.file_job(What::Zip, args, Vec::new(), Vec::new());
     }
 
-    fn file_job(&mut self, what: What, args: Vec<OsString>, landings: Vec<(String, (i32, i32))>) {
+    fn file_job(
+        &mut self,
+        what: What,
+        args: Vec<OsString>,
+        landings: Vec<(String, (i32, i32))>,
+        moving: Vec<PathBuf>,
+    ) {
         let argv: Vec<&std::ffi::OsStr> = std::iter::once(EXPLORER.as_ref())
             .chain(args.iter().map(|a| a.as_os_str()))
             .collect();
@@ -158,6 +176,7 @@ impl State {
                     what,
                     args,
                     landings,
+                    moving,
                     ended: None,
                 };
                 log::info!("desktop: file job in pid {pid}: {:?}", job.args);
@@ -172,9 +191,28 @@ impl State {
         }
     }
 
+    /// Moves whose process has ended hand their cut files to [`State::cut_moved`]: a file gone
+    /// from where it was moved, and one still there (a cancelled or failed move) stays cut.
+    pub(crate) fn file_jobs_ended(&mut self) {
+        let moving: Vec<PathBuf> = (self.filejobs.jobs.iter_mut())
+            .filter(|j| !crate::spawn::running(j.pid))
+            .flat_map(|j| std::mem::take(&mut j.moving))
+            .collect();
+        if moving.is_empty() {
+            return;
+        }
+        self.spawn_fs_job(move || {
+            let moved: Vec<PathBuf> = (moving.into_iter())
+                .filter(|p| std::fs::symlink_metadata(p).is_err())
+                .collect();
+            Box::new(move |state: &mut State| state.cut_moved(&moved))
+        });
+    }
+
     /// A desktop scan found `fresh`, names it did not list before: the jobs' icons among them
     /// take their cells. Jobs whose process ended a while ago are let go.
     pub(crate) fn land_job_icons(&mut self, fresh: &[String]) {
+        self.file_jobs_ended();
         let mut landed = Vec::new();
         let now = Instant::now();
         for j in &mut self.filejobs.jobs {
