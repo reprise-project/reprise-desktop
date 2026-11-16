@@ -284,7 +284,10 @@ the screen takes the interface of the last session used at this computer.
 - **A layout per set of monitors.** Docking or undocking puts back the layout
   last used with those monitors. Forget saved layouts on the Display page.
 - **Duplicate.** Super+P opens the display switcher: Extend, Duplicate, Only
-  1 and Only 2, also on the Display page.
+  1 and Only 2, also on the Display page. Duplicate runs the largest size
+  every monitor lists that fits inside the mode each runs on its own. Extend
+  puts each monitor back in the mode, scale and place it had before, or its
+  `[[outputs]]` mode.
 - **Fractional scaling** from 1 to 4 in quarter steps, per monitor. Programs
   that support it draw at the exact scale.
 - **Colour profiles.** An ICC profile per monitor loads its calibration

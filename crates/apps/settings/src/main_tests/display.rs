@@ -417,3 +417,31 @@ fn the_page_takes_the_primary_from_the_saved_layout_over_config() {
         ]
     );
 }
+
+#[test]
+fn extend_from_a_copy_runs_each_display_in_its_outputs_mode() {
+    let mut app = app("extend-from-copy");
+    let mut ctx = test_ctx();
+    let config = "[[outputs]]\nname = \"HDMI-A-1\"\nmode = \"1920x1080@75\"\n";
+    std::fs::write(&app.path, config).unwrap();
+    app.display.layouts = app.path.with_file_name("displays.toml");
+    let copying = |name| {
+        let mut h = displaypage::test_head(name);
+        h.current = Some(2);
+        h
+    };
+    let heads = vec![copying("DP-1"), copying("HDMI-A-1")];
+    app.event(MAIN, Event::Heads(heads), &mut ctx);
+    let d = &mut app.display.model;
+    d.pick_projection(0);
+    let set: Vec<_> = (d.changes().unwrap().set.iter())
+        .map(|(n, c)| (n.clone(), c.mode.map(|m| m.refresh_mhz), c.position))
+        .collect();
+    assert_eq!(
+        set,
+        [
+            ("DP-1".to_string(), Some(60_000), Some((0, 0))),
+            ("HDMI-A-1".to_string(), Some(75_000), Some((1920, 0)))
+        ]
+    );
+}

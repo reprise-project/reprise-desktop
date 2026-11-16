@@ -2,6 +2,7 @@
 //! set changes, saved after a reload that changed `[[outputs]]`.
 
 use repriseconf::displays::{self, Layout, Layouts, Monitor, MonitorLayout};
+use repriseconf::projection::{self, Home};
 use smithay::output::Output;
 
 use crate::{
@@ -173,6 +174,21 @@ impl State {
         self.update_layout();
         crate::autorotate::outputs_changed(self);
         true
+    }
+
+    /// Each of `heads`' home for the display switcher (`projection::homes`): its place in the
+    /// connected set's saved side-by-side arrangement, else its `[[outputs]]` entry.
+    pub fn display_homes(&self, heads: &[HeadState]) -> Vec<Home> {
+        let ids = ids_of(heads);
+        let connectors: Vec<String> = heads.iter().map(|h| h.output.name()).collect();
+        let seen = (self.saved_layouts.seen.clone())
+            .unwrap_or_else(|| displays::outputs_fingerprint(&self.config.outputs));
+        let layouts =
+            Layouts::parse(&std::fs::read_to_string(&self.saved_layouts.path).unwrap_or_default());
+        let extended = (layouts.find(&ids, &seen))
+            .and_then(Layout::extended)
+            .unwrap_or_default();
+        projection::homes(extended, &ids, &connectors, &self.config.outputs)
     }
 
     /// The saved layout's settings for `output`, when one is in force.

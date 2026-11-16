@@ -1,10 +1,11 @@
 //! Applying a `Projection` (Extend, Duplicate, Only 1, Only 2) from the display switcher: the heads
 //! as `repriseconf::projection` plans them, run through `State::apply_head` once modes settle, then
-//! saved as the connected set's layout.
+//! saved as the connected set's layout. A side-by-side arrangement is saved before it is left, so
+//! the copy or Only saved over it keeps it to extend back to.
 
 use std::time::Duration;
 
-use repriseconf::projection::{self, Mode, Projection, Screen};
+use repriseconf::projection::{self, Home, Mode, Projection, Screen};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::Transform;
 
@@ -16,7 +17,7 @@ use crate::output::HeadRequest;
 const SETTLE_TRIES: u32 = 40;
 const SETTLE_STEP: Duration = Duration::from_millis(50);
 
-fn screen(h: &HeadState) -> Screen {
+fn screen(h: &HeadState, home: Home) -> Screen {
     let o = &h.output;
     let at = o.current_location();
     Screen {
@@ -37,6 +38,7 @@ fn screen(h: &HeadState) -> Screen {
             o.current_transform(),
             Transform::_90 | Transform::_270 | Transform::Flipped90 | Transform::Flipped270
         ),
+        home,
     }
 }
 
@@ -44,8 +46,17 @@ impl State {
     /// The connected monitors as the switcher counts them, in the Display page's order.
     fn screens(&self) -> (Vec<HeadState>, Vec<Screen>) {
         let heads = crate::backend::heads(self);
-        let screens = heads.iter().map(screen).collect();
+        let screens = heads.iter().map(|h| screen(h, Home::default())).collect();
         (heads, screens)
+    }
+
+    /// Save the connected monitors' arrangement while it is side by side, so a copy or Only saved
+    /// over it keeps it (`displays::Layouts::put`).
+    pub fn save_side_by_side(&mut self) {
+        let (_, screens) = self.screens();
+        if screens.len() >= 2 && projection::current(&screens) == Projection::Extend {
+            self.save_layout();
+        }
     }
 
     fn primary_name(&self) -> Option<String> {
@@ -85,7 +96,11 @@ impl State {
             }
             return;
         }
-        let (heads, screens) = self.screens();
+        let heads = crate::backend::heads(self);
+        let homes = self.display_homes(&heads);
+        let screens: Vec<Screen> = (heads.iter().zip(homes))
+            .map(|(h, home)| screen(h, home))
+            .collect();
         let primary = self.primary_name();
         let Some(plan) = projection::plan(&screens, primary.as_deref(), p) else {
             log::info!("display switcher: {p:?} needs more monitors");
@@ -109,6 +124,7 @@ impl State {
             .collect();
         reqs.sort_by_key(|(_, r)| !r.enabled);
         log::info!("display switcher: {p:?}");
+        self.save_side_by_side();
         for (h, req) in &reqs {
             if !self.apply_head(&h.output, req) {
                 log::warn!("display switcher: {} refused {p:?}", h.output.name());
@@ -166,6 +182,33 @@ mod tests {
         assert_eq!((b.current_location().x, b.current_location().y), (1920, 0));
         assert_eq!(h.state.own_outputs(), [a, b]);
         assert_eq!(h.state.bars.len(), 2);
+    }
+
+    #[test]
+    fn extend_after_duplicate_puts_each_display_back_at_its_place_and_scale() {
+        let (mut h, a, b) = pair((1920, 1080));
+        let head = |at: (i32, i32), scale: f64| HeadRequest {
+            enabled: true,
+            mode: None,
+            position: Some(at),
+            transform: Transform::Normal,
+            scale,
+            adaptive_sync: false,
+        };
+        assert!(h.state.apply_head(&a, &head((0, 0), 2.0)));
+        assert!(h.state.apply_head(&b, &head((0, 540), 1.0)));
+        h.state.update_layout();
+        project(&mut h, Projection::Duplicate);
+        assert_eq!(
+            b.current_scale().fractional_scale(),
+            2.0,
+            "the primary's scale"
+        );
+        project(&mut h, Projection::Extend);
+        assert_eq!(h.state.projection().0, Projection::Extend);
+        assert_eq!((b.current_location().x, b.current_location().y), (0, 540));
+        assert_eq!(b.current_scale().fractional_scale(), 1.0);
+        assert_eq!(a.current_scale().fractional_scale(), 2.0);
     }
 
     #[test]
