@@ -1058,15 +1058,22 @@ impl XwmHandler for State {
 
     /// An X11 client took a selection and listed its targets: Wayland clients get it as the
     /// bridge rules.
-    fn new_selection(&mut self, xwm: XwmId, selection: SelectionTarget, mime_types: Vec<String>) {
+    fn new_selection(
+        &mut self,
+        xwm: XwmId,
+        selection: SelectionTarget,
+        mut mime_types: Vec<String>,
+    ) {
         if self.bridge_verdict(xwm, bridge::Event::Targets, selection) != bridge::Verdict::Allow {
             return;
         }
         self.xwayland.selections[slot(selection)] = None;
+        let sandboxed = self.clip_owner_sandboxed();
+        reprisefs::dropdata::mark_sandboxed(&mut mime_types, sandboxed);
         match selection {
             SelectionTarget::Clipboard => {
                 self.clip.offered.clone_from(&mime_types);
-                self.clip.sandboxed = self.clip_owner_sandboxed();
+                self.clip.sandboxed = sandboxed;
                 set_data_device_selection(&self.dh, &self.seat, mime_types, Owner::X11(xwm));
                 self.clipboard_changed();
             }

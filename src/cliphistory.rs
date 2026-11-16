@@ -16,6 +16,7 @@ use smithay::wayland::selection::data_device::data_device_selection_alive;
 
 use crate::clipboard::{Offer, TEXT_MIMES};
 use crate::compositor::State;
+use reprisefs::dropdata::SANDBOXED;
 
 pub const MAX_ENTRIES: usize = 25;
 pub const MAX_BYTES: usize = 10 << 20;
@@ -200,6 +201,7 @@ pub fn plan(offered: &[String]) -> Vec<Step> {
             || o.starts_with("text/plain")
             || o == PNG
             || o == HINT
+            || o == SANDBOXED
             || extras.contains(&o);
         if !skip && extras.len() < MAX_EXTRAS {
             extras.push(o);
@@ -224,7 +226,7 @@ impl Got {
                 got.text.get_or_insert(bytes.clone());
             } else if mime == PNG {
                 got.png = Some(bytes.clone());
-            } else if mime != HINT {
+            } else if mime != HINT && mime != SANDBOXED {
                 got.extras.push((mime.clone(), bytes.clone()));
             }
         }
@@ -328,14 +330,18 @@ impl State {
         self.next_history_step();
     }
 
-    /// Put entry `id` back on the clipboard, held by Reprise. False when the entry is gone.
+    /// Put entry `id` back on the clipboard, held by Reprise and marked as its program's was.
+    /// False when the entry is gone.
     pub(crate) fn clip_offer_entry(&mut self, id: u64) -> bool {
-        let Some((offers, sandboxed)) = (self.panels.history.history)
+        let Some((mut offers, sandboxed)) = (self.panels.history.history)
             .get(id)
             .map(|e| (e.offers.clone(), e.sandboxed))
         else {
             return false;
         };
+        if sandboxed {
+            offers.push((SANDBOXED.to_string(), Arc::from(&[][..])));
+        }
         self.clip_offer_each(offers);
         self.clip.sandboxed = sandboxed;
         true

@@ -100,8 +100,9 @@ portal (`$XDG_RUNTIME_DIR/doc`); any other path is one inside its sandbox.
 Reprise reads a sandboxed program's drag through its document portal key
 when it offers one, and otherwise takes its URI list only when every path
 lies under the document portal. Its clipboard's file list is taken the same
-way, and never as a cut. The compositor marks every drag of a sandboxed
-program with `application/x-reprise-sandboxed` and takes the type off any
+way, and never as a cut. The compositor marks every drag and clipboard
+selection of a sandboxed program with `application/x-reprise-sandboxed`,
+the clipboard history's copy of one included, and takes the type off any
 other program's, so Reprise's programs hold the list to the same rule and
 only ever copy its files. An X11 drag counts as a sandboxed program's unless
 a host program's X11 window has the focus. Under another compositor nothing
