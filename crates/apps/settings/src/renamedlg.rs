@@ -1,19 +1,15 @@
 //! Rename dialog for a Start Menu row label.
 
-use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W};
 use reprisekit::controls::form::{self, Control, Form, Item};
-use reprisekit::raster::Rect;
+use reprisekit::controls::rowsdlg::{EDIT_H, MARGIN, Rows};
 use reprisekit::textedit::TextEdit;
 
 pub const CLIENT: (i32, i32) = (320, 79);
 
-const MARGIN: i32 = 12;
-const LABEL_W: i32 = 64;
-const FIELD_X: i32 = MARGIN + LABEL_W + 4;
-const FIELD_W: i32 = CLIENT.0 - MARGIN - FIELD_X;
-const BTN_Y: i32 = CLIENT.1 - MARGIN - BUTTON_H;
-const CANCEL_X: i32 = CLIENT.0 - MARGIN - BUTTON_W;
-const OK_X: i32 = CANCEL_X - BUTTON_GAP - BUTTON_W;
+const ROWS: Rows = Rows {
+    client: CLIENT,
+    label_w: 64,
+};
 
 pub const OK: &str = "ok";
 pub const CANCEL: &str = "cancel";
@@ -35,36 +31,19 @@ impl RenameDialog {
     pub fn new(label: &str) -> RenameDialog {
         let mut edit = TextEdit::new(label, false);
         edit.select_all();
-        let items = vec![
-            Item::label(
-                "name_l",
-                Rect::new(MARGIN, MARGIN + 4, LABEL_W, 13),
-                "&Name:",
-            ),
+        let mut items = vec![
+            ROWS.label("name_l", MARGIN, "&Name:"),
             Item::new(
                 NAME,
-                Rect::new(FIELD_X, MARGIN, FIELD_W, 20),
+                ROWS.field(MARGIN, EDIT_H),
                 Control::Edit {
                     edit,
                     first: Default::default(),
                     enabled: true,
                 },
             ),
-            Item::button(
-                OK,
-                Rect::new(OK_X, BTN_Y, BUTTON_W, BUTTON_H),
-                "OK",
-                true,
-                true,
-            ),
-            Item::button(
-                CANCEL,
-                Rect::new(CANCEL_X, BTN_Y, BUTTON_W, BUTTON_H),
-                "Cancel",
-                true,
-                false,
-            ),
         ];
+        items.extend(ROWS.ok_cancel(OK, CANCEL));
         let mut form = Form::new(items);
         form.focus_id(NAME);
         RenameDialog { form }
