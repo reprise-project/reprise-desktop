@@ -364,7 +364,8 @@ installs on its own, and closing the window doesn't stop an install halfway.
 It also notices a system updated from elsewhere, such as `pacman -Syu` in a
 terminal, once the running kernel's modules are gone or a package leaves
 `/run/reboot-required`, and says "Restart to finish updating" with Restart
-Now and Later. Restart Now goes the way Start's Restart does: programs are
+Now and Later. When `/run/reboot-required.pkgs` names only Reprise (its
+packages write it on an upgrade), it says logging off and back on is enough. Restart Now goes the way Start's Restart does: programs are
 asked to close first. Settings > Advanced turns it
 off (`[updates] restart_notice`).
 

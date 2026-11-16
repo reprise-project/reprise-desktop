@@ -211,7 +211,10 @@ impl Window {
 
         let busy = phase.busy();
         self.form.set_enabled("check", !busy);
-        let restart = matches!(phase, Phase::Installed(Restart::System) | Phase::RestartDue);
+        let restart = matches!(
+            phase,
+            Phase::Installed(Restart::System) | Phase::RestartDue(_)
+        );
         let install = !busy && !held && picked > 0;
         let (label, act, enabled) = if restart && !install {
             ("&Restart Now", Outcome::Restart, true)
@@ -496,7 +499,7 @@ mod tests {
                     request: Some("Unplug the camera and plug it back in.".into()),
                 },
                 Phase::Installed(Restart::System),
-                Phase::RestartDue,
+                Phase::RestartDue(crate::restart::Due::System),
                 Phase::Failed("The package manager is busy.".into()),
             ]
             .into_iter()
@@ -553,7 +556,10 @@ mod tests {
     fn a_restart_puts_restart_now_beside_install_or_in_its_place_with_nothing_to_install() {
         let env = Env::new();
         let cm = env.theme.look.controls_at_100();
-        for phase in [Phase::Installed(Restart::System), Phase::RestartDue] {
+        for phase in [
+            Phase::Installed(Restart::System),
+            Phase::RestartDue(crate::restart::Due::Reprise),
+        ] {
             let mut w = Window::new(None);
             env.sync(&mut w, &phase, &[update("bash")]);
             assert_eq!(label(&w, "act"), "&Install");

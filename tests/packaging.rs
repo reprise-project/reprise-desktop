@@ -467,7 +467,9 @@ fn an_upgrade_of_either_package_raises_the_restart_notice() {
         "Type = Path",
         "Target = usr/bin/reprise",
         "When = PostTransaction",
-        &format!("Exec = /usr/bin/touch {RESTART_FLAG}"),
+        &format!(
+            "Exec = /bin/sh -c 'touch {RESTART_FLAG} && {{ grep -qsx reprise {RESTART_FLAG}.pkgs || echo reprise >>{RESTART_FLAG}.pkgs; }}'"
+        ),
     ] {
         assert!(lines.contains(&line), "{hook} has {line:?}");
     }

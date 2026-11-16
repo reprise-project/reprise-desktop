@@ -4,6 +4,8 @@
 
 use std::collections::BTreeSet;
 
+use crate::restart::Due;
+
 /// How much an update matters, as PackageKit rates it (firmware maps its
 /// urgency onto it, Flatpak is `Normal`). Most to least urgent, which is the
 /// order inside a group.
@@ -187,7 +189,7 @@ pub enum Phase {
     },
     Installed(Restart),
     /// The system was updated outside an install here and needs a restart (see `restart`).
-    RestartDue,
+    RestartDue(crate::restart::Due),
     Failed(String),
 }
 
@@ -232,7 +234,7 @@ pub fn headline(phase: &Phase, updates: &[Update], picked: usize) -> String {
         Phase::Installing { .. } => {
             "Installing updates. You can close this window; the updates keep installing.".into()
         }
-        Phase::Installed(Restart::System) | Phase::RestartDue if picked > 0 => format!(
+        Phase::Installed(Restart::System) | Phase::RestartDue(_) if picked > 0 => format!(
             "Your computer needs a restart to finish updating. {} selected: click Install to \
              install {}, or Restart Now.",
             count(picked),
@@ -245,8 +247,13 @@ pub fn headline(phase: &Phase, updates: &[Update], picked: usize) -> String {
             "The updates were installed. Log off and back on to finish installing them.".into()
         }
         Phase::Installed(Restart::None) => "The updates were installed.".into(),
-        Phase::RestartDue => {
+        Phase::RestartDue(Due::System) => {
             "The system was updated. Some devices may not work until you restart your computer."
+                .into()
+        }
+        Phase::RestartDue(Due::Reprise) => {
+            "Reprise was updated. Log off and back on, or restart your computer, to use the new \
+             version."
                 .into()
         }
         Phase::Failed(message) => message.clone(),
@@ -293,9 +300,14 @@ pub fn tray_look(phase: &Phase, updates: &[Update]) -> TrayLook {
             tip: "Restart your computer to finish installing updates".into(),
             active: true,
         },
-        Phase::RestartDue => TrayLook {
+        Phase::RestartDue(Due::System) => TrayLook {
             icon: "system-reboot",
             tip: "Restart to finish updating".into(),
+            active: true,
+        },
+        Phase::RestartDue(Due::Reprise) => TrayLook {
+            icon: "system-reboot",
+            tip: "Log off or restart to finish updating Reprise".into(),
             active: true,
         },
         Phase::Installed(Restart::Session) => TrayLook {
@@ -369,11 +381,17 @@ pub fn installed_balloon(restart: Restart) -> (String, String) {
     ("Updates installed".into(), body.into())
 }
 
-pub fn restart_balloon() -> (String, String) {
-    (
-        "Restart to finish updating".into(),
-        "The system was updated. Some devices may not work until you restart.".into(),
-    )
+pub fn restart_balloon(due: Due) -> (String, String) {
+    match due {
+        Due::System => (
+            "Restart to finish updating".into(),
+            "The system was updated. Some devices may not work until you restart.".into(),
+        ),
+        Due::Reprise => (
+            "Reprise was updated".into(),
+            "Log off and back on, or restart, to use the new version.".into(),
+        ),
+    }
 }
 
 /// Something a device asks for while its firmware installs: `now` holds the install until it is
@@ -410,6 +428,17 @@ pub fn closed_balloon(phase: &Phase) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_restart_only_reprise_asked_for_says_logging_off_is_enough() {
+        let line = headline(&Phase::RestartDue(Due::Reprise), &[], 0);
+        assert!(line.starts_with("Reprise was updated. Log off"), "{line}");
+        let (summary, body) = restart_balloon(Due::Reprise);
+        assert_eq!(summary, "Reprise was updated");
+        assert!(body.starts_with("Log off and back on"), "{body}");
+        let system = headline(&Phase::RestartDue(Due::System), &[], 0);
+        assert!(system.contains("Some devices may not work"), "{system}");
+    }
 
     #[test]
     fn closing_on_a_request_to_do_now_balloons_it_and_closing_otherwise_does_not() {
