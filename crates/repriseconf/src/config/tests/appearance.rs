@@ -27,12 +27,15 @@ fn color_scheme_picks_the_blue_variant() {
 }
 
 #[test]
-fn a_scheme_of_another_interface_falls_back() {
-    let blue =
-        Config::parse("[appearance]\ninterface = \"blue\"\ncolor_scheme = \"Brick\"\n").unwrap();
-    assert_eq!(blue.blue_variant, reprisekit::blue::Variant::Blue);
-    let classic = Config::parse("[appearance]\ncolor_scheme = \"Olive Green\"\n").unwrap();
-    assert_eq!(classic.theme.colors, Config::default().theme.colors);
+fn a_scheme_of_another_interface_is_an_error() {
+    assert_eq!(
+        Config::parse("[appearance]\ninterface = \"blue\"\ncolor_scheme = \"Brick\"\n").err(),
+        Some("[appearance] color_scheme = \"Brick\" is not a Blue scheme".into())
+    );
+    assert_eq!(
+        Config::parse("[appearance]\ncolor_scheme = \"Olive Green\"\n").err(),
+        Some("[appearance] color_scheme = \"Olive Green\" is not a Classic scheme".into())
+    );
 }
 
 #[test]
@@ -71,9 +74,16 @@ fn classic_config_theme_is_unchanged() {
 }
 
 #[test]
-fn unknown_interface_falls_back_to_classic() {
-    let c = Config::parse("[appearance]\ninterface = \"frosted\"\n").unwrap();
+fn an_unknown_interface_is_an_error_and_a_lenient_read_runs_classic() {
+    let text = "[appearance]\ninterface = \"frosted\"\n";
+    let e = "[appearance] interface = \"frosted\" is not classic, blue or glass";
+    assert_eq!(Config::parse(text).err().as_deref(), Some(e));
+    let (c, dropped) = Config::parse_lenient(text).unwrap();
     assert_eq!(c.interface, Interface::Classic);
+    assert_eq!(
+        dropped,
+        [("appearance.interface".to_string(), e.to_string())]
+    );
 }
 
 #[test]
@@ -540,7 +550,7 @@ fn reprise_resolves_to_what_was_generated_else_as_auto() {
 }
 
 #[test]
-fn font_smoothing_defaults_to_grayscale_and_an_unknown_value_keeps_it() {
+fn font_smoothing_defaults_to_grayscale_and_an_unknown_value_is_an_error() {
     assert_eq!(
         Config::default().toolkits.font_smoothing,
         FontSmoothing::Grayscale
@@ -549,11 +559,14 @@ fn font_smoothing_defaults_to_grayscale_and_an_unknown_value_keeps_it() {
         ("grayscale", FontSmoothing::Grayscale),
         ("subpixel", FontSmoothing::Subpixel),
         ("none", FontSmoothing::None),
-        ("crisp", FontSmoothing::Grayscale),
     ] {
         let c = Config::parse(&format!("[toolkits]\nfont_smoothing = \"{s}\"\n")).unwrap();
         assert_eq!(c.toolkits.font_smoothing, f, "{s}");
     }
+    assert_eq!(
+        Config::parse("[toolkits]\nfont_smoothing = \"crisp\"\n").err(),
+        Some("[toolkits] font_smoothing = \"crisp\" is not grayscale, subpixel or none".into())
+    );
 }
 
 #[test]
@@ -845,7 +858,13 @@ fn wallpaper_water_parses_and_defaults_off() {
     assert_eq!(w("[wallpaper]\nwater = \"Lively\"\n"), Ok(Water::Lively));
     assert_eq!(w("[wallpaper]\nwater = \"rain\"\n"), Ok(Water::Rain));
     assert_eq!(w("[wallpaper]\nwater = \"glow\"\n"), Ok(Water::Glow));
-    assert!(w("[wallpaper]\nwater = \"storm\"\n").is_err());
+    assert_eq!(
+        w("[wallpaper]\nwater = \"storm\"\n"),
+        Err(
+            "wallpaper.water \"storm\" is not one of off, calm, lively, rain, ink, glow, sparks, neon"
+                .into()
+        )
+    );
 }
 
 #[test]

@@ -19,18 +19,21 @@ pub enum Water {
 }
 
 impl Water {
+    pub const ALL: [Water; 8] = [
+        Water::Off,
+        Water::Calm,
+        Water::Lively,
+        Water::Rain,
+        Water::Ink,
+        Water::Glow,
+        Water::Sparks,
+        Water::Neon,
+    ];
+
     pub fn parse(s: &str) -> Option<Water> {
-        match s.to_ascii_lowercase().as_str() {
-            "off" => Some(Water::Off),
-            "calm" => Some(Water::Calm),
-            "lively" => Some(Water::Lively),
-            "rain" => Some(Water::Rain),
-            "ink" => Some(Water::Ink),
-            "glow" => Some(Water::Glow),
-            "sparks" => Some(Water::Sparks),
-            "neon" => Some(Water::Neon),
-            _ => None,
-        }
+        Water::ALL
+            .into_iter()
+            .find(|w| w.name().eq_ignore_ascii_case(s))
     }
 
     pub fn name(self) -> &'static str {

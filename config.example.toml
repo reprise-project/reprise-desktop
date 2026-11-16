@@ -86,9 +86,9 @@ theme = "hicolor"            # freedesktop icon theme for menus, taskbar, captio
 #                            # smooth their text; none is fully hinted monochrome
 
 [appearance]
-interface = "classic"        # classic | blue | glass; an unknown value falls back to classic
+interface = "classic"        # classic | blue | glass; an unknown value runs classic and the config notice names it
 # color_scheme = "Brick"     # Classic: a scheme name (Reprise Settings' Appearance page lists them); Blue: "Blue", "Olive Green", "Silver", "Slate", "Sapphire", "Obsidian", "Ember", "Cobalt", "Carbon" or "Steel"; Glass has none, see [glass] color
-#                            # a name from another interface falls back to that interface's default and logs a warning; Glass ignores the key
+#                            # a name from another interface takes that interface's default and the config notice names it; Glass ignores the key
 
 # [wallpaper]                # the picture under the desktop icons, drawn over [colors] background
 # image = "/usr/share/backgrounds/picture.jpg"   # bmp, jpg, png or dib; "" or a file that does not decode shows the colour alone
@@ -190,7 +190,7 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 #                            # layout, comma separated (",qwerty" with "us,hu")
 # options = ""               # empty uses the xkb/XKB_DEFAULT_OPTIONS default;
 #                            # comma separated, e.g. "compose:ralt,ctrl:nocaps"
-# repeat_rate = 25           # keys per second
+# repeat_rate = 25           # keys per second, 0 (no repeat) to 255
 # repeat_delay = 600         # milliseconds before repeat starts
 # layout_per_window = false  # true: each window keeps the layout it last had;
 #                            # a new window starts on the first

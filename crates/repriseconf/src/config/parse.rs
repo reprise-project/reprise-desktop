@@ -4,10 +4,10 @@ use super::file::{AutoFlag, FileAppearance, FileConfig};
 use super::{
     CURSOR_SIZE_MAX, ClickMethod, Config, DIM_INACTIVE_MAX, EFFECTS_MS_MAX, EffectsConfig,
     FontSmoothing, HIDDEN_FRAME_RATE_MAX, HotCorner, IdleOverrides, MAX_POSITION, MenuAnimation,
-    OutputConfig, OutputMode, PREVIEW_FPS_MAX, PointerConfig, PowerAction, SNAP_DISTANCE_MAX,
-    SWITCH_MS_MAX, ShortcutOverlay, StartMenuStyle, SwitchStyle, SwitcherConfig, TabletConfig,
-    TaskbarButtons, TaskbarConfig, TitleDoubleClick, Transform, WORKSPACES_MAX, quarter_scale,
-    switcher_size,
+    OutputConfig, OutputMode, PREVIEW_FPS_MAX, PointerConfig, PowerAction, REPEAT_RATE_MAX,
+    SNAP_DISTANCE_MAX, SWITCH_MS_MAX, ShortcutOverlay, StartMenuStyle, SwitchStyle, SwitcherConfig,
+    TabletConfig, TaskbarButtons, TaskbarConfig, TitleDoubleClick, Transform, WORKSPACES_MAX,
+    quarter_scale, switcher_size,
 };
 use reprisekit::interface::Interface;
 use reprisekit::theme::{Color, FontConfig};
@@ -142,8 +142,20 @@ pub fn lenient_over<T>(
             // keys of its group each pass on their own and clash together.
             let bad: Vec<(String, String)> = (inner.iter())
                 .filter_map(|(name, v)| {
-                    let group = with_partners(key, name, inner);
+                    let mut group = with_partners(key, name, inner);
+                    let partners = group.len();
+                    group.extend(
+                        (inner.iter())
+                            .filter(|(k, v)| {
+                                leans_on(key, name, k) && fails(alone(k, (*v).clone())).is_none()
+                            })
+                            .map(|(k, v)| (k.clone(), v.clone())),
+                    );
                     let together = fails(group.clone())?;
+                    // A key leaning on a sound one is the bad one, and its error is the one read with it.
+                    if group.len() > partners {
+                        return Some((name.clone(), together));
+                    }
                     if let Some(e) = fails(alone(name, v.clone())) {
                         return Some((name.clone(), e));
                     }
@@ -227,6 +239,15 @@ const PARTNERS: &[(&str, &[&str])] = &[
     ("night_light", &["latitude", "longitude"]),
 ];
 
+/// Keys `Config::from_file` checks against a key that is checked alone: a lenient read tries
+/// the first with the second when the second passes alone, and drops only the first.
+const LEANS_ON: &[(&str, &str, &str)] = &[("appearance", "color_scheme", "interface")];
+
+/// Whether key `name` of table `table` is checked against key `other` ([`LEANS_ON`]).
+fn leans_on(table: &str, name: &str, other: &str) -> bool {
+    LEANS_ON.contains(&(table, name, other))
+}
+
 /// Key `name` of table `table`, with its [`PARTNERS`] that `inner` holds.
 fn with_partners(table: &str, name: &str, inner: &toml::Table) -> toml::Table {
     let group = PARTNERS
@@ -308,23 +329,17 @@ impl Config {
         }
         let appearance = file.appearance.unwrap_or_default();
         if let Some(s) = appearance.interface {
-            match Interface::parse(&s) {
-                Some(i) => cfg.interface = i,
-                None => log::warn!("[appearance] interface = {s:?} is unknown; using classic"),
-            }
+            cfg.interface = Interface::parse(&s).ok_or_else(|| {
+                format!("[appearance] interface = {s:?} is not classic, blue or glass")
+            })?;
         }
         cfg.color_scheme = appearance.color_scheme;
         if cfg.interface == Interface::Blue
             && let Some(name) = cfg.color_scheme.as_deref()
         {
-            match reprisekit::blue::Variant::from_name(name) {
-                Some(v) => cfg.blue_variant = v,
-                None => {
-                    log::warn!(
-                        "[appearance] color_scheme = {name:?} is not a Blue scheme; using Blue"
-                    )
-                }
-            }
+            cfg.blue_variant = reprisekit::blue::Variant::from_name(name).ok_or_else(|| {
+                format!("[appearance] color_scheme = {name:?} is not a Blue scheme")
+            })?;
         }
         if let Some(g) = file.glass {
             if let Some(name) = g.color {
@@ -477,10 +492,9 @@ impl Config {
         if cfg.interface == Interface::Classic
             && let Some(name) = cfg.color_scheme.as_deref()
         {
-            match reprisekit::schemes::scheme(name) {
-                Some(colors) => cfg.theme.colors = colors,
-                None => log::warn!("[appearance] color_scheme = {name:?} is not a Classic scheme"),
-            }
+            cfg.theme.colors = reprisekit::schemes::scheme(name).ok_or_else(|| {
+                format!("[appearance] color_scheme = {name:?} is not a Classic scheme")
+            })?;
         }
         for (name, value) in file.colors.unwrap_or_default() {
             let c =
@@ -604,7 +618,8 @@ impl Config {
             }
             if let Some(v) = w.water {
                 cfg.wallpaper.water = reprisekit::water::Water::parse(&v).ok_or_else(|| {
-                    format!("wallpaper.water {v:?} is not off, calm, lively or rain")
+                    let names: Vec<_> = reprisekit::water::Water::ALL.map(|w| w.name()).into();
+                    format!("wallpaper.water {v:?} is not one of {}", names.join(", "))
                 })?;
             }
             if let Some(v) = w.water_rate {
@@ -686,12 +701,9 @@ impl Config {
                 cfg.toolkits.gtk4_colors = v;
             }
             if let Some(s) = t.font_smoothing {
-                match FontSmoothing::parse(&s) {
-                    Some(f) => cfg.toolkits.font_smoothing = f,
-                    None => {
-                        log::warn!("[toolkits] font_smoothing = {s:?} is unknown; using grayscale")
-                    }
-                }
+                cfg.toolkits.font_smoothing = FontSmoothing::parse(&s).ok_or_else(|| {
+                    format!("[toolkits] font_smoothing = {s:?} is not grayscale, subpixel or none")
+                })?;
             }
         }
         if let Some(c) = file.cursor {
@@ -1319,8 +1331,10 @@ impl Config {
                 cfg.keyboard.options = v;
             }
             if let Some(v) = k.repeat_rate {
-                if v < 0 {
-                    return Err("keyboard.repeat_rate must be >= 0".into());
+                if !(0..=REPEAT_RATE_MAX).contains(&v) {
+                    return Err(format!(
+                        "keyboard.repeat_rate must be 0 (off) to {REPEAT_RATE_MAX}, got {v}"
+                    ));
                 }
                 cfg.keyboard.repeat_rate = v;
             }

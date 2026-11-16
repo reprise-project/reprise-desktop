@@ -86,7 +86,7 @@ pub fn keyboard(a: Area) -> Form {
         222,
         80,
         "&Repeat rate:",
-        (1, 255),
+        (1, repriseconf::config::REPEAT_RATE_MAX),
     ));
     items.push(Item::label_at("rate_units", GX + 140, 222, 50, "a second"));
     items.extend(spin(
