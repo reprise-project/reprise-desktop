@@ -510,7 +510,7 @@ pub fn access(
     for slot in &lay.slots {
         match list.entries.get(slot.entry) {
             Some(Entry::Header(h)) => {
-                tree.push(id, slot.entry, access::label(slot.rect, h, true));
+                tree.push(id, slot.entry, access::static_text(slot.rect, h, true));
             }
             Some(Entry::Row(row)) => {
                 let (title, caption) = tile(*row);
