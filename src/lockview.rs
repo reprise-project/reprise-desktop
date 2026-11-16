@@ -571,6 +571,7 @@ pub fn engage(state: &mut State) {
 /// `raise`, then take every grab and focus from clients. Lock mode's end seals with no `raise`.
 pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     state.app_input_release_held();
+    state.vk_release_held();
     state.close_menu();
     state.release_capture();
     state.switcher_cancel();
