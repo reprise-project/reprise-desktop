@@ -1,6 +1,6 @@
 //! Explorer's modal dialogs in one child window: the error box, the delete and replace confirmations, the Open With chooser, the Properties sheet's Advanced Attributes, Confirm Attribute Changes and Change Icon, the Move and Copy folder picker (`browse`), Unlock Drive, and Connect to Server with its password and question boxes.
 //!
-//! One child at a time: raising a second replaces the first. Two stack instead: the chooser's Browse... opens the program picker (`PROGRAM_BROWSE`) over it, and a refused name in the Move/Copy picker raises its error box (`browse::ERROR`). The error and confirm boxes keep only their text and focused button, so their [`Form`] is rebuilt per event; the chooser keeps an `openwith` control that takes its own events ([`crate::openwith`]).
+//! One child at a time: a box raised while another is up waits for it ([`Explorer::raise`]). Two stack instead: the chooser's Browse... opens the program picker (`PROGRAM_BROWSE`) over it, and a refused name in the Move/Copy picker raises its error box (`browse::ERROR`). The error and confirm boxes keep only their text and focused button, so their [`Form`] is rebuilt per event; the chooser keeps an `openwith` control that takes its own events ([`crate::openwith`]).
 
 use crate::icons::{IconSlot, land_picture};
 use crate::place;
@@ -232,6 +232,17 @@ pub enum Dialog {
 }
 
 impl Dialog {
+    /// A job, a paste or a server connection holds for the answer, so it comes up before the
+    /// other boxes waiting ([`Explorer::show_waiting`]).
+    fn held(&self) -> bool {
+        match self {
+            Dialog::Replace(_) | Dialog::Login(_) => true,
+            Dialog::Confirm(c) => c.job.is_some(),
+            Dialog::Question { about, .. } => matches!(about, crate::shares::Asking::Connection),
+            _ => false,
+        }
+    }
+
     fn title(&self) -> String {
         match self {
             Dialog::Message { title, .. } => title.clone(),
@@ -324,23 +335,24 @@ impl Explorer {
         f
     }
 
-    /// Raise a box titled `title` over `text` with the theme's error icon. While a replace prompt or
-    /// another box is up the box waits for it (`messages_waiting`).
-    pub fn message_box(&mut self, title: &str, text: String, ctx: &mut Ctx) -> Reply {
-        if matches!(
-            self.dialog,
-            Some(Dialog::Replace(_) | Dialog::Message { .. })
-        ) || self.holds_a_job()
-        {
-            self.messages_waiting.push_back((title.to_string(), text));
+    /// The one way a box goes up: into the empty slot, or behind the box up, which it never
+    /// replaces. [`Explorer::show_waiting`] raises it once the slot empties.
+    pub(crate) fn raise(&mut self, d: Dialog) -> Reply {
+        if self.dialog.is_some() {
+            self.waiting.push_back(d);
             return Reply::none();
         }
+        self.dialog = Some(d);
+        Reply::redraw_all()
+    }
+
+    /// Raise a box titled `title` over `text` with the theme's error icon.
+    pub fn message_box(&mut self, title: &str, text: String, ctx: &mut Ctx) -> Reply {
         self.wear_error_icon(ctx);
-        self.dialog = Some(Dialog::Message {
+        self.raise(Dialog::Message {
             title: title.to_string(),
             text,
-        });
-        Reply::redraw_all()
+        })
     }
 
     /// The message boxes' icon, fetched for the first box.
@@ -375,13 +387,12 @@ impl Explorer {
             self.forms.text,
         );
         let live = robots.is_some();
-        self.dialog = Some(Dialog::Advanced {
+        self.raise(Dialog::Advanced {
             form,
             subject,
             live,
             icon,
-        });
-        Reply::redraw_all()
+        })
     }
 
     pub fn about_box(&mut self, ctx: &mut Ctx) -> Reply {
@@ -392,11 +403,10 @@ impl Explorer {
         let u = self.forms.text;
         let w = u.len(aboutbox::CLIENT.0);
         form.set_picture("banner", aboutbox::banner_wide(&ctx.text, px, w, u));
-        self.dialog = Some(Dialog::About(form, icon));
-        Reply::redraw_all()
+        self.raise(Dialog::About(form, icon))
     }
 
-    /// Raise a delete prompt over `paths` on the template its kind takes (see [`dlgtemplate`]). `no_bin` leads with the drive having no Recycle Bin for some or all of `paths` ([`reprisefs::bincap::delete_prompt`]). `empty_bin` is the Recycle Bin's Empty task, which counts the listed items since it has no paths; `bin` is the picked items of a prompt raised in the Recycle Bin, which Yes deletes for good.
+    /// Raise a delete prompt over `paths` ([`Explorer::delete_question`]).
     #[allow(clippy::too_many_arguments)]
     pub fn confirm_box(
         &mut self,
@@ -409,6 +419,23 @@ impl Explorer {
         empty_bin: bool,
         bin: Option<Vec<crate::fileops::BinItem>>,
     ) -> Reply {
+        let c = self.delete_question(kind, name, paths, erase, no_bin, icon, empty_bin, bin);
+        self.raise(Dialog::Confirm(c))
+    }
+
+    /// A delete prompt over `paths` on the template its kind takes (see [`dlgtemplate`]). `no_bin` leads with the drive having no Recycle Bin for some or all of `paths` ([`reprisefs::bincap::delete_prompt`]). `empty_bin` is the Recycle Bin's Empty task, which counts the listed items since it has no paths; `bin` is the picked items of a prompt raised in the Recycle Bin, which Yes deletes for good.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn delete_question(
+        &self,
+        kind: ConfirmKind,
+        name: &str,
+        paths: Vec<PathBuf>,
+        erase: bool,
+        no_bin: reprisefs::bincap::BinLack,
+        icon: IconSlot,
+        empty_bin: bool,
+        bin: Option<Vec<crate::fileops::BinItem>>,
+    ) -> Confirm {
         let count = if empty_bin {
             self.items.len()
         } else {
@@ -416,7 +443,7 @@ impl Explorer {
         };
         let (title, text) = reprisefs::bincap::delete_prompt(kind, name, count, erase, no_bin);
         let min_text_h = (kind == ConfirmKind::Folder).then_some(FOLDER_TEXT_H);
-        self.dialog = Some(Dialog::Confirm(Confirm {
+        Confirm {
             title,
             text,
             min_text_h,
@@ -435,18 +462,17 @@ impl Explorer {
             script: None,
             mount: false,
             job: None,
-        }));
-        Reply::redraw_all()
+        }
     }
 
     /// Whether the box up is [`Explorer::ask_failed`]'s, which a job waits on.
+    #[cfg(test)]
     pub(crate) fn holds_a_job(&self) -> bool {
         matches!(&self.dialog, Some(Dialog::Confirm(c)) if c.job.is_some())
     }
 
     /// Ask what the job held on a failed item does next: Skip goes on with the rest, Retry runs
-    /// the item again, Cancel ends the job. While another box is up it waits for it
-    /// (`failed_waiting`).
+    /// the item again, Cancel ends the job.
     pub(crate) fn ask_failed(
         &mut self,
         asked: reprisefs::progress::Asked,
@@ -457,11 +483,7 @@ impl Explorer {
         if self.closing {
             return Reply::none();
         }
-        if self.dialog.is_some() {
-            self.failed_waiting.push_back((asked, title, text));
-            return Reply::none();
-        }
-        self.dialog = Some(Dialog::Confirm(Confirm {
+        self.raise(Dialog::Confirm(Confirm {
             title,
             text,
             min_text_h: None,
@@ -477,12 +499,11 @@ impl Explorer {
             script: None,
             mount: false,
             job: Some(asked),
-        }));
-        Reply::redraw_all()
+        }))
     }
 
     /// The answer to [`Explorer::ask_failed`], by the button `out` pressed.
-    fn failed_answered(&mut self, out: form::Event, ctx: &mut Ctx) -> Reply {
+    fn failed_answered(&mut self, out: form::Event) -> Reply {
         use reprisefs::progress::Decision;
         let decision = match out {
             form::Event::Default => Decision::Skip,
@@ -500,10 +521,7 @@ impl Explorer {
         if let Some(Dialog::Confirm(Confirm { job: Some(m), .. })) = self.dialog.take() {
             m.answer(decision);
         }
-        Reply {
-            redraw_all: true,
-            ..self.show_waiting(ctx)
-        }
+        Reply::redraw_all()
     }
 
     /// Ask whether to run the file at `path`, a script as `open` says, or (a script) open it in
@@ -515,11 +533,8 @@ impl Explorer {
         asked: reprisefs::program::Asked,
         ctx: &mut Ctx,
     ) -> Reply {
-        if self.holds_a_job() {
-            return Reply::none();
-        }
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        self.dialog = Some(Dialog::Confirm(Confirm {
+        self.raise(Dialog::Confirm(Confirm {
             title: reprisefs::program::ASK_TITLE,
             text: asked.text(&name),
             min_text_h: None,
@@ -535,8 +550,7 @@ impl Explorer {
             script: Some((open, asked)),
             mount: false,
             job: None,
-        }));
-        Reply::redraw_all()
+        }))
     }
 
     /// The answer to [`Explorer::ask_run`]: the button `out` pressed, by its place in
@@ -576,7 +590,7 @@ impl Explorer {
                 spawn_app: Some("reprise-notepad".into()),
                 ..Reply::default()
             },
-            _ => self.show_waiting(ctx),
+            _ => Reply::none(),
         };
         Reply {
             redraw_all: true,
@@ -897,7 +911,7 @@ impl Explorer {
                 Some(Dialog::Browse(_) | Dialog::ChooseProgram(_) | Dialog::Unlock(_))
             ) {
                 self.dialog = None;
-                return self.show_waiting(ctx);
+                return Reply::redraw_all();
             }
             return self.dialog_outcome(form::Event::Cancel, ctx);
         }
@@ -1011,7 +1025,7 @@ impl Explorer {
         if let Dialog::Confirm(c) = d
             && c.job.is_some()
         {
-            return self.failed_answered(out, ctx);
+            return self.failed_answered(out);
         }
         if let Dialog::Confirm(c) = d
             && c.too_big.is_some()
@@ -1024,15 +1038,9 @@ impl Explorer {
                     let mut asker = c.too_big.expect("a question about an item too big");
                     asker.answer(a);
                     let reply = self.too_big_step(asker, ctx);
-                    match self.dialog.is_some() {
-                        true => Reply {
-                            redraw_all: true,
-                            ..reply
-                        },
-                        false => Reply {
-                            redraw_all: true,
-                            ..self.show_waiting(ctx)
-                        },
+                    Reply {
+                        redraw_all: true,
+                        ..reply
                     }
                 }
                 None if out == form::Event::None => Reply::none(),
@@ -1123,7 +1131,7 @@ impl Explorer {
                 if attrs {
                     return self.attrs_cancelled();
                 }
-                self.show_waiting(ctx)
+                Reply::redraw_all()
             }
             Answer::Accept => match self.dialog.take() {
                 Some(Dialog::Confirm(c)) if c.empty_bin => self.empty_bin_now(ctx),
@@ -1171,29 +1179,38 @@ impl Explorer {
             replacebox::Choice::Cancel => Answer::Cancel,
         });
         let reply = self.ask_replace(pending, asker, ctx);
-        if self.dialog.is_some() {
-            return Reply {
-                redraw_all: true,
-                ..reply
-            };
+        Reply {
+            redraw_all: true,
+            ..reply
         }
-        self.show_waiting(ctx)
     }
 
-    /// With no box up, raise what waited for the replace prompt: the next
-    /// batch's prompt first, then the error boxes, one at a time.
+    /// After every event: an empty slot takes what waits, whichever way it emptied.
+    pub(crate) fn raise_waiting(&mut self, reply: Reply, ctx: &mut Ctx) -> Reply {
+        if self.dialog.is_some() || (self.waiting.is_empty() && self.replace_waiting.is_empty()) {
+            return reply;
+        }
+        reply.and(self.show_waiting(ctx))
+    }
+
+    /// With the slot empty, raise what waits ([`Explorer::raise`]): a box a job, paste or
+    /// connection holds for first, then the next paste's prompt, then the rest in order. A
+    /// replace prompt whose files are being read holds them all, so a paste's prompts keep their
+    /// order.
     pub(crate) fn show_waiting(&mut self, ctx: &mut Ctx) -> Reply {
+        let mut reply = Reply::none();
         while self.dialog.is_none() && self.asking.is_none() {
-            if let Some((asked, title, text)) = self.failed_waiting.pop_front() {
-                self.ask_failed(asked, title, text, ctx);
+            let held = self.waiting.iter().position(Dialog::held);
+            if let Some(d) = held.and_then(|i| self.waiting.remove(i)) {
+                reply = reply.and(self.raise(d));
             } else if let Some((pending, asker)) = self.replace_waiting.pop_front() {
-                self.ask_replace(pending, asker, ctx);
-            } else if let Some((title, text)) = self.messages_waiting.pop_front() {
-                self.message_box(&title, text, ctx);
+                reply = reply.and(self.ask_replace(pending, asker, ctx));
+            } else if let Some(d) = self.waiting.pop_front() {
+                reply = reply.and(self.raise(d));
             } else {
                 break;
             }
         }
-        Reply::redraw_all()
+        reply
     }
 }

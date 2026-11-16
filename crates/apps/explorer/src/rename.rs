@@ -297,8 +297,7 @@ impl Explorer {
             others,
         };
         b.replan();
-        self.dialog = Some(Dialog::BatchRename(Box::new(b)));
-        Reply::redraw_all()
+        self.raise(Dialog::BatchRename(Box::new(b)))
     }
 
     /// What the Rename dialog's form answered.
@@ -313,7 +312,7 @@ impl Explorer {
             }
             form::Event::Cancel | form::Event::Pressed(renamebox::CANCEL) => {
                 self.dialog = None;
-                self.show_waiting(ctx)
+                Reply::redraw_all()
             }
             form::Event::Default | form::Event::Pressed(renamebox::OK) => {
                 let rows = b.plan();

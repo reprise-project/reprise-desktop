@@ -51,13 +51,15 @@ impl Explorer {
                 }
                 Reply::redraw_all()
             }
-            openwith::Event::Choose { id, always } => match self.dialog.take() {
-                Some(Dialog::ChooseProgram(c)) => self.choose_program_ok(*c, id, always, ctx),
-                other => {
-                    self.dialog = other;
-                    Reply::none()
+            openwith::Event::Choose { id, always } => {
+                match self
+                    .dialog
+                    .take_if(|d| matches!(d, Dialog::ChooseProgram(_)))
+                {
+                    Some(Dialog::ChooseProgram(c)) => self.choose_program_ok(*c, id, always, ctx),
+                    _ => Reply::none(),
                 }
-            },
+            }
         }
     }
 

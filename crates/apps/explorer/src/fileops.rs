@@ -398,9 +398,7 @@ impl Explorer {
         }
         match asker.step() {
             Step::Cancelled => Reply::none(),
-            Step::Ask { .. }
-                if matches!(self.dialog, Some(Dialog::Replace(_))) || self.asking.is_some() =>
-            {
+            Step::Ask { .. } if self.dialog.is_some() || self.asking.is_some() => {
                 self.replace_waiting.push_back((pending, asker));
                 Reply::none()
             }
@@ -460,12 +458,8 @@ impl Explorer {
         }
     }
 
-    /// Raises the replace prompt for `ask` on its sides as read ([`ReadSide`]); a message box up
-    /// waits behind it.
+    /// Raises the replace prompt for `ask` on its sides as read ([`ReadSide`]).
     fn open_replace(&mut self, ask: Asking, sides: Option<[ReadSide; 2]>, ctx: &mut Ctx) -> Reply {
-        if let Some(Dialog::Message { title, text }) = self.dialog.take() {
-            self.messages_waiting.push_back((title, text));
-        }
         let side = |s: ReadSide, ex: &Self, ctx: &mut Ctx| {
             let pick = crate::icons::file_pick(&ex.globs, &s.path, s.is_dir);
             let icon = IconSlot::new(&mut ctx.icons, pick, 32);
@@ -493,14 +487,13 @@ impl Explorer {
             icon: folder.icon(),
             many: ask.many,
         };
-        self.dialog = Some(Dialog::Replace(Box::new(ReplaceAsk {
+        self.raise(Dialog::Replace(Box::new(ReplaceAsk {
             fields,
             icons: (folder, sides),
             asker: ask.asker,
             pending: ask.pending,
             focus: None,
-        })));
-        Reply::redraw_all()
+        })))
     }
 
     /// Raises the replace prompt whose sides ([`Explorer::ask_replace`]) were read late. A window
@@ -698,17 +691,25 @@ impl Explorer {
     }
 
     /// File > Close or the close box. With work in flight the window hides and [`Explorer::wake`]
-    /// quits once it drains. A Replace prompt still up (the taskbar's Close passes it) answers No,
-    /// as do the pastes waiting behind it, and the rest is put.
+    /// quits once it drains. The hidden window asks nothing: the box up (the taskbar's Close
+    /// passes it) and those waiting are dropped, which ends a job held on a failed item, and
+    /// every replace prompt answers No, so the rest of its paste is put.
     pub fn close(&mut self, ctx: &mut Ctx) -> Reply {
         self.flush_settings();
-        if self.holds_a_job() {
-            self.dialog = None;
+        let boxes: Vec<Dialog> = self
+            .dialog
+            .take()
+            .into_iter()
+            .chain(self.waiting.drain(..))
+            .collect();
+        self.closing = !boxes.is_empty() || !self.replace_waiting.is_empty();
+        for d in boxes {
+            if let Dialog::Replace(r) = d {
+                self.ask_replace(r.pending, r.asker, ctx);
+            }
         }
-        self.failed_waiting.clear();
-        if let Some(Dialog::Replace(r)) = self.dialog.take() {
-            self.closing = true;
-            self.ask_replace(r.pending, r.asker, ctx);
+        // Behind a prompt whose files are being read, `take_asking` answers them in turn.
+        if self.asking.is_none() {
             self.show_waiting(ctx);
         }
         if self.busy() {
@@ -917,13 +918,19 @@ impl Explorer {
                 let kind = ConfirmKind::of(1, is_dir);
                 let text = reprisefs::bincap::too_big_text(&reprisefs::bincap::label(path));
                 let icon = question_icon(ctx, is_dir);
-                let reply =
-                    self.confirm_box(kind, "", Vec::new(), true, BinLack::None, icon, false, None);
-                if let Some(Dialog::Confirm(c)) = self.dialog.as_mut() {
-                    c.text = text;
-                    c.too_big = Some(asker);
-                }
-                reply
+                let mut c = self.delete_question(
+                    kind,
+                    "",
+                    Vec::new(),
+                    true,
+                    BinLack::None,
+                    icon,
+                    false,
+                    None,
+                );
+                c.text = text;
+                c.too_big = Some(asker);
+                self.raise(Dialog::Confirm(c))
             }
             TooBigStep::Done(plan) => {
                 let from = self.place.title();
@@ -1243,8 +1250,7 @@ impl Explorer {
             browse: None,
         };
         cp.wear_icons(&mut ctx.icons);
-        self.dialog = Some(Dialog::ChooseProgram(Box::new(cp)));
-        Reply::redraw_all()
+        self.raise(Dialog::ChooseProgram(Box::new(cp)))
     }
 
     pub(crate) fn choose_program_ok(
@@ -1337,13 +1343,19 @@ impl Explorer {
                 let text = no_bin.question(many);
                 let kind = ConfirmKind::of(if many { 2 } else { 1 }, is_dir);
                 let icon = question_icon(ctx, is_dir);
-                let reply =
-                    self.confirm_box(kind, "", Vec::new(), true, BinLack::None, icon, false, None);
-                if let Some(Dialog::Confirm(c)) = self.dialog.as_mut() {
-                    c.text = text;
-                    c.undo_erase = true;
-                }
-                reply
+                let mut c = self.delete_question(
+                    kind,
+                    "",
+                    Vec::new(),
+                    true,
+                    BinLack::None,
+                    icon,
+                    false,
+                    None,
+                );
+                c.text = text;
+                c.undo_erase = true;
+                reply.and(self.raise(Dialog::Confirm(c)))
             }
             None => self.message_box("Error", format!("Cannot undo: {e}"), ctx),
         }

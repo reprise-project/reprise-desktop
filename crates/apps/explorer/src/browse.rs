@@ -226,17 +226,13 @@ impl Explorer {
             &self.forms.controls(),
         );
         b.bf.tree.follow(&lay.tree);
-        self.dialog = Some(Dialog::Browse(b));
-        Reply::redraw_all()
+        self.raise(Dialog::Browse(b))
     }
 
     pub fn browse_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
-        let mut b = match self.dialog.take() {
-            Some(Dialog::Browse(b)) => b,
-            other => {
-                self.dialog = other;
-                return Reply::none();
-            }
+        let Some(Dialog::Browse(mut b)) = self.dialog.take_if(|d| matches!(d, Dialog::Browse(_)))
+        else {
+            return Reply::none();
         };
         let lay = b.bf.layout(
             &self.dialog_text,
@@ -599,15 +595,12 @@ impl Explorer {
     /// [`Explorer::refill_tree_node`] does for the Folders tree. True when the node was filled
     /// at once; a late read lands through [`Explorer::take_browse`].
     pub(crate) fn refill_browse_node(&mut self, place: &Place, ctx: &mut Ctx) -> bool {
-        let mut b = match self.dialog.take() {
-            Some(Dialog::Browse(b)) => b,
-            other => {
-                self.dialog = other;
-                return false;
-            }
+        let Some(Dialog::Browse(mut b)) = self.dialog.take_if(|d| matches!(d, Dialog::Browse(_)))
+        else {
+            return false;
         };
         let filled = self.refill_browse_in(&mut b, place, ctx);
-        self.dialog = Some(Dialog::Browse(b));
+        self.raise(Dialog::Browse(b));
         filled
     }
 
@@ -652,12 +645,9 @@ impl Explorer {
     /// True when one did.
     pub(crate) fn take_browse(&mut self, ctx: &mut Ctx) -> bool {
         let left = self.take_browse_left(ctx);
-        let mut b = match self.dialog.take() {
-            Some(Dialog::Browse(b)) => b,
-            other => {
-                self.dialog = other;
-                return left;
-            }
+        let Some(Dialog::Browse(mut b)) = self.dialog.take_if(|d| matches!(d, Dialog::Browse(_)))
+        else {
+            return left;
         };
         let inp = Inputs {
             show_hidden: self.settings.show_hidden,
@@ -731,14 +721,14 @@ impl Explorer {
             Some(Making::Rename { from, path, job }) => match job.take() {
                 Some(done) => {
                     self.renamed(&mut b, &from, path, done, ctx);
-                    self.dialog = Some(Dialog::Browse(b));
+                    self.raise(Dialog::Browse(b));
                     return true;
                 }
                 None => b.making = Some(Making::Rename { from, path, job }),
             },
             None => {}
         }
-        self.dialog = Some(Dialog::Browse(b));
+        self.raise(Dialog::Browse(b));
         landed
     }
 
@@ -821,7 +811,7 @@ impl Explorer {
     }
 
     fn put_back(&mut self, b: Browse, reply: Reply) -> Reply {
-        self.dialog = Some(Dialog::Browse(b));
+        self.raise(Dialog::Browse(b));
         reply
     }
 

@@ -310,15 +310,12 @@ pub struct Explorer {
     pub(crate) extract_queue: std::collections::VecDeque<extracting::Batch>,
     /// The whole percent and paused state last put on the task button.
     pub(crate) task_progress: Option<(u32, bool)>,
-    /// While a replace prompt is up: the batches whose prompts come next, and
-    /// the error boxes of batches that finished meanwhile. Error boxes also
-    /// wait behind one already up.
+    /// The boxes raised while another was up, oldest first ([`Explorer::raise`]).
+    pub(crate) waiting: std::collections::VecDeque<Dialog>,
+    /// The pastes whose next clash is asked once the slot is free and no replace prompt's files
+    /// are being read.
     pub(crate) replace_waiting:
         std::collections::VecDeque<(fileops::PendingPut, reprisefs::replace::Asker)>,
-    pub(crate) messages_waiting: std::collections::VecDeque<(String, String)>,
-    /// Jobs held on a failed item ([`Explorer::ask_failed`]) whose box waits for the one up.
-    pub(crate) failed_waiting:
-        std::collections::VecDeque<(reprisefs::progress::Asked, &'static str, String)>,
     /// A replace prompt whose two files are still being read, on a listing thread.
     pub(crate) asking: Option<fileops::ReadingSides>,
     /// Finished background jobs (deletes, the bin's Empty) waiting for a wake.
@@ -563,9 +560,8 @@ impl Explorer {
             extracting: None,
             extract_queue: std::collections::VecDeque::new(),
             task_progress: None,
+            waiting: std::collections::VecDeque::new(),
             replace_waiting: std::collections::VecDeque::new(),
-            messages_waiting: std::collections::VecDeque::new(),
-            failed_waiting: std::collections::VecDeque::new(),
             asking: None,
             jobs_tx,
             jobs_rx,
@@ -1558,6 +1554,127 @@ struct Lazy {
     units: TextUnits,
 }
 
+impl Explorer {
+    /// An event on window `win`. After every event an empty dialog slot takes what waits for it.
+    pub(crate) fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        let reply = route(self, win, ev, ctx);
+        self.raise_waiting(reply, ctx)
+    }
+}
+
+fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+    ex.follow_forms(ctx);
+    match ev {
+        Event::Key(_) => ex.keyed = true,
+        Event::Pointer(PointerInput::Press { .. }) => ex.keyed = false,
+        _ => {}
+    }
+    // An Alt held when a child window came up is released over there; that
+    // release must not come back as a menu-bar activation.
+    if win != MAIN {
+        ex.alt_arm.interrupt();
+    }
+    if win == DIALOG {
+        return ex.dialog_event(ev, ctx);
+    }
+    if win == PROGRAM_BROWSE {
+        return ex.program_browse_event(ev, ctx);
+    }
+    if win == browse::ERROR {
+        return ex.browse_error_event(ev);
+    }
+    if win == PROPS {
+        return ex.props_event(ev, ctx);
+    }
+    if win == preview::PREVIEW {
+        return ex.preview_event(ev, ctx);
+    }
+    if [copydlg::COPY, copydlg::REMOVE, copydlg::EXTRACT].contains(&win) {
+        return ex.progress_event(win, ev, ctx);
+    }
+    let reply = match ev {
+        Event::Key(k) => ex.key(k, ctx),
+        Event::KeyUp(k) => {
+            // A release whose press never arrived is a key the compositor grabbed
+            // (Alt+space opens its window menu): this Alt means nothing here.
+            if k.sym != keysym::ALT_L && k.sym != keysym::ALT_R {
+                ex.alt_arm.interrupt();
+                return Reply::none();
+            }
+            // Only a bare Alt press and release with the window's own keyboard activates
+            // the bar; a popup or modal child owns the keys while up.
+            if ex.alt_arm.release_alt()
+                && ex.popup.is_none()
+                && ex.dialog.is_none()
+                && ex.props.is_none()
+            {
+                let lay = ex.bar_layout(ctx);
+                let m = ctx.theme.clone();
+                ex.bar
+                    .key(Key::Activate, &lay, &ctx.text, &m, ctx.theme.fonts.size_px);
+                return Reply::redraw();
+            }
+            Reply::none()
+        }
+        Event::Pointer(p) => ex.pointer(p, ctx),
+        Event::PastedFiles(clip) => ex.pasted(clip, ctx),
+        Event::Pasted(text) => ex.paste_text(&text),
+        Event::Wake => ex.wake(ctx),
+        Event::Blink => {
+            ex.flush_settings();
+            // The Address and Search fields' carets are the only things in the window that blink.
+            Reply {
+                redraw: matches!(ex.focus, Focus::Address | Focus::Search),
+                ..Reply::none()
+            }
+        }
+        Event::Tick => {
+            let field = ex.address_tick(ctx);
+            let tip = ex.tip_tick(std::time::Instant::now(), ctx);
+            Reply {
+                redraw: field.redraw || tip.redraw,
+                tick: field.tick || tip.tick,
+                ..tip
+            }
+        }
+        Event::Focus(false) => {
+            ex.alt_arm.interrupt();
+            let closed = ex.close_drop_menu();
+            ex.flush_settings();
+            Reply {
+                redraw: closed,
+                ..Reply::none()
+            }
+        }
+        // A maximized window's size is the screen's: a hand size still pending is saved.
+        Event::Resized if ctx.maximized => Reply::redraw(),
+        // Only a size the user gives is kept: the opening configure leaves the file alone.
+        Event::Resized => {
+            ex.window_px = (!ctx.at_pick).then_some(ctx.size);
+            ex.settings_dirty |= ex.window_px.is_some();
+            Reply::redraw()
+        }
+        Event::CloseRequest => ex.close(ctx),
+        Event::DragEnter {
+            x, y, offered, own, ..
+        } => ex.drag_enter(x, y, offered, own, ctx),
+        Event::DragFiles { paths } => ex.drag_files(paths, ctx),
+        Event::DragMotion { x, y, .. } => ex.drag_over(x, y, ctx),
+        Event::DragLeave => ex.drag_leave(),
+        Event::DragDrop {
+            x,
+            y,
+            data,
+            action,
+            source,
+        } => ex.drag_drop((x, y), data, action, source, ctx),
+        Event::DropCancelled => ex.drop_cancelled(),
+        Event::DragEnd { .. } => ex.drag_ended(),
+        _ => Reply::redraw(),
+    };
+    ex.settle_drop(reply)
+}
+
 impl App for Lazy {
     fn title(&self) -> String {
         match &self.inner {
@@ -1586,125 +1703,11 @@ impl App for Lazy {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
-        if self.inner.is_none() {
-            self.inner = Some(Explorer::open(
-                self.start.clone(),
-                |d| d.is_dir(),
-                Explorer::new,
-                ctx,
-            ));
-        }
-        let ex = self.inner.as_mut().expect("built above");
-        ex.follow_forms(ctx);
-        match ev {
-            Event::Key(_) => ex.keyed = true,
-            Event::Pointer(PointerInput::Press { .. }) => ex.keyed = false,
-            _ => {}
-        }
-        // An Alt held when a child window came up is released over there; that
-        // release must not come back as a menu-bar activation.
-        if win != MAIN {
-            ex.alt_arm.interrupt();
-        }
-        if win == DIALOG {
-            return ex.dialog_event(ev, ctx);
-        }
-        if win == PROGRAM_BROWSE {
-            return ex.program_browse_event(ev, ctx);
-        }
-        if win == browse::ERROR {
-            return ex.browse_error_event(ev);
-        }
-        if win == PROPS {
-            return ex.props_event(ev, ctx);
-        }
-        if win == preview::PREVIEW {
-            return ex.preview_event(ev, ctx);
-        }
-        if [copydlg::COPY, copydlg::REMOVE, copydlg::EXTRACT].contains(&win) {
-            return ex.progress_event(win, ev, ctx);
-        }
-        let reply = match ev {
-            Event::Key(k) => ex.key(k, ctx),
-            Event::KeyUp(k) => {
-                // A release whose press never arrived is a key the compositor grabbed
-                // (Alt+space opens its window menu): this Alt means nothing here.
-                if k.sym != keysym::ALT_L && k.sym != keysym::ALT_R {
-                    ex.alt_arm.interrupt();
-                    return Reply::none();
-                }
-                // Only a bare Alt press and release with the window's own keyboard activates
-                // the bar; a popup or modal child owns the keys while up.
-                if ex.alt_arm.release_alt()
-                    && ex.popup.is_none()
-                    && ex.dialog.is_none()
-                    && ex.props.is_none()
-                {
-                    let lay = ex.bar_layout(ctx);
-                    let m = ctx.theme.clone();
-                    ex.bar
-                        .key(Key::Activate, &lay, &ctx.text, &m, ctx.theme.fonts.size_px);
-                    return Reply::redraw();
-                }
-                Reply::none()
-            }
-            Event::Pointer(p) => ex.pointer(p, ctx),
-            Event::PastedFiles(clip) => ex.pasted(clip, ctx),
-            Event::Pasted(text) => ex.paste_text(&text),
-            Event::Wake => ex.wake(ctx),
-            Event::Blink => {
-                ex.flush_settings();
-                // The Address and Search fields' carets are the only things in the window that blink.
-                Reply {
-                    redraw: matches!(ex.focus, Focus::Address | Focus::Search),
-                    ..Reply::none()
-                }
-            }
-            Event::Tick => {
-                let field = ex.address_tick(ctx);
-                let tip = ex.tip_tick(std::time::Instant::now(), ctx);
-                Reply {
-                    redraw: field.redraw || tip.redraw,
-                    tick: field.tick || tip.tick,
-                    ..tip
-                }
-            }
-            Event::Focus(false) => {
-                ex.alt_arm.interrupt();
-                let closed = ex.close_drop_menu();
-                ex.flush_settings();
-                Reply {
-                    redraw: closed,
-                    ..Reply::none()
-                }
-            }
-            // A maximized window's size is the screen's: a hand size still pending is saved.
-            Event::Resized if ctx.maximized => Reply::redraw(),
-            // Only a size the user gives is kept: the opening configure leaves the file alone.
-            Event::Resized => {
-                ex.window_px = (!ctx.at_pick).then_some(ctx.size);
-                ex.settings_dirty |= ex.window_px.is_some();
-                Reply::redraw()
-            }
-            Event::CloseRequest => ex.close(ctx),
-            Event::DragEnter {
-                x, y, offered, own, ..
-            } => ex.drag_enter(x, y, offered, own, ctx),
-            Event::DragFiles { paths } => ex.drag_files(paths, ctx),
-            Event::DragMotion { x, y, .. } => ex.drag_over(x, y, ctx),
-            Event::DragLeave => ex.drag_leave(),
-            Event::DragDrop {
-                x,
-                y,
-                data,
-                action,
-                source,
-            } => ex.drag_drop((x, y), data, action, source, ctx),
-            Event::DropCancelled => ex.drop_cancelled(),
-            Event::DragEnd { .. } => ex.drag_ended(),
-            _ => Reply::redraw(),
-        };
-        ex.settle_drop(reply)
+        let start = &self.start;
+        let ex = self.inner.get_or_insert_with(|| {
+            Explorer::open(start.clone(), |d| d.is_dir(), Explorer::new, ctx)
+        });
+        ex.event(win, ev, ctx)
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
