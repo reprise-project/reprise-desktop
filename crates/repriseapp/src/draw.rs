@@ -162,9 +162,7 @@ impl Host {
         self.app.follow_scale(id, scale, &mut self.ctx);
         let paste = self.edit_menu.is_pending(id) && self.clipboard_text();
         let within = self.menu_within((w, h));
-        let box_owner = (self.file_box.as_ref())
-            .filter(|_| id == crate::filebox::FILE_BOX)
-            .map(|(o, _)| *o);
+        let box_owner = crate::filebox::owner(&self.file_box, id);
         let app = &mut self.app;
         let menu = &mut self.edit_menu;
         let last_tip = &mut self.slots[i].tip;

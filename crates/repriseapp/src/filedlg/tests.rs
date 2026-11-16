@@ -1134,10 +1134,8 @@ fn a_box_icon_lands_off_the_loop_and_a_broken_one_leaves_none() {
         icon.map(|c| c.get(16, 16))
     };
     for (icon, want) in [("user-trash-full", Some(TEXT)), ("dialog-error", None)] {
-        h.ask = Some(Ask {
-            icon,
-            ..error_box("Title", "Text".into())
-        });
+        h.ask.drain();
+        h.ask.ask(ok_box("Text"), Pending::new(icon, Then::Nothing));
         assert!(h.prime_box(&mut icons));
         assert_eq!(mid(&h), Some(0), "{icon}: a blank stand-in");
         assert!(!h.prime_box(&mut icons) && !h.box_landed(&mut icons));
@@ -1564,10 +1562,12 @@ fn a_relist_of_a_folder_being_read_waits_on_that_read() {
     std::fs::remove_dir_all(&t).ok();
 }
 
-/// A program with a file dialog in window `DLG` that does nothing for its thumbnails.
+/// A program with a file dialog in window `DLG`, until `closed`, that does nothing for its
+/// thumbnails.
 struct Program {
     host: Host,
     dlg: FileDlg,
+    closed: bool,
 }
 
 const DLG: crate::WinId = crate::WinId::named("open");
@@ -1590,7 +1590,7 @@ impl crate::App for Program {
 
 impl crate::Extended for Program {
     fn drop_file_dialog(&mut self, win: crate::WinId) -> Option<crate::fielddrop::FileDrop<'_>> {
-        (win == DLG).then_some(crate::fielddrop::FileDrop {
+        (win == DLG && !self.closed).then_some(crate::fielddrop::FileDrop {
             dlg: &mut self.dlg,
             host: &mut self.host,
         })
@@ -1603,7 +1603,11 @@ fn every_programs_file_dialog_shows_thumbnails_without_wiring() {
     let mut icons = flat_icons(t.path());
     let mut host = host_in(&t.path().join("list"));
     let dlg = open_dlg(&mut host);
-    let mut app = Program { host, dlg };
+    let mut app = Program {
+        host,
+        dlg,
+        closed: false,
+    };
     thumbs_on(&mut app, crate::MAIN, &crate::Waker::noop());
     assert!(
         app.host.thumbs.is_none(),
@@ -1616,7 +1620,7 @@ fn every_programs_file_dialog_shows_thumbnails_without_wiring() {
     );
     thumbs_without_cache(&mut app.host);
     thumbs_on(&mut app, DLG, &crate::Waker::noop());
-    let Program { host, dlg } = &mut app;
+    let Program { host, dlg, .. } = &mut app;
     host.ensure_listed(dlg, &mut icons, &|_| true);
     view(host, dlg, Mode::Thumbnails);
     let mut redrawn = Vec::new();
@@ -1938,9 +1942,16 @@ fn answer_yes(h: &mut Host) -> Outcome {
     box_key(h, Event::Key(k))
 }
 
+/// `ev` on the window of the box up.
 fn box_key(h: &mut Host, ev: Event) -> Outcome {
     let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
-    h.box_event(&ev, &text, &Theme::default())
+    let win = h.ask.win().expect("a box is up");
+    h.box_event(win, &ev, &text, &Theme::default())
+}
+
+/// An OK box saying `text`.
+fn ok_box(text: &str) -> MsgBox {
+    MsgBox::new("Title", box_fields(text.into(), &["OK"]))
 }
 
 #[test]
@@ -2126,6 +2137,177 @@ fn delete_asks_before_deleting_for_good_what_the_recycle_bin_cannot_take() {
         "Are you sure you want to delete 'now.txt'?",
         "a bin set to delete at once asks to delete for good"
     );
+}
+
+#[test]
+fn a_question_raised_while_an_error_is_up_waits_behind_it_and_each_answer_runs_its_own_step() {
+    use reprisekit::textedit::keysym;
+    let t = tempfile::tempdir().unwrap();
+    std::fs::write(t.path().join("big.iso"), "big").unwrap();
+    std::fs::write(t.path().join("now.txt"), "now").unwrap();
+    let _bins = fake_bins(t.path(), "confirm = false\nmax_percent = 0\n");
+    let mut h = host_in(t.path());
+    let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+    let mut dlg = open_dlg(&mut h);
+    h.thumbs_on(&crate::Waker::noop());
+    h.ensure_listed(&mut dlg, &mut icons, &|_: &Item| true);
+    focus_list(&mut h, &mut dlg);
+
+    assert!(dlg.select_named("big.iso"));
+    send(&mut h, &mut dlg, &press(keysym::DELETE, false, false, None));
+    assert!(dlg.select_named("now.txt"));
+    for key in [keysym::F2, keysym::END] {
+        send(&mut h, &mut dlg, &press(key, false, false, None));
+    }
+    send(
+        &mut h,
+        &mut dlg,
+        &press('/' as u32, false, false, Some("/")),
+    );
+    send(&mut h, &mut dlg, &press(keysym::RETURN, false, false, None));
+    let rename = h.asking().map(|m| m.title.clone());
+    assert_eq!(
+        rename.as_deref(),
+        Some("Rename"),
+        "the refused name says why"
+    );
+    let error_win = h.ask.win();
+
+    settle(&mut h, &mut dlg, &mut icons, |h| h.deleting.is_none());
+    assert_eq!(
+        h.asking().map(|m| m.title.as_str()),
+        Some("Rename"),
+        "the question about big.iso waits behind the error"
+    );
+    assert_eq!(answer(&mut h, keysym::RETURN), Outcome::Closed(Some(0)));
+    assert!(
+        t.path().join("big.iso").is_file(),
+        "OK on the error deletes nothing"
+    );
+    assert_eq!(
+        asked(&mut h, &mut dlg, &mut icons).1,
+        "'big.iso' is too big for the Recycle Bin. Do you want to delete it permanently?"
+    );
+    assert_ne!(
+        h.ask.win(),
+        error_win,
+        "the question maps a window of its own"
+    );
+    answer_yes(&mut h);
+    settle(&mut h, &mut dlg, &mut icons, |h| h.deleting.is_none());
+    assert!(
+        !t.path().join("big.iso").exists(),
+        "Yes deletes it for good"
+    );
+    assert!(h.asking().is_none());
+}
+
+/// A [`crate::Ctx`] at the default theme with no icons.
+fn ctx() -> crate::Ctx {
+    crate::Ctx {
+        theme: Theme::default(),
+        text: std::rc::Rc::new(TextRenderer::load(&reprisekit::theme::FontConfig::default())),
+        icons: IconCache::new(IconTheme::load("test", &[])),
+        caret_on: true,
+        size: CLIENT,
+        maximized: false,
+        origin: (0, 0),
+        wake: crate::Waker::noop(),
+        heads: Default::default(),
+        want_tick: Default::default(),
+        output_size: None,
+        at_pick: false,
+        text_size: 100,
+    }
+}
+
+/// A program whose file dialog has two OK boxes raised, "First" up.
+fn two_boxes(t: &Path) -> Program {
+    let mut host = host_in(t);
+    let dlg = open_dlg(&mut host);
+    host.tell("First", "first".into());
+    host.tell("Second", "second".into());
+    Program {
+        host,
+        dlg,
+        closed: false,
+    }
+}
+
+#[test]
+fn the_box_after_another_takes_the_other_window_over_the_dialog_and_gets_its_events_draw_and_tree()
+{
+    use crate::filebox;
+    use reprisekit::textedit::keysym;
+    let t = tempfile::tempdir().unwrap();
+    let mut app = two_boxes(t.path());
+    let mut ctx = ctx();
+    let key = |sym| press(sym, false, false, None);
+
+    let first = filebox::follow(&mut app, DLG, &mut ctx).0.expect("a box");
+    assert_eq!(first.title, "First");
+    assert!(first.modal);
+    assert!(filebox::owns(first.id) && !filebox::owns(DLG) && !filebox::owns(crate::MAIN));
+    let shown = Some((DLG, first.clone()));
+    assert_eq!(filebox::owner(&shown, first.id), Some(DLG));
+    assert_eq!(
+        filebox::owner(&shown, DLG),
+        None,
+        "the dialog is the program's"
+    );
+    assert_eq!(
+        filebox::event(&mut app, DLG, first.id, &key(keysym::RETURN), &ctx),
+        Outcome::Closed(Some(0))
+    );
+
+    let second = filebox::follow(&mut app, DLG, &mut ctx)
+        .0
+        .expect("the next box");
+    assert_eq!(second.title, "Second");
+    assert_ne!(second.id, first.id, "the next box maps a window of its own");
+    let shown = Some((DLG, second.clone()));
+    assert_eq!(
+        filebox::owner(&shown, second.id),
+        Some(DLG),
+        "the box names the dialog's window as its parent and its host takes the box"
+    );
+    let mut c = Canvas::new(second.size.0 as u32, second.size.1 as u32);
+    crate::Host::draw_file_box(&mut app, DLG, &mut c, &ctx);
+    assert!(c.pixels.iter().any(|&p| p != c.pixels[0]), "the box draws");
+    let mut tree = reprisekit::access::Tree::window(&second.title, second.size);
+    crate::Host::access_file_box(&mut app, DLG, &mut tree, &ctx);
+    assert!(
+        (tree.nodes()).any(|(_, n)| n.label().or(n.value()) == Some("second")),
+        "the reader reads the second box"
+    );
+    assert_eq!(
+        filebox::event(&mut app, DLG, first.id, &key(keysym::ESCAPE), &ctx),
+        Outcome::None,
+        "the first box's window took its answer and is gone"
+    );
+    assert_eq!(
+        filebox::event(&mut app, DLG, second.id, &key(keysym::ESCAPE), &ctx),
+        Outcome::Closed(None)
+    );
+    assert_eq!(filebox::follow(&mut app, DLG, &mut ctx).0, None);
+}
+
+#[test]
+fn the_boxes_over_a_file_dialog_leave_with_it_and_stay_away_from_the_next() {
+    let t = tempfile::tempdir().unwrap();
+    let mut app = two_boxes(t.path());
+    let mut ctx = ctx();
+    assert!(crate::filebox::follow(&mut app, DLG, &mut ctx).0.is_some());
+    app.closed = true;
+    assert_eq!(
+        crate::filebox::follow(&mut app, DLG, &mut ctx).0,
+        None,
+        "the box leaves with its dialog"
+    );
+    app.dlg = app.host.open(t.path(), open_fields(), ctx.theme.text);
+    app.closed = false;
+    assert!(app.host.asking().is_none(), "neither box comes back");
+    assert_eq!(crate::filebox::follow(&mut app, DLG, &mut ctx).0, None);
 }
 
 #[test]
