@@ -23,6 +23,7 @@ use smithay_client_toolkit::reexports::protocols::xdg::{
     dialog::v1::client::{xdg_dialog_v1, xdg_wm_dialog_v1},
     foreign::{zv1::client::zxdg_importer_v1, zv2::client::zxdg_importer_v2},
     system_bell::v1::client::xdg_system_bell_v1,
+    toplevel_icon::v1::client::{xdg_toplevel_icon_manager_v1, xdg_toplevel_icon_v1},
     toplevel_tag::v1::client::xdg_toplevel_tag_manager_v1,
 };
 use smithay_client_toolkit::{
@@ -182,6 +183,9 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
     let tag_manager = globals
         .bind::<xdg_toplevel_tag_manager_v1::XdgToplevelTagManagerV1, _, _>(&qh, 1..=1, NoEvents)
         .ok();
+    let icon_manager = globals
+        .bind::<xdg_toplevel_icon_manager_v1::XdgToplevelIconManagerV1, _, _>(&qh, 1..=1, NoEvents)
+        .ok();
     let system_bell = globals
         .bind::<xdg_system_bell_v1::XdgSystemBellV1, _, _>(&qh, 1..=1, NoEvents)
         .ok();
@@ -256,6 +260,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         importer_v1,
         wm_dialog,
         tag_manager,
+        icon_manager,
         system_bell,
         effects,
         tab_groups,
@@ -517,6 +522,8 @@ no_events!(
     xdg_wm_dialog_v1::XdgWmDialogV1,
     xdg_dialog_v1::XdgDialogV1,
     xdg_toplevel_tag_manager_v1::XdgToplevelTagManagerV1,
+    xdg_toplevel_icon_manager_v1::XdgToplevelIconManagerV1,
+    xdg_toplevel_icon_v1::XdgToplevelIconV1,
     xdg_system_bell_v1::XdgSystemBellV1,
     zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
     reprise_tabs_v1::RepriseTabsV1,

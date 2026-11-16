@@ -503,6 +503,7 @@ impl Explorer {
             },
             Command::NodeProperties => match self.node_folder() {
                 Some((path, name)) => self.open_properties(&path, &name, &name, ctx),
+                None if self.node_is_bin() => self.open_bin_props(ctx),
                 None => Reply::none(),
             },
             Command::SelectAll => {

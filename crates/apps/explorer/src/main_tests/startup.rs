@@ -238,6 +238,11 @@ fn bin_properties_shows_recycle_bin_properties_alone_and_ends_with_it() {
     wake_until(ex, &mut ctx, |ex| ex.bin_props.is_some());
     let ids: Vec<WinId> = app.children().iter().map(|c| c.id).collect();
     assert_eq!(ids, [crate::bin_props::BIN_PROPS], "the sheet alone");
+    let icon = repriseapp::Extended::window_icon(&app, crate::bin_props::BIN_PROPS);
+    assert!(
+        matches!(icon, Some("user-trash" | "user-trash-full")),
+        "the sheet wears the bin, not the program's folder: {icon:?}"
+    );
     let reply = app.event(crate::bin_props::BIN_PROPS, Event::CloseRequest, &mut ctx);
     assert!(reply.quit, "closing the sheet ends the process");
 }

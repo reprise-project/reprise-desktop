@@ -1892,6 +1892,11 @@ impl repriseapp::Extended for Lazy {
         self.inner.as_ref().and_then(|ex| ex.min_size(win))
     }
 
+    fn window_icon(&self, win: WinId) -> Option<&'static str> {
+        let b = self.inner.as_ref()?.bin_props.as_ref()?;
+        (win == bin_props::BIN_PROPS).then(|| b.icon())
+    }
+
     fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
         if win != MAIN {
             return repriseapp::reader_popup(self, win, ctx);
