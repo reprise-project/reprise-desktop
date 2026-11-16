@@ -499,16 +499,20 @@ fn toolkits_default_to_auto_and_resolve_against_the_look() {
         resolve_gtk_theme(&auto.gtk_theme, true, None),
         "Adwaita-dark"
     );
-    assert_eq!(resolve_qt(&auto.qt_platform_theme, false, None), None);
     assert_eq!(
-        resolve_qt(&auto.qt_platform_theme, true, None),
+        resolve_qt(&auto.qt_platform_theme, None, false),
         Some("xdgdesktopportal")
+    );
+    assert_eq!(
+        resolve_qt(&auto.qt_platform_theme, None, true),
+        None,
+        "the session's own platform theme stands"
     );
     let c =
         Config::parse("[toolkits]\ngtk_theme = \"Arc\"\nqt_platform_theme = \"qt6ct\"\n").unwrap();
     assert_eq!(resolve_gtk_theme(&c.toolkits.gtk_theme, true, None), "Arc");
     assert_eq!(
-        resolve_qt(&c.toolkits.qt_platform_theme, false, None),
+        resolve_qt(&c.toolkits.qt_platform_theme, None, true),
         Some("qt6ct")
     );
     assert!(Config::parse("[toolkits]\nnope = 1\n").is_err());
@@ -525,9 +529,9 @@ fn reprise_resolves_to_what_was_generated_else_as_auto() {
     );
     assert_eq!(resolve_gtk_theme(gtk, true, None), "Adwaita-dark");
     assert_eq!(resolve_gtk_theme(gtk, false, None), "Adwaita");
-    assert_eq!(resolve_qt(qt, false, Some("qt6ct")), Some("qt6ct"));
-    assert_eq!(resolve_qt(qt, true, None), Some("xdgdesktopportal"));
-    assert_eq!(resolve_qt(qt, false, None), None);
+    assert_eq!(resolve_qt(qt, Some("qt6ct"), true), Some("qt6ct"));
+    assert_eq!(resolve_qt(qt, None, false), Some("xdgdesktopportal"));
+    assert_eq!(resolve_qt(qt, None, true), None);
     assert_eq!(
         resolve_gtk_theme("Arc", false, Some("Reprise")),
         "Arc",

@@ -178,7 +178,7 @@ pub const REPRISE_TOOLKIT_ROW: &str = "Reprise (follows the look)";
 /// platform theme plugins a desktop Linux ships. Any other name shows as
 /// itself.
 pub const QT_PLATFORM_THEMES: &Choices = &[
-    (TOOLKIT_AUTO, "Automatic (desktop portal when dark)"),
+    (TOOLKIT_AUTO, "Automatic (desktop portal)"),
     (TOOLKIT_REPRISE, REPRISE_TOOLKIT_ROW),
     ("xdgdesktopportal", "Desktop portal"),
     ("qt6ct", "qt6ct"),
