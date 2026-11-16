@@ -106,7 +106,7 @@ fn barrier_ok(b: &Barrier, zones: &[Zone]) -> bool {
             && y2 < zy2
             && !zones
                 .iter()
-                .any(|o| covers(o, far, y1) || covers(o, far, y2))
+                .any(|o| touches(far, (y1, y2), (o.x, o.width), (o.y, o.height)))
     } else {
         let y = b.y1;
         let (x1, x2) = (b.x1.min(b.x2), b.x1.max(b.x2));
@@ -117,7 +117,7 @@ fn barrier_ok(b: &Barrier, zones: &[Zone]) -> bool {
             && x2 < zx2
             && !zones
                 .iter()
-                .any(|o| covers(o, x1, far) || covers(o, x2, far))
+                .any(|o| touches(far, (x1, x2), (o.y, o.height), (o.x, o.width)))
     }
 }
 
@@ -128,8 +128,13 @@ fn within(b: &Barrier, z: &Zone) -> bool {
     xs.iter().all(|&x| x >= z.x && x <= zx2) && ys.iter().all(|&y| y >= z.y && y <= zy2)
 }
 
-fn covers(z: &Zone, x: i32, y: i32) -> bool {
-    x >= z.x && x < z.x + z.width as i32 && y >= z.y && y < z.y + z.height as i32
+/// Whether a zone spanning `across` (start, length) holds the line `far` and its
+/// extent `along` (start, length) overlaps the inclusive span `lo..=hi`.
+fn touches(far: i32, (lo, hi): (i32, i32), across: (i32, u32), along: (i32, u32)) -> bool {
+    far >= across.0
+        && far < across.0 + across.1 as i32
+        && lo < along.0 + along.1 as i32
+        && hi >= along.0
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.InputCapture")]
@@ -556,6 +561,33 @@ mod tests {
             b(10, 0, 500, 1919, 500),  // inside a zone
         ];
         assert_eq!(validate(&bad, &z), vec![7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn an_edge_a_shorter_zone_touches_in_its_middle_fails() {
+        let z = [
+            Zone {
+                width: 1920,
+                height: 2160,
+                x: 0,
+                y: 0,
+            },
+            Zone {
+                width: 1920,
+                height: 1080,
+                x: 1920,
+                y: 500,
+            },
+        ];
+        let edges = [
+            b(1, 1920, 0, 1920, 2159),   // right of the tall zone, beside the short one
+            b(2, 3840, 500, 3840, 1579), // right of the short zone
+            b(3, 0, 0, 1919, 0),         // top of the tall zone
+            b(4, 1920, 0, 1920, 499),    // right of the tall zone above the short one
+            b(5, 1920, 500, 3839, 500),  // top of the short zone
+            b(6, 1920, 1580, 3839, 1580), // bottom of the short zone
+        ];
+        assert_eq!(validate(&edges, &z), vec![1]);
     }
 
     #[test]
