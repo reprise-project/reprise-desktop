@@ -887,7 +887,7 @@ impl SettingsApp {
             Ok(open) => Reply {
                 redraw: true,
                 spawn: vec![open.argv],
-                spawn_app: open.app,
+                spawn_app: open.app.map(|a| a.to_string()),
                 spawn_dir: open.dir,
                 ..Default::default()
             },

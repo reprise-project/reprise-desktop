@@ -567,7 +567,7 @@ fn a_launchers_name_key_moves_to_its_file_name_once() {
         target: Target::Launch(
             apps::parse_desktop(
                 &format!("[Desktop Entry]\nType=Application\nName={name}\nExec=x\n"),
-                file,
+                &file.parse().unwrap(),
             )
             .unwrap(),
         ),
@@ -911,14 +911,14 @@ fn icon_menu_has_its_rows_with_open_bold() {
         MenuItem::Entry { label, mnemonic: Some(6), .. } if label == "Allow Launching"
     ));
     let (items, commands) = open_with_menu(&[
-        ("vim".into(), "Vim".into()),
-        ("tj".into(), "Tom & Jerry".into()),
+        ("vim.desktop".parse().unwrap(), "Vim".into()),
+        ("tj.desktop".parse().unwrap(), "Tom & Jerry".into()),
     ]);
     assert_eq!(
         commands,
         vec![
-            Some(OpenWithApp("vim".into())),
-            Some(OpenWithApp("tj".into())),
+            Some(OpenWithApp("vim.desktop".parse().unwrap())),
+            Some(OpenWithApp("tj.desktop".parse().unwrap())),
             None,
             Some(ChooseProgram)
         ]

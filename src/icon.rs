@@ -547,7 +547,7 @@ pub(crate) mod tests {
             name: "Viewer".into(),
             exec_line: "viewer".into(),
             terminal: false,
-            id: "org.example.Viewer".into(),
+            id: "org.example.Viewer.desktop".parse().unwrap(),
             icon: Some(file.into()),
             startup_wm_class: None,
             categories: Vec::new(),
@@ -586,7 +586,7 @@ pub(crate) mod tests {
             name: "Viewer".into(),
             exec_line: "viewer".into(),
             terminal: false,
-            id: "org.example.Viewer".into(),
+            id: "org.example.Viewer.desktop".parse().unwrap(),
             icon: Some(file.into()),
             startup_wm_class: None,
             categories: Vec::new(),
@@ -617,8 +617,9 @@ pub(crate) mod tests {
             format!("[Desktop Entry]\nType=Application\nName=Editor\nExec=ed\nIcon={file}\n");
         let item = crate::quicklaunch::QuickItem {
             file: "editor.desktop".into(),
-            entry: crate::quicklaunch::parse(&text, "editor.desktop", "foot").unwrap(),
-            app: reprisefs::apps::parse_desktop(&text, "editor.desktop"),
+            entry: crate::quicklaunch::parse(&text, &"editor.desktop".parse().unwrap(), "foot")
+                .unwrap(),
+            app: reprisefs::apps::parse_desktop(&text, &"editor.desktop".parse().unwrap()),
         };
         let mut icons = IconCache::new(IconTheme::load("none", &[]));
         assert!(crate::taskbarview::quick_icon(&mut icons, &item, 16).is_none());

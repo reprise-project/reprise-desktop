@@ -87,7 +87,7 @@ pub fn pick(open: &[(String, usize)], apps: &[AppEntry], exclude: &[String]) -> 
         };
         saved.push(SavedApp {
             app_id: app_id.clone(),
-            entry: e.id.clone(),
+            entry: e.id.to_string(),
             desktop: *desktop,
             loose: Vec::new(),
         });
@@ -181,7 +181,7 @@ pub fn to_start<'a>(
         .filter_map(|s| Some((s, apps.iter().find(|e| e.id == s.entry)?)))
         .filter(|(_, e)| {
             let prog = program(&e.exec_line);
-            !autostarted.iter().any(|a| a.id == e.id)
+            !autostarted.iter().any(|a| e.id == a.id)
                 && !started.iter().any(|p| p.is_some() && *p == prog)
         })
         .collect()
@@ -853,7 +853,7 @@ fn restore_now(state: &mut State, autostarted: &[Entry]) {
     for (s, (argv, id, dir)) in started.iter().zip(&argvs) {
         log::info!("session: restoring {} ({id})", s.app_id);
         if let Ok(argv) = argv {
-            crate::spawn::spawn_argv_in(argv, Some(id), dir.as_deref(), &state.env, None);
+            crate::spawn::spawn_argv_in(argv, Some(id.as_str()), dir.as_deref(), &state.env, None);
         }
     }
     await_windows(state, &started, now);
@@ -895,7 +895,7 @@ pub fn settle_restart(state: &mut State, app_id: &str) {
             return TimeoutAction::Drop;
         };
         for _ in 0..n {
-            crate::spawn::spawn_argv_in(&argv, Some(&e.id), e.path.as_deref(), &state.env, None);
+            crate::spawn::spawn_argv_in(&argv, Some(e.id.as_str()), e.path.as_deref(), &state.env, None);
         }
         TimeoutAction::Drop
     });
@@ -917,7 +917,7 @@ mod tests {
             .unwrap_or_default();
         reprisefs::apps::parse_desktop(
             &format!("[Desktop Entry]\nType=Application\nName={id}\nExec={exec}\n{class}"),
-            &format!("{id}.desktop"),
+            &format!("{id}.desktop").parse().unwrap(),
         )
         .unwrap()
     }

@@ -241,7 +241,7 @@ fn open_file_asks_the_file_system_nothing() {
         open_file(dir.path(), &viewer, "foot").unwrap(),
         Opening {
             argv: vec!["viewer".into(), dir.path().as_os_str().to_owned()],
-            app: Some("viewer.desktop".into()),
+            app: Some("viewer.desktop".parse().unwrap()),
             dir: None,
         },
         "in the program's app scope"
@@ -264,7 +264,7 @@ fn open_in_looks_up_the_types_default_program_and_runs_as_it() {
         open(&song).unwrap(),
         Opening {
             argv: vec!["player".into(), song.clone().into_os_string()],
-            app: Some("player.desktop".into()),
+            app: Some("player.desktop".parse().unwrap()),
             dir: Some("/srv/music".into()),
         },
         "in the program's Path= folder"
@@ -282,7 +282,7 @@ fn app(id: &str, mimes: &[&str]) -> AppEntry {
         name: id.into(),
         exec_line: String::new(),
         terminal: false,
-        id: id.into(),
+        id: id.parse().unwrap(),
         icon: None,
         startup_wm_class: None,
         categories: Vec::new(),
@@ -306,7 +306,7 @@ fn a_type_s_own_default_never_falls_back_to_a_parent() {
     ];
     let lists = ["[Default Applications]\ntext/plain=notepad.desktop\n".to_string()];
     let own = |apps: &[AppEntry]| {
-        own_default_in_lists(&lists, &tree, "text/calendar", apps).map(|i| apps[i].id.clone())
+        own_default_in_lists(&lists, &tree, "text/calendar", apps).map(|i| apps[i].id.to_string())
     };
     assert_eq!(own(&apps).as_deref(), Some("calendar.desktop"));
     assert_eq!(own(&apps[..1]), None, "not the text editor");
@@ -566,7 +566,7 @@ fn glance_in_types_the_file_from_the_given_tables() {
         name: "Player".into(),
         exec_line: "player %f".into(),
         terminal: false,
-        id: "player.desktop".into(),
+        id: "player.desktop".parse().unwrap(),
         icon: None,
         startup_wm_class: None,
         categories: Vec::new(),
@@ -590,7 +590,7 @@ fn a_symlink_to_a_document_shows_what_opens_its_target() {
         name: "Player".into(),
         exec_line: "player %f".into(),
         terminal: false,
-        id: "player.desktop".into(),
+        id: "player.desktop".parse().unwrap(),
         icon: Some("audio-player".into()),
         startup_wm_class: None,
         categories: Vec::new(),
@@ -624,7 +624,7 @@ fn an_executable_script_opens_with_nothing_and_is_described_by_its_name() {
         name: "Editor".into(),
         exec_line: "editor %f".into(),
         terminal: false,
-        id: "editor.desktop".into(),
+        id: "editor.desktop".parse().unwrap(),
         icon: Some("text-editor".into()),
         startup_wm_class: None,
         categories: Vec::new(),

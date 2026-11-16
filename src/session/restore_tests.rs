@@ -16,7 +16,7 @@ fn desk() -> (Harness, TestClient) {
     h.state.app_index = vec![
         reprisefs::apps::parse_desktop(
             "[Desktop Entry]\nType=Application\nName=Foot\nExec=foot\n",
-            "foot.desktop",
+            &"foot.desktop".parse().unwrap(),
         )
         .unwrap(),
     ];

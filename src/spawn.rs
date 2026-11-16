@@ -1095,10 +1095,7 @@ fn log_name(app: Option<&str>, program: &str) -> String {
 /// through another launcher such as `sh` or `env`.
 pub fn command_app(cmd: &str, apps: &[reprisefs::apps::AppEntry]) -> Option<String> {
     if let Some(id) = gtk_launch_id(cmd) {
-        return apps
-            .iter()
-            .find(|e| e.id == id.as_str())
-            .map(|e| e.id.clone());
+        return apps.iter().find(|e| e.id == id).map(|e| e.id.to_string());
     }
     let program = crate::session::program(cmd)?;
     let program = program.trim_matches('\'');
@@ -1109,7 +1106,7 @@ pub fn command_app(cmd: &str, apps: &[reprisefs::apps::AppEntry]) -> Option<Stri
         apps.iter()
             .find(|e| crate::session::program(&e.exec_line).as_deref() == Some(program))
     });
-    Some(entry.map_or_else(|| program.to_string(), |e| e.id.clone()))
+    Some(entry.map_or_else(|| program.to_string(), |e| e.id.to_string()))
 }
 
 /// The folder a Run line names when the whole line is one path: absolute or under `~`, single-
@@ -1519,7 +1516,7 @@ mod tests {
     fn a_document_shortcut_names_its_file_and_a_program_launcher_names_none() {
         let argv = |exec: &str| {
             let text = format!("[Desktop Entry]\nType=Application\nName=N\nExec={exec}\n");
-            match crate::quicklaunch::parse(&text, "n.desktop", "foot")
+            match crate::quicklaunch::parse(&text, &"n.desktop".parse().unwrap(), "foot")
                 .unwrap()
                 .action
             {
@@ -1559,7 +1556,7 @@ mod tests {
     fn a_typed_or_bound_command_scopes_as_its_entry_else_its_program() {
         let entry = |id: &str, exec: &str| {
             let text = format!("[Desktop Entry]\nType=Application\nName=N\nExec={exec}\n");
-            reprisefs::apps::parse_desktop(&text, id).unwrap()
+            reprisefs::apps::parse_desktop(&text, &id.parse().unwrap()).unwrap()
         };
         let apps = [
             entry("org.deskflow.deskflow.desktop", "deskflow"),

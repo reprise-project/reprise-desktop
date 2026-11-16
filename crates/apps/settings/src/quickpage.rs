@@ -89,7 +89,8 @@ pub fn load(dir: &Path) -> Vec<Launcher> {
             let text = apps::read_desktop_file(&dir.join(&file)).ok()?;
             // `spawn` needs a command, which a button file does not carry.
             let is_action = |a: &str| a != "spawn" && ACTIONS.contains(&a);
-            let (name, icon) = match ql::button(&text, &file, is_action)? {
+            let id = apps::DesktopId::from_file_name(&file)?;
+            let (name, icon) = match ql::button(&text, &id, is_action)? {
                 ql::Button::App(app) => (app.name, app.icon),
                 ql::Button::Action { name, icon, .. } => (name, icon),
             };
@@ -119,7 +120,7 @@ pub fn add(dir: &Path, item: &NewItem) -> std::io::Result<String> {
         } else {
             apps::with_name(&text, &item.name)
         };
-        Some((ql::unique_name(dir, &a.id), text))
+        Some((ql::unique_name(dir, a.id.as_str()), text))
     });
     let (file, text) = match copied {
         Some(c) => c,

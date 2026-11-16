@@ -279,7 +279,7 @@ fn a_start_menu_entrys_file_is_named_and_drawn_as_its_entry() {
         name: name.into(),
         exec_line: "x".into(),
         terminal: false,
-        id: id.into(),
+        id: id.parse().unwrap(),
         icon: Some("accessories-calculator".into()),
         startup_wm_class: None,
         categories: Vec::new(),

@@ -238,7 +238,7 @@ impl Explorer {
                     Ok(spawn) => Reply {
                         spawn,
                         spawn_dir: app.path,
-                        spawn_app: Some(app.id),
+                        spawn_app: Some(app.id.to_string()),
                         ..Default::default()
                     },
                     Err(refused) => self.exec_refused(&refused, ctx),
@@ -1192,7 +1192,7 @@ impl Explorer {
             Ok(argv) => Reply {
                 redraw: true,
                 spawn: vec![argv],
-                spawn_app: Some(app.id.clone()),
+                spawn_app: Some(app.id.to_string()),
                 spawn_dir: app.path.clone(),
                 ..Default::default()
             },
@@ -1250,7 +1250,7 @@ impl Explorer {
             .and_then(|m| reprisefs::props::default_app(m, apps));
         let (recommended, others) = reprisefs::apps::chooser_groups(apps, mime.as_deref(), default);
         let program = |i: usize| Program {
-            id: apps[i].id.clone(),
+            id: apps[i].id.to_string(),
             name: apps[i].name.clone(),
             icon: apps[i].icon.clone(),
         };
@@ -1260,7 +1260,7 @@ impl Explorer {
             others.into_iter().map(program).collect(),
         );
         if let Some(d) = default {
-            ow.select_id(&apps[d].id);
+            ow.select_id(apps[d].id.as_str());
         }
         if set_default {
             ow.always = Check {
@@ -1316,7 +1316,7 @@ impl Explorer {
                 redraw_all: true,
                 spawn: vec![argv],
                 spawn_dir: app.path,
-                spawn_app: Some(app.id),
+                spawn_app: Some(app.id.to_string()),
                 ..Default::default()
             },
             Err(refused) => self.exec_refused(&refused, ctx),

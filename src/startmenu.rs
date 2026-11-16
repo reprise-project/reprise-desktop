@@ -47,7 +47,7 @@ impl State {
         let pinned_taskbar = self.quick_file_of(&entry.id).is_some();
         let uninstall = (self.app_uninstall.get(&entry.id).copied()).unwrap_or(Uninstall::Absent);
         Some(program_menu(
-            &entry.id,
+            entry.id.as_str(),
             pinned_start,
             pinned_taskbar,
             in_frequent,
@@ -222,7 +222,7 @@ impl Uninstall {
 /// Reads the file system: runs with the app index's scan, never from a click.
 pub fn uninstall_offers(
     apps: &[reprisefs::apps::AppEntry],
-) -> std::collections::HashMap<String, Uninstall> {
+) -> std::collections::HashMap<reprisefs::apps::DesktopId, Uninstall> {
     use reprisefs::software::{packagekit_present, remover_among};
     let installs = reprisefs::flatpak::installations();
     let packagekit = packagekit_present();

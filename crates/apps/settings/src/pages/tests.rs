@@ -168,7 +168,7 @@ fn every_dialog_fits_its_text_under_every_interface() {
     );
     let app = |name: &str| {
         let entry = format!("[Desktop Entry]\nType=Application\nName={name}\nExec=true\n");
-        reprisefs::apps::parse_desktop(&entry, "a.desktop").unwrap()
+        reprisefs::apps::parse_desktop(&entry, &"a.desktop".parse().unwrap()).unwrap()
     };
     let long = Shortcut::new(
         "Super+Shift+Alt+Page_Down",

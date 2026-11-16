@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use repriseapp::keys::form_input;
 use repriseapp::{App, Caption, Ctx, Event, Reply, WinId};
+use reprisefs::apps::DesktopId;
 use reprisefs::software::{Installation, Remover};
 use reprisekit::access::Tree;
 use reprisekit::controls::form::Form;
@@ -213,7 +214,9 @@ fn install_of(i: Installation) -> Install {
 /// The program with desktop file `file`: what removes it and what it is.
 fn read_program(file: &Path, conn: Option<&Connection>) -> (Found, Plan) {
     let text = reprisefs::apps::read_desktop_file(file).unwrap_or_default();
-    let id = file.file_name().map(|n| n.to_string_lossy().into_owned());
+    let id = file
+        .file_name()
+        .and_then(|n| DesktopId::from_file_name(&n.to_string_lossy()));
     let entry = id.and_then(|id| reprisefs::apps::parse_desktop_any(&text, &id));
     let stem = file.file_stem().map(|s| s.to_string_lossy().into_owned());
     let mut found = Found {
@@ -266,7 +269,7 @@ fn read_program(file: &Path, conn: Option<&Connection>) -> (Found, Plan) {
         },
         Remover::Launcher => {
             found.facts = launcher_facts(&text, |id| {
-                let id = format!("{id}.desktop");
+                let id = DesktopId::from_file_name(&format!("{id}.desktop"))?;
                 let text = reprisefs::apps::read_desktop_file(&reprisefs::apps::find_file(&id)?);
                 reprisefs::apps::parse_desktop_any(&text.ok()?, &id).map(|e| e.name)
             });

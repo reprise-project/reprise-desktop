@@ -203,7 +203,7 @@ mod tests {
         let path = Path::new("/home/u/Downloads/a.qqz");
         let program = Opening {
             argv: vec!["viewer".into(), path.into()],
-            app: Some("viewer.desktop".into()),
+            app: Some("viewer.desktop".parse().unwrap()),
             dir: Some("/opt/viewer".into()),
         };
         assert_eq!(open_command(path, Ok(Some(program.clone()))), program);

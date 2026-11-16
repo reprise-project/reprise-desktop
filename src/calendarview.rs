@@ -724,7 +724,7 @@ mod tests {
             name: "Calendar".into(),
             exec_line: "gnome-calendar".into(),
             terminal: false,
-            id: GNOME_CALENDAR.into(),
+            id: GNOME_CALENDAR.parse().unwrap(),
             icon: None,
             startup_wm_class: None,
             categories: Vec::new(),
@@ -736,7 +736,10 @@ mod tests {
         assert_eq!(h.state.calendar.answered, 2);
         assert_eq!(program(&h.state), None, "a read picks nothing");
         open(&mut h.state, bar);
-        assert_eq!(program(&h.state).as_deref(), Some(GNOME_CALENDAR));
+        assert_eq!(
+            program(&h.state).as_ref().map(|p| p.as_str()),
+            Some(GNOME_CALENDAR)
+        );
         let opens = h
             .state
             .calendar

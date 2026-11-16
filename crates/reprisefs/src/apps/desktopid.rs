@@ -68,6 +68,44 @@ impl std::fmt::Display for DesktopId {
     }
 }
 
+/// A name [`DesktopId::from_file_name`] refuses.
+#[derive(Debug, PartialEq, Eq)]
+pub struct NotDesktopId;
+
+impl std::fmt::Display for NotDesktopId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("not a desktop file name")
+    }
+}
+
+impl std::error::Error for NotDesktopId {}
+
+impl std::str::FromStr for DesktopId {
+    type Err = NotDesktopId;
+
+    fn from_str(name: &str) -> Result<DesktopId, NotDesktopId> {
+        DesktopId::from_file_name(name).ok_or(NotDesktopId)
+    }
+}
+
+impl PartialEq<str> for DesktopId {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<String> for DesktopId {
+    fn eq(&self, other: &String) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<&str> for DesktopId {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::DesktopId;

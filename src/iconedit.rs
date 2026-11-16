@@ -181,7 +181,9 @@ impl State {
         self.clip_files(move |state, clip| {
             for path in &clip.paths {
                 match reprisefs::apps::open_argv(&app, &state.config.terminal, path) {
-                    Ok(argv) => state.spawn_app_activated(&argv, &app.id, app.path.as_deref()),
+                    Ok(argv) => {
+                        state.spawn_app_activated(&argv, app.id.as_str(), app.path.as_deref())
+                    }
                     Err(refused) => return state.exec_refused(&refused),
                 }
             }

@@ -311,10 +311,11 @@ pub fn can_allow_launching_at(path: &Path, target: &Target) -> bool {
         .file_name()
         .map(|n| n.to_string_lossy())
         .unwrap_or_default();
+    let Some(id) = apps::DesktopId::from_file_name(&name) else {
+        return false;
+    };
     matches!(target, Target::Open(_))
-        && name.ends_with(".desktop")
-        && apps::read_desktop_file(path)
-            .is_ok_and(|text| apps::parse_desktop(&text, &name).is_some())
+        && apps::read_desktop_file(path).is_ok_and(|text| apps::parse_desktop(&text, &id).is_some())
 }
 
 /// What a file or folder found outside the desktop is, for its menu and for opening it.
@@ -692,7 +693,7 @@ mod tests {
         let argv = |e: &DesktopEntry| {
             let exec = place_command(e).unwrap();
             let text = apps::launcher_text("s", None, apps::Launch::Exec(&exec)).unwrap();
-            let app = apps::parse_desktop(&text, "s.desktop").unwrap();
+            let app = apps::parse_desktop(&text, &"s.desktop".parse().unwrap()).unwrap();
             apps::launch_argv(&app, "foot").unwrap()
         };
         let bin = recycle_bin(PathBuf::from("/t/files"), false);

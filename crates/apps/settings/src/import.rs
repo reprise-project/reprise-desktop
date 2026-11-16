@@ -6,7 +6,7 @@ mod plasma;
 
 use crate::model::{self, CLICK_METHODS, Choices, HOT_CORNERS, POSITIONS, Settings};
 use crate::{quickpage, welcome};
-use reprisefs::apps::AppEntry;
+use reprisefs::apps::{AppEntry, DesktopId};
 use reprisefs::quicklaunch as ql;
 use reprisekit::controls::importsheet::{Line, Source};
 use reprisekit::controls::welcome::TEXT_SIZES;
@@ -23,7 +23,7 @@ pub enum Device {
 /// A pinned program: a desktop entry, or the default program for a type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Launcher {
-    Id(String),
+    Id(DesktopId),
     Default(&'static str),
 }
 
@@ -305,7 +305,7 @@ impl Setting {
 /// What the import looks up on this machine.
 pub trait System {
     /// Desktop entry `id`, installed and shown, and its file.
-    fn app(&self, id: &str) -> Option<(AppEntry, PathBuf)>;
+    fn app(&self, id: &DesktopId) -> Option<(AppEntry, PathBuf)>;
     /// The default program for `mime`, and its file.
     fn default_app(&self, mime: &str) -> Option<(AppEntry, PathBuf)>;
     fn is_file(&self, path: &Path) -> bool;
@@ -335,8 +335,8 @@ impl Default for Live {
 }
 
 impl System for Live {
-    fn app(&self, id: &str) -> Option<(AppEntry, PathBuf)> {
-        let a = self.apps.iter().find(|a| a.id == id && a.shown)?;
+    fn app(&self, id: &DesktopId) -> Option<(AppEntry, PathBuf)> {
+        let a = self.apps.iter().find(|a| a.id == *id && a.shown)?;
         Some((a.clone(), reprisefs::apps::find_file(id)?))
     }
     fn default_app(&self, mime: &str) -> Option<(AppEntry, PathBuf)> {
@@ -435,13 +435,13 @@ pub fn plan(name: &'static str, found: &[Setting], config: &str, sys: &dyn Syste
                 };
                 let Some((app, file)) = app else {
                     let value = match l {
-                        Launcher::Id(id) => reprisefs::apps::DesktopId::stem_of(id).to_string(),
+                        Launcher::Id(id) => id.stem().to_string(),
                         Launcher::Default(mime) => format!("the default program for {mime}"),
                     };
                     greyed.push(grey(what, "not installed", value));
                     continue;
                 };
-                let taken = quick.contains(&app.id)
+                let taken = quick.iter().any(|q| app.id == *q)
                     || changes
                         .iter()
                         .any(|(_, w)| matches!(w, Write::QuickLaunch(a, _) if a.id == app.id));
@@ -545,7 +545,7 @@ pub fn write(config: &Path, quick: Option<&Path>, picked: &[&Write]) -> Result<(
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     // The program's own entry, under its own name, so the taskbar matches its windows.
     for (a, text) in apps {
-        let name = ql::unique_name(dir, &a.id);
+        let name = ql::unique_name(dir, a.id.as_str());
         std::fs::write(dir.join(&name), text).map_err(|e| e.to_string())?;
         order.push(name);
     }

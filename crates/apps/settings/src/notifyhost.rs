@@ -75,7 +75,7 @@ fn entry_name(key: &str) -> Option<String> {
         return None;
     }
     let (path, id) = (reprisefs::apps::DesktopId::for_app_id(key).into_iter())
-        .find_map(|id| Some((reprisefs::apps::find_file(id.as_str())?, id)))?;
+        .find_map(|id| Some((reprisefs::apps::find_file(&id)?, id)))?;
     let text = reprisefs::apps::read_desktop_file(&path).ok()?;
-    Some(reprisefs::apps::parse_desktop_any(&text, id.as_str())?.name)
+    Some(reprisefs::apps::parse_desktop_any(&text, &id)?.name)
 }

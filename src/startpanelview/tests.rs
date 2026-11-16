@@ -51,7 +51,7 @@ fn app(name: &str, category: &str) -> AppEntry {
         name: name.into(),
         exec_line: name.into(),
         terminal: false,
-        id: format!("{name}.desktop"),
+        id: format!("{name}.desktop").parse().unwrap(),
         icon: None,
         startup_wm_class: None,
         categories: vec![category.into()],
@@ -292,8 +292,8 @@ fn two_entries_of_one_name_list_once_by_the_lower_id() {
         app("Paint", "Utility"),
         app("Notes", "Utility"),
     ];
-    apps[0].id = "z-paint.desktop".into();
-    apps[2].id = "a-paint.desktop".into();
+    apps[0].id = "z-paint.desktop".parse().unwrap();
+    apps[2].id = "a-paint.desktop".parse().unwrap();
     apps[3].shown = false;
     let kept = one_per_name(&apps);
     assert_eq!(kept, [false, true, true, false]);
@@ -1243,10 +1243,14 @@ fn a_program_menu_acts_on_its_program_after_a_rescan_moves_it() {
         (rows.iter().flatten()).find(|r| matches!(r, crate::startmenu::StartRow::PinStart(_)));
     h.state.start_row(pin.expect("Pin to Start Menu").clone());
     assert!(
-        !h.state.launches.is_pinned("Zoom.desktop"),
+        !h.state.launches.is_pinned(&"Zoom.desktop".parse().unwrap()),
         "a program gone since the menu opened is left alone"
     );
-    assert!(!h.state.launches.is_pinned("Audacity.desktop"));
+    assert!(
+        !h.state
+            .launches
+            .is_pinned(&"Audacity.desktop".parse().unwrap())
+    );
 }
 
 #[test]

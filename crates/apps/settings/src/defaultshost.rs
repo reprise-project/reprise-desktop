@@ -106,7 +106,7 @@ impl SettingsApp {
         let default = d.current(&t.mime);
         let (recommended, others) = reprisefs::apps::chooser_groups(apps, Some(&t.mime), default);
         let program = |i: usize| Program {
-            id: apps[i].id.clone(),
+            id: apps[i].id.to_string(),
             name: apps[i].name.clone(),
             icon: apps[i].icon.clone(),
         };
@@ -120,7 +120,7 @@ impl SettingsApp {
             others.into_iter().map(program).collect(),
         );
         if let Some(i) = default {
-            ow.select_id(&apps[i].id);
+            ow.select_id(apps[i].id.as_str());
         }
         ow.always = openwith::Check {
             on: true,

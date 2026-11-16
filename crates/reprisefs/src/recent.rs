@@ -678,7 +678,7 @@ mod tests {
         let entry = |name: &str, exec: &str| {
             apps::parse_desktop(
                 &format!("[Desktop Entry]\nType=Application\nName={name}\nExec={exec}\n"),
-                "x.desktop",
+                &"x.desktop".parse().unwrap(),
             )
             .unwrap()
         };
@@ -714,7 +714,7 @@ mod tests {
     fn editor() -> AppEntry {
         apps::parse_desktop(
             "[Desktop Entry]\nType=Application\nName=Text & Notes\nExec=notes %U\n",
-            "notes.desktop",
+            &"notes.desktop".parse().unwrap(),
         )
         .unwrap()
     }

@@ -655,7 +655,7 @@ mod tests {
             name: "Maps".into(),
             exec_line: "maps".into(),
             terminal: false,
-            id: id.into(),
+            id: format!("{id}.desktop").parse().unwrap(),
             icon: Some(icon.into()),
             startup_wm_class: None,
             categories: Vec::new(),

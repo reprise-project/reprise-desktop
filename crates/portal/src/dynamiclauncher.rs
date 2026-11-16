@@ -58,7 +58,9 @@ impl DynamicLauncher {
         self.frontend.check(&hdr).await?;
         let id = app_id.clone();
         let allowed = blocking::unblock(move || {
-            let entry = reprisefs::apps::find_file(&format!("{id}.desktop")).is_some();
+            let entry = reprisefs::apps::DesktopId::from_file_name(&format!("{id}.desktop"))
+                .and_then(|d| reprisefs::apps::find_file(&d))
+                .is_some();
             let flatpak = (reprisefs::flatpak::installations().iter())
                 .any(|i| i.join("app").join(&id).exists());
             own_program(&id, entry, flatpak)

@@ -1611,7 +1611,7 @@ fn raise_without_token(desktop_id: &str, app_id: &str, hint: &str) -> (bool, boo
         name: "Mail".into(),
         exec_line: String::new(),
         terminal: false,
-        id: desktop_id.into(),
+        id: desktop_id.parse().unwrap(),
         icon: None,
         startup_wm_class: None,
         categories: Vec::new(),

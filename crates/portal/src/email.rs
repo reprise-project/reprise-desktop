@@ -188,7 +188,7 @@ fn client_of(entry: &AppEntry) -> Client {
         .file_name()
         .map(|n| n.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let id = entry.id.to_lowercase();
+    let id = entry.id.as_str().to_lowercase();
     let named = |n: &str| program.contains(n) || id.contains(n);
     if named("thunderbird") {
         Client::Thunderbird
@@ -242,10 +242,10 @@ fn compose(mail: &Mail, token: Option<&str>) -> Result<String, Failure> {
     let entry = reprisefs::props::default_app_entry(MAILTO, &apps).ok_or(Failure::NoProgram)?;
     let (argv, as_uri) =
         compose_argv(entry, mail, &repriseconf::current().terminal).map_err(Failure::Refused)?;
-    let started = match start(&argv, &entry.id, token) {
+    let started = match start(&argv, entry.id.as_str(), token) {
         // Without xdg-utils the program gets the mailto: URI itself.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && argv[0] == "xdg-email" => {
-            start(&as_uri, &entry.id, token)
+            start(&as_uri, entry.id.as_str(), token)
         }
         r => r,
     };
@@ -526,7 +526,7 @@ mod tests {
     fn the_mail_program_is_known_by_its_program_or_entry() {
         let entry = |id: &str, exec: &str| {
             let text = format!("[Desktop Entry]\nType=Application\nName=Mail\nExec={exec}\n");
-            reprisefs::apps::parse_desktop(&text, id).unwrap()
+            reprisefs::apps::parse_desktop(&text, &id.parse().unwrap()).unwrap()
         };
         let flatpak =
             "/usr/bin/flatpak run --command=thunderbird org.mozilla.Thunderbird @@u %u @@";
@@ -552,7 +552,8 @@ mod tests {
     fn a_mail_program_in_a_terminal_gets_the_uri_under_the_terminal() {
         let text = "[Desktop Entry]\nType=Application\nName=NeoMutt\nExec=neomutt %u\n\
                     Terminal=true\n";
-        let entry = reprisefs::apps::parse_desktop(text, "neomutt.desktop").unwrap();
+        let entry =
+            reprisefs::apps::parse_desktop(text, &"neomutt.desktop".parse().unwrap()).unwrap();
         let (argv, as_uri) = compose_argv(&entry, &report(), "foot").unwrap();
         assert_eq!(argv[0], "xdg-email");
         let uri: Vec<&str> = as_uri.iter().map(|a| a.to_str().unwrap()).collect();

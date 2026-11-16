@@ -162,7 +162,7 @@ pub enum DesktopCommand {
     EmptyBin,
     BinProperties,
     Edit,
-    OpenWithApp(String),
+    OpenWithApp(reprisefs::apps::DesktopId),
     ChooseProgram,
     Cut,
     Copy,

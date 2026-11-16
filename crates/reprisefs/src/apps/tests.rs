@@ -30,7 +30,7 @@ fn a_link_file_round_trips_and_keeps_its_keys_to_itself() {
 
 #[test]
 fn parses_application_and_strips_codes() {
-    let e = parse_desktop(FIREFOX, "firefox.desktop").unwrap();
+    let e = parse_desktop(FIREFOX, &"firefox.desktop".parse().unwrap()).unwrap();
     assert_eq!(e.name, "Firefox");
     assert_eq!(launch_argv(&e, "foot").unwrap(), ["firefox"]);
     assert!(!e.terminal);
@@ -49,7 +49,9 @@ fn parses_application_and_strips_codes() {
 fn path_is_the_folder_an_entry_starts_in_and_a_missing_one_falls_back() {
     let entry = |path: &str| {
         let text = format!("[Desktop Entry]\nType=Application\nName=G\nExec=g\n{path}");
-        parse_desktop(&text, "g.desktop").unwrap().path
+        parse_desktop(&text, &"g.desktop".parse().unwrap())
+            .unwrap()
+            .path
     };
     assert_eq!(entry("Path=/opt/game\n"), Some("/opt/game".into()));
     assert_eq!(entry("Path=\n"), None);
@@ -218,7 +220,7 @@ fn a_shortcut_opens_the_path_it_was_made_for() {
     ] {
         let cmd = open_command_for(Path::new(p)).unwrap();
         let text = launcher_text("s", None, Launch::Exec(&cmd)).unwrap();
-        let entry = parse_desktop(&text, "s.desktop").unwrap();
+        let entry = parse_desktop(&text, &"s.desktop".parse().unwrap()).unwrap();
         assert_eq!(
             launch_argv(&entry, "foot").unwrap(),
             ["xdg-open", p],
@@ -252,27 +254,50 @@ fn open_argv_for_keeps_a_name_that_is_not_utf8() {
 
 #[test]
 fn excludes_hidden_nodisplay_wrong_type_and_showin() {
-    assert!(parse_desktop("[Desktop Entry]\nType=Link\nName=x\nExec=x\n", "a").is_none());
-    let quiet = "[Desktop Entry]\nType=Application\nName=x\nExec=x\nNoDisplay=true\n";
-    assert!(parse_desktop(quiet, "a").is_none());
     assert!(
-        !parse_desktop_any(quiet, "a").unwrap().shown,
+        parse_desktop(
+            "[Desktop Entry]\nType=Link\nName=x\nExec=x\n",
+            &"a.desktop".parse().unwrap()
+        )
+        .is_none()
+    );
+    let quiet = "[Desktop Entry]\nType=Application\nName=x\nExec=x\nNoDisplay=true\n";
+    assert!(parse_desktop(quiet, &"a.desktop".parse().unwrap()).is_none());
+    assert!(
+        !parse_desktop_any(quiet, &"a.desktop".parse().unwrap())
+            .unwrap()
+            .shown,
         "the index keeps it, unshown"
     );
     assert!(
-        parse_desktop("[Desktop Entry]\nType=Application\nName=x\nExec=x\n", "a")
-            .unwrap()
-            .shown
+        parse_desktop(
+            "[Desktop Entry]\nType=Application\nName=x\nExec=x\n",
+            &"a.desktop".parse().unwrap()
+        )
+        .unwrap()
+        .shown
     );
     assert!(
         parse_desktop(
             "[Desktop Entry]\nType=Application\nName=x\nExec=x\nHidden=true\n",
-            "a"
+            &"a.desktop".parse().unwrap()
         )
         .is_none()
     );
-    assert!(parse_desktop("[Desktop Entry]\nType=Application\nName=x\n", "a").is_none());
-    assert!(parse_desktop("[Other]\nType=Application\nName=x\nExec=x\n", "a").is_none());
+    assert!(
+        parse_desktop(
+            "[Desktop Entry]\nType=Application\nName=x\n",
+            &"a.desktop".parse().unwrap()
+        )
+        .is_none()
+    );
+    assert!(
+        parse_desktop(
+            "[Other]\nType=Application\nName=x\nExec=x\n",
+            &"a.desktop".parse().unwrap()
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -285,7 +310,7 @@ fn default_terminal_is_reprise() {
 fn the_terminal_runs_alone_in_the_scope_of_the_entry_naming_its_program() {
     let foot = parse_desktop(
         "[Desktop Entry]\nType=Application\nName=Foot\nExec=foot\n",
-        "org.codeberg.dnkl.foot.desktop",
+        &"org.codeberg.dnkl.foot.desktop".parse().unwrap(),
     )
     .map(|e| AppEntry {
         startup_wm_class: Some("foot".into()),
@@ -313,7 +338,7 @@ fn the_terminal_runs_alone_in_the_scope_of_the_entry_naming_its_program() {
 fn terminal_entries_wrap_in_terminal() {
     let e = parse_desktop(
         "[Desktop Entry]\nType=Application\nName=htop\nExec=htop\nTerminal=true\n",
-        "htop.desktop",
+        &"htop.desktop".parse().unwrap(),
     )
     .unwrap();
     assert!(e.terminal);
@@ -328,7 +353,7 @@ fn launch_argv_passes_shell_syntax_through_as_plain_arguments() {
     let e = parse_desktop(
         "[Desktop Entry]\nType=Application\nName=x\n\
          Exec=prog $HOME `id`; *.txt \"a b\" %U\n",
-        "x.desktop",
+        &"x.desktop".parse().unwrap(),
     )
     .unwrap();
     assert_eq!(
@@ -341,7 +366,7 @@ fn launch_argv_passes_shell_syntax_through_as_plain_arguments() {
 fn an_entry_without_a_file_code_opens_with_no_file() {
     let e = parse_desktop(
         "[Desktop Entry]\nType=Application\nName=Term\nExec=gnome-terminal --daemon\n",
-        "t.desktop",
+        &"t.desktop".parse().unwrap(),
     )
     .unwrap();
     assert_eq!(
@@ -355,7 +380,7 @@ fn icon_and_name_codes_expand_from_the_entry() {
     let e = parse_desktop(
         "[Desktop Entry]\nType=Application\nName=My Ed\nIcon=ed\n\
          Exec=ed %i --title %c --x %f\n",
-        "ed.desktop",
+        &"ed.desktop".parse().unwrap(),
     )
     .unwrap();
     assert_eq!(
@@ -375,7 +400,7 @@ fn open_argv_fills_the_file_slot_with_the_path_bytes() {
         let text = format!(
             "[Desktop Entry]\nType=Application\nName=x\nExec={exec}\nTerminal={terminal}\n"
         );
-        parse_desktop(&text, "x.desktop").unwrap()
+        parse_desktop(&text, &"x.desktop".parse().unwrap()).unwrap()
     };
     let path = Path::new(std::ffi::OsStr::from_bytes(b"/home/u/it's a\xff.txt"));
     let open = |exec, terminal, term| -> Vec<Vec<u8>> {
@@ -423,7 +448,7 @@ fn open_argv_fills_the_file_slot_with_the_path_bytes() {
 fn open_args_argv_puts_the_arguments_in_the_first_file_slot() {
     let entry = |exec: &str| {
         let text = format!("[Desktop Entry]\nType=Application\nName=x\nExec={exec}\n");
-        parse_desktop(&text, "x.desktop").unwrap()
+        parse_desktop(&text, &"x.desktop".parse().unwrap()).unwrap()
     };
     let open = |exec, args: &[&str]| -> Vec<String> {
         let args = args.iter().map(OsString::from).collect();
@@ -460,12 +485,12 @@ fn open_args_argv_puts_the_arguments_in_the_first_file_slot() {
 
 #[test]
 fn parses_icon_and_startup_wm_class() {
-    let e = parse_desktop(FIREFOX, "firefox.desktop").unwrap();
+    let e = parse_desktop(FIREFOX, &"firefox.desktop".parse().unwrap()).unwrap();
     assert_eq!(e.icon.as_deref(), Some("firefox"));
     assert_eq!(e.startup_wm_class, None);
     let e = parse_desktop(
         "[Desktop Entry]\nType=Application\nName=Code\nExec=code\nIcon=/opt/code/code.png\nStartupWMClass=Code\n",
-        "code.desktop",
+        &"code.desktop".parse().unwrap(),
     )
     .unwrap();
     assert_eq!(e.icon.as_deref(), Some("/opt/code/code.png"));
@@ -475,15 +500,15 @@ fn parses_icon_and_startup_wm_class() {
 #[test]
 fn icon_for_app_id_matches_id_then_wm_class() {
     let entries = vec![
-        parse_desktop(FIREFOX, "org.mozilla.firefox.desktop").unwrap(),
+        parse_desktop(FIREFOX, &"org.mozilla.firefox.desktop".parse().unwrap()).unwrap(),
         parse_desktop(
             "[Desktop Entry]\nType=Application\nName=Code\nExec=code\nIcon=vscode\nStartupWMClass=Code\n",
-            "code-oss.desktop",
+            &"code-oss.desktop".parse().unwrap(),
         )
         .unwrap(),
         parse_desktop(
             "[Desktop Entry]\nType=Application\nName=NoIcon\nExec=x\nStartupWMClass=x\n",
-            "x.desktop",
+            &"x.desktop".parse().unwrap(),
         )
         .unwrap(),
     ];
@@ -507,12 +532,12 @@ fn icon_for_app_id_prefers_the_id_match_over_a_class_match() {
     let entries = vec![
         parse_desktop(
             "[Desktop Entry]\nType=Application\nName=Wrapper\nExec=w\nIcon=wrapper\nStartupWMClass=code\n",
-            "wrapper.desktop",
+            &"wrapper.desktop".parse().unwrap(),
         )
         .unwrap(),
         parse_desktop(
             "[Desktop Entry]\nType=Application\nName=Code\nExec=code\nIcon=vscode\n",
-            "code.desktop",
+            &"code.desktop".parse().unwrap(),
         )
         .unwrap(),
     ];
@@ -580,7 +605,10 @@ fn a_nested_entry_takes_its_dash_joined_id_and_earlier_dirs_shadow_it() {
     write_entry(&user.join("x-y.desktop"), "top");
     write_entry(&user.join("x/y.desktop"), "nested");
     let ids = |list: Vec<AppEntry>| {
-        let mut v: Vec<(String, String)> = list.into_iter().map(|e| (e.id, e.exec_line)).collect();
+        let mut v: Vec<(String, String)> = list
+            .into_iter()
+            .map(|e| (e.id.to_string(), e.exec_line))
+            .collect();
         v.sort();
         v
     };
@@ -594,18 +622,24 @@ fn a_nested_entry_takes_its_dash_joined_id_and_earlier_dirs_shadow_it() {
     );
     let dirs = [user.clone(), sys.clone()];
     assert_eq!(
-        find_file_in(&dirs, "wine-Programs-Test-Test App.desktop"),
+        find_file_in(
+            &dirs,
+            &"wine-Programs-Test-Test App.desktop".parse().unwrap()
+        ),
         Some(user.join("wine/Programs/Test/Test App.desktop"))
     );
     assert_eq!(
-        find_file_in(&dirs, "kde4-old.desktop"),
+        find_file_in(&dirs, &"kde4-old.desktop".parse().unwrap()),
         Some(sys.join("kde4/old.desktop"))
     );
     assert_eq!(
-        find_file_in(&dirs, "x-y.desktop"),
+        find_file_in(&dirs, &"x-y.desktop".parse().unwrap()),
         Some(user.join("x-y.desktop"))
     );
-    assert_eq!(find_file_in(&dirs, "wine-Programs-Gone.desktop"), None);
+    assert_eq!(
+        find_file_in(&dirs, &"wine-Programs-Gone.desktop".parse().unwrap()),
+        None
+    );
 }
 
 #[test]
@@ -626,7 +660,7 @@ fn group_files_apps_by_first_matching_category() {
         name: name.into(),
         exec_line: name.to_lowercase(),
         terminal: false,
-        id: format!("{name}.desktop"),
+        id: format!("{name}.desktop").parse().unwrap(),
         icon: None,
         startup_wm_class: None,
         categories: cats.iter().map(|c| c.to_string()).collect(),
@@ -813,7 +847,7 @@ fn open_with_lists_the_handlers_by_name_and_text_editors_for_text() {
         name: name.into(),
         exec_line: format!("{} %f", name.to_lowercase()),
         terminal: name == "Vim",
-        id: format!("{name}.desktop"),
+        id: format!("{name}.desktop").parse().unwrap(),
         icon: None,
         startup_wm_class: None,
         categories: Vec::new(),
@@ -839,7 +873,7 @@ fn open_with_lists_the_handlers_by_name_and_text_editors_for_text() {
     assert!(
         parse_desktop(
             "[Desktop Entry]\nType=Application\nName=X\nExec=x %F\nMimeType=text/plain;;image/png;\n",
-            "x.desktop"
+            &"x.desktop".parse().unwrap()
         )
         .unwrap()
         .mime_types
@@ -862,7 +896,7 @@ fn a_browsed_program_gets_an_unshown_entry_that_opens_its_file() {
         open_argv(&e, "foot", Path::new("/home/u/a b.py")).unwrap(),
         ["/opt/My Tools/view$1", "/home/u/a b.py"]
     );
-    let text = std::fs::read_to_string(dir.join(&e.id)).unwrap();
+    let text = std::fs::read_to_string(dir.join(e.id.as_str())).unwrap();
     assert_eq!(
         parse_desktop_any(&text, &e.id),
         Some(e.clone()),
@@ -875,7 +909,7 @@ fn a_browsed_program_gets_an_unshown_entry_that_opens_its_file() {
         ["text/x-python", "text/plain"],
         "and adds the new type"
     );
-    let text = std::fs::read_to_string(dir.join(&e.id)).unwrap();
+    let text = std::fs::read_to_string(dir.join(e.id.as_str())).unwrap();
     assert_eq!(parse_desktop_any(&text, &e.id), Some(again.clone()));
     assert_eq!(
         program_entry_in(&dir, prog, Some("text/plain")).unwrap(),
@@ -901,12 +935,12 @@ fn a_browsed_program_gets_an_unshown_entry_that_opens_its_file() {
 fn an_unshown_entry_is_left_out_of_the_lists_unless_it_is_the_default() {
     let mut quiet = parse_desktop_any(
         "[Desktop Entry]\nType=Application\nName=Quiet\nExec=q %f\nNoDisplay=true\nMimeType=text/plain;\nCategories=Utility;\n",
-        "quiet.desktop",
+        &"quiet.desktop".parse().unwrap(),
     )
     .unwrap();
     let loud = AppEntry {
         name: "Loud".into(),
-        id: "loud.desktop".into(),
+        id: "loud.desktop".parse().unwrap(),
         shown: true,
         ..quiet.clone()
     };
@@ -939,12 +973,12 @@ fn open_with_lists_a_browsed_program_for_its_types_only() {
     let browsed = program_entry_in(dir.path(), Path::new("/opt/view"), Some("image/png")).unwrap();
     let quiet = parse_desktop_any(
         "[Desktop Entry]\nType=Application\nName=Quiet\nExec=q %f\nNoDisplay=true\nMimeType=image/png;\n",
-        "quiet.desktop",
+        &"quiet.desktop".parse().unwrap(),
     )
     .unwrap();
     let shown = AppEntry {
         name: "Paint".into(),
-        id: "paint.desktop".into(),
+        id: "paint.desktop".parse().unwrap(),
         shown: true,
         ..quiet.clone()
     };
@@ -970,7 +1004,7 @@ fn chooser_groups_put_the_type_s_programs_and_default_first_and_the_rest_by_name
         name: name.into(),
         exec_line: String::new(),
         terminal: false,
-        id: id.into(),
+        id: id.parse().unwrap(),
         icon: None,
         startup_wm_class: None,
         categories: Vec::new(),
@@ -1034,7 +1068,7 @@ fn hostile_names(dir: &Path) -> Vec<PathBuf> {
 
 fn exec_entry(exec: &str) -> AppEntry {
     let text = format!("[Desktop Entry]\nType=Application\nName=My Ed\nExec={exec}\n");
-    parse_desktop(&text, "x.desktop").unwrap()
+    parse_desktop(&text, &"x.desktop".parse().unwrap()).unwrap()
 }
 
 #[test]
@@ -1138,7 +1172,10 @@ fn an_entry_shows_by_every_desktop_name_and_only_with_its_try_exec_program() {
     let on = |extra: &str, desktops: &[&str], installed: bool| {
         let text = format!("[Desktop Entry]\nType=Application\nName=x\nExec=x\n{extra}\n");
         let desktops: Vec<String> = desktops.iter().map(|d| d.to_string()).collect();
-        parse_desktop_on(&text, "a", &desktops, |_| installed).is_some()
+        parse_desktop_on(&text, &"a.desktop".parse().unwrap(), &desktops, |_| {
+            installed
+        })
+        .is_some()
     };
     let reprise = ["reprise"];
     assert!(!on("OnlyShowIn=GNOME;", &reprise, true));
@@ -1158,7 +1195,7 @@ fn an_entry_shows_by_every_desktop_name_and_only_with_its_try_exec_program() {
     assert!(on("TryExec=", &reprise, false), "an empty TryExec");
     let found = parse_desktop_any(
         "[Desktop Entry]\nType=Application\nName=x\nExec=x\nTryExec=/nonexistent/reprise-x\n",
-        "a",
+        &"a.desktop".parse().unwrap(),
     );
     assert!(found.is_none(), "TryExec is looked up on disk");
 }

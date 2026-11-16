@@ -199,10 +199,10 @@ impl State {
         }
     }
 
-    pub(crate) fn quick_file_of(&self, id: &str) -> Option<String> {
+    pub(crate) fn quick_file_of(&self, id: &reprisefs::apps::DesktopId) -> Option<String> {
         self.quicklaunch
             .iter()
-            .find(|q| q.app.as_ref().is_some_and(|a| a.id == id))
+            .find(|q| q.app.as_ref().is_some_and(|a| a.id == *id))
             .map(|q| q.file.clone())
     }
 

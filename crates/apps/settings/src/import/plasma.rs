@@ -2,6 +2,7 @@
 //! kxkbrc, kwinrc, kcmfonts and the desktop's applet file.
 
 use super::{Device, Launcher, Setting, other};
+use reprisefs::apps::DesktopId;
 use std::path::{Path, PathBuf};
 
 /// The largest Plasma config file read; a real one is a few KiB.
@@ -212,13 +213,11 @@ fn launchers(applets: &KConfig) -> Vec<Launcher> {
         .filter_map(|l| {
             let l = l.trim();
             if let Some(id) = l.strip_prefix("applications:") {
-                return Some(Launcher::Id(id.to_string()));
+                return DesktopId::from_file_name(id).map(Launcher::Id);
             }
             if let Some(p) = l.strip_prefix("file://") {
                 let name = Path::new(p).file_name()?.to_str()?;
-                return name
-                    .ends_with(".desktop")
-                    .then(|| Launcher::Id(name.to_string()));
+                return DesktopId::from_file_name(name).map(Launcher::Id);
             }
             match l {
                 "preferred://browser" => Some(Launcher::Default("x-scheme-handler/http")),

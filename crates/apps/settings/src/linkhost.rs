@@ -5,14 +5,17 @@ use crate::SettingsApp;
 use crate::pages::PROGRAM_BUTTONS;
 use repriseapp::Reply;
 use repriseconf::pages::links;
-use reprisefs::apps::{AppEntry, find_file_in, launch_argv, parse_desktop, read_desktop_file};
+use reprisefs::apps::{
+    AppEntry, DesktopId, find_file_in, launch_argv, parse_desktop, read_desktop_file,
+};
 use std::path::PathBuf;
 
 /// The entry `id` names: the first of `dirs` holding the file decides; `None` when that one is
 /// not shown (`NoDisplay`, `Hidden`, `OnlyShowIn`, `NotShowIn`) or does not parse.
 pub(crate) fn find(id: &str, dirs: &[PathBuf]) -> Option<AppEntry> {
-    let path = find_file_in(dirs, id)?;
-    parse_desktop(&read_desktop_file(&path).ok()?, id)
+    let id = DesktopId::from_file_name(id)?;
+    let path = find_file_in(dirs, &id)?;
+    parse_desktop(&read_desktop_file(&path).ok()?, &id)
 }
 
 /// Start `entry` in its app scope.
@@ -20,7 +23,7 @@ pub(crate) fn launch(entry: &AppEntry, terminal: &str) -> Reply {
     match launch_argv(entry, terminal) {
         Ok(argv) => Reply {
             spawn: vec![argv],
-            spawn_app: Some(entry.id.clone()),
+            spawn_app: Some(entry.id.to_string()),
             spawn_dir: entry.path.clone(),
             ..Reply::redraw()
         },
@@ -40,7 +43,7 @@ pub(crate) fn start(id: &str) -> bool {
     let Ok(argv) = launch_argv(&e, &repriseconf::current().terminal) else {
         return false;
     };
-    match repriseapp::spawn_in(&argv, e.path.as_deref(), Some(&e.id)) {
+    match repriseapp::spawn_in(&argv, e.path.as_deref(), Some(e.id.as_str())) {
         Ok(()) => true,
         Err(err) => {
             log::warn!("start {id}: {err}");

@@ -1334,7 +1334,7 @@ mod tests {
             name: "Test".into(),
             exec_line: "true".into(),
             terminal: false,
-            id: "test.desktop".into(),
+            id: "test.desktop".parse().unwrap(),
             icon: Some("test-app".into()),
             startup_wm_class: None,
             categories: Vec::new(),
@@ -1383,7 +1383,7 @@ mod tests {
             name: "Test".into(),
             exec_line: "true".into(),
             terminal: false,
-            id: "test.desktop".into(),
+            id: "test.desktop".parse().unwrap(),
             icon: Some("test-app".into()),
             startup_wm_class: None,
             categories: Vec::new(),
@@ -1489,7 +1489,7 @@ mod tests {
         let app = DragSource::App {
             entry: reprisefs::apps::parse_desktop(
                 "[Desktop Entry]\nType=Application\nName=Vim\nExec=vim\n",
-                "vim.desktop",
+                &"vim.desktop".parse().unwrap(),
             )
             .unwrap(),
             file: PathBuf::from("/usr/share/applications/vim.desktop"),
@@ -1595,7 +1595,7 @@ mod tests {
         let app = DragSource::App {
             entry: reprisefs::apps::parse_desktop(
                 &std::fs::read_to_string(&app_file).unwrap(),
-                "firefox.desktop",
+                &"firefox.desktop".parse().unwrap(),
             )
             .unwrap(),
             file: app_file.clone(),
@@ -1702,7 +1702,7 @@ mod tests {
         let app = DragSource::App {
             entry: reprisefs::apps::parse_desktop(
                 &std::fs::read_to_string(&app_file).unwrap(),
-                "firefox.desktop",
+                &"firefox.desktop".parse().unwrap(),
             )
             .unwrap(),
             file: app_file.clone(),
