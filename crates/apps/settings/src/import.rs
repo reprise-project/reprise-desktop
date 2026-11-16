@@ -395,6 +395,12 @@ fn picture_refused(path: &str, sys: &dyn System) -> Option<&'static str> {
     (!sys.is_file(Path::new(path))).then_some("the file is missing")
 }
 
+/// Why Apply would refuse `want` when it takes `base` (the file's settings) as they are.
+fn refused(want: &Settings, base: &Settings) -> Option<String> {
+    let err = model::validate(want, base).err()?;
+    model::validate(base, base).is_ok().then_some(err)
+}
+
 /// The rows `found` makes against `config` (config.toml's text): each setting that would change
 /// something, in order, then the ones Reprise can't take, greyed with why.
 pub fn plan(name: &'static str, found: &[Setting], config: &str, sys: &dyn System) -> Plan {
@@ -451,22 +457,22 @@ pub fn plan(name: &'static str, found: &[Setting], config: &str, sys: &dyn Syste
             }
             Setting::Pinned(_) if favourites == 0 => {}
             f => {
-                let why = match f {
-                    Setting::Wallpaper { path, .. } => picture_refused(path, sys),
-                    Setting::Dark(_) if crate::appearancepage::interface(&s) == Interface::Blue => {
-                        Some("Blue comes in light colours only")
-                    }
-                    _ => None,
-                };
                 let mut t = s.clone();
                 f.apply(&mut t);
+                let why = match f {
+                    Setting::Wallpaper { path, .. } => picture_refused(path, sys).map(String::from),
+                    Setting::Dark(_) if crate::appearancepage::interface(&s) == Interface::Blue => {
+                        Some("Blue comes in light colours only".into())
+                    }
+                    _ => refused(&t, &s),
+                };
                 if let Some(why) = why {
                     let value = match f {
                         Setting::Wallpaper { path, .. } => path.clone(),
                         Setting::Dark(d) => on(*d),
                         _ => f.shown(&t),
                     };
-                    greyed.push(grey(what, why, value));
+                    greyed.push(grey(what, &why, value));
                     continue;
                 }
                 if t == s {
@@ -522,6 +528,9 @@ pub fn write(config: &Path, quick: Option<&Path>, picked: &[&Write]) -> Result<(
             let mut want = base.clone();
             for s in &settings {
                 s.apply(&mut want);
+            }
+            if let Some(why) = refused(&want, &base) {
+                return Err(why);
             }
             model::save(text, &want, &base)
         });
