@@ -756,10 +756,11 @@ impl State {
             .flat_map(|g| std::mem::take(&mut g.thumbs))
             .flatten()
             .collect();
+        self.redraw_overview();
+        // After the new pictures, so a minimized window is never suspended in between.
         for id in old {
             self.thumb_drop(id);
         }
-        self.redraw_overview();
     }
 
     /// Draw the open overview again.
@@ -1031,6 +1032,26 @@ mod tests {
         let sheets: Vec<Option<u64>> = ids.iter().map(|&id| h.state.thumb_sheet(id)).collect();
         assert!(sheets[0].is_some(), "drawn into a shared texture");
         assert!(sheets.iter().all(|s| *s == sheets[0]), "one: {sheets:?}");
+    }
+
+    #[test]
+    fn a_window_mapped_under_the_overview_sends_a_minimized_one_no_configure() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "one", 300, 200);
+        h.map_toplevel(&mut c, "two", 300, 200);
+        h.state.set_minimized(a.id, true);
+        h.state.open_overview();
+        h.roundtrip(&mut c);
+        assert!(h.state.live_previews.shows(a.id), "its cell shows it live");
+        let before = c.side.shells[a.shell].configures;
+        h.map_toplevel(&mut c, "three", 300, 200);
+        h.state.overview_refresh();
+        h.roundtrip(&mut c);
+        let v = h.state.overview.view.as_ref().expect("the overview");
+        assert_eq!(v.windows.len(), 3, "the new window joined");
+        assert_eq!(c.side.shells[a.shell].configures, before);
     }
 
     #[test]
