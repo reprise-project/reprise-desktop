@@ -39,6 +39,7 @@ fn select_opens_the_folder_on_the_entry() {
             select: Vec::new(),
             sheet: None,
             connect: None,
+            search: false,
         }
     );
 
@@ -115,6 +116,23 @@ fn a_start_folder_that_answers_opens_there_and_selects_its_entry() {
     let missing = open(&[dir.path().join("gone").as_os_str()], &mut ctx);
     assert_eq!(missing.place, Place::Home);
     assert!(missing.checking.is_none());
+}
+
+#[test]
+fn search_opens_its_folder_with_the_keyboard_in_the_search_field() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let start = parse_args([
+        std::ffi::OsString::from("--search"),
+        dir.path().as_os_str().to_os_string(),
+    ]);
+    let mut ctx = test_ctx();
+    let ex = Explorer::open(start, |d| d.is_dir(), test_explorer, &mut ctx);
+    assert_eq!(ex.place, Place::Folder(dir.path().to_path_buf()));
+    assert_eq!(ex.focus, Focus::Search);
+
+    let plain = parse_args([dir.path().as_os_str().to_os_string()]);
+    let ex = Explorer::open(plain, |d| d.is_dir(), test_explorer, &mut ctx);
+    assert_ne!(ex.focus, Focus::Search, "without --search the view has it");
 }
 
 #[test]

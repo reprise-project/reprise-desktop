@@ -286,7 +286,7 @@ pub fn default_menu() -> Vec<Entry> {
                 Entry::item(
                     "&For Files or Folders...",
                     "system-search",
-                    cmd("reprise-explorer \"$HOME\""),
+                    cmd("reprise-explorer --search \"$HOME\""),
                 ),
                 Entry::item(
                     "On the &Internet...",

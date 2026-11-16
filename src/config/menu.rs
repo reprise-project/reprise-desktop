@@ -144,7 +144,7 @@ pub(super) fn default_startmenu() -> Vec<MenuEntry> {
                 MenuEntry::spawn(
                     "&For Files or Folders...",
                     "system-search",
-                    "reprise-explorer \"$HOME\"",
+                    "reprise-explorer --search \"$HOME\"",
                 ),
                 MenuEntry::spawn(
                     "On the &Internet...",

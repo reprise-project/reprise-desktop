@@ -1133,7 +1133,7 @@ icon = "system-search"
 [[startmenu.items]]
 label = "&For Files or Folders..."
 icon = "system-search"
-command = 'reprise-explorer "$HOME"'
+command = 'reprise-explorer --search "$HOME"'
 [[startmenu.items]]
 label = "On the &Internet..."
 icon = "web-browser"
