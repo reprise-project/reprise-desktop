@@ -28,14 +28,29 @@ use reprisekit::tr;
 
 use sheet::{Local, Outcome, Sheet, System};
 
+/// An Apply under way on the worker thread.
+struct Applying {
+    result: Receiver<Result<System, timedate::Failure>>,
+    then: Then,
+}
+
+/// What the sheet does once the Apply under way lands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Then {
+    /// Stays up: Apply started it.
+    Stay,
+    /// OK: closes when the Apply succeeds, stays with the error when it fails.
+    Close,
+    /// Cancel or the close box: closes unless there is a failure to tell.
+    Leave,
+}
+
 #[derive(Default)]
 struct DateTimeApp {
     sheet: Option<Sheet>,
     system: System,
     zones: Vec<String>,
-    /// An Apply under way on the worker thread, and whether an OK started
-    /// it (the sheet closes when it succeeds).
-    applying: Option<(Receiver<Result<System, timedate::Failure>>, bool)>,
+    applying: Option<Applying>,
     /// timedated's zone each time it changes.
     zones_moved: Option<Receiver<String>>,
     waker: Option<repriseapp::Waker>,
@@ -91,8 +106,12 @@ impl DateTimeApp {
         })
     }
 
-    fn apply(&mut self, change: sheet::Change, close: bool) {
-        if self.applying.is_some() {
+    /// Starts `change`, or while an Apply is under way, has an OK or Cancel wait for it.
+    fn apply(&mut self, change: sheet::Change, then: Then) {
+        if let Some(a) = &mut self.applying {
+            if then != Then::Stay {
+                a.then = then;
+            }
             return;
         }
         let (tx, rx) = channel();
@@ -103,14 +122,28 @@ impl DateTimeApp {
                 w.wake();
             }
         });
-        self.applying = Some((rx, close));
+        self.applying = Some(Applying { result: rx, then });
+    }
+
+    /// Cancel or the close box: the program quits, after the Apply under way lands.
+    fn close(&mut self) -> Reply {
+        match &mut self.applying {
+            Some(a) => {
+                a.then = Then::Leave;
+                Reply::none()
+            }
+            None => Reply {
+                quit: true,
+                ..Reply::none()
+            },
+        }
     }
 
     fn wake(&mut self) -> Reply {
-        if let Some((rx, close)) = &self.applying
-            && let Ok(result) = rx.try_recv()
+        if let Some(a) = &self.applying
+            && let Ok(result) = a.result.try_recv()
         {
-            let close = *close;
+            let then = a.then;
             self.applying = None;
             match result {
                 Ok(system) => {
@@ -119,7 +152,7 @@ impl DateTimeApp {
                     if let Some(s) = &mut self.sheet {
                         s.applied(&self.system, t);
                     }
-                    if close {
+                    if then != Then::Stay {
                         self.quit = true;
                     }
                 }
@@ -135,8 +168,10 @@ impl DateTimeApp {
                             s.unapplied(&self.system);
                         }
                     }
-                    if let Some(text) = failure.message() {
-                        self.error.show(&tr!("title"), text, None);
+                    match failure.message() {
+                        Some(text) => self.error.show(&tr!("title"), text, None),
+                        None if then == Then::Leave => self.quit = true,
+                        None => {}
                     }
                 }
             }
@@ -278,30 +313,29 @@ impl DateTimeApp {
             return self.error.event(win, &ev, text, &self.forms);
         }
         if matches!(ev, Event::CloseRequest) {
-            return Reply {
-                quit: true,
-                ..Reply::none()
-            };
+            return self.close();
         }
         let s = self.ensure();
         let Some(ev) = sheet_input(&mut s.sheet, &ev, ctx) else {
             return Reply::none();
         };
-        match s.event(ev) {
+        let outcome = s.event(ev);
+        self.answer(outcome)
+    }
+
+    fn answer(&mut self, outcome: Outcome) -> Reply {
+        match outcome {
             Outcome::None => Reply::none(),
             Outcome::Redraw => Reply::redraw(),
             Outcome::Apply(change) => {
-                self.apply(change, false);
+                self.apply(change, Then::Stay);
                 Reply::redraw()
             }
             Outcome::ApplyAndClose(change) => {
-                self.apply(change, true);
+                self.apply(change, Then::Close);
                 Reply::redraw()
             }
-            Outcome::Close => Reply {
-                quit: true,
-                ..Reply::none()
-            },
+            Outcome::Close => self.close(),
         }
     }
 }
@@ -310,4 +344,88 @@ impl DateTimeApp {
 pub fn main(_args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
     repriseapp::run(Box::new(DateTimeApp::default())).unwrap_or_else(|e| e.exit());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::Sender;
+
+    use repriseapp::MAIN;
+
+    fn test_ctx() -> Ctx {
+        let theme = Theme::default();
+        Ctx {
+            text: TextRenderer::load(&theme.fonts).into(),
+            theme,
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: sheet::CLIENT,
+            maximized: false,
+            origin: (0, 0),
+            wake: repriseapp::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            output_size: None,
+            at_pick: false,
+            text_size: 100,
+        }
+    }
+
+    /// The app with an Apply under way, as Apply leaves it, and the sender its result lands on.
+    fn applying() -> (DateTimeApp, Sender<Result<System, timedate::Failure>>) {
+        let mut app = DateTimeApp::default();
+        app.ensure();
+        let (tx, rx) = channel();
+        app.applying = Some(Applying {
+            result: rx,
+            then: Then::Stay,
+        });
+        (app, tx)
+    }
+
+    fn ok() -> Outcome {
+        Outcome::ApplyAndClose(sheet::Change {
+            ntp: Some(true),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn ok_pressed_while_an_apply_waits_closes_when_it_succeeds() {
+        let (mut app, tx) = applying();
+        assert!(!app.answer(ok()).quit);
+        tx.send(Ok(System::default())).unwrap();
+        assert!(app.wake().quit);
+    }
+
+    #[test]
+    fn ok_pressed_while_an_apply_waits_stays_with_the_error_when_it_fails() {
+        let (mut app, tx) = applying();
+        let _ = app.answer(ok());
+        tx.send(Err(timedate::Failure::Text("no timedated".into())))
+            .unwrap();
+        assert!(!app.wake().quit);
+        assert!(app.error.is_shown());
+    }
+
+    #[test]
+    fn a_close_while_an_apply_waits_keeps_the_program_until_the_result() {
+        let mut ctx = test_ctx();
+        let (mut app, tx) = applying();
+        assert!(!app.event(MAIN, Event::CloseRequest, &mut ctx).quit);
+        assert!(!app.wake().quit, "nothing landed yet");
+        tx.send(Err(timedate::Failure::Text("no timedated".into())))
+            .unwrap();
+        assert!(!app.wake().quit, "a failure is told");
+        assert!(app.error.is_shown());
+
+        let (mut app, tx) = applying();
+        let _ = app.answer(Outcome::Close);
+        tx.send(Ok(System::default())).unwrap();
+        assert!(app.wake().quit);
+    }
 }
