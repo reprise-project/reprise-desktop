@@ -57,7 +57,7 @@ impl Request {
                     self.path = dir.to_path_buf();
                     Found::Folder(rows)
                 }
-                None => Found::Missing,
+                None => Found::Missing(reprisefs::dialogops::no_folder_text(&self.path)),
             }
         } else {
             match std::fs::metadata(&self.path) {
@@ -65,7 +65,13 @@ impl Request {
                     Found::Folder(read_folder(&self.path, hidden, self.exts, pattern))
                 }
                 Ok(m) if m.is_file() && !self.folder_only => Found::File,
-                _ => Found::Missing,
+                _ if self.folder_only => {
+                    Found::Missing(reprisefs::dialogops::no_folder_text(&self.path))
+                }
+                _ => Found::Missing(match self.path.parent() {
+                    Some(dir) if !dir.is_dir() => reprisefs::dialogops::no_folder_text(dir),
+                    _ => reprisefs::dialogops::not_found_text(&self.path),
+                }),
             }
         };
         let art = match &found {

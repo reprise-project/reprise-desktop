@@ -53,10 +53,7 @@ fn decide(
             }
             Ok(Resolved::File(p)) => {
                 if folder_mode || (kind == Kind::Open && !p.exists()) {
-                    return Decision::Error(format!(
-                        "{} was not found. Check the file name and try again.",
-                        p.display()
-                    ));
+                    return Decision::Error(reprisefs::dialogops::not_found_text(&p));
                 }
                 paths.push(p);
             }

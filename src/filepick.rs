@@ -40,11 +40,13 @@ pub enum Purpose {
     Program,
 }
 
+const TITLE: &str = "Browse";
+
 impl Purpose {
     fn fields(self) -> Fields {
         let filters = vec!["Programs".into(), "All Files".into()];
         Fields {
-            title: "Browse".into(),
+            title: TITLE.into(),
             accept_label: "Open".into(),
             filters,
             mode: filedlg::DlgMode::Open,
@@ -96,9 +98,9 @@ pub struct FilePicker {
     /// The relisting of the folder shown that only gives its entries their icons at the
     /// dialog's new scale or icon theme ([`FilePicker::follow_scale`]).
     restyling: Option<u64>,
-    /// My Recent Documents' files by the name each is listed as, while
-    /// that listing is on screen.
-    recent: std::collections::HashMap<String, PathBuf>,
+    /// The shown folder's names that are not the name on disk, for a typed name
+    /// ([`reprisefs::dialogops::alias`]).
+    aliases: std::collections::HashMap<String, std::ffi::OsString>,
     pictures: Pictures,
     /// The view and sort last stored, and the file they live in once
     /// [`FilePicker::remember_in`] named it.
@@ -250,7 +252,8 @@ enum Found {
     /// cannot come back from the thread that read the folder.
     Folder(Vec<Listed>),
     File,
-    Missing,
+    /// The error box's text.
+    Missing(String),
 }
 
 impl FilePicker {
@@ -291,7 +294,7 @@ impl FilePicker {
             listing: None,
             opening: None,
             restyling: None,
-            recent: Default::default(),
+            aliases: Default::default(),
             pictures: Pictures::default(),
             remembered: Default::default(),
             view_file: None,
