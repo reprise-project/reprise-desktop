@@ -1237,7 +1237,7 @@ fn render_treeview() {
 fn a_blue_trees_lit_bar_part_draws_hot() {
     use crate::classic::widgets::{Axis, ScrollHit};
     let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let text = TextRenderer::load(&FontConfig::default());
     let mut tv = TreeView {
         roots: (0..40)

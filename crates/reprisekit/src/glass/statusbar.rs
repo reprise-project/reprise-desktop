@@ -117,7 +117,13 @@ mod tests {
 
     #[test]
     fn the_glass_status_bar_is_a_grey_line_over_white_round_its_face() {
-        assert_eq!(theme_for(Interface::Glass).look.controls().status_bar, H);
+        assert_eq!(
+            theme_for(Interface::Glass)
+                .look
+                .controls_at_100()
+                .status_bar,
+            H
+        );
         let c = bar(false);
         for (x, y, rgb, what) in [
             (0, 0, 0x8D8E8E, "the top line's first pixel"),

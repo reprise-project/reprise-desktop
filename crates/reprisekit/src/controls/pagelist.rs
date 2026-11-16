@@ -1010,7 +1010,7 @@ mod tests {
         let theme = theme_for(Interface::Blue);
         let (p, px) = (theme.paint(), theme.fonts.size_px);
         let mut list = PageList::new(GROUPS);
-        let cm = theme.look.controls();
+        let cm = theme.look.controls_at_100();
         let lay = layout(&list, SHORT, &cm);
         list.bar_press(BarHit::Forward, &lay);
         let lay = layout(&list, SHORT, &cm);
@@ -1264,7 +1264,7 @@ mod tests {
                 let theme = theme_for(i).scaled(s);
                 let text = TextRenderer::load(&theme.fonts);
                 let (p, cs, px) = (theme.paint(), &theme.colors, theme.fonts.size_px);
-                let cm = p.look.controls().grown(p.text);
+                let cm = p.look.controls_at_100().grown(p.text);
                 let mut list = PageList::new(LINK_GROUPS);
                 list.set_link_enabled(1, false);
                 let lay = layout(&list, LINK_FRAME, &cm);

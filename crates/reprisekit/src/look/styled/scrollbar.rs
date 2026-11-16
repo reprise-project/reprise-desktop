@@ -72,7 +72,7 @@ fn bar(
     if !st.has_parts(&[track, back, forward, thumb]) {
         return false;
     }
-    let thumb_min = p.look.controls().thumb_min;
+    let thumb_min = p.look.controls_at_100().thumb_min;
     let parts = scrollbar_parts(sb, p.s, pos, visible, total, horizontal, thumb_min);
     let live = total > visible;
     let lit = if live { lit } else { None };

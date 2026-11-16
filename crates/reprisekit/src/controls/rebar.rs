@@ -62,7 +62,7 @@ pub fn height(rb: &Rebar, m: &RebarMetrics) -> i32 {
 /// The background behind the whole stack, then the line along each band that wears one.
 pub fn draw(c: &mut Canvas, p: &Paint, rb: &Rebar, r: Rect) {
     let s = p.s;
-    let m = p.look.controls().rebar;
+    let m = p.look.controls_at_100().rebar;
     let lines: Vec<i32> = layout(rb, r, &m)
         .iter()
         .enumerate()
@@ -128,7 +128,10 @@ mod tests {
     #[test]
     fn blues_first_band_wears_no_line() {
         let rb = bands(BLUE_HEIGHTS);
-        let m = interfaces::blue_theme(Variant::Blue).look.controls().rebar;
+        let m = interfaces::blue_theme(Variant::Blue)
+            .look
+            .controls_at_100()
+            .rebar;
         let rects = layout(&rb, Rect::new(0, 0, 792, BLUE_HEIGHT), &m);
         let ys: Vec<i32> = rects.iter().map(|r| r.y).collect();
         assert_eq!(ys, BLUE_CONTENT);
@@ -149,7 +152,7 @@ mod tests {
             (Variant::Cobalt, [2, 28, 70], 92),
             (Variant::Carbon, [2, 28, 70], 92),
         ] {
-            let m = interfaces::blue_theme(v).look.controls().rebar;
+            let m = interfaces::blue_theme(v).look.controls_at_100().rebar;
             let rects = layout(&rb, Rect::new(0, 0, 792, h), &m);
             let ys: Vec<i32> = rects.iter().map(|r| r.y).collect();
             assert_eq!(ys, content, "{v:?}");

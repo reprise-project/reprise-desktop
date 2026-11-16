@@ -946,7 +946,7 @@ mod tests {
             status_bar: true,
             ..Settings::default()
         };
-        let lay = layout((792, 566), &s, 200, 23, 0, &blue.look.controls());
+        let lay = layout((792, 566), &s, 200, 23, 0, &blue.look.controls_at_100());
         assert_eq!(lay.rebar, Rect::new(0, 0, 792, 86));
         assert_eq!(lay.menu, Rect::new(0, 0, 792, 22));
         assert_eq!(lay.toolbar, Some(Rect::new(0, 24, 792, 38)));
@@ -965,7 +965,7 @@ mod tests {
             status_bar: false,
             ..Settings::default()
         };
-        let lay = layout((792, 566), &s, 200, 23, 0, &glass.look.controls());
+        let lay = layout((792, 566), &s, 200, 23, 0, &glass.look.controls_at_100());
         assert_eq!(lay.rebar, Rect::new(0, 0, 792, 78));
         assert_eq!(lay.menu, Rect::new(0, 0, 792, 22));
         assert_eq!(lay.toolbar, Some(Rect::new(0, 24, 792, 30)));

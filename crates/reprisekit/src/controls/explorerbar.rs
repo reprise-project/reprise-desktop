@@ -395,7 +395,7 @@ mod tests {
                 let lay = layout(
                     &bar(),
                     Rect::new(0, i as i32 * 40, 204, 40),
-                    &theme.look.controls(),
+                    &theme.look.controls_at_100(),
                 );
                 c.fill_rect(lay.body, theme.colors.window);
                 draw(&mut c, &text, &p, &bar(), &lay, theme.fonts.size_px);

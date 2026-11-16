@@ -82,7 +82,7 @@ impl Notepad {
         dlg.set_extra(
             encoding_row(self.format),
             ENCODING_ROW_H,
-            &self.forms.look.controls(),
+            &self.forms.look.controls_at_100(),
         );
         self.saveas = Some(dlg);
     }

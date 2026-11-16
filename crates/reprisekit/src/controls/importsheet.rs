@@ -417,7 +417,7 @@ impl Sheet {
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, s: &Sheet, px: u32) {
     c.fill_rect(c.bounds(), p.cs.button_face);
     form::draw(c, text, p, &s.form, true, px);
-    let cm = p.look.controls().grown(p.text);
+    let cm = p.look.controls_at_100().grown(p.text);
     let lay = listview::layout(&s.list, cm.text.rect(LIST), &cm);
     listview::draw(c, text, p, &s.list, &lay, None, px);
     form::draw_popups(c, text, p, &s.form, px);

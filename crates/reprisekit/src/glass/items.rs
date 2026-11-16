@@ -302,7 +302,11 @@ mod tests {
         set(&mut lv);
         let mut c = Canvas::new(280, 170);
         c.fill_rect(c.bounds(), Color::rgb(0xFF, 0xFF, 0xFF));
-        let lay = listview::layout(&lv, Rect::new(10, 10, 260, 150), &theme.look.controls());
+        let lay = listview::layout(
+            &lv,
+            Rect::new(10, 10, 260, 150),
+            &theme.look.controls_at_100(),
+        );
         let px = theme.fonts.size_px;
         listview::draw(&mut c, &text, &theme.paint(), &lv, &lay, lv.bars.lit(), px);
         (c, lay.body.y, lay.body.x)
@@ -329,7 +333,7 @@ mod tests {
             &text,
             px,
             Rect::new(10, 10, 180, 120),
-            &theme.look.controls(),
+            &theme.look.controls_at_100(),
         );
         set(&mut tv, &lay);
         let mut c = Canvas::new(200, 140);
@@ -509,7 +513,11 @@ mod tests {
             let mut sv = shellview::sample(mode, false);
             sv.hot = Some(3);
             let mut c = Canvas::new(460, 220);
-            let lay = shellview::layout(&sv, Rect::new(5, 5, 450, 210), &theme.look.controls());
+            let lay = shellview::layout(
+                &sv,
+                Rect::new(5, 5, 450, 210),
+                &theme.look.controls_at_100(),
+            );
             shellview::draw(&mut c, &text, &theme.paint(), &sv, &lay, sv.bars.lit(), px);
             for (i, outline) in [(2, 0x7A9BCD), (3, 0xB6D1FB)] {
                 let cell = lay.cells[i];

@@ -354,7 +354,7 @@ pub fn run_dialog() {
     };
     let text = TextRenderer::load(&reprisekit::theme::Theme::default().fonts);
     let forms = dialog::start_forms();
-    let cm = forms.look.controls();
+    let cm = forms.look.controls_at_100();
     let mut picture = input.person.as_mut().and_then(|p| {
         let c = p.picture.as_deref().and_then(account_picture);
         if c.is_none() {
@@ -1184,7 +1184,7 @@ mod tests {
             &text,
             theme.fonts.size_px,
             TextUnits::ONE,
-            &theme.look.controls(),
+            &theme.look.controls_at_100(),
         );
         let mut c = Canvas::new(w as u32, h as u32);
         c.fill_rect(c.bounds(), theme.colors.button_face);

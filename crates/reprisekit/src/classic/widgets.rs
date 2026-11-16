@@ -746,7 +746,7 @@ fn scrollbar(
     horizontal: bool,
 ) {
     let Paint { cs, s, .. } = *p;
-    let thumb_min = p.look.controls().thumb_min;
+    let thumb_min = p.look.controls_at_100().thumb_min;
     let parts = scrollbar_parts(sb, s, pos, visible, total, horizontal, thumb_min);
     let enabled = total > visible;
     c.dither_rect_t(sb, cs.button_face, cs.button_hilight, s);

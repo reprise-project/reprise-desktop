@@ -136,7 +136,7 @@ fn draw_on(
     let Paint { cs, s, .. } = *p;
     let flat = p.look.style().is_some_and(|st| st.flat_menus);
     let strip = !banded && glass.is_none();
-    let bm = p.look.controls().menubar;
+    let bm = p.look.controls_at_100().menubar;
     let m = bm.titles(banded);
     let (pad, dy) = (m.pad, m.text_dy);
     if let Some(st) = p.look.style()
@@ -204,7 +204,7 @@ fn draw_framed(
 ) {
     use crate::look::styled::menu as look;
     let Paint { cs, s, .. } = *p;
-    let m = *p.look.controls().menubar.titles(banded);
+    let m = *p.look.controls_at_100().menubar.titles(banded);
     if !banded && glass.is_none() {
         look::draw_bar(st, c, lay.bar.scaled(s), s);
     }
@@ -553,7 +553,7 @@ mod tests {
         for v in crate::blue::Variant::ALL {
             let theme = crate::interfaces::blue_theme(v);
             let (cs, px) = (&theme.colors, theme.fonts.size_px);
-            let cm = theme.look.controls();
+            let cm = theme.look.controls_at_100();
             let mut bar = Bar::new(vec![("&File", vec![]), ("&Edit", vec![])]);
             let client = Rect::new(0, 0, 200, 40);
             let file_w = text.measure("File", false, px);
@@ -586,7 +586,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let theme = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
         let (cs, px) = (&theme.colors, theme.fonts.size_px);
-        let cm = theme.look.controls();
+        let cm = theme.look.controls_at_100();
         let ink = |banded: bool| {
             let mut bar = Bar::new(vec![("&File", vec![])]);
             bar.banded = banded;

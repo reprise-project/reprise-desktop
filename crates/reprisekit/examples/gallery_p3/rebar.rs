@@ -10,7 +10,7 @@ use reprisekit::theme::Theme;
 pub const HEIGHT: i32 = 184;
 
 pub fn draw(c: &mut Canvas, theme: &Theme, _text: &TextRenderer, r: Rect) {
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let rb = rebar::Rebar {
         bands: vec![
             rebar::Band { height: 22 },

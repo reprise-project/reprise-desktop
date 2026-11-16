@@ -564,7 +564,7 @@ fn last_first_at(m: &Mixer, d: &Dims, w: i32) -> usize {
 pub fn layout(m: &Mixer, theme: &Theme, text: &TextRenderer, body: Rect) -> Layout {
     let text = text.dialog(DialogFont::ShellDlg);
     let px = theme.fonts.size_px;
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let d = Dims::new(theme.text);
     let scrolls = m.columns.len() > fitting(m, &d, 0, body.width);
     let first = m.first.min(last_first_at(m, &d, body.width));

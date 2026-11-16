@@ -179,7 +179,7 @@ pub fn draw_window(
     px: u32,
 ) {
     crate::controls::form::draw(c, text, p, f, true, px);
-    let cm = p.look.controls().grown(p.text);
+    let cm = p.look.controls_at_100().grown(p.text);
     if let Some(lay) = grid_layout(f, &cm) {
         super::draw(c, glyphs, p, map, &lay, grid_focused);
     }

@@ -31,7 +31,7 @@ pub fn look(theme: &Theme) -> Option<(&Style, FlyoutLook)> {
 }
 
 pub fn border(theme: &Theme) -> i32 {
-    theme.look.controls().flyout_border
+    theme.look.controls_at_100().flyout_border
 }
 
 /// How far a flyout's canvas reaches past the panel in `theme`'s look, at scale 1: its shadow, or nothing.

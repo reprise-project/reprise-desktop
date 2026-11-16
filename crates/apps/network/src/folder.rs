@@ -840,7 +840,7 @@ mod tests {
 
     fn row_point(f: &Folder, ctx: &Ctx, i: usize) -> (i32, i32) {
         let (_, list_r) = f.layout(ctx);
-        let lay = listview::layout(&f.list, list_r, &ctx.theme.look.controls());
+        let lay = listview::layout(&f.list, list_r, &ctx.theme.look.controls_at_100());
         let mut y = lay.body.y + listview::ROW_H / 2;
         for g in &f.list.groups {
             if g.first <= i {
@@ -857,7 +857,7 @@ mod tests {
         ctx.theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
         let mut f = folder();
         let (_, list_r) = f.layout(&ctx);
-        let lay = listview::layout(&f.list, list_r, &ctx.theme.look.controls());
+        let lay = listview::layout(&f.list, list_r, &ctx.theme.look.controls_at_100());
         let sb = lay.scrollbar.expect("a short window scrolls the list");
         let (x, y) = (sb.x + 8, sb.y + 2);
         let up = (Axis::Vertical, ScrollHit::Back);
@@ -1076,14 +1076,14 @@ mod tests {
             &ctx.text,
             ctx.theme.fonts.size_px,
             pane_r,
-            &ctx.theme.look.controls(),
+            &ctx.theme.look.controls_at_100(),
         );
         assert_eq!(pl.headers[0].x, SECTION_X);
         assert_eq!(pl.headers[0].right(), SECTION_RIGHT);
         assert_eq!(pl.headers[0].y, PANE_HEADER_Y);
         assert_eq!(f.pane.sections.len(), 4);
         // The borderless list puts its header's face, body, group rule and the group's first row on their rows. The header's rect leads with a highlight row, so it starts a px above the face.
-        let ll = listview::layout(&f.list, list_r, &ctx.theme.look.controls());
+        let ll = listview::layout(&f.list, list_r, &ctx.theme.look.controls_at_100());
         assert_eq!(ll.header.y + 1, LIST_HEADER_Y);
         assert_eq!(ll.body.x, BODY_X);
         assert_eq!(ll.body.y, LIST_HEADER_Y + 16, "body y 18");
@@ -1109,7 +1109,7 @@ mod tests {
         f.fit_columns(&wide);
         assert_eq!(f.list.columns[3].width, DEVICE_W + 100);
         let (_, list_r) = f.layout(&wide);
-        let ll = listview::layout(&f.list, list_r, &ctx.theme.look.controls());
+        let ll = listview::layout(&f.list, list_r, &ctx.theme.look.controls_at_100());
         assert_eq!(ll.total_w, ll.body.width);
         assert!(ll.hscroll.is_none());
     }
@@ -1298,7 +1298,7 @@ mod tests {
             &ctx.text,
             ctx.theme.fonts.size_px,
             pane_r,
-            &ctx.theme.look.controls(),
+            &ctx.theme.look.controls_at_100(),
         );
         let mut click = |r: Rect| f.press(one(r.x + 2, r.y + 2), BTN_LEFT, &s, &ctx);
         assert_eq!(
@@ -1349,7 +1349,7 @@ mod tests {
         f.refresh(&s, None);
         f.fit_columns(&ctx);
         let (_, list_r) = f.layout(&ctx);
-        let lay = listview::layout(&f.list, list_r, &ctx.theme.look.controls());
+        let lay = listview::layout(&f.list, list_r, &ctx.theme.look.controls_at_100());
         let sb = lay.scrollbar.expect("a vertical bar");
         assert_eq!(f.wheel(3, &ctx), Outcome::Redraw);
         assert_eq!(f.list.top, 3);

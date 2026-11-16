@@ -1137,7 +1137,7 @@ mod tests {
         let ctx = ctx();
         let (_, list_r) = c.layout(&ctx);
         assert!(
-            tilelist::layout(&c.list, list_r, &ctx.theme.look.controls())
+            tilelist::layout(&c.list, list_r, &ctx.theme.look.controls_at_100())
                 .scrollbar
                 .is_none(),
             "four rows and the hidden-network row fit"
@@ -1158,7 +1158,7 @@ mod tests {
         });
         assert_eq!(c.rows.len(), 10);
         assert_eq!(c.list.entries.len(), 11);
-        let sb = tilelist::layout(&c.list, list_r, &ctx.theme.look.controls())
+        let sb = tilelist::layout(&c.list, list_r, &ctx.theme.look.controls_at_100())
             .scrollbar
             .expect("a bar");
         assert_eq!(c.scroll(3), Outcome::Redraw);
@@ -1185,7 +1185,7 @@ mod tests {
             c.page() as usize,
             c.list.entries.len(),
             false,
-            ctx.theme.look.controls().thumb_min,
+            ctx.theme.look.controls_at_100().thumb_min,
         );
         let thumb = parts.thumb.expect("a thumb");
         assert_eq!(

@@ -275,7 +275,7 @@ pub fn page_shell(mut c: Canvas, theme: &Theme, text: &TextRenderer, with_blue: 
         let lay = grouplist::layout(
             &list,
             Rect::new(350, 3555, 338, 210),
-            &theme.look.controls(),
+            &theme.look.controls_at_100(),
         );
         let icon = swatch16(Color::rgb(80, 193, 255));
         let icons: Vec<Option<&Canvas>> = (0..list.rows.len()).map(|_| Some(&icon)).collect();
@@ -308,7 +308,7 @@ pub fn page_shell(mut c: Canvas, theme: &Theme, text: &TextRenderer, with_blue: 
         );
         ow.select_id("texteditor");
         let (x, y) = (350, 8596);
-        let lay = ow.layout(text, px, (x, y), &theme.look.controls());
+        let lay = ow.layout(text, px, (x, y), &theme.look.controls_at_100());
         ow.draw(
             &mut c,
             text,
@@ -456,7 +456,7 @@ pub fn page_shell(mut c: Canvas, theme: &Theme, text: &TextRenderer, with_blue: 
         ]);
         let client = Rect::new(10, 3940, 400, 170);
         c.fill_rect(client, cs.window);
-        let lay = bar.layout(text, px, client, &theme.look.controls());
+        let lay = bar.layout(text, px, client, &theme.look.controls_at_100());
         bar.open_title(0, &lay, text, theme, px, true);
         bar.underline = true;
         bar.draw(&mut c, text, theme, &lay);
@@ -628,7 +628,7 @@ pub fn page_desk(
         ];
         list.select_row(Some(1));
         let r = Rect::new(10, 4940, 360, 3 * TILE_H + 2 * 31 + 4);
-        let lay = tilelist::layout(&list, r, &theme.look.controls());
+        let lay = tilelist::layout(&list, r, &theme.look.controls_at_100());
         tilelist::draw(
             &mut c,
             text,
@@ -770,7 +770,7 @@ pub fn page_desk(
         let yl = updown::layout_for(
             &year,
             Rect::new(620, 5440, 79, 21),
-            &theme.look.controls(),
+            &theme.look.controls_at_100(),
             reprisekit::theme::TextUnits::ONE,
         );
         updown::draw(
@@ -824,7 +824,7 @@ pub fn page_desk(
         );
         let mut tf = timefield::TimeField::new(23, 41, 24, true);
         tf.select(1);
-        let tl = timefield::layout(Rect::new(734, 5570, 103, 20), &theme.look.controls());
+        let tl = timefield::layout(Rect::new(734, 5570, 103, 20), &theme.look.controls_at_100());
         timefield::draw(
             &mut c,
             text,
@@ -836,7 +836,7 @@ pub fn page_desk(
             px,
         );
         let hm = timefield::TimeField::hm(21, 0, false);
-        let hl = timefield::layout(Rect::new(734, 5596, 70, 20), &theme.look.controls());
+        let hl = timefield::layout(Rect::new(734, 5596, 70, 20), &theme.look.controls_at_100());
         timefield::draw(
             &mut c,
             text,
@@ -1035,8 +1035,8 @@ pub fn page_desk(
         );
         let m = multiedit::Metrics {
             bars_always: false,
-            bar: theme.look.controls().scroll,
-            thumb_min: theme.look.controls().thumb_min,
+            bar: theme.look.controls_at_100().scroll,
+            thumb_min: theme.look.controls_at_100().thumb_min,
             ..Default::default()
         };
         let mut edit = multiedit::MultiEdit::new("first line\nsay  to all");
@@ -1074,7 +1074,7 @@ pub fn page_desk(
             "Move".into(),
             tv,
         );
-        let lay = d.layout(text, px, &theme.look.controls());
+        let lay = d.layout(text, px, &theme.look.controls_at_100());
         let (w, h) = browsefolder::CLIENT;
         let mut dc = Canvas::new(w as u32, h as u32);
         d.draw(&mut dc, text, &Paint { s, ..theme.paint() }, &lay, px);

@@ -47,7 +47,7 @@ pub fn title_rect(st: &Style, p: &Paint, r: Rect, ptr: Interaction, sorted: bool
     let state = item_state(img.states.contains(&State::Checked), ptr, sorted);
     let t = st.content_rect(Part::HeaderItem, r, p.s);
     let push = if state == State::Pressed { p.s } else { 0 };
-    let after = sorted && !p.look.controls().header_arrow_over;
+    let after = sorted && !p.look.controls_at_100().header_arrow_over;
     let dx = if after { SORTED_DX * p.s } else { 0 };
     Some(Rect::new(
         t.x + push + dx,

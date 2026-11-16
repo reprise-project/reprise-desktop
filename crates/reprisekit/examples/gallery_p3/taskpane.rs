@@ -39,7 +39,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
             tp.hot = Some((0, 0));
         }
         let pane = Rect::new(r.x + 10 + i as i32 * 220, r.y, 200, r.height);
-        let lay = taskpane::layout(&tp, text, px, pane, &theme.look.controls());
+        let lay = taskpane::layout(&tp, text, px, pane, &theme.look.controls_at_100());
         taskpane::draw(c, text, &p, &tp, &lay, px);
         taskpane::draw_gap(
             c,

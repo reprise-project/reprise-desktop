@@ -14,7 +14,7 @@ const ROWS: i32 = 3;
 pub const HEIGHT: i32 = ROWS * ROW + 4;
 
 pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     // (sorted column and rising, the column under the pointer, the column
     // held)
     let rows = [

@@ -316,7 +316,7 @@ fn draw_strip(
     glass_ink: Option<Color>,
 ) {
     let (s, u) = (p.s, p.text);
-    let m = &p.look.controls().toolbar;
+    let m = &p.look.controls_at_100().toolbar;
     look::draw_background(c, p, r.scaled(s));
     for (i, (item, &rect)) in tb.items.iter().zip(rects).enumerate() {
         let sr = rect.scaled(s);
@@ -632,7 +632,7 @@ mod tests {
         let tb = explorer_strip();
         let cm = crate::interfaces::blue_theme(crate::blue::Variant::Blue)
             .look
-            .controls();
+            .controls_at_100();
         let r = Rect::new(0, 24, 792, 38);
         let rects = layout(&tb, &text, 11, r, &cm);
         let edges: Vec<(i32, i32)> = rects.iter().map(|b| (b.x, b.width)).collect();

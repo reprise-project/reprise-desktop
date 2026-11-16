@@ -330,11 +330,12 @@ fn change_default_chooser_only_sets_the_default() {
         true,
         None,
     );
-    let lay =
-        d.chooser()
-            .unwrap()
-            .ow
-            .layout(&text, theme.fonts.size_px, (3, 21), &theme.look.controls());
+    let lay = d.chooser().unwrap().ow.layout(
+        &text,
+        theme.fonts.size_px,
+        (3, 21),
+        &theme.look.controls_at_100(),
+    );
     let (b, lr) = (lay.check, lay.check_label);
     let has = |r: Rect, color: u32| {
         (r.x..r.right()).any(|x| (r.y..r.bottom()).any(|y| c.get(x, y) == color))
@@ -367,11 +368,12 @@ fn open_with_chooser_draws_group_list_and_selection() {
         None,
     );
     let cs = &theme.colors;
-    let lay =
-        d.chooser()
-            .unwrap()
-            .ow
-            .layout(&text, theme.fonts.size_px, (3, 21), &theme.look.controls());
+    let lay = d.chooser().unwrap().ow.layout(
+        &text,
+        theme.fonts.size_px,
+        (3, 21),
+        &theme.look.controls_at_100(),
+    );
     let g = lay.group;
     assert_eq!(c.get(g.x + 200, g.y), cs.button_shadow.argb());
     assert_eq!(c.get(g.x + 200, g.y + 1), cs.button_hilight.argb());

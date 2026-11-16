@@ -30,7 +30,7 @@ fn a_check_boxs_focus_ring_at_scale_two_spans_the_scaled_label() {
     };
     // The ring runs from 1 px left of the label rect to 1 px past it;
     // the rect starts at the scaled label x and is the text plus 2 px.
-    let x = 10 + classic_paint(cs, 1).look.controls().check_label;
+    let x = 10 + classic_paint(cs, 1).look.controls_at_100().check_label;
     for s in [1, 2] {
         let want = s * x + text.measure(label, false, 11 * s as u32) + 3 * s - 1;
         assert_eq!(right(s), want, "the ring ends at x {want} at scale {s}");

@@ -83,7 +83,7 @@ fn small() -> ToolBar {
 pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
     let px = theme.fonts.size_px;
     let p = theme.paint();
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     let one_band = rebar::Rebar {
         bands: vec![rebar::Band {
             height: toolbar::height(true, &cm),

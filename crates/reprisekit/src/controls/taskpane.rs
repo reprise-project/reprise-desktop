@@ -561,8 +561,8 @@ mod tests {
             assert_eq!(rows.first(), Some(&top), "{pct}%: the open chevron's tip");
 
             let blue = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
-            let native = blue.look.controls().task.header;
-            let grown = blue.look.controls().grown(u);
+            let native = blue.look.controls_at_100().task.header;
+            let grown = blue.look.controls_at_100().grown(u);
             let band = grown.task.header;
             assert_eq!(band, u.len(native), "{pct}%");
             let r = Rect::new(0, 0, 186, native);
@@ -632,7 +632,7 @@ mod tests {
         let theme = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
         let px = theme.fonts.size_px;
         let r = Rect::new(0, 86, 200, 457);
-        let lay = layout(&pane(), &text, px, r, &theme.look.controls());
+        let lay = layout(&pane(), &text, px, r, &theme.look.controls_at_100());
         assert_eq!(lay.back, Rect::new(1, 86, 199, 456));
         let mut c = Canvas::new(200, 543);
         draw(&mut c, &text, &theme.paint(), &pane(), &lay, px);
@@ -981,7 +981,7 @@ mod tests {
             ..Default::default()
         };
         let r = Rect::new(0, 0, 200, 456);
-        let lay = layout(&tp, &text, px, r, &theme.look.controls());
+        let lay = layout(&tp, &text, px, r, &theme.look.controls_at_100());
         let mut c = Canvas::new(210, 456);
         let p = theme.paint();
         draw(&mut c, &text, &p, &tp, &lay, px);

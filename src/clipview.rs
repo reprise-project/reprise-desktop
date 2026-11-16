@@ -37,7 +37,7 @@ pub fn open_on(state: &State) -> Option<Output> {
 }
 
 fn panel_size(model: &ClipHistory, theme: &reprisekit::theme::Theme) -> (i32, i32) {
-    let cm = theme.look.controls();
+    let cm = theme.look.controls_at_100();
     (
         cliphistory::width(&cm),
         cliphistory::layout(model, &cm).height,
@@ -173,7 +173,7 @@ impl State {
                 &v.model,
                 lx.floor() as i32 - v.origin.0,
                 ly.floor() as i32 - v.origin.1,
-                &self.config.theme.look.controls(),
+                &self.config.theme.look.controls_at_100(),
             )
         })
     }
@@ -205,7 +205,7 @@ impl State {
 
     /// The pointer at layout (`lx`, `ly`) with the panel's scrollbar held.
     pub fn clipview_drag(&mut self, lx: f64, ly: f64) {
-        let cm = self.config.theme.look.controls();
+        let cm = self.config.theme.look.controls_at_100();
         let Some(v) = self.panels.clipview.as_mut() else {
             return;
         };
@@ -367,7 +367,7 @@ impl State {
         let rect = crate::raster::Rect::new(x, y, w, h);
         let mut tree = crate::access::root(Role::Window, "Clipboard History", rect);
         let px = self.config.theme.fonts.size_px;
-        let cm = self.config.theme.look.controls();
+        let cm = self.config.theme.look.controls_at_100();
         let focus = cliphistory::access(&v.model, &self.text, px, &mut tree, ROOT, &cm);
         tree.set_focus(focus);
         Some(tree)

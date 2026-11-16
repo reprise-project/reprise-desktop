@@ -167,7 +167,7 @@ fn tray_dialog(theme: &Theme) -> Dialog {
         vec![entry("nm-applet", "Network"), entry("volume", "Volume")],
         vec![entry("sticky", "Sticky Keys")],
         (w == Wording::Glass).then_some(false),
-        theme.look.controls(),
+        theme.look.controls_at_100(),
     ))
 }
 

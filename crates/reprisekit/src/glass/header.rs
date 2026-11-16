@@ -433,7 +433,7 @@ mod tests {
     fn a_glass_list_centres_its_sort_arrow_over_the_column() {
         let theme = theme_for(Interface::Glass);
         let text = TextRenderer::load(&FontConfig::default());
-        let cm = theme.look.controls();
+        let cm = theme.look.controls_at_100();
         assert_eq!(cm.list_header, 24, "a 24 px header");
         let draw = |sort| {
             let lv: ListView = ListView {

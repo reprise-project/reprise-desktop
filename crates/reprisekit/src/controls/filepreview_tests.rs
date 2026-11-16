@@ -54,7 +54,7 @@ fn metrics(theme: &Theme) -> Metrics {
         bars_always: false,
         ..Metrics::default()
     };
-    m.follow_look(&theme.look.controls());
+    m.follow_look(&theme.look.controls_at_100());
     m
 }
 

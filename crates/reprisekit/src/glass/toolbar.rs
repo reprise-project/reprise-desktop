@@ -417,7 +417,7 @@ mod tests {
     #[test]
     fn the_rebar_is_flat_and_closes_with_its_own_line() {
         let theme = glass();
-        let cm = theme.look.controls();
+        let cm = theme.look.controls_at_100();
         let rb = Rebar {
             bands: [22, 30, 22].map(|height| Band { height }).into(),
         };
@@ -468,7 +468,12 @@ mod tests {
         let px = theme.fonts.size_px;
         let mut bar = menubar::Bar::new(vec![("&File", vec![]), ("&Edit", vec![])]);
         bar.banded = true;
-        let lay = bar.layout(&text, px, Rect::new(0, 0, 300, 22), &theme.look.controls());
+        let lay = bar.layout(
+            &text,
+            px,
+            Rect::new(0, 0, 300, 22),
+            &theme.look.controls_at_100(),
+        );
         let mut c = Canvas::new(300, 22);
         c.fill_rect(c.bounds(), Color::rgb(0xF6, 0xF7, 0xF7));
         bar.draw(&mut c, &text, &theme, &lay);

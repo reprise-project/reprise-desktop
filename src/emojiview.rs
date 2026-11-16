@@ -137,7 +137,7 @@ impl State {
         let emoji = &self.panels.emoji;
         let recent = emoji.recent.iter().filter_map(|e| Entry::get(e)).collect();
         let model = EmojiPicker::new(recent, emoji.catalog.clone());
-        let cm = self.config.theme.look.controls();
+        let cm = self.config.theme.look.controls_at_100();
         let size = (emojipicker::width(&cm), emojipicker::layout(&cm).height);
         let origin = crate::textinput::popup_origin(anchor, size, self.usable_area(out.as_ref()));
         let tree = self.scene.tree_create(self.layers.menu);
@@ -206,7 +206,7 @@ impl State {
                 &v.model,
                 lx.floor() as i32 - v.origin.0,
                 ly.floor() as i32 - v.origin.1,
-                &self.config.theme.look.controls(),
+                &self.config.theme.look.controls_at_100(),
             )
         })
     }
@@ -239,7 +239,7 @@ impl State {
 
     /// The pointer at layout (`lx`, `ly`) with the panel's scrollbar held.
     pub fn emoji_drag(&mut self, lx: f64, ly: f64) {
-        let cm = self.config.theme.look.controls();
+        let cm = self.config.theme.look.controls_at_100();
         let Some(v) = self.panels.emojiview.as_mut() else {
             return;
         };
@@ -341,7 +341,7 @@ impl State {
             caret.on,
             preedit.as_ref(),
         );
-        let cm = config.theme.look.controls();
+        let cm = config.theme.look.controls_at_100();
         let size = (emojipicker::width(&cm), emojipicker::layout(&cm).height);
         let pane = glass::flyout_glass(config, size);
         let Some(v) = panels.emojiview.as_mut() else {
@@ -366,7 +366,7 @@ impl State {
         use reprisekit::access::{ROOT, accesskit::Role};
         let v = self.panels.emojiview.as_ref()?;
         let (x, y) = v.origin;
-        let cm = self.config.theme.look.controls();
+        let cm = self.config.theme.look.controls_at_100();
         let rect = crate::raster::Rect::new(
             x,
             y,

@@ -63,8 +63,8 @@ pub fn render(s: i32) -> Canvas {
                 bars_always: false,
                 flat: true,
                 wrap: true,
-                bar: theme.look.controls().scroll,
-                thumb_min: theme.look.controls().thumb_min,
+                bar: theme.look.controls_at_100().scroll,
+                thumb_min: theme.look.controls_at_100().thumb_min,
                 ..Default::default()
             };
             let lines = if j == 2 {

@@ -986,7 +986,7 @@ fn a_blue_text_boxs_lit_bar_part_draws_hot() {
     let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
     let text = TextRenderer::load(&FontConfig::default());
     let mut m = Metrics::default();
-    m.follow_look(&theme.look.controls());
+    m.follow_look(&theme.look.controls_at_100());
     let t = e(&"line\n".repeat(60));
     let r = Rect::new(0, 0, 200, 120);
     let lay = layout(&text, &m, &t, r, 1);

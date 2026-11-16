@@ -403,7 +403,7 @@ pub fn run_dialog() {
         &input.choices,
         &text,
         px,
-        &repriseapp::start_theme().look.controls(),
+        &repriseapp::start_theme().look.controls_at_100(),
     );
     let out = Arc::new(Mutex::new(Output::default()));
     repriseapp::run(Box::new(Pick {
@@ -609,7 +609,7 @@ mod tests {
                 &cs,
                 text,
                 base.fonts.size_px,
-                &base.look.controls(),
+                &base.look.controls_at_100(),
             );
             dlg.set_text(theme.text);
             dlg.drawn_with(&theme.paint());

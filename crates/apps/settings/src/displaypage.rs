@@ -1631,7 +1631,11 @@ mod tests {
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let theme = reprisekit::interfaces::theme_for(i);
             let text = TextRenderer::load(&theme.fonts);
-            let (p, px, cm) = (theme.paint(), theme.fonts.size_px, theme.look.controls());
+            let (p, px, cm) = (
+                theme.paint(),
+                theme.fonts.size_px,
+                theme.look.controls_at_100(),
+            );
             let sheet =
                 PropSheet::with_list(groups, vec![page(&d, Area::MIN)], crate::pages::CLIENT);
             let (w, h) = (sheet.size.0 as u32, sheet.size.1 as u32);
