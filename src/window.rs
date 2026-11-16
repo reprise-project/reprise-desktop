@@ -215,6 +215,8 @@ pub struct Window {
     /// under it rather than its app's ([`Window::kept_key`]).
     pub place_tag: Option<String>,
     pub modal: bool,
+    /// Whether a mapped window Reprise manages is up its parent chain ([`State::owner`]).
+    pub owned: bool,
     pub on_top: bool,
     /// A consent prompt ([`crate::mapfocus::is_consent`]), set at map: stacked in
     /// `layers.prompts`, and input from an app's RemoteDesktop session never reaches it.
@@ -441,15 +443,12 @@ impl Window {
     pub fn parent_handle(&self) -> Option<Handle> {
         match &self.kind {
             Kind::Xdg(t) => t.parent().map(Handle::Wl),
-            Kind::X11(x) => x
-                .is_transient_for()
-                .filter(|&p| p != x11rb::NONE && p != x.window_id())
-                .map(Handle::X11),
+            Kind::X11(x) => x11_parent(x),
         }
     }
 
     pub fn is_owned(&self) -> bool {
-        self.parent_handle().is_some()
+        self.owned
     }
 
     pub fn is_modal(&self) -> bool {
@@ -514,6 +513,13 @@ impl Window {
             ..self.chrome()
         }
     }
+}
+
+/// The parent X11 window `x` names in WM_TRANSIENT_FOR, whether or not Reprise manages it.
+pub(crate) fn x11_parent(x: &X11Surface) -> Option<Handle> {
+    x.is_transient_for()
+        .filter(|&p| p != x11rb::NONE && p != x.window_id())
+        .map(Handle::X11)
 }
 
 impl State {

@@ -111,6 +111,7 @@ impl State {
             file_dialog: false,
             place_tag: None,
             modal: false,
+            owned: false,
             on_top: false,
             consent: false,
             frame_scale: 1,
@@ -251,11 +252,14 @@ impl State {
     pub fn map_window(&mut self, w: WindowId) {
         self.redraw_changed(|s| {
             s.hold_taskbars(|s| {
+                // An X11 window can name its parent before Reprise manages it.
+                s.refresh_owned();
                 if s.win(w).is_some_and(|x| x.override_redirect) {
                     s.map_or_window(w);
                 } else {
                     s.map_managed(w);
                 }
+                s.refresh_owned();
             })
         });
     }
@@ -298,9 +302,7 @@ impl State {
         }
         let out = self.placement_output(want.as_ref());
         let area = self.usable_area(out.as_ref());
-        let owner = self
-            .parent_window(w)
-            .filter(|&p| self.win(p).is_some_and(|p| p.mapped));
+        let owner = self.owner(w);
         let resizable = self.win(w).is_some_and(Window::is_resizable);
         let position = want.as_ref().and_then(|x| x.position);
         let rescaled = want.as_ref().and_then(|x| x.rescaled);
@@ -649,6 +651,7 @@ impl State {
         let tree = win.tree;
         self.scene.set_enabled(tree, false);
         crate::idle::inhibition_changed(self);
+        self.refresh_owned();
         if was_focused {
             self.focus_top();
         }
@@ -673,6 +676,7 @@ impl State {
             let win = self.windows.remove(i);
             self.scene.destroy(win.tree);
         }
+        self.refresh_owned();
         self.close_ended_programs();
         if refocus {
             self.focus_top();
@@ -712,11 +716,10 @@ impl State {
 impl Window {
     /// Update capabilities; returns whether they changed, or None if the initial configure is still
     /// to be sent.
-    fn send_capabilities(&mut self) -> Option<bool> {
+    pub(super) fn send_capabilities(&mut self) -> Option<bool> {
         let Kind::Xdg(toplevel) = &self.kind else {
             return Some(false);
         };
-        // Recomputed every commit: the xdg parent is set after the initial commit.
         let owned = self.is_owned();
         let caps = (!owned, !owned && self.is_resizable());
         // Resending on every commit risks a configure / ack / commit loop.

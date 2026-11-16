@@ -731,15 +731,14 @@ struct Premap {
 }
 
 impl Premap {
-    fn of(x: &X11Surface) -> Premap {
+    /// `owned` is [`State::owner`]'s answer for `x`.
+    fn of(x: &X11Surface, owned: bool) -> Premap {
         let class = x.class();
         let min = x.min_size().unwrap_or_default();
         let max = x.max_size().unwrap_or_default();
         Premap {
             override_redirect: x.is_override_redirect(),
-            owned: x
-                .is_transient_for()
-                .is_some_and(|p| p != x11rb::NONE && p != x.window_id()),
+            owned,
             modal: x.is_modal(),
             app: if class.is_empty() {
                 x.instance()
@@ -786,7 +785,8 @@ impl State {
     /// The client size the window rules or the app's memory give X11 window `x`
     /// before it maps; `None` leaves the client's own size.
     fn x11_planned_size(&self, x: &X11Surface) -> Option<(i32, i32)> {
-        let p = Premap::of(x);
+        let owned = self.owner_from(crate::window::x11_parent(x)).is_some();
+        let p = Premap::of(x, owned);
         let want = self.plan_for(&p.subject(), None)?;
         let out = self.placement_output(Some(&want));
         p.size(
