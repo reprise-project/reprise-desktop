@@ -2,11 +2,8 @@
 //! bars otherwise. A window with its tabs in the caption has no strip; its toolbar leads with
 //! the new-tab split button. The pointer on them, and the new-tab menu.
 
+use repriseapp::ctxmenu::{Popup, Step};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, KeyInput, PointerInput, Reply};
-use reprisekit::access::accesskit::NodeId;
-use reprisekit::access::{ROOT, Tree};
-use reprisekit::controls::hosted::Chain;
-use reprisekit::controls::menu::{MenuAction, MenuCtx, MenuKey, MenuTree, PopupMenu};
 use reprisekit::controls::rebar;
 use reprisekit::controls::tabstrip::{self, AdderPart, DocHit, DocLayout, Drag, TabStrip};
 use reprisekit::controls::toolbar::{self, Item, Part, ToolBar};
@@ -33,7 +30,8 @@ pub const GRID_GAP: i32 = 4;
 pub struct Chrome {
     pub bar: ToolBar,
     pub press: Option<Press>,
-    pub menu: Option<Popup>,
+    /// The new-tab menu, open.
+    pub menu: Option<Popup<Choice>>,
     /// The chrome is drawn again next frame.
     pub dirty: bool,
     /// The theme and active state the chrome was last drawn in.
@@ -70,29 +68,6 @@ pub enum Press {
     Close(usize),
     Add,
     Button(usize),
-}
-
-/// The new-tab menu, open.
-pub struct Popup {
-    tree: MenuTree,
-    chain: PopupMenu,
-    choices: Vec<Option<Choice>>,
-}
-
-impl Popup {
-    /// The menu's nodes under the window; returns the node to focus.
-    pub fn access(&self, tree: &mut Tree) -> NodeId {
-        self.chain.access(tree, ROOT, "newtab")
-    }
-}
-
-impl Chain for Popup {
-    fn chain(&self) -> &PopupMenu {
-        &self.chain
-    }
-    fn chain_mut(&mut self) -> &mut PopupMenu {
-        &mut self.chain
-    }
 }
 
 pub struct Layout {
@@ -393,13 +368,8 @@ impl Terminal {
             .map(|h| sshhosts::read(&std::path::Path::new(&h).join(".ssh")))
             .unwrap_or_default();
         let (items, choices) = newtab::menu(&self.settings, &hosts);
-        let tree = MenuTree::flat(items);
-        let chain = PopupMenu::open(&tree, at, &menu_ctx(ctx), false);
-        self.w.chrome.menu = Some(Popup {
-            tree,
-            chain,
-            choices,
-        });
+        let rows = items.into_iter().zip(choices).collect();
+        self.w.chrome.menu = Popup::open(rows, at.0, at.1, ctx, false);
         self.w.full = true;
     }
 
@@ -407,40 +377,28 @@ impl Terminal {
         let Some(m) = &mut self.w.chrome.menu else {
             return Reply::none();
         };
-        let action = match p {
-            PointerInput::Motion { x, y } => match m.chain.motion(&m.tree, x, y, &menu_ctx(ctx)) {
-                true => MenuAction::Redraw,
-                false => MenuAction::None,
-            },
-            PointerInput::Press { x, y, .. } => m.chain.click(&m.tree, x, y, &menu_ctx(ctx)),
-            _ => MenuAction::None,
+        let step = match p {
+            PointerInput::Motion { x, y } if m.motion(x, y, ctx) => Step::Redraw,
+            PointerInput::Press { x, y, .. } => m.press(x, y, ctx),
+            _ => Step::None,
         };
-        self.menu_action(action)
+        self.menu_step(step)
     }
 
     pub(crate) fn menu_key(&mut self, k: &KeyInput, ctx: &Ctx) -> Reply {
-        let Some(key) = MenuKey::from_keysym(k.sym, k.utf8.as_deref()) else {
-            return Reply::none();
-        };
         let Some(m) = &mut self.w.chrome.menu else {
             return Reply::none();
         };
-        let action = m.chain.key(&m.tree, key, &menu_ctx(ctx));
-        self.menu_action(action)
+        let step = m.key(k, ctx);
+        self.menu_step(step)
     }
 
-    fn menu_action(&mut self, action: MenuAction) -> Reply {
-        match action {
-            MenuAction::None => Reply::none(),
-            MenuAction::Redraw => Reply::redraw(),
-            MenuAction::Close => self.close_menu(),
-            MenuAction::Chosen(path) => {
-                let choice = self
-                    .w
-                    .chrome
-                    .menu
-                    .as_ref()
-                    .and_then(|m| m.choices.get(path[0]).cloned().flatten());
+    fn menu_step(&mut self, step: Step<Choice>) -> Reply {
+        match step {
+            Step::None => Reply::none(),
+            Step::Redraw => Reply::redraw(),
+            Step::Closed => self.close_menu(),
+            Step::Chosen(choice) => {
                 let closed = self.close_menu();
                 match choice {
                     Some(c) => closed.and(self.new_tab(&c)),
@@ -458,17 +416,7 @@ impl Terminal {
 
     pub(crate) fn draw_menu(&self, c: &mut Canvas, ctx: &Ctx) {
         if let Some(m) = &self.w.chrome.menu {
-            m.chain
-                .draw(c, &ctx.theme, &ctx.text, ctx.theme.access_keys);
+            m.draw(c, ctx);
         }
-    }
-}
-
-fn menu_ctx(ctx: &Ctx) -> MenuCtx<'_> {
-    MenuCtx {
-        text: &ctx.text,
-        theme: &ctx.theme,
-        px: ctx.theme.fonts.size_px,
-        within: ctx.menu_within(),
     }
 }

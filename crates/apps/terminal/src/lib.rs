@@ -1183,7 +1183,7 @@ impl repriseapp::Extended for Terminal {
         }
         termgrid::access(&self.w.snap, lay.grid, tree, ROOT, "grid");
         if let Some(m) = &self.w.chrome.menu {
-            let focus = m.access(tree);
+            let focus = m.access(tree, ROOT);
             tree.set_focus(focus);
         }
     }
