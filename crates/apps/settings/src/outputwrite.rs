@@ -221,27 +221,40 @@ pub fn session_primary(connected: &[Head], layouts: &str, config: &str) -> Optio
     }
 }
 
-/// [`set_output_in`] on `text`. Err when `text` is not TOML: a file that does not parse is not one to overwrite.
-pub fn set_output(text: &str, name: &str, keys: &OutputKeys) -> Result<String, String> {
-    let mut doc: DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
-    set_output_in(&mut doc, name, keys)?;
+/// Why [`set_output`] left the text as it was.
+#[derive(Debug, PartialEq)]
+pub enum Unsaved {
+    /// The text is not TOML: a file that does not parse is not one to overwrite.
+    Parse(String),
+    /// [`set_output_in`]'s refusal of a value or of the file's `outputs`.
+    Refused(String),
+}
+
+/// [`set_output_in`] on `text`.
+pub fn set_output(text: &str, name: &str, keys: &OutputKeys) -> Result<String, Unsaved> {
+    let mut doc: DocumentMut = text.parse().map_err(|e| Unsaved::Parse(format!("{e}")))?;
+    set_output_in(&mut doc, name, keys).map_err(Unsaved::Refused)?;
     Ok(doc.to_string())
 }
 
 /// [`set_output`] on the file at `path`, under `repriseconf::edit`'s lock. Err is the error box's text.
-pub fn save(path: &Path, name: &str, keys: &OutputKeys) -> Result<(), &'static str> {
+pub fn save(path: &Path, name: &str, keys: &OutputKeys) -> Result<(), String> {
     match repriseconf::edit(path, |text| set_output(text, name, keys)) {
         Ok(Ok(_)) => Ok(()),
-        Ok(Err(e)) => {
+        Ok(Err(Unsaved::Parse(e))) => {
             log::warn!(
                 "{} does not parse, refusing to rewrite it: {e}",
                 path.display()
             );
-            Err("config.toml does not parse; the display setting was not saved.")
+            Err("config.toml does not parse; the display setting was not saved.".into())
+        }
+        Ok(Err(Unsaved::Refused(why))) => {
+            log::warn!("{name} in {}: {why}", path.display());
+            Err(format!("The display setting was not saved: {why}."))
         }
         Err(e) => {
             log::warn!("write {}: {e}", path.display());
-            Err("config.toml could not be written.")
+            Err("config.toml could not be written.".into())
         }
     }
 }
@@ -319,7 +332,7 @@ mod tests {
         assert_eq!(dp1["mode"].as_str(), Some("1920x1080@60"));
         assert_eq!(
             set_output("outputs = [1]\n", "DP-1", &keys()).unwrap_err(),
-            "`outputs` holds something that is not a table"
+            Unsaved::Refused("`outputs` holds something that is not a table".into())
         );
     }
 
@@ -432,11 +445,18 @@ mod tests {
             "# mine\n\n[[outputs]]\nname = \"DP-1\"\nadaptive_sync = true\n"
         );
         std::fs::write(&path, "[[[").unwrap();
-        assert!(
-            save(&path, "DP-1", &vrr).is_err(),
+        assert_eq!(
+            save(&path, "DP-1", &vrr),
+            Err("config.toml does not parse; the display setting was not saved.".into()),
             "a file that does not parse is left alone"
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "[[[");
+        std::fs::write(&path, "outputs = 1\n").unwrap();
+        assert_eq!(
+            save(&path, "DP-1", &vrr),
+            Err("The display setting was not saved: `outputs` is not an array of tables.".into()),
+            "a refused value says why"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

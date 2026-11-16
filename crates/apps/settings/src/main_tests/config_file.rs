@@ -27,6 +27,31 @@ fn a_config_written_elsewhere_shows_on_the_open_sheet_and_apply_keeps_it() {
 }
 
 #[test]
+fn a_config_written_elsewhere_keeps_the_selection_of_an_edit_typed_in() {
+    let path = tmp("config-caret").join("config.toml");
+    std::fs::write(&path, "").unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let id = "task_manager";
+    let p = (0..a.sheet.pages.len())
+        .find(|&i| a.sheet.pages[i].item(id).is_some())
+        .unwrap();
+    fn edit<'a>(f: &'a mut form::Form, id: &str) -> &'a mut reprisekit::textedit::TextEdit {
+        match &mut f.item_mut(id).unwrap().control {
+            form::Control::Edit { edit, .. } => edit,
+            c => panic!("{id} is an edit, not {c:?}"),
+        }
+    }
+    a.sheet.pages[p].show_edit_text(id, "htop --tree");
+    edit(&mut a.sheet.pages[p], id).set_selection(0, 4);
+    a.sheet_event(propsheet::Event::Page(p, form::Event::Changed(id)));
+    std::fs::write(&path, "[accessibility]\nmouse_keys = true\n").unwrap();
+    assert!(a.config_changed());
+    let e = edit(&mut a.sheet.pages[p], id);
+    assert_eq!(e.text, "htop --tree");
+    assert_eq!(e.selection(), 0..4, "the selection stays");
+}
+
+#[test]
 fn a_save_that_fails_shows_why_and_does_not_quit() {
     let mut app = app("save-fails");
     std::fs::write(&app.path, "[general\n").expect("write");

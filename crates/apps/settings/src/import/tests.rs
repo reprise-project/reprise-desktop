@@ -275,6 +275,29 @@ fn dark_is_greyed_under_blue() {
     );
 }
 
+#[test]
+fn night_light_hours_that_start_when_they_end_are_greyed_and_never_written() {
+    let same = Setting::NightSchedule(Some(("22:00".into(), "22:00".into())));
+    let p = plan("GNOME", std::slice::from_ref(&same), "", &fake());
+    assert_eq!(
+        cells(&p.lines[0]),
+        (
+            "The night light's From and To times must differ.",
+            "22:00 to 22:00",
+            true
+        )
+    );
+    assert!(p.writes.is_empty());
+    let config = scratch("same-hours").join("config.toml");
+    std::fs::write(&config, "").unwrap();
+    let w = Write::Config(same);
+    assert_eq!(
+        write(&config, None, &[&w]),
+        Err("The night light's From and To times must differ.".into())
+    );
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), "");
+}
+
 fn scratch(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("reprise-import-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);

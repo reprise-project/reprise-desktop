@@ -79,6 +79,18 @@ impl SettingsApp {
         outputwrite::session_primary(heads, &layouts, &config)
     }
 
+    /// Take the saved layouts, primary and profiles afresh from displays.toml and config.toml,
+    /// after an Import replaced them.
+    pub(crate) fn reread_display_files(&mut self) {
+        let text = std::fs::read_to_string(&self.path).unwrap_or_default();
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        (self.display.model).set_profiles_saved(outputwrite::read_profiles(&text, home.as_deref()));
+        self.display.model.layouts_saved = self.display.layouts.exists();
+        let primary = self.session_primary(&self.display.connected);
+        self.display.model.set_primary_saved(primary);
+        displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
+    }
+
     pub(crate) fn heads_changed(&mut self, heads: Vec<Head>) -> Reply {
         let primary = self.session_primary(&heads);
         self.display.model.set_primary_saved(primary);
@@ -327,7 +339,7 @@ impl SettingsApp {
             match e {
                 Effect::Save(name, keys) => {
                     if let Err(why) = outputwrite::save(&self.path, &name, &keys) {
-                        self.fail(why);
+                        self.fail(&why);
                         failed = true;
                     } else {
                         saved = true;

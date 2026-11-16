@@ -134,6 +134,8 @@ impl SettingsApp {
             Ok(_) => {
                 self.backup_status(&format!("Imported {}.", path.display()));
                 self.config_changed();
+                self.reread_display_files();
+                self.scan_profiles();
                 self.quick_reload(None);
             }
             Err(why) => self.fail(&why),

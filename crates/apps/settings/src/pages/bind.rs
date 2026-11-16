@@ -626,8 +626,8 @@ fn nudged_keys(form: &Form) -> Vec<Key> {
     crate::model::keys_apart(base, &moved)
 }
 
-/// Push `s` into every bound control and the Layouts list. Rebuilds the edits,
-/// so call it on load or cancel, never on a keystroke: `TextEdit::new` puts the caret at the end.
+/// Push `s` into every bound control and the Layouts list. An edit whose text already holds its
+/// value keeps its caret; the rest are rebuilt, so never call it on a keystroke.
 pub fn write(sheet: &mut PropSheet, s: &Settings, reg: &[Layout], system: &str) {
     fill_layouts(sheet, s, reg, system, None);
     crate::menupage::fill(&mut sheet.pages[Page::StartMenu.index()], &s.startmenu);
@@ -641,18 +641,20 @@ pub fn write_forms(sheet: &mut PropSheet, s: &Settings) {
     }
 }
 
-/// Push `s` into the bound controls `form` has; rebuilds its edits, so never on a keystroke.
+/// Push `s` into the bound controls `form` has; [`write`] says which edits are rebuilt.
 pub fn write_form(form: &mut Form, s: &Settings) {
     for b in binds() {
         let Some(item) = form.item_mut(b.id()) else {
             continue;
         };
         match (&b, &mut item.control) {
-            (Bind::Text(_, at), Control::Edit { edit, first, .. }) => {
+            (Bind::Text(_, at), Control::Edit { edit, first, .. }) if edit.text != *at.get(s) => {
                 *edit = TextEdit::new(at.get(s).clone(), false);
                 first.set(0);
             }
-            (Bind::Names(_, at), Control::Edit { edit, first, .. }) => {
+            (Bind::Names(_, at), Control::Edit { edit, first, .. })
+                if names(&edit.text) != *at.get(s) =>
+            {
                 *edit = TextEdit::new(at.get(s).join(", "), false);
                 first.set(0);
             }

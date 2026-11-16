@@ -33,6 +33,22 @@ fn question_up(tag: &str, press: displayhost::Press) -> (SettingsApp, Ctx) {
 }
 
 #[test]
+fn rereading_the_display_files_takes_their_layouts_and_profiles() {
+    let mut app = app("display-reread");
+    app.display.layouts = tmp("display-reread-state").join("displays.toml");
+    assert!(!app.display.model.layouts_saved);
+    let config = "[[outputs]]\nname = \"DP-1\"\nicc_profile = \"/p/a.icc\"\n";
+    std::fs::write(&app.path, config).unwrap();
+    std::fs::write(&app.display.layouts, "").unwrap();
+    app.reread_display_files();
+    assert!(app.display.model.layouts_saved);
+    assert_eq!(
+        app.display.model.profile_of("DP-1"),
+        Some(&std::path::PathBuf::from("/p/a.icc"))
+    );
+}
+
+#[test]
 fn apply_greys_once_a_profile_pick_is_written() {
     let mut app = app("profile-apply");
     let mut ctx = test_ctx();
