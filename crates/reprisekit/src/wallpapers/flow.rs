@@ -8,9 +8,12 @@ use std::f32::consts::PI;
 use super::noise::Rng;
 use super::noise::form::{Field, fbm};
 use super::tone::{
-    C, Ramp, hex, lit, mix, mul, oklch, quantise, sat as clamp01, smooth as smoothstep, to_srgb,
+    C, Ramp, hex, lit, mix, mul, oklch, quantise_px, sat as clamp01, smooth as smoothstep, to_srgb,
 };
-use super::{Variant, each, par_bands};
+use super::{Variant, par_bands};
+
+/// Rows drawn at a time.
+const BAND_ROWS: usize = 32;
 
 pub(super) fn render(w: usize, h: usize, v: Variant, seed: u32) -> Vec<u32> {
     let pal = match v {
@@ -18,7 +21,7 @@ pub(super) fn render(w: usize, h: usize, v: Variant, seed: u32) -> Vec<u32> {
         Variant::Hue { hue, dark } => from_hue(hue as f32, dark),
         Variant::Glass => named("night"),
     };
-    quantise(&draw(w, h, &pal, seed), w, seed)
+    draw(w, h, &pal, seed)
 }
 
 fn dist(x: f32, y: f32, cx: f32, cy: f32) -> f32 {
@@ -117,7 +120,7 @@ struct Stroke {
     in_disc: bool,
 }
 
-fn draw(w: usize, h: usize, pal: &FlowPalette, seed: u32) -> Vec<C> {
+fn draw(w: usize, h: usize, pal: &FlowPalette, seed: u32) -> Vec<u32> {
     let aspect = w as f32 / h as f32;
     let (hw, hh) = (aspect * 0.5 + 0.02, 0.52);
     let s = seed;
@@ -300,53 +303,63 @@ fn draw(w: usize, h: usize, pal: &FlowPalette, seed: u32) -> Vec<C> {
             });
         }
     }
-    let mut ink_px: Vec<(f32, C)> = vec![(0.0, [0.0; 3]); w * h];
-    par_bands(&mut ink_px, w, |first, band| {
-        let last = first + band.len() / w;
-        for sg in &segs {
-            let (y0, y1) = (sg.rows.0.max(first), sg.rows.1.min(last));
-            if y0 >= y1 {
-                continue;
-            }
-            let ((ax, ay), (bx, by), r) = (sg.a, sg.b, sg.r);
-            let (dx, dy) = (bx - ax, by - ay);
-            let l2 = (dx * dx + dy * dy).max(1e-9);
-            for yy in y0..y1 {
-                let py = yy as f32 + 0.5;
-                for xx in sg.cols.0..sg.cols.1 {
-                    let pxx = xx as f32 + 0.5;
-                    let tt = (((pxx - ax) * dx + (py - ay) * dy) / l2).clamp(0.0, 1.0);
-                    let (qx, qy) = (ax + tt * dx - pxx, ay + tt * dy - py);
-                    let d = (qx * qx + qy * qy).sqrt();
-                    let mut cv = clamp01(r + 0.5 - d) * sg.a_k;
-                    if cv <= 0.0 {
-                        continue;
-                    }
-                    let ux = (pxx - w as f32 * 0.5) / scale;
-                    let uy = (py - h as f32 * 0.5) / scale;
-                    let sd = (dist(ux, uy, cx, cy) - cr) * scale;
-                    let side_cov = if sg.in_disc {
-                        clamp01(0.5 - sd)
-                    } else {
-                        clamp01(0.5 + sd)
-                    };
-                    cv *= side_cov * sg.alpha;
-                    let o = &mut band[(yy - first) * w + xx];
-                    if cv > o.0 {
-                        *o = (cv, sg.c);
+    let bg = Ramp::new(&pal.bg);
+    let inv = 1.0 / h as f32;
+    let mut out = vec![0u32; w * h];
+    par_bands(&mut out, w, |first, rows| {
+        // A few rows at a time, so the coverage scratch stays small with one thread too.
+        for (k, band) in rows.chunks_mut(BAND_ROWS * w).enumerate() {
+            let first = first + k * BAND_ROWS;
+            let last = first + band.len() / w;
+            let mut ink: Vec<(f32, C)> = vec![(0.0, [0.0; 3]); band.len()];
+            for sg in &segs {
+                let (y0, y1) = (sg.rows.0.max(first), sg.rows.1.min(last));
+                if y0 >= y1 {
+                    continue;
+                }
+                let ((ax, ay), (bx, by), r) = (sg.a, sg.b, sg.r);
+                let (dx, dy) = (bx - ax, by - ay);
+                let l2 = (dx * dx + dy * dy).max(1e-9);
+                for yy in y0..y1 {
+                    let py = yy as f32 + 0.5;
+                    for xx in sg.cols.0..sg.cols.1 {
+                        let pxx = xx as f32 + 0.5;
+                        let tt = (((pxx - ax) * dx + (py - ay) * dy) / l2).clamp(0.0, 1.0);
+                        let (qx, qy) = (ax + tt * dx - pxx, ay + tt * dy - py);
+                        let d = (qx * qx + qy * qy).sqrt();
+                        let mut cv = clamp01(r + 0.5 - d) * sg.a_k;
+                        if cv <= 0.0 {
+                            continue;
+                        }
+                        let ux = (pxx - w as f32 * 0.5) / scale;
+                        let uy = (py - h as f32 * 0.5) / scale;
+                        let sd = (dist(ux, uy, cx, cy) - cr) * scale;
+                        let side_cov = if sg.in_disc {
+                            clamp01(0.5 - sd)
+                        } else {
+                            clamp01(0.5 + sd)
+                        };
+                        cv *= side_cov * sg.alpha;
+                        let o = &mut ink[(yy - first) * w + xx];
+                        if cv > o.0 {
+                            *o = (cv, sg.c);
+                        }
                     }
                 }
             }
+            for (n, o) in band.iter_mut().enumerate() {
+                let (i, j) = (n % w, first + n / w);
+                let x = (i as f32 + 0.5 - w as f32 * 0.5) * inv;
+                let y = (j as f32 + 0.5 - h as f32 * 0.5) * inv;
+                let r = dist(x, y, cx, cy);
+                let vign = 1.0 - 0.12 * smoothstep(0.3, 1.1, dist(x, y, 0.1, 0.0));
+                let b = mul(bg.at(clamp01(0.5 + y * 0.8 - x * 0.2)), vign);
+                let inside = clamp01(0.5 - (r - cr) * scale);
+                let b = mix(b, bg.at(1.0), inside * 0.6);
+                let (cov, col) = ink[n];
+                *o = quantise_px(mix(b, col, cov), i, j, seed);
+            }
         }
     });
-    let bg = Ramp::new(&pal.bg);
-    each(w, h, |i, j, x, y| {
-        let r = dist(x, y, cx, cy);
-        let vign = 1.0 - 0.12 * smoothstep(0.3, 1.1, dist(x, y, 0.1, 0.0));
-        let b = mul(bg.at(clamp01(0.5 + y * 0.8 - x * 0.2)), vign);
-        let inside = clamp01(0.5 - (r - cr) * scale);
-        let b = mix(b, bg.at(1.0), inside * 0.6);
-        let (cov, col) = ink_px[j * w + i];
-        mix(b, col, cov)
-    })
+    out
 }

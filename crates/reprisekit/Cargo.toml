@@ -18,6 +18,8 @@ reprisekit-pins = { path = "../reprisekit-pins" }
 libc.workspace = true
 log.workspace = true
 fontdb = "0.24"
+# icon-theme.cache, mapped so every program shares its pages.
+memmap2 = "0.9"
 # The fontconfig files and font directories a cached font scan depends on.
 fontconfig-parser = "0.5"
 freetype-rs = "0.38"

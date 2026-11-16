@@ -184,21 +184,25 @@ pub fn quantise(px: &[C], w: usize, seed: u32) -> Vec<u32> {
     let mut out = vec![0u32; px.len()];
     par_rows(&mut out, w, |j, row| {
         for (i, o) in row.iter_mut().enumerate() {
-            let c = px[j * w + i];
-            let (i, j) = (i as i32, j as i32);
-            let h0 = hash_form(i, j, seed ^ 0x51ed);
-            let h1 = hash_form(i, j, seed ^ 0xa3c9);
-            let mut v = [0u32; 3];
-            for (ch, v) in v.iter_mut().enumerate() {
-                let a = ((h0 >> (ch * 10)) & 1023) as f32 / 1023.0;
-                let b = ((h1 >> (ch * 10)) & 1023) as f32 / 1023.0;
-                let n = a + b - 1.0;
-                *v = (c[ch] * 255.0 + 0.5 + n).floor().clamp(0.0, 255.0) as u32;
-            }
-            *o = argb(v[0], v[1], v[2]);
+            *o = quantise_px(px[j * w + i], i, j, seed);
         }
     });
     out
+}
+
+/// [`quantise`]'s pixel at column `i`, row `j`.
+pub fn quantise_px(c: C, i: usize, j: usize, seed: u32) -> u32 {
+    let (i, j) = (i as i32, j as i32);
+    let h0 = hash_form(i, j, seed ^ 0x51ed);
+    let h1 = hash_form(i, j, seed ^ 0xa3c9);
+    let mut v = [0u32; 3];
+    for (ch, v) in v.iter_mut().enumerate() {
+        let a = ((h0 >> (ch * 10)) & 1023) as f32 / 1023.0;
+        let b = ((h1 >> (ch * 10)) & 1023) as f32 / 1023.0;
+        let n = a + b - 1.0;
+        *v = (c[ch] * 255.0 + 0.5 + n).floor().clamp(0.0, 255.0) as u32;
+    }
+    argb(v[0], v[1], v[2])
 }
 
 pub fn quantise_grain(px: &[C], w: usize, grain: f32, seed: u32) -> Vec<u32> {
@@ -258,12 +262,19 @@ impl Shoulder {
 }
 
 pub fn quantise_shoulder(px: &[C], w: usize) -> Vec<u32> {
-    let tone = Shoulder::new();
     let mut out = vec![0u32; px.len()];
-    par_rows(&mut out, w, |y, row| {
+    quantise_shoulder_rows(px, w, 0, &mut out);
+    out
+}
+
+/// [`quantise_shoulder`] for whole rows of a picture `w` wide: `px` and `out` hold the same rows,
+/// the first of them pixel `first` of the picture, which the dither is keyed by.
+pub fn quantise_shoulder_rows(px: &[C], w: usize, first: usize, out: &mut [u32]) {
+    let tone = Shoulder::new();
+    par_rows(out, w, |y, row| {
         for (x, o) in row.iter_mut().enumerate() {
-            let i = y * w + x;
-            let p = px[i];
+            let p = px[y * w + x];
+            let i = first + y * w + x;
             let mut z = (i as u64)
                 .wrapping_add(0x9e37_79b9_7f4a_7c15)
                 .wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -279,7 +290,6 @@ pub fn quantise_shoulder(px: &[C], w: usize) -> Vec<u32> {
             *o = argb(v[0], v[1], v[2]);
         }
     });
-    out
 }
 
 #[cfg(test)]

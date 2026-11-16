@@ -254,6 +254,7 @@ impl Host {
     /// Warms the icon theme off the loop, then reloads it once a directory it reads changes, so
     /// an icon installed or removed while the program runs shows.
     pub(crate) fn watch_icons(&mut self) {
+        self.icons_deferred = false;
         self.icon_watch = None;
         let (stop, stopped) = match reprisefs::dirchange::stop() {
             Ok(pair) => pair,

@@ -353,6 +353,8 @@ struct Host {
     look: Look,
     /// Ends the thread watching the icon theme's directories when replaced.
     icon_watch: Option<reprisefs::dirchange::Stop>,
+    /// A program that starts in the tray warms and watches the icon theme once a window shows.
+    icons_deferred: bool,
     icon_jobs: iconjobs::IconJobs,
     /// The caret blink timer is in the loop; it leaves while no window blinks ([`Host::arm_blink`]).
     blink_armed: bool,
