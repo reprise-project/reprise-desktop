@@ -144,13 +144,9 @@ fn os_name() -> String {
     reprisefs::sysinfo::os_release(&text).name
 }
 
-/// "Uninstalling it also removes 2 packages that need it: a, b." for the other `ids` a change
-/// touches; empty when there are none.
-fn also(ids: &[String], verb: Verb) -> String {
+/// How many package names `ids` hold, and them sorted: "a, b, c, d, e, f and 2 more".
+fn named(ids: &[String]) -> (usize, String) {
     const LISTED: usize = 6;
-    if ids.is_empty() {
-        return String::new();
-    }
     let mut names: Vec<&str> = ids.iter().map(|id| split_package_id(id).0).collect();
     names.sort_unstable();
     names.dedup();
@@ -159,13 +155,43 @@ fn also(ids: &[String], verb: Verb) -> String {
     if n > LISTED {
         list.push_str(&format!(" and {} more", n - LISTED));
     }
-    let noun = if n == 1 { "package" } else { "packages" };
+    (n, list)
+}
+
+fn packages(n: usize) -> &'static str {
+    if n == 1 { "package" } else { "packages" }
+}
+
+/// "Uninstalling it also removes 2 packages that need it: a, b." for the other `ids` a change
+/// touches; empty when there are none.
+fn also(ids: &[String], verb: Verb) -> String {
+    if ids.is_empty() {
+        return String::new();
+    }
+    let (n, list) = named(ids);
+    let noun = packages(n);
     match verb {
         Verb::Uninstall => {
             let needs = if n == 1 { "needs" } else { "need" };
             format!("Uninstalling it also removes {n} {noun} that {needs} it: {list}.")
         }
         Verb::Install => format!("Installing it also installs or updates {n} {noun}: {list}."),
+    }
+}
+
+/// A package file's note for the other packages its dry run touches: [`also`]'s install sentence,
+/// then "Installing it removes 1 package: foo." (or "It removes ..." after the first).
+fn install_note(t: &packagekit::Touched) -> String {
+    let added = also(&t.added, Verb::Install);
+    if t.removed.is_empty() {
+        return added;
+    }
+    let (n, list) = named(&t.removed);
+    let removes = format!("removes {n} {}: {list}.", packages(n));
+    if added.is_empty() {
+        format!("Installing it {removes}")
+    } else {
+        format!("{added} It {removes}")
     }
 }
 
@@ -302,7 +328,7 @@ async fn read_package(c: &Connection, file: &Path, found: &mut Found) -> Plan {
                 .collect();
             let blocks = guard::blocks(&set, &guard::essential(&set));
             if !blocks.is_empty() {
-                found.note = guard::refusal(&blocks);
+                found.note = guard::refusal(Verb::Uninstall, &blocks);
                 found.refused = true;
                 return Plan::Nothing;
             }
@@ -490,18 +516,31 @@ fn pacman_plan(path: &Path, name: &str, found: &mut Found) -> Plan {
 
 async fn simulate_file(c: &Connection, file: &str, name: &str, found: &mut Found) -> Plan {
     match packagekit::install_file(c, file, name, true, &mut |_, _| {}, &mut |_| {}).await {
-        Ok(others) => {
-            found.note = also(&others, Verb::Install);
-            found.ready = true;
-            Plan::InstallFile {
-                file: file.into(),
-                name: name.into(),
-            }
-        }
+        Ok(touched) => file_plan(&touched, file, name, found),
         Err(e) => {
             found.note = pk_text(e);
             Plan::Nothing
         }
+    }
+}
+
+/// Installs package file `file` (package `name`) unless its dry run, which `touched`, removes a
+/// package the guard keeps; the note says which.
+fn file_plan(touched: &packagekit::Touched, file: &str, name: &str, found: &mut Found) -> Plan {
+    let removed: Vec<&str> = (touched.removed.iter())
+        .map(|id| split_package_id(id).0)
+        .collect();
+    let blocks = guard::blocks(&removed, &guard::essential(&removed));
+    if !blocks.is_empty() {
+        found.note = guard::refusal(Verb::Install, &blocks);
+        found.refused = true;
+        return Plan::Nothing;
+    }
+    found.note = install_note(touched);
+    found.ready = true;
+    Plan::InstallFile {
+        file: file.into(),
+        name: name.into(),
     }
 }
 
@@ -588,7 +627,8 @@ fn run(
         ))),
         (Plan::InstallFile { file, name }, Some(c)) => pk(zbus::block_on(
             packagekit::install_file(c, file, name, false, &mut report, &mut watch),
-        )),
+        )
+        .map(|t| t.added)),
     };
     let cancelled = std::mem::take(&mut lock(stop).cancelled);
     match done {
@@ -1114,6 +1154,35 @@ mod tests {
     }
 
     #[test]
+    fn a_package_file_note_says_which_packages_it_removes() {
+        let touched = |added: &[&str], removed: &[&str]| packagekit::Touched {
+            added: added
+                .iter()
+                .map(|n| format!("{n};1-1;amd64;local"))
+                .collect(),
+            removed: removed
+                .iter()
+                .map(|n| format!("{n};1-1;amd64;installed"))
+                .collect(),
+        };
+        assert_eq!(install_note(&touched(&[], &[])), "");
+        assert_eq!(
+            install_note(&touched(&[], &["foo"])),
+            "Installing it removes 1 package: foo."
+        );
+        assert_eq!(
+            install_note(&touched(&["libbar"], &["foo", "baz"])),
+            "Installing it also installs or updates 1 package: libbar. It removes 2 packages: \
+             baz, foo."
+        );
+        let mut found = Found::default();
+        let plan = file_plan(&touched(&[], &["foo"]), "/d/x.deb", "x", &mut found);
+        assert!(matches!(plan, Plan::InstallFile { .. }), "{plan:?}");
+        assert!(found.ready && !found.refused);
+        assert_eq!(found.note, "Installing it removes 1 package: foo.");
+    }
+
+    #[test]
     fn a_launcher_names_the_flatpak_that_installed_it() {
         let named = |id: &str| (id == "org.gnome.Epiphany").then(|| "Web".to_string());
         let text = "[Desktop Entry]\nName=Maps\nX-Flatpak=org.gnome.Epiphany\n";
@@ -1290,6 +1359,35 @@ mod tests {
         assert!(ran.is_err());
         app.emergency();
         assert!(!dir.exists(), "emergency removes the copy a run kept");
+    }
+
+    #[test]
+    fn a_package_file_install_that_would_remove_reprise_offers_only_close() {
+        let mut app = Installer::new(Target::Install("/home/u/Downloads/x_1_amd64.deb".into()));
+        let (go, go_rx) = channel();
+        app.go = Some(go);
+        let touched = packagekit::Touched {
+            added: vec!["libx;1-1;amd64;local".into()],
+            removed: vec!["reprise;0.1.0-1;amd64;installed".into()],
+        };
+        let mut found = Found {
+            name: "x".into(),
+            ..Found::default()
+        };
+        let plan = file_plan(&touched, "/home/u/Downloads/x_1_amd64.deb", "x", &mut found);
+        assert_eq!(plan, Plan::Nothing);
+        app.worker_msg(Msg::Found(found));
+        assert_eq!(app.sheet.stage, Stage::Refused);
+        assert_eq!(
+            app.sheet.note,
+            "Installing it would remove reprise (part of Reprise)."
+        );
+        assert!(!app.choose(Choice::Go).redraw);
+        assert!(go_rx.try_recv().is_err(), "the worker never runs");
+        let close = app
+            .sheet
+            .choice(&reprisekit::controls::form::Event::Default);
+        assert_eq!(close, Some(Choice::Close));
     }
 
     #[test]
