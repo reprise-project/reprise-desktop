@@ -204,7 +204,11 @@ pub(super) async fn build(
         let was = prev.devices.iter().find(|d| d.path == device.path);
         device.connected_since = match (device.state, was) {
             (State::Connected, Some(d)) if d.state == State::Connected => d.connected_since,
-            (State::Connected, _) => Some(Instant::now()),
+            // A link already up when first seen is dated by its address; one seen coming up
+            // without an address to go by counts from now.
+            (State::Connected, was) => {
+                addrage::since(&device.iface).or(was.map(|_| Instant::now()))
+            }
             _ => None,
         };
     }

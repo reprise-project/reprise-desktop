@@ -14,8 +14,8 @@ pub const TAG_PORTAL: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum TrayMsg {
-    /// A VPN's row, by its index in the snapshot: connect, or disconnect when up.
-    Vpn(usize),
+    /// A VPN's row, by [`vpn_key`] of its connection path: connect, or disconnect when up.
+    Vpn(u64),
     Hotspot,
     SignIn,
     /// The first row: the app decides from `managed` whether it disables or enables.
@@ -49,7 +49,8 @@ pub struct MenuShape {
     pub has_wifi: bool,
     pub has_device: bool,
     pub hotspot_on: bool,
-    pub vpns: Vec<(String, bool)>,
+    /// Each saved VPN's [`vpn_key`], name and whether it is up.
+    pub vpns: Vec<(u64, String, bool)>,
     /// None hides the row: the machine has no radio switch.
     pub airplane: Option<Mode>,
 }
@@ -90,8 +91,8 @@ pub fn menu(shape: &MenuShape) -> Rows<TrayMsg> {
             .separator();
     }
     if !shape.vpns.is_empty() {
-        for (i, (name, up)) in shape.vpns.iter().enumerate() {
-            rows.add(TrayMsg::Vpn(i), |id| Node::toggle(id, name.clone(), *up));
+        for (key, name, up) in &shape.vpns {
+            rows.add(TrayMsg::Vpn(*key), |id| Node::toggle(id, name.clone(), *up));
         }
         rows.separator();
     }
@@ -103,6 +104,15 @@ pub fn menu(shape: &MenuShape) -> Rows<TrayMsg> {
         .separator()
         .add(TrayMsg::Exit, row("Exit"));
     rows
+}
+
+/// A VPN row's key: a click on a menu opened before VPNs were added, removed or renamed still
+/// toggles the VPN it showed.
+pub fn vpn_key(conn_path: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    conn_path.hash(&mut h);
+    h.finish()
 }
 
 pub fn menu_nodes(shape: &MenuShape) -> Vec<Node> {
@@ -121,7 +131,9 @@ pub fn menu_shape(s: &nm::Snapshot) -> MenuShape {
         has_wifi: wifi_device(s).is_some(),
         has_device: primary.is_some(),
         hotspot_on: wifi_device(s).is_some_and(|d| d.hotspot.is_some()),
-        vpns: s.vpns.iter().map(|v| (v.name.clone(), v.active)).collect(),
+        vpns: (s.vpns.iter())
+            .map(|v| (vpn_key(&v.conn_path), v.name.clone(), v.active))
+            .collect(),
         airplane: s.airplane,
     }
 }
@@ -602,7 +614,7 @@ mod tests {
         MenuShape {
             has_wifi: true,
             has_device: true,
-            vpns: vec![("Away".into(), true), ("Work".into(), false)],
+            vpns: vec![(1, "Away".into(), true), (2, "Work".into(), false)],
             ..MenuShape::default()
         }
     }
@@ -693,7 +705,7 @@ mod tests {
         let shape = MenuShape {
             has_wifi: true,
             hotspot_on: true,
-            vpns: vec![("Away".into(), true), ("Work".into(), false)],
+            vpns: vec![(1, "Away".into(), true), (2, "Work".into(), false)],
             ..MenuShape::default()
         };
         assert_eq!(
@@ -702,8 +714,8 @@ mod tests {
                 row(TrayMsg::Wireless, "View Available Wireless Networks"),
                 row(TrayMsg::Hotspot, "Stop Hotspot"),
                 sep(),
-                row(TrayMsg::Vpn(0), "Away"),
-                row(TrayMsg::Vpn(1), "Work"),
+                row(TrayMsg::Vpn(1), "Away"),
+                row(TrayMsg::Vpn(2), "Work"),
                 sep(),
                 row(TrayMsg::Folder, "Open Network Connections"),
                 sep(),
@@ -930,6 +942,28 @@ mod tests {
             active: true,
         }];
         assert_eq!(icon_for(&vpn), (NetIcon::Wired, true));
+    }
+
+    #[test]
+    fn a_vpn_row_clicked_after_the_list_moved_toggles_the_vpn_it_showed() {
+        let vpn = |path: &str, name: &str| nm::Vpn {
+            conn_path: path.into(),
+            name: name.into(),
+            kind: "wireguard".into(),
+            active: false,
+        };
+        let mut s = snap(vec![]);
+        s.vpns = vec![vpn("/Settings/3", "Work")];
+        let opened = menu_shape(&s);
+        let work = menu_nodes(&opened)
+            .into_iter()
+            .find(|n| n.label == "Work")
+            .expect("the Work row");
+        s.vpns.insert(0, vpn("/Settings/4", "Away"));
+        assert_eq!(
+            translate(Msg::Clicked(work.id), &menu_shape(&s)),
+            Some(TrayMsg::Vpn(vpn_key("/Settings/3")))
+        );
     }
 
     #[test]

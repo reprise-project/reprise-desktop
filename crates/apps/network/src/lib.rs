@@ -26,7 +26,7 @@ mod tray;
 mod vpnsheet;
 mod wg;
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
@@ -58,6 +58,9 @@ const VPN: WinId = WinId::named("vpn");
 const IMPORT: WinId = WinId::named("import");
 const HOTSPOT: WinId = WinId::named("hotspot");
 const NOTICE: WinId = WinId::named("notice");
+/// The window a queued notice opens in as the one before closes: a fresh window gets its own
+/// title and size.
+const NOTICE_NEXT: WinId = WinId::named("notice-next");
 const BROWSE_TITLE: &str = "Choose File";
 
 /// Where the sign-in balloon sends the browser when NetworkManager has no
@@ -107,6 +110,7 @@ struct Notice {
     msg: MsgBox,
     /// The saved VPN Yes deletes.
     delete: Option<String>,
+    win: WinId,
 }
 
 #[derive(Default)]
@@ -137,6 +141,8 @@ struct NetApp {
     browse_for: Option<Browse>,
     hotspot: Option<hotspot::HotspotDialog>,
     notice: Option<Notice>,
+    /// Notices waiting for the open one to close, oldest first.
+    queued: VecDeque<Notice>,
     /// The message box's font, loaded in `start`: `children` sizes its window without a `Ctx`.
     dialog_text: Option<Rc<TextRenderer>>,
     /// `Ctx::forms` as of the last event, which `children` and `initial_size` size windows by.
@@ -288,10 +294,7 @@ impl NetApp {
     }
 
     fn tell(&mut self, title: &str, text: &str) {
-        if self.notice.is_some() {
-            return;
-        }
-        self.notice = Some(Notice {
+        self.show(Notice {
             msg: MsgBox::new(
                 title,
                 msgbox::Fields {
@@ -305,7 +308,17 @@ impl NetApp {
                 },
             ),
             delete: None,
+            win: NOTICE,
         });
+    }
+
+    /// Opens `n`, or queues it behind the notice that is open.
+    fn show(&mut self, n: Notice) {
+        if self.notice.is_some() {
+            self.queued.push_back(n);
+        } else {
+            self.notice = Some(n);
+        }
     }
 
     fn ask_delete(&mut self, conn_path: &str) {
@@ -316,7 +329,7 @@ impl NetApp {
             .find(|v| v.conn_path == conn_path)
             .map(|v| v.name.clone())
             .unwrap_or_default();
-        self.notice = Some(Notice {
+        self.show(Notice {
             msg: MsgBox::new(
                 "Confirm Connection Delete",
                 msgbox::Fields {
@@ -332,11 +345,13 @@ impl NetApp {
                 },
             ),
             delete: Some(conn_path.to_string()),
+            win: NOTICE,
         });
     }
 
-    fn toggle_vpn(&mut self, i: usize) {
-        let Some(v) = self.snapshot.vpns.get(i) else {
+    fn toggle_vpn(&mut self, key: u64) {
+        let vpns = &self.snapshot.vpns;
+        let Some(v) = vpns.iter().find(|v| tray::vpn_key(&v.conn_path) == key) else {
             return;
         };
         let cmd = if v.active {
@@ -908,11 +923,11 @@ impl NetApp {
         Reply::redraw_all()
     }
 
-    fn notice_event(&mut self, ev: Event) -> Reply {
+    fn notice_event(&mut self, win: WinId, ev: Event) -> Reply {
         let Some(text) = &self.dialog_text else {
             return Reply::none();
         };
-        let Some(n) = &mut self.notice else {
+        let Some(n) = self.notice.as_mut().filter(|n| n.win == win) else {
             return Reply::none();
         };
         match n.msg.event(&ev, text, &self.forms) {
@@ -920,7 +935,10 @@ impl NetApp {
                 if let (Some(conn), Some(0)) = (n.delete.take(), button) {
                     self.send(nm::Cmd::DeleteVpn(conn));
                 }
-                self.notice = None;
+                self.notice = self.queued.pop_front().map(|mut next| {
+                    next.win = if win == NOTICE { NOTICE_NEXT } else { NOTICE };
+                    next
+                });
                 Reply::redraw_all()
             }
             oneshot::Outcome::Redraw => Reply::redraw(),
@@ -1257,7 +1275,7 @@ impl App for NetApp {
             });
         }
         if let (Some(n), Some(text)) = (&self.notice, &self.dialog_text) {
-            out.push(n.msg.child(NOTICE, text, &self.forms));
+            out.push(n.msg.child(n.win, text, &self.forms));
         }
         out
     }
@@ -1318,7 +1336,7 @@ impl App for NetApp {
                 self.hotspot_event(ev, ctx).with_clipboard(clip)
             }
             IMPORT => self.import_event(ev, ctx),
-            NOTICE => self.notice_event(ev),
+            NOTICE | NOTICE_NEXT => self.notice_event(win, ev),
             _ => self.folder_event(ev, ctx),
         }
     }
@@ -1428,8 +1446,8 @@ impl App for NetApp {
                     );
                 }
             }
-            NOTICE => {
-                if let Some(n) = &self.notice {
+            NOTICE | NOTICE_NEXT => {
+                if let Some(n) = self.notice.as_ref().filter(|n| n.win == win) {
                     n.msg.draw(c, &forms, &ctx.text);
                 }
             }
@@ -1500,8 +1518,8 @@ impl repriseapp::Extended for NetApp {
                     d.access(tree, r, &ctx.text, forms.fonts.size_px);
                 }
             }
-            NOTICE => {
-                if let Some(n) = &self.notice {
+            NOTICE | NOTICE_NEXT => {
+                if let Some(n) = self.notice.as_ref().filter(|n| n.win == win) {
                     n.msg.access(tree, &ctx.text, &forms);
                 }
             }
@@ -1617,6 +1635,24 @@ mod tests {
         app.event(KEY, ctrl(b'a'), &mut ctx);
         assert_eq!(app.event(KEY, ctrl(b'c'), &mut ctx).copy, None);
         assert_eq!(app.event(KEY, ctrl(b'x'), &mut ctx).copy, None);
+    }
+
+    #[test]
+    fn a_notice_told_while_one_is_open_opens_in_a_fresh_window_when_it_closes() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        let mut app = NetApp::default();
+        app.event(repriseapp::MAIN, Event::Wake, &mut ctx);
+        app.tell("Import", "first");
+        app.tell("Import", "second");
+        let shown = |app: &NetApp| {
+            let n = app.notice.as_ref().expect("a notice");
+            (n.win, n.msg.fields.text.clone())
+        };
+        assert_eq!(shown(&app), (NOTICE, "first".to_string()));
+        app.event(NOTICE, Event::CloseRequest, &mut ctx);
+        assert_eq!(shown(&app), (NOTICE_NEXT, "second".to_string()));
+        app.event(NOTICE_NEXT, Event::CloseRequest, &mut ctx);
+        assert!(app.notice.is_none());
     }
 
     #[test]
