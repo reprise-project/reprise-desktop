@@ -173,11 +173,15 @@ impl State {
         }
     }
 
-    /// Empty the Recycle Bin, the home trash and each drive's, on a removal job. The watch flips its icon; a failure says why in an error box.
+    /// Empty the Recycle Bin, the home trash and each drive's, on a removal job. The watch flips its icon; a failure says why in an error box. While one runs, its progress dialog comes up instead.
     pub fn empty_bin(&mut self) {
+        if self.raise_emptying() {
+            return;
+        }
         self.spawn_fs_job(move || -> OnLoop {
             let roots = reprisefs::trash::Bins::system().map(|b| b.roots());
             Box::new(move |state| match roots {
+                _ if state.raise_emptying() => {}
                 Some(roots) => {
                     let items = roots.iter().cloned().map(Removal::Empty).collect();
                     let kind = reprisekit::controls::copyprogress::Kind::Empty;
@@ -345,8 +349,12 @@ impl State {
     }
 
     /// Empty Recycle Bin: asks to delete what the bins hold, counted in a file action, so a drive
-    /// bin on a mount that stopped answering gives up instead of asking minutes later.
+    /// bin on a mount that stopped answering gives up instead of asking minutes later. While an
+    /// emptying runs, its progress dialog comes up instead.
     pub fn ask_empty_bin(&mut self) {
+        if self.raise_emptying() {
+            return;
+        }
         let action = Action::reads("Error Deleting File or Folder");
         self.spawn_fs_action(action, |_| -> OnLoop {
             let (count, first) = reprisefs::trash::Bins::system()
@@ -362,7 +370,7 @@ impl State {
                     (n + m, first)
                 });
             Box::new(move |state: &mut State| {
-                if count > 0 {
+                if count > 0 && !state.raise_emptying() {
                     state.open_dialog(Dialog::confirm_empty_bin(count, first.as_deref()));
                 }
             })

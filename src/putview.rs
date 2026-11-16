@@ -69,6 +69,63 @@ pub struct Running {
     failed: Option<Failure>,
 }
 
+impl Running {
+    /// The put into `dir` as its dialog shows it.
+    fn shown(&self, dir: &Path) -> Shown {
+        let from = (self.puts.first())
+            .and_then(|(s, _, _)| s.path().parent())
+            .map(folder_name)
+            .unwrap_or_default();
+        Shown {
+            started: self.started,
+            dialog: self.dialog,
+            kind: match self.op {
+                DropOp::Move => Kind::Move,
+                _ => Kind::Copy,
+            },
+            from,
+            to: folder_name(dir),
+            ident: dir.to_path_buf(),
+            cancelled: self.job.cancelled(),
+        }
+    }
+}
+
+impl Removing {
+    fn shown(&self) -> Shown {
+        let from = match self.kind {
+            Kind::Empty => "Recycle Bin".to_string(),
+            _ => (self.paths.first())
+                .and_then(|p| p.parent())
+                .map(folder_name)
+                .unwrap_or_default(),
+        };
+        Shown {
+            started: self.started,
+            dialog: self.dialog,
+            kind: self.kind,
+            from,
+            to: String::new(),
+            ident: self.paths.first().cloned().unwrap_or_default(),
+            cancelled: self.job.meter().cancelled(),
+        }
+    }
+}
+
+impl Zipping {
+    fn shown(&self) -> Shown {
+        Shown {
+            started: self.started,
+            dialog: self.dialog,
+            kind: Kind::Compress,
+            from: self.from.clone(),
+            to: self.to.clone(),
+            ident: self.ident.clone(),
+            cancelled: self.job.meter().cancelled(),
+        }
+    }
+}
+
 fn status(s: Snapshot, waiting: usize) -> Status {
     Status {
         phase: match s.phase {
@@ -199,26 +256,7 @@ impl State {
             return;
         };
         let st = status(run.job.progress(), waiting);
-        let kind = if run.op == DropOp::Move {
-            Kind::Move
-        } else {
-            Kind::Copy
-        };
-        let from = run
-            .puts
-            .first()
-            .and_then(|(s, _, _)| s.path().parent())
-            .map(folder_name)
-            .unwrap_or_default();
-        let job = Shown {
-            started: run.started,
-            dialog: run.dialog,
-            kind,
-            from,
-            to: folder_name(dir),
-            ident: dir.to_path_buf(),
-            cancelled: run.job.cancelled(),
-        };
+        let job = run.shown(dir);
         let dialog = self.present(job, st);
         if let Some(run) = self.drags.running.get_mut(dir) {
             run.dialog = dialog;
@@ -255,28 +293,21 @@ impl State {
         job.dialog
     }
 
-    /// Close dialog `id` of a job that dealt with `done` items: a balloon tells of the end when the
-    /// dialog was up but not focused and the job was not cancelled.
-    fn close_progress(
-        &mut self,
-        id: Option<u64>,
-        done: usize,
-        cancelled: bool,
-        failed: Option<&Failure>,
-    ) {
-        let Some(i) = id.and_then(|id| self.dialogs.views.iter().position(|v| v.id == id)) else {
-            return;
-        };
-        let focused = i + 1 == self.dialogs.views.len() && self.dialog_has_keyboard();
-        let note = self.dialogs.views[i]
-            .dialog
-            .copy()
-            .map(|c| c.cp.ended_note(done));
-        self.close_dialog_at(i);
-        if !focused && !cancelled {
+    /// Close `job`'s dialog after it dealt with `done` items. A balloon tells of the end when the
+    /// job ran long enough for its dialog, was not cancelled, and its dialog was not the focused
+    /// one: closed by a panel and waiting to come back counts as not focused.
+    fn close_progress(&mut self, job: &Shown, done: usize, failed: Option<&Failure>) {
+        let at = (job.dialog).and_then(|id| self.dialogs.views.iter().position(|v| v.id == id));
+        let focused =
+            at.is_some_and(|i| i + 1 == self.dialogs.views.len() && self.dialog_has_keyboard());
+        if let Some(i) = at {
+            self.close_dialog_at(i);
+        }
+        let shown = job.started.elapsed() >= copyprogress::SHOW_AFTER;
+        if shown && !focused && !job.cancelled {
             let (summary, body) = match failed {
                 Some((title, text)) => (title.to_string(), text.clone()),
-                None => note.unwrap_or_default(),
+                None => copyprogress::ended_note(job.kind, &job.from, &job.to, done),
             };
             crate::notifyview::notice(self, &summary, &body);
         }
@@ -288,8 +319,7 @@ impl State {
         let Some(run) = self.drags.running.remove(dir) else {
             return;
         };
-        let cancelled = run.job.cancelled();
-        self.close_progress(run.dialog, run.landed, cancelled, run.failed.as_ref());
+        self.close_progress(&run.shown(dir), run.landed, run.failed.as_ref());
         self.show_drop_failure(run.failed);
         self.put_done(dir);
     }
@@ -378,6 +408,17 @@ impl State {
             .map(|(d, _)| d.clone())
     }
 
+    /// Whether an Empty Recycle Bin is under way; its progress dialog, when up, comes to the front.
+    pub(crate) fn raise_emptying(&mut self) -> bool {
+        let Some(r) = (self.drags.removals.values()).find(|r| r.kind == Kind::Empty) else {
+            return false;
+        };
+        if let Some(i) = r.dialog.and_then(|id| self.dialog_index(id)) {
+            self.raise_dialog(i);
+        }
+        true
+    }
+
     /// Run `items` (each naming the path at the same index of `paths`) on a removal job; `bins` is
     /// where a [`Removal::Trash`] goes.
     pub(crate) fn start_removal(
@@ -446,30 +487,12 @@ impl State {
             let Some(r) = self.drags.removals.remove(&key) else {
                 return false;
             };
-            let cancelled = r.job.meter().cancelled();
-            self.close_progress(r.dialog, r.done, cancelled, r.failed.as_ref());
+            self.close_progress(&r.shown(), r.done, r.failed.as_ref());
             self.show_drop_failure(r.failed);
             return false;
         }
         let st = status(r.job.progress(), 0);
-        let from = match r.kind {
-            Kind::Empty => "Recycle Bin".to_string(),
-            _ => r
-                .paths
-                .first()
-                .and_then(|p| p.parent())
-                .map(folder_name)
-                .unwrap_or_default(),
-        };
-        let job = Shown {
-            started: r.started,
-            dialog: r.dialog,
-            kind: r.kind,
-            from,
-            to: String::new(),
-            ident: r.paths.first().cloned().unwrap_or_default(),
-            cancelled: r.job.meter().cancelled(),
-        };
+        let job = r.shown();
         let dialog = self.present(job, st);
         if let Some(r) = self.drags.removals.get_mut(&key) {
             r.dialog = dialog;
@@ -525,21 +548,12 @@ impl State {
             let Some(z) = self.drags.zips.remove(&key) else {
                 return false;
             };
-            let m = z.job.meter();
-            let done = m.snapshot().items as usize;
-            self.close_progress(z.dialog, done, m.cancelled(), z.failed.as_ref());
+            let done = z.job.meter().snapshot().items as usize;
+            self.close_progress(&z.shown(), done, z.failed.as_ref());
             self.show_drop_failure(z.failed);
             return false;
         }
-        let job = Shown {
-            started: z.started,
-            dialog: z.dialog,
-            kind: Kind::Compress,
-            from: z.from.clone(),
-            to: z.to.clone(),
-            ident: z.ident.clone(),
-            cancelled: z.job.meter().cancelled(),
-        };
+        let job = z.shown();
         let st = status(z.job.meter().snapshot(), 0);
         let dialog = self.present(job, st);
         if let Some(z) = self.drags.zips.get_mut(&key) {
@@ -551,6 +565,7 @@ impl State {
 
 #[cfg(test)]
 mod tests {
+    use super::{CopyProgress, Dialog, Kind};
     use reprisefs::compress::Compress;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
@@ -633,6 +648,57 @@ mod tests {
         assert!(v.dialog.on_taskbar(), "with its task button");
         assert_eq!(h.state.drags.running[&to].dialog, Some(v.id));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn notices(h: &crate::harness::Harness) -> Vec<String> {
+        (h.state.notify.log.entries.iter())
+            .map(|e| e.n.summary.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_copy_ending_while_a_panel_holds_its_dialog_tells_of_its_end_in_a_balloon() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (dir, to) = copy_into(&mut h, "ends-under-panel");
+        shown_late(&mut h, &to);
+        turn_off(&mut h);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while h.state.drags.running.contains_key(&to) {
+            assert!(std::time::Instant::now() < end, "the copy ends");
+            h.run_for(20);
+        }
+        assert_eq!(notices(&h), ["Copied 1 item"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn empty_recycle_bin_while_one_runs_brings_up_its_dialog_and_starts_no_other() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let root = sandbox("emptying");
+        let items = vec![reprisefs::removal::Removal::Empty(root.clone())];
+        h.state
+            .start_removal(items, vec![root.clone()], None, Kind::Empty);
+        let cp = CopyProgress::new(Kind::Empty, "Recycle Bin", "", h.state.config.glass.color);
+        let id = h
+            .state
+            .open_view(Dialog::copy_progress(cp, root.clone()), None);
+        h.state.drags.removals.values_mut().next().unwrap().dialog = id;
+        h.state.open_dialog(Dialog::error("Other", "on top".into()));
+        h.state.ask_empty_bin();
+        h.state.empty_bin();
+        assert_eq!(h.state.drags.removals.len(), 1, "one emptying");
+        let titles: Vec<_> = (h.state.dialogs.views.iter())
+            .map(|v| v.dialog.title.clone())
+            .collect();
+        assert_eq!(titles.len(), 2, "no question: {titles:?}");
+        assert_eq!(
+            h.state.dialogs.views.last().map(|v| v.id),
+            id,
+            "its dialog in front"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
