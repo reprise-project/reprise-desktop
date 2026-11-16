@@ -1490,9 +1490,7 @@ impl Mixer {
         let first = !self.cues;
         self.cues = true;
         if let Some(i) = self.open_list() {
-            let a = self
-                .output_mut(i)
-                .map_or(combo::Act::None, |c| c.list_key(key));
+            let a = self.output_mut(i).map_or(combo::Act::None, |c| c.key(key));
             return self.act(i, a);
         }
         let scrolled = self.first;
@@ -1507,9 +1505,7 @@ impl Mixer {
             (K::Space, Focus::Check(i)) => self.flip(i),
             (K::Space | K::Enter, Focus::Advanced) if self.advanced_live() => Event::Advanced,
             (k, Focus::Output(i)) => {
-                let a = self
-                    .output_mut(i)
-                    .map_or(combo::Act::None, |c| c.closed_key(k));
+                let a = self.output_mut(i).map_or(combo::Act::None, |c| c.key(k));
                 self.act(i, a)
             }
             (k, Focus::Volume(i)) => match k {

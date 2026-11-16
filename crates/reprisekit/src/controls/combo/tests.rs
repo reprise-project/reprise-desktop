@@ -975,3 +975,77 @@ fn a_value_or_row_wider_than_its_room_ends_in_an_ellipsis() {
         "the first row"
     );
 }
+
+#[test]
+fn a_key_picks_on_a_closed_combo_and_moves_the_highlight_on_an_open_one() {
+    use crate::controls::form::Key;
+    let mut c = combo();
+    assert_eq!(c.key(Key::Down), Act::Picked(1));
+    assert_eq!(c.key(Key::Right), Act::Picked(2));
+    assert_eq!(c.key(Key::End), Act::None, "already the last row");
+    assert_eq!(c.key(Key::PageUp), Act::Picked(0));
+    assert_eq!(c.key(Key::Drop), Act::Redraw);
+    assert_eq!(c.open, Some(0));
+    assert_eq!(c.key(Key::End), Act::Redraw);
+    assert_eq!(
+        (c.open, c.selected),
+        (Some(2), 0),
+        "the pick waits for Enter"
+    );
+    assert_eq!(c.key(Key::Left), Act::None, "Left is not a list key");
+    assert_eq!(c.key(Key::Enter), Act::Picked(2));
+    assert_eq!(c.open, None);
+    for close in [Key::Escape, Key::Drop, Key::Tab { back: false }] {
+        c.toggle();
+        c.key(Key::Up);
+        assert_eq!(c.key(close.clone()), Act::Redraw);
+        assert_eq!((c.open, c.selected), (None, 2), "{close:?} closes the list");
+    }
+}
+
+#[test]
+fn a_letter_finds_the_next_row_it_starts_skipping_greyed_rows() {
+    use crate::controls::form::Key;
+    let mut c = Combo::new(&["Slate", "Harbor", "Sand", "Spruce"], 0, 8);
+    c.items[2].greyed = true;
+    assert_eq!(c.key(Key::Char('s')), Act::Picked(3), "Sand is greyed");
+    assert_eq!(c.key(Key::Char('S')), Act::Picked(0), "the search wraps");
+    assert_eq!(c.key(Key::Char('s')), Act::Picked(3));
+    assert_eq!(c.key(Key::Char('h')), Act::Picked(1));
+    assert_eq!(
+        c.key(Key::Char('h')),
+        Act::Redraw,
+        "the only H row stays picked"
+    );
+    assert_eq!(c.key(Key::Char('x')), Act::None, "no row: the host's key");
+    c.toggle();
+    assert_eq!(c.key(Key::Char('s')), Act::Redraw);
+    assert_eq!(
+        (c.open, c.selected),
+        (Some(3), 1),
+        "an open list moves its highlight"
+    );
+    assert_eq!(c.key(Key::Enter), Act::Picked(3));
+}
+
+#[test]
+fn an_editable_combo_leaves_its_editing_keys_to_the_field() {
+    use crate::controls::form::Key;
+    let mut c = combo();
+    c.edit = Some(TextEdit::new("typed", false));
+    for k in [Key::Char('s'), Key::Home, Key::End, Key::Left, Key::Right] {
+        assert_eq!(c.key(k.clone()), Act::None, "closed {k:?}");
+    }
+    assert_eq!(c.key(Key::Down), Act::Picked(0));
+    c.toggle();
+    for k in [Key::Char('s'), Key::Home, Key::End] {
+        assert_eq!(c.key(k.clone()), Act::None, "open {k:?}");
+    }
+    c.key(Key::Down);
+    assert_eq!(c.key(Key::Enter), Act::Redraw);
+    assert_eq!(
+        (c.open, c.text()),
+        (None, "Slate"),
+        "Enter closes the list on the text the highlight filled in"
+    );
+}

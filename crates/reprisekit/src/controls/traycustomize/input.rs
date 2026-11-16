@@ -31,6 +31,18 @@ impl TrayCustomize {
         }
     }
 
+    /// A key for the combo, open or focused: a pick takes effect on the selected entry at once.
+    fn combo_key(&mut self, key: form::Key) -> Event {
+        match self.combo.key(key) {
+            combo::Act::Picked(i) => {
+                self.take_pick(i);
+                Event::Redraw
+            }
+            combo::Act::Redraw => Event::Redraw,
+            combo::Act::None => Event::None,
+        }
+    }
+
     pub fn key(&mut self, key: form::Key) -> Event {
         let ev = self.key_inner(key);
         match ev {
@@ -43,22 +55,7 @@ impl TrayCustomize {
         let height = self.body_height();
         use form::Key;
         if self.combo.open.is_some() {
-            return match key {
-                Key::Up | Key::Down => {
-                    self.combo.step(key == Key::Down);
-                    Event::Redraw
-                }
-                Key::Enter | Key::Drop => {
-                    self.combo.take();
-                    self.take_pick(self.combo.selected);
-                    Event::Redraw
-                }
-                Key::Escape => {
-                    self.combo.open = None;
-                    Event::Redraw
-                }
-                _ => Event::None,
-            };
+            return self.combo_key(key);
         }
         match key {
             Key::Tab { back } => {
@@ -106,12 +103,7 @@ impl TrayCustomize {
                 'a' => self.press(Focus::AllIcons),
                 _ => Event::None,
             },
-            Key::Drop if self.focus == Focus::Combo => redraw_if(self.combo.toggle()),
-            Key::Up | Key::Down if self.focus == Focus::Combo => {
-                let changed = self.combo.step(key == Key::Down);
-                self.take_pick(self.combo.selected);
-                redraw_if(changed)
-            }
+            _ if self.focus == Focus::Combo => self.combo_key(key),
             Key::Up | Key::Down | Key::Home | Key::End | Key::PageUp | Key::PageDown
                 if self.focus == Focus::List && !self.entries.is_empty() =>
             {

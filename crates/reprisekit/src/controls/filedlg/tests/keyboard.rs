@@ -96,7 +96,6 @@ fn escape_cancels() {
     ));
 }
 
-/// `combo_key` has no Escape arm, so Escape must not reach it.
 #[test]
 fn escape_closes_an_open_combo_instead_of_the_dialog() {
     let mut d = sample();
@@ -118,6 +117,85 @@ fn enter_commits_an_open_combo_instead_of_accepting() {
         "the dialog must not end while a list is dropped: {ev:?}"
     );
     assert!(d.lookin.open.is_none(), "the list closed");
+}
+
+#[test]
+fn tab_closes_a_dropped_list_and_keeps_the_focus() {
+    let mut d = sample();
+    let tab = form::Key::Tab { back: false };
+    d.focus = Focus::FileType;
+    d.filetype.open = Some(0);
+    assert!(matches!(
+        d.key(R, tab.clone(), None, Mods::default()),
+        Event::Redraw
+    ));
+    assert_eq!((d.focus, d.filetype.open), (Focus::FileType, None));
+    d.focus = Focus::LookIn;
+    d.lookin.open = Some(0);
+    assert!(matches!(
+        d.key(R, tab, None, Mods::default()),
+        Event::Redraw
+    ));
+    assert_eq!((d.focus, d.lookin.open), (Focus::LookIn, None));
+}
+
+#[test]
+fn an_arrow_or_home_on_a_closed_look_in_lists_the_crumb_it_picks() {
+    let docs = || Folder {
+        id: 2,
+        parent: Some(1),
+        crumbs: vec![
+            Crumb {
+                id: 1,
+                label: "Home".into(),
+                depth: 0,
+                icon: None,
+            },
+            Crumb {
+                id: 2,
+                label: "Docs".into(),
+                depth: 1,
+                icon: None,
+            },
+        ],
+        entries: vec![],
+    };
+    let home = form::Key::Edit(EditKey::Home { select: false });
+    for key in [form::Key::Up, form::Key::Left, home] {
+        let mut d = sample();
+        d.set_listing(docs());
+        d.focus = Focus::LookIn;
+        match d.key(R, key.clone(), None, Mods::default()) {
+            Event::NeedListing(1) => {}
+            other => panic!("{key:?} lists Home, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_letter_moves_an_open_files_of_type_list_and_enter_takes_the_row() {
+    let mut d = FileDlg::new(
+        Fields {
+            filters: vec!["All Files (*.*)".into(), "Text Documents (*.txt)".into()],
+            ..sample().fields
+        },
+        vec![],
+    );
+    d.focus = Focus::FileType;
+    let t = form::Key::Edit(EditKey::Insert("t".into()));
+    assert!(matches!(
+        d.key(R, form::Key::Drop, None, Mods::default()),
+        Event::Redraw
+    ));
+    assert!(matches!(
+        d.key(R, t, Some('t'), Mods::default()),
+        Event::Redraw
+    ));
+    assert_eq!((d.filetype.open, d.filetype.selected), (Some(1), 0));
+    match d.key(R, form::Key::Enter, None, Mods::default()) {
+        Event::FilterChanged(1) => {}
+        other => panic!("Enter picks Text Documents, got {other:?}"),
+    }
 }
 
 #[test]

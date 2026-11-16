@@ -619,6 +619,9 @@ fn up_and_down_walk_the_history_and_f4_opens_the_list() {
     assert!(field(&d).edit().unwrap().all_selected());
     d.key(Key::Drop);
     assert_eq!(d.key(Key::Escape), Outcome::Redraw);
+    d.key(Key::Drop);
+    assert_eq!(d.key(Key::Tab { back: false }), Outcome::Redraw);
+    assert_eq!(field(&d).combo.open, None, "Tab closes the list");
     assert_eq!(d.key(Key::Escape), Outcome::Close);
     let mut plain = Dialog::run(&[]);
     assert_eq!(plain.key(Key::Drop), Outcome::Nothing);

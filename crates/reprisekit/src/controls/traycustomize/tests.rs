@@ -1178,3 +1178,29 @@ fn preview() {
     t.draw(&mut c, &text, &theme.paint(), &l, Cues::NONE, px);
     crate::raster::write_preview(&c, "traycustomize-glass-200.png");
 }
+
+#[test]
+fn tab_closes_the_open_behaviour_list_and_a_letter_picks_on_the_closed_one() {
+    let mut t = sample(Wording::Classic);
+    t.click(Some(Hit::Row(0)));
+    let i = t.selected.unwrap();
+    t.focus = Focus::Combo;
+    assert_eq!(t.key(form::Key::Drop), Event::Redraw);
+    assert!(t.combo.open.is_some());
+    assert_eq!(t.key(form::Key::Tab { back: false }), Event::Redraw);
+    assert_eq!((t.focus, t.combo.open), (Focus::Combo, None));
+    t.key(form::Key::Char('h'));
+    assert_eq!(
+        t.entries[i].behaviour,
+        Behaviour::Auto,
+        "h: Hide when inactive"
+    );
+    t.key(form::Key::Char('a'));
+    let first_a = t.entries[i].behaviour;
+    t.key(form::Key::Char('a'));
+    assert_eq!(
+        [first_a, t.entries[i].behaviour],
+        [Behaviour::Hide, Behaviour::Show],
+        "a: Always hide, then Always show"
+    );
+}
