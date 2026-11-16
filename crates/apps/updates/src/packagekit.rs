@@ -1,7 +1,9 @@
 //! The PackageKit side: distribution updates on the system bus. Every request is a transaction (`CreateTransaction`, a method on the object, answers as signals until `Finished`). Refreshing and listing need no password; installing asks polkit, which reprise-polkit prompts for.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
+use futures_util::future::{Either, select};
 use futures_util::stream::StreamExt;
 use reprisebus::Signal;
 use zbus::Connection;
@@ -41,6 +43,10 @@ const STATUS_UPDATE: u32 = 10;
 
 /// `Percentage` while PackageKit cannot tell.
 const PERCENT_UNKNOWN: u32 = 101;
+
+/// How long a transaction that cannot prompt runs before it is cancelled, so a wedged daemon
+/// does not hold the worker for the rest of the session.
+const UNATTENDED_LIMIT: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -171,6 +177,19 @@ async fn transaction(
     progress: Progress<'_>,
     watch: Option<Watch<'_>>,
 ) -> Result<Said, Error> {
+    let limit = (!interactive).then_some(UNATTENDED_LIMIT);
+    transaction_within(conn, request, interactive, limit, progress, watch).await
+}
+
+/// [`transaction`], cancelled once `limit` passes without `Finished`.
+async fn transaction_within(
+    conn: &Connection,
+    request: Request,
+    interactive: bool,
+    limit: Option<Duration>,
+    progress: Progress<'_>,
+    watch: Option<Watch<'_>>,
+) -> Result<Said, Error> {
     let tid: OwnedObjectPath = conn
         .call_method(Some(NAME), PATH, Some(IFACE), "CreateTransaction", &())
         .await
@@ -284,7 +303,20 @@ async fn transaction(
     let mut error: Option<(u32, String)> = None;
     // The percentage runs 0 to 100 through the dependency resolve before it restarts for download and install; it is shown only once the packages' own steps begin, so the bar never goes back.
     let mut stepped = false;
-    while let Some(sig) = signals.next().await {
+    let mut timer = limit.map_or_else(async_io::Timer::never, async_io::Timer::after);
+    loop {
+        let sig = match select(signals.next(), &mut timer).await {
+            Either::Left((Some(sig), _)) => sig,
+            Either::Left((None, _)) => break,
+            Either::Right(_) => {
+                if let Err(e) = cancel(conn, tid.as_str()).await {
+                    log::debug!("Cancel: {e}");
+                }
+                return Err(Error::Failed(
+                    "PackageKit took too long and was stopped.".into(),
+                ));
+            }
+        };
         let m = match sig {
             Signal::OwnerChanged => {
                 return Err(Error::Failed("PackageKit stopped.".into()));
@@ -690,12 +722,15 @@ mod tests {
 
     mod bus {
         use std::collections::HashMap;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
 
         use zbus::{OwnedObjectPath, Variant};
 
         use super::super::{
-            EXIT_CANCELLED, Error, NAME, PATH, PROPERTIES, STATUS_DOWNLOAD, TX_IFACE, Tx, cancel,
-            install_file,
+            EXIT_CANCELLED, Error, NAME, PATH, PROPERTIES, Request, STATUS_DOWNLOAD, TX_IFACE, Tx,
+            cancel, install_file, transaction_within,
         };
 
         use reprisebus::testbus::bus;
@@ -718,13 +753,18 @@ mod tests {
             }
         }
 
-        /// A transaction that starts downloading, may be cancelled, and then finishes as
-        /// cancelled.
-        struct Transaction;
+        /// A transaction whose install starts downloading and whose update list never comes,
+        /// and which finishes as cancelled when asked to.
+        #[derive(Default)]
+        struct Transaction {
+            cancelled: Arc<AtomicBool>,
+        }
 
         #[zbus::interface(name = "org.freedesktop.PackageKit.Transaction")]
         impl Transaction {
             fn set_hints(&self, _hints: Vec<String>) {}
+
+            fn get_updates(&self, _filter: u64) {}
 
             async fn install_files(
                 &self,
@@ -744,6 +784,7 @@ mod tests {
             }
 
             async fn cancel(&self, #[zbus(connection)] conn: &zbus::Connection) {
+                self.cancelled.store(true, Ordering::SeqCst);
                 let body = (EXIT_CANCELLED, 0u32);
                 conn.emit_signal(None::<&str>, TID, TX_IFACE, "Finished", &body)
                     .await
@@ -759,7 +800,11 @@ mod tests {
             zbus::block_on(async {
                 let services = connect(&bus.1).await;
                 services.object_server().at(PATH, Daemon).await.unwrap();
-                services.object_server().at(TID, Transaction).await.unwrap();
+                services
+                    .object_server()
+                    .at(TID, Transaction::default())
+                    .await
+                    .unwrap();
                 services.request_name(NAME).await.unwrap();
                 let conn = connect(&bus.1).await;
                 let mut tid = None;
@@ -790,6 +835,36 @@ mod tests {
                     ended,
                     Err(Error::Failed("The install was cancelled.".into()))
                 );
+            });
+        }
+
+        #[test]
+        fn an_unattended_transaction_that_never_finishes_is_cancelled_at_its_limit() {
+            let Some(bus) = bus() else {
+                return;
+            };
+            zbus::block_on(async {
+                let services = connect(&bus.1).await;
+                let tx = Transaction::default();
+                let cancelled = tx.cancelled.clone();
+                services.object_server().at(PATH, Daemon).await.unwrap();
+                services.object_server().at(TID, tx).await.unwrap();
+                services.request_name(NAME).await.unwrap();
+                let conn = connect(&bus.1).await;
+                let ended = transaction_within(
+                    &conn,
+                    Request::GetUpdates,
+                    false,
+                    Some(Duration::from_millis(200)),
+                    &mut |_, _| {},
+                    None,
+                )
+                .await;
+                assert!(
+                    matches!(&ended, Err(Error::Failed(m)) if m == "PackageKit took too long and was stopped."),
+                    "{ended:?}"
+                );
+                assert!(cancelled.load(Ordering::SeqCst), "Cancel was sent");
             });
         }
     }
