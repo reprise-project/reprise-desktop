@@ -609,10 +609,11 @@ pub fn kind_text_in(db: &MimeDb, path: &Path, is_dir: bool, mime: Option<&str>) 
         .unwrap_or_else(|| props::generic_type_name(path))
 }
 
-/// "M/D/YYYY H:MM AM/PM" (or 24-hour), the Date Modified text.
+/// The Date Modified text: the LC_TIME locale's [short date](locale::short_date), then
+/// "H:MM AM/PM" or "H:MM".
 pub fn date_text(secs: i64, is_12h: bool) -> String {
     let tm = locale::localtime(secs);
-    let date = format!("{}/{}/{}", tm.tm_mon + 1, tm.tm_mday, tm.tm_year + 1900);
+    let date = locale::short_date(&tm);
     if is_12h {
         let (h12, ampm) = match tm.tm_hour {
             0 => (12, "AM"),
@@ -1225,10 +1226,11 @@ mod tests {
     }
 
     #[test]
-    fn date_text_is_explorers() {
+    fn date_text_is_the_locales_short_date_and_the_clock() {
         // 2026-09-13 20:25 local: build the epoch from the components.
         let secs = crate::locale::mktime(2026, 9, 13, 20, 25, 0);
-        assert_eq!(date_text(secs, true), "9/13/2026 8:25 PM");
-        assert_eq!(date_text(secs, false), "9/13/2026 20:25");
+        let date = crate::locale::short_date(&crate::locale::localtime(secs));
+        assert_eq!(date_text(secs, true), format!("{date} 8:25 PM"));
+        assert_eq!(date_text(secs, false), format!("{date} 20:25"));
     }
 }

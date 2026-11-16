@@ -810,9 +810,9 @@ pub fn clock_text() -> String {
     time_text(clock_now())
 }
 
-/// Today as a long date ("Thursday, September 10, 2026") in the LC_TIME locale: the clock's tip and accessible description.
+/// Today as the LC_TIME locale's long date ("Thursday, 09/10/2026"): the clock's tip and accessible description.
 pub fn date_text() -> String {
-    reprisefs::locale::strftime(&reprisefs::locale::localtime(clock_now()), c"%A, %B %d, %Y")
+    reprisefs::locale::long_date(&reprisefs::locale::localtime(clock_now()))
 }
 
 /// The bar's clock text: [`clock_text`], and with `date` the LC_TIME short date ("09/27/2026") on a second line.

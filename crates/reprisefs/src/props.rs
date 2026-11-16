@@ -1333,7 +1333,7 @@ pub fn format_contains(files: u64, folders: u64) -> String {
     )
 }
 
-/// The Properties sheet's date: "Today, September 10, 2026, 9:32:37 PM" (24-hour when `is_12h` is false).
+/// The Properties sheet's date: "Today, 09/10/2026, 9:32:37 PM" (24-hour when `is_12h` is false).
 pub fn format_time(secs: i64, is_12h: bool) -> String {
     long_date(secs, is_12h, true)
 }
@@ -1359,7 +1359,7 @@ fn civil_day(t: &libc::tm) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// The long date: "Today" or "Yesterday" where they apply, else the weekday, then month, day, year and clock in the LC_TIME locale ([`crate::locale::strftime`]). `seconds` adds `:%S`.
+/// The long date: "Today" or "Yesterday" where they apply, else the weekday, then the LC_TIME locale's short date and the clock ([`crate::locale::long_date`]). `seconds` adds `:%S`.
 fn long_date(secs: i64, is_12h: bool, seconds: bool) -> String {
     let then = crate::locale::localtime(secs);
     let today = crate::locale::localtime(now_secs());
@@ -1375,7 +1375,7 @@ fn long_date(secs: i64, is_12h: bool, seconds: bool) -> String {
         (false, true) => "%H:%M:%S",
         (false, false) => "%H:%M",
     };
-    let fmt = std::ffi::CString::new(format!("{named_day}, %B %d, %Y, {clock}"))
+    let fmt = std::ffi::CString::new(format!("{named_day}, %x, {clock}"))
         .expect("the format holds no NUL");
     crate::locale::strftime(&then, &fmt).replace(",  ", ", ")
 }

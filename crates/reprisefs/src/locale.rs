@@ -41,6 +41,20 @@ pub fn strftime(tm: &libc::tm, fmt: &CStr) -> String {
     strftime_in(env.as_ref(), tm, fmt)
 }
 
+/// The LC_TIME locale's own date ("11/14/2026" in en_US, "14.11.2026" in de_DE): its `%x`, in [`strftime`].
+pub fn short_date(tm: &libc::tm) -> String {
+    strftime(tm, SHORT_DATE)
+}
+
+/// The weekday, then [`short_date`] ("Saturday, 14.11.2026"). glibc has no long date in the
+/// locale's order, and `%B %d` would put the month first in every one.
+pub fn long_date(tm: &libc::tm) -> String {
+    strftime(tm, LONG_DATE)
+}
+
+const SHORT_DATE: &CStr = c"%x";
+const LONG_DATE: &CStr = c"%A, %x";
+
 fn strftime_in(loc: Option<&TimeLocale>, tm: &libc::tm, fmt: &CStr) -> String {
     let mut buf = [0u8; 256];
     // SAFETY: `buf` is writable for `buf.len()` bytes, `fmt` is
@@ -187,6 +201,26 @@ mod tests {
         if let Some(hu) = TimeLocale::load(c"hu_HU.UTF-8") {
             assert_eq!(strftime_in(Some(&hu), &tm, c"%B"), "október");
             assert_eq!(strftime_in(None, &tm, c"%B"), "October");
+        }
+    }
+
+    #[test]
+    fn dates_take_the_order_of_the_locale_they_are_written_in() {
+        let tm = localtime(mktime(2026, 11, 14, 12, 0, 0));
+        let c = TimeLocale::load(c"C").expect("the C locale");
+        assert_eq!(strftime_in(Some(&c), &tm, SHORT_DATE), "11/14/26");
+        assert_eq!(strftime_in(Some(&c), &tm, LONG_DATE), "Saturday, 11/14/26");
+        if let Some(hu) = TimeLocale::load(c"hu_HU.UTF-8") {
+            let short = strftime_in(Some(&hu), &tm, SHORT_DATE);
+            assert!(short.starts_with("2026"), "the year first: {short}");
+            let long = strftime_in(Some(&hu), &tm, LONG_DATE);
+            assert_eq!(long, format!("szombat, {short}"));
+        }
+        if let Some(de) = TimeLocale::load(c"de_DE.UTF-8") {
+            assert_eq!(
+                strftime_in(Some(&de), &tm, LONG_DATE),
+                "Samstag, 14.11.2026"
+            );
         }
     }
 

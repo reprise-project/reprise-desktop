@@ -1,12 +1,11 @@
 use super::*;
 
 #[test]
-fn date_text_is_the_long_date() {
+fn date_text_is_the_weekday_and_the_locales_own_date() {
     let s = date_text();
-    let (_, rest) = s.split_once(", ").expect("weekday");
-    let (_, year) = rest.rsplit_once(", ").expect("year");
-    assert_eq!(year.len(), 4);
-    assert!(year.chars().all(|c| c.is_ascii_digit()));
+    let (_, date) = s.split_once(", ").expect("weekday");
+    let today = reprisefs::locale::localtime(clock_now());
+    assert_eq!(date, reprisefs::locale::short_date(&today));
 }
 use reprisekit::taskbar::TASK_GAP;
 

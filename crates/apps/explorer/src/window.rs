@@ -626,7 +626,7 @@ pub fn status_panels(
 }
 
 /// First status panel for one selected Recycle Bin item: "Original Location:
-/// /home/u/Desktop Type: Text Document Date Modified: 9/14/2026 3:43 PM".
+/// /home/u/Desktop Type: Text Document Date Modified: 09/14/2026 3:43 PM".
 /// Missing facts are left out.
 pub fn bin_status_text(it: &Item, is_12h: bool) -> String {
     let mut facts = Vec::new();
