@@ -364,23 +364,54 @@ async fn run(poster: repriseapp::Poster<Msg>, ready: Sender<bool>) {
             return;
         }
     };
-    let subject = subject(&session);
     let locale = std::env::var("LANG").unwrap_or_else(|_| "C".into());
-    if let Err(e) = authority
-        .inner()
+    keep_registered(authority.inner(), &session, &locale, ready).await;
+}
+
+/// Registers [`PATH`] as the agent for `session` with whichever polkitd owns the authority.
+async fn register(authority: &zbus::Proxy<'_>, session: &str, locale: &str) -> zbus::Result<()> {
+    authority
         .call::<_, _, ()>(
             "RegisterAuthenticationAgent",
-            &(subject, locale.as_str(), PATH),
+            &(subject(session), locale, PATH),
         )
         .await
-    {
+}
+
+/// Registers once, answering `ready`, then again for every new owner of the authority's name:
+/// polkitd keeps agents in memory only, so a restarted one knows none. Returns only on failure.
+async fn keep_registered(
+    authority: &zbus::Proxy<'_>,
+    session: &str,
+    locale: &str,
+    ready: Sender<bool>,
+) {
+    use futures_util::StreamExt;
+    // Subscribed before the first registration, so a restart in between is not missed.
+    let mut owners = match authority.receive_owner_changed().await {
+        Ok(o) => o,
+        Err(e) => {
+            log::info!("cannot follow polkitd ({e}); no polkit agent");
+            let _ = ready.send(false);
+            return;
+        }
+    };
+    if let Err(e) = register(authority, session, locale).await {
         log::info!("polkitd refused the agent ({e}); no polkit agent");
         let _ = ready.send(false);
         return;
     }
     log::info!("registered as the polkit agent for session {session}");
     let _ = ready.send(true);
-    std::future::pending::<()>().await;
+    while let Some(owner) = owners.next().await {
+        if owner.is_none() {
+            continue;
+        }
+        match register(authority, session, locale).await {
+            Ok(()) => log::info!("registered again with the restarted polkitd"),
+            Err(e) => log::warn!("the restarted polkitd refused the agent: {e}"),
+        }
+    }
 }
 
 pub fn start(waker: repriseapp::Waker) -> Option<Receiver<Msg>> {
@@ -535,5 +566,124 @@ mod tests {
     #[test]
     fn a_buffer_too_small_for_the_entry_grows_until_it_fits() {
         assert_eq!(passwd_name(0, 1).as_deref(), Some("root"));
+    }
+
+    mod bus {
+        use std::collections::HashMap;
+        use std::io::{BufRead, BufReader};
+        use std::process::{Child, Command, Stdio};
+        use std::sync::mpsc::{Receiver, Sender, channel};
+        use std::time::Duration;
+
+        use zbus::OwnedVariant;
+
+        use super::super::{PATH, keep_registered};
+
+        const NAME: &str = "org.freedesktop.PolicyKit1";
+
+        struct Bus(Child, String);
+
+        impl Drop for Bus {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        fn bus() -> Option<Bus> {
+            let mut child = Command::new("dbus-daemon")
+                .args(["--session", "--nofork", "--print-address"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()?;
+            let mut line = String::new();
+            BufReader::new(child.stdout.take()?)
+                .read_line(&mut line)
+                .ok()?;
+            Some(Bus(child, line.trim().to_string()))
+        }
+
+        async fn connect(address: &str) -> zbus::Connection {
+            zbus::connection::Builder::address(address)
+                .build()
+                .await
+                .expect("connect")
+        }
+
+        /// A registration: the subject's kind and session id, the locale and the agent's path.
+        type Registration = (String, String, String, String);
+
+        struct Authority(Sender<Registration>);
+
+        #[zbus::interface(name = "org.freedesktop.PolicyKit1.Authority")]
+        impl Authority {
+            fn register_authentication_agent(
+                &self,
+                subject: (String, HashMap<String, OwnedVariant>),
+                locale: String,
+                path: String,
+            ) {
+                let (kind, mut details) = subject;
+                let id = details
+                    .remove("session-id")
+                    .and_then(|v| String::try_from(v).ok())
+                    .unwrap_or_default();
+                let _ = self.0.send((kind, id, locale, path));
+            }
+        }
+
+        /// A polkitd that takes the authority's name on `address` and reports registrations.
+        async fn polkitd(address: &str, seen: Sender<Registration>) -> zbus::Connection {
+            let conn = connect(address).await;
+            conn.object_server()
+                .at("/org/freedesktop/PolicyKit1/Authority", Authority(seen))
+                .await
+                .unwrap();
+            conn.request_name(NAME).await.unwrap();
+            conn
+        }
+
+        fn next(seen: &Receiver<Registration>, what: &str) -> Registration {
+            seen.recv_timeout(Duration::from_secs(5))
+                .unwrap_or_else(|_| panic!("{what}"))
+        }
+
+        #[test]
+        fn a_restarted_polkitd_gets_the_registration_again() {
+            let Some(bus) = bus() else {
+                eprintln!("no dbus-daemon; skipped");
+                return;
+            };
+            let (seen_tx, seen) = channel();
+            let first = zbus::block_on(polkitd(&bus.1, seen_tx.clone()));
+            let address = bus.1.clone();
+            let (ready_tx, ready) = channel();
+            std::thread::spawn(move || {
+                zbus::block_on(async {
+                    let conn = connect(&address).await;
+                    let authority = zbus_polkit::policykit1::AuthorityProxy::new(&conn)
+                        .await
+                        .unwrap();
+                    keep_registered(authority.inner(), "7", "de_DE.UTF-8", ready_tx).await;
+                })
+            });
+            assert_eq!(ready.recv_timeout(Duration::from_secs(5)), Ok(true));
+            let expected = (
+                "unix-session".to_string(),
+                "7".to_string(),
+                "de_DE.UTF-8".to_string(),
+                PATH.to_string(),
+            );
+            assert_eq!(next(&seen, "registered at start"), expected);
+
+            zbus::block_on(first.close()).unwrap();
+            let _second = zbus::block_on(polkitd(&bus.1, seen_tx));
+            assert_eq!(next(&seen, "registered with the new owner"), expected);
+            assert!(
+                seen.recv_timeout(Duration::from_millis(200)).is_err(),
+                "one registration per owner"
+            );
+        }
     }
 }
