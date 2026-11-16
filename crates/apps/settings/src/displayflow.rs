@@ -1,6 +1,7 @@
 use std::time::Instant;
 
-use repriseapp::heads::{HeadConfig, HeadRequests, HeadSet};
+use repriseapp::heads::{AdaptiveSync, HeadConfig, HeadRequests, HeadSet};
+use repriseconf::config::VrrPolicy;
 
 use crate::displaypage::Display;
 use crate::monitordlg::MonitorDialog;
@@ -30,8 +31,8 @@ pub struct Question {
 
 #[derive(Default)]
 pub struct Flow {
-    /// The VRR requests out: (serial, output, value asked).
-    vrr: Vec<(u32, String, bool)>,
+    /// The VRR requests out: (serial, output, value asked, value it ran).
+    vrr: Vec<(u32, String, bool, bool)>,
     /// The mode and arrangement request out: (serial, what ran, what was asked).
     mode: Option<(u32, HeadSet, HeadSet)>,
     pub question: Option<Question>,
@@ -89,12 +90,26 @@ impl Flow {
                 };
                 out.push(Effect::Save(head, keys));
             }
-            for (head, on) in ch.vrr {
+            for (head, p) in ch.vrr {
+                // The compositor takes only on or off; "fullscreen" reaches it through the file.
+                if p == VrrPolicy::Fullscreen {
+                    d.vrr_written(&head, p);
+                    let keys = OutputKeys {
+                        adaptive_sync: Some(p),
+                        ..OutputKeys::default()
+                    };
+                    out.push(Effect::Save(head, keys));
+                    continue;
+                }
+                let on = p == VrrPolicy::On;
+                let was = d
+                    .head_named(&head)
+                    .is_some_and(|h| h.adaptive_sync == AdaptiveSync::On);
                 let cfg = HeadConfig {
                     adaptive_sync: Some(on),
                     ..HeadConfig::default()
                 };
-                self.vrr.push((req.configure(&head, cfg), head, on));
+                self.vrr.push((req.configure(&head, cfg), head, on, was));
             }
             if !ch.set.is_empty() {
                 let serial = req.configure_all(ch.set.clone());
@@ -130,16 +145,17 @@ impl Flow {
     ) -> Vec<Effect> {
         let mut out = Vec::new();
         if let Some(i) = self.vrr.iter().position(|v| v.0 == serial) {
-            let (_, head, on) = self.vrr.remove(i);
+            let (_, head, on, was) = self.vrr.remove(i);
             if ok && self.discard {
                 let cfg = HeadConfig {
-                    adaptive_sync: Some(!on),
+                    adaptive_sync: Some(was),
                     ..HeadConfig::default()
                 };
                 self.revert(vec![(head, cfg)], req, false);
             } else if ok {
+                d.vrr_written(&head, VrrPolicy::of(on));
                 let keys = OutputKeys {
-                    adaptive_sync: Some(on),
+                    adaptive_sync: Some(VrrPolicy::of(on)),
                     ..OutputKeys::default()
                 };
                 out.push(Effect::Save(head, keys));
@@ -398,14 +414,14 @@ mod tests {
             let mut d = Display::with_heads(vec![test_head("DP-1")]);
             let mut req = HeadRequests::default();
             let mut flow = Flow::default();
-            d.set_vrr(true);
+            d.set_vrr(VrrPolicy::On);
             flow.apply(&mut d, &mut req, false);
             let asked = take(&mut req);
             assert_eq!(asked[0].2.adaptive_sync, Some(true));
             let out = flow.applied(asked[0].0, ok, &mut d, &mut req);
             if ok {
                 let keys = OutputKeys {
-                    adaptive_sync: Some(true),
+                    adaptive_sync: Some(VrrPolicy::On),
                     ..OutputKeys::default()
                 };
                 assert_eq!(out, vec![Effect::Save("DP-1".into(), keys)]);
@@ -415,15 +431,38 @@ mod tests {
                     vec![Effect::Fail(VRR_REFUSED)],
                     "a refusal writes nothing and says so"
                 );
-                assert!(!d.pick().unwrap().vrr, "and unticks");
+                assert_eq!(
+                    d.pick().unwrap().vrr,
+                    VrrPolicy::Off,
+                    "and goes back to Off"
+                );
             }
         }
     }
 
     #[test]
+    fn fullscreen_is_saved_without_a_request_and_shows_as_picked() {
+        let mut d = Display::with_heads(vec![test_head("DP-1")]);
+        let mut req = HeadRequests::default();
+        let mut flow = Flow::default();
+        d.set_vrr(VrrPolicy::Fullscreen);
+        let keys = OutputKeys {
+            adaptive_sync: Some(VrrPolicy::Fullscreen),
+            ..OutputKeys::default()
+        };
+        assert_eq!(
+            flow.apply(&mut d, &mut req, false),
+            vec![Effect::Save("DP-1".into(), keys)]
+        );
+        assert!(take(&mut req).is_empty() && !flow.busy());
+        assert!(!d.dirty(), "the page shows what the file now says");
+        assert_eq!(d.pick().unwrap().vrr, VrrPolicy::Fullscreen);
+    }
+
+    #[test]
     fn vrr_and_mode_go_as_two_requests_vrr_first() {
         let (mut d, mut req) = smaller();
-        d.set_vrr(true);
+        d.set_vrr(VrrPolicy::On);
         let mut flow = Flow::default();
         flow.apply(&mut d, &mut req, true);
         let asked = take(&mut req);
@@ -484,7 +523,7 @@ mod tests {
         if mode {
             d.pick_resolution(1);
         }
-        d.set_vrr(vrr);
+        d.set_vrr(VrrPolicy::of(vrr));
         let mut req = HeadRequests::default();
         let mut flow = Flow::default();
         flow.apply(&mut d, &mut req, false);

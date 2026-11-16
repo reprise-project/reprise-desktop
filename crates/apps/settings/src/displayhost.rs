@@ -92,6 +92,9 @@ impl SettingsApp {
         let text = std::fs::read_to_string(&self.path).unwrap_or_default();
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         (self.display.model).set_profiles_saved(outputwrite::read_profiles(&text, home.as_deref()));
+        self.display
+            .model
+            .set_vrr_saved(outputwrite::read_vrr(&text));
         self.display.model.layouts_saved = self.display.layouts.exists();
         let primary = self.session_primary(&self.display.connected);
         self.display.model.set_primary_saved(primary);
