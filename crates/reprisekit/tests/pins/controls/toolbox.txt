@@ -14,11 +14,11 @@ blue 2 rest d46c1b3d2e2b6680
 blue 2 hot 8afe1b78a512c56a
 blue 2 pressed 7e76c9601770ebac
 blue 2 no options 17c56e1070f61e60
-glass 1 rest 30d64a9ac84ebedd
-glass 1 hot f0b3c907e0e43d28
-glass 1 pressed 244c70aad8af53ba
+glass 1 rest b9c02e5fe51a5fb5
+glass 1 hot 2d6c8e2106ad3a50
+glass 1 pressed 5fad0ffc31c0f922
 glass 1 no options 1857b096073c2225
-glass 2 rest 3008a6c98d477c19
-glass 2 hot 0765ecc170527731
-glass 2 pressed 42763c2e63f06eb0
+glass 2 rest 59706579d1847fb9
+glass 2 hot 99a86ba239a8e5d1
+glass 2 pressed 0e5134949b850810
 glass 2 no options 16b69c7272773449

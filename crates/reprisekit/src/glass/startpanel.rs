@@ -1373,7 +1373,7 @@ mod tests {
             let d = render(p, None);
             let f = d.l.rect(Spot::Search).unwrap();
             let (_, cy, ch) = at::CARET;
-            inks(&d, Rect::new(f.x, f.y + cy, at::TEXT_RIGHT, ch), 0x2E8CFF)
+            inks(&d, Rect::new(f.x, f.y + cy, at::TEXT_RIGHT, ch), 0x1A6EE0)
         };
         let shift_home = EditKey::Home { select: true };
         assert!(
