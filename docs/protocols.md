@@ -57,7 +57,11 @@ confinement holds, every motion goes through as it comes.
   `xdg_wm_dialog_v1`, `xdg_toplevel_tag_manager_v1` (a toplevel tagged
   `file-dialog` opens at the size and place its app's last file dialog was
   left at, its owner's app for a dialog with an owner), `xdg_toplevel_icon_manager_v1`, `zxdg_exporter_v1`/`zxdg_importer_v1`,
-  `zxdg_exporter_v2`/`zxdg_importer_v2`, `xwayland_shell_v1`,
+  `zxdg_exporter_v2`/`zxdg_importer_v2`, `xdg_toplevel_drag_manager_v1` (a
+  window a program attaches to its own drag moves with the pointer and lets
+  the drop targets beneath it see the drag, so a browser tab torn out of its
+  strip follows as a window and drops into another window's strip),
+  `xwayland_shell_v1`,
   `xdg_system_bell_v1` (a ring plays the `[sounds] theme`'s bell unless
   `[sounds] bell` is off, at most one per 100 ms, and flashes the task button of
   an unfocused window it names)

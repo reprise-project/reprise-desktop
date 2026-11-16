@@ -147,6 +147,7 @@ mod testbus;
 mod textinput;
 mod tooltip;
 mod toplevels;
+mod toplevelsdrag;
 mod touch;
 mod virtualout;
 mod virtualpointer;

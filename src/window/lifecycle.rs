@@ -414,6 +414,9 @@ impl State {
                 (x, y) = (frame.x, frame.y);
             }
         }
+        if let Some(at) = self.carried_frame_at(w, self.drag_point()) {
+            (x, y) = at;
+        }
         let desktops = self.desktops.count;
         if let Some(win) = self.win_mut(w) {
             win.x = x;
@@ -646,6 +649,7 @@ impl State {
         self.remember_file_dialog(w);
         self.forget_window(w);
         self.reset_state(w);
+        self.carry_unmapped(w);
         let Some(win) = self.win_mut(w) else {
             return;
         };
