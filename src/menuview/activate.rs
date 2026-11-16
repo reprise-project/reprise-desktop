@@ -230,8 +230,13 @@ impl State {
 
     /// Adds Quick Launch buttons for `srcs` from `slot` on (the end without one), once a file job
     /// has read each (a dragged `.desktop` file, or whether it is a folder) and written its
-    /// button's file.
-    pub(crate) fn quick_add(&mut self, srcs: Vec<std::path::PathBuf>, slot: Option<usize>) {
+    /// button's file. Once one lands, the task row's unpinned buttons take their `anchored` places.
+    pub(crate) fn quick_add(
+        &mut self,
+        srcs: Vec<std::path::PathBuf>,
+        slot: Option<usize>,
+        anchored: Vec<crate::taskbarview::Anchored>,
+    ) {
         let Some(dir) = reprisefs::quicklaunch::dir() else {
             return;
         };
@@ -240,11 +245,19 @@ impl State {
                 .iter()
                 .map(|src| crate::quicklaunch::add(&dir, src))
                 .collect();
-            Box::new(move |state: &mut State| state.quick_added(&files, slot))
+            Box::new(move |state: &mut State| state.quick_added(&files, slot, anchored))
         });
     }
 
-    fn quick_added(&mut self, files: &[Option<String>], slot: Option<usize>) {
+    fn quick_added(
+        &mut self,
+        files: &[Option<String>],
+        slot: Option<usize>,
+        anchored: Vec<crate::taskbarview::Anchored>,
+    ) {
+        if files.iter().any(Option::is_some) {
+            self.anchor_units(anchored);
+        }
         self.quick_reload();
         for (n, file) in files.iter().enumerate() {
             let Some(file) = file else {

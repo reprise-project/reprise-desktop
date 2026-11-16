@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Instant};
 use reprisescene::{Input, TreeId};
 use smithay::output::Output;
 
-use super::{DRAG_PX, quick_icon};
+use super::{Anchored, DRAG_PX, anchored, quick_icon};
 use crate::{
     compositor::State,
     input::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Hit, Interaction},
@@ -501,19 +501,7 @@ impl State {
             return i;
         };
         let before = taskslide::row(bar);
-        // The buttons are from the last draw; a window or dialog may have closed.
-        let moved: Vec<(Vec<WindowId>, Option<u64>, usize)> = anchors
-            .iter()
-            .map(|(u, anchor)| {
-                let wins = u
-                    .clone()
-                    .filter_map(|b| bar.buttons.get(b))
-                    .flatten()
-                    .copied()
-                    .collect();
-                (wins, bar.dialogs.get(u.start).copied().flatten(), *anchor)
-            })
-            .collect();
+        let moved = anchored(bar, &anchors);
         if order.iter().enumerate().any(|(n, &k)| n != k) {
             let mut old: Vec<Option<QuickItem>> = std::mem::take(&mut self.quicklaunch)
                 .into_iter()
@@ -523,8 +511,33 @@ impl State {
             self.bar_shared.quick_moved = true;
             self.pins_reordered(&order);
         }
+        self.anchor_units(moved);
+        self.redraw_taskbars();
+        // A pin's index is its place in the old order; name it by the new one.
+        let Some(key) = crate::taskbar::pin_renamed(key, &order) else {
+            return i;
+        };
+        self.slide_row_moved(tree, &before, &order, key);
+        self.bar(tree)
+            .and_then(|b| crate::taskbar::find_task(&b.buttons, &b.pins, &b.dialogs, &key))
+            .unwrap_or(i)
+    }
+
+    /// Where `n` launchers dropped into `gap` on bar `tree`'s task row go: the Quick Launch slot,
+    /// and the row's unpinned buttons with the places that keep them on their side of the drop.
+    pub(crate) fn row_insert(&self, tree: TreeId, gap: usize, n: usize) -> (usize, Vec<Anchored>) {
+        let Some(bar) = self.bar(tree) else {
+            return (self.quicklaunch.len(), Vec::new());
+        };
+        let (slot, anchors) = crate::taskbar::insert_pins(&bar.pins, &bar.runs, gap, n);
+        (slot, anchored(bar, &anchors))
+    }
+
+    /// Give the windows and dialogs of each of `units` its anchor, and fresh seqs in row order so a
+    /// run keeps its order. The callers redraw the bars afterwards.
+    pub(crate) fn anchor_units(&mut self, units: Vec<Anchored>) {
         let live = self.task_windows();
-        for (wins, dialog, anchor) in moved {
+        for (wins, dialog, anchor) in units {
             let seq = crate::taskbar::next_seq();
             // Each window its own seq, in row order, so a run keeps its order.
             for (n, w) in wins.into_iter().filter(|w| live.contains(w)).enumerate() {
@@ -545,15 +558,6 @@ impl State {
                 v.seq = seq;
             }
         }
-        self.redraw_taskbars();
-        // A pin's index is its place in the old order; name it by the new one.
-        let Some(key) = crate::taskbar::pin_renamed(key, &order) else {
-            return i;
-        };
-        self.slide_row_moved(tree, &before, &order, key);
-        self.bar(tree)
-            .and_then(|b| crate::taskbar::find_task(&b.buttons, &b.pins, &b.dialogs, &key))
-            .unwrap_or(i)
     }
 
     fn pins_reordered(&mut self, order: &[usize]) {

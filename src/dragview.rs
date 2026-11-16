@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use reprisefs::apps::AppEntry;
 use reprisekit::taskbar::{TaskbarHit, TaskbarLayout};
-use reprisescene::{BufferId, Input};
+use reprisescene::{BufferId, Input, TreeId};
 use smithay::output::Output;
 use smithay::utils::{Logical, Point};
 
@@ -116,6 +116,12 @@ pub(crate) struct PlaceLink {
 pub enum DropTarget {
     /// Quick Launch gap `slot` (see `TaskbarLayout::drop_slot`).
     Quick(usize),
+    /// Gap `gap` on bar `bar`'s task row (`taskbar::pin_drop_gap`), where `[taskbar] pinned` puts the
+    /// Quick Launch programs.
+    Pin {
+        bar: TreeId,
+        gap: usize,
+    },
     Folder(PathBuf),
     /// A desktop cell, as a 100% cell (`desktop::to_saved`): a drop's file work answers later,
     /// maybe after the text size has grown the grid (`State::desktop_drop_at`).
@@ -800,8 +806,10 @@ impl State {
         }
     }
 
-    /// What sits under layout point `pos` for a drop of `sources`: the Quick Launch band, a folder icon
-    /// (not a dragged one), or a desktop cell (see [`takes_cell`]); None otherwise. Another program's drag passes no sources.
+    /// What sits under layout point `pos` for a drop of `sources`: the Quick Launch band, the task row
+    /// for launchers and programs while it holds the pins (see [`pins_on_row`]), a folder icon (not a
+    /// dragged one), or a desktop cell (see [`takes_cell`]); None otherwise. Another program's drag
+    /// passes no sources.
     pub fn drop_target_at(
         &self,
         sources: &[DragSource],
@@ -817,7 +825,20 @@ impl State {
             Hit::Taskbar { bar, hit } => {
                 let b = self.bar(bar)?;
                 let (lx, ly) = self.bar_local(b, pos.x, pos.y);
-                quick_drop(&b.layout, hit, lx, ly).map(DropTarget::Quick)
+                if let Some(slot) = quick_drop(&b.layout, hit, lx, ly) {
+                    return Some(DropTarget::Quick(slot));
+                }
+                let entries = self.desktop.as_ref().map_or(&[][..], |v| &v.entries[..]);
+                if !self.config.taskbar.pinned
+                    || sources.is_empty()
+                    || !sources.iter().all(|s| pins_on_row(s, entries))
+                {
+                    return None;
+                }
+                let at = row_drop(&b.layout, hit, lx, ly)?;
+                let tasks = b.layout.along_rects(&b.layout.tasks);
+                let gap = crate::taskbar::pin_drop_gap(&tasks, &b.pins, &b.runs, at);
+                Some(DropTarget::Pin { bar, gap })
             }
             Hit::Desktop { index } => {
                 let view = self.desktop.as_ref()?;
@@ -894,7 +915,12 @@ impl State {
         match target {
             DropTarget::Quick(slot) => {
                 let srcs = sources.iter().map(|s| s.path().to_path_buf()).collect();
-                self.quick_add(srcs, Some(*slot));
+                self.quick_add(srcs, Some(*slot), Vec::new());
+            }
+            DropTarget::Pin { bar, gap } => {
+                let srcs: Vec<PathBuf> = sources.iter().map(|s| s.path().to_path_buf()).collect();
+                let (slot, anchored) = self.row_insert(*bar, *gap, srcs.len());
+                self.quick_add(srcs, Some(slot), anchored);
             }
             // The same questions as Delete: Confirm File Delete, and whether to take a place off the desktop.
             DropTarget::Trash => match bin_drop(sources) {
@@ -1044,7 +1070,7 @@ impl State {
                     .collect();
                 (view.dir.clone(), cells)
             }
-            DropTarget::Quick(_) | DropTarget::Trash => return,
+            DropTarget::Quick(_) | DropTarget::Pin { .. } | DropTarget::Trash => return,
         };
         let action = Action::changes(DropOp::Shortcut.failure_title(), State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
@@ -1218,6 +1244,37 @@ impl State {
             log::warn!("{title}: {text}");
             self.open_dialog(crate::dialog::Dialog::error(title, text));
         }
+    }
+}
+
+/// How far along the task row a drop at bar point (`x`, `y`) over `hit` lands, if on the row.
+fn row_drop(layout: &TaskbarLayout, hit: TaskbarHit, x: i32, y: i32) -> Option<i32> {
+    let at = layout.along(x, y);
+    let on_row = matches!(hit, TaskbarHit::Task(_) | TaskbarHit::More)
+        || (hit == TaskbarHit::Nothing && at >= layout.tasks_x() && at < layout.tasks_limit());
+    on_row.then_some(at)
+}
+
+/// Whether `source` becomes a pin on the task row: a Start menu program, a launcher or a program
+/// file. A desktop icon goes by its entry in `entries` as the scan read it; a launcher whose
+/// program is untrusted counts, and gets Allow Launching's question (`quicklaunch::add`).
+fn pins_on_row(source: &DragSource, entries: &[desktop::DesktopEntry]) -> bool {
+    let launcher = |p: &Path| p.extension().is_some_and(|e| e == "desktop");
+    match source {
+        DragSource::App { .. } => true,
+        DragSource::Icon { .. } if source.is_system() => false,
+        DragSource::Icon { id, path, .. } => {
+            match desktop::find(entries, id).map(|i| &entries[i]) {
+                Some(e) if e.is_dir => false,
+                Some(e) => match &e.target {
+                    Target::Launch(_) | Target::Run(..) => true,
+                    Target::Uri(_) => false,
+                    Target::Open(_) => e.allow_launching,
+                },
+                None => launcher(path),
+            }
+        }
+        DragSource::File { path, .. } => launcher(path),
     }
 }
 
@@ -1795,5 +1852,163 @@ mod tests {
             batch.asker.answer(Answer::No).clone(),
             Step::Done(v) if matches!(v[..], [Verdict::Skip, Verdict::Put])
         ));
+    }
+
+    fn desktop_entry(
+        path: &str,
+        target: Target,
+        is_dir: bool,
+        allow: bool,
+    ) -> desktop::DesktopEntry {
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        desktop::DesktopEntry {
+            label: name.clone(),
+            name,
+            icon: String::new(),
+            target,
+            path: PathBuf::from(path),
+            shortcut: false,
+            kind: desktop::Kind::File,
+            is_dir,
+            allow_launching: allow,
+        }
+    }
+
+    #[test]
+    fn only_launchers_and_programs_pin_on_the_task_row() {
+        use reprisefs::program::Program;
+        let icon = |path: &str| DragSource::Icon {
+            id: desktop::IconId::File(PathBuf::from(path)),
+            path: PathBuf::from(path),
+            name: path.into(),
+        };
+        let open = |p: &str| Target::Open(PathBuf::from(p));
+        let entries = [
+            desktop_entry(
+                "/d/tool",
+                Target::Run("/d/tool".into(), Program::Binary),
+                false,
+                false,
+            ),
+            desktop_entry("/d/new.desktop", open("/d/new.desktop"), false, true),
+            desktop_entry("/d/notes.txt", open("/d/notes.txt"), false, false),
+            desktop_entry(
+                "/d/web.desktop",
+                Target::Uri("https://example.org".into()),
+                false,
+                false,
+            ),
+            desktop_entry("/d/apps.desktop", open("/d/apps.desktop"), true, false),
+        ];
+        assert!(pins_on_row(&icon("/d/tool"), &entries), "a program file");
+        assert!(
+            pins_on_row(&icon("/d/new.desktop"), &entries),
+            "an untrusted launcher, asked about when it runs"
+        );
+        assert!(
+            !pins_on_row(&icon("/d/notes.txt"), &entries),
+            "a plain file"
+        );
+        assert!(
+            !pins_on_row(&icon("/d/web.desktop"), &entries),
+            "a web link"
+        );
+        assert!(!pins_on_row(&icon("/d/apps.desktop"), &entries), "a folder");
+        let system = DragSource::Icon {
+            id: desktop::IconId::System(desktop::Kind::RecycleBin),
+            path: PathBuf::new(),
+            name: "Recycle Bin".into(),
+        };
+        assert!(!pins_on_row(&system, &entries));
+        assert!(pins_on_row(&DragSource::file("/x/app.desktop".into()), &[]));
+        assert!(!pins_on_row(&DragSource::file("/x/a.txt".into()), &[]));
+    }
+
+    #[test]
+    fn a_launcher_dropped_on_the_pinned_row_pins_at_that_slot() {
+        use crate::config::{Action, QuickLaunchEntry};
+        let mut config = crate::config::Config::default();
+        config.taskbar.pinned = true;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let pin = |file: &str| crate::quicklaunch::QuickItem {
+            file: file.into(),
+            entry: QuickLaunchEntry {
+                label: file.into(),
+                icon: None,
+                action: Action::Spawn("true".into()),
+            },
+            app: None,
+        };
+        h.state.quicklaunch = vec![pin("a.desktop"), pin("b.desktop")];
+        let mut c = h.connect();
+        let w = h.map_toplevel(&mut c, "test.other", 300, 200);
+        h.dispatch();
+        let bar = &h.state.bars[0];
+        let tree = bar.tree;
+        assert_eq!(bar.pins, [Some(0), Some(1), None]);
+        let origin = h.state.bar_drawn(&bar.output).shown;
+        let at = |h: &crate::harness::Harness, i: usize, right: bool| {
+            let r = h.state.bars[0].layout.tasks[i];
+            let x = if right { r.right() - 2 } else { r.x + 2 };
+            Point::from((
+                f64::from(origin.x + x),
+                f64::from(origin.y + r.y + r.height / 2),
+            ))
+        };
+        let launcher = [DragSource::file("/x/app.desktop".into())];
+        let target = |h: &crate::harness::Harness, i, right| {
+            h.state.drop_target_at(&launcher, at(h, i, right))
+        };
+        assert_eq!(
+            target(&h, 0, false),
+            Some(DropTarget::Pin { bar: tree, gap: 0 })
+        );
+        assert_eq!(
+            target(&h, 1, true),
+            Some(DropTarget::Pin { bar: tree, gap: 2 }),
+            "past the second pin's centre"
+        );
+        assert_eq!(
+            target(&h, 2, false),
+            Some(DropTarget::Pin { bar: tree, gap: 2 }),
+            "on the running button, short of its centre"
+        );
+        assert_eq!(
+            h.state.row_insert(tree, 2, 1),
+            (2, vec![(vec![w.id], None, usize::MAX)]),
+            "the window stays past the new pin"
+        );
+        assert_eq!(
+            target(&h, 2, true),
+            Some(DropTarget::Pin { bar: tree, gap: 3 })
+        );
+        let (slot, anchored) = h.state.row_insert(tree, 3, 1);
+        assert_eq!(slot, 2);
+        h.state.anchor_units(anchored);
+        h.state.quicklaunch.insert(slot, pin("app.desktop"));
+        h.state.redraw_taskbars();
+        h.dispatch();
+        assert_eq!(
+            h.state.bars[0].pins,
+            [Some(0), Some(1), None, Some(2)],
+            "the new pin lands past the window it was dropped beyond"
+        );
+
+        let text = [DragSource::file("/x/notes.txt".into())];
+        assert_eq!(h.state.drop_target_at(&text, at(&h, 0, false)), None);
+        assert_eq!(
+            h.state.drop_target_at(&[], at(&h, 0, false)),
+            None,
+            "another program's drag"
+        );
+        h.state.config.taskbar.pinned = false;
+        h.state.redraw_taskbars();
+        h.dispatch();
+        assert_eq!(
+            h.state.drop_target_at(&launcher, at(&h, 0, false)),
+            None,
+            "a task button takes no launcher while Quick Launch has its own band"
+        );
     }
 }

@@ -134,7 +134,7 @@ pub fn answer(
     let op = match (target, reprisefs::ops::modifier_op(ctrl, shift, alt)) {
         (DropTarget::Trash, None | Some(DropOp::Move)) => DropOp::Move,
         (DropTarget::Trash, Some(_)) => return None,
-        (DropTarget::Quick(_), _) | (_, None) => natural,
+        (DropTarget::Quick(_) | DropTarget::Pin { .. }, _) | (_, None) => natural,
         (_, Some(op)) => op,
     };
     let op = match (grabbed, op) {

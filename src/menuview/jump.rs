@@ -150,7 +150,7 @@ impl State {
             }
             JumpRow::Pin => {
                 if let Some(src) = &target.source {
-                    self.quick_add(vec![src.clone()], None);
+                    self.quick_add(vec![src.clone()], None, Vec::new());
                 }
             }
             JumpRow::Unpin => {
