@@ -494,6 +494,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("login_sessions", "Sessions at most:"),
             ("login_end_after", "End disconnected sessions after:"),
             ("login_fingerprint", "Certificate fingerprint:"),
+            ("login_thumbprint", "Thumbprint (SHA-1):"),
         ],
         Page::Advanced => &[
             ("task_manager", "Task manager (empty runs Task Manager):"),

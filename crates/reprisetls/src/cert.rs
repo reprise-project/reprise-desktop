@@ -19,6 +19,9 @@ pub struct Identity {
     pub acceptor: TlsAcceptor,
     /// SHA-256 of the certificate's DER, as uppercase hex pairs joined by `:`.
     pub fingerprint: String,
+    /// SHA-1 of the certificate's DER, 40 lowercase hex digits: the thumbprint certificate
+    /// viewers show.
+    pub thumbprint: String,
     config: Arc<ServerConfig>,
     public_key: Vec<u8>,
 }
@@ -110,6 +113,7 @@ fn pem_error(e: pem::Error) -> io::Error {
 
 fn identity(cert: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> io::Result<Identity> {
     let fingerprint = fingerprint(&cert);
+    let thumbprint = thumbprint(&cert);
     let public_key = rcgen::KeyPair::try_from(&key)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
         .public_key_raw()
@@ -124,9 +128,15 @@ fn identity(cert: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> io::R
     Ok(Identity {
         acceptor: TlsAcceptor::from(config.clone()),
         fingerprint,
+        thumbprint,
         config,
         public_key,
     })
+}
+
+fn thumbprint(der: &[u8]) -> String {
+    let sha1 = ::aws_lc_rs::digest::digest(&::aws_lc_rs::digest::SHA1_FOR_LEGACY_USE_ONLY, der);
+    sha1.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn fingerprint(der: &[u8]) -> String {
@@ -223,6 +233,18 @@ mod tests {
             load_or_create(dir.path()).unwrap().fingerprint,
             second.fingerprint
         );
+    }
+
+    #[test]
+    fn the_thumbprint_is_the_sha1_of_the_certificate_in_lowercase_hex() {
+        assert_eq!(
+            thumbprint(b"abc"),
+            "a9993e364706816aba3e25717850c26c9cd0d89d"
+        );
+        let t = load_or_create(tempfile::tempdir().unwrap().path())
+            .unwrap()
+            .thumbprint;
+        assert_eq!(t.len(), 40);
     }
 
     #[test]

@@ -21,7 +21,7 @@ pub(crate) struct Remote {
     pub(crate) status: Option<Status>,
     pub(crate) address: Option<String>,
     pub(crate) manager: bool,
-    pub(crate) machine_fingerprint: Option<String>,
+    pub(crate) machine_fingerprint: Option<pages::Prints>,
 }
 
 /// A read or an act off the loop: the state afterwards, and what to tell when the act failed.
@@ -192,13 +192,11 @@ impl SettingsApp {
     pub(crate) fn show_remote(&mut self, keep: Option<String>) {
         let at = Page::RemoteDesktop.index();
         let r = &self.remote;
-        let machine = r.manager.then(|| {
-            r.machine_fingerprint
-                .as_deref()
-                .unwrap_or(pages::NOT_RUNNING)
-        });
+        let machine = r
+            .manager
+            .then(|| (r.machine_fingerprint.clone()).unwrap_or_else(pages::Prints::not_running));
         if pages::managed(&self.sheet.pages[at]) != r.manager {
-            let page = pages::remote_desktop(self.area(), None, false, machine);
+            let page = pages::remote_desktop(self.area(), None, false, machine.as_ref());
             self.sheet.set_page(at, page);
             pages::write_form(&mut self.sheet.pages[at], &self.want);
             pages::follow(&mut self.sheet, &self.want);
@@ -210,7 +208,7 @@ impl SettingsApp {
             r.enabled,
             r.address.as_deref(),
             keep.as_deref(),
-            machine,
+            machine.as_ref(),
         );
     }
 }

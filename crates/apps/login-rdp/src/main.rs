@@ -110,7 +110,7 @@ fn main() -> ExitCode {
     let fingerprint = runtime.join("fingerprint");
     if let Err(e) = cert::replace(
         &fingerprint,
-        format!("{}\n", identity.fingerprint).as_bytes(),
+        format!("{}\n{}\n", identity.fingerprint, identity.thumbprint).as_bytes(),
         0o644,
     ) {
         log::warn!("{}: {e}", fingerprint.display());

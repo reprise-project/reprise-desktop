@@ -493,7 +493,8 @@ matched control focused.
     mode is off while an external screen locker is set. While
     `reprise-login` runs, the switch gives way to a note that remote logins
     are set on the Login Manager page, the port row is gone, New
-    Certificate... is greyed, the fingerprint is the login manager's, and a
+    Certificate... is greyed, the fingerprint is the login manager's with its
+    SHA-1 thumbprint under it, and a
     User Accounts... button opens your account's Password tab, where your
     Remote Desktop password is set
     ([remote-desktop.md](remote-desktop.md#remote-logins)).
@@ -537,8 +538,8 @@ matched control focused.
     refuses one. Remote Logins: Allow remote logins to this computer, the
     port, a note naming the group whose members may log on, Sessions at
     most, End disconnected sessions after (Never, 15 minutes, 1 hour, 4
-    hours or 1 day), and the certificate fingerprint, or Not running while
-    the front is off. OK and Apply save through `pkexec`, which asks for an
+    hours or 1 day), and the certificate fingerprint and thumbprint, or Not
+    running while the front is off. OK and Apply save through `pkexec`, which asks for an
     administrator's password on each save,
     and say why when the login manager refuses
     the settings. Cancel or closing the window while that prompt is up
