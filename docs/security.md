@@ -1941,7 +1941,9 @@ stop the share first.
   once obexd reports it complete. The offered name loses path separators,
   control characters and leading dots, and the move never replaces
   anything: a taken name (a symlink included) is numbered. A transfer that
-  ends early has its partial file removed. Every refusal, and an offer left
+  ends early has its partial file removed, and one still in that folder after
+Reprise exited mid-transfer goes when the agent next starts and obexd no
+longer lists its transfer. Every refusal, and an offer left
   unanswered for 50 seconds, replies `Rejected`: obexd takes a file into its
   own folder after any other error or after 60 seconds without an answer.
   Receiving is opt-in: "Receive files" is off until ticked on the Options
