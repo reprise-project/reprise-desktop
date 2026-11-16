@@ -898,24 +898,11 @@ impl State {
         let Some(v) = self.overview.view.as_mut() else {
             return;
         };
-        let parent = v.grids[g].cells;
-        let wells: Vec<Option<Rect>> = (0..windows.len()).map(|i| v.layouts[g].well(i)).collect();
-        let mut old = std::mem::take(&mut v.grids[g].thumbs);
-        let mut thumbs = Vec::with_capacity(windows.len());
-        for (&w, well) in windows.iter().zip(wells) {
-            let Some(well) = well else {
-                thumbs.push(None);
-                continue;
-            };
-            let kept = old
-                .iter()
-                .position(|t| t.is_some_and(|id| self.thumb_shows(id, w, well, scale)))
-                .and_then(|i| old[i].take());
-            thumbs.push(kept.or_else(|| self.thumb_create(w, parent, well, scale)));
-        }
-        for id in old.into_iter().flatten() {
-            self.thumb_drop(id);
-        }
+        let (parent, old) = (v.grids[g].cells, std::mem::take(&mut v.grids[g].thumbs));
+        let cells: Vec<_> = (windows.iter().enumerate())
+            .map(|(i, &w)| v.layouts[g].well(i).map(|well| (w, well)))
+            .collect();
+        let thumbs = self.place_thumbs(old, parent, &cells, scale);
         if let Some(v) = self.overview.view.as_mut() {
             v.grids[g].thumbs = thumbs;
         }
@@ -1027,6 +1014,23 @@ mod tests {
         assert_eq!(take_asked_outputs(), ["TEST-1"], "a cell lights on TEST-1");
         h.state.overview_hover(None);
         assert_eq!(take_asked_outputs(), ["TEST-1"], "and goes dark");
+    }
+
+    #[test]
+    fn the_overviews_pictures_are_cells_of_one_texture() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        for name in ["one", "two", "three"] {
+            h.map_toplevel(&mut c, name, 300, 200);
+        }
+        h.state.open_overview();
+        let v = h.state.overview.view.as_ref().expect("the overview");
+        let ids: Vec<ThumbId> = v.grids[0].thumbs.iter().flatten().copied().collect();
+        assert_eq!(ids.len(), 3, "a picture per window");
+        let sheets: Vec<Option<u64>> = ids.iter().map(|&id| h.state.thumb_sheet(id)).collect();
+        assert!(sheets[0].is_some(), "drawn into a shared texture");
+        assert!(sheets.iter().all(|s| *s == sheets[0]), "one: {sheets:?}");
     }
 
     #[test]

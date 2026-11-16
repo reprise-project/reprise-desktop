@@ -792,36 +792,11 @@ impl State {
         let Some(sw) = self.switcher.panel.as_mut() else {
             return;
         };
-        let tree = sw.tree;
-        let wells = sw.layout.wells.clone();
-        let mut old = std::mem::take(&mut sw.thumbs);
-        let mut thumbs = Vec::with_capacity(windows.len());
-        let mut wants = Vec::new();
-        for (i, (&window, &well)) in windows.iter().zip(&wells).enumerate() {
-            let Some(w) = window else {
-                thumbs.push(None);
-                continue;
-            };
-            let kept = old
-                .iter()
-                .position(|t| t.is_some_and(|id| self.thumb_shows(id, w, well, scale)))
-                .and_then(|i| old[i].take());
-            if kept.is_none() {
-                wants.push((i, (w, well)));
-            }
-            thumbs.push(kept);
-        }
-        let (cells, wants): (Vec<usize>, Vec<_>) = wants.into_iter().unzip();
-        for (i, id) in cells
-            .into_iter()
-            .zip(self.thumbs_create(tree, &wants, scale))
-        {
-            thumbs[i] = id;
-        }
-        // The pictures no cell kept go before the list is put back.
-        for id in old.into_iter().flatten() {
-            self.thumb_drop(id);
-        }
+        let (tree, old) = (sw.tree, std::mem::take(&mut sw.thumbs));
+        let cells: Vec<_> = (windows.iter().zip(&sw.layout.wells))
+            .map(|(&w, &well)| w.map(|w| (w, well)))
+            .collect();
+        let thumbs = self.place_thumbs(old, tree, &cells, scale);
         if let Some(sw) = self.switcher.panel.as_mut() {
             sw.thumbs = thumbs;
         }
