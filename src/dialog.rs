@@ -343,7 +343,8 @@ impl Dialog {
     /// What makes this dialog "the same window" as one already open: its title, the file it is
     /// about and, for a message box, what its first button other than Cancel does. Two same-named
     /// files get a Properties sheet each and two delete questions about different items both stay
-    /// up, while Run or Recycle Bin Properties stay single.
+    /// up, while Run or Recycle Bin Properties stay single. A file's sheet goes by its path alone,
+    /// so one renamed under it is still the file's.
     pub fn identity(&self) -> (&str, Option<&std::path::Path>, Option<&DialogAction>) {
         let path = match &self.style {
             Style::Chooser(c) => Some(c.path.as_path()),
@@ -363,7 +364,11 @@ impl Dialog {
                 .find(|a| **a != DialogAction::Cancel),
             _ => None,
         };
-        (self.title.as_str(), path, acts)
+        let title = match &self.style {
+            Style::Form(f) if matches!(f.kind, FormKind::Properties(_)) => "Properties",
+            _ => self.title.as_str(),
+        };
+        (title, path, acts)
     }
 
     /// The pid End Program's End Now would kill; None for any other dialog.
