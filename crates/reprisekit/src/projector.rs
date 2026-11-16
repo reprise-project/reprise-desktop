@@ -4,9 +4,9 @@
 use crate::projection::Projection;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
-use crate::theme::Color;
+use crate::theme::{Color, TextUnits};
 
-/// A tile, the gap between tiles and the padding round them, logical px.
+/// A tile at 100% text, the gap between tiles and the padding round them, logical px.
 pub const TILE: (i32, i32) = (96, 78);
 pub const GAP: i32 = 8;
 pub const PAD: i32 = 12;
@@ -33,17 +33,23 @@ pub struct ProjectorLayout {
     pub height: i32,
     pub tiles: [Rect; 4],
     pub scale: i32,
+    pub units: TextUnits,
 }
 
 impl ProjectorLayout {
-    /// A row of a tile per [`Projection::ALL`], logical px.
-    pub fn compute() -> ProjectorLayout {
-        let (w, h) = TILE;
+    /// A row of a tile per [`Projection::ALL`], logical px, at text size `u`: a tile widens with
+    /// its caption and the caption's row grows; the picture keeps its size.
+    pub fn compute(u: TextUnits) -> ProjectorLayout {
+        let (w, h) = (
+            u.len(TILE.0),
+            TILE.1 - CAPTION.height + u.len(CAPTION.height),
+        );
         ProjectorLayout {
             width: 2 * PAD + 4 * w + 3 * GAP,
             height: 2 * PAD + h,
             tiles: std::array::from_fn(|i| Rect::new(PAD + i as i32 * (w + GAP), PAD, w, h)),
             scale: 1,
+            units: u,
         }
     }
 
@@ -54,6 +60,7 @@ impl ProjectorLayout {
             height: self.height * n,
             tiles: self.tiles.map(|r| r.scaled(n)),
             scale: self.scale * n,
+            units: self.units,
         }
     }
 
@@ -61,12 +68,20 @@ impl ProjectorLayout {
         self.tiles.iter().position(|t| t.contains(x, y))
     }
 
+    /// Centred across tile `i`.
     pub fn picture(&self, i: usize) -> Rect {
-        within(self.tiles[i], PICTURE, self.scale)
+        let dx = (self.tiles[i].width / self.scale - TILE.0) / 2;
+        let r = Rect {
+            x: PICTURE.x + dx,
+            ..PICTURE
+        };
+        within(self.tiles[i], r, self.scale)
     }
 
     pub fn caption(&self, i: usize) -> Rect {
-        within(self.tiles[i], CAPTION, self.scale)
+        let w = self.tiles[i].width / self.scale - 2 * CAPTION.x;
+        let r = Rect::new(CAPTION.x, CAPTION.y, w, self.units.len(CAPTION.height));
+        within(self.tiles[i], r, self.scale)
     }
 }
 
@@ -93,7 +108,7 @@ pub struct Ink {
 }
 
 /// `choice`'s picture at `at` (device px, scale `s`): monitors 1 and 2, lit where `choice` shows
-/// the desktop, their digits in `text` at `size_px`; Extend lays one band across both, Duplicate
+/// the desktop, their digits in `text` at `size_px` (the 100% text's: the picture keeps its size); Extend lays one band across both, Duplicate
 /// the same window on each.
 pub fn draw_picture(
     c: &mut Canvas,
@@ -137,7 +152,7 @@ mod tests {
 
     #[test]
     fn four_tiles_lie_in_one_row() {
-        let l = ProjectorLayout::compute();
+        let l = ProjectorLayout::compute(TextUnits::ONE);
         assert_eq!((l.width, l.height), (432, 102));
         assert_eq!(l.tiles[0], Rect::new(12, 12, 96, 78));
         assert_eq!(l.tiles[3], Rect::new(324, 12, 96, 78));
@@ -146,8 +161,17 @@ mod tests {
     }
 
     #[test]
+    fn at_200_percent_text_the_tiles_widen_and_the_captions_grow_round_a_kept_picture() {
+        let l = ProjectorLayout::compute(TextUnits::new(22, 11));
+        assert_eq!(l.tiles[0], Rect::new(12, 12, 192, 100));
+        assert_eq!(l.picture(0), Rect::new(68, 20, 80, 35));
+        assert_eq!(l.caption(0), Rect::new(16, 60, 184, 44));
+        assert_eq!(l.scaled(2).picture(0), l.picture(0).scaled(2));
+    }
+
+    #[test]
     fn a_hit_finds_the_tile_and_misses_the_gaps() {
-        let l = ProjectorLayout::compute();
+        let l = ProjectorLayout::compute(TextUnits::ONE);
         assert_eq!(l.hit(12, 12), Some(0));
         assert_eq!(l.hit(220, 50), Some(2));
         assert_eq!(l.hit(110, 50), None, "the gap between tiles");
@@ -160,8 +184,8 @@ mod tests {
     #[test]
     fn scale_2_doubles_every_rect() {
         let (l, l2) = (
-            ProjectorLayout::compute(),
-            ProjectorLayout::compute().scaled(2),
+            ProjectorLayout::compute(TextUnits::ONE),
+            ProjectorLayout::compute(TextUnits::ONE).scaled(2),
         );
         assert_eq!((l2.width, l2.height, l2.scale), (864, 204, 2));
         for i in 0..4 {

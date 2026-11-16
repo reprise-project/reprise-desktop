@@ -63,7 +63,7 @@ pub fn render_snap_layouts() -> Canvas {
         let grid = PickerLayout::compute(Shape::Grid, (1920, 1050), &cells);
         let row = PickerLayout::compute(Shape::Row, (1920, 1050), &bar_cells);
         let row_top = 12 + grid.height + 12;
-        let switcher = ProjectorLayout::compute();
+        let switcher = ProjectorLayout::compute(theme.text);
         let switcher_top = row_top + row.height + 12;
         if i == Interface::Glass {
             let band = Rect::new(x0, 0, w, switcher_top + switcher.height + 12);

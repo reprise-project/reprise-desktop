@@ -611,8 +611,8 @@ pub fn render_stats_panel(with_blue: bool) -> Canvas {
         themes.push(cued(interfaces::theme_for(Interface::Blue)));
         themes.push(cued(interfaces::theme_for(Interface::Glass)));
     }
-    let h = statspanel::height(p.rows.len());
-    let step = statspanel::W + 40;
+    let (w, h) = statspanel::size(p.rows.len(), themes[0].text);
+    let step = w + 40;
     let mut c = blurred_stripes(themes.len() as i32 * step + 20, h + 60);
     for (i, theme) in themes.iter().enumerate() {
         let text = TextRenderer::load(&theme.fonts);

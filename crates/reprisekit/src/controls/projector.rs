@@ -119,7 +119,8 @@ pub fn draw(theme: &Theme, text: &TextRenderer, layout: &ProjectorLayout, p: &Pr
             };
             (ink, cs.gray_text)
         };
-        draw_picture(&mut c, text, size, layout.picture(i), choice, &ink, s);
+        let digit = layout.units.base_px(size);
+        draw_picture(&mut c, text, digit, layout.picture(i), choice, &ink, s);
         let caption = layout.caption(i);
         let label = choice.label();
         let label = text.ellipsize(&label, caption.width, false, size);
@@ -174,7 +175,7 @@ mod tests {
     use super::*;
     use crate::interface::Interface;
     use crate::interfaces::{draw_projector, theme_for};
-    use crate::theme::{Color, FontConfig};
+    use crate::theme::{Color, FontConfig, TextUnits};
 
     fn text() -> TextRenderer {
         TextRenderer::load(&FontConfig::default())
@@ -259,7 +260,7 @@ mod tests {
     fn classic_rings_the_lit_tile_2_px_and_the_hot_one_1_px() {
         let t = Theme::default();
         let cs = &t.colors;
-        let l = ProjectorLayout::compute();
+        let l = ProjectorLayout::compute(TextUnits::ONE);
         let p = Projector {
             hot: Some(2),
             ..Projector::new(Projection::Extend, 2)
@@ -279,7 +280,7 @@ mod tests {
     fn only_1_lights_screen_1_and_leaves_screen_2_dark() {
         let t = Theme::default();
         let cs = &t.colors;
-        let l = ProjectorLayout::compute();
+        let l = ProjectorLayout::compute(TextUnits::ONE);
         let c = draw(&t, &text(), &l, &Projector::new(Projection::Only(0), 2));
         let [one, two] = screens(l.picture(2), 1);
         let low = |r: Rect| c.get(r.x + 3, r.bottom() - 3);
@@ -301,7 +302,7 @@ mod tests {
     fn extend_bands_across_the_gap_and_duplicate_shows_a_window_on_each() {
         let t = Theme::default();
         let cs = &t.colors;
-        let l = ProjectorLayout::compute();
+        let l = ProjectorLayout::compute(TextUnits::ONE);
         let c = draw(&t, &text(), &l, &Projector::new(Projection::Extend, 2));
         let [one, two] = screens(l.picture(0), 1);
         let gap = (one.right() + two.x) / 2;
@@ -317,7 +318,7 @@ mod tests {
     fn a_greyed_tile_draws_in_gray_text_with_dark_screens() {
         let t = Theme::default();
         let cs = &t.colors;
-        let l = ProjectorLayout::compute();
+        let l = ProjectorLayout::compute(TextUnits::ONE);
         let c = draw(&t, &text(), &l, &Projector::new(Projection::Only(0), 1));
         let caption = l.caption(0);
         assert!(any_px(&c, caption, |px| px == cs.gray_text.argb()));
@@ -330,7 +331,7 @@ mod tests {
     #[test]
     fn blue_rings_the_lit_tile_in_its_scheme() {
         let t = theme_for(Interface::Blue);
-        let l = ProjectorLayout::compute();
+        let l = ProjectorLayout::compute(TextUnits::ONE);
         let c = draw(&t, &text(), &l, &Projector::new(Projection::Duplicate, 2));
         let lit = l.tiles[1];
         let hilight = crate::blue::Variant::Blue.scheme().system.hilight;
@@ -341,7 +342,7 @@ mod tests {
     fn glass_cuts_its_corners_and_fades_a_greyed_tile() {
         let t = theme_for(Interface::Glass);
         let ink = t.look.style().unwrap().caption_text.color.argb();
-        let l = ProjectorLayout::compute();
+        let l = ProjectorLayout::compute(TextUnits::ONE);
         let c = draw_projector(&t, &l, &text(), &Projector::new(Projection::Only(0), 1));
         assert_eq!(c.get(0, 0) >> 24, 0, "the cut corner is clear");
         assert_ne!(c.get(l.width / 2, 6) >> 24, 0, "the sheet has its tint");
@@ -355,7 +356,7 @@ mod tests {
     #[test]
     fn glass_draws_the_lit_and_hot_tiles_apart_from_a_plain_one() {
         let t = theme_for(Interface::Glass);
-        let l = ProjectorLayout::compute();
+        let l = ProjectorLayout::compute(TextUnits::ONE);
         let text = text();
         let p = Projector {
             hot: Some(1),
@@ -372,7 +373,7 @@ mod tests {
         let text = text();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let t = theme_for(i).scaled(2);
-            let l = ProjectorLayout::compute().scaled(2);
+            let l = ProjectorLayout::compute(TextUnits::ONE).scaled(2);
             let c = draw_projector(&t, &l, &text, &Projector::new(Projection::Extend, 2));
             assert_eq!((c.width, c.height), (864, 204), "{i:?}");
             let [one, _] = screens(l.picture(0), 2);
@@ -403,7 +404,7 @@ mod tests {
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             for s in [1, 2] {
                 let t = theme_for(i).scaled(s);
-                let l = ProjectorLayout::compute().scaled(s);
+                let l = ProjectorLayout::compute(TextUnits::ONE).scaled(s);
                 for (state, p) in &states {
                     let c = draw_projector(&t, &l, &text, p);
                     got.push((format!("{i:?} {s} {state}"), fnv(&c)));
@@ -415,7 +416,7 @@ mod tests {
 
     #[test]
     fn access_names_a_radio_per_tile_and_checks_the_lit_one() {
-        let l = ProjectorLayout::compute();
+        let l = ProjectorLayout::compute(TextUnits::ONE);
         let mut tree = Tree::window("Display switcher", (l.width, l.height));
         let p = Projector::new(Projection::Only(0), 1);
         let lit = access(&l, &p, &mut tree, access::ROOT);
@@ -443,7 +444,7 @@ mod tests {
                     ..Projector::new(Projection::Only(0), 2)
                 };
                 let t = theme_for(i).scaled(s);
-                let l = ProjectorLayout::compute().scaled(s);
+                let l = ProjectorLayout::compute(TextUnits::ONE).scaled(s);
                 let c = draw_projector(&t, &l, &text, &p);
                 let mut bg = Canvas::new(c.width, c.height);
                 bg.fill_rect(bg.bounds(), Color::rgb(0x80, 0x80, 0x80));

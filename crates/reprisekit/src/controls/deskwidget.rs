@@ -13,7 +13,7 @@ use crate::metrics::ControlMetrics;
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::shape::{self, Stops};
 use crate::text::{Align, TextRenderer};
-use crate::theme::{Color, Theme};
+use crate::theme::{Color, TextUnits, Theme};
 use accesskit::{NodeId, Role};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -274,31 +274,33 @@ const LABEL_H: i32 = 13;
 const GRAPH_FILL: u8 = 0x50;
 const GLASS_WELL: u8 = 0x40;
 
-/// The panel's size at scale 1: the clock's per face, the calendar's grown with the text size
-/// like its grid, the meter's per style.
+/// The panel's size at scale 1: the clock's per face, the calendar's like its grid, the meter's
+/// per style, the parts that hold text grown with the text size.
 pub fn size(content: &Content, cm: &ControlMetrics) -> (i32, i32) {
+    let u = cm.text;
     match content {
-        Content::Clock(c) => clock_size(c.face),
+        Content::Clock(c) => clock_size(c.face, u),
         Content::Calendar(_) => {
             let (w, h) = calendar::size(cm);
             let title = cm.text.len(TITLE_H);
             (w + 2 * PAD, title + TITLE_GAP + h + 2 * PAD)
         }
-        Content::Meter(m) => meter_size(m.style),
+        Content::Meter(m) => meter_size(m.style, u),
     }
 }
 
-fn clock_size(face: Face) -> (i32, i32) {
+fn clock_size(face: Face, u: TextUnits) -> (i32, i32) {
     match face {
         Face::Analog => (ANALOG + 2 * PAD, ANALOG + 2 * PAD),
-        Face::Digital => (DIGITAL_W, TIME_H + DATE_H + 2 * PAD),
+        Face::Digital => (u.len(DIGITAL_W), u.len(TIME_H) + u.len(DATE_H) + 2 * PAD),
     }
 }
 
-fn meter_size(style: MeterStyle) -> (i32, i32) {
+/// The bars grow with their labels; the graph's well keeps its height.
+fn meter_size(style: MeterStyle, u: TextUnits) -> (i32, i32) {
     match style {
-        MeterStyle::Bars => (METER_W, 2 * BAR_H + ROW_GAP + 2 * PAD),
-        MeterStyle::Graph => (METER_W, LABEL_H + 2 + GRAPH_H + 2 * PAD),
+        MeterStyle::Bars => (u.len(METER_W), 2 * u.len(BAR_H) + ROW_GAP + 2 * PAD),
+        MeterStyle::Graph => (u.len(METER_W), u.len(LABEL_H) + 2 + GRAPH_H + 2 * PAD),
     }
 }
 
@@ -455,7 +457,8 @@ fn body(
                 draw_analog_clock(c, p, face, clock.time, clock.seconds);
             }
             Face::Digital => {
-                let time = Rect::new(inner.x, inner.y, inner.width, TIME_H).scaled(s);
+                let (time_h, date_h) = (cm.text.len(TIME_H), cm.text.len(DATE_H));
+                let time = Rect::new(inner.x, inner.y, inner.width, time_h).scaled(s);
                 let size = cm.text.px(TIME_PX) * s as u32;
                 put_text(
                     c,
@@ -468,7 +471,7 @@ fn body(
                     Align::Center,
                     size,
                 );
-                let date = Rect::new(inner.x, inner.y + TIME_H, inner.width, DATE_H).scaled(s);
+                let date = Rect::new(inner.x, inner.y + time_h, inner.width, date_h).scaled(s);
                 let date_text = text.ellipsize(&clock.date, date.width, false, px);
                 put_text(
                     c,
@@ -505,16 +508,19 @@ fn body(
             let rows = [("CPU", &m.cpu), ("Memory", &m.memory)];
             match m.style {
                 MeterStyle::Bars => {
+                    let u = cm.text;
+                    let (bar_h, label_w, percent_w) =
+                        (u.len(BAR_H), u.len(LABEL_W), u.len(PERCENT_W));
                     for (i, (label, list)) in rows.into_iter().enumerate() {
-                        let y = inner.y + i as i32 * (BAR_H + ROW_GAP);
-                        let l = Rect::new(inner.x, y, LABEL_W, BAR_H).scaled(s);
+                        let y = inner.y + i as i32 * (bar_h + ROW_GAP);
+                        let l = Rect::new(inner.x, y, label_w, bar_h).scaled(s);
                         put_text(c, text, glass, l, label, false, ink, Align::Left, px);
-                        let bar_w = inner.width - LABEL_W - PERCENT_W;
-                        let bar = Rect::new(inner.x + LABEL_W, y, bar_w, BAR_H);
+                        let bar_w = inner.width - label_w - percent_w;
+                        let bar = Rect::new(inner.x + label_w, y, bar_w, bar_h);
                         let now = list.last().copied();
                         let share = f64::from(now.unwrap_or(0)) / 100.0;
                         draw_progress(c, p, bar, share, true);
-                        let r = Rect::new(bar.right(), y, PERCENT_W, BAR_H).scaled(s);
+                        let r = Rect::new(bar.right(), y, percent_w, bar_h).scaled(s);
                         put_text(
                             c,
                             text,
@@ -530,12 +536,13 @@ fn body(
                 }
                 MeterStyle::Graph => {
                     let gw = (inner.width - PAD) / 2;
+                    let label_h = cm.text.len(LABEL_H);
                     for (i, (label, list)) in rows.into_iter().enumerate() {
                         let x = inner.x + i as i32 * (gw + PAD);
                         let words = format!("{label} {}", percent(list.last().copied()));
-                        let l = Rect::new(x, inner.y, gw, LABEL_H).scaled(s);
+                        let l = Rect::new(x, inner.y, gw, label_h).scaled(s);
                         put_text(c, text, glass, l, &words, false, ink, Align::Left, px);
-                        let well = Rect::new(x, inner.y + LABEL_H + 2, gw, GRAPH_H);
+                        let well = Rect::new(x, inner.y + label_h + 2, gw, GRAPH_H);
                         draw_graph(c, p, well, list, glass);
                     }
                 }
