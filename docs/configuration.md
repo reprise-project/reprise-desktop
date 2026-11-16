@@ -238,8 +238,10 @@ everything, and running sessions keep running. systemd starts it at most
 twice in 30 s, so a third start within that time leaves a text login on
 tty1 instead ([install.md](install.md#login-manager) says how to recover).
 A missing file gives the defaults. A key with a value it can't use keeps
-its default and an unknown key is skipped; a file that isn't TOML gives
-every default. The journal names each (`journalctl -b -u reprise-login`).
+its default and an unknown key is skipped. A file that isn't TOML or can't
+be read gives every default at start-up, and a reload of it changes nothing:
+the last settings stay. The journal names each (`journalctl -b -u
+reprise-login`).
 
 Settings > Login Manager writes the file through `pkexec
 reprise-login-settings`, which asks for an administrator's password on each save, refuses a file with an unknown key or a bad value, rewrites it from the

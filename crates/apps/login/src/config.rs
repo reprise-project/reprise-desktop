@@ -5,23 +5,37 @@ use repriselogin::machine::{BACKGROUND_PICTURE, Background, MachineConfig};
 
 use crate::machinewrite::{MAX_STORED, stored_size};
 
-/// Reads the machine settings at `path`, logging each warning. A missing file gives the defaults.
+/// Reads the machine settings at `path`, logging each warning. A missing file gives the defaults,
+/// and so does one that can't be read or isn't TOML.
 pub fn load(path: &Path) -> MachineConfig {
     load_with(path, Path::new(BACKGROUND_PICTURE))
 }
 
-/// [`load`], the settings' picture at `picture`: one the login screen can't show is dropped, so
-/// the greeting names no background.
+/// [`load`] for a reload: a file that can't be read or isn't TOML gives `None`, so the running
+/// settings stay.
+pub fn reload(path: &Path) -> Option<MachineConfig> {
+    read_with(path, Path::new(BACKGROUND_PICTURE))
+        .map_err(|e| log::warn!("{}: {e}; the last settings stay", path.display()))
+        .ok()
+}
+
+/// [`load`], the settings' picture at `picture`.
 fn load_with(path: &Path, picture: &Path) -> MachineConfig {
+    read_with(path, picture).unwrap_or_else(|e| {
+        log::warn!("{}: {e}; every setting keeps its default", path.display());
+        MachineConfig::default()
+    })
+}
+
+/// The settings at `path`, failing when the file can't be read or isn't TOML. A picture at
+/// `picture` the login screen can't show is dropped, so the greeting names no background.
+fn read_with(path: &Path, picture: &Path) -> Result<MachineConfig, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return MachineConfig::default(),
-        Err(e) => {
-            log::warn!("{}: {e}", path.display());
-            return MachineConfig::default();
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(MachineConfig::default()),
+        Err(e) => return Err(e.to_string()),
     };
-    let (mut config, warnings) = MachineConfig::parse(&text);
+    let (mut config, warnings) = MachineConfig::parse_toml(&text)?;
     for w in warnings {
         log::warn!("{}: {w}", path.display());
     }
@@ -34,7 +48,7 @@ fn load_with(path: &Path, picture: &Path) -> MachineConfig {
         );
         config.login.background = None;
     }
-    config
+    Ok(config)
 }
 
 /// Why `picture` is no file the login screen can show, if it is not. Only its header is read:
@@ -68,6 +82,34 @@ fn shown(picture: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reload_of_a_broken_file_keeps_the_last_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("login.toml");
+        std::fs::write(
+            &path,
+            "[remote_desktop]\nenabled = true\nmax_sessions = \"3\n",
+        )
+        .unwrap();
+        assert_eq!(reload(&path), None, "not TOML");
+        assert_eq!(
+            load(&path),
+            MachineConfig::default(),
+            "start-up takes the defaults"
+        );
+        assert_eq!(reload(dir.path()), None, "unreadable");
+        std::fs::write(&path, "[remote_desktop]\nenabled = true\n").unwrap();
+        assert!(reload(&path).expect("TOML").remote.enabled);
+        std::fs::write(&path, "[remote_desktop]\nenabled = 1\n").unwrap();
+        assert_eq!(
+            reload(&path),
+            Some(MachineConfig::default()),
+            "a bad value keeps its default"
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(reload(&path), Some(MachineConfig::default()), "missing");
+    }
 
     #[test]
     fn a_picture_the_login_screen_cannot_show_is_left_out() {
