@@ -228,7 +228,7 @@ fn an_empty_paste_changes_nothing() {
     let mut ctx = test_ctx();
     let mut p = Paint::new(None);
     p.event(MAIN, Event::PastedImage(Vec::new()), &mut ctx);
-    assert!(p.doc.sel.is_none() && p.prompt.is_none());
+    assert!(p.doc.sel.is_none() && p.prompt.is_empty());
 }
 
 #[test]
@@ -280,8 +280,8 @@ fn attributes_size_the_canvas_and_refuse_a_bad_number() {
     set_edit(f, "width", "64");
     set_edit(f, "height", "0");
     p.event(DIALOG, key(0xff0d, false), &mut ctx);
-    assert!(p.dialog.is_some() && p.prompt.is_some(), "0 is refused");
-    p.prompt = None;
+    assert!(p.dialog.is_some() && !p.prompt.is_empty(), "0 is refused");
+    p.prompt.close();
     set_edit(&mut p.dialog.as_mut().unwrap().1, "height", "32");
     p.event(DIALOG, key(0xff0d, false), &mut ctx);
     assert!(p.dialog.is_none());
@@ -317,7 +317,7 @@ fn a_skew_past_the_largest_picture_is_refused_and_changes_nothing() {
     p.event(DIALOG, key(0xff0d, false), &mut ctx);
     assert!(p.dialog.is_some(), "the dialog stays up");
     assert_eq!(
-        p.prompt.as_ref().map(|(b, _)| b.fields.text.as_str()),
+        p.prompt.up().map(|(b, _)| b.fields.text.as_str()),
         Some("The picture would be more than 16,384 pixels wide or high.")
     );
     assert_eq!((p.doc.img.w, p.doc.img.h), (1920, 1080));
@@ -368,13 +368,58 @@ fn new_on_a_changed_picture_asks_first() {
     drag(&mut p, &mut ctx, (1, 1), (6, 1), BTN_LEFT);
     p.event(MAIN, key(0x6e, true), &mut ctx);
     assert!(matches!(
-        p.prompt,
+        p.prompt.up(),
         Some((_, Prompt::SaveChanges(Then::New)))
     ));
-    p.prompt = None;
+    p.prompt.close();
     p.answered(Prompt::SaveChanges(Then::New), Some(1));
     assert!(!p.doc.dirty && !p.doc.hist.can_undo());
     assert_eq!(p.doc.img.get(3, 1), Some(WHITE));
+}
+
+/// The prompt up and its window.
+fn prompt_up(p: &Paint) -> Option<(Prompt, WinId)> {
+    Some((p.prompt.up()?.1.clone(), p.prompt.win()?))
+}
+
+/// A changed picture saved at `dir`/drawing.png.
+fn changed_picture(dir: &Path, ctx: &mut Ctx) -> Paint {
+    let mut p = Paint::new(None);
+    pick(&mut p, ctx, Tool::Pencil);
+    drag(&mut p, ctx, (1, 1), (6, 1), BTN_LEFT);
+    p.path = Some(dir.join("drawing.png"));
+    p
+}
+
+#[test]
+fn a_draw_failure_waits_behind_save_changes_and_yes_still_quits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_ctx();
+    let mut p = changed_picture(dir.path(), &mut ctx);
+    p.command(menu::title::FILE, menu::row::EXIT, &ctx);
+    p.draw_failed("no memory");
+    let (what, win) = prompt_up(&p).expect("a prompt is up");
+    assert_eq!(what, Prompt::SaveChanges(Then::Quit));
+    let reply = p.event(win, key(0xff0d, false), &mut ctx);
+    assert!(reply.quit, "Yes saves and quits");
+    assert!(dir.path().join("drawing.png").exists());
+}
+
+#[test]
+fn save_changes_raised_behind_a_draw_failure_is_up_after_its_ok_and_yes_still_quits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_ctx();
+    let mut p = changed_picture(dir.path(), &mut ctx);
+    p.draw_failed("no memory");
+    p.command(menu::title::FILE, menu::row::EXIT, &ctx);
+    let (what, win) = prompt_up(&p).expect("a prompt is up");
+    assert_eq!(what, Prompt::Error);
+    assert!(!p.event(win, key(0xff0d, false), &mut ctx).quit);
+    let (what, win) = prompt_up(&p).expect("Save changes is up after OK");
+    assert_eq!(what, Prompt::SaveChanges(Then::Quit));
+    let reply = p.event(win, key(0xff0d, false), &mut ctx);
+    assert!(reply.quit, "Yes saves and quits");
+    assert!(dir.path().join("drawing.png").exists());
 }
 
 #[test]
