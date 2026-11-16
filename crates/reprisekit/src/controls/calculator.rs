@@ -383,13 +383,17 @@ impl Calc {
                 },
                 _ => {
                     let v = self.value();
+                    self.drop_closed_group();
                     self.set_value(-v);
                 }
             },
             Input::Func(f) => {
                 let v = self.value();
                 match self.func(f, v) {
-                    Ok(r) => self.set_value(r),
+                    Ok(r) => {
+                        self.drop_closed_group();
+                        self.set_value(r);
+                    }
                     Err(e) => self.fail(e),
                 }
             }
@@ -615,6 +619,27 @@ impl Calc {
                 self.entered = false;
             }
             Err(e) => self.fail(e),
+        }
+    }
+
+    /// A function applied to a group just closed replaces the group with its result.
+    fn drop_closed_group(&mut self) {
+        if self.entered || !matches!(self.expr.last(), Some(Term::Close)) {
+            return;
+        }
+        let mut depth = 0;
+        for (i, t) in self.expr.iter().enumerate().rev() {
+            match t {
+                Term::Close => depth += 1,
+                Term::Open => {
+                    depth -= 1;
+                    if depth == 0 {
+                        self.expr.truncate(i);
+                        return;
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
