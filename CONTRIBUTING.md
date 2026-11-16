@@ -19,7 +19,9 @@ every test in its own process across all test binaries at once and reads
 `.config/nextest.toml`. Without it, `cargo test --workspace` runs the same
 tests.
 `scripts/affected-tests [BASE]` builds and runs only the tests of the crates
-changed since BASE (default `origin/main`) and the crates that depend on them.
+changed since BASE (default `origin/main`) and the crates that depend on them,
+plus the tests that read the whole tree (string ids, window ids, licence
+citations, packaging), which run on any crate or `packaging/` change.
 
 CI runs the same three commands as an unprivileged user in an Arch Linux
 image built from `.github/ci-image/` (`packages` lists what it installs). On
