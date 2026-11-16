@@ -48,7 +48,7 @@ struct UpdatesApp {
     owed: Restart,
     tray_state: Option<model::TrayLook>,
     /// What the restart watch last said, and `[updates] restart_notice`, reread on each config change.
-    restart_due: bool,
+    restart_due: Option<restart::Due>,
     notice_on: bool,
     config: Option<repriseconf::ConfigWatch>,
     /// The once-a-boot mark of the restart balloon, and this boot's id.
@@ -80,7 +80,7 @@ impl UpdatesApp {
             hold: false,
             owed: Restart::None,
             tray_state: None,
-            restart_due: false,
+            restart_due: None,
             notice_on: repriseconf::current().restart_notice,
             config: None,
             mark: restart::mark_path(),
@@ -120,7 +120,7 @@ impl UpdatesApp {
     fn waits_on_restart(&self) -> bool {
         matches!(
             self.phase,
-            Phase::Installed(Restart::System | Restart::Session) | Phase::RestartDue
+            Phase::Installed(Restart::System | Restart::Session) | Phase::RestartDue(_)
         )
     }
 
@@ -135,25 +135,31 @@ impl UpdatesApp {
     /// A restart the system needs shows in the window and tray until it happens, and in a balloon
     /// once a boot. An install's result says it instead, and one running holds it until it ends.
     fn settle_restart(&mut self) {
-        if !(self.restart_due && self.notice_on) {
-            if self.phase == Phase::RestartDue {
+        let Some(due) = self.restart_due.filter(|_| self.notice_on) else {
+            if matches!(self.phase, Phase::RestartDue(_)) {
                 self.phase = self.settled();
             }
             return;
-        }
+        };
         match self.phase {
-            Phase::Checking | Phase::Installing { .. } | Phase::RestartDue => return,
+            Phase::Checking | Phase::Installing { .. } => return,
+            Phase::RestartDue(_) => {
+                self.phase = Phase::RestartDue(due);
+                return;
+            }
             Phase::Installed(Restart::System) => {
                 restart::first_this_boot(&self.mark, &self.boot);
                 return;
             }
             Phase::Installed(_) => self.phase = Phase::Installed(Restart::System),
-            Phase::Unchecked | Phase::Ready | Phase::Failed(_) => self.phase = Phase::RestartDue,
+            Phase::Unchecked | Phase::Ready | Phase::Failed(_) => {
+                self.phase = Phase::RestartDue(due)
+            }
         }
         if restart::first_this_boot(&self.mark, &self.boot)
             && let Some(t) = &self.tray
         {
-            let (summary, body) = model::restart_balloon();
+            let (summary, body) = model::restart_balloon(due);
             t.notify_buttons(
                 &summary,
                 &body,
@@ -253,7 +259,7 @@ impl UpdatesApp {
                     Ok(restart) => {
                         self.owed = self.owed.max(restart);
                         let mut restart = self.owed;
-                        if self.restart_due && self.notice_on {
+                        if self.restart_due.is_some() && self.notice_on {
                             restart = restart.max(Restart::System);
                         }
                         if self.hidden || restart != Restart::None {
@@ -698,14 +704,14 @@ mod tests {
     #[test]
     fn a_restart_the_system_needs_holds_through_checks_until_it_goes() {
         let (mut app, dir) = restart_app("due", true);
-        app.worker_msg(worker::Msg::RestartDue(true));
-        assert_eq!(app.phase, Phase::RestartDue);
+        app.worker_msg(worker::Msg::RestartDue(Some(restart::Due::System)));
+        assert_eq!(app.phase, Phase::RestartDue(restart::Due::System));
         assert!(marked(&app), "the balloon went up this boot");
         let look = model::tray_look(&app.phase, &app.updates);
         assert_eq!((look.icon, look.active), ("system-reboot", true));
         app.worker_msg(worker::Msg::Checking);
         app.worker_msg(found(Ok(vec![update("a")])));
-        assert_eq!(app.phase, Phase::RestartDue);
+        assert_eq!(app.phase, Phase::RestartDue(restart::Due::System));
         assert_eq!(app.updates.len(), 1);
         let (text, theme) = window_env();
         app.window
@@ -721,7 +727,13 @@ mod tests {
         );
         let look = model::tray_look(&app.phase, &app.updates);
         assert_eq!(look.icon, "system-reboot");
-        app.worker_msg(worker::Msg::RestartDue(false));
+        app.worker_msg(worker::Msg::RestartDue(Some(restart::Due::Reprise)));
+        assert_eq!(
+            app.phase,
+            Phase::RestartDue(restart::Due::Reprise),
+            "the reason follows the flag"
+        );
+        app.worker_msg(worker::Msg::RestartDue(None));
         assert_eq!(app.phase, Phase::Ready);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -763,7 +775,7 @@ mod tests {
         let (mut app, dir) = restart_app("install", true);
         app.worker_msg(found(Ok(vec![update("linux")])));
         app.install();
-        app.worker_msg(worker::Msg::RestartDue(true));
+        app.worker_msg(worker::Msg::RestartDue(Some(restart::Due::System)));
         assert!(app.phase.busy(), "the install's progress stays up");
         assert!(!marked(&app));
         app.worker_msg(worker::Msg::Installed(Ok(Restart::None)));
@@ -775,7 +787,7 @@ mod tests {
     #[test]
     fn the_restart_notice_switched_off_shows_nothing() {
         let (mut app, dir) = restart_app("off", false);
-        app.worker_msg(worker::Msg::RestartDue(true));
+        app.worker_msg(worker::Msg::RestartDue(Some(restart::Due::System)));
         assert_eq!(app.phase, Phase::Unchecked);
         app.worker_msg(worker::Msg::Installed(Ok(Restart::None)));
         assert_eq!(app.phase, Phase::Installed(Restart::None));

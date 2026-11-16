@@ -47,8 +47,8 @@ pub enum Msg {
     /// A device's request while its firmware installs, `None` once it carries on.
     Request(Option<Request>),
     Installed(Result<Restart, Failure>),
-    /// Whether the system needs a restart no install here asked for, at start and on each change.
-    RestartDue(bool),
+    /// The restart the system needs that no install here asked for, at start and on each change.
+    RestartDue(Option<crate::restart::Due>),
 }
 
 /// Why an install stopped.
