@@ -185,6 +185,8 @@ pub struct Keyboard {
     pub switcher: bool,
     pub overview: bool,
     pub snap_picker: bool,
+    /// The bind opened the snap picker, so it takes the keys (`SnapPickerView::has_keys`).
+    pub snap_picker_keys: bool,
     pub projector: bool,
     pub menus: bool,
     pub launcher: bool,
@@ -200,6 +202,29 @@ pub struct Keyboard {
     pub client: bool,
     /// The login screen takes the keys no dialog or menu takes.
     pub greeter: bool,
+}
+
+impl Keyboard {
+    /// Mark popup `p` up, in the flag `focus_of` reads for it.
+    pub fn popup_up(&mut self, p: Popup) {
+        let flag = match p {
+            // They take no keys but Escape and never hold the focus.
+            Popup::TrayFlyout | Popup::TaskPreview => return,
+            Popup::SnapPicker => &mut self.snap_picker,
+            Popup::Projector => &mut self.projector,
+            Popup::NotifyCenter => &mut self.notify_center,
+            Popup::Calendar => &mut self.calendar,
+            Popup::Displays => &mut self.displays,
+            Popup::Menu => &mut self.menus,
+            Popup::Launcher => &mut self.launcher,
+            Popup::StartPanel => &mut self.start_panel,
+            Popup::ClipView => &mut self.clipview,
+            Popup::EmojiView => &mut self.emojiview,
+            Popup::Switcher => &mut self.switcher,
+            Popup::Overview => &mut self.overview,
+        };
+        *flag = true;
+    }
 }
 
 /// The surface whose tree has the focus, in `keyroute::route`'s order.
@@ -221,7 +246,7 @@ pub fn focus_of(k: &Keyboard) -> Option<Surface> {
         Some(Surface::Switcher)
     } else if k.overview {
         Some(Surface::Overview)
-    } else if k.snap_picker {
+    } else if k.snap_picker && k.snap_picker_keys {
         Some(Surface::SnapPicker)
     } else if k.projector {
         Some(Surface::Projector)
@@ -255,7 +280,7 @@ pub fn focus_of(k: &Keyboard) -> Option<Surface> {
 }
 
 fn keyboard(state: &State) -> Keyboard {
-    Keyboard {
+    let mut k = Keyboard {
         lock: state.desktop_locked() && crate::lockview::desk_screen_shows(state),
         color_pick: state.panels.colorpick.is_some(),
         region: state.panels.region.is_some(),
@@ -263,24 +288,18 @@ fn keyboard(state: &State) -> Keyboard {
             || state.inputproto.gated()
             || state.panels.takes_pointer()
             || state.interaction.is_keyboard(),
-        switcher: state.switcher.is_open(),
-        overview: state.overview.view.is_some(),
-        snap_picker: state.snap_picker.has_keys(),
-        projector: state.projector.is_open(),
-        menus: !state.menus.is_empty(),
-        launcher: state.launcher.is_some(),
-        start_panel: state.start_panel.is_some(),
-        clipview: state.panels.clipview.is_some(),
-        emojiview: state.panels.emojiview.is_some(),
+        snap_picker_keys: state.snap_picker.has_keys(),
         notify_reply: crate::notifyview::reply_focused(state),
-        notify_center: crate::notifycenter::is_open(state),
-        displays: crate::displaysview::is_open(state),
         taskbar: state.bar_shared.keys.map(|k| k.bar),
         dialog: state.active_dialog_id(),
-        calendar: crate::calendarview::is_open(state),
         client: state.focused.is_some() || state.layers_shell.focused.is_some(),
         greeter: state.greeter.login.is_some(),
+        ..Keyboard::default()
+    };
+    for p in Popup::open(state) {
+        k.popup_up(p);
     }
+    k
 }
 
 /// The focused control of the compositor's surface that has the
@@ -1198,6 +1217,23 @@ mod tests {
             Some(Surface::ColorPick),
             "the loupe takes every key"
         );
+    }
+
+    #[test]
+    fn each_popup_that_takes_keys_has_the_focus_alone() {
+        let none = Keyboard {
+            snap_picker_keys: true,
+            ..Keyboard::default()
+        };
+        for p in Popup::ALL {
+            let mut k = none.clone();
+            k.popup_up(p);
+            if matches!(p, Popup::TrayFlyout | Popup::TaskPreview) {
+                assert_eq!(k, none, "{p:?} takes no focus");
+                continue;
+            }
+            assert_eq!(focus_of(&k), Some(surface_of(p)), "{p:?} has the focus");
+        }
     }
 
     #[test]
