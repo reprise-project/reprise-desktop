@@ -124,7 +124,6 @@ impl Switch {
     }
 
     /// A switch that never codes H.264.
-    #[cfg(test)]
     pub fn bitmaps() -> Switch {
         Switch::new(Box::new(|_, _, _| Err(EncodeError("no H.264 here".into()))))
     }

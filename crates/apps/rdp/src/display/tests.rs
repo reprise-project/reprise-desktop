@@ -565,6 +565,44 @@ async fn a_frame_that_failed_is_sent_again_on_a_static_screen() {
     );
 }
 
+/// Panics on every frame, as an encoder bug would.
+struct Panics;
+
+impl Encoder for Panics {
+    fn encode(&mut self, _: &Frame, _: bool) -> Result<Encoded, crate::encode::EncodeError> {
+        panic!("an encoder bug");
+    }
+}
+
+#[tokio::test]
+async fn an_encoding_thread_that_panics_is_replaced_by_one_sending_bitmaps() {
+    let (frames, frames_rx) = unbounded_channel();
+    let (_sizes, sizes_rx) = unbounded_channel();
+    let told = Told::new(Arc::new(Mutex::new(DesktopSize {
+        width: 4,
+        height: 2,
+    })));
+    let switch = || Switch::bitmaps().with_bitmap(Box::new(Panics));
+    let mut live = Live::new(
+        frames_rx,
+        sizes_rx,
+        told,
+        Worker::spawn(switch).unwrap(),
+        None,
+        SharedMoves::default(),
+        links().0,
+    );
+    frames.send(frame((4, 2), SMALL)).unwrap();
+    let sent = tokio::time::timeout(Duration::from_secs(5), live.next()).await;
+    assert_eq!(
+        bitmap_size(sent.expect("an update, not a wait")),
+        (4, 2),
+        "the frame the panic lost goes whole from the new thread"
+    );
+    frames.send(frame((4, 2), SMALL)).unwrap();
+    assert_eq!(bitmap_size(live.next().await), (1, 1), "and the next one");
+}
+
 /// Each frame a [`Coder`] coded: its backend, whether a keyframe was asked for, its QP.
 type Coded = Arc<Mutex<Vec<(Backend, bool, u8)>>>;
 

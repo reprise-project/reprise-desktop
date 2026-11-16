@@ -538,6 +538,8 @@ struct Live {
     held_resize: Option<(u32, u32)>,
     /// The H.264 the client was last sent, AVC420 or AVC444, logged when it changes.
     coding: Option<&'static str>,
+    /// The encoding thread ended once and a bitmap one took over.
+    respawned: bool,
 }
 
 impl Live {
@@ -592,6 +594,7 @@ impl Live {
             failing: false,
             held_resize: None,
             coding: None,
+            respawned: false,
         };
         live.choose(cfg.encoder);
         live
@@ -660,7 +663,11 @@ impl Live {
                 },
                 done = self.worker.done.recv() => match done {
                     Some(d) => self.finish(d),
-                    None => break,
+                    None if self.respawn() => {}
+                    None => {
+                        self.ended = true;
+                        return None;
+                    }
                 },
                 frame = self.frames.recv() => match frame {
                     Some(f) => self.take(f),
@@ -678,6 +685,32 @@ impl Live {
         log::info!("the screen stream ended");
         self.ended = true;
         None
+    }
+
+    /// The encoding thread ended (an encoder panicked): a new one sends bitmaps from the frame
+    /// it lost on. False if no thread starts, or the bitmap one ended too.
+    fn respawn(&mut self) -> bool {
+        if std::mem::replace(&mut self.respawned, true) {
+            log::warn!("the bitmap encoding thread stopped; this screen ends");
+            return false;
+        }
+        log::warn!("the encoding thread stopped; sending bitmaps from now on");
+        match Worker::spawn(Switch::bitmaps) {
+            Ok(worker) => self.worker = worker,
+            Err(e) => {
+                log::warn!("no encoding thread: {e}");
+                return false;
+            }
+        }
+        self.busy = false;
+        self.use_backend(None);
+        self.h264 = None;
+        self.order = None;
+        self.keyframe = true;
+        if self.pending.is_none() && self.held_resize.is_none() {
+            self.pending = self.last.clone();
+        }
+        true
     }
 
     /// The client opened the graphics pipeline or ran out of time: the held resize goes now, or
