@@ -1,11 +1,10 @@
 //! Phones paired through KDE Connect: `kdeconnectd`'s reachable devices on the session bus,
 //! followed through its signals and restarts, and the ring and share calls made on one.
 
-use crate::Signal;
+use crate::{Props, Signal, prop};
 use futures_util::FutureExt;
 use futures_util::stream::StreamExt;
-use std::collections::HashMap;
-use zbus::{Connection, OwnedMatchRule, OwnedVariant};
+use zbus::{Connection, OwnedMatchRule};
 
 pub const NAME: &str = "org.kde.kdeconnect";
 const DAEMON_PATH: &str = "/modules/kdeconnect";
@@ -45,11 +44,7 @@ fn device_path(id: &str) -> String {
     format!("{DAEMON_PATH}/devices/{id}")
 }
 
-async fn get_all(
-    conn: &Connection,
-    path: &str,
-    iface: &str,
-) -> Option<HashMap<String, OwnedVariant>> {
+async fn get_all(conn: &Connection, path: &str, iface: &str) -> Option<Props> {
     let reply = conn
         .call_method(Some(NAME), path, Some(PROPERTIES), "GetAll", &(iface,))
         .await
@@ -57,12 +52,8 @@ async fn get_all(
     reply.body().deserialize().ok()
 }
 
-fn prop<T: TryFrom<OwnedVariant>>(props: &HashMap<String, OwnedVariant>, key: &str) -> Option<T> {
-    props.get(key)?.clone().try_into().ok()
-}
-
 /// The battery as `charge` and `isCharging` give it; a negative charge is none reported yet.
-fn battery(props: &HashMap<String, OwnedVariant>) -> Option<Battery> {
+fn battery(props: &Props) -> Option<Battery> {
     let charge: i32 = prop(props, "charge")?;
     Some(Battery {
         charge: u8::try_from(charge).ok()?.min(100),

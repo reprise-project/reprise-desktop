@@ -4,9 +4,9 @@
 use std::collections::HashMap;
 
 use futures_util::stream::StreamExt;
-use zbus::{Connection, Message, OwnedMatchRule, OwnedObjectPath, OwnedVariant};
+use zbus::{Connection, Message, OwnedMatchRule, OwnedObjectPath};
 
-use crate::Signal;
+use crate::{Props, Signal, prop};
 
 pub const NAME: &str = "org.bluez";
 const ROOT: &str = "/";
@@ -32,22 +32,13 @@ impl Device {
     }
 }
 
-type Interfaces = HashMap<String, HashMap<String, OwnedVariant>>;
+/// `GetManagedObjects`' answer: each object's interfaces and their properties.
+pub type Objects = HashMap<OwnedObjectPath, HashMap<String, Props>>;
 
-fn device(path: &str, interfaces: &Interfaces) -> Option<Device> {
+fn device(path: &str, interfaces: &HashMap<String, Props>) -> Option<Device> {
     let props = interfaces.get(DEVICE)?;
-    let text = |k: &str| {
-        props
-            .get(k)
-            .and_then(|v| String::try_from(v.clone()).ok())
-            .unwrap_or_default()
-    };
-    let flag = |k: &str| {
-        props
-            .get(k)
-            .and_then(|v| bool::try_from(v.clone()).ok())
-            .unwrap_or(false)
-    };
+    let text = |k: &str| prop::<String>(props, k).unwrap_or_default();
+    let flag = |k: &str| prop(props, k).unwrap_or(false);
     Some(Device {
         path: path.to_string(),
         address: text("Address"),
@@ -57,8 +48,8 @@ fn device(path: &str, interfaces: &Interfaces) -> Option<Device> {
     })
 }
 
-/// Every device BlueZ knows, from its object manager.
-pub async fn devices(conn: &Connection) -> zbus::Result<Vec<Device>> {
+/// Every object BlueZ's object manager lists.
+pub async fn objects(conn: &Connection) -> zbus::Result<Objects> {
     let reply = conn
         .call_method(
             Some(NAME),
@@ -68,8 +59,13 @@ pub async fn devices(conn: &Connection) -> zbus::Result<Vec<Device>> {
             &(),
         )
         .await?;
-    let objects: HashMap<OwnedObjectPath, Interfaces> = reply.body().deserialize()?;
-    Ok(objects
+    reply.body().deserialize()
+}
+
+/// Every device BlueZ knows, from its object manager.
+pub async fn devices(conn: &Connection) -> zbus::Result<Vec<Device>> {
+    Ok(objects(conn)
+        .await?
         .iter()
         .filter_map(|(path, ifaces)| device(path.as_str(), ifaces))
         .collect())
@@ -124,14 +120,9 @@ fn rules() -> Vec<OwnedMatchRule> {
 
 /// `Connected` from a device's `PropertiesChanged`, when it changed.
 fn connected_change(m: &Message) -> Option<bool> {
-    let (iface, changed, _): (String, HashMap<String, OwnedVariant>, Vec<String>) =
-        m.body().deserialize().ok()?;
+    let (iface, changed, _): (String, Props, Vec<String>) = m.body().deserialize().ok()?;
     (iface == DEVICE)
-        .then(|| {
-            changed
-                .get("Connected")
-                .and_then(|v| bool::try_from(v.clone()).ok())
-        })
+        .then(|| prop(&changed, "Connected"))
         .flatten()
 }
 
