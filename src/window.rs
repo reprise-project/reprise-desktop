@@ -401,6 +401,19 @@ impl Window {
             .unwrap_or_else(|| bbox_from_surface_tree(self.wl_surface(), (0, 0)))
     }
 
+    /// An xdg toplevel that made no decoration object and either draws a shadow inside its buffer
+    /// or asked to map maximized draws its own frame (libadwaita, GTK4 with a header bar).
+    /// Maximized, such a client draws no shadow, so its geometry tells nothing.
+    pub fn draws_own_frame(&self) -> bool {
+        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State;
+        let Some(t) = self.xdg() else {
+            return false;
+        };
+        !crate::handlers::negotiated(self.wl_surface())
+            && (self.geometry_origin() != (0, 0)
+                || t.with_pending_state(|s| s.states.contains(State::Maximized)))
+    }
+
     fn geometry_origin(&self) -> (i32, i32) {
         let g = self.geometry();
         (g.loc.x, g.loc.y)

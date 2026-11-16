@@ -477,6 +477,7 @@ impl XdgDialogHandler for State {
 impl XdgDecorationHandler for State {
     /// A decoration made again after a destroy hands the frame back to Reprise.
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
+        negotiate(toplevel.wl_surface());
         server_side(&toplevel);
         if let Some(w) = self.window_for_surface(toplevel.wl_surface()) {
             self.set_csd(w, false);
@@ -514,6 +515,20 @@ impl XdgDecorationHandler for State {
 /// the request came before the toplevel.
 struct KdeClientSide(std::cell::Cell<bool>);
 
+/// A client made an xdg or KDE decoration object for the surface: it said whose frame it wants.
+struct Negotiated;
+
+fn negotiate(surface: &WlSurface) {
+    with_states(surface, |s| {
+        s.data_map.insert_if_missing(|| Negotiated);
+    });
+}
+
+/// Whether a client made a decoration object for `surface` (see `Window::draws_own_frame`).
+pub(crate) fn negotiated(surface: &WlSurface) -> bool {
+    with_states(surface, |s| s.data_map.get::<Negotiated>().is_some())
+}
+
 fn kde_client_side(surface: &WlSurface) -> bool {
     with_states(surface, |s| {
         s.data_map.get::<KdeClientSide>().is_some_and(|c| c.0.get())
@@ -525,6 +540,10 @@ fn kde_client_side(surface: &WlSurface) -> bool {
 impl KdeDecorationHandler for State {
     fn kde_decoration_state(&self) -> &KdeDecorationState {
         &self.kde_decoration_state
+    }
+
+    fn new_decoration(&mut self, surface: &WlSurface, _: &OrgKdeKwinServerDecoration) {
+        negotiate(surface);
     }
 
     fn request_mode(

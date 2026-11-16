@@ -204,9 +204,13 @@ pub fn css(cs: &ColorScheme, interface: Interface) -> String {
     for (name, c) in &colors {
         out += &format!("  --{}: {};\n", name.replace('_', "-"), hex(*c));
     }
-    out += "  --window-radius: 0px;\n}\n";
-    out += &rule(SQUARE_WINDOWS, "border-radius: 0;");
-    if interface == Interface::Classic {
+    let classic = interface == Interface::Classic;
+    if classic {
+        out += "  --window-radius: 0px;\n";
+    }
+    out += "}\n";
+    if classic {
+        out += &rule(SQUARE_WINDOWS, "border-radius: 0;");
         out += &rule(CLASSIC_SQUARE, "border-radius: 0;");
     }
     if let Some(edge) = edge(cs) {
@@ -347,22 +351,25 @@ mod tests {
     }
 
     #[test]
-    fn windows_are_square_and_classic_squares_popovers() {
+    fn classic_squares_windows_and_popovers() {
         let cs = ColorScheme::default();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let css = css(&cs, i);
-            assert!(
+            let classic = i == Interface::Classic;
+            assert_eq!(
                 css.contains("  --border-color: #808080;\n  --window-radius: 0px;\n}\n"),
-                "{i:?}: :root ends with a window radius of 0"
+                classic,
+                "{i:?}: :root ends with a window radius of 0 under Classic only"
             );
-            assert!(
+            assert_eq!(
                 css.contains(
                     "\nwindow.dialog.message.csd,\nwindow.messagedialog.csd,\n\
                      window.dialog-window.alert.csd,\n\
                      window.dialog-window.alert .body-scrolled-window > viewport {\n  \
                      border-radius: 0;\n}\n"
                 ),
-                "{i:?}: message and alert windows are square"
+                classic,
+                "{i:?}: message and alert windows are square under Classic only"
             );
             assert_eq!(
                 css.contains("\npopover > contents,\n"),

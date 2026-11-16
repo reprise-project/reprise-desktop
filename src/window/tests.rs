@@ -1782,6 +1782,52 @@ fn a_client_destroying_its_decoration_takes_its_own_frame_at_the_next_commit() {
 }
 
 #[test]
+fn a_toplevel_that_negotiates_nothing_and_draws_its_own_shadow_maps_unframed() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let shadowed = h.map_toplevel_after(&mut c, "adw", 350, 250, |h, c, t| {
+        c.side.shells[t.shell]
+            .xdg
+            .set_window_geometry(25, 25, 300, 200);
+        h.roundtrip(c);
+    });
+    assert!(h.state.win(shadowed.id).is_some_and(|w| w.csd));
+    let maximized = h.map_toplevel_after(&mut c, "adw", 300, 200, |h, c, t| {
+        c.side.shells[t.shell].toplevel.set_maximized();
+        h.roundtrip(c);
+    });
+    assert!(
+        h.state.win(maximized.id).is_some_and(|w| w.csd),
+        "one asking to map maximized draws no shadow but its own caption"
+    );
+    let plain = h.map_toplevel(&mut c, "plain", 300, 200);
+    assert!(
+        h.state.win(plain.id).is_some_and(|w| !w.csd),
+        "a window drawn to its edges keeps the frame"
+    );
+}
+
+#[test]
+fn a_toplevel_asking_for_the_frame_keeps_it_though_its_geometry_is_inset() {
+    use wayland_protocols::xdg::decoration::zv1::client::{
+        zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, zxdg_toplevel_decoration_v1::Mode,
+    };
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let manager: ZxdgDecorationManagerV1 = c.bind("zxdg_decoration_manager_v1", 2);
+    let t = h.map_toplevel_after(&mut c, "app", 350, 250, |h, c, t| {
+        let shell = &c.side.shells[t.shell];
+        let d = manager.get_toplevel_decoration(&shell.toplevel, &c.qh(), ());
+        d.set_mode(Mode::ServerSide);
+        shell.xdg.set_window_geometry(25, 25, 300, 200);
+        h.roundtrip(c);
+    });
+    assert!(h.state.win(t.id).is_some_and(|w| !w.csd));
+}
+
+#[test]
 fn a_decoration_made_again_without_a_mode_hands_the_frame_back_to_reprise() {
     use wayland_client::WEnum;
     use wayland_protocols::xdg::decoration::zv1::client::{
