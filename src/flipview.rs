@@ -973,10 +973,11 @@ impl State {
                 st.pics[k].slot.borrow_mut().set(None);
             }
             let output = st.output.clone();
+            self.flip_draw(leaving, Instant::now());
+            // After the new picture, so a hidden window is never suspended in between.
             if let Some(id) = drop {
                 self.thumb_drop(id);
             }
-            self.flip_draw(leaving, Instant::now());
             crate::backend::schedule(self, &output);
         }
     }
@@ -1143,6 +1144,24 @@ mod tests {
         h.state.switcher_cancel();
         let gone = h.state.switcher.leaving.as_ref();
         assert!(gone.is_none_or(|st| !st.moving(now)), "no flight back");
+    }
+
+    #[test]
+    fn a_minimized_window_resizing_itself_under_the_stack_gets_no_configure() {
+        let mut h = glass();
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "one", 300, 200);
+        h.map_toplevel(&mut c, "two", 300, 200);
+        h.state.set_minimized(a.id, true);
+        h.state.open_flip(crate::keys::MOD_LOGO);
+        h.state.flip_reveal();
+        h.roundtrip(&mut c);
+        assert!(h.state.live_previews.shows(a.id), "its card shows it live");
+        let before = c.side.shells[a.shell].configures;
+        h.resize_self(&mut c, a, 400, 300);
+        h.roundtrip(&mut c);
+        assert!(h.state.live_previews.shows(a.id), "its card still does");
+        assert_eq!(c.side.shells[a.shell].configures, before);
     }
 
     #[test]
