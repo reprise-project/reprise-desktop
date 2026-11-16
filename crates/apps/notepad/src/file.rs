@@ -84,7 +84,7 @@ impl Notepad {
 
     pub(crate) fn save_failed(&mut self, path: &Path, e: &std::io::Error) {
         log::warn!("save {}: {e}", path.display());
-        self.error = Some(self.error_box(&tr!("save-failed", path = path.display().to_string())));
+        self.fail(&tr!("save-failed", path = path.display().to_string()));
     }
 
     pub(crate) fn open_failed(&mut self, path: &Path, e: &std::io::Error) {
@@ -116,7 +116,7 @@ impl Notepad {
             self.lossy = Some((prompt, text));
             return;
         }
-        self.error = Some(self.error_box(&open_failed_text(path, e)));
+        self.fail(&open_failed_text(path, e));
     }
 
     /// Yes shows the copy as Untitled, so a save cannot write the replaced characters over the

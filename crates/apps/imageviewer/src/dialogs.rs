@@ -21,33 +21,10 @@ fn filters() -> Vec<String> {
 }
 
 impl Viewer {
-    pub(crate) fn error_box(&self, text: &str) -> MsgBox {
-        MsgBox::new(
-            NAME,
-            msgbox::Fields {
-                text: text.into(),
-                icon: self.warn_icon.clone(),
-                buttons: vec![reprisekit::kit_tr!("ok")],
-                default: 0,
-                min_text_h: None,
-                min_w: 0,
-                max_w: repriseapp::dialog_max_w(),
-            },
-        )
-    }
-
-    pub(crate) fn error_event(&mut self, ev: Event) -> Reply {
-        let Some(b) = &mut self.error else {
-            return Reply::none();
-        };
-        match b.event(&ev, &self.dialog_text, &self.forms) {
-            Outcome::Closed(_) => {
-                self.error = None;
-                Reply::redraw_all()
-            }
-            Outcome::Redraw => Reply::redraw(),
-            Outcome::None => Reply::none(),
-        }
+    /// Shows `text` in the error box.
+    pub(crate) fn fail(&mut self, text: &str) {
+        let icon = self.warn_icon.clone();
+        self.error.show(NAME, text.into(), icon);
     }
 
     /// Delete, or Shift+Delete (`erase`): the drive and the Recycle Bin settings say whether it
@@ -124,7 +101,7 @@ impl Viewer {
             Err(e) => {
                 log::warn!("delete {}: {e}", path.display());
                 let name = reprisefs::bincap::label(path);
-                self.error = Some(self.error_box(&format!("Cannot delete {name}: {e}")));
+                self.fail(&format!("Cannot delete {name}: {e}"));
             }
         }
     }
@@ -168,7 +145,7 @@ impl Viewer {
                 Reply::redraw_all()
             }
             Driven::Failed(msg) => {
-                self.error = Some(self.error_box(&msg));
+                self.fail(&msg);
                 Reply::redraw_all()
             }
         }

@@ -80,7 +80,9 @@ fn fail_under_box(a: &mut SettingsApp, ctx: &Ctx, reason: &str) {
     };
     a.fail(reason);
     assert!(
-        a.children().iter().any(|c| c.id == ERROR_WIN && c.modal),
+        a.children()
+            .iter()
+            .any(|c| c.id == ErrorBox::WIN && c.modal),
         "the error box is modal"
     );
     for win in free {
@@ -90,8 +92,8 @@ fn fail_under_box(a: &mut SettingsApp, ctx: &Ctx, reason: &str) {
 
 /// Closes the error box from its frame.
 fn close_box(a: &mut SettingsApp, ctx: &mut Ctx) {
-    a.event(ERROR_WIN, Event::CloseRequest, ctx);
-    assert!(a.error.is_none(), "the error box closed");
+    a.event(ErrorBox::WIN, Event::CloseRequest, ctx);
+    assert!(!a.error.is_shown(), "the error box closed");
 }
 
 fn page_request(name: &str) -> instance::Request {

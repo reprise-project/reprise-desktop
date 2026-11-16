@@ -202,8 +202,10 @@ impl Notepad {
         }
     }
 
-    pub(crate) fn error_box(&self, text: &str) -> MsgBox {
-        ok_box(text.into(), self.warn_icon.clone())
+    /// Shows `text` in the error box.
+    pub(crate) fn fail(&mut self, text: &str) {
+        let icon = self.warn_icon.clone();
+        self.error.show(&tr!("name"), text.into(), icon);
     }
 
     pub(crate) fn about_fields(&self) -> aboutbox::Fields {
@@ -228,20 +230,6 @@ impl Notepad {
             self.forms.fonts.size_px,
             u,
         ))
-    }
-
-    pub(crate) fn error_event(&mut self, ev: Event) -> Reply {
-        let Some(b) = &mut self.error else {
-            return Reply::none();
-        };
-        match b.event(&ev, &self.dialog_text, &self.forms) {
-            oneshot::Outcome::Closed(_) => {
-                self.error = None;
-                Reply::redraw_all()
-            }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
-        }
     }
 
     /// About's own loop.

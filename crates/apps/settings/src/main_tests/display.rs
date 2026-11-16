@@ -231,7 +231,7 @@ fn ok_waits_for_the_primary_call_and_a_failed_one_keeps_the_sheet_with_a_box() {
     let answer = app.display.primary_answer.take().unwrap();
     answer.send(Err("refused")).unwrap();
     assert_eq!(app.primary_done(), Some(false), "the sheet stays");
-    let text = app.error.as_ref().map(|b| b.fields.text.clone());
+    let text = app.error.shown().map(|b| b.fields.text.clone());
     assert_eq!(text.as_deref(), Some("refused"));
     assert!(app.display.primary_job.is_none());
     assert!(apply_lit(&app), "Apply lights once the call ended");
@@ -315,7 +315,7 @@ fn a_refused_primary_puts_the_check_back_on_the_running_display() {
     let answer = app.display.primary_answer.take().unwrap();
     answer.send(Err("refused")).unwrap();
     assert_eq!(app.primary_done(), Some(false));
-    assert!(app.error.is_some(), "the error box is up");
+    assert!(app.error.is_shown(), "the error box is up");
     assert_eq!(
         app.display.model.primary_index(),
         0,
@@ -353,10 +353,10 @@ fn a_refused_vrr_on_ok_says_so_and_keeps_the_sheet() {
         &mut ctx,
     );
     assert!(!r.quit, "the sheet stays open");
-    let text = app.error.as_ref().map(|b| b.fields.text.clone());
+    let text = app.error.shown().map(|b| b.fields.text.clone());
     assert_eq!(text.as_deref(), Some(displayflow::VRR_REFUSED));
     assert!(
-        app.children().iter().any(|c| c.id == ERROR_WIN),
+        app.children().iter().any(|c| c.id == ErrorBox::WIN),
         "the error box is up"
     );
     assert!(!app.display.model.pick().unwrap().vrr, "the box unticks");

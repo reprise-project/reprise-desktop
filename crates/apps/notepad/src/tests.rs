@@ -1122,7 +1122,7 @@ fn a_typed_path_into_a_missing_folder_shows_a_box_and_keeps_the_dialog() {
             np.open_accept("reprise-no-such-dir/x.txt", &mut test_icons());
             assert!(np.open.is_some(), "Open stays open");
         }
-        assert!(np.error.is_some(), "a box says the folder is missing");
+        assert!(np.error.is_shown(), "a box says the folder is missing");
     }
 }
 
@@ -1300,10 +1300,10 @@ fn failed_save_on_the_prompt_raises_the_box_and_drops_the_action() {
     assert!(np.dirty);
     assert!(
         np.error
-            .as_ref()
+            .shown()
             .is_some_and(|b| b.fields.text.starts_with("Cannot create the "))
     );
-    assert_eq!(np.children().last().expect("the box").id, ERRORBOX);
+    assert_eq!(np.children().last().expect("the box").id, ErrorBox::WIN);
 }
 
 #[test]
@@ -1340,7 +1340,7 @@ fn a_device_or_folder_on_the_command_line_raises_the_box() {
         let np = Notepad::new(Some(PathBuf::from(p)));
         assert_eq!(np.path, None);
         assert_eq!(np.edit.text(), "");
-        let text = &np.error.as_ref().expect("the box").fields.text;
+        let text = &np.error.shown().expect("the box").fields.text;
         assert_eq!(text, &format!("Cannot open {p}.\nIt is not a file."));
     }
 }
@@ -1350,7 +1350,7 @@ fn a_draw_failure_raises_the_box_with_the_systems_error() {
     let mut np = Notepad::new(None);
     np.draw_failed("Too many open files");
     assert_eq!(
-        np.error.as_ref().expect("the box").fields.text,
+        np.error.shown().expect("the box").fields.text,
         "Notepad cannot draw its window: Too many open files.\nClose some programs and try again."
     );
 }
@@ -1369,7 +1369,7 @@ fn a_failed_open_from_the_dialog_raises_the_box_over_it() {
     assert!(np.open.is_some(), "the dialog stays up");
     assert_eq!(np.path, None);
     assert_eq!(
-        np.error.as_ref().expect("the box").fields.text,
+        np.error.shown().expect("the box").fields.text,
         format!(
             "{}\nFile not found.\nPlease verify the correct file name was given.",
             missing.display()
@@ -1715,7 +1715,7 @@ fn a_typed_wildcard_filters_the_open_dialog() {
         &mut ctx,
     );
     np.open_event(key(keysym::RETURN), &mut ctx);
-    assert!(np.error.is_none(), "no box");
+    assert!(!np.error.is_shown(), "no box");
     let dlg = np.open.as_ref().expect("the dialog stays open");
     assert_eq!(dlg.file_name(), "*");
     let mut names: Vec<&str> = dlg.entries().iter().map(|e| e.name.as_str()).collect();

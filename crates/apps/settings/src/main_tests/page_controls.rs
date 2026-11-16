@@ -171,7 +171,7 @@ fn the_remote_desktop_page_follows_what_the_server_says() {
     );
     assert_eq!(remote_label(&a, "encoder"), "Video: VA-API H.264");
     assert_eq!(page.edit_text("fingerprint"), "3F:9A");
-    assert!(a.error.is_none());
+    assert!(!a.error.is_shown());
     assert_eq!(a.want, a.loaded, "the switch is no change for Apply");
 
     remote_read(
@@ -179,7 +179,7 @@ fn the_remote_desktop_page_follows_what_the_server_says() {
         remotehost::Remote::default(),
         Some("Remote Desktop could not be turned on.".into()),
     );
-    assert!(a.error.is_some(), "a failed switch says why");
+    assert!(a.error.is_shown(), "a failed switch says why");
     let page = &a.sheet.pages[Page::RemoteDesktop.index()];
     assert_eq!(page.checked(pages::REMOTE_ALLOW), Some(false));
     assert_eq!(remote_label(&a, "status"), "Off");
@@ -586,7 +586,7 @@ fn the_screen_reader_boxes_follow_the_reads_and_grey_without_orca() {
         running,
         Some("The screen reader could not be started.".into()),
     );
-    assert!(a.error.is_some(), "a failed switch says why");
+    assert!(a.error.is_shown(), "a failed switch says why");
     assert_eq!(a.sheet.pages[at].checked(magnifierpage::READER), Some(true));
     a.sheet.pages[at].set_check(magnifierpage::READER, false);
     a.sheet_event(propsheet::Event::Page(
@@ -641,7 +641,7 @@ fn the_airplane_check_box_acts_at_once_and_follows_the_radios() {
         Some(Mode::On),
         Some("Airplane mode could not be turned off.".into()),
     );
-    assert!(a.error.is_some(), "a failed change says why");
+    assert!(a.error.is_shown(), "a failed change says why");
     assert_eq!(a.sheet.pages[p].checked(pages::AIRPLANE), Some(true));
 }
 
@@ -796,11 +796,11 @@ fn region_and_language_saves_locale_conf_on_apply_and_sets_the_system_at_once() 
     assert!(a.region.as_ref().unwrap().setting);
     assert!(!lit(&a), "greyed while localed works");
     region_set(&mut a, Err(None));
-    assert!(a.error.is_none(), "a dismissed prompt says nothing");
+    assert!(!a.error.is_shown(), "a dismissed prompt says nothing");
     assert!(lit(&a));
     a.sheet_event(propsheet::Event::Page(p, form::Event::Pressed(SYSTEM)));
     region_set(&mut a, Ok(vec![("LANG".into(), "de_DE.UTF-8".into())]));
-    assert!(a.error.is_none());
+    assert!(!a.error.is_shown());
     assert!(!lit(&a), "the system now has it");
     a.sheet_event(propsheet::Event::Page(p, form::Event::Pressed(SYSTEM)));
     assert!(
@@ -817,7 +817,7 @@ fn region_and_language_saves_locale_conf_on_apply_and_sets_the_system_at_once() 
         &mut a,
         Err(Some("You are not allowed to make this change.".into())),
     );
-    assert!(a.error.is_some(), "a refusal says why");
+    assert!(a.error.is_shown(), "a refusal says why");
 }
 
 fn thunderbolt_read(a: &mut SettingsApp, found: Option<Found>, failed: Option<String>) {
@@ -975,7 +975,7 @@ fn authorize_acts_at_once_on_the_picked_device_and_says_why_it_failed() {
         Some(found),
         Some("Acme Dock could not be authorized.".into()),
     );
-    assert!(a.error.is_some(), "a failed change says why");
+    assert!(a.error.is_shown(), "a failed change says why");
     assert!(tb_lit(&a, pages::TB_AUTHORIZE));
     assert_eq!(a.want, a.loaded, "the buttons are no change for Apply");
 }
@@ -1110,7 +1110,7 @@ fn a_startup_remove_that_fails_says_why() {
     pages::fill_list(&mut a.list, &a.entries, &[true]);
     a.list.selection.focus = Some(0);
     a.remove_selected();
-    let text = a.error.as_ref().map(|b| b.fields.text.clone());
+    let text = a.error.shown().map(|b| b.fields.text.clone());
     assert_eq!(
         text.as_deref(),
         Some("Cannot remove 'Volume': a system entry has no user file to remove.")

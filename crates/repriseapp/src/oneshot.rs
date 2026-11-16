@@ -4,7 +4,7 @@
 //! The form drawn last stays in a [`Shown`], so a cut label tips its whole text.
 
 use crate::keys::dialog_key;
-use crate::{BTN_LEFT, Child, Event, PointerInput, WinId};
+use crate::{BTN_LEFT, Child, Event, PointerInput, Reply, WinId};
 use reprisekit::access::{Tree, accesskit::NodeId};
 use reprisekit::controls::dlgtemplate::{self, Template};
 use reprisekit::controls::form::{self, Form};
@@ -300,6 +300,81 @@ impl MsgBox {
     }
 }
 
+/// A one-OK error box in a child window of its own, [`ErrorBox::WIN`]: a program's word that
+/// something failed. The program routes that window's events, draw and access here.
+#[derive(Default)]
+pub struct ErrorBox(Option<MsgBox>);
+
+impl ErrorBox {
+    pub const WIN: WinId = WinId::named("error");
+
+    /// Shows `text` under `title`, with `icon` beside it, in place of any box shown.
+    pub fn show(&mut self, title: &str, text: String, icon: Option<Canvas>) {
+        self.0 = Some(MsgBox::new(
+            title,
+            Fields {
+                text,
+                icon,
+                buttons: vec![reprisekit::kit_tr!("ok")],
+                default: 0,
+                min_text_h: None,
+                min_w: 0,
+                max_w: crate::dialog_max_w(),
+            },
+        ));
+    }
+
+    pub fn is_shown(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// The box shown.
+    pub fn shown(&self) -> Option<&MsgBox> {
+        self.0.as_ref()
+    }
+
+    /// The box shown, to give it an icon that loaded after it opened.
+    pub fn shown_mut(&mut self) -> Option<&mut MsgBox> {
+        self.0.as_mut()
+    }
+
+    pub fn close(&mut self) {
+        self.0 = None;
+    }
+
+    /// The box's window while it is shown.
+    pub fn child(&self, text: &TextRenderer, theme: &Theme) -> Option<Child> {
+        Some(self.0.as_ref()?.child(Self::WIN, text, theme))
+    }
+
+    /// An event for [`ErrorBox::WIN`]; OK and closing take the box down.
+    pub fn event(&mut self, ev: &Event, text: &TextRenderer, theme: &Theme) -> Reply {
+        let Some(b) = &mut self.0 else {
+            return Reply::none();
+        };
+        match b.event(ev, text, theme) {
+            Outcome::Closed(_) => {
+                self.0 = None;
+                Reply::redraw_all()
+            }
+            Outcome::Redraw => Reply::redraw(),
+            Outcome::None => Reply::none(),
+        }
+    }
+
+    pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer) {
+        if let Some(b) = &self.0 {
+            b.draw(c, theme, text);
+        }
+    }
+
+    pub fn access(&self, tree: &mut Tree, text: &TextRenderer, theme: &Theme) {
+        if let Some(b) = &self.0 {
+            b.access(tree, text, theme);
+        }
+    }
+}
+
 pub fn access_form(form: &Form, tree: &mut Tree, text: &TextRenderer, px: u32) {
     if let Some(f) = form.access(tree, reprisekit::access::ROOT, text, px) {
         tree.set_focus(f);
@@ -455,6 +530,32 @@ mod tests {
             glass.min(180 - 2 * 8),
             "capped to a 180 px output less the Glass dialog border"
         );
+    }
+
+    #[test]
+    fn an_error_box_shows_one_ok_and_closes_on_it() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let mut e = ErrorBox::default();
+        assert_eq!(e.child(&text, &theme), None);
+        e.show("Sounds", "The device is gone.".into(), None);
+        assert_eq!(
+            e.shown().map(|b| b.fields.text.as_str()),
+            Some("The device is gone.")
+        );
+        assert_eq!(e.child(&text, &theme).map(|c| c.id), Some(ErrorBox::WIN));
+        assert_eq!(
+            e.shown().map(|b| b.fields.buttons.clone()),
+            Some(vec!["OK".into()])
+        );
+        let key = Event::Key(crate::KeyInput {
+            sym: keysym::RETURN,
+            utf8: None,
+            mods: Default::default(),
+            edit: None,
+        });
+        assert!(e.event(&key, &text, &theme).redraw_all);
+        assert!(!e.is_shown());
     }
 
     #[test]

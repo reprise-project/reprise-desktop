@@ -264,7 +264,7 @@ fn apply_sends_the_edited_machine_settings_to_the_helper() {
             outputs: Vec::new(),
         }
     );
-    assert!(a.error.is_none());
+    assert!(!a.error.is_shown());
     assert!(!a.dirty(), "a save leaves nothing to apply");
 }
 
@@ -361,7 +361,7 @@ fn ok_during_a_failed_save_keeps_the_sheet_open_with_why() {
     a.sheet_event(propsheet::Event::Ok);
     assert!(!settle(&mut a, &mut ctx).quit);
     assert!(!a.wake().quit, "the sheet stays open");
-    let text = a.error.as_ref().map(|b| b.fields.text.clone());
+    let text = a.error.shown().map(|b| b.fields.text.clone());
     assert_eq!(text.as_deref(), Some("The change was not authorized."));
     assert!(a.dirty(), "the change stays to apply");
     assert!(!a.wake().quit, "the close it waited on is spent");
@@ -395,7 +395,7 @@ fn cancel_or_a_close_during_a_save_closes_when_it_ends_saved_or_not() {
         );
         assert!(a.wake().quit, "{tag}, cancel {cancel}: the sheet closes");
         assert!(
-            a.error.is_none(),
+            !a.error.is_shown(),
             "{tag}, cancel {cancel}: no box over a closing sheet"
         );
         assert_eq!(
@@ -461,7 +461,7 @@ fn a_refused_helper_shows_its_reasons() {
     pick(&mut a, "login_interface", 0);
     a.sheet_event(propsheet::Event::Apply);
     a.wake();
-    let text = a.error.as_ref().map(|b| b.fields.text.clone());
+    let text = a.error.shown().map(|b| b.fields.text.clone());
     assert_eq!(
         text.as_deref(),
         Some(
@@ -565,7 +565,7 @@ fn a_missing_helper_is_named_and_pkexec_never_runs() {
 }
 
 fn error_text(a: &SettingsApp) -> Option<String> {
-    a.error.as_ref().map(|b| b.fields.text.clone())
+    a.error.shown().map(|b| b.fields.text.clone())
 }
 
 #[test]
@@ -612,7 +612,7 @@ fn an_unreadable_or_invalid_file_is_never_saved_over() {
             _ => assert_eq!(why, "Is a directory (os error 21)"),
         }
 
-        a.error = None;
+        a.error.close();
         SENT.with(|s| s.borrow_mut().clear());
         pick(&mut a, "login_interface", 2);
         assert!(a.dirty(), "{tag}: the edit lights Apply");
@@ -622,7 +622,7 @@ fn an_unreadable_or_invalid_file_is_never_saved_over() {
         assert_eq!(error_text(&a), Some(opened), "{tag}: told again on Apply");
         assert!(a.dirty(), "{tag}: the edit stays");
 
-        a.error = None;
+        a.error.close();
         if text.is_none() {
             std::fs::remove_dir(&path).unwrap();
         }
@@ -638,7 +638,7 @@ fn an_unreadable_or_invalid_file_is_never_saved_over() {
         assert_eq!(combo_text(login(&a), "login_interface"), "Blue", "{tag}");
         assert!(!a.dirty(), "{tag}: the page holds the fixed file");
 
-        a.error = None;
+        a.error.close();
         pick(&mut a, "login_interface", 2);
         a.sheet_event(propsheet::Event::Apply);
         a.wake();
@@ -667,7 +667,7 @@ fn the_error_at_open_has_the_stop_icon_when_a_wake_is_the_first_event() {
     a.event(repriseapp::MAIN, Event::Wake, &mut ctx);
     let icon = a
         .error
-        .as_ref()
+        .shown()
         .map(|b| b.fields.icon.as_ref() == Some(&stop));
     assert_eq!(icon, Some(true), "the box at open has dialog-error");
 }
@@ -699,7 +699,7 @@ fn a_file_changed_since_the_page_opened_is_not_overwritten() {
     assert_eq!(combo_text(login(&a), "login_interface"), "Blue");
     assert!(!a.dirty(), "the page holds the file as it now reads");
 
-    a.error = None;
+    a.error.close();
     pick(&mut a, "login_interface", 2);
     a.sheet_event(propsheet::Event::Apply);
     a.wake();

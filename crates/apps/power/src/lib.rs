@@ -25,7 +25,7 @@ mod upower;
 use std::time::{Duration, Instant};
 
 use repriseapp::keys::sheet_input;
-use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::oneshot::{self, ErrorBox};
 use repriseapp::{App, Child, Ctx, Event, Reply, WinId};
 use reprisebus::charge::{self, ChargeLimit};
 use reprisekit::access::Tree;
@@ -65,7 +65,7 @@ struct PowerApp {
     iconless: bool,
     hidden: bool,
     tray_only: bool,
-    error: Option<MsgBox>,
+    error: ErrorBox,
     /// The renderer and forms theme the box and window are sized with: `children` and
     /// `initial_size` have no `Ctx`, so they are kept from `start` and the last event.
     dialog_text: Option<Rc<TextRenderer>>,
@@ -93,8 +93,6 @@ fn toggle(device: &str, on: bool) -> Charged {
         limit: if cfg!(test) { None } else { charge::read() },
     }
 }
-
-const ERROR_WIN: WinId = WinId::named("error");
 
 /// The low battery balloon; `saving` adds that power saver is on.
 /// How long a balloon waits for the power saver hold's answer; past it the low balloon goes out
@@ -370,18 +368,7 @@ impl PowerApp {
     }
 
     fn fail(&mut self, text: String) {
-        self.error = Some(MsgBox::new(
-            "Power Options",
-            reprisekit::controls::msgbox::Fields {
-                text,
-                icon: None,
-                buttons: vec!["OK".into()],
-                default: 0,
-                min_text_h: None,
-                min_w: 0,
-                max_w: repriseapp::dialog_max_w(),
-            },
-        ));
+        self.error.show("Power Options", text, None);
     }
 
     /// Turn the charge limit on or off on a thread; a change while one runs shows the known limit again.
@@ -442,20 +429,6 @@ impl PowerApp {
             self.set_profile(p);
         }
         saved
-    }
-
-    fn error_event(&mut self, ev: Event) -> Reply {
-        let (Some(b), Some(text)) = (&mut self.error, &self.dialog_text) else {
-            return Reply::none();
-        };
-        match b.event(&ev, text, &self.forms) {
-            oneshot::Outcome::Closed(_) => {
-                self.error = None;
-                Reply::redraw_all()
-            }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
-        }
     }
 
     fn outcome(&mut self, out: sheet::Outcome) -> Reply {
@@ -611,10 +584,10 @@ impl App for PowerApp {
     }
 
     fn children(&self) -> Vec<Child> {
-        match (&self.error, &self.dialog_text) {
-            (Some(b), Some(text)) => vec![b.child(ERROR_WIN, text, &self.forms)],
-            _ => Vec::new(),
-        }
+        (self.dialog_text.as_ref())
+            .and_then(|text| self.error.child(text, &self.forms))
+            .into_iter()
+            .collect()
     }
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
@@ -655,10 +628,8 @@ impl App for PowerApp {
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         self.dialog_text = Some(ctx.text.clone());
         let forms = ctx.forms();
-        if win == ERROR_WIN {
-            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
-                b.draw(c, &forms, text);
-            }
+        if win == ErrorBox::WIN {
+            self.error.draw(c, &forms, &ctx.text);
             return;
         }
         self.build(None);
@@ -689,16 +660,14 @@ impl repriseapp::Extended for PowerApp {
     }
 
     fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
-        let s = self.sheet.as_mut().filter(|_| win != ERROR_WIN)?;
+        let s = self.sheet.as_mut().filter(|_| win != ErrorBox::WIN)?;
         Some(repriseapp::ReaderForm::Sheet(&mut s.sheet))
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let forms = ctx.forms();
-        if win == ERROR_WIN {
-            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
-                b.access(tree, text, &forms);
-            }
+        if win == ErrorBox::WIN {
+            self.error.access(tree, &ctx.text, &forms);
         } else if let Some(s) = &self.sheet {
             oneshot::access_sheet(&s.sheet, tree, &ctx.text, forms.fonts.size_px);
         }
@@ -710,8 +679,11 @@ impl PowerApp {
         if matches!(ev, Event::Wake) {
             return self.wake();
         }
-        if win == ERROR_WIN {
-            return self.error_event(ev);
+        if win == ErrorBox::WIN {
+            let Some(text) = &self.dialog_text else {
+                return Reply::none();
+            };
+            return self.error.event(&ev, text, &self.forms);
         }
         self.ensure(ctx);
         let Some(s) = &mut self.sheet else {
@@ -1009,7 +981,8 @@ mod tests {
             .unwrap();
             app.wake();
             assert!(app.charging.is_none());
-            assert_eq!(app.error.as_ref().map(|b| b.fields.text.as_str()), said);
+            assert_eq!(app.error.shown().map(|b| b.fields.text.as_str()), said);
+
             assert_eq!(check(&app), (false, true), "back at the known limit, live");
         }
     }

@@ -7,9 +7,7 @@ use crate::{
     SettingsApp, autostart, defaultspage, displaypage, menupage, model, pages, quickpage,
     read_config, take,
 };
-use repriseapp::oneshot::{self, MsgBox};
 use repriseconf::Key;
-use reprisekit::controls::msgbox;
 use reprisekit::controls::propsheet;
 use std::path::PathBuf;
 
@@ -346,37 +344,18 @@ impl SettingsApp {
 
     /// Show `reason` in the error box; the first failure wins.
     pub(crate) fn fail(&mut self, reason: &str) {
-        if self.error.is_none() {
+        if !self.error.is_shown() {
             // `dialog-error` is the theme's, so it is `None` until the
             // first event primed it and the box draws without a column.
-            self.error = Some(MsgBox::new(
-                "Reprise Settings",
-                msgbox::Fields {
-                    text: reason.to_string(),
-                    icon: self.err_icon.clone(),
-                    buttons: vec!["OK".into()],
-                    default: 0,
-                    min_text_h: None,
-                    min_w: 0,
-                    max_w: repriseapp::dialog_max_w(),
-                },
-            ));
+            let icon = self.err_icon.clone();
+            self.error
+                .show("Reprise Settings", reason.to_string(), icon);
         }
     }
 
     pub(crate) fn error_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
         let theme = self.dialog_theme(&ctx.theme);
-        let Some(b) = &mut self.error else {
-            return Reply::none();
-        };
-        match b.event(&ev, &self.dialog_text, &theme) {
-            oneshot::Outcome::Closed(_) => {
-                self.error = None;
-                Reply::redraw_all()
-            }
-            oneshot::Outcome::Redraw => Reply::redraw(),
-            oneshot::Outcome::None => Reply::none(),
-        }
+        self.error.event(&ev, &self.dialog_text, &theme)
     }
 
     /// Reread `config.toml` after a write from elsewhere: the controls the user has not moved show
