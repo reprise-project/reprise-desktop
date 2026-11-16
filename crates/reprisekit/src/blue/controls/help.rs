@@ -2,7 +2,7 @@
 //! disables, so it carries no Disabled frame. Sizes below are design px.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad};
+use crate::blue::scheme::{Face, stops};
 use crate::raster::Canvas;
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, Part, PartImage, State};
@@ -79,12 +79,6 @@ fn help_box(face: &Face, d: i32, side: i32) -> Canvas {
             None => under,
         }
     })
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), shape::premul(c, 255)))
-        .collect()
 }
 
 struct Fill<'a> {

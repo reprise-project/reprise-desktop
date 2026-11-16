@@ -20,7 +20,7 @@
 //! Disabled repeats Normal.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad};
+use crate::blue::scheme::{Face, Grad, stops};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{CLEAR, Px, Stops, centre, draw, mix, polygon, premul, ringed, shares};
 use crate::style::{Layout, Part, PartImage, State};
@@ -56,7 +56,7 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let track = [&s.trackbar_track.normal, &s.trackbar_track.disabled];
     let track = PartImage::new(
-        stack(track.map(|f| channel(f.down, false, d))),
+        Canvas::stacked(&track.map(|f| channel(f.down, false, d))),
         &TRACK_STATES,
         Layout::Vertical,
     )
@@ -64,7 +64,7 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
     .at_scale(d);
     let track_v = [&s.trackbar_track_v.normal, &s.trackbar_track_v.disabled];
     let track_v = PartImage::new(
-        stack(track_v.map(|f| channel(f.across, true, d))),
+        Canvas::stacked(&track_v.map(|f| channel(f.across, true, d))),
         &TRACK_STATES,
         Layout::Vertical,
     )
@@ -73,7 +73,7 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
 
     let t = &s.trackbar_thumb;
     let mut thumb = PartImage::new(
-        stack([&t.normal, &t.hot, &t.pressed, &t.disabled].map(|f| pointer(f, d))),
+        Canvas::stacked(&[&t.normal, &t.hot, &t.pressed, &t.disabled].map(|f| pointer(f, d))),
         &THUMB_STATES,
         Layout::Vertical,
     )
@@ -82,7 +82,7 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
 
     let b = &s.trackbar_thumb_v;
     let thumb_v = PartImage::new(
-        stack([&b.normal, &b.hot, &b.pressed, &b.normal].map(|f| box_thumb(f, d))),
+        Canvas::stacked(&[&b.normal, &b.hot, &b.pressed, &b.normal].map(|f| box_thumb(f, d))),
         &THUMB_STATES,
         Layout::Vertical,
     )
@@ -95,26 +95,6 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
         (Part::TrackbarTrackV, track_v),
         (Part::TrackbarThumbV, thumb_v),
     ]
-}
-
-fn stack<const N: usize>(frames: [Canvas; N]) -> Canvas {
-    let (w, h) = (frames[0].width, frames[0].height);
-    let mut a = Canvas::new(w, h * N as u32);
-    for (i, f) in frames.iter().enumerate() {
-        let top = i as i32 * h as i32;
-        for y in 0..h as i32 {
-            for x in 0..w as i32 {
-                a.put_raw(x, top + y, f.get(x, y));
-            }
-        }
-    }
-    a
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), premul(c, 255)))
-        .collect()
 }
 
 fn at(g: Grad, t: f64) -> Px {

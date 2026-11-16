@@ -478,13 +478,7 @@ fn ringed4(
 }
 
 fn stack(frames: impl Iterator<Item = Canvas>) -> Canvas {
-    let frames: Vec<Canvas> = frames.collect();
-    let (w, h) = (frames[0].width, frames[0].height);
-    let mut a = Canvas::new(w, h * frames.len() as u32);
-    for (i, f) in frames.iter().enumerate() {
-        a.blit_over(0, (i as u32 * h) as i32, f);
-    }
-    a
+    Canvas::stacked(&frames.collect::<Vec<_>>())
 }
 
 #[cfg(test)]

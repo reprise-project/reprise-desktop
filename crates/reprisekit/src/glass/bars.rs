@@ -139,7 +139,7 @@ fn thumb_part(d: i32) -> PartImage {
     PartImage {
         true_size: true,
         ..PartImage::new(
-            stack(THUMB_STATES.map(|s| thumb(&inks(s), d))),
+            Canvas::stacked(&THUMB_STATES.map(|s| thumb(&inks(s), d))),
             &THUMB_STATES,
             Layout::Vertical,
         )
@@ -158,7 +158,7 @@ fn track_v_part(d: i32) -> PartImage {
 /// rows 3 and 6 share any extra height so the gloss's split stays central.
 fn thumb_v_part(d: i32) -> PartImage {
     PartImage::new(
-        stack(THUMB_STATES.map(|s| thumb_v(&inks(s), d))),
+        Canvas::stacked(&THUMB_STATES.map(|s| thumb_v(&inks(s), d))),
         &THUMB_STATES,
         Layout::Vertical,
     )
@@ -166,15 +166,6 @@ fn thumb_v_part(d: i32) -> PartImage {
     .two_bands(3, 6)
     .outset(Insets::new(1, 0, 1, 0))
     .at_scale(d)
-}
-
-fn stack<const N: usize>(frames: [Canvas; N]) -> Canvas {
-    let (w, h) = (frames[0].width, frames[0].height);
-    let mut atlas = Canvas::new(w, h * N as u32);
-    for (i, f) in frames.iter().enumerate() {
-        atlas.blit_over(0, i as i32 * h as i32, f);
-    }
-    atlas
 }
 
 fn grey(v: f64) -> Px {

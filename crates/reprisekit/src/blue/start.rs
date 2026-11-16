@@ -4,7 +4,7 @@
 //! a face shaded down by the face's `down` gradient and across by its
 //! `across` gradient.
 
-use crate::blue::scheme::{Face, Grad, Metrics, Scheme};
+use crate::blue::scheme::{Face, Metrics, Scheme, stops};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, CLEAR, Px, Stops};
 use crate::style::{Layout, PartImage, State};
@@ -46,12 +46,6 @@ pub fn start_button(s: &Scheme, d: i32) -> PartImage {
     PartImage::new(a, &STATES, Layout::Vertical)
         .sizing(Insets::new(m.start_left, 0, m.start_right, 0))
         .at_scale(d)
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), shape::premul(c, 255)))
-        .collect()
 }
 
 /// One state's frame: the rim where the outline and the face inset 1 px

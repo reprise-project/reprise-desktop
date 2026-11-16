@@ -3,7 +3,7 @@
 //! since it grows over both neighbours.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad};
+use crate::blue::scheme::{Face, stops};
 use crate::raster::Insets;
 use crate::shape::{self, CLEAR, Px, Stops};
 use crate::style::{Layout, Part, PartImage, State};
@@ -35,12 +35,6 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
         (Part::TabItem, tab_item(&faces, r, d)),
         (Part::TabPane, tab_pane(&s.tab_pane.normal, d)),
     ]
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), shape::premul(c, 255)))
-        .collect()
 }
 
 fn tinted(body: Px, tint: Px) -> Px {

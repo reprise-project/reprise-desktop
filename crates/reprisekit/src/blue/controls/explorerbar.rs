@@ -3,7 +3,7 @@
 //! Pressed ([`Part::ExplorerBarClose`]), drawn from the scheme at the draw's scale.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad};
+use crate::blue::scheme::{Face, stops};
 use crate::metrics::BarMetrics;
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, CLEAR, Px, Stops, centre, premul};
@@ -43,12 +43,6 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
         (Part::ExplorerBarHeader, head),
         (Part::ExplorerBarClose, close),
     ]
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), premul(c, 255)))
-        .collect()
 }
 
 fn along(v: i32, d: i32, len: i32) -> f64 {

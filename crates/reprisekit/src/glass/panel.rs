@@ -6,7 +6,7 @@ use super::art;
 use super::tint::{self, Recolour, Surface};
 use crate::backdrop::corner_radius;
 use crate::raster::{Canvas, Insets};
-use crate::shape::{Px, centre, pack, premul, ringed, rounded, smooth};
+use crate::shape::{Px, centre, pack, phi, premul, ringed, rounded, smooth};
 use crate::style::{Layout, PartImage, State};
 use crate::theme::Color;
 
@@ -432,18 +432,6 @@ pub fn part(p: &Panel, s: &Settings, w: i32, h: i32, fixed: Insets, d: i32) -> P
         ))
         .at_scale(d)
         .split_ends()
-}
-
-fn phi(z: f64) -> f64 {
-    // erf by Abramowitz and Stegun 7.1.26, good to 1.5e-7.
-    let x = z.abs() / std::f64::consts::SQRT_2;
-    let t = 1.0 / (1.0 + 0.327_591_1 * x);
-    let poly = t
-        * (0.254_829_592
-            + t * (-0.284_496_736
-                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
-    let erf = 1.0 - poly * (-x * x).exp();
-    0.5 * (1.0 + erf.copysign(z))
 }
 
 /// `sh` falling from a `w` x `h` rect, on a canvas reaching its margin

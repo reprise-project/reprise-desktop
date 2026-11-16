@@ -56,6 +56,13 @@ impl Variant {
 /// Positions run 0..=1 over the face at rest; pixel `i` of `n` sits at `(i + 0.5) / n`.
 pub type Grad = &'static [(f32, Color)];
 
+/// `g` as opaque premultiplied [`crate::shape::Stops`] positions.
+pub(crate) fn stops(g: Grad) -> Vec<(f64, crate::shape::Px)> {
+    g.iter()
+        .map(|&(t, c)| (f64::from(t), crate::shape::premul(c, 255)))
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Face {
     pub rim: Color,

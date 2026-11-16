@@ -92,17 +92,11 @@ impl Ink {
 }
 
 fn premul(c: Color, a: u8) -> u32 {
-    let m = |v: u8| (u32::from(v) * u32::from(a) + 127) / 255;
-    u32::from(a) << 24 | m(c.r) << 16 | m(c.g) << 8 | m(c.b)
+    shape::pack(shape::premul(c, a))
 }
 
 fn over(dst: u32, src: u32) -> u32 {
-    let k = 255 - (src >> 24);
-    let ch = |sh: u32| {
-        let (s, d) = ((src >> sh) & 0xFF, (dst >> sh) & 0xFF);
-        (s + (d * k + 127) / 255).min(255) << sh
-    };
-    ch(24) | ch(16) | ch(8) | ch(0)
+    crate::raster::over_round(src, dst)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -2,7 +2,7 @@
 //! Top/bottom rings take the `down` profile, side rings the `across` profile; the fill shifts by `across`.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad, TASK_ATTENTION};
+use crate::blue::scheme::{Face, TASK_ATTENTION, stops};
 use crate::raster::Insets;
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, PartImage, State};
@@ -29,12 +29,6 @@ const STATES: [State; 6] = [
 /// near-black middle column from blowing the ratio up.
 fn lum(p: Px) -> f64 {
     0.30 * p.1[0] + 0.59 * p.1[1] + 0.11 * p.1[2] + 4.0
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), shape::premul(c, 255)))
-        .collect()
 }
 
 fn inset(v: Variant) -> [i32; 4] {

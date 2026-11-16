@@ -14,7 +14,7 @@
 //! row 6 in Slate's down button) the only stretchable row, so no size repeats a slice of the chevron.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad};
+use crate::blue::scheme::{Face, stops};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, Part, PartImage, State};
@@ -86,12 +86,6 @@ fn button(faces: [&Face; 4], dir: Dir, seam: i32, d: i32) -> PartImage {
     PartImage::new(atlas, &STATES, Layout::Vertical)
         .sizing(Insets::new(3, seam, 11, H - seam - 1))
         .at_scale(d)
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), shape::premul(c, 255)))
-        .collect()
 }
 
 fn at_pixel(g: &[(f64, Px)], i: f64, n: i32) -> Px {

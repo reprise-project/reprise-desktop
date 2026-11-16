@@ -3,7 +3,7 @@
 use std::f64::consts::SQRT_2;
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad};
+use crate::blue::scheme::{Face, stops};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, CLEAR, Px, Stops};
 use crate::style::{Layout, Part, PartImage, State};
@@ -67,12 +67,6 @@ impl Shading {
             .min_by(|a, b| luma(a).total_cmp(&luma(b)))
             .unwrap_or(CLEAR)
     }
-}
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), shape::premul(c, 255)))
-        .collect()
 }
 
 /// `a` plus `b` less `base`, per channel, held to 0..=255: two shadings laid one over the other from where they cross.
@@ -329,12 +323,7 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
 }
 
 fn atlas(frames: &[Canvas], states: &[State], d: i32) -> PartImage {
-    let (w, h) = (frames[0].width, frames[0].height);
-    let mut a = Canvas::new(w, h * frames.len() as u32);
-    for (i, f) in frames.iter().enumerate() {
-        a.blit_canvas(0, i as i32 * h as i32, f);
-    }
-    PartImage::new(a, states, Layout::Vertical).at_scale(d)
+    PartImage::new(Canvas::stacked(frames), states, Layout::Vertical).at_scale(d)
 }
 
 #[cfg(test)]

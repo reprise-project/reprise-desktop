@@ -52,6 +52,22 @@ pub fn over(top: Px, under: Px) -> Px {
     )
 }
 
+/// Abramowitz and Stegun 7.1.26, within 1.5e-7.
+pub fn erf(x: f64) -> f64 {
+    let t = 1.0 / (1.0 + 0.327_591_1 * x.abs());
+    let poly = t
+        * (0.254_829_592
+            + t * (-0.284_496_736
+                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
+    let y = 1.0 - poly * (-x * x).exp();
+    y.copysign(x)
+}
+
+/// The standard normal's cumulative share below `z`.
+pub fn phi(z: f64) -> f64 {
+    0.5 * (1.0 + erf(z / std::f64::consts::SQRT_2))
+}
+
 /// `a` with `k` (0..1) of `b` in its place, alpha and every channel
 /// alike.
 pub fn mix(a: Px, b: Px, k: f64) -> Px {

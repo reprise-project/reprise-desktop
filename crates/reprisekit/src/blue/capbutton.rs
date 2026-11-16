@@ -1,7 +1,7 @@
 //! Reprise Blue's caption buttons, drawn at the output scale from the scheme's [`Face`]s: a 21x21 square with rounded corners and a 1 px rim, the face shaded by two gradients at once (`down` top to bottom, `across` left to right) and the glyph over it in the face's `mark`. A dark glyph on a light face sits on a white copy of itself one pixel down and left.
 //! Glyphs are whole design pixels (minimize, maximize, restore) or two square-cut strokes (close), so at 1 they keep solid pixels and at 2 and up the cross's slopes and the box's corners are drawn again, smooth.
 
-use crate::blue::scheme::{Face, Grad, Scheme};
+use crate::blue::scheme::{Face, Scheme, stops};
 use crate::raster::Canvas;
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, PartImage, State};
@@ -91,12 +91,6 @@ const CORNER: f64 = 3.0;
 
 /// How much of a disabled maximize glyph gives way to the face behind it.
 const GREYED: f64 = 0.5;
-
-fn stops(g: Grad) -> Vec<(f64, Px)> {
-    g.iter()
-        .map(|&(t, c)| (f64::from(t), shape::premul(c, 255)))
-        .collect()
-}
 
 fn mean(s: &[(f64, Px)]) -> [f64; 3] {
     let n = SIDE - 2;

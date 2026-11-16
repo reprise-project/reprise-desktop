@@ -333,15 +333,6 @@ fn radio(ink: &RadioInks, checked: bool, d: i32) -> Canvas {
     })
 }
 
-fn column(frames: &[Canvas]) -> Canvas {
-    let (w, h) = (frames[0].width, frames[0].height);
-    let mut a = Canvas::new(w, h * frames.len() as u32);
-    for (i, f) in frames.iter().enumerate() {
-        a.blit_over(0, (i as u32 * h) as i32, f);
-    }
-    a
-}
-
 /// The check box and radio parts painted at `d`, the same in every glass colour.
 pub fn parts(d: i32) -> [(Part, PartImage); 2] {
     let states = [&BOX_NORMAL, &BOX_HOT, &BOX_PRESSED, &BOX_DISABLED];
@@ -350,7 +341,7 @@ pub fn parts(d: i32) -> [(Part, PartImage); 2] {
         .flat_map(|c| states.map(|ink| check_box(ink, c, d)))
         .collect();
     let check = PartImage::new_check(
-        column(&boxes),
+        Canvas::stacked(&boxes),
         &[Check::Unchecked, Check::Checked, Check::Mixed],
         Layout::Vertical,
     )
@@ -361,7 +352,7 @@ pub fn parts(d: i32) -> [(Part, PartImage); 2] {
         .flat_map(|on| states.map(|ink| radio(ink, on, d)))
         .collect();
     let mut radio = PartImage::new_check(
-        column(&discs),
+        Canvas::stacked(&discs),
         &[Check::Unchecked, Check::Checked],
         Layout::Vertical,
     )

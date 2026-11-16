@@ -402,20 +402,11 @@ fn turned(c: &Canvas) -> Canvas {
     t
 }
 
-fn stack(frames: &[Canvas]) -> Canvas {
-    let (w, h) = (frames[0].width, frames[0].height);
-    let mut a = Canvas::new(w, h * frames.len() as u32);
-    for (i, f) in frames.iter().enumerate() {
-        a.blit_over(0, (i as u32 * h) as i32, f);
-    }
-    a
-}
-
 fn frames(cells: &[Canvas], lying: bool) -> Canvas {
     if lying {
-        stack(&cells.iter().map(turned).collect::<Vec<_>>())
+        Canvas::stacked(&cells.iter().map(turned).collect::<Vec<_>>())
     } else {
-        stack(cells)
+        Canvas::stacked(cells)
     }
 }
 

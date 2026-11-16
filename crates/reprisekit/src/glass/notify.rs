@@ -6,8 +6,8 @@ use super::{Mode, NotifyStyle};
 use crate::backdrop::corner_radius;
 use crate::raster::{Canvas, Insets, Rect};
 use crate::shape::{
-    CLEAR, Px, Stops, centre, draw, ellipse, mix, over, pack, premul, rounded, rounded_distance,
-    scale, shares, smooth, stroke, unpack,
+    CLEAR, Px, Stops, centre, draw, ellipse, mix, over, pack, phi, premul, rounded,
+    rounded_distance, scale, shares, smooth, stroke, unpack,
 };
 use crate::style::{NotifyInks, NotifyLook, SQUIRCLE_ROUND, SheetShape, SheetSpec, State, Well};
 use crate::theme::Color;
@@ -290,22 +290,6 @@ fn cast_row(how: &Cast, uy: f64, (x, y, w, h, r): (f64, f64, f64, f64, f64)) -> 
 fn cast_under(p: Px, c: f64, shade: Px) -> Px {
     let u = scale(shade, 1.0 - c);
     (p.0 + u.0, std::array::from_fn(|i| p.1[i] + u.1[i]))
-}
-
-/// The standard normal's cumulative share below `z`.
-fn phi(z: f64) -> f64 {
-    let x = z.abs() / std::f64::consts::SQRT_2;
-    let t = 1.0 / (1.0 + 0.327_591_1 * x);
-    let poly = t
-        * (0.254_829_592
-            + t * (-0.284_496_736
-                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
-    let erf = 1.0 - poly * (-x * x).exp();
-    if z >= 0.0 {
-        0.5 * (1.0 + erf)
-    } else {
-        0.5 * (1.0 - erf)
-    }
 }
 
 fn footprint(spec: &SheetSpec) -> Rect {
