@@ -714,6 +714,9 @@ fn teardown(state: &mut State, side: Side, fade: bool) -> Option<Refocus> {
             false => destroy_cover(state, &c.output, c.tree),
         }
     }
+    if state.lock.console.is_none() && state.lock.remote.is_none() {
+        reprisekit::interfaces::logon::forget_logon_art();
+    }
     Some((l.prev_focus, l.prev_focused_layer, l.prev_desktop))
 }
 
