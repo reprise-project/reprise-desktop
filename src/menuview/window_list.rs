@@ -17,7 +17,11 @@ impl State {
     pub fn open_window_list(&mut self, tree: TreeId, i: usize) {
         let Some((output, btn, mut wins)) = self.bar(tree).map(|b| {
             let btn = list_anchor(&b.layout, i);
-            let wins = b.buttons.get(i).cloned().unwrap_or_default();
+            let wins = b
+                .slots
+                .get(i)
+                .map(|s| s.windows.clone())
+                .unwrap_or_default();
             (b.output.clone(), btn, wins)
         }) else {
             return;
@@ -69,11 +73,11 @@ impl State {
         let Some(b) = self.bar(tree) else { return };
         let Some(more) = b.layout.more else { return };
         let output = b.output.clone();
-        let (keys, rows): (Vec<_>, Vec<_>) = (b.layout.tasks.len()..b.buttons.len())
+        let (keys, rows): (Vec<_>, Vec<_>) = (b.layout.tasks.len()..b.slots.len())
             .filter_map(|i| {
-                let key = crate::taskbar::task_key(&b.buttons, &b.pins, &b.dialogs, i)?;
+                let key = crate::taskbar::task_key(&b.slots, i)?;
                 let title = self.task_button_name(b, i).map(|(t, _)| t);
-                let window = b.buttons.get(i)?.first().copied();
+                let window = b.slots.get(i)?.windows.first().copied();
                 Some((key, (title.unwrap_or_default(), window)))
             })
             .unzip();

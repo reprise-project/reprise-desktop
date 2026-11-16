@@ -212,12 +212,14 @@ pub fn next_seq() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// A slot of the task row: the windows behind its button (none for an idle pin or a dialog), its pinned
-/// item (index into the Quick Launch list) and its dialog (by id).
+/// A slot of the task row: the windows behind its button (none for an idle pin or a dialog; window
+/// indices while laid out, ids on the bar), its pinned item (index into the Quick Launch list), the
+/// app id an unpinned button groups its run by (`group` mode only) and its dialog (by id).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Slot {
-    pub windows: Vec<usize>,
+pub struct Slot<W = usize> {
+    pub windows: Vec<W>,
     pub pin: Option<usize>,
+    pub run: Option<String>,
     pub dialog: Option<u64>,
 }
 
@@ -325,7 +327,7 @@ pub fn merge_row(
         slots.extend(buttons.into_iter().map(|windows| Slot {
             windows,
             pin: Some(k),
-            dialog: None,
+            ..Slot::default()
         }));
     }
     slots.extend(rest.map(|(_, s)| s));
@@ -398,19 +400,18 @@ pub fn dialog_entry(title: &str, active: bool) -> TaskEntry {
     }
 }
 
-/// The units a drag moves along the task row, as button index ranges: a pinned app's buttons, an
-/// unpinned run with the same `runs` key (`group` mode's app ids), or a lone button. `runs` is parallel
-/// to `pins`, or shorter where no button has a key.
-pub fn row_units(pins: &[Option<usize>], runs: &[Option<String>]) -> Vec<std::ops::Range<usize>> {
-    let run = |i: usize| runs.get(i).and_then(Option::as_ref);
+/// The units a drag moves along the task row, as slot index ranges: a pinned app's buttons, an
+/// unpinned run with the same [`Slot::run`], or a lone button.
+pub fn row_units<W>(slots: &[Slot<W>]) -> Vec<std::ops::Range<usize>> {
     let mut units: Vec<std::ops::Range<usize>> = Vec::new();
-    for (i, p) in pins.iter().enumerate() {
+    for (i, s) in slots.iter().enumerate() {
         match units.last_mut() {
-            Some(u) if p.is_some() && pins[u.start] == *p => u.end = i + 1,
+            Some(u) if s.pin.is_some() && slots[u.start].pin == s.pin => u.end = i + 1,
             Some(u)
-                if p.is_none()
-                    && pins[u.start].is_none()
-                    && run(i).is_some_and(|r| run(u.start) == Some(r)) =>
+                if s.pin.is_none()
+                    && slots[u.start].pin.is_none()
+                    && s.run.is_some()
+                    && slots[u.start].run == s.run =>
             {
                 u.end = i + 1
             }
@@ -424,14 +425,8 @@ pub fn row_units(pins: &[Option<usize>], runs: &[Option<String>]) -> Vec<std::op
 /// into (counted as `move_button` does); `tasks` in along/across form (`TaskbarLayout::along_rects`).
 /// A unit passes a neighbour once the pointer, offset by the grab, crosses the neighbour's centre. In
 /// place is the unit's own index.
-pub fn row_drop_slot(
-    tasks: &[Rect],
-    pins: &[Option<usize>],
-    runs: &[Option<String>],
-    from: usize,
-    at: i32,
-) -> usize {
-    let units = row_units(pins, runs);
+pub fn row_drop_slot<W>(tasks: &[Rect], slots: &[Slot<W>], from: usize, at: i32) -> usize {
+    let units = row_units(slots);
     let rects = unit_rects(tasks, &units);
     let (Some(d), Some(grabbed)) = (
         units.iter().position(|u| u.contains(&from)),
@@ -470,27 +465,21 @@ fn unit_rects(tasks: &[Rect], units: &[std::ops::Range<usize>]) -> Vec<Rect> {
 
 /// The gap among [`row_units`] that a launcher dropped `at` px along the row pins into: before a
 /// unit while `at` is short of its centre, after it from there on. `tasks` in along/across form.
-pub fn pin_drop_gap(
-    tasks: &[Rect],
-    pins: &[Option<usize>],
-    runs: &[Option<String>],
-    at: i32,
-) -> usize {
-    slot_at(&unit_rects(tasks, &row_units(pins, runs)), at)
+pub fn pin_drop_gap<W>(tasks: &[Rect], slots: &[Slot<W>], at: i32) -> usize {
+    slot_at(&unit_rects(tasks, &row_units(slots)), at)
 }
 
 /// The row once `n` new pins go into `gap` among its [`row_units`]: the Quick Launch index the
 /// first takes, and each unpinned unit's buttons with the pins then before it, anchored as
 /// [`reorder_row`] anchors them.
-pub fn insert_pins(
-    pins: &[Option<usize>],
-    runs: &[Option<String>],
+pub fn insert_pins<W>(
+    slots: &[Slot<W>],
     gap: usize,
     n: usize,
 ) -> (usize, Vec<(std::ops::Range<usize>, usize)>) {
-    let units = row_units(pins, runs);
+    let units = row_units(slots);
     let gap = gap.min(units.len());
-    let pinned = |u: &&std::ops::Range<usize>| pins[u.start].is_some();
+    let pinned = |u: &&std::ops::Range<usize>| slots[u.start].pin.is_some();
     let at = units[..gap].iter().filter(pinned).count();
     let pin_count = units.iter().filter(pinned).count();
     let mut before = 0;
@@ -499,7 +488,7 @@ pub fn insert_pins(
         if i == gap {
             before += n;
         }
-        match pins[u.start] {
+        match slots[u.start].pin {
             Some(_) => before += 1,
             None => anchors.push((u, before)),
         }
@@ -517,20 +506,15 @@ pub type RowOrder = (Vec<usize>, Vec<(std::ops::Range<usize>, usize)>);
 /// The row after the unit holding button `from` moves to gap `slot`: pins in new order (old indices),
 /// and each unpinned unit's first button with the pins now before it. A unit after the last pin anchors
 /// at `usize::MAX`, so a pin added later still joins the others before it. None when nothing changes.
-pub fn reorder_row(
-    pins: &[Option<usize>],
-    runs: &[Option<String>],
-    from: usize,
-    slot: usize,
-) -> Option<RowOrder> {
-    let mut units = row_units(pins, runs);
+pub fn reorder_row<W>(slots: &[Slot<W>], from: usize, slot: usize) -> Option<RowOrder> {
+    let mut units = row_units(slots);
     let at = units.iter().position(|u| u.contains(&from))?;
     if !move_button(&mut units, at, slot) {
         return None;
     }
     let (mut order, mut anchors) = (Vec::new(), Vec::new());
     for u in units {
-        match pins[u.start] {
+        match slots[u.start].pin {
             Some(k) => order.push(k),
             None => anchors.push((u, order.len())),
         }
@@ -654,38 +638,24 @@ pub enum TaskKey<W> {
     Dialog(u64),
 }
 
-/// The key of task button `i`, from the row's `buttons` (windows), `pins` and `dialogs`. None for a stale index.
-pub fn task_key<W: Copy>(
-    buttons: &[Vec<W>],
-    pins: &[Option<usize>],
-    dialogs: &[Option<u64>],
-    i: usize,
-) -> Option<TaskKey<W>> {
-    if let Some(id) = dialogs.get(i).copied().flatten() {
+/// The key of task button `i` among `slots`. None for a stale index.
+pub fn task_key<W: Copy>(slots: &[Slot<W>], i: usize) -> Option<TaskKey<W>> {
+    let s = slots.get(i)?;
+    if let Some(id) = s.dialog {
         return Some(TaskKey::Dialog(id));
     }
-    let pin = pins.get(i).copied().flatten();
-    match pin {
-        Some(k) if pins.iter().filter(|p| **p == pin).count() == 1 => Some(TaskKey::Pin(k)),
-        _ => buttons
-            .get(i)
-            .and_then(|b| b.first())
-            .map(|&w| TaskKey::Window(w))
-            .or(pin.map(TaskKey::Pin)),
+    match s.pin {
+        Some(k) if slots.iter().filter(|o| o.pin == s.pin).count() == 1 => Some(TaskKey::Pin(k)),
+        _ => (s.windows.first().map(|&w| TaskKey::Window(w))).or(s.pin.map(TaskKey::Pin)),
     }
 }
 
 /// The task button `key` names in the row as laid out now; None once gone.
-pub fn find_task<W: PartialEq>(
-    buttons: &[Vec<W>],
-    pins: &[Option<usize>],
-    dialogs: &[Option<u64>],
-    key: &TaskKey<W>,
-) -> Option<usize> {
+pub fn find_task<W: PartialEq>(slots: &[Slot<W>], key: &TaskKey<W>) -> Option<usize> {
     match key {
-        TaskKey::Window(w) => buttons.iter().position(|b| b.contains(w)),
-        TaskKey::Pin(k) => pins.iter().position(|p| *p == Some(*k)),
-        TaskKey::Dialog(id) => dialogs.iter().position(|d| *d == Some(*id)),
+        TaskKey::Window(w) => slots.iter().position(|s| s.windows.contains(w)),
+        TaskKey::Pin(k) => slots.iter().position(|s| s.pin == Some(*k)),
+        TaskKey::Dialog(id) => slots.iter().position(|s| s.dialog == Some(*id)),
     }
 }
 

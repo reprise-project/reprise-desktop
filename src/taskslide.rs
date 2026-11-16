@@ -22,7 +22,7 @@ pub type Key = TaskKey<WindowId>;
 pub fn row(bar: &Bar) -> Vec<(Key, i32)> {
     (0..bar.layout.tasks.len())
         .filter_map(|i| {
-            let k = crate::taskbar::task_key(&bar.buttons, &bar.pins, &bar.dialogs, i)?;
+            let k = crate::taskbar::task_key(&bar.slots, i)?;
             Some((k, bar.layout.to_along(bar.layout.tasks[i]).x))
         })
         .collect()
@@ -30,7 +30,7 @@ pub fn row(bar: &Bar) -> Vec<(Key, i32)> {
 
 /// The buttons of `bar` that move with button `i` in a drag (its unit).
 fn unit_mates(bar: &Bar, i: usize) -> impl Iterator<Item = usize> {
-    crate::taskbar::row_units(&bar.pins, &bar.runs)
+    crate::taskbar::row_units(&bar.slots)
         .into_iter()
         .find(|u| u.contains(&i))
         .unwrap_or(i..i + 1)
@@ -49,7 +49,7 @@ pub fn forget(bar: &mut Bar, key: Key) {
 /// slot, and the floated button's index and x. Notes the x as drawn.
 pub fn draw_state(bar: &mut Bar, now: Instant) -> (Vec<i32>, Option<(usize, i32)>) {
     let float = bar.task_float.and_then(|(k, s)| {
-        let i = crate::taskbar::find_task(&bar.buttons, &bar.pins, &bar.dialogs, &k)?;
+        let i = crate::taskbar::find_task(&bar.slots, &k)?;
         Some((i, s.x(now)))
     });
     bar.task_float_drawn = float.map(|(_, x)| x);
@@ -58,7 +58,7 @@ pub fn draw_state(bar: &mut Bar, now: Instant) -> (Vec<i32>, Option<(usize, i32)
     } else {
         (0..bar.layout.tasks.len())
             .map(|i| {
-                let k = crate::taskbar::task_key(&bar.buttons, &bar.pins, &bar.dialogs, i);
+                let k = crate::taskbar::task_key(&bar.slots, i);
                 k.and_then(|k| bar.task_slides.iter().find(|(s, _)| *s == k))
                     .map_or(0, |(_, s)| s.offset(now))
             })
@@ -100,16 +100,13 @@ impl State {
         let Some(bar) = self.bar_mut(tree) else {
             return;
         };
-        let unit: Vec<Key> =
-            crate::taskbar::find_task(&bar.buttons, &bar.pins, &bar.dialogs, &dragged)
-                .map(|i| {
-                    unit_mates(bar, i)
-                        .filter_map(|j| {
-                            crate::taskbar::task_key(&bar.buttons, &bar.pins, &bar.dialogs, j)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+        let unit: Vec<Key> = crate::taskbar::find_task(&bar.slots, &dragged)
+            .map(|i| {
+                unit_mates(bar, i)
+                    .filter_map(|j| crate::taskbar::task_key(&bar.slots, j))
+                    .collect()
+            })
+            .unwrap_or_default();
         bar.task_slides.retain(|(k, _)| !unit.contains(k));
         let mut started = false;
         for (k, from, to) in crate::taskbar::moved_buttons(&old, &row(bar)) {
@@ -137,12 +134,12 @@ impl State {
         let Some(bar) = self.bar(tree) else {
             return;
         };
-        let Some(i) = crate::taskbar::find_task(&bar.buttons, &bar.pins, &bar.dialogs, &key) else {
+        let Some(i) = crate::taskbar::find_task(&bar.slots, &key) else {
             return;
         };
         let pointer = self.bar_along(bar, p.x, p.y);
         let row = bar.layout.along_rects(&bar.layout.tasks);
-        let unit = crate::taskbar::row_units(&bar.pins, &bar.runs)
+        let unit = crate::taskbar::row_units(&bar.slots)
             .into_iter()
             .find(|u| u.contains(&i))
             .unwrap_or(i..i + 1);
@@ -168,7 +165,7 @@ impl State {
         let Some((key, at)) = bar.task_float else {
             return;
         };
-        let slot = crate::taskbar::find_task(&bar.buttons, &bar.pins, &bar.dialogs, &key)
+        let slot = crate::taskbar::find_task(&bar.slots, &key)
             .and_then(|i| bar.layout.tasks.get(i))
             .map(|r| bar.layout.to_along(*r).x);
         // From where the float is on screen; a motion since the last frame has not

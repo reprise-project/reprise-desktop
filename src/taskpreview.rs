@@ -238,7 +238,7 @@ fn show(state: &mut State, bar: TreeId, i: usize) {
     let Some((output, mut windows, btn)) = state.bar(bar).and_then(|b| {
         Some((
             b.output.clone(),
-            b.buttons.get(i)?.clone(),
+            b.slots.get(i)?.windows.clone(),
             *b.layout.tasks.get(i)?,
         ))
     }) else {

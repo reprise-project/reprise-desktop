@@ -175,8 +175,8 @@ impl State {
         let back = self.bar_shared.keys.map_or(Back::Nobody, |k| k.back);
         if button == BTN_LEFT
             && let TaskbarHit::Task(i) = at
-            && b.dialogs.get(i).copied().flatten().is_none()
-            && let Some(w) = b.buttons.get(i).and_then(|ws| returns_to(back, ws))
+            && b.slots.get(i).and_then(|s| s.dialog).is_none()
+            && let Some(w) = b.slots.get(i).and_then(|s| returns_to(back, &s.windows))
             && self.win(w).is_some_and(|x| !x.minimized)
         {
             self.bar_shared.keys = None;
@@ -343,8 +343,8 @@ mod tests {
         let b = h.map_toplevel(&mut c, "test.app", 300, 200);
         h.dispatch();
         let tree = h.state.bars[0].tree;
-        let i = (h.state.bars[0].buttons.iter())
-            .position(|ws| ws.len() == 2)
+        let i = (h.state.bars[0].slots.iter())
+            .position(|s| s.windows.len() == 2)
             .expect("one button holds both windows");
         h.state.focus_bar_item(tree, TaskbarHit::Task(i));
         let focused = h.state.focused;

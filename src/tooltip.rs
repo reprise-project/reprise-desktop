@@ -518,7 +518,9 @@ pub(crate) fn label_for(state: &State, bar: TreeId, hit: TaskbarHit) -> Option<S
             let b = state.bar(bar)?;
             // The preview panel (`taskpreview`) names the windows instead;
             // a pinned app with none has no panel, so it keeps its tip.
-            if state.config.previews.taskbar && b.buttons.get(i).is_some_and(|w| !w.is_empty()) {
+            if state.config.previews.taskbar
+                && b.slots.get(i).is_some_and(|s| !s.windows.is_empty())
+            {
                 return None;
             }
             let rect = *b.layout.tasks.get(i)?;

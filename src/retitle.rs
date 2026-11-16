@@ -256,7 +256,11 @@ impl State {
 
     fn task_label(&self, w: WindowId) -> TaskLabel {
         TaskLabel::across((self.bars.iter()).filter_map(|b| {
-            let group = b.buttons.iter().find(|g| g.contains(&w))?;
+            let group = b
+                .slots
+                .iter()
+                .map(|s| &s.windows)
+                .find(|g| g.contains(&w))?;
             Some((group.len(), b.layout.icons_only))
         }))
     }

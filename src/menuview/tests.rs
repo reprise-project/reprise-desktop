@@ -219,28 +219,31 @@ fn an_overflow_rows_pick_names_its_bar_and_button() {
 
 #[test]
 fn an_overflow_row_finds_its_button_after_the_row_changes() {
-    use crate::taskbar::{find_task, task_key};
+    use crate::taskbar::{Slot, find_task, task_key};
     let mut scene = crate::compositor::DeskScene::new();
     let bar = scene.tree_create(scene.root());
     let [a, b, c] = [WindowId::next(), WindowId::next(), WindowId::next()];
-    let opened = [vec![a], vec![b], vec![c]];
+    let row = |ws: &[WindowId]| -> Vec<Slot<WindowId>> {
+        (ws.iter())
+            .map(|&w| Slot {
+                windows: vec![w],
+                pin: None,
+                run: None,
+                dialog: None,
+            })
+            .collect()
+    };
+    let opened = row(&[a, b, c]);
     let kind = MenuKind::TaskOverflow {
         bar,
-        keys: (1..3)
-            .filter_map(|i| task_key(&opened, &[], &[], i))
-            .collect(),
+        keys: (1..3).filter_map(|i| task_key(&opened, i)).collect(),
     };
     let MenuPick::TaskOverflow { key, .. } = kind.pick(1) else {
         panic!("row 1 is c's button");
     };
-    let a_closed = [vec![b], vec![c]];
-    assert_eq!(
-        find_task(&a_closed, &[], &[], &key),
-        Some(1),
-        "one place up"
-    );
-    let c_closed = [vec![a], vec![b]];
-    assert_eq!(find_task(&c_closed, &[], &[], &key), None, "gone");
+    let a_closed = row(&[b, c]);
+    assert_eq!(find_task(&a_closed, &key), Some(1), "one place up");
+    assert_eq!(find_task(&row(&[a, b]), &key), None, "gone");
 }
 
 #[test]

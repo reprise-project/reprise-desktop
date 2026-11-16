@@ -46,8 +46,7 @@ impl State {
                     TaskbarHit::Quick(i) => (false, Some(i), None, None, false, None, false),
                     TaskbarHit::Pager(i) => (false, None, Some(i), None, false, None, false),
                     TaskbarHit::Task(i) => {
-                        let key =
-                            crate::taskbar::task_key(&bar.buttons, &bar.pins, &bar.dialogs, i);
+                        let key = crate::taskbar::task_key(&bar.slots, i);
                         (false, None, None, key, false, None, false)
                     }
                     TaskbarHit::ShowDesktop => (false, None, None, None, true, None, false),
@@ -142,7 +141,7 @@ impl State {
                     crate::taskbar::PressTiming::OnRelease => {
                         let p = self.pointer_location();
                         let held = self.bar(tree).and_then(|b| {
-                            let key = crate::taskbar::task_key(&b.buttons, &b.pins, &b.dialogs, i)?;
+                            let key = crate::taskbar::task_key(&b.slots, i)?;
                             let slot = b.layout.tasks.get(i).map_or(0, |r| b.layout.to_along(*r).x);
                             let grab = self.bar_along(b, f64::from(at.0), f64::from(at.1)) - slot;
                             Some((key, grab, b.layout.along_f(p.x, p.y)))
@@ -232,7 +231,7 @@ impl State {
     }
 
     fn task_button_dialog(&self, tree: TreeId, i: usize) -> Option<u64> {
-        self.bar(tree)?.dialogs.get(i).copied().flatten()
+        self.bar(tree)?.slots.get(i)?.dialog
     }
 
     fn task_button_menu(
@@ -249,7 +248,10 @@ impl State {
             }
             return;
         }
-        let Some(wins) = self.bar(tree).and_then(|b| b.buttons.get(i).cloned()) else {
+        let Some(wins) = self
+            .bar(tree)
+            .and_then(|b| b.slots.get(i).map(|s| s.windows.clone()))
+        else {
             return;
         };
         match wins.as_slice() {
@@ -304,7 +306,7 @@ impl State {
                     }
                 }
                 let Some((button, along, at)) = self.bar(tree).and_then(|b| {
-                    let i = crate::taskbar::find_task(&b.buttons, &b.pins, &b.dialogs, &key)?;
+                    let i = crate::taskbar::find_task(&b.slots, &key)?;
                     Some((i, b.layout.along_f(p.x, p.y), self.bar_along(b, p.x, p.y)))
                 }) else {
                     return;
@@ -316,7 +318,7 @@ impl State {
                 let button = self.row_drag(tree, button, at);
                 let key = self
                     .bar(tree)
-                    .and_then(|b| crate::taskbar::task_key(&b.buttons, &b.pins, &b.dialogs, button))
+                    .and_then(|b| crate::taskbar::task_key(&b.slots, button))
                     .unwrap_or(key);
                 self.interaction = Interaction::TaskPress {
                     bar: tree,
@@ -486,18 +488,16 @@ impl State {
 
     fn row_drag(&mut self, tree: TreeId, i: usize, at: i32) -> usize {
         let Some(bar) = self.bar(tree) else { return i };
-        let Some(key) = crate::taskbar::task_key(&bar.buttons, &bar.pins, &bar.dialogs, i) else {
+        let Some(key) = crate::taskbar::task_key(&bar.slots, i) else {
             return i;
         };
         let slot = crate::taskbar::row_drop_slot(
             &bar.layout.along_rects(&bar.layout.tasks),
-            &bar.pins,
-            &bar.runs,
+            &bar.slots,
             i,
             at,
         );
-        let Some((order, anchors)) = crate::taskbar::reorder_row(&bar.pins, &bar.runs, i, slot)
-        else {
+        let Some((order, anchors)) = crate::taskbar::reorder_row(&bar.slots, i, slot) else {
             return i;
         };
         let before = taskslide::row(bar);
@@ -519,7 +519,7 @@ impl State {
         };
         self.slide_row_moved(tree, &before, &order, key);
         self.bar(tree)
-            .and_then(|b| crate::taskbar::find_task(&b.buttons, &b.pins, &b.dialogs, &key))
+            .and_then(|b| crate::taskbar::find_task(&b.slots, &key))
             .unwrap_or(i)
     }
 
@@ -529,7 +529,7 @@ impl State {
         let Some(bar) = self.bar(tree) else {
             return (self.quicklaunch.len(), Vec::new());
         };
-        let (slot, anchors) = crate::taskbar::insert_pins(&bar.pins, &bar.runs, gap, n);
+        let (slot, anchors) = crate::taskbar::insert_pins(&bar.slots, gap, n);
         (slot, anchored(bar, &anchors))
     }
 
@@ -680,7 +680,10 @@ impl State {
             self.task_dialog_click(id);
             return;
         }
-        let Some(wins) = self.bar(tree).and_then(|b| b.buttons.get(i).cloned()) else {
+        let Some(wins) = self
+            .bar(tree)
+            .and_then(|b| b.slots.get(i).map(|s| s.windows.clone()))
+        else {
             return;
         };
         match wins.as_slice() {
@@ -716,9 +719,9 @@ impl State {
             return;
         };
         let tree = bar.tree;
-        match bar.buttons.get(i) {
-            Some(wins) if wins.len() > 1 && bar.dialogs.get(i).is_none_or(Option::is_none) => {
-                let wins = wins.clone();
+        match bar.slots.get(i) {
+            Some(s) if s.windows.len() > 1 && s.dialog.is_none() => {
+                let wins = s.windows.clone();
                 self.cycle_group(&wins);
             }
             Some(_) => self.task_button_click(tree, i, false),
@@ -748,7 +751,7 @@ impl State {
     fn task_button_launch(&mut self, tree: TreeId, i: usize) {
         if let Some(k) = self
             .bar(tree)
-            .and_then(|b| b.pins.get(i).copied().flatten())
+            .and_then(|b| b.slots.get(i).and_then(|s| s.pin))
         {
             self.run_quick(k);
         }

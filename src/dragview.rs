@@ -837,7 +837,7 @@ impl State {
                 }
                 let at = row_drop(&b.layout, hit, lx, ly)?;
                 let tasks = b.layout.along_rects(&b.layout.tasks);
-                let gap = crate::taskbar::pin_drop_gap(&tasks, &b.pins, &b.runs, at);
+                let gap = crate::taskbar::pin_drop_gap(&tasks, &b.slots, at);
                 Some(DropTarget::Pin { bar, gap })
             }
             Hit::Desktop { index } => {
@@ -1946,7 +1946,10 @@ mod tests {
         h.dispatch();
         let bar = &h.state.bars[0];
         let tree = bar.tree;
-        assert_eq!(bar.pins, [Some(0), Some(1), None]);
+        let pins = |h: &crate::harness::Harness| -> Vec<_> {
+            h.state.bars[0].slots.iter().map(|s| s.pin).collect()
+        };
+        assert_eq!(pins(&h), [Some(0), Some(1), None]);
         let origin = h.state.bar_drawn(&bar.output).shown;
         let at = |h: &crate::harness::Harness, i: usize, right: bool| {
             let r = h.state.bars[0].layout.tasks[i];
@@ -1990,7 +1993,7 @@ mod tests {
         h.state.redraw_taskbars();
         h.dispatch();
         assert_eq!(
-            h.state.bars[0].pins,
+            pins(&h),
             [Some(0), Some(1), None, Some(2)],
             "the new pin lands past the window it was dropped beyond"
         );

@@ -99,8 +99,8 @@ impl State {
             }
             MenuPick::Edit { .. } => {}
             MenuPick::TaskOverflow { bar, key } => {
-                let button = (self.bar(bar))
-                    .and_then(|b| crate::taskbar::find_task(&b.buttons, &b.pins, &b.dialogs, &key));
+                let button =
+                    (self.bar(bar)).and_then(|b| crate::taskbar::find_task(&b.slots, &key));
                 if let Some(button) = button {
                     self.task_button_click(bar, button, false);
                 }

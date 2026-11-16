@@ -5,17 +5,17 @@ use crate::{compositor::State, menuview::MenuRoot};
 
 impl State {
     pub fn task_button_name(&self, bar: &Bar, i: usize) -> Option<(String, bool)> {
-        if let Some(id) = bar.dialogs.get(i).copied().flatten() {
+        if let Some(id) = bar.slots.get(i).and_then(|s| s.dialog) {
             let v = self.dialogs.views.iter().find(|v| v.id == id)?;
             return Some((v.dialog.title.clone(), self.active_dialog_id() == Some(id)));
         }
         let live = |w: &crate::window::Window| self.focused == Some(w.id) && !w.minimized;
-        let wins: Vec<&crate::window::Window> = (bar.buttons.get(i)?.iter())
+        let wins: Vec<&crate::window::Window> = (bar.slots.get(i)?.windows.iter())
             .filter_map(|&w| self.win(w))
             .collect();
         match wins.as_slice() {
             [] => {
-                let k = bar.pins.get(i).copied().flatten()?;
+                let k = bar.slots.get(i).and_then(|s| s.pin)?;
                 self.quicklaunch
                     .get(k)
                     .map(|q| (q.entry.label.clone(), false))
@@ -39,13 +39,13 @@ impl State {
     }
 
     fn task_button_badge(&self, bar: &Bar, i: usize) -> Option<u32> {
-        if !self.config.taskbar.badges || bar.dialogs.get(i).copied().flatten().is_some() {
+        if !self.config.taskbar.badges || bar.slots.get(i).and_then(|s| s.dialog).is_some() {
             return None;
         }
-        let app = (bar.buttons.get(i)?.first())
+        let app = (bar.slots.get(i)?.windows.first())
             .and_then(|&w| self.win(w))
             .map_or_else(String::new, |w| w.app_id());
-        self.task_badge(&app, bar.pins.get(i).copied().flatten())
+        self.task_badge(&app, bar.slots.get(i).and_then(|s| s.pin))
     }
 
     fn tray_cell_name(&self, bar: TreeId, i: usize) -> String {
@@ -90,7 +90,7 @@ impl State {
                 .collect(),
             attention: (0..l.tasks.len())
                 .map(|i| {
-                    (bar.buttons.get(i).into_iter().flatten())
+                    (bar.slots.get(i).into_iter().flat_map(|s| &s.windows))
                         .any(|&w| self.win(w).is_some_and(|w| w.attention.is_some()))
                 })
                 .collect(),
