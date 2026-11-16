@@ -219,6 +219,7 @@ impl<R: Renderer, D> Scene<R, D> {
 
     pub fn remove_output(&mut self, output: &Output) {
         self.outputs.retain(|o| o != output);
+        self.cover.get_mut().retain(|m| m.output != *output);
         crate::surface::leave_output(self, output);
     }
 
