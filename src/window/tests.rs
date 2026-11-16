@@ -1322,8 +1322,8 @@ fn state_faults(h: &crate::harness::Harness, w: super::WindowId) -> Vec<&'static
             "the client hears fullscreen as it is",
         ),
         (
-            suspended != (win.minimized && !s.live_previews.shows(w)),
-            "the client hears a minimized window no live picture shows as suspended",
+            suspended != (win.hidden() && !s.live_previews.shows(w)),
+            "the client hears a hidden window no live picture shows as suspended",
         ),
         (
             win.minimized == s.scene.enabled(win.tree),
