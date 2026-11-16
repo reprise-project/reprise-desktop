@@ -198,10 +198,20 @@ async fn run() -> Result<(), String> {
     let mut daemon = Daemon::new(config, remembered);
     daemon.background_before(backgrounds::load(Path::new(BACKGROUNDS)));
     daemon.viewed_before(backgrounds::load(Path::new(VIEWED)));
-    let loaded = remotepw::load(Path::new(STORE));
-    let stored = loaded.len();
-    let passwords = remotepw::current(loaded, |user| users::lookup(user).map(|e| e.map(|e| e.uid)));
-    let dropped = passwords.len() < stored;
+    let (passwords, dropped) = match remotepw::load(Path::new(STORE)) {
+        Ok(loaded) => {
+            let stored = loaded.len();
+            let uid_of = |user: &str| users::lookup(user).map(|e| e.map(|e| e.uid));
+            let passwords = remotepw::current(loaded, uid_of);
+            let dropped = passwords.len() < stored;
+            (passwords, dropped)
+        }
+        Err(e) => {
+            log::error!("{STORE}: {e}; Remote Desktop password changes are refused until it reads");
+            daemon.password_store_unreadable();
+            (Vec::new(), false)
+        }
+    };
     // No front is linked yet, so this emits nothing.
     let _ = daemon.set_remote_passwords(passwords);
     // An account made again with the same name and uid must not find the old password.
