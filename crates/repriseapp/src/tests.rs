@@ -594,6 +594,32 @@ fn a_modal_child_gates_input_but_not_the_flyout() {
 }
 
 #[test]
+fn a_close_request_under_a_modal_child_is_dropped_and_one_on_the_child_arrives() {
+    const SHEET: WinId = WinId::named("sheet");
+    const ADVANCED: WinId = WinId::named("advanced");
+    let parent = |w: WinId| match w {
+        ADVANCED => Some(SHEET),
+        _ => Some(MAIN),
+    };
+    let slots = [(MAIN, false), (SHEET, false), (ADVANCED, true)];
+    let close = Event::CloseRequest;
+    for win in [MAIN, SHEET] {
+        let modal = modal_over(win, slots.into_iter(), parent);
+        assert_eq!(modal, Some(ADVANCED), "the box gates {win:?}");
+        assert!(input_blocked(&close, modal, win, false));
+    }
+    let modal = modal_over(ADVANCED, slots.into_iter(), parent);
+    assert!(!input_blocked(&close, modal, ADVANCED, false));
+    assert!(
+        !input_blocked(&close, Some(ADVANCED), WinId::named("flyout"), true),
+        "the compositor takes a flyout away under the box too"
+    );
+    let free = [(MAIN, false), (SHEET, false)];
+    let modal = modal_over(SHEET, free.into_iter(), parent);
+    assert!(!input_blocked(&close, modal, SHEET, false));
+}
+
+#[test]
 fn only_the_windows_a_reply_draws_again_are_read_again() {
     let none = Reply::none();
     assert!(!redraws(&none, MAIN, MAIN), "a reply that draws nothing");

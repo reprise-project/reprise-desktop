@@ -1,4 +1,5 @@
-//! Handing an event to the program and carrying out its `Reply`; a modal child gates input.
+//! Handing an event to the program and carrying out its `Reply`; a modal child gates input and
+//! close requests.
 
 use crate::clipboard::{CLIPBOARD_FILES, CLIPBOARD_IMAGE, CLIPBOARD_TEXT, image_mime, text_mime};
 use crate::sizing::{bounded, sane_size};
@@ -443,11 +444,12 @@ pub(crate) fn newly_covered(
 }
 
 /// Whether `ev` on `win` is dropped because modal child `modal` is up:
-/// keys and pointer go to that child alone. A flyout is exempt: it sits
+/// keys, pointer and close requests go to that child alone, so a window
+/// stays until the box over it is answered. A flyout is exempt: it sits
 /// over the whole output, the modal child included, so gating it would
 /// leave nothing on screen that takes input.
 pub(crate) fn input_blocked(ev: &Event, modal: Option<WinId>, win: WinId, flyout: bool) -> bool {
-    let input = matches!(
+    let gated = matches!(
         ev,
         Event::Key(_)
             | Event::KeyUp(_)
@@ -456,8 +458,9 @@ pub(crate) fn input_blocked(ev: &Event, modal: Option<WinId>, win: WinId, flyout
             | Event::DragMotion { .. }
             | Event::DragFiles { .. }
             | Event::DragDrop { .. }
+            | Event::CloseRequest
     );
-    input && !flyout && modal.is_some_and(|m| m != win)
+    gated && !flyout && modal.is_some_and(|m| m != win)
 }
 
 /// The keyboard's window, else the pointer's (a hover tip ticks on the blink), else none; the

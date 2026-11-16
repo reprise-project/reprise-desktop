@@ -111,7 +111,8 @@ pub enum Event {
     /// The frame's X, or the window menu's Close. On `MAIN` the program
     /// answers `Reply::quit`; on a child it drops that `Child`. On a
     /// flyout, the compositor took it away; the program stops returning
-    /// it from `Extended::flyout`.
+    /// it from `Extended::flyout`. A window under a modal child gets none
+    /// while the child is up.
     CloseRequest,
     /// Something off the event loop's thread has work for the program (see
     /// `Waker::wake`). Delivered on `MAIN` even when the main window is
