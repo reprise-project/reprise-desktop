@@ -76,10 +76,6 @@ impl<T> Tabs<T> {
         self.list.get(self.strip.open)
     }
 
-    pub fn current_mut(&mut self) -> Option<&mut T> {
-        self.list.get_mut(self.strip.open)
-    }
-
     /// The held tab follows the pointer to `x` ([`TabStrip::drag_to`]); true when the order changed.
     pub fn drag_to(&mut self, l: &DocLayout, x: i32) -> bool {
         let Some(from) = self.strip.dragging.map(|d| d.tab) else {

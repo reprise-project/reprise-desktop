@@ -597,10 +597,6 @@ pub const WEB_SHORTCUT: &str = "Internet Shortcut";
 
 /// "File Folder", the MIME comment (`props::comment_of`) when
 /// shared-mime-info has one, else "TXT File" / "File".
-pub fn kind_text(path: &Path, is_dir: bool, mime: Option<&str>) -> String {
-    kind_text_in(&MimeDb::empty(), path, is_dir, mime)
-}
-
 pub fn kind_text_in(db: &MimeDb, path: &Path, is_dir: bool, mime: Option<&str>) -> String {
     if is_dir {
         return "File Folder".to_string();

@@ -1019,7 +1019,6 @@ impl Dialog {
     }
 
     /// A Welcome panel drawn Blue under glass too.
-    #[allow(dead_code)]
     pub fn always_blue(mut self) -> Dialog {
         if let Style::Welcome(w) = &mut self.style {
             w.always_blue = true;

@@ -430,18 +430,6 @@ impl<R: Renderer, D> Scene<R, D> {
         (self.node_type(node)? == NodeType::Tree).then_some(TreeId(node))
     }
 
-    pub fn as_rect(&self, node: NodeId) -> Option<RectId> {
-        (self.node_type(node)? == NodeType::Rect).then_some(RectId(node))
-    }
-
-    pub fn as_buffer(&self, node: NodeId) -> Option<BufferId> {
-        (self.node_type(node)? == NodeType::Buffer).then_some(BufferId(node))
-    }
-
-    pub fn as_surface(&self, node: NodeId) -> Option<SurfaceId> {
-        (self.node_type(node)? == NodeType::Surface).then_some(SurfaceId(node))
-    }
-
     pub fn as_custom(&self, node: NodeId) -> Option<CustomId> {
         (self.node_type(node)? == NodeType::Custom).then_some(CustomId(node))
     }
