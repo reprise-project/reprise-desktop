@@ -292,8 +292,8 @@ impl Explorer {
         }
         let sl = self.view_layout(lay.view, ctx);
         match shellview::hit(&self.sv, &sl, x, y) {
-            shellview::Hit::Entry(i) => match self.items.get(i).and_then(crate::folder_place) {
-                Some(place) => self.open_in_new_tab(place),
+            shellview::Hit::Entry(i) => match self.items.get(i).filter(|it| it.is_dir).cloned() {
+                Some(it) => self.open_folder(&it, crate::Follow::NewTab, ctx),
                 None => Reply::none(),
             },
             _ => Reply::none(),
