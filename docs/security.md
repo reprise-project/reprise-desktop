@@ -1047,9 +1047,11 @@ NTLM checks a client's proof against a password the server already holds,
 which PAM never hands out. So NLA logs on with a Remote Desktop password
 each user sets for themselves in User Accounts. It is kept as
 its NT hash, unsalted MD4 as NTLM needs, which is fast to crack from a
-copy. The file, `/var/lib/reprise-login/remote-passwords`, is 0600 root in a
-0700 directory. Use a strong Remote Desktop password: it needs 8
-characters or more and must differ from the login password.
+copy. The file, `/var/lib/reprise-login/remote-passwords`, is 0600 root, in
+the 0711 state directory the login screen's picture needs ([Login
+manager](#login-manager)), so any account can tell whether it exists and when
+it changed. Use a strong Remote Desktop password: it needs 8 characters or
+more and must differ from the login password.
 
 - The account socket acts only on the caller's own uid, and setting or
   clearing it takes that user's login password, checked through

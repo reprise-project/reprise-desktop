@@ -45,7 +45,7 @@ fn parse(line: &str) -> Option<StoredPassword> {
     })
 }
 
-/// Replaces `path` with `all`, the file 0600 in a 0700 directory.
+/// Replaces `path` with `all`, the file 0600; a missing directory is made 0700.
 pub fn save(path: &Path, all: &[StoredPassword]) -> io::Result<()> {
     // Sized for a 10-digit uid up front: a reallocation would free an unzeroed copy of the hashes.
     let len = all
