@@ -418,7 +418,7 @@ const SETTLE_CAP: Duration = Duration::from_secs(30);
 /// way after a cancelled client is gone. A user install deploys in the client itself.
 pub fn settled_refs(install: Install) -> Option<Refs> {
     let root = (install == Install::System)
-        .then(|| installations().into_iter().next())
+        .then(|| reprisefs::flatpak::installations().into_iter().next())
         .flatten();
     let look = || {
         let deploying = root.as_deref().map(deploys_under_way).unwrap_or_default();
@@ -645,19 +645,6 @@ fn parse_info(out: &str) -> Info {
 /// What `install` holds of app `id`.
 pub fn info(install: Install, id: &str) -> Result<Info, String> {
     run(&["info", flag(install), id]).map(|out| parse_info(&out))
-}
-
-/// The system and user installations, where Flatpak looks for them.
-pub fn installations() -> Vec<PathBuf> {
-    let var = |k| {
-        std::env::var_os(k)
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
-    let system = var("FLATPAK_SYSTEM_DIR").unwrap_or_else(|| "/var/lib/flatpak".into());
-    let user =
-        var("FLATPAK_USER_DIR").or_else(|| reprisexdg::data_home().map(|d| d.join("flatpak")));
-    std::iter::once(system).chain(user).collect()
 }
 
 /// Flatpak touches an installation's `.changed` after every change to it, whoever made it.
