@@ -223,6 +223,7 @@ fn restart(argv: Vec<OsString>) {
         )
     };
     crate::stall::before_exec();
+    crate::fdlimit::lower();
     let exe = exec_path(std::fs::read_link(SELF_EXE), is_running_image);
     let mut c = std::process::Command::new(exe);
     if let Some((first, rest)) = argv.split_first() {
