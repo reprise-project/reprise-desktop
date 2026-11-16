@@ -28,14 +28,14 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 
-use repriseapp::filedlg::{Host, Resolved, Step};
+use repriseapp::filedlg::{Driven, Host};
 use repriseapp::keys::{form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{
     App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, PointerInput, Reply, WinId,
 };
 use reprisekit::access::Tree;
-use reprisekit::controls::filedlg::{DlgMode, Event as FileEvent, Fields as FileFields, FileDlg};
+use reprisekit::controls::filedlg::{DlgMode, Fields as FileFields, FileDlg};
 use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::msgbox::Fields;
 use reprisekit::controls::{form, propsheet, wizard};
@@ -790,58 +790,20 @@ impl PrintersApp {
         let Some((host, d)) = self.browse.as_mut() else {
             return Reply::none();
         };
-        let keep = repriseapp::filedlg::type_keep(d);
-        host.ensure_listed(d, &mut ctx.icons, &keep);
-        match host.event(
-            d,
-            &ev,
-            &ctx.text,
-            &ctx.forms(),
-            ctx.size,
-            &ctx.theme.metrics,
-        ) {
-            Step::Closed | Step::Out(FileEvent::Cancel) => {
+        let (text, forms) = (ctx.text.clone(), ctx.forms());
+        match host.drive(d, &ev, &text, &forms, ctx) {
+            Driven::Reply(r) => *r,
+            Driven::Cancelled => {
                 self.browse = None;
                 Reply::redraw_all()
             }
-            Step::None => Reply::none(),
-            Step::Redraw => Reply::redraw(),
-            Step::Resize => Reply::resize(),
-            Step::Out(FileEvent::NeedListing(id)) => {
-                host.list(d, id, &mut ctx.icons, &keep);
-                Reply::redraw()
-            }
-            Step::Out(FileEvent::FilterChanged(_)) => {
-                let keep = repriseapp::filedlg::type_keep(d);
-                if let Some(id) = host.folder {
-                    host.list(d, id, &mut ctx.icons, &keep);
+            Driven::Picked(path) => {
+                self.browse = None;
+                if let Some(w) = &mut self.wizard {
+                    w.file_in(path, &self.snapshot);
                 }
-                Reply::redraw()
+                Reply::redraw_all()
             }
-            Step::Out(FileEvent::Accept(names)) => {
-                let Some(name) = names.into_iter().next() else {
-                    return Reply::none();
-                };
-                match host.resolve(&name) {
-                    Ok(Resolved::Folder(id, _)) => {
-                        host.list(d, id, &mut ctx.icons, &keep);
-                        d.clear_file_name();
-                        Reply::redraw()
-                    }
-                    Ok(Resolved::File(path)) => {
-                        self.browse = None;
-                        if let Some(w) = &mut self.wizard {
-                            w.file_in(path, &self.snapshot);
-                        }
-                        Reply::redraw_all()
-                    }
-                    Err(msg) => {
-                        log::warn!("have disk {name}: {msg}");
-                        Reply::none()
-                    }
-                }
-            }
-            Step::Out(_) => Reply::redraw(),
         }
     }
 

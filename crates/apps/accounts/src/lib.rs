@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
-use repriseapp::filedlg::{Host, Resolved, Step, type_keep};
+use repriseapp::filedlg::{Driven, Host};
 use repriseapp::keys::{dialog_key, form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, ErrorBox, MsgBox};
 use repriseapp::{
@@ -24,9 +24,7 @@ use repriseapp::{
 };
 use reprisekit::access::Tree;
 use reprisekit::controls::addfinger::{self, AddFinger};
-use reprisekit::controls::filedlg::{
-    self, DlgMode, Event as FileEvent, Fields as FileFields, FileDlg,
-};
+use reprisekit::controls::filedlg::{self, DlgMode, Fields as FileFields, FileDlg};
 use reprisekit::controls::fingerprints;
 use reprisekit::controls::msgbox::Fields;
 use reprisekit::controls::remotepassword;
@@ -941,75 +939,34 @@ impl AccountsApp {
         let Some(d) = &mut self.browse else {
             return Reply::none();
         };
-        let host = &mut self.browse_host;
-        let keep = type_keep(d);
-        host.ensure_listed(d, &mut ctx.icons, &keep);
-        let close = |app: &mut AccountsApp| {
-            app.browse = None;
-            Reply::redraw_all()
+        let (text, forms) = (ctx.text.clone(), ctx.forms());
+        let path = match self.browse_host.drive(d, &ev, &text, &forms, ctx) {
+            Driven::Reply(r) => return *r,
+            Driven::Cancelled => None,
+            Driven::Picked(path) => Some(path),
         };
-        match host.event(
-            d,
-            &ev,
-            &ctx.text,
-            &ctx.forms(),
-            ctx.size,
-            &ctx.theme.metrics,
-        ) {
-            Step::Closed | Step::Out(FileEvent::Cancel) => close(self),
-            Step::None => Reply::none(),
-            Step::Redraw => Reply::redraw(),
-            Step::Resize => Reply::resize(),
-            Step::Out(FileEvent::NeedListing(id)) => {
-                host.list(d, id, &mut ctx.icons, &keep);
-                Reply::redraw()
-            }
-            Step::Out(FileEvent::FilterChanged(_)) => {
-                let keep = type_keep(d);
-                if let Some(id) = host.folder {
-                    host.list(d, id, &mut ctx.icons, &keep);
-                }
-                Reply::redraw()
-            }
-            Step::Out(FileEvent::Accept(names)) => {
-                let Some(name) = names.into_iter().next() else {
-                    return Reply::none();
-                };
-                match host.resolve(&name) {
-                    Ok(Resolved::Folder(id, _)) => {
-                        host.list(d, id, &mut ctx.icons, &keep);
-                        d.clear_file_name();
-                        Reply::redraw()
-                    }
-                    Ok(Resolved::File(path)) => {
-                        let px = self
-                            .props
-                            .as_ref()
-                            .map_or(props::PREVIEW_PX, |p| p.preview_px());
-                        match picture::load_file(&path, px) {
-                            Some(c) => {
-                                if let Some(p) = &mut self.props {
-                                    p.browsed(path, c);
-                                }
-                            }
-                            None => {
-                                let name = path
-                                    .file_name()
-                                    .unwrap_or(path.as_os_str())
-                                    .to_string_lossy();
-                                self.fail(format!("'{name}' is not a picture Reprise can read."));
-                            }
-                        }
-                        close(self)
-                    }
-                    Err(msg) => {
-                        self.fail(msg);
-                        close(self)
+        if let Some(path) = path {
+            let px = self
+                .props
+                .as_ref()
+                .map_or(props::PREVIEW_PX, |p| p.preview_px());
+            match picture::load_file(&path, px) {
+                Some(c) => {
+                    if let Some(p) = &mut self.props {
+                        p.browsed(path, c);
                     }
                 }
+                None => {
+                    let name = path
+                        .file_name()
+                        .unwrap_or(path.as_os_str())
+                        .to_string_lossy();
+                    self.fail(format!("'{name}' is not a picture Reprise can read."));
+                }
             }
-            Step::Out(_) => Reply::redraw(),
         }
+        self.browse = None;
+        Reply::redraw_all()
     }
 
     fn focused_edit(&self, win: WinId) -> Option<form::FocusedEdit<'_>> {

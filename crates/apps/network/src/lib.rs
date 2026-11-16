@@ -31,14 +31,14 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 
-use repriseapp::filedlg::{Host, Resolved, Step, type_keep};
+use repriseapp::filedlg::{Driven, Host};
 use repriseapp::keys::{form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{App, Child, Ctx, DropForm, Event, FileDrop, PointerInput, Reply, WinId};
 use reprisebus::airplane::Mode;
 use reprisekit::access::Tree;
 use reprisekit::art::neticon;
-use reprisekit::controls::filedlg::{self, DlgMode, Event as FileEvent, Fields, FileDlg};
+use reprisekit::controls::filedlg::{self, DlgMode, Fields, FileDlg};
 use reprisekit::controls::form;
 use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::msgbox;
@@ -864,63 +864,25 @@ impl NetApp {
         let Some(d) = &mut self.import else {
             return Reply::none();
         };
-        let host = &mut self.import_host;
-        let keep = type_keep(d);
-        host.ensure_listed(d, &mut ctx.icons, &keep);
-        let picked = match host.event(
-            d,
-            &ev,
-            &ctx.text,
-            &ctx.forms(),
-            ctx.size,
-            &ctx.theme.metrics,
-        ) {
-            Step::Closed | Step::Out(FileEvent::Cancel) => None,
-            Step::None => return Reply::none(),
-            Step::Redraw => return Reply::redraw(),
-            Step::Resize => return Reply::resize(),
-            Step::Out(FileEvent::NeedListing(id)) => {
-                host.list(d, id, &mut ctx.icons, &keep);
-                return Reply::redraw();
-            }
-            Step::Out(FileEvent::FilterChanged(_)) => {
-                let keep = type_keep(d);
-                if let Some(id) = host.folder {
-                    host.list(d, id, &mut ctx.icons, &keep);
-                }
-                return Reply::redraw();
-            }
-            Step::Out(FileEvent::Accept(names)) => {
-                let Some(name) = names.into_iter().next() else {
-                    return Reply::none();
-                };
-                match host.resolve(&name) {
-                    Ok(Resolved::Folder(id, _)) => {
-                        host.list(d, id, &mut ctx.icons, &keep);
-                        d.clear_file_name();
-                        return Reply::redraw();
-                    }
-                    Ok(Resolved::File(path)) => Some(Ok(path)),
-                    Err(msg) => Some(Err(msg)),
-                }
-            }
-            Step::Out(_) => return Reply::redraw(),
+        let (text, forms) = (ctx.text.clone(), ctx.forms());
+        let picked = match self.import_host.drive(d, &ev, &text, &forms, ctx) {
+            Driven::Reply(r) => return *r,
+            Driven::Cancelled => None,
+            Driven::Picked(path) => Some(path),
         };
         self.import = None;
-        let title = self.file_title();
         match (picked, self.browse_for.take()) {
-            (Some(Ok(path)), Some(Browse::Ovpn(field))) => {
+            (Some(path), Some(Browse::Ovpn(field))) => {
                 if let Some(VpnWin::OpenVpn(s)) = &mut self.vpn {
                     s.set_path(field, &path.to_string_lossy());
                 }
             }
-            (Some(Ok(path)), Some(Browse::Eap(field))) => {
+            (Some(path), Some(Browse::Eap(field))) => {
                 if let Some(d) = &mut self.eap {
                     d.set_path(field, &path);
                 }
             }
-            (Some(Ok(path)), None) => self.import_file(path),
-            (Some(Err(msg)), _) => self.tell(title, &msg),
+            (Some(path), None) => self.import_file(path),
             (None, _) => {}
         }
         Reply::redraw_all()

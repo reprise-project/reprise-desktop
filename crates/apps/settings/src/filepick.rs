@@ -2,8 +2,8 @@
 //! Browse for a program and the Backup page's Export... and Import....
 
 use crate::{SettingsApp, autostart, wallpapers};
-use repriseapp::filedlg::{Resolved, Step, type_keep};
-use reprisekit::controls::filedlg::{DlgMode, Event as FileEvent, Fields, FileDlg};
+use repriseapp::filedlg::{Driven, type_keep};
+use reprisekit::controls::filedlg::{DlgMode, Fields, FileDlg};
 use std::path::PathBuf;
 
 use repriseapp::{Ctx, Event, Reply};
@@ -34,7 +34,7 @@ fn home() -> PathBuf {
 fn pick_keep(
     pick: Pick,
     d: &FileDlg,
-) -> impl Fn(&reprisefs::listing::Item) -> bool + Clone + Send + 'static {
+) -> impl Fn(&reprisefs::listing::Item) -> bool + Clone + Send + 'static + use<> {
     let typed = type_keep(d);
     let programs = repriseapp::openwith::programs_keep(d.filter());
     move |i| match pick {
@@ -136,83 +136,39 @@ impl SettingsApp {
         let Some(d) = &mut self.add else {
             return Reply::none();
         };
-        let host = &mut self.add_host;
-        let keep = pick_keep(pick, d);
-        host.ensure_listed(d, &mut ctx.icons, &keep);
-        match host.event(
-            d,
-            &ev,
-            &ctx.text,
-            &ctx.forms(),
-            ctx.size,
-            &ctx.theme.metrics,
-        ) {
-            Step::Closed | Step::Out(FileEvent::Cancel) => self.close_add(),
-            Step::None => Reply::none(),
-            Step::Redraw => Reply::redraw(),
-            Step::Resize => Reply::resize(),
-            Step::Out(FileEvent::NeedListing(id)) => {
-                host.list(d, id, &mut ctx.icons, &keep);
-                Reply::redraw()
-            }
-            Step::Out(FileEvent::FilterChanged(_)) => {
-                let keep = pick_keep(pick, d);
-                if let Some(id) = host.folder {
-                    host.list(d, id, &mut ctx.icons, &keep);
+        let (text, forms) = (ctx.text.clone(), ctx.forms());
+        let driven =
+            (self.add_host).drive_keeping(d, &ev, &text, &forms, ctx, |d| pick_keep(pick, d));
+        let path = match driven {
+            Driven::Reply(r) => return *r,
+            Driven::Cancelled => return self.close_add(),
+            Driven::Picked(path) => path,
+        };
+        match pick {
+            Pick::Autostart => {
+                if let Err(e) = autostart::add(&self.user_autostart(), &path) {
+                    log::warn!("add {}: {e}", path.display());
+                    self.fail(&format!("Cannot add '{}': {e}.", path.display()));
                 }
-                Reply::redraw()
+                self.rescan();
             }
-            Step::Out(FileEvent::Accept(names)) => {
-                let Some(name) = names.into_iter().next() else {
-                    return Reply::none();
-                };
-                match host.resolve(&name) {
-                    Ok(Resolved::Folder(_, path)) if pick == Pick::SlideFolder => {
-                        self.slide_folder(path);
-                        self.sync_apply();
-                        self.close_add()
-                    }
-                    Ok(Resolved::Folder(id, _)) => {
-                        host.list(d, id, &mut ctx.icons, &keep);
-                        d.clear_file_name();
-                        Reply::redraw()
-                    }
-                    Ok(Resolved::File(path)) => {
-                        match pick {
-                            Pick::Autostart => {
-                                if let Err(e) = autostart::add(&self.user_autostart(), &path) {
-                                    log::warn!("add {}: {e}", path.display());
-                                    self.fail(&format!("Cannot add '{}': {e}.", path.display()));
-                                }
-                                self.rescan();
-                            }
-                            Pick::Wallpaper => match wallpapers::refusal(&path) {
-                                Some(why) => self.fail(&why),
-                                None => self.browsed(path),
-                            },
-                            Pick::LoginBackground => match wallpapers::refusal(&path) {
-                                Some(why) => self.fail(&why),
-                                None => self.login_picture(path),
-                            },
-                            Pick::Program if !path.is_file() => {
-                                log::warn!("{} is not a file", path.display());
-                                return Reply::none();
-                            }
-                            Pick::Program => self.browsed_program(&path),
-                            Pick::Export | Pick::Import => self.backup_picked(pick, path),
-                            Pick::SlideFolder => {}
-                        }
-                        self.sync_apply();
-                        self.close_add()
-                    }
-                    Err(msg) => {
-                        log::warn!("add {name}: {msg}");
-                        self.fail(&msg);
-                        self.close_add()
-                    }
-                }
+            Pick::Wallpaper => match wallpapers::refusal(&path) {
+                Some(why) => self.fail(&why),
+                None => self.browsed(path),
+            },
+            Pick::LoginBackground => match wallpapers::refusal(&path) {
+                Some(why) => self.fail(&why),
+                None => self.login_picture(path),
+            },
+            Pick::SlideFolder => self.slide_folder(path),
+            Pick::Program if !path.is_file() => {
+                log::warn!("{} is not a file", path.display());
+                return Reply::none();
             }
-            Step::Out(_) => Reply::redraw(),
+            Pick::Program => self.browsed_program(&path),
+            Pick::Export | Pick::Import => self.backup_picked(pick, path),
         }
+        self.sync_apply();
+        self.close_add()
     }
 }
