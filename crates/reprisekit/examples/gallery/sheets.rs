@@ -309,9 +309,7 @@ pub fn render_tray_customize() -> Canvas {
         passive,
         behaviour,
     };
-    let mut c = Canvas::new(1204, 1033);
-    c.fill_rect(c.bounds(), Theme::default().colors.background);
-    let (mut x, mut y) = (10, 10);
+    let mut pages = Vec::new();
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
         let theme = cued(interfaces::theme_for(i));
         let w = Wording::of(&theme);
@@ -329,13 +327,14 @@ pub fn render_tray_customize() -> Canvas {
                 Behaviour::Show,
             )],
             (w == Wording::Glass).then_some(false),
-            theme.look.controls_at_100(),
+            theme.controls(),
         );
+        let px = theme.fonts.size_px;
+        t.fit(&text, px);
         t.select(1);
         if i == Interface::Classic {
             t.combo.toggle();
         }
-        let px = theme.fonts.size_px;
         let lay = t.layout(&text, px, (0, 0));
         let (cw, ch) = t.client();
         let mut sc = Canvas::new(cw as u32, ch as u32);
@@ -347,11 +346,24 @@ pub fn render_tray_customize() -> Canvas {
             reprisekit::cues::Cues::NONE,
             px,
         );
-        if i == Interface::Glass {
-            (x, y) = (10, 411);
-        }
-        c.blit_canvas(x, y, &sc);
-        x += cw + 10;
+        pages.push(sc);
     }
+    let top_w: i32 = pages[..2].iter().map(|p| p.width as i32 + 10).sum();
+    let top_h = pages[..2]
+        .iter()
+        .map(|p| p.height as i32)
+        .max()
+        .unwrap_or(0);
+    let glass_y = (20 + top_h).max(411);
+    let w = (10 + top_w).max(20 + pages[2].width as i32).max(1204);
+    let h = (glass_y + pages[2].height as i32 + 10).max(1033);
+    let mut c = Canvas::new(w as u32, h as u32);
+    c.fill_rect(c.bounds(), Theme::default().colors.background);
+    let mut x = 10;
+    for page in &pages[..2] {
+        c.blit_canvas(x, 10, page);
+        x += page.width as i32 + 10;
+    }
+    c.blit_canvas(10, glass_y, &pages[2]);
     c
 }

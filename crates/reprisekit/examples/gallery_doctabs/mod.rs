@@ -92,14 +92,21 @@ pub fn render(s: i32) -> Canvas {
     let looks = looks();
     let states = states();
     let label_w = 90;
+    let grown = |u: TextUnits| tabstrip::doc_height(u) - tabstrip::doc_height(TextUnits::ONE);
+    let row_h = ROW_H + looks.iter().map(|l| grown(l.1.text)).max().unwrap_or(0);
+    let strip_w = looks
+        .iter()
+        .map(|l| l.1.text.len(STRIP_W))
+        .max()
+        .unwrap_or(STRIP_W);
     let (w, h) = (
-        label_w + states.len() as i32 * (STRIP_W + 10),
-        20 + looks.len() as i32 * ROW_H,
+        label_w + states.len() as i32 * (strip_w + 10),
+        20 + looks.len() as i32 * row_h,
     );
     let mut c = super::blurred_stripes(w * s, h * s);
     let head = TextRenderer::load(&FontConfig::default());
     for (j, (name, _)) in states.iter().enumerate() {
-        let r = Rect::new(label_w + j as i32 * (STRIP_W + 10), 2, STRIP_W, 16).scaled(s);
+        let r = Rect::new(label_w + j as i32 * (strip_w + 10), 2, strip_w, 16).scaled(s);
         head.draw(
             &mut c,
             r,
@@ -111,7 +118,7 @@ pub fn render(s: i32) -> Canvas {
         );
     }
     for (i, (name, base, on_glass)) in looks.iter().enumerate() {
-        let y = 20 + i as i32 * ROW_H;
+        let y = 20 + i as i32 * row_h;
         let r = Rect::new(4, y, label_w - 8, 22).scaled(s);
         head.draw(
             &mut c,
@@ -127,17 +134,17 @@ pub fn render(s: i32) -> Canvas {
         let text = TextRenderer::load(&theme.fonts);
         let p = theme.paint();
         for (j, (_, strip)) in states.iter().enumerate() {
-            let x = label_w + j as i32 * (STRIP_W + 10);
-            let area = Rect::new(x, y, STRIP_W, tabstrip::doc_height(TextUnits::ONE));
-            let client = Rect::new(x, y, STRIP_W, ROW_H - 4);
+            let x = label_w + j as i32 * (strip_w + 10);
+            let area = Rect::new(x, y, strip_w, tabstrip::doc_height(base.text));
+            let client = Rect::new(x, y, strip_w, row_h - 4);
             if *on_glass {
                 look::draw_client_glass(&mut c, &theme, client.scaled(s), client.height * s, false);
             } else {
                 c.fill_rect(client.scaled(s), p.cs.button_face);
             }
-            let term = Rect::new(x, area.bottom(), STRIP_W, client.bottom() - area.bottom());
+            let term = Rect::new(x, area.bottom(), strip_w, client.bottom() - area.bottom());
             c.fill_rect(term.scaled(s), Color::rgb(0x0C, 0x0C, 0x0C));
-            let l = tabstrip::doc_layout(&one, base.fonts.size_px, strip, area, TextUnits::ONE);
+            let l = tabstrip::doc_layout(&one, base.fonts.size_px, strip, area, base.text);
             tabstrip::doc_draw(&mut c, &text, &p, strip, &l, *on_glass, theme.fonts.size_px);
         }
     }

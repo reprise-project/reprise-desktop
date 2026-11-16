@@ -126,12 +126,6 @@ blue-variants.png "new folder" x20
 blue-variants.png "the Web" x20
 caption-tabs-200.png "..." x6
 caption-tabs.png "..." x6
-doc-tabs@1.png "htop" x104
-doc-tabs@1.png "s..." x144
-doc-tabs@1.png "ssh b..." x84
-doc-tabs@1.png "ssh box" x12
-doc-tabs@1.png "~/pr..." x91
-doc-tabs@1.png "~/pro..." x13
 file-dialog.png "Files of type:" x1
 filepreview.png "# Space shows a file;" x3
 filepreview.png "[appearance]" x3
@@ -281,13 +275,6 @@ overview.png "My Documents" x3
 overview.png "Untitled - Notepad" x3
 path-complete.png "~/Do" x3
 perf@1.png "42 %" x4
-power@1.png "Cancel" x32
-power@1.png "Disconnect" x8
-power@1.png "Hibernate" x4
-power@1.png "Log Off" x16
-power@1.png "Stand By" x8
-power@1.png "Switch User" x12
-power@1.png "Turn Off" x16
 quick-more.png "3:45 PM" x6
 reprisekit-gallery.png "#0A246A" x1
 reprisekit-gallery.png "00" x1
@@ -439,26 +426,5 @@ taskbar-edges.png "3:45 PM" x4
 tray-arrow.png "3:45 PM" x4
 tray-arrow.png "Start" x2
 tray-arrow.png "start" x2
-tray-customize.png "A hidden icon and its notifications won't tell you about changes. To see hidden icons at any time, click the arrow beside the notification area." x1
-tray-customize.png "Always h..." x2
-tray-customize.png "Always s..." x2
-tray-customize.png "Always show all icons and notifications on the taskbar" x1
-tray-customize.png "Always..." x2
-tray-customize.png "Behavior" x1
-tray-customize.png "Choose which icons and notifications appear on the taskbar" x1
-tray-customize.png "Hide wh..." x2
-tray-customize.png "Name" x1
-tray-customize.png "Network" x2
-tray-customize.png "Only show notifications" x1
-tray-customize.png "Reprise keeps the icons of busy" x2
-tray-customize.png "Restore Defaults" x2
-tray-customize.png "Select an item, then choose how it behaves:" x2
-tray-customize.png "Sticky Keys" x3
-tray-customize.png "Sticky Keys: all is well" x1
-tray-customize.png "Volume" x2
-tray-customize.png "and keeps the idle ones behind" x2
-tray-customize.png "and urgent items on the taskbar" x2
-tray-customize.png "for any item below." x2
-tray-customize.png "the arrow. Pick another behavior" x2
 welcome@1.png "Message Box" x2
 windowed-dialog.png "Copying..." x33
