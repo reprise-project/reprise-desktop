@@ -785,7 +785,8 @@ missing. Another account's tab only says each user adds their own.
 ## Software Updates
 
 Checks for system, Flatpak and firmware updates after login and every six
-hours, and again when a Flatpak installation changes, a firmware device is
+hours, time asleep included (a check that fell due during suspend runs within
+five minutes of resume), and again when a Flatpak installation changes, a firmware device is
 plugged in or out, or new firmware metadata arrives. Lists them by source, all
 ticked; untick what you'd rather skip and click Install. Where fetching firmware
 metadata takes a password, the checks on their own skip it and Check Now asks
