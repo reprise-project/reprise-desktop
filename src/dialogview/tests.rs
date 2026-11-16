@@ -541,3 +541,31 @@ fn a_welcome_panels_still_fades_in_on_its_outputs_frames_over_its_time() {
         "shown whole at its end"
     );
 }
+
+#[test]
+fn recycle_bin_settings_that_cannot_be_written_say_so_in_an_error_box() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    crate::fsjobs::setup(&mut h.state);
+    let dir = crate::harness::scratch().join("bin-settings-unwritten");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config.toml");
+    std::fs::write(&path, "[recycle_bin\n").unwrap();
+    h.state.config_path = path.clone();
+    h.state.apply_dialog(crate::dialog::Outcome::BinSettings {
+        settings: reprisefs::bincap::Policy::default(),
+        close: true,
+    });
+    h.until("the error box", |s| {
+        (s.dialogs.views.last()).is_some_and(|v| v.dialog.title == "Recycle Bin Properties")
+    });
+    let shown = &h.state.dialogs.views.last().unwrap().dialog;
+    assert!(
+        shown
+            .text
+            .starts_with("Cannot save the Recycle Bin settings in config.toml: "),
+        "{}",
+        shown.text
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "[recycle_bin\n");
+}

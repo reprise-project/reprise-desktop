@@ -475,10 +475,9 @@ impl State {
             }
             let done = if entry.label_is_name_key() {
                 // A launcher's or a link's label is its `Name=`; the file keeps its name.
-                if let Err(e) = reprisefs::apps::set_launcher_name(&entry.path, &typed) {
-                    log::warn!("desktop: rename {} failed: {e}", entry.path.display());
-                }
-                Ok(None)
+                (reprisefs::apps::set_launcher_name(&entry.path, &typed))
+                    .map(|()| None)
+                    .map_err(|e| format!("Cannot rename {}: {e}", entry.label))
             } else {
                 desktop::rename_file(&entry, &typed)
             };
@@ -615,5 +614,42 @@ mod tests {
             row(place_menu(desktop::Place::Home, true, None)),
             Some(IconProperties)
         );
+    }
+
+    #[test]
+    fn a_launcher_whose_name_cannot_be_written_says_why_in_an_error_box() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        crate::fsjobs::setup(&mut h.state);
+        let desk = crate::harness::scratch().join("launcher-rename-refused");
+        std::fs::create_dir_all(&desk).unwrap();
+        let launcher = desk.join("app.desktop");
+        let text = "[Desktop Entry]\nType=Application\nName=App\nExec=true\n";
+        std::fs::write(&launcher, text).unwrap();
+        reprisefs::apps::allow_launching(&launcher).unwrap();
+        crate::desktopview::create(&mut h.state, desk.clone(), Default::default(), None);
+        h.state.rescan_desktop();
+        let listed = |s: &State| {
+            (s.desktop.as_ref().unwrap().entries.iter()).position(|e| e.path == launcher)
+        };
+        h.until("the launcher listed", |s| listed(s).is_some());
+        let i = listed(&h.state).unwrap();
+        assert!(h.state.desktop.as_ref().unwrap().entries[i].label_is_name_key());
+        std::fs::set_permissions(&desk, std::fs::Permissions::from_mode(0o555)).unwrap();
+        h.state.begin_rename(i);
+        h.state.rename_paste("Renamed");
+        h.state.commit_rename();
+        h.until("the error box", |s| {
+            (s.dialogs.views.last()).is_some_and(|v| v.dialog.title == "Rename")
+        });
+        std::fs::set_permissions(&desk, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let shown = &h.state.dialogs.views.last().unwrap().dialog;
+        assert!(
+            shown.text.starts_with("Cannot rename App: "),
+            "{}",
+            shown.text
+        );
+        assert_eq!(std::fs::read_to_string(&launcher).unwrap(), text);
     }
 }

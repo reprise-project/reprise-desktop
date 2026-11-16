@@ -229,7 +229,16 @@ impl State {
                 self.too_big_step(*asker);
             }
             Outcome::BinSettings { settings, close } => {
-                crate::configwrite::save_recycle_bin(&self.config_path, settings, true);
+                let tx = self.loop_sender();
+                crate::configwrite::save_recycle_bin(&self.config_path, settings, true, |e| {
+                    let text = format!("Cannot save the Recycle Bin settings in config.toml: {e}");
+                    let shown: crate::fsjobs::OnLoop = Box::new(move |state: &mut State| {
+                        state.open_dialog(Dialog::error("Recycle Bin Properties", text));
+                    });
+                    if let Some(tx) = tx {
+                        let _ = tx.send(shown);
+                    }
+                });
                 reprisefs::binage::poke();
                 if close {
                     self.close_dialog();
