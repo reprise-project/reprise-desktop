@@ -19,6 +19,24 @@ use reprisekit::icontheme::IconCache;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Set once the sheet that holds it closes, which stops the sheet's folder walk.
+#[derive(Default)]
+pub(crate) struct WalkStop(Arc<AtomicBool>);
+
+impl WalkStop {
+    pub(crate) fn flag(&self) -> Arc<AtomicBool> {
+        self.0.clone()
+    }
+}
+
+impl Drop for WalkStop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
 
 impl Explorer {
     /// File > Properties, Alt+Enter and the menus' Properties row: the sheet for the single
@@ -200,17 +218,22 @@ impl Explorer {
             icon_chosen: None,
             picks: Default::default(),
             checksums: Default::default(),
+            walk: Default::default(),
             sheet,
         }
     }
 
     fn walk_for_props(&mut self, info: &FileInfo, ctx: &mut Ctx) {
+        let Some(stop) = self.props.as_ref().map(|p| p.walk.flag()) else {
+            return;
+        };
         if info.is_dir && info.contains.is_none() {
             let path = info.path.clone();
-            self.spawn_job(ctx, move || {
-                let totals = reprisefs::props::folder_totals(&path);
+            self.spawn_read_job(ctx, move || {
+                let totals = reprisefs::props::folder_totals_unless(&path, &stop);
                 Box::new(move |ex: &mut Explorer, _: &mut Ctx| {
                     if let Some(p) = ex.props.as_mut()
+                        && let Some(totals) = totals
                         && p.set.is_none()
                         && p.info.path == path
                         && p.info.contains.is_none()
@@ -283,6 +306,7 @@ impl Explorer {
             icon_chosen: None,
             picks: Default::default(),
             checksums: Default::default(),
+            walk: Default::default(),
             info,
             sheet,
         }
@@ -318,19 +342,26 @@ impl Explorer {
 
     /// The combined sheet's walk of its folders' totals, while it is up.
     fn walk_set_for_props(&mut self, set: SetInfo, ctx: &mut Ctx) {
+        let Some(stop) = self.props.as_ref().map(|p| p.walk.flag()) else {
+            return;
+        };
         if set.walking {
             let paths = set.paths;
-            self.spawn_job(ctx, move || {
-                let mut sum = reprisefs::props::FolderTotals::default();
-                for d in paths.iter().filter(|p| p.is_dir()) {
-                    let t = reprisefs::props::folder_totals(d);
-                    sum.files += t.files;
-                    sum.folders += t.folders;
-                    sum.size += t.size;
-                    sum.on_disk += t.on_disk;
-                }
+            self.spawn_read_job(ctx, move || {
+                let sum = paths.iter().filter(|p| p.is_dir()).try_fold(
+                    reprisefs::props::FolderTotals::default(),
+                    |mut sum, d| {
+                        let t = reprisefs::props::folder_totals_unless(d, &stop)?;
+                        sum.files += t.files;
+                        sum.folders += t.folders;
+                        sum.size += t.size;
+                        sum.on_disk += t.on_disk;
+                        Some(sum)
+                    },
+                );
                 Box::new(move |ex: &mut Explorer, _: &mut Ctx| {
                     if let Some(p) = ex.props.as_mut()
+                        && let Some(sum) = sum
                         && p.set
                             .as_ref()
                             .is_some_and(|s| s.paths == paths && s.walking)
@@ -377,6 +408,7 @@ impl Explorer {
             icon_chosen: None,
             picks: Default::default(),
             checksums: Default::default(),
+            walk: Default::default(),
             set: Some(set),
             sheet,
         })

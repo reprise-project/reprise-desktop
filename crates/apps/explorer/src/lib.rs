@@ -322,6 +322,8 @@ pub struct Explorer {
     jobs_tx: std::sync::mpsc::Sender<fileops::JobDone>,
     jobs_rx: std::sync::mpsc::Receiver<fileops::JobDone>,
     pub(crate) jobs_pending: usize,
+    /// [`Explorer::spawn_read_job`]'s reads still out.
+    reads: Vec<Job<fileops::JobDone>>,
     /// Actions still out after the listing wait ([`Explorer::act`]).
     pub(crate) acting: Vec<acting::Acting>,
     /// How long an action waits on the file system: [`acting::ACTION_DEADLINE`], shorter in tests.
@@ -568,6 +570,7 @@ impl Explorer {
             jobs_tx,
             jobs_rx,
             jobs_pending: 0,
+            reads: Vec::new(),
             acting: Vec::new(),
             action_deadline: acting::ACTION_DEADLINE,
             landed_late: Arc::default(),

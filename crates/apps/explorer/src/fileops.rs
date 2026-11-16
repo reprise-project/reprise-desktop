@@ -645,7 +645,7 @@ impl Explorer {
     }
 
     /// Run `work` on a thread; its result runs on the window at the next wake. Used for slow work
-    /// (deletes, Empty, folder walks).
+    /// that changes files or drives (deletes, Empty, mounts), which a close waits for.
     pub(crate) fn spawn_job(&mut self, ctx: &Ctx, work: impl FnOnce() -> JobDone + Send + 'static) {
         let tx = self.jobs_tx.clone();
         let wake = ctx.wake.clone();
@@ -661,6 +661,31 @@ impl Explorer {
             self.jobs_pending -= 1;
             log::warn!("explorer: cannot spawn a job thread ({e}); the work was dropped");
         }
+    }
+
+    /// [`Explorer::spawn_job`] for work that only reads, on a listing thread
+    /// ([`Explorer::spawn_read`]) a close does not wait for: a FIFO or a dead mount it hangs on
+    /// never holds the closed window's process.
+    pub(crate) fn spawn_read_job(
+        &mut self,
+        ctx: &Ctx,
+        read: impl FnOnce() -> JobDone + Send + 'static,
+    ) {
+        let job = self.spawn_read(ctx, read);
+        self.reads.push(job);
+    }
+
+    /// The reads [`Explorer::spawn_read_job`] started that have answered, run on the window.
+    pub(crate) fn take_reads(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let mut done = Vec::new();
+        self.reads.retain(|j| match j.take() {
+            Some(d) => {
+                done.push(d);
+                false
+            }
+            None => true,
+        });
+        done.into_iter().map(|d| d(self, ctx)).reduce(Reply::and)
     }
 
     pub(crate) fn poll_jobs(&mut self, ctx: &mut Ctx) -> Option<Reply> {
@@ -750,8 +775,12 @@ impl Explorer {
     #[cfg(test)]
     pub(crate) fn finish_puts(&mut self, ctx: &mut Ctx) -> Reply {
         let mut reply = Reply::none();
-        while (self.busy() && !self.holds_a_job()) || self.tip_walk_out() {
+        while (self.busy() && !self.holds_a_job()) || self.tip_walk_out() || !self.reads.is_empty()
+        {
             std::thread::sleep(std::time::Duration::from_millis(2));
+            if let Some(r) = self.take_reads(ctx) {
+                reply = r;
+            }
             if let Some(r) = self.poll_put(ctx) {
                 reply = r;
             }

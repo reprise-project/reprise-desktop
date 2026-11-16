@@ -188,6 +188,7 @@ fn props(info: FileInfo) -> Props {
         icon_chosen: None,
         picks: Default::default(),
         checksums: Default::default(),
+        walk: Default::default(),
         info,
         sheet,
     }

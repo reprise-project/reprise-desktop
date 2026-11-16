@@ -25,13 +25,15 @@ fn yes_all(src: &Path, dest: &Path) -> Option<Replacing> {
 }
 
 #[test]
-fn read_regular_refuses_a_fifo_a_folder_and_a_file_over_the_cap() {
+fn read_and_open_regular_refuse_a_fifo_a_folder_and_a_file_over_the_cap() {
     let t = tempfile::tempdir().unwrap();
     let fifo = t.path().join("fifo");
     mkfifo(&fifo);
     let kind = |p: &Path, max| read_regular(p, max).unwrap_err().kind();
     assert_eq!(kind(&fifo, 10), io::ErrorKind::InvalidInput);
     assert_eq!(kind(t.path(), 10), io::ErrorKind::InvalidInput);
+    let opened = open_regular(&fifo).unwrap_err().kind();
+    assert_eq!(opened, io::ErrorKind::InvalidInput);
     let file = t.path().join("f");
     fs::write(&file, "0123456789").unwrap();
     assert_eq!(kind(&file, 9), io::ErrorKind::FileTooLarge);
