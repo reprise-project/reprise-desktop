@@ -181,8 +181,9 @@ impl Asked {
         }
     }
 
-    /// The text for the file `name`.
+    /// The text for the file `name`, shown on one line without format characters.
     pub fn text(self, name: &str) -> String {
+        let name = crate::names::shown_line(name, usize::MAX);
         match self {
             Asked::Script => format!(
                 "\"{name}\" is a script. Running it can change or delete your files.\n\n\
@@ -322,8 +323,10 @@ fn executable(path: &Path) -> io::Result<()> {
     }
 }
 
-/// The error box text for the program `name` when starting it failed with `e`.
+/// The error box text for the program `name` (shown on one line) when starting it failed with
+/// `e`.
 pub fn run_failed_text(name: &str, e: &io::Error) -> String {
+    let name = crate::names::shown_line(name, usize::MAX);
     let why = match e.raw_os_error() {
         // A missing terminal, interpreter on the `#!` line or binary loader.
         Some(libc::ENOENT) => "The program that runs it was not found.".to_string(),
@@ -704,6 +707,21 @@ mod tests {
             Asked::of(Program::Binary).text("a.pdf"),
             "\"a.pdf\" is a program. Running it can change or delete your files.\n\n\
              Do you want to run it?"
+        );
+    }
+
+    #[test]
+    fn the_run_question_and_its_error_show_a_name_with_breaks_and_format_characters_on_one_line() {
+        let name = "a.txt\n\nIt is safe.\u{202e}hs.\u{200b}x";
+        let text = Asked::Script.text(name);
+        assert!(
+            text.starts_with("\"a.txtIt is safe.hs.x\" is a script."),
+            "{text:?}"
+        );
+        let e = io::Error::from_raw_os_error(libc::EACCES);
+        assert_eq!(
+            run_failed_text(name, &e),
+            "Cannot run a.txtIt is safe.hs.x: Access is denied."
         );
     }
 }
