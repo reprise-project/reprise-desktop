@@ -4,10 +4,7 @@ use std::{sync::Arc, time::Instant};
 
 use reprisekit::anim::{Unroll, UnrollFrom};
 use reprisescene::{Input, NodeId, TreeId};
-use smithay::{
-    output::Output,
-    reexports::calloop::timer::{TimeoutAction, Timer},
-};
+use smithay::output::Output;
 
 use crate::{
     compositor::{SceneOwner, State},
@@ -201,7 +198,7 @@ impl State {
         });
         if opening.is_some() {
             self.open_menu_frame(self.menus.len() - 1, 0.0);
-            self.arm_menu_fade();
+            self.animate(crate::animclock::Anim::MenuOpen);
         }
         crate::autohideview::poke(self);
     }
@@ -478,9 +475,6 @@ impl State {
         for b in &mut self.bars {
             b.start_pressed = held == Some(b.tree);
         }
-        if let Some(t) = self.menu_fade_timer.take() {
-            self.handle.remove(t);
-        }
         self.redraw_taskbars();
     }
 
@@ -530,21 +524,6 @@ impl State {
         }
     }
 
-    fn arm_menu_fade(&mut self) {
-        if self.menu_fade_timer.is_some() {
-            return;
-        }
-        let token = self
-            .handle
-            .insert_source(Timer::from_duration(FADE_TICK), |_, _, state| {
-                state.menu_fade_tick()
-            });
-        match token {
-            Ok(t) => self.menu_fade_timer = Some(t),
-            Err(e) => log::warn!("menu fade timer: {}", e.error),
-        }
-    }
-
     /// Shows menu `idx` at `t` (0 to 1) of its opening; at 1 the opening ends.
     fn open_menu_frame(&mut self, idx: usize, t: f32) {
         let Some(skin) = self.menus.get(idx).map(|m| m.skin) else {
@@ -580,25 +559,26 @@ impl State {
         }
     }
 
-    fn menu_fade_tick(&mut self) -> TimeoutAction {
+    /// One frame of every opening menu; whether one still opens.
+    pub(crate) fn menu_open_step(&mut self, now: Instant) -> bool {
         let ms = self.config.theme.metrics.menu_fade_ms.max(1) as f32;
         let mut done = true;
         let trees: Vec<NodeId> = self.menus.iter().map(|m| m.tree.into()).collect();
-        let was = self.outputs_of_nodes(&trees);
+        let mut was = self.outputs_of_nodes(&trees);
         for idx in 0..self.menus.len() {
             if self.menus[idx].opening.is_none() {
                 continue;
             }
-            let t = (self.menus[idx].opened.elapsed().as_secs_f32() * 1000.0 / ms).min(1.0);
+            // A menu faded or unrolled to nothing yet shows on no output.
+            if !was.contains(&self.menus[idx].output) {
+                was.push(self.menus[idx].output.clone());
+            }
+            let since = now.saturating_duration_since(self.menus[idx].opened);
+            let t = (since.as_secs_f32() * 1000.0 / ms).min(1.0);
             self.open_menu_frame(idx, t);
             done &= t >= 1.0;
         }
         self.redraw_nodes(was, &trees);
-        if done {
-            self.menu_fade_timer = None;
-            TimeoutAction::Drop
-        } else {
-            TimeoutAction::ToDuration(FADE_TICK)
-        }
+        !done
     }
 }

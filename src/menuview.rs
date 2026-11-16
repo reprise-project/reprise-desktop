@@ -17,11 +17,7 @@ mod window_list;
 #[cfg(test)]
 mod tests;
 
-use std::{
-    path::PathBuf,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{path::PathBuf, rc::Rc, time::Instant};
 
 use reprisefs::apps::AppEntry;
 use reprisekit::anim::UnrollFrom;
@@ -569,8 +565,6 @@ impl Menu {
 }
 
 pub(crate) const RECENT_DOCUMENTS: usize = 15;
-
-const FADE_TICK: Duration = Duration::from_millis(16);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuPending {

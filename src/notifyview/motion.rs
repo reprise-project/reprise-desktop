@@ -1,4 +1,4 @@
-//! Sheets arriving, sliding between slots, opening and leaving, and their frame tick.
+//! Sheets arriving, sliding between slots, opening and leaving, stepped on the frame clock.
 
 use reprisekit::anim::{Ease, Tween};
 use reprisekit::controls::notifysheet::{
@@ -7,10 +7,10 @@ use reprisekit::controls::notifysheet::{
 use reprisekit::taskbar::Edge;
 use reprisescene::{Input, NodeId};
 use smithay::output::Output;
-use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use std::rc::Rc;
 use std::time::Instant;
 
+use crate::animclock::Anim;
 use crate::compositor::{DeskScene, State};
 use crate::config::EffectsConfig;
 use crate::glass::GlassCtx;
@@ -20,7 +20,7 @@ use super::layout::Drawn;
 use super::paint::{lay_stack, redraw};
 use super::pointer::{rehold, rehover};
 use super::warm::warm_openings;
-use super::{Balloon, NOTIFY_TICK, NotifyView, droplets};
+use super::{Balloon, NotifyView, droplets};
 
 /// A sheet's way in, out and between slots, and a Droplet's opening.
 #[derive(Clone, Copy, Debug)]
@@ -243,36 +243,24 @@ pub(super) fn still(v: &NotifyView, now: Instant) -> bool {
         .all(|b| b.motion.settled(now))
 }
 
-/// A tick not `settled` at its start runs once more, so the next one sees the rest and re-checks
+/// A step not `settled` at its start runs once more, so the next one sees the rest and re-checks
 /// the pointer; one settled runs on while a Droplet it opened at `later` moves.
-pub(super) fn keeps_ticking(v: &NotifyView, settled: bool, later: Instant) -> bool {
+pub(super) fn keeps_stepping(v: &NotifyView, settled: bool, later: Instant) -> bool {
     !settled || !still(v, later)
 }
 
-pub(super) fn arm_tick(state: &mut State) {
-    if state.notify.tick_timer.is_some() || still(&state.notify, Instant::now()) {
-        return;
-    }
-    match state
-        .handle
-        .insert_source(Timer::from_duration(NOTIFY_TICK), |_, _, state| {
-            if tick(state) {
-                TimeoutAction::ToDuration(NOTIFY_TICK)
-            } else {
-                state.notify.tick_timer = None;
-                TimeoutAction::Drop
-            }
-        }) {
-        Ok(t) => state.notify.tick_timer = Some(t),
-        Err(e) => log::warn!("notification motion timer: {}", e.error),
+/// While anything moves, the sheets step on every frame from the next one.
+pub(super) fn animate(state: &mut State) {
+    if !still(&state.notify, Instant::now()) {
+        state.animate(Anim::Notify);
+        redraw(state);
     }
 }
 
 /// Redraws the Droplets opening, with the stack following their height and the hold the still
 /// pointer, poses every sheet and takes down those done leaving; true while any still moves.
 /// Once all rest, the still pointer is re-checked as on a move.
-pub(super) fn tick(state: &mut State) -> bool {
-    let now = Instant::now();
+pub(crate) fn step(state: &mut State, now: Instant) -> bool {
     let v = &state.notify;
     if v.stack
         .iter()
@@ -313,10 +301,10 @@ pub(super) fn tick(state: &mut State) -> bool {
     let settled = still(&state.notify, now);
     if settled {
         rehold(state, now);
-        // A Droplet this opens moves on, and `paint` leaves the running tick armed.
+        // A Droplet this opens moves on, and `paint` leaves the step running.
         rehover(state);
     }
-    let moving = keeps_ticking(&state.notify, settled, Instant::now());
+    let moving = keeps_stepping(&state.notify, settled, Instant::now().max(now));
     if !moving {
         warm_openings(state);
     }
@@ -337,7 +325,7 @@ pub(super) fn leave(state: &mut State, mut b: Balloon) {
     restack(&mut state.scene, &v.stack, &v.leaving, now);
     crate::autohideview::poke(state);
     crate::access::touch(state);
-    arm_tick(state);
+    animate(state);
 }
 
 /// A sheet's band in the overlay, lowest first: leaving ones draw under arriving ones, and both

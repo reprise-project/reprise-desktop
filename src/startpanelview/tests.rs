@@ -1248,3 +1248,36 @@ fn a_program_menu_acts_on_its_program_after_a_rescan_moves_it() {
     );
     assert!(!h.state.launches.is_pinned("Audacity.desktop"));
 }
+
+#[test]
+fn the_panels_fade_in_steps_on_its_outputs_frames_over_its_time() {
+    let mut config = crate::config::Config::default();
+    config.startmenu_style = crate::config::StartMenuStyle::Glass;
+    config.effects.menu_animation = crate::config::MenuAnimation::Fade;
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    h.pointer_to(512.0, 400.0);
+    h.state.toggle_start_from_keys();
+    let v = h
+        .state
+        .start_panel
+        .as_ref()
+        .expect("the Start panel is open");
+    let (tree, opened) = (v.tree, v.opened);
+    let ms = std::time::Duration::from_millis(h.state.config.theme.metrics.menu_fade_ms as u64);
+    crate::animclock::step(&mut h.state, opened + ms / 2);
+    let half = h.state.scene.opacity(tree).unwrap();
+    assert!((half - 0.5).abs() < 1e-3, "half way, half shown: {half}");
+    crate::animclock::assert_steps_until(
+        &mut h.state,
+        crate::animclock::Anim::StartPanel,
+        &["TEST-1"],
+        opened + ms,
+    );
+    assert_eq!(
+        h.state.scene.opacity(tree),
+        Some(1.0),
+        "shown whole at its end"
+    );
+}

@@ -54,8 +54,8 @@ pub struct StartPanelView {
     pressed: Option<Spot>,
     hover: Option<RegistrationToken>,
     opened: Instant,
-    /// The opening's timer, fading or unrolling.
-    fade: Option<RegistrationToken>,
+    /// Whether the opening, fading or unrolling, still runs.
+    opening: bool,
     /// The side the panel unrolls from while it does.
     unroll: Option<UnrollFrom>,
     /// Where the unrolling panel draws from `at` this frame.
@@ -71,7 +71,6 @@ pub struct StartPanelView {
     drawn: Option<Drawn>,
     rasters: Rasters,
     crossfades: Vec<Crossfade>,
-    crossfade_timer: Option<RegistrationToken>,
 }
 
 impl StartPanelView {
@@ -168,7 +167,7 @@ impl State {
             pressed: None,
             hover: None,
             opened: Instant::now(),
-            fade: None,
+            opening: opening != MenuAnimation::None,
             unroll,
             shift: (0, 0),
             extent: Rect::new(0, 0, 0, 0),
@@ -183,7 +182,6 @@ impl State {
             drawn: None,
             rasters: Rasters::default(),
             crossfades: Vec::new(),
-            crossfade_timer: None,
         });
         self.read_user_pictures(vec![px]);
         self.list_start_programs();
@@ -201,7 +199,7 @@ impl State {
             b.start_pressed = true;
         }
         if opening != MenuAnimation::None {
-            self.arm_start_panel_fade();
+            self.animate(crate::animclock::Anim::StartPanel);
         }
         self.redraw_start_panel();
         self.redraw_taskbar(bar);
@@ -211,10 +209,7 @@ impl State {
         let Some(mut v) = self.start_panel.take() else {
             return;
         };
-        for t in [v.hover.take(), v.fade.take(), v.crossfade_timer.take()]
-            .into_iter()
-            .flatten()
-        {
+        if let Some(t) = v.hover.take() {
             self.handle.remove(t);
         }
         crate::tooltip::hover_start_panel(self, None);

@@ -23,6 +23,12 @@ pub enum Anim {
     TaskSlide,
     /// The tray arrow's run of hidden icons sliding out or back (`trayreveal`).
     TrayReveal,
+    /// Menus fading or unrolling in (`menuview`).
+    MenuOpen,
+    /// The Start panel fading or unrolling in, and its pictures crossfading (`startpanelview`).
+    StartPanel,
+    /// Notification balloons sliding and Droplet beads in motion (`notifyview`).
+    Notify,
 }
 
 impl Anim {
@@ -33,6 +39,9 @@ impl Anim {
             Anim::Hover => state.hover_step(now),
             Anim::TaskSlide => state.slide_step(now),
             Anim::TrayReveal => crate::trayreveal::step(state, now),
+            Anim::MenuOpen => state.menu_open_step(now),
+            Anim::StartPanel => state.start_panel_step(now),
+            Anim::Notify => crate::notifyview::motion::step(state, now),
         }
     }
 }

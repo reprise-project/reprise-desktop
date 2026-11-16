@@ -4,7 +4,7 @@
 mod access;
 mod clock;
 mod layout;
-mod motion;
+pub(crate) mod motion;
 mod paint;
 mod pointer;
 mod reply;
@@ -59,8 +59,6 @@ const REPLY_IDLE: Duration = Duration::from_secs(120);
 
 /// How often a sheet's app line ("2 min ago") is redrawn.
 const AGE_TICK: Duration = Duration::from_secs(60);
-
-const NOTIFY_TICK: Duration = Duration::from_millis(16);
 
 /// Logical px.
 const TINT_PX: i32 = 48;
@@ -164,7 +162,6 @@ pub struct NotifyView {
     own_actions: Vec<(String, OwnAction)>,
     timer: Option<RegistrationToken>,
     age_timer: Option<RegistrationToken>,
-    tick_timer: Option<RegistrationToken>,
     /// Wakes at each minute boundary while `[notifications] quiet_hours` is set.
     minute_timer: Option<RegistrationToken>,
     /// Ends a timed Do Not Disturb.

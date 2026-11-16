@@ -703,3 +703,44 @@ fn a_key_in_a_menu_asks_only_the_outputs_the_menu_is_on() {
     asked.dedup();
     assert_eq!(asked, ["TEST-1"], "the highlight moves on TEST-1 only");
 }
+
+#[test]
+fn a_menus_fade_in_steps_on_its_outputs_frames_over_its_time() {
+    let mut config = crate::config::Config::default();
+    config.effects.menu_animation = crate::config::MenuAnimation::Fade;
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    h.state.open_desktop_menu((300, 300));
+    let (tree, opened) = (h.state.menus[0].tree, h.state.menus[0].opened);
+    assert_eq!(h.state.menus[0].opening, Some(Opening::Fade));
+    let ms = std::time::Duration::from_millis(h.state.config.theme.metrics.menu_fade_ms as u64);
+    crate::animclock::step(&mut h.state, opened + ms / 2);
+    let half = h.state.scene.opacity(tree).unwrap();
+    assert!((half - 0.5).abs() < 1e-3, "half way, half shown: {half}");
+    crate::animclock::assert_steps_until(
+        &mut h.state,
+        crate::animclock::Anim::MenuOpen,
+        &["TEST-1"],
+        opened + ms,
+    );
+    assert_eq!(
+        h.state.scene.opacity(tree),
+        Some(1.0),
+        "shown whole at its end"
+    );
+    assert_eq!(h.state.menus[0].opening, None, "the opening ended");
+}
+
+#[test]
+fn a_menu_fading_in_from_nothing_asks_its_first_frame_on_the_next_turn() {
+    let mut config = crate::config::Config::default();
+    config.effects.menu_animation = crate::config::MenuAnimation::Fade;
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    h.state.open_desktop_menu((300, 300));
+    crate::backend::take_asks();
+    h.dispatch();
+    assert_eq!(crate::backend::take_asked_outputs(), ["TEST-1"]);
+}
