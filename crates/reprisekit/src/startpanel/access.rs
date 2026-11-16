@@ -13,7 +13,11 @@ use crate::raster::Rect;
 /// Add the panel's nodes under `parent`, in `l`'s coordinates (pass the unscaled layout for logical
 /// bounds). Returns the focused node: the spot the keyboard walked to, else the keyboard's stop; the pointer's spot never takes it.
 pub fn access(p: &StartPanel, l: &Layout, tree: &mut Tree, parent: NodeId) -> NodeId {
-    let menu = tree.push(parent, "start", access::node(Role::Menu, l.panel));
+    let menu = tree.push(
+        parent,
+        "start",
+        access::named(Role::Menu, l.panel, "Start Menu"),
+    );
     let groups: Vec<(usize, NodeId)> = l
         .headers
         .iter()
@@ -213,6 +217,7 @@ mod tests {
         p.places = vec![place("Documents")];
         let (t, focus) = build(&p);
         assert_eq!(t.get(focus).unwrap().role(), Role::Menu, "nothing lit");
+        assert_eq!(t.get(focus).unwrap().label(), Some("Start Menu"));
         assert!(
             !t.nodes().any(|(_, n)| n.role() == Role::SearchInput),
             "no search field"

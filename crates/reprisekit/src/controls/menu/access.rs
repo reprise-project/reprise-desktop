@@ -39,7 +39,8 @@ pub fn access_row(item: &MenuItem, r: Rect, open: bool) -> Option<Node> {
     Some(n)
 }
 
-/// Returns the menu's id, the id each row got (the menu's own for a separator, so a submenu hung there has a parent), and the highlighted row's id.
+/// Adds a menu level under `parent`, named after it when `parent` is the title or row that opens
+/// it. Returns the menu's id, the id each row got (the menu's own for a separator, so a submenu hung there has a parent), and the highlighted row's id.
 #[allow(clippy::too_many_arguments)]
 pub fn access_menu(
     tree: &mut Tree,
@@ -51,7 +52,14 @@ pub fn access_menu(
     hovered: Option<usize>,
     open: Option<usize>,
 ) -> (NodeId, Vec<NodeId>, Option<NodeId>) {
-    let menu = tree.push(parent, key, access::node(Role::Menu, rect));
+    let mut n = access::node(Role::Menu, rect);
+    if let Some(name) = (tree.get(parent))
+        .filter(|p| p.role() == Role::MenuItem)
+        .and_then(|p| p.label())
+    {
+        n.set_label(name.to_owned());
+    }
+    let menu = tree.push(parent, key, n);
     let mut rows = Vec::with_capacity(items.len());
     let mut focus = None;
     for (i, item) in items.iter().enumerate() {

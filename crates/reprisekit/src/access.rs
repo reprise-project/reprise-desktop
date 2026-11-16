@@ -560,9 +560,15 @@ pub fn toggle(role: Role, r: Rect, label: &str, state: accesskit::Toggled, enabl
     n
 }
 
+/// A static label read from `text`, its `&` access key marker dropped.
 pub fn label(r: Rect, text: &str, enabled: bool) -> Node {
+    static_text(r, &crate::text::split_mnemonic(text).0, enabled)
+}
+
+/// A static label reading `text` as drawn, `&` and all.
+pub fn static_text(r: Rect, text: &str, enabled: bool) -> Node {
     let mut n = node(Role::Label, r);
-    n.set_value(crate::text::split_mnemonic(text).0);
+    n.set_value(text);
     if !enabled {
         n.set_disabled();
     }

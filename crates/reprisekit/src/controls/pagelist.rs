@@ -589,7 +589,7 @@ pub fn access(
         };
         match row {
             Row::Heading(h) => {
-                let mut n = access::label(*r, h, true);
+                let mut n = access::static_text(*r, h, true);
                 place(&mut n);
                 tree.push(id, i, n);
             }
@@ -859,6 +859,17 @@ mod tests {
             sets,
             vec![(Some(1), Some(3)), (Some(2), Some(3)), (Some(3), Some(3))]
         );
+    }
+
+    #[test]
+    fn a_heading_reads_its_ampersand_as_drawn() {
+        let list = PageList::new(&[("Display & Sound", &[Item::Page("Mouse")])]);
+        let lay = layout(&list, FRAME, &ControlMetrics::CLASSIC);
+        let mut tree = Tree::window("T", (160, 140));
+        let strip = TabStrip::new(&["Mouse"], 0);
+        access(&list, &strip, &lay, &mut tree, ROOT, "pages");
+        let heading = tree.nodes().find(|(_, n)| n.role() == Role::Label);
+        assert_eq!(heading.unwrap().1.value(), Some("Display & Sound"));
     }
 
     const SHORT: Rect = Rect::new(6, 8, 140, 60);

@@ -1659,8 +1659,22 @@ mod bar_tests {
         assert_eq!(tree.get(new).unwrap().is_expanded(), Some(true));
         let sub = tree.get(new).unwrap().children()[0];
         assert!(tree.get(sub).unwrap().children().contains(&focus));
+        assert_eq!(
+            tree.get(sub).unwrap().label(),
+            Some("New"),
+            "named by its row"
+        );
         let file = tree.find(Role::MenuItem, "File").expect("the File title");
         assert_eq!(tree.get(file).unwrap().is_expanded(), Some(true));
+        let menu = tree.get(file).unwrap().children()[0];
+        assert_eq!(
+            (
+                tree.get(menu).unwrap().role(),
+                tree.get(menu).unwrap().label()
+            ),
+            (Role::Menu, Some("File")),
+            "the drop-down is named by its title"
+        );
     }
 
     #[test]
