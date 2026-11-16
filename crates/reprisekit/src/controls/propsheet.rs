@@ -391,7 +391,8 @@ impl PropSheet {
         Rect::new(MARGIN + self.page_dx(), ok.y, RESTORE_W, BUTTON_H)
     }
 
-    /// Grey or ungrey Apply on every page (the sheet shares one button row).
+    /// Grey or ungrey Apply on every page (the sheet shares one button row). A page whose focus
+    /// was on Apply as it greys moves it to OK.
     pub fn set_apply_enabled(&mut self, on: bool) {
         for page in &mut self.pages {
             if let Some(Item {
@@ -400,6 +401,9 @@ impl PropSheet {
             }) = page.item_mut(APPLY)
             {
                 *enabled = on;
+            }
+            if !on && page.focus().is_some_and(|f| page.items[f].id == APPLY) {
+                page.focus_id(OK);
             }
         }
     }
