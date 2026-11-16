@@ -218,11 +218,7 @@ impl App for DateTimeApp {
         self.forms = ctx.forms();
         let mut reply = self.dispatch(win, ev, ctx);
         let size = self.forms.text.size(sheet::CLIENT);
-        if size != self.asked {
-            self.asked = size;
-            reply.size = Some(size);
-            reply.redraw = true;
-        }
+        reply.ask_size(&mut self.asked, size);
         reply
     }
 

@@ -174,11 +174,7 @@ impl App for AboutBox {
     fn event(&mut self, _win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         let mut reply = self.dispatch(ev, ctx);
         let size = self.size(ctx);
-        if size != self.asked {
-            self.asked = size;
-            reply.size = Some(size);
-            reply.redraw = true;
-        }
+        reply.ask_size(&mut self.asked, size);
         reply
     }
 

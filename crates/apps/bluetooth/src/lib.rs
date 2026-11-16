@@ -82,7 +82,7 @@ struct BtApp {
     /// The last event's [`Ctx::forms`], which dialogs are built and sized with.
     forms: Theme,
     /// The client size last asked for the main window, which grows with the text size.
-    asked: Option<(i32, i32)>,
+    asked: (i32, i32),
     hidden: bool,
     tray_only: bool,
 }
@@ -116,7 +116,7 @@ impl BtApp {
             battery: battery::Warner::default(),
             text: None,
             forms: Theme::default(),
-            asked: None,
+            asked: devices::CLIENT,
             hidden: tray_only,
             tray_only,
         }
@@ -1128,11 +1128,7 @@ impl App for BtApp {
         }
         .with_clipboard(clip);
         let size = self.forms.text.size(devices::CLIENT);
-        if self.asked != Some(size) {
-            self.asked = Some(size);
-            reply.size = Some(size);
-            reply.redraw = true;
-        }
+        reply.ask_size(&mut self.asked, size);
         reply
     }
 

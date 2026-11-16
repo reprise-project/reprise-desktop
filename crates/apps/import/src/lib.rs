@@ -24,6 +24,8 @@ struct ImportApp {
     plans: Vec<Plan>,
     /// Built at the first event, with the window's text renderer.
     sheet: Option<Sheet>,
+    /// The client size last asked for the main window.
+    asked: (i32, i32),
 }
 
 impl ImportApp {
@@ -33,6 +35,7 @@ impl ImportApp {
             quick,
             plans,
             sheet: None,
+            asked: importsheet::CLIENT,
         }
     }
 
@@ -147,10 +150,7 @@ impl App for ImportApp {
     fn event(&mut self, _win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         let mut reply = self.dispatch(ev, ctx);
         let size = Sheet::size(ctx.forms().text);
-        if ctx.size != size {
-            reply.size = Some(size);
-            reply.redraw = true;
-        }
+        reply.ask_size(&mut self.asked, size);
         reply
     }
 
@@ -308,5 +308,10 @@ mod tests {
         let reply = app.event(repriseapp::MAIN, Event::Resized, &mut ctx);
         assert_eq!(reply.size, Some(Sheet::size(ctx.forms().text)));
         assert_ne!(reply.size, Some(importsheet::CLIENT));
+        let reply = app.event(repriseapp::MAIN, Event::Resized, &mut ctx);
+        assert_eq!(
+            reply.size, None,
+            "a window held at its old size is not asked again"
+        );
     }
 }

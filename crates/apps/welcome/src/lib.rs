@@ -52,6 +52,8 @@ struct WelcomeApp {
     error: ErrorBox,
     /// The renderer and forms theme the box is sized with: `children` has no `Ctx`.
     dialog: Option<(Rc<TextRenderer>, Theme)>,
+    /// The client size last asked for the main window.
+    asked: (i32, i32),
 }
 
 fn read(path: &std::path::Path) -> String {
@@ -68,6 +70,7 @@ impl WelcomeApp {
             welcome: None,
             error: ErrorBox::default(),
             dialog: None,
+            asked: welcome::CLIENT,
         }
     }
 
@@ -183,10 +186,7 @@ impl App for WelcomeApp {
         }
         let mut reply = self.dispatch(ev, ctx);
         let size = ctx.forms().text.size(welcome::CLIENT);
-        if ctx.size != size {
-            reply.size = Some(size);
-            reply.redraw = true;
-        }
+        reply.ask_size(&mut self.asked, size);
         reply
     }
 
@@ -365,5 +365,10 @@ mod tests {
         let grown = ctx.forms().text.size(welcome::CLIENT);
         assert_ne!(grown, welcome::CLIENT);
         assert_eq!(reply.size, Some(grown), "150% grows it");
+        let reply = app.event(repriseapp::MAIN, Event::Resized, &mut ctx);
+        assert_eq!(
+            reply.size, None,
+            "a window held at its old size is not asked again"
+        );
     }
 }

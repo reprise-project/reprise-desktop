@@ -793,6 +793,7 @@ struct Installer {
     icon: Option<String>,
     icon_loaded: bool,
     units: TextUnits,
+    /// The client size last asked for, at the text size of the last event.
     asked: (i32, i32),
 }
 
@@ -1026,7 +1027,7 @@ impl App for Installer {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        self.units.size(self.asked)
+        self.asked
     }
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
@@ -1052,11 +1053,7 @@ impl App for Installer {
         self.units = ctx.forms().text;
         let mut reply = self.dispatch(ev, ctx);
         let size = self.units.size(installsheet::client(&self.sheet));
-        if size != self.units.size(self.asked) {
-            self.asked = installsheet::client(&self.sheet);
-            reply.size = Some(size);
-            reply.redraw = true;
-        }
+        reply.ask_size(&mut self.asked, size);
         reply
     }
 
@@ -1120,6 +1117,43 @@ pub fn main(target: Target) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_ctx(text_size: u32) -> Ctx {
+        Ctx {
+            theme: reprisekit::theme::Theme::default(),
+            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default())
+                .into(),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: (300, 300),
+            maximized: false,
+            origin: (0, 0),
+            wake: repriseapp::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            output_size: None,
+            at_pick: false,
+            text_size,
+        }
+    }
+
+    #[test]
+    fn the_sheet_grows_with_a_live_text_size_change() {
+        let mut app = Installer::new(Target::Install("/d/foot.pkg.tar.zst".into()));
+        let mut ctx = test_ctx(100);
+        app.event(repriseapp::MAIN, Event::Resized, &mut ctx);
+        let client = installsheet::client(&app.sheet);
+        assert_eq!(app.initial_size(), client);
+
+        ctx.text_size = 200;
+        let reply = app.event(repriseapp::MAIN, Event::Resized, &mut ctx);
+        let grown = ctx.forms().text.size(client);
+        assert_ne!(grown, client);
+        assert_eq!(reply.size, Some(grown));
+    }
 
     #[test]
     fn the_command_line_names_the_target() {

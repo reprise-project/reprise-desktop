@@ -185,6 +185,18 @@ impl Reply {
             ..Default::default()
         }
     }
+    /// Ask for the main window at `size`, the client size it grows to with what it shows, when
+    /// that isn't `asked`, the size asked for last, and draw it again. True when it asked.
+    pub fn ask_size(&mut self, asked: &mut (i32, i32), size: (i32, i32)) -> bool {
+        if *asked == size {
+            return false;
+        }
+        *asked = size;
+        self.size = Some(size);
+        self.redraw = true;
+        true
+    }
+
     /// This reply with the clipboard half `clip` read for the same event
     /// ([`keys::form_clipboard`](crate::keys::form_clipboard)) added: `clip`'s copy goes first, and
     /// either one asking to paste asks.

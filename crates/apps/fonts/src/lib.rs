@@ -196,11 +196,7 @@ impl App for Viewer {
     fn event(&mut self, _win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         let mut reply = self.dispatch(ev, ctx);
         let size = ctx.forms().text.size(fontview::CLIENT);
-        if size != self.asked {
-            self.asked = size;
-            reply.size = Some(size);
-            reply.redraw = true;
-        }
+        reply.ask_size(&mut self.asked, size);
         reply
     }
 

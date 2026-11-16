@@ -410,11 +410,7 @@ impl App for UpdatesApp {
         self.units = ctx.forms().text;
         let mut reply = self.dispatch(win, ev, ctx);
         let size = self.units.size(window::CLIENT);
-        if size != self.asked {
-            self.asked = size;
-            reply.size = Some(size);
-            reply.redraw = true;
-        }
+        reply.ask_size(&mut self.asked, size);
         reply
     }
 
