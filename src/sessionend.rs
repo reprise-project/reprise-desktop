@@ -1,5 +1,5 @@
 //! Ending the session: Log Off, Turn Off and Restart close programs first so nothing unsaved is lost without a word.
-//! `begin` asks every window to close, then the session ends once no window or inhibitor holds it; after `PROMPT_AFTER`
+//! `begin` asks every window to close, then the session ends once no window, inhibitor, recording or desktop file job holds it; after `PROMPT_AFTER`
 //! the session-end prompt lists what is left. A critical battery kills the remainder after `PROMPT_AFTER` without a prompt.
 //! Turn Off and Restart ask logind first, and a refusal before or after the programs close shows a message box;
 //! one that needs a password runs before the fade, so polkit's prompt shows over the desktop.
@@ -222,8 +222,8 @@ pub fn tick(state: &mut State) {
     };
     let programs = programs(state);
     let holders = e.holders.as_ref().map(|h| holding(h, e.goal));
-    let recording = crate::screenrecord::finishing(state);
-    if programs.is_empty() && !recording && holders.as_ref().is_some_and(Vec::is_empty) {
+    let busy = crate::screenrecord::finishing(state) || state.files_under_way().is_some();
+    if programs.is_empty() && !busy && holders.as_ref().is_some_and(Vec::is_empty) {
         log::info!("session end: every program closed");
         finish(state, false);
         return;
@@ -1003,6 +1003,12 @@ fn sync_prompt(state: &mut State) {
             reason: "Finishing the screen recording".into(),
         });
     }
+    if let Some(why) = state.files_under_way() {
+        fields.rows.push(Row {
+            name: "Files".into(),
+            reason: why.into(),
+        });
+    }
     match prompt_index(state) {
         Some(i) if state.dialogs.views[i].dialog.title == fields.title() => {
             let changed = state.dialogs.views[i]
@@ -1392,6 +1398,58 @@ mod tests {
         h.state.recording = None;
         tick(&mut h.state);
         assert!(h.state.ending.is_none(), "it ends once the file is closed");
+    }
+
+    #[test]
+    fn a_desktop_copy_under_way_holds_the_end_and_is_listed() {
+        use crate::dragview::{DragSource, QueuedPut};
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let dir = std::env::temp_dir().join(format!("reprise-end-copy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let to = dir.join("to");
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        h.state.spawn_put(QueuedPut {
+            dir: to,
+            op: reprisefs::ops::DropOp::Copy,
+            puts: vec![(
+                (
+                    DragSource::File {
+                        path: dir.join("a.txt"),
+                        name: "a.txt".into(),
+                    },
+                    None,
+                    None,
+                ),
+                None,
+            )],
+            existing: Vec::new(),
+        });
+        h.state.ending = Some(Ending {
+            goal: Goal::LogOff,
+            cmd: None,
+            holders: Some(Vec::new()),
+            stop: None,
+            asked_portal: false,
+            timer: None,
+            reports: None,
+            mode: Mode::Prompted,
+            password: Password::No,
+        });
+        tick(&mut h.state);
+        assert!(h.state.ending.is_some(), "held");
+        let i = prompt_index(&h.state).expect("the prompt");
+        let form = h.state.dialogs.views[i].dialog.end_session_form().unwrap();
+        let row = Row {
+            name: "Files".into(),
+            reason: "Copying files".into(),
+        };
+        assert!(!endsession::set_rows(form, &[row]), "its one row");
+        h.until("the copy ends", |s| s.drags.running.is_empty());
+        tick(&mut h.state);
+        assert!(h.state.ending.is_none(), "it ends once the copy has landed");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

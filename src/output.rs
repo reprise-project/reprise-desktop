@@ -756,7 +756,7 @@ impl State {
         self.refit_maximized();
         self.rescue_offscreen();
         self.snap_outputs_changed();
-        self.close_dialogs_off_scene();
+        self.move_dialogs_off_scene();
         self.keep_dialogs_inside();
         crate::tray::forget_output(self);
         crate::tray::sync_icon_sizes(self);

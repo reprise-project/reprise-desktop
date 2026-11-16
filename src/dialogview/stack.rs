@@ -48,7 +48,9 @@ impl State {
                     self.redraw_dialog(j);
                 }
             }
-            None => self.open_view(d, None),
+            None => {
+                self.open_view(d, None);
+            }
         }
     }
 
@@ -69,17 +71,16 @@ impl State {
         }
     }
 
-    pub(super) fn open_view(&mut self, mut d: Dialog, parent: Option<u64>) {
+    /// Show `d` on top, as `parent`'s child when given; returns its view, None with no output to
+    /// show it on.
+    pub(crate) fn open_view(&mut self, mut d: Dialog, parent: Option<u64>) -> Option<u64> {
         let pos = self.pointer_location();
-        let Some(out) = self
+        let out = self
             .output_at(pos.x, pos.y)
-            .or_else(|| self.scene.outputs().first().cloned())
-        else {
-            return;
-        };
+            .or_else(|| self.scene.outputs().first().cloned())?;
         let area = self.usable_area(Some(&out));
         if area.width <= 0 {
-            return;
+            return None;
         }
         let theme = &self.config.theme;
         d.fit_in(theme, &self.text, (area.width, area.height));
@@ -163,6 +164,7 @@ impl State {
                 std::time::Duration::ZERO,
             );
         }
+        Some(id)
     }
 
     /// Freeze the screen behind Welcome panel `id` and fade it to grey. Taken once the panel has the
@@ -470,16 +472,38 @@ impl State {
         }
     }
 
-    pub fn close_dialogs_off_scene(&mut self) {
+    /// Move each dialog whose output left the layout onto the pointer's output, or the first, so
+    /// a question or a job's progress stays up. A Welcome panel, frozen over the output it left,
+    /// closes, as does every dialog once no output is left.
+    pub fn move_dialogs_off_scene(&mut self) {
+        let pos = self.pointer_location();
+        let onto = (self.output_at(pos.x, pos.y)).or_else(|| self.scene.outputs().first().cloned());
         let (mut i, mut removed, mut on_taskbar) = (0, false, false);
         while i < self.dialogs.views.len() {
-            if !self.scene.outputs().contains(&self.dialogs.views[i].output) {
-                let v = self.dialogs.views.remove(i);
-                on_taskbar |= v.dialog.on_taskbar();
-                removed = true;
-                self.destroy_dialog(v);
-            } else {
+            let v = &self.dialogs.views[i];
+            if self.scene.outputs().contains(&v.output) {
                 i += 1;
+                continue;
+            }
+            let welcome = matches!(v.dialog.style, Style::Welcome(_));
+            match onto.clone().filter(|_| !welcome) {
+                Some(o) => {
+                    self.dialogs.views[i].output = o;
+                    self.refit_dialog(i);
+                    let v = &self.dialogs.views[i];
+                    let area = self.usable_area(Some(&v.output));
+                    if let Some((x, y)) = refit_origin(&v.dialog, (v.x, v.y), v.layout.size, area) {
+                        self.move_dialog(i, x, y);
+                    }
+                    self.redraw_dialog(i);
+                    i += 1;
+                }
+                None => {
+                    let v = self.dialogs.views.remove(i);
+                    on_taskbar |= v.dialog.on_taskbar();
+                    removed = true;
+                    self.destroy_dialog(v);
+                }
             }
         }
         if removed {
