@@ -1,7 +1,8 @@
 //! The progress dialogs' host half, for a put (copy, move), a removal (delete, Empty, Restore) and an
 //! extraction or compression:
 //! when each comes up, its window and events, Pause and Cancel on its job, the task button's
-//! progress for all of them together, and the balloon for a job that ends while its dialog is not looked at.
+//! progress for all of them together, the balloon for a job that ends while its dialog is not looked at, and
+//! the logout inhibitor the process holds while one runs.
 
 use crate::Explorer;
 use repriseapp::{Child, Ctx, Event, PointerInput, Reply, WinId};
@@ -143,6 +144,24 @@ impl Explorer {
             COPY => self.put_queue.len(),
             EXTRACT => self.extract_queue.len(),
             _ => self.remove_queue.len(),
+        }
+    }
+
+    /// What Log Off waits for while a job runs: the first running job's work.
+    pub(crate) fn logout_reason(&self) -> Option<&'static str> {
+        let running = [COPY, REMOVE, EXTRACT]
+            .into_iter()
+            .find_map(|w| self.progress(w));
+        running.map(|p| holds_off(p.kind))
+    }
+
+    /// Hold off log off while [`Explorer::logout_reason`] says why, in a folder window and a
+    /// process of one job alike, and let go once the last job ends.
+    pub(crate) fn hold_logout(&mut self) {
+        let reason = self.logout_reason();
+        if reason != self.logout_held {
+            self.logout_held = reason;
+            reprisebus::inhibit::hold_logout(reason);
         }
     }
 
@@ -311,6 +330,19 @@ impl Explorer {
                 .cp
                 .access(tree, &self.dialog_text, &p, self.forms.fonts.size_px);
         }
+    }
+}
+
+/// The reason a job of `kind` gives for holding off log off.
+fn holds_off(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Copy => "Copying files",
+        Kind::Move => "Moving files",
+        Kind::Delete | Kind::Erase => "Deleting files",
+        Kind::Empty => "Emptying the Recycle Bin",
+        Kind::Restore => "Restoring files",
+        Kind::Extract => "Extracting files",
+        Kind::Compress => "Compressing files",
     }
 }
 

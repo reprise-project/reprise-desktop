@@ -2,9 +2,8 @@
 //! asks, shows the progress dialog and says why it stopped: a drop's or paste's put (`--put`), a
 //! delete (`--delete`), Empty Recycle Bin (`--empty-bin`) and Send To's zip (`--zip`).
 //!
-//! The desktop keeps the processes it started. A session end leaves their windows open, waits for
-//! them and lists them as one Files row; End Now ends them. A put onto a desktop cell names the
-//! icons it will land, and each takes its cell when the desktop's scan first finds it.
+//! The desktop keeps the processes it started. A put onto a desktop cell names the icons it will
+//! land, and each takes its cell when the desktop's scan first finds it.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -30,18 +29,6 @@ pub enum What {
 }
 
 impl What {
-    /// What the session-end prompt's Files row says the job is doing.
-    fn reason(self) -> &'static str {
-        match self {
-            What::Put(DropOp::Move) => "Moving files",
-            What::Put(DropOp::Copy) => "Copying files",
-            What::Put(DropOp::Shortcut) => "Creating shortcuts",
-            What::Delete => "Deleting files",
-            What::Empty => "Emptying the Recycle Bin",
-            What::Zip => "Compressing files",
-        }
-    }
-
     /// The title of the box that says the job did not start.
     fn failure_title(self) -> &'static str {
         match self {
@@ -72,16 +59,6 @@ impl FileJobs {
     /// The jobs whose process still runs.
     fn running(&self) -> impl Iterator<Item = &Job> {
         (self.jobs.iter()).filter(|j| crate::spawn::running(j.pid))
-    }
-
-    /// Whether `pid` is a job's process still running.
-    pub fn holds(&self, pid: Option<i32>) -> bool {
-        pid.is_some_and(|pid| self.running().any(|j| j.pid as i32 == pid))
-    }
-
-    /// The pids of the jobs still running.
-    pub fn pids(&self) -> Vec<i32> {
-        self.running().map(|j| j.pid as i32).collect()
     }
 }
 
@@ -195,11 +172,6 @@ impl State {
         }
     }
 
-    /// What a desktop file job under way does, for the session-end prompt; None when none runs.
-    pub(crate) fn files_under_way(&self) -> Option<&'static str> {
-        self.filejobs.running().next().map(|j| j.what.reason())
-    }
-
     /// A desktop scan found `fresh`, names it did not list before: the jobs' icons among them
     /// take their cells. Jobs whose process ended a while ago are let go.
     pub(crate) fn land_job_icons(&mut self, fresh: &[String]) {
@@ -224,49 +196,6 @@ impl State {
         for (name, cell) in landed {
             self.land_icon(&name, cell);
         }
-    }
-}
-
-#[cfg(test)]
-impl FileJobs {
-    /// A job of `what` in process `pid`, as if the desktop had started it.
-    pub fn started(&mut self, pid: u32, what: What) {
-        self.jobs.push(Job {
-            pid,
-            what,
-            args: Vec::new(),
-            landings: Vec::new(),
-            ended: None,
-        });
-    }
-}
-
-/// A process standing in for a job's: a `sleep` the spawner reaps, killed on drop.
-#[cfg(test)]
-pub struct FakeJob(std::process::Child);
-
-#[cfg(test)]
-impl FakeJob {
-    pub fn start() -> FakeJob {
-        let child = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .expect("sleep");
-        crate::spawn::adopt(child.id() as libc::pid_t, "sleep");
-        FakeJob(child)
-    }
-
-    pub fn pid(&self) -> u32 {
-        self.0.id()
-    }
-}
-
-#[cfg(test)]
-impl Drop for FakeJob {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-        crate::spawn::reap_children();
     }
 }
 

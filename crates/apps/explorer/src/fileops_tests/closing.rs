@@ -37,6 +37,31 @@ fn close_waits_for_a_copy_in_flight() {
 }
 
 #[test]
+fn log_off_is_held_off_while_a_copy_runs_and_let_go_once_it_lands() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("a.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    assert_eq!(ex.logout_reason(), None);
+    ex.run(Command::Paste, &mut ctx);
+    let clip = FileClip {
+        cut: false,
+        paths: vec![dir.path().join("a.txt")],
+    };
+    ex.pasted(clip, &mut ctx);
+    ex.hold_logout();
+    assert_eq!(ex.logout_held, Some("Copying files"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while ex.put.is_some() {
+        assert!(std::time::Instant::now() < deadline, "the copy lands");
+        ex.wake(&mut ctx);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    ex.hold_logout();
+    assert_eq!(ex.logout_held, None);
+}
+
+#[test]
 fn close_when_idle_quits_at_once() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut ctx = test_ctx();

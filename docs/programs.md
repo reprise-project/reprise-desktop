@@ -58,8 +58,12 @@ The file manager, and the default for folders.
 - **The desktop's file work** runs in Explorer the same way: a drop or paste
   onto the desktop or one of its folders, Delete and Shift+Delete, Empty
   Recycle Bin and Send To > Compressed (zipped) Folder each start a process
-  that asks, shows the progress dialog and ends with its job. Log Off, Turn
-  Off and Restart wait for one under way and list it as Files.
+  that asks, shows the progress dialog and ends with its job.
+- **Log Off waits for file work.** While a copy, move, delete, Empty Recycle
+  Bin, extraction or zip runs, in a folder window or a process of its own,
+  Explorer holds off log off through the Inhibit portal, as other file
+  managers do. Log Off, Turn Off and Restart leave its windows open and list
+  it with what it's doing ("Copying files"), and once the job ends they go on.
 - **Show in folder** from other programs: Explorer answers
   `org.freedesktop.FileManager1`, so a browser's "Show in folder" opens the
   file's folder with the file selected.

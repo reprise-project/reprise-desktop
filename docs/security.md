@@ -662,7 +662,9 @@ any sandbox, read through its pidfd by the rules in [Sandboxed
 programs](#sandboxed-programs); any other caller gets AccessDenied, so a
 sandboxed app that holds the name while xdg-desktop-portal is away can't
 speak for other apps. Its own `org.reprise.SessionEnd`, which lists the
-apps holding logout off, answers only the compositor's process. App ids, parent windows and restore data are taken
+apps holding logout off with their processes, answers only the compositor's
+process. An app's process is the one the bus names for the unique name in
+the request path the frontend made for its call. App ids, parent windows and restore data are taken
 on the frontend's word, and the frontend reads the app id from the sandbox.
 
 What a consent prompt remembers, and where:

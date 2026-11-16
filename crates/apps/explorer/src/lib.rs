@@ -328,6 +328,8 @@ pub struct Explorer {
     pub(crate) extract_queue: std::collections::VecDeque<extracting::Batch>,
     /// The whole percent and paused state last put on the task button.
     pub(crate) task_progress: Option<(u32, bool)>,
+    /// The reason the process last held off log off with ([`Explorer::hold_logout`]).
+    pub(crate) logout_held: Option<&'static str>,
     /// The boxes raised while another was up, oldest first ([`Explorer::raise`]).
     pub(crate) waiting: std::collections::VecDeque<Dialog>,
     /// The pastes whose next clash is asked once the slot is free and no replace prompt's files
@@ -591,6 +593,7 @@ impl Explorer {
             extracting: None,
             extract_queue: std::collections::VecDeque::new(),
             task_progress: None,
+            logout_held: None,
             waiting: std::collections::VecDeque::new(),
             replace_waiting: std::collections::VecDeque::new(),
             asking: None,
@@ -1838,6 +1841,7 @@ impl App for Lazy {
             }
         };
         let reply = opened.and(ex.event(win, ev, ctx));
+        ex.hold_logout();
         if start.alone.is_some() && !ex.closing && ex.sheet_closed() {
             return reply.and(ex.close(ctx));
         }
