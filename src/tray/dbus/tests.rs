@@ -586,6 +586,7 @@ fn test_loop(conn: Connection, events: Sender<TrayEvent>, eventfd: RawFd) -> Loo
         senders: Arc::default(),
         responding: Arc::default(),
         identities: Arc::default(),
+        taken: HashMap::new(),
     }
 }
 
@@ -1323,6 +1324,34 @@ fn a_session_taking_its_names_back_takes_only_free_ones_and_a_later_session_repl
             "queued for the screensaver name, it gets it back"
         );
     });
+}
+
+#[test]
+fn names_a_starting_session_took_and_let_go_come_back_to_the_running_tray() {
+    let Some(bus) = reprisebus::testbus::bus() else {
+        return;
+    };
+    let tray = Relayed::on(&bus);
+    zbus::block_on(async {
+        let watching = observer(&bus).await;
+        let ours = owner_of(&watching, NOTIFY_NAME).await;
+        assert!(ours.is_some(), "the tray hosts {NOTIFY_NAME}");
+        let taker = observer(&bus).await;
+        let theirs = taker.unique_name().map(|n| n.to_string());
+        for name in [NOTIFY_NAME, WATCHER_NAME] {
+            own(&taker, name, name_flags(false)).await.unwrap();
+            assert_eq!(owner_of(&watching, name).await, theirs, "{name} taken");
+        }
+        taker.close().await.unwrap();
+        for name in [NOTIFY_NAME, WATCHER_NAME] {
+            assert_eq!(
+                new_owner(&watching, name, theirs.as_deref()).await,
+                ours,
+                "{name} back with the tray"
+            );
+        }
+    });
+    assert!(tray.stop(), "the tray serves on");
 }
 
 #[test]

@@ -243,7 +243,9 @@ session's idle timer, and it takes the user manager and the names back the
 same way. Of two text-login sessions that gave way to one, the one logind
 opened first takes back and the other goes on giving way to it. A session
 that ends while the other runs leaves that session's units and app scopes
-running.
+running. Reprise asks for its bus names only once it holds the seat, so a
+second `reprise` that cannot open one takes none, and a name another process
+takes from a running session comes back to it once that process lets go.
 
 XDG autostart honours `OnlyShowIn`, `NotShowIn`, `Hidden` and `TryExec`.
 An entry marked `X-systemd-skip=true` or `X-GNOME-HiddenUnderSystemd=true`

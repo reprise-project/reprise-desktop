@@ -404,9 +404,11 @@ fn run(
     dialogview::setup(&mut state);
     state.refresh_recent();
     state.keyboard_setup();
+    backend::init(&mut state)?;
+    // After the seat is ours: a start that fails leaves a running session's theme files and
+    // bus names alone.
     toolkits::refresh(&mut state);
     tray::setup(&mut state);
-    backend::init(&mut state)?;
     loginlink::setup(&mut state);
     lockview::find_listed(&mut state);
     lockback::read(&mut state);
