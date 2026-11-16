@@ -305,6 +305,8 @@ pub struct Logon {
     going_down: bool,
     /// Where the tiles' focus goes when the administrator's form is left.
     admin_from: Part,
+    /// Failed attempts so far; each gives the reader's message node a new id.
+    failures: u32,
 }
 
 impl Logon {
@@ -352,6 +354,7 @@ impl Logon {
             back: Screen::Typed,
             going_down: false,
             admin_from: Part::Tile(0),
+            failures: 0,
         };
         m.focus = m.home();
         if let Part::Tile(i) = m.focus {
@@ -419,6 +422,7 @@ impl Logon {
         now.message = was.message.clone();
         now.hint = was.hint.clone();
         now.layout = was.layout.clone();
+        now.failures = was.failures;
         (now == *was).then_some(touched)
     }
 
@@ -869,6 +873,7 @@ impl Logon {
         self.name.set_read_only(self.unlocking());
         self.busy = false;
         self.message = Some(text);
+        self.failures = self.failures.wrapping_add(1);
         self.focus = self.home();
         if self.interface == Interface::Glass && self.screen != Screen::Message {
             self.back = self.screen;
@@ -971,7 +976,8 @@ pub fn hit(l: &LogonLayout, x: i32, y: i32) -> Option<Part> {
 
 /// The screen's fields and buttons under `tree`'s root, inside a dialog node when there is one,
 /// with the focus on the focused part. The message, Caps Lock notice included, is a label in a
-/// polite live region, so a reader speaks each new one.
+/// polite live region, so a reader speaks each new one. Each failure adds it afresh, so a
+/// failure repeating the last one's text is spoken too.
 pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
     let parent = match l.dialog {
         Some(r) => tree.push(ROOT, "dialog", ax::titled(Role::Dialog, r, &m.title())),
@@ -1021,7 +1027,7 @@ pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
         let r = l.dialog.unwrap_or(l.output);
         let mut n = ax::label(r, &said.join(" "), true);
         n.set_live(Live::Polite);
-        tree.push(parent, "message", n);
+        tree.push(parent, ("message", m.failures), n);
     }
     if let Some(id) = focus {
         tree.set_focus(id);
