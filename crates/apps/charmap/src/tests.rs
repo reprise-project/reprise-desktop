@@ -123,3 +123,20 @@ fn a_search_narrows_the_grid() {
     );
     assert_eq!(w.map.picked(), Some('0'));
 }
+
+#[test]
+fn the_window_follows_the_text_size_and_asks_once() {
+    let (mut w, mut ctx) = (window(), test_ctx());
+    let reply = w.event(MAIN, Event::Resized, &mut ctx);
+    assert_eq!(reply.size, None);
+    ctx.text_size = 200;
+    let grown = ctx.forms().text.size(charmap::CLIENT);
+    assert_ne!(grown, charmap::CLIENT);
+    let reply = w.event(MAIN, Event::Resized, &mut ctx);
+    assert_eq!(reply.size, Some(grown));
+    let reply = w.event(MAIN, Event::Resized, &mut ctx);
+    assert_eq!(
+        reply.size, None,
+        "a window held at its old size is not asked again"
+    );
+}

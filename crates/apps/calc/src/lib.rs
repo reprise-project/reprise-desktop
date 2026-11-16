@@ -315,11 +315,7 @@ impl App for Calculator {
             },
         };
         let size = self.size(ctx);
-        if size != self.asked {
-            self.asked = size;
-            reply.size = Some(size);
-            reply.redraw = true;
-        }
+        reply.ask_size(&mut self.asked, size);
         reply
     }
 

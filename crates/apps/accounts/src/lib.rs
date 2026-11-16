@@ -1121,9 +1121,7 @@ impl App for AccountsApp {
         }
         let mut reply = self.dispatch(win, ev, ctx);
         let size = self.forms.text.size(users::CLIENT);
-        if size != self.asked {
-            self.asked = size;
-            reply.size = Some(size);
+        if reply.ask_size(&mut self.asked, size) {
             reply.redraw_all = true;
         }
         reply

@@ -96,6 +96,23 @@ fn reply_merge_keeps_primary() {
 }
 
 #[test]
+fn a_size_is_asked_once_until_it_changes() {
+    let mut asked = (300, 200);
+    let mut same = Reply::none();
+    assert!(!same.ask_size(&mut asked, (300, 200)));
+    assert_eq!((same.size, same.redraw), (None, false));
+
+    let mut grown = Reply::none();
+    assert!(grown.ask_size(&mut asked, (450, 300)));
+    assert_eq!((grown.size, grown.redraw), (Some((450, 300)), true));
+    assert_eq!(asked, (450, 300));
+
+    let mut again = Reply::none();
+    assert!(!again.ask_size(&mut asked, (450, 300)));
+    assert_eq!(again.size, None);
+}
+
+#[test]
 fn damage_rects_scale_to_buffer() {
     let rects = [Rect::new(1, 2, 3, 4), Rect::new(0, 0, 10, 5)];
     assert_eq!(buffer_damage(&rects, 2), vec![(2, 4, 6, 8), (0, 0, 20, 10)]);

@@ -35,6 +35,8 @@ struct CharMapWindow {
     grid_focus: bool,
     clicks: DoubleClick<usize>,
     thumb: ThumbDrag,
+    /// The client size last asked for the main window.
+    asked: (i32, i32),
 }
 
 fn load(family: &str) -> TextRenderer {
@@ -59,6 +61,7 @@ impl CharMapWindow {
             grid_focus: true,
             clicks: DoubleClick::default(),
             thumb: ThumbDrag::default(),
+            asked: charmap::CLIENT,
         }
     }
 
@@ -289,10 +292,7 @@ impl App for CharMapWindow {
             },
         };
         let size = ctx.forms().text.size(charmap::CLIENT);
-        if ctx.size != size {
-            reply.size = Some(size);
-            reply.redraw = true;
-        }
+        reply.ask_size(&mut self.asked, size);
         reply
     }
 
