@@ -282,6 +282,9 @@ impl Explorer {
         tips.push(Vec::new());
         out.push(details);
         self.taskpane.sections = out;
+        if (self.taskpane.focus).is_some_and(|f| !self.taskpane.stops().contains(&f)) {
+            self.taskpane.focus = None;
+        }
         self.pane_cmds = cmds;
         self.pane_tips = tips;
         self.pane_key = Some(key);

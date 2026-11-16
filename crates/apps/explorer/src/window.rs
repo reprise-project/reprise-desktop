@@ -29,12 +29,11 @@
 use crate::Explorer;
 use crate::commands::Command;
 use crate::settings::Settings;
-use accesskit::Role;
 use repriseapp::Ctx;
 use repriseapp::iconjobs::IconWaits;
 use reprisefs::launcher::Launcher;
 use reprisefs::listing::Item;
-use reprisekit::access::{self, ROOT, Tree, accesskit};
+use reprisekit::access::{ROOT, Tree};
 use reprisekit::classic::widgets::FIELD_PAD;
 use reprisekit::controls::hosted::Chain;
 use reprisekit::controls::metrics::ControlMetrics;
@@ -427,13 +426,9 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
         ));
     }
     ex.access_tabs(tree, ctx);
-    let mut folders = None;
+    let (mut folders, mut tasks) = (None, None);
     if let Some(bl) = &lay.bar {
-        let pane = tree.push(
-            ROOT,
-            "left bar",
-            access::named(Role::Pane, bl.frame, &ex.explorer_bar.title),
-        );
+        let pane = explorerbar::access(&ex.explorer_bar, bl, tree, ROOT);
         if let Some(r) = lay.tree {
             let tl = treeview::layout(&ex.tree, &ctx.text, px, r, &ctx.theme.controls());
             folders = Some(treeview::access(
@@ -443,7 +438,7 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
     }
     if let Some(r) = lay.tasks {
         let tl = taskpane::layout(&ex.taskpane, &ctx.text, px, r, &ctx.theme.controls());
-        taskpane::access(&ex.taskpane, &tl, tree, ROOT);
+        tasks = taskpane::access(&ex.taskpane, &tl, tree, ROOT);
     }
     let sl = ex.view_layout(lay.view, ctx);
     let view = shellview::access(&ex.sv, &sl, &ctx.text, px, tree, ROOT, "view");
@@ -458,6 +453,7 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
         crate::Focus::Address => address,
         crate::Focus::Search => search,
         crate::Focus::Tree => folders,
+        crate::Focus::Tasks => tasks,
         crate::Focus::View => Some(view),
     });
     tree.set_focus(focus.unwrap_or(view));

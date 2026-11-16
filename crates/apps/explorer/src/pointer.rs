@@ -437,7 +437,7 @@ impl Explorer {
 
     /// A click in the task pane: a chevron collapses its section (remembered by
     /// title), a live row runs its [`crate::pane`] command.
-    fn taskpane_event(&mut self, ev: taskpane::Event, ctx: &mut Ctx) -> Reply {
+    pub(crate) fn taskpane_event(&mut self, ev: taskpane::Event, ctx: &mut Ctx) -> Reply {
         match ev {
             taskpane::Event::Toggle(i) => {
                 if let Some(s) = self.taskpane.sections.get(i) {

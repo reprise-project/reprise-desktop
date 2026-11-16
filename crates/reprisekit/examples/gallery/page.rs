@@ -1198,6 +1198,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
         top: 0,
         hot: Some((0, 0)),
         hot_header: None,
+        focus: Some(taskpane::Stop::Row(0, 2)),
     };
     let pane = Rect::new(240, strip.y + 10, 200, 300);
     let lay = taskpane::layout(&tp, text, px, pane, &theme.look.controls_at_100());

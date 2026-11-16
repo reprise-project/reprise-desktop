@@ -92,6 +92,15 @@ pub struct TaskPane {
     pub top: i32,
     pub hot: Option<(usize, usize)>,
     pub hot_header: Option<usize>,
+    /// The stop holding the keyboard, drawn in a focus rectangle; `None` while the pane hasn't it.
+    pub focus: Option<Stop>,
+}
+
+/// Where the keyboard rests in the pane: a section's header, or one of its enabled links.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stop {
+    Header(usize),
+    Row(usize, usize),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -284,6 +293,59 @@ pub fn hit(tp: &TaskPane, lay: &Layout, x: i32, y: i32) -> Hit {
 }
 
 impl TaskPane {
+    /// Every stop in Tab order: each shown section's header, then its enabled links while it is open.
+    pub fn stops(&self) -> Vec<Stop> {
+        let mut out = Vec::new();
+        for (i, s) in self.sections.iter().enumerate() {
+            if s.hidden() {
+                continue;
+            }
+            out.push(Stop::Header(i));
+            if let (true, Body::Links(rows)) = (s.open, &s.body) {
+                let live = rows.iter().enumerate().filter(|(_, r)| r.enabled);
+                out.extend(live.map(|(j, _)| Stop::Row(i, j)));
+            }
+        }
+        out
+    }
+
+    /// Moves the keyboard one stop on, or back; from no stop it takes the first, or the last.
+    /// Past either end it lets go of the keyboard and gives false.
+    pub fn step(&mut self, back: bool) -> bool {
+        let stops = self.stops();
+        let at = self.focus.and_then(|f| stops.iter().position(|s| *s == f));
+        let next = match (at, back) {
+            (None, false) => Some(0),
+            (None, true) => stops.len().checked_sub(1),
+            (Some(i), false) => Some(i + 1),
+            (Some(i), true) => i.checked_sub(1),
+        };
+        self.focus = next.and_then(|i| stops.get(i)).copied();
+        self.focus.is_some()
+    }
+
+    /// Enter or Space on the stop held: a header opens or closes its section, a link reports
+    /// itself, as a click on them does.
+    pub fn activate(&mut self) -> Event {
+        match self.focus {
+            Some(Stop::Header(i)) => self.click(Hit::Header(i)),
+            Some(Stop::Row(i, j)) => self.click(Hit::Row(i, j)),
+            None => Event::None,
+        }
+    }
+
+    /// Scrolls `top` so the stop held sits inside `lay`'s frame; the host lays out again after.
+    pub fn reveal(&mut self, lay: &Layout) {
+        let Some(r) = self.focus.and_then(|f| stop_rect(lay, f)) else {
+            return;
+        };
+        if r.y < lay.frame.y {
+            self.top = (self.top - (lay.frame.y - r.y)).max(0);
+        } else if r.bottom() > lay.frame.bottom() {
+            self.top += (r.bottom() - lay.frame.bottom()).min(r.y - lay.frame.y);
+        }
+    }
+
     /// Act on a click: a header collapses or expands its section, an enabled link reports itself, an arrow scrolls. The host re-lays out and clamps `top` against `content_h`; only the top end is clamped here.
     pub fn click(&mut self, hit: Hit) -> Event {
         match hit {
@@ -310,6 +372,14 @@ impl TaskPane {
             }
             Hit::Scrollbar | Hit::Nothing => Event::None,
         }
+    }
+}
+
+/// The rect a stop's focus rectangle and node take: the header band, or the link's row.
+fn stop_rect(lay: &Layout, stop: Stop) -> Option<Rect> {
+    match stop {
+        Stop::Header(i) => lay.headers.get(i).copied(),
+        Stop::Row(i, j) => lay.rows.get(i).and_then(|r| r.get(j)).copied(),
     }
 }
 
@@ -382,6 +452,12 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, tp: &TaskPane, lay: 
             }
         }
     }
+    if let Some(r) = tp.focus.and_then(|f| stop_rect(lay, f)) {
+        let ring = r.intersect(&lay.back);
+        if !ring.is_empty() {
+            crate::look::widgets::draw_focus_ring(c, p, ring.scaled(s), cs.window_text);
+        }
+    }
     if let Some(sb) = lay.scrollbar {
         let view = lay.frame.height.max(1) as usize;
         draw_scrollbar(
@@ -405,8 +481,10 @@ pub fn draw_gap(c: &mut Canvas, p: &Paint, lay: &Layout, gap: Rect) {
 }
 
 /// The task pane's `access` part: each section a group named by its title, holding its links or lines while open.
-pub fn access(tp: &TaskPane, lay: &Layout, tree: &mut Tree, parent: NodeId) -> NodeId {
+/// The pane's nodes under `parent`; gives the node of the stop holding the keyboard, if one does.
+pub fn access(tp: &TaskPane, lay: &Layout, tree: &mut Tree, parent: NodeId) -> Option<NodeId> {
     let pane = tree.push(parent, "tasks", access::node(Role::Pane, lay.frame));
+    let mut focus = None;
     for (k, s) in tp.sections.iter().enumerate() {
         if s.hidden() {
             continue;
@@ -416,6 +494,9 @@ pub fn access(tp: &TaskPane, lay: &Layout, tree: &mut Tree, parent: NodeId) -> N
         let mut g = access::named(Role::Group, head.union(&body), &s.title);
         g.set_expanded(s.open);
         let g = tree.push(pane, k, g);
+        if tp.focus == Some(Stop::Header(k)) {
+            focus = Some(g);
+        }
         if !s.open {
             continue;
         }
@@ -430,7 +511,10 @@ pub fn access(tp: &TaskPane, lay: &Layout, tree: &mut Tree, parent: NodeId) -> N
                         .unwrap_or_default();
                     let mut n = access::named(Role::Link, r, &row.text);
                     access::focusable(&mut n, row.enabled);
-                    tree.push(g, i, n);
+                    let id = tree.push(g, i, n);
+                    if tp.focus == Some(Stop::Row(k, i)) {
+                        focus = Some(id);
+                    }
                 }
             }
             Body::Lines(_) => {
@@ -440,7 +524,7 @@ pub fn access(tp: &TaskPane, lay: &Layout, tree: &mut Tree, parent: NodeId) -> N
             }
         }
     }
-    pane
+    focus
 }
 
 #[cfg(test)]
@@ -803,6 +887,104 @@ mod tests {
             .filter_map(|(_, n)| n.label())
             .collect();
         assert_eq!(groups, ["Other Places", "Details"]);
+    }
+
+    #[test]
+    fn tab_walks_headers_and_live_links_and_lets_go_past_the_ends() {
+        let (theme, text) = renderer();
+        let mut tp = pane();
+        if let Body::Links(rows) = &mut tp.sections[0].body {
+            rows[1].enabled = false;
+        }
+        let stops = tp.stops();
+        assert_eq!(
+            stops[..3],
+            [Stop::Header(0), Stop::Row(0, 0), Stop::Row(0, 2)]
+        );
+        assert!(tp.step(false));
+        assert_eq!(tp.focus, Some(Stop::Header(0)));
+        assert_eq!(tp.activate(), Event::Toggle(0));
+        assert!(tp.step(false));
+        assert_eq!(
+            tp.focus,
+            Some(Stop::Header(1)),
+            "a closed section's links are skipped"
+        );
+        assert!(tp.step(true));
+        assert!(!tp.step(true), "Shift+Tab past the first stop lets go");
+        assert_eq!(tp.focus, None);
+        assert!(tp.step(true));
+        assert_eq!(tp.focus, stops.last().copied());
+
+        tp.sections[0].open = true;
+        tp.focus = Some(Stop::Row(0, 2));
+        assert_eq!(tp.activate(), Event::Row(0, 2));
+        let px = theme.fonts.size_px;
+        let lay = layout(&tp, &text, px, PANE, &ControlMetrics::CLASSIC);
+        let mut tree = Tree::window("Folder", (200, 600));
+        let id = access(&tp, &lay, &mut tree, crate::access::ROOT).expect("the focused link");
+        assert_eq!(
+            tree.get(id).and_then(|n| n.label()),
+            Some(link_text(&tp, 0, 2))
+        );
+    }
+
+    /// The focused stop wears the dotted focus rectangle on its row's edge, in every interface;
+    /// Tab scrolls a stop below the pane into view.
+    #[test]
+    fn the_focused_link_wears_a_focus_rectangle_and_is_scrolled_to() {
+        use crate::interface::Interface;
+        use crate::interfaces::theme_for;
+        crate::pins::fonts();
+        let (_, text) = renderer();
+        let mut tp = pane();
+        let mut pins = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = theme_for(i);
+            let px = theme.fonts.size_px;
+            let lay = layout(&tp, &text, px, PANE, &theme.look.controls_at_100());
+            let draw_at = |tp: &TaskPane| {
+                let mut c = Canvas::new(200, 600);
+                draw(&mut c, &text, &theme.paint(), tp, &lay, px);
+                c
+            };
+            tp.focus = None;
+            let plain = draw_at(&tp);
+            tp.focus = Some(Stop::Row(0, 0));
+            let ringed = draw_at(&tp);
+            let r = lay.rows[0][0];
+            assert_ne!(
+                ringed.get(r.x, r.y),
+                plain.get(r.x, r.y),
+                "{i:?}: the ring's corner"
+            );
+            assert_eq!(
+                ringed.get(r.x + 3, r.y + 3),
+                plain.get(r.x + 3, r.y + 3),
+                "{i:?}: inside the ring"
+            );
+            pins.push((format!("{i:?}").to_lowercase(), crate::pins::fnv(&ringed)));
+        }
+        crate::pins::check("taskpane_focus", &pins);
+
+        let px = renderer().0.fonts.size_px;
+        let short = Rect::new(PANE.x, PANE.y, PANE.width, 120);
+        let lay = layout(&tp, &text, px, short, &ControlMetrics::CLASSIC);
+        tp.focus = tp.stops().last().copied();
+        tp.reveal(&lay);
+        let lay = layout(&tp, &text, px, short, &ControlMetrics::CLASSIC);
+        let last = stop_rect(&lay, tp.focus.unwrap()).unwrap();
+        assert!(
+            last.bottom() <= short.bottom() && last.y >= short.y,
+            "{last:?}"
+        );
+    }
+
+    fn link_text(tp: &TaskPane, i: usize, j: usize) -> &str {
+        match &tp.sections[i].body {
+            Body::Links(rows) => &rows[j].text,
+            Body::Lines(_) => "",
+        }
     }
 
     #[test]

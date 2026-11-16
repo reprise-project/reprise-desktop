@@ -18,6 +18,7 @@ use reprisekit::controls::iconview::IconMove;
 use reprisekit::controls::menu::{MenuAction, MenuKey};
 use reprisekit::controls::menubar::{Action, Key};
 use reprisekit::controls::shellview;
+use reprisekit::controls::taskpane;
 use reprisekit::controls::treeview;
 use reprisekit::selection::Mods;
 use reprisekit::textedit::keysym::{self, ALT_L, ALT_R, ISO_LEFT_TAB, SPACE};
@@ -72,6 +73,14 @@ impl Explorer {
                 self.address.set_place(&self.place.address(), icon);
             }
             return self.address_event(ev, ctx);
+        }
+
+        if self.focus == Focus::Tasks
+            && !k.mods.ctrl
+            && !k.mods.alt
+            && let Some(reply) = self.tasks_key(&k, ctx)
+        {
+            return reply;
         }
 
         // The accelerators, ahead of the bar's access keys: none of them
@@ -145,14 +154,24 @@ impl Explorer {
         // under an open box in any case.
         if matches!(k.sym, keysym::TAB | ISO_LEFT_TAB) && self.sv.edit.is_none() {
             let back = k.mods.shift || k.sym == ISO_LEFT_TAB;
-            self.focus = self.next_focus(back);
+            // The task pane walks its stops first and lets go past the ends.
+            if self.focus == Focus::Tasks && self.taskpane.step(back) {
+                self.reveal_task(ctx);
+                return Reply::redraw();
+            }
+            self.focus = self.next_focus(back, ctx);
+            if self.focus == Focus::Tasks {
+                self.taskpane.focus = None;
+                self.taskpane.step(back);
+                self.reveal_task(ctx);
+            }
             return Reply::redraw();
         }
 
         match self.focus {
             Focus::Tree => self.tree_key(k, ctx),
             Focus::View => self.view_key(k, ctx),
-            Focus::Address | Focus::Search => Reply::none(),
+            Focus::Address | Focus::Search | Focus::Tasks => Reply::none(),
         }
     }
 
@@ -171,19 +190,54 @@ impl Explorer {
         }
     }
 
-    fn next_focus(&self, back: bool) -> Focus {
-        // The left column's pane, when it takes the keyboard.
-        let bar = self.settings.folders.then_some(Focus::Tree);
-        match (self.focus, back) {
-            (Focus::Address, false) => bar.unwrap_or(Focus::View),
-            (Focus::Tree, false) => Focus::View,
-            (Focus::View, false) => Focus::Address,
-            (Focus::Address, true) => Focus::View,
-            (Focus::Tree, true) => Focus::Address,
-            (Focus::View, true) => bar.unwrap_or(Focus::Address),
-            (Focus::Search, false) => Focus::View,
-            (Focus::Search, true) => Focus::Address,
+    /// Tab's order: the address bar, the search field when the toolbar shows it, the left
+    /// column's pane (the Folders tree, or the task pane when it has a stop), then the view.
+    fn next_focus(&self, back: bool, ctx: &Ctx) -> Focus {
+        let lay = self.layout(ctx);
+        let bar = match self.settings.folders {
+            true => Some(Focus::Tree),
+            false => {
+                (lay.tasks.is_some() && !self.taskpane.stops().is_empty()).then_some(Focus::Tasks)
+            }
+        };
+        let search = crate::window::search_field(self, ctx).map(|_| Focus::Search);
+        let order: Vec<Focus> = [Some(Focus::Address), search, bar, Some(Focus::View)]
+            .into_iter()
+            .flatten()
+            .collect();
+        let at = order.iter().position(|f| *f == self.focus).unwrap_or(0);
+        let n = order.len();
+        order[if back { (at + n - 1) % n } else { (at + 1) % n }]
+    }
+
+    /// The task pane's keys while it holds the keyboard: Up and Down walk its stops, Enter and
+    /// Space act as a click on the one held. `None` for any other key.
+    fn tasks_key(&mut self, k: &KeyInput, ctx: &mut Ctx) -> Option<Reply> {
+        match k.sym {
+            keysym::RETURN | keysym::KP_ENTER | SPACE => {
+                let ev = self.taskpane.activate();
+                Some(self.taskpane_event(ev, ctx))
+            }
+            keysym::UP | keysym::KP_UP | keysym::DOWN | keysym::KP_DOWN => {
+                let back = matches!(k.sym, keysym::UP | keysym::KP_UP);
+                if !self.taskpane.step(back) {
+                    self.taskpane.step(!back);
+                }
+                self.reveal_task(ctx);
+                Some(Reply::redraw())
+            }
+            _ => None,
         }
+    }
+
+    /// Scrolls the task pane's held stop into view.
+    fn reveal_task(&mut self, ctx: &Ctx) {
+        let Some(r) = self.layout(ctx).tasks else {
+            return;
+        };
+        let px = ctx.theme.fonts.size_px;
+        let tl = taskpane::layout(&self.taskpane, &ctx.text, px, r, &ctx.theme.controls());
+        self.taskpane.reveal(&tl);
     }
 
     /// Shift+F10 and the Menu key: the context menu of whatever has the focus, opened at the focused item's lower-left corner (the tree's node, the view's entry, else the background menu).
@@ -445,6 +499,68 @@ mod tests {
         ex.key_inner(key(keysym::F2, None, false, false, false), &mut ctx);
         ex.key_inner(key(ISO_LEFT_TAB, None, false, true, false), &mut ctx);
         assert!(ex.sv.edit.is_none());
+    }
+
+    /// With the Folders tree off, Tab goes from the address bar through the search field to the
+    /// task pane's stops, then the view; Enter on a link runs it and Shift+Tab walks back.
+    #[test]
+    fn tab_reaches_the_task_panes_links_after_the_address_bar() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let mut ctx = test_ctx();
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        ex.settings.folders = false;
+        ex.refresh_chrome(&mut ctx);
+        let tab = |ex: &mut Explorer, ctx: &mut Ctx, back: bool| {
+            let sym = if back { ISO_LEFT_TAB } else { keysym::TAB };
+            ex.event(
+                crate::MAIN,
+                repriseapp::Event::Key(key(sym, None, false, back, false)),
+                ctx,
+            );
+        };
+        ex.focus = Focus::Address;
+        let search = crate::window::search_field(&ex, &ctx).is_some();
+        tab(&mut ex, &mut ctx, false);
+        if search {
+            assert_eq!(ex.focus, Focus::Search);
+            tab(&mut ex, &mut ctx, false);
+        }
+        assert_eq!(ex.focus, Focus::Tasks);
+        let first = ex.taskpane.stops()[0];
+        assert_eq!(
+            ex.taskpane.focus,
+            Some(first),
+            "the first stop takes the keyboard"
+        );
+        let stops = ex.taskpane.stops().len();
+        for _ in 0..stops {
+            tab(&mut ex, &mut ctx, false);
+        }
+        assert_eq!(
+            ex.focus,
+            Focus::View,
+            "past the last stop Tab goes on to the view"
+        );
+        assert_eq!(
+            ex.taskpane.focus, None,
+            "the pane lets go of its focus rectangle"
+        );
+        tab(&mut ex, &mut ctx, true);
+        assert_eq!(ex.focus, Focus::Tasks);
+        assert_eq!(ex.taskpane.focus, ex.taskpane.stops().last().copied());
+
+        let link = ex.taskpane.stops().into_iter().find(|s| {
+            matches!(s, taskpane::Stop::Row(i, j)
+                if ex.pane_cmds[*i][*j] == crate::commands::Command::NewFolder)
+        });
+        ex.taskpane.focus = link;
+        let ret = key(keysym::RETURN, None, false, false, false);
+        ex.event(crate::MAIN, repriseapp::Event::Key(ret), &mut ctx);
+        ex.finish_puts(&mut ctx);
+        assert!(
+            dir.path().join("New Folder").is_dir(),
+            "Enter on Make a new folder made one"
+        );
     }
 
     #[test]

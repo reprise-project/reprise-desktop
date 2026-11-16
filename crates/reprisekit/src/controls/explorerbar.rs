@@ -21,6 +21,8 @@
 //! ring: a 22 px strip over a 1 px line, the body from the bar's edges, and
 //! a 20x17 close box against the strip's top.
 
+use crate::access::accesskit::{NodeId, Role};
+use crate::access::{self, Tree};
 use crate::controls::metrics::{BarMetrics, ControlMetrics};
 use crate::look::Paint;
 use crate::look::widgets::explorerbar as look;
@@ -133,6 +135,19 @@ pub fn hit(lay: &Layout, x: i32, y: i32) -> Hit {
     } else {
         Hit::Nothing
     }
+}
+
+/// The bar's pane, named by its title, holding its close box as a button. The host adds the
+/// body's nodes under the pane it returns.
+pub fn access(eb: &ExplorerBar, lay: &Layout, tree: &mut Tree, parent: NodeId) -> NodeId {
+    let pane = tree.push(
+        parent,
+        "left bar",
+        access::named(Role::Pane, lay.frame, &eb.title),
+    );
+    let close = lay.close.intersect(&lay.frame);
+    tree.push(pane, "close", access::named(Role::Button, close, "Close"));
+    pane
 }
 
 /// Paint the strip and its frame, the splitter and the close box, clipped
@@ -267,6 +282,18 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn access_names_the_pane_and_gives_its_close_box_a_button() {
+        let lay = layout(&bar(), BAR, &CM);
+        let mut t = Tree::window("Explorer", (400, 400));
+        let pane = access(&bar(), &lay, &mut t, access::ROOT);
+        assert_eq!(t.get(pane).map(|n| n.role()), Some(Role::Pane));
+        assert_eq!(t.get(pane).and_then(|n| n.label()), Some("Folders"));
+        let close = t.find(Role::Button, "Close").expect("the close box's node");
+        let kids = t.get(pane).map(|n| n.children().to_vec());
+        assert_eq!(kids, Some(vec![close]));
     }
 
     #[test]
