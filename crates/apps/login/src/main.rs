@@ -302,7 +302,8 @@ async fn run() -> Result<(), String> {
             Event::Save => rt.saver.save(),
             Event::Reload => {
                 log::info!("reading {MACHINE_CONFIG} again");
-                if let Some(config) = config::reload(Path::new(MACHINE_CONFIG)) {
+                if let Some(config) = config::reload(Path::new(MACHINE_CONFIG), rt.daemon.config())
+                {
                     rt.input(Input::ConfigReloaded(config)).await;
                 }
             }

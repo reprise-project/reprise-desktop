@@ -11,31 +11,39 @@ pub fn load(path: &Path) -> MachineConfig {
     load_with(path, Path::new(BACKGROUND_PICTURE))
 }
 
-/// [`load`] for a reload: a file that can't be read or isn't TOML gives `None`, so the running
-/// settings stay.
-pub fn reload(path: &Path) -> Option<MachineConfig> {
-    read_with(path, Path::new(BACKGROUND_PICTURE))
+/// [`load`] for a reload while `last` runs: a file that can't be read or isn't TOML gives `None`,
+/// so the running settings stay, and a key with a value it can't use keeps its value in `last`.
+pub fn reload(path: &Path, last: &MachineConfig) -> Option<MachineConfig> {
+    read_with(path, Path::new(BACKGROUND_PICTURE), Some(last))
         .map_err(|e| log::warn!("{}: {e}; the last settings stay", path.display()))
         .ok()
 }
 
 /// [`load`], the settings' picture at `picture`.
 fn load_with(path: &Path, picture: &Path) -> MachineConfig {
-    read_with(path, picture).unwrap_or_else(|e| {
+    read_with(path, picture, None).unwrap_or_else(|e| {
         log::warn!("{}: {e}; every setting keeps its default", path.display());
         MachineConfig::default()
     })
 }
 
-/// The settings at `path`, failing when the file can't be read or isn't TOML. A picture at
-/// `picture` the login screen can't show is dropped, so the greeting names no background.
-fn read_with(path: &Path, picture: &Path) -> Result<MachineConfig, String> {
+/// The settings at `path`, read over `last` when there is one, failing when the file can't be
+/// read or isn't TOML. A picture at `picture` the login screen can't show is dropped, so the
+/// greeting names no background.
+fn read_with(
+    path: &Path,
+    picture: &Path,
+    last: Option<&MachineConfig>,
+) -> Result<MachineConfig, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(MachineConfig::default()),
         Err(e) => return Err(e.to_string()),
     };
-    let (mut config, warnings) = MachineConfig::parse_toml(&text)?;
+    let (mut config, warnings) = match last {
+        Some(last) => MachineConfig::parse_over(&text, last)?,
+        None => MachineConfig::parse_toml(&text)?,
+    };
     for w in warnings {
         log::warn!("{}: {w}", path.display());
     }
@@ -92,23 +100,22 @@ mod tests {
             "[remote_desktop]\nenabled = true\nmax_sessions = \"3\n",
         )
         .unwrap();
-        assert_eq!(reload(&path), None, "not TOML");
-        assert_eq!(
-            load(&path),
-            MachineConfig::default(),
-            "start-up takes the defaults"
-        );
-        assert_eq!(reload(dir.path()), None, "unreadable");
+        let none = MachineConfig::default();
+        assert_eq!(reload(&path, &none), None, "not TOML");
+        assert_eq!(load(&path), none, "start-up takes the defaults");
+        assert_eq!(reload(dir.path(), &none), None, "unreadable");
         std::fs::write(&path, "[remote_desktop]\nenabled = true\n").unwrap();
-        assert!(reload(&path).expect("TOML").remote.enabled);
+        let on = reload(&path, &none).expect("TOML");
+        assert!(on.remote.enabled);
         std::fs::write(&path, "[remote_desktop]\nenabled = 1\n").unwrap();
         assert_eq!(
-            reload(&path),
-            Some(MachineConfig::default()),
-            "a bad value keeps its default"
+            reload(&path, &on),
+            Some(on.clone()),
+            "a bad value keeps its last"
         );
+        assert_eq!(load(&path), none, "start-up gives a bad value its default");
         std::fs::remove_file(&path).unwrap();
-        assert_eq!(reload(&path), Some(MachineConfig::default()), "missing");
+        assert_eq!(reload(&path, &on), Some(none), "missing");
     }
 
     #[test]

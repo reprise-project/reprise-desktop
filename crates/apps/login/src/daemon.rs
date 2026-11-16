@@ -478,6 +478,11 @@ pub struct Daemon {
 }
 
 impl Daemon {
+    /// The machine settings it runs with, the base a reload is read over.
+    pub fn config(&self) -> &MachineConfig {
+        &self.config
+    }
+
     pub fn new(config: MachineConfig, remembered: Remembered) -> Daemon {
         Daemon {
             config,
