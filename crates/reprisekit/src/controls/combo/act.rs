@@ -2,6 +2,7 @@
 //! keys on its field and open list, and its list laid out above the field.
 
 use super::{Combo, Hit, Layout, widen_list};
+use crate::classic::widgets::BarHit;
 use crate::controls::form::Key;
 use crate::raster::Rect;
 use crate::selection::type_ahead;
@@ -56,11 +57,11 @@ impl Combo {
                 self.open = None;
                 return Act::Redraw;
             }
-            Hit::Thumb(_) => return Act::None,
-            Hit::ScrollUp => -1,
-            Hit::ScrollDown => 1,
-            Hit::PageUp => -page,
-            Hit::PageDown => page,
+            Hit::Bar(BarHit::Back) => -1,
+            Hit::Bar(BarHit::Forward) => 1,
+            Hit::Bar(BarHit::PageBack) => -page,
+            Hit::Bar(BarHit::PageForward) => page,
+            Hit::Bar(BarHit::Thumb(_) | BarHit::Track) => return Act::None,
         };
         if self.scroll(rows) {
             Act::Redraw

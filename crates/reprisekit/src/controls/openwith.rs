@@ -1118,7 +1118,12 @@ mod tests {
         // 16 rows, 11 in view: a 120 px thumb on the 174 px track.
         let grab_y = sb.y + 16 + 4;
         let hit = o.hit(&l, sb.x + 8, grab_y);
-        assert_eq!(hit, Some(Hit::List(grouplist::Hit::Thumb(4))));
+        assert_eq!(
+            hit,
+            Some(Hit::List(grouplist::Hit::Bar(
+                crate::classic::widgets::BarHit::Thumb(4)
+            )))
+        );
         assert_eq!(o.click(hit), Event::None, "the press moves nothing");
         assert!(o.holding());
         assert_eq!(o.drag(&l, grab_y + 27), Some(Event::Redraw));
@@ -1130,7 +1135,12 @@ mod tests {
         assert_eq!(o.drag(&l, grab_y), None, "let go: nothing follows");
         assert_eq!(o.list.top, 5);
         let above = o.hit(&l, sb.x + 8, sb.y + 20);
-        assert_eq!(above, Some(Hit::List(grouplist::Hit::PageUp)));
+        assert_eq!(
+            above,
+            Some(Hit::List(grouplist::Hit::Bar(
+                crate::classic::widgets::BarHit::PageBack
+            )))
+        );
         assert_eq!(o.click(above), Event::Redraw);
         assert_eq!(o.list.top, 0, "a page back");
         assert!(!o.holding(), "the track grabs nothing");

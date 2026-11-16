@@ -107,7 +107,8 @@ pub fn sort_by_column(sv: &mut ShellView, col: usize) {
 /// Ascending lists folders ([`Entry::is_folder`]) first, each part by the
 /// column's key (name and type case-insensitively, size and date numerically),
 /// then by name; descending is that order reversed, so files come first. A
-/// view with no sort, or with groups, keeps the host's order.
+/// view with no sort, or with groups, keeps the host's order. The file
+/// dialog's [`details_fields`] are the columns it sorts; any other sorts by name.
 pub fn sort(sv: &mut ShellView) {
     let Some((col, asc)) = sv.sort else {
         return;
@@ -125,11 +126,9 @@ pub fn sort(sv: &mut ShellView) {
     }
     let key = |e: &Entry| {
         let by = match field {
-            Field::Name => Key::Name,
+            Field::Name | Field::Folder | Field::Deleted => Key::Name,
             Field::Size => Key::Size(e.size),
             Field::Kind => Key::Text(e.kind.to_lowercase()),
-            Field::Folder => Key::Text(e.folder.to_lowercase()),
-            Field::Deleted => Key::Text(e.deleted.clone()),
             Field::Modified => Key::Date(e.mtime),
         };
         (!e.is_folder(), by, e.name.to_lowercase(), e.name.clone())
