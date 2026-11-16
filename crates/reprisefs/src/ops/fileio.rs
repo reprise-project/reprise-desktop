@@ -385,6 +385,15 @@ pub(super) fn mounts_for(
     Some(info)
 }
 
+/// Whether device `dev` is a drive ([`crate::places::drive_device`]), by the mount table
+/// [`MOUNTS`] holds.
+pub(crate) fn on_a_drive(dev: u64) -> bool {
+    mounts_for(&MOUNTS, dev, Instant::now(), || {
+        std::fs::read("/proc/self/mountinfo").ok()
+    })
+    .is_some_and(|info| crate::places::drive_device(&info, dev))
+}
+
 /// Whether a copy from device `src` onto `dst` leaves a drive ([`crate::places::drive_device`]).
 pub(super) fn off_a_drive(mountinfo: &[u8], src: u64, dst: u64) -> bool {
     src != dst && crate::places::drive_device(mountinfo, src)
