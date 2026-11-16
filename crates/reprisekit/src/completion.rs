@@ -62,8 +62,10 @@ impl Inline {
                     | EditKey::Copy
             );
             if moves {
+                keep(edit, i);
+                let end = edit.text.len();
+                edit.set_selection(i, end);
                 edit.key(ek);
-                truncate(edit, i);
             } else {
                 truncate(edit, i);
                 if !eats && !matches!(ek, EditKey::Undo) {
@@ -96,9 +98,8 @@ impl Inline {
 
     /// The tail stays as typed text, the caret after it.
     pub fn accept(&mut self, edit: &mut TextEdit) {
-        if self.tail.take().is_some() {
-            let end = edit.text.len();
-            edit.set_selection(end, end);
+        if let Some(i) = self.tail.take() {
+            keep(edit, i);
         }
     }
 
@@ -115,6 +116,13 @@ impl Inline {
         edit.set_selection(query.len(), end);
         self.tail = Some(query.len());
     }
+}
+
+/// Turns the tail from `i` into an insert of its own, so Undo takes it back off.
+fn keep(edit: &mut TextEdit, i: usize) {
+    let tail = edit.text.split_off(i);
+    edit.set_selection(i, i);
+    edit.key(EditKey::Insert(tail));
 }
 
 fn truncate(edit: &mut TextEdit, i: usize) {

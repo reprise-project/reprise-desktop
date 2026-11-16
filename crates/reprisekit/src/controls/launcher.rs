@@ -1335,8 +1335,8 @@ mod tests {
             word: false,
         }));
         assert_eq!(typed(&mut l, "x"), Event::QueryChanged);
-        assert_eq!(l.edit.text, "nx");
-        assert_eq!(l.query(), "nx");
+        assert_eq!(l.edit.text, "nxotepad");
+        assert_eq!(l.query(), "nxotepad");
     }
 
     #[test]
@@ -1450,15 +1450,11 @@ mod tests {
         typed(&mut l, "no");
         l.set_rows(rows(&["Notepad"]));
         assert_eq!(l.edit.text, "notepad");
-        // SelectAll drops the tail like Backspace does, so re-ranking the
-        // same query on the next `set_rows` does not complete it right
-        // back to "notepad".
         l.key(Key::Char(EditKey::SelectAll));
-        assert_eq!(l.edit.text, "no");
-        assert_eq!(l.edit.selection(), 0..2);
-        l.set_rows(rows(&["Notepad"]));
-        assert_eq!(l.edit.text, "no");
-        assert_eq!(l.edit.selection(), 0..2);
+        assert_eq!(l.edit.text, "notepad", "the tail stays as typed text");
+        assert_eq!(l.edit.selection(), 0..7);
+        l.set_rows(rows(&["Notepad Plus"]));
+        assert_eq!(l.edit.text, "notepad", "nothing completes on its own");
         assert_eq!(typed(&mut l, "x"), Event::QueryChanged);
         assert_eq!(l.edit.text, "x");
     }

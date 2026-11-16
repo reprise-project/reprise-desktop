@@ -222,6 +222,60 @@ fn tab_takes_the_tail_and_escape_drops_it() {
 }
 
 #[test]
+fn a_move_over_the_tail_keeps_it_as_typed_text() {
+    for (ek, caret) in [
+        (EditKey::End { select: false }, 12),
+        (
+            EditKey::Right {
+                select: false,
+                word: false,
+            },
+            12,
+        ),
+        (EditKey::Home { select: false }, 0),
+        (
+            EditKey::Left {
+                select: false,
+                word: false,
+            },
+            5,
+        ),
+    ] {
+        let mut pc = PathComplete::new(Scope::Rooted);
+        let mut edit = TextEdit::new("", false);
+        typed(&mut pc, &mut edit, "~/Dow");
+        serve(&mut pc, &mut edit, &[HOME]);
+        pc.edit(&mut edit, ek.clone());
+        assert_eq!(edit.text, "~/Downloads/", "{ek:?} keeps the tail");
+        assert_eq!(
+            (edit.caret(), edit.has_selection()),
+            (caret, false),
+            "{ek:?}"
+        );
+        assert_eq!(pc.inline.tail(), None, "{ek:?} leaves nothing shown");
+    }
+}
+
+#[test]
+fn copy_and_select_all_over_the_tail_keep_the_field_and_undo_takes_the_tail_off() {
+    let mut pc = PathComplete::new(Scope::Rooted);
+    let mut edit = TextEdit::new("", false);
+    typed(&mut pc, &mut edit, "~/Dow");
+    serve(&mut pc, &mut edit, &[HOME]);
+    pc.edit(&mut edit, EditKey::Copy);
+    assert_eq!(
+        shown(&edit),
+        ("~/Dow", "nloads/"),
+        "the copied tail stays selected"
+    );
+    assert_eq!(pc.inline.tail(), None);
+    pc.edit(&mut edit, EditKey::SelectAll);
+    assert_eq!(edit.selection(), 0..12);
+    pc.edit(&mut edit, EditKey::Undo);
+    assert_eq!(edit.text, "~/Dow", "the kept tail is one undo step");
+}
+
+#[test]
 fn a_caret_off_the_end_closes_the_list() {
     let mut pc = PathComplete::new(Scope::Rooted);
     let mut edit = TextEdit::new("", false);
