@@ -92,8 +92,14 @@ pub fn set_recycle_bin(
 }
 
 /// Queue `set_recycle_bin` on `path`: Recycle Bin Properties' OK and Apply (`replace`),
-/// and moving an older session's setting out of the state file (not `replace`).
-pub fn save_recycle_bin(path: &Path, policy: reprisefs::bincap::Policy, replace: bool) {
+/// and moving an older session's setting out of the state file (not `replace`). A failed write
+/// calls `failed` with the reason, on the writer thread.
+pub fn save_recycle_bin(
+    path: &Path,
+    policy: reprisefs::bincap::Policy,
+    replace: bool,
+    failed: impl FnOnce(String) + Send + 'static,
+) {
     let path = path.to_path_buf();
     queue(Box::new(move || {
         let saved = repriseconf::edit(&path, |text| set_recycle_bin(text, &policy, replace))
@@ -101,7 +107,10 @@ pub fn save_recycle_bin(path: &Path, policy: reprisefs::bincap::Policy, replace:
             .and_then(|r| r);
         match saved {
             Ok(_) => log::info!("config {}: saved recycle_bin", path.display()),
-            Err(e) => log::error!("config {}: {e}; recycle_bin not saved", path.display()),
+            Err(e) => {
+                log::error!("config {}: {e}; recycle_bin not saved", path.display());
+                failed(e);
+            }
         }
     }));
 }

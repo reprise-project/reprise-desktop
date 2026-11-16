@@ -134,7 +134,7 @@ pub fn setup(state: &mut State) {
     let persisted = crate::state::load();
     state.dialogs.run_history = persisted.run_history;
     if let Some(old) = persisted.bin {
-        crate::configwrite::save_recycle_bin(&state.config_path, old.policy(), false);
+        crate::configwrite::save_recycle_bin(&state.config_path, old.policy(), false, |_| {});
         crate::state::drop_key("bin");
     }
     crate::fsjobs::setup(state);

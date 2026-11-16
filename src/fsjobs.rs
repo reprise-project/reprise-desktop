@@ -412,6 +412,11 @@ impl State {
         }
         self.fsjobs.spawn_now(tx, Box::new(work))
     }
+
+    /// What another thread sends to run on the loop; None without the channel.
+    pub fn loop_sender(&self) -> Option<Sender<OnLoop>> {
+        self.fsjobs.tx.clone()
+    }
 }
 
 #[cfg(test)]

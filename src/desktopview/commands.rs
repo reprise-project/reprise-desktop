@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use reprisefs::apps::AppEntry;
 use reprisefs::program::{Confirm, Program, ScriptOpen};
-use reprisefs::{apps, names, ops, udisks};
+use reprisefs::{apps, ops, udisks};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::{
@@ -342,17 +342,16 @@ impl State {
             return;
         };
         let existing: Vec<String> = view.entries.iter().map(|e| e.name.clone()).collect();
-        let name = names::new_folder_name(&existing);
-        let (dir, path) = (view.dir.clone(), view.dir.join(&name));
+        let dir = view.dir.clone();
         let action = Action::changes("New Folder", State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
             if !gate.change(&dir) {
                 return Box::new(|_| {});
             }
-            let made = std::fs::create_dir(&path);
+            let made = reprisefs::dialogops::new_folder(&dir, "New Folder", &existing);
             Box::new(move |state: &mut State| match made {
-                Ok(()) => state.created(&name, at),
-                Err(e) => log::warn!("desktop: could not create {}: {e}", path.display()),
+                Ok(name) => state.created(&name, at),
+                Err(e) => state.create_failed("New Folder", e),
             })
         });
     }
@@ -379,9 +378,16 @@ impl State {
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     state.created(&name, at)
                 }
-                Err(e) => log::warn!("desktop: could not create a text document: {e}"),
+                Err(e) => state.create_failed("New Text Document", e),
             })
         });
+    }
+
+    /// A New Folder or New Text Document the desktop's folder refused, in an error box.
+    fn create_failed(&mut self, what: &str, e: std::io::Error) {
+        log::warn!("desktop: could not create a {what}: {e}");
+        let text = format!("Cannot create {what}: {e}");
+        self.open_dialog(crate::dialog::Dialog::error(what, text));
     }
 
     /// Run a desktop-menu command; `aim` is the icon it was aimed at, which may have

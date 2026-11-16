@@ -1582,3 +1582,42 @@ fn a_file_whose_icon_name_never_decodes_wears_the_next_name() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_new_folder_or_text_document_the_desktop_refuses_says_why_in_an_error_box() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let desk = crate::harness::scratch().join("desktop-new-refused");
+    std::fs::create_dir_all(&desk).unwrap();
+    crate::desktopview::create(&mut h.state, desk.clone(), Default::default(), None);
+    std::fs::set_permissions(&desk, std::fs::Permissions::from_mode(0o555)).unwrap();
+    for (cmd, title) in [
+        (DesktopCommand::NewFolder, "New Folder"),
+        (DesktopCommand::NewTextDocument, "New Text Document"),
+    ] {
+        h.state.desktop_command(cmd, None);
+        let shown = &h.state.dialogs.views.last().expect("an error box").dialog;
+        assert_eq!(shown.title, title);
+        assert!(
+            shown.text.starts_with(&format!("Cannot create {title}: ")),
+            "{}",
+            shown.text
+        );
+        h.state.apply_dialog(crate::dialog::Outcome::Close);
+    }
+    std::fs::set_permissions(&desk, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(std::fs::read_dir(&desk).unwrap().count(), 0);
+}
+
+#[test]
+fn a_new_folder_takes_the_next_name_when_a_stale_listing_missed_one() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let desk = crate::harness::scratch().join("desktop-new-stale");
+    std::fs::create_dir_all(desk.join("New Folder")).unwrap();
+    crate::desktopview::create(&mut h.state, desk.clone(), Default::default(), None);
+    h.state.desktop_command(DesktopCommand::NewFolder, None);
+    assert!(desk.join("New Folder (2)").is_dir());
+    assert!(h.state.dialogs.views.is_empty());
+}
