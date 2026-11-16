@@ -54,7 +54,7 @@ const PICK: WinId = WinId::named("pick");
 const HISTORY: usize = 100;
 /// How long a program or process has to end after End Task or End Process before End Now is
 /// offered.
-const END_WAIT: Duration = Duration::from_secs(5);
+pub(crate) const END_WAIT: Duration = Duration::from_secs(5);
 /// How long the pointer rests on a process before its command line shows.
 const TIP_DELAY: Duration = Duration::from_millis(600);
 
@@ -207,6 +207,8 @@ pub struct TaskMgr {
     /// Select Columns, while open.
     pick: Option<Form>,
     ending: Vec<Ending>,
+    /// End Task on a program that answers ([`worker::end_task`]), given its scope and pids.
+    end_task: fn(String, Vec<i32>),
     entries: Arc<Vec<AppEntry>>,
     icons: HashMap<String, Option<Rc<Canvas>>>,
     tip: Option<Tip>,
@@ -231,6 +233,7 @@ impl TaskMgr {
             app_rows: Vec::new(),
             hung: Vec::new(),
             hung_rx: None,
+            end_task: worker::end_task,
             procs: List::new(Vec::new()),
             proc_rows: Vec::new(),
             starts: HashMap::new(),
@@ -679,7 +682,11 @@ impl TaskMgr {
             self.ask = Some((Ask::EndNow(Target::Scope(row.unit)), b));
             return Reply::redraw_all();
         }
-        worker::kill_scope(row.unit.clone(), SIGTERM);
+        let pids = (self.snap.scopes.iter())
+            .find(|s| s.unit == row.unit)
+            .map(|s| s.pids.clone())
+            .unwrap_or_default();
+        (self.end_task)(row.unit.clone(), pids);
         self.wait_for(Target::Scope(row.unit), row.name);
         Reply::redraw()
     }

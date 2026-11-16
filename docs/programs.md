@@ -711,9 +711,10 @@ Ctrl+Shift+Escape, or Task Manager on the taskbar's menu, opens it (`task_manage
 another program).
 
 - **Applications:** each program started from the Start menu, the launcher or a
-  desktop icon, with its icon and name. End Task asks the program and its
-  helpers to close; one still running a few seconds later gets an End Now
-  prompt. Switch To (or a double click) brings its window up. Status reads
+  desktop icon, with its icon and name. End Task closes the program's windows as
+  their X button does, so it can ask to save first, and asks its helpers to
+  end once no window is left; one still running a few seconds later gets an
+  End Now prompt. Switch To (or a double click) brings its window up. Status reads
   Not Responding while a window of the program doesn't answer Reprise's
   pings (checked every 5 s while Task Manager is open), and End Task on it
   goes straight to End Now.

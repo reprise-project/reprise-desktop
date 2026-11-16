@@ -1,5 +1,5 @@
 //! The thread that samples: a [`Snapshot`] every interval while one is set, posted to the event
-//! loop, and the signals End Task and End Process send.
+//! loop, and what End Task and End Process send: window closes and signals.
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::Duration;
@@ -66,19 +66,75 @@ pub fn spawn(mut sampler: Sampler, wake: impl Fn() + Send + 'static) -> Handle {
 /// Sends `sig` to every process of scope `unit` through the user manager, off the event loop.
 pub fn kill_scope(unit: String, sig: i32) {
     std::thread::spawn(move || {
-        let call = reprisebus::session().and_then(|conn| {
-            reprisebus::wait(conn.call_method(
-                Some("org.freedesktop.systemd1"),
-                "/org/freedesktop/systemd1",
-                Some("org.freedesktop.systemd1.Manager"),
-                "KillUnit",
-                &(&unit, "all", sig),
-            ))
-        });
-        if let Err(e) = call {
+        if let Err(e) = signal_scope(&unit, sig) {
             log::warn!("signal {sig} to {unit}: {e}");
         }
     });
+}
+
+fn signal_scope(unit: &str, sig: i32) -> Result<(), String> {
+    let conn = reprisebus::session().map_err(|e| e.to_string())?;
+    reprisebus::wait(conn.call_method(
+        Some("org.freedesktop.systemd1"),
+        "/org/freedesktop/systemd1",
+        Some("org.freedesktop.systemd1.Manager"),
+        "KillUnit",
+        &(unit, "all", sig),
+    ))
+    .map(drop)
+    .map_err(|e| e.to_string())
+}
+
+/// End Task on a program that answers: [`end_gently`] scope `unit` whose processes are `pids`,
+/// off the event loop.
+pub fn end_task(unit: String, pids: Vec<i32>) {
+    std::thread::spawn(move || {
+        let close = || {
+            reprisebus::tray::close_windows(&pids).unwrap_or_else(|e| {
+                log::warn!("End Task {unit}: windows not closed: {e}");
+                0
+            })
+        };
+        let count = || reprisebus::tray::count_windows(&pids).unwrap_or(0);
+        let term = || {
+            // A program that closed its last window has often left its scope already.
+            if let Err(e) = signal_scope(&unit, libc::SIGTERM) {
+                log::debug!("End Task {unit}: {e}");
+            }
+        };
+        end_gently(
+            close,
+            count,
+            term,
+            crate::END_WAIT,
+            Duration::from_millis(250),
+        );
+    });
+}
+
+/// Asks a program's windows to close (`close` returns how many it asked), then runs `term` at
+/// once when there were none, or once `count` finds none left within `wait`. A program still
+/// showing a window after `wait` is left to End Now.
+pub fn end_gently(
+    close: impl FnOnce() -> u32,
+    count: impl Fn() -> u32,
+    term: impl FnOnce(),
+    wait: Duration,
+    step: Duration,
+) {
+    if close() > 0 {
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            std::thread::sleep(step);
+            if count() == 0 {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return;
+            }
+        }
+    }
+    term();
 }
 
 /// Sends `sig` to process `pid`.
@@ -95,6 +151,37 @@ pub fn kill_pid(pid: i32, sig: i32) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    /// Runs [`end_gently`] with `closed` windows asked and `left` the counts that follow, and
+    /// returns how many counts it took and whether it signalled.
+    fn gently(closed: u32, left: &[u32]) -> (usize, bool) {
+        let counts = std::cell::Cell::new(0);
+        let termed = std::cell::Cell::new(false);
+        let count = || {
+            let i = counts.get();
+            counts.set(i + 1);
+            left.get(i).copied().unwrap_or(1)
+        };
+        let step = Duration::from_millis(1);
+        end_gently(|| closed, count, || termed.set(true), step * 20, step);
+        (counts.get(), termed.get())
+    }
+
+    #[test]
+    fn end_task_signals_a_program_only_once_it_shows_no_window() {
+        assert_eq!(gently(0, &[]), (0, true), "no window: signalled at once");
+        assert_eq!(
+            gently(2, &[2, 1, 0]),
+            (3, true),
+            "signalled once the last window closed"
+        );
+        let (counts, termed) = gently(1, &[]);
+        assert!(
+            !termed,
+            "a window still up after the wait is left to End Now"
+        );
+        assert!(counts > 1, "counted until the wait ran out");
+    }
 
     #[test]
     fn the_sampler_waits_for_an_interval_and_samples_on_ask() {

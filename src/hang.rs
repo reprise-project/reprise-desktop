@@ -837,6 +837,22 @@ impl State {
         self.end_process(pid);
     }
 
+    /// Task Manager's End Task: the mapped windows whose client is one of `pids`, each asked to
+    /// close as its X button does when `close`. Returns how many there are.
+    pub fn end_task_windows(&mut self, pids: &[i32], close: bool) -> usize {
+        let shown: Vec<WindowId> = (self.windows.iter())
+            .filter(|w| w.mapped && !w.override_redirect)
+            .filter(|w| self.client_pid(w.id).is_some_and(|p| pids.contains(&p)))
+            .map(|w| w.id)
+            .collect();
+        if close {
+            for &w in &shown {
+                self.close(w);
+            }
+        }
+        shown.len()
+    }
+
     /// SIGKILL `pid` unless it forwards X11 windows ([`signalled`]), then disconnect its windows'
     /// clients, which a thread stuck on a dead mount keeps open. Never the compositor or Xwayland.
     pub fn end_process(&mut self, pid: i32) {
@@ -1354,6 +1370,30 @@ mod tests {
         assert!(
             !signalled(4321, None, [Some(4321), Some(2)]),
             "a forwarded window claims a pid on another host"
+        );
+    }
+
+    #[test]
+    fn end_task_closes_only_the_windows_of_the_programs_processes() {
+        const PID: i32 = i32::MAX - 813;
+        const OTHER: i32 = i32::MAX - 814;
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut c = h.connect_as(PID);
+        let mut other = h.connect_as(OTHER);
+        h.map_toplevel(&mut c, "app", 200, 100);
+        h.map_toplevel(&mut c, "app", 100, 80);
+        h.map_toplevel(&mut other, "app", 200, 100);
+        assert_eq!(h.state.end_task_windows(&[PID, 1], false), 2);
+        h.roundtrip(&mut c);
+        assert!(c.side.closes.is_empty(), "a count closes nothing");
+        assert_eq!(h.state.end_task_windows(&[PID, 1], true), 2);
+        h.roundtrip(&mut c);
+        h.roundtrip(&mut other);
+        assert_eq!(c.side.closes, [0, 1], "each window is asked to close");
+        assert!(
+            other.side.closes.is_empty(),
+            "another process with the same app id keeps its window"
         );
     }
 

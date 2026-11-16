@@ -666,10 +666,40 @@ fn a_hung_window_is_its_program_by_pid_and_else_by_app_id() {
     assert!(!hung(0, "reprise.notepad", 9999));
 }
 
+thread_local! {
+    static ENDED: std::cell::RefCell<Vec<(String, Vec<i32>)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn record_end(unit: String, pids: Vec<i32>) {
+    ENDED.with_borrow_mut(|e| e.push((unit, pids)));
+}
+
+#[test]
+fn end_task_on_a_program_that_answers_closes_its_windows_and_waits_for_it() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    t.end_task = record_end;
+    click_row(&mut t, &mut ctx, 0);
+    t.event(MAIN, key(keysym::DELETE), &mut ctx);
+    let unit = t.app_rows[0].unit.clone();
+    let pids = (t.snap.scopes.iter().find(|s| s.unit == unit))
+        .unwrap()
+        .pids
+        .clone();
+    assert_eq!(
+        ENDED.take(),
+        [(unit.clone(), pids)],
+        "the program's processes are asked to close their windows"
+    );
+    assert!(t.ask.is_none(), "End Now waits");
+    assert!(matches!(&t.ending[..], [e] if e.target == Target::Scope(unit.clone())));
+}
+
 #[test]
 fn end_task_on_a_program_not_responding_offers_end_now_at_once() {
     let mut ctx = ctx();
     let mut t = loaded(&mut ctx);
+    t.end_task = record_end;
     t.set_hung(vec![("org.kde.ark".into(), 41)], &mut ctx);
     click_row(&mut t, &mut ctx, 0);
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
@@ -679,6 +709,7 @@ fn end_task_on_a_program_not_responding_offers_end_now_at_once() {
         t.ending.is_empty(),
         "nothing waits on a request it cannot answer"
     );
+    assert!(ENDED.take().is_empty(), "no window is asked to close");
 }
 
 #[test]

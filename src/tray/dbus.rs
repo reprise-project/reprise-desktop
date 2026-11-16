@@ -98,6 +98,23 @@ impl Responding {
     }
 }
 
+impl Shell {
+    /// `CloseWindows` (`close`) and `CountWindows`: the windows of the processes `pids`.
+    async fn windows_of(
+        &self,
+        conn: &Connection,
+        hdr: &Header<'_>,
+        pids: Vec<i32>,
+        close: bool,
+    ) -> zbus::fdo::Result<u32> {
+        self.host_only.check(conn, hdr).await?;
+        let (reply, answer) = async_channel::bounded(1);
+        let ev = TrayEvent::WindowsOf { pids, close, reply };
+        emit(&self.events, self.eventfd, ev);
+        Ok(answer.recv().await.unwrap_or(0))
+    }
+}
+
 #[zbus::interface(name = "org.reprise.Tray")]
 impl Shell {
     async fn customize(
@@ -204,6 +221,24 @@ impl Shell {
         self.host_only.check(conn, &hdr).await?;
         emit(&self.events, self.eventfd, TrayEvent::ReloadRemembered);
         Ok(())
+    }
+
+    async fn close_windows(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+        pids: Vec<i32>,
+    ) -> zbus::fdo::Result<u32> {
+        self.windows_of(conn, &hdr, pids, true).await
+    }
+
+    async fn count_windows(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+        pids: Vec<i32>,
+    ) -> zbus::fdo::Result<u32> {
+        self.windows_of(conn, &hdr, pids, false).await
     }
 
     /// The icon of the window playing a sound stream; see [`crate::streamwindow`].
