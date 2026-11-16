@@ -9,6 +9,8 @@ pub mod session;
 pub mod throttle;
 pub mod users;
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 pub const GREETER_SOCKET: &str = "/run/reprise-login/greeter.sock";
@@ -26,6 +28,13 @@ pub const USER_SERVICES: [&str; 4] = [
     "reprise-login-remote",
     "reprise-login-remote-nla",
 ];
+
+/// An RDP connection's time from its TCP accept to its TLS ClientHello, the X.224 request
+/// included. Both RDP servers hold a connection to it and to [`RDP_HANDSHAKE`].
+pub const RDP_HELLO: Duration = Duration::from_secs(10);
+/// From the TLS ClientHello to the credentials, HYBRID_EX's verified password included: long
+/// enough for a client's user to answer its certificate or password prompt.
+pub const RDP_HANDSHAKE: Duration = Duration::from_secs(60);
 
 /// Lines of PAM text kept and shown.
 pub const PROMPT_LINES: usize = 2;

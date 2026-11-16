@@ -569,8 +569,9 @@ A login counts as a failure from the moment its password check starts until
 PAM accepts it, so a client that drops the connection mid-check still
 spends an attempt. A wrong password is answered after PAM's failure delay,
 about 2 s; a wrong name, a back-off and the pause are answered at once. A
-connection has 10 s to log in; a check in flight when that time runs out is
-finished first.
+connection has 10 s from its TCP accept to send its X.224 request and its TLS
+ClientHello, then 60 s to log in, time for its user to answer a certificate
+prompt; a check in flight when that time runs out is finished first.
 
 Up to `max_viewers` connections are served at once, counting those still
 logging in. One more is closed at once, before TLS, and never touches the
@@ -583,7 +584,8 @@ connection from an address in its back-off: a throttled address holds no
 place while it waits. A few addresses can still hold every place: with the
 default `max_viewers = 4`, two IPv4 addresses or two IPv6 /64s that open two
 connections each, send nothing and reconnect every 10 s keep the owner's
-client out without spending a login. Under reprise-login the front's own
+client out without spending a login, and ones that send a ClientHello
+first hold each place for up to 70 s. Under reprise-login the front's own
 limits apply instead ([Throttle](#throttle)). TCP keepalive ends a
 connection whose client has gone silent within about 30 s.
 
