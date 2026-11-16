@@ -197,6 +197,9 @@ impl State {
             .unwrap_or(false);
         match (win.mapped, has_buffer) {
             (false, true) => {
+                if !win.csd && win.draws_own_frame() {
+                    self.set_csd(w, true);
+                }
                 self.map_window(w);
                 return;
             }

@@ -11,7 +11,10 @@ picture shows (Mini View, a task button's panel, Alt+Tab, the 3D switcher)
 is not suspended while the picture is up.
 
 Windows that ask for server-side decorations get Reprise's frames in the
-current interface. Programs that draw their own title bars may look
+current interface, and so does a window that asks for nothing and draws to
+its buffer's edges. A window that asks for nothing but draws a shadow
+around itself (libadwaita, GTK4 with a header bar) keeps its own title bar
+and gets no frame. Programs that draw their own title bars may look
 different. They've brought their own furniture.
 
 ## Tools that work
