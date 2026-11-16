@@ -11,6 +11,8 @@ const FILL: f64 = 0.75;
 /// Well px within which a dragged tile's edge lines up with a neighbour's.
 const SNAP_PX: f64 = 8.0;
 pub const BADGE: i32 = 200;
+/// Px kept clear each side of a badge's label.
+const BADGE_PAD: i32 = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tile {
@@ -470,13 +472,21 @@ pub fn access(
     id
 }
 
-/// Identify's number for an output: a raised box, or under glass a glass panel with white
-/// digits whose canvas reaches [`panel::margin`] past the badge.
-pub fn draw_badge(theme: &Theme, text: &TextRenderer, number: u32) -> Canvas {
+/// Identify's number for an output, or the numbers of copies showing one box joined as the well
+/// joins them: a raised box, or under glass a glass panel with white digits whose canvas reaches
+/// [`panel::margin`] past the badge. A label too wide for the badge is drawn smaller.
+pub fn draw_badge(theme: &Theme, text: &TextRenderer, numbers: &[u32]) -> Canvas {
     let p = theme.paint();
     let (cs, s) = (p.cs, p.s);
-    let size = theme.fonts.size_px * 12;
-    let digits = number.to_string();
+    let digits: Vec<String> = numbers.iter().map(u32::to_string).collect();
+    let digits = digits.join(" | ");
+    let full = theme.fonts.size_px * 12;
+    let room = (BADGE - 2 * BADGE_PAD) * s;
+    let wide = text.measure(&digits, true, full);
+    let size = match wide > room {
+        true => (i64::from(full) * i64::from(room) / i64::from(wide)).max(1) as u32,
+        false => full,
+    };
     if let Some((style, spec)) = panel::glass(theme) {
         return panel::draw(style, spec, BADGE, BADGE, s, |c| {
             let b = c.bounds();
@@ -846,7 +856,7 @@ mod tests {
         let theme = Theme::default();
         let cs = &theme.colors;
         let text = TextRenderer::load(&theme.fonts);
-        let c = draw_badge(&theme, &text, 1);
+        let c = draw_badge(&theme, &text, &[1]);
         assert_eq!((c.width, c.height), (BADGE as u32, BADGE as u32));
         assert_eq!(c.get(1, 1), cs.button_hilight.argb());
         assert_eq!(c.get(BADGE - 1, BADGE - 1), cs.button_dk_shadow.argb());
@@ -858,10 +868,32 @@ mod tests {
     }
 
     #[test]
+    fn a_badge_for_copies_carries_both_numbers_inside_its_box() {
+        let theme = Theme::default();
+        let ink = theme.colors.button_text.argb();
+        let text = TextRenderer::load(&theme.fonts);
+        let c = draw_badge(&theme, &text, &[1, 2]);
+        assert_eq!((c.width, c.height), (BADGE as u32, BADGE as u32));
+        let inside = 2..BADGE - 2;
+        let inked: Vec<i32> = (inside.clone())
+            .filter(|&x| inside.clone().any(|y| c.get(x, y) == ink))
+            .collect();
+        let (first, last) = (inked[0], inked[inked.len() - 1]);
+        assert!(
+            first >= BADGE_PAD && last < BADGE - BADGE_PAD,
+            "{first}..{last}"
+        );
+        assert!(
+            inked.windows(2).filter(|w| w[1] > w[0] + 1).count() >= 2,
+            "two digits and a bar between: {inked:?}"
+        );
+    }
+
+    #[test]
     fn under_glass_the_badge_is_a_glass_panel_with_white_digits() {
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
         let text = TextRenderer::load(&theme.fonts);
-        let c = draw_badge(&theme, &text, 1);
+        let c = draw_badge(&theme, &text, &[1]);
         let m = panel::margin(&theme);
         assert_eq!(
             (c.width as i32, c.height as i32),
@@ -876,7 +908,7 @@ mod tests {
             .filter(|&y| c.get(m.left + BADGE / 2, m.top + y) == white)
             .count();
         assert!(mid > 10, "the white stem of the 1: {mid} px");
-        let c2 = draw_badge(&theme.scaled(2), &text, 1);
+        let c2 = draw_badge(&theme.scaled(2), &text, &[1]);
         assert_eq!((c2.width, c2.height), (c.width * 2, c.height * 2));
     }
 }

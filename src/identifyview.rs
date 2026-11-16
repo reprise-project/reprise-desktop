@@ -1,9 +1,10 @@
 //! Identify's numbers: the Display page names the outputs in its order
 //! (`org.reprise.Tray.Identify`), and each one in the layout shows its
 //! number, from 1, as a `reprisekit::controls::arrange` badge in its
-//! middle for 2 s, on a glass backdrop under a look with glass. The badges
-//! sit in `layers.overlay` and let the pointer through. A second Identify
-//! replaces the first.
+//! middle for 2 s, on a glass backdrop under a look with glass. Copies
+//! (Duplicate) share one box and one badge with all their numbers. The
+//! badges sit in `layers.overlay` and let the pointer through. A second
+//! Identify replaces the first.
 
 use std::time::Duration;
 
@@ -38,25 +39,37 @@ fn badge_origin(b: Rect) -> (i32, i32) {
     (b.x + (b.width - BADGE) / 2, b.y + (b.height - BADGE) / 2)
 }
 
+/// `numbered` (an output, its box and number) as one entry per box, in first-seen order, with
+/// the numbers of every output showing that box in rising order.
+fn by_box<O>(numbered: Vec<(O, Rect, u32)>) -> Vec<(O, Rect, Vec<u32>)> {
+    let mut boxes: Vec<(O, Rect, Vec<u32>)> = Vec::new();
+    for (out, b, n) in numbered {
+        match boxes.iter_mut().find(|(_, seen, _)| *seen == b) {
+            Some((_, _, numbers)) => numbers.push(n),
+            None => boxes.push((out, b, vec![n])),
+        }
+    }
+    for (_, _, numbers) in &mut boxes {
+        numbers.sort_unstable();
+    }
+    boxes
+}
+
 /// Number each output named in `names`, the first 1, unless its side is
 /// locked (`locked_on`); the rest show nothing.
 pub fn show(state: &mut State, names: &[String]) {
     hide(state);
-    let outputs = state.scene.outputs().to_vec();
-    for out in outputs {
-        let Some(k) = names.iter().position(|n| *n == out.name()) else {
-            continue;
-        };
-        if state.locked_on(&out) {
-            continue;
-        }
-        let b = state.layout_box(Some(&out));
-        if b.width <= 0 {
-            continue;
-        }
+    let numbered = (state.scene.outputs().iter())
+        .filter_map(|out| {
+            let k = names.iter().position(|n| *n == out.name())?;
+            let b = state.layout_box(Some(out));
+            (!state.locked_on(out) && b.width > 0).then(|| (out.clone(), b, k as u32 + 1))
+        })
+        .collect();
+    for (out, b, numbers) in by_box(numbered) {
         let scale = state.draw_scale_at(Some(&out)).max(1);
         let theme = state.config.theme.scaled(scale);
-        let canvas = arrange::draw_badge(&theme, state.text.for_output(theme.scale), k as u32 + 1);
+        let canvas = arrange::draw_badge(&theme, state.text.for_output(theme.scale), &numbers);
         let m = panel::margin(&state.config.theme);
         let at = badge_origin(b);
         let pane = match state.config.theme.glass() {
@@ -129,5 +142,12 @@ mod tests {
     fn a_badge_sits_in_the_middle_of_its_output() {
         assert_eq!(badge_origin(Rect::new(0, 0, 1920, 1080)), (860, 440));
         assert_eq!(badge_origin(Rect::new(1920, -200, 1280, 1024)), (2460, 212));
+    }
+
+    #[test]
+    fn copies_showing_one_box_share_a_badge_with_their_numbers() {
+        let (a, b) = (Rect::new(0, 0, 1920, 1080), Rect::new(1920, 0, 1280, 1024));
+        let got = by_box(vec![("DP-2", a, 3), ("HDMI-A-1", b, 2), ("DP-1", a, 1)]);
+        assert_eq!(got, [("DP-2", a, vec![1, 3]), ("HDMI-A-1", b, vec![2])]);
     }
 }
