@@ -99,12 +99,7 @@ pub enum Focus {
     View,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct Hover {
-    pub on: HoverOn,
-    pub at: (i32, i32),
-    pub since: std::time::Instant,
-}
+pub type Hover = repriseapp::tip::Rest<HoverOn>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HoverOn {

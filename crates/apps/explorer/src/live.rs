@@ -372,7 +372,7 @@ impl Explorer {
         if self.tip.is_some() {
             return Reply::none();
         }
-        if now.duration_since(h.since) < HOVER {
+        if !h.due(now, HOVER) {
             return Reply {
                 tick: true,
                 ..Reply::none()
@@ -487,7 +487,7 @@ impl Explorer {
         w.rx = None;
         self.folder_tip = Some((w.path.clone(), lines));
         match self.hover {
-            Some(h) if self.tip.is_none() && h.since.elapsed() >= HOVER => {
+            Some(h) if self.tip.is_none() && h.due(Instant::now(), HOVER) => {
                 self.show_tip(ctx);
                 self.tip.is_some()
             }
@@ -558,26 +558,23 @@ impl Explorer {
     /// Arms, re-arms or drops the tip for the pointer at `(x, y)`
     /// ([`Explorer::tip_target`]). `true` when the window needs repainting.
     pub fn hover_view(&mut self, x: i32, y: i32, lay: &window::Layout, ctx: &Ctx) -> bool {
-        match self.tip_target(x, y, lay, ctx) {
-            Some(on) if self.hover.is_some_and(|h| h.on == on) && self.tip.is_some() => false,
-            Some(on) => {
-                let had = self.tip.take().is_some();
-                if self.hover.is_none_or(|h| h.on != on) {
-                    self.tip_walk = None;
-                    self.folder_tip = None;
-                    if let HoverOn::Entry(i) = on {
-                        self.read_dims(i, ctx);
-                    }
-                }
-                self.hover = Some(crate::Hover {
-                    on,
-                    at: (x, y),
-                    since: Instant::now(),
-                });
-                had
-            }
-            None => self.hide_tip(),
+        let Some(on) = self.tip_target(x, y, lay, ctx) else {
+            return self.hide_tip();
+        };
+        let up = self.tip.is_some();
+        let rest = crate::Hover::moved(self.hover, Some(on), (x, y), up, Instant::now());
+        if rest == self.hover {
+            return false;
         }
+        if self.hover.is_none_or(|h| h.on != on) {
+            self.tip_walk = None;
+            self.folder_tip = None;
+            if let HoverOn::Entry(i) = on {
+                self.read_dims(i, ctx);
+            }
+        }
+        self.hover = rest;
+        self.tip.take().is_some()
     }
 
     /// Drops the infotip and its arming; `true` when a tip was on screen.

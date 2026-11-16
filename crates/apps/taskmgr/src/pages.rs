@@ -230,7 +230,7 @@ pub fn draw(t: &mut TaskMgr, c: &mut Canvas, ctx: &Ctx) {
         m.draw(c, ctx);
     }
     if let Some(tip) = t.tip.as_ref().filter(|tip| tip.shown)
-        && let Some(row) = t.proc_rows.iter().find(|r| r.pid == tip.pid)
+        && let Some(row) = t.proc_rows.iter().find(|r| r.pid == tip.rest.on)
         && !row.cmdline.is_empty()
     {
         let tc = reprisekit::controls::tooltip::draw_tip_at(
@@ -239,14 +239,11 @@ pub fn draw(t: &mut TaskMgr, c: &mut Canvas, ctx: &Ctx) {
             &row.cmdline,
             c.scale(),
         );
-        let (w, h) = (tc.width as i32, tc.height as i32);
-        let x = (tip.at.0 + 12).min(ctx.size.0 - w).max(0);
-        let y = if tip.at.1 + 20 + h <= ctx.size.1 {
-            tip.at.1 + 20
-        } else {
-            (tip.at.1 - h - 4).max(0)
-        };
-        c.blit_over(x * c.scale(), y * c.scale(), &tc);
+        let s = c.scale();
+        let size = (tc.width as i32 / s, tc.height as i32 / s);
+        let client = Rect::new(0, 0, ctx.size.0, ctx.size.1);
+        let (x, y) = reprisekit::controls::tooltip::place(tip.rest.at, size, client, true);
+        c.blit_over(x * s, y * s, &tc);
     }
 }
 
