@@ -588,6 +588,16 @@ impl State {
         self.bar_at(output, self.bar_hide.drawn(output))
     }
 
+    /// The widest one-line clock in the bar's font, px.
+    pub fn side_clock_w(&self) -> i32 {
+        let px = self.config.theme.fonts.size_px;
+        let widest = crate::taskbar::widest_times().iter();
+        widest
+            .map(|t| self.text.measure(t, false, px))
+            .max()
+            .unwrap_or(0)
+    }
+
     fn bar_at(&self, output: &Output, hidden: f32) -> BarPlacement {
         let b = self.layout_box(Some(output));
         let (theme, tb) = (&self.config.theme, &self.config.taskbar);
@@ -596,6 +606,7 @@ impl State {
             &theme.metrics,
             &theme.taskbar_shape(),
             tb.side_width,
+            self.side_clock_w(),
             b,
         );
         // A width drag lays the bars out at the dragged width; windows keep the
@@ -612,6 +623,7 @@ impl State {
                     &theme.metrics,
                     &theme.taskbar_shape(),
                     w,
+                    self.side_clock_w(),
                     b,
                 );
                 crate::barplace::place_resizing(b, tb.position, t, live, hide)

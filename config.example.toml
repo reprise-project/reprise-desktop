@@ -141,7 +141,8 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 #                            # every bar sits on, under every interface
 # side_width = 0             # a left or right bar's width; 0: the
 #                            # interface's own (Start's width, or one icon
-#                            # in Glass), one icon to a third of the output;
+#                            # in Glass), widened to hold the clock's one
+#                            # line; one icon to a third of the output;
 #                            # dragging an unlocked side bar's edge sets it,
 #                            # and dragging its empty space to an edge sets
 #                            # position. A side bar puts the buttons that

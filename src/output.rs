@@ -1016,6 +1016,7 @@ impl State {
                     &theme.metrics,
                     &theme.taskbar_shape(),
                     tb.side_width,
+                    self.side_clock_w(),
                     b,
                 );
                 let p =

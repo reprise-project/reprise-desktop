@@ -572,11 +572,13 @@ impl TaskbarShape {
         }
     }
 
-    /// Width of a side bar `wanted` px wide (0: default), at least one slot, at most a third of the output.
-    pub fn side_width(&self, m: &Metrics, wanted: i32, output_width: i32) -> i32 {
+    /// Width of a side bar `wanted` px wide, at least one slot, at most a third of the output. At
+    /// 0 it is the look's default, widened to hold a one-line clock `clock` px wide.
+    pub fn side_width(&self, m: &Metrics, wanted: i32, output_width: i32, clock: i32) -> i32 {
         let slot = self.side_slot(m);
         let w = if wanted <= 0 {
-            self.side_default(m)
+            let room = clock + 2 * SIDE_CLOCK_AIR + self.button_top + self.button_bottom;
+            self.side_default(m).max(room)
         } else {
             wanted
         };
@@ -646,6 +648,9 @@ pub enum TaskRow {
     AtLeast(i32),
     Icons,
 }
+
+/// Px a side bar's default width leaves either side of its clock.
+const SIDE_CLOCK_AIR: i32 = 2;
 
 /// The shortest bar, at scale 1, that sets its clock on two lines.
 pub const TWO_LINE_CLOCK_MIN: i32 = 40;

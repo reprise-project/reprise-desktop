@@ -27,7 +27,7 @@ fn a_side_bars_reveal_line_is_its_inner_two_columns() {
 }
 
 #[test]
-fn a_side_bar_is_starts_width_or_one_slot_by_default_and_clamped() {
+fn a_side_bar_is_starts_width_or_one_slot_by_default_widened_for_its_clock_and_clamped() {
     use crate::interface::Interface;
     let m = Metrics::default();
     let c = TaskbarShape::CLASSIC;
@@ -56,19 +56,25 @@ fn a_side_bar_is_starts_width_or_one_slot_by_default_and_clamped() {
         (44, 44),
         "Glass's small bar: one 44 px slot"
     );
-    assert_eq!(c.side_width(&m, 0, 1920), 60, "0: the default");
-    assert_eq!(c.side_width(&m, 10, 1920), 28, "never under a slot");
-    assert_eq!(c.side_width(&m, 200, 1920), 200);
+    assert_eq!(c.side_width(&m, 0, 1920, 39), 60, "0: the default");
+    assert_eq!(c.side_width(&m, 10, 1920, 39), 28, "never under a slot");
+    assert_eq!(c.side_width(&m, 200, 1920, 39), 200);
     assert_eq!(
-        c.side_width(&m, 2000, 1920),
+        c.side_width(&m, 2000, 1920, 39),
         640,
         "never past a third of the output"
     );
     assert_eq!(
-        c.side_width(&m, 0, 60),
+        c.side_width(&m, 0, 60, 39),
         28,
         "an output too narrow for the default: a slot"
     );
+    assert_eq!(
+        c.side_width(&m, 0, 1920, 82),
+        92,
+        "0 with a clock wider than Start: the clock, 2 px either side, inside the bar's 4 and 2 px"
+    );
+    assert_eq!(c.side_width(&m, 40, 1920, 82), 40, "a chosen width is kept");
 }
 
 #[test]
@@ -543,7 +549,7 @@ fn a_column_with_the_tasks_first_lays_them_above_quick_launch() {
 fn a_column_a_third_of_a_1920_output_wide_labels_its_buttons_across_it() {
     use crate::interface::Interface;
     let m = Metrics::default();
-    let t = TaskbarShape::CLASSIC.side_width(&m, 2000, 1920);
+    let t = TaskbarShape::CLASSIC.side_width(&m, 2000, 1920, 39);
     assert_eq!(t, 640);
     let l = look_column(
         Interface::Classic,

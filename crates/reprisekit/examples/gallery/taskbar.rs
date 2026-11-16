@@ -439,7 +439,8 @@ pub fn render_taskbar_edges() -> Canvas {
     let mut x = 10;
     for theme in &themes {
         let shape = theme.taskbar_shape();
-        let t = shape.side_default(&theme.metrics);
+        let clock = text.measure("3:45 PM", false, theme.fonts.size_px);
+        let t = shape.side_width(&theme.metrics, 0, 1920, clock);
         let counts = TaskbarCounts {
             quick: 3,
             pager: 2,
@@ -601,7 +602,10 @@ pub fn render_taskbar_cells() -> Canvas {
     let mut x = 10;
     for theme in &themes {
         let icon_px = theme.taskbar_shape().task_icon;
-        let t = theme.taskbar_shape().side_default(&theme.metrics);
+        let clock = text.measure("3:45 PM", false, theme.fonts.size_px);
+        let t = theme
+            .taskbar_shape()
+            .side_width(&theme.metrics, 0, 1920, clock);
         for cell in cells {
             let span = BarSpan {
                 edge: Edge::Left,
@@ -729,7 +733,10 @@ pub fn render_quick_more() -> Canvas {
     }
     for interface in looks {
         let theme = cued(interfaces::theme_for(interface));
-        let t = theme.taskbar_shape().side_default(&theme.metrics);
+        let clock = text.measure("3:45 PM", false, theme.fonts.size_px);
+        let t = theme
+            .taskbar_shape()
+            .side_width(&theme.metrics, 0, 1920, clock);
         let mut x = 10;
         for edge in [Edge::Left, Edge::Right] {
             for cell in cells {
@@ -786,10 +793,13 @@ pub fn render_tray_arrow() -> Canvas {
         clock: "3:45 PM".into(),
     };
     let cell = |hot, open, held| PopupCell { hot, open, held };
-    let mut c = blurred_stripes(1060, 262);
+    let themes = [Interface::Classic, Interface::Blue].map(|i| cued(interfaces::theme_for(i)));
+    let side = themes[0].text.len(60);
+    let step = 370 + 2 * (side + 10) + 30;
+    let bar_h = themes.iter().map(|t| t.metrics.taskbar_height).max();
+    let mut c = blurred_stripes(2 * step - 20, 22 + 6 * (bar_h.unwrap_or(0) + 10));
     let mut x0 = 10;
-    for interface in [Interface::Classic, Interface::Blue] {
-        let theme = cued(interfaces::theme_for(interface));
+    for theme in themes {
         let shape = theme.taskbar_shape();
         let full = reveal_width(&shape, 2);
         let lay = |span: BarSpan, reveal: i32| {
@@ -845,14 +855,14 @@ pub fn render_tray_arrow() -> Canvas {
             let span = BarSpan {
                 edge: Edge::Left,
                 length: 200,
-                thickness: 60,
+                thickness: side,
             };
             let l = lay(span, reveal);
             let st = state(cell, l.tray.len());
             draw(&mut c, &l, &st, (x, 16));
-            x += 70;
+            x += side + 10;
         }
-        x0 += 540;
+        x0 += step;
     }
     c
 }

@@ -89,15 +89,18 @@ pub fn place(output: Rect, edge: Edge, thickness: i32) -> BarPlacement {
     }
 }
 
+/// How thick the bar is on `edge`: its height, or on a side `[taskbar] side_width` as
+/// [`TaskbarShape::side_width`] takes it, with `clock` the widest one-line clock in px.
 pub fn thickness(
     edge: Edge,
     m: &crate::theme::Metrics,
     shape: &TaskbarShape,
     side_width: i32,
+    clock: i32,
     output: Rect,
 ) -> i32 {
     if edge.is_side() {
-        shape.side_width(m, side_width, output.width)
+        shape.side_width(m, side_width, output.width, clock)
     } else {
         m.taskbar_height
     }
@@ -140,7 +143,7 @@ pub fn dragged_width(
     grab: i32,
 ) -> i32 {
     let wanted = (depth(edge, output, at.0, at.1) + grab).max(1);
-    shape.side_width(m, wanted, output.width)
+    shape.side_width(m, wanted, output.width, 0)
 }
 
 /// `place` with `[taskbar] auto_hide`: `hide` is None with it off, else the slide, 0.0 shown to 1.0 hidden.
@@ -369,29 +372,34 @@ mod tests {
         let c = TaskbarShape::CLASSIC;
         let out = Rect::new(0, 0, 1920, 1080);
         assert_eq!(
-            thickness(Edge::Bottom, &m, &c, 300, out),
+            thickness(Edge::Bottom, &m, &c, 300, 39, out),
             28,
             "the bar's height"
         );
-        assert_eq!(thickness(Edge::Top, &m, &c, 0, out), 28);
+        assert_eq!(thickness(Edge::Top, &m, &c, 0, 39, out), 28);
         assert_eq!(
-            thickness(Edge::Left, &m, &c, 0, out),
+            thickness(Edge::Left, &m, &c, 0, 39, out),
             60,
             "Classic's own width"
         );
-        assert_eq!(thickness(Edge::Right, &m, &c, 120, out), 120);
+        assert_eq!(thickness(Edge::Right, &m, &c, 120, 39, out), 120);
         assert_eq!(
-            thickness(Edge::Left, &m, &c, 5, out),
+            thickness(Edge::Left, &m, &c, 5, 39, out),
             28,
             "never under a slot"
         );
         assert_eq!(
-            thickness(Edge::Left, &m, &c, 900, out),
+            thickness(Edge::Left, &m, &c, 900, 39, out),
             640,
             "never past a third"
         );
-        let p = place(out, Edge::Left, thickness(Edge::Left, &m, &c, 0, out));
+        let p = place(out, Edge::Left, thickness(Edge::Left, &m, &c, 0, 39, out));
         assert_eq!(p.shown, Rect::new(0, 0, 60, 1080));
+        assert_eq!(
+            thickness(Edge::Left, &m, &c, 0, 82, out),
+            92,
+            "a clock wider than Start widens the default"
+        );
     }
 
     #[test]
