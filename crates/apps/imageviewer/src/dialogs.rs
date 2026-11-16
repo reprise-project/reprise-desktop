@@ -1,8 +1,8 @@
 //! The delete prompt, the error box and the Open dialog.
 
 use super::*;
+use repriseapp::asks::Answer;
 use repriseapp::filedlg::Driven;
-use repriseapp::oneshot::Outcome;
 use reprisefs::bincap::{ConfirmKind, DeleteMode, delete_prompt};
 use reprisekit::controls::dlgtemplate::{self, Template};
 use reprisekit::controls::filedlg::{DlgMode, Fields};
@@ -33,7 +33,7 @@ impl Viewer {
         let Some(path) = self.folder.current().map(Path::to_path_buf) else {
             return Reply::none();
         };
-        if self.delete.is_some() {
+        if !self.delete.is_empty() {
             return Reply::none();
         }
         self.send(Job::Fate { path, erase });
@@ -42,7 +42,9 @@ impl Viewer {
 
     /// The worker's answer to [`Viewer::ask_delete`]: the prompt, or the delete at once.
     pub(crate) fn fated(&mut self, path: PathBuf, mode: DeleteMode) -> bool {
-        if self.folder.current() != Some(path.as_path()) {
+        if self.folder.current() != Some(path.as_path())
+            || self.delete.iter().any(|(_, (p, _))| *p == path)
+        {
             return false;
         }
         if !mode.ask {
@@ -66,24 +68,20 @@ impl Viewer {
             max_w: 0,
         };
         let b = MsgBox::on_template(title, Template::MessageBox, fields);
-        self.delete = Some((b, path, mode.erase));
+        self.delete.ask(b, (path, mode.erase));
         true
     }
 
-    pub(crate) fn delete_event(&mut self, ev: Event) -> Reply {
-        let Some((b, _, _)) = &mut self.delete else {
-            return Reply::none();
-        };
-        match b.event(&ev, &self.dialog_text, &self.forms) {
-            Outcome::Closed(picked) => {
-                let (_, path, erase) = self.delete.take().expect("the prompt is up");
+    pub(crate) fn delete_event(&mut self, win: WinId, ev: Event) -> Reply {
+        match self.delete.event(win, &ev, &self.dialog_text, &self.forms) {
+            Answer::Closed((path, erase), picked) => {
                 if picked == Some(0) {
                     self.send(Job::Delete { path, erase });
                 }
                 Reply::redraw_all()
             }
-            Outcome::Redraw => Reply::redraw(),
-            Outcome::None => Reply::none(),
+            Answer::Redraw => Reply::redraw(),
+            Answer::None => Reply::none(),
         }
     }
 

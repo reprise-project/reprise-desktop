@@ -143,7 +143,7 @@ impl Viewer {
         let live = [
             (title::FILE, row::BACKGROUND, shown && background),
             (title::EDIT, row::COPY, file),
-            (title::EDIT, row::DELETE, file && self.delete.is_none()),
+            (title::EDIT, row::DELETE, file && self.delete.is_empty()),
             (title::VIEW, row::PREVIOUS, many),
             (title::VIEW, row::NEXT, many),
             (title::VIEW, row::FIRST, many),
