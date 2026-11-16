@@ -335,13 +335,34 @@ fn deferred_work_runs_one_step_at_a_time_reset_probes_scan_enables_config() {
         "the first probe step lists three connectors and probes one"
     );
     assert_eq!(
-        next_step(false, true, Some(1), true, true, true),
-        Some(Probe),
-        "a new uevent starts the scan over"
-    );
-    assert_eq!(
         next_step(false, false, Some(0), true, true, true),
         Some(Scan)
+    );
+}
+
+#[test]
+fn uevents_faster_than_a_pass_let_it_scan_then_start_one_more() {
+    let mut rescan = true;
+    let mut unprobed: Option<usize> = None;
+    let mut steps = Vec::new();
+    while let Some(step) = next_step(false, rescan, unprobed, false, false, false) {
+        // A uevent lands with each of the first pass's probes.
+        let flapping = steps.len() < 3;
+        steps.push(step);
+        match step {
+            // As quiet_step: a probe step lists the connectors only when no pass is under way.
+            Step::Probe if unprobed.is_none() => (rescan, unprobed) = (false, Some(2)),
+            Step::Probe => unprobed = unprobed.map(|n| n - 1),
+            Step::Scan => unprobed = None,
+            _ => unreachable!(),
+        }
+        rescan |= flapping;
+        assert!(steps.len() < 20, "never ends: {steps:?}");
+    }
+    use Step::*;
+    assert_eq!(
+        steps,
+        [Probe, Probe, Probe, Scan, Probe, Probe, Probe, Scan]
     );
 }
 
