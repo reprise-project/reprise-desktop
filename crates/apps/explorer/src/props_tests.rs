@@ -1617,3 +1617,157 @@ fn find_target_answering_late_selects_it_on_a_later_wake() {
         ]]
     );
 }
+
+/// Closing the sheet under Confirm Attribute Changes gives the question its Cancel: nothing is
+/// written and no box is left to answer for a sheet that is gone.
+#[test]
+fn closing_the_sheet_under_its_attribute_question_writes_nothing_and_leaves_no_box() {
+    use crate::place::Place;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let full = dir.path().join("Reports");
+    std::fs::create_dir_all(&full).expect("mkdir");
+    std::fs::write(full.join("a.txt"), "a").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.open_properties(&full, "Reports", "Reports", &mut ctx);
+    ex.finish_puts(&mut ctx);
+    let p = ex.props.as_mut().expect("the sheet");
+    p.sheet.open_mut().set_check(HIDDEN, true);
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Apply, &mut ctx);
+    assert!(matches!(
+        ex.dialog(),
+        Some(crate::dialogs::Dialog::AttrConfirm(_))
+    ));
+
+    ex.event(PROPS, repriseapp::Event::CloseRequest, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(ex.props.is_none(), "the sheet closes");
+    assert!(ex.dialogs.is_empty(), "no box is left");
+    assert!(full.exists(), "the folder is not hidden");
+}
+
+/// Closing the sheet takes its Change... chooser down with it, while a box of the folder
+/// window's waiting behind the chooser stays.
+#[test]
+fn closing_the_sheet_takes_its_change_chooser_and_leaves_the_other_boxes() {
+    use crate::dialogs::Dialog;
+    use crate::place::Place;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = dir.path().join("notes.txt");
+    std::fs::write(&path, "notes").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.open_properties(&path, "notes.txt", "notes.txt", &mut ctx);
+    ex.choose_program_for(&path, true, &mut ctx);
+    ex.message_box("Explorer", "x".into(), &mut ctx);
+    assert!(matches!(ex.dialog(), Some(Dialog::ChooseProgram(_))));
+
+    ex.event(PROPS, repriseapp::Event::CloseRequest, &mut ctx);
+    assert!(ex.props.is_none(), "the sheet closes");
+    assert_eq!(ex.dialogs.len(), 1, "the chooser is gone");
+    assert!(matches!(ex.dialog(), Some(Dialog::Message { .. })));
+}
+
+/// The sheet's Cancel takes its boxes too, one waiting behind a box of the folder window's
+/// included.
+#[test]
+fn the_sheets_cancel_takes_a_sheet_box_waiting_behind_another() {
+    use crate::dialogs::Dialog;
+    use crate::place::Place;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, "a").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.open_properties(&f, "a.txt", "a.txt", &mut ctx);
+    ex.message_box("Explorer", "x".into(), &mut ctx);
+    ex.advanced_attributes(FOLDER, None, &mut ctx);
+    assert_eq!(ex.dialogs.len(), 2);
+
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Cancel, &mut ctx);
+    assert!(ex.props.is_none(), "the sheet closes");
+    assert_eq!(ex.dialogs.len(), 1, "Advanced Attributes is gone");
+    assert!(matches!(ex.dialog(), Some(Dialog::Message { .. })));
+}
+
+/// OK's write landing closes the sheet and takes the sheet's attribute question with it: a set's
+/// question, which carries its own paths, writes nothing once its sheet is gone.
+#[test]
+fn a_set_question_whose_sheet_a_landing_write_closed_writes_nothing() {
+    use crate::dialogs::Dialog;
+    use crate::place::Place;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let paths: Vec<PathBuf> = ["a.txt", "b.txt"]
+        .iter()
+        .map(|n| dir.path().join(n))
+        .collect();
+    for p in &paths {
+        std::fs::write(p, "x").expect("write");
+    }
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let n = ex.items.len();
+    ex.sv.selection.select_all(n);
+    ex.properties(&mut ctx);
+    ex.finish_puts(&mut ctx);
+    let p = ex.props.as_mut().expect("the combined sheet");
+    p.sheet
+        .open_mut()
+        .set_check_state(READ_ONLY, CheckState::On);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let writing = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Ok, &mut ctx);
+    assert!(ex.props.is_some(), "the sheet stays until the write lands");
+    let form = attr_form(
+        &AttrMoves::default(),
+        Some(true),
+        filesheet::Subject::Set { has_dir: false },
+        &ex.dialog_text,
+        ex.dialog_px,
+        TextUnits::ONE,
+    );
+    ex.raise(Dialog::AttrConfirm(AttrConfirm {
+        set: Some(paths.clone()),
+        new_name: None,
+        attrs: AttrMoves::default(),
+        hidden: Some(true),
+        close: false,
+        form,
+    }));
+    drop(writing);
+    ex.held = None;
+    ex.finish_puts(&mut ctx);
+    assert!(ex.props.is_none(), "OK's write closed the sheet");
+
+    ex.dialog_outcome(
+        reprisekit::controls::form::Event::Pressed(ATTR_OK),
+        &mut ctx,
+    );
+    ex.finish_puts(&mut ctx);
+    assert!(ex.dialogs.is_empty(), "no box is left");
+    assert!(paths.iter().all(|p| p.exists()), "nothing is hidden");
+}
+
+/// A box the sheet raised covers the sheet and a plain box the folder window; the error box
+/// and the program picker cover the box they stack on.
+#[test]
+fn a_sheets_box_covers_the_sheet_and_a_plain_box_the_folder_window() {
+    use crate::place::Place;
+    use repriseapp::MAIN;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, "a").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.open_properties(&f, "a.txt", "a.txt", &mut ctx);
+    ex.advanced_attributes(FOLDER, None, &mut ctx);
+    assert_eq!(ex.parent_of(crate::DIALOG), PROPS);
+    assert_eq!(ex.parent_of(crate::browse::ERROR), crate::DIALOG);
+    assert_eq!(ex.parent_of(crate::PROGRAM_BROWSE), crate::DIALOG);
+    assert_eq!(ex.parent_of(PROPS), MAIN);
+
+    ex.dismiss_up(&mut ctx);
+    ex.message_box("Explorer", "x".into(), &mut ctx);
+    assert_eq!(ex.parent_of(crate::DIALOG), MAIN);
+}

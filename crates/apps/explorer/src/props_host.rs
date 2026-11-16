@@ -592,11 +592,21 @@ impl Explorer {
         }
     }
 
+    /// Closes the sheet, the one way it goes. Its boxes, up or waiting, leave first with their
+    /// cancel answer ([`Explorer::dismiss`]), so none is answered for a sheet that is gone.
+    pub(crate) fn close_props(&mut self, ctx: &mut Ctx) -> Reply {
+        let mut reply = Reply::redraw_all();
+        for d in self.dialogs.withdraw(crate::dialogs::Dialog::of_sheet) {
+            reply = reply.and(self.dismiss(d, ctx));
+        }
+        self.props = None;
+        reply
+    }
+
     /// The sheet's event loop.
     pub fn props_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         if matches!(ev, Event::CloseRequest) {
-            self.props = None;
-            return Reply::redraw_all();
+            return self.close_props(ctx);
         }
         let Some(p) = self.props.as_mut() else {
             return Reply::none();
@@ -624,10 +634,7 @@ impl Explorer {
                 Reply::none()
             }
             propsheet::Event::Redraw => Reply::redraw(),
-            propsheet::Event::Cancel => {
-                self.props = None;
-                Reply::redraw_all()
-            }
+            propsheet::Event::Cancel => self.close_props(ctx),
             propsheet::Event::Ok => self.apply_props(true, ctx),
             propsheet::Event::Apply => self.apply_props(false, ctx),
             propsheet::Event::Page(_, ev) => {
@@ -643,12 +650,8 @@ impl Explorer {
                 if let form::Event::Pressed(RESTORE) = ev
                     && let Some(item) = self.props.as_ref().and_then(|p| p.restore.clone())
                 {
-                    self.props = None;
-                    let reply = self.restore_items(vec![item], ctx);
-                    return Reply {
-                        redraw_all: true,
-                        ..reply
-                    };
+                    let closed = self.close_props(ctx);
+                    return closed.and(self.restore_items(vec![item], ctx));
                 }
                 if let form::Event::Pressed(filesheet::CHANGE_ICON) = ev {
                     return self.change_icon(ctx);
@@ -757,8 +760,7 @@ impl Explorer {
             && launcher.is_empty()
         {
             if close {
-                self.props = None;
-                return Reply::redraw_all();
+                return self.close_props(ctx);
             }
             return Reply::none();
         }
@@ -831,8 +833,7 @@ impl Explorer {
     ) -> Reply {
         if attrs.is_empty() && hidden.is_none() {
             if close {
-                self.props = None;
-                return Reply::redraw_all();
+                return self.close_props(ctx);
             }
             return Reply::none();
         }
@@ -921,10 +922,7 @@ impl Explorer {
                     move |ex, items, ctx| ex.open_sheet(SheetRead::Set(items, caption), ctx),
                 )
             }
-            _ => {
-                self.props = None;
-                Reply::none()
-            }
+            _ => self.close_props(ctx),
         };
         Reply {
             redraw_all: true,
@@ -1036,8 +1034,7 @@ impl Explorer {
     fn finish_props(&mut self, path: &Path, close: bool, ctx: &mut Ctx) -> Reply {
         let reply = self.refresh(ctx);
         if close {
-            self.props = None;
-            return Reply::redraw_all();
+            return self.close_props(ctx);
         }
         let Some(p) = self.props.as_ref() else {
             return Reply {

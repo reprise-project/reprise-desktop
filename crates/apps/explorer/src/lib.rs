@@ -1206,9 +1206,10 @@ impl Explorer {
                         it.path == item.path && it.trashed.as_deref() == item.record.as_ref()
                     })
                 });
-        if stale_sheet {
-            self.props = None;
-        }
+        let closed = match stale_sheet {
+            true => self.close_props(ctx),
+            false => Reply::none(),
+        };
         self.place = place.clone();
         self.tabs.set_label(place.title());
         self.resort();
@@ -1238,8 +1239,7 @@ impl Explorer {
         }
         Reply {
             redraw: true,
-            redraw_all: stale_sheet,
-            ..Default::default()
+            ..closed
         }
     }
 
@@ -1890,6 +1890,10 @@ impl App for Lazy {
 impl repriseapp::Extended for Lazy {
     fn hidden(&self) -> bool {
         self.start.alone.is_some() || self.inner.as_ref().is_some_and(|ex| ex.closing)
+    }
+
+    fn parent(&self, win: WinId) -> Option<WinId> {
+        Some(self.inner.as_ref().map_or(MAIN, |ex| ex.parent_of(win)))
     }
 
     fn caption(&self, win: WinId) -> repriseapp::Caption {
