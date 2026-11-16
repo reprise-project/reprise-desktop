@@ -844,6 +844,9 @@ impl SettingsApp {
         app.display
             .model
             .set_profiles_saved(outputwrite::read_profiles(&text, home.as_deref()));
+        app.display
+            .model
+            .set_vrr_saved(outputwrite::read_vrr(&text));
         pages::show_proxy(&mut app.sheet.pages[Page::Network.index()], &app.proxy.want);
         app.rescan();
         app.app_names = app_names(&app.want);

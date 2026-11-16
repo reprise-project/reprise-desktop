@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use repriseapp::heads::{AdaptiveSync, Head, HeadConfig, HeadMode, HeadSet, Transform};
+use repriseconf::config::VrrPolicy;
 use reprisekit::controls::arrange::{self, Arrange, Tile};
 use reprisekit::controls::combo::{COMBO_H, Combo};
 use reprisekit::controls::form::{Control, Form, Item};
@@ -12,6 +13,7 @@ use reprisekit::raster::Rect;
 use reprisekit::text::Align;
 use reprisekit::trackbar::{self, TrackBar};
 
+use crate::outputwrite::SavedVrr;
 use crate::pages::Area;
 use crate::registry::Page;
 
@@ -34,31 +36,38 @@ const ORIENTATIONS: [(&str, Transform); 4] = [
     ("Portrait (flipped)", Transform::Rotate270),
 ];
 
+/// The Variable refresh rate combo's rows.
+pub const VRR_ROWS: [(&str, VrrPolicy); 3] = [
+    ("Off", VrrPolicy::Off),
+    ("On", VrrPolicy::On),
+    ("Full-screen windows only", VrrPolicy::Fullscreen),
+];
+
 /// What the page has picked for its output.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pick {
     pub mode: Option<HeadMode>,
     pub transform: Transform,
     pub scale: f64,
-    pub vrr: bool,
+    pub vrr: VrrPolicy,
 }
 
-impl Pick {
-    fn of(h: &Head) -> Pick {
-        Pick {
-            mode: h.current_mode(),
-            transform: h.transform,
-            scale: h.scale,
-            vrr: h.adaptive_sync == AdaptiveSync::On,
-        }
+/// An output's VRR policy from what it runs and what the file says: the compositor reports only
+/// whether VRR runs now, so "fullscreen" comes from the file.
+fn vrr_of(runs: AdaptiveSync, saved: VrrPolicy) -> VrrPolicy {
+    match (runs, saved) {
+        (AdaptiveSync::Unsupported, _) => VrrPolicy::Off,
+        (_, VrrPolicy::Fullscreen) => VrrPolicy::Fullscreen,
+        (AdaptiveSync::On, _) => VrrPolicy::On,
+        (AdaptiveSync::Off, _) => VrrPolicy::Off,
     }
 }
 
 /// What OK or Apply asks of the outputs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Changes {
-    /// Each output whose VRR check moved, with its new state.
-    pub vrr: Vec<(String, bool)>,
+    /// Each output whose VRR pick moved, with its new policy.
+    pub vrr: Vec<(String, VrrPolicy)>,
     /// One configuration: each output's mode, transform and scale that moved and, when the
     /// arrangement moved, every output's place.
     pub set: HeadSet,
@@ -98,6 +107,8 @@ pub struct Display {
     profiles_gone: Vec<PathBuf>,
     /// Profile picks not yet written, by output.
     profile_picks: Vec<(String, Option<PathBuf>)>,
+    /// `adaptive_sync` as the file has it.
+    vrr_saved: SavedVrr,
 }
 
 /// A mode's size as the layout sees it under `transform` and `scale`: turned a quarter swaps the
@@ -153,8 +164,8 @@ impl Display {
         self.picks = (self.heads.iter())
             .map(|h| {
                 old.iter()
-                    .find(|(o, _)| o.name == h.name && Pick::of(o) == Pick::of(h))
-                    .map_or_else(|| Pick::of(h), |(_, p)| *p)
+                    .find(|(o, _)| o.name == h.name && self.running(o) == self.running(h))
+                    .map_or_else(|| self.running(h), |(_, p)| *p)
             })
             .collect();
     }
@@ -388,7 +399,7 @@ impl Display {
         self.heads
             .iter()
             .zip(&self.picks)
-            .any(|(h, p)| *p != Pick::of(h))
+            .any(|(h, p)| *p != self.running(h))
             || self.moved()
             || self.primary != self.primary_saved
             || self.projection.is_some()
@@ -404,17 +415,39 @@ impl Display {
     /// The picks back to what the outputs run and the file says.
     pub fn reset(&mut self) {
         self.projection = None;
-        self.picks = self.heads.iter().map(Pick::of).collect();
+        self.picks = self.heads.iter().map(|h| self.running(h)).collect();
         self.places = self.heads.iter().map(|h| h.position).collect();
         self.primary = self.primary_saved.clone();
         self.profile_picks.clear();
     }
 
-    /// Output `name`'s VRR check back to what it runs.
+    /// What `h` runs, as the page shows it.
+    pub fn running(&self, h: &Head) -> Pick {
+        Pick {
+            mode: h.current_mode(),
+            transform: h.transform,
+            scale: h.scale,
+            vrr: vrr_of(h.adaptive_sync, self.vrr_saved.of(&h.name)),
+        }
+    }
+
+    pub fn set_vrr_saved(&mut self, saved: SavedVrr) {
+        self.vrr_saved = saved;
+    }
+
+    /// Output `name`'s `adaptive_sync` was written as `p`.
+    pub fn vrr_written(&mut self, name: &str, p: VrrPolicy) {
+        self.vrr_saved.set(name, p);
+    }
+
+    /// Output `name`'s VRR pick back to what it runs.
     pub fn reset_vrr(&mut self, name: &str) {
-        if let Some((h, p)) = (self.heads.iter().zip(&mut self.picks)).find(|(h, _)| h.name == name)
-        {
-            p.vrr = Pick::of(h).vrr;
+        let Some(i) = self.heads.iter().position(|h| h.name == name) else {
+            return;
+        };
+        let vrr = self.running(&self.heads[i]).vrr;
+        if let Some(p) = self.picks.get_mut(i) {
+            p.vrr = vrr;
         }
     }
 
@@ -424,7 +457,7 @@ impl Display {
         let mut vrr = Vec::new();
         let mut set: HeadSet = Vec::new();
         for (h, p) in self.heads.iter().zip(&self.picks) {
-            let now = Pick::of(h);
+            let now = self.running(h);
             if h.adaptive_sync != AdaptiveSync::Unsupported && p.vrr != now.vrr {
                 vrr.push((h.name.clone(), p.vrr));
             }
@@ -684,13 +717,13 @@ impl Display {
         self.resettle();
     }
 
-    /// Tick or untick VRR; an output without it keeps it off.
-    pub fn set_vrr(&mut self, on: bool) {
+    /// Pick a VRR policy; an output without VRR keeps it off.
+    pub fn set_vrr(&mut self, vrr: VrrPolicy) {
         let can = self
             .head()
             .is_some_and(|h| h.adaptive_sync != AdaptiveSync::Unsupported);
         if let Some(p) = self.pick_mut() {
-            p.vrr = on && can;
+            p.vrr = if can { vrr } else { VrrPolicy::Off };
         }
     }
 
@@ -884,14 +917,26 @@ pub fn page(d: &Display, a: Area) -> Form {
         scale_row(pick.scale),
         true,
     ));
-    items.push(
-        Item::check(VRR, X, 222 + dy, "Enable &variable refresh rate")
-            .checked(pick.vrr)
-            .enabled(head.adaptive_sync != AdaptiveSync::Unsupported),
-    );
+    items.push(Item::label_at(
+        "vrr_label",
+        X,
+        226 + dy,
+        RX - X,
+        "&Variable refresh rate:",
+    ));
+    let vrr_rows: Vec<String> = VRR_ROWS.iter().map(|(s, _)| s.to_string()).collect();
+    let vrr_row = (VRR_ROWS.iter().position(|(_, p)| *p == pick.vrr)).unwrap_or(0);
+    let vrr_on = head.adaptive_sync != AdaptiveSync::Unsupported;
+    items.push(combo(
+        VRR,
+        (RX, 222 + dy, combo_w),
+        &vrr_rows,
+        vrr_row,
+        vrr_on,
+    ));
     items.push(Item::button(
         FORGET,
-        Rect::new(a.right() - 135, 242 + dy, 135, 23),
+        Rect::new(a.right() - 135, 252 + dy, 135, 23),
         "&Forget saved layouts",
         d.layouts_saved,
         false,
@@ -899,11 +944,11 @@ pub fn page(d: &Display, a: Area) -> Form {
     let built_in = repriseconf::displays::is_built_in(&head.name);
     if built_in {
         items.push(
-            Item::check(AUTO_ROTATE, X, 247 + dy, "Rotate &automatically")
+            Item::check(AUTO_ROTATE, X, 257 + dy, "Rotate &automatically")
                 .enabled(d.sensor == Some(true)),
         );
     }
-    let mut row_y = 276 + dy;
+    let mut row_y = 286 + dy;
     if let Some((rows, sel)) = d.projection_rows() {
         items.push(Item::label_at(
             "multiple_label",
@@ -971,7 +1016,9 @@ pub fn read(d: &mut Display, form: &Form, id: &str) -> bool {
             .combo_selected(ORIENTATION)
             .map(|r| d.pick_orientation(r)),
         SCALE => form.combo_selected(SCALE).map(|r| d.pick_scale(r)),
-        VRR => form.checked(VRR).map(|on| d.set_vrr(on)),
+        VRR => (form.combo_selected(VRR))
+            .and_then(|r| VRR_ROWS.get(r))
+            .map(|(_, p)| d.set_vrr(*p)),
         PROJECTION => form
             .combo_selected(PROJECTION)
             .map(|r| d.pick_projection(r)),
@@ -1119,18 +1166,50 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_fullscreen_shows_whether_or_not_vrr_runs_now() {
+        let mut runs = test_head("DP-1");
+        let mut none = test_head("HDMI-A-1");
+        none.adaptive_sync = AdaptiveSync::Unsupported;
+        let mut d = Display::with_heads(vec![runs.clone(), none.clone()]);
+        let vrr = |d: &Display, h: &Head| d.running(h).vrr;
+        assert_eq!(vrr(&d, &runs), VrrPolicy::Off);
+        d.set_vrr_saved(saved_top(VrrPolicy::Fullscreen));
+        assert_eq!(vrr(&d, &runs), VrrPolicy::Fullscreen);
+        runs.adaptive_sync = AdaptiveSync::On;
+        assert_eq!(
+            vrr(&d, &runs),
+            VrrPolicy::Fullscreen,
+            "while a window is fullscreen"
+        );
+        assert_eq!(vrr(&d, &none), VrrPolicy::Off, "an output without VRR");
+        d.vrr_written("DP-1", VrrPolicy::On);
+        assert_eq!(
+            vrr(&d, &runs),
+            VrrPolicy::On,
+            "its entry over the top-level key"
+        );
+    }
+
+    fn saved_top(top: VrrPolicy) -> SavedVrr {
+        SavedVrr {
+            top,
+            outputs: Vec::new(),
+        }
+    }
+
+    #[test]
     fn changes_name_only_what_differs() {
         let mut d = Display::with_heads(vec![test_head("DP-1")]);
         assert_eq!(d.changes(), None);
         assert!(!d.dirty());
         d.pick_resolution(1);
-        d.set_vrr(true);
+        d.set_vrr(VrrPolicy::On);
         assert!(d.dirty());
         let h = test_head("DP-1");
         assert_eq!(
             d.changes(),
             Some(Changes {
-                vrr: vec![("DP-1".into(), true)],
+                vrr: vec![("DP-1".into(), VrrPolicy::On)],
                 set: vec![(
                     "DP-1".into(),
                     HeadConfig {
@@ -1148,7 +1227,7 @@ mod tests {
         let mut none = test_head("DP-1");
         none.adaptive_sync = AdaptiveSync::Unsupported;
         let mut d = Display::with_heads(vec![none]);
-        d.set_vrr(true);
+        d.set_vrr(VrrPolicy::On);
         assert_eq!(d.changes(), None, "a head without VRR takes no VRR change");
     }
 
@@ -1390,11 +1469,11 @@ mod tests {
     fn each_output_keeps_its_picks_while_another_is_shown_and_apply_asks_for_all() {
         let mut d = pair();
         d.pick_orientation(1);
-        d.set_vrr(true);
+        d.set_vrr(VrrPolicy::On);
         d.pick_monitor(1);
         assert_eq!(
             d.pick(),
-            Some(Pick::of(d.head().unwrap())),
+            Some(d.running(d.head().unwrap())),
             "the second output shows as it runs"
         );
         d.pick_scale(4);
@@ -1404,9 +1483,9 @@ mod tests {
             Transform::Rotate90,
             "the first output's pick is back"
         );
-        assert!(d.pick().unwrap().vrr);
+        assert_eq!(d.pick().unwrap().vrr, VrrPolicy::On);
         let ch = d.changes().unwrap();
-        assert_eq!(ch.vrr, vec![("DP-1".to_string(), true)]);
+        assert_eq!(ch.vrr, vec![("DP-1".to_string(), VrrPolicy::On)]);
         let looks: Vec<_> = (ch.set.iter())
             .map(|(n, c)| (n.as_str(), c.transform, c.scale))
             .collect();
@@ -1500,11 +1579,12 @@ mod tests {
         assert_eq!(at(&two, REFRESH), Rect::new(203, 230, 175, 21));
         assert_eq!(at(&two, ORIENTATION), Rect::new(20, 299, 173, 21));
         assert_eq!(at(&two, SCALE), Rect::new(203, 299, 175, 21));
-        assert_eq!(at(&two, VRR), Rect::new(20, 332, 13, 13));
-        assert_eq!(at(&two, FORGET), Rect::new(243, 352, 135, 23));
-        assert_eq!(at(&two, PROJECTION), Rect::new(203, 386, 175, 21));
-        assert_eq!(at(&two, "profile_label"), Rect::new(20, 420, 183, 13));
-        assert_eq!(at(&two, PROFILE), Rect::new(203, 416, 175, 21));
+        assert_eq!(at(&two, "vrr_label"), Rect::new(20, 336, 183, 13));
+        assert_eq!(at(&two, VRR), Rect::new(203, 332, 175, 21));
+        assert_eq!(at(&two, FORGET), Rect::new(243, 362, 135, 23));
+        assert_eq!(at(&two, PROJECTION), Rect::new(203, 396, 175, 21));
+        assert_eq!(at(&two, "profile_label"), Rect::new(20, 430, 183, 13));
+        assert_eq!(at(&two, PROFILE), Rect::new(203, 426, 175, 21));
         for it in &two.items {
             let r = it.placed(&ControlMetrics::CLASSIC);
             assert!(
@@ -1597,14 +1677,24 @@ mod tests {
         assert_eq!(f.combo_selected(SCALE), Some(2));
         assert_eq!(f.combo_selected(ORIENTATION), Some(0));
         assert_eq!(f.combo_selected(REFRESH), Some(0));
-        assert!(matches!(
-            f.item(VRR).unwrap().control,
-            Control::Check {
-                checked: false,
-                enabled: false,
-                ..
-            }
-        ));
+        assert_eq!(f.combo_selected(VRR), Some(0));
+        assert!(matches!(&f.item(VRR).unwrap().control, Control::Combo(c) if !c.enabled));
+    }
+
+    #[test]
+    fn the_vrr_combo_shows_and_reads_the_three_policies() {
+        let mut d = Display::with_heads(vec![test_head("DP-1")]);
+        for (row, p) in [
+            (2, VrrPolicy::Fullscreen),
+            (1, VrrPolicy::On),
+            (0, VrrPolicy::Off),
+        ] {
+            let mut f = page(&d, Area::MIN);
+            f.set_combo(VRR, row);
+            assert!(read(&mut d, &f, VRR));
+            assert_eq!(d.pick().unwrap().vrr, p);
+            assert_eq!(page(&d, Area::MIN).combo_selected(VRR), Some(row));
+        }
     }
 
     #[test]
@@ -1612,7 +1702,7 @@ mod tests {
         let d = Display::with_heads(vec![test_head("DP-1")]);
         let f = page(&d, Area::MIN);
         let note = f.item(TEXT_SIZE_NOTE).unwrap();
-        assert_eq!(note.rect, Rect::new(20, 420, 358, 13));
+        assert_eq!(note.rect, Rect::new(20, 430, 358, 13));
         let Control::Label { text, .. } = &note.control else {
             panic!("a label: {:?}", note.control);
         };
@@ -1702,7 +1792,7 @@ mod tests {
     fn a_built_in_panel_offers_rotate_automatically_while_an_accelerometer_is_reported() {
         let mut d = Display::with_heads(vec![test_head("eDP-1"), test_head("DP-1")]);
         let f = page(&d, Area::MIN);
-        assert_eq!(at(&f, AUTO_ROTATE), Rect::new(20, 357, 13, 13));
+        assert_eq!(at(&f, AUTO_ROTATE), Rect::new(20, 367, 13, 13));
         assert!(!enabled(&f, AUTO_ROTATE), "greyed until the sensor is read");
         assert!(f.item(SENSOR_NOTE).is_none());
         d.sensor = Some(true);
@@ -1712,7 +1802,7 @@ mod tests {
         d.sensor = Some(false);
         let f = page(&d, Area::MIN);
         assert!(!enabled(&f, AUTO_ROTATE));
-        assert_eq!(at(&f, SENSOR_NOTE), Rect::new(20, 468, 358, 13));
+        assert_eq!(at(&f, SENSOR_NOTE), Rect::new(20, 478, 358, 13));
         let keys: Vec<char> = (f.items.iter())
             .filter_map(|it| match &it.control {
                 Control::Check { label, .. } => reprisekit::text::access_key(label),
@@ -1762,7 +1852,7 @@ mod tests {
         d.pick_monitor(1);
         assert_eq!(
             d.pick(),
-            Some(Pick::of(d.head().unwrap())),
+            Some(d.running(d.head().unwrap())),
             "another monitor shows as it runs"
         );
         assert!(d.dirty(), "the first one's picks wait for Apply or Cancel");

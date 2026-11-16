@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use repriseapp::heads::{Head, Transform};
+use repriseconf::config::VrrPolicy;
 use repriseconf::displays::{Layouts, Monitor, monitor_ids, outputs_fingerprint};
 use repriseconf::hz_string;
 use repriseconf::projection::Home;
@@ -16,7 +17,7 @@ pub struct OutputKeys {
     pub transform: Option<Transform>,
     /// 1 removes the key, since 1 is what a missing one means; a whole number is written as an integer.
     pub scale: Option<f64>,
-    pub adaptive_sync: Option<bool>,
+    pub adaptive_sync: Option<VrrPolicy>,
     pub position: Option<(i32, i32)>,
     /// `Some(None)` removes the key.
     pub icc_profile: Option<Option<PathBuf>>,
@@ -150,8 +151,11 @@ pub fn set_output_in(doc: &mut DocumentMut, name: &str, keys: &OutputKeys) -> Re
             table["scale"] = value(s);
         }
     }
-    if let Some(v) = keys.adaptive_sync {
-        table["adaptive_sync"] = value(v);
+    match keys.adaptive_sync {
+        Some(VrrPolicy::Off) => table["adaptive_sync"] = value(false),
+        Some(VrrPolicy::On) => table["adaptive_sync"] = value(true),
+        Some(VrrPolicy::Fullscreen) => table["adaptive_sync"] = value("fullscreen"),
+        None => {}
     }
     match &keys.icc_profile {
         Some(Some(p)) => table["icc_profile"] = value(p.to_str().expect("checked above")),
@@ -186,6 +190,52 @@ pub fn read_profiles(text: &str, home: Option<&Path>) -> Vec<(String, PathBuf)> 
             Some((name.to_string(), path))
         })
         .collect()
+}
+
+/// `adaptive_sync` as the file has it: the top-level key, and each `[[outputs]]` entry's.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SavedVrr {
+    pub top: VrrPolicy,
+    pub outputs: Vec<(String, VrrPolicy)>,
+}
+
+impl SavedVrr {
+    /// What output `name` runs under: its entry's key, else the top-level one.
+    pub fn of(&self, name: &str) -> VrrPolicy {
+        (self.outputs.iter())
+            .find(|(n, _)| n == name)
+            .map_or(self.top, |(_, p)| *p)
+    }
+
+    /// Output `name`'s key as just written.
+    pub fn set(&mut self, name: &str, p: VrrPolicy) {
+        self.outputs.retain(|(n, _)| n != name);
+        self.outputs.push((name.to_string(), p));
+    }
+}
+
+fn vrr_policy(item: Option<&Item>) -> Option<VrrPolicy> {
+    let v = item?.as_value()?;
+    v.as_bool()
+        .map(VrrPolicy::of)
+        .or_else(|| VrrPolicy::word(v.as_str()?))
+}
+
+/// The `adaptive_sync` keys of `text`; Off for a file that does not parse.
+pub fn read_vrr(text: &str) -> SavedVrr {
+    let Ok(doc) = text.parse::<DocumentMut>() else {
+        return SavedVrr::default();
+    };
+    let outputs = (entries(&doc).into_iter())
+        .filter_map(|t| {
+            let name = t.get("name")?.as_str()?;
+            Some((name.to_string(), vrr_policy(t.get("adaptive_sync"))?))
+        })
+        .collect();
+    SavedVrr {
+        top: vrr_policy(doc.get("adaptive_sync")).unwrap_or_default(),
+        outputs,
+    }
 }
 
 /// The output the file marks `primary`, the first when several are; None for a file that does not parse or marks none.
@@ -362,6 +412,35 @@ mod tests {
     }
 
     #[test]
+    fn adaptive_sync_is_written_as_a_bool_or_fullscreen_and_read_back() {
+        let mut text = "adaptive_sync = true\n".to_string();
+        for (name, p) in [("DP-1", VrrPolicy::Fullscreen), ("DP-2", VrrPolicy::Off)] {
+            let vrr = OutputKeys {
+                adaptive_sync: Some(p),
+                ..OutputKeys::default()
+            };
+            text = set_output(&text, name, &vrr).unwrap();
+        }
+        assert!(
+            text.contains("name = \"DP-1\"\nadaptive_sync = \"fullscreen\"\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("name = \"DP-2\"\nadaptive_sync = false\n"),
+            "{text}"
+        );
+        let saved = read_vrr(&text);
+        assert_eq!(saved.of("DP-1"), VrrPolicy::Fullscreen);
+        assert_eq!(saved.of("DP-2"), VrrPolicy::Off);
+        assert_eq!(saved.of("HDMI-A-1"), VrrPolicy::On, "the top-level key");
+        let c = repriseconf::config::Config::parse(&text).unwrap();
+        assert_eq!(
+            c.adaptive_sync_for_output_name("DP-1"),
+            VrrPolicy::Fullscreen
+        );
+    }
+
+    #[test]
     fn an_existing_entry_keeps_its_other_keys_and_its_comments() {
         let text = "[[outputs]]\n# the laptop panel\nname = \"eDP-1\"\nscale = 1.5\nmode = \"1280x800\"\n\n[[outputs]]\nname = \"DP-1\"\ntransform = \"90\"\n";
         let out = set_output(
@@ -369,7 +448,7 @@ mod tests {
             "DP-1",
             &OutputKeys {
                 transform: Some(Transform::Normal),
-                adaptive_sync: Some(true),
+                adaptive_sync: Some(VrrPolicy::On),
                 ..keys()
             },
         )
@@ -442,7 +521,7 @@ mod tests {
             "[idle]\nlock_after = 0\n# note\n",
             "DP-1",
             &OutputKeys {
-                adaptive_sync: Some(true),
+                adaptive_sync: Some(VrrPolicy::On),
                 ..keys()
             },
         )
@@ -461,7 +540,7 @@ mod tests {
         let path = dir.join("config.toml");
         std::fs::write(&path, "# mine\n").unwrap();
         let vrr = OutputKeys {
-            adaptive_sync: Some(true),
+            adaptive_sync: Some(VrrPolicy::On),
             ..keys()
         };
         assert_eq!(save(&path, "DP-1", &vrr), Ok(()));

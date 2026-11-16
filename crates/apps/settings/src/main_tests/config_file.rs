@@ -56,7 +56,7 @@ fn a_save_that_fails_shows_why_and_does_not_quit() {
     let mut app = app("save-fails");
     std::fs::write(&app.path, "[general\n").expect("write");
     let keys = outputwrite::OutputKeys {
-        adaptive_sync: Some(true),
+        adaptive_sync: Some(repriseconf::config::VrrPolicy::On),
         ..outputwrite::OutputKeys::default()
     };
     let r = app.display_effects(vec![

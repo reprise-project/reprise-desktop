@@ -1,0 +1,24 @@
+off x1 Classic 0b19cf9e9a10ad8d
+off x1 Blue 05d6855f371d215d
+off x1 Glass 73f6568a7833ee44
+off x2 Classic 736f4bedd83f0cd9
+off x2 Blue e15c81ba55d74604
+off x2 Glass d3f46af7c7570a45
+on x1 Classic 3ee4a3c8e2b16475
+on x1 Blue cc2e1697b6205b4d
+on x1 Glass 78b414f7623c123c
+on x2 Classic a3df8c404fd14c03
+on x2 Blue 80c0c8f3d625f63e
+on x2 Glass ffe3fedbba98ee53
+full-screen windows only x1 Classic 76184cec50ec7e9b
+full-screen windows only x1 Blue d0f1e4dcaa6324df
+full-screen windows only x1 Glass d770b3277a7847b9
+full-screen windows only x2 Classic 1005581a99600121
+full-screen windows only x2 Blue bb537f92fc29056c
+full-screen windows only x2 Glass b23579521b0b13cf
+no VRR x1 Classic 751c5f83bbe6a723
+no VRR x1 Blue e8b876eb7b26aaf2
+no VRR x1 Glass 716fcf6eb136333b
+no VRR x2 Classic 36b43c1fa082f0e5
+no VRR x2 Blue a7be1f9238569f20
+no VRR x2 Glass c388125cf962e03b
