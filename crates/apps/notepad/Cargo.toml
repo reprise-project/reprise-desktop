@@ -12,7 +12,6 @@ description = "Notepad: a plain text editor"
 workspace = true
 
 [dependencies]
-reprisexdg = { path = "../../reprisexdg" }
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisefs = { path = "../../reprisefs" }

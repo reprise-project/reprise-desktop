@@ -236,7 +236,7 @@ pub(crate) fn open_failed_text(path: &Path, e: &std::io::Error) -> String {
 
 /// Where `emergency` leaves unsaved text: `$XDG_STATE_HOME/reprise/notepad`.
 pub(crate) fn recovery_dir() -> Option<PathBuf> {
-    Some(reprisexdg::state_home()?.join("reprise").join("notepad"))
+    reprisefs::recovery::dir("notepad")
 }
 
 /// Write `lines` to `recovery-<pid>-<stem>.txt` in `dir`, made 0700 if missing.
@@ -247,35 +247,12 @@ pub(crate) fn write_recovery(
     lines: &[impl AsRef<str>],
     format: Format,
 ) -> std::io::Result<PathBuf> {
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)?;
-    let path = dir.join(format!("{RECOVERY_PREFIX}{pid}-{stem}.txt"));
-    reprisefs::ops::write_document(&path, &encode(lines, format))?;
-    Ok(path)
+    reprisefs::recovery::write(dir, pid, stem, "txt", &encode(lines, format))
 }
-
-const RECOVERY_PREFIX: &str = "recovery-";
 
 /// The recovery files in `dir`, by name.
 pub(crate) fn recovered_in(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut found: Vec<PathBuf> = entries
-        .flatten()
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with(RECOVERY_PREFIX) && n.ends_with(".txt"))
-        })
-        .collect();
-    found.sort();
-    found
+    reprisefs::recovery::found(dir, "txt")
 }
 
 #[cfg(test)]

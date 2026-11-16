@@ -137,6 +137,7 @@ quality-high = High (90)
 quality-good = Good (75)
 quality-small = Small (50)
 save-changes = Save changes to { $name }?
+recovered = A picture was recovered. Open it?
 overwrite = { $path } already exists.
     Do you want to replace it?
 open-failed = Paint cannot read this file.

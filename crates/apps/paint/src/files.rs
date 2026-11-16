@@ -178,9 +178,11 @@ impl Paint {
             }
             (Prompt::SaveChanges(then), Some(1)) => {
                 self.doc.dirty = false;
+                self.forget_rescued();
                 self.run(then)
             }
             (Prompt::Overwrite(path, kind), Some(0)) => self.saveas_write(path, kind),
+            (Prompt::Recovered(file), answer) => self.recovered_answered(file, answer),
             _ => Reply::redraw_all(),
         }
     }
@@ -210,6 +212,7 @@ impl Paint {
         match file::save(&self.doc.img, path, kind, self.quality) {
             Ok(()) => {
                 self.doc.dirty = false;
+                self.forget_rescued();
                 true
             }
             Err(e) => {
@@ -247,6 +250,99 @@ impl Paint {
             self.error(tr!("background-failed", error = e));
         }
         Reply::redraw_all()
+    }
+
+    /// Leaves an unsaved picture in the recovery folder as a PNG, in place of the recovery file
+    /// it came from.
+    pub(crate) fn rescue(&mut self) {
+        let Some(dir) = self.rescue_dir.clone() else {
+            return;
+        };
+        self.commit_text();
+        self.doc.finish();
+        if !self.doc.dirty {
+            return;
+        }
+        let stem = (self.path.as_deref())
+            .and_then(Path::file_stem)
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| tr!("untitled"));
+        let kept = file::encode(&self.doc.img, Kind::Png, 100).and_then(|bytes| {
+            let pid = std::process::id();
+            reprisefs::recovery::write(&dir, pid, &stem, Kind::Png.ext(), &bytes)
+                .map_err(|e| e.to_string())
+        });
+        match kept {
+            Ok(kept) => {
+                log::error!("unsaved picture kept in {}", kept.display());
+                if self.rescued.as_ref().is_some_and(|old| *old != kept) {
+                    self.forget_rescued();
+                }
+            }
+            Err(e) => log::error!("cannot keep the unsaved picture in {}: {e}", dir.display()),
+        }
+    }
+
+    /// Offers the recovery files left in the recovery folder, one question at a time.
+    pub(crate) fn offer_recovered(&mut self) {
+        let files = (self.rescue_dir.as_deref())
+            .map(|dir| reprisefs::recovery::found(dir, Kind::Png.ext()))
+            .unwrap_or_default();
+        for file in files {
+            self.ask(
+                tr!("recovered"),
+                vec![
+                    reprisekit::kit_tr!("yes-bare"),
+                    reprisekit::kit_tr!("no-bare"),
+                ],
+                0,
+                Prompt::Recovered(file),
+            );
+        }
+    }
+
+    /// Yes opens the picture in `file` as an unsaved Untitled one and offers no more files; No
+    /// deletes the file and the next is offered. Closing the question keeps the files for the
+    /// next start.
+    pub(crate) fn recovered_answered(&mut self, file: PathBuf, answer: Option<usize>) -> Reply {
+        match answer {
+            Some(0) => {
+                self.prompt.withdraw(|p| matches!(p, Prompt::Recovered(_)));
+                match file::load(&file) {
+                    Ok(img) => {
+                        self.doc = Doc::new(img);
+                        self.doc.dirty = true;
+                        self.path = None;
+                        self.rescued = Some(file);
+                        self.hscroll.top = 0;
+                        self.vscroll.top = 0;
+                    }
+                    Err(e) => self.error(tr!(
+                        "open-failed",
+                        path = file.display().to_string(),
+                        error = e
+                    )),
+                }
+            }
+            Some(_) => {
+                if let Err(e) = std::fs::remove_file(&file) {
+                    log::warn!("remove {}: {e}", file.display());
+                }
+            }
+            None => {
+                self.prompt.withdraw(|p| matches!(p, Prompt::Recovered(_)));
+            }
+        }
+        Reply::redraw_all()
+    }
+
+    /// The recovered picture was saved or let go: its recovery file goes.
+    fn forget_rescued(&mut self) {
+        if let Some(file) = self.rescued.take()
+            && let Err(e) = std::fs::remove_file(&file)
+        {
+            log::warn!("remove {}: {e}", file.display());
+        }
     }
 
     pub(crate) fn open_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
