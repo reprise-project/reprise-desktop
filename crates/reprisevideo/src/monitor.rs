@@ -7,7 +7,7 @@ use pipewire::spa::pod::Pod;
 use pipewire::spa::pod::serialize::PodSerializer;
 use pipewire::spa::sys as spa_sys;
 use pipewire::stream::{StreamFlags, StreamRc, StreamState};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::io;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -58,8 +58,8 @@ pub fn on_pipewire(
 /// Capture the monitor of sink `target` (the default sink, followed as it changes, for None) into
 /// `samples`: S16LE stereo at `rate`, in the chunks PipeWire hands over, each with the time of the
 /// cycle that queued it, so chunks the thread takes late in a burst keep their own times. Runs until a stop from
-/// `stopped`, a core error or, with a `target`, the sink going; the stream is called `name` for
-/// program `app`.
+/// `stopped`, a core error or, with a `target`, the sink going; a stream error is the Err. The
+/// stream is called `name` for program `app`.
 pub fn capture(
     target: Option<&str>,
     app: &str,
@@ -83,13 +83,17 @@ pub fn capture(
         props.insert("node.latency", format!("{}/{rate}", rate / 50));
         let stream = StreamRc::new(core.clone(), name, props).map_err(|e| e.to_string())?;
         let weak = main_loop.downgrade();
+        let failed = Rc::new(RefCell::new(None));
         let _listener = stream
             .add_local_listener_with_user_data(samples)
-            .state_changed(move |_, _, _, new| {
-                if let StreamState::Error(e) = new {
-                    log::warn!("sound: capture: {e}");
-                    if let Some(l) = weak.upgrade() {
-                        l.quit();
+            .state_changed({
+                let failed = failed.clone();
+                move |_, _, _, new| {
+                    if let StreamState::Error(e) = new {
+                        *failed.borrow_mut() = Some(e);
+                        if let Some(l) = weak.upgrade() {
+                            l.quit();
+                        }
                     }
                 }
             })
@@ -128,7 +132,7 @@ pub fn capture(
         log::info!("sound: capturing \"{name}\"");
         main_loop.run();
         let _ = stream.disconnect();
-        Ok(())
+        failed.take().map_or(Ok(()), Err)
     })
 }
 
