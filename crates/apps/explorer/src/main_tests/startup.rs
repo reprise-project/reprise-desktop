@@ -37,7 +37,7 @@ fn select_opens_the_folder_on_the_entry() {
             place: Place::Home,
             dir: None,
             select: Vec::new(),
-            sheet: None,
+            alone: None,
             connect: None,
             search: false,
         }
@@ -174,7 +174,7 @@ fn properties_shows_the_sheet_alone_and_ends_with_it() {
         std::ffi::OsString::from("--properties"),
         file.clone().into(),
     ]);
-    assert_eq!(start.sheet.as_deref(), Some(file.as_path()));
+    assert_eq!(start.alone, Some(Alone::Properties(vec![file.clone()])));
     let mut app = Lazy {
         start,
         inner: None,
@@ -190,4 +190,89 @@ fn properties_shows_the_sheet_alone_and_ends_with_it() {
     );
     let reply = app.event(PROPS, Event::CloseRequest, &mut ctx);
     assert!(reply.quit, "closing the sheet ends the process");
+}
+
+#[test]
+fn properties_of_several_paths_shows_the_combined_sheet() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+    for f in [&a, &b] {
+        std::fs::write(f, "x").expect("write");
+    }
+    let gone = dir.path().join("gone.txt");
+    let sheet_of = |paths: &[&PathBuf]| {
+        let args = std::iter::once("--properties".into()).chain(paths.iter().map(|p| p.into()));
+        let mut app = Lazy {
+            start: parse_args(args.collect::<Vec<std::ffi::OsString>>()),
+            inner: None,
+            units: TextUnits::ONE,
+        };
+        let mut ctx = test_ctx();
+        let _ = app.event(MAIN, Event::Wake, &mut ctx);
+        let props = app.inner.and_then(|ex| ex.props).expect("the sheet is up");
+        (props.set.map(|s| s.paths), props.info.path)
+    };
+    assert_eq!(sheet_of(&[&b, &a]).0, Some(vec![b.clone(), a.clone()]));
+    assert_eq!(
+        sheet_of(&[&a, &gone]),
+        (None, a.clone()),
+        "one path that reads gets its own sheet"
+    );
+}
+
+#[test]
+fn open_with_shows_the_chooser_alone_and_ends_with_it() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let file = dir.path().join("a.txt");
+    std::fs::write(&file, "x").expect("write");
+    let start = parse_args([std::ffi::OsString::from("--open-with"), file.clone().into()]);
+    assert_eq!(start.alone, Some(Alone::OpenWith(file.clone())));
+    let mut app = Lazy {
+        start,
+        inner: None,
+        units: TextUnits::ONE,
+    };
+    assert!(repriseapp::Extended::hidden(&app), "no folder window");
+
+    let mut ctx = test_ctx();
+    let _ = app.event(MAIN, Event::Wake, &mut ctx);
+    assert!(
+        app.children()
+            .iter()
+            .any(|c| c.id == crate::dialogs::DIALOG),
+        "the chooser is up"
+    );
+    let reply = app.event(crate::dialogs::DIALOG, Event::CloseRequest, &mut ctx);
+    assert!(reply.quit, "closing the chooser ends the process");
+}
+
+#[test]
+fn a_start_menu_entrys_file_is_named_and_drawn_as_its_entry() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let apps_dir = dir.path().join("applications");
+    std::fs::create_dir_all(apps_dir.join("org")).expect("mkdir");
+    let calc = apps_dir.join("org/calc.desktop");
+    std::fs::write(&calc, "[Desktop Entry]\nName=Calculator\nExec=calc\n").expect("write");
+    let entry = |id: &str, name: &str| reprisefs::apps::AppEntry {
+        name: name.into(),
+        exec_line: "x".into(),
+        terminal: false,
+        id: id.into(),
+        icon: Some("accessories-calculator".into()),
+        startup_wm_class: None,
+        categories: Vec::new(),
+        mime_types: Vec::new(),
+        shown: true,
+        path: None,
+    };
+    let apps = [
+        entry("calc.desktop", "Other"),
+        entry("org-calc.desktop", "Calculator"),
+    ];
+    let dirs = [apps_dir.clone()];
+    let found = crate::props_host::menu_entry_in(&calc, &apps, &dirs).map(|e| e.name.as_str());
+    assert_eq!(found, Some("Calculator"));
+    let elsewhere = dir.path().join("calc.desktop");
+    std::fs::write(&elsewhere, "x").expect("write");
+    assert!(crate::props_host::menu_entry_in(&elsewhere, &apps, &dirs).is_none());
 }

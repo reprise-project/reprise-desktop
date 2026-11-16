@@ -134,10 +134,7 @@ impl State {
             }
             Dc::Print | Dc::Edit => self.print_or_edit(vec![path], cmd == Dc::Print),
             Dc::OpenWithApp(app) => self.open_files_with(vec![path], &app),
-            Dc::ChooseProgram => {
-                let d = self.choose_program(&path, false);
-                self.open_dialog(d);
-            }
+            Dc::ChooseProgram => self.choose_program(&path),
             Dc::SendToDest(row) => {
                 // The names beside the file, which a Send To to the same folder numbers past.
                 let dir = path.parent().map(Path::to_path_buf);
@@ -181,24 +178,7 @@ impl State {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
                 self.ask_delete(vec![path], name, false);
             }
-            Dc::IconProperties => {
-                let name = path
-                    .file_name()
-                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-                let p = self.pointer_location();
-                let at = (p.x as i32, p.y as i32);
-                let apps = self.app_index.clone();
-                self.spawn_fs_action(Action::reads("Properties"), move |_| {
-                    let info = reprisefs::props::glance(&path, &name, &apps);
-                    Box::new(move |state: &mut State| match info {
-                        Ok(info) => {
-                            let icon = state.file_icon_name(&path, info.is_dir);
-                            state.open_properties(&info, &icon, at);
-                        }
-                        Err(err) => log::warn!("properties: {}: {err}", path.display()),
-                    })
-                });
-            }
+            Dc::IconProperties => self.show_properties(&[path]),
             _ => {}
         }
     }
@@ -207,10 +187,6 @@ impl State {
     /// Ctrl+Enter too.
     pub(crate) fn open_file_location(&mut self, path: &Path) {
         self.spawn_argv_activated(&apps::open_location_argv(path));
-    }
-
-    pub(crate) fn file_icon_name(&self, path: &Path, is_dir: bool) -> String {
-        self.with_mime(|db| crate::search::file_icon_name(path, is_dir, db, &self.icons))
     }
 
     /// `f` over the desktop's MIME database, an empty one without a desktop.

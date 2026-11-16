@@ -500,9 +500,8 @@ impl State {
         self.relayout_desktop();
     }
 
-    /// A desktop file was renamed on disk (an inline rename, later a
-    /// Properties sheet's OK): its dragged cell follows the new name, then
-    /// the desktop rescans.
+    /// A desktop file was renamed on disk by an inline rename: its dragged cell follows the new
+    /// name, then the desktop rescans.
     pub fn renamed(&mut self, from: &Path, to: &Path) {
         if let Some(view) = self.desktop.as_mut() {
             let old = view

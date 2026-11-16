@@ -14,7 +14,7 @@ impl Dialog {
         }
     }
 
-    /// A key. A form or the chooser takes it first. Otherwise Enter presses the default button,
+    /// A key. A form takes it first. Otherwise Enter presses the default button,
     /// Escape cancels, text edits the field; without a field Space presses the focused button and a
     /// letter the button with that access key. With Run's drop list open, Up/Down move the
     /// highlight, Enter takes it, Escape closes the list only.
@@ -60,19 +60,6 @@ impl Dialog {
                 k => k,
             };
             return Self::tray_outcome(t.key(key));
-        }
-        if let Some(c) = self.chooser_mut() {
-            // The chooser has no edit field: a space is Space, a letter
-            // the list's type-ahead.
-            let key = match key {
-                Key::Edit(k) => match reprisekit::controls::form::flat_key(&k) {
-                    Some(k) => k,
-                    None => return Outcome::Nothing,
-                },
-                k => k,
-            };
-            let ev = c.ow.key(key);
-            return self.chooser_outcome(ev);
         }
         if self.buttons_only() {
             // Left and Right come in as editing keys; with no field to
@@ -158,9 +145,8 @@ impl Dialog {
         }
     }
 
-    /// The pointer let go over `over`. A form's or the chooser's held
-    /// push button acts now (on the release, not the press), the chooser's
-    /// only if `over` is still that button, and a held thumb lets go.
+    /// The pointer let go over `over`. A form's held push button acts now (on the release, not
+    /// the press), and a held thumb lets go.
     pub fn release(&mut self, over: Option<DialogHit>) -> Outcome {
         if self.field.as_mut().is_some_and(|f| f.thumb.release()) {
             return Outcome::Redraw;
@@ -169,14 +155,6 @@ impl Dialog {
             self.field_lit.motion(field_part(over));
             self.field_lit.release();
             return Outcome::Redraw;
-        }
-        if let Some(c) = self.chooser_mut() {
-            let h = match over {
-                Some(DialogHit::Chooser(h)) => Some(h),
-                _ => None,
-            };
-            let ev = c.ow.release(h);
-            return self.chooser_outcome(ev);
         }
         if let Some(t) = self.tray_mut() {
             return Self::tray_outcome(t.release(tray_part(over)));
@@ -234,20 +212,12 @@ impl Dialog {
         s.motion(x, y, hit) != SheetEvent::None
     }
 
-    /// A left press other than on a button. A form or the chooser takes it first; on the drop arrow
+    /// A left press other than on a button. A form takes it first; on the drop arrow
     /// it toggles the list, on a row takes the entry, on the scroll arrows scrolls, elsewhere
     /// closes an open list. Not the file picker's (see `key`).
     pub fn click(&mut self, hit: Option<DialogHit>) -> Outcome {
         if let Some(f) = self.form_mut() {
             return f.click(hit);
-        }
-        if let Some(c) = self.chooser_mut() {
-            let h = match hit {
-                Some(DialogHit::Chooser(h)) => Some(h),
-                _ => None,
-            };
-            let ev = c.ow.click(h);
-            return self.chooser_outcome(ev);
         }
         if let Some(t) = self.tray_mut() {
             return Self::tray_outcome(t.click(tray_part(hit)));
@@ -305,9 +275,8 @@ impl Dialog {
         }
     }
 
-    /// The second press of a double click. On a row of the chooser's list
-    /// it takes the row and presses OK, in a form's edit field it selects
-    /// the word there; anywhere else it is a plain press.
+    /// The second press of a double click. In a form's edit field it selects the word there;
+    /// anywhere else it is a plain press.
     pub fn double_click(&mut self, hit: Option<DialogHit>) -> Outcome {
         if let Some(f) = self.form_mut() {
             let h = match hit {
@@ -320,14 +289,6 @@ impl Dialog {
             let ev = form.double_click(h);
             return f.event(ev);
         }
-        if let Some(c) = self.chooser_mut() {
-            let h = match hit {
-                Some(DialogHit::Chooser(h)) => Some(h),
-                _ => None,
-            };
-            let ev = c.ow.double_click(h);
-            return self.chooser_outcome(ev);
-        }
         self.click(hit)
     }
 
@@ -338,8 +299,8 @@ impl Dialog {
     }
 
     /// The wheel turned `rows` rows (down is positive) over `hit`. A form's page takes it as
-    /// `Form::wheel` does, a page's scroll bar as `PropSheet::wheel` does, the chooser's list
-    /// scrolls while the pointer is on it, Run's open drop list scrolls anywhere. Not the tray
+    /// `Form::wheel` does, a page's scroll bar as `PropSheet::wheel` does, Run's open drop list
+    /// scrolls anywhere. Not the tray
     /// dialog's or the file picker's.
     pub fn wheel(&mut self, hit: Option<DialogHit>, rows: i32) -> Outcome {
         if let Some(f) = self.form_mut() {
@@ -364,14 +325,6 @@ impl Dialog {
                 return redraw_if(s.wheel_page(rows) != SheetEvent::None);
             }
             return f.event(ev);
-        }
-        if let Some(c) = self.chooser_mut() {
-            let h = match hit {
-                Some(DialogHit::Chooser(h)) => Some(h),
-                _ => None,
-            };
-            let ev = c.ow.wheel(h, rows);
-            return self.chooser_outcome(ev);
         }
         match self.field.as_mut() {
             Some(f) if f.combo.open.is_some() => redraw_if(f.combo.scroll(rows)),
@@ -609,10 +562,6 @@ impl Dialog {
     ) -> Outcome {
         match layout.hit(self, x, y, text, px) {
             Some(DialogHit::Button(i)) => self.focus_button(i),
-            Some(DialogHit::Chooser(h)) => match self.chooser_mut() {
-                Some(c) => redraw_if(c.ow.focus_on(Some(h)) != openwith::Event::None),
-                None => Outcome::Nothing,
-            },
             Some(DialogHit::Tray(h)) => match self.tray_mut() {
                 Some(t) => redraw_if(t.focus_on(Some(h)) != traycustomize::Event::None),
                 None => Outcome::Nothing,
@@ -667,7 +616,7 @@ impl Dialog {
         Outcome::Redraw
     }
 
-    /// A reader asked to see row `row` of the list at dialog point (`x`, `y`): Open With's programs, the tray's items, an open drop list, a sheet's page list, or a form
+    /// A reader asked to see row `row` of the list at dialog point (`x`, `y`): the tray's items, an open drop list, a sheet's page list, or a form
     /// page's list box or tree, scrolls it in.
     pub fn reveal(
         &mut self,
@@ -677,9 +626,6 @@ impl Dialog {
         text: &TextRenderer,
         px: u32,
     ) -> Outcome {
-        if let Some(c) = self.chooser_mut() {
-            return redraw_if(c.ow.reveal(row) != openwith::Event::None);
-        }
         if let (Some(t), Some(client)) = (self.tray_mut(), layout.page) {
             let lay = t.layout(text, px, (client.x, client.y));
             let hit = t.hit(&lay, x, y);
@@ -835,9 +781,6 @@ impl Dialog {
         self.field_lit.clear();
         if let Some(f) = self.field.as_mut() {
             f.thumb.release();
-        }
-        if let Some(c) = self.chooser_mut() {
-            c.ow.release(None);
         }
         if let Some(f) = self.form_mut() {
             if let Some(s) = f.sheet_mut() {

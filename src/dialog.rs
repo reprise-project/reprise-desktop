@@ -7,12 +7,10 @@ use crate::raster::Rect;
 use crate::text::{DialogFont, TextRenderer};
 use crate::textedit::{EditKey, TextEdit};
 use crate::theme::Theme;
-use reprisekit::classic::widgets::CheckState;
 use reprisekit::controls::combo::Combo;
 use reprisekit::controls::copyprogress::CopyProgress;
 use reprisekit::controls::dlgtemplate::Template;
 use reprisekit::controls::endsession::Goal;
-use reprisekit::controls::openwith;
 use reprisekit::controls::pathcomplete::{self, PathComplete};
 use reprisekit::controls::scrollbar::ThumbDrag;
 use reprisekit::controls::traycustomize::{self, TrayCustomize};
@@ -25,20 +23,17 @@ mod draw;
 mod form;
 mod input;
 mod layout;
-mod sheet;
 #[cfg(test)]
 mod tests;
 mod welcome;
 
-pub use self::draw::{access, access_copy, draw, draw_copy, draw_field, page_pictures};
+pub use self::draw::{access, access_copy, draw, draw_copy, draw_field};
 pub use self::form::{FormBody, FormDialog, Kind, Measured};
 use self::input::redraw_if;
 pub(crate) use self::input::tray_part;
 pub(crate) use self::layout::FORM_CLIENT;
 use self::layout::{CAPTION_H, DIALOG_FRAME, client_shift};
 pub use self::layout::{DialogHit, DialogLayout, ICON_PX, caption_button};
-pub use self::sheet::{AttrConfirm, AttrWrite, SetBase, SheetBase, Written, shortcut_facts};
-use self::sheet::{props_event, set_event, sheet_over};
 use self::welcome::{IconButton, draw_icon_button, draw_welcome};
 
 /// What pressing a button (or Enter for the default one) does.
@@ -170,8 +165,6 @@ pub enum Style {
         /// Red exclamation badge over the icon's bottom-left (Confirm Delete on a system icon).
         delete_badge: bool,
     },
-    /// The "Open With" chooser: the `openwith` control in a fixed frame.
-    Chooser(Box<Chooser>),
     /// Log Off or Turn off computer: the Blue `powerpanel`, or under glass a framed dialog with
     /// push buttons unless the panel is to be Blue there too.
     Welcome(Box<Welcome>),
@@ -230,16 +223,6 @@ pub fn by_start(area: Rect, edge: reprisekit::taskbar::Edge, size: (i32, i32)) -
         Edge::Right => (area.right() - size.0, area.y),
     };
     crate::window::keep_inside(corner, size, area)
-}
-
-/// The Open With chooser: the `openwith` control, the file, its type, and whether OK only writes
-/// the default (Change...).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Chooser {
-    pub ow: openwith::OpenWith,
-    pub set_default: bool,
-    pub path: std::path::PathBuf,
-    pub mime: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -341,17 +324,12 @@ impl Dialog {
     }
 
     /// What makes this dialog "the same window" as one already open: its title, the file it is
-    /// about and, for a message box, what its first button other than Cancel does. Two same-named
-    /// files get a Properties sheet each and two delete questions about different items both stay
-    /// up, while Run or Recycle Bin Properties stay single. A file's sheet goes by its path alone,
-    /// so one renamed under it is still the file's.
+    /// about and, for a message box, what its first button other than Cancel does. Two delete
+    /// questions about different items both stay up, while Run or Recycle Bin Properties stay
+    /// single.
     pub fn identity(&self) -> (&str, Option<&std::path::Path>, Option<&DialogAction>) {
         let path = match &self.style {
-            Style::Chooser(c) => Some(c.path.as_path()),
             Style::Form(f) => match &f.kind {
-                FormKind::Attributes(a) => a.path(),
-                FormKind::Properties(b) => Some(b.path.as_path()),
-                FormKind::SetProperties(s) => s.paths.first().map(|p| p.as_path()),
                 FormKind::Replace(b) => Some(b.identity()),
                 _ => None,
             },
@@ -364,11 +342,7 @@ impl Dialog {
                 .find(|a| **a != DialogAction::Cancel),
             _ => None,
         };
-        let title = match &self.style {
-            Style::Form(f) if matches!(f.kind, FormKind::Properties(_)) => "Properties",
-            _ => self.title.as_str(),
-        };
-        (title, path, acts)
+        (self.title.as_str(), path, acts)
     }
 
     /// The pid End Program's End Now would kill; None for any other dialog.
@@ -405,20 +379,6 @@ impl Dialog {
             fraction: c.cp.fraction(),
             paused: c.cp.status.paused,
         })
-    }
-
-    pub fn chooser(&self) -> Option<&Chooser> {
-        match &self.style {
-            Style::Chooser(c) => Some(&**c),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn chooser_mut(&mut self) -> Option<&mut Chooser> {
-        match &mut self.style {
-            Style::Chooser(c) => Some(&mut **c),
-            _ => None,
-        }
     }
 
     pub fn copy(&self) -> Option<&CopyDialog> {
@@ -526,80 +486,7 @@ pub enum Outcome {
     /// [`DialogAction::RenameDesktop`] with the field's trimmed text.
     RenameDesktop(usize, String),
     Act(Action),
-    /// A Properties sheet's OK or Apply: rename `path` to `name` when the
-    /// name or the Hidden box changed, write the attributes whose boxes
-    /// moved (`attrs`), and `hidden` when Hidden moved (a folder's
-    /// `.hidden` line goes when it is cleared). `close` closes the sheet
-    /// after (OK); Apply keeps it open. `recurse` is the Confirm Attribute
-    /// Changes answer for a folder: None until it has been asked, then
-    /// whether the attributes and Hidden reach the subfolders and files.
-    Properties {
-        path: std::path::PathBuf,
-        name: Option<std::ffi::OsString>,
-        attrs: reprisefs::props::AttrMoves,
-        hidden: Option<bool>,
-        /// The Summary fields that moved, by index into
-        /// `filesheet::SUMMARY_IDS`, with what they hold now.
-        summary: Vec<(usize, String)>,
-        /// A folder's icon when Change Icon moved it: its own, or the
-        /// standard folder's for None.
-        folder_icon: Option<Option<String>>,
-        /// A program launcher's keys that moved: its Shortcut fields and
-        /// the icon Change Icon left.
-        launcher: Vec<(reprisefs::launcher::Key, String)>,
-        close: bool,
-        recurse: Option<bool>,
-    },
-    /// Open `path` with the program whose desktop-file id is `app`;
-    /// `always` makes it the default for `mime`.
-    OpenWith {
-        path: std::path::PathBuf,
-        app: String,
-        always: bool,
-        mime: Option<String>,
-    },
-    /// A set's Properties sheet's OK or Apply: write the attributes that
-    /// moved on every item in `paths`, and hide or show each when Hidden
-    /// did. `close` and `recurse` are as for `Properties`; only a set
-    /// with a folder is asked how far they reach.
-    SetProperties {
-        paths: Vec<std::path::PathBuf>,
-        attrs: reprisefs::props::AttrMoves,
-        hidden: Option<bool>,
-        folder_icon: Option<Option<String>>,
-        close: bool,
-        recurse: Option<bool>,
-    },
-    /// Change Icon... on Customize or Shortcut: the Change Icon box for
-    /// the folder or the launcher (`launcher`) called `name`, on
-    /// `current` (None: the standard folder, or no icon of its own).
-    ChangeIcon {
-        name: String,
-        current: Option<String>,
-        launcher: bool,
-    },
-    /// Shortcut's Find Target...: open the folder this program sits in
-    /// with it selected, the sheet staying up.
-    FindTarget(std::path::PathBuf),
-    IconChosen(Option<String>),
-    ChangeDefault(std::path::PathBuf),
-    /// The Properties sheet's Advanced...: Advanced Attributes for what
-    /// the sheet is about, its archive and index boxes at `robots` (None:
-    /// greyed, the file system keeps no such flags).
-    AdvancedAttributes {
-        subject: reprisekit::controls::filesheet::Subject,
-        robots: Option<[CheckState; 2]>,
-    },
-    AdvancedChosen([CheckState; 2]),
-    /// OK on the chooser Change... opened: make `app` the default for
-    /// `mime` without running the file, and tell the sheet behind it.
-    SetDefault {
-        path: std::path::PathBuf,
-        app: String,
-        mime: Option<String>,
-    },
     BrowseRun,
-    BrowseProgram,
     BinSettings {
         settings: reprisefs::bincap::Policy,
         close: bool,

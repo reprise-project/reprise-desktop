@@ -1028,7 +1028,6 @@ mod tests {
                 &l,
                 None,
                 None,
-                &[],
                 &d,
                 false,
                 None,

@@ -103,15 +103,19 @@ impl Explorer {
         )
     }
 
-    /// `--properties PATH`'s sheet, for a path no listing shows: its name, a launcher's own
-    /// included, is read with the rest of the sheet.
+    /// `--properties PATH`'s sheet, for a path no listing shows: its name, a launcher's or a
+    /// Start menu entry's own included, is read with the rest of the sheet.
     pub(crate) fn open_path_properties(&mut self, path: &Path, ctx: &mut Ctx) -> Reply {
         let path = path.to_path_buf();
         let (apps, globs) = (self.app_index.clone(), self.globs.clone());
         let scale = ctx.icons.scale();
         let work = move |_: &Gate| {
-            let it = reprisefs::listing::item_at(&path, &globs);
-            let name = it.label().to_string();
+            let name = match menu_entry(&path, &apps) {
+                Some(e) => e.name.clone(),
+                None => reprisefs::listing::item_at(&path, &globs)
+                    .label()
+                    .to_string(),
+            };
             (glance(&path, &name, &apps, &globs, scale), name)
         };
         self.act(
@@ -119,6 +123,40 @@ impl Explorer {
             Action::reads("Properties"),
             work,
             |ex, (glanced, name), ctx| ex.glanced(glanced, &name, &name, ctx),
+        )
+    }
+
+    /// `--properties PATH...`'s sheet: the combined sheet when two or more of `paths` read, else
+    /// the first path's own.
+    pub(crate) fn open_paths_properties(&mut self, paths: &[PathBuf], ctx: &mut Ctx) -> Reply {
+        let [first, ..] = paths else {
+            return Reply::none();
+        };
+        if paths.len() == 1 {
+            return self.open_path_properties(first, ctx);
+        }
+        let (paths, globs) = (paths.to_vec(), self.globs.clone());
+        let apps = self.app_index.clone();
+        let work = move |_: &Gate| {
+            let chosen: Vec<(PathBuf, String)> = (paths.iter())
+                .map(|p| {
+                    let label = reprisefs::listing::item_at(p, &globs).label().to_string();
+                    (p.clone(), label)
+                })
+                .collect();
+            (glance_set_items(&chosen, &apps, &globs), paths)
+        };
+        self.act(
+            ctx,
+            Action::reads("Properties"),
+            work,
+            |ex, (items, paths), ctx| match items.first() {
+                Some(first) if items.len() > 1 => {
+                    let caption = format!("{}, ...", first.name);
+                    ex.open_sheet(SheetRead::Set(items, caption), ctx)
+                }
+                _ => ex.open_path_properties(&paths[0], ctx),
+            },
         )
     }
 
@@ -513,7 +551,8 @@ impl Explorer {
         landed
     }
 
-    /// Whether a `--properties` process is done: its sheet is closed and no box or work is left.
+    /// Whether a process started for one box (`--properties`, `--open-with`) is done: its sheet is
+    /// closed and no box or work is left.
     pub(crate) fn sheet_closed(&self) -> bool {
         self.props.is_none()
             && self.props_due.is_none()
@@ -1186,6 +1225,8 @@ fn glance(
         .and_then(|m| reprisefs::apps::shortcut_at(&info.path, &m))
     {
         SheetIcon::Shortcut(sc.icon().to_string())
+    } else if let Some(e) = menu_entry(&info.path, apps) {
+        SheetIcon::Shortcut(e.icon.clone().unwrap_or_else(|| PROGRAM_ICON.into()))
     } else {
         SheetIcon::File(reprisefs::apps::mime_of_in(globs, &info.path))
     };
@@ -1214,6 +1255,31 @@ fn glance(
         files,
         scale,
     })
+}
+
+const PROGRAM_ICON: &str = "application-x-executable";
+
+/// The Start menu's entry read from the file at `path`, as the menu names and draws it.
+fn menu_entry<'a>(
+    path: &Path,
+    apps: &'a [reprisefs::apps::AppEntry],
+) -> Option<&'a reprisefs::apps::AppEntry> {
+    menu_entry_in(path, apps, &reprisefs::apps::default_dirs())
+}
+
+/// [`menu_entry`] with the applications folders `dirs`.
+pub(crate) fn menu_entry_in<'a>(
+    path: &Path,
+    apps: &'a [reprisefs::apps::AppEntry],
+    dirs: &[PathBuf],
+) -> Option<&'a reprisefs::apps::AppEntry> {
+    let file = path.file_name()?.to_str()?;
+    if !file.ends_with(".desktop") {
+        return None;
+    }
+    (apps.iter())
+        .filter(|e| e.id.ends_with(file))
+        .find(|e| reprisefs::apps::find_file_in(dirs, &e.id).as_deref() == Some(path))
 }
 
 /// Each of `chosen` (path and label) that answers, for the combined sheet.

@@ -49,8 +49,7 @@ pub fn draw_field(
 
 /// Render `d` at `theme.scale`; `layout` is the logical layout, `icon` the
 /// dialog's 32 px (times scale) icon, `caption_icon` the same icon at the
-/// theme's icon size for a styled caption, and `row_icons` the chooser's
-/// row icons or a Properties sheet's Opens with icon (the first).
+/// theme's icon size for a styled caption.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     theme: &Theme,
@@ -58,7 +57,6 @@ pub fn draw(
     layout: &DialogLayout,
     icon: Option<&Canvas>,
     caption_icon: Option<&Canvas>,
-    row_icons: &[Option<&Canvas>],
     d: &Dialog,
     caret: bool,
     lit: Lit<usize>,
@@ -108,14 +106,7 @@ pub fn draw(
     }
 
     if let Some(f) = d.form() {
-        draw_form(&mut c, &paint, theme, text, f, dots, row_icons);
-    }
-    if let (Some(ch), Some(client)) = (d.chooser(), layout.page) {
-        let lay = ch
-            .ow
-            .layout(text, px, (client.x, client.y), &layout.controls);
-        ch.ow
-            .draw(&mut c, text, &paint, &lay, icon, row_icons, cues, px);
+        draw_form(&mut c, &paint, theme, text, f, dots);
     }
     if let (Some(t), Some(client)) = (d.tray(), layout.page) {
         let lay = t.layout(text, px, (client.x, client.y));
@@ -138,12 +129,6 @@ pub fn draw(
     {
         let r = r.scaled(s);
         draw_delete_badge(&mut c, r.x, r.y, s);
-    }
-    if let (Some(r), Some(FormKind::Properties(b))) = (layout.icon, d.form().map(|f| &f.kind))
-        && b.shortcut
-    {
-        let r = r.scaled(s);
-        reprisekit::controls::iconview::draw_shortcut_arrow(&mut c, r.x, r.bottom(), s);
     }
     // The dialog's own text and buttons, in the font it is set in; the
     // frame and a form's pages above pick their own.
@@ -274,8 +259,7 @@ pub fn access_copy(
 /// `d`'s `access` part under the dialog node `ROOT`, in dialog
 /// coordinates: its text, Run's labelled field, a form's tabs and open
 /// page, and the buttons. Returns the node with the focus: the field, the
-/// form's focused control, else the default button. The Open With
-/// chooser adds its own control's tree and returns its focus instead.
+/// form's focused control, else the default button.
 pub fn access(
     d: &Dialog,
     layout: &DialogLayout,
@@ -284,12 +268,6 @@ pub fn access(
     tree: &mut reprisekit::access::Tree,
 ) -> reprisekit::access::accesskit::NodeId {
     use reprisekit::access::{self as ax, ROOT};
-    if let (Some(ch), Some(client)) = (d.chooser(), layout.page) {
-        let lay = ch
-            .ow
-            .layout(text, px, (client.x, client.y), &layout.controls);
-        return ch.ow.access(tree, &lay);
-    }
     if let (Some(t), Some(client)) = (d.tray(), layout.page) {
         let lay = t.layout(text, px, (client.x, client.y));
         return t.access(tree, &lay, text, px);
@@ -348,41 +326,8 @@ pub fn access(
     focus.or(default).unwrap_or(ROOT)
 }
 
-/// The icons a Properties sheet's open page shows in its pictures, by
-/// item id and icon name, which the host resolves at 32 px and hands to
-/// `draw` as row icons from 1 on (row 0 is the Opens with program).
-pub fn page_pictures(d: &Dialog) -> Vec<(&'static str, String, i32)> {
-    use reprisekit::controls::filesheet::{
-        CUSTOM_ICON, CUSTOM_PREVIEW, PAGE_ICONS, PREVIEW_PX, STANDARD_FOLDER_ICON,
-    };
-    let Some(f) = d.form() else {
-        return Vec::new();
-    };
-    let folder = match &f.kind {
-        FormKind::Properties(b) => b.icon_chosen.clone().unwrap_or_else(|| b.own_icon.clone()),
-        FormKind::SetProperties(s) => s.icon_chosen.clone().flatten(),
-        _ => return Vec::new(),
-    }
-    .unwrap_or_else(|| STANDARD_FOLDER_ICON.to_string());
-    let Some(page) = f.open_page() else {
-        return Vec::new();
-    };
-    PAGE_ICONS
-        .into_iter()
-        .map(|(id, n)| (id, n.to_string(), ICON_PX))
-        .chain([
-            (CUSTOM_ICON, folder.clone(), ICON_PX),
-            (CUSTOM_PREVIEW, folder, PREVIEW_PX),
-        ])
-        .filter(|(id, _, _)| page.item(id).is_some())
-        .collect()
-}
-
-/// A form dialog: a sheet through `propsheet::draw`, or the plain form.
-/// A Properties sheet's Opens with icon (row 0 of `row_icons`, from the
-/// host's cache) and its page's other pictures (`page_pictures`, from
-/// row 1 on) are filled in here, since the pages are built without them.
-/// `p` is the dialog's paint.
+/// A form dialog: a sheet through `propsheet::draw`, or the plain form. `p` is the dialog's
+/// paint.
 fn draw_form(
     c: &mut Canvas,
     p: &Paint,
@@ -390,45 +335,13 @@ fn draw_form(
     text: &TextRenderer,
     f: &FormDialog,
     cues: bool,
-    row_icons: &[Option<&Canvas>],
 ) {
-    let opens_icon = row_icons.first().copied().flatten();
-    let s = theme.scale.max(1);
     let px = theme.fonts.size_px;
     match &f.body {
         FormBody::Sheet(sheet) => {
             reprisekit::controls::propsheet::draw(c, text, p, sheet, cues, px)
         }
         FormBody::Plain(form) => reprisekit::controls::form::draw(c, text, p, form, cues, px),
-    }
-    let Some(form) = f.open_page() else {
-        return;
-    };
-    if let (FormKind::Properties(_), Some(r), Some(ic)) =
-        (&f.kind, form.rect("opens_icon"), opens_icon)
-    {
-        c.blit_over(r.x * s, r.y * s, ic);
-    }
-    if matches!(f.kind, FormKind::Properties(_) | FormKind::SetProperties(_)) {
-        // In `page_pictures` order, which the host resolved from row 1 on.
-        let pictures = [
-            reprisekit::controls::filesheet::PAGE_ICONS[0].0,
-            reprisekit::controls::filesheet::PAGE_ICONS[1].0,
-            reprisekit::controls::filesheet::CUSTOM_ICON,
-            reprisekit::controls::filesheet::CUSTOM_PREVIEW,
-        ];
-        let rects = pictures.into_iter().filter_map(|id| form.rect(id));
-        for (r, ic) in rects.zip(row_icons.iter().skip(1)) {
-            if let Some(ic) = ic {
-                let (w, h) = (ic.width as i32, ic.height as i32);
-                let r = r.scaled(s);
-                c.blit_over(
-                    r.x + (r.width - w).max(0) / 2,
-                    r.y + (r.height - h).max(0) / 2,
-                    ic,
-                );
-            }
-        }
     }
 }
 

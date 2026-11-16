@@ -11,16 +11,13 @@ mod draw;
 mod input;
 mod outcome;
 mod power;
-mod properties;
 mod stack;
 
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 
-use reprisekit::controls::openwith;
 use reprisekit::cues::Cues;
 use reprisekit::pointer::DoubleClick;
 use reprisescene::{BufferId, TreeId};
@@ -29,7 +26,7 @@ use smithay::output::Output;
 use smithay::reexports::calloop::RegistrationToken;
 
 use crate::compositor::State;
-use crate::dialog::{self, Dialog, DialogHit, DialogLayout, Outcome, Style};
+use crate::dialog::{Dialog, DialogHit, DialogLayout, Outcome, Style};
 use crate::glass::{Backdrop, frame_pane};
 use crate::raster::{Canvas, Rect};
 use crate::textedit::EditKey;
@@ -75,15 +72,11 @@ pub struct DialogView {
     pub output: Output,
     /// Last press in the field or a form's edit field, for double-click word select.
     field_press: DoubleClick<usize>,
-    /// A list row's last press, for double-click as OK.
-    row_press: DoubleClick<usize>,
     wheel: reprisekit::pointer::WheelCarry,
     /// Icons the last draw used, so a caret blink skips the lookups.
     icons: Option<(IconKey, DialogIcons)>,
     /// Jobs decoding icon files the icons wait for; they are looked up again when one lands.
     decodes: crate::fsjobs::Reads<IconFiles>,
-    /// Theme names Change Icon's list wears a blank stand-in for until they land.
-    waiting: Vec<String>,
     /// Last full raster without its caret, and its scale: a blink repaints the field over a clone.
     still_canvas: Option<(Canvas, i32)>,
     /// Keyboard cues: a pointer-opened dialog starts without them ([`Cues::key`]), a key-opened one has them.
@@ -259,8 +252,6 @@ struct IconKey {
 struct DialogIcons {
     icon: Option<Canvas>,
     caption: Option<Canvas>,
-    /// Row icons by name and logical size at the key's scale; `None` for a name the theme lacks.
-    rows: HashMap<(String, i32), Option<Canvas>>,
 }
 
 /// Icon `name` at `px` from `cache`. An icon file is never read here: one not decoded at `px` yet
@@ -325,62 +316,6 @@ fn icon_key(d: &Dialog, scale: i32) -> IconKey {
     IconKey {
         scale,
         icon: d.icon.clone(),
-    }
-}
-
-/// The rows of `d` that draw an icon, ascending, with name and logical size: chooser rows at 16 px, or a
-/// Properties sheet's Opens with row 0 at 16 px and its page pictures (`dialog::page_pictures`) at 32 px.
-fn row_icon_names(d: &Dialog) -> Vec<(usize, String, i32)> {
-    match d.chooser() {
-        Some(c) => {
-            let rows = &c.ow.list.rows;
-            let top = c.ow.list.top;
-            (top..rows.len().min(top + openwith::ROWS))
-                .filter_map(|i| openwith::icon_name(&rows[i]).map(|n| (i, n.to_string(), 16)))
-                .collect()
-        }
-        None => {
-            let opens = match d.form().map(|f| &f.kind) {
-                Some(crate::dialog::Kind::Properties(b)) => b.opens_icon.as_deref(),
-                _ => None,
-            };
-            let pics = dialog::page_pictures(d)
-                .into_iter()
-                .enumerate()
-                .map(|(k, (_, n, px))| (k + 1, n, px));
-            opens
-                .map(|n| (0, n.to_string(), 16))
-                .into_iter()
-                .chain(pics)
-                .collect()
-        }
-    }
-}
-
-/// What a set's Properties OK or Apply writes: attributes and Hidden per item, and the icon Change Icon gave its folders.
-struct SetWrite {
-    paths: Vec<std::path::PathBuf>,
-    attrs: reprisefs::props::AttrMoves,
-    hidden: Option<bool>,
-    folder_icon: Option<Option<String>>,
-}
-
-/// What one item's Properties OK or Apply writes: the rename to `name`, and Read-only and Hidden when moved.
-struct Props {
-    path: std::path::PathBuf,
-    name: Option<std::ffi::OsString>,
-    attrs: reprisefs::props::AttrMoves,
-    hidden: Option<bool>,
-    summary: Vec<(usize, String)>,
-    folder_icon: Option<Option<String>>,
-    launcher: Vec<(reprisefs::launcher::Key, String)>,
-}
-
-impl Props {
-    /// Whether the sheet is read again once this lands: launcher keys and the execute bit
-    /// decide its rows.
-    fn rereads(&self) -> bool {
-        !self.launcher.is_empty() || self.attrs.executable.is_some()
     }
 }
 

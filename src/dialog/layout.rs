@@ -34,12 +34,11 @@ pub struct DialogLayout {
     /// rows of the look's `combo_row` inside a 1 px border.
     pub list: Option<Rect>,
     pub buttons: Vec<Rect>,
-    /// A form dialog's tab rects and its page, or the Open With chooser's
-    /// client area.
+    /// A form dialog's tab rects and its page, or a control dialog's client area.
     pub tabs: Vec<Rect>,
     pub page: Option<Rect>,
     /// The look's control sizes it was laid out with, which `hit`,
-    /// `scrollbar` and `access` lay the Run list and the chooser out with.
+    /// `scrollbar` and `access` lay the Run list out with.
     pub controls: ControlMetrics,
     /// A Blue Welcome panel's own layout, which `buttons` repeats: its cells, then Cancel.
     pub power: Option<reprisekit::powerpanel::Layout>,
@@ -63,7 +62,6 @@ pub enum DialogHit {
     Row(usize),
     Tab(usize),
     Control(reprisekit::controls::form::Hit),
-    Chooser(openwith::Hit),
     Tray(traycustomize::Hit),
     /// A sheet's page scrollbar, while a sheet cut to its output scrolls its page.
     PageBar(reprisekit::controls::propsheet::Hit),
@@ -93,15 +91,6 @@ pub(super) const CAPTION_H: i32 = dlgtemplate::CAPTION_H;
 pub(crate) const FORM_CLIENT: (i32, i32) = (DIALOG_FRAME, DIALOG_FRAME + CAPTION_H);
 
 pub const ICON_PX: i32 = dlgtemplate::ICON_PX;
-
-pub(super) const CHOOSER_W: i32 = 396;
-
-pub(super) const CHOOSER_H: i32 = 419;
-
-const _: () = assert!(
-    CHOOSER_W == openwith::CLIENT.0 + 2 * DIALOG_FRAME
-        && CHOOSER_H == openwith::CLIENT.1 + DIALOG_FRAME + FORM_CLIENT.1
-);
 
 /// End Program: a fixed 354x243 template. The 32 px icon, then the text
 /// in a column inking from `EP_TEXT_X` to 18 px short of the right edge, each
@@ -155,7 +144,6 @@ impl DialogLayout {
             }
             Style::Welcome(w) => return Self::compute_welcome(w, theme.text),
             Style::Form(f) => return Self::compute_form(theme, text, d, f),
-            Style::Chooser(_) => Self::compute_chooser(),
             Style::TrayCustomize(t) => {
                 return Self::compute_client(t.client()).framed(theme, d.help);
             }
@@ -336,15 +324,6 @@ impl DialogLayout {
         }
     }
 
-    fn compute_chooser() -> DialogLayout {
-        let (cw, ch) = openwith::CLIENT;
-        DialogLayout {
-            size: (CHOOSER_W, CHOOSER_H),
-            page: Some(Rect::new(FORM_CLIENT.0, FORM_CLIENT.1, cw, ch)),
-            ..Default::default()
-        }
-    }
-
     /// A form dialog: the caption, the tab strip's rects when it has one,
     /// and its fixed size; the controls carry their own rects.
     fn compute_form(
@@ -435,10 +414,6 @@ impl DialogLayout {
                 }),
                 FormBody::Plain(form) => form.hit(x, y, text, px).map(DialogHit::Control),
             };
-        }
-        if let (Some(c), Some(client)) = (d.chooser(), self.page) {
-            let lay = c.ow.layout(text, px, (client.x, client.y), &self.controls);
-            return c.ow.hit(&lay, x, y).map(DialogHit::Chooser);
         }
         if let (Some(t), Some(client)) = (d.tray(), self.page) {
             let lay = t.layout(text, px, (client.x, client.y));

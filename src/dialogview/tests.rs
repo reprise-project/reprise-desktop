@@ -1,6 +1,6 @@
 use super::{
     blur_cues_without_keyboard, client_part, glass_pane, raise_order, reader_focus, refit_origin,
-    row_icon_names, to_local,
+    to_local,
 };
 use crate::dialog::Dialog;
 use crate::raster::Rect;
@@ -76,9 +76,6 @@ fn an_icon_file_stuck_decoding_holds_one_job_and_the_others_decode_once_it_is_st
     assert!(decodes.land(read));
     assert!(!decodes.land(held));
 }
-
-use reprisekit::controls::form::Key;
-use reprisekit::controls::openwith::{Program, ROWS};
 
 #[test]
 fn only_the_dialog_with_the_keyboard_keeps_its_underlines() {
@@ -289,44 +286,6 @@ fn a_point_left_of_the_layout_origin_maps_to_the_pixel_under_it() {
 }
 
 #[test]
-fn the_chooser_resolves_icons_for_its_visible_rows_only() {
-    let others = (0..40)
-        .map(|i| Program {
-            id: format!("app{i}.desktop"),
-            name: format!("Program {i:02}"),
-            icon: Some(format!("icon{i}")),
-        })
-        .collect();
-    let mut d = Dialog::open_with(
-        std::path::Path::new("/tmp/a.txt"),
-        None,
-        vec![],
-        others,
-        None,
-        false,
-    );
-    let names = row_icon_names(&d);
-    assert_eq!(names.len(), ROWS, "one name per visible row");
-    assert_eq!(
-        names[0],
-        (0, "folder".to_string(), 16),
-        "the group header draws a folder"
-    );
-    assert_eq!(names[1], (1, "icon0".to_string(), 16));
-    for _ in 0..40 {
-        d.key(Key::Down);
-    }
-    let names = row_icon_names(&d);
-    assert_eq!(names.len(), ROWS, "one name per visible row");
-    assert_eq!(
-        names.first(),
-        Some(&(30, "icon29".to_string(), 16)),
-        "the list scrolled to its last page"
-    );
-    assert_eq!(names.last(), Some(&(40, "icon39".to_string(), 16)));
-}
-
-#[test]
 fn raising_a_child_brings_its_parent_up_under_it() {
     // Run (0), its Browse (1), then a sheet opened on its own (2).
     let links = [(0, None), (1, Some(0)), (2, None)];
@@ -350,32 +309,6 @@ fn raising_the_top_family_keeps_the_order() {
 fn a_child_whose_parent_closed_raises_alone() {
     let links = [(0, None), (5, Some(9)), (2, None)];
     assert_eq!(raise_order(&links, 1), vec![0, 2, 1]);
-}
-
-#[test]
-fn a_write_of_the_execute_bit_or_launcher_keys_reads_the_sheet_again() {
-    let props = |attrs: reprisefs::props::AttrMoves, launcher| super::Props {
-        path: "/home/u/Desktop/run.sh".into(),
-        name: None,
-        attrs,
-        hidden: None,
-        summary: Vec::new(),
-        folder_icon: None,
-        launcher,
-    };
-    let attrs = |read_only, executable| reprisefs::props::AttrMoves {
-        read_only,
-        executable,
-        ..Default::default()
-    };
-    assert!(props(attrs(None, Some(false)), Vec::new()).rereads());
-    assert!(props(attrs(None, Some(true)), Vec::new()).rereads());
-    let link = vec![(reprisefs::launcher::Key::Link, "a".to_string())];
-    assert!(props(attrs(None, None), link).rereads());
-    assert!(
-        !props(attrs(Some(true), None), Vec::new()).rereads(),
-        "Read-only changes no row"
-    );
 }
 
 #[test]
@@ -409,75 +342,6 @@ fn a_dialog_asks_for_frames_only_on_the_outputs_it_covers() {
     assert_eq!(outputs(), vec!["TEST-1", "TEST-2"], "a move off TEST-1");
     h.state.blink_dialog();
     assert_eq!(outputs(), vec!["TEST-2"], "a caret blink on TEST-2");
-}
-
-/// Change Icon opens with blank stand-ins for cold SVGs and takes each icon as it lands; a
-/// name whose file decodes at no size leaves the list.
-#[test]
-fn change_icon_takes_its_cold_svgs_as_they_land_and_drops_a_broken_one() {
-    use crate::icon::{land_until, red, svg_theme, two_outputs};
-    let root = svg_theme(&["folder", "folder-music"], &["folder-videos"]);
-    let mut h = two_outputs("classic", &root);
-    h.state.open_change_icon("Songs", None, false);
-    let list = |h: &crate::harness::Harness| {
-        let d = &h.state.dialogs.views.last().expect("Change Icon").dialog;
-        let form = d.form().and_then(|f| f.body.pages().first().cloned())?;
-        match form
-            .item(reprisekit::controls::filesheet::CHANGE_ICON_LIST)?
-            .control
-            .clone()
-        {
-            reprisekit::controls::form::Control::IconList(l) => Some(*l),
-            _ => None,
-        }
-    };
-    let opened = list(&h).expect("the icon list");
-    assert_eq!(opened.names, ["folder", "folder-music", "folder-videos"]);
-    assert!(
-        (opened.icons.iter()).all(|c| c.as_ref().is_some_and(|c| c.pixels.iter().all(|&p| p == 0))),
-        "blank stand-ins"
-    );
-    assert_eq!(opened.picked(), Some("folder"));
-    crate::backend::take_asks();
-    land_until(&mut h, |h| list(h).is_some_and(|l| l.names.len() == 2));
-    let landed = list(&h).unwrap();
-    assert_eq!(landed.names, ["folder", "folder-music"]);
-    assert!(landed.icons.iter().all(|c| c.as_ref().is_some_and(red)));
-    assert_eq!(landed.picked(), Some("folder"));
-    assert!(h.state.dialogs.views.last().unwrap().waiting.is_empty());
-    let asked = crate::backend::take_asks();
-    assert!(
-        !asked.is_empty() && asked.iter().all(|(o, _)| o == "TEST-1"),
-        "only the dialog's output: {asked:?}"
-    );
-    std::fs::remove_dir_all(&root).unwrap();
-}
-
-/// A Properties sheet opened on a guessed type icon that turns out to decode at no size wears
-/// the icon its file gets now.
-#[test]
-fn a_properties_header_whose_guessed_icon_is_refused_wears_the_next_one() {
-    use crate::icon::{land_until, red, svg_theme, two_outputs};
-    let root = svg_theme(&["text-x-generic"], &["text-plain"]);
-    let mut h = two_outputs("classic", &root);
-    let file = root.join("notes.txt");
-    std::fs::write(&file, "x").unwrap();
-    let info = reprisefs::props::glance(&file, "notes.txt", &[]).unwrap();
-    assert!(
-        h.state.icons.has_unread("text-plain"),
-        "counted without decoding"
-    );
-    h.state.open_properties(&info, "text-plain", (10, 10));
-    let header = |h: &crate::harness::Harness| {
-        let v = h.state.dialogs.views.last()?;
-        let (_, icons) = v.icons.as_ref()?;
-        Some((v.dialog.icon.clone()?, icons.icon.clone()))
-    };
-    land_until(&mut h, |h| {
-        header(h)
-            .is_some_and(|(name, icon)| name == "text-x-generic" && icon.is_some_and(|c| red(&c)))
-    });
-    std::fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]

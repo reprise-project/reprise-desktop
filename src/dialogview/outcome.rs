@@ -2,8 +2,6 @@ use crate::compositor::State;
 use crate::dialog::{Dialog, Outcome};
 use reprisefs::program::Confirm;
 
-use super::*;
-
 impl State {
     pub(crate) fn apply_dialog(&mut self, outcome: Outcome) {
         match outcome {
@@ -84,103 +82,7 @@ impl State {
                 self.close_dialog();
                 self.run_action(&a, 0);
             }
-            Outcome::OpenWith {
-                path,
-                app,
-                always,
-                mime,
-            } => self.apply_open_with(&path, &app, always, mime.as_deref()),
-            Outcome::ChangeDefault(path) => {
-                // A symlink's Change... asks for the type of its target, resolved in a file job.
-                self.spawn_fs_job(move || {
-                    let real = std::fs::canonicalize(&path).unwrap_or(path);
-                    Box::new(move |state: &mut State| {
-                        let d = state.choose_program(&real, true);
-                        state.open_dialog_over(d);
-                    })
-                });
-            }
-            Outcome::SetDefault { path, app, mime } => {
-                self.apply_set_default(&path, &app, mime.as_deref())
-            }
-            Outcome::AdvancedAttributes { subject, robots } => {
-                let t = &self.config.theme;
-                let px = t.fonts.size_px;
-                let d = Dialog::advanced_attributes(subject, robots, &self.text, px, t.text);
-                self.open_dialog_over(d)
-            }
-            Outcome::AdvancedChosen(chosen) => {
-                if !self.close_to_parent() {
-                    return;
-                }
-                if let Some(i) = self.dialogs.views.len().checked_sub(1)
-                    && self.dialogs.views[i].dialog.advanced_chosen(chosen)
-                {
-                    self.redraw_dialog(i);
-                }
-            }
             Outcome::BrowseRun => self.browse_run(),
-            Outcome::BrowseProgram => self.browse_program(),
-            Outcome::Properties {
-                path,
-                name,
-                attrs,
-                hidden,
-                summary,
-                folder_icon,
-                launcher,
-                close,
-                recurse,
-            } => self.apply_properties(
-                Props {
-                    path,
-                    name,
-                    attrs,
-                    hidden,
-                    summary,
-                    folder_icon,
-                    launcher,
-                },
-                close,
-                recurse,
-            ),
-            Outcome::SetProperties {
-                paths,
-                attrs,
-                hidden,
-                folder_icon,
-                close,
-                recurse,
-            } => self.apply_set_properties(
-                SetWrite {
-                    paths,
-                    attrs,
-                    hidden,
-                    folder_icon,
-                },
-                close,
-                recurse,
-            ),
-            Outcome::ChangeIcon {
-                name,
-                current,
-                launcher,
-            } => self.open_change_icon(&name, current, launcher),
-            Outcome::FindTarget(program) => self.spawn_argv_activated(&[
-                std::ffi::OsStr::new("reprise-explorer"),
-                std::ffi::OsStr::new("--select"),
-                program.as_os_str(),
-            ]),
-            Outcome::IconChosen(icon) => {
-                if !self.close_to_parent() {
-                    return;
-                }
-                if let Some(i) = self.dialogs.views.len().checked_sub(1)
-                    && self.dialogs.views[i].dialog.icon_chosen(icon)
-                {
-                    self.redraw_dialog(i);
-                }
-            }
             Outcome::HideSystemIcon(name) => {
                 self.close_dialog();
                 self.hide_system_icons(&[name]);

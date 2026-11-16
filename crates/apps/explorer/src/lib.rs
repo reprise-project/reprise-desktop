@@ -865,7 +865,7 @@ impl Explorer {
             dir,
             select,
             connect,
-            sheet: _,
+            alone: _,
             search,
         } = start;
         let check = dir.map(|d| Job::spawn(Some(&ctx.wake), move || is_dir(&d)));
@@ -1787,8 +1787,8 @@ impl App for Lazy {
     }
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
-        // A sheet-only start has no window to bring the first event.
-        if self.start.sheet.is_some() {
+        // A start with no folder window has no window to bring the first event.
+        if self.start.alone.is_some() {
             waker.wake();
         }
         repriseapp::Start::Continue
@@ -1806,14 +1806,16 @@ impl App for Lazy {
                     Explorer::new,
                     ctx,
                 ));
-                if let Some(path) = &start.sheet {
-                    opened = ex.open_path_properties(path, ctx);
-                }
+                opened = match &start.alone {
+                    Some(Alone::Properties(paths)) => ex.open_paths_properties(paths, ctx),
+                    Some(Alone::OpenWith(path)) => ex.choose_program_for(path, false, ctx),
+                    None => Reply::none(),
+                };
                 ex
             }
         };
         let reply = opened.and(ex.event(win, ev, ctx));
-        if start.sheet.is_some() && !ex.closing && ex.sheet_closed() {
+        if start.alone.is_some() && !ex.closing && ex.sheet_closed() {
             return reply.and(ex.close(ctx));
         }
         reply
@@ -1861,7 +1863,7 @@ impl App for Lazy {
 
 impl repriseapp::Extended for Lazy {
     fn hidden(&self) -> bool {
-        self.start.sheet.is_some() || self.inner.as_ref().is_some_and(|ex| ex.closing)
+        self.start.alone.is_some() || self.inner.as_ref().is_some_and(|ex| ex.closing)
     }
 
     fn caption(&self, win: WinId) -> repriseapp::Caption {
@@ -1990,18 +1992,29 @@ struct Start {
     select: Vec<PathBuf>,
     /// A server address to connect to once the window is up.
     connect: Option<String>,
-    /// `--properties`: the path whose sheet is the only window; the process ends with it.
-    sheet: Option<PathBuf>,
+    /// The box that is the only window; the process ends with it.
+    alone: Option<Alone>,
     /// `--search`: the keyboard starts in the Search field.
     search: bool,
 }
 
-/// `reprise-explorer [--search] [PLACE]`, `--select PATH...` or `--properties PATH`. PLACE is a
+/// A start that shows one box without a folder window.
+#[derive(Clone, Debug, PartialEq)]
+enum Alone {
+    /// `--properties PATH...`: the sheet of one path, or the combined sheet of several.
+    Properties(Vec<PathBuf>),
+    /// `--open-with PATH`: the Open With chooser.
+    OpenWith(PathBuf),
+}
+
+/// `reprise-explorer [--search] [PLACE]`, `--select PATH...`, `--properties PATH...` or
+/// `--open-with PATH`. PLACE is a
 /// folder's path, "Computer", "Recycle Bin" or "Network", or a server address, which opens
 /// Computer and connects to it; a missing or unknown one is Home. `--search` puts the keyboard in
 /// the Search field. `--select` opens the folder the first absolute PATH sits in with it and the
 /// others there selected, the first scrolled into view (Find Target's window). `--properties`
-/// shows an absolute PATH's Properties sheet alone.
+/// shows the Properties sheet of the absolute PATHs alone, combined for two or more;
+/// `--open-with` shows the Open With chooser for PATH alone.
 fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
     let mut args = args.into_iter();
     let first = args.next();
@@ -2021,20 +2034,34 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             dir: None,
             select: Vec::new(),
             connect: Some(addr.uri()),
-            sheet: None,
+            alone: None,
             search: false,
         };
     }
-    if first.as_deref() == Some("--properties".as_ref())
-        && let Some(path) = args.next().map(PathBuf::from).filter(|p| p.is_absolute())
-    {
-        let place = path.parent().map_or(Place::Home, Place::from_path);
+    let alone = match first.as_ref().and_then(|a| a.to_str()) {
+        Some("--properties") => {
+            let paths: Vec<PathBuf> = args.by_ref().map(PathBuf::from).collect();
+            (paths.iter().all(|p| p.is_absolute()) && !paths.is_empty())
+                .then_some(Alone::Properties(paths))
+        }
+        Some("--open-with") => args
+            .next()
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .map(Alone::OpenWith),
+        _ => None,
+    };
+    if let Some(alone) = alone {
+        let path = match &alone {
+            Alone::Properties(paths) => &paths[0],
+            Alone::OpenWith(path) => path,
+        };
         return Start {
-            place,
+            place: path.parent().map_or(Place::Home, Place::from_path),
             dir: None,
             select: Vec::new(),
             connect: None,
-            sheet: Some(path),
+            alone: Some(alone),
             search: false,
         };
     }
@@ -2068,7 +2095,7 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
         dir,
         select,
         connect: None,
-        sheet: None,
+        alone: None,
         search: false,
     }
 }
