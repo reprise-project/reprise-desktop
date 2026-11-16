@@ -221,39 +221,64 @@ impl State {
         crate::spawn::spawn_argv_in(&argv, app.as_deref(), Some(dir), &self.env, Some(&launch));
     }
 
-    /// The Run dialog's line: one that names a folder opens it in Explorer, anything else runs
-    /// as [`State::spawn_command_activated`], a document it names going into the recent files. The
-    /// path is checked off the loop on a [`State::spawn_job`], so a mount that does not answer
-    /// stalls neither the loop nor the launch.
-    pub fn run_line_activated(&mut self, cmd: &str) {
+    /// The line typed in Run box `from`: one that names a folder opens it in Explorer, a document
+    /// opens as its icon does ([`State::open_document`]), anything else runs as
+    /// [`State::spawn_command_activated`]. Each closes the box. A line whose program is not there
+    /// keeps the box open under a notice. The paths are checked off the loop on a
+    /// [`State::spawn_job`], so a mount that does not answer stalls neither the loop nor the launch.
+    pub fn run_line_activated(&mut self, cmd: &str, from: Option<u64>) {
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-        let Some(dir) = crate::spawn::command_folder(cmd, home.as_deref()) else {
-            self.spawn_command_activated(cmd);
-            return;
-        };
-        let cmd = cmd.to_string();
-        let mime = (dir.file_name())
+        let folder = crate::spawn::command_folder(cmd, home.as_deref());
+        let program = crate::spawn::command_program(cmd, home.as_deref());
+        let path = std::env::var_os("PATH");
+        let mime = (folder.as_ref().and_then(|d| d.file_name()))
             .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
+        let cmd = cmd.to_string();
         self.spawn_job(move || {
-            let meta = std::fs::metadata(&dir).ok();
-            let fixed_modes = reprisefs::props::Mount::of(&dir).fixed_modes;
-            let (is_dir, is_document) = (meta.as_ref()).map_or((false, false), |m| {
-                (
-                    m.is_dir(),
-                    names_a_document(m, mime.as_deref(), fixed_modes),
-                )
-            });
-            Box::new(move |state: &mut State| {
-                if is_dir {
-                    state.spawn_argv_activated(&reprisefs::apps::open_folder_argv(&dir));
-                } else {
-                    state.spawn_command_activated(&cmd);
-                    if is_document {
-                        state.record_recent(vec![dir], None);
+            let line = match (folder, program) {
+                (Some(dir), _) => match std::fs::metadata(&dir) {
+                    Ok(m) if m.is_dir() => RunLine::Folder(dir),
+                    Ok(m) => {
+                        let fixed_modes = reprisefs::props::Mount::of(&dir).fixed_modes;
+                        match names_a_document(&m, mime.as_deref(), fixed_modes) {
+                            true => RunLine::Document(dir),
+                            false => RunLine::Command,
+                        }
                     }
-                }
-            })
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        RunLine::Missing(cmd.trim().to_string())
+                    }
+                    Err(_) => RunLine::Command,
+                },
+                (None, Some((word, p))) if p.missing(path.as_deref()) => RunLine::Missing(word),
+                (None, _) => RunLine::Command,
+            };
+            Box::new(move |state: &mut State| state.run_line_checked(&cmd, from, line))
         });
+    }
+
+    fn run_line_checked(&mut self, cmd: &str, from: Option<u64>, line: RunLine) {
+        if let RunLine::Missing(word) = &line {
+            let d = crate::dialog::Dialog::run_not_found(word);
+            return self.open_dialog_over_id(d, from);
+        }
+        if let Some(i) = from.and_then(|id| self.dialog_index(id)) {
+            self.close_dialog_at(i);
+        }
+        crate::dialog::remember(&mut self.dialogs.run_history, cmd);
+        crate::state::save_dialogs(&self.dialogs.run_history);
+        match line {
+            RunLine::Folder(dir) => {
+                self.spawn_argv_activated(&reprisefs::apps::open_folder_argv(&dir))
+            }
+            RunLine::Document(path) => {
+                let how = reprisefs::program::Confirm::on_open(self.config.confirm_scripts);
+                self.open_document(&path, None, how, true);
+            }
+            RunLine::Command | RunLine::Missing(_) => {
+                self.spawn_command_activated(cmd);
+            }
+        }
     }
 
     pub fn spawn_argv_activated<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
@@ -331,6 +356,16 @@ impl State {
 /// Whether a Run line's path is a document to record as opened: a regular file with no execute
 /// bit, since an executable it names runs instead, or, on a mount whose modes are fixed (FAT,
 /// exFAT and NTFS can mark every file executable), one whose name's type `mime` is no program's.
+/// What a Run line was found to name, off the loop.
+enum RunLine {
+    Folder(std::path::PathBuf),
+    Document(std::path::PathBuf),
+    /// The program, as typed, is not there.
+    Missing(String),
+    /// Anything else, for `sh`.
+    Command,
+}
+
 fn names_a_document(meta: &std::fs::Metadata, mime: Option<&str>, fixed_modes: bool) -> bool {
     use std::os::unix::fs::PermissionsExt;
     meta.is_file()
@@ -450,6 +485,53 @@ mod tests {
         assert!(
             !client_token_trusted(false, Some(focused.clone()), Some(focused)),
             "expected untrusted"
+        );
+    }
+
+    #[test]
+    fn a_run_line_opens_a_document_and_names_a_missing_program_over_the_open_box() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let run = |h: &mut crate::harness::Harness| {
+            h.state.open_dialog(crate::dialog::Dialog::run(&[]));
+            h.state.dialogs.views.last().map(|v| v.id)
+        };
+        crate::spawn::record();
+        let from = run(&mut h);
+        h.state
+            .run_line_activated("reprise-no-such-program --flag", from);
+        h.until("the notice", |s| s.dialogs.views.len() == 2);
+        assert!(
+            from.and_then(|id| h.state.dialog_index(id)).is_some(),
+            "the Run box stays open"
+        );
+        assert!(
+            (h.state.dialogs.views[1].dialog.text)
+                .starts_with("Reprise cannot find 'reprise-no-such-program'."),
+            "the notice names the program"
+        );
+        assert_eq!(
+            crate::spawn::recorded(),
+            Vec::<String>::new(),
+            "nothing runs"
+        );
+        h.state.close_all_dialogs();
+
+        let dir = crate::harness::scratch().join("run-line");
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = dir.join("notes.txt");
+        std::fs::write(&doc, "").unwrap();
+        std::fs::set_permissions(&doc, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let from = run(&mut h);
+        h.state.run_line_activated(&doc.display().to_string(), from);
+        h.until("the document opens", |s| {
+            from.and_then(|id| s.dialog_index(id)).is_none()
+                && (!s.dialogs.views.is_empty() || !crate::spawn::recorded().is_empty())
+        });
+        assert!(
+            !crate::spawn::recorded().contains(&"notes.txt".to_string()),
+            "the document is not handed to the shell"
         );
     }
 

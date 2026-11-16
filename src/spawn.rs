@@ -1085,6 +1085,66 @@ pub fn command_folder(cmd: &str, home: Option<&std::path::Path>) -> Option<std::
     path.is_absolute().then_some(path)
 }
 
+/// The program a Run line's first word starts: a path or a name looked up on `PATH`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunProgram {
+    Path(std::path::PathBuf),
+    Name(String),
+}
+
+impl RunProgram {
+    /// Whether nothing is there to start: no file at the path, or no executable file of the name
+    /// in any folder of `path` (the `PATH` the shell gets; None says nothing is missing). Stats:
+    /// call it off the loop.
+    pub fn missing(&self, path: Option<&std::ffi::OsStr>) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        match self {
+            RunProgram::Path(p) => {
+                matches!(std::fs::metadata(p), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+            }
+            RunProgram::Name(name) => path.is_some_and(|path| {
+                !std::env::split_paths(path)
+                    .filter(|dir| dir.is_absolute())
+                    .filter_map(|dir| std::fs::metadata(dir.join(name)).ok())
+                    .any(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            }),
+        }
+    }
+}
+
+/// Words `sh` runs itself, or reads as part of its grammar, rather than looking up on `PATH`.
+const SHELL_WORDS: [&str; 51] = [
+    "!", ".", ":", "[", "alias", "bg", "break", "builtin", "case", "cd", "command", "continue",
+    "declare", "do", "done", "echo", "elif", "else", "esac", "eval", "exec", "exit", "export",
+    "false", "fg", "fi", "for", "function", "getopts", "hash", "if", "jobs", "kill", "local",
+    "printf", "pwd", "read", "readonly", "return", "set", "shift", "source", "test", "then",
+    "trap", "true", "type", "ulimit", "umask", "unset", "while",
+];
+
+/// The program a plain Run line starts, with its first word as typed: an absolute path, one
+/// under `~/`, or a bare name. None for a line `sh` reads as more than a program and its
+/// arguments (quotes, variables, globs, operators, an assignment, a builtin, a relative path),
+/// which runs as it is.
+pub fn command_program(cmd: &str, home: Option<&std::path::Path>) -> Option<(String, RunProgram)> {
+    if cmd.contains(|c: char| c == '\n' || "'\"\\$`;&|<>(){}*?[]#".contains(c)) {
+        return None;
+    }
+    let word = cmd.split_whitespace().next()?;
+    if word.contains('=') || SHELL_WORDS.contains(&word) {
+        return None;
+    }
+    let program = if let Some(rest) = word.strip_prefix("~/") {
+        RunProgram::Path(home?.join(rest))
+    } else if word.starts_with('/') {
+        RunProgram::Path(word.into())
+    } else if word.contains(['/', '~']) {
+        return None;
+    } else {
+        RunProgram::Name(word.to_string())
+    };
+    Some((word.to_string(), program))
+}
+
 /// The file `xdg-open <file>` opens; None for any other command line.
 pub fn xdg_open_file(argv: &[std::ffi::OsString]) -> Option<&std::path::Path> {
     match argv {
@@ -2469,6 +2529,68 @@ mod tests {
         let p = env(None).pairs();
         assert!(p.contains(&("XDG_SESSION_TYPE", "wayland".into())));
         assert!(p.contains(&("XDG_SEAT", "seat0".into())));
+    }
+
+    #[test]
+    fn a_plain_run_line_names_the_program_to_look_for() {
+        use std::path::{Path, PathBuf};
+        let home = Path::new("/home/u");
+        let program = |cmd| command_program(cmd, Some(home)).map(|(_, p)| p);
+        let name = |n: &str| Some(RunProgram::Name(n.into()));
+        let path = |p: &str| Some(RunProgram::Path(PathBuf::from(p)));
+        assert_eq!(program("fooberx"), name("fooberx"));
+        assert_eq!(program("  firefox --new-window x "), name("firefox"));
+        assert_eq!(program("~/bin/tool -v"), path("/home/u/bin/tool"));
+        assert_eq!(program("/opt/app/run"), path("/opt/app/run"));
+        assert_eq!(
+            command_program("fooberx -x", None),
+            Some(("fooberx".into(), RunProgram::Name("fooberx".into()))),
+            "the word as typed"
+        );
+        assert_eq!(command_program("~/bin/tool", None), None, "no home");
+        for line in [
+            "",
+            "FOO=1 foot",
+            "cd /tmp",
+            "exec foot",
+            "foot; fooberx",
+            "foot && fooberx",
+            "fooberx || foot",
+            "foot > /tmp/log",
+            "'foot'",
+            "\"foot\"",
+            "$TERMINAL",
+            "foot *.txt",
+            "bin/tool",
+            "./tool",
+            "~u/bin/tool",
+            "foot\nfooberx",
+            "foot # x",
+        ] {
+            assert_eq!(program(line), None, "{line:?} is the shell's");
+        }
+    }
+
+    #[test]
+    fn a_run_program_is_missing_only_where_nothing_is_there() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::harness::scratch().join("run-program");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (tool, doc) = (dir.join("tool"), dir.join("notes"));
+        std::fs::write(&tool, "").unwrap();
+        std::fs::write(&doc, "").unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::ffi::OsString::from(format!("relative:{}", dir.display()));
+        let missing = |p: RunProgram| p.missing(Some(&path));
+        assert!(!missing(RunProgram::Name("tool".into())));
+        assert!(missing(RunProgram::Name("fooberx".into())));
+        assert!(
+            missing(RunProgram::Name("notes".into())),
+            "a file the shell cannot run is not the program"
+        );
+        assert!(!RunProgram::Name("fooberx".into()).missing(None), "no PATH");
+        assert!(!missing(RunProgram::Path(doc)));
+        assert!(missing(RunProgram::Path(dir.join("gone"))));
     }
 
     #[test]

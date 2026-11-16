@@ -894,6 +894,17 @@ impl Dialog {
         }
     }
 
+    /// Run's answer to a line whose program `word` is not there; the Run box stays open under it.
+    pub fn run_not_found(word: &str) -> Dialog {
+        Dialog::error(
+            word,
+            format!(
+                "Reprise cannot find '{word}'. Make sure you typed the name correctly, and then \
+                 try again."
+            ),
+        )
+    }
+
     /// The error for a picked program at `path` whose name is not
     /// UTF-8: a command line and a desktop entry's `Exec` hold text only,
     /// so it cannot be run from one.
