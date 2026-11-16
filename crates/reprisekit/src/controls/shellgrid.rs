@@ -184,13 +184,6 @@ pub(crate) fn thumb_lines(text: &TextRenderer, name: &str, px: u32, u: TextUnits
     iconview::wrap_label(text, name, u.len(THUMB_FRAME), px)
 }
 
-/// A `Theme` for `iconview::draw_cell` with `desktop_text` swapped for `window_text`: the label sits on the view's `window`.
-fn cell_theme(p: &Paint, px: u32) -> Theme {
-    let mut theme = Theme::for_draw(p, px);
-    theme.colors.desktop_text = p.cs.window_text;
-    theme
-}
-
 /// The icon `mode` draws for `e`, faded to half (a copy) when the entry is cut or hidden. Thumbnails fall back to the 32 px icon.
 pub(crate) fn entry_icon(e: &Entry, mode: Mode) -> Option<Cow<'_, Canvas>> {
     let icon = match mode {
@@ -357,7 +350,7 @@ pub(crate) fn draw_grid(
             draw_group_header(&mut bc, text, cs, r, &g.title, title_box, &rule, px, s);
         }
     }
-    let theme = cell_theme(p, px);
+    let theme = Theme::for_draw(p, px);
     for (i, e) in sv.entries.iter().enumerate() {
         let Some(&at) = lay.cells.get(i) else {
             break;
@@ -408,6 +401,7 @@ pub(crate) fn draw_grid(
                     e.link,
                     sel,
                     rename,
+                    iconview::Ground::Window,
                 );
             }
             Mode::Tiles => {

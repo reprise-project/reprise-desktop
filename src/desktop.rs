@@ -1400,7 +1400,7 @@ mod tests {
         };
         let show = drawn(names::Extensions::Show);
         assert_ne!(show, drawn(names::Extensions::Hide), "the extension shows");
-        assert_eq!(show, [0xbc4146243175562c, 0x0018bc62529b17fc]);
+        assert_eq!(show, [0x2d00afbf3175562c, 0x0018bc62529b17fc]);
     }
 
     /// An executable FIFO named `*.desktop` would block `open(2)` forever,

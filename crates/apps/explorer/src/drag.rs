@@ -347,7 +347,7 @@ impl Explorer {
             .collect();
         ctx.icons.set_scale(drawn);
         (self.list_icons).decode_misses(s, ctx.icons.theme(), &ctx.wake);
-        let mut theme = ctx.theme.scaled(s);
+        let theme = ctx.theme.scaled(s);
         if self.sv.mode != Mode::Icons {
             let rows: Vec<shellview::DragRow> = shown
                 .iter()
@@ -374,12 +374,10 @@ impl Explorer {
                 })
             })
             .collect();
-        // `draw_cell`'s unselected label is drawn for the desktop, where
-        // the text is white; in the view it sits on white, so the colour
-        // is swapped the way `shellgrid` swaps it for the same call.
-        theme.colors.desktop_text = theme.colors.window_text;
         let cell = iconview::Cell::grown(ctx.theme.text);
-        let (image, grab) = iconview::drag_image(&theme, &ctx.text, &ghosts, cell, d.origin)?;
+        let ground = iconview::Ground::Window;
+        let (image, grab) =
+            iconview::drag_image(&theme, &ctx.text, &ghosts, cell, d.origin, ground)?;
         Some((image.at_scale(s), grab))
     }
 
