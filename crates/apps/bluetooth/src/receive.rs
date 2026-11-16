@@ -59,12 +59,15 @@ pub fn downloads() -> Option<PathBuf> {
     reprisefs::places::user_dir("DOWNLOAD", "Downloads")
 }
 
+/// What every [`incoming_name`] starts with.
+pub const INCOMING: &str = ".reprise-";
+
 /// The name obexd writes `transfer` (its object path) under in its own folder until it is
 /// complete: hidden, and unique while obexd runs.
 pub fn incoming_name(transfer: &str) -> String {
     let mut parts = transfer.rsplit('/');
     let (t, s) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
-    format!(".reprise-{}", safe_name(&format!("{s}-{t}")))
+    format!("{INCOMING}{}", safe_name(&format!("{s}-{t}")))
 }
 
 /// Moves the received file `from` into `dir` (made if missing) as `offered` cleaned, numbered

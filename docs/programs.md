@@ -693,7 +693,9 @@ the device, the file and its size, with Accept and Decline; it starts on
 Decline, and one left unanswered for 50 seconds is declined. An accepted file
 goes to Downloads under its own name, numbered "photo (2).jpg" when the name
 is taken, and a balloon says when it has arrived, with Open and Show in
-folder; one that stops early says "File not received". A device that isn't
+folder; one that stops early says "File not received", and a part-received
+file left in obexd's folder when Bluetooth Devices closed mid-transfer is
+removed the next time it starts. A device that isn't
 paired is refused without a box. The check box is greyed with a note when
 obexd (`bluez-obex`) isn't installed.
 

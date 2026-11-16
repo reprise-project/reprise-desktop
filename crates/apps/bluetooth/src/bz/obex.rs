@@ -1,8 +1,8 @@
 //! The `org.bluez.obex.Agent1` obexd asks before it takes a pushed file, registered while
 //! `[bluetooth] receive_files` is on. docs/security.md covers what it refuses and where files go.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -55,7 +55,8 @@ struct Accepted {
 #[derive(Default)]
 struct Shared {
     accepted: Mutex<HashMap<String, Accepted>>,
-    /// The transfer whose offer waits on the user; obexd's `Cancel` names none.
+    /// The transfer obexd waits on the user for; its `Cancel` names none. obexd asks about one
+    /// at a time, but may ask again before a cancelled offer's prompt has closed.
     waiting: Mutex<Option<String>>,
     receiving: AtomicBool,
     /// A `RegisterAgent` is out; the obexd it starts is not a restarted one.
@@ -139,7 +140,12 @@ impl Agent {
                 false
             }
         };
-        lock(&self.shared.waiting).take();
+        {
+            let mut waiting = lock(&self.shared.waiting);
+            if waiting.as_ref() == Some(&transfer) {
+                waiting.take();
+            }
+        }
         self.poster.post(BzMsg::OfferGone(transfer));
         answer
     }
@@ -266,10 +272,58 @@ async fn serve(conn: Connection, bluez: Connection, poster: Poster) -> Option<Ob
         poster.post(BzMsg::Obex(false));
         return None;
     }
+    if let Some(cache) = reprisexdg::cache_home() {
+        sweep(&conn, &cache.join("obexd")).await;
+    }
     let obex = Obex { conn, shared };
     poster.post(BzMsg::Obex(present(&obex.conn, NAME).await));
     obex.follow(poster).await;
     Some(obex)
+}
+
+/// Removes the files accepted transfers left in obexd's folder `root` when no transfer obexd
+/// still lists writes them: a run that exited mid-transfer leaves its file there.
+async fn sweep(conn: &Connection, root: &Path) {
+    let mut live = HashSet::new();
+    if reprisebus::name_owner(conn, NAME).await.is_some() {
+        let objects = conn
+            .call_method(
+                Some(NAME),
+                "/",
+                Some(OBJECT_MANAGER),
+                "GetManagedObjects",
+                &(),
+            )
+            .await
+            .and_then(|m| m.body().deserialize::<Objects>());
+        match objects {
+            Ok(o) => live.extend(
+                (o.iter())
+                    .filter(|(_, ifaces)| ifaces.contains_key(TRANSFER_IFACE))
+                    .map(|(p, _)| crate::receive::incoming_name(p.as_str())),
+            ),
+            Err(e) => {
+                log::info!("cannot list obexd's transfers ({e}); its folder stays as it is");
+                return;
+            }
+        }
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let left = name.starts_with(crate::receive::INCOMING) && !live.contains(name);
+        if left && e.file_type().is_ok_and(|t| t.is_file()) {
+            match std::fs::remove_file(e.path()) {
+                Ok(()) => log::info!("removed {name}, left by an unfinished transfer"),
+                Err(err) => log::warn!("cannot remove {}: {err}", e.path().display()),
+            }
+        }
+    }
 }
 
 impl Obex {
@@ -650,7 +704,11 @@ pub(super) mod tests {
     }
 
     async fn push(obexd: &Connection, agent: &Connection) -> zbus::Result<String> {
-        let path = ObjectPath::try_from(TRANSFER).unwrap();
+        push_at(obexd, agent, TRANSFER).await
+    }
+
+    async fn push_at(obexd: &Connection, agent: &Connection, t: &str) -> zbus::Result<String> {
+        let path = ObjectPath::try_from(t).unwrap();
         obexd
             .call_method(
                 agent.unique_name().map(|n| n.as_str()),
@@ -843,5 +901,96 @@ pub(super) mod tests {
         );
         zbus::block_on(obex.receive(true));
         assert_eq!(second.recv_timeout(LONG).as_deref(), Ok(PATH));
+    }
+
+    async fn obexd_cancels(obexd: &Connection, agent: &Connection) {
+        let name = agent.unique_name().map(|n| n.as_str());
+        let agent1 = Some("org.bluez.obex.Agent1");
+        (obexd.call_method(name, PATH, agent1, "Cancel", &()).await).expect("cancelled");
+    }
+
+    #[test]
+    fn a_cancel_after_the_first_prompt_closes_ends_the_second_offer() {
+        const SECOND: &str = "/org/bluez/obex/server/session0/transfer1";
+        let Some(bus) = bus() else {
+            return;
+        };
+        let (poster, rx) = Poster::channel(repriseapp::Waker::noop());
+        let (obexd, conn, _keep) = zbus::block_on(async {
+            let (bluez, obexd, _) = fakes(&bus.1, "first.txt", PAIRED).await;
+            let second = FakeTransfer {
+                name: "second.txt".into(),
+                status: "queued".into(),
+            };
+            obexd.object_server().at(SECOND, second).await.unwrap();
+            let conn = connect(&bus.1).await;
+            let obex = serve(conn.clone(), conn.clone(), poster)
+                .await
+                .expect("served");
+            obex.receive(true).await;
+            (obexd, conn, (bluez, obex))
+        });
+        let offer = |want: &str| match next(&rx, LONG, |m| matches!(m, BzMsg::Offer(_))) {
+            Some(BzMsg::Offer(o)) if o.transfer == want => o,
+            other => panic!("{other:?}"),
+        };
+        let gone = |want: &str| {
+            next(&rx, LONG, |m| matches!(m, BzMsg::OfferGone(t) if t == want)).is_some()
+        };
+        let pushing = |t: &'static str| {
+            let (obexd, conn) = (obexd.clone(), conn.clone());
+            std::thread::spawn(move || zbus::block_on(push_at(&obexd, &conn, t)))
+        };
+        let first = pushing(TRANSFER);
+        let first_offer = offer(TRANSFER);
+        zbus::block_on(obexd_cancels(&obexd, &conn));
+        assert!(gone(TRANSFER));
+        let second = pushing(SECOND);
+        let second_offer = offer(SECOND);
+        drop(first_offer);
+        assert!(rejected(first.join().unwrap()));
+        assert!(gone(TRANSFER), "the first prompt closes");
+        zbus::block_on(obexd_cancels(&obexd, &conn));
+        assert!(
+            gone(SECOND),
+            "obexd's next Cancel is about the second offer"
+        );
+        drop(second_offer);
+        assert!(rejected(second.join().unwrap()));
+    }
+
+    #[test]
+    fn files_left_by_unfinished_transfers_go_and_live_ones_stay() {
+        let Some(bus) = bus() else {
+            return;
+        };
+        let root = root_for("left over.txt");
+        std::fs::create_dir_all(&root).unwrap();
+        let live = crate::receive::incoming_name(TRANSFER);
+        let names = [live.as_str(), ".reprise-session3-transfer9", "photo.jpg"];
+        for n in names {
+            std::fs::write(root.join(n), "part").unwrap();
+        }
+        let listed = || {
+            let mut names: Vec<String> = std::fs::read_dir(&root)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().into_string().unwrap())
+                .collect();
+            names.sort();
+            names
+        };
+        zbus::block_on(async {
+            let conn = connect(&bus.1).await;
+            let (_bluez, obexd, _) = fakes(&bus.1, "left over.txt", PAIRED).await;
+            sweep(&conn, &root).await;
+            assert_eq!(
+                listed(),
+                [live.as_str(), "photo.jpg"],
+                "the transfer obexd lists stays"
+            );
+            obexd.release_name(NAME).await.unwrap();
+            sweep(&conn, &root).await;
+            assert_eq!(listed(), ["photo.jpg"], "with obexd gone nothing writes it");
+        });
     }
 }
