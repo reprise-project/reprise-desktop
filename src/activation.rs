@@ -5,10 +5,6 @@ use std::time::{Duration, Instant};
 
 use smithay::{
     input::Seat,
-    reexports::calloop::{
-        LoopHandle,
-        timer::{TimeoutAction, Timer},
-    },
     reexports::wayland_server::{Resource, backend::ClientId, protocol::wl_surface::WlSurface},
     wayland::{
         compositor::get_parent,
@@ -84,9 +80,9 @@ impl XdgActivationHandler for State {
     }
 
     fn token_created(&mut self, _token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
+        prune(&mut self.activation);
         let held = (self.activation.tokens())
             .filter(|(_, d)| d.client_id.is_some() && d.client_id == data.client_id)
-            .filter(|(_, d)| d.timestamp.elapsed() < TOKEN_LIFETIME)
             .count();
         if held >= TOKENS_PER_CLIENT {
             return false;
@@ -173,20 +169,15 @@ impl XdgActivationHandler for State {
     }
 }
 
-/// Drop expired tokens every [`TOKEN_LIFETIME`].
-pub fn start_pruning(handle: &LoopHandle<'static, State>) {
-    let timer = Timer::from_duration(TOKEN_LIFETIME);
-    let armed = handle.insert_source(timer, |_, _, state| {
-        (state.activation).retain_tokens(|_, d| d.timestamp.elapsed() < TOKEN_LIFETIME);
-        TimeoutAction::ToDuration(TOKEN_LIFETIME)
-    });
-    if let Err(e) = armed {
-        log::warn!("activation tokens: no prune timer: {}", e.error);
-    }
+/// Drop expired tokens. Runs as each token is made, so what stays is at most the tokens made in
+/// the [`TOKEN_LIFETIME`] before the newest, and no timer wakes an idle loop.
+fn prune(activation: &mut XdgActivationState) {
+    activation.retain_tokens(|_, d| d.timestamp.elapsed() < TOKEN_LIFETIME);
 }
 
 impl State {
     pub fn new_activation_token(&mut self) -> String {
+        prune(&mut self.activation);
         let (token, data) = self.activation.create_external_token(None);
         data.user_data.insert_if_missing(|| Trusted);
         token.to_string()

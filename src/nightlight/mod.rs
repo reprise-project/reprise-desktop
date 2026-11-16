@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 
 use smithay::{
     output::Output,
-    reexports::calloop::timer::{TimeoutAction, Timer},
+    reexports::calloop::{
+        RegistrationToken,
+        timer::{TimeoutAction, Timer},
+    },
 };
 
 use crate::compositor::State;
@@ -65,6 +68,8 @@ pub struct NightLight {
     told_no_place: bool,
     outputs: Vec<OutputGamma>,
     pub control: GammaControlState,
+    /// The minute tick, armed while [`ticks`] holds.
+    timer: Option<RegistrationToken>,
 }
 
 impl NightLight {
@@ -78,6 +83,7 @@ impl NightLight {
             zone: Zone::default(),
             told_no_place: false,
             outputs: Vec::new(),
+            timer: None,
             control: GammaControlState::new::<State, _>(
                 dh,
                 crate::sandbox::filter("zwlr_gamma_control_manager_v1"),
@@ -110,20 +116,37 @@ fn to_next_minute() -> std::time::Duration {
     std::time::Duration::from_secs((60 - now().rem_euclid(60)).max(1) as u64)
 }
 
-/// Work out the first temperature and re-read the schedule at every
-/// minute boundary from now on. Runs once the backend drives its outputs.
+/// Work out the first temperature. Runs once the backend drives its outputs.
 pub fn setup(state: &mut State) {
+    update(state);
+}
+
+/// Whether the minute tick has work: a schedule to follow, or a ramp an output has yet to take.
+fn ticks(nl: &NightLight) -> bool {
+    nl.cfg.enabled || nl.outputs.iter().any(|o| o.dirty)
+}
+
+/// Re-read the schedule at every minute boundary while [`ticks`] holds.
+fn arm(state: &mut State) {
+    if state.night.timer.is_some() || !ticks(&state.night) {
+        return;
+    }
     let timer =
         state
             .handle
             .insert_source(Timer::from_duration(to_next_minute()), |_, _, state| {
                 update(state);
-                TimeoutAction::ToDuration(to_next_minute())
+                if ticks(&state.night) {
+                    TimeoutAction::ToDuration(to_next_minute())
+                } else {
+                    state.night.timer = None;
+                    TimeoutAction::Drop
+                }
             });
-    if let Err(e) = timer {
-        log::warn!("night light: no minute timer: {}", e.error);
+    match timer {
+        Ok(t) => state.night.timer = Some(t),
+        Err(e) => log::warn!("night light: no minute timer: {}", e.error),
     }
-    update(state);
 }
 
 /// The time zone last looked up and its city's place.
@@ -229,6 +252,7 @@ pub fn update(state: &mut State) {
         crate::displaysview::refresh(state);
         state.redraw_taskbars();
     }
+    arm(state);
 }
 
 fn apply_all(state: &mut State) {
@@ -238,9 +262,15 @@ fn apply_all(state: &mut State) {
     }
 }
 
+/// [`apply_now`], then the minute tick to try again if the ramp did not go on.
+fn apply(state: &mut State, output: &Output) {
+    apply_now(state, output);
+    arm(state);
+}
+
 /// Put the current temperature on `output` unless it has it already or
 /// a client holds its gamma.
-fn apply(state: &mut State, output: &Output) {
+fn apply_now(state: &mut State, output: &Output) {
     if state.night.control.held(output) {
         return;
     }
@@ -416,6 +446,7 @@ pub fn gamma_failed(state: &mut State, output: &Output) {
     if let Some(o) = state.night.outputs.iter_mut().find(|o| &o.output == output) {
         o.dirty = true;
     }
+    arm(state);
 }
 
 pub fn output_on(state: &mut State, output: &Output) {
@@ -754,6 +785,22 @@ mod tests {
     }
 
     /// A v2 display profile whose `vcgt` table runs red 0 to 0.8, green 0 to 1, blue 0 to 0.5.
+    #[test]
+    fn the_minute_tick_runs_only_while_night_light_is_on() {
+        let mut h = crate::harness::Harness::new();
+        update(&mut h.state);
+        assert!(h.state.night.timer.is_none(), "off: no tick");
+        h.state.config.night_light.enabled = true;
+        update(&mut h.state);
+        assert!(h.state.night.timer.is_some(), "on: a tick");
+        h.state.config.night_light.enabled = false;
+        update(&mut h.state);
+        assert!(
+            !ticks(&h.state.night),
+            "off again: the next tick is the last"
+        );
+    }
+
     fn calibrated() -> Vec<u8> {
         let mut vcgt = b"vcgt\0\0\0\0\0\0\0\0".to_vec();
         for v in [3u16, 2, 2, 0, 52428, 0, 65535, 0, 32767] {

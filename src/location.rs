@@ -430,7 +430,7 @@ async fn follow(
     let mut wakes: SelectAll<BoxStream<'static, Wake>> = SelectAll::new();
     wakes.push(signals.map(Wake::Geoclue).boxed());
     wakes.push(enabled.clone().map(Wake::Enabled).boxed());
-    wakes.push(async_io::Timer::interval(RETRY).map(|_| Wake::Tick).boxed());
+    let mut tick = async_io::Timer::never();
 
     let mut clients = Clients::default();
     let mut present = follow_owner(&conn, &geoclue).await;
@@ -439,7 +439,11 @@ async fn follow(
         clients.in_use = in_use(&conn).await;
         clients.report(tx);
     }
-    while let Some(w) = wakes.next().await {
+    loop {
+        let ticked = async { tick.next().await.map(|_| Wake::Tick) };
+        let Some(w) = futures_lite::future::or(wakes.next(), ticked).await else {
+            break;
+        };
         match w {
             Wake::Geoclue(reprisebus::Signal::OwnerChanged) => {
                 let up = follow_owner(&conn, &geoclue).await;
@@ -481,6 +485,11 @@ async fn follow(
                 }
             }
             Wake::Tick => {}
+        }
+        match (present && clients.in_use, tick.will_fire()) {
+            (true, false) => tick.set_interval(RETRY),
+            (false, true) => tick = async_io::Timer::never(),
+            _ => {}
         }
     }
     Ok(())
