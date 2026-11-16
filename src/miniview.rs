@@ -137,10 +137,7 @@ fn rebuild(state: &mut State, id: u64) {
     );
     let scale = state.draw_scale_at(out.as_ref()).max(1);
     let layout = m.layout();
-    let old = state.mini_views.get_mut(id).and_then(|m| m.thumb.take());
-    if let Some(t) = old {
-        state.thumb_drop(t);
-    }
+    let old_thumb = state.mini_views.get_mut(id).and_then(|m| m.thumb.take());
     let was = state.scene.outputs_of(tree);
     // Made again so the picture stays between the frame and the close box.
     let old = (state.mini_views.get_mut(id)).map(|m| [m.frame.take(), m.controls.take()]);
@@ -156,6 +153,10 @@ fn rebuild(state: &mut State, id: u64) {
         Input::Rect(Rectangle::new((0, 0).into(), (fw, fh).into())),
     );
     let thumb = state.thumb_create(w, tree, layout.picture, scale);
+    // Dropped after the new one is made, so a minimized window is never suspended in between.
+    if let Some(t) = old_thumb {
+        state.thumb_drop(t);
+    }
     let controls = state.scene.buffer_create(tree);
     state.scene.set_input(controls, Input::Passthrough);
     let pane = glass::wanted(&state.config).then(|| Pane {
@@ -512,6 +513,23 @@ mod tests {
         assert_ne!(id, id2);
         assert!(!suspended(&h, t), "a new Mini View wakes it");
         h.state.set_minimized(t.id, false);
+        assert!(!suspended(&h, t));
+    }
+
+    #[test]
+    fn sizing_a_minimized_windows_mini_view_sends_it_no_configure() {
+        let (mut h, mut c, t) = desk();
+        let id = open(&mut h, t);
+        h.state.set_minimized(t.id, true);
+        h.roundtrip(&mut c);
+        let before = c.side.shells[t.shell].configures;
+        let start = h.state.mini_views.rect(id).unwrap();
+        for d in [(-40.0, -40.0), (-80.0, -60.0), (-20.0, -20.0)] {
+            super::size_to(&mut h.state, id, start, d);
+        }
+        assert_ne!(h.state.mini_views.rect(id), Some(start), "it was sized");
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.shells[t.shell].configures, before);
         assert!(!suspended(&h, t));
     }
 
