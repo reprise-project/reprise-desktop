@@ -20,6 +20,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use log::warn;
+use reprisefs::subprocess;
 use serde_json::Value;
 
 const NODE: &str = "PipeWire:Interface:Node";
@@ -637,11 +638,26 @@ impl Drop for Watch {
 /// What one `pw-dump` run reports, for a window that sizes itself before [`watch`] first delivers.
 /// Empty when PipeWire or `pw-dump` is not there.
 pub fn snapshot_now() -> Snapshot {
-    let Ok(out) = Command::new("pw-dump").stderr(Stdio::null()).output() else {
-        return Snapshot::default();
+    snapshot_of("pw-dump", CHILD_DEADLINE)
+}
+
+/// How long one `pw-dump`, `wpctl` or `pw-cli` run may take: a PipeWire that takes the
+/// connection and stops answering would hold its caller for good.
+const CHILD_DEADLINE: Duration = Duration::from_secs(5);
+
+fn snapshot_of(program: &str, within: Duration) -> Snapshot {
+    let mut cmd = Command::new(program);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+    let out = match subprocess::run(&mut cmd, within) {
+        Ok(ran) => ran.stdout,
+        Err(subprocess::Error::Spawn(_)) => return Snapshot::default(),
+        Err(e) => {
+            warn!("{program}: {e}");
+            return Snapshot::default();
+        }
     };
     let mut store = Store::new();
-    for array in serde_json::Deserializer::from_slice(&out.stdout)
+    for array in serde_json::Deserializer::from_slice(out.as_bytes())
         .into_iter::<Value>()
         .map_while(Result::ok)
     {
@@ -941,7 +957,8 @@ struct Writer {
 }
 
 impl Writer {
-    fn new() -> Writer {
+    /// A writer killing a program that runs past `within`.
+    fn new(within: Duration) -> Writer {
         let queue = Arc::new(Queue::default());
         let shared = queue.clone();
         std::thread::spawn(move || {
@@ -958,14 +975,11 @@ impl Writer {
                     }
                     pending.remove(0)
                 };
-                let took = match Command::new(program)
-                    .args(&args)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                {
-                    Ok(status) if !status.success() => {
-                        warn!("{program} {} exited with {status}", args.join(" "));
+                let mut cmd = Command::new(program);
+                cmd.args(&args).stdout(Stdio::null()).stderr(Stdio::null());
+                let took = match subprocess::run(&mut cmd, within) {
+                    Ok(ran) if !ran.status.success() => {
+                        warn!("{program} {} exited with {}", args.join(" "), ran.status);
                         false
                     }
                     Ok(_) => true,
@@ -1021,7 +1035,7 @@ impl Writer {
 
 fn writer() -> &'static Writer {
     static WRITER: OnceLock<Writer> = OnceLock::new();
-    WRITER.get_or_init(Writer::new)
+    WRITER.get_or_init(|| Writer::new(CHILD_DEADLINE))
 }
 
 fn installed(program: &str) -> bool {
@@ -1122,7 +1136,7 @@ mod tests {
     /// Writes run one at a time in order, and a queued write replaces an older pending write of its key.
     #[test]
     fn a_write_tells_its_caller_whether_it_took() {
-        let w = Writer::new();
+        let w = Writer::new(CHILD_DEADLINE);
         let (tx, rx) = mpsc::channel();
         for (id, program) in [(1, "false"), (2, "true")] {
             let tx = tx.clone();
@@ -1151,7 +1165,7 @@ mod tests {
             &format!(r#"echo "$*" >> {}; sleep 0.3"#, log.display()),
         );
         let path: &'static str = Box::leak(script.to_string_lossy().into_owned().into_boxed_str());
-        let w = Writer::new();
+        let w = Writer::new(CHILD_DEADLINE);
         let lines = || -> Vec<String> {
             std::fs::read_to_string(&log)
                 .unwrap_or_default()
@@ -1192,8 +1206,41 @@ mod tests {
     }
 
     #[test]
+    fn a_pipewire_that_stops_answering_cannot_hold_a_snapshot_or_a_write() {
+        let script = script("hung", "exec sleep 30");
+        let path: &'static str = Box::leak(script.to_string_lossy().into_owned().into_boxed_str());
+        let within = Duration::from_millis(200);
+        let started = std::time::Instant::now();
+        assert_eq!(snapshot_of(path, within), Snapshot::default());
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "the dump was cut off"
+        );
+
+        let w = Writer::new(within);
+        let (tx, rx) = mpsc::channel();
+        for id in [1, 2] {
+            let tx = tx.clone();
+            assert!(w.send_then(
+                Key::Default(id),
+                path,
+                Vec::new(),
+                Box::new(move |took| tx.send((id, took)).unwrap()),
+            ));
+        }
+        let heard: Vec<_> = (0..2)
+            .map(|_| {
+                rx.recv_timeout(Duration::from_secs(3))
+                    .expect("a write ended")
+            })
+            .collect();
+        assert_eq!(heard, [(1, false), (2, false)], "each write was cut off");
+        let _ = std::fs::remove_file(&script);
+    }
+
+    #[test]
     fn a_missing_writer_program_is_reported() {
-        let w = Writer::new();
+        let w = Writer::new(CHILD_DEADLINE);
         assert!(!w.send(
             Key::Default(1),
             "reprise-no-such-wpctl",

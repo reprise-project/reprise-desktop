@@ -4977,6 +4977,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "log",
+ "reprisefs",
  "reprisexdg",
  "serde_json",
 ]
