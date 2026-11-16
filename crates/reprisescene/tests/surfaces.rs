@@ -706,6 +706,8 @@ fn a_surface_under_opaque_leaves_is_covered_unless_glass_shown_or_read_reads_it(
     let s = scene.surface_create(root, surface.clone());
     scene.set_position(s, 10, 10);
     let cover = scene.rect_create(root, (100, 100), [0.0, 0.0, 0.0, 1.0]);
+    // Chrome: glass reads through it.
+    scene.set_in_backdrop(cover, false);
     let (covered, shown) = (Some(vec![]), Some(vec![left.clone()]));
     let reading = |scene: &mut Scene<DummyRenderer>, size, at: (i32, i32), grow: &Rc<Cell<i32>>| {
         let n = scene.custom_create(
@@ -759,7 +761,13 @@ fn a_surface_under_opaque_leaves_is_covered_unless_glass_shown_or_read_reads_it(
     assert_eq!(
         scene.outputs_showing(&surface),
         shown,
-        "glass beneath it reading it: its backdrop can hold what lies above"
+        "glass beneath it reading it: its backdrop holds what lies above"
+    );
+    scene.set_in_backdrop(cover, true);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        covered,
+        "glass beneath it reading it through a cover its backdrop holds"
     );
     scene.destroy(beneath);
     let pane = scene.custom_create(root, Box::new(Pane));
@@ -768,6 +776,83 @@ fn a_surface_under_opaque_leaves_is_covered_unless_glass_shown_or_read_reads_it(
         scene.outputs_showing(&surface),
         covered,
         "a custom node that reads all beneath it, beneath it"
+    );
+}
+
+#[test]
+fn a_surface_glass_reads_only_through_an_opaque_window_below_the_glass_is_covered() {
+    let mut w = World::new();
+    let surface = w.surface();
+    let left = w.left.clone();
+    let mut scene = Scene::<DummyRenderer>::new();
+    scene.add_output(&left);
+    let (covered, shown) = (Some(vec![]), Some(vec![left.clone()]));
+    let windows = scene.tree_create(scene.root());
+    let low = scene.tree_create(windows);
+    let s = scene.surface_create(low, surface.clone());
+    scene.set_position(s, 10, 10);
+    let mid = scene.tree_create(windows);
+    let body = scene.rect_create(mid, (100, 100), [0.0, 0.0, 0.0, 1.0]);
+    let top = scene.tree_create(windows);
+    let bar = scene.custom_create(
+        top,
+        Box::new(Reading {
+            size: (100, 20),
+            grow: Rc::new(Cell::new(10)),
+        }),
+    );
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        covered,
+        "a title bar reading it through the window body between them"
+    );
+    let ring = scene.custom_create(
+        low,
+        Box::new(Reading {
+            size: (40, 40),
+            grow: Rc::new(Cell::new(0)),
+        }),
+    );
+    scene.set_position(ring, 10, 10);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        covered,
+        "glass of its own window that the title bar reads only through the body"
+    );
+    scene.destroy(ring);
+
+    scene.set_in_backdrop(body, false);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "the body left out of the backdrop"
+    );
+    scene.set_in_backdrop(body, true);
+
+    scene.destroy(body);
+    let own = scene.rect_create(top, (100, 100), [0.0, 0.0, 0.0, 1.0]);
+    scene.place_below(own, bar);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "the body in the title bar's own window, which a backdrop of its own leaves out"
+    );
+
+    scene.destroy(own);
+    let above = scene.tree_create(windows);
+    let over = scene.rect_create(above, (40, 40), [0.0, 0.0, 0.0, 1.0]);
+    scene.set_position(over, 10, 10);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        shown,
+        "an opaque window above the title bar, which a backdrop of its own leaves out"
+    );
+    scene.rect_set_size(over, (100, 100));
+    scene.set_position(over, 0, 0);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        covered,
+        "the window above also hides the title bar"
     );
 }
 
@@ -890,6 +975,8 @@ fn an_output_walks_its_cover_again_when_its_view_a_node_a_surface_or_glass_chang
     let s = scene.surface_create(root, surface.clone());
     scene.set_position(s, 10, 10);
     let cover = scene.rect_create(root, (30, 100), [0.0, 0.0, 0.0, 1.0]);
+    // Chrome: glass reads through it.
+    scene.set_in_backdrop(cover, false);
     let (covered, shown) = (Some(vec![]), Some(vec![left.clone()]));
     let mut since = scene.cover_walks();
     let mut check = |scene: &Scene<DummyRenderer>, want: &Option<Vec<Output>>, why: &str| {
