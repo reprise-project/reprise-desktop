@@ -271,6 +271,44 @@ fn the_queue_drops_its_oldest_past_the_cap() {
 }
 
 #[test]
+fn a_burst_that_pushes_a_transient_note_out_of_the_queue_closes_it() {
+    use crate::tray::TrayCommand;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let (_tx, _wake, heard) = crate::tray::headless(&mut h.state);
+    for id in 1..=cap(&h.state) as u32 {
+        show(&mut h.state, note(id, &format!("Shown{id}")));
+    }
+    let mut transient = note(100, "Once");
+    transient.transient = true;
+    show(&mut h.state, transient);
+    for id in 101..100 + MAX_QUEUED as u32 {
+        show(&mut h.state, note(id, &format!("Queued{id}")));
+    }
+    assert_eq!(h.state.notify.queue.len(), MAX_QUEUED);
+    assert!(h.state.notify.queue.front().is_some_and(|q| q.is(100)));
+    for _ in 0..BURST_AFTER {
+        h.state.notify.recent.arrived("Mail", Instant::now());
+    }
+    show(&mut h.state, note(200, "Mail"));
+    assert!(
+        h.state
+            .notify
+            .queue
+            .back()
+            .is_some_and(|q| q.burst_of("Mail")),
+        "the fourth from Mail queues a burst"
+    );
+    let closed: Vec<(u32, u32)> = std::iter::from_fn(|| heard.try_recv().ok())
+        .filter_map(|cmd| match cmd {
+            TrayCommand::NotificationClosed { id, reason } => Some((id, reason)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(closed, [(100, REASON_UNDEFINED)]);
+}
+
+#[test]
 fn a_critical_balloon_stays_unless_its_sender_sets_a_timeout() {
     let mut n = Notification::new(1, "Hi".into(), String::new());
     assert_eq!(timeout_ms(&n), Some(DEFAULT_MS));
