@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use inotify::{EventMask, Inotify, WatchMask};
 use smithay::reexports::calloop::channel::Sender;
@@ -32,14 +32,20 @@ pub struct Holder {
     pub exe: String,
 }
 
-/// Start the thread; it sends the holders each time they change, and
-/// once at the start. It runs as long as the compositor does.
+/// Start the thread; it sends the holders each time they change, and once at the start. It runs
+/// as long as the compositor does, starting the watch again when it fails.
 pub fn start(tx: Sender<Vec<Holder>>) {
     let spawned = std::thread::Builder::new()
         .name("camera-devices".into())
         .spawn(move || {
-            if let Err(e) = watch(&tx) {
-                log::info!("privacy: no camera device watch ({e})");
+            let mut backoff = crate::privacy::Backoff::new();
+            loop {
+                let began = Instant::now();
+                match watch(&tx) {
+                    Ok(()) => return,
+                    Err(e) => log::info!("privacy: camera device watch failed ({e}); retrying"),
+                }
+                std::thread::sleep(backoff.after(began.elapsed()));
             }
         });
     if let Err(e) = spawned {
@@ -70,7 +76,11 @@ fn watch(tx: &Sender<Vec<Holder>>) -> std::io::Result<()> {
     let mut buf = [0u8; 4096];
     loop {
         let mut add = Vec::new();
-        for ev in ino.read_events_blocking(&mut buf)? {
+        let events = match ino.read_events_blocking(&mut buf) {
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            read => read?,
+        };
+        for ev in events {
             if ev.wd == dev
                 && ev.mask.contains(EventMask::CREATE)
                 && let Some(name) = ev.name.filter(|n| is_camera_node(n))
