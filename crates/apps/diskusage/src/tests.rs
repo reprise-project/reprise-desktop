@@ -130,7 +130,7 @@ fn move_to_recycle_bin_takes_the_entry_out_of_the_count() {
     files(&r);
     let config = t.path().join("config.toml");
     fs::write(&config, "[recycle_bin]\nconfirm = false\n").unwrap();
-    reprisefs::bincap::set_config_path(Some(config));
+    reprisefs::configfile::set_path(Some(config));
     reprisefs::trash::set_home_trash(Some(t.path().join("Trash")));
     reprisefs::trash::set_mount_table(Some("/dev/null".into()));
     let mut d = counted(&r);
@@ -162,7 +162,7 @@ fn move_to_recycle_bin_takes_the_entry_out_of_the_count() {
         b.fields.text,
         "Are you sure you want to send 'notes.txt' to the Recycle Bin?"
     );
-    reprisefs::bincap::set_config_path(None);
+    reprisefs::configfile::set_path(None);
     reprisefs::trash::set_home_trash(None);
     reprisefs::trash::set_mount_table(None);
 }

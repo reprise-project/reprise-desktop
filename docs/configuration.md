@@ -4,6 +4,9 @@ Reprise reads `~/.config/reprise/config.toml`. Every key is documented in
 [`config.example.toml`](../config.example.toml), and a key you leave out
 takes its default. An edit applies the moment you save the file.
 
+`reprise --config FILE` reads another file. The programs Reprise starts read
+that file too: they get its path as `REPRISE_CONFIG`.
+
 Most keys are also in [Reprise Settings](programs.md#reprise-settings), which
 writes back into the same file and leaves your comments, key order and the
 sections it doesn't touch alone. Use whichever you like. They don't fight.

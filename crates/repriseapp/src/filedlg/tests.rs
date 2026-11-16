@@ -1782,7 +1782,7 @@ fn fake_bins(t: &Path, settings: &str) -> FakeBins {
     let held = HELD.lock().unwrap_or_else(|e| e.into_inner());
     let config = t.join("config.toml");
     std::fs::write(&config, format!("[recycle_bin]\n{settings}")).unwrap();
-    reprisefs::bincap::set_config_path(Some(config));
+    reprisefs::configfile::set_path(Some(config));
     reprisefs::trash::set_mount_table(Some(PathBuf::from("/dev/null")));
     reprisefs::trash::set_home_trash(Some(t.join("trash")));
     FakeBins(held)
@@ -1790,7 +1790,7 @@ fn fake_bins(t: &Path, settings: &str) -> FakeBins {
 
 impl Drop for FakeBins {
     fn drop(&mut self) {
-        reprisefs::bincap::set_config_path(None);
+        reprisefs::configfile::set_path(None);
         reprisefs::trash::set_home_trash(None);
         reprisefs::trash::set_mount_table(None);
     }

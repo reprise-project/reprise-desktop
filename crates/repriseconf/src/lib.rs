@@ -42,26 +42,10 @@ macro_rules! lens {
     };
 }
 
-static CONFIG_PATH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
-
-/// Points [`config_path`] at `path` for the whole process, so a program's tests never read the
-/// developer's own file.
-#[doc(hidden)]
-pub fn set_config_path(path: Option<PathBuf>) {
-    *CONFIG_PATH.lock().unwrap_or_else(|e| e.into_inner()) = path;
-}
-
+/// The config file: the compositor's (`reprise --config` included), else the user's own
+/// ([`reprisefs::configfile::path`]).
 pub fn config_path() -> PathBuf {
-    if let Some(path) = CONFIG_PATH
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-    {
-        return path;
-    }
-    xdg_home("XDG_CONFIG_HOME", ".config")
-        .join("reprise")
-        .join("config.toml")
+    reprisefs::configfile::path()
 }
 
 /// The compositor's state file, `$XDG_STATE_HOME/reprise/state.toml`.

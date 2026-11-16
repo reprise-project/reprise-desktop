@@ -98,12 +98,12 @@ impl DataHome {
             // SAFETY: std serialises its own env access and only `TRASH_ENV` holders read these variables.
             unsafe { std::env::set_var(name, value) };
         }
-        reprisefs::bincap::set_config_path(Some(dir.join("config/reprise/config.toml")));
+        reprisefs::configfile::set_path(Some(dir.join("config/reprise/config.toml")));
         Self(was)
     }
 
     fn recycle_bin(&self, keys: &str) {
-        let path = reprisefs::bincap::config_path();
+        let path = reprisefs::configfile::path();
         std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir");
         std::fs::write(path, format!("[recycle_bin]\n{keys}")).expect("write");
     }

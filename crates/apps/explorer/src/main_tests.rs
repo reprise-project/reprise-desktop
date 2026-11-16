@@ -40,7 +40,7 @@ fn scratch() -> PathBuf {
 /// [`test_env`], and again by a test that pointed it elsewhere, as it ends.
 pub(crate) fn scratch_bin() {
     reprisefs::trash::set_mount_table(Some("/dev/null".into()));
-    reprisefs::bincap::set_config_path(Some(scratch().join("config.toml")));
+    reprisefs::configfile::set_path(Some(scratch().join("config.toml")));
 }
 
 /// Saves land in a scratch state dir, thumbnails in a scratch cache dir and the Recycle Bin in
@@ -72,7 +72,7 @@ pub(crate) fn test_env() {
         std::fs::set_permissions(&term, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let config = state.join("config.toml");
         std::fs::write(&config, format!("terminal = \"{}\"\n", term.display())).expect("write");
-        repriseconf::set_config_path(Some(config));
+        reprisefs::configfile::set_path(Some(config));
     });
 }
 

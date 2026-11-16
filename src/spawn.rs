@@ -143,6 +143,8 @@ pub struct SessionEnv {
     /// resolves to.
     pub qt_generated: Option<&'static str>,
     pub renderer: &'static str,
+    /// [`reprisefs::configfile::ENV`]: the config file the compositor reads.
+    pub config: String,
     pub login: Vec<(&'static str, String)>,
     /// `LANG` and the other locale variables ([`take_user_locale`] applied), so services the bus
     /// starts follow the session's language. Empty when nested or without `LANG`.
@@ -220,6 +222,10 @@ impl SessionEnv {
             qt_platform_theme: crate::config::TOOLKIT_AUTO.into(),
             qt_generated: None,
             renderer: "",
+            config: reprisefs::configfile::path()
+                .into_os_string()
+                .into_string()
+                .unwrap_or_default(),
             login: FORWARDED
                 .into_iter()
                 .filter_map(|k| Some((k, std::env::var(k).ok().filter(|v| !v.is_empty())?)))
@@ -306,6 +312,7 @@ impl SessionEnv {
             ("XCURSOR_THEME", self.cursor.0.clone()),
             ("XCURSOR_SIZE", self.cursor.1.to_string()),
             (reprisefs::sysinfo::RENDERER_ENV, self.renderer.into()),
+            (reprisefs::configfile::ENV, self.config.clone()),
             // GTK3 opens its file dialogs through the portal.
             ("GTK_USE_PORTAL", "1".into()),
         ];
@@ -1358,6 +1365,7 @@ mod tests {
             qt_platform_theme: "auto".into(),
             qt_generated: None,
             renderer: "vulkan",
+            config: "/srv/test/config.toml".into(),
             login: vec![("XDG_SEAT", "seat0".into())],
             locale: Vec::new(),
             parent: Vec::new(),
@@ -1575,6 +1583,7 @@ mod tests {
             "XCURSOR_THEME",
             "XCURSOR_SIZE",
             reprisefs::sysinfo::RENDERER_ENV,
+            reprisefs::configfile::ENV,
             "GTK_USE_PORTAL",
             "DISPLAY",
             "XAUTHORITY",
@@ -2113,9 +2122,9 @@ mod tests {
         );
     }
 
-    /// The desktop name, the colours, the interface, Blue's variant and
-    /// the icon theme reach a child through the command, not the process
-    /// environment.
+    /// The desktop name, the colours, the interface, Blue's variant, the
+    /// icon theme and the config file reach a child through the command, not
+    /// the process environment.
     #[test]
     fn command_carries_the_desktop_and_colours() {
         let c = command("true", &env(None), None).unwrap();
@@ -2132,6 +2141,11 @@ mod tests {
             Some(Some("classic".into()))
         );
         assert_eq!(env_of(&c, reprisekit::blue::ENV), Some(Some("blue".into())));
+        assert_eq!(
+            env_of(&c, reprisefs::configfile::ENV),
+            Some(Some("/srv/test/config.toml".into())),
+            "the compositor's config file"
+        );
         assert_eq!(
             env_of(&c, reprisekit::icontheme::ENV),
             Some(Some("retro-icons".into())),
