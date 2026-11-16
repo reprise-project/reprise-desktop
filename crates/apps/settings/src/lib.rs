@@ -1197,6 +1197,11 @@ impl repriseapp::Extended for SettingsApp {
         true
     }
 
+    /// The Monitor question is answered No, so a mode on trial does not outlive Settings.
+    fn emergency_outputs(&mut self, heads: &mut repriseapp::heads::HeadRequests) {
+        let _ = self.display.flow.answer(false, heads);
+    }
+
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
         let form = match win {
             repriseapp::MAIN => self.sheet.open_mut(),
