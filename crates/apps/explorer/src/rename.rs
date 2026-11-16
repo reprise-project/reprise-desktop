@@ -258,7 +258,7 @@ impl BatchRename {
 impl Explorer {
     /// F2 or Rename with several items picked. Launchers are left out: their shown name is the
     /// one inside them, not the file's.
-    fn begin_batch_rename(&mut self) -> Reply {
+    pub(crate) fn begin_batch_rename(&mut self) -> Reply {
         let picked: Vec<&Item> = self
             .sv
             .selection
@@ -314,10 +314,7 @@ impl Explorer {
                 b.replan();
                 Reply::redraw()
             }
-            form::Event::Cancel | form::Event::Pressed(renamebox::CANCEL) => {
-                self.take_up();
-                Reply::redraw_all()
-            }
+            form::Event::Cancel | form::Event::Pressed(renamebox::CANCEL) => self.dismiss_up(ctx),
             form::Event::Default | form::Event::Pressed(renamebox::OK) => {
                 let rows = b.plan();
                 if !batchrename::ready(&rows) {

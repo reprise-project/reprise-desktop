@@ -187,10 +187,7 @@ impl Explorer {
         let reply = match u.input(ev, ctx) {
             Outcome::None => Reply::none(),
             Outcome::Redraw => Reply::redraw(),
-            Outcome::Cancel => {
-                self.take_up();
-                Reply::redraw_all()
-            }
+            Outcome::Cancel => self.dismiss_up(ctx),
             Outcome::Submit(pass) => {
                 let volume = u.volume.clone();
                 let Some(udisks) = self.udisks.clone() else {

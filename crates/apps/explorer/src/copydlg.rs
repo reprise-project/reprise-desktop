@@ -357,7 +357,7 @@ pub(crate) fn combined(jobs: &[(f64, bool)]) -> Option<(f64, bool)> {
     Some((fraction, jobs.iter().all(|j| j.1)))
 }
 
-fn stop(meter: &Meter) {
+pub(crate) fn stop(meter: &Meter) {
     meter.set_paused(false);
     meter.cancel();
 }

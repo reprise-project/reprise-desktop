@@ -123,7 +123,7 @@ impl Confirm {
     }
 
     /// The answer button `id` gives the question about an item too big
-    /// for its Recycle Bin; Escape and the close box cancel the batch.
+    /// for its Recycle Bin.
     fn too_big_answer(&self, out: &form::Event) -> Option<reprisefs::replace::Answer> {
         use reprisefs::replace::Answer;
         let many = self.too_big.as_ref()?.many();
@@ -133,7 +133,6 @@ impl Confirm {
         };
         match out {
             form::Event::Default => Some(Answer::Yes),
-            form::Event::Cancel => Some(Answer::Cancel),
             form::Event::Pressed(id) => dlgtemplate::BUTTON_IDS
                 .iter()
                 .position(|b| b == id)
@@ -573,7 +572,6 @@ impl Explorer {
         use reprisefs::progress::Decision;
         let decision = match out {
             form::Event::Default => Decision::Skip,
-            form::Event::Cancel => Decision::Abort,
             form::Event::Pressed(id) => match dlgtemplate::BUTTON_IDS.iter().position(|&b| b == id)
             {
                 Some(0) => Decision::Skip,
@@ -631,7 +629,6 @@ impl Explorer {
         };
         let pick = match out {
             form::Event::Default => default,
-            form::Event::Cancel => 2,
             form::Event::Pressed(id) => match dlgtemplate::BUTTON_IDS.iter().position(|&b| b == id)
             {
                 Some(i) => i,
@@ -973,23 +970,16 @@ impl Explorer {
     }
 
     /// The dialog's own event loop. Every box closes on its cancel
-    /// button, on Escape and on the frame's close box.
+    /// button, and on Escape and the frame's close box through [`Explorer::dismiss`].
     pub fn dialog_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
+        if matches!(ev, Event::CloseRequest) {
+            return self.dismiss_up(ctx);
+        }
         if matches!(
             self.dialogs.up(),
             Some(Dialog::Connect(_) | Dialog::Login(_))
         ) {
             return self.connect_event(ev, ctx);
-        }
-        if matches!(ev, Event::CloseRequest) {
-            if matches!(
-                self.dialogs.up(),
-                Some(Dialog::Browse(_) | Dialog::ChooseProgram(_) | Dialog::Unlock(_))
-            ) {
-                self.take_up();
-                return Reply::redraw_all();
-            }
-            return self.dialog_outcome(form::Event::Cancel, ctx);
         }
         if self.dialog().is_none() {
             return Reply::none();
@@ -1087,6 +1077,9 @@ impl Explorer {
             reprisekit::controls::filesheet::change_icon_restore(form);
             return Reply::redraw();
         }
+        if out == form::Event::Cancel {
+            return self.dismiss_up(ctx);
+        }
         let Some(d) = self.dialogs.up() else {
             return Reply::none();
         };
@@ -1127,7 +1120,6 @@ impl Explorer {
             let n = choices.len();
             let default = about.default_choice(n);
             return match out {
-                form::Event::Cancel => self.question_answered(None, ctx),
                 form::Event::Default => self.question_answered(Some(default), ctx),
                 form::Event::Pressed(id) => {
                     let i = (0..n).find(|&i| msgbox::button_id(i) == id);
@@ -1139,12 +1131,11 @@ impl Explorer {
         }
         let answer = match d {
             Dialog::Message { .. } => match out {
-                form::Event::Cancel | form::Event::Default => Answer::Close,
+                form::Event::Default => Answer::Close,
                 form::Event::Pressed(id) if id == msgbox::OK => Answer::Close,
                 _ => Answer::Stay,
             },
             Dialog::Confirm(c) => match out {
-                form::Event::Cancel => Answer::Close,
                 form::Event::Pressed(id) if id == msgbox::button_id(1) => Answer::Close,
                 form::Event::Default if c.mount => Answer::Close,
                 form::Event::Default => Answer::Accept,
@@ -1152,7 +1143,7 @@ impl Explorer {
                 _ => Answer::Stay,
             },
             Dialog::About(..) => match out {
-                form::Event::Cancel | form::Event::Default => Answer::Close,
+                form::Event::Default => Answer::Close,
                 form::Event::Pressed(id) if id == aboutbox::OK => Answer::Close,
                 _ => Answer::Stay,
             },
@@ -1162,18 +1153,17 @@ impl Explorer {
                 use reprisekit::controls::filesheet::{CHANGE_ICON_CANCEL, CHANGE_ICON_OK};
                 match out {
                     form::Event::Default | form::Event::Pressed(CHANGE_ICON_OK) => Answer::Accept,
-                    form::Event::Cancel | form::Event::Pressed(CHANGE_ICON_CANCEL) => Answer::Close,
+                    form::Event::Pressed(CHANGE_ICON_CANCEL) => Answer::Close,
                     _ => Answer::Stay,
                 }
             }
             Dialog::Advanced { live, .. } => match out {
                 form::Event::Default | form::Event::Pressed(ADV_OK) if *live => Answer::Accept,
-                form::Event::Cancel | form::Event::Default => Answer::Close,
+                form::Event::Default => Answer::Close,
                 form::Event::Pressed(ADV_OK | ADV_CANCEL) => Answer::Close,
                 _ => Answer::Stay,
             },
             Dialog::AttrConfirm(_) => match out {
-                form::Event::Cancel => Answer::Close,
                 form::Event::Pressed(ATTR_CANCEL) => Answer::Close,
                 form::Event::Default | form::Event::Pressed(ATTR_OK) => Answer::Accept,
                 _ => Answer::Stay,
@@ -1201,16 +1191,7 @@ impl Explorer {
         match answer {
             Answer::Stay if out == form::Event::None => Reply::none(),
             Answer::Stay => Reply::redraw(),
-            Answer::Close => {
-                // Cancelling the attribute question leaves the sheet's
-                // box where the file says it should be.
-                let attrs = matches!(self.dialogs.up(), Some(Dialog::AttrConfirm(_)));
-                self.take_up();
-                if attrs {
-                    return self.attrs_cancelled();
-                }
-                Reply::redraw_all()
-            }
+            Answer::Close => self.dismiss_up(ctx),
             Answer::Accept => match self.take_up() {
                 Some(Dialog::Confirm(c)) if c.empty_bin => self.empty_bin_now(ctx),
                 Some(Dialog::Confirm(c)) if c.mount => match c.paths.first() {
@@ -1242,6 +1223,98 @@ impl Explorer {
 }
 
 impl Explorer {
+    /// [`Explorer::dismiss`] on the box up.
+    pub(crate) fn dismiss_up(&mut self, ctx: &mut Ctx) -> Reply {
+        match self.take_up_if(Dialog::shows) {
+            Some(d) => self.dismiss(d, ctx),
+            None => Reply::none(),
+        }
+    }
+
+    /// The one exit of a box that leaves unanswered: Escape, its close box, its owner gone, the
+    /// window closing. Whoever waits on it gets its cancel answer, once.
+    pub(crate) fn dismiss(&mut self, d: Dialog, ctx: &mut Ctx) -> Reply {
+        use reprisefs::progress::Decision;
+        let reply = match d {
+            Dialog::Confirm(c) => {
+                if let Some(job) = c.job {
+                    job.answer(Decision::Abort);
+                }
+                match c.too_big {
+                    Some(mut asker) => {
+                        asker.answer(reprisefs::replace::Answer::Cancel);
+                        self.too_big_step(asker, ctx)
+                    }
+                    None => Reply::none(),
+                }
+            }
+            Dialog::Replace(r) => self.paste_dismissed(r.pending, r.asker, ctx),
+            Dialog::Paste(p) => {
+                let (pending, asker) = *p;
+                self.paste_dismissed(pending, asker, ctx)
+            }
+            Dialog::Reading(r) => {
+                let (ask, ..) = *r;
+                let (pending, asker) = ask.into_paste();
+                self.paste_dismissed(pending, asker, ctx)
+            }
+            // Cancelling the attribute question leaves the sheet's box where the file says it
+            // should be.
+            Dialog::AttrConfirm(_) => self.attrs_cancelled(),
+            Dialog::Browse(b) => {
+                self.browse_left.extend(b.making);
+                Reply::none()
+            }
+            Dialog::Connect(_)
+            | Dialog::Login(_)
+            | Dialog::Question {
+                about: crate::shares::Asking::Connection,
+                ..
+            } => self.cancel_connection(),
+            Dialog::Message { .. }
+            | Dialog::About(..)
+            | Dialog::ChooseProgram(_)
+            | Dialog::Advanced { .. }
+            | Dialog::ChangeIcon { .. }
+            | Dialog::Unlock(_)
+            | Dialog::BatchRename(_)
+            | Dialog::Question {
+                about: crate::shares::Asking::Disconnect(_),
+                ..
+            } => Reply::none(),
+        };
+        Reply {
+            redraw_all: true,
+            ..reply
+        }
+    }
+
+    /// A paste whose prompt left unanswered is cancelled; on a closed window, where nothing can be
+    /// asked, every clash answers No and the rest is put ([`Explorer::ask_replace`]).
+    fn paste_dismissed(
+        &mut self,
+        pending: crate::fileops::PendingPut,
+        mut asker: reprisefs::replace::Asker,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        if !self.closing {
+            asker.answer(reprisefs::replace::Answer::Cancel);
+        }
+        self.ask_replace(pending, asker, ctx)
+    }
+
+    /// A job that ended takes down its failure boxes, up or waiting.
+    pub(crate) fn job_ended(
+        &mut self,
+        meter: &std::sync::Arc<reprisefs::progress::Meter>,
+        ctx: &mut Ctx,
+    ) {
+        let ours = |d: &Dialog| matches!(d, Dialog::Confirm(Confirm { job: Some(j), .. }) if j.is_for(meter));
+        for d in self.dialogs.withdraw(ours) {
+            self.dismiss(d, ctx);
+        }
+    }
+
     fn replace_answered(&mut self, c: replacebox::Choice, ctx: &mut Ctx) -> Reply {
         use reprisefs::replace::Answer;
         let Some(Dialog::Replace(r)) = self.take_up() else {

@@ -47,6 +47,11 @@ impl Asked {
             m.decide(d);
         }
     }
+
+    /// Whether it is the question of the job `meter` measures.
+    pub fn is_for(&self, meter: &Arc<Meter>) -> bool {
+        self.0.as_ref().is_some_and(|m| Arc::ptr_eq(m, meter))
+    }
 }
 
 impl Drop for Asked {

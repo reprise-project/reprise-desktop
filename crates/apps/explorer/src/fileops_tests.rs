@@ -20,6 +20,8 @@ mod cold_icons;
 mod creating;
 #[path = "fileops_tests/delete.rs"]
 mod delete;
+#[path = "fileops_tests/exits.rs"]
+mod exits;
 #[path = "fileops_tests/open_with.rs"]
 mod open_with;
 #[path = "fileops_tests/paste.rs"]

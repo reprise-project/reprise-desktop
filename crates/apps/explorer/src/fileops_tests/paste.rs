@@ -249,6 +249,42 @@ fn closing_the_failure_box_ends_its_paste() {
     assert!(!dir.join("b.txt").exists(), "the paste ended at gone.txt");
 }
 
+/// A paste cancelled from its progress window while it holds on a failed item ends, and its
+/// failure box goes with it, whether up or waiting behind another box.
+#[test]
+fn a_cancelled_paste_takes_its_failure_box_with_it() {
+    for waiting in [false, true] {
+        let home = tempfile::tempdir().expect("a temp dir");
+        let (from, dir) = (home.path().join("from"), home.path().join("to"));
+        std::fs::create_dir_all(&from).expect("mkdir");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(from.join("b.txt"), "b").expect("write");
+        let mut ctx = test_ctx();
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
+        if waiting {
+            ex.message_box("Explorer", "Up first".into(), &mut ctx);
+        }
+        ex.run(Command::Paste, &mut ctx);
+        ex.pasted(
+            FileClip {
+                cut: false,
+                paths: vec![from.join("gone.txt"), from.join("b.txt")],
+            },
+            &mut ctx,
+        );
+        let holds = |ex: &Explorer| {
+            (ex.dialogs.iter()).any(|d| matches!(d, Dialog::Confirm(c) if c.job.is_some()))
+        };
+        crate::tests::wake_until(&mut ex, &mut ctx, holds);
+        let meter = ex.put.as_ref().expect("the paste").progress.meter.clone();
+        crate::copydlg::stop(&meter);
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| !ex.busy());
+        assert!(!holds(&ex), "the failure box is gone (waiting: {waiting})");
+        assert_eq!(ex.dialogs.len(), waiting as usize, "the other box stays");
+        assert!(!dir.join("b.txt").exists(), "the paste ended at gone.txt");
+    }
+}
+
 /// A failed item's box raised while the Open With chooser is up waits for it, and comes up once
 /// Escape closes the chooser.
 #[test]

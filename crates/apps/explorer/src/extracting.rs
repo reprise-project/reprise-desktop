@@ -203,6 +203,7 @@ impl Explorer {
             return boxed;
         }
         let ex = self.extracting.take()?;
+        self.job_ended(ex.job.meter(), ctx);
         let done = match zipping {
             true => ex.job.meter().snapshot().items as usize,
             false => ex.landed.len(),
