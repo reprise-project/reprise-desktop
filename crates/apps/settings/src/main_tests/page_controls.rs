@@ -155,6 +155,7 @@ fn the_remote_desktop_page_follows_what_the_server_says() {
         encoder: "VA-API H.264".into(),
         encoders: vec!["vaapi".into(), "none".into()],
         fingerprint: "3F:9A".into(),
+        thumbprint: "3f9a".into(),
     };
     let serving = remotehost::Remote {
         enabled: true,
@@ -173,6 +174,12 @@ fn the_remote_desktop_page_follows_what_the_server_says() {
     assert_eq!(page.edit_text("fingerprint"), "3F:9A");
     assert!(!a.error.is_shown());
     assert_eq!(a.want, a.loaded, "the switch is no change for Apply");
+    a.sheet.pages[Page::RemoteDesktop.index()].set_combo(pages::REMOTE_PRINT, 1);
+    let picked = form::Event::Changed(pages::REMOTE_PRINT);
+    a.sheet_event(propsheet::Event::Page(Page::RemoteDesktop.index(), picked));
+    let page = &a.sheet.pages[Page::RemoteDesktop.index()];
+    assert_eq!(page.edit_text("fingerprint"), "3f9a", "the thumbprint");
+    assert_eq!(a.want, a.loaded, "the pick is no change for Apply");
 
     remote_read(
         &mut a,

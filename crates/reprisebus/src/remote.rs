@@ -36,6 +36,8 @@ pub struct Status {
     pub encoders: Vec<String>,
     /// SHA-256 of its certificate, hex pairs joined by `:`.
     pub fingerprint: String,
+    /// SHA-1 of its certificate, 40 lowercase hex digits.
+    pub thumbprint: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,6 +67,7 @@ pub fn from_props(props: &Props) -> Status {
         encoder: text("Encoder"),
         encoders: prop(props, "Encoders").unwrap_or_default(),
         fingerprint: text("Fingerprint"),
+        thumbprint: text("Thumbprint"),
     }
 }
 
@@ -286,6 +289,7 @@ mod tests {
             ("Clients".to_string(), clients),
             ("Encoder".to_string(), owned(Variant::from("VA-API H.264"))),
             ("Fingerprint".to_string(), owned(Variant::from("AB:CD"))),
+            ("Thumbprint".to_string(), owned(Variant::from("abcd"))),
         ]);
         assert_eq!(
             from_props(&props),
@@ -299,6 +303,7 @@ mod tests {
                 encoder: "VA-API H.264".into(),
                 encoders: Vec::new(),
                 fingerprint: "AB:CD".into(),
+                thumbprint: "abcd".into(),
             }
         );
         assert_eq!(

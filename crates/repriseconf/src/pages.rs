@@ -479,7 +479,7 @@ impl Page {
                 "wpad",
                 "no_proxy",
             ],
-            Page::RemoteDesktop => &["rdp", "remmina", "desktop sharing"],
+            Page::RemoteDesktop => &["rdp", "remmina", "desktop sharing", "thumbprint"],
             Page::Privacy => &[
                 "location",
                 "app permissions",

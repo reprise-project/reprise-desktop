@@ -58,8 +58,9 @@ pub use network::{
     PROXY_AUTO, PROXY_HOSTS, PROXY_IGNORE, PROXY_MANUAL, PROXY_NONE, PROXY_PAC, PROXY_PORTS,
 };
 pub use system::{
-    RD_PASSWORD_ACCOUNTS, REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup,
-    managed, notifications, privacy, remote_desktop, selected_client, show_remote, sound, startup,
+    RD_PASSWORD_ACCOUNTS, REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_PRINT, REMOTE_REGENERATE,
+    advanced, backup, managed, notifications, privacy, remote_desktop, selected_client,
+    show_remote, sound, startup,
 };
 pub use thunderbolt::{
     TB_AUTHORIZE, TB_FORGET, TB_LIST, selected as selected_device, show_thunderbolt, thunderbolt,

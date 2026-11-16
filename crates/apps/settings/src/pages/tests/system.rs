@@ -836,6 +836,7 @@ fn serving(clients: Vec<reprisebus::remote::Client>) -> reprisebus::remote::Stat
         encoder: "VA-API H.264".into(),
         encoders: vec!["vaapi".into(), "software".into(), "none".into()],
         fingerprint: "3F:9A:0C:51:E2:7B:44:D8:19:A6:5E:C0:2D:93:7F:B1:08:6C:E4:5A:21:DF:90:3B:C7:12:6E:A8:F5:04:9D:B3".into(),
+        thumbprint: "3f9a0c51e27b44d819a65ec02d937fb1086ce45a".into(),
     }
 }
 
@@ -868,7 +869,7 @@ const REMOTE_GREYED: [&str; 23] = [
     "remote_screen_label",
     "remote_screen_show",
     "remote_screen_lock",
-    "fingerprint_label",
+    "print",
     "fingerprint",
     "regenerate",
     "disconnect",
@@ -884,10 +885,10 @@ fn the_remote_desktop_page_geometry() {
     assert_eq!(rect(&s, p, "allow_note"), Rect::new(38, 64, 340, 13));
     assert_eq!(rect(&s, p, "status"), Rect::new(38, 80, 340, 13));
     assert_eq!(
-        rect(&s, p, "fingerprint_label"),
-        Rect::new(20, 104, 126, 13)
+        rect(&s, p, "print"),
+        Rect::new(20, 100, 120, combo::COMBO_H)
     );
-    assert_eq!(rect(&s, p, "fingerprint"), Rect::new(150, 100, 112, 20));
+    assert_eq!(rect(&s, p, "fingerprint"), Rect::new(144, 100, 118, 20));
     assert_eq!(rect(&s, p, "regenerate"), Rect::new(268, 98, 110, 23));
     assert_eq!(rect(&s, p, "quality_label"), Rect::new(20, 130, 200, 13));
     assert_eq!(rect(&s, p, "quality_speed"), Rect::new(20, 157, 44, 13));
@@ -1117,6 +1118,31 @@ fn allow_reflects_the_unit() {
     for id in REMOTE_GREYED {
         assert!(enabled(&on, id), "{id} is lit while the server runs");
     }
+}
+
+#[test]
+fn the_print_row_shows_the_thumbprint_once_sha1_is_picked() {
+    let s = serving(Vec::new());
+    let mut page = remote_desktop(Area::MIN, Some(&s), true, None);
+    assert_eq!(page.edit_text("fingerprint"), s.fingerprint);
+    assert_eq!(
+        page.item("fingerprint").unwrap().name,
+        Some("SHA-256 fingerprint")
+    );
+    page.set_combo("print", 1);
+    show_remote(&mut page, Some(&s), true, None, None, None);
+    assert_eq!(page.edit_text("fingerprint"), s.thumbprint);
+    assert_eq!(
+        page.item("fingerprint").unwrap().name,
+        Some("SHA-1 thumbprint")
+    );
+    let machine = prints();
+    show_remote(&mut page, Some(&s), true, None, None, Some(&machine));
+    assert_eq!(
+        page.edit_text("fingerprint"),
+        machine.thumbprint,
+        "the login manager's"
+    );
 }
 
 #[test]
@@ -1629,7 +1655,7 @@ fn the_remote_desktop_page_pixels() {
             (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
         });
     assert_eq!(
-        h, 15_354_460_693_671_608_155,
+        h, 1_690_708_961_555_854_480,
         "the page with its client selected"
     );
 }

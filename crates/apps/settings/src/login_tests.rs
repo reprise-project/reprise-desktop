@@ -799,9 +799,15 @@ fn under_reprise_login_the_allow_box_is_a_note() {
         "Remote logins are set on the Login Manager page."
     );
     assert_eq!(page.edit_text("fingerprint"), "AB:CD", "the machine's");
-    assert_eq!(page.edit_text("thumbprint"), "abcd");
     assert!(lit(page, "quality"), "the session's settings still apply");
     assert!(!lit(page, pages::REMOTE_REGENERATE));
+    a.sheet.pages[Page::RemoteDesktop.index()].set_combo(pages::REMOTE_PRINT, 1);
+    changed(&mut a, Page::RemoteDesktop, pages::REMOTE_PRINT);
+    assert_eq!(
+        remote(&a).edit_text("fingerprint"),
+        "abcd",
+        "the thumbprint"
+    );
 
     remote_read(&mut a, remotehost::Remote::default());
     let page = remote(&a);

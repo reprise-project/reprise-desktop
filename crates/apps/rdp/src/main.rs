@@ -121,6 +121,7 @@ fn main() -> ExitCode {
         encoder: choice::PROBING_LABEL.into(),
         encoders: choice::names(&[]),
         fingerprint: (identity.as_ref()).map_or_else(String::new, |i| i.fingerprint.clone()),
+        thumbprint: (identity.as_ref()).map_or_else(String::new, |i| i.thumbprint.clone()),
         ..control::Status::default()
     });
     let (disconnect, disconnect_rx) = mpsc::unbounded_channel();
@@ -472,7 +473,10 @@ async fn regenerate_on_request(
         let made = match cert::regenerate(&dir) {
             Ok(new) => {
                 log::info!("new certificate fingerprint {}", new.fingerprint);
-                status.send_modify(|s| s.fingerprint = new.fingerprint.clone());
+                status.send_modify(|s| {
+                    s.fingerprint = new.fingerprint.clone();
+                    s.thumbprint = new.thumbprint.clone();
+                });
                 identity.send_replace(new);
                 Ok(())
             }

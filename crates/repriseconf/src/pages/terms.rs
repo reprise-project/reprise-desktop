@@ -439,7 +439,8 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
         Page::RemoteDesktop => &[
             ("allow", "Allow remote connections to this computer"),
             ("port", "Port:"),
-            ("fingerprint", "Fingerprint (SHA-256):"),
+            ("print", "Certificate"),
+            ("fingerprint", "SHA-256 fingerprint"),
             ("regenerate", "New Certificate..."),
             ("quality", "Picture quality"),
             ("frame_rate", "Frame rate:"),
