@@ -205,6 +205,25 @@ fn tab_runs_off_the_page_onto_the_buttons_and_back() {
 }
 
 #[test]
+fn greying_the_focused_apply_hands_the_focus_to_ok() {
+    use crate::access::{ROOT, Tree, accesskit::Role};
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut s = folder_sheet();
+    let focus_id = |s: &PropSheet| s.open().focus().map(|i| s.open().items[i].id);
+    s.set_apply_enabled(true);
+    s.open_mut().focus_id(APPLY);
+    s.set_apply_enabled(false);
+    assert_eq!(focus_id(&s), Some(OK));
+    let mut tree = Tree::window("T", s.size);
+    let (_, focus) = s.access(&mut tree, ROOT, &text, 11);
+    assert_eq!(focus, tree.find(Role::DefaultButton, "OK"));
+    s.open_mut().focus_id("ro");
+    s.set_apply_enabled(true);
+    s.set_apply_enabled(false);
+    assert_eq!(focus_id(&s), Some("ro"), "a focus elsewhere stays put");
+}
+
+#[test]
 fn arrows_on_the_sheet_buttons_move_between_them() {
     let mut s = folder_sheet();
     let focus_id = |s: &PropSheet| s.open().focus().map(|i| s.open().items[i].id);
