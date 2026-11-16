@@ -4,10 +4,27 @@ use super::*;
 fn find_search(
     q: &reprisefs::search::Query,
     cancel: &std::sync::atomic::AtomicBool,
-) -> Vec<PathBuf> {
+) -> Option<Vec<PathBuf>> {
     let mut find = std::process::Command::new("find");
     find.arg(&q.root);
-    reprisefs::search::collect(find, q, cancel)
+    Some(reprisefs::search::collect(find, q, cancel))
+}
+
+#[test]
+fn a_search_with_no_tool_says_what_it_needs_in_the_status_bar() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("report.txt"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.search_run = |_, _| None;
+    ex.run(Command::SearchFocus, &mut ctx);
+    ex.search_field
+        .key(reprisekit::textedit::EditKey::Insert("report".into()));
+    press(&mut ex, keysym::RETURN, &mut ctx);
+    assert!(ex.items.is_empty());
+    assert_eq!(ex.status.panels[0].text, "File search needs plocate or fd.");
+    press(&mut ex, keysym::ESCAPE, &mut ctx);
+    assert_eq!(ex.status.panels[0].text, "1 object");
 }
 
 #[test]

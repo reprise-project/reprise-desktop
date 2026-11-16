@@ -21,9 +21,39 @@ impl Explorer {
         if self.filling.iter().any(|(p, ..)| *p == place) {
             return;
         }
-        match self.read_job(ctx, self.kids_reader(&path, place.clone())) {
+        let read = self.kids_reader(&path, place.clone());
+        self.fill_from(place, read, ctx);
+    }
+
+    fn fill_from(
+        &mut self,
+        place: Place,
+        read: impl FnOnce() -> Kids + Send + 'static,
+        ctx: &mut Ctx,
+    ) {
+        match self.read_job(ctx, read) {
             Ok(kids) => self.fill_read(&place, kids, ctx),
             Err(job) => self.filling.push((place, job, false)),
+        }
+    }
+
+    /// Hidden Items flipped: every Folders node holding children is read again, parents first, so
+    /// what is open stays open, hidden folders come or go, and each child's + is worked out again.
+    pub fn rescan_tree(&mut self, ctx: &mut Ctx) {
+        for place in foldertree::filled(&self.tree, &self.tree_places) {
+            if self.tree_path_of(&place).is_none() {
+                continue;
+            }
+            if let Some((.., again)) = self.filling.iter_mut().find(|(p, ..)| *p == place) {
+                *again = true;
+                continue;
+            }
+            let world = self.tree_world();
+            let at = place.clone();
+            let read = move || {
+                foldertree::read_kids(&at, &world.inputs(), &[], world.scale, &world.specials)
+            };
+            self.fill_from(place, read, ctx);
         }
     }
 

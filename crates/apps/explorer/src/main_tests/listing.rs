@@ -403,3 +403,67 @@ fn ctrl_h_lists_hidden_entries_faded_and_keeps_the_setting() {
     assert_eq!(names(&ex), ["a.txt"]);
     assert!(!ex.settings.show_hidden);
 }
+
+#[test]
+fn hidden_items_keeps_the_open_folders_open_and_adds_or_drops_hidden_ones() {
+    let top = tempfile::Builder::new()
+        .prefix("tree")
+        .tempdir()
+        .expect("a temp dir");
+    let (a, b) = (top.path().join("a"), top.path().join("a/b"));
+    std::fs::create_dir_all(&b).expect("mkdir");
+    std::fs::create_dir_all(a.join(".h/inner")).expect("mkdir");
+    std::fs::create_dir_all(top.path().join("c/.only")).expect("mkdir");
+    std::fs::create_dir_all(top.path().join("d/e")).expect("mkdir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(b.clone()), &mut ctx);
+    ex.build_tree(&mut ctx);
+    ex.show(Place::Folder(b.clone()), &mut ctx);
+    let node = |ex: &Explorer, p: &std::path::Path| {
+        let path = ex.tree_path_of(&Place::Folder(p.to_path_buf()))?;
+        ex.tree.node(&path).cloned()
+    };
+    let kids = |ex: &Explorer, p: &std::path::Path| -> Vec<String> {
+        node(ex, p).map_or_else(Vec::new, |n| {
+            n.children.iter().map(|c| c.label.clone()).collect()
+        })
+    };
+    wake_until(&mut ex, &mut ctx, |ex| !kids(ex, &a).is_empty());
+    assert_eq!(kids(&ex, &a), ["b"]);
+    let c = top.path().join("c");
+    let d = top.path().join("d");
+    let d_path = ex
+        .tree_path_of(&Place::Folder(d.clone()))
+        .expect("d in the tree");
+    ex.tree.node_mut(&d_path).expect("d's node").expanded = true;
+    ex.fill_node(d_path, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| !kids(ex, &d).is_empty());
+    assert!(
+        node(&ex, &c).is_some_and(|n| !n.has_children),
+        "c holds only a hidden folder"
+    );
+    let picked = |ex: &Explorer| ex.tree.selected.as_ref().and_then(|p| ex.place_of(p));
+    assert_eq!(picked(&ex), Some(Place::Folder(b.clone())));
+
+    ex.run(Command::ToggleHidden, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| kids(ex, &a).len() == 2);
+    assert_eq!(kids(&ex, &a), [".h", "b"]);
+    assert!(node(&ex, &a).is_some_and(|n| n.expanded), "a stays open");
+    assert!(
+        node(&ex, &d).is_some_and(|n| n.expanded),
+        "d, off the way to b, stays open"
+    );
+    assert_eq!(kids(&ex, &d), ["e"]);
+    assert_eq!(
+        picked(&ex),
+        Some(Place::Folder(b.clone())),
+        "the pick stays on b"
+    );
+    assert!(node(&ex, &c).is_some_and(|n| n.has_children), "c now opens");
+
+    ex.run(Command::ToggleHidden, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| kids(ex, &a).len() == 1);
+    assert_eq!(kids(&ex, &a), ["b"]);
+    assert!(node(&ex, &a).is_some_and(|n| n.expanded), "a stays open");
+    assert!(node(&ex, &c).is_some_and(|n| !n.has_children));
+}

@@ -427,22 +427,25 @@ pub fn holds(
 /// [`detect`] lists; after plocate's hits, fd adds what changed since its
 /// database. Empty text with nothing to narrow it finds nothing.
 pub fn run(q: &Query, cancel: &AtomicBool) -> Vec<PathBuf> {
-    run_where(q, cancel, |_| true)
+    try_run(q, cancel).unwrap_or_default()
 }
 
-/// [`run`] with an extra `admit` test (such as file type) applied before paths count toward `q.limit`.
-pub fn run_where(
-    q: &Query,
-    cancel: &AtomicBool,
-    admit: impl Fn(&Path) -> bool + Send + Sync + 'static,
-) -> Vec<PathBuf> {
+/// [`run`], or None when [`detect`] finds no tool that searches `q.root`.
+pub fn try_run(q: &Query, cancel: &AtomicBool) -> Option<Vec<PathBuf>> {
     if q.text.is_empty() && !q.filter.narrows() {
-        return Vec::new();
+        return Some(Vec::new());
     }
-    run_engines(&detect(&q.root), q, cancel, Arc::new(admit))
+    let engines = detect(&q.root);
+    if engines.is_empty() {
+        return None;
+    }
+    Some(run_engines(&engines, q, cancel, Arc::new(|_: &Path| true)))
 }
 
-/// [`run_where`] over `engines` in order. Each runs on what is left of the budget and the limit;
+/// What the launcher and Explorer's Search say when [`try_run`] finds no tool.
+pub const NO_TOOL: &str = "File search needs plocate or fd.";
+
+/// [`try_run`] over `engines` in order. Each runs on what is left of the budget and the limit;
 /// once one finds something the search ends, except that plocate's hits send fd only after
 /// entries modified since plocate's database was written.
 fn run_engines(engines: &[Engine], q: &Query, cancel: &AtomicBool, admit: Admit) -> Vec<PathBuf> {
