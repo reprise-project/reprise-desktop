@@ -13,8 +13,9 @@ use super::{
 use crate::table::Route;
 use crate::worker::{AUTH_FAILED, Mode};
 
-/// The groups whose members are administrators: `wheel` on Arch, `sudo` on Ubuntu.
-pub const ADMIN_GROUPS: [&str; 2] = ["wheel", "sudo"];
+/// The groups whose members are administrators: `wheel` on Arch, `sudo` and the legacy
+/// `admin` on Ubuntu (its polkit rules name both).
+pub const ADMIN_GROUPS: [&str; 3] = ["wheel", "sudo", "admin"];
 /// A refused check hears its error this long after its last answer, whatever refused it.
 pub const ADMIN_REFUSE_DELAY: Duration = REFUSE_DELAY;
 
