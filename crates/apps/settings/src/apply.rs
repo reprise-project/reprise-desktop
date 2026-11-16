@@ -5,7 +5,7 @@ use crate::backuphost::Then;
 use crate::registry::{self, Page};
 use crate::{
     SettingsApp, autostart, defaultspage, displaypage, menupage, model, pages, quickpage,
-    read_config,
+    read_config, take,
 };
 use repriseapp::oneshot::{self, MsgBox};
 use repriseconf::Key;
@@ -43,16 +43,17 @@ impl SettingsApp {
         autostart::user_dir(&reprisexdg::config_home().unwrap_or_default())
     }
 
-    /// Re-read the autostart directories; unapplied checks are dropped, the files changed under them.
+    /// Re-read the autostart directories; an unapplied check stays on its entry.
     pub(crate) fn rescan(&mut self) {
-        // An entry a unit of the session starts is not listed: its check could not stop the unit.
-        let units = reprisebus::units::session_programs();
+        let pending = self.pending_checks();
         self.entries = reprisefs::autostart::scan(
             &reprisexdg::config_dirs(),
             &reprisexdg::config_home().unwrap_or_default(),
         );
+        // An entry a unit of the session starts is not listed: its check could not stop the unit.
+        let units = &self.session_units;
         self.entries.retain(|e| {
-            !reprisefs::autostart::left_to_systemd(e, &units, reprisefs::autostart::find_program)
+            !reprisefs::autostart::left_to_systemd(e, units, reprisefs::autostart::find_program)
         });
         // Checked means it starts here: a system entry fenced off by
         // `OnlyShowIn` is listed unchecked, the way the compositor skips it.
@@ -61,7 +62,42 @@ impl SettingsApp {
             .iter()
             .map(|e| e.runs_on(&self.desktops))
             .collect();
-        let checks = self.applied_checks.clone();
+        self.show_startup(&pending);
+    }
+
+    /// The session's units were read: list the Startup entries without the ones they start.
+    pub(crate) fn units_done(&mut self) -> bool {
+        let Some(rx) = &self.units_reading else {
+            return false;
+        };
+        let units = match take(rx) {
+            Ok(None) => return false,
+            Ok(Some(units)) => units,
+            Err(()) => Default::default(),
+        };
+        self.units_reading = None;
+        self.session_units = units;
+        self.rescan();
+        true
+    }
+
+    /// The Startup checks moved since the last Apply, by entry id.
+    pub(crate) fn pending_checks(&self) -> Vec<(String, bool)> {
+        let checks = self.list.checks.iter().flatten();
+        (self.entries.iter().zip(checks).zip(&self.applied_checks))
+            .filter(|((_, want), have)| want != have)
+            .map(|((e, want), _)| (e.id.clone(), *want))
+            .collect()
+    }
+
+    /// List the entries with their applied checks, each of `pending` put back on its entry.
+    pub(crate) fn show_startup(&mut self, pending: &[(String, bool)]) {
+        let mut checks = self.applied_checks.clone();
+        for (id, want) in pending {
+            if let Some(i) = self.entries.iter().position(|e| e.id == *id) {
+                checks[i] = *want;
+            }
+        }
         pages::fill_list(&mut self.list, &self.entries, &checks);
         self.sync_remove();
     }

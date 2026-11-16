@@ -3,6 +3,14 @@ use crate::{SettingsApp, saverdlg, saverpage, take, wallpapers};
 use repriseapp::decode::Decoders;
 use repriseapp::keys::form_input;
 use repriseapp::{Ctx, Event, Reply};
+use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
+
+/// The Photos folder's pictures: being listed, or as listed.
+pub(crate) enum Photos {
+    Listing(Receiver<Vec<PathBuf>>),
+    Listed(Vec<PathBuf>),
+}
 
 impl SettingsApp {
     pub(crate) fn saver_dlg_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
@@ -44,6 +52,7 @@ impl SettingsApp {
     pub(crate) fn saver_tick(&mut self, ctx: &Ctx) -> bool {
         if self.sheet.tabs.open != Page::ScreenSaverLock.index() {
             self.saver_preview = None;
+            self.saver_photos = None;
             return false;
         }
         let kind = match saverpage::row(&self.want) {
@@ -64,12 +73,21 @@ impl SettingsApp {
         let Some((p, last)) = self.saver_preview.as_mut() else {
             return false;
         };
-        if let Some((folder, rx)) = &self.saver_photos
-            && folder == &self.want.saver_folder
-            && let Ok(Some(pics)) = take(rx)
+        if let Some((folder, photos)) = &mut self.saver_photos
+            && *folder == self.want.saver_folder
         {
-            p.files = pics;
-            self.saver_photos = None;
+            if let Photos::Listing(rx) = photos {
+                match take(rx) {
+                    Ok(None) => {}
+                    Ok(Some(pics)) => *photos = Photos::Listed(pics),
+                    Err(()) => *photos = Photos::Listed(Vec::new()),
+                }
+            }
+            if let Photos::Listed(pics) = photos
+                && p.files.is_empty()
+            {
+                p.files.clone_from(pics);
+            }
         }
         if let Some(rx) = &self.saver_photo
             && let Ok(Some(got)) = take(rx)
@@ -107,7 +125,24 @@ impl SettingsApp {
             return false;
         }
         self.away_fresh = true;
-        self.away_devices = reprisebus::bluez::paired();
+        // Tests leave the system bus alone.
+        if !cfg!(test) {
+            self.away_reading = Some(self.spawn(reprisebus::bluez::paired));
+        }
+        false
+    }
+
+    /// BlueZ listed the paired devices: offer them on the page.
+    pub(crate) fn away_done(&mut self) -> bool {
+        let Some(rx) = &self.away_reading else {
+            return false;
+        };
+        self.away_devices = match take(rx) {
+            Ok(None) => return false,
+            Ok(Some(found)) => found,
+            Err(()) => Vec::new(),
+        };
+        self.away_reading = None;
         self.follow_away();
         true
     }
@@ -125,8 +160,11 @@ impl SettingsApp {
             return;
         };
         let folder = self.want.saver_folder.clone();
-        let have = self.saver_photos.as_ref().map(|(f, _)| f == &folder);
-        if p.kind != reprisekit::saver::Kind::Photos || !p.files.is_empty() || have == Some(true) {
+        let have = self
+            .saver_photos
+            .as_ref()
+            .is_some_and(|(f, _)| *f == folder);
+        if p.kind != reprisekit::saver::Kind::Photos || have {
             return;
         }
         let dir = wallpapers::expand(&folder)
@@ -136,6 +174,6 @@ impl SettingsApp {
                 .map(reprisefs::pictures::in_folder)
                 .unwrap_or_default()
         });
-        self.saver_photos = Some((folder, rx));
+        self.saver_photos = Some((folder, Photos::Listing(rx)));
     }
 }
