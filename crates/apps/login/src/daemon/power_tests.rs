@@ -33,7 +33,7 @@ fn admin_groups(user: &str) -> Vec<Effect> {
     vec![Effect::LookUp {
         key: LookUpKey::Admin(CHECK),
         user: user.into(),
-        groups: vec!["wheel".into(), "sudo".into()],
+        groups: vec!["wheel".into(), "sudo".into(), "admin".into()],
     }]
 }
 

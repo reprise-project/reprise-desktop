@@ -283,8 +283,8 @@ screen refuses logins and resumes alike.
 
 While any session holding someone's work runs, Shut Down and Restart on the
 login screen ask for an administrator's password (`reprise-login-check`,
-`wheel` or `sudo`, never root). Every refusal comes 3 s after the last
-answer, so the reply doesn't tell who is an administrator. A session that
+`wheel`, `sudo` or Ubuntu's legacy `admin`, never root). Every refusal comes
+3 s after the last answer, so the reply doesn't tell who is an administrator. A session that
 isn't on screen can't take the screen from the user in front of it
 ([Background sessions](#background-sessions)).
 
