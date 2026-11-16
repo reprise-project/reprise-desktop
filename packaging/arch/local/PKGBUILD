@@ -185,6 +185,7 @@ package() {
   install -Dm644 data/pam.d/reprise-login-remote-nla "$pkgdir/etc/pam.d/reprise-login-remote-nla"
   install -Dm644 data/pam.d/reprise-login-check "$pkgdir/etc/pam.d/reprise-login-check"
   install -Dm644 data/geoclue/90-reprise.conf "$pkgdir/etc/geoclue/conf.d/90-reprise.conf"
+  install -Dm644 data/libalpm/hooks/reprise-upgrade.hook "$pkgdir/usr/share/libalpm/hooks/reprise-upgrade.hook"
   install -Dm644 config.example.toml "$pkgdir/usr/share/doc/reprise/config.example.toml"
   for ftl in data/locale/*/*.ftl; do
     install -Dm644 "$ftl" "$pkgdir/usr/share/reprise/locale/${ftl#data/locale/}"

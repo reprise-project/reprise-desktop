@@ -25,6 +25,8 @@ rm -rf "$root"
 mkdir -p "$root/DEBIAN"
 (build)
 (package)
+# pacman's upgrade hook; the postinst does its work on Debian.
+rm -r "$root/usr/share/libalpm"
 
 "$here/pam.sh" "$root"
 
