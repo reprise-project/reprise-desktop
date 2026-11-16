@@ -6,7 +6,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use zbus::OwnedVariant;
 use zbus::{Connection, Proxy};
 
-use crate::upower::{Feed, Run, follow};
+use reprisebus::follow::{Feed, Run, follow};
 
 /// Bus names with object paths, current first; older daemons own only
 /// `net.hadess.PowerProfiles`. Each name is also the interface at its path.
@@ -293,9 +293,12 @@ pub fn watch(waker: repriseapp::Waker) -> (Receiver<Profiles>, Setter) {
         tx: tx.clone(),
         waker: waker.clone(),
     };
-    follow("reprise-power-profiles", tx, waker, |feed| {
-        zbus::block_on(run(feed))
-    });
+    follow(
+        "reprise-power-profiles",
+        tx,
+        move || waker.wake(),
+        |feed| zbus::block_on(run(feed)),
+    );
     (rx, setter)
 }
 

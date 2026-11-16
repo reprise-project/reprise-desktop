@@ -46,6 +46,7 @@
 //! [`secrets`] looks up and stores passwords in the Secret Service.
 //! [`eds`] reads a day's events from evolution-data-server's calendars.
 //! [`bounded`] decodes what another peer sends within size caps, never as a `Variant` tree.
+//! [`follow`] reruns a source on a thread with a backoff, sending only what changed.
 
 pub mod a11y;
 pub mod airplane;
@@ -60,6 +61,7 @@ pub mod eds;
 pub mod error;
 pub mod filemanager1;
 pub mod filetransfer;
+pub mod follow;
 pub mod fprint;
 pub mod instance;
 pub mod journal;

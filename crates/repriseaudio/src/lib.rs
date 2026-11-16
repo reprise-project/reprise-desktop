@@ -15,11 +15,12 @@ use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use log::warn;
+use reprisebus::follow::{self, Feed, Run};
 use reprisefs::subprocess;
 use serde_json::Value;
 
@@ -681,22 +682,10 @@ fn watch_program(program: &'static str, waker: impl Fn() + Send + 'static) -> Wa
     let (tx, rx) = mpsc::channel();
     let pump_state = Arc::new(Pump::default());
     let shared = pump_state.clone();
-    std::thread::spawn(move || {
-        let mut pause = RETRY_MIN;
-        while !shared.stopped.load(Ordering::SeqCst) {
-            match pump(program, &tx, &waker, &shared) {
-                Run::Gone => break,
-                Run::Missing => {
-                    warn!("{program} is not installed; no audio devices");
-                    let _ = tx.send(Snapshot::default());
-                    waker();
-                    break;
-                }
-                Run::Ended { delivered } => {
-                    pause = next_pause(pause, delivered);
-                    std::thread::sleep(pause);
-                }
-            }
+    follow::follow("reprise-pw-dump", tx, waker, move |feed| {
+        match shared.stopped.load(Ordering::SeqCst) {
+            true => Run::Closed,
+            false => pump(program, feed, &shared),
         }
     });
     Watch {
@@ -705,30 +694,9 @@ fn watch_program(program: &'static str, waker: impl Fn() + Send + 'static) -> Wa
     }
 }
 
-const RETRY_MIN: Duration = Duration::from_secs(2);
-const RETRY_MAX: Duration = Duration::from_secs(60);
-
-/// The pause before the next `pw-dump`: the minimum after a run that delivered, else doubled up to a minute.
-fn next_pause(pause: Duration, delivered: bool) -> Duration {
-    if delivered {
-        RETRY_MIN
-    } else {
-        (pause * 2).min(RETRY_MAX)
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum Run {
-    Gone,
-    Missing,
-    /// It exited or could not be started; `delivered` says whether it printed an array first.
-    Ended {
-        delivered: bool,
-    },
-}
-
-/// One `program -m` run. The child sits in `shared` while it runs so `stop` can kill it.
-fn pump(program: &str, tx: &Sender<Snapshot>, waker: &dyn Fn(), shared: &Pump) -> Run {
+/// One `program -m` run. The child sits in `shared` while it runs so `stop` can kill it. A missing
+/// `program` sends one empty snapshot and closes the run.
+fn pump(program: &str, feed: &mut Feed<Snapshot>, shared: &Pump) -> Run {
     let mut command = Command::new(program);
     // SAFETY: the closure runs in the forked child before exec and only
     // calls prctl, which is async-signal-safe.
@@ -748,7 +716,11 @@ fn pump(program: &str, tx: &Sender<Snapshot>, waker: &dyn Fn(), shared: &Pump) -
         .spawn()
     {
         Ok(child) => child,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Run::Missing,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            warn!("{program} is not installed; no audio devices");
+            feed.unavailable();
+            return Run::Closed;
+        }
         Err(err) => {
             warn!("could not run {program}: {err}");
             return Run::Ended { delivered: false };
@@ -765,7 +737,6 @@ fn pump(program: &str, tx: &Sender<Snapshot>, waker: &dyn Fn(), shared: &Pump) -
     }
 
     let mut store = Store::new();
-    let mut last: Option<Snapshot> = None;
     let mut run = Run::Ended { delivered: false };
     for array in
         serde_json::Deserializer::from_reader(std::io::BufReader::new(stdout)).into_iter::<Value>()
@@ -774,17 +745,12 @@ fn pump(program: &str, tx: &Sender<Snapshot>, waker: &dyn Fn(), shared: &Pump) -
             Ok(array) => {
                 store.apply(&array);
                 run = Run::Ended { delivered: true };
-                // Most changes touch objects the snapshot never shows; wake the window only when what it shows moved.
-                let snap = store.snapshot();
-                if last.as_ref() == Some(&snap) {
-                    continue;
-                }
-                if tx.send(snap.clone()).is_err() {
-                    run = Run::Gone;
+                // Most changes touch objects the snapshot never shows; the feed wakes the window
+                // only when what it shows moved.
+                if !feed.send(store.snapshot()) {
+                    run = Run::Closed;
                     break;
                 }
-                last = Some(snap);
-                waker();
             }
             Err(err) => {
                 warn!("{program} output did not parse: {err}");
@@ -1092,15 +1058,16 @@ mod tests {
     /// A missing binary is reported as such so `watch` can stop; a program that exits without output is an ordinary end.
     #[test]
     fn pump_tells_a_missing_binary_from_an_exit() {
-        let (tx, _rx) = mpsc::channel();
-        let waker = || {};
+        let (tx, rx) = mpsc::channel();
+        let mut feed = Feed::new(tx, || {});
         let shared = Pump::default();
         assert_eq!(
-            pump("reprise-no-such-pw-dump", &tx, &waker, &shared),
-            Run::Missing
+            pump("reprise-no-such-pw-dump", &mut feed, &shared),
+            Run::Closed
         );
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), [Snapshot::default()]);
         assert_eq!(
-            pump("true", &tx, &waker, &shared),
+            pump("true", &mut feed, &shared),
             Run::Ended { delivered: false }
         );
     }
@@ -1277,18 +1244,6 @@ mod tests {
         let _ = std::fs::remove_file(&script);
     }
 
-    #[test]
-    fn retry_pause_doubles_to_a_minute_and_resets_on_output() {
-        let mut p = RETRY_MIN;
-        let mut seen = vec![];
-        for _ in 0..7 {
-            p = next_pause(p, false);
-            seen.push(p.as_secs());
-        }
-        assert_eq!(seen, [4, 8, 16, 32, 60, 60, 60]);
-        assert_eq!(next_pause(p, true), RETRY_MIN);
-    }
-
     fn loaded() -> Store {
         let mut store = Store::new();
         store.apply(&json(DUMP));
@@ -1331,7 +1286,8 @@ mod tests {
     fn pump_sends_a_snapshot_only_when_it_changed() {
         let script = script("same", r"printf '[]\n[]\n'");
         let (tx, rx) = mpsc::channel();
-        let run = pump(script.to_str().unwrap(), &tx, &|| {}, &Pump::default());
+        let mut feed = Feed::new(tx, || {});
+        let run = pump(script.to_str().unwrap(), &mut feed, &Pump::default());
         assert_eq!(run, Run::Ended { delivered: true });
         assert_eq!(rx.try_iter().count(), 1);
         let _ = std::fs::remove_file(&script);
