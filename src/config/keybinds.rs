@@ -91,88 +91,14 @@ impl Action {
     /// The config name of a compositor action (the inverse of `from_parts`);
     /// None for `Spawn` and `Exec`, which are commands, not names.
     pub fn name(&self) -> Option<&'static str> {
-        Some(match self {
-            Action::Spawn(_) | Action::Exec { .. } => return None,
-            Action::Terminal => "terminal",
-            Action::Explorer => "explorer",
-            Action::Close => "close",
-            Action::Cycle => "cycle",
-            Action::CycleApp => "cycle-app",
-            Action::Flip => "flip",
-            Action::Exit => "exit",
-            Action::Maximize => "maximize",
-            Action::Minimize => "minimize",
-            Action::Lock => "lock",
-            Action::StartMenu => "startmenu",
-            Action::Run => "run",
-            Action::LogOff => "logoff",
-            Action::TurnOff => "turnoff",
-            Action::WindowMenu => "windowmenu",
-            Action::ShowDesktop => "showdesktop",
-            Action::TaskItem(n) => return TASKBAR_ITEMS.get(*n).copied(),
-            Action::ToggleFrame => "toggleframe",
-            Action::AlwaysOnTop => "alwaysontop",
-            Action::MiniView => "mini-view",
-            Action::Center => "center",
-            Action::Tab(false) => "tab-next",
-            Action::Tab(true) => "tab-prev",
-            Action::Desktop(crate::desktops::Step::Prev) => "desktop-prev",
-            Action::Desktop(crate::desktops::Step::Next) => "desktop-next",
-            Action::CarryToDesktop(crate::desktops::Step::Prev) => "desktop-carry-prev",
-            Action::CarryToDesktop(crate::desktops::Step::Next) => "desktop-carry-next",
-            Action::Desktop(crate::desktops::Step::To(n)) => return DESKTOP_ITEMS.get(*n).copied(),
+        match self {
+            Action::TaskItem(n) => TASKBAR_ITEMS.get(*n).copied(),
+            Action::Desktop(crate::desktops::Step::To(n)) => DESKTOP_ITEMS.get(*n).copied(),
             Action::CarryToDesktop(crate::desktops::Step::To(n)) => {
-                return DESKTOP_CARRY_ITEMS.get(*n).copied();
+                DESKTOP_CARRY_ITEMS.get(*n).copied()
             }
-            Action::AllDesktops => "all-desktops",
-            Action::DoNotDisturb => "do-not-disturb",
-            Action::Notifications => "notifications",
-            Action::NightLight => "night-light",
-            Action::Snap(crate::snap::Dir::Left) => "snap-left",
-            Action::Snap(crate::snap::Dir::Right) => "snap-right",
-            Action::Snap(crate::snap::Dir::Up) => "snap-up",
-            Action::Snap(crate::snap::Dir::Down) => "snap-down",
-            Action::SnapLayouts => "snap-layouts",
-            Action::DisplaySwitcher => "display-switcher",
-            Action::Zoom(crate::magnifier::ZoomStep::In) => "zoom-in",
-            Action::Zoom(crate::magnifier::ZoomStep::Out) => "zoom-out",
-            Action::Zoom(crate::magnifier::ZoomStep::Reset) => "zoom-reset",
-            Action::ColorFilter => "color-filter",
-            Action::ScreenReader => "screen-reader",
-            Action::Launcher => "launcher",
-            Action::TaskManager => "task-manager",
-            Action::Overview => "overview",
-            Action::FocusTaskbar => "focus-taskbar",
-            Action::FocusTray => "focus-tray",
-            Action::ClipboardHistory => "clipboard-history",
-            Action::EmojiPicker => "emoji-picker",
-            Action::NextLayout => "next-layout",
-            Action::Screenshot => "screenshot",
-            Action::ScreenshotWindow => "screenshot-window",
-            Action::ScreenshotRegion => "screenshot-region",
-            Action::ScreenshotContent => "screenshot-content",
-            Action::RecordScreen => "record-screen",
-            Action::RecordRegion => "record-region",
-            Action::ColorPicker => "color-picker",
-            Action::VolumeUp => "volume-up",
-            Action::VolumeDown => "volume-down",
-            Action::Mute => "mute",
-            Action::MicMute => "mic-mute",
-            Action::BrightnessUp => "brightness-up",
-            Action::BrightnessDown => "brightness-down",
-            Action::KbdBrightnessUp => "kbd-brightness-up",
-            Action::KbdBrightnessDown => "kbd-brightness-down",
-            Action::PlayPause => "play-pause",
-            Action::Next => "next",
-            Action::Prev => "prev",
-            Action::Stop => "stop",
-            Action::Wifi => "wifi",
-            Action::Touchpad(None) => "touchpad",
-            Action::Touchpad(Some(true)) => "touchpad-on",
-            Action::Touchpad(Some(false)) => "touchpad-off",
-            Action::Airplane => "airplane-mode",
-            Action::RotationLock => "rotation-lock",
-        })
+            a => NAMED_ACTIONS.iter().find(|(_, b)| b == a).map(|(n, _)| *n),
+        }
     }
 
     /// What a launcher file for this action holds: the command of a
@@ -187,97 +113,114 @@ impl Action {
     }
 
     pub fn from_parts(action: &str, command: Option<&str>) -> Result<Action, String> {
-        Ok(match action {
-            "spawn" => Action::Spawn(command.ok_or("spawn needs a command")?.to_string()),
-            "terminal" => Action::Terminal,
-            "explorer" => Action::Explorer,
-            "close" => Action::Close,
-            "cycle" => Action::Cycle,
-            "cycle-app" => Action::CycleApp,
-            "flip" => Action::Flip,
-            "exit" => Action::Exit,
-            "maximize" => Action::Maximize,
-            "minimize" => Action::Minimize,
-            "lock" => Action::Lock,
-            "startmenu" => Action::StartMenu,
-            "run" => Action::Run,
-            "logoff" => Action::LogOff,
-            "turnoff" => Action::TurnOff,
-            "windowmenu" => Action::WindowMenu,
-            "showdesktop" => Action::ShowDesktop,
-            "toggleframe" => Action::ToggleFrame,
-            "alwaysontop" => Action::AlwaysOnTop,
-            "mini-view" => Action::MiniView,
-            "center" => Action::Center,
-            "tab-next" => Action::Tab(false),
-            "tab-prev" => Action::Tab(true),
-            "desktop-prev" => Action::Desktop(crate::desktops::Step::Prev),
-            "desktop-next" => Action::Desktop(crate::desktops::Step::Next),
-            "desktop-carry-prev" => Action::CarryToDesktop(crate::desktops::Step::Prev),
-            "desktop-carry-next" => Action::CarryToDesktop(crate::desktops::Step::Next),
-            "all-desktops" => Action::AllDesktops,
-            "do-not-disturb" => Action::DoNotDisturb,
-            "notifications" => Action::Notifications,
-            "night-light" => Action::NightLight,
-            "snap-left" => Action::Snap(crate::snap::Dir::Left),
-            "snap-right" => Action::Snap(crate::snap::Dir::Right),
-            "snap-up" => Action::Snap(crate::snap::Dir::Up),
-            "snap-down" => Action::Snap(crate::snap::Dir::Down),
-            "snap-layouts" => Action::SnapLayouts,
-            "display-switcher" => Action::DisplaySwitcher,
-            "zoom-in" => Action::Zoom(crate::magnifier::ZoomStep::In),
-            "zoom-out" => Action::Zoom(crate::magnifier::ZoomStep::Out),
-            "zoom-reset" => Action::Zoom(crate::magnifier::ZoomStep::Reset),
-            "color-filter" => Action::ColorFilter,
-            "screen-reader" => Action::ScreenReader,
-            "launcher" => Action::Launcher,
-            "task-manager" => Action::TaskManager,
-            "overview" => Action::Overview,
-            "focus-taskbar" => Action::FocusTaskbar,
-            "focus-tray" => Action::FocusTray,
-            "clipboard-history" => Action::ClipboardHistory,
-            "emoji-picker" => Action::EmojiPicker,
-            "next-layout" => Action::NextLayout,
-            "screenshot" => Action::Screenshot,
-            "screenshot-window" => Action::ScreenshotWindow,
-            "screenshot-region" => Action::ScreenshotRegion,
-            "screenshot-content" => Action::ScreenshotContent,
-            "record-screen" => Action::RecordScreen,
-            "record-region" => Action::RecordRegion,
-            "color-picker" => Action::ColorPicker,
-            "volume-up" => Action::VolumeUp,
-            "volume-down" => Action::VolumeDown,
-            "mute" => Action::Mute,
-            "mic-mute" => Action::MicMute,
-            "brightness-up" => Action::BrightnessUp,
-            "brightness-down" => Action::BrightnessDown,
-            "kbd-brightness-up" => Action::KbdBrightnessUp,
-            "kbd-brightness-down" => Action::KbdBrightnessDown,
-            "play-pause" => Action::PlayPause,
-            "next" => Action::Next,
-            "prev" => Action::Prev,
-            "stop" => Action::Stop,
-            "wifi" => Action::Wifi,
-            "touchpad" => Action::Touchpad(None),
-            "touchpad-on" => Action::Touchpad(Some(true)),
-            "touchpad-off" => Action::Touchpad(Some(false)),
-            "airplane-mode" => Action::Airplane,
-            "rotation-lock" => Action::RotationLock,
-            other => {
-                let at = |names: &[&str]| names.iter().position(|n| *n == other);
-                if let Some(n) = at(&TASKBAR_ITEMS) {
-                    Action::TaskItem(n)
-                } else if let Some(n) = at(&DESKTOP_ITEMS) {
-                    Action::Desktop(crate::desktops::Step::To(n))
-                } else if let Some(n) = at(&DESKTOP_CARRY_ITEMS) {
-                    Action::CarryToDesktop(crate::desktops::Step::To(n))
-                } else {
-                    return Err(format!("unknown action {other:?}"));
-                }
-            }
-        })
+        if action == "spawn" {
+            return Ok(Action::Spawn(
+                command.ok_or("spawn needs a command")?.to_string(),
+            ));
+        }
+        if let Some((_, a)) = NAMED_ACTIONS.iter().find(|(n, _)| *n == action) {
+            return Ok(a.clone());
+        }
+        let at = |names: &[&str]| names.iter().position(|n| *n == action);
+        if let Some(n) = at(&TASKBAR_ITEMS) {
+            Ok(Action::TaskItem(n))
+        } else if let Some(n) = at(&DESKTOP_ITEMS) {
+            Ok(Action::Desktop(crate::desktops::Step::To(n)))
+        } else if let Some(n) = at(&DESKTOP_CARRY_ITEMS) {
+            Ok(Action::CarryToDesktop(crate::desktops::Step::To(n)))
+        } else {
+            Err(format!("unknown action {action:?}"))
+        }
     }
 }
+
+/// Every action a fixed config name stands for, with the name; the numbered ones take theirs
+/// from `TASKBAR_ITEMS`, `DESKTOP_ITEMS` and `DESKTOP_CARRY_ITEMS`.
+pub(crate) const NAMED_ACTIONS: &[(&str, Action)] = &[
+    ("terminal", Action::Terminal),
+    ("explorer", Action::Explorer),
+    ("close", Action::Close),
+    ("cycle", Action::Cycle),
+    ("cycle-app", Action::CycleApp),
+    ("flip", Action::Flip),
+    ("exit", Action::Exit),
+    ("maximize", Action::Maximize),
+    ("minimize", Action::Minimize),
+    ("lock", Action::Lock),
+    ("startmenu", Action::StartMenu),
+    ("run", Action::Run),
+    ("logoff", Action::LogOff),
+    ("turnoff", Action::TurnOff),
+    ("windowmenu", Action::WindowMenu),
+    ("showdesktop", Action::ShowDesktop),
+    ("toggleframe", Action::ToggleFrame),
+    ("alwaysontop", Action::AlwaysOnTop),
+    ("mini-view", Action::MiniView),
+    ("center", Action::Center),
+    ("tab-next", Action::Tab(false)),
+    ("tab-prev", Action::Tab(true)),
+    ("desktop-prev", Action::Desktop(crate::desktops::Step::Prev)),
+    ("desktop-next", Action::Desktop(crate::desktops::Step::Next)),
+    (
+        "desktop-carry-prev",
+        Action::CarryToDesktop(crate::desktops::Step::Prev),
+    ),
+    (
+        "desktop-carry-next",
+        Action::CarryToDesktop(crate::desktops::Step::Next),
+    ),
+    ("all-desktops", Action::AllDesktops),
+    ("do-not-disturb", Action::DoNotDisturb),
+    ("notifications", Action::Notifications),
+    ("night-light", Action::NightLight),
+    ("snap-left", Action::Snap(crate::snap::Dir::Left)),
+    ("snap-right", Action::Snap(crate::snap::Dir::Right)),
+    ("snap-up", Action::Snap(crate::snap::Dir::Up)),
+    ("snap-down", Action::Snap(crate::snap::Dir::Down)),
+    ("snap-layouts", Action::SnapLayouts),
+    ("display-switcher", Action::DisplaySwitcher),
+    ("zoom-in", Action::Zoom(crate::magnifier::ZoomStep::In)),
+    ("zoom-out", Action::Zoom(crate::magnifier::ZoomStep::Out)),
+    (
+        "zoom-reset",
+        Action::Zoom(crate::magnifier::ZoomStep::Reset),
+    ),
+    ("color-filter", Action::ColorFilter),
+    ("screen-reader", Action::ScreenReader),
+    ("launcher", Action::Launcher),
+    ("task-manager", Action::TaskManager),
+    ("overview", Action::Overview),
+    ("focus-taskbar", Action::FocusTaskbar),
+    ("focus-tray", Action::FocusTray),
+    ("clipboard-history", Action::ClipboardHistory),
+    ("emoji-picker", Action::EmojiPicker),
+    ("next-layout", Action::NextLayout),
+    ("screenshot", Action::Screenshot),
+    ("screenshot-window", Action::ScreenshotWindow),
+    ("screenshot-region", Action::ScreenshotRegion),
+    ("screenshot-content", Action::ScreenshotContent),
+    ("record-screen", Action::RecordScreen),
+    ("record-region", Action::RecordRegion),
+    ("color-picker", Action::ColorPicker),
+    ("volume-up", Action::VolumeUp),
+    ("volume-down", Action::VolumeDown),
+    ("mute", Action::Mute),
+    ("mic-mute", Action::MicMute),
+    ("brightness-up", Action::BrightnessUp),
+    ("brightness-down", Action::BrightnessDown),
+    ("kbd-brightness-up", Action::KbdBrightnessUp),
+    ("kbd-brightness-down", Action::KbdBrightnessDown),
+    ("play-pause", Action::PlayPause),
+    ("next", Action::Next),
+    ("prev", Action::Prev),
+    ("stop", Action::Stop),
+    ("wifi", Action::Wifi),
+    ("touchpad", Action::Touchpad(None)),
+    ("touchpad-on", Action::Touchpad(Some(true))),
+    ("touchpad-off", Action::Touchpad(Some(false))),
+    ("airplane-mode", Action::Airplane),
+    ("rotation-lock", Action::RotationLock),
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Keybind {
