@@ -639,7 +639,7 @@ pub fn access(
                 Face::Analog => format!("{}:{:02}", c.time.0, c.time.1),
                 Face::Digital => format!("{}, {}", c.text, c.date),
             };
-            tree.push(id, "time", access::label(inner, &said, true));
+            tree.push(id, "time", access::static_text(inner, &said, true));
         }
         Content::Calendar(cal) => {
             let title_h = cm.text.len(TITLE_H);

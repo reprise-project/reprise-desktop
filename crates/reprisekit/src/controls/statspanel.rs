@@ -114,7 +114,7 @@ pub fn access(p: &StatsPanel, r: Rect, tree: &mut Tree, parent: NodeId) -> NodeI
     let id = tree.push(parent, "stats", access::named(Role::Group, r, &p.title));
     for (i, (row, (l, v))) in p.rows.iter().zip(layout(p, r).rows).enumerate() {
         let line = format!("{}: {}", row.label, row.value);
-        tree.push(id, i, access::label(l.union(&v), &line, true));
+        tree.push(id, i, access::static_text(l.union(&v), &line, true));
     }
     id
 }

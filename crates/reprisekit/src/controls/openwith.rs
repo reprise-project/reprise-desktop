@@ -660,7 +660,7 @@ impl OpenWith {
         tree.push(
             root,
             "text",
-            access::label(lay.prompt.union(&lay.file), &words, true),
+            access::static_text(lay.prompt.union(&lay.file), &words, true),
         );
         let group = tree.push(root, "group", access::named(Role::Group, lay.group, GROUP));
         let list = grouplist::access(&self.list, &lay.list, tree, group, "list");

@@ -258,7 +258,11 @@ pub fn access(k: &KeySheet, lay: &Layout, at: Rect, tree: &mut Tree, parent: Nod
         let gid = tree.push(id, gi, access::named(Role::Group, shift(span), &g.title));
         for (i, (b, (keys, what))) in g.rows.iter().zip(rows).enumerate() {
             let line = format!("{}: {}", b.keys, b.what);
-            tree.push(gid, i, access::label(shift(keys.union(what)), &line, true));
+            tree.push(
+                gid,
+                i,
+                access::static_text(shift(keys.union(what)), &line, true),
+            );
         }
     }
     id
