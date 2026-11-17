@@ -15,7 +15,7 @@ impl State {
             self.dialogs.active,
             crate::layer::holds_keyboard(self),
             &self.focus_order,
-            |p| self.win(p).is_some_and(|p| p.mapped && !p.hidden()) && self.on_current_desktop(p),
+            |p| self.shown_here(p),
         );
         match top {
             Next::Keep => {}
@@ -30,6 +30,25 @@ impl State {
                 self.restack();
             }
         }
+    }
+
+    fn shown_here(&self, w: WindowId) -> bool {
+        self.win(w).is_some_and(|x| x.mapped && !x.hidden()) && self.on_current_desktop(w)
+    }
+
+    /// Notes focused `w` leaving ([`mapfocus::Handover`]), once `focus_order` has dropped it: the
+    /// keyboard goes where [`State::focus_top`] puts it.
+    pub(crate) fn note_handover(&mut self, w: WindowId) {
+        let heir = match self.dialogs.active || crate::layer::holds_keyboard(self) {
+            true => None,
+            false => (self.focus_order.iter().rev().copied()).find(|&p| self.shown_here(p)),
+        };
+        self.focus_handover =
+            (self.win(w).and_then(|x| x.wl_client())).map(|c| mapfocus::Handover {
+                client: client_key(&c),
+                heir,
+                at: std::time::Instant::now(),
+            });
     }
 
     /// A press on the desktop gives it the keyboard: dialogs and the focused window
@@ -189,6 +208,14 @@ impl State {
             |s: &State, w: WindowId| s.win(w).and_then(|x| x.wl_client()).map(|c| client_key(&c));
         let pid = |s: &State, w: WindowId| s.client_pid(w);
         let new_pid = pid(self, w);
+        let reprise = self.dialogs.active || self.bar_shared.keys.is_some();
+        let handed = !reprise
+            && (self.focus_handover).is_some_and(|h| {
+                h.hands_to(client(self, w), self.focused, std::time::Instant::now())
+            });
+        if handed {
+            self.focus_handover = None;
+        }
         let (lineage, session) = new_pid.map(mapfocus::lineage).unwrap_or_default();
         let launch = mapfocus::take_recorded_launch(&lineage, session);
         if let Some(win) = self.win_mut(w) {
@@ -203,6 +230,7 @@ impl State {
             prompt: self.prompt_pid(w).is_some_and(|pid| {
                 mapfocus::is_prompt_window(pid, &self.win(w).map(|x| x.title()).unwrap_or_default())
             }),
+            handed,
         };
         let window = self
             .focused
@@ -212,7 +240,6 @@ impl State {
                 pid: pid(self, f),
                 owns: self.is_owner_of(f, w),
             });
-        let reprise = self.dialogs.active || self.bar_shared.keys.is_some();
         let holder = mapfocus::holder(reprise, window);
         let takes = mapfocus::takes_focus(&new, holder)
             || holder
@@ -421,6 +448,82 @@ mod tests {
         c.activate(&token, explorer);
         h.roundtrip(&mut c);
         assert_eq!(h.state.focused, Some(explorer.id), "the token raises");
+    }
+
+    /// Pids no process has, so neither program descends from the other.
+    const TERMINAL: i32 = i32::MAX - 701;
+    const JOB: i32 = i32::MAX - 702;
+    const OTHER: i32 = i32::MAX - 703;
+
+    #[test]
+    fn a_box_mapping_as_its_programs_answered_box_leaves_takes_the_keyboard_back() {
+        use crate::window::FIXED_DIALOG_TAG;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut term = h.connect_as(TERMINAL);
+        let terminal = h.map_toplevel(&mut term, "foot", 400, 300);
+        let mut job = h.connect_as(JOB);
+        let first = h.map_dialog(&mut job, "explorer", None, FIXED_DIALOG_TAG, (200, 100));
+        assert_eq!(
+            h.state.focused,
+            Some(terminal.id),
+            "a background box maps behind"
+        );
+        h.state.focus_window(first.id);
+        job.destroy(first);
+        h.roundtrip(&mut job);
+        assert_eq!(
+            h.state.focused,
+            Some(terminal.id),
+            "the terminal has it back"
+        );
+        let next = h.map_dialog(&mut job, "explorer", None, FIXED_DIALOG_TAG, (200, 100));
+        assert_eq!(
+            h.state.focused,
+            Some(next.id),
+            "the box after it takes the keyboard its program had"
+        );
+    }
+
+    #[test]
+    fn a_box_mapping_late_or_after_the_user_moved_on_maps_behind() {
+        use crate::window::FIXED_DIALOG_TAG;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut term = h.connect_as(TERMINAL);
+        let terminal = h.map_toplevel(&mut term, "foot", 400, 300);
+        let mut job = h.connect_as(JOB);
+        let answered = |h: &mut crate::harness::Harness, job: &mut crate::harness::TestClient| {
+            let b = h.map_dialog(job, "explorer", None, FIXED_DIALOG_TAG, (200, 100));
+            h.state.focus_window(b.id);
+            job.destroy(b);
+            h.roundtrip(job);
+        };
+        answered(&mut h, &mut job);
+        if let Some(handover) = &mut h.state.focus_handover {
+            handover.at -= crate::mapfocus::HANDOVER;
+        }
+        h.map_dialog(&mut job, "explorer", None, FIXED_DIALOG_TAG, (200, 100));
+        assert_eq!(h.state.focused, Some(terminal.id), "a box a moment late");
+
+        answered(&mut h, &mut job);
+        let editor = h.map_toplevel(&mut term, "foot", 400, 300);
+        assert_eq!(
+            h.state.focused,
+            Some(editor.id),
+            "the user turned to another window"
+        );
+        h.map_dialog(&mut job, "explorer", None, FIXED_DIALOG_TAG, (200, 100));
+        assert_eq!(h.state.focused, Some(editor.id), "which keeps the keyboard");
+
+        answered(&mut h, &mut job);
+        let mut other = h.connect_as(OTHER);
+        h.map_dialog(&mut other, "other", None, FIXED_DIALOG_TAG, (200, 100));
+        assert_eq!(
+            h.state.focused,
+            Some(editor.id),
+            "another program's box maps behind"
+        );
     }
 }
 

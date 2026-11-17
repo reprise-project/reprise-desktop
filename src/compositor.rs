@@ -245,6 +245,8 @@ pub struct State {
     pub focused: Option<WindowId>,
     pub frame_batch: crate::window::FrameBatch,
     pub focus_order: Vec<WindowId>,
+    /// The last window that left with the keyboard, for its program's next window.
+    pub focus_handover: Option<crate::mapfocus::Handover>,
     /// The window whose caption button is lit (`State::frame_hover`).
     pub hot_frame: Option<WindowId>,
     /// Windows whose caption buttons are still fading (`hoverfade`).
@@ -701,6 +703,7 @@ impl State {
             focused: None,
             frame_batch: Default::default(),
             focus_order: Vec::new(),
+            focus_handover: None,
             hot_frame: None,
             fading_frames: Vec::new(),
             shadows: Default::default(),
