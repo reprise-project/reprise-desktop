@@ -294,17 +294,41 @@ impl BtApp {
         let Some(body) = error else {
             return;
         };
-        let title = bz::failure_title(&bz::Cmd::Connect(device.clone()));
+        let cmd = bz::Cmd::Connect(device.clone());
         if self.disconnected.contains(&device) {
+            let title = bz::failure_title(&cmd);
             log::info!("{title} {device} after a Disconnect: {body}");
             return;
         }
-        self.failed(title.into(), body);
+        self.failed(&cmd, body);
     }
 
-    fn failed(&mut self, title: String, body: String) {
+    /// A failure covers the window it is about while that one is open: its device's sheet, the
+    /// wizard's search, else the folder.
+    fn failed(&mut self, cmd: &bz::Cmd, body: String) {
+        let title = bz::failure_title(cmd);
         log::warn!("{title}: {body}");
-        self.error.show(&title, body, None);
+        let sheet_of = |d: &String| self.props.as_ref().is_some_and(|p| &p.path == d);
+        let over = match cmd {
+            bz::Cmd::Connect(d)
+            | bz::Cmd::Disconnect(d)
+            | bz::Cmd::SetTrusted { device: d, .. }
+            | bz::Cmd::SetAlias { device: d, .. }
+                if sheet_of(d) =>
+            {
+                PROPS
+            }
+            bz::Cmd::StartDiscovery(_) if self.wizard.is_some() => WIZARD,
+            _ => repriseapp::MAIN,
+        };
+        self.error.show_over(over, title, body, None);
+    }
+
+    /// Takes the failures over a sheet or wizard that closed.
+    fn withdraw_orphans(&mut self) {
+        let (props, wizard) = (self.props.is_some(), self.wizard.is_some());
+        self.error
+            .withdraw(|w| (w == PROPS && !props) || (w == WIZARD && !wizard));
     }
 
     /// Drains the bus thread's and tray's channels, and redraws when either had something. Quits
@@ -316,7 +340,7 @@ impl BtApp {
             any = true;
             match msg {
                 bz::BzMsg::Snapshot(s) => latest = Some(s),
-                bz::BzMsg::Failed { title, body } => self.failed(title, body),
+                bz::BzMsg::Failed { cmd, body } => self.failed(&cmd, body),
                 bz::BzMsg::Connected { device, error } => self.connected(device, error),
                 bz::BzMsg::Paired {
                     device,
@@ -1105,7 +1129,9 @@ impl App for BtApp {
         self.text = Some(ctx.text.clone());
         self.forms = ctx.forms();
         if matches!(ev, Event::Wake) {
-            return self.wake(ctx);
+            let reply = self.wake(ctx);
+            self.withdraw_orphans();
+            return reply;
         }
         let clip = form_clipboard(self.focused_edit(win), &ev);
         let mut reply = match win {
@@ -1118,6 +1144,7 @@ impl App for BtApp {
             _ => self.main_event(ev, ctx),
         }
         .with_clipboard(clip);
+        self.withdraw_orphans();
         let size = self.forms.text.size(devices::CLIENT);
         reply.ask_size(&mut self.asked, size);
         reply
@@ -1185,6 +1212,11 @@ impl repriseapp::Extended for BtApp {
 
     fn hidden(&self) -> bool {
         self.hidden
+    }
+
+    /// A failure covers the window it is about ([`BtApp::failed`]), every other child the folder.
+    fn parent(&self, win: WinId) -> Option<WinId> {
+        Some(self.error.parent(win).unwrap_or(repriseapp::MAIN))
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
@@ -1489,6 +1521,54 @@ mod tests {
             Some("Could not connect"),
             "a Connect failing on its own shows a box"
         );
+    }
+
+    /// Hands the program the bus thread's `msgs` in one wake.
+    fn bus_says(a: &mut BtApp, msgs: impl IntoIterator<Item = bz::BzMsg>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        for m in msgs {
+            tx.send(m).unwrap();
+        }
+        a.bz_rx = Some(rx);
+        a.event(MAIN, Event::Wake, &mut test_ctx());
+    }
+
+    #[test]
+    fn a_failure_covers_the_sheet_or_wizard_it_is_about_and_leaves_with_it() {
+        let mut a = app();
+        a.snapshot_in(snap(true));
+        a.open_props("/a/cans");
+        a.open_wizard();
+        let failed = |cmd| bz::BzMsg::Failed {
+            cmd,
+            body: "Not ready".into(),
+        };
+        let alias = bz::Cmd::SetAlias {
+            device: "/a/cans".into(),
+            alias: "Mine".into(),
+        };
+        let power = bz::Cmd::SetPowered {
+            adapter: "/a".into(),
+            on: true,
+        };
+        let search = || bz::Cmd::StartDiscovery("/a".into());
+        bus_says(&mut a, [failed(alias), failed(search()), failed(power)]);
+        a.connected("/a/cans".into(), Some("timed out".into()));
+        let over = |a: &BtApp| a.parent(a.error.win()?);
+        assert_eq!(over(&a), Some(PROPS), "a change from the sheet covers it");
+        a.error.close();
+        assert_eq!(over(&a), Some(WIZARD), "the search covers the wizard");
+        a.error.close();
+        assert_eq!(over(&a), Some(MAIN), "the adapter's covers the folder");
+        a.error.close();
+        assert_eq!(over(&a), Some(PROPS), "a connect covers its device's sheet");
+
+        let mut ctx = test_ctx();
+        a.event(PROPS, Event::CloseRequest, &mut ctx);
+        assert!(!a.error.is_shown(), "the box left with the sheet");
+        bus_says(&mut a, [failed(search())]);
+        a.event(WIZARD, Event::CloseRequest, &mut ctx);
+        assert!(!a.error.is_shown(), "the box left with the wizard");
     }
 
     #[test]

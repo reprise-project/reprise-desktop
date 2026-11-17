@@ -337,10 +337,7 @@ fn commands(
                 Cmd::Airplane(on) => {
                     if let Err(body) = reprisebus::airplane::set(&bus, on).await {
                         log::warn!("{cmd:?} failed: {body}");
-                        poster.post(BzMsg::Failed {
-                            title: failure_title(&cmd).into(),
-                            body,
-                        });
+                        poster.post(BzMsg::Failed { cmd, body });
                     }
                 }
                 Cmd::Connect(device) => {
@@ -359,8 +356,8 @@ fn commands(
                         log::warn!("{cmd:?} failed: {e}");
                         if !quiet(&cmd) {
                             poster.post(BzMsg::Failed {
-                                title: failure_title(&cmd).into(),
                                 body: error_of(&e),
+                                cmd,
                             });
                         }
                     }
