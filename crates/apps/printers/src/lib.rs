@@ -23,7 +23,7 @@ mod tray;
 mod wins;
 mod worker;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
@@ -120,6 +120,9 @@ struct PrintersApp {
     folder: folder::Folder,
     queues: Wins<queue::Queue>,
     props: Wins<props::PropsSheet>,
+    /// A sheet opened from a queue window, with that window: it covers it and closes with it.
+    /// Any other sheet is the folder's.
+    sheet_over: HashMap<WinId, WinId>,
     ids: Ids,
     wizard: Option<addwiz::AddWizard>,
     browse: Option<(Host, FileDlg)>,
@@ -203,8 +206,25 @@ impl PrintersApp {
         self.note.show_over(over.unwrap_or(MAIN), title, body, None);
     }
 
-    /// Takes the notices over a sheet or queue window that closed.
-    fn withdraw_notices(&mut self) {
+    /// Closes the sheets over a queue window that closed, then takes the notices over a sheet or
+    /// queue window that closed.
+    fn withdraw_orphans(&mut self) {
+        let (queues, props) = (&self.queues, &self.props);
+        let mut orphans = Vec::new();
+        self.sheet_over
+            .retain(|&sheet, queue| match queues.get(*queue) {
+                None => {
+                    orphans.push(sheet);
+                    false
+                }
+                Some(_) => props.get(sheet).is_some(),
+            });
+        for &sheet in &orphans {
+            self.props.close(sheet);
+        }
+        if !orphans.is_empty() {
+            self.sync_watching();
+        }
         let (queues, props) = (&self.queues, &self.props);
         self.note
             .withdraw(|w| w != MAIN && queues.get(w).is_none() && props.get(w).is_none());
@@ -257,7 +277,7 @@ impl PrintersApp {
             }
             None => !snap.running || renaming.contains(&p.printer),
         });
-        self.withdraw_notices();
+        self.withdraw_orphans();
         self.push_tray();
     }
 
@@ -590,8 +610,8 @@ impl PrintersApp {
                 self.send(Cmd::CancelAll(p));
                 Reply::redraw()
             }
-            O::Sharing(p) => self.props_opened(&p, props::SHARING),
-            O::Properties(p) => self.props_opened(&p, props::GENERAL),
+            O::Sharing(p) => self.props_opened(&p, props::SHARING, MAIN),
+            O::Properties(p) => self.props_opened(&p, props::GENERAL, MAIN),
             O::Delete(p) => {
                 self.ask_delete(p, ctx);
                 Reply::redraw_all()
@@ -607,8 +627,16 @@ impl PrintersApp {
         }
     }
 
-    fn props_opened(&mut self, printer: &str, tab: usize) -> Reply {
-        let raise = self.open_props(printer, tab).and_then(Opened::raise);
+    /// Opens or raises `printer`'s sheet from window `from`. A sheet opened from a queue window
+    /// stays that window's while it is open, wherever it is raised from later.
+    fn props_opened(&mut self, printer: &str, tab: usize, from: WinId) -> Reply {
+        let opened = self.open_props(printer, tab);
+        if let Some(Opened::New(sheet)) = opened
+            && from != MAIN
+        {
+            self.sheet_over.insert(sheet, from);
+        }
+        let raise = opened.and_then(Opened::raise);
         Reply {
             raise,
             ..Reply::redraw_all()
@@ -670,7 +698,13 @@ impl PrintersApp {
             Event::Pointer(PointerInput::ScrollAcross { cols, .. }) => q.wheel_across(cols, ctx),
             _ => return Reply::none(),
         };
-        let printer = q.printer.clone();
+        self.queue_outcome(win, out, ctx)
+    }
+
+    fn queue_outcome(&mut self, win: WinId, out: queue::Outcome, ctx: &mut Ctx) -> Reply {
+        let Some(printer) = self.queues.get(win).map(|q| q.printer.clone()) else {
+            return Reply::none();
+        };
         use queue::Outcome as O;
         match out {
             O::None => Reply::none(),
@@ -689,8 +723,8 @@ impl PrintersApp {
             O::Pause => self.folder_outcome(folder::Outcome::Pause(printer), ctx),
             O::Resume => self.folder_outcome(folder::Outcome::Resume(printer), ctx),
             O::CancelAll => self.folder_outcome(folder::Outcome::CancelAll(printer), ctx),
-            O::Sharing => self.folder_outcome(folder::Outcome::Sharing(printer), ctx),
-            O::Properties => self.folder_outcome(folder::Outcome::Properties(printer), ctx),
+            O::Sharing => self.props_opened(&printer, props::SHARING, win),
+            O::Properties => self.props_opened(&printer, props::GENERAL, win),
         }
     }
 
@@ -969,7 +1003,7 @@ impl App for PrintersApp {
             w if self.note.owns(w) => self.note.event(w, &ev, &ctx.text, &self.forms),
             _ => self.main_event(ev, ctx),
         };
-        self.withdraw_notices();
+        self.withdraw_orphans();
         reply.with_clipboard(clip)
     }
 
@@ -1040,6 +1074,9 @@ impl repriseapp::Extended for PrintersApp {
     fn parent(&self, win: WinId) -> Option<WinId> {
         if let Some(over) = self.note.parent(win) {
             return Some(over);
+        }
+        if let Some(&queue) = self.sheet_over.get(&win) {
+            return Some(queue);
         }
         let Some(main) = self.confirm.parent(win) else {
             return Some(MAIN);
@@ -1552,6 +1589,54 @@ mod tests {
             "Inkjet's notice left with its queue"
         );
         assert_eq!(notice_over(&app), Some(MAIN), "Office's notice stays");
+    }
+
+    #[test]
+    fn a_sheet_is_owned_by_the_window_it_was_opened_from_and_leaves_with_it() {
+        let mut app = two_printers();
+        let mut ctx = test_ctx(queue::CLIENT);
+        let laser_queue = app.open_queue("Laser").id();
+        let inkjet_queue = app.open_queue("Inkjet").id();
+        app.queue_outcome(laser_queue, queue::Outcome::Properties, &mut ctx);
+        let laser = app.props.of("Laser").expect("Laser's sheet opened");
+        app.folder_outcome(folder::Outcome::Properties("Inkjet".into()), &mut ctx);
+        let inkjet = app.props.of("Inkjet").expect("Inkjet's sheet opened");
+        assert_eq!(
+            app.parent(laser),
+            Some(laser_queue),
+            "the queue window it opened from"
+        );
+        assert_eq!(app.parent(inkjet), Some(MAIN), "opened from the folder");
+        assert_eq!(
+            app.parent(laser_queue),
+            Some(MAIN),
+            "a queue window is the folder's"
+        );
+
+        app.folder_outcome(folder::Outcome::Properties("Laser".into()), &mut ctx);
+        app.queue_outcome(inkjet_queue, queue::Outcome::Sharing, &mut ctx);
+        assert_eq!(
+            app.parent(laser),
+            Some(laser_queue),
+            "its queue window, raised from the folder"
+        );
+        assert_eq!(
+            app.parent(inkjet),
+            Some(MAIN),
+            "the folder, raised from its queue"
+        );
+
+        worker_says(&mut app, [Msg::TestPage("Laser".into())]);
+        assert_eq!(
+            notice_over(&app),
+            Some(laser),
+            "the notice covers the sheet"
+        );
+        app.event(laser_queue, Event::CloseRequest, &mut ctx);
+        assert_eq!(app.props.of("Laser"), None, "left with its queue window");
+        assert!(!app.note.is_shown(), "the notice left with the sheet");
+        app.event(inkjet_queue, Event::CloseRequest, &mut ctx);
+        assert_eq!(app.props.of("Inkjet"), Some(inkjet), "the folder's stays");
     }
 
     #[test]
