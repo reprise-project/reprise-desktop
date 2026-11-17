@@ -400,7 +400,9 @@ impl Explorer {
     }
 
     /// Asks about the next clash of `pending`. A closed window has no one to ask, so it answers
-    /// No to each: nothing is replaced and the rest is put.
+    /// No to each: nothing is replaced and the rest is put. Behind a box up the paste waits its
+    /// turn, except behind a busy Connect to Server, whose place the prompt takes
+    /// ([`Explorer::raise`]).
     pub(crate) fn ask_replace(
         &mut self,
         mut pending: PendingPut,
@@ -410,11 +412,10 @@ impl Explorer {
         while self.closing && matches!(asker.step(), Step::Ask { .. }) {
             asker.answer(Answer::No);
         }
+        let waits = !self.dialogs.is_empty() && !self.answered && !self.connecting_up();
         match asker.step() {
             Step::Cancelled => Reply::none(),
-            Step::Ask { .. } if !self.dialogs.is_empty() && !self.answered => {
-                self.raise(Dialog::Paste(Box::new((pending, asker))))
-            }
+            Step::Ask { .. } if waits => self.raise(Dialog::Paste(Box::new((pending, asker)))),
             Step::Ask {
                 index,
                 clash,

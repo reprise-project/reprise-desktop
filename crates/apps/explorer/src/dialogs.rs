@@ -366,15 +366,26 @@ impl Explorer {
 
     /// The one way a box goes up ([`repriseapp::asks::Queue`]): behind the box up, which it never replaces, and
     /// behind the boxes waiting, or ahead of the plain ones when its owner holds for it. A box an
-    /// answer raises takes the answered box's place ([`Explorer::take_up`]).
+    /// answer raises takes the answered box's place ([`Explorer::take_up`]). Connect to Server
+    /// showing a connection under way is the one box a held box replaces: it waits behind every
+    /// box raised so far, so a job's question is never stuck behind it.
     pub(crate) fn raise(&mut self, d: Dialog) -> Reply {
-        let up = self.dialogs.is_empty() || self.answered;
+        let mut up = self.dialogs.is_empty() || self.answered;
         if std::mem::take(&mut self.answered) {
             self.dialogs.restore(d);
             // `restore` gives back the window of the box taken; this one is another box.
             if self.answered_in == Some(self.dialog_win()) {
                 self.flip = !self.flip;
             }
+        } else if d.held() && self.connecting_up() {
+            let connect = self.dialogs.close();
+            self.dialogs.restore(d);
+            // `restore` gives back Connect to Server's window; the held box maps one of its own.
+            self.flip = !self.flip;
+            if let Some(connect) = connect {
+                self.dialogs.raise(connect);
+            }
+            up = true;
         } else if d.held() {
             self.dialogs.raise_held(d);
         } else {
