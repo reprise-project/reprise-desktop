@@ -32,7 +32,7 @@ impl State {
         }
     }
 
-    fn shown_here(&self, w: WindowId) -> bool {
+    pub(crate) fn shown_here(&self, w: WindowId) -> bool {
         self.win(w).is_some_and(|x| x.mapped)
             && !self.minimized_along_chain(w)
             && self.on_current_desktop(w)
