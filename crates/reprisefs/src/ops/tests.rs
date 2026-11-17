@@ -1483,6 +1483,60 @@ fn a_failed_folder_copy_names_the_entry_by_its_path_under_the_folder() {
 }
 
 #[test]
+fn a_merge_paste_names_the_folder_it_cannot_read_by_its_path_under_the_folder() {
+    use std::os::unix::fs::PermissionsExt;
+    // SAFETY: geteuid takes no arguments and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        // root reads the unreadable folder.
+        return;
+    }
+    let t = tempfile::tempdir().unwrap();
+    let (src, dest) = (t.path().join("src"), t.path().join("dest"));
+    fs::create_dir_all(src.join("a/sub")).unwrap();
+    fs::create_dir_all(dest.join("src")).unwrap();
+    let shut = |p: &Path, mode| fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
+    let merge = || {
+        let onto = yes(Seen::of(&dest.join("src")));
+        copy_failure(&src, &dest, onto.as_ref())
+    };
+    let denied = "Permission denied (os error 13)";
+
+    shut(&src.join("a"), 0o300);
+    let got = merge();
+    shut(&src.join("a"), 0o755);
+    assert_eq!(
+        got,
+        (
+            format!("Cannot copy src: a: {denied}"),
+            io::ErrorKind::PermissionDenied
+        )
+    );
+
+    shut(&src.join("a/sub"), 0o300);
+    let got = merge();
+    shut(&src.join("a/sub"), 0o755);
+    assert_eq!(
+        got,
+        (
+            format!("Cannot copy src: a/sub: {denied}"),
+            io::ErrorKind::PermissionDenied
+        )
+    );
+
+    shut(&src, 0o300);
+    let got = merge();
+    shut(&src, 0o755);
+    assert_eq!(
+        got,
+        (
+            format!("Cannot copy src: {denied}"),
+            io::ErrorKind::PermissionDenied
+        )
+    );
+    assert_eq!(fs::read_dir(dest.join("src")).unwrap().count(), 0);
+}
+
+#[test]
 fn a_copied_read_only_folder_keeps_its_mode() {
     use std::os::unix::fs::PermissionsExt;
     let t = tempfile::tempdir().unwrap();

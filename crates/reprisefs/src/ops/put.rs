@@ -65,6 +65,16 @@ impl From<io::Error> for PutError {
     }
 }
 
+impl PutError {
+    /// [`in_tree`] of an io error; the other kinds name no entry.
+    fn in_tree(self, under: &Path) -> Self {
+        match self {
+            PutError::Io(e) => PutError::Io(in_tree(under, e)),
+            other => other,
+        }
+    }
+}
+
 /// Whether `src` and `dir` sit on the same file system, which is what
 /// decides a plain left drop: a move inside a drive, a copy between
 /// drives. Anything unreadable answers "the same", the within-a-drive
@@ -511,6 +521,8 @@ fn merges(kind: std::fs::FileType, moving: bool) -> bool {
 /// - `crossing` (a move to another drive, which copies) meets a FIFO or
 ///   a socket, which the copy cannot carry, or a read-only folder, whose
 ///   entries could not be removed after the copy.
+///
+/// An io error inside `src` names its entry by its path under `src` ([`in_tree`]).
 pub(super) fn preflight_merge(
     src: &Path,
     dest: Option<&Path>,
@@ -533,7 +545,8 @@ pub(super) fn preflight_merge(
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let from = entry.path();
-        let meta = std::fs::symlink_metadata(&from)?;
+        let named = |e: PutError| e.in_tree(Path::new(&entry.file_name()));
+        let meta = std::fs::symlink_metadata(&from).map_err(|e| named(e.into()))?;
         let kind = meta.file_type();
         let plain = kind.is_dir() || kind.is_file() || kind.is_symlink();
         if crossing && !plain {
@@ -554,7 +567,8 @@ pub(super) fn preflight_merge(
             .and_then(|t| std::fs::symlink_metadata(t).ok());
         match (&there_meta, kind.is_dir()) {
             (Some(t), true) if t.is_dir() => {
-                preflight_merge(&from, there.as_deref(), moving, crossing, depth + 1)?
+                preflight_merge(&from, there.as_deref(), moving, crossing, depth + 1)
+                    .map_err(named)?
             }
             (Some(t), false) if !t.is_dir() => {
                 if is_itself(&from, &meta, t) {
@@ -562,7 +576,9 @@ pub(super) fn preflight_merge(
                 }
             }
             (Some(_), _) => return Err(PutError::Occupied),
-            (None, true) => preflight_merge(&from, None, moving, crossing, depth + 1)?,
+            (None, true) => {
+                preflight_merge(&from, None, moving, crossing, depth + 1).map_err(named)?
+            }
             (None, false) => {}
         }
     }
@@ -678,10 +694,7 @@ fn merge_into(
             }
             Ok(())
         };
-        one().map_err(|e| match e {
-            PutError::Io(e) => PutError::Io(in_tree(Path::new(&entry.file_name()), e)),
-            other => other,
-        })?;
+        one().map_err(|e| e.in_tree(Path::new(&entry.file_name())))?;
     }
     // Everything not kept is in `dest` by now; a folder that will not go (a
     // file appeared in it meanwhile) is left behind rather than failing a
