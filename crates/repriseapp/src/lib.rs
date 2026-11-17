@@ -40,6 +40,7 @@ pub mod oneshot;
 mod ontop;
 pub mod openwith;
 mod outputmgmt;
+mod outputtrial;
 pub mod pathjob;
 mod pool;
 mod primary;

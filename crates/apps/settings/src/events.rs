@@ -437,6 +437,7 @@ impl SettingsApp {
         match ev {
             Event::Heads(heads) => self.heads_changed(heads, &mut ctx.heads),
             Event::HeadsApplied { serial, ok } => self.heads_applied(serial, ok, &mut ctx.heads),
+            Event::TrialEnded(end) => self.trial_ended(end),
             Event::Tick => {
                 let mut r = self.display_tick(&mut ctx.heads);
                 self.saver_ticking = false;

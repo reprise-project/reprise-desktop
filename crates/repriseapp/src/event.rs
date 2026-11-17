@@ -183,4 +183,9 @@ pub enum Event {
         serial: u32,
         ok: bool,
     },
+    /// The trial begun with the newest
+    /// [`HeadRequests::configure_on_trial`](crate::heads::HeadRequests::configure_on_trial) is
+    /// over, on `MAIN`; an older trial's end is not told. A refused trial is not told: its
+    /// configuration fails.
+    TrialEnded(heads::TrialEnd),
 }

@@ -349,7 +349,8 @@ impl Notepad {
             | Event::OnTop(_)
             | Event::Suspended(_)
             | Event::Heads(_)
-            | Event::HeadsApplied { .. } => Reply::none(),
+            | Event::HeadsApplied { .. }
+            | Event::TrialEnded(_) => Reply::none(),
         }
     }
 }
