@@ -189,6 +189,7 @@ fn props(info: FileInfo) -> Props {
         picks: Default::default(),
         checksums: Default::default(),
         walk: Default::default(),
+        opened: 0,
         info,
         sheet,
     }
@@ -1869,7 +1870,8 @@ fn a_failed_attribute_write_covers_the_sheet_read_again_after_it() {
     ex.open_properties(&f, "a.txt", "a.txt", &mut ctx);
     ex.finish_puts(&mut ctx);
     let gone = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
-    ex.attrs_written(Err(gone), &f, false, &mut ctx);
+    let sheet = ex.props.as_ref().expect("the sheet").id();
+    ex.attrs_written(Err(gone), &f, &f, false, sheet, &mut ctx);
     ex.finish_puts(&mut ctx);
     assert!(ex.props.is_some(), "the sheet stays up");
     assert!(
@@ -1900,4 +1902,330 @@ fn a_sheets_apply_past_its_deadline_gives_up_over_the_sheet() {
     assert_eq!(ex.parent_of(ex.dialog_win()), PROPS);
     drop(writing);
     ex.held = None;
+}
+
+/// Opens `path`'s sheet and waits till it is up.
+fn sheet_up(ex: &mut crate::Explorer, path: &Path, ctx: &mut repriseapp::Ctx) {
+    let name = path.file_name().expect("a name").to_string_lossy();
+    ex.open_properties(path, &name, &name, ctx);
+    crate::tests::wake_until(ex, ctx, |ex| {
+        ex.props.as_ref().is_some_and(|p| p.info.path == path)
+    });
+}
+
+/// Ticks Read-only on the sheet up and presses Apply, with the sheet's reads and writes held
+/// till `gate`'s write lock drops.
+fn apply_read_only_held(
+    ex: &mut crate::Explorer,
+    gate: &std::sync::Arc<std::sync::RwLock<()>>,
+    ctx: &mut repriseapp::Ctx,
+) {
+    let p = ex.props.as_mut().expect("the sheet");
+    p.sheet.open_mut().set_check(READ_ONLY, true);
+    ex.held = Some(gate.clone());
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Apply, ctx);
+    ex.held = None;
+}
+
+/// Read-only on folder `full`'s sheet, applied and confirmed, its write held till `gate`'s
+/// write lock drops.
+fn confirm_read_only_held(
+    ex: &mut crate::Explorer,
+    full: &Path,
+    gate: &std::sync::Arc<std::sync::RwLock<()>>,
+    ctx: &mut repriseapp::Ctx,
+) {
+    sheet_up(ex, full, ctx);
+    let p = ex.props.as_mut().expect("the sheet");
+    p.sheet.open_mut().set_check(READ_ONLY, true);
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Apply, ctx);
+    let Some(crate::dialogs::Dialog::AttrConfirm(a)) = ex.take_up() else {
+        panic!("Confirm Attribute Changes is up");
+    };
+    ex.held = Some(gate.clone());
+    ex.attrs_confirmed(a, ctx);
+    ex.held = None;
+}
+
+/// A write that fails after another file's sheet replaced the sheet that asked for it says
+/// so over the folder window, and stays up when the new sheet closes.
+#[test]
+fn a_failure_landing_after_its_sheet_was_replaced_covers_the_folder_window() {
+    use crate::dialogs::Dialog;
+    use crate::place::Place;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (full, b) = (dir.path().join("Reports"), dir.path().join("b.txt"));
+    std::fs::create_dir_all(full.join("sub")).expect("mkdir");
+    std::fs::write(&b, "b").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let writing = gate.write().expect("lock");
+    confirm_read_only_held(&mut ex, &full, &gate, &mut ctx);
+    sheet_up(&mut ex, &b, &mut ctx);
+    std::fs::remove_dir_all(&full).expect("rm");
+    drop(writing);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    assert!(
+        matches!(ex.dialog(), Some(Dialog::Message { text, .. }) if text.starts_with("Cannot change Reports")),
+        "the write's failure is up"
+    );
+    assert_eq!(ex.parent_of(ex.dialog_win()), repriseapp::MAIN);
+    assert_eq!(ex.props.as_ref().map(|p| p.info.path.clone()), Some(b));
+    ex.props_event(repriseapp::Event::CloseRequest, &mut ctx);
+    assert!(ex.dialog().is_some(), "the failure stays up");
+}
+
+/// The read of a sheet after its Apply, landing after another file's sheet replaced it, leaves
+/// the new sheet showing its own file.
+#[test]
+fn a_read_after_apply_landing_after_its_sheet_was_replaced_leaves_the_new_sheet() {
+    use crate::place::Place;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (full, b) = (dir.path().join("Reports"), dir.path().join("b.txt"));
+    std::fs::create_dir_all(full.join("sub")).expect("mkdir");
+    std::fs::write(&b, "b").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let writing = gate.write().expect("lock");
+    confirm_read_only_held(&mut ex, &full, &gate, &mut ctx);
+    sheet_up(&mut ex, &b, &mut ctx);
+    drop(writing);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+        ex.acting.is_empty() && ex.props_due.is_none()
+    });
+    let mode = |p: &Path| std::fs::metadata(p).expect("stat").permissions().mode();
+    assert_eq!(mode(&full) & 0o222, 0, "the write landed");
+    assert_eq!(ex.props.as_ref().map(|p| p.info.path.clone()), Some(b));
+    assert_eq!(
+        ex.props.as_ref().map(|p| p.title()).as_deref(),
+        Some("b.txt Properties")
+    );
+    assert!(ex.dialog().is_none());
+    for p in [full.join("sub"), full.clone()] {
+        std::fs::set_permissions(&p, PermissionsExt::from_mode(0o755)).expect("chmod back");
+    }
+}
+
+/// The read of a set's sheet after its Apply, landing after another file's sheet replaced it,
+/// leaves the new sheet showing its own file.
+#[test]
+fn a_sets_read_after_apply_landing_after_its_sheet_was_replaced_leaves_the_new_sheet() {
+    use crate::place::Place;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let [a, b, c] = ["a.txt", "b.txt", "c.txt"].map(|n| dir.path().join(n));
+    for f in [&a, &b, &c] {
+        std::fs::write(f, "x").expect("write");
+    }
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.open_paths_properties(&[a, b], &mut ctx);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+        ex.props.as_ref().is_some_and(|p| p.set.is_some())
+    });
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let writing = gate.write().expect("lock");
+    apply_read_only_held(&mut ex, &gate, &mut ctx);
+    sheet_up(&mut ex, &c, &mut ctx);
+    drop(writing);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+        ex.acting.is_empty() && ex.props_due.is_none()
+    });
+    let p = ex.props.as_ref().expect("a sheet");
+    assert!(p.set.is_none(), "the set's read leaves c.txt's sheet");
+    assert_eq!(p.info.path, c);
+    assert_eq!(p.title(), "c.txt Properties");
+}
+
+/// Apply's look into a folder, landing after another file's sheet replaced the folder's,
+/// asks nothing over the new sheet and writes nothing.
+#[test]
+fn a_question_due_after_its_sheet_was_replaced_is_not_asked() {
+    use crate::place::Place;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (full, b) = (dir.path().join("Reports"), dir.path().join("b.txt"));
+    std::fs::create_dir_all(full.join("sub")).expect("mkdir");
+    std::fs::write(&b, "b").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    sheet_up(&mut ex, &full, &mut ctx);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let writing = gate.write().expect("lock");
+    apply_read_only_held(&mut ex, &gate, &mut ctx);
+    sheet_up(&mut ex, &b, &mut ctx);
+    drop(writing);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.acting.is_empty());
+    assert!(ex.dialog().is_none(), "nothing asked over b.txt's sheet");
+    let mode = |p: &Path| std::fs::metadata(p).expect("stat").permissions().mode();
+    assert_ne!(mode(&full) & 0o200, 0, "Reports is left writable");
+    assert_ne!(mode(&b) & 0o200, 0, "b.txt is left writable");
+}
+
+/// Apply on a file whose sheet another file's replaced before the write began writes the file
+/// it was pressed for.
+#[test]
+fn an_apply_landing_after_its_sheet_was_replaced_writes_the_file_it_was_for() {
+    use crate::place::Place;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+    std::fs::write(&a, "a").expect("write");
+    std::fs::write(&b, "b").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    sheet_up(&mut ex, &a, &mut ctx);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let writing = gate.write().expect("lock");
+    apply_read_only_held(&mut ex, &gate, &mut ctx);
+    sheet_up(&mut ex, &b, &mut ctx);
+    drop(writing);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+        ex.acting.is_empty() && ex.props_due.is_none()
+    });
+    let mode = |p: &Path| std::fs::metadata(p).expect("stat").permissions().mode();
+    assert_eq!(mode(&a) & 0o222, 0, "a.txt is read-only");
+    assert_ne!(mode(&b) & 0o200, 0, "b.txt is left writable");
+    assert_eq!(ex.props.as_ref().map(|p| p.info.path.clone()), Some(b));
+}
+
+/// Presses `ev` (Apply or OK) on the sheet up, with its reads and writes held till `gate`'s
+/// write lock drops.
+fn press_held(
+    ex: &mut crate::Explorer,
+    ev: reprisekit::controls::propsheet::Event,
+    gate: &std::sync::Arc<std::sync::RwLock<()>>,
+    ctx: &mut repriseapp::Ctx,
+) {
+    ex.held = Some(gate.clone());
+    ex.props_outcome(ev, ctx);
+    ex.held = None;
+}
+
+/// A rename landing after its sheet closed and the same file's sheet opened again moves the
+/// new sheet to the renamed file, so its next Apply finds the file.
+#[test]
+fn a_rename_landing_after_the_same_files_sheet_was_opened_again_moves_the_new_sheet() {
+    use reprisekit::controls::propsheet::Event as Sheet;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+    std::fs::write(&a, "a").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(
+        crate::place::Place::Folder(dir.path().to_path_buf()),
+        &mut ctx,
+    );
+    sheet_up(&mut ex, &a, &mut ctx);
+    type_sheet_name(&mut ex, "b.txt");
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let writing = gate.write().expect("lock");
+    press_held(&mut ex, Sheet::Apply, &gate, &mut ctx);
+    ex.props_event(repriseapp::Event::CloseRequest, &mut ctx);
+    sheet_up(&mut ex, &a, &mut ctx);
+    let reopened = ex.props.as_ref().expect("the sheet").id();
+    drop(writing);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+        ex.acting.is_empty() && ex.props_due.is_none()
+    });
+    assert!(b.exists(), "the rename landed");
+    let p = ex.props.as_ref().expect("the reopened sheet stays up");
+    assert_eq!(p.id(), reopened);
+    assert_eq!(p.info.path, b);
+    assert_eq!(p.title(), "b.txt Properties");
+}
+
+/// OK whose write lands after another file's sheet replaced its sheet writes its own file and
+/// leaves the new sheet up.
+#[test]
+fn an_ok_landing_after_its_sheet_was_replaced_leaves_the_new_sheet_up() {
+    use reprisekit::controls::propsheet::Event as Sheet;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+    std::fs::write(&a, "a").expect("write");
+    std::fs::write(&b, "b").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(
+        crate::place::Place::Folder(dir.path().to_path_buf()),
+        &mut ctx,
+    );
+    sheet_up(&mut ex, &a, &mut ctx);
+    let p = ex.props.as_mut().expect("the sheet");
+    p.sheet.open_mut().set_check(READ_ONLY, true);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let writing = gate.write().expect("lock");
+    press_held(&mut ex, Sheet::Ok, &gate, &mut ctx);
+    sheet_up(&mut ex, &b, &mut ctx);
+    drop(writing);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+        ex.acting.is_empty() && ex.props_due.is_none()
+    });
+    let mode = |p: &Path| std::fs::metadata(p).expect("stat").permissions().mode();
+    assert_eq!(mode(&a) & 0o222, 0, "a.txt is read-only");
+    assert_ne!(mode(&b) & 0o200, 0, "b.txt is left writable");
+    assert_eq!(ex.props.as_ref().map(|p| p.info.path.clone()), Some(b));
+}
+
+/// Apply on a folder whose sheet closed before its question was due asks nothing, and leaves
+/// the folder's name and attributes as they were.
+#[test]
+fn a_question_due_after_its_sheet_closed_is_not_asked_and_nothing_it_held_is_written() {
+    use reprisekit::controls::propsheet::Event as Sheet;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let full = dir.path().join("Reports");
+    std::fs::create_dir_all(full.join("sub")).expect("mkdir");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(
+        crate::place::Place::Folder(dir.path().to_path_buf()),
+        &mut ctx,
+    );
+    sheet_up(&mut ex, &full, &mut ctx);
+    type_sheet_name(&mut ex, "Done");
+    let p = ex.props.as_mut().expect("the sheet");
+    p.sheet.open_mut().set_check(READ_ONLY, true);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let writing = gate.write().expect("lock");
+    press_held(&mut ex, Sheet::Apply, &gate, &mut ctx);
+    ex.props_event(repriseapp::Event::CloseRequest, &mut ctx);
+    drop(writing);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.acting.is_empty());
+    assert!(ex.dialog().is_none(), "nothing is asked");
+    assert!(full.exists(), "Reports keeps its name");
+    assert!(!dir.path().join("Done").exists());
+    let mode = |p: &Path| std::fs::metadata(p).expect("stat").permissions().mode();
+    assert_ne!(mode(&full) & 0o200, 0, "Reports is left writable");
+}
+
+/// A rename landing after another file's sheet replaced its sheet renames the file it was
+/// pressed for and leaves the new sheet showing its own file.
+#[test]
+fn a_rename_landing_after_its_sheet_was_replaced_renames_its_own_file() {
+    use reprisekit::controls::propsheet::Event as Sheet;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let [a, b, c] = ["a.txt", "b.txt", "c.txt"].map(|n| dir.path().join(n));
+    std::fs::write(&a, "a").expect("write");
+    std::fs::write(&b, "b").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(
+        crate::place::Place::Folder(dir.path().to_path_buf()),
+        &mut ctx,
+    );
+    sheet_up(&mut ex, &a, &mut ctx);
+    type_sheet_name(&mut ex, "c.txt");
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let writing = gate.write().expect("lock");
+    press_held(&mut ex, Sheet::Apply, &gate, &mut ctx);
+    sheet_up(&mut ex, &b, &mut ctx);
+    drop(writing);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+        ex.acting.is_empty() && ex.props_due.is_none()
+    });
+    assert_eq!(std::fs::read_to_string(&c).ok().as_deref(), Some("a"));
+    assert_eq!(std::fs::read_to_string(&b).ok().as_deref(), Some("b"));
+    let p = ex.props.as_ref().expect("b.txt's sheet");
+    assert_eq!(p.info.path, b);
+    assert_eq!(p.title(), "b.txt Properties");
 }

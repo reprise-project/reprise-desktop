@@ -3,6 +3,7 @@
 
 use crate::Explorer;
 use crate::acting::Action;
+use crate::dialogs::SheetId;
 use repriseapp::listjob::Job;
 use repriseapp::{Child, Ctx, Event, Reply, WinId};
 use reprisefs::bincap::{self, Policy};
@@ -34,9 +35,18 @@ pub(crate) struct BinProps {
     reads: Vec<(PathBuf, Job<Option<Drive>>)>,
     /// Some bin held an item as the sheet opened, so its window wears the full bin.
     full: bool,
+    /// Which opening of the sheet window this is ([`crate::dialogs::SheetId`]).
+    pub(crate) opened: u64,
 }
 
 impl BinProps {
+    pub(crate) fn id(&self) -> SheetId {
+        SheetId {
+            win: BIN_PROPS,
+            opened: self.opened,
+        }
+    }
+
     pub(crate) fn icon(&self) -> &'static str {
         if self.full {
             "user-trash-full"
@@ -66,6 +76,7 @@ impl Explorer {
             let mut sheet =
                 BinSheet::new(settings_of(&bins.policy), home.iter().cloned().collect());
             sheet.sheet.fit_tabs(&ctx.text, ctx.forms().fonts.size_px);
+            let opened = ex.next_sheet();
             ex.bin_props = Some(BinProps {
                 sheet,
                 config: repriseconf::config_path(),
@@ -74,6 +85,7 @@ impl Explorer {
                 tabs: HashMap::new(),
                 reads: Vec::new(),
                 full,
+                opened,
             });
             ex.rescan_send_drives(ctx);
             ex.read_bin_tabs(ctx);
@@ -206,7 +218,8 @@ impl Explorer {
     /// Writes `settings` into `[recycle_bin]`; OK closes the sheet first. A write that fails says
     /// so in a box.
     fn save_bin_settings(&mut self, settings: &Settings, close: bool, ctx: &mut Ctx) -> Reply {
-        let Some(path) = self.bin_props.as_ref().map(|b| b.config.clone()) else {
+        let Some((path, sheet)) = self.bin_props.as_ref().map(|b| (b.config.clone(), b.id()))
+        else {
             return Reply::none();
         };
         let closed = match close {
@@ -223,14 +236,14 @@ impl Explorer {
         };
         let reply = self.act(
             ctx,
-            Action::changes(TITLE).of(BIN_PROPS),
+            Action::changes(TITLE).of(sheet),
             work,
-            |ex, saved, ctx| match saved {
+            move |ex, saved, ctx| match saved {
                 Ok(()) => Reply::none(),
                 Err(e) => {
                     log::error!("recycle bin: settings not saved: {e}");
                     let text = format!("Cannot save the Recycle Bin settings in config.toml: {e}");
-                    ex.message_over(Some(BIN_PROPS), TITLE, text, ctx)
+                    ex.message_over(Some(sheet), TITLE, text, ctx)
                 }
             },
         );
@@ -417,6 +430,30 @@ mod tests {
         ex.save_bin_settings(&settings_of(&Policy::default()), true, &mut ctx);
         wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
         assert_eq!(ex.parent_of(ex.dialog_win()), repriseapp::MAIN);
+    }
+
+    /// Apply's failed write landing after the sheet closed and opened again says so over the
+    /// folder window, and stays up when the new sheet closes.
+    #[test]
+    fn an_apply_failing_after_its_sheet_was_opened_again_covers_the_folder_window() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let config = dir.path().join("config.toml");
+        std::fs::write(&config, "[recycle_bin\n").expect("write");
+        let mut ctx = test_ctx();
+        let mut ex = sheet_up(&config, &mut ctx);
+        let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+        let writing = gate.write().expect("lock");
+        ex.held = Some(gate.clone());
+        ex.save_bin_settings(&settings_of(&Policy::default()), false, &mut ctx);
+        ex.held = None;
+        ex.bin_props_event(Event::CloseRequest, &mut ctx);
+        ex.properties(&mut ctx);
+        wake_until(&mut ex, &mut ctx, |ex| ex.bin_props.is_some());
+        drop(writing);
+        wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+        assert_eq!(ex.parent_of(ex.dialog_win()), repriseapp::MAIN);
+        ex.bin_props_event(Event::CloseRequest, &mut ctx);
+        assert!(ex.dialog().is_some(), "the failure stays up");
     }
 
     #[test]
