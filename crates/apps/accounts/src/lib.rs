@@ -11,7 +11,7 @@ mod rdpassword;
 mod remote;
 mod users;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
@@ -260,7 +260,7 @@ impl AccountsApp {
             changed = true;
             reread = true;
             if let Err(r) = done {
-                self.fail(fingers::refusal(r).text("delete the fingerprint"));
+                self.fail_over(PROPS, fingers::refusal(r).text("delete the fingerprint"));
             }
         }
         if let Some((from, steps, ended)) = self.fingers.add_landed() {
@@ -518,6 +518,20 @@ impl AccountsApp {
         self.error.show(TITLE, text, None);
     }
 
+    /// [`AccountsApp::fail`] raised from the sheet or Add Account (`win`): the box covers that
+    /// window while it is open and leaves with it, else it covers the main window.
+    fn fail_over(&mut self, win: WinId, text: String) {
+        let open = match win {
+            PROPS => self.props.is_some(),
+            ADD => self.add.is_some(),
+            _ => false,
+        };
+        match open {
+            true => self.error.show_over(win, TITLE, text, None),
+            false => self.fail(text),
+        }
+    }
+
     fn user(&self, uid: u32) -> Option<&User> {
         self.users.rows.iter().find(|u| u.uid == uid)
     }
@@ -653,7 +667,7 @@ impl AccountsApp {
                         if done.is_ok() {
                             p.applied(u);
                             if close {
-                                self.props = None;
+                                self.close_props();
                             }
                         } else {
                             p.unapplied();
@@ -663,7 +677,7 @@ impl AccountsApp {
             }
         }
         if after == After::Add && done.is_ok() {
-            self.add = None;
+            self.close_add();
         }
         if let Some(d) = &mut self.add {
             d.set_taken(self.users.rows.iter().map(|u| u.login.clone()).collect());
@@ -674,9 +688,11 @@ impl AccountsApp {
                 After::Props { uid, .. } if !ours => self.user(uid).map(User::named),
                 _ => None,
             };
-            match whose {
-                Some(name) => self.fail(format!("The account {name}:\n\n{why}")),
-                None => self.fail(why),
+            match (whose, after) {
+                (Some(name), _) => self.fail(format!("The account {name}:\n\n{why}")),
+                (None, After::Props { .. }) if ours => self.fail_over(PROPS, why),
+                (None, After::Add) => self.fail_over(ADD, why),
+                (None, _) => self.fail(why),
             }
         }
         if std::mem::take(&mut self.open_yours)
@@ -770,6 +786,13 @@ impl AccountsApp {
         self.rd_password = None;
         self.close_add_finger();
         self.asking.withdraw(|a| *a == Ask::ClearFingers);
+        self.error.withdraw(|w| w == PROPS);
+    }
+
+    /// Close Add Account and the error raised from it.
+    fn close_add(&mut self) {
+        self.add = None;
+        self.error.withdraw(|w| w == ADD);
     }
 
     fn main_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
@@ -847,7 +870,7 @@ impl AccountsApp {
             users::Outcome::Close if self.working() => {
                 self.closing = true;
                 self.close_props();
-                self.add = None;
+                self.close_add();
                 Reply::redraw_all()
             }
             users::Outcome::Close => Reply {
@@ -939,7 +962,7 @@ impl AccountsApp {
                 Reply::redraw_all()
             }
             props::Outcome::Refuse(why) => {
-                self.fail(why);
+                self.fail_over(PROPS, why);
                 Reply::redraw_all()
             }
             props::Outcome::Close => {
@@ -976,7 +999,7 @@ impl AccountsApp {
                 Reply::redraw_all()
             }
             adduser::Outcome::Cancel => {
-                self.add = None;
+                self.close_add();
                 Reply::redraw_all()
             }
         }
@@ -1039,27 +1062,36 @@ impl AccountsApp {
             Driven::Picked(path) => Some(path),
         };
         if let Some(path) = path {
-            let px = self
-                .props
-                .as_ref()
-                .map_or(props::PREVIEW_PX, |p| p.preview_px());
-            match picture::load_file(&path, px) {
-                Some(c) => {
-                    if let Some(p) = &mut self.props {
-                        p.browsed(path, c);
-                    }
-                }
-                None => {
-                    let name = path
-                        .file_name()
-                        .unwrap_or(path.as_os_str())
-                        .to_string_lossy();
-                    self.fail(format!("'{name}' is not a picture Reprise can read."));
-                }
-            }
+            self.picture_picked(&path);
         }
         self.browse = None;
         Reply::redraw_all()
+    }
+
+    /// The sheet's Browse picked `path`: the sheet shows it, or an error box says it is no
+    /// picture.
+    fn picture_picked(&mut self, path: &Path) {
+        let px = self
+            .props
+            .as_ref()
+            .map_or(props::PREVIEW_PX, |p| p.preview_px());
+        match picture::load_file(path, px) {
+            Some(c) => {
+                if let Some(p) = &mut self.props {
+                    p.browsed(path.to_path_buf(), c);
+                }
+            }
+            None => {
+                let name = path
+                    .file_name()
+                    .unwrap_or(path.as_os_str())
+                    .to_string_lossy();
+                self.fail_over(
+                    PROPS,
+                    format!("'{name}' is not a picture Reprise can read."),
+                );
+            }
+        }
     }
 
     fn focused_edit(&self, win: WinId) -> Option<form::FocusedEdit<'_>> {
@@ -1237,8 +1269,12 @@ impl repriseapp::Extended for AccountsApp {
         self.closing
     }
 
-    /// The dialogs and the question raised from the Properties sheet cover it.
+    /// The dialogs and the question raised from the Properties sheet cover it; an error box
+    /// covers the window it was raised from ([`AccountsApp::fail_over`]).
     fn parent(&self, win: WinId) -> Option<WinId> {
+        if self.error.owns(win) {
+            return self.error.parent(win);
+        }
         let from_sheet = match win {
             RD_PASSWORD | ADD_FINGER | BROWSE => true,
             w if self.asking.owns(w) => matches!(self.asking.up(), Some((_, Ask::ClearFingers))),
@@ -1573,6 +1609,96 @@ mod tests {
         assert_eq!(app.parent(question), Some(MAIN));
     }
 
+    /// A failed job for window `after` lands with `rows` read.
+    fn job_fails(app: &mut AccountsApp, after: After, rows: Vec<User>) {
+        let (tx, rx) = channel();
+        let failed = Err(acct::Failure::Text("Not authorized.".into()));
+        tx.send((failed, Ok(rows))).unwrap();
+        app.job = Some((rx, after));
+        assert!(app.accounts_done());
+    }
+
+    /// The window the error box up covers.
+    fn error_over(app: &AccountsApp) -> Option<WinId> {
+        use repriseapp::Extended;
+        app.parent(app.error.win().expect("an error box is up"))
+    }
+
+    #[test]
+    fn an_error_the_sheet_raises_covers_the_sheet_and_leaves_with_it() {
+        let rows = vec![user(1000, "jo", true, true), user(1001, "al", false, false)];
+        let mut app = AccountsApp::new();
+        app.users.refresh(rows.clone(), vec![None, None]);
+        app.open_props(1000);
+        app.submitted(props::Outcome::Refuse("refused".into()));
+        assert_eq!(
+            error_over(&app),
+            Some(PROPS),
+            "the refusal covers the sheet"
+        );
+        let after = After::Props {
+            close: true,
+            sheet: app.sheets,
+            uid: 1000,
+        };
+        job_fails(&mut app, after, rows.clone());
+        assert!(app.props.is_some(), "a failed OK keeps the sheet");
+        app.error.close();
+        assert_eq!(error_text(&app).as_deref(), Some("Not authorized."));
+        assert_eq!(
+            error_over(&app),
+            Some(PROPS),
+            "Apply's failure covers the sheet"
+        );
+        app.ask_remove(1001, &mut test_ctx());
+        app.fail("about the list".into());
+
+        app.props_event(Event::CloseRequest, &mut test_ctx());
+        assert!(app.props.is_none());
+        assert_eq!(error_text(&app).as_deref(), Some("about the list"));
+        assert_eq!(
+            app.error.boxes().count(),
+            1,
+            "the sheet's error left with it"
+        );
+        assert_eq!(error_over(&app), Some(MAIN));
+    }
+
+    #[test]
+    fn an_unreadable_picture_from_the_sheets_browse_covers_the_sheet() {
+        let file = std::path::Path::new("/nonexistent/notes.png");
+        let mut app = with_reader();
+        app.open_props(1000);
+        app.open_browse(app.forms.text);
+        app.picture_picked(file);
+        assert_eq!(
+            error_text(&app).as_deref(),
+            Some("'notes.png' is not a picture Reprise can read.")
+        );
+        assert_eq!(error_over(&app), Some(PROPS));
+    }
+
+    #[test]
+    fn add_accounts_failed_create_covers_the_dialog_and_leaves_with_it() {
+        let rows = vec![user(1000, "jo", true, true)];
+        let mut app = AccountsApp::new();
+        app.users.refresh(rows.clone(), vec![None]);
+        app.add = Some(adduser::AddUser::new(vec!["jo".into()]));
+        job_fails(&mut app, After::Add, rows.clone());
+        assert!(app.add.is_some(), "a failed Create keeps the dialog");
+        assert_eq!(error_over(&app), Some(ADD));
+
+        app.add_event(Event::CloseRequest, &test_ctx());
+        assert!(app.add.is_none());
+        assert!(!app.error.is_shown(), "the error left with the dialog");
+        job_fails(&mut app, After::Add, rows);
+        assert_eq!(
+            error_over(&app),
+            Some(MAIN),
+            "with no dialog the main window"
+        );
+    }
+
     #[test]
     fn remove_greys_until_the_change_under_way_lands() {
         let rows = vec![user(1000, "jo", true, true), user(1001, "al", false, false)];
@@ -1652,6 +1778,11 @@ mod tests {
         assert_eq!(
             error_text(&app).as_deref(),
             Some("You weren't allowed to delete the fingerprint.")
+        );
+        assert_eq!(
+            error_over(&app),
+            Some(PROPS),
+            "the refusal covers the sheet"
         );
         assert_eq!(app.fingers.found, Some(virtual_reader()));
         assert!(!app.fingers.facts(true).busy);
