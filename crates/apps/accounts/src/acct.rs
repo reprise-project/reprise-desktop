@@ -3,7 +3,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc::Sender;
 use std::time::Duration;
+
+use futures_util::StreamExt;
 
 use zbus::{OwnedObjectPath, OwnedVariant};
 use zeroize::Zeroizing;
@@ -291,6 +294,62 @@ pub fn password_mode(path: &str) -> zbus::Result<PasswordMode> {
         let v: OwnedVariant = reply.body().deserialize()?;
         Ok(mode_of(Some(&v)))
     })
+}
+
+/// Send the path of each account whose `PasswordMode` AccountsService says changed, until
+/// `moved` is dropped, waking the host after each.
+pub fn follow_modes(moved: Sender<String>, waker: repriseapp::Waker) {
+    let spawned = std::thread::Builder::new()
+        .name("reprise-accounts-modes".into())
+        .spawn(move || zbus::block_on(follow(moved, waker)));
+    if let Err(e) = spawned {
+        log::warn!("could not start the password mode thread: {e}");
+    }
+}
+
+async fn follow(moved: Sender<String>, waker: repriseapp::Waker) {
+    let conn = match connect(READ_TIMEOUT).await {
+        Ok(c) => c,
+        Err(e) => {
+            log::info!("password modes are not followed: {e}");
+            return;
+        }
+    };
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface("org.freedesktop.DBus.Properties")
+        .member("PropertiesChanged")
+        .add_arg(USER_IFACE)
+        .build();
+    let rules = match rule {
+        Ok(r) => vec![r.into()],
+        Err(e) => {
+            log::warn!("no match rule for password modes: {e}");
+            return;
+        }
+    };
+    let mut signals = reprisebus::signals(&conn, DEST, rules).await;
+    while let Some(signal) = signals.next().await {
+        let reprisebus::Signal::Message(m) = signal else {
+            continue;
+        };
+        if let Some(path) = m.header().path().filter(|_| names_mode(&m)) {
+            if moved.send(path.to_string()).is_err() {
+                return;
+            }
+            waker.wake();
+        }
+    }
+}
+
+/// Whether a `PropertiesChanged` changes or invalidates `PasswordMode`.
+fn names_mode(m: &zbus::Message) -> bool {
+    type Changed = (String, HashMap<String, OwnedVariant>, Vec<String>);
+    m.body()
+        .deserialize::<Changed>()
+        .is_ok_and(|(_, changed, invalidated)| {
+            changed.contains_key("PasswordMode") || invalidated.iter().any(|p| p == "PasswordMode")
+        })
 }
 
 /// Where the accounts are read and changed. Under test none, so nothing reaches the system

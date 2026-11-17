@@ -95,6 +95,8 @@ struct AccountsApp {
         Receiver<zbus::Result<acct::PasswordMode>>,
         Option<propsheet::Event>,
     )>,
+    /// The accounts whose password mode AccountsService says changed.
+    modes_moved: Option<Receiver<String>>,
     waker: Option<repriseapp::Waker>,
     face: Option<Canvas>,
     text: Option<Rc<TextRenderer>>,
@@ -129,6 +131,7 @@ impl AccountsApp {
             error: ErrorBox::default(),
             job: None,
             mode_read: None,
+            modes_moved: None,
             waker: None,
             face: None,
             text: None,
@@ -533,8 +536,12 @@ impl AccountsApp {
     fn wake(&mut self) -> Reply {
         let remote = self.remote_done();
         let fingers = self.fingers_done();
+        // The job's read may be older than a mode read that lands with it: the mode read goes
+        // last.
+        let accounts = self.accounts_done();
+        let moved = self.modes_moved();
         let mode = self.mode_done();
-        if self.accounts_done() || remote || fingers || mode {
+        if accounts || remote || fingers || moved || mode {
             Reply::redraw_all()
         } else {
             Reply::none()
@@ -554,6 +561,24 @@ impl AccountsApp {
         if held {
             self.set_busy(self.job.is_some());
         }
+    }
+
+    /// AccountsService said password modes changed: the open sheet's account's is read again,
+    /// keeping an Apply or OK that waits on a read. True when it was.
+    fn modes_moved(&mut self) -> bool {
+        let Some(rx) = &self.modes_moved else {
+            return false;
+        };
+        let moved: Vec<String> = rx.try_iter().collect();
+        let ours = self
+            .props
+            .as_ref()
+            .is_some_and(|p| moved.contains(&p.user.path));
+        if ours {
+            let then = self.mode_read.take().and_then(|(_, then)| then);
+            self.read_mode(then);
+        }
+        ours
     }
 
     /// The open sheet's password mode came back: the sheet takes it, then decides the Apply or
@@ -1127,6 +1152,9 @@ impl App for AccountsApp {
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.fonts();
+        let (tx, rx) = channel();
+        acct::follow_modes(tx, waker.clone());
+        self.modes_moved = Some(rx);
         self.waker = Some(waker);
         self.run(Vec::new(), After::Read);
         self.read_remote(Duration::ZERO);
@@ -1829,6 +1857,35 @@ mod tests {
             p.sheet.pages[props::TAB_PASSWORD].edit_text("new"),
             "newpass1",
             "the new password stays typed"
+        );
+    }
+
+    #[test]
+    fn a_password_blanked_or_set_while_the_sheet_is_open_turns_its_page() {
+        use acct::PasswordMode::{Empty, Regular};
+        let you = you_with(Regular);
+        let path = you.path.clone();
+        let mut app = stub_accounts(vec![you], Regular);
+        let (tx, rx) = channel();
+        app.modes_moved = Some(rx);
+        let mut ctx = test_ctx();
+        app.open_props(1000);
+        app.event(MAIN, Event::Wake, &mut ctx);
+        type_password(&mut app, "new", "newpass1");
+        let current = |app: &AccountsApp| {
+            app.props.as_ref().unwrap().sheet.pages[props::TAB_PASSWORD].can_focus("current")
+        };
+        MODE.set(Empty);
+        tx.send(path.clone()).unwrap();
+        app.event(MAIN, Event::Wake, &mut ctx);
+        assert!(!current(&app), "blanked: nothing to type in Current");
+        MODE.set(Regular);
+        tx.send(path).unwrap();
+        app.event(MAIN, Event::Wake, &mut ctx);
+        assert!(current(&app), "set: Current is asked for again");
+        assert_eq!(
+            app.props.as_ref().unwrap().sheet.pages[props::TAB_PASSWORD].edit_text("new"),
+            "newpass1"
         );
     }
 }
