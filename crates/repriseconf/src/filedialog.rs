@@ -74,11 +74,18 @@ pub fn save_to(path: &Path, app: &str, lines: &str) -> std::io::Result<()> {
     .map(|_| ())
 }
 
+/// The place keys of builds that kept every close's place, not only a dragged one: they read as
+/// nothing, and the entry's next write drops them.
+const RETIRED: [&str; 2] = ["x", "y"];
+
 fn merged(old: &str, app: &str, lines: &str, now: u64) -> String {
     let mut all = tables(old);
     let new: Table = toml::from_str(lines).unwrap_or_default();
     let entry = all.entry(app).or_insert_with(|| Value::Table(Table::new()));
     if let Value::Table(t) = entry {
+        for k in RETIRED {
+            t.remove(k);
+        }
         t.extend(new);
         t.insert("used".into(), Value::Integer(now as i64));
     }
@@ -124,16 +131,16 @@ impl Geometry {
         (scale(self.width), scale(self.height))
     }
 
-    /// `x` and `y` when moved, `width` and `height`, as TOML lines.
+    /// `left` and `top` when moved, `width` and `height`, as TOML lines.
     pub fn text(&self) -> String {
         let at = self
             .at
-            .map_or(String::new(), |(x, y)| format!("x = {x}\ny = {y}\n"));
+            .map_or(String::new(), |(x, y)| format!("left = {x}\ntop = {y}\n"));
         format!("{at}width = {}\nheight = {}\n", self.width, self.height)
     }
 
     /// Reads [`Geometry::text`]'s lines; None unless the size is there and positive, and `at`
-    /// only when both `x` and `y` are.
+    /// only when both `left` and `top` are.
     pub fn parse(text: &str) -> Option<Geometry> {
         let value = |name: &str| {
             text.lines()
@@ -142,7 +149,7 @@ impl Geometry {
                 .and_then(|(_, v)| v.trim().parse::<i32>().ok())
         };
         let g = Geometry {
-            at: value("x").zip(value("y")),
+            at: value("left").zip(value("top")),
             width: value("width")?,
             height: value("height")?,
         };
@@ -177,16 +184,16 @@ mod tests {
     #[test]
     fn each_app_has_its_own_table_and_a_save_keeps_its_other_keys() {
         let text = merged("", "reprise.notepad", "view = \"details\"\n", 10);
-        let text = merged(&text, "org.example.Editor", "x = 5\ny = 6\n", 11);
-        let text = merged(&text, "reprise.notepad", "x = 1\ny = 2\n", 12);
+        let text = merged(&text, "org.example.Editor", "left = 5\ntop = 6\n", 11);
+        let text = merged(&text, "reprise.notepad", "left = 1\ntop = 2\n", 12);
         assert_eq!(
             text,
-            "[\"org.example.Editor\"]\nused = 11\nx = 5\ny = 6\n\n\
-             [\"reprise.notepad\"]\nused = 12\nview = \"details\"\nx = 1\ny = 2\n"
+            "[\"org.example.Editor\"]\nleft = 5\ntop = 6\nused = 11\n\n\
+             [\"reprise.notepad\"]\nleft = 1\ntop = 2\nused = 12\nview = \"details\"\n"
         );
         assert_eq!(
             section(&text, "reprise.notepad"),
-            "used = 12\nview = \"details\"\nx = 1\ny = 2\n"
+            "left = 1\ntop = 2\nused = 12\nview = \"details\"\n"
         );
         assert_eq!(section(&text, "org.example.Other"), "", "no table yet");
         assert_eq!(sections(&text).len(), 2);
@@ -199,6 +206,23 @@ mod tests {
         assert_eq!(
             merged(old, "", "view = \"icons\"\n", 7),
             "[\"\"]\nused = 7\nview = \"icons\"\n"
+        );
+    }
+
+    #[test]
+    fn an_old_place_reads_as_none_and_goes_at_the_entrys_next_write() {
+        let old = "[a]\nused = 1\nx = 20\ny = 30\nwidth = 640\nheight = 450\n";
+        assert_eq!(
+            Geometry::parse(&section(old, "a")),
+            Some(Geometry {
+                at: None,
+                width: 640,
+                height: 450
+            })
+        );
+        assert_eq!(
+            merged(old, "a", "width = 700\n", 2),
+            "[a]\nheight = 450\nused = 2\nwidth = 700\n"
         );
     }
 
@@ -238,7 +262,7 @@ mod tests {
         let unmoved = Geometry { at: None, ..g };
         assert_eq!(Geometry::parse(&unmoved.text()), Some(unmoved));
         assert_eq!(
-            Geometry::parse("x = 1\nwidth = 3\nheight = 4\n"),
+            Geometry::parse("left = 1\nwidth = 3\nheight = 4\n"),
             Some(Geometry {
                 at: None,
                 width: 3,
@@ -250,16 +274,16 @@ mod tests {
         assert_eq!(Geometry::parse(&format!("{view}{}", g.text())), Some(g));
         assert_eq!(Geometry::parse(view), None, "no geometry yet");
         assert_eq!(
-            Geometry::parse("x = 1\ny = 2\nwidth = 3\n"),
+            Geometry::parse("left = 1\ntop = 2\nwidth = 3\n"),
             None,
             "no height"
         );
         assert_eq!(
-            Geometry::parse("x = 1\ny = 2\nwidth = big\nheight = 4\n"),
+            Geometry::parse("left = 1\ntop = 2\nwidth = big\nheight = 4\n"),
             None
         );
         assert_eq!(
-            Geometry::parse("x = 1\ny = 2\nwidth = 0\nheight = 4\n"),
+            Geometry::parse("left = 1\ntop = 2\nwidth = 0\nheight = 4\n"),
             None
         );
     }
