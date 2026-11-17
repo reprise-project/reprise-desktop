@@ -137,7 +137,7 @@ impl Screenshot {
                 let picked = crate::with_request(server, handle, asker, None, move |c| {
                     pick(&id, parent, c, types)
                 });
-                Ok(picked.await?.map(Shot::Of))
+                picked.await?.map(|t| t.map(Shot::Of))
             }
             Plan::Area => {
                 let id = app_id.to_string();
@@ -268,28 +268,28 @@ fn needs_consent(options: &HashMap<String, Variant<'_>>) -> bool {
     flag("interactive") || !flag("permission_store_checked")
 }
 
-/// The screen or window, of the `types` kinds, the user picks for `app_id`; None on Cancel, a
-/// frontend Close or nothing to list. Blocking.
+/// The screen or window, of the `types` kinds, the user picks for `app_id`; None on Cancel or a
+/// frontend Close, Err when no picker could be shown. Blocking.
 fn pick(
     app_id: &str,
     parent: Option<String>,
     cancel: Arc<AtomicBool>,
     types: u32,
-) -> Option<Target> {
-    let wl = Wayland::connect()
-        .map_err(|e| log::warn!("Screenshot: {e}"))
-        .ok()?;
+) -> Result<Option<Target>, String> {
+    let wl = Wayland::connect()?;
     let types = match wl.can_capture_toplevels() {
         true => types,
         false => types & !crate::SOURCE_WINDOW,
     };
     if types == 0 {
-        log::warn!("Screenshot: the compositor captures no windows");
-        return None;
+        return Err("the compositor captures no windows".into());
     }
     let entries = crate::share_entries(types, &wl.outputs(), &wl.toplevels());
     drop(wl);
-    let (target, _) = crate::picker::pick(
+    if entries.is_empty() {
+        return Err("nothing to pick from".into());
+    }
+    let picked = crate::picker::pick(
         crate::picker::Purpose::Screenshot,
         &crate::remotedesktop::display_name(app_id),
         entries,
@@ -297,8 +297,8 @@ fn pick(
         false,
         parent,
         cancel,
-    )?;
-    Some(target)
+    );
+    Ok(picked.map(|(target, _)| target))
 }
 
 /// Capture `shot` and write it out; blocking. An area leaves out the pointer that dragged it.
@@ -804,6 +804,23 @@ mod tests {
             answers(&bus, None, &calls),
             [crate::RESPONSE_OTHER, crate::RESPONSE_OTHER],
             "without the compositor's link"
+        );
+    }
+
+    #[test]
+    fn a_pick_that_shows_no_picker_answers_other_and_not_cancelled() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let calls = [
+            opts(&[("interactive", true)]),
+            with_target(&[], TARGET_WINDOW),
+        ];
+        assert_eq!(
+            answers(&bus, None, &calls),
+            [crate::RESPONSE_OTHER, crate::RESPONSE_OTHER],
+            "with no compositor to list screens and windows from"
         );
     }
 
