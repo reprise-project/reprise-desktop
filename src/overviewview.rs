@@ -310,6 +310,8 @@ impl State {
         self.cancel_interaction();
         self.close_menus_above(0);
         self.close_launcher();
+        // A window the preview panel shows stays awake until its cell shows it.
+        crate::taskpreview::hold(self);
         crate::taskpreview::hide(self);
         crate::snappickerview::hide(self);
         let tree = self.scene.tree_create(self.layers.menu);
@@ -350,6 +352,7 @@ impl State {
         self.clear_pointer_focus();
         self.set_cursor("default");
         self.redraw_overview();
+        crate::taskpreview::release(self);
         let p = self.pointer_location();
         self.repoint(p, InputTime::now());
     }
@@ -1074,6 +1077,41 @@ mod tests {
         let v = h.state.overview.view.as_ref().expect("the overview");
         assert_eq!(v.windows.len(), 3, "the new window joined");
         assert_eq!(c.side.shells[a.shell].configures, before);
+    }
+
+    #[test]
+    fn opening_the_overview_over_a_minimized_windows_preview_panel_never_suspends_it() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "one", 300, 200);
+        h.map_toplevel(&mut c, "two", 300, 200);
+        h.state.set_minimized(a.id, true);
+        let bar = &h.state.bars[0];
+        let i = (bar.slots.iter().position(|s| s.windows == [a.id])).expect("its task button");
+        let tree = bar.tree;
+        crate::taskpreview::hover(&mut h.state, tree, crate::taskbar::TaskbarHit::Task(i));
+        h.until("the panel", |s| s.task_preview.is_shown());
+        h.roundtrip(&mut c);
+        let heard = &c.side.shells[a.shell].suspended;
+        assert_eq!(
+            heard.last(),
+            Some(&false),
+            "its picture in the panel wakes it"
+        );
+        let heard = heard.len();
+        h.state.open_overview();
+        h.roundtrip(&mut c);
+        assert!(
+            !h.state.task_preview.is_shown(),
+            "the overview takes the panel down"
+        );
+        assert!(h.state.live_previews.shows(a.id), "its cell shows it live");
+        assert_eq!(
+            c.side.shells[a.shell].suspended[heard..],
+            [false; 0],
+            "the panel's picture hands over to the cell's with no configure"
+        );
     }
 
     #[test]
