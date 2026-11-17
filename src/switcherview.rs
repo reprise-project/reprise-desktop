@@ -428,12 +428,20 @@ impl State {
     }
 
     pub fn switcher_commit(&mut self) {
-        if let Some(sw) = self.switcher.panel.take() {
+        if let Some(mut sw) = self.switcher.panel.take() {
             let entry = sw.entries.get(sw.selected).copied();
+            // The pictures go after the switch, so a minimized window picked is never suspended
+            // in between.
+            let pictures: Vec<ThumbId> = (sw.thumb.take().into_iter())
+                .chain(std::mem::take(&mut sw.thumbs).into_iter().flatten())
+                .collect();
             // Ending the peek and the focus change both redraw the old focus's frame.
             self.batch_frames(|s| {
                 s.destroy_switcher_tree(sw);
                 s.switch_to(entry);
+                for id in pictures {
+                    s.thumb_drop(id);
+                }
             });
         } else if let Some(st) = self.switcher.stack.take() {
             // Released before it showed: nothing switches.
@@ -776,13 +784,14 @@ impl State {
         if keep {
             return;
         }
-        if let Some(id) = old {
-            self.thumb_drop(id);
-        }
         let thumb = match (window, well) {
             (Some(w), Some(well)) => self.thumb_create(w, tree, well, scale),
             _ => None,
         };
+        // After the new picture, so a minimized window is never suspended in between.
+        if let Some(id) = old {
+            self.thumb_drop(id);
+        }
         if let Some(sw) = self.switcher.panel.as_mut() {
             sw.thumb = thumb;
         }
@@ -900,6 +909,45 @@ mod tests {
         h.button(crate::harness::LEFT, true);
         assert!(!h.state.switcher.is_open(), "the press closes it");
         assert_eq!(crate::backend::take_asked_outputs(), ["TEST-1"]);
+    }
+
+    /// A switcher open over "top" with minimized "low" selected, its picture up; the client
+    /// side, "low", and how many suspended states low heard so far.
+    fn switcher_over_minimized() -> (Harness, TestClient, crate::harness::Toplevel, usize) {
+        let text = "[switcher]\npeek = false\n";
+        let mut h = Harness::with_config(crate::config::Config::parse(text).unwrap());
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let low = h.map_toplevel(&mut c, "low", 300, 200);
+        h.map_toplevel(&mut c, "top", 300, 200);
+        h.state.set_minimized(low.id, true);
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.shells[low.shell].suspended.last(), Some(&true));
+        h.state.open_switcher(crate::keys::MOD_ALT);
+        h.roundtrip(&mut c);
+        let heard = &c.side.shells[low.shell].suspended;
+        assert_eq!(heard.last(), Some(&false), "its picture wakes it");
+        let heard = heard.len();
+        (h, c, low, heard)
+    }
+
+    #[test]
+    fn picking_a_minimized_window_in_the_switcher_never_suspends_it() {
+        let (mut h, mut c, low, heard) = switcher_over_minimized();
+        h.state.switcher_commit();
+        h.roundtrip(&mut c);
+        assert!(!h.state.win(low.id).unwrap().minimized, "it came up");
+        assert!(!c.side.shells[low.shell].suspended[heard..].contains(&true));
+    }
+
+    #[test]
+    fn the_switchers_picture_drawn_at_a_new_scale_keeps_a_minimized_window_awake() {
+        let (mut h, mut c, low, heard) = switcher_over_minimized();
+        let out = h.state.scene.outputs()[0].clone();
+        out.change_current_state(None, None, Some(smithay::output::Scale::Integer(2)), None);
+        h.state.redraw_switcher();
+        h.roundtrip(&mut c);
+        assert!(!c.side.shells[low.shell].suspended[heard..].contains(&true));
     }
 
     const ALT: u32 = 56;

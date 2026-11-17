@@ -581,15 +581,28 @@ impl State {
     /// Close the overview and bring up window `i`. Under snap assist it
     /// fills the zone instead and the next empty zone offers the rest.
     fn overview_activate(&mut self, i: usize) {
-        let Some(v) = self.overview.view.as_ref() else {
+        let Some(v) = self.overview.view.as_mut() else {
             return;
         };
         let w = v.windows.get(i).copied();
         let assist = v.assist.clone();
+        // The pictures go after the window comes up, so a minimized one is never suspended in
+        // between.
+        let pictures: Vec<ThumbId> = (v.grids.iter_mut())
+            .flat_map(|g| std::mem::take(&mut g.thumbs))
+            .flatten()
+            .collect();
         self.close_overview();
-        let Some(w) = w else {
-            return;
-        };
+        if let Some(w) = w {
+            self.overview_bring_up(w, assist);
+        }
+        for id in pictures {
+            self.thumb_drop(id);
+        }
+    }
+
+    /// Bring up `w`, picked in the overview, or under snap assist fill the next zone with it.
+    fn overview_bring_up(&mut self, w: WindowId, assist: Option<(WindowId, Vec<(usize, Rect)>)>) {
         if let Some((leader, zones)) = assist {
             if let Some((&(zone, rect), rest)) = zones.split_first() {
                 self.wm.snap.join_group(leader, w, zone);
@@ -1061,6 +1074,29 @@ mod tests {
         let v = h.state.overview.view.as_ref().expect("the overview");
         assert_eq!(v.windows.len(), 3, "the new window joined");
         assert_eq!(c.side.shells[a.shell].configures, before);
+    }
+
+    #[test]
+    fn picking_a_minimized_window_in_the_overview_never_suspends_it() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "one", 300, 200);
+        h.map_toplevel(&mut c, "two", 300, 200);
+        h.state.set_minimized(a.id, true);
+        h.state.open_overview();
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.shells[a.shell].suspended.last(), Some(&false));
+        let heard = c.side.shells[a.shell].suspended.len();
+        let v = h.state.overview.view.as_ref().expect("the overview");
+        let i = v.windows.iter().position(|&w| w == a.id).unwrap();
+        h.state.overview_activate(i);
+        h.roundtrip(&mut c);
+        assert!(!h.state.win(a.id).unwrap().minimized, "it came up");
+        assert!(
+            !c.side.shells[a.shell].suspended[heard..].contains(&true),
+            "never suspended between the pictures and the restore"
+        );
     }
 
     #[test]
