@@ -12,6 +12,8 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::TextEdit;
 use zeroize::Zeroizing;
 
+use crate::helper::{Prompt, Tag};
+
 /// The client area for a message of one or two lines; see `client_size`.
 pub const CLIENT: (i32, i32) = (378, 207);
 
@@ -46,6 +48,7 @@ const CANCEL_X: i32 = 287;
 pub const FAILED: &str = "The user name or password is incorrect.";
 /// The status area's first line while Caps Lock is on.
 pub const CAPS_LOCK: &str = "Caps Lock is on.";
+/// The label of [`Prompt::password`], with its access key.
 const PASSWORD_LABEL: &str = "&Password:";
 
 /// Rows the block under the message shifts down by: one per line past two.
@@ -60,9 +63,10 @@ pub fn client_size(lines: usize) -> (i32, i32) {
 pub enum Outcome {
     None,
     Redraw,
-    /// Try this user and password.
+    /// Try this user and password, typed under `tag`.
     Submit {
         user: String,
+        tag: Tag,
         password: Zeroizing<String>,
     },
     /// Another user was picked: the conversation starts over for them.
@@ -77,9 +81,10 @@ impl std::fmt::Debug for Outcome {
         match self {
             Outcome::None => write!(f, "None"),
             Outcome::Redraw => write!(f, "Redraw"),
-            Outcome::Submit { user, .. } => f
+            Outcome::Submit { user, tag, .. } => f
                 .debug_struct("Submit")
                 .field("user", user)
+                .field("tag", tag)
                 .field("password", &"<redacted>")
                 .finish(),
             Outcome::UserChanged(user) => f.debug_tuple("UserChanged").field(user).finish(),
@@ -93,6 +98,8 @@ pub struct RunAs {
     pub form: Form,
     pub size: (i32, i32),
     users: Vec<String>,
+    /// The prompt the field stands for.
+    tag: Tag,
     busy: bool,
     status: String,
     caps_lock: bool,
@@ -191,6 +198,10 @@ impl RunAs {
             form,
             size,
             users: users.to_vec(),
+            tag: Tag {
+                n: 1,
+                prompt: Prompt::password(),
+            },
             busy: false,
             status: String::new(),
             caps_lock: false,
@@ -214,7 +225,11 @@ impl RunAs {
                 }
                 let user = self.user();
                 let password = self.take_password();
-                Outcome::Submit { user, password }
+                Outcome::Submit {
+                    user,
+                    tag: self.tag.clone(),
+                    password,
+                }
             }
             form::Event::Pressed("cancel") | form::Event::Cancel => Outcome::Cancel,
             form::Event::Redraw => Outcome::Redraw,
@@ -245,11 +260,46 @@ impl RunAs {
         self.form.focus_id("password");
     }
 
-    /// Label the field with a further prompt's `text` (None: the password) and open it,
-    /// emptied, for the answer; `echo` shows the answer as it is typed.
-    pub fn ask(&mut self, text: Option<&str>, echo: bool) {
-        let label = text.map_or(PASSWORD_LABEL.into(), reprisekit::text::escape_mnemonic);
-        self.form.set_text("password_l", &label);
+    /// A new conversation: the field stands for its first prompt, which is expected to be
+    /// `prompt`. It opens hidden whatever `prompt`'s echo: only PAM asking a shown prompt
+    /// (`ask`) makes it plain, so a stale or forged memory never shows a password.
+    pub fn open(&mut self, prompt: &Prompt) {
+        let label = if *prompt == Prompt::password() {
+            PASSWORD_LABEL.into()
+        } else {
+            reprisekit::text::escape_mnemonic(&prompt.text)
+        };
+        self.show(&label, false);
+        self.tag = Tag {
+            n: 1,
+            prompt: prompt.clone(),
+        };
+    }
+
+    /// PAM asks `tag`: the field takes its text and echo, emptied, unless it already stands for
+    /// it (an opening field then keeps its text, hidden), and is open for the answer.
+    pub fn ask(&mut self, tag: Tag) {
+        if self.tag != tag {
+            self.show(
+                &reprisekit::text::escape_mnemonic(&tag.prompt.text),
+                tag.prompt.echo,
+            );
+            self.take_password();
+            self.tag = tag;
+        }
+        self.set_busy(false);
+        self.set_status("");
+        self.form.focus_id("password");
+    }
+
+    pub fn tag(&self) -> &Tag {
+        &self.tag
+    }
+
+    /// Label the field; `echo` shows the answer as it is typed, and a change of it empties
+    /// the field.
+    fn show(&mut self, label: &str, echo: bool) {
+        self.form.set_text("password_l", label);
         if let Some(Control::Edit { edit, .. }) =
             self.form.item_mut("password").map(|i| &mut i.control)
             && edit.is_secret() == echo
@@ -261,12 +311,11 @@ impl RunAs {
                 TextEdit::secret()
             };
         }
-        if text.is_some() {
-            self.take_password();
-            self.set_busy(false);
-            self.set_status("");
-            self.form.focus_id("password");
-        }
+    }
+
+    #[cfg(test)]
+    pub fn busy(&self) -> bool {
+        self.busy
     }
 
     #[cfg(test)]
@@ -472,7 +521,7 @@ mod tests {
         assert!(button_enabled(&d, "ok"));
         d.form.set_combo("user", 1);
         match d.event(form::Event::Default) {
-            Outcome::Submit { user, password } => {
+            Outcome::Submit { user, password, .. } => {
                 assert_eq!(user, "alice");
                 assert_eq!(&*password, "hunter2");
             }
@@ -504,6 +553,31 @@ mod tests {
             d.event(form::Event::Changed("password")),
             Outcome::Redraw
         ));
+    }
+
+    /// The own Password field draws its access key and stands for PAM's "Password: " trimmed;
+    /// another remembered prompt draws its text as PAM sent it.
+    #[test]
+    fn the_own_password_field_is_pams_password_prompt() {
+        let label = |d: &RunAs| match d.form.item("password_l").map(|i| &i.control) {
+            Some(Control::Label { text, .. }) => text.clone(),
+            _ => String::new(),
+        };
+        let mut d = dialog(&["root"]);
+        assert_eq!(label(&d), "&Password:");
+        assert_eq!(
+            reprisekit::text::split_mnemonic(PASSWORD_LABEL).0,
+            Prompt::password().text
+        );
+        let code = Prompt {
+            text: "Code & PIN:".into(),
+            echo: true,
+        };
+        d.open(&code);
+        assert_eq!(label(&d), "Code && PIN:");
+        assert_eq!(*d.tag(), Tag { n: 1, prompt: code });
+        d.open(&Prompt::password());
+        assert_eq!(label(&d), "&Password:");
     }
 
     #[test]

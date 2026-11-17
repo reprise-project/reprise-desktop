@@ -15,6 +15,7 @@ workspace = true
 repriseapp = { path = "../../repriseapp" }
 reprisebus = { path = "../../reprisebus" }
 reprisefs = { path = "../../reprisefs" }
+repriseconf = { path = "../../repriseconf" }
 reprisekit = { path = "../../reprisekit" }
 repriselogin = { path = "../../repriselogin" }
 zbus.workspace = true
@@ -23,5 +24,7 @@ async-channel.workspace = true
 futures-util.workspace = true
 blocking.workspace = true
 zeroize.workspace = true
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
 libc.workspace = true
 log.workspace = true

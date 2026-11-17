@@ -14,6 +14,7 @@ reprisebus::test_session!();
 
 mod agent;
 mod dialog;
+mod first;
 mod helper;
 
 use std::collections::VecDeque;
@@ -31,7 +32,8 @@ use reprisekit::theme::TextUnits;
 
 use agent::{Msg, Outcome, Request};
 use dialog::RunAs;
-use helper::{Report, Verdict};
+use first::FirstPrompts;
+use helper::{Prompt, Report, Tag, Verdict};
 
 const RUNAS: WinId = WinId::named("runas");
 const KEY_ICON: &str = "polkit-gnome-authorization";
@@ -50,9 +52,11 @@ struct Active {
     session: Option<(helper::Session, String)>,
     reports: Option<Receiver<Report>>,
     prompted: bool,
-    /// The prompts this conversation has asked, which each submit names; past the first, or
-    /// for a shown first one, the field asks anew.
+    /// The prompts this conversation has reported.
     prompts: u32,
+    /// What was submitted ahead of its prompt: the helper gives it to that prompt only if PAM
+    /// asks exactly this.
+    sent: Option<Tag>,
     /// The first PAM error or info text since the password prompt (or the
     /// conversation's start), shown on failure instead of the generic text. The
     /// first explains a rejection (pam_faillock's "account locked" precedes its
@@ -76,6 +80,7 @@ impl Active {
             reports: None,
             prompted: false,
             prompts: 0,
+            sent: None,
             notice: None,
             failure_shown: false,
             held: None,
@@ -83,19 +88,21 @@ impl Active {
     }
 
     /// Hang up on any conversation in flight and start one for the user the dialog
-    /// shows. Without a waker (the tests) nothing starts.
-    fn begin(&mut self, waker: Option<&repriseapp::Waker>) {
+    /// shows, the field on the first prompt `first` remembers for them. Without a waker (the
+    /// tests) nothing starts.
+    fn begin(&mut self, waker: Option<&repriseapp::Waker>, first: &FirstPrompts) {
         self.session = None;
         self.reports = None;
         self.prompted = false;
         self.prompts = 0;
-        self.dialog.ask(None, false);
+        self.sent = None;
+        let user = self.dialog.user();
+        self.dialog.open(&first.get(&user));
         self.notice = None;
         self.held = None;
         let Some(waker) = waker else {
             return;
         };
-        let user = self.dialog.user();
         let (tx, rx) = std::sync::mpsc::channel();
         match helper::authenticate(user.clone(), self.request.cookie.clone(), tx, waker.clone()) {
             Some(session) => {
@@ -118,6 +125,7 @@ struct PolkitApp {
     waker: Option<repriseapp::Waker>,
     /// The text size the active dialog opened at.
     units: TextUnits,
+    first: FirstPrompts,
 }
 
 impl PolkitApp {
@@ -161,7 +169,7 @@ impl PolkitApp {
         let lines = wrap(&request.message);
         let dialog = RunAs::new(&lines, &request.users, request.selected, key, user_icon);
         let mut a = Active::new(request, dialog);
-        a.begin(self.waker.as_ref());
+        a.begin(self.waker.as_ref(), &self.first);
         self.active = Some(a);
     }
 
@@ -206,8 +214,19 @@ impl PolkitApp {
             }
             Report::Prompt { text, echo } => {
                 a.prompts += 1;
-                if a.prompts > 1 || echo {
-                    a.dialog.ask(Some(&text), echo);
+                let tag = Tag {
+                    n: a.prompts,
+                    prompt: Prompt { text, echo },
+                };
+                if tag.n == 1
+                    && let Some((_, user)) = &a.session
+                {
+                    self.first.learn(user, &tag.prompt);
+                }
+                // Text sent under another prompt was dropped: ask again.
+                let dropped = a.sent.take().is_some_and(|s| s != tag);
+                if dropped || *a.dialog.tag() != tag {
+                    a.dialog.ask(tag);
                 }
                 a.prompted = true;
                 a.notice = None;
@@ -225,7 +244,7 @@ impl PolkitApp {
                     a.dialog.fail(notice.as_deref());
                     a.failure_shown = true;
                     // Straight into the next try, so the reader is listening before anything is typed.
-                    a.begin(self.waker.as_ref());
+                    a.begin(self.waker.as_ref(), &self.first);
                 }
             }
             Report::Done(Verdict::Unreachable) => {
@@ -234,22 +253,23 @@ impl PolkitApp {
                 a.session = None;
                 a.reports = None;
                 a.prompted = false;
+                a.sent = None;
                 a.dialog.set_busy(false);
             }
         }
     }
 
-    /// Give the helper what the dialog submitted, starting a conversation if none
+    /// Give the helper what the dialog submitted under `tag`, starting a conversation if none
     /// is running for `user`. A password sent before the helper asks waits for its
     /// prompt, which comes after the earlier PAM steps (the fingerprint reader), and
-    /// answers it only if it is hidden.
-    fn submit(&mut self, user: String, password: zeroize::Zeroizing<String>) {
+    /// answers it only if that prompt is `tag`.
+    fn submit(&mut self, user: String, tag: Tag, password: zeroize::Zeroizing<String>) {
         let waker = self.waker.clone();
         let Some(a) = self.active.as_mut() else {
             return;
         };
         if a.session.as_ref().is_none_or(|(_, u)| *u != user) {
-            a.begin(waker.as_ref());
+            a.begin(waker.as_ref(), &self.first);
         }
         a.dialog.set_busy(true);
         // Asked for: the password goes straight in. Not yet: the helper is
@@ -262,8 +282,11 @@ impl PolkitApp {
         a.failure_shown = false;
         a.held = None;
         a.prompted = false;
+        if tag.n > a.prompts {
+            a.sent = Some(tag.clone());
+        }
         let sent = match &a.session {
-            Some((session, _)) => session.answer(a.prompts, password),
+            Some((session, _)) => session.answer(tag, password),
             None => false,
         };
         if !sent && waker.is_some() {
@@ -277,7 +300,7 @@ impl PolkitApp {
         if let Some(a) = self.active.as_mut()
             && a.session.as_ref().is_some_and(|(_, u)| u != user)
         {
-            a.begin(waker.as_ref());
+            a.begin(waker.as_ref(), &self.first);
         }
     }
 
@@ -328,8 +351,12 @@ impl PolkitApp {
                 self.finish(Outcome::Cancelled);
                 Reply::redraw_all()
             }
-            dialog::Outcome::Submit { user, password } => {
-                self.submit(user, password);
+            dialog::Outcome::Submit {
+                user,
+                tag,
+                password,
+            } => {
+                self.submit(user, tag, password);
                 Reply::redraw()
             }
             dialog::Outcome::UserChanged(user) => {
@@ -370,6 +397,7 @@ impl App for PolkitApp {
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.waker = Some(waker.clone());
+        self.first = FirstPrompts::load(first::path());
         match agent::start(waker) {
             Some(rx) => {
                 self.msgs = Some(rx);
@@ -461,6 +489,73 @@ mod tests {
 
     fn open(app: &mut PolkitApp) {
         app.open_next(&|m| reprisekit::text::wrap_chars(m, 58), None, None);
+    }
+
+    /// Type `text` into the field and press OK, as the user does: nothing goes out while OK
+    /// is greyed.
+    fn type_ok(app: &mut PolkitApp, text: &str) {
+        let a = app.active.as_mut().expect("a box is open");
+        a.dialog.form.focus_id("password");
+        let ev = a.dialog.form.paste(text.into());
+        a.dialog.event(ev);
+        let out = a.dialog.event(reprisekit::controls::form::Event::Default);
+        assert!(
+            matches!(out, dialog::Outcome::Submit { .. }),
+            "OK submits {text:?}, got {out:?}"
+        );
+        app.dialog_outcome(out);
+    }
+
+    /// The tag OK carries for `text` typed into the field; the submit goes nowhere.
+    fn ok_tag(app: &mut PolkitApp, text: &str) -> Tag {
+        let d = &mut app.active.as_mut().expect("a box is open").dialog;
+        let ev = d.form.paste(text.into());
+        d.event(ev);
+        match d.event(reprisekit::controls::form::Event::Default) {
+            dialog::Outcome::Submit { tag, .. } => tag,
+            other => panic!("OK submits {text:?}, got {other:?}"),
+        }
+    }
+
+    fn label(app: &PolkitApp) -> String {
+        app.active.as_ref().unwrap().dialog.label().to_string()
+    }
+
+    /// Answers that reached the conversation: the tag each was typed under, and the text.
+    fn sent(answers: &std::sync::mpsc::Receiver<helper::Answer>) -> Vec<(u32, String, String)> {
+        answers
+            .try_iter()
+            .map(|a| (a.tag.n, a.tag.prompt.text, a.text.to_string()))
+            .collect()
+    }
+
+    /// A detached conversation for `user` in place of the helper's.
+    fn attach(app: &mut PolkitApp, user: &str) -> std::sync::mpsc::Receiver<helper::Answer> {
+        let (session, answers) = helper::Session::detached();
+        app.active.as_mut().unwrap().session = Some((session, user.into()));
+        answers
+    }
+
+    fn secret(app: &PolkitApp) -> bool {
+        let form = &app.active.as_ref().unwrap().dialog.form;
+        match form.item("password").map(|i| &i.control) {
+            Some(form::Control::Edit { edit, .. }) => edit.is_secret(),
+            other => panic!("the field is {other:?}"),
+        }
+    }
+
+    fn code(echo: bool) -> Prompt {
+        Prompt {
+            text: "Verification code:".into(),
+            echo,
+        }
+    }
+
+    fn prompt(p: &Prompt) -> Report {
+        Report::Prompt {
+            text: p.text.clone(),
+            echo: p.echo,
+        }
     }
 
     fn request(cookie: &str) -> (Request, async_channel::Receiver<Outcome>) {
@@ -652,7 +747,7 @@ mod tests {
         app.report(Report::Info(
             "Place your finger on the fingerprint reader".into(),
         ));
-        app.submit("root".into(), zeroize::Zeroizing::new("hunter2".into()));
+        type_ok(&mut app, "hunter2");
         let act = app.active.as_ref().unwrap();
         assert_eq!(
             act.dialog.status(),
@@ -684,44 +779,30 @@ mod tests {
             text: "Password:".into(),
             echo: false,
         });
-        let label = |app: &PolkitApp| app.active.as_ref().unwrap().dialog.label().to_string();
         assert_eq!(label(&app), "&Password:");
-        app.submit("root".into(), zeroize::Zeroizing::new("hunter2".into()));
+        type_ok(&mut app, "hunter2");
         app.report(Report::Prompt {
             text: "Verification code:".into(),
             echo: false,
         });
         assert_eq!(label(&app), "Verification code:");
-        let act = app.active.as_mut().unwrap();
-        assert_eq!(act.dialog.password(), "");
-        act.dialog.form.paste("123456".into());
-        let out = act.dialog.event(reprisekit::controls::form::Event::Default);
-        let dialog::Outcome::Submit { user, password } = out else {
-            panic!("OK submits the code, got {out:?}");
-        };
-        app.submit(user, password);
+        assert_eq!(app.active.as_ref().unwrap().dialog.password(), "");
+        type_ok(&mut app, "123456");
         let got: Vec<String> = answers.try_iter().map(|a| a.text.to_string()).collect();
         assert_eq!(got, ["hunter2", "123456"]);
         app.report(Report::Done(Verdict::Failed));
         assert_eq!(label(&app), "&Password:", "a retry asks for the password");
     }
 
-    /// A shown prompt (a one-time code) opens the field as plain text; the retry hides it again.
+    /// A shown prompt (a one-time code) opens the field as plain text; asked first, it is where
+    /// the retry opens, in a hidden field.
     #[test]
     fn a_shown_prompt_shows_its_answer_as_typed() {
         let mut app = PolkitApp::default();
         let (a, _a_rx) = request("a");
         app.handle(Msg::Begin(a));
         open(&mut app);
-        let (session, _answers) = helper::Session::detached();
-        app.active.as_mut().unwrap().session = Some((session, "root".into()));
-        let secret = |app: &PolkitApp| {
-            let form = &app.active.as_ref().unwrap().dialog.form;
-            match form.item("password").map(|i| &i.control) {
-                Some(form::Control::Edit { edit, .. }) => edit.is_secret(),
-                other => panic!("the field is {other:?}"),
-            }
-        };
+        attach(&mut app, "root");
         app.report(Report::Prompt {
             text: "Passcode:".into(),
             echo: true,
@@ -733,11 +814,15 @@ mod tests {
         );
         assert!(!secret(&app));
         app.report(Report::Done(Verdict::Failed));
-        assert!(secret(&app), "a retry asks for the password");
+        assert!(
+            secret(&app),
+            "the retry opens hidden on the shown first prompt"
+        );
+        assert_eq!(app.active.as_ref().unwrap().dialog.label(), "Passcode:");
     }
 
-    /// Each submit names the prompt the box showed when it was typed: 0 for its own Password
-    /// field, then each prompt in turn.
+    /// Each submit names the prompt the box showed when it was typed: its own Password field
+    /// as the first, then each prompt PAM asked.
     #[test]
     fn an_answer_names_the_prompt_it_was_typed_under() {
         let mut app = PolkitApp::default();
@@ -746,30 +831,264 @@ mod tests {
         open(&mut app);
         let (session, answers) = helper::Session::detached();
         app.active.as_mut().unwrap().session = Some((session, "root".into()));
-        let pw = |s: &str| zeroize::Zeroizing::new(s.to_string());
-        app.submit("root".into(), pw("hunter2"));
+        type_ok(&mut app, "hunter2");
         app.report(Report::Prompt {
             text: "Verification code:".into(),
             echo: true,
         });
-        app.submit("root".into(), pw("424242"));
+        type_ok(&mut app, "424242");
         app.report(Report::Prompt {
             text: "Password:".into(),
             echo: false,
         });
-        app.submit("root".into(), pw("hunter2"));
-        let got: Vec<(u32, String)> = answers
+        type_ok(&mut app, "hunter2");
+        assert_eq!(
+            sent(&answers),
+            [
+                (1, "Password:".into(), "hunter2".into()),
+                (1, "Verification code:".into(), "424242".into()),
+                (2, "Password:".into(), "hunter2".into())
+            ]
+        );
+    }
+
+    /// Nothing remembered and a hidden code asked first: the password typed in the own field
+    /// is taken back, the box asks for the code with OK usable again, the code goes out under
+    /// it, and the code prompt is remembered, so the retry opens on it.
+    #[test]
+    fn a_hidden_first_prompt_of_another_text_is_asked_and_remembered() {
+        let mut app = PolkitApp::default();
+        let (a, _a_rx) = request("a");
+        app.handle(Msg::Begin(a));
+        open(&mut app);
+        let (session, answers) = helper::Session::detached();
+        app.active.as_mut().unwrap().session = Some((session, "root".into()));
+        assert_eq!(label(&app), "&Password:");
+        type_ok(&mut app, "hunter2");
+        app.report(prompt(&code(false)));
+        assert_eq!(label(&app), "Verification code:");
+        let act = app.active.as_ref().unwrap();
+        assert_eq!(act.dialog.password(), "");
+        assert_eq!(
+            act.dialog.form.focus(),
+            act.dialog.form.index_of("password")
+        );
+        type_ok(&mut app, "424242");
+        app.report(prompt(&Prompt::password()));
+        assert_eq!(label(&app), "Password:");
+        type_ok(&mut app, "hunter2");
+        assert_eq!(
+            sent(&answers),
+            [
+                (1, "Password:".into(), "hunter2".into()),
+                (1, "Verification code:".into(), "424242".into()),
+                (2, "Password:".into(), "hunter2".into())
+            ]
+        );
+        assert_eq!(app.first.get("root"), code(false));
+        app.report(Report::Done(Verdict::Failed));
+        assert_eq!(
+            label(&app),
+            "Verification code:",
+            "the retry opens on the code"
+        );
+        assert_eq!(
+            *app.active.as_ref().unwrap().dialog.tag(),
+            Tag {
+                n: 1,
+                prompt: code(false)
+            }
+        );
+    }
+
+    /// With a shown code prompt remembered, the box opens on it in a hidden field and what is
+    /// typed there is sent under the remembered prompt; PAM asking it keeps the box busy on it.
+    #[test]
+    fn a_remembered_first_prompt_opens_the_box() {
+        let mut app = PolkitApp::default();
+        app.first.learn("root", &code(true));
+        let (a, _a_rx) = request("a");
+        app.handle(Msg::Begin(a));
+        open(&mut app);
+        let answers = attach(&mut app, "root");
+        assert_eq!(label(&app), "Verification code:");
+        assert!(secret(&app), "nothing asked yet: the field is hidden");
+        type_ok(&mut app, "424242");
+        app.report(prompt(&code(true)));
+        assert!(
+            app.active.as_ref().unwrap().dialog.busy(),
+            "the code went to its prompt: still busy"
+        );
+        let got: Vec<(Tag, String)> = answers
             .try_iter()
-            .map(|a| (a.prompt, a.text.to_string()))
+            .map(|a| (a.tag, a.text.to_string()))
             .collect();
         assert_eq!(
             got,
-            [
-                (0, "hunter2".into()),
-                (1, "424242".into()),
-                (2, "hunter2".into())
-            ]
+            [(
+                Tag {
+                    n: 1,
+                    prompt: code(true)
+                },
+                "424242".into()
+            )]
         );
+    }
+
+    /// A state file naming "Password:" as a shown first prompt opens the field hidden; PAM's
+    /// hidden "Password: " empties it, keeps it hidden and forgets the entry, on disk too.
+    #[test]
+    fn a_remembered_shown_password_never_opens_a_plain_field() {
+        let dir = std::env::temp_dir().join(format!("reprise-polkit-shown-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("polkit.toml");
+        std::fs::write(&path, "[root]\ntext = \"Password:\"\necho = true\n").unwrap();
+        let mut app = PolkitApp {
+            first: FirstPrompts::load(path.clone()),
+            ..PolkitApp::default()
+        };
+        let (a, _a_rx) = request("a");
+        app.handle(Msg::Begin(a));
+        open(&mut app);
+        attach(&mut app, "root");
+        assert!(secret(&app), "the box opens hidden");
+        assert_eq!(label(&app), "Password:");
+        let d = &mut app.active.as_mut().unwrap().dialog;
+        let ev = d.form.paste("hunter2".into());
+        d.event(ev);
+        app.report(prompt(&Prompt::password()));
+        assert!(secret(&app), "PAM's hidden prompt keeps the field hidden");
+        assert_eq!(app.active.as_ref().unwrap().dialog.password(), "");
+        assert_eq!(app.first.get("root"), Prompt::password());
+        app.first.wait();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Text typed in the opening field under a remembered shown prompt stays hidden whatever PAM
+    /// asks first: kept as dots under the same prompt, emptied before the field turns plain for
+    /// another.
+    #[test]
+    fn nothing_typed_hidden_is_shown_plain() {
+        let passcode = Prompt {
+            text: "Passcode:".into(),
+            echo: true,
+        };
+        for (asked, kept) in [
+            (code(true), true),
+            (passcode, false),
+            (Prompt::password(), false),
+        ] {
+            let mut app = PolkitApp::default();
+            app.first.learn("root", &code(true));
+            let (a, _a_rx) = request("a");
+            app.handle(Msg::Begin(a));
+            open(&mut app);
+            attach(&mut app, "root");
+            let d = &mut app.active.as_mut().unwrap().dialog;
+            let ev = d.form.paste("4242".into());
+            d.event(ev);
+            assert!(secret(&app), "{asked:?}: typed hidden");
+            app.report(prompt(&asked));
+            let typed = app.active.as_ref().unwrap().dialog.password().to_string();
+            assert_eq!(typed, if kept { "4242" } else { "" }, "{asked:?}");
+            assert!(
+                secret(&app) || typed.is_empty(),
+                "{asked:?}: a plain field holds nothing typed hidden"
+            );
+            assert_eq!(secret(&app), kept || !asked.echo, "{asked:?}");
+        }
+    }
+
+    /// A remembered prompt the stack no longer asks: the text is taken back, PAM's prompt is
+    /// asked, and the next box opens on the own Password field as before.
+    #[test]
+    fn a_stale_remembered_prompt_asks_pams_and_is_forgotten() {
+        let mut app = PolkitApp::default();
+        app.first.learn("root", &code(false));
+        let (a, _a_rx) = request("a");
+        app.handle(Msg::Begin(a));
+        open(&mut app);
+        let (session, _answers) = helper::Session::detached();
+        app.active.as_mut().unwrap().session = Some((session, "root".into()));
+        type_ok(&mut app, "hunter2");
+        app.report(prompt(&Prompt::password()));
+        assert_eq!(label(&app), "Password:");
+        assert_eq!(app.active.as_ref().unwrap().dialog.password(), "");
+        type_ok(&mut app, "hunter2");
+        assert_eq!(app.first.get("root"), Prompt::password());
+        app.report(Report::Done(Verdict::Failed));
+        assert_eq!(label(&app), "&Password:");
+    }
+
+    /// Each user's box opens on the first prompt remembered for them, and OK there submits
+    /// under it.
+    #[test]
+    fn two_users_open_on_their_own_first_prompts() {
+        let mut app = PolkitApp::default();
+        app.first.learn("alice", &code(false));
+        let (mut a, _a_rx) = request("a");
+        a.users = vec!["root".into(), "alice".into()];
+        app.handle(Msg::Begin(a));
+        open(&mut app);
+        attach(&mut app, "root");
+        assert_eq!(label(&app), "&Password:");
+        let password = Tag {
+            n: 1,
+            prompt: Prompt::password(),
+        };
+        assert_eq!(ok_tag(&mut app, "hunter2"), password);
+        let d = &mut app.active.as_mut().unwrap().dialog;
+        d.form.set_combo("user", 1);
+        let out = d.event(reprisekit::controls::form::Event::Changed("user"));
+        app.dialog_outcome(out);
+        assert_eq!(label(&app), "Verification code:");
+        let alices = Tag {
+            n: 1,
+            prompt: code(false),
+        };
+        assert_eq!(ok_tag(&mut app, "424242"), alices);
+    }
+
+    /// PAM's "Password: " on a plain stack is the own field: nothing changes on screen and the
+    /// password typed there is its answer.
+    #[test]
+    fn a_plain_stack_answers_the_own_field() {
+        let mut app = PolkitApp::default();
+        let (a, _a_rx) = request("a");
+        app.handle(Msg::Begin(a));
+        open(&mut app);
+        let (session, answers) = helper::Session::detached();
+        app.active.as_mut().unwrap().session = Some((session, "root".into()));
+        type_ok(&mut app, "hunter2");
+        app.report(prompt(&Prompt::password()));
+        assert_eq!(label(&app), "&Password:");
+        assert!(app.active.as_ref().unwrap().dialog.busy());
+        assert_eq!(sent(&answers), [(1, "Password:".into(), "hunter2".into())]);
+        assert!(app.first.get("root") == Prompt::password());
+    }
+
+    /// A first prompt that comes before anything is sent (the reader's stack starts at once)
+    /// leaves what is being typed under a label that matches it, and relabels and empties a
+    /// field that does not.
+    #[test]
+    fn an_early_first_prompt_keeps_typing_only_under_its_own_label() {
+        for (asked, kept) in [(Prompt::password(), true), (code(false), false)] {
+            let mut app = PolkitApp::default();
+            let (a, _a_rx) = request("a");
+            app.handle(Msg::Begin(a));
+            open(&mut app);
+            let (session, _answers) = helper::Session::detached();
+            app.active.as_mut().unwrap().session = Some((session, "root".into()));
+            let d = &mut app.active.as_mut().unwrap().dialog;
+            let ev = d.form.paste("hun".into());
+            d.event(ev);
+            app.report(prompt(&asked));
+            let d = &app.active.as_ref().unwrap().dialog;
+            assert_eq!(d.password(), if kept { "hun" } else { "" }, "{asked:?}");
+            assert_eq!(d.tag().prompt, asked);
+        }
     }
 
     /// A finger that matches ends the request with no password typed.
