@@ -117,7 +117,13 @@ confinement holds, every motion goes through as it comes.
   ([protocols/reprise-tabs-v1.xml](../protocols/reprise-tabs-v1.xml));
   `reprise_on_top_v1`, hidden from sandboxed programs: keeps one of the
   program's windows on top, as Always on Top does
-  ([protocols/reprise-on-top-v1.xml](../protocols/reprise-on-top-v1.xml))
+  ([protocols/reprise-on-top-v1.xml](../protocols/reprise-on-top-v1.xml));
+  `reprise_output_trial_v1`, offered where `zwlr_output_manager_v1` is: a
+  display change on trial for 1 to 60 seconds, which Reprise puts back
+  unless the program keeps it in time, and also when the program goes; a
+  configuration the program covers with its trial is applied only while
+  that trial is held
+  ([protocols/reprise-output-trial-v1.xml](../protocols/reprise-output-trial-v1.xml))
 
 ## Portals
 

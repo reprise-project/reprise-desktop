@@ -228,7 +228,9 @@ Restore Defaults, on every page whose controls write `config.toml` keys,
 takes the page's keys that are off their defaults out of `config.toml`. When
 `config.toml` changes while Settings is open, the controls you haven't
 touched show the new values. A display change asks whether to keep it and
-reverts after 15 seconds without an answer.
+reverts after 15 seconds without an answer. Reprise holds the old settings:
+they come back after the 15 seconds even when Settings stops responding, and
+at once when Settings is closed or killed during the question.
 
 Login Manager sets the login screen and remote logins for the whole computer,
 in `/etc/reprise/login.toml`. OK and Apply save through `pkexec`, which asks
