@@ -1148,7 +1148,7 @@ fn wide_filter_tree(transform: &str) -> resvg::usvg::Tree {
 /// colour matrices.
 const WIDE_FILTER_WORK: f64 = 18.0 + 25.0 + 2.0 + 3.0 * 35.0;
 
-/// resvg 0.49's `render_group` for a filtered group under `ts` in `bound`: the bound inside it,
+/// resvg 0.50's `render_group` for a filtered group under `ts` in `bound`: the bound inside it,
 /// its layer's pixels and the transform inside it. None when resvg skips the group.
 fn resvg_filter_layer(
     ts: resvg::tiny_skia::Transform,
@@ -1183,7 +1183,7 @@ fn resvg_filter_layer(
 
 /// The resvg whose layer bounds `Cost::group` and [`resvg_filter_layer`] were last checked
 /// against.
-const RESVG_CHECKED: &str = "0.49.0";
+const RESVG_CHECKED: &str = "0.50.0";
 
 #[test]
 fn cargo_lock_holds_the_resvg_the_svg_price_was_checked_against() {
@@ -1202,7 +1202,7 @@ fn cargo_lock_holds_the_resvg_the_svg_price_was_checked_against() {
          bound under `inv_rest`, `fit_to_rect`, the +2 px pad) and src/lib.rs `max_filter_bbox` \
          against crates/reprisekit/src/icontheme/decode.rs `layer_bound`, `unrotation`, \
          `stretched` and `Cost::group`, and against `resvg_filter_layer` in {}; update them and \
-         the \"resvg 0.49\" notes there if they differ, then set RESVG_CHECKED there",
+         the \"resvg 0.50\" notes there if they differ, then set RESVG_CHECKED there",
         file!()
     );
 }
@@ -1296,6 +1296,22 @@ fn nested_skewed_filter_regions_are_priced_at_least_at_the_layers_resvg_draws() 
             "skewX then skewY({angle}): {price} covers {pixels} px"
         );
     }
+}
+
+/// resvg draws a pattern's content at the scale that fits it to its rounded tile: a tile of half
+/// a pixel rounds to one and draws its content at twice the device scale.
+#[test]
+fn a_pattern_tile_rounded_up_prices_its_content_at_the_scale_resvg_draws_it() {
+    let tree = budget_tree(&format!(
+        r##"<filter id="f" filterUnits="userSpaceOnUse" x="0" y="0" width="20" height="20"><feFlood flood-color="#f00"/>{}</filter><pattern id="p" patternUnits="userSpaceOnUse" width="0.5" height="0.5"><g filter="url(#f)">{SHAPE}</g></pattern><rect width="16" height="16" fill="url(#p)"/>"##,
+        r#"<feColorMatrix type="saturate" values=".5"/>"#.repeat(3)
+    ));
+    let pixels = 40.0 * 40.0;
+    let price = least_budget(&tree, 16);
+    assert!(
+        price >= pixels * WIDE_FILTER_WORK,
+        "{price} covers a {pixels} px layer"
+    );
 }
 
 /// resvg draws an SVG picture through a pixmap the size of the one it lands in and bounds the
@@ -1424,6 +1440,48 @@ fn an_svg_usvg_would_build_too_much_from_is_refused_before_it_does() {
         r##"<linearGradient id="g"><stop offset="0"/></linearGradient><path d="M0 0{vertices}" style="fill:url(#g);marker:none"/>"##
     );
     assert_eq!(refused(&filled), None);
+}
+
+/// usvg searches each element a filter's `<feImage>` names for reference loops, walking all
+/// it holds, whether the filter is used or not: 60 nested groups named by an unused filter's
+/// pictures walk 4000 rects 60 times.
+#[test]
+fn an_svg_whose_pictures_name_nested_groups_is_refused_before_usvg_builds_it() {
+    let refused = |body: &str| parse_xml(&budget_svg(body), SVG_MAX_WORK).err();
+    let why = Some("too many elements once uses and references expand");
+    let rects = r#"<rect width="1" height="1"/>"#.repeat(4_000);
+    let groups = |n: usize, inside: &str| {
+        let open: String = (0..n).map(|i| format!(r#"<g id="g{i}">"#)).collect();
+        format!("{open}{inside}{}", "</g>".repeat(n))
+    };
+    let pictures = |n: usize| {
+        let named: String = (0..n)
+            .map(|i| format!(r##"<feImage xlink:href="#g{i}"/>"##))
+            .collect();
+        format!(r#"<filter id="f">{named}</filter>"#)
+    };
+    let unused = |n: usize| format!("<defs>{}</defs>{}", pictures(n), groups(60, &rects));
+    assert_eq!(refused(&unused(1)), None);
+    assert_eq!(refused(&unused(60)), why);
+    // A picture can name a group its own filter stands in.
+    let inside = format!("{}{rects}", pictures(60));
+    assert_eq!(refused(&groups(60, &inside)), why);
+}
+
+/// usvg looks each element's inherited style up through its ancestors: 1000 nested groups
+/// around 18 000 rects take it a third of a second, priced as the rects alone.
+#[test]
+fn an_svg_nested_deeper_than_icons_nest_is_refused() {
+    let nested = |depth: usize, rects: usize| {
+        let (open, close) = ("<g>".repeat(depth), "</g>".repeat(depth));
+        let rects = r#"<rect width="1" height="1"/>"#.repeat(rects);
+        budget_svg(&format!("{open}{rects}{close}"))
+    };
+    let p = tmp("nested.svg");
+    assert!(decode_bytes(&p, nested(60, 1).as_bytes(), 16, true).is_some());
+    let deep = nested(1000, 18_000);
+    assert!(parse_xml(&deep, SVG_MAX_WORK).is_ok());
+    assert!(decode_bytes(&p, deep.as_bytes(), 16, true).is_none());
 }
 
 #[test]
