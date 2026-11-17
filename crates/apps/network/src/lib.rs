@@ -130,10 +130,19 @@ enum Browse {
     Eap(&'static str),
 }
 
+/// The window an OK box was raised from: it covers that window and leaves with it.
+enum Over {
+    Main,
+    /// The chooser while it shows this radio.
+    Chooser(String),
+    /// VPN sheet number `n` ([`NetApp::vpn_opened`]) while it is open.
+    Vpn(u64),
+}
+
 /// What a notice box answers for.
 enum Notice {
-    /// An OK box, raised from VPN sheet number `sheet` when it names one.
-    Tell { sheet: Option<u64> },
+    /// An OK box.
+    Tell(Over),
     /// Confirm Connection Delete: Yes deletes this saved connection.
     Delete(String),
 }
@@ -349,15 +358,48 @@ impl NetApp {
     }
 
     fn tell(&mut self, title: &str, text: &str) {
-        self.notices
-            .ask(ok_box(title, text), Notice::Tell { sheet: None });
+        self.tell_over(Over::Main, title, text);
     }
 
-    /// [`NetApp::tell`] for the VPN sheet open, which the box covers while that sheet stays.
+    /// [`NetApp::tell`] for the VPN sheet open.
     fn tell_from_sheet(&mut self, title: &str, text: &str) {
-        let sheet = Some(self.vpn_opened);
-        self.notices
-            .ask(ok_box(title, text), Notice::Tell { sheet });
+        self.tell_over(Over::Vpn(self.vpn_opened), title, text);
+    }
+
+    fn tell_over(&mut self, over: Over, title: &str, text: &str) {
+        self.notices.ask(ok_box(title, text), Notice::Tell(over));
+    }
+
+    /// The window `over` names, `None` once it closed or shows something else.
+    fn window_of(&self, over: &Over) -> Option<WinId> {
+        match over {
+            Over::Main => Some(repriseapp::MAIN),
+            Over::Chooser(radio) => (self.chooser.as_ref())
+                .filter(|c| &c.device_path == radio)
+                .map(|_| CHOOSER),
+            Over::Vpn(n) => (self.vpn.is_some() && *n == self.vpn_opened).then_some(VPN),
+        }
+    }
+
+    /// The window the file dialog was raised from: a Browse... covers the sheet or dialog that
+    /// asked, Import the folder.
+    fn browse_over(&self) -> Option<WinId> {
+        match self.browse_for {
+            Some(Browse::Ovpn { sheet, .. }) => self.window_of(&Over::Vpn(sheet)),
+            Some(Browse::Eap(_)) => self.eap.as_ref().map(|_| EAP),
+            None => Some(repriseapp::MAIN),
+        }
+    }
+
+    /// Takes the boxes whose window closed: the notices raised from it, and a Browse... whose
+    /// sheet or dialog went.
+    fn withdraw_orphans(&mut self) {
+        let mut notices = std::mem::take(&mut self.notices);
+        notices.withdraw(|n| matches!(n, Notice::Tell(over) if self.window_of(over).is_none()));
+        self.notices = notices;
+        if self.import.is_some() && self.browse_over().is_none() {
+            self.picked(None);
+        }
     }
 
     /// Opens `w` in the VPN sheet's window in place of the sheet there, unless that sheet holds
@@ -1002,6 +1044,10 @@ impl NetApp {
                 _ => return Reply::none(),
             }
         };
+        self.chooser_outcome(out)
+    }
+
+    fn chooser_outcome(&mut self, out: chooser::Outcome) -> Reply {
         let device = match &self.chooser {
             Some(c) => c.device_path.clone(),
             None => return Reply::none(),
@@ -1050,7 +1096,7 @@ impl NetApp {
                     .iter()
                     .find(|d| d.path == device)
                     .map_or_else(|| "Network Connections".into(), |d| d.shell_name.clone());
-                self.tell(&title, nm::WIFI_NEEDS_AGENT);
+                self.tell_over(Over::Chooser(device), &title, nm::WIFI_NEEDS_AGENT);
                 Reply::redraw_all()
             }
             chooser::Outcome::Hidden => {
@@ -1342,11 +1388,13 @@ impl App for NetApp {
         self.dialog_text = Some(ctx.text.clone());
         self.forms = ctx.forms();
         if matches!(ev, Event::Wake) {
-            return self.wake();
+            let reply = self.wake();
+            self.withdraw_orphans();
+            return reply;
         }
         self.read_icons(ctx);
         self.import_host.icons.prime(&mut ctx.icons);
-        match win {
+        let reply = match win {
             CHOOSER => self.chooser_event(ev, ctx),
             KEY => {
                 let field = self.key.as_ref().and_then(|k| k.form.focused_edit());
@@ -1375,7 +1423,9 @@ impl App for NetApp {
             IMPORT => self.import_event(ev, ctx),
             w if self.notices.owns(w) => self.notice_event(w, ev),
             _ => self.folder_event(ev, ctx),
-        }
+        };
+        self.withdraw_orphans();
+        reply
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
@@ -1503,18 +1553,19 @@ impl repriseapp::Extended for NetApp {
         self.hidden
     }
 
-    /// A notice raised from a VPN sheet, and a Browse... for one, cover that sheet while it is
-    /// open.
+    /// A box covers the window it was raised from while that one is open: the key and login
+    /// dialogs the chooser, a notice its [`Over`], a file dialog [`NetApp::browse_over`].
     fn parent(&self, win: WinId) -> Option<WinId> {
-        let sheet = match (self.notices.up(), self.browse_for) {
-            (Some((_, Notice::Tell { sheet })), _) if self.notices.owns(win) => *sheet,
-            (_, Some(Browse::Ovpn { sheet, .. })) if win == IMPORT => Some(sheet),
+        let over = match win {
+            KEY | EAP => self.chooser.as_ref().map(|_| CHOOSER),
+            IMPORT => self.browse_over(),
+            w if self.notices.owns(w) => match self.notices.up() {
+                Some((_, Notice::Tell(over))) => self.window_of(over),
+                _ => None,
+            },
             _ => None,
         };
-        match sheet {
-            Some(s) if self.vpn.is_some() && s == self.vpn_opened => Some(VPN),
-            _ => Some(repriseapp::MAIN),
-        }
+        Some(over.unwrap_or(repriseapp::MAIN))
     }
 
     /// The Import file dialog resizes, down to its opening size.
@@ -1820,7 +1871,7 @@ mod tests {
             data: vec![],
         };
         tx.send(nm::NmMsg::Vpn(edit)).unwrap();
-        app.wake()
+        app.event(repriseapp::MAIN, Event::Wake, &mut test_ctx(folder::CLIENT))
     }
 
     #[test]
@@ -1859,6 +1910,69 @@ mod tests {
         assert_eq!(app.parent(win), Some(VPN));
         app.show_vpn(ovpn_sheet("/conn/b"));
         assert_eq!(app.parent(win), Some(repriseapp::MAIN));
+    }
+
+    #[test]
+    fn a_box_raised_from_the_chooser_covers_it_and_leaves_with_it() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        let mut app = NetApp {
+            snapshot: radios(&["/dev/1"]),
+            ..NetApp::default()
+        };
+        app.folder_outcome(folder::Outcome::ViewWireless("/dev/1".into()), &ctx);
+        app.chooser_outcome(chooser::Outcome::NeedsAgent);
+        let (_, notice) = shown(&app).expect("the agent notice is up");
+        assert_eq!(
+            app.parent(notice),
+            Some(CHOOSER),
+            "the notice covers the chooser"
+        );
+        let connect = |security| chooser::Outcome::Connect {
+            ap: "/ap/1".into(),
+            ssid: "Lab".into(),
+            security,
+            needs_key: true,
+        };
+        app.chooser_outcome(connect(nm::Security::Psk));
+        assert_eq!(
+            app.parent(KEY),
+            Some(CHOOSER),
+            "the key prompt covers the chooser"
+        );
+        app.event(KEY, Event::CloseRequest, &mut ctx);
+        app.chooser_outcome(connect(nm::Security::Enterprise));
+        assert_eq!(
+            app.parent(EAP),
+            Some(CHOOSER),
+            "the login dialog covers the chooser"
+        );
+        app.open_browse(Browse::Eap("ca"), ctx.theme.text);
+        assert_eq!(
+            app.parent(IMPORT),
+            Some(EAP),
+            "Browse covers the login dialog"
+        );
+
+        app.event(CHOOSER, Event::CloseRequest, &mut ctx);
+        assert!(app.notices.is_empty(), "the notice left with the chooser");
+        assert!(app.eap.is_none(), "the login dialog left with the chooser");
+        assert!(app.import.is_none(), "Browse left with the login dialog");
+    }
+
+    #[test]
+    fn a_notice_or_browse_from_a_vpn_sheet_leaves_when_another_sheet_takes_its_place() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = NetApp {
+            nm_rx: Some(rx),
+            ..NetApp::default()
+        };
+        loaded(&mut app, &tx, "/conn/a");
+        app.tell_from_sheet("a Properties", "The gateway is missing.");
+        let sheet = app.vpn_opened;
+        app.open_browse(Browse::Ovpn { field: "ca", sheet }, Theme::default().text);
+        loaded(&mut app, &tx, "/conn/b");
+        assert!(app.notices.is_empty(), "the notice left with a's sheet");
+        assert!(app.import.is_none(), "Browse left with a's sheet");
     }
 
     #[test]
