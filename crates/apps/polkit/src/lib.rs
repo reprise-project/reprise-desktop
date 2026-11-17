@@ -298,7 +298,7 @@ impl PolkitApp {
     fn user_changed(&mut self, user: &str) {
         let waker = self.waker.clone();
         if let Some(a) = self.active.as_mut()
-            && a.session.as_ref().is_some_and(|(_, u)| u != user)
+            && a.session.as_ref().is_none_or(|(_, u)| u != user)
         {
             a.begin(waker.as_ref(), &self.first);
         }
@@ -1123,6 +1123,33 @@ mod tests {
         type_ok(&mut app, "hunter2");
         assert!(app.active.as_ref().unwrap().dialog.busy());
         pick(&mut app, 1);
+        assert_eq!(label(&app), "Verification code:");
+        let alices = attach(&mut app, "alice");
+        type_ok(&mut app, "424242");
+        assert_eq!(
+            tags(&alices),
+            [Tag {
+                n: 1,
+                prompt: code(false)
+            }]
+        );
+    }
+
+    /// What was typed for the first user after their helper went must not wait in the field
+    /// for the picked user's OK.
+    #[test]
+    fn a_user_picked_after_an_unreachable_helper_starts_their_conversation() {
+        let mut app = two_users();
+        app.first.learn("alice", &code(false));
+        app.report(Report::Error("Cannot reach the polkit helper: x".into()));
+        app.report(Report::Done(Verdict::Unreachable));
+        assert_eq!(label(&app), "&Password:");
+        let d = &mut app.active.as_mut().unwrap().dialog;
+        let ev = d.form.paste("roots".into());
+        d.event(ev);
+        pick(&mut app, 1);
+        assert_eq!(app.active.as_ref().unwrap().dialog.password(), "");
+        assert!(secret(&app));
         assert_eq!(label(&app), "Verification code:");
         let alices = attach(&mut app, "alice");
         type_ok(&mut app, "424242");
