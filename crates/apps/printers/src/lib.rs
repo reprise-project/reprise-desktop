@@ -197,9 +197,17 @@ impl PrintersApp {
         t.notify_clickable(summary, body, tag);
     }
 
-    fn fail(&mut self, title: &str, body: String) {
-        let icon = None;
-        self.note.show(title, body, icon);
+    /// A notice about `printer` covers its Properties sheet, else its queue, else the folder.
+    fn notify(&mut self, printer: Option<&str>, title: &str, body: String) {
+        let over = printer.and_then(|p| self.props.of(p).or_else(|| self.queues.of(p)));
+        self.note.show_over(over.unwrap_or(MAIN), title, body, None);
+    }
+
+    /// Takes the notices over a sheet or queue window that closed.
+    fn withdraw_notices(&mut self) {
+        let (queues, props) = (&self.queues, &self.props);
+        self.note
+            .withdraw(|w| w != MAIN && queues.get(w).is_none() && props.get(w).is_none());
     }
 
     fn snapshot_in(&mut self, s: Snapshot) {
@@ -249,6 +257,7 @@ impl PrintersApp {
             }
             None => !snap.running || renaming.contains(&p.printer),
         });
+        self.withdraw_notices();
         self.push_tray();
     }
 
@@ -283,10 +292,14 @@ impl PrintersApp {
             match m {
                 Msg::Snapshot(s) => latest = Some(s),
                 Msg::JobEnded(j) => ended.push(j),
-                Msg::Failed { title, body } => {
+                Msg::Failed {
+                    title,
+                    body,
+                    printer,
+                } => {
                     self.renaming.clear();
                     self.ports_after = None;
-                    self.fail(&title, body)
+                    self.notify(printer.as_deref(), &title, body)
                 }
                 Msg::Options(name, r) => {
                     let printer = self.snapshot.printer(&name).cloned();
@@ -321,11 +334,8 @@ impl PrintersApp {
                     }
                 }
                 Msg::TestPage(p) => {
-                    self.note.show(
-                        "Print Test Page",
-                        format!("A test page has been sent to {p}."),
-                        None,
-                    );
+                    let body = format!("A test page has been sent to {p}.");
+                    self.notify(Some(&p), "Print Test Page", body);
                 }
             }
         }
@@ -591,7 +601,7 @@ impl PrintersApp {
                 Reply::redraw_all()
             }
             O::BadName(why) => {
-                self.fail("Rename", why);
+                self.notify(None, "Rename", why);
                 Reply::redraw_all()
             }
         }
@@ -730,7 +740,7 @@ impl PrintersApp {
                 Reply::redraw_all()
             }
             props::Outcome::BadName(why) => {
-                self.fail("Rename", why);
+                self.notify(Some(&printer), "Rename", why);
                 Reply::redraw_all()
             }
             props::Outcome::Close => {
@@ -950,7 +960,7 @@ impl App for PrintersApp {
             }
         }
         let clip = form_clipboard(self.focused_edit(win), &ev);
-        match win {
+        let reply = match win {
             _ if self.queues.get(win).is_some() => self.queue_event(win, ev, ctx),
             _ if self.props.get(win).is_some() => self.props_event(win, ev, ctx),
             WIZARD => self.wizard_event(ev, ctx),
@@ -958,8 +968,9 @@ impl App for PrintersApp {
             w if self.confirm.owns(w) => self.confirm_event(w, ev, ctx),
             w if self.note.owns(w) => self.note.event(w, &ev, &ctx.text, &self.forms),
             _ => self.main_event(ev, ctx),
-        }
-        .with_clipboard(clip)
+        };
+        self.withdraw_notices();
+        reply.with_clipboard(clip)
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
@@ -1027,6 +1038,9 @@ impl repriseapp::Extended for PrintersApp {
     }
 
     fn parent(&self, win: WinId) -> Option<WinId> {
+        if let Some(over) = self.note.parent(win) {
+            return Some(over);
+        }
         let Some(main) = self.confirm.parent(win) else {
             return Some(MAIN);
         };
@@ -1473,6 +1487,71 @@ mod tests {
         let (ask, _) = question(&app).expect("Inkjet's question");
         assert!(matches!(ask, Ask::Delete(p) if p == "Inkjet"));
         assert_eq!(app.confirm.len(), 1);
+    }
+
+    /// Hands the program the worker's `msgs` in one wake.
+    fn worker_says(app: &mut PrintersApp, msgs: impl IntoIterator<Item = Msg>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        for m in msgs {
+            tx.send(m).unwrap();
+        }
+        app.rx = Some(rx);
+        app.wake();
+    }
+
+    /// The window the notice up covers.
+    fn notice_over(app: &PrintersApp) -> Option<WinId> {
+        app.parent(app.note.win()?)
+    }
+
+    #[test]
+    fn a_notice_covers_its_printer_s_sheet_else_its_queue_else_the_main_window() {
+        let mut app = two_printers();
+        let laser_queue = app.open_queue("Laser").id();
+        let laser_sheet = app.open_props("Laser", props::GENERAL).unwrap().id();
+        let inkjet_queue = app.open_queue("Inkjet").id();
+        let sent = |p: &str| Msg::TestPage(p.into());
+        worker_says(&mut app, [sent("Laser"), sent("Inkjet"), sent("Office")]);
+        assert_eq!(notice_over(&app), Some(laser_sheet), "Laser's sheet");
+        app.note.close();
+        assert_eq!(notice_over(&app), Some(inkjet_queue), "Inkjet's queue");
+        app.note.close();
+        assert_eq!(notice_over(&app), Some(MAIN), "no window of Office's");
+        app.note.close();
+        app.props.close(laser_sheet);
+        worker_says(&mut app, [sent("Laser")]);
+        assert_eq!(notice_over(&app), Some(laser_queue), "Laser's queue");
+    }
+
+    #[test]
+    fn a_notice_goes_with_the_window_it_covers() {
+        let mut app = two_printers();
+        let mut ctx = test_ctx(props::CLIENT);
+        let sheet = app.open_props("Laser", props::GENERAL).unwrap().id();
+        worker_says(&mut app, [Msg::TestPage("Laser".into())]);
+        app.event(sheet, Event::CloseRequest, &mut ctx);
+        assert!(!app.note.is_shown(), "closed with its sheet");
+
+        app.open_props("Laser", props::GENERAL);
+        let queue = app.open_queue("Inkjet").id();
+        let sent = |p: &str| Msg::TestPage(p.into());
+        worker_says(&mut app, [sent("Laser"), sent("Inkjet"), sent("Office")]);
+        let mut s = app.snapshot.clone();
+        s.printers.retain(|p| p.name != "Laser");
+        app.snapshot_in(s);
+        assert_eq!(
+            app.note.boxes().count(),
+            2,
+            "Laser's notice left with its sheet"
+        );
+        assert_eq!(notice_over(&app), Some(queue), "Inkjet's notice is up");
+        app.event(queue, Event::CloseRequest, &mut ctx);
+        assert_eq!(
+            app.note.boxes().count(),
+            1,
+            "Inkjet's notice left with its queue"
+        );
+        assert_eq!(notice_over(&app), Some(MAIN), "Office's notice stays");
     }
 
     #[test]
