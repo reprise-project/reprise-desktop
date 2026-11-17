@@ -2232,6 +2232,170 @@ fn a_task_button_whose_box_has_the_keyboard_minimizes_the_family_and_brings_it_b
     );
 }
 
+/// The window holding the seat's keyboard.
+fn keyboard(h: &crate::harness::Harness) -> Option<WindowId> {
+    let held = h.state.seat.get_keyboard().and_then(|k| k.current_focus());
+    (h.state.windows.iter())
+        .find(|w| held.as_ref() == Some(w.wl_surface()))
+        .map(|w| w.id)
+}
+
+/// A modal box with no parent yet, as a program opens one while its main window is hidden.
+fn map_loose_modal(
+    h: &mut crate::harness::Harness,
+    c: &mut crate::harness::TestClient,
+) -> crate::harness::Toplevel {
+    use wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1;
+    h.map_toplevel_after(c, "test.app", 120, 60, |hs, c, t| {
+        let toplevel = c.side.shells[t.shell].toplevel.clone();
+        let wm: XdgWmDialogV1 = c.bind("xdg_wm_dialog_v1", 1);
+        wm.get_xdg_dialog(&toplevel, &c.qh(), ()).set_modal();
+        hs.roundtrip(c);
+    })
+}
+
+fn set_parent(
+    h: &mut crate::harness::Harness,
+    c: &mut crate::harness::TestClient,
+    child: crate::harness::Toplevel,
+    parent: crate::harness::Toplevel,
+) {
+    let owner = c.side.shells[parent.shell].toplevel.clone();
+    c.side.shells[child.shell].toplevel.set_parent(Some(&owner));
+    h.roundtrip(c);
+}
+
+#[test]
+fn a_modal_box_given_a_parent_over_the_focused_window_comes_up_with_the_keyboard() {
+    for box_first in [true, false] {
+        let mut h = forgetful();
+        let mut c = h.connect();
+        let other = h.map_toplevel(&mut c, "test.other", 300, 200);
+        let (main, b) = if box_first {
+            let b = map_loose_modal(&mut h, &mut c);
+            (h.map_toplevel(&mut c, "test.app", 400, 300), b)
+        } else {
+            let main = h.map_toplevel(&mut c, "test.app", 400, 300);
+            let b = map_loose_modal(&mut h, &mut c);
+            click_in(&mut h, main.id);
+            (main, b)
+        };
+        assert_eq!(h.state.focused, Some(main.id));
+        assert!(above(&h, main.id, b.id));
+
+        set_parent(&mut h, &mut c, b, main);
+        let how = if box_first {
+            "box mapped first"
+        } else {
+            "main clicked"
+        };
+        assert!(above(&h, b.id, main.id), "{how}: the box is over main");
+        assert_eq!(h.state.focused, Some(b.id), "{how}: the box is focused");
+        assert_eq!(keyboard(&h), Some(b.id), "{how}: the box has the keyboard");
+        assert!(above(&h, main.id, other.id), "{how}: the family stays up");
+    }
+}
+
+#[test]
+fn a_sheet_given_a_parent_brings_the_box_over_it_up_over_the_new_owner() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let queue = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let sheet = h.map_dialog(&mut c, "test.app", Some(queue), "", (250, 150));
+    let test_page = h.map_modal(&mut c, "test.app", sheet, (120, 60));
+    let main = h.map_toplevel(&mut c, "test.app", 400, 300);
+    assert_eq!(h.state.focused, Some(main.id));
+
+    set_parent(&mut h, &mut c, queue, main);
+    assert_eq!(h.state.focused, Some(test_page.id), "the box is focused");
+    assert_eq!(keyboard(&h), Some(test_page.id), "the box has the keyboard");
+    assert_eq!(
+        stacking(&h),
+        [main.id, queue.id, sheet.id, test_page.id],
+        "each window over its owner, the box on top"
+    );
+}
+
+#[test]
+fn two_windows_given_one_owner_in_turn_stand_over_it_in_the_order_they_opened() {
+    for behind in [false, true] {
+        let mut h = forgetful();
+        let mut c = h.connect();
+        let queue = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let sheet = h.map_dialog(&mut c, "test.app", None, "", (250, 150));
+        let main = h.map_toplevel(&mut c, "test.app", 400, 300);
+        let other = behind.then(|| h.map_toplevel(&mut c, "test.other", 300, 200));
+        let focused = other.unwrap_or(main);
+
+        set_parent(&mut h, &mut c, queue, main);
+        set_parent(&mut h, &mut c, sheet, main);
+        let family = [main.id, queue.id, sheet.id];
+        let want: Vec<_> = family.into_iter().chain(other.map(|o| o.id)).collect();
+        assert_eq!(stacking(&h), want, "behind another program: {behind}");
+        assert_eq!(h.state.focused, Some(focused.id));
+    }
+}
+
+#[test]
+fn a_parent_set_behind_another_program_stacks_the_family_in_its_place() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let b = map_loose_modal(&mut h, &mut c);
+    let main = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let other = h.map_toplevel(&mut c, "test.other", 300, 200);
+    assert_eq!(stacking(&h), [b.id, main.id, other.id]);
+
+    set_parent(&mut h, &mut c, b, main);
+    assert_eq!(
+        stacking(&h),
+        [main.id, b.id, other.id],
+        "the box over main, both under the focused program"
+    );
+    assert_eq!(h.state.focused, Some(other.id), "the focus stays");
+}
+
+#[test]
+fn a_parent_set_leaves_a_progress_box_over_the_modal_box_beside_it() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let loose = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let folder = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let progress = h.map_dialog(&mut c, "test.app", Some(folder), PROMPT_TAG, (300, 200));
+    let failed = h.map_modal(&mut c, "test.app", folder, (120, 60));
+    h.state.focus_window(progress.id);
+    let other = h.map_toplevel(&mut c, "test.other", 300, 200);
+    assert_eq!(
+        stacking(&h),
+        [loose.id, folder.id, failed.id, progress.id, other.id]
+    );
+
+    set_parent(&mut h, &mut c, loose, folder);
+    assert_eq!(
+        stacking(&h),
+        [folder.id, loose.id, failed.id, progress.id, other.id],
+        "the box over the window it now covers, the progress box still over the box"
+    );
+    assert_eq!(h.state.focused, Some(other.id));
+}
+
+#[test]
+fn an_activation_of_a_window_its_box_covers_lands_on_the_box() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let b = map_loose_modal(&mut h, &mut c);
+    let main = h.map_toplevel(&mut c, "test.app", 400, 300);
+    set_parent(&mut h, &mut c, b, main);
+    let other = h.map_toplevel(&mut c, "test.other", 300, 200);
+    assert_eq!(h.state.focused, Some(other.id));
+
+    let token = h.state.new_activation_token();
+    c.activate(&token, main);
+    h.roundtrip(&mut c);
+    assert_eq!(h.state.focused, Some(b.id), "the box is focused");
+    assert_eq!(keyboard(&h), Some(b.id), "the box has the keyboard");
+    assert_eq!(stacking(&h), [other.id, main.id, b.id]);
+}
+
 /// The windows of `ws` whose frame shows other pixels than a fresh draw of it, which draws
 /// active only the focused window.
 fn stale_frames(h: &mut crate::harness::Harness, ws: &[WindowId]) -> Vec<WindowId> {
