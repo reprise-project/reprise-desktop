@@ -44,6 +44,7 @@ pub(crate) fn status(s: Snapshot, waiting: usize) -> Status {
             JobPhase::Finishing => Phase::Finishing,
         },
         paused: s.paused,
+        asking: s.asking,
         bytes: s.bytes,
         total_bytes: s.total_bytes,
         items: s.items,

@@ -67,6 +67,8 @@ impl Drop for Asked {
 pub struct Snapshot {
     pub phase: Phase,
     pub paused: bool,
+    /// A failed item waits for the host's [`Decision`] ([`Meter::asking`]).
+    pub asking: bool,
     pub bytes: u64,
     pub total_bytes: u64,
     pub items: u64,
@@ -120,6 +122,7 @@ impl Meter {
                 _ => Phase::Finishing,
             },
             paused: self.paused.load(Ordering::Relaxed),
+            asking: self.asking(),
             bytes: self.bytes.load(Ordering::Relaxed),
             total_bytes: self.total_bytes.load(Ordering::Relaxed),
             items: self.items.load(Ordering::Relaxed),
@@ -658,6 +661,19 @@ mod tests {
         m.ask();
         Asked::new(m.clone()).answer(Decision::Skip);
         assert_eq!(m.decision(), Decision::Skip);
+    }
+
+    #[test]
+    fn a_snapshot_says_when_a_failed_item_waits_for_its_answer() {
+        let m = Arc::new(Meter::default());
+        m.ask_on_failure();
+        assert!(!m.snapshot().asking);
+        m.ask();
+        assert!(m.snapshot().asking, "the failed item waits");
+        Asked::new(m.clone()).answer(Decision::Skip);
+        assert!(!m.snapshot().asking, "the answer lets the job go on");
+        assert_eq!(m.decision(), Decision::Skip);
+        assert!(!m.snapshot().asking);
     }
 
     #[test]

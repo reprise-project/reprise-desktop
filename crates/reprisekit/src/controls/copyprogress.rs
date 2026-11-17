@@ -64,6 +64,9 @@ pub enum Phase {
 pub struct Status {
     pub phase: Phase,
     pub paused: bool,
+    /// Held on the question a failed item asks: the time it waits counts for the rate as a
+    /// pause does.
+    pub asking: bool,
     pub bytes: u64,
     pub total_bytes: u64,
     pub items: u64,
@@ -87,6 +90,9 @@ pub enum Outcome {
 const SETTLE_MS: u64 = 1000;
 /// The rate is read over at least this long.
 const RATE_MS: u64 = 500;
+/// The longest time the line gives: past it the hours would take three figures, so a longer
+/// estimate (a stalled copy's) reads as none.
+const LONGEST_S: f64 = 99.0 * 3600.0;
 /// The flight's frame time: it moves at about 15 frames a second. A host ticks the dialog at it.
 pub const FRAME_MS: u64 = 66;
 /// A put done sooner than this never shows the dialog.
@@ -206,7 +212,7 @@ impl CopyProgress {
 
     /// Take the job's `status` at `now_ms`; true when the dialog draws differently.
     pub fn update(&mut self, status: Status, now_ms: u64) -> bool {
-        let running = status.phase == Phase::Copying && !status.paused;
+        let running = status.phase == Phase::Copying && !status.paused && !status.asking;
         if running && self.copying_since.is_none() {
             self.copying_since = Some(now_ms);
         }
@@ -279,9 +285,10 @@ impl CopyProgress {
             Phase::Copying => {}
         }
         let (done, all) = self.measure(s);
+        let left = all.saturating_sub(done) as f64;
         match self.rate() {
-            Some(r) => remaining_text(all.saturating_sub(done) as f64 / r),
-            None => "Calculating...".into(),
+            Some(r) if left <= r * LONGEST_S => remaining_text(left / r),
+            _ => "Calculating...".into(),
         }
     }
 
@@ -857,7 +864,8 @@ pub fn remaining_text(secs: f64) -> String {
     } else if secs < 3600 {
         plural(((secs + 30) / 60).max(1), "minute")
     } else {
-        let (h, m) = (secs / 3600, (secs % 3600 + 30) / 60);
+        let minutes = (secs + 30) / 60;
+        let (h, m) = (minutes / 60, minutes % 60);
         match m {
             0 => plural(h, "hour"),
             m => format!("{} and {}", plural(h, "hour"), plural(m, "minute")),
@@ -993,6 +1001,7 @@ mod tests {
             remaining_text(7500.0),
             "About 2 hours and 5 minutes remaining"
         );
+        assert_eq!(remaining_text(7199.0), "About 2 hours remaining");
     }
 
     #[test]
@@ -1029,6 +1038,88 @@ mod tests {
         assert_eq!(label(&cp), "&Resume");
         cp.update(copying(50, 100), 9100);
         assert_eq!(label(&cp), "&Pause");
+    }
+
+    /// `cp` takes `status` every frame from `from` up to `to` ms.
+    fn hold(cp: &mut CopyProgress, status: &Status, from: u64, to: u64) {
+        for t in (from..=to).step_by(FRAME_MS as usize) {
+            cp.update(status.clone(), t);
+        }
+    }
+
+    #[test]
+    fn a_wait_on_a_question_keeps_the_estimate_and_the_rate_picks_up_after() {
+        const ALL: u64 = 100_000_000;
+        let mut cp = CopyProgress::new(Kind::Copy, "a", "b", SKY);
+        hold(&mut cp, &copying(0, ALL), 0, 0);
+        hold(&mut cp, &copying(8_000_000, ALL), 1000, 1000);
+        assert_eq!(cp.remaining(), "About 15 seconds remaining");
+        let asking = Status {
+            asking: true,
+            ..copying(8_000_000, ALL)
+        };
+        hold(&mut cp, &asking, 1066, 61_000);
+        assert_eq!(
+            cp.remaining(),
+            "About 15 seconds remaining",
+            "a minute on the question is no copying at all"
+        );
+        let paused = Status {
+            paused: true,
+            ..asking.clone()
+        };
+        hold(&mut cp, &paused, 61_066, 62_000);
+        assert_eq!(cp.remaining(), "Paused");
+        hold(&mut cp, &asking, 62_066, 92_000);
+        assert_eq!(cp.remaining(), "About 15 seconds remaining");
+
+        hold(&mut cp, &copying(8_000_000, ALL), 92_066, 92_066);
+        hold(&mut cp, &copying(12_000_000, ALL), 92_566, 92_566);
+        let rate = cp.rate().expect("a rate");
+        assert!((rate - 8.0e6).abs() < 1.0, "8 MB a second, not {rate}");
+        assert_eq!(cp.remaining(), "About 15 seconds remaining");
+    }
+
+    #[test]
+    fn a_pause_resumed_goes_on_from_the_rate_before_it() {
+        const ALL: u64 = 100_000_000;
+        let mut cp = CopyProgress::new(Kind::Copy, "a", "b", SKY);
+        hold(&mut cp, &copying(0, ALL), 0, 0);
+        hold(&mut cp, &copying(8_000_000, ALL), 1000, 1000);
+        let paused = Status {
+            paused: true,
+            ..copying(8_000_000, ALL)
+        };
+        hold(&mut cp, &paused, 1066, 61_000);
+        hold(&mut cp, &copying(8_000_000, ALL), 61_066, 61_066);
+        hold(&mut cp, &copying(12_000_000, ALL), 61_566, 61_566);
+        let rate = cp.rate().expect("a rate");
+        assert!((rate - 8.0e6).abs() < 1.0, "8 MB a second, not {rate}");
+        assert_eq!(cp.remaining(), "About 15 seconds remaining");
+    }
+
+    #[test]
+    fn a_stalled_copy_gives_no_estimate_past_99_hours() {
+        const ALL: u64 = 100_000_000_000;
+        let mut cp = CopyProgress::new(Kind::Copy, "a", "b", SKY);
+        hold(&mut cp, &copying(0, ALL), 0, 0);
+        hold(&mut cp, &copying(1_000_000, ALL), 1000, 1000);
+        assert_eq!(
+            cp.remaining(),
+            "About 27 hours and 47 minutes remaining",
+            "1 MB a second"
+        );
+        hold(&mut cp, &copying(1_000_000, ALL), 1066, 4000);
+        assert_eq!(
+            cp.remaining(),
+            "About 84 hours and 46 minutes remaining",
+            "a stall stretches the estimate"
+        );
+        hold(&mut cp, &copying(1_000_000, ALL), 4066, 600_000);
+        assert!(cp.rate().is_some_and(|r| r > 0.0 && r < 1e-100));
+        assert_eq!(cp.remaining(), "Calculating...");
+        cp.status = copying(ALL, ALL);
+        assert_eq!(cp.remaining(), "A few seconds remaining");
     }
 
     #[test]
