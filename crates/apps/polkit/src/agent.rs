@@ -37,6 +37,8 @@ pub struct Request {
 pub enum Msg {
     Begin(Request),
     Cancel(String),
+    /// polkitd's name changed owner: the cookies the old polkitd issued are dead.
+    CancelAll,
 }
 
 pub fn user_name(uid: u32) -> Option<String> {
@@ -347,7 +349,7 @@ async fn run(poster: repriseapp::Poster<Msg>, ready: Sender<bool>) {
         }
     };
     let agent = Agent {
-        poster,
+        poster: poster.clone(),
         dismissed,
         session: session.clone(),
     };
@@ -365,7 +367,7 @@ async fn run(poster: repriseapp::Poster<Msg>, ready: Sender<bool>) {
         }
     };
     let locale = std::env::var("LANG").unwrap_or_else(|_| "C".into());
-    keep_registered(authority.inner(), &session, &locale, ready).await;
+    keep_registered(authority.inner(), &session, &locale, ready, &poster).await;
 }
 
 /// Registers [`PATH`] as the agent for `session` with whichever polkitd owns the authority.
@@ -379,12 +381,14 @@ async fn register(authority: &zbus::Proxy<'_>, session: &str, locale: &str) -> z
 }
 
 /// Registers once, answering `ready`, then again for every new owner of the authority's name:
-/// polkitd keeps agents in memory only, so a restarted one knows none. Returns only on failure.
+/// polkitd keeps agents in memory only, so a restarted one knows none. Each change of owner posts
+/// [`Msg::CancelAll`]. Returns only on failure.
 async fn keep_registered(
     authority: &zbus::Proxy<'_>,
     session: &str,
     locale: &str,
     ready: Sender<bool>,
+    poster: &repriseapp::Poster<Msg>,
 ) {
     use futures_util::StreamExt;
     // Subscribed before the first registration, so a restart in between is not missed.
@@ -404,6 +408,7 @@ async fn keep_registered(
     log::info!("registered as the polkit agent for session {session}");
     let _ = ready.send(true);
     while let Some(owner) = owners.next().await {
+        poster.post(Msg::CancelAll);
         if owner.is_none() {
             continue;
         }
@@ -624,7 +629,7 @@ mod tests {
         }
 
         #[test]
-        fn a_restarted_polkitd_gets_the_registration_again() {
+        fn a_restarted_polkitd_cancels_every_request_and_gets_the_registration_again() {
             let Some(bus) = bus() else {
                 return;
             };
@@ -632,13 +637,15 @@ mod tests {
             let first = zbus::block_on(polkitd(&bus.1, seen_tx.clone()));
             let address = bus.1.clone();
             let (ready_tx, ready) = channel();
+            let (poster, msgs) = repriseapp::Poster::channel(repriseapp::Waker::noop());
             std::thread::spawn(move || {
                 zbus::block_on(async {
                     let conn = connect(&address).await;
                     let authority = zbus_polkit::policykit1::AuthorityProxy::new(&conn)
                         .await
                         .unwrap();
-                    keep_registered(authority.inner(), "7", "de_DE.UTF-8", ready_tx).await;
+                    let (session, locale) = ("7", "de_DE.UTF-8");
+                    keep_registered(authority.inner(), session, locale, ready_tx, &poster).await;
                 })
             });
             assert_eq!(ready.recv_timeout(Duration::from_secs(5)), Ok(true));
@@ -650,7 +657,14 @@ mod tests {
             );
             assert_eq!(next(&seen, "registered at start"), expected);
 
+            assert!(msgs.try_recv().is_err(), "nothing is cancelled at start");
+
             zbus::block_on(first.close()).unwrap();
+            let left = msgs.recv_timeout(Duration::from_secs(5));
+            assert!(
+                matches!(left, Ok(super::super::Msg::CancelAll)),
+                "the requests of the polkitd that left are cancelled"
+            );
             let _second = zbus::block_on(polkitd(&bus.1, seen_tx));
             assert_eq!(next(&seen, "registered with the new owner"), expected);
             assert!(

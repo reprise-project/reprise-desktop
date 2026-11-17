@@ -136,6 +136,12 @@ impl PolkitApp {
                     let _ = r.done.send_blocking(Outcome::Withdrawn);
                 }
             }
+            Msg::CancelAll => {
+                self.finish(Outcome::Withdrawn);
+                for r in self.queue.drain(..) {
+                    let _ = r.done.send_blocking(Outcome::Withdrawn);
+                }
+            }
         }
     }
 
@@ -487,6 +493,23 @@ mod tests {
         app.handle(Msg::Cancel("a".into()));
         assert!(app.active.is_none());
         assert_eq!(a_rx.try_recv(), Ok(Outcome::Withdrawn));
+    }
+
+    #[test]
+    fn polkitd_leaving_withdraws_the_open_and_the_queued_requests() {
+        let mut app = PolkitApp::default();
+        let (a, a_rx) = request("a");
+        let (b, b_rx) = request("b");
+        app.handle(Msg::Begin(a));
+        app.handle(Msg::Begin(b));
+        open(&mut app);
+        app.handle(Msg::CancelAll);
+        assert!(app.active.is_none(), "the open box closes");
+        assert!(app.queue.is_empty());
+        assert_eq!(a_rx.try_recv(), Ok(Outcome::Withdrawn));
+        assert_eq!(b_rx.try_recv(), Ok(Outcome::Withdrawn));
+        open(&mut app);
+        assert!(app.active.is_none(), "nothing opens after");
     }
 
     #[test]
