@@ -749,6 +749,8 @@ fn steps(base: std::os::fd::BorrowedFd, rel: &Path) -> std::io::Result<std::os::
     Ok(at)
 }
 
+/// [`merge_into`] of the folder open as `from`, `rel` under the archive's top, into `to`; an entry
+/// that fails is named by its path under the top ([`crate::ops::in_tree`]).
 fn merge_at(
     from: std::os::fd::BorrowedFd,
     to: std::os::fd::BorrowedFd,
@@ -756,8 +758,8 @@ fn merge_at(
     moved: &mut Vec<PathBuf>,
 ) -> Result<(), Failure> {
     use crate::ops::at::{open_dir, rename_free};
-    let io = |e: std::io::Error| Failure::Tool(e.to_string());
-    for (name, is_dir) in crate::ops::entries_at(from).map_err(io)? {
+    let io = |rel: &Path, e| Failure::Tool(crate::ops::in_tree(rel, e).to_string());
+    for (name, is_dir) in crate::ops::entries_at(from).map_err(|e| io(rel, e))? {
         let rel = rel.join(OsStr::from_bytes(name.to_bytes()));
         match rename_free(from, &name, to, &name) {
             Ok(()) => {
@@ -765,7 +767,7 @@ fn merge_at(
                 continue;
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(io(e)),
+            Err(e) => return Err(io(&rel, e)),
         }
         if !is_dir {
             continue;
@@ -776,7 +778,7 @@ fn merge_at(
                 rel.display()
             ))
         })?;
-        let here = open_dir(from, &name, false).map_err(io)?;
+        let here = open_dir(from, &name, false).map_err(|e| io(&rel, e))?;
         merge_at(here.as_fd(), there.as_fd(), &rel, moved)?;
     }
     Ok(())
@@ -1649,6 +1651,47 @@ mod tests {
             );
             assert_eq!(std::fs::read_dir(&away).unwrap().count(), 0, "{there}");
         }
+    }
+
+    #[test]
+    fn a_failed_merge_names_the_entry_by_its_path_in_the_archive() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let (src, d) = (t.path().join("src"), t.path().join("d"));
+        std::fs::create_dir_all(src.join("sub/deep")).unwrap();
+        std::fs::create_dir_all(d.join("sub/deep")).unwrap();
+        std::fs::write(src.join("sub/x.txt"), "x").unwrap();
+        std::fs::write(src.join("sub/deep/y.txt"), "y").unwrap();
+        let (one, two) = (d.join("one.tar"), d.join("two.tar"));
+        bsdtar(&src, &["-cf", one.to_str().unwrap(), "sub/x.txt"]);
+        bsdtar(&src, &["-cf", two.to_str().unwrap(), "sub/deep/y.txt"]);
+        let shut = |p: &Path, mode| {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        let failed = |archive: &Path| match &only(archive, true)[..] {
+            [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished] => text.clone(),
+            got => panic!("{}: {got:?}", archive.display()),
+        };
+        let denied = "Permission denied (os error 13)";
+
+        shut(&d.join("sub"), 0o555);
+        let got = failed(&one);
+        shut(&d.join("sub"), 0o755);
+        assert_eq!(got, format!("Cannot extract one.tar: sub/x.txt: {denied}"));
+
+        shut(&d.join("sub/deep"), 0o555);
+        let got = failed(&two);
+        shut(&d.join("sub/deep"), 0o755);
+        assert_eq!(
+            got,
+            format!("Cannot extract two.tar: sub/deep/y.txt: {denied}")
+        );
+
+        shut(&d, 0o555);
+        let got = failed(&one);
+        shut(&d, 0o755);
+        assert_eq!(got, format!("Cannot extract one.tar: {denied}"));
+        assert_eq!(names_in(&d), ["one.tar", "sub", "two.tar"]);
     }
 
     #[test]
