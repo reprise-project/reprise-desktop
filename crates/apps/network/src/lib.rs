@@ -224,20 +224,20 @@ impl NetApp {
     }
 
     /// The Status sheet for `path`, replacing whatever was open, with its interface counters read
-    /// while it stays open.
-    fn open_status(&mut self, path: &str) {
+    /// while it stays open. A sheet already showing `path` stays, and comes back as the window to
+    /// raise.
+    fn open_status(&mut self, path: &str) -> Option<WinId> {
         if self.status.as_ref().is_some_and(|s| s.device_path == path) {
-            return;
+            return Some(STATUS);
         }
-        let Some(d) = self.snapshot.devices.iter().find(|d| d.path == path) else {
-            return;
-        };
+        let d = self.snapshot.devices.iter().find(|d| d.path == path)?;
         let (next, iface) = (status::Status::new(d), d.iface.clone());
         self.close_status();
         self.status = Some(next);
         if let Some(w) = self.waker.clone() {
             self.speed = Some(speed::start(iface, move || w.wake()));
         }
+        None
     }
 
     fn close_status(&mut self) {
@@ -245,7 +245,12 @@ impl NetApp {
         self.status = None;
     }
 
-    fn open_chooser(&mut self, path: &str) {
+    /// The chooser for radio `path`, in place of the one open. A chooser already showing `path`
+    /// stays with its pick and key prompts, and comes back as the window to raise.
+    fn open_chooser(&mut self, path: &str) -> Option<WinId> {
+        if self.chooser.as_ref().is_some_and(|c| c.device_path == path) {
+            return Some(CHOOSER);
+        }
         let found = self
             .snapshot
             .devices
@@ -256,6 +261,7 @@ impl NetApp {
             self.chooser = Some(c);
             self.sync_refused();
         }
+        None
     }
 
     /// Hand the chooser the networks whose key it asks for again.
@@ -406,7 +412,16 @@ impl NetApp {
         self.send(cmd);
     }
 
-    fn open_hotspot(&mut self, device: &str) {
+    /// The Create Hotspot dialog for radio `device`, in place of the one open, unless that one
+    /// holds typed input: then it stays, and comes back as the window to raise.
+    fn open_hotspot(&mut self, device: &str) -> Option<WinId> {
+        if self
+            .hotspot
+            .as_ref()
+            .is_some_and(hotspot::HotspotDialog::edited)
+        {
+            return Some(HOTSPOT);
+        }
         let joined = (self.snapshot.devices.iter())
             .find(|d| d.path == device)
             .and_then(|d| d.wifi.as_ref()?.active_ssid.clone());
@@ -415,6 +430,7 @@ impl NetApp {
             &hotspot::default_ssid(),
             joined.as_deref(),
         ));
+        None
     }
 
     fn open_import(&mut self, u: TextUnits) {
@@ -739,17 +755,21 @@ impl NetApp {
             }
             _ => return Reply::none(),
         };
+        self.folder_outcome(out, ctx)
+    }
+
+    fn folder_outcome(&mut self, out: folder::Outcome, ctx: &Ctx) -> Reply {
         match out {
             folder::Outcome::None => Reply::none(),
             folder::Outcome::Redraw => Reply::redraw(),
-            folder::Outcome::OpenStatus(p) => {
-                self.open_status(&p);
-                Reply::redraw_all()
-            }
-            folder::Outcome::ViewWireless(p) => {
-                self.open_chooser(&p);
-                Reply::redraw_all()
-            }
+            folder::Outcome::OpenStatus(p) => Reply {
+                raise: self.open_status(&p),
+                ..Reply::redraw_all()
+            },
+            folder::Outcome::ViewWireless(p) => Reply {
+                raise: self.open_chooser(&p),
+                ..Reply::redraw_all()
+            },
             folder::Outcome::Toggle(p) => {
                 self.toggle(&p);
                 Reply::redraw()
@@ -785,10 +805,10 @@ impl NetApp {
                 self.open_import(ctx.forms().text);
                 Reply::redraw_all()
             }
-            folder::Outcome::CreateHotspot(p) => {
-                self.open_hotspot(&p);
-                Reply::redraw_all()
-            }
+            folder::Outcome::CreateHotspot(p) => Reply {
+                raise: self.open_hotspot(&p),
+                ..Reply::redraw_all()
+            },
             folder::Outcome::StopHotspot(p) => {
                 self.send(nm::Cmd::StopHotspot(p));
                 Reply::redraw()
@@ -1156,10 +1176,10 @@ impl NetApp {
                 self.send(nm::Cmd::Repair(device));
                 Reply::redraw()
             }
-            status::Outcome::ViewWireless => {
-                self.open_chooser(&device);
-                Reply::redraw_all()
-            }
+            status::Outcome::ViewWireless => Reply {
+                raise: self.open_chooser(&device),
+                ..Reply::redraw_all()
+            },
             status::Outcome::Close => {
                 self.close_status();
                 Reply::redraw_all()
@@ -1888,6 +1908,91 @@ mod tests {
                 .is_none()
         );
         assert!(size(&app).1 > size(&bare).1);
+    }
+
+    /// A snapshot with Wi-Fi radios `paths`.
+    fn radios(paths: &[&str]) -> nm::Snapshot {
+        let radio = |p: &&str| nm::Device {
+            path: p.to_string(),
+            kind: nm::Kind::Wifi,
+            wifi: Some(nm::Wifi::default()),
+            managed: true,
+            ..nm::Device::default()
+        };
+        nm::Snapshot {
+            devices: paths.iter().map(radio).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn create_a_hotspot_picked_again_replaces_an_untouched_dialog_and_brings_a_typed_one_forward() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        let handoff = reprisebus::instance::Handoff {
+            token: Some("t".into()),
+            by_key: false,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = NetApp {
+            tray: Some(reprisetray::TrayHandle::holding(handoff.clone())),
+            msgs: Some(rx),
+            snapshot: radios(&["/dev/1", "/dev/2"]),
+            ..NetApp::default()
+        };
+        let create = |app: &mut NetApp, ctx: &Ctx, radio: &str| {
+            let out = folder::Outcome::CreateHotspot(radio.into());
+            app.folder_outcome(out, ctx).raise
+        };
+        let dialog = |app: &NetApp| {
+            let d = app.hotspot.as_ref().expect("the dialog");
+            (d.device.clone(), d.form.edit_text("ssid").to_string())
+        };
+        assert_eq!(create(&mut app, &ctx, "/dev/1"), None);
+        assert_eq!(create(&mut app, &ctx, "/dev/2"), None);
+        assert_eq!(dialog(&app).0, "/dev/2", "an untouched dialog is replaced");
+
+        app.hotspot.as_mut().unwrap().form.focus_id("ssid");
+        app.event(HOTSPOT, Event::Pasted("Lab".into()), &mut ctx);
+        let typed = dialog(&app);
+        assert_ne!(typed.1, hotspot::default_ssid(), "the name took the paste");
+        assert_eq!(create(&mut app, &ctx, "/dev/1"), Some(HOTSPOT));
+        assert_eq!(dialog(&app), typed, "the typed dialog stays with its name");
+        tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::Hotspot))
+            .unwrap();
+        assert_eq!(app.wake().activate, Some((HOTSPOT, handoff)));
+        assert_eq!(dialog(&app), typed, "and so from the tray");
+    }
+
+    #[test]
+    fn status_and_the_chooser_picked_again_for_their_radio_come_forward_as_they_are() {
+        let ctx = test_ctx(folder::CLIENT);
+        let mut app = NetApp {
+            snapshot: radios(&["/dev/1", "/dev/2"]),
+            ..NetApp::default()
+        };
+        let mut pick = |out| app.folder_outcome(out, &ctx).raise;
+        assert_eq!(pick(folder::Outcome::OpenStatus("/dev/1".into())), None);
+        assert_eq!(
+            pick(folder::Outcome::OpenStatus("/dev/1".into())),
+            Some(STATUS)
+        );
+        assert_eq!(pick(folder::Outcome::ViewWireless("/dev/1".into())), None);
+        app.chooser.as_mut().unwrap().connecting = Some("Neighbour".into());
+        let mut pick = |out| app.folder_outcome(out, &ctx).raise;
+        assert_eq!(
+            pick(folder::Outcome::ViewWireless("/dev/1".into())),
+            Some(CHOOSER)
+        );
+        let connecting = app.chooser.as_ref().and_then(|c| c.connecting.clone());
+        assert_eq!(connecting, Some("Neighbour".into()), "the chooser stays");
+        let mut pick = |out| app.folder_outcome(out, &ctx).raise;
+        assert_eq!(pick(folder::Outcome::ViewWireless("/dev/2".into())), None);
+        let radio = app.chooser.as_ref().map(|c| c.device_path.clone());
+        assert_eq!(
+            radio.as_deref(),
+            Some("/dev/2"),
+            "another radio replaces it"
+        );
     }
 
     #[test]
