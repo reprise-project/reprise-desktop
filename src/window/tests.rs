@@ -2073,6 +2073,43 @@ fn closing_a_modal_box_gives_the_keyboard_to_its_parent() {
     );
 }
 
+#[test]
+fn focusing_an_owned_window_of_a_program_behind_another_brings_its_owner_up_next_in_line() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let paint = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let recovered = h.map_modal(&mut c, "test.app", paint, (120, 60));
+    let notepad = h.map_toplevel(&mut c, "test.other", 100, 80);
+    h.state.move_to(notepad.id, 900, 650);
+    h.state.focus_window(notepad.id);
+    assert!(above(&h, notepad.id, paint.id), "the program starts behind");
+    click_in(&mut h, recovered.id);
+    assert_eq!(h.state.focused, Some(recovered.id));
+    assert!(
+        above(&h, paint.id, notepad.id),
+        "a click on the box brings its window up"
+    );
+    assert!(above(&h, recovered.id, paint.id), "the box over its window");
+    c.destroy(recovered);
+    h.roundtrip(&mut c);
+    assert_eq!(
+        h.state.focused,
+        Some(paint.id),
+        "the box's window takes the keyboard after it"
+    );
+    let find = h.map_dialog(&mut c, "test.app", Some(paint), "", (200, 100));
+    h.state.focus_window(notepad.id);
+    h.state.focus_window(find.id);
+    assert!(
+        above(&h, paint.id, notepad.id),
+        "a window it owns brings it up"
+    );
+    assert!(above(&h, find.id, paint.id));
+    c.destroy(find);
+    h.roundtrip(&mut c);
+    assert_eq!(h.state.focused, Some(paint.id));
+}
+
 /// A forgetful harness with TEST-1 (1024x768) and TEST-2 (1280x1024) to its right.
 fn two_screens() -> (
     crate::harness::Harness,

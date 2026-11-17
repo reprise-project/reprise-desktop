@@ -116,7 +116,7 @@ impl State {
 
     /// Focus and raise `w`, showing its desktop first. A window a modal dialog covers
     /// ([`State::modal_target`]) brings its family up with the dialog on top, and the dialog
-    /// takes the focus.
+    /// takes the focus. An owned window brings its family up under it the same way.
     pub fn focus_window(&mut self, owner: WindowId) {
         self.redraw_changed(|s| {
             s.raise_and_focus(owner);
@@ -142,17 +142,20 @@ impl State {
         }
         let cleared = self.clear_attention(owner);
         let w = self.modal_target(owner);
-        if w != owner {
-            let home = self.home(owner);
+        if w != owner || self.owner(w).is_some() {
             if let Some(tree) = self.win(home).map(|x| x.tree) {
                 self.scene.raise_to_top(tree);
             }
             self.raise_children(home);
-            // The dialog's owner takes the focus back when the dialog closes (`focus_top`).
-            if let Some(o) = self.owner(w) {
-                self.focus_order.retain(|p| *p != o && *p != w);
-                self.focus_order.extend([o, w]);
+            // Its owners take the keyboard back in turn as it and they close (`focus_top`).
+            let mut chain = vec![w];
+            while let Some(o) =
+                (chain.last().and_then(|&x| self.owner(x))).filter(|o| !chain.contains(o))
+            {
+                chain.push(o);
             }
+            self.focus_order.retain(|p| !chain.contains(p));
+            self.focus_order.extend(chain.into_iter().rev());
         }
         let Some(tree) = self.win(w).map(|x| x.tree) else {
             return;
