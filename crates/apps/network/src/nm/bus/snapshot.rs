@@ -121,7 +121,7 @@ pub(super) async fn build(
         paths(conn, MANAGER_PATH, NAME, "GetDevices"),
         get_all_of(conn, active_paths, ACTIVE_IFACE),
     );
-    let (known_ssids, mut vpns) = known_and_vpns(saved);
+    let mut vpns = saved_vpns(saved);
 
     let mut active_vpns = HashSet::new();
     let primary_active = object(&manager_props, "PrimaryConnection");
@@ -145,7 +145,6 @@ pub(super) async fn build(
         vpn.active = active_vpns.contains(&vpn.conn_path);
     }
 
-    let known_ssids = &known_ssids;
     let hotspots = hotspot_profiles(saved);
     let (hotspots, profile_of) = (&hotspots, &profile_of);
     let mut out: Vec<Device> = join_all(devices.into_iter().map(|path| async move {
@@ -179,6 +178,7 @@ pub(super) async fn build(
             .then(|| link.as_ref().and_then(|p| object(p, "ActiveAccessPoint")))
             .flatten();
         let dhcp = object(&props, "Dhcp4Config").is_some();
+        let known_ssids = known_on(saved, &text(&props, "Interface"));
         let hotspot = object(&props, "ActiveConnection")
             .and_then(|a| profile_of.get(&a))
             .and_then(|c| hotspots.get(c))
@@ -190,7 +190,7 @@ pub(super) async fn build(
             wireless: wifi.then(|| link.clone().unwrap_or_default()),
             ip4,
             aps,
-            known_ssids: known_ssids.clone(),
+            known_ssids,
             active_ap,
             dhcp,
             hotspot,
