@@ -210,6 +210,10 @@ impl RunAs {
 
     /// A key or a click the host has already given the form, as an `Outcome`.
     pub fn event(&mut self, ev: form::Event) -> Outcome {
+        // In the pick's own event, so no key typed after it reaches the list.
+        if self.form.take_chosen() == Some("user") {
+            self.form.focus_id("password");
+        }
         match ev {
             form::Event::Changed("user") => {
                 self.sync_ok();

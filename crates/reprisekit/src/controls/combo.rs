@@ -126,6 +126,9 @@ pub struct Combo {
     /// A value wider than the field ends in an ellipsis instead of widening it in a form's fit:
     /// for rows that are names from outside, of any length.
     pub elide: bool,
+    /// A row was picked from the open list, the one already picked too, since
+    /// [`Form::take_chosen`](crate::controls::form::Form::take_chosen) last read it.
+    pub chosen: bool,
 }
 
 impl Combo {
@@ -153,6 +156,7 @@ impl Combo {
             hosted: false,
             added_at: None,
             elide: false,
+            chosen: false,
         }
     }
 
@@ -252,10 +256,11 @@ impl Combo {
         if self.items.get(i).is_some_and(|it| it.greyed) {
             return false;
         }
-        self.open = None;
+        let from_list = self.open.take().is_some();
         if i >= self.items.len() {
             return false;
         }
+        self.chosen |= from_list;
         let was = self.edit.as_ref().map(|e| e.text.clone());
         self.fill(i);
         let changed = i != self.selected || was != self.edit.as_ref().map(|e| e.text.clone());

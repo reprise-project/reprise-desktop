@@ -1149,6 +1149,108 @@ mod tests {
         assert_eq!(app.active.as_ref().unwrap().dialog.password(), "");
     }
 
+    /// `key` given to the box as the host gives it, its outcome acted on.
+    fn press(app: &mut PolkitApp, key: form::Key) {
+        let d = &mut app.active.as_mut().unwrap().dialog;
+        let ev = d.form.key(key);
+        let out = d.event(ev);
+        app.dialog_outcome(out);
+    }
+
+    fn click_user(app: &mut PolkitApp, part: reprisekit::controls::combo::Hit) {
+        let d = &mut app.active.as_mut().unwrap().dialog;
+        let hit = form::Hit {
+            item: d.form.index_of("user").unwrap(),
+            part: form::Part::Combo(part),
+            x: 0,
+        };
+        let ev = d.form.click(Some(hit));
+        let out = d.event(ev);
+        app.dialog_outcome(out);
+    }
+
+    fn type_keys(app: &mut PolkitApp, text: &str) {
+        for ch in text.chars() {
+            press(
+                app,
+                form::Key::Edit(reprisekit::textedit::EditKey::Insert(ch.into())),
+            );
+        }
+    }
+
+    fn focus_on(app: &PolkitApp, id: &str) -> bool {
+        let f = &app.active.as_ref().unwrap().dialog.form;
+        f.focus().is_some() && f.focus() == f.index_of(id)
+    }
+
+    /// A user picked from the open list, by mouse or keyboard, the shown one too, takes the
+    /// password typed straight after it, all of it.
+    #[test]
+    fn a_password_typed_right_after_a_pick_from_the_list_is_all_in_the_field() {
+        use reprisekit::controls::combo::Hit;
+        type Pick = fn(&mut PolkitApp);
+        let picks: [(&str, Pick, &str); 3] = [
+            (
+                "click",
+                |app| {
+                    click_user(app, Hit::Field);
+                    click_user(app, Hit::Row(1));
+                },
+                "alice",
+            ),
+            (
+                "keys",
+                |app| {
+                    press(app, form::Key::Tab { back: true });
+                    press(app, form::Key::Drop);
+                    press(app, form::Key::Down);
+                    press(app, form::Key::Enter);
+                },
+                "alice",
+            ),
+            (
+                "same user",
+                |app| {
+                    click_user(app, Hit::Field);
+                    click_user(app, Hit::Row(0));
+                },
+                "root",
+            ),
+        ];
+        for (how, pick, user) in picks {
+            let mut app = two_users();
+            pick(&mut app);
+            let answers = attach(&mut app, user);
+            type_keys(&mut app, "in2pass");
+            let d = &app.active.as_ref().unwrap().dialog;
+            assert_eq!(d.password(), "in2pass", "{how}");
+            assert_eq!(d.user(), user, "{how}");
+            press(&mut app, form::Key::Enter);
+            assert_eq!(
+                sent(&answers),
+                [(1, "Password:".into(), "in2pass".into())],
+                "{how}"
+            );
+        }
+    }
+
+    /// Arrows on the closed list and Escape on the open one keep the keyboard on the list.
+    #[test]
+    fn stepping_through_users_keeps_the_focus_on_the_list() {
+        let mut app = two_users();
+        press(&mut app, form::Key::Tab { back: true });
+        press(&mut app, form::Key::Down);
+        assert_eq!(app.active.as_ref().unwrap().dialog.user(), "alice");
+        assert!(focus_on(&app, "user"), "after Down");
+        press(&mut app, form::Key::Drop);
+        press(&mut app, form::Key::Up);
+        press(&mut app, form::Key::Escape);
+        assert_eq!(app.active.as_ref().unwrap().dialog.user(), "alice");
+        assert!(focus_on(&app, "user"), "after Escape");
+        press(&mut app, form::Key::Tab { back: false });
+        assert!(focus_on(&app, "password"), "after Tab");
+    }
+
     /// A finger that matches ends the request with no password typed.
     #[test]
     fn a_finger_alone_succeeds() {
