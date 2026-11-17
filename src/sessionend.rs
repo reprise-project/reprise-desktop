@@ -222,7 +222,8 @@ fn start(
 }
 
 /// Ask the windows still unasked to close once the holders are known, all but those of a process
-/// holding off log off through the portal, which wait until it lets go.
+/// holding off log off through the portal, which wait until it lets go, and modal dialogs over
+/// their program's windows ([`modal_over_own`]).
 fn ask_windows(state: &mut State) {
     let Some(e) = state.ending.as_mut() else {
         return;
@@ -241,8 +242,19 @@ fn ask_windows(state: &mut State) {
         e.unasked = wait;
     }
     for w in ask {
-        state.close(w);
+        if !modal_over_own(state, w) {
+            state.close(w);
+        }
     }
+}
+
+/// Whether `w` is a modal dialog over another window of its program. It is not asked to close:
+/// a program takes that as its answer (Cancel), and the window under it, asked instead, drops the
+/// request while the dialog is up, so the program stays listed with its question on screen.
+fn modal_over_own(state: &State, w: WindowId) -> bool {
+    let pid = state.client_pid(w);
+    state.win(w).is_some_and(|x| x.is_modal())
+        && (state.owner(w)).is_some_and(|o| pid.is_none() || state.client_pid(o) == pid)
 }
 
 pub fn tick(state: &mut State) {
@@ -1577,6 +1589,35 @@ mod tests {
         ask_windows(&mut h.state);
         h.roundtrip(&mut c);
         assert_eq!(c.side.closes, [0], "asked once, after the copy let go");
+    }
+
+    #[test]
+    fn a_modal_box_over_its_programs_window_is_not_asked_to_close() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let notepad = h.map_toplevel(&mut c, "reprise.notepad", 400, 300);
+        let save = h.map_modal(&mut c, "reprise.notepad", notepad, (300, 120));
+        let find = h.map_dialog(&mut c, "reprise.notepad", Some(notepad), "", (200, 100));
+        h.state.ending = Some(Ending {
+            goal: Goal::LogOff,
+            cmd: None,
+            holders: Some(Vec::new()),
+            stop: None,
+            asked_portal: false,
+            timer: None,
+            reports: None,
+            mode: Mode::Waiting,
+            password: Password::No,
+            unasked: vec![notepad.id, save.id, find.id],
+        });
+        ask_windows(&mut h.state);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            c.side.closes,
+            [notepad.shell, find.shell],
+            "the window under the box and its other window, not the box"
+        );
     }
 
     #[test]
