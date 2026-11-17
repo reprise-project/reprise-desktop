@@ -145,9 +145,17 @@ pub enum Answer<K> {
 /// Message boxes with a payload `K` each, in one modal child window over [`Asks::over`]'s window.
 /// The program lists [`Asks::child`] in its children and routes the windows [`Asks::owns`] here.
 pub struct Asks<K> {
-    queue: Queue<(MsgBox, K)>,
+    /// Each box with its payload and the window it covers when [`Asks::ask_over`] named one.
+    queue: Queue<(MsgBox, K, Option<WinId>)>,
     wins: [WinId; 2],
     parent: WinId,
+}
+
+/// Boxes in the window named `ask` over [`MAIN`], for a program with one `Asks`.
+impl<K> Default for Asks<K> {
+    fn default() -> Asks<K> {
+        Asks::new(WinId::named("ask"))
+    }
 }
 
 impl<K> Asks<K> {
@@ -170,12 +178,19 @@ impl<K> Asks<K> {
 
     /// Raises `b` ([`Queue::raise`]).
     pub fn ask(&mut self, b: MsgBox, k: K) {
-        self.queue.raise((b, k));
+        self.queue.raise((b, k, None));
+    }
+
+    /// Raises `b` over `parent` in place of the boxes' own parent, such as the sheet it asks
+    /// about. A box whose `parent` closes before it comes up maps alone, so the program
+    /// withdraws it with that window.
+    pub fn ask_over(&mut self, parent: WinId, b: MsgBox, k: K) {
+        self.queue.raise((b, k, Some(parent)));
     }
 
     /// Raises `b` for an owner that blocks on its answer ([`Queue::raise_held`]).
     pub fn ask_held(&mut self, b: MsgBox, k: K) {
-        self.queue.raise_held((b, k));
+        self.queue.raise_held((b, k, None));
     }
 
     /// Whether `win` is one of the boxes' windows, up or left: route its events here.
@@ -188,27 +203,29 @@ impl<K> Asks<K> {
         (!self.queue.is_empty()).then(|| self.wins[self.queue.turn()])
     }
 
-    /// The window a box window covers, for `Extended::parent`; `None` when `win` is not one.
+    /// The window a box window covers, for `Extended::parent`: the one [`Asks::ask_over`] gave
+    /// the box up, else [`Asks::over`]'s; `None` when `win` is not a box window.
     pub fn parent(&self, win: WinId) -> Option<WinId> {
-        self.owns(win).then_some(self.parent)
+        let own = self.queue.up().and_then(|(_, _, p)| *p);
+        self.owns(win).then_some(own.unwrap_or(self.parent))
     }
 
     pub fn up(&self) -> Option<(&MsgBox, &K)> {
-        self.queue.up().map(|(b, k)| (b, k))
+        self.queue.up().map(|(b, k, _)| (b, k))
     }
 
     /// The box up, to give it an icon that decoded after it was raised.
     pub fn up_mut(&mut self) -> Option<&mut MsgBox> {
-        self.queue.up_mut().map(|(b, _)| b)
+        self.queue.up_mut().map(|(b, _, _)| b)
     }
 
     /// Every box, the one up first.
     pub fn iter(&self) -> impl Iterator<Item = (&MsgBox, &K)> {
-        self.queue.iter().map(|(b, k)| (b, k))
+        self.queue.iter().map(|(b, k, _)| (b, k))
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&mut MsgBox, &mut K)> {
-        self.queue.iter_mut().map(|(b, k)| (b, k))
+        self.queue.iter_mut().map(|(b, k, _)| (b, k))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -221,12 +238,12 @@ impl<K> Asks<K> {
 
     /// Takes the box up without an answer, and the next is up.
     pub fn close(&mut self) -> Option<K> {
-        self.queue.close().map(|(_, k)| k)
+        self.queue.close().map(|(_, k, _)| k)
     }
 
     /// The window of the box up.
     pub fn child(&self, text: &TextRenderer, theme: &Theme) -> Option<Child> {
-        let (b, _) = self.queue.up()?;
+        let (b, _, _) = self.queue.up()?;
         Some(b.child(self.win()?, text, theme))
     }
 
@@ -242,40 +259,40 @@ impl<K> Asks<K> {
         if self.win() != Some(win) {
             return Answer::None;
         }
-        let Some((b, _)) = self.queue.up_mut() else {
+        let Some((b, _, _)) = self.queue.up_mut() else {
             return Answer::None;
         };
         match b.event(ev, text, theme) {
             Outcome::None => Answer::None,
             Outcome::Redraw => Answer::Redraw,
             Outcome::Closed(button) => match self.queue.close() {
-                Some((_, k)) => Answer::Closed(k, button),
+                Some((_, k, _)) => Answer::Closed(k, button),
                 None => Answer::None,
             },
         }
     }
 
     pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer) {
-        if let Some((b, _)) = self.queue.up() {
+        if let Some((b, _, _)) = self.queue.up() {
             b.draw(c, theme, text);
         }
     }
 
     pub fn access(&self, tree: &mut Tree, text: &TextRenderer, theme: &Theme) {
-        if let Some((b, _)) = self.queue.up() {
+        if let Some((b, _, _)) = self.queue.up() {
             b.access(tree, text, theme);
         }
     }
 
     /// Takes the payloads of every box `gone` picks, up or waiting ([`Queue::withdraw`]).
     pub fn withdraw(&mut self, gone: impl Fn(&K) -> bool) -> Vec<K> {
-        let out = self.queue.withdraw(|(_, k)| gone(k));
-        out.into_iter().map(|(_, k)| k).collect()
+        let out = self.queue.withdraw(|(_, k, _)| gone(k));
+        out.into_iter().map(|(_, k, _)| k).collect()
     }
 
     /// Takes every box's payload, the one up first ([`Queue::drain`]).
     pub fn drain(&mut self) -> Vec<K> {
-        self.queue.drain().into_iter().map(|(_, k)| k).collect()
+        self.queue.drain().into_iter().map(|(_, k, _)| k).collect()
     }
 }
 
@@ -472,5 +489,45 @@ mod tests {
             Asks::<()>::new(WinId::named("x")).parent(WinId::named("x")),
             Some(MAIN)
         );
+    }
+
+    #[test]
+    fn a_default_asks_has_windows_of_its_own_over_main() {
+        #[derive(Default)]
+        struct Program {
+            asks: Asks<u8>,
+        }
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let mut p = Program::default();
+        p.asks.ask(ok_box("question"), 7);
+        let win = p.asks.child(&text, &theme).unwrap().id;
+        assert_eq!(p.asks.parent(win), Some(MAIN));
+        let errors = crate::oneshot::ErrorBox::default();
+        for w in p.asks.wins {
+            assert!(
+                !errors.owns(w) && !crate::filebox::owns(w),
+                "apart from the error and file dialog boxes"
+            );
+        }
+        assert_eq!(
+            p.asks.event(win, &enter(), &text, &theme),
+            Answer::Closed(7, Some(0))
+        );
+    }
+
+    #[test]
+    fn a_box_raised_over_a_window_names_it_and_the_next_box_its_asks_parent() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let (main, sheet) = (crate::window_id(1), crate::window_id(2));
+        let mut a = Asks::new(WinId::named("ask")).over(main);
+        a.ask_over(sheet, ok_box("about the sheet"), 1);
+        a.ask(ok_box("about the program"), 2);
+        let first = a.win().unwrap();
+        assert_eq!(a.parent(first), Some(sheet));
+        a.event(first, &enter(), &text, &theme);
+        let second = a.win().unwrap();
+        assert_eq!(a.parent(second), Some(main));
     }
 }
