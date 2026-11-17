@@ -29,7 +29,7 @@ use smithay::{
             backend::{ClientData, ClientId, DisconnectReason},
         },
     },
-    utils::{Clock, Logical, Monotonic, Point},
+    utils::{Clock, Logical, Monotonic, Point, Rectangle},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         image_capture_source::{ImageCaptureSourceState, OutputCaptureSourceState},
@@ -1028,19 +1028,17 @@ impl State {
 
     /// Ask the outputs `commit_outputs` names for a new frame for what `surface` drew, as
     /// `redraw_content` does for every output; every output when nothing places it and it may
-    /// show. `in_place`: only the tree's pixels changed (`samepixels::Commit::in_place`).
+    /// show. `damage`: only the tree's pixels changed (`samepixels::Commit::in_place`), under
+    /// these rects from its origin (`samepixels::damage`).
     pub fn redraw_surface(
         &mut self,
         surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
-        in_place: bool,
+        damage: Option<&[Rectangle<i32, Logical>]>,
     ) {
         use crate::backend::Ask;
         let ask = match &self.cursor {
             CursorImageStatus::Surface(c) if c == surface => Ask::Cursor,
-            _ => match in_place
-                .then(|| self.scene.surface_extents(surface))
-                .flatten()
-            {
+            _ => match damage.and_then(|_| self.scene.surface_extents(surface)) {
                 Some(r) => Ask::Commit(crate::glass::Drawn {
                     r,
                     window: (self.scene.surface_node(surface))
@@ -1049,8 +1047,14 @@ impl State {
                 None => Ask::Content,
             },
         };
-        match self.commit_outputs(surface) {
-            Some(outputs) => crate::backend::schedule_on(self, &outputs, ask),
+        match self.commit_outputs(surface, damage) {
+            Some((outputs, missed)) => {
+                crate::backend::schedule_on(self, &outputs, ask);
+                // An output left out still draws the surface, so it answers its frame callbacks.
+                if missed {
+                    crate::backend::answer_frames(self);
+                }
+            }
             None if self.never_shown(surface) => {}
             None => self.redraw_content(),
         }
@@ -1070,19 +1074,21 @@ impl State {
 
     /// The outputs a commit to the surface tree under `surface` can change: the cursor's
     /// (`backend::cursor_outputs`) when it is the cursor, none for a cursor surface not in use,
-    /// else those showing it. `None` when nothing places it.
+    /// else those showing it where it drew (`Scene::outputs_damaged`), and whether one showing it
+    /// was left out. `None` when nothing places it.
     pub fn commit_outputs(
         &self,
         surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
-    ) -> Option<Vec<smithay::output::Output>> {
+        damage: Option<&[Rectangle<i32, Logical>]>,
+    ) -> Option<(Vec<smithay::output::Output>, bool)> {
         use smithay::wayland::{compositor::get_role, seat::CURSOR_IMAGE_ROLE};
         if matches!(&self.cursor, CursorImageStatus::Surface(c) if c == surface) {
-            return Some(crate::backend::cursor_outputs(self));
+            return Some((crate::backend::cursor_outputs(self), false));
         }
         if get_role(surface) == Some(CURSOR_IMAGE_ROLE) {
-            return Some(Vec::new());
+            return Some((Vec::new(), false));
         }
-        self.scene.outputs_showing(surface)
+        self.scene.outputs_damaged(surface, damage)
     }
 
     /// Ask the outputs showing the cursor for a frame with its new image.
@@ -1392,6 +1398,39 @@ mod tests {
     }
 
     #[test]
+    fn a_commit_under_a_glass_framed_window_asks_a_frame_only_for_pixels_its_frame_reads() {
+        let config =
+            Config::parse("[appearance]\ninterface = \"glass\"\n[effects]\nreduce_motion = true\n")
+                .unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        let o = h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let video = h.map_toplevel(&mut c, "video", 200, 100);
+        let cover = h.map_toplevel(&mut c, "cover", 400, 300);
+        h.draw_opaque(&mut c, cover, 0xff00_0000);
+        h.state.move_to(cover.id, 100, 100);
+        let (x, y) = h.state.win(cover.id).unwrap().client_origin();
+        let g = h.state.win(video.id).unwrap().geom.client;
+        h.state.move_to(video.id, x + 8 - g.x, y + 100 - g.y);
+        h.run_for(600);
+        let mut asks = |argb, damage| {
+            crate::backend::take_asks();
+            h.draw_part(&mut c, video, argb, damage);
+            crate::backend::take_asked_outputs()
+        };
+        assert_eq!(
+            asks(0xff20_2020, (150, 40, 40, 40)),
+            [] as [String; 0],
+            "pixels far from the cover's frame show nowhere"
+        );
+        assert_eq!(
+            asks(0xff40_4040, (0, 40, 4, 40)),
+            [o.name()],
+            "pixels beside the cover's frame show in its glass"
+        );
+    }
+
+    #[test]
     fn a_commit_from_a_window_under_an_opaque_fullscreen_one_asks_for_no_frame() {
         use crate::harness::{Harness, TestClient, Toplevel};
         fn asks(h: &mut Harness, c: &mut TestClient, t: Toplevel) -> bool {
@@ -1546,11 +1585,15 @@ mod tests {
         let b = h.output("TEST-2", 1024, 768);
         let mut c = h.connect();
         let cursor = h.bare_surface(&mut c);
-        assert_eq!(h.state.commit_outputs(&cursor), None, "nothing places it");
+        assert_eq!(
+            h.state.commit_outputs(&cursor, None),
+            None,
+            "nothing places it"
+        );
         h.state.cursor = CursorImageStatus::Surface(cursor.clone());
         assert_eq!(
-            h.state.commit_outputs(&cursor),
-            Some(vec![]),
+            h.state.commit_outputs(&cursor, None),
+            Some((vec![], false)),
             "no output has drawn the cursor yet"
         );
         let b_at = reprisescene::output_rect(&b).expect("TEST-2's place").loc;
@@ -1558,12 +1601,12 @@ mod tests {
         h.state.zoom(crate::magnifier::ZoomStep::In);
         h.state.cursor = CursorImageStatus::Surface(cursor.clone());
         assert_eq!(
-            h.state.commit_outputs(&cursor),
-            Some(vec![b.clone()]),
+            h.state.commit_outputs(&cursor, None),
+            Some((vec![b.clone()], false)),
             "a zoom follows it"
         );
         crate::backend::take_asks();
-        h.state.redraw_surface(&cursor, true);
+        h.state.redraw_surface(&cursor, Some(&[]));
         assert_eq!(
             crate::backend::take_asks(),
             vec![(b.name(), crate::backend::Ask::Cursor)],
@@ -1573,8 +1616,8 @@ mod tests {
         smithay::wayland::compositor::give_role(&cursor, smithay::wayland::seat::CURSOR_IMAGE_ROLE)
             .expect("the cursor role");
         assert_eq!(
-            h.state.commit_outputs(&cursor),
-            Some(vec![]),
+            h.state.commit_outputs(&cursor, None),
+            Some((vec![], false)),
             "a cursor surface not in use shows nowhere"
         );
     }

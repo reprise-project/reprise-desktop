@@ -122,10 +122,11 @@ impl CompositorHandler for State {
         crate::layer::commit(self, surface);
         crate::sessionlock::commit(self, surface);
         self.ime_commit(surface);
+        let damage = crate::samepixels::damage(&top);
         if commit.shows_nothing_new() {
             crate::backend::answer_frames(self);
         } else {
-            self.redraw_surface(&top, commit.in_place());
+            self.redraw_surface(&top, commit.in_place().then_some(&damage[..]));
         }
     }
 

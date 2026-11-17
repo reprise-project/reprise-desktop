@@ -32,22 +32,33 @@ pub(crate) struct Shows {
     pub(crate) walked: HashSet<NodeId>,
 }
 
-/// Per output, the surface nodes it draws none of ([`Scene::covered_on`]), each output walked
-/// when first asked about.
+/// Per output, the surface nodes it draws only where glass reads them ([`Scene::covered_on`]),
+/// each output walked when first asked about.
 pub(crate) struct Covered<'s, R: Renderer, D> {
     scene: &'s Scene<R, D>,
     /// By the index of the output in `scene.outputs`.
-    nodes: Vec<OnceCell<Vec<NodeId>>>,
+    nodes: Vec<OnceCell<Vec<ReadAt>>>,
 }
+
+/// A surface node under opaque leaves, and the layout rects where glass reads it from there;
+/// none when nothing draws it.
+pub(crate) type ReadAt = (NodeId, Vec<Rectangle<i32, Logical>>);
 
 impl<R: Renderer, D> Covered<'_, R, D> {
     pub(crate) fn on(&self, node: NodeId, output: &Output) -> bool {
-        let Some(i) = self.scene.outputs.iter().position(|o| o == output) else {
-            return false;
-        };
-        self.nodes[i]
-            .get_or_init(|| self.scene.covered_on(output))
-            .contains(&node)
+        self.read_at(node, output).is_some_and(<[_]>::is_empty)
+    }
+
+    /// Where `output` draws surface node `node` when it lies under opaque leaves: only where glass
+    /// reads it. None when the output draws it on the screen or nowhere near.
+    pub(crate) fn read_at(
+        &self,
+        node: NodeId,
+        output: &Output,
+    ) -> Option<&[Rectangle<i32, Logical>]> {
+        let i = self.scene.outputs.iter().position(|o| o == output)?;
+        let under = self.nodes[i].get_or_init(|| self.scene.covered_on(output));
+        under.iter().find(|(n, _)| *n == node).map(|(_, r)| &r[..])
     }
 }
 
@@ -59,9 +70,10 @@ impl<R: Renderer, D> Scene<R, D> {
         }
     }
 
-    /// The surface nodes `output` draws none of ([`Scene::leaves_on`]). The output's last walk
-    /// answers while the nodes, its view and every [`Input`] are as that walk found them.
-    pub(crate) fn covered_on(&self, output: &Output) -> Vec<NodeId> {
+    /// The surface nodes `output` draws only where glass reads them ([`Scene::leaves_on`]). The
+    /// output's last walk answers while the nodes, its view and every [`Input`] are as that walk
+    /// found them.
+    pub(crate) fn covered_on(&self, output: &Output) -> Vec<ReadAt> {
         let Some(view) = View::of(output) else {
             return Vec::new();
         };
@@ -74,10 +86,10 @@ impl<R: Renderer, D> Scene<R, D> {
             return m.nodes.clone();
         }
         self.cover_walks.set(self.cover_walks.get() + 1);
-        let nodes: Vec<NodeId> = match self.leaves_on(output, None) {
+        let nodes: Vec<ReadAt> = match self.leaves_on(output, None) {
             Leaves::All(leaves) => (leaves.into_iter())
-                .filter(|l| l.surface && l.covered)
-                .map(|l| l.id)
+                .filter(|l| l.surface)
+                .filter_map(|l| Some((l.id, l.read_at?)))
                 .collect(),
             _ => Vec::new(),
         };
@@ -156,7 +168,7 @@ impl<R: Renderer, D> Scene<R, D> {
         let parent = |id: NodeId| self.node(id).and_then(|n| n.parent).map(|p| p.0);
         for l in leaves {
             s.walked.insert(l.id);
-            if l.covered {
+            if l.read_at.as_ref().is_some_and(Vec::is_empty) {
                 continue;
             }
             let mut at = Some(l.id);
@@ -286,9 +298,11 @@ impl<R: Renderer, D> Scene<R, D> {
                 .map(|s| Leaf {
                     id: s.id,
                     surface: s.surface,
-                    covered: s.under
-                        && s.order < from
-                        && !reads.iter().any(|r| r.sees(s.rect, s.order, &veils)),
+                    read_at: (s.under && s.order < from).then(|| {
+                        (reads.iter())
+                            .flat_map(|r| r.seen(s.rect, s.order, &veils))
+                            .collect()
+                    }),
                 })
                 .collect(),
         )
@@ -315,7 +329,7 @@ pub(crate) struct Memo {
     view: View,
     changes: u64,
     inputs: Vec<Input>,
-    nodes: Vec<NodeId>,
+    nodes: Vec<ReadAt>,
 }
 
 /// What a cover walk reads that [`Scene::changes`] does not count: a client surface tree's box
@@ -355,8 +369,9 @@ struct Shown {
 struct Leaf {
     id: NodeId,
     surface: bool,
-    /// Drawn by none of the output's pixels.
-    covered: bool,
+    /// Under opaque leaves, where glass reads it: drawn by none of the output's pixels when empty.
+    /// None when it shows on the screen or a custom node reads everything beneath it.
+    read_at: Option<Vec<Rectangle<i32, Logical>>>,
 }
 
 /// A custom node the output shows part of, in walk order (front first).
@@ -386,11 +401,21 @@ struct Veil {
 }
 
 impl Read {
-    /// Whether this read reaches part of the leaf at `rect` and `order` past the veils every backdrop
-    /// the glass may draw from holds: those below the glass and outside its anchor, or above both.
+    /// Whether this read reaches part of the leaf at `rect` and `order` ([`Read::seen`]).
     fn sees(&self, rect: Rectangle<i32, Logical>, order: usize, veils: &[Veil]) -> bool {
+        !self.seen(rect, order, veils).is_empty()
+    }
+
+    /// The parts of the leaf at `rect` and `order` this read reaches past the veils every backdrop
+    /// the glass may draw from holds: those below the glass and outside its anchor, or above both.
+    fn seen(
+        &self,
+        rect: Rectangle<i32, Logical>,
+        order: usize,
+        veils: &[Veil],
+    ) -> Vec<Rectangle<i32, Logical>> {
         let Some(part) = self.rect.intersection(rect) else {
-            return false;
+            return Vec::new();
         };
         let hiding = (veils.iter())
             .take_while(|v| v.order < order)
@@ -398,7 +423,7 @@ impl Read {
             .filter(|v| self.anchor.is_none() || v.anchor != self.anchor)
             .flat_map(|v| v.rects.iter().copied())
             .filter(|r| r.overlaps(part));
-        !part.subtract_rects(hiding).is_empty()
+        part.subtract_rects(hiding)
     }
 }
 
