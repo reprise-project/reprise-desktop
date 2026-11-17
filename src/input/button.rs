@@ -212,14 +212,13 @@ impl State {
         }
         // A task button brings its window up on the press or the release, after the press takes
         // its preview panel down: the panel's pictures go once the taskbar is done with it.
-        if matches!(
-            hit,
-            Hit::Taskbar {
-                hit: TaskbarHit::Task(_),
-                ..
-            }
-        ) {
+        if let Hit::Taskbar {
+            bar,
+            hit: TaskbarHit::Task(i),
+        } = hit
+        {
             crate::taskpreview::hold(self);
+            crate::taskpreview::pressed(self, bar, i);
         }
         // A press off a popup closes it and goes on to what it landed on.
         for p in Popup::ALL {
