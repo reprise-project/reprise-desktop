@@ -192,6 +192,8 @@ impl SeatHandler for State {
 
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
         let client = focused.and_then(|s| self.dh.get_client(s.id()).ok());
+        let enter = seat.get_keyboard().and_then(|k| k.last_enter());
+        (self.keyboard_turn).entered(client.as_ref().map(|c| c.id()), enter);
         if let Some(c) = &client {
             crate::textinput::peek_text_inputs(self, c);
         }

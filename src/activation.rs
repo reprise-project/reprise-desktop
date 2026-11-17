@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use smithay::{
     input::Seat,
     reexports::wayland_server::{Resource, backend::ClientId, protocol::wl_surface::WlSurface},
+    utils::Serial,
     wayland::{
         compositor::get_parent,
         xdg_activation::{
@@ -24,15 +25,45 @@ const TOKENS_PER_CLIENT: usize = 32;
 
 struct Trusted;
 
-/// A client's new token earns trust only with an input serial on our seat and a
-/// surface of the client holding keyboard focus; a pointer enter alone yields a
-/// valid serial.
+/// A client's new token earns trust only with an input serial on our seat from the client's
+/// [`KeyboardTurn`] and a surface of the client holding keyboard focus; a pointer enter alone
+/// yields a valid serial.
 fn client_token_trusted(
     serial_ok: bool,
     token_client: Option<ClientId>,
     focus_client: Option<ClientId>,
 ) -> bool {
     serial_ok && token_client.is_some() && token_client == focus_client
+}
+
+/// The client holding the keyboard and the enter that gave it the keyboard. The keyboard moving
+/// between that client's surfaces (to its menu and back, from a closed dialog to its window) keeps
+/// the enter, so an input on the menu or the dialog still counts; a move to another client or to
+/// no surface starts a new turn.
+#[derive(Default)]
+pub struct KeyboardTurn(Option<(ClientId, Serial)>);
+
+impl KeyboardTurn {
+    /// The keyboard entered a surface of `client` on `serial`.
+    pub fn entered(&mut self, client: Option<ClientId>, serial: Option<Serial>) {
+        match (client, serial) {
+            (Some(c), _) if self.0.as_ref().is_some_and(|(held, _)| *held == c) => {}
+            (Some(c), Some(s)) => self.0 = Some((c, s)),
+            _ => self.0 = None,
+        }
+    }
+
+    /// The keyboard left every surface.
+    pub fn left(&mut self) {
+        self.0 = None;
+    }
+
+    /// The enter that started `client`'s turn, when the turn is its.
+    fn since(&self, client: Option<&ClientId>) -> Option<Serial> {
+        (self.0.as_ref())
+            .filter(|(held, _)| Some(held) == client)
+            .map(|(_, s)| *s)
+    }
 }
 
 /// How long the client a drag was dropped on may raise the window it took it with: the drop
@@ -88,20 +119,19 @@ impl XdgActivationHandler for State {
             return false;
         }
         let keyboard = self.seat.get_keyboard();
+        let focus_client = (keyboard.as_ref())
+            .and_then(|k| k.current_focus())
+            .and_then(|s| s.client())
+            .map(|c| c.id());
+        let since = (self.keyboard_turn.since(focus_client.as_ref()))
+            .or_else(|| keyboard.as_ref().and_then(|k| k.last_enter()));
         let serial_ok = data.serial.as_ref().is_some_and(|(serial, seat)| {
             Seat::<State>::from_resource(seat).as_ref() == Some(&self.seat)
-                && keyboard
-                    .as_ref()
-                    .and_then(|k| k.last_enter())
-                    .is_some_and(|enter| serial.is_no_older_than(&enter))
+                && since.is_some_and(|since| serial.is_no_older_than(&since))
         });
         let token_client = data
             .surface
             .as_ref()
-            .and_then(|s| s.client())
-            .map(|c| c.id());
-        let focus_client = keyboard
-            .and_then(|k| k.current_focus())
             .and_then(|s| s.client())
             .map(|c| c.id());
         let dropped = drop_target_trusted(
@@ -482,6 +512,138 @@ mod tests {
             !r.take(Some(&id("calc.desktop")), at + Duration::from_secs(1)),
             "a second pick of the same program renews its grant, it doesn't add one"
         );
+    }
+
+    use crate::harness::{Harness, TestClient, Toplevel};
+
+    /// A click in the middle of window `t`, given the keyboard first; the serial `c` heard for it.
+    fn click_on(h: &mut Harness, c: &mut TestClient, t: Toplevel) -> u32 {
+        h.state.focus_window(t.id);
+        h.roundtrip(c);
+        let w = h.state.win(t.id).expect("the window");
+        let (client, x, y) = (w.geom.client, w.x, w.y);
+        let (x, y) = (
+            x + client.x + client.width / 2,
+            y + client.y + client.height / 2,
+        );
+        h.click(f64::from(x), f64::from(y));
+        h.roundtrip(c);
+        c.side.button_serial
+    }
+
+    /// A token `c` asks on `serial` from `from`, presented for `raise`.
+    fn raise_on(h: &mut Harness, c: &mut TestClient, serial: u32, from: Toplevel, raise: Toplevel) {
+        c.token_on(serial, from);
+        h.roundtrip(c);
+        let token = c.side.tokens.last().expect("a token").clone();
+        c.activate(&token, raise);
+        h.roundtrip(c);
+    }
+
+    #[test]
+    fn a_pick_from_a_programs_menu_raises_another_of_its_windows_after_the_menu_closes() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let sheet = h.map_toplevel(&mut c, "test.sheet", 300, 200);
+        let folder = h.map_toplevel(&mut c, "test.folder", 300, 200);
+        click_on(&mut h, &mut c, folder);
+        let menu = h.map_popup(&mut c, folder, 100, 80);
+        assert_eq!(c.side.keyboard_focus.as_ref(), Some(&menu.surface));
+        let w = h.state.win(folder.id).expect("the folder");
+        let (x, y) = (w.x + w.geom.client.x + 10, w.y + w.geom.client.y + 10);
+        h.click(f64::from(x), f64::from(y));
+        h.roundtrip(&mut c);
+        let pick = c.side.button_serial;
+        let enters = c.side.enters;
+        c.hide_popup(&menu);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            c.side.enters,
+            enters + 1,
+            "the keyboard comes back to the folder"
+        );
+        raise_on(&mut h, &mut c, pick, folder, sheet);
+        assert_eq!(
+            h.state.focused,
+            Some(sheet.id),
+            "the sheet takes the keyboard"
+        );
+    }
+
+    #[test]
+    fn a_click_in_a_programs_dialog_raises_another_of_its_windows_after_the_dialog_closes() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let sheet = h.map_toplevel(&mut c, "test.sheet", 300, 200);
+        let folder = h.map_toplevel(&mut c, "test.folder", 300, 200);
+        let dialog = h.map_dialog(&mut c, "test.folder", Some(folder), "", (200, 100));
+        let ok = click_on(&mut h, &mut c, dialog);
+        c.destroy(dialog);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            h.state.focused,
+            Some(folder.id),
+            "the keyboard is back on the folder"
+        );
+        raise_on(&mut h, &mut c, ok, folder, sheet);
+        assert_eq!(
+            h.state.focused,
+            Some(sheet.id),
+            "the sheet takes the keyboard"
+        );
+    }
+
+    #[test]
+    fn a_program_without_the_keyboard_raises_nothing_on_a_serial_as_new_as_the_focused_ones() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut other = h.connect();
+        let behind = h.map_toplevel(&mut other, "test.other", 300, 200);
+        let second = h.map_toplevel(&mut other, "test.other", 300, 200);
+        let mut c = h.connect();
+        let folder = h.map_toplevel(&mut c, "test.folder", 300, 200);
+        let click = click_on(&mut h, &mut c, folder);
+        raise_on(&mut h, &mut other, click, behind, second);
+        assert_eq!(
+            h.state.focused,
+            Some(folder.id),
+            "the folder keeps the keyboard"
+        );
+        assert!(
+            h.state
+                .win(second.id)
+                .is_some_and(|w| w.attention.is_some())
+        );
+    }
+
+    #[test]
+    fn a_serial_from_before_the_keyboard_went_elsewhere_raises_nothing() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut other = h.connect();
+        let elsewhere = h.map_toplevel(&mut other, "test.other", 300, 200);
+        let mut c = h.connect();
+        let sheet = h.map_toplevel(&mut c, "test.sheet", 300, 200);
+        let folder = h.map_toplevel(&mut c, "test.folder", 300, 200);
+        let before = click_on(&mut h, &mut c, folder);
+        click_on(&mut h, &mut other, elsewhere);
+        h.state.focus_window(folder.id);
+        h.roundtrip(&mut c);
+        raise_on(&mut h, &mut c, before, folder, sheet);
+        assert_eq!(
+            h.state.focused,
+            Some(folder.id),
+            "after another program had it"
+        );
+
+        let before = click_on(&mut h, &mut c, folder);
+        h.state.focus_desktop();
+        h.state.focus_window(folder.id);
+        h.roundtrip(&mut c);
+        raise_on(&mut h, &mut c, before, folder, sheet);
+        assert_eq!(h.state.focused, Some(folder.id), "after the desktop had it");
     }
 
     #[test]
