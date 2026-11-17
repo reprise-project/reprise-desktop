@@ -394,6 +394,12 @@ impl Explorer {
         }
     }
 
+    /// Whether the box up is Connect to Server showing a connection under way, which takes no
+    /// input but Cancel.
+    pub(crate) fn connecting_up(&self) -> bool {
+        self.connection.is_some() && matches!(self.dialogs.up(), Some(Dialog::Connect(_)))
+    }
+
     /// Connect to Server, still busy, back up while the connection goes on.
     fn show_connect_again(&mut self) -> Reply {
         self.take_up();
@@ -585,6 +591,13 @@ pub(crate) mod tests {
     /// An Explorer with a connection to `uri` under way whose steps the test sends.
     pub(crate) fn connecting(uri: &str, ctx: &mut Ctx) -> (Explorer, Sender<Step>) {
         let mut ex = test_explorer(Place::Computer, ctx);
+        let steps = connect_in(&mut ex, uri, ctx);
+        (ex, steps)
+    }
+
+    /// Starts a connection to `uri` in `ex`, Connect to Server up and busy; the test sends its
+    /// steps.
+    pub(crate) fn connect_in(ex: &mut Explorer, uri: &str, ctx: &mut Ctx) -> Sender<Step> {
         let addr = Address::parse(uri).expect("an address");
         let (tx, steps) = std::sync::mpsc::channel();
         let mut b = ConnectBox::open(&addr.uri(), ctx);
@@ -596,7 +609,7 @@ pub(crate) mod tests {
             addr,
             connect: None,
         });
-        (ex, tx)
+        tx
     }
 
     pub(crate) fn login(retry: bool) -> mount::Login {
