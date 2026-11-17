@@ -530,6 +530,30 @@ fn a_plugged_phone_lists_in_computer_and_its_mount_takes_its_name_and_eject() {
     assert!(computer_nodes(&ex).contains(&Place::Folder(at)));
 }
 
+/// gvfs's folder is its own FUSE mount, which no folder watch sees change, so it is listed again
+/// when a share in it comes or goes. Nothing wakes here, so only that relisting can show it.
+#[test]
+fn the_folder_shown_lists_a_share_in_it_as_it_mounts_and_unmounts() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let at = dir.path().join("sftp:host=nas,user=u");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let listed = |ex: &Explorer| ex.items.iter().any(|it| it.path == at);
+    assert!(!listed(&ex));
+
+    std::fs::create_dir(&at).expect("the share's folder");
+    ex.shares_changed(phone_mount(at.clone()), &mut ctx);
+    assert!(listed(&ex), "the share's folder is listed once it mounts");
+
+    std::fs::remove_dir(&at).expect("the share goes");
+    let none = reprisefs::netshare::Snapshot {
+        gio: true,
+        shares: Vec::new(),
+    };
+    ex.shares_changed(none, &mut ctx);
+    assert!(!listed(&ex), "the share's folder is gone once it unmounts");
+}
+
 /// A phone's folder walked to before gvfs listed it as a share leaves no folder node behind under
 /// its parent once it mounts, or once it goes.
 #[test]

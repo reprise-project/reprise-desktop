@@ -216,7 +216,9 @@ impl Explorer {
             // The share's folder is gone; its parent is gvfs's own folder, not a place to land.
             return self.go(Place::Computer, ctx);
         }
-        if self.place == Place::Computer {
+        // gvfs's folder is its own FUSE mount, which no folder watch sees change.
+        let lists_one = here.as_ref().is_some_and(|h| parents.contains(h));
+        if self.place == Place::Computer || lists_one {
             return self.refresh(ctx);
         }
         // A share's root now has its name and Computer above it.
