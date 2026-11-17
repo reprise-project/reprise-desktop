@@ -610,7 +610,7 @@ impl State {
             return;
         };
         if std::mem::replace(&mut win.dialog_tag, tag) != tag {
-            self.on_parent_changed(w);
+            self.ownership_changed(w);
         }
     }
 }

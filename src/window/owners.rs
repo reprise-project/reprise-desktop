@@ -157,11 +157,55 @@ impl State {
             .unwrap_or(w)
     }
 
+    /// A mapped `w` given an owner stands as if it had mapped over that owner: its family is
+    /// restacked in place, and a family holding the focus comes up as a click on the focused
+    /// window brings it, the keyboard going to a modal box that now covers that window.
     pub fn on_parent_changed(&mut self, w: WindowId) {
+        self.ownership_changed(w);
+        if !self.win(w).is_some_and(|x| x.mapped) || self.owner(w).is_none() {
+            return;
+        }
+        let home = self.home(w);
+        self.redraw_changed(|s| s.stack_family(home, w));
+        if !self.desktop_locked()
+            && let Some(f) = self.focused
+            && self.home(f) == home
+        {
+            self.focus_window(f);
+        }
+    }
+
+    /// Frames, capabilities and the session follow a change of `w`'s parent or dialog tag.
+    pub(crate) fn ownership_changed(&mut self, w: WindowId) {
         self.session.owe();
         if !self.refresh_owned().contains(&w) {
             self.reframe(w);
         }
+    }
+
+    /// Reorder `home`'s family in the slots it holds in `w`'s layer, in [`State::raise_children`]'s
+    /// order: each window over its owner, then the family's modal box and what it owns over every
+    /// window it covers ([`State::modal_target`]).
+    fn stack_family(&mut self, home: WindowId, w: WindowId) {
+        let Some(layer) = self.win(w).and_then(|x| self.scene.parent(x.tree)) else {
+            return;
+        };
+        let mut order = vec![home];
+        walk_owned(home, (), |x| self.owned_by(x), |k, ()| order.push(k));
+        let modal = self.modal_target(home);
+        if modal != home {
+            let (lifted, mut rest): (Vec<_>, Vec<_>) =
+                (order.into_iter()).partition(|&k| k == modal || self.is_owner_of(modal, k));
+            let covered = rest.iter().rposition(|&k| self.modal_target(k) == modal);
+            let at = covered.map_or(0, |i| i + 1);
+            rest.splice(at..at, lifted);
+            order = rest;
+        }
+        let nodes: Vec<_> = (order.iter().filter_map(|&k| self.win(k)))
+            .filter(|x| x.mapped && self.scene.parent(x.tree) == Some(layer))
+            .map(|x| x.tree.node())
+            .collect();
+        self.scene.reorder_in_place(&nodes);
     }
 
     /// Lay mapped `w`'s frame out again around a client that stays where it is.
