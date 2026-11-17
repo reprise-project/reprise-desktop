@@ -2,7 +2,7 @@ use super::*;
 use crate::clipboard::{TEXT_MIME, pasted_text, read_capped, text_mime};
 use crate::deliver::{
     blink_target, input_blocked, modal_over, newly_covered, orphaned, redraws, root_of,
-    takes_blinks, top_modal,
+    stands_beside, takes_blinks, top_modal,
 };
 use crate::draw::{buffer_damage, copy_pixels, next_buffer, surface_damage};
 use crate::reply::spawn_then;
@@ -604,19 +604,69 @@ fn a_close_request_under_a_modal_child_is_dropped_and_one_on_the_child_arrives()
     let slots = [(MAIN, false), (SHEET, false), (ADVANCED, true)];
     let close = Event::CloseRequest;
     for win in [MAIN, SHEET] {
-        let modal = modal_over(win, slots.into_iter(), parent);
+        let modal = modal_over(win, false, slots.into_iter(), parent);
         assert_eq!(modal, Some(ADVANCED), "the box gates {win:?}");
         assert!(input_blocked(&close, modal, win, false));
     }
-    let modal = modal_over(ADVANCED, slots.into_iter(), parent);
+    let modal = modal_over(ADVANCED, false, slots.into_iter(), parent);
     assert!(!input_blocked(&close, modal, ADVANCED, false));
     assert!(
         !input_blocked(&close, Some(ADVANCED), WinId::named("flyout"), true),
         "the compositor takes a flyout away under the box too"
     );
     let free = [(MAIN, false), (SHEET, false)];
-    let modal = modal_over(SHEET, free.into_iter(), parent);
+    let modal = modal_over(SHEET, false, free.into_iter(), parent);
     assert!(!input_blocked(&close, modal, SHEET, false));
+}
+
+#[test]
+fn a_progress_box_takes_input_beside_a_box_over_its_parent_and_not_under_its_own() {
+    const PROGRESS: WinId = WinId::named("progress");
+    const SHEET: WinId = WinId::named("sheet");
+    const FAILED: WinId = WinId::named("failed");
+    const OWN: WinId = WinId::named("own");
+    let parent = |w: WinId| match w {
+        OWN => Some(PROGRESS),
+        _ => Some(MAIN),
+    };
+    assert!(stands_beside(Caption::Prompt, false));
+    assert!(!stands_beside(Caption::Prompt, true), "a modal box blocks");
+    assert!(!stands_beside(Caption::Help, false), "a sheet is gated");
+    assert!(!stands_beside(Caption::Window, false));
+
+    let slots = [
+        (MAIN, false),
+        (PROGRESS, false),
+        (SHEET, false),
+        (FAILED, true),
+    ];
+    let modal = modal_over(PROGRESS, true, slots.into_iter(), parent);
+    assert_eq!(modal, None, "the box over the main window leaves it free");
+    for ev in [Event::Pointer(PointerInput::Leave), Event::CloseRequest] {
+        assert!(
+            !input_blocked(&ev, modal, PROGRESS, false),
+            "{ev:?} arrives"
+        );
+    }
+    for win in [MAIN, SHEET] {
+        assert_eq!(
+            modal_over(win, false, slots.into_iter(), parent),
+            Some(FAILED),
+            "the box still gates {win:?}"
+        );
+    }
+
+    let own = [
+        (MAIN, false),
+        (PROGRESS, false),
+        (FAILED, true),
+        (OWN, true),
+    ];
+    assert_eq!(
+        modal_over(PROGRESS, true, own.into_iter(), parent),
+        Some(OWN),
+        "a box over the progress box gates it"
+    );
 }
 
 #[test]
@@ -786,13 +836,13 @@ fn a_modal_child_gates_only_the_windows_it_sits_over() {
         (WinId::named("second"), false),
         (WinId::named("confirm"), true),
     ];
-    assert_eq!(modal_over(MAIN, slots.into_iter(), parent), None);
+    assert_eq!(modal_over(MAIN, false, slots.into_iter(), parent), None);
     assert_eq!(
-        modal_over(WinId::named("second"), slots.into_iter(), parent),
+        modal_over(WinId::named("second"), false, slots.into_iter(), parent),
         Some(WinId::named("confirm"))
     );
     assert_eq!(
-        modal_over(WinId::named("confirm"), slots.into_iter(), parent),
+        modal_over(WinId::named("confirm"), false, slots.into_iter(), parent),
         Some(WinId::named("confirm"))
     );
 }

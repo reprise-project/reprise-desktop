@@ -16,8 +16,9 @@ pub const TICK_MS: u64 = 50;
 impl Host {
     /// The modal child gating `win`: the newest over `win`'s own window.
     fn modal(&self, win: WinId) -> Option<WinId> {
+        let beside = (self.slots.iter()).any(|s| s.id == win && stands_beside(s.caption, s.modal));
         let slots = self.slots.iter().map(|s| (s.id, s.modal));
-        modal_over(win, slots, |w| self.parent_of(w))
+        modal_over(win, beside, slots, |w| self.parent_of(w))
     }
 
     /// Each window and the modal child gating its input, if any: none for a flyout or the modal
@@ -419,14 +420,38 @@ pub(crate) fn redraws(reply: &Reply, win: WinId, id: WinId) -> bool {
     (reply.redraw && id == win) || reply.redraw_all || reply.redraw_wins.contains(&id)
 }
 
-/// The modal child among `slots` that gates `win`: the newest with the same toplevel.
+/// The modal child among `slots` that gates `win`: the newest with the same toplevel, or for a
+/// window that stands `beside` its family's boxes ([`stands_beside`]), the newest over it.
 pub(crate) fn modal_over(
     win: WinId,
+    beside: bool,
     slots: impl Iterator<Item = (WinId, bool)>,
     parent: impl Fn(WinId) -> Option<WinId>,
 ) -> Option<WinId> {
     let root = root_of(win, &parent);
-    top_modal(slots.filter(|&(id, _)| root_of(id, &parent) == root))
+    top_modal(slots.filter(|&(id, _)| match beside {
+        true => over(id, win, &parent),
+        false => root_of(id, &parent) == root,
+    }))
+}
+
+/// Whether `win` is up `id`'s chain of parents.
+fn over(id: WinId, win: WinId, parent: impl Fn(WinId) -> Option<WinId>) -> bool {
+    let mut w = id;
+    for _ in 0..8 {
+        match parent(w) {
+            Some(p) if p == win => return true,
+            Some(p) if p != w => w = p,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Whether a window takes input beside a box over another window of its family: a prompt that
+/// does not block, such as a job's progress box.
+pub(crate) fn stands_beside(caption: crate::Caption, modal: bool) -> bool {
+    caption == crate::Caption::Prompt && !modal
 }
 
 /// The newest, since each child maps over the ones before it.
