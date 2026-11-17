@@ -51,10 +51,12 @@ use stack::{
 };
 
 /// Default and clamp for how long a balloon stays up (ms). A request of 0 ("never") is held to
-/// `MAX_MS`; a critical notification stays until dealt with unless it asks for a time.
+/// `MAX_MS`, a time the sender names to `ASKED_MAX_MS`; a critical notification stays until
+/// dealt with unless it asks for a time.
 const DEFAULT_MS: i32 = 7000;
 const MIN_MS: i32 = 3000;
 const MAX_MS: i32 = 20000;
+const ASKED_MAX_MS: i32 = 30000;
 
 /// An open reply row with no key or pointer in the balloon for this long collapses, and the balloon
 /// times out as usual so the queue behind it moves.
@@ -795,7 +797,7 @@ fn timeout_ms(n: &Notification) -> Option<i32> {
     Some(match n.expire_timeout {
         t if t < 0 => DEFAULT_MS,
         0 => MAX_MS,
-        t => t.clamp(MIN_MS, MAX_MS),
+        t => t.clamp(MIN_MS, ASKED_MAX_MS),
     })
 }
 

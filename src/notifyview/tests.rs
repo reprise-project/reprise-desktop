@@ -309,6 +309,15 @@ fn a_burst_that_pushes_a_transient_note_out_of_the_queue_closes_it() {
 }
 
 #[test]
+fn a_balloon_stays_as_long_as_its_sender_asks_up_to_30_seconds() {
+    let mut n = Notification::new(1, "New drive".into(), String::new());
+    n.expire_timeout = 30_000;
+    assert_eq!(timeout_ms(&n), Some(30_000));
+    n.expire_timeout = 600_000;
+    assert_eq!(timeout_ms(&n), Some(30_000));
+}
+
+#[test]
 fn a_critical_balloon_stays_unless_its_sender_sets_a_timeout() {
     let mut n = Notification::new(1, "Hi".into(), String::new());
     assert_eq!(timeout_ms(&n), Some(DEFAULT_MS));
