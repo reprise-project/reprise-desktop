@@ -206,7 +206,7 @@ impl Popup {
     pub fn unhover(self, state: &mut State) {
         match self {
             Popup::TrayFlyout => crate::trayflyout::hover(state, None),
-            Popup::TaskPreview => crate::taskpreview::hide(state),
+            Popup::TaskPreview => crate::taskpreview::leave(state),
             Popup::SnapPicker => crate::snappickerview::leave(state),
             Popup::Projector => crate::projectorview::hover(state, None),
             Popup::Calendar => crate::calendarview::hover(state, None),

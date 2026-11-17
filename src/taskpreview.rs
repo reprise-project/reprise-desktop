@@ -52,6 +52,8 @@ pub struct TaskPreviewView {
     peeking: bool,
     /// The pictures `hold` took out of the panel, until `release`.
     held: Vec<ThumbId>,
+    /// The task button last pressed with the pointer: its panel waits until the pointer leaves it.
+    pressed: Option<(TreeId, usize)>,
 }
 
 struct Panel {
@@ -68,16 +70,20 @@ struct Panel {
     hot: Option<usize>,
 }
 
-/// The pointer is over `hit` on bar `bar`. A task button starts the delay, or takes over a panel at once; anything else on the bar takes it down.
+/// The pointer is over `hit` on bar `bar`. A task button starts the delay, or takes over a panel at once, except the one just pressed (`pressed`); anything else on the bar takes it down.
 pub fn hover(state: &mut State, bar: TreeId, hit: TaskbarHit) {
     stop_peek(state);
     let target = match hit {
         TaskbarHit::Task(i) if state.config.previews.taskbar => (bar, i),
         _ => {
-            hide(state);
+            leave(state);
             return;
         }
     };
+    if state.task_preview.pressed == Some(target) {
+        return;
+    }
+    state.task_preview.pressed = None;
     let v = &state.task_preview;
     let shown = v.shown.as_ref().map(|p| (p.bar, p.button));
     if shown == Some(target) || v.pending == Some(target) {
@@ -181,8 +187,21 @@ pub fn release(state: &mut State) {
     }
 }
 
-/// Take the panel down and forget a button waiting for one. Called on every pointer motion off the
-/// task buttons, so with no panel, button or peek it touches nothing.
+/// A pointer press on task button `i` of bar `bar`: its panel stays down until the pointer has
+/// left the button, so a pointer resting where it clicked brings none back.
+pub fn pressed(state: &mut State, bar: TreeId, i: usize) {
+    state.task_preview.pressed = Some((bar, i));
+}
+
+/// The pointer is off the task buttons and the panel: as `hide`, and the pressed button shows its
+/// panel again on the next rest.
+pub fn leave(state: &mut State) {
+    state.task_preview.pressed = None;
+    hide(state);
+}
+
+/// Take the panel down and forget a button waiting for one. `leave` calls it on every pointer motion
+/// off the task buttons, so with no panel, button or peek it touches nothing.
 pub fn hide(state: &mut State) {
     let v = &state.task_preview;
     if v.pending.is_none() && v.shown.is_none() && !v.peeking {
@@ -487,6 +506,48 @@ mod tests {
                 Some(&true),
                 "no picture outlives the press, pinned {pinned}"
             );
+        }
+    }
+
+    #[test]
+    fn after_a_click_on_a_task_button_its_panel_waits_for_the_pointer_to_come_back() {
+        for pinned in [false, true] {
+            let mut h = crate::harness::Harness::new();
+            h.state.config.taskbar.pinned = pinned;
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            let a = h.map_toplevel(&mut c, "one", 300, 200);
+            let b = h.map_toplevel(&mut c, "two", 300, 200);
+            let bar = &h.state.bars[0];
+            let origin = h.state.bar_drawn(&bar.output).shown;
+            let centre = |w| {
+                let i = (bar.slots.iter().position(|s| s.windows == [w])).expect("a task button");
+                let r = bar.layout.tasks[i];
+                let x = f64::from(origin.x + r.x + r.width / 2);
+                (i, x, f64::from(origin.y + r.y + r.height / 2))
+            };
+            let (ia, ax, ay) = centre(a.id);
+            let (ib, bx, by) = centre(b.id);
+            let on = |s: &State, i| (s.task_preview.shown.as_ref()).is_some_and(|p| p.button == i);
+            h.pointer_to(ax, ay);
+            h.until("the panel on a rest", |s| on(s, ia));
+            // Brings it up, then minimizes it.
+            for _ in 0..2 {
+                h.button(crate::input::BTN_LEFT, true);
+                h.button(crate::input::BTN_LEFT, false);
+                h.run_for(2 * SHOW_MS);
+                assert!(
+                    !h.state.task_preview.is_shown(),
+                    "no panel while the pointer rests where it clicked, pinned {pinned}"
+                );
+            }
+            h.pointer_to(512.0, 300.0);
+            h.pointer_to(ax, ay);
+            h.until("the panel once the pointer is back", |s| on(s, ia));
+            h.button(crate::input::BTN_LEFT, true);
+            h.button(crate::input::BTN_LEFT, false);
+            h.pointer_to(bx, by);
+            h.until("the panel on the next button", |s| on(s, ib));
         }
     }
 
