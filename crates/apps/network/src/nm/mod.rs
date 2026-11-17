@@ -651,24 +651,54 @@ pub enum NmMsg {
     KeyRefused(Ssid),
 }
 
-pub fn known_and_vpns(
+/// The SSID profile `s` joins as a client on radio `iface`: none for a hotspot, ad-hoc or mesh
+/// profile, one bound to another interface, or one with no SSID.
+fn client_ssid(s: &HashMap<String, Props>, iface: &str) -> Option<Ssid> {
+    let w = s.get("802-11-wireless")?;
+    let mode = text(w, "mode");
+    let bound = (s.get("connection"))
+        .map(|c| text(c, "interface-name"))
+        .unwrap_or_default();
+    let client = mode.is_empty() || mode == "infrastructure";
+    let here = bound.is_empty() || bound == iface;
+    // A profile for a hidden network can carry no SSID at all; an empty one would match every
+    // hidden AP.
+    Some(ssid_of(w, "ssid")).filter(|ssid| client && here && !ssid.is_empty())
+}
+
+/// The networks saved for a client join on radio `iface`, each with whether its profile holds
+/// the key.
+pub fn known_on(saved: &[(String, HashMap<String, Props>)], iface: &str) -> HashMap<Ssid, bool> {
+    saved
+        .iter()
+        .filter(|(_, s)| {
+            s.get("connection")
+                .is_some_and(|c| text(c, "type") == "802-11-wireless")
+        })
+        .filter_map(|(_, s)| {
+            let has_key = s.get("802-11-wireless-security").is_none_or(psk_in_profile);
+            Some((client_ssid(s, iface)?, has_key))
+        })
+        .collect()
+}
+
+/// The saved profile a client join of `ssid` on radio `iface` activates.
+pub fn client_profile(
     saved: &[(String, HashMap<String, Props>)],
-) -> (HashMap<Ssid, bool>, Vec<Vpn>) {
-    let mut ssids = HashMap::new();
+    iface: &str,
+    ssid: &Ssid,
+) -> Option<String> {
+    saved
+        .iter()
+        .find(|(_, s)| client_ssid(s, iface).as_ref() == Some(ssid))
+        .map(|(path, _)| path.clone())
+}
+
+pub fn saved_vpns(saved: &[(String, HashMap<String, Props>)]) -> Vec<Vpn> {
     let mut vpns = vec![];
     for (path, s) in saved {
         let meta = s.get("connection").cloned().unwrap_or_default();
         let kind = match text(&meta, "type").as_str() {
-            "802-11-wireless" => {
-                // A profile for a hidden network can carry no SSID at
-                // all; an empty one would match every hidden AP.
-                let ssid = s.get("802-11-wireless").map(|w| ssid_of(w, "ssid"));
-                if let Some(ssid) = ssid.filter(|s| !s.is_empty()) {
-                    let has_key = s.get("802-11-wireless-security").is_none_or(psk_in_profile);
-                    ssids.insert(ssid, has_key);
-                }
-                continue;
-            }
             // NM names the VPN plugin by its bus name; the last component
             // is the kind ("org.freedesktop.NetworkManager.openvpn").
             "vpn" => s
@@ -689,7 +719,7 @@ pub fn known_and_vpns(
         });
     }
     vpns.sort_by(|a, b| a.name.cmp(&b.name));
-    (ssids, vpns)
+    vpns
 }
 
 pub fn hotspot_profiles(saved: &[(String, HashMap<String, Props>)]) -> HashMap<String, String> {
@@ -1134,7 +1164,7 @@ mod tests {
     }
 
     #[test]
-    fn known_and_vpns_reads_the_saved_connections() {
+    fn the_saved_connections_give_the_known_networks_and_the_vpns() {
         let saved = vec![
             (
                 "/Settings/1".to_string(),
@@ -1228,13 +1258,12 @@ mod tests {
                 )]),
             ),
         ];
-        let (ssids, vpns) = known_and_vpns(&saved);
         assert_eq!(
-            ssids,
+            known_on(&saved, "wlan0"),
             HashMap::from([("Intrepid 5".into(), true), ("Office".into(), false)])
         );
         assert_eq!(
-            vpns,
+            saved_vpns(&saved),
             vec![
                 Vpn {
                     conn_path: "/Settings/4".into(),
@@ -1351,6 +1380,53 @@ mod tests {
             hotspot_profiles(&saved),
             HashMap::from([("/Settings/2".to_string(), "Desk".to_string())])
         );
+    }
+
+    #[test]
+    fn a_hotspot_or_a_profile_bound_to_another_radio_is_no_known_network_on_a_radio() {
+        let wifi = |iface: &str, mode: &str, ssid: &str| {
+            HashMap::from([
+                (
+                    "connection".to_string(),
+                    props(vec![
+                        ("type", Variant::from("802-11-wireless")),
+                        ("interface-name", Variant::from(iface.to_string())),
+                    ]),
+                ),
+                (
+                    "802-11-wireless".to_string(),
+                    props(vec![
+                        ("mode", Variant::from(mode.to_string())),
+                        ("ssid", Variant::from(ssid.as_bytes().to_vec())),
+                    ]),
+                ),
+            ])
+        };
+        let saved = vec![
+            ("/Settings/1".to_string(), wifi("", "", "Home")),
+            ("/Settings/2".to_string(), wifi("wlan0", "ap", "Desk")),
+            ("/Settings/3".to_string(), wifi("", "adhoc", "Party")),
+            ("/Settings/4".to_string(), wifi("", "mesh", "Mesh")),
+            (
+                "/Settings/5".to_string(),
+                wifi("wlan0", "infrastructure", "Office"),
+            ),
+        ];
+        let known = |iface| {
+            let mut ssids: Vec<String> = (known_on(&saved, iface).into_keys())
+                .map(|s| s.to_string())
+                .collect();
+            ssids.sort();
+            ssids
+        };
+        assert_eq!(known("wlan0"), ["Home", "Office"]);
+        assert_eq!(known("wlan1"), ["Home"]);
+        let profile = |iface, ssid: &str| client_profile(&saved, iface, &ssid.into());
+        assert_eq!(profile("wlan1", "Desk"), None, "a hotspot is never joined");
+        assert_eq!(profile("wlan0", "Desk"), None, "not even on its own radio");
+        assert_eq!(profile("wlan1", "Office"), None, "bound to wlan0");
+        assert_eq!(profile("wlan0", "Office").as_deref(), Some("/Settings/5"));
+        assert_eq!(profile("wlan1", "Home").as_deref(), Some("/Settings/1"));
     }
 
     #[test]

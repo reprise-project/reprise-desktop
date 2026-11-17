@@ -265,18 +265,13 @@ pub(super) async fn new_profile_owner(conn: &Connection) -> Option<String> {
     profile_owner(&perms, login)
 }
 
-pub(super) async fn connection_for(conn: &Connection, ssid: &Ssid) -> Option<String> {
-    if ssid.is_empty() {
-        return None;
-    }
-    saved(conn)
-        .await
-        .into_iter()
-        .find(|(_, s)| {
-            s.get("802-11-wireless")
-                .is_some_and(|w| ssid_of(w, "ssid") == *ssid)
-        })
-        .map(|(path, _)| path)
+/// The saved profile a join of `ssid` on radio `device` activates ([`client_profile`]).
+pub(super) async fn connection_for(conn: &Connection, device: &str, ssid: &Ssid) -> Option<String> {
+    let iface = match proxy(conn, device, DEVICE_IFACE).await {
+        Ok(p) => p.get_property::<String>("Interface").await.ok(),
+        Err(_) => None,
+    };
+    client_profile(&saved(conn).await, &iface.unwrap_or_default(), ssid)
 }
 
 /// Write a new key into a saved connection. `GetSettings` omits secrets and `Update` replaces

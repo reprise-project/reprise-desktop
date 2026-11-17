@@ -103,7 +103,7 @@ pub(super) async fn join_wifi(conn: &Connection, cmd: &Cmd) -> Result<String, Fa
     else {
         unreachable!("`command` joins only a Connect");
     };
-    let known = connection_for(conn, ssid).await;
+    let known = connection_for(conn, device, ssid).await;
     match connect_plan(known.as_deref(), key.as_ref()) {
         ConnectPlan::Activate(connection) => {
             needs_no_agent(conn, &connection, WIFI_NEEDS_AGENT).await?;
