@@ -371,10 +371,24 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_with_a_place_under_the_old_keys_opens_over_its_owner_at_its_size() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let main = h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.state.move_to(main.id, 500, 300);
+        let text = "[\"test.app\"]\nused = 1\nx = 20\ny = 30\nwidth = 640\nheight = 450\n";
+        h.state.wm.file_dialog.geometry = Kept::parse(PathBuf::from("/nowhere"), text).geometry;
+        let d = h.map_dialog(&mut c, "test.app", Some(main), FILE_DIALOG_TAG, (640, 450));
+        assert_eq!(at_of(&h, d.id), over(&h, d.id, main.id));
+        assert_eq!(h.state.file_dialog_size(d.id), Some((640, 450)));
+    }
+
+    #[test]
     fn the_kept_file_gives_each_apps_geometry() {
-        let text = "[\"org.example.A\"]\nx = 5\ny = 6\nwidth = 600\nheight = 400\n\
+        let text = "[\"org.example.A\"]\nleft = 5\ntop = 6\nwidth = 600\nheight = 400\n\
                     [\"org.example.B\"]\nview = \"icons\"\n\
-                    [reprise]\nfolder = \"/home/u/bin\"\nx = 1\ny = 2\nwidth = 3\nheight = 4\n";
+                    [reprise]\nfolder = \"/home/u/bin\"\nleft = 1\ntop = 2\nwidth = 3\nheight = 4\n";
         let k = Kept::parse(PathBuf::from("/nowhere"), text);
         assert_eq!(
             k.geometry.get("org.example.A"),
