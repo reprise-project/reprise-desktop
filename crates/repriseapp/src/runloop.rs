@@ -143,11 +143,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
     let mut event_queue = event_queue;
     let mut event_loop: EventLoop<Host> = EventLoop::try_new().map_err(failed("event loop"))?;
     let loop_handle = event_loop.handle();
-    let ending = conn.clone();
-    hangup::route_to(&loop_handle, move |host: &mut Host| {
-        host.app.emergency();
-        host.send_last_outputs(&ending);
-    });
+    hangup::route_to(&loop_handle, |host: &mut Host| host.app.emergency());
 
     let compositor = CompositorState::bind(&globals, &qh).map_err(failed("wl_compositor"))?;
     let xdg_shell = XdgShell::bind(&globals, &qh).map_err(failed("xdg_wm_base"))?;

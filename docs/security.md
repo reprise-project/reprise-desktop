@@ -39,8 +39,17 @@ Such a program can bind every global Reprise offers, including these:
 - **Session lock** (`ext_session_lock_manager_v1`): locks the screen and
   draws the lock screen. See [The lock screen](#the-lock-screen).
 - **Output management, power and gamma** (`zwlr_output_manager_v1`,
-  `zwlr_output_power_manager_v1`, `zwlr_gamma_control_manager_v1`):
-  rearranges, turns off or recolours the screens.
+  `zwlr_output_power_manager_v1`, `zwlr_gamma_control_manager_v1`,
+  `reprise_output_trial_manager_v1`): rearranges, turns off or recolours
+  the screens. A trial lasts at most 60 seconds; then Reprise puts the
+  displays back unless the trial is kept. While a display change is on
+  trial, no display change is saved, whichever program or shortcut makes
+  it. A put back that comes due while the session is off its seat waits
+  until it is back; for that whole time nothing is saved, no trial begins
+  and every other output-management change is cancelled. A program can
+  begin one trial after another, so every display change stays unsaved and
+  goes back; output management already lets it change the screens as it
+  likes.
 - **On top** (`reprise_on_top_v1`): keeps one of the program's windows
   above the others, below a [consent prompt](#consent-prompts).
 
