@@ -738,3 +738,24 @@ fn a_combined_button_draws_active_while_a_box_of_one_of_its_windows_has_the_keyb
     h.state.focus_window(other.id);
     assert_eq!(active_buttons(&mut h), [vec![other.id]]);
 }
+
+#[test]
+fn a_combined_button_clicked_while_a_box_of_one_window_has_the_keyboard_brings_up_the_next() {
+    let mut config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+    config.remember_windows = false;
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let one = h.map_toplevel(&mut c, "explorer", 400, 300);
+    let two = h.map_toplevel(&mut c, "explorer", 400, 300);
+    let advanced = h.map_modal(&mut c, "explorer", two, (120, 60));
+    assert_eq!(h.state.focused, Some(advanced.id));
+    h.state.redraw_taskbars();
+    let bar = &h.state.bars[0];
+    let i = (bar.slots.iter())
+        .position(|s| s.windows == [one.id, two.id])
+        .expect("the program's one button");
+    let tree = bar.tree;
+    h.state.task_button_click(tree, i, false);
+    assert_eq!(h.state.focused, Some(one.id), "the window after the box's");
+}

@@ -693,7 +693,7 @@ impl State {
                 let Some(win) = self.win(w) else { return };
                 if win.minimized || win.shaded {
                     self.bring_up(w);
-                } else if self.focused == Some(w) {
+                } else if self.active_task_window() == Some(w) {
                     self.set_minimized(w, true);
                 } else {
                     self.focus_window(w);
@@ -733,7 +733,8 @@ impl State {
     fn cycle_group(&mut self, wins: &[WindowId]) {
         let live = self.task_windows();
         let wins: Vec<WindowId> = wins.iter().copied().filter(|w| live.contains(w)).collect();
-        if let Some(w) = crate::taskbar::group_click_pick(&wins, &self.focus_order, self.focused) {
+        let active = self.active_task_window();
+        if let Some(w) = crate::taskbar::group_click_pick(&wins, &self.focus_order, active) {
             self.bring_up(w);
         }
     }

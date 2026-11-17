@@ -2127,7 +2127,6 @@ fn a_family_alt_tab_hides_for_the_desktop_takes_the_keyboard_off_its_box() {
             .map(|w| w.id)
     };
     assert_eq!(keyboard(&h), Some(advanced.id));
-    task_button(&mut h, folder.id);
     alt_tab(&mut h);
     assert!(
         h.state.win(folder.id).unwrap().minimized,
@@ -2136,6 +2135,42 @@ fn a_family_alt_tab_hides_for_the_desktop_takes_the_keyboard_off_its_box() {
     assert_eq!(h.state.focused, None, "no hidden window is focused");
     assert_eq!(keyboard(&h), None, "the hidden box takes no keys");
     task_button(&mut h, folder.id);
+    assert_eq!(h.state.focused, Some(advanced.id));
+    assert_eq!(
+        keyboard(&h),
+        Some(advanced.id),
+        "the box comes back with the keyboard"
+    );
+}
+
+#[test]
+fn a_task_button_whose_box_has_the_keyboard_minimizes_the_family_and_brings_it_back_to_the_box() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let other = h.map_toplevel(&mut c, "test.other", 300, 200);
+    let folder = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let sheet = h.map_dialog(&mut c, "test.app", Some(folder), "", (300, 200));
+    let advanced = h.map_modal(&mut c, "test.app", sheet, (120, 60));
+    let keyboard = |h: &crate::harness::Harness| {
+        let held = h.state.seat.get_keyboard().and_then(|k| k.current_focus());
+        (h.state.windows.iter())
+            .find(|w| held.as_ref() == Some(w.wl_surface()))
+            .map(|w| w.id)
+    };
+    assert_eq!(keyboard(&h), Some(advanced.id));
+    task_button(&mut h, folder.id);
+    assert!(
+        h.state.win(folder.id).unwrap().minimized,
+        "the family hides"
+    );
+    assert_eq!(
+        h.state.focused,
+        Some(other.id),
+        "the window behind takes the keyboard"
+    );
+    assert_eq!(keyboard(&h), Some(other.id));
+    task_button(&mut h, folder.id);
+    assert!(!h.state.win(folder.id).unwrap().minimized);
     assert_eq!(h.state.focused, Some(advanced.id));
     assert_eq!(
         keyboard(&h),
