@@ -2,7 +2,7 @@
 //! a re-listing so view, status bar and Details box agree with disk.
 
 use crate::acting::{Action, Deadline};
-use crate::dialogs::{ChooseProgram, ConfirmKind, Dialog, ReplaceAsk, TRASH_ICON};
+use crate::dialogs::{ChooseProgram, ConfirmKind, Dialog, ReplaceAsk, SheetId, TRASH_ICON};
 use crate::icons::IconSlot;
 use crate::place::Place;
 use crate::{Explorer, Focus};
@@ -1340,44 +1340,48 @@ impl Explorer {
         let Some(path) = self.open_with_path.clone() else {
             return Reply::none();
         };
-        self.choose_program_for(&path, false, ctx)
+        self.choose_program_for(&path, None, ctx)
     }
 
-    /// The Open With chooser for `path`, once a listing thread has read its type. With
-    /// `set_default` (the sheet's Change...) a link's target is read in its place.
+    /// The Open With chooser for `path`, once a listing thread has read its type. For `sheet`'s
+    /// Change... a link's target is read in its place, and no chooser comes up once that sheet
+    /// is gone.
     pub(crate) fn choose_program_for(
         &mut self,
         path: &Path,
-        set_default: bool,
+        sheet: Option<SheetId>,
         ctx: &mut Ctx,
     ) -> Reply {
         let (path, globs) = (path.to_path_buf(), self.globs.clone());
         let work = move |_: &Gate| {
-            let path = match set_default {
-                true => std::fs::canonicalize(&path).unwrap_or(path),
-                false => path,
+            let path = match sheet {
+                Some(_) => std::fs::canonicalize(&path).unwrap_or(path),
+                None => path,
             };
             let mime = reprisefs::apps::mime_of_in(&globs, &path);
             (path, mime)
         };
-        let title = if set_default {
-            "Properties"
-        } else {
-            "Open With"
+        let title = match sheet {
+            Some(_) => "Properties",
+            None => "Open With",
         };
-        self.act(
-            ctx,
-            Action::reads(title),
-            work,
-            move |ex, (path, mime), ctx| ex.open_chooser(path, mime, set_default, ctx),
-        )
+        let action = Action {
+            sheet,
+            ..Action::reads(title)
+        };
+        self.act(ctx, action, work, move |ex, (path, mime), ctx| {
+            if sheet.is_some_and(|s| !ex.sheet_up(s)) {
+                return Reply::none();
+            }
+            ex.open_chooser(path, mime, sheet, ctx)
+        })
     }
 
     fn open_chooser(
         &mut self,
         path: PathBuf,
         mime: Option<String>,
-        set_default: bool,
+        sheet: Option<SheetId>,
         ctx: &mut Ctx,
     ) -> Reply {
         let apps = &self.app_index;
@@ -1398,7 +1402,7 @@ impl Explorer {
         if let Some(d) = default {
             ow.select_id(apps[d].id.as_str());
         }
-        if set_default {
+        if sheet.is_some() {
             ow.always = Check {
                 on: true,
                 enabled: false,
@@ -1408,7 +1412,7 @@ impl Explorer {
             path,
             mime,
             ow,
-            set_default,
+            sheet,
             icon: None,
             row_icons: Vec::new(),
             waits: IconWaits::default(),
@@ -1428,7 +1432,7 @@ impl Explorer {
     ) -> Reply {
         let found = self.app_index.iter().find(|a| a.id == id).cloned();
         let Some(app) = found.or_else(|| self.browsed_entry(&id, &c, always)) else {
-            if c.set_default || !Path::new(&id).is_absolute() {
+            if c.sheet.is_some() || !Path::new(&id).is_absolute() {
                 return Reply::redraw_all();
             }
             return Reply {
@@ -1443,8 +1447,8 @@ impl Explorer {
         {
             log::warn!("explorer: cannot make {} the default: {e}", app.id);
         }
-        if c.set_default {
-            self.props_set_opens_with(app.name.clone(), app.icon.clone(), ctx);
+        if let Some(sheet) = c.sheet {
+            self.props_set_opens_with(sheet, app.name.clone(), app.icon.clone(), ctx);
             return Reply::redraw_all();
         }
         match reprisefs::apps::open_argv(&app, &repriseconf::current().terminal, &c.path) {
@@ -1465,7 +1469,7 @@ impl Explorer {
         c: &ChooseProgram,
         always: bool,
     ) -> Option<reprisefs::apps::AppEntry> {
-        let mime = c.mime.as_deref().filter(|_| always || c.set_default)?;
+        let mime = c.mime.as_deref().filter(|_| always || c.sheet.is_some())?;
         if !Path::new(id).is_absolute() {
             return None;
         }

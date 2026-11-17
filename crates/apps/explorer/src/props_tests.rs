@@ -841,7 +841,10 @@ fn change_opens_the_chooser_with_always_checked_and_greyed() {
     std::fs::write(&path, "notes").expect("write");
     let mut ctx = crate::tests::test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    ex.choose_program_for(&path, true, &mut ctx);
+    sheet_up(&mut ex, &path, &mut ctx);
+    let sheet = ex.props.as_ref().map(|p| p.id());
+    ex.choose_program_for(&path, sheet, &mut ctx);
+    assert_eq!(ex.parent_of(ex.dialog_win()), PROPS);
     match ex.dialogs.up_mut() {
         Some(Dialog::ChooseProgram(c)) => {
             assert_eq!(
@@ -851,7 +854,7 @@ fn change_opens_the_chooser_with_always_checked_and_greyed() {
                     enabled: false
                 }
             );
-            assert!(c.set_default);
+            assert_eq!(c.sheet, sheet);
             assert_eq!(
                 c.ow.key(reprisekit::controls::form::Key::Access('b')),
                 openwith::Event::Browse,
@@ -1564,8 +1567,10 @@ fn change_reads_a_links_target_off_the_loop() {
     let mut ex = crate::tests::test_explorer(Place::Folder(real.clone()), &mut ctx);
     let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
     let closed = gate.write().expect("lock");
+    sheet_up(&mut ex, &link, &mut ctx);
+    let sheet = ex.props.as_ref().map(|p| p.id());
     ex.held = Some(gate.clone());
-    ex.choose_program_for(&link, true, &mut ctx);
+    ex.choose_program_for(&link, sheet, &mut ctx);
     assert!(ex.dialog().is_none(), "no chooser before the read lands");
 
     drop(closed);
@@ -1659,7 +1664,8 @@ fn closing_the_sheet_takes_its_change_chooser_and_leaves_the_other_boxes() {
     let mut ctx = crate::tests::test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.open_properties(&path, "notes.txt", "notes.txt", &mut ctx);
-    ex.choose_program_for(&path, true, &mut ctx);
+    let sheet = ex.props.as_ref().map(|p| p.id());
+    ex.choose_program_for(&path, sheet, &mut ctx);
     ex.message_box("Explorer", "x".into(), &mut ctx);
     assert!(matches!(ex.dialog(), Some(Dialog::ChooseProgram(_))));
 
@@ -2228,4 +2234,34 @@ fn a_rename_landing_after_its_sheet_was_replaced_renames_its_own_file() {
     let p = ex.props.as_ref().expect("b.txt's sheet");
     assert_eq!(p.info.path, b);
     assert_eq!(p.title(), "b.txt Properties");
+}
+
+/// Change... whose look at the file's type lands after another file's sheet replaced its sheet
+/// raises no chooser, as the sheet that asked for it is gone.
+#[test]
+fn a_change_landing_after_its_sheet_was_replaced_raises_no_chooser() {
+    use reprisekit::controls::form;
+    use reprisekit::controls::propsheet::Event as Sheet;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+    std::fs::write(&a, "a").expect("write");
+    std::fs::write(&b, "b").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(
+        crate::place::Place::Folder(dir.path().to_path_buf()),
+        &mut ctx,
+    );
+    sheet_up(&mut ex, &a, &mut ctx);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let writing = gate.write().expect("lock");
+    press_held(
+        &mut ex,
+        Sheet::Page(0, form::Event::Pressed(CHANGE)),
+        &gate,
+        &mut ctx,
+    );
+    sheet_up(&mut ex, &b, &mut ctx);
+    drop(writing);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.acting.is_empty());
+    assert!(ex.dialog().is_none(), "no chooser over b.txt's sheet");
 }

@@ -68,11 +68,11 @@ fn a_chooser_opened_by_key_shows_its_cues() {
         Some(Dialog::ChooseProgram(c)) => c.input.cues(),
         other => panic!("expected the chooser, got {:?}", other.is_some()),
     };
-    ex.choose_program_for(&path, false, &mut ctx);
+    ex.choose_program_for(&path, None, &mut ctx);
     assert_eq!(cues(&ex), Cues::NONE, "opened with the pointer");
     ex.take_up();
     ex.keyed = true;
-    ex.choose_program_for(&path, false, &mut ctx);
+    ex.choose_program_for(&path, None, &mut ctx);
     assert_eq!(cues(&ex), Cues::ALL, "opened from the keyboard");
 }
 
@@ -86,7 +86,7 @@ fn chooser_ok_runs_the_program_on_release() {
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.app_index = vec![app("Editor", "editor", &["text/plain"])].into();
-    ex.choose_program_for(&path, false, &mut ctx);
+    ex.choose_program_for(&path, None, &mut ctx);
     let ok = match ex.dialog() {
         Some(Dialog::ChooseProgram(c)) => {
             c.ow.layout(&ex.dialog_text, ex.dialog_px, (0, 0), &ctx.theme.controls())
@@ -123,7 +123,7 @@ fn ok_on_a_browsed_program_runs_it_on_the_file() {
     std::fs::write(dir.path().join("b.txt"), "").unwrap();
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    ex.choose_program_for(&dir.path().join("b.txt"), false, &mut ctx);
+    ex.choose_program_for(&dir.path().join("b.txt"), None, &mut ctx);
     let c = match ex.take_up() {
         Some(Dialog::ChooseProgram(c)) => c,
         _ => panic!("expected the chooser"),
@@ -140,7 +140,7 @@ fn browse_opens_the_program_picker_over_the_chooser() {
     std::fs::write(dir.path().join("b.txt"), "").unwrap();
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    ex.choose_program_for(&dir.path().join("b.txt"), false, &mut ctx);
+    ex.choose_program_for(&dir.path().join("b.txt"), None, &mut ctx);
     ex.chooser_event(key_event_alt('b'), &mut ctx);
     let kids = ex.children();
     assert!(
@@ -160,7 +160,7 @@ fn the_program_picker_has_the_plain_caption_of_a_file_dialog() {
     std::fs::write(dir.path().join("b.txt"), "").unwrap();
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    ex.choose_program_for(&dir.path().join("b.txt"), false, &mut ctx);
+    ex.choose_program_for(&dir.path().join("b.txt"), None, &mut ctx);
     ex.chooser_event(key_event_alt('b'), &mut ctx);
     assert_eq!(
         ex.caption(crate::dialogs::DIALOG),

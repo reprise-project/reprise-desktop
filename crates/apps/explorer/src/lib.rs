@@ -1555,7 +1555,7 @@ impl Explorer {
                 ..Default::default()
             },
             Opened::Open(Err(refused)) => self.exec_refused(&refused, ctx),
-            Opened::Choose => self.choose_program_for(path, false, ctx),
+            Opened::Choose => self.choose_program_for(path, None, ctx),
             Opened::Ran(Ok(())) => Reply::redraw(),
             Opened::Ask(open, asked) => self.ask_run(path, open, asked, ctx),
             Opened::Ran(Err(e)) => {
@@ -1845,7 +1845,7 @@ impl App for Lazy {
                 ));
                 opened = match &start.alone {
                     Some(Alone::Properties(paths)) => ex.open_paths_properties(paths, ctx),
-                    Some(Alone::OpenWith(path)) => ex.choose_program_for(path, false, ctx),
+                    Some(Alone::OpenWith(path)) => ex.choose_program_for(path, None, ctx),
                     Some(Alone::BinProperties) => ex.open_bin_props(ctx),
                     Some(Alone::Put {
                         op,
