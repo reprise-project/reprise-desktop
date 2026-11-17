@@ -70,7 +70,8 @@ impl Explorer {
             Some((bins, home, full))
         };
         self.act(ctx, Action::reads(TITLE), work, |ex, read, ctx| {
-            let Some((bins, home, full)) = read else {
+            // A second Properties pressed while the first read was out leaves the sheet up.
+            let Some((bins, home, full)) = read.filter(|_| ex.bin_props.is_none()) else {
                 return Reply::none();
             };
             let mut sheet =
@@ -454,6 +455,31 @@ mod tests {
         assert_eq!(ex.parent_of(ex.dialog_win()), repriseapp::MAIN);
         ex.bin_props_event(Event::CloseRequest, &mut ctx);
         assert!(ex.dialog().is_some(), "the failure stays up");
+    }
+
+    /// Two openings in flight put up one sheet: the second, landing while the first is up,
+    /// leaves it and the boxes it raised.
+    #[test]
+    fn a_second_opening_landing_while_the_sheet_is_up_leaves_it() {
+        use std::sync::{Arc, RwLock};
+        let mut ctx = test_ctx();
+        let mut ex = test_explorer(Place::RecycleBin, &mut ctx);
+        let (first, second) = (Arc::new(RwLock::new(())), Arc::new(RwLock::new(())));
+        let held_first = first.write().expect("lock");
+        let held_second = second.write().expect("lock");
+        ex.held = Some(first.clone());
+        ex.properties(&mut ctx);
+        ex.held = Some(second.clone());
+        ex.properties(&mut ctx);
+        ex.held = None;
+        drop(held_first);
+        wake_until(&mut ex, &mut ctx, |ex| ex.bin_props.is_some());
+        let up = ex.bin_props.as_ref().expect("the sheet").id();
+        ex.message_over(Some(up), TITLE, "about the sheet".into(), &mut ctx);
+        drop(held_second);
+        wake_until(&mut ex, &mut ctx, |ex| ex.acting.is_empty());
+        assert!(ex.sheet_up(up), "the first sheet stays up");
+        assert_eq!(ex.parent_of(ex.dialog_win()), BIN_PROPS);
     }
 
     #[test]
