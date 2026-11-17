@@ -254,7 +254,7 @@ fn check_frontend(sender: Option<&str>, owner: Option<&str>) -> zbus::fdo::Resul
 /// client and the capture object go with `data`.
 pub(crate) async fn end_session(conn: &zbus::Connection, key: &str, data: Option<SessionData>) {
     if let Some(mut s) = data {
-        if let Some(c) = s.picking.take() {
+        for c in s.picking.drain(..) {
             c.store(true, Ordering::SeqCst);
         }
         stop_casts(s.take_casts()).await;
@@ -355,17 +355,18 @@ pub(crate) async fn with_request<T: Send + 'static>(
 ) -> zbus::fdo::Result<T> {
     let cancel = Arc::new(AtomicBool::new(false));
     let _held = export_request(server, handle, cancel.clone(), asker).await?;
-    let picking = |flag: Option<Arc<AtomicBool>>| {
+    let picking = |f: &dyn Fn(&mut Vec<Arc<AtomicBool>>)| {
         if let Some((sessions, key)) = session
             && let Some(s) = sessions.lock().unwrap().get_mut(key)
         {
-            s.picking = flag;
+            f(&mut s.picking);
         }
     };
-    picking(Some(cancel.clone()));
+    picking(&|p| p.push(cancel.clone()));
+    let flag = cancel.clone();
     let out = blocking::unblock(move || dialog(cancel)).await;
     let _ = server.remove::<Request, _>(handle.clone()).await;
-    picking(None);
+    picking(&|p| p.retain(|c| !Arc::ptr_eq(c, &flag)));
     Ok(out)
 }
 
@@ -432,9 +433,9 @@ struct SessionData {
     /// The unique bus name of the frontend that created it: the session
     /// ends when that name leaves the bus.
     owner: String,
-    /// Set while Start or BindShortcuts shows a dialog; Close flips it so
-    /// the dialog goes away with the session.
-    picking: Option<Arc<AtomicBool>>,
+    /// The cancel flags of the Start or BindShortcuts dialogs up on it; Close sets them so
+    /// the dialogs go away with the session.
+    picking: Vec<Arc<AtomicBool>>,
     kind: SessionKind,
 }
 
@@ -461,7 +462,7 @@ impl SessionData {
     fn new(owner: String, kind: SessionKind) -> Self {
         SessionData {
             owner,
-            picking: None,
+            picking: Vec::new(),
             kind,
         }
     }
@@ -1917,6 +1918,57 @@ mod tests {
         assert!(cancel.load(Ordering::SeqCst));
         drop(held);
         assert!(lock(&frontend.requests).is_empty());
+    }
+
+    #[test]
+    fn closing_a_session_cancels_every_dialog_it_has_up() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let portal = crate::lockmode::tests::connect(&bus).await;
+            let frontend = Frontend::default();
+            frontend.set(Some(":1.5".into()));
+            let asker = Caller {
+                frontend,
+                name: ":1.5".into(),
+            };
+            let key = format!("{SESSION_PREFIX}1_1/s");
+            let sessions: Sessions = Arc::default();
+            let session =
+                SessionData::new(":1.5".into(), SessionKind::ScreenCast(Default::default()));
+            sessions.lock().unwrap().insert(key.clone(), session);
+            let up = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let asker = &asker;
+            let dialog = |n: u32| {
+                let handle = ObjectPath::try_from(format!("{REQUEST_PREFIX}1_1/t{n}")).unwrap();
+                let (up, server, sessions, key) =
+                    (up.clone(), portal.object_server(), &sessions, &key);
+                async move {
+                    with_request(server, &handle, asker, Some((sessions, key)), move |c| {
+                        up.fetch_add(1, Ordering::SeqCst);
+                        let end = std::time::Instant::now() + reprisebus::testbus::REPLY;
+                        while !c.load(Ordering::SeqCst) && std::time::Instant::now() < end {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                        c.load(Ordering::SeqCst)
+                    })
+                    .await
+                    .unwrap()
+                }
+            };
+            let close = async {
+                while up.load(Ordering::SeqCst) < 2 {
+                    async_io::Timer::after(std::time::Duration::from_millis(5)).await;
+                }
+                let data = sessions.lock().unwrap().remove(&key);
+                end_session(&portal, &key, data).await;
+            };
+            let both = futures_lite::future::zip(dialog(1), dialog(2));
+            let ((first, second), ()) = futures_lite::future::zip(both, close).await;
+            assert!(first && second, "both dialogs are cancelled");
+        });
     }
 
     #[test]
