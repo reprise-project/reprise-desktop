@@ -50,7 +50,8 @@ use reprisekit::text::TextRenderer;
 use reprisekit::theme::{TextUnits, Theme};
 
 /// The windows the folder and the tray open. One Status sheet and one VPN
-/// sheet at a time: opening another replaces it.
+/// sheet at a time: opening another replaces it, except a VPN sheet with
+/// unsaved edits, which comes forward instead.
 const CHOOSER: WinId = WinId::named("chooser");
 const KEY: WinId = WinId::named("key");
 const EAP: WinId = WinId::named("eap");
@@ -95,6 +96,27 @@ impl VpnWin {
             VpnWin::Plugin(s) => s.window_title(),
         }
     }
+
+    fn values(&self) -> VpnValues {
+        match self {
+            VpnWin::WireGuard(s) => VpnValues::WireGuard(Box::new(s.config())),
+            VpnWin::OpenVpn(s) => VpnValues::OpenVpn(Box::new(s.config())),
+            VpnWin::Plugin(s) => VpnValues::Plugin(s.values()),
+        }
+    }
+
+    /// A connection NetworkManager does not have yet: a new or imported WireGuard one.
+    fn is_new(&self) -> bool {
+        matches!(self, VpnWin::WireGuard(s) if s.conn_path.is_none())
+    }
+}
+
+/// What a VPN sheet's OK would save.
+#[derive(PartialEq)]
+enum VpnValues {
+    WireGuard(Box<wg::Config>),
+    OpenVpn(Box<ovpn::Config>),
+    Plugin((String, Vec<(String, String)>)),
 }
 
 /// The field a Browse... file dialog fills.
@@ -162,6 +184,8 @@ struct NetApp {
     vpn: Option<VpnWin>,
     /// The VPN sheets opened so far: the number of the one in `vpn`.
     vpn_opened: u64,
+    /// What the sheet in `vpn` held when it opened.
+    vpn_opened_with: Option<VpnValues>,
     import: Option<FileDlg>,
     import_host: Host,
     /// The file dialog is a Browse... for this field, not Import.
@@ -330,10 +354,18 @@ impl NetApp {
             .ask(ok_box(title, text), Notice::Tell { sheet });
     }
 
-    /// Opens `w` in the VPN sheet's window, in place of the sheet there.
-    fn show_vpn(&mut self, w: VpnWin) {
+    /// Opens `w` in the VPN sheet's window in place of the sheet there, unless that sheet holds
+    /// what NetworkManager does not: then it stays, and comes back as the window to raise.
+    fn show_vpn(&mut self, w: VpnWin) -> Option<WinId> {
+        let unsaved = (self.vpn.as_ref())
+            .is_some_and(|v| v.is_new() || Some(v.values()) != self.vpn_opened_with);
+        if unsaved {
+            return Some(VPN);
+        }
         self.vpn_opened += 1;
+        self.vpn_opened_with = Some(w.values());
         self.vpn = Some(w);
+        None
     }
 
     fn ask_delete(&mut self, conn_path: &str) {
@@ -445,7 +477,8 @@ impl NetApp {
 
     /// A file picked in Import: a WireGuard file opens in its sheet, any
     /// other goes to NetworkManager, and one nothing can read says why.
-    fn import_file(&mut self, path: PathBuf) {
+    /// The window to raise comes back, as from [`NetApp::show_vpn`].
+    fn import_file(&mut self, path: PathBuf) -> Option<WinId> {
         let text = match std::fs::read(&path) {
             Ok(bytes) => String::from_utf8(bytes).ok(),
             Err(e) => {
@@ -453,16 +486,17 @@ impl NetApp {
                     "Import",
                     &format!("{} could not be read: {e}.", path.display()),
                 );
-                return;
+                return None;
             }
         };
         match import::plan(&path, text.as_deref(), &import::installed_plugins()) {
             Ok(import::Plan::WireGuard(cfg)) => {
-                self.show_vpn(VpnWin::WireGuard(vpnsheet::WgSheet::new(&cfg, None)));
+                return self.show_vpn(VpnWin::WireGuard(vpnsheet::WgSheet::new(&cfg, None)));
             }
             Ok(import::Plan::Plugins(kinds)) => self.send(nm::Cmd::Import { path, kinds }),
             Err(why) => self.tell("Import", &why),
         }
+        None
     }
 
     /// The latest snapshot: the folder's rows, the two windows watching a
@@ -526,7 +560,7 @@ impl NetApp {
                 s.counters(at, c);
             }
         }
-        let mut latest = None;
+        let (mut latest, mut raise) = (None, None);
         while let Some(msg) = self.nm_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
             match msg {
                 nm::NmMsg::Snapshot(s) => {
@@ -551,7 +585,7 @@ impl NetApp {
                     self.sync_refused();
                 }
                 nm::NmMsg::Vpn(edit) => {
-                    self.show_vpn(match edit {
+                    raise = raise.or(self.show_vpn(match edit {
                         nm::VpnEdit::WireGuard { conn_path, cfg } => {
                             VpnWin::WireGuard(vpnsheet::WgSheet::new(&cfg, Some(conn_path)))
                         }
@@ -572,7 +606,7 @@ impl NetApp {
                         } => VpnWin::Plugin(vpnsheet::PluginSheet::new(
                             &conn_path, &name, &kind, &data,
                         )),
-                    });
+                    }));
                     self.hidden = false;
                 }
             }
@@ -660,6 +694,7 @@ impl NetApp {
         }
         Reply {
             activate: reprisetray::handoff_for(self.tray.as_ref(), raised, shown),
+            raise,
             ..Reply::redraw_all()
         }
     }
@@ -740,10 +775,11 @@ impl NetApp {
                 Reply::redraw_all()
             }
             folder::Outcome::NewWireGuard => {
-                self.show_vpn(VpnWin::WireGuard(vpnsheet::WgSheet::fresh(
-                    &self.snapshot.vpns,
-                )));
-                Reply::redraw_all()
+                let fresh = vpnsheet::WgSheet::fresh(&self.snapshot.vpns);
+                Reply {
+                    raise: self.show_vpn(VpnWin::WireGuard(fresh)),
+                    ..Reply::redraw_all()
+                }
             }
             folder::Outcome::Import => {
                 self.open_import(ctx.forms().text);
@@ -883,13 +919,15 @@ impl NetApp {
             Driven::Cancelled => None,
             Driven::Picked(path) => Some(path),
         };
-        self.picked(picked);
-        Reply::redraw_all()
+        Reply {
+            raise: self.picked(picked),
+            ..Reply::redraw_all()
+        }
     }
 
     /// The file dialog closed on `picked`: a Browse... fills its field in the sheet or dialog
-    /// that asked, Import imports.
-    fn picked(&mut self, picked: Option<PathBuf>) {
+    /// that asked, Import imports. The window to raise comes back, as from [`NetApp::import_file`].
+    fn picked(&mut self, picked: Option<PathBuf>) -> Option<WinId> {
         self.import = None;
         match (picked, self.browse_for.take()) {
             (Some(path), Some(Browse::Ovpn { field, sheet })) => {
@@ -904,9 +942,10 @@ impl NetApp {
                     d.set_path(field, &path);
                 }
             }
-            (Some(path), None) => self.import_file(path),
+            (Some(path), None) => return self.import_file(path),
             (None, _) => {}
         }
+        None
     }
 
     fn notice_event(&mut self, win: WinId, ev: Event) -> Reply {
@@ -1736,11 +1775,6 @@ mod tests {
         app.show_vpn(ovpn_sheet("/conn/a"));
         let sheet = app.vpn_opened;
         app.open_browse(Browse::Ovpn { field: "ca", sheet }, u);
-        assert_eq!(app.parent(IMPORT), Some(VPN), "Browse covers its sheet");
-        app.picked(Some("/certs/a.crt".into()));
-        assert_eq!(ca_of(&app), Some("/certs/a.crt".into()));
-
-        app.open_browse(Browse::Ovpn { field: "ca", sheet }, u);
         app.show_vpn(ovpn_sheet("/conn/b"));
         assert_eq!(app.parent(IMPORT), Some(repriseapp::MAIN));
         app.picked(Some("/certs/other.crt".into()));
@@ -1749,6 +1783,49 @@ mod tests {
             None,
             "the sheet that replaced it keeps its field"
         );
+
+        let sheet = app.vpn_opened;
+        app.open_browse(Browse::Ovpn { field: "ca", sheet }, u);
+        assert_eq!(app.parent(IMPORT), Some(VPN), "Browse covers its sheet");
+        app.picked(Some("/certs/b.crt".into()));
+        assert_eq!(ca_of(&app), Some("/certs/b.crt".into()));
+    }
+
+    /// NetworkManager's answer to Properties on OpenVPN connection `conn`, read by a wake.
+    fn loaded(app: &mut NetApp, tx: &std::sync::mpsc::Sender<nm::NmMsg>, conn: &str) -> Reply {
+        let edit = nm::VpnEdit::Plugin {
+            conn_path: conn.into(),
+            name: conn.trim_start_matches("/conn/").into(),
+            kind: "openvpn".into(),
+            data: vec![],
+        };
+        tx.send(nm::NmMsg::Vpn(edit)).unwrap();
+        app.wake()
+    }
+
+    #[test]
+    fn properties_on_another_vpn_replace_an_untouched_sheet_and_bring_an_edited_one_forward() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = NetApp {
+            nm_rx: Some(rx),
+            ..NetApp::default()
+        };
+        let title = |app: &NetApp| app.vpn.as_ref().map(VpnWin::title);
+        loaded(&mut app, &tx, "/conn/office");
+        assert_eq!(loaded(&mut app, &tx, "/conn/lab").raise, None);
+        assert_eq!(title(&app).as_deref(), Some("lab Properties"));
+
+        app.event(VPN, Event::Pasted("2".into()), &mut ctx);
+        let edited = title(&app);
+        assert_ne!(
+            edited.as_deref(),
+            Some("lab Properties"),
+            "the name took the paste"
+        );
+        let r = loaded(&mut app, &tx, "/conn/office");
+        assert_eq!(r.raise, Some(VPN), "the edited sheet comes forward");
+        assert_eq!(title(&app), edited, "with its edit");
     }
 
     #[test]
