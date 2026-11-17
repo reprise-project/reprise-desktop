@@ -1,4 +1,4 @@
-//! Media key backends: volume and mute through `wpctl`, backlights through logind's `SetBrightness`, external monitors over DDC/CI through `ddcutil`, transport through MPRIS, the wireless radio through NetworkManager, airplane mode through `reprisebus::airplane`. One worker thread runs the jobs and reports over a calloop channel so the event loop never blocks; display jobs run on a lane thread per backlight or DDC bus, so a monitor that stops answering holds up only itself, and the two radio keys on one radio lane.
+//! Media key backends: volume and mute through `wpctl`, backlights through logind's `SetBrightness`, external monitors over DDC/CI through `ddcutil`, transport through MPRIS, the wireless radio through NetworkManager, airplane mode through `reprisebus::airplane`. One worker thread runs the jobs and reports over a calloop channel so the event loop never blocks; display jobs run on a lane thread per backlight or DDC monitor, so a monitor that stops answering holds up only itself, and the two radio keys on one radio lane.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -292,9 +292,11 @@ impl Sysfs {
 enum Panel {
     Backlight(String),
     Ddc(u32),
+    /// A connector (`card1-DP-1`) whose I2C bus sysfs does not name: its lane asks ddcutil for the bus.
+    DdcUnlisted(String),
 }
 
-/// The panel behind `output`, from its connector `card*-<output>` under `drm`: a backlight device inside the connector (a laptop), else the connector's I2C bus. DisplayPort carries DDC/CI over its AUX channel (an `i2c-N` child); HDMI and DVI on the bus the `ddc` link names.
+/// The panel behind `output`, from its connector `card*-<output>` under `drm`: a backlight device inside the connector (a laptop), else the connector's I2C bus. DisplayPort carries DDC/CI over its AUX channel (an `i2c-N` child); HDMI and DVI on the bus the `ddc` link names. A driver that hangs its I2C adapters on the card (NVIDIA's) gives a connector neither, so an external connector of such a card is [`Panel::DdcUnlisted`].
 fn panel_for(drm: &std::path::Path, output: &str) -> Option<Panel> {
     let conn = std::fs::read_dir(drm)
         .ok()?
@@ -320,17 +322,25 @@ fn panel_for(drm: &std::path::Path, output: &str) -> Option<Panel> {
     {
         return Some(Panel::Backlight(bl.clone()));
     }
-    let bus = |n: &str| n.strip_prefix("i2c-")?.parse().ok();
-    children
-        .iter()
-        .find_map(|n| bus(n))
-        .or_else(|| {
-            bus(std::fs::read_link(conn.join("ddc"))
-                .ok()?
-                .file_name()?
-                .to_str()?)
-        })
-        .map(Panel::Ddc)
+    let bus = |n: &str| n.strip_prefix("i2c-")?.parse::<u32>().ok();
+    let listed = children.iter().find_map(|n| bus(n)).or_else(|| {
+        bus(std::fs::read_link(conn.join("ddc"))
+            .ok()?
+            .file_name()?
+            .to_str()?)
+    });
+    if let Some(listed) = listed {
+        return Some(Panel::Ddc(listed));
+    }
+    // `device` is the connector's card, the card's `device` its PCI device.
+    let card_has_buses = std::fs::read_dir(conn.join("device/device"))
+        .ok()?
+        .flatten()
+        .any(|e| e.file_name().to_str().and_then(bus).is_some());
+    if !card_has_buses || is_internal(output) {
+        return None;
+    }
+    Some(Panel::DdcUnlisted(conn.file_name()?.to_str()?.to_owned()))
 }
 
 /// A laptop's own panel, whose backlight can sit outside its connector (ACPI's `acpi_video0`).
@@ -427,10 +437,11 @@ async fn set_brightness(buses: &mut Buses, subsystem: &str, name: &str, v: u32) 
     ok
 }
 
-/// One device's display jobs: the DDC maximum from the last read (writes need it), and the program DDC jobs run with its leading arguments.
+/// One device's display jobs: the DDC maximum from the last read (writes need it), the program DDC jobs run with its leading arguments, and the bus ddcutil found for a [`Panel::DdcUnlisted`].
 struct Lane {
     ddc_max: Option<u32>,
     ddcutil: Vec<String>,
+    detected_bus: Option<u32>,
 }
 
 impl Lane {
@@ -438,6 +449,7 @@ impl Lane {
         Lane {
             ddc_max: None,
             ddcutil: vec!["ddcutil".into()],
+            detected_bus: None,
         }
     }
 }
@@ -482,6 +494,43 @@ async fn ddcutil(lane: &mut Lane, args: &[&str]) -> Option<String> {
             None
         }
     }
+}
+
+/// How long `ddcutil detect` gets: it probes every I2C bus, which takes seconds.
+const DETECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The bus `ddcutil detect --brief` pairs with `connector`: the `I2C bus` line of the block whose `DRM connector` line names it.
+fn parse_detect(out: &str, connector: &str) -> Option<u32> {
+    let mut bus = None;
+    for line in out.lines() {
+        if !line.starts_with(char::is_whitespace) {
+            bus = None;
+        }
+        let Some((key, v)) = line.split_once(':') else {
+            continue;
+        };
+        match key.trim() {
+            "I2C bus" => {
+                bus = v
+                    .trim()
+                    .strip_prefix("/dev/i2c-")
+                    .and_then(|n| n.parse().ok())
+            }
+            "DRM connector" if v.trim() == connector => return bus,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Ask ddcutil which bus `connector`'s monitor answers on.
+async fn ddc_detect(lane: &mut Lane, connector: &str) -> Option<u32> {
+    let out = ddcutil(lane, &["detect", "--brief"]).await?;
+    let bus = parse_detect(&out, connector);
+    if bus.is_none() {
+        log::info!("media: ddcutil detect lists no bus for {connector}");
+    }
+    bus
 }
 
 /// Read over DDC/CI, keeping the monitor's maximum for the next write. DDC calls skip ddcutil's start-up checks and writes skip its read-back: on some monitors those cost seconds, which would outrun JOB_TIMEOUT.
@@ -542,7 +591,12 @@ async fn perform_display(
     let Some(panel) = sysfs.device(job.display()) else {
         return not_answering(&job);
     };
+    let panel = match (panel, lane.detected_bus) {
+        (Panel::DdcUnlisted(_), Some(bus)) => Panel::Ddc(bus),
+        (panel, _) => panel,
+    };
     let outcome = match (&panel, &job) {
+        (Panel::DdcUnlisted(_), _) => return not_answering(&job),
         (Panel::Backlight(name), DisplayJob::Read { .. }) => {
             Outcome::Read(backlight_read(sysfs, name))
         }
@@ -849,7 +903,7 @@ fn to_lane(
     }
 }
 
-/// A lane's loop: drain the queue, fold it, run each job under `timeout`; a job that times out or panics reports not answering.
+/// A lane's loop: drain the queue, fold it, run each job under `timeout`; a job that times out or panics reports not answering. A [`Panel::DdcUnlisted`] lane first finds its bus, under DETECT_TIMEOUT, and asks again at the next job while it has none.
 fn run_lane(
     jobs: Receiver<DisplayJob>,
     sysfs: &Sysfs,
@@ -862,6 +916,12 @@ fn run_lane(
         let mut queue = vec![first];
         queue.extend(jobs.try_iter());
         for job in fold_display(queue) {
+            if lane.detected_bus.is_none()
+                && let Some(Panel::DdcUnlisted(connector)) = sysfs.device(job.display())
+            {
+                lane.detected_bus =
+                    guarded(&job, DETECT_TIMEOUT, ddc_detect(&mut lane, &connector)).flatten();
+            }
             let done = guarded(
                 &job,
                 timeout,
@@ -1110,6 +1170,49 @@ mod tests {
         assert_eq!(panel_for(&d.0, "HDMI-A-1"), Some(Panel::Ddc(3)));
         assert_eq!(panel_for(&d.0, "DP-1"), None);
         assert!(is_internal("eDP-1") && !is_internal("DP-2"));
+    }
+
+    #[test]
+    fn a_connector_with_no_bus_of_its_own_is_unlisted_when_its_card_has_buses() {
+        let d = TempDir::new("drm-unlisted");
+        let mk = |p: &str| std::fs::create_dir_all(d.0.join(p)).unwrap();
+        mk("card1-DP-1/device/device/i2c-4");
+        mk("card1-eDP-1/device/device/i2c-4");
+        mk("card0-Virtual-1/device/device");
+
+        assert_eq!(
+            panel_for(&d.0, "DP-1"),
+            Some(Panel::DdcUnlisted("card1-DP-1".into()))
+        );
+        assert_eq!(panel_for(&d.0, "eDP-1"), None);
+        assert_eq!(panel_for(&d.0, "Virtual-1"), None);
+    }
+
+    const DETECT: &str = "\
+Display 1
+   I2C bus:          /dev/i2c-4
+   DRM connector:    card1-DP-1
+   drm_connector_id: 839
+   Monitor:          ABC:Monitor:1234
+
+Invalid display
+   I2C bus:          /dev/i2c-6
+   DRM connector:    card1-HDMI-A-1
+   Monitor:          ABC:Other:5678
+";
+
+    #[test]
+    fn detect_pairs_a_connector_with_the_bus_of_its_own_block() {
+        assert_eq!(parse_detect(DETECT, "card1-DP-1"), Some(4));
+        assert_eq!(parse_detect(DETECT, "card1-HDMI-A-1"), Some(6));
+        assert_eq!(parse_detect(DETECT, "card1-DP-2"), None);
+        assert_eq!(
+            parse_detect(
+                "Display 1\n   I2C bus: /dev/i2c-4\nDisplay 2\n   DRM connector: card1-DP-1\n",
+                "card1-DP-1"
+            ),
+            None
+        );
     }
 
     #[test]
@@ -1390,10 +1493,55 @@ mod tests {
         write(&d.0, "ddcutil", &format!("{script}\n"));
         let sysfs = Sysfs::from_var(Some(d.0.clone().into()));
         let lane = Lane {
-            ddc_max: None,
             ddcutil: vec!["sh".into(), bin.to_str().unwrap().into()],
+            ..Lane::new()
         };
         (d, sysfs, lane)
+    }
+
+    #[test]
+    fn an_unlisted_connector_takes_its_bus_from_one_detect() {
+        let (d, sysfs, lane) = ddc_fixture(
+            "ddc-unlisted",
+            &format!(
+                r#"here="$(dirname "$0")"
+case "$*" in
+*detect*) echo detect >> "$here/detects"; cat <<'END'
+{DETECT}END
+;;
+*getvcp*) echo "VCP 10 C 450 450" ;;
+*setvcp*) echo "$*" > "$here/set" ;;
+esac"#
+            ),
+        );
+        std::fs::create_dir_all(d.0.join("class/drm/card1-DP-1/device/device/i2c-4")).unwrap();
+        let (jobs, rx) = std::sync::mpsc::channel();
+        let (tx, reports) = std::sync::mpsc::channel();
+        jobs.send(read("DP-1", 1)).unwrap();
+        jobs.send(set("DP-1", 50, 2)).unwrap();
+        drop(jobs);
+        run_lane(rx, &sysfs, lane, JOB_TIMEOUT, |r| {
+            tx.send(r.outcome).unwrap()
+        });
+
+        assert_eq!(
+            reports.try_iter().collect::<Vec<_>>(),
+            vec![
+                Outcome::Read(Some(Reading {
+                    level: 100,
+                    floor: 0
+                })),
+                Outcome::Wrote
+            ]
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.0.join("set")).unwrap().trim(),
+            "--bus 4 --skip-ddc-checks --noverify setvcp 10 225"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.0.join("detects")).unwrap(),
+            "detect\n"
+        );
     }
 
     #[test]
@@ -1430,8 +1578,8 @@ esac"#,
     #[test]
     fn a_missing_ddcutil_is_tried_once() {
         let mut lane = Lane {
-            ddc_max: None,
             ddcutil: vec!["/nonexistent/ddcutil".into()],
+            ..Lane::new()
         };
         assert_eq!(zbus::block_on(ddc_read(&mut lane, 8)), None);
         assert!(
