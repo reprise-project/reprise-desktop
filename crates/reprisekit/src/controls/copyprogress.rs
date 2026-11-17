@@ -847,7 +847,7 @@ pub fn bytes_text(bytes: u64) -> String {
 }
 
 /// `secs` left in words: "A few seconds", seconds in fives under a minute, then minutes, then
-/// hours and minutes.
+/// hours and minutes. Each unit takes over once the smaller one rounds up to it.
 pub fn remaining_text(secs: f64) -> String {
     let secs = secs.max(0.0).ceil() as u64;
     let plural = |n: u64, one: &str| {
@@ -857,14 +857,15 @@ pub fn remaining_text(secs: f64) -> String {
             format!("{n} {one}s")
         }
     };
+    let fives = secs.div_ceil(5) * 5;
+    let minutes = ((secs + 30) / 60).max(1);
     let body = if secs <= 5 {
         return "A few seconds remaining".into();
-    } else if secs < 60 {
-        plural(secs.div_ceil(5) * 5, "second")
-    } else if secs < 3600 {
-        plural(((secs + 30) / 60).max(1), "minute")
+    } else if fives < 60 {
+        plural(fives, "second")
+    } else if minutes < 60 {
+        plural(minutes, "minute")
     } else {
-        let minutes = (secs + 30) / 60;
         let (h, m) = (minutes / 60, minutes % 60);
         match m {
             0 => plural(h, "hour"),
@@ -992,16 +993,30 @@ mod tests {
 
     #[test]
     fn the_time_left_reads_in_rounded_words() {
-        assert_eq!(remaining_text(3.0), "A few seconds remaining");
-        assert_eq!(remaining_text(21.0), "About 25 seconds remaining");
-        assert_eq!(remaining_text(65.0), "About 1 minute remaining");
-        assert_eq!(remaining_text(130.0), "About 2 minutes remaining");
-        assert_eq!(remaining_text(3600.0), "About 1 hour remaining");
-        assert_eq!(
-            remaining_text(7500.0),
-            "About 2 hours and 5 minutes remaining"
-        );
-        assert_eq!(remaining_text(7199.0), "About 2 hours remaining");
+        let cases = [
+            (3.0, "A few seconds remaining"),
+            (5.0, "A few seconds remaining"),
+            (5.5, "About 10 seconds remaining"),
+            (21.0, "About 25 seconds remaining"),
+            (55.0, "About 55 seconds remaining"),
+            (55.5, "About 1 minute remaining"),
+            (59.5, "About 1 minute remaining"),
+            (65.0, "About 1 minute remaining"),
+            (89.0, "About 1 minute remaining"),
+            (90.0, "About 2 minutes remaining"),
+            (130.0, "About 2 minutes remaining"),
+            (3569.0, "About 59 minutes remaining"),
+            (3570.0, "About 1 hour remaining"),
+            (3599.0, "About 1 hour remaining"),
+            (3600.0, "About 1 hour remaining"),
+            (3629.0, "About 1 hour remaining"),
+            (3630.0, "About 1 hour and 1 minute remaining"),
+            (7199.0, "About 2 hours remaining"),
+            (7500.0, "About 2 hours and 5 minutes remaining"),
+        ];
+        for (secs, want) in cases {
+            assert_eq!(remaining_text(secs), want, "{secs} s");
+        }
     }
 
     #[test]
