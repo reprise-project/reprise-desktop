@@ -2232,6 +2232,45 @@ fn a_task_button_whose_box_has_the_keyboard_minimizes_the_family_and_brings_it_b
     );
 }
 
+/// The windows of `ws` whose frame shows other pixels than a fresh draw of it, which draws
+/// active only the focused window.
+fn stale_frames(h: &mut crate::harness::Harness, ws: &[WindowId]) -> Vec<WindowId> {
+    let pixels = |h: &crate::harness::Harness, w: WindowId| {
+        let frame = h.state.win(w).expect("the window").frame;
+        frame.map(|b| h.state.scene.buffer_canvas(b))
+    };
+    (ws.iter().copied())
+        .filter(|&w| {
+            let shown = pixels(h, w);
+            h.state.redraw_frame(w);
+            pixels(h, w) != shown
+        })
+        .collect()
+}
+
+#[test]
+fn a_progress_box_that_had_the_keyboard_draws_inactive_once_its_family_comes_back_to_the_box() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let folder = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let progress = h.map_dialog(&mut c, "test.app", Some(folder), PROMPT_TAG, (300, 200));
+    let failed = h.map_modal(&mut c, "test.app", folder, (120, 60));
+    click_in(&mut h, progress.id);
+    assert_eq!(h.state.focused, Some(progress.id));
+    let family = [folder.id, progress.id, failed.id];
+    assert_eq!(stale_frames(&mut h, &family), []);
+
+    task_button(&mut h, folder.id);
+    assert!(h.state.win(folder.id).unwrap().minimized);
+    task_button(&mut h, folder.id);
+    assert_eq!(h.state.focused, Some(failed.id), "the box has the keyboard");
+    assert_eq!(
+        stale_frames(&mut h, &family),
+        [],
+        "only the box's frame draws active"
+    );
+}
+
 /// A forgetful harness with TEST-1 (1024x768) and TEST-2 (1280x1024) to its right.
 fn two_screens() -> (
     crate::harness::Harness,

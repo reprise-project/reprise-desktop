@@ -1108,6 +1108,21 @@ impl<R: Renderer, D> Scene<R, D> {
             .is_some_and(|b| !matches!(b.pixels, Pixels::None))
     }
 
+    /// The canvas `buffer` shows, as [`Scene::buffer_set_canvas`] took it; None for a texture
+    /// or no pixels.
+    pub fn buffer_canvas(&self, buffer: BufferId) -> Option<Vec<u32>> {
+        let Pixels::Canvas(m) = &self.buffer_ref(buffer)?.pixels else {
+            return None;
+        };
+        let mut pixels = Vec::new();
+        let _ = m.clone().render().draw(|mem| {
+            let words = mem.as_chunks::<4>().0.iter();
+            pixels = words.map(|&b| u32::from_le_bytes(b)).collect();
+            Ok::<_, ()>(Vec::new())
+        });
+        Some(pixels)
+    }
+
     pub fn surface(&self, node: SurfaceId) -> Option<&WlSurface> {
         match self.node(node.0).map(|n| &n.content) {
             Some(Content::Surface(s)) => Some(&s.surface),
