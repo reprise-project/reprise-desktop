@@ -1208,6 +1208,11 @@ impl repriseapp::Extended for BtApp {
             }
             w if self.remove.owns(w) => self.remove.access(tree, &ctx.text, &forms),
             w if self.error.owns(w) => self.error.access(tree, &ctx.text, &forms),
+            OFFER => {
+                if let Some((_, b)) = &self.offer {
+                    b.access(tree, &ctx.text, &forms);
+                }
+            }
             _ => self.devices.access(tree, ctx),
         }
     }
@@ -1923,6 +1928,20 @@ mod tests {
         armed_offer(&mut a);
         a.offer_event(key(u32::from('a'), true), &mut ctx);
         assert_eq!(wait.try_recv(), Ok(true), "Alt+A accepts");
+    }
+
+    #[test]
+    fn the_offer_box_gives_a_screen_reader_its_own_buttons() {
+        let mut ctx = test_ctx();
+        let mut a = app();
+        let (o, _wait) = offer("/t/0");
+        a.offer_in(o, &mut ctx);
+        let mut tree = Tree::window(receive::TITLE, (300, 150));
+        a.access(OFFER, &mut tree, &ctx);
+        for button in ["Accept", "Decline"] {
+            let named = tree.nodes().any(|(_, n)| n.label() == Some(button));
+            assert!(named, "{button}");
+        }
     }
 
     /// The offer box as its window had the keyboard for the consent wait.
