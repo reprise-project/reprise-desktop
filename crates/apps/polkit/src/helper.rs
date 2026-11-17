@@ -10,12 +10,14 @@
 //! helper only on OK, with the password: hanging up at the password prompt (Cancel) fails PAM
 //! and pam_faillock counts it against the account.
 //!
-//! Typed text answers only the prompt the box showed while it was typed. The box opens on its
-//! own Password field, which stands for a hidden first prompt; when PAM asks something else
-//! first (a shown one-time code), that text is dropped and the box asks PAM's prompt.
+//! Typed text answers a prompt only when the box showed that prompt, by its place in the
+//! conversation, its text and its echo, while the text was typed. The box opens on a guess at
+//! the first prompt (see `first`); when PAM asks something else, the text is dropped and wiped,
+//! and the box asks PAM's prompt.
 
 use reprisebus::mutex::lock;
 use repriselogin::is_login_prompt;
+use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -249,10 +251,35 @@ impl Stop {
     }
 }
 
-/// Text the box submitted, and how many prompts it had shown when the text was typed: 0 for
-/// its own Password field, before the helper asked anything.
+/// A prompt as the box shows it: PAM's text with its end trimmed, and whether the answer shows
+/// as it is typed.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Prompt {
+    pub text: String,
+    pub echo: bool,
+}
+
+impl Prompt {
+    /// What `pam_unix` asks on an untranslated system: the box's own Password field.
+    pub fn password() -> Prompt {
+        Prompt {
+            text: "Password:".into(),
+            echo: false,
+        }
+    }
+}
+
+/// The prompt the box showed while text was typed: its place among the prompts the conversation
+/// reports (from 1; a login prompt answered with the user name is not one), and what it asked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tag {
+    pub n: u32,
+    pub prompt: Prompt,
+}
+
+/// Text the box submitted, and the prompt it was typed under.
 pub struct Answer {
-    pub prompt: u32,
+    pub tag: Tag,
     pub text: Zeroizing<String>,
 }
 
@@ -265,10 +292,10 @@ pub struct Session {
 }
 
 impl Session {
-    /// Hand over `text`, typed while the box showed its `prompt`th prompt. False when the
-    /// conversation is already over.
-    pub fn answer(&self, prompt: u32, text: Zeroizing<String>) -> bool {
-        self.password.send(Answer { prompt, text }).is_ok()
+    /// Hand over `text`, typed while the box showed `tag`. False when the conversation is
+    /// already over.
+    pub fn answer(&self, tag: Tag, text: Zeroizing<String>) -> bool {
+        self.password.send(Answer { tag, text }).is_ok()
     }
 }
 
@@ -505,21 +532,25 @@ fn run(
     if stop.stopped() {
         return;
     }
-    // The prompts reported so far, and whether the first was hidden.
-    let asked = std::cell::Cell::new((0, false));
+    let asked = RefCell::new(Tag {
+        n: 0,
+        prompt: Prompt::password(),
+    });
     let report = &mut |r: Report| {
-        if let Report::Prompt { echo, .. } = &r {
-            let (n, hidden) = asked.get();
-            asked.set((n + 1, if n == 0 { !echo } else { hidden }));
+        if let Report::Prompt { text, echo } = &r {
+            let mut asked = asked.borrow_mut();
+            asked.n += 1;
+            asked.prompt = Prompt {
+                text: text.clone(),
+                echo: *echo,
+            };
         }
         report(r);
     };
+    // Text typed under another prompt is dropped, wiped, and the next answer awaited.
     let mut password = || loop {
         let a = first.take().or_else(|| password_rx.recv().ok())?;
-        let (n, first_hidden) = asked.get();
-        // The box's own Password field stands for a first prompt that is hidden. Text
-        // typed under another prompt is dropped, wiped, and the next answer awaited.
-        if a.prompt == n || (a.prompt == 0 && n == 1 && first_hidden) {
+        if a.tag == *asked.borrow() {
             break Some(a.text);
         }
     };
@@ -1025,7 +1056,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel();
         let session = start(tx);
-        assert!(session.answer(0, Zeroizing::new("hunter2".into())));
+        assert!(session.answer(own_field(), Zeroizing::new("hunter2".into())));
         listener.set_nonblocking(false).unwrap();
         let (conn, _) = listener.accept().unwrap();
         let mut r = BufReader::new(conn.try_clone().unwrap());
@@ -1058,44 +1089,102 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// With a shown code asked before the password, the password typed into the box's own
-    /// field never goes to the code prompt: the code prompt is asked, then the password, each
-    /// with what was typed under it. With or without a finger the password is typed before
-    /// PAM asks anything.
+    /// The box's own Password field, before PAM has asked anything.
+    fn own_field() -> Tag {
+        tag(1, "Password:", false)
+    }
+
+    fn tag(n: u32, text: &str, echo: bool) -> Tag {
+        Tag {
+            n,
+            prompt: Prompt {
+                text: text.into(),
+                echo,
+            },
+        }
+    }
+
+    /// Accept the agent's connection, failing after 5 s instead of waiting for ever.
+    fn accept(listener: &std::os::unix::net::UnixListener) -> UnixStream {
+        listener.set_nonblocking(true).unwrap();
+        let start = std::time::Instant::now();
+        loop {
+            match listener.accept() {
+                Ok((conn, _)) => {
+                    conn.set_nonblocking(false).unwrap();
+                    conn.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                    return conn;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(start.elapsed() < Duration::from_secs(5), "no connection");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("accept: {e}"),
+            }
+        }
+    }
+
+    /// Play the helper on `sock`: take the header lines, then ask each of `prompts` (whole
+    /// lines) once `go` fires, and say SUCCESS only if the answers are `want`. Every read gives
+    /// up after 5 s, so an answer the agent holds back fails the test instead of hanging it.
+    fn prompting_helper(
+        sock: PathBuf,
+        prompts: &'static [&'static str],
+        want: &'static [&'static str],
+    ) -> (std::thread::JoinHandle<Vec<String>>, Sender<()>) {
+        let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let helper = std::thread::spawn(move || {
+            let conn = accept(&listener);
+            let mut r = BufReader::new(conn.try_clone().unwrap());
+            let mut w = conn;
+            let mut got = Vec::new();
+            let mut read = |got: &mut Vec<String>| {
+                let mut line = String::new();
+                r.read_line(&mut line).expect("an answer within 5 s");
+                got.push(line.trim_end().to_string());
+            };
+            read(&mut got);
+            read(&mut got);
+            go_rx.recv().unwrap();
+            for prompt in prompts {
+                writeln!(w, "{prompt}").unwrap();
+                read(&mut got);
+            }
+            let ok = got[2..] == *want;
+            writeln!(w, "{}", if ok { "SUCCESS" } else { "FAILURE" }).unwrap();
+            got
+        });
+        (helper, go_tx)
+    }
+
+    /// With a code asked before the password, shown or hidden, the password typed into the
+    /// box's own field never goes to the code prompt: the code prompt is asked, then the
+    /// password, each with what was typed under it. With or without a finger the password is
+    /// typed before PAM asks anything.
     #[test]
-    fn a_password_typed_before_a_shown_first_prompt_never_answers_it() {
-        for finger in [false, true] {
-            let dir = scratch(if finger { "code-early" } else { "code-late" });
-            let sock = dir.join("agent-helper.socket");
-            let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
-            let (go_tx, go_rx) = mpsc::channel::<()>();
-            let helper = std::thread::spawn(move || {
-                let (conn, _) = listener.accept().unwrap();
-                let mut r = BufReader::new(conn.try_clone().unwrap());
-                let mut w = conn;
-                let mut got = Vec::new();
-                let mut read = |got: &mut Vec<String>| {
-                    let mut line = String::new();
-                    r.read_line(&mut line).unwrap();
-                    got.push(line.trim_end().to_string());
-                };
-                read(&mut got);
-                read(&mut got);
-                go_rx.recv().unwrap();
-                for prompt in [
+    fn a_password_typed_before_another_first_prompt_never_answers_it() {
+        for (echo, finger) in [(true, false), (true, true), (false, false), (false, true)] {
+            let dir = scratch(&format!("code-{echo}-{finger}"));
+            let prompts: &[&str] = if echo {
+                &[
                     "PAM_PROMPT_ECHO_ON Verification code: ",
                     "PAM_PROMPT_ECHO_OFF Password: ",
-                ] {
-                    writeln!(w, "{prompt}").unwrap();
-                    read(&mut got);
-                }
-                let ok = got[2..] == ["424242", "hunter2"];
-                writeln!(w, "{}", if ok { "SUCCESS" } else { "FAILURE" }).unwrap();
-                got
-            });
+                ]
+            } else {
+                &[
+                    "PAM_PROMPT_ECHO_OFF Verification code: ",
+                    "PAM_PROMPT_ECHO_OFF Password: ",
+                ]
+            };
+            let (helper, go) = prompting_helper(
+                dir.join("agent-helper.socket"),
+                prompts,
+                &["424242", "hunter2"],
+            );
             let (tx, rx) = mpsc::channel();
             let session = authenticate_at(
-                sock,
+                dir.join("agent-helper.socket"),
                 dir.join("no-helper"),
                 if finger { |_| true } else { |_| false },
                 "alice".into(),
@@ -1104,33 +1193,116 @@ mod tests {
                 Box::new(|| {}),
             )
             .expect("the thread starts");
-            assert!(session.answer(0, Zeroizing::new("hunter2".into())));
-            go_tx.send(()).unwrap();
+            assert!(session.answer(own_field(), Zeroizing::new("hunter2".into())));
+            go.send(()).unwrap();
             let next = || rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let case = format!("echo {echo}, finger {finger}");
             assert_eq!(
                 next(),
                 Report::Prompt {
                     text: "Verification code:".into(),
-                    echo: true,
-                }
+                    echo,
+                },
+                "{case}"
             );
-            assert!(session.answer(1, Zeroizing::new("424242".into())));
+            assert!(session.answer(
+                tag(1, "Verification code:", echo),
+                Zeroizing::new("424242".into())
+            ));
             assert_eq!(
                 next(),
                 Report::Prompt {
                     text: "Password:".into(),
                     echo: false,
-                }
+                },
+                "{case}"
             );
-            assert!(session.answer(2, Zeroizing::new("hunter2".into())));
-            assert_eq!(next(), Report::Done(Verdict::Success), "finger: {finger}");
+            assert!(session.answer(tag(2, "Password:", false), Zeroizing::new("hunter2".into())));
+            assert_eq!(next(), Report::Done(Verdict::Success), "{case}");
             assert_eq!(
                 helper.join().unwrap(),
                 ["alice", "c-10", "424242", "hunter2"],
-                "the code prompt gets the code and the password prompt the password"
+                "the code prompt gets the code and the password prompt the password ({case})"
             );
             let _ = std::fs::remove_dir_all(dir);
         }
+    }
+
+    /// A code typed under a remembered code label before PAM asks anything goes to the code
+    /// prompt, hidden or shown.
+    #[test]
+    fn text_typed_under_the_first_prompt_pam_asks_answers_it() {
+        for (echo, line) in [
+            (false, &["PAM_PROMPT_ECHO_OFF Verification code: "]),
+            (true, &["PAM_PROMPT_ECHO_ON Verification code: "]),
+        ] {
+            remembered_code_answers_it(echo, line);
+        }
+    }
+
+    fn remembered_code_answers_it(echo: bool, line: &'static [&'static str]) {
+        let dir = scratch(&format!("remembered-{echo}"));
+        let (helper, go) = prompting_helper(dir.join("agent-helper.socket"), line, &["424242"]);
+        let (tx, rx) = mpsc::channel();
+        let session = authenticate_at(
+            dir.join("agent-helper.socket"),
+            dir.join("no-helper"),
+            |_| false,
+            "alice".into(),
+            "c-11".into(),
+            tx,
+            Box::new(|| {}),
+        )
+        .expect("the thread starts");
+        assert!(session.answer(
+            tag(1, "Verification code:", echo),
+            Zeroizing::new("424242".into())
+        ));
+        go.send(()).unwrap();
+        let next = || rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(next(), Report::Prompt { .. }));
+        assert_eq!(next(), Report::Done(Verdict::Success));
+        assert_eq!(helper.join().unwrap(), ["alice", "c-11", "424242"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// At a later prompt an answer is dropped when its place is right but its text is not, or
+    /// its text is right but its place is an earlier prompt's.
+    #[test]
+    fn a_stale_tag_at_a_later_prompt_is_dropped() {
+        let dir = scratch("stale");
+        let (helper, go) = prompting_helper(
+            dir.join("agent-helper.socket"),
+            &[
+                "PAM_PROMPT_ECHO_OFF Password: ",
+                "PAM_PROMPT_ECHO_OFF Password: ",
+            ],
+            &["first", "second"],
+        );
+        let (tx, rx) = mpsc::channel();
+        let session = authenticate_at(
+            dir.join("agent-helper.socket"),
+            dir.join("no-helper"),
+            |_| false,
+            "alice".into(),
+            "c-12".into(),
+            tx,
+            Box::new(|| {}),
+        )
+        .expect("the thread starts");
+        let pw = |s: &str| Zeroizing::new(s.to_string());
+        assert!(session.answer(own_field(), pw("first")));
+        go.send(()).unwrap();
+        let next = || rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(next(), Report::Prompt { .. }));
+        assert!(matches!(next(), Report::Prompt { .. }));
+        assert!(session.answer(own_field(), pw("stale place")));
+        assert!(session.answer(tag(2, "Verification code:", false), pw("stale text")));
+        assert!(session.answer(tag(2, "Password:", true), pw("stale echo")));
+        assert!(session.answer(tag(2, "Password:", false), pw("second")));
+        assert_eq!(next(), Report::Done(Verdict::Success));
+        assert_eq!(helper.join().unwrap(), ["alice", "c-12", "first", "second"]);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// A scratch directory of our own, since a helper stand-in must be
