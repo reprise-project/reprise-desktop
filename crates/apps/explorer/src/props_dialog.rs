@@ -120,6 +120,8 @@ pub struct Props {
     pub(crate) picks: crate::props_host::Picks,
     pub(crate) checksums: crate::checksums::Checksums,
     pub(crate) walk: crate::props_host::WalkStop,
+    /// Which opening of the sheet window this is ([`crate::dialogs::SheetId`]).
+    pub(crate) opened: u64,
 }
 
 pub fn bin_facts(
@@ -151,6 +153,13 @@ fn bin_size(info: &FileInfo) -> String {
 }
 
 impl Props {
+    pub(crate) fn id(&self) -> crate::dialogs::SheetId {
+        crate::dialogs::SheetId {
+            win: PROPS,
+            opened: self.opened,
+        }
+    }
+
     pub fn general(&self) -> &Form {
         &self.sheet.pages[0]
     }

@@ -284,9 +284,15 @@ pub struct Explorer {
     pub props: Option<Props>,
     /// Recycle Bin Properties, in its own modeless window.
     pub(crate) bin_props: Option<bin_props::BinProps>,
-    /// A sheet read and waiting for its icons to land before it goes up; true for the open sheet
-    /// read again after its Apply.
-    props_due: Option<(props_host::SheetRead, repriseapp::iconjobs::IconWaits, bool)>,
+    /// A sheet read and waiting for its icons to land before it goes up; for the open sheet read
+    /// again after its Apply, that sheet's [`dialogs::SheetId::opened`].
+    props_due: Option<(
+        props_host::SheetRead,
+        repriseapp::iconjobs::IconWaits,
+        Option<u64>,
+    )>,
+    /// How many sheets have opened ([`Explorer::next_sheet`]).
+    sheets_opened: u64,
     /// Space's preview of the selected item, in its own modeless window.
     pub(crate) preview: Option<preview::Preview>,
     /// The main window's client size at its last draw: the preview's arrows lay the view out by it.
@@ -570,6 +576,7 @@ impl Explorer {
             props: None,
             bin_props: None,
             props_due: None,
+            sheets_opened: 0,
             preview: None,
             main_size: ctx.size,
             error_icon: None,

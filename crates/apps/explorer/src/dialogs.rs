@@ -191,12 +191,21 @@ pub struct ReplaceAsk {
     pub focus: Option<&'static str>,
 }
 
+/// One opening of a sheet window: a sheet closed and opened again, or replaced by another
+/// file's, is another sheet, so an answer landing late can tell the sheet that asked is gone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SheetId {
+    pub win: WinId,
+    /// The sheet's number among the sheets opened ([`Explorer::next_sheet`]).
+    pub opened: u64,
+}
+
 pub enum Dialog {
     Message {
         title: String,
         text: String,
         /// The Properties sheet that raised it ([`Dialog::sheet`]); `None` for the folder window.
-        sheet: Option<WinId>,
+        sheet: Option<SheetId>,
     },
     Confirm(Confirm),
     /// Confirm File or Folder Replace; its form is rebuilt per event.
@@ -271,7 +280,7 @@ impl Dialog {
                 Some(crate::props_dialog::PROPS)
             }
             Dialog::ChooseProgram(cp) if cp.set_default => Some(crate::props_dialog::PROPS),
-            Dialog::Message { sheet, .. } => *sheet,
+            Dialog::Message { sheet, .. } => sheet.map(|s| s.win),
             _ => None,
         }
     }
@@ -503,6 +512,22 @@ impl Explorer {
         }
     }
 
+    /// Whether the sheet `id` names is still the one up in its window.
+    pub(crate) fn sheet_up(&self, id: SheetId) -> bool {
+        let up = match id.win {
+            crate::props_dialog::PROPS => self.props.as_ref().map(|p| p.opened),
+            crate::bin_props::BIN_PROPS => self.bin_props.as_ref().map(|b| b.opened),
+            _ => None,
+        };
+        up == Some(id.opened)
+    }
+
+    /// The number the next sheet to open takes ([`SheetId::opened`]).
+    pub(crate) fn next_sheet(&mut self) -> u64 {
+        self.sheets_opened += 1;
+        self.sheets_opened
+    }
+
     /// The boxes waiting behind the one up.
     #[cfg(test)]
     pub(crate) fn boxes_waiting(&self) -> usize {
@@ -538,11 +563,11 @@ impl Explorer {
         self.message_over(None, title, text, ctx)
     }
 
-    /// [`Explorer::message_box`] raised by the sheet window `sheet`: it covers the sheet while
-    /// the sheet is up, and the folder window once the sheet has closed.
+    /// [`Explorer::message_box`] raised by the sheet `sheet`: it covers the sheet while it is
+    /// up, and the folder window once it has closed or another sheet took its window.
     pub(crate) fn message_over(
         &mut self,
-        sheet: Option<WinId>,
+        sheet: Option<SheetId>,
         title: &str,
         text: String,
         ctx: &mut Ctx,
@@ -551,7 +576,7 @@ impl Explorer {
         self.raise(Dialog::Message {
             title: title.to_string(),
             text,
-            sheet: sheet.filter(|&s| self.sheet_open(s)),
+            sheet: sheet.filter(|&s| self.sheet_up(s)),
         })
     }
 

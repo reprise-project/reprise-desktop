@@ -19,8 +19,8 @@ pub(crate) struct Action {
     pub title: &'static str,
     /// The work changes files after [`Gate::change`].
     pub changes: bool,
-    /// The sheet window that asked for it, which the error box covers ([`Explorer::message_over`]).
-    pub sheet: Option<repriseapp::WinId>,
+    /// The sheet that asked for it, which the error box covers ([`Explorer::message_over`]).
+    pub sheet: Option<crate::dialogs::SheetId>,
 }
 
 impl Action {
@@ -40,8 +40,8 @@ impl Action {
         }
     }
 
-    /// The action asked for by the sheet window `sheet`.
-    pub(crate) fn of(self, sheet: repriseapp::WinId) -> Action {
+    /// The action asked for by the sheet `sheet`.
+    pub(crate) fn of(self, sheet: crate::dialogs::SheetId) -> Action {
         Action {
             sheet: Some(sheet),
             ..self

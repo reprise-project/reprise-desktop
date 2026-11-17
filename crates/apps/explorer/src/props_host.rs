@@ -3,6 +3,7 @@
 
 use crate::Explorer;
 use crate::acting::Action;
+use crate::dialogs::SheetId;
 use crate::props_dialog::{
     ADVANCED, AttrConfirm, BIN_SHEET_H, CHANGE, ICON_PX, PROPS, Props, READ_ONLY, RESTORE, SHEET_W,
     attr_form, attr_tree_picked, bin_facts, bin_page, folder_has_contents, general_page, rows,
@@ -208,16 +209,40 @@ impl Explorer {
     /// Puts up the sheet `read` builds once every theme icon it wears is ready: till then it
     /// waits in `props_due` for them to land off the loop ([`repriseapp::iconjobs`]).
     fn open_sheet(&mut self, read: SheetRead, ctx: &mut Ctx) -> Reply {
-        self.due_sheet(read, false, ctx)
+        self.due_sheet(read, None, ctx)
     }
 
-    /// [`Explorer::open_sheet`] for the open sheet read again after its Apply: the boxes it
-    /// raised stay up over it.
-    fn refresh_sheet(&mut self, read: SheetRead, ctx: &mut Ctx) -> Reply {
-        self.due_sheet(read, true, ctx)
+    /// [`Explorer::open_sheet`] for the sheet read again after a write for `was`
+    /// ([`Explorer::sheet_showing`]): the boxes it raised stay up over it. The read is dropped
+    /// once no such sheet is up, or while another file's sheet waits to replace it.
+    fn refresh_sheet(
+        &mut self,
+        id: SheetId,
+        was: &[PathBuf],
+        read: SheetRead,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let Some(id) = self.sheet_showing(id, was) else {
+            return Reply::redraw_all();
+        };
+        if matches!(self.props_due, Some((_, _, None))) {
+            return Reply::redraw_all();
+        }
+        self.due_sheet(read, Some(id.opened), ctx)
     }
 
-    fn due_sheet(&mut self, read: SheetRead, refresh: bool, ctx: &mut Ctx) -> Reply {
+    /// The sheet a write for `was` that sheet `id` asked for reads again: `id` while it is up,
+    /// else a sheet opened since on the same `was`.
+    fn sheet_showing(&self, id: SheetId, was: &[PathBuf]) -> Option<SheetId> {
+        let p = self.props.as_ref()?;
+        let shown = match &p.set {
+            Some(set) => &set.paths[..],
+            None => std::slice::from_ref(&p.info.path),
+        };
+        (self.sheet_up(id) || shown == was).then(|| p.id())
+    }
+
+    fn due_sheet(&mut self, read: SheetRead, refresh: Option<u64>, ctx: &mut Ctx) -> Reply {
         if let SheetRead::One(g, _) | SheetRead::Bin(g, _) = &read {
             ctx.icons.put_files_at(g.files.clone(), g.scale);
         }
@@ -230,8 +255,11 @@ impl Explorer {
         let Some((read, _, refresh)) = self.props_due.take() else {
             return Reply::none();
         };
+        if refresh.is_some_and(|n| self.props.as_ref().map(|p| p.opened) != Some(n)) {
+            return Reply::none();
+        }
         let mut waits = IconWaits::default();
-        let props = match &read {
+        let mut props = match &read {
             SheetRead::One(g, title) => Some(self.build_props(g, title.clone(), &mut waits, ctx)),
             SheetRead::Bin(g, it) => Some(self.build_bin_props(g, it, &mut waits, ctx)),
             SheetRead::Set(items, caption) => {
@@ -244,9 +272,12 @@ impl Explorer {
         }
         // The sheet this one replaces goes the one way a sheet goes, taking its boxes.
         let reply = match self.props {
-            Some(_) if !refresh => self.close_props(ctx),
+            Some(_) if refresh.is_none() => self.close_props(ctx),
             _ => Reply::redraw_all(),
         };
+        if let Some(p) = &mut props {
+            p.opened = refresh.unwrap_or_else(|| self.next_sheet());
+        }
         self.props = props;
         match (&read, self.props.as_ref().and_then(|p| p.set.clone())) {
             (SheetRead::Set(..), Some(set)) => self.walk_set_for_props(set, ctx),
@@ -293,6 +324,7 @@ impl Explorer {
             picks: Default::default(),
             checksums: Default::default(),
             walk: Default::default(),
+            opened: 0,
             sheet,
         }
     }
@@ -381,6 +413,7 @@ impl Explorer {
             picks: Default::default(),
             checksums: Default::default(),
             walk: Default::default(),
+            opened: 0,
             info,
             sheet,
         }
@@ -483,6 +516,7 @@ impl Explorer {
             picks: Default::default(),
             checksums: Default::default(),
             walk: Default::default(),
+            opened: 0,
             set: Some(set),
             sheet,
         })
@@ -695,9 +729,9 @@ impl Explorer {
     }
 
     fn find_target(&mut self, ctx: &mut Ctx) -> Reply {
-        let Some((l, page, path)) = self.props.as_ref().and_then(|p| {
+        let Some((l, page, path, sheet)) = self.props.as_ref().and_then(|p| {
             let page = filesheet::shortcut_of(&p.sheet.pages)?;
-            Some((p.info.launcher.clone()?, page, p.info.path.clone()))
+            Some((p.info.launcher.clone()?, page, p.info.path.clone(), p.id()))
         }) else {
             return Reply::none();
         };
@@ -709,7 +743,7 @@ impl Explorer {
         let title = "Problem with Shortcut";
         self.act(
             ctx,
-            Action::reads(title).of(PROPS),
+            Action::reads(title).of(sheet),
             work,
             move |ex, found, ctx| match found {
                 Ok(found) => Reply {
@@ -720,7 +754,7 @@ impl Explorer {
                     ]],
                     ..Reply::none()
                 },
-                Err(text) => ex.message_over(Some(PROPS), title, text, ctx),
+                Err(text) => ex.message_over(Some(sheet), title, text, ctx),
             },
         )
     }
@@ -729,10 +763,11 @@ impl Explorer {
         let Some(p) = self.props.as_ref() else {
             return Reply::none();
         };
+        let sheet = p.id();
         if let Some(set) = &p.set {
             let (paths, attrs, hidden) = (set.paths.clone(), p.attrs(), p.hidden());
             let Some(icon) = p.icon_chosen.clone() else {
-                return self.apply_set_props(paths, attrs, hidden, close, ctx);
+                return self.apply_set_props(paths, attrs, hidden, close, sheet, ctx);
             };
             let dirs = paths.clone();
             let work = move |gate: &Gate| {
@@ -750,19 +785,19 @@ impl Explorer {
             };
             return self.act(
                 ctx,
-                Action::changes("Properties").of(PROPS),
+                Action::changes("Properties").of(sheet),
                 work,
                 move |ex, (), ctx| {
                     if attrs.is_empty() && hidden.is_none() {
-                        return ex.finish_set_props(paths, close, ctx);
+                        return ex.finish_set_props(paths.clone(), &paths, close, sheet, ctx);
                     }
-                    ex.apply_set_props(paths, attrs, hidden, close, ctx)
+                    ex.apply_set_props(paths, attrs, hidden, close, sheet, ctx)
                 },
             );
         }
         let new_name = match p.new_name() {
             Ok(name) => name,
-            Err(text) => return self.message_over(Some(PROPS), "Rename", text, ctx),
+            Err(text) => return self.message_over(Some(sheet), "Rename", text, ctx),
         };
         let (attrs, hidden) = (p.attrs(), p.hidden());
         let summary = p.summary_moves();
@@ -780,6 +815,7 @@ impl Explorer {
             }
             return Reply::none();
         }
+        let info = p.info.clone();
         let (path, name) = (p.info.path.clone(), p.info.name.clone());
         let look_inside = (!attrs.is_empty() || hidden.is_some()) && p.info.is_dir;
         let at = path.clone();
@@ -806,18 +842,22 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::changes("Properties").of(PROPS),
+            Action::changes("Properties").of(sheet),
             work,
             move |ex, pre, ctx| {
                 let ask = match pre {
                     Ok(ask) => ask,
-                    Err(text) => return ex.message_over(Some(PROPS), "Properties", text, ctx),
+                    Err(text) => return ex.message_over(Some(sheet), "Properties", text, ctx),
                 };
                 if new_name.is_none() && attrs.is_empty() && hidden.is_none() {
-                    return ex.finish_props(&path, close, ctx);
+                    return ex.finish_props(&path, &path, close, sheet, ctx);
                 }
                 if !ask {
-                    return ex.write_props(new_name, attrs, hidden, false, close, ctx);
+                    return ex.write_props(info, sheet, new_name, attrs, hidden, false, close, ctx);
+                }
+                // The question goes with its sheet ([`Explorer::close_props`]).
+                if !ex.sheet_up(sheet) {
+                    return ex.finish_props(&path, &path, close, sheet, ctx);
                 }
                 let form = attr_form(
                     &attrs,
@@ -845,6 +885,7 @@ impl Explorer {
         attrs: AttrMoves,
         hidden: Option<bool>,
         close: bool,
+        sheet: SheetId,
         ctx: &mut Ctx,
     ) -> Reply {
         if attrs.is_empty() && hidden.is_none() {
@@ -857,11 +898,15 @@ impl Explorer {
         let work = move |_: &Gate| looked.iter().any(|p| p.is_dir() && folder_has_contents(p));
         self.act(
             ctx,
-            Action::reads("Properties").of(PROPS),
+            Action::reads("Properties").of(sheet),
             work,
             move |ex, ask, ctx| {
                 if !ask {
-                    return ex.write_set_props(paths, attrs, hidden, false, close, ctx);
+                    return ex.write_set_props(paths, attrs, hidden, false, close, sheet, ctx);
+                }
+                // The question goes with its sheet ([`Explorer::close_props`]).
+                if !ex.sheet_up(sheet) {
+                    return ex.finish_set_props(paths.clone(), &paths, close, sheet, ctx);
                 }
                 let form = attr_form(
                     &attrs,
@@ -883,6 +928,7 @@ impl Explorer {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_set_props(
         &mut self,
         paths: Vec<PathBuf>,
@@ -890,8 +936,10 @@ impl Explorer {
         hidden: Option<bool>,
         tree: bool,
         close: bool,
+        sheet: SheetId,
         ctx: &mut Ctx,
     ) -> Reply {
+        let was = paths.clone();
         let work = move |gate: &Gate| {
             if !paths.first().is_some_and(|p| gate.change(p)) {
                 return None;
@@ -900,7 +948,7 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::changes("Properties").of(PROPS),
+            Action::changes("Properties").of(sheet),
             work,
             move |ex, w, ctx| {
                 let Some(w) = w else {
@@ -914,11 +962,11 @@ impl Explorer {
                 // closed it, the box covers the folder window.
                 let shown = match &failed {
                     Some(text) if !close => {
-                        ex.message_over(Some(PROPS), "Properties", text.clone(), ctx)
+                        ex.message_over(Some(sheet), "Properties", text.clone(), ctx)
                     }
                     _ => Reply::none(),
                 };
-                let reply = ex.finish_set_props(w.now, close, ctx);
+                let reply = ex.finish_set_props(w.now, &was, close, sheet, ctx);
                 match failed {
                     Some(text) if close => reply.and(ex.message_box("Properties", text, ctx)),
                     _ => reply.and(shown),
@@ -927,11 +975,27 @@ impl Explorer {
         )
     }
 
-    fn finish_set_props(&mut self, now: Vec<PathBuf>, close: bool, ctx: &mut Ctx) -> Reply {
+    /// The folder is read again after a set's write for `was`, now at `now`; sheet `sheet`,
+    /// while it is up, closes on OK, and the sheet showing `was` is read again
+    /// ([`Explorer::sheet_showing`]).
+    fn finish_set_props(
+        &mut self,
+        now: Vec<PathBuf>,
+        was: &[PathBuf],
+        close: bool,
+        sheet: SheetId,
+        ctx: &mut Ctx,
+    ) -> Reply {
         let reply = self.refresh(ctx);
+        let Some(target) = self.sheet_showing(sheet, was) else {
+            return Reply {
+                redraw_all: true,
+                ..reply
+            };
+        };
         let caption = self.props.as_ref().map(|p| p.caption.clone());
-        let sheet = match caption {
-            Some(caption) if !close => {
+        let shown = match caption {
+            Some(caption) if !(close && target == sheet) => {
                 let chosen: Vec<(PathBuf, String)> = (now.iter())
                     .filter_map(|p| {
                         Some((p.clone(), p.file_name()?.to_string_lossy().into_owned()))
@@ -939,23 +1003,30 @@ impl Explorer {
                     .collect();
                 let (apps, globs) = (self.app_index.clone(), self.globs.clone());
                 let work = move |_: &Gate| glance_set_items(&chosen, &apps, &globs);
+                let was = was.to_vec();
                 self.act(
                     ctx,
-                    Action::reads("Properties").of(PROPS),
+                    Action::reads("Properties").of(target),
                     work,
-                    move |ex, items, ctx| ex.refresh_sheet(SheetRead::Set(items, caption), ctx),
+                    move |ex, items, ctx| {
+                        ex.refresh_sheet(target, &was, SheetRead::Set(items, caption), ctx)
+                    },
                 )
             }
             _ => self.close_props(ctx),
         };
         Reply {
             redraw_all: true,
-            ..reply.and(sheet)
+            ..reply.and(shown)
         }
     }
 
+    /// Writes the name and attributes sheet `sheet` asked for to `info`'s file.
+    #[allow(clippy::too_many_arguments)]
     fn write_props(
         &mut self,
+        info: FileInfo,
+        sheet: SheetId,
         new_name: Option<std::ffi::OsString>,
         attrs: AttrMoves,
         hidden: Option<bool>,
@@ -963,9 +1034,6 @@ impl Explorer {
         close: bool,
         ctx: &mut Ctx,
     ) -> Reply {
-        let Some(info) = self.props.as_ref().map(|p| p.info.clone()) else {
-            return Reply::redraw_all();
-        };
         let old = info.file_name();
         let to = new_name.map(|name| info.path.with_file_name(name));
         let here = self.place.path().as_deref() == Some(info.path.as_path());
@@ -986,12 +1054,12 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::changes("Properties").of(PROPS),
+            Action::changes("Properties").of(sheet),
             work,
             move |ex, done, ctx| {
                 let (renamed, path, write) = match done {
                     None => return Reply::none(),
-                    Some(Err(text)) => return ex.message_over(Some(PROPS), "Rename", text, ctx),
+                    Some(Err(text)) => return ex.message_over(Some(sheet), "Rename", text, ctx),
                     Some(Ok(done)) => done,
                 };
                 if let Some(to) = &renamed {
@@ -1002,32 +1070,40 @@ impl Explorer {
                         ex.show(place, ctx);
                     }
                 }
-                ex.attrs_written(write, &path, close, ctx)
+                ex.attrs_written(write, &path, &info.path, close, sheet, ctx)
             },
         )
     }
 
     pub(crate) fn attrs_confirmed(&mut self, a: AttrConfirm, ctx: &mut Ctx) -> Reply {
         let tree = attr_tree_picked(&a.form);
+        let Some((info, sheet)) = self.props.as_ref().map(|p| (p.info.clone(), p.id())) else {
+            return Reply::redraw_all();
+        };
         if let Some(paths) = a.set {
-            return self.write_set_props(paths, a.attrs, a.hidden, tree, a.close, ctx);
+            return self.write_set_props(paths, a.attrs, a.hidden, tree, a.close, sheet, ctx);
         }
-        self.write_props(a.new_name, a.attrs, a.hidden, tree, a.close, ctx)
+        let (new_name, attrs, hidden) = (a.new_name, a.attrs, a.hidden);
+        self.write_props(info, sheet, new_name, attrs, hidden, tree, a.close, ctx)
     }
 
+    /// The attribute write to `path`, the file sheet `sheet` showed at `was`, landed.
     pub(crate) fn attrs_written(
         &mut self,
         write: std::io::Result<()>,
         path: &Path,
+        was: &Path,
         close: bool,
+        sheet: SheetId,
         ctx: &mut Ctx,
     ) -> Reply {
         let Err(e) = write else {
-            return self.finish_props(path, close, ctx);
+            return self.finish_props(path, was, close, sheet, ctx);
         };
         // Raised before the sheet is read again, which keeps its boxes.
-        let shown = self.message_over(Some(PROPS), "Properties", change_failed_text(path, &e), ctx);
-        shown.and(self.finish_props(path, false, ctx))
+        let text = change_failed_text(path, &e);
+        let shown = self.message_over(Some(sheet), "Properties", text, ctx);
+        shown.and(self.finish_props(path, was, false, sheet, ctx))
     }
 
     pub(crate) fn attrs_cancelled(&mut self) -> Reply {
@@ -1055,45 +1131,64 @@ impl Explorer {
         Reply::redraw_all()
     }
 
-    fn finish_props(&mut self, path: &Path, close: bool, ctx: &mut Ctx) -> Reply {
+    /// The folder is read again after a write to `path`, the file sheet `sheet` showed at `was`;
+    /// sheet `sheet`, while it is up, closes on OK, and the sheet showing `was` is read again
+    /// ([`Explorer::sheet_showing`]).
+    fn finish_props(
+        &mut self,
+        path: &Path,
+        was: &Path,
+        close: bool,
+        sheet: SheetId,
+        ctx: &mut Ctx,
+    ) -> Reply {
         let reply = self.refresh(ctx);
-        if close {
-            return self.close_props(ctx);
-        }
-        let Some(p) = self.props.as_ref() else {
+        let target = self.sheet_showing(sheet, &[was.to_path_buf()]);
+        let Some((p, target)) = self.props.as_ref().zip(target) else {
             return Reply {
                 redraw_all: true,
                 ..reply
             };
         };
+        if close && target == sheet {
+            return self.close_props(ctx);
+        }
         let listed = self.index_of(path).and_then(|j| self.items.get(j));
+        // Another sheet's Name field holds the name it opened with, not the one written.
         let name = match (listed, p.name()) {
-            (Some(it), _) => it.label().to_string(),
-            (None, typed) if typed.is_empty() => p.info.name.clone(),
+            (Some(it), _) => Some(it.label().to_string()),
+            _ if target != sheet => None,
+            (None, typed) if typed.is_empty() => Some(p.info.name.clone()),
             (None, typed) => {
                 let ext = p.info.hidden_ext.len();
                 let full = p.wanted_name(&typed);
-                full[..full.len() - ext].to_string()
+                Some(full[..full.len() - ext].to_string())
             }
         };
-        let caption = if p.caption == p.info.name {
-            name.clone()
-        } else {
-            p.caption.clone()
-        };
+        let caption = (p.caption != p.info.name).then(|| p.caption.clone());
         let (path, apps, globs) = (
             path.to_path_buf(),
             self.app_index.clone(),
             self.globs.clone(),
         );
         let scale = ctx.icons.scale();
-        let work = move |_: &Gate| glance(&path, &name, &apps, &globs, scale);
+        let work = move |_: &Gate| {
+            let name = name.unwrap_or_else(|| {
+                let it = reprisefs::listing::item_at(&path, &globs);
+                it.label().to_string()
+            });
+            (glance(&path, &name, &apps, &globs, scale), name)
+        };
+        let was = vec![was.to_path_buf()];
         let sheet = self.act(
             ctx,
             Action::reads("Properties"),
             work,
-            move |ex, glanced, ctx| match glanced {
-                Ok(g) if ex.props.is_some() => ex.refresh_sheet(SheetRead::One(g, caption), ctx),
+            move |ex, (glanced, name), ctx| match glanced {
+                Ok(g) => {
+                    let caption = caption.unwrap_or(name);
+                    ex.refresh_sheet(target, &was, SheetRead::One(g, caption), ctx)
+                }
                 _ => Reply::redraw_all(),
             },
         );
