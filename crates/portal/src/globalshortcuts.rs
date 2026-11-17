@@ -31,7 +31,11 @@ pub struct GlobalShortcuts {
     /// then fail, as they do on a compositor without `create_shortcuts`.
     pub link: Option<Link>,
     pub frontend: crate::Frontend,
+    pub config: Config,
 }
+
+/// config.toml, [`shortcutconf::read`] outside tests. Blocking.
+pub type Config = fn() -> toml_edit::DocumentMut;
 
 fn string_opt(opts: &HashMap<String, OwnedVariant>, key: &str) -> String {
     opts.get(key)
@@ -146,9 +150,9 @@ fn session_of(sessions: &Sessions, session: &str) -> Option<(String, Vec<String>
     }
 }
 
-/// config.toml, read in the blocking pool: the file may sit on a slow home.
-async fn read() -> toml_edit::DocumentMut {
-    blocking::unblock(shortcutconf::read).await
+/// `config` read in the blocking pool: the file may sit on a slow home.
+async fn read(config: Config) -> toml_edit::DocumentMut {
+    blocking::unblock(config).await
 }
 
 /// [`shortcutconf::update`] in the blocking pool, where waiting on the edit lock stalls no call.
@@ -170,11 +174,90 @@ fn sessions_of(sessions: &Sessions, app: &str) -> usize {
         .count()
 }
 
-async fn current(app: &str, ids: &[String]) -> Vec<Entry> {
-    let all = shortcutconf::entries(&read().await, app);
+async fn current(config: Config, app: &str, ids: &[String]) -> Vec<Entry> {
+    let all = shortcutconf::entries(&read(config).await, app);
     ids.iter()
         .filter_map(|id| all.iter().find(|e| &e.id == id).cloned())
         .collect()
+}
+
+impl GlobalShortcuts {
+    /// BindShortcuts once its request is served: asks, then writes the bindings.
+    async fn bind(
+        &self,
+        request: &crate::Served<'_>,
+        key: &str,
+        app: String,
+        wanted: Vec<Wanted>,
+        parent_window: String,
+    ) -> (u32, Results) {
+        let doc = read(self.config).await;
+        let (first, items) = match step(&doc, &app, &wanted) {
+            Step::Refused => return (RESPONSE_CANCELLED, Results::new()),
+            Step::Nothing => return (RESPONSE_OK, results(&[])),
+            Step::Ask { first, new } => (first, Some(new)),
+            Step::Write => (false, None),
+        };
+        let answer = match items {
+            None => Answer::Allow { remember: false },
+            Some(items) => {
+                let parent = crate::dialog::parent_handle(&parent_window);
+                let id = app.clone();
+                let session = Some((&self.sessions, key));
+                let asked = request.ask(session, move |c| {
+                    crate::permit::ask(crate::permit::Kind::Shortcuts, &id, items, false, parent, c)
+                });
+                asked.await.unwrap_or(Answer::Dismissed)
+            }
+        };
+        if request.closed() {
+            log::info!("GlobalShortcuts.BindShortcuts for {app:?}: closed");
+            return (RESPONSE_CANCELLED, Results::new());
+        }
+        match answer {
+            Answer::Allow { .. } => {}
+            Answer::Deny if first => {
+                log::info!("GlobalShortcuts.BindShortcuts for {app:?} denied");
+                let denied = app.clone();
+                if let Err(e) = update(move |d| shortcutconf::deny(d, &denied)).await {
+                    log::warn!("GlobalShortcuts: recording the refusal: {e}");
+                }
+                return (RESPONSE_CANCELLED, Results::new());
+            }
+            Answer::Dismissed if first => {
+                log::info!("GlobalShortcuts.BindShortcuts for {app:?}: no answer");
+                return (RESPONSE_CANCELLED, Results::new());
+            }
+            Answer::Deny | Answer::Dismissed => {
+                log::info!("GlobalShortcuts.BindShortcuts for {app:?}: new shortcuts {answer:?}");
+            }
+        }
+        let bound = app.clone();
+        let written = update(move |d| {
+            let had = shortcutconf::entries(d, &bound);
+            let wanted = granted(&had, &wanted, answer);
+            let ids: Vec<String> = wanted.iter().map(|w| w.id.clone()).collect();
+            let known = (wanted.iter()).any(|w| had.iter().any(|e| e.id == w.id));
+            (ids, known, shortcutconf::bind(d, &bound, &wanted))
+        });
+        let (ids, known, entries) = match written.await {
+            Ok(w) => w,
+            Err(e) => {
+                log::warn!("GlobalShortcuts: writing {app}'s shortcuts: {e}");
+                return (RESPONSE_OTHER, Results::new());
+            }
+        };
+        // A refusal that leaves the session none of the shortcuts it already had is Cancelled.
+        if !answer.allowed() && !known {
+            return (RESPONSE_CANCELLED, Results::new());
+        }
+        if let Some(d) = self.sessions.lock().unwrap().get_mut(key)
+            && let SessionKind::GlobalShortcuts(g) = &mut d.kind
+        {
+            g.ids = ids;
+        }
+        (RESPONSE_OK, results(&entries))
+    }
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.GlobalShortcuts")]
@@ -203,7 +286,7 @@ impl GlobalShortcuts {
             log::warn!("GlobalShortcuts: refusing a program with no app id");
             return Ok((RESPONSE_OTHER, Results::new()));
         }
-        let doc = read().await;
+        let doc = read(self.config).await;
         if !may_open(&doc, &app_id, sessions_of(&self.sessions, &app_id)) {
             log::warn!(
                 "GlobalShortcuts: refusing {app_id:?}: it is in shortcuts_denied or holds {MAX_SESSIONS_PER_APP} sessions"
@@ -234,6 +317,7 @@ impl GlobalShortcuts {
             self.sessions.clone(),
             path.clone(),
             h.events(),
+            self.config,
         ));
         crate::replace_session(
             &self.sessions,
@@ -291,68 +375,10 @@ impl GlobalShortcuts {
             "GlobalShortcuts.BindShortcuts {key} for {app:?}: {:?}",
             wanted.iter().map(|w| &w.id).collect::<Vec<_>>()
         );
-        let doc = read().await;
-        let (first, items) = match step(&doc, &app, &wanted) {
-            Step::Refused => return Ok((RESPONSE_CANCELLED, Results::new())),
-            Step::Nothing => return Ok((RESPONSE_OK, results(&[]))),
-            Step::Ask { first, new } => (first, Some(new)),
-            Step::Write => (false, None),
-        };
-        let answer = match items {
-            None => Answer::Allow { remember: false },
-            Some(items) => {
-                let parent = crate::dialog::parent_handle(&parent_window);
-                let id = app.clone();
-                let session = Some((&self.sessions, key));
-                crate::with_request(server, &handle, &asker, session, move |c| {
-                    crate::permit::ask(crate::permit::Kind::Shortcuts, &id, items, false, parent, c)
-                })
-                .await?
-            }
-        };
-        match answer {
-            Answer::Allow { .. } => {}
-            Answer::Deny if first => {
-                log::info!("GlobalShortcuts.BindShortcuts for {app:?} denied");
-                let denied = app.clone();
-                if let Err(e) = update(move |d| shortcutconf::deny(d, &denied)).await {
-                    log::warn!("GlobalShortcuts: recording the refusal: {e}");
-                }
-                return Ok((RESPONSE_CANCELLED, Results::new()));
-            }
-            Answer::Dismissed if first => {
-                log::info!("GlobalShortcuts.BindShortcuts for {app:?}: no answer");
-                return Ok((RESPONSE_CANCELLED, Results::new()));
-            }
-            Answer::Deny | Answer::Dismissed => {
-                log::info!("GlobalShortcuts.BindShortcuts for {app:?}: new shortcuts {answer:?}");
-            }
-        }
-        let bound = app.clone();
-        let written = update(move |d| {
-            let had = shortcutconf::entries(d, &bound);
-            let wanted = granted(&had, &wanted, answer);
-            let ids: Vec<String> = wanted.iter().map(|w| w.id.clone()).collect();
-            let known = (wanted.iter()).any(|w| had.iter().any(|e| e.id == w.id));
-            (ids, known, shortcutconf::bind(d, &bound, &wanted))
-        });
-        let (ids, known, entries) = match written.await {
-            Ok(w) => w,
-            Err(e) => {
-                log::warn!("GlobalShortcuts: writing {app}'s shortcuts: {e}");
-                return Ok((RESPONSE_OTHER, Results::new()));
-            }
-        };
-        // A refusal that leaves the session none of the shortcuts it already had is Cancelled.
-        if !answer.allowed() && !known {
-            return Ok((RESPONSE_CANCELLED, Results::new()));
-        }
-        if let Some(d) = self.sessions.lock().unwrap().get_mut(key)
-            && let SessionKind::GlobalShortcuts(g) = &mut d.kind
-        {
-            g.ids = ids;
-        }
-        Ok((RESPONSE_OK, results(&entries)))
+        let request = crate::Served::new(server, &handle, &asker).await?;
+        let out = self.bind(&request, key, app, wanted, parent_window).await;
+        request.end().await;
+        Ok(out)
     }
 
     async fn list_shortcuts(
@@ -365,9 +391,12 @@ impl GlobalShortcuts {
         match session_of(&self.sessions, session_handle.as_str()) {
             Some((app, ids)) if ids.is_empty() => Ok((
                 RESPONSE_OK,
-                results(&shortcutconf::entries(&read().await, &app)),
+                results(&shortcutconf::entries(&read(self.config).await, &app)),
             )),
-            Some((app, ids)) => Ok((RESPONSE_OK, results(&current(&app, &ids).await))),
+            Some((app, ids)) => Ok((
+                RESPONSE_OK,
+                results(&current(self.config, &app, &ids).await),
+            )),
             None => Ok((RESPONSE_OTHER, Results::new())),
         }
     }
@@ -425,6 +454,7 @@ async fn relay(
     sessions: Sessions,
     session: OwnedObjectPath,
     events: async_channel::Receiver<ShortcutEvent>,
+    config: Config,
 ) {
     let Ok(emitter) = SignalEmitter::new(&conn, crate::PATH) else {
         return;
@@ -458,7 +488,7 @@ async fn relay(
                 if ids.is_empty() {
                     continue;
                 }
-                let shortcuts = described(&current(&app, &ids).await);
+                let shortcuts = described(&current(config, &app, &ids).await);
                 GlobalShortcuts::shortcuts_changed(&emitter, session.clone(), shortcuts).await
             }
         };
@@ -645,5 +675,121 @@ mod tests {
             keys: "Pause".into(),
         }]);
         assert_eq!(r["shortcuts"].value_signature().to_string(), "a(sa{sv})");
+    }
+
+    static CONFIG: crate::tests::Gate = crate::tests::Gate::new();
+
+    fn config_held_open() -> toml_edit::DocumentMut {
+        CONFIG.wait();
+        toml_edit::DocumentMut::new()
+    }
+
+    static BOUND_CONFIG: crate::tests::Gate = crate::tests::Gate::new();
+
+    /// config.toml with `talk` bound for org.example.App, so binding it again asks nothing.
+    fn bound_config_held_open() -> toml_edit::DocumentMut {
+        BOUND_CONFIG.wait();
+        let mut doc = toml_edit::DocumentMut::new();
+        let talk = Wanted {
+            id: "talk".into(),
+            description: "Talk".into(),
+            trigger: String::new(),
+        };
+        shortcutconf::bind(&mut doc, "org.example.App", &[talk]);
+        doc
+    }
+
+    /// BindShortcuts of `talk` for org.example.App, reading config.toml through `config`, with a
+    /// Close once the read waits on `gate`: the answer and whether its Request is still served.
+    /// None without a dbus-daemon.
+    fn bind_closed_during_the_read(
+        config: Config,
+        gate: &'static crate::tests::Gate,
+    ) -> Option<(u32, Results, bool)> {
+        use crate::inputlink::tests::{fake_compositor, link_on, request};
+        let bus = crate::lockmode::tests::bus()?;
+        let (ours, mut theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        std::thread::spawn(move || {
+            fake_compositor(&mut theirs, 2, 10);
+            while request(&mut theirs).is_ok() {}
+        });
+        let link = link_on(ours);
+        Some(zbus::block_on(async {
+            let sessions = Sessions::default();
+            let (client, portal) = crate::tests::portal_with(&bus, |frontend| GlobalShortcuts {
+                sessions: sessions.clone(),
+                link: None,
+                frontend,
+                config,
+            })
+            .await;
+            let key = format!("{}1_1/g", crate::SESSION_PREFIX);
+            let shortcuts = ShortcutsSession {
+                app: "org.example.App".into(),
+                ids: Vec::new(),
+                _handle: link.create_shortcuts("org.example.App").unwrap(),
+                _relay: zruntime::spawn(async {}),
+            };
+            let owner = client.unique_name().unwrap().to_string();
+            let data = SessionData::new(owner, SessionKind::GlobalShortcuts(shortcuts));
+            sessions.lock().unwrap().insert(key.clone(), data);
+            let handle = format!("{}1_1/b", crate::REQUEST_PREFIX);
+            let bound = zruntime::spawn({
+                let (client, portal, handle) = (client.clone(), portal.clone(), handle.clone());
+                async move {
+                    let mut talk = HashMap::new();
+                    talk.insert("description", Variant::from("Talk"));
+                    let none: HashMap<&str, Variant<'_>> = HashMap::new();
+                    let handle = ObjectPath::try_from(handle.as_str()).unwrap();
+                    let session = ObjectPath::try_from(key.as_str()).unwrap();
+                    let body = (handle, session, vec![("talk", talk)], "", none);
+                    let reply = crate::tests::call_portal(
+                        &client,
+                        &portal,
+                        "GlobalShortcuts",
+                        "BindShortcuts",
+                        &body,
+                    );
+                    let reply = reply.await.unwrap();
+                    reply.body().deserialize::<(u32, Results)>().unwrap()
+                }
+            });
+            assert!(gate.reached().await, "the call reads config.toml");
+            let closed = crate::tests::close_request(&client, &portal, &handle).await;
+            assert!(closed.is_ok(), "the Close is answered: {closed:?}");
+            gate.open();
+            let (code, results) = bound.await.unwrap();
+            let served = crate::tests::request_served(&portal, &handle).await;
+            (code, results, served)
+        }))
+    }
+
+    #[test]
+    fn a_close_while_the_config_is_read_answers_cancelled_and_leaves_no_request() {
+        let Some((code, results, served)) = bind_closed_during_the_read(config_held_open, &CONFIG)
+        else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        assert_eq!(code, RESPONSE_CANCELLED);
+        assert!(results.is_empty(), "nothing bound");
+        assert!(!served, "no Request object stays behind");
+    }
+
+    #[test]
+    fn a_close_before_a_bind_that_asks_nothing_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.toml");
+        reprisefs::configfile::set_path(Some(config.clone()));
+        let out = bind_closed_during_the_read(bound_config_held_open, &BOUND_CONFIG);
+        reprisefs::configfile::set_path(None);
+        let Some((code, results, served)) = out else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        assert_eq!(code, RESPONSE_CANCELLED);
+        assert!(results.is_empty(), "nothing bound");
+        assert!(!config.exists(), "config.toml is not written");
+        assert!(!served, "no Request object stays behind");
     }
 }
