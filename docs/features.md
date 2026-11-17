@@ -426,8 +426,9 @@ the screen takes the interface of the last session used at this computer.
   one window.
 - **Remote control.** Tools can drive the keyboard and mouse once you allow
   them. One allowed with Remember shows a balloon as it starts.
-- **One keyboard and mouse across computers** with Deskflow. Super+Shift+Esc
-  always takes them back.
+- **One keyboard and mouse across computers** with Deskflow. The volume,
+  screen brightness and playback keys act on the computer the pointer is
+  on. Super+Shift+Esc always takes them back.
 - **VM viewers and remote desktops get your shortcuts** while they have
   focus. Super+Shift+Esc takes them back.
 - **Pointer lock and raw motion** for games, 3D tools and VM viewers.
