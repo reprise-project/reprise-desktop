@@ -1794,6 +1794,10 @@ mod tests {
         app.event(MAIN, Event::Wake, &mut ctx);
         app.event(MAIN, Event::Wake, &mut ctx);
         assert_eq!(error_text(&app), None);
+        assert!(
+            app.props.as_ref().unwrap().sheet.pages[props::TAB_PASSWORD].can_focus("current"),
+            "the page asks for the current password again once one is set"
+        );
         assert_eq!(
             APPLIED.with_borrow(Clone::clone),
             [vec![Op::OwnPassword {

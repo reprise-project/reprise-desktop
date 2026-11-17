@@ -38,6 +38,7 @@ const FACE: &str = "face";
 const STOCK: &str = "stock";
 const PREVIEW: &str = "preview";
 pub const BROWSE: &str = "browse";
+const CURRENT_L: &str = "current_l";
 const CURRENT: &str = "current";
 const NEW: &str = "new";
 const CONFIRM: &str = "confirm";
@@ -208,7 +209,23 @@ fn password_page(user: &User, remote: Option<&Section>) -> Form {
     if let Some(s) = remote {
         items.extend(remotepassword::items(s, X, REMOTE_Y, CLIENT.0 - 2 * X).0);
     }
-    Form::new(items)
+    let mut page = Form::new(items);
+    follow_mode(&mut page, user);
+    page
+}
+
+/// Your account without a password has no current one to type: the field greys where it
+/// stands, empty and out of the focus.
+fn follow_mode(page: &mut Form, user: &User) {
+    let current = !(user.you && user.password_mode == PasswordMode::Empty);
+    page.set_enabled(CURRENT_L, current);
+    page.set_enabled(CURRENT, current);
+    if !current {
+        wipe(page, CURRENT);
+        if page.focus() == page.index_of(CURRENT) {
+            page.focus_id(NEW);
+        }
+    }
 }
 
 fn fingers_page(s: &fingerprints::Section) -> Form {
@@ -217,18 +234,19 @@ fn fingers_page(s: &fingerprints::Section) -> Form {
 
 fn login_password(user: &User) -> Vec<Item> {
     if user.you {
+        let intro: &[&str] = match user.password_mode {
+            PasswordMode::Empty => &[
+                "Your account has no password. To set one, type the",
+                "new password twice.",
+            ],
+            PasswordMode::Regular | PasswordMode::AtLogin => &[
+                "To change your password, type the one you use now,",
+                "then the new one twice.",
+            ],
+        };
         return vec![
-            Item::lines_at(
-                "intro",
-                X,
-                40,
-                CLIENT.0 - 2 * X,
-                &[
-                    "To change your password, type the one you use now,",
-                    "then the new one twice.",
-                ],
-            ),
-            Item::label_at("current_l", X, 84, 130, "&Current password:"),
+            Item::lines_at("intro", X, 40, CLIENT.0 - 2 * X, intro),
+            Item::label_at(CURRENT_L, X, 84, 130, "&Current password:"),
             secret(CURRENT, 80),
             Item::label_at("new_l", X, 114, 130, "&New password:"),
             secret(NEW, 110),
@@ -374,9 +392,26 @@ impl Props {
             && self.password_typed()
     }
 
-    /// The account's password mode as it is now.
+    /// The account's password mode as it is now; the Password page turns to it, keeping what
+    /// is typed.
     pub fn set_password_mode(&mut self, mode: PasswordMode) {
-        self.user.password_mode = mode;
+        if self.user.password_mode != mode {
+            self.user.password_mode = mode;
+            self.rebuild_password();
+            self.sync();
+        }
+    }
+
+    /// Build the Password page again for the account and the Remote Desktop password section,
+    /// keeping what is typed on it.
+    fn rebuild_password(&mut self) {
+        let mut page = password_page(&self.user, self.remote.as_ref());
+        page.carry(&self.sheet.pages[TAB_PASSWORD]);
+        follow_mode(&mut page, &self.user);
+        for (a, lit) in self.remote.iter().flat_map(|s| &s.actions) {
+            page.set_enabled(a.id(), *lit);
+        }
+        self.sheet.set_page(TAB_PASSWORD, page);
     }
 
     /// The calls for what changed, or why it cannot be applied.
@@ -553,7 +588,11 @@ impl Props {
     /// baseline. The password fields empty.
     pub fn applied(&mut self, user: User) {
         let last_admin = self.last_admin;
+        let turned = user.password_mode != self.user.password_mode;
         self.user = user;
+        if turned {
+            self.rebuild_password();
+        }
         self.picture = None;
         let page = &mut self.sheet.pages[TAB_GENERAL];
         page.set_text("login", &self.user.login);
@@ -600,13 +639,8 @@ impl Props {
         if self.remote == remote {
             return false;
         }
-        let mut page = password_page(&self.user, remote.as_ref());
-        page.carry(&self.sheet.pages[TAB_PASSWORD]);
-        for (a, lit) in remote.iter().flat_map(|s| &s.actions) {
-            page.set_enabled(a.id(), *lit);
-        }
-        self.sheet.set_page(TAB_PASSWORD, page);
         self.remote = remote;
+        self.rebuild_password();
         self.sync();
         true
     }
@@ -742,23 +776,29 @@ mod tests {
     #[test]
     fn every_page_fits_its_text() {
         let over = reprisekit::interfaces::form_overflows(|_, _, _| {
-            [("yours", user(true, true)), ("another", user(false, false))]
-                .into_iter()
-                .flat_map(|(whose, u)| {
-                    let remote = tallest_remote(&u);
-                    let fingers = tallest_fingers(&u);
-                    let mut p = Props::new(u, None, false, TextUnits::ONE);
-                    p.show_remote(remote);
-                    p.show_fingers(fingers);
-                    let s = p.sheet.clone();
-                    let tabs = s
-                        .tabs
-                        .labels
-                        .into_iter()
-                        .map(move |t| format!("{whose} {t}"));
-                    tabs.zip(s.pages)
-                })
-                .collect()
+            let mut empty = user(true, true);
+            empty.password_mode = PasswordMode::Empty;
+            [
+                ("yours", user(true, true)),
+                ("yours without a password", empty),
+                ("another", user(false, false)),
+            ]
+            .into_iter()
+            .flat_map(|(whose, u)| {
+                let remote = tallest_remote(&u);
+                let fingers = tallest_fingers(&u);
+                let mut p = Props::new(u, None, false, TextUnits::ONE);
+                p.show_remote(remote);
+                p.show_fingers(fingers);
+                let s = p.sheet.clone();
+                let tabs = s
+                    .tabs
+                    .labels
+                    .into_iter()
+                    .map(move |t| format!("{whose} {t}"));
+                tabs.zip(s.pages)
+            })
+            .collect()
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
     }
@@ -1137,6 +1177,100 @@ mod tests {
                 new: Zeroizing::new("newpass1".into())
             }])
         );
+    }
+
+    fn intro(p: &Props) -> Vec<String> {
+        match p.sheet.pages[TAB_PASSWORD]
+            .item("intro")
+            .map(|i| &i.control)
+        {
+            Some(Control::Lines(l)) => l.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn lit(p: &Props, id: &str) -> bool {
+        match p.sheet.pages[TAB_PASSWORD].item(id).map(|i| &i.control) {
+            Some(Control::Label { enabled, .. } | Control::Edit { enabled, .. }) => *enabled,
+            _ => false,
+        }
+    }
+
+    const NO_PASSWORD_INTRO: [&str; 2] = [
+        "Your account has no password. To set one, type the",
+        "new password twice.",
+    ];
+
+    #[test]
+    fn your_account_without_a_password_greys_the_current_one_where_it_stands() {
+        let rects = |p: &Props| {
+            ["current_l", CURRENT, NEW, CONFIRM]
+                .map(|id| p.sheet.pages[TAB_PASSWORD].item(id).map(|i| i.rect))
+        };
+        let with = Props::new(user(true, false), None, false, TextUnits::ONE);
+        let mut u = user(true, false);
+        u.password_mode = PasswordMode::Empty;
+        let mut p = Props::new(u, None, false, TextUnits::ONE);
+        assert_eq!(intro(&p), NO_PASSWORD_INTRO);
+        assert!(!lit(&p, "current_l") && !lit(&p, CURRENT));
+        assert!(lit(&p, NEW) && lit(&p, CONFIRM));
+        assert_eq!(rects(&p), rects(&with), "nothing moves");
+        let page = &mut p.sheet.pages[TAB_PASSWORD];
+        assert!(!page.can_focus(CURRENT));
+        page.focus_id(NEW);
+        assert_eq!(page.key(form::Key::Access('c')), form::Event::None);
+        assert_eq!(
+            page.focus().and_then(|i| page.items.get(i)).map(|i| i.id),
+            Some(NEW),
+            "Alt+C goes nowhere"
+        );
+    }
+
+    #[test]
+    fn your_password_page_follows_its_mode_and_keeps_the_new_password_typed() {
+        let mut p = Props::new(user(true, false), None, false, TextUnits::ONE);
+        let regular = intro(&p);
+        type_into(&mut p, TAB_PASSWORD, NEW, "newpass1");
+        type_into(&mut p, TAB_PASSWORD, CONFIRM, "newpass1");
+        type_into(&mut p, TAB_PASSWORD, CURRENT, "old");
+        p.set_password_mode(PasswordMode::Empty);
+        assert_eq!(intro(&p), NO_PASSWORD_INTRO);
+        let page = &p.sheet.pages[TAB_PASSWORD];
+        assert!(!lit(&p, "current_l") && !lit(&p, CURRENT));
+        assert_eq!(page.edit_text(CURRENT), "", "a greyed field holds nothing");
+        assert_eq!(
+            page.focus().and_then(|i| page.items.get(i)).map(|i| i.id),
+            Some(NEW),
+            "the focus leaves the greyed field"
+        );
+        assert_eq!(
+            (page.edit_text(NEW), page.edit_text(CONFIRM)),
+            ("newpass1", "newpass1")
+        );
+        p.set_password_mode(PasswordMode::Regular);
+        assert_eq!(intro(&p), regular);
+        assert!(lit(&p, "current_l") && lit(&p, CURRENT));
+        let page = &p.sheet.pages[TAB_PASSWORD];
+        assert_eq!(
+            (page.edit_text(NEW), page.edit_text(CONFIRM)),
+            ("newpass1", "newpass1")
+        );
+        let mut empty = user(true, false);
+        empty.password_mode = PasswordMode::Empty;
+        p.applied(empty);
+        assert_eq!(intro(&p), NO_PASSWORD_INTRO, "an Apply's read turns it too");
+    }
+
+    #[test]
+    fn another_account_and_one_asked_at_login_keep_their_text_without_a_password() {
+        for (you, mode) in [(false, PasswordMode::Empty), (true, PasswordMode::AtLogin)] {
+            let base = Props::new(user(you, true), None, false, TextUnits::ONE);
+            let mut u = user(you, true);
+            u.password_mode = mode;
+            let p = Props::new(u, None, false, TextUnits::ONE);
+            assert_eq!(intro(&p), intro(&base), "{mode:?}");
+            assert_eq!(lit(&p, CURRENT), you, "{mode:?}");
+        }
     }
 
     fn tick_at_login(p: &mut Props) {
