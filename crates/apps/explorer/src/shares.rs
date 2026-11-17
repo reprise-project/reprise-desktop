@@ -32,7 +32,7 @@ pub struct LoginBox {
 }
 
 pub(crate) struct Connection {
-    /// `None` in a test that feeds `steps` itself.
+    /// `None` in a test.
     conn: Option<Connecting>,
     steps: Receiver<Step>,
     addr: Address,
@@ -260,13 +260,16 @@ impl Explorer {
         );
         let (tx, rx) = std::sync::mpsc::channel();
         let wake = ctx.wake.clone();
-        let conn = mount::connect(addr.clone(), move |step| {
-            if tx.send(step).is_ok() {
-                wake.wake();
-            }
+        // A test presses Connect without running gio.
+        let conn = (!cfg!(test)).then(|| {
+            mount::connect(addr.clone(), move |step| {
+                if tx.send(step).is_ok() {
+                    wake.wake();
+                }
+            })
         });
         self.connection = Some(Connection {
-            conn: Some(conn),
+            conn,
             steps: rx,
             addr,
             connect: None,
@@ -340,8 +343,13 @@ impl Explorer {
                     return Reply::none();
                 };
                 self.start_connection(addr, &mut b, ctx);
-                self.put_back(Dialog::Connect(b));
-                Reply::redraw()
+                match self.connect_behind_held(Dialog::Connect(b)) {
+                    Some(connect) => {
+                        self.put_back(connect);
+                        Reply::redraw()
+                    }
+                    None => Reply::redraw_all(),
+                }
             }
             (Some(Dialog::Login(b)), form::Event::Pressed(nc::OK) | form::Event::Default) => {
                 if !nc::enabled(&b.form, nc::OK) {
@@ -402,11 +410,13 @@ impl Explorer {
         self.connection.is_some() && matches!(self.dialogs.up(), Some(Dialog::Connect(_)))
     }
 
-    /// Connect to Server, still busy, back up while the connection goes on.
+    /// Connect to Server, still busy, back up while the connection goes on, or behind a held box
+    /// waiting ([`Explorer::connect_behind_held`]).
     fn show_connect_again(&mut self) -> Reply {
         self.take_up();
-        match self.connection.as_mut().and_then(|c| c.connect.take()) {
-            Some(b) => self.raise(Dialog::Connect(Box::new(b))),
+        let connect = self.connection.as_mut().and_then(|c| c.connect.take());
+        match connect.and_then(|b| self.connect_behind_held(Dialog::Connect(Box::new(b)))) {
+            Some(connect) => self.raise(connect),
             None => Reply::redraw_all(),
         }
     }
