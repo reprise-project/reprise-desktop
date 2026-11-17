@@ -449,7 +449,8 @@ fn over(id: WinId, win: WinId, parent: impl Fn(WinId) -> Option<WinId>) -> bool 
 }
 
 /// Whether a window takes input beside a box over another window of its family: a prompt that
-/// does not block, such as a job's progress box.
+/// does not block, such as a job's progress box. The compositor's focus reads the same two facts:
+/// the `prompt` tag and no `set_modal`.
 pub(crate) fn stands_beside(caption: crate::Caption, modal: bool) -> bool {
     caption == crate::Caption::Prompt && !modal
 }

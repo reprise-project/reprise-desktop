@@ -1,6 +1,6 @@
 use crate::compositor::State;
 
-use super::{Handle, Window, WindowId};
+use super::{DialogTag, Handle, Window, WindowId};
 
 /// Visit windows below `root` owner-first, siblings in `children`'s order; iterative with a visited
 /// set so parent cycles (X11 transients) are safe.
@@ -141,13 +141,19 @@ impl State {
 
     /// The window that takes the focus in `w`'s place: the newest mapped modal dialog of `w`'s
     /// family (the windows under its [`State::home`]) that is neither `w` nor an owner of it, else
-    /// `w`. A dialog covers its family, siblings included, as programs gate their input.
+    /// `w`. A dialog covers its family, siblings included, as programs gate their input. A prompt
+    /// that is not modal (a job's progress box) stands beside them: only a dialog it owns covers it.
     pub fn modal_target(&self, w: WindowId) -> WindowId {
         let home = self.home(w);
+        let beside =
+            (self.win(w)).is_some_and(|x| x.dialog_tag == DialogTag::Prompt && !x.is_modal());
         (self.windows.iter().rev())
             .filter(|x| x.mapped && x.id != w && x.is_modal())
             .map(|x| x.id)
-            .find(|&d| self.home(d) == home && !self.is_owner_of(d, w))
+            .find(|&d| match beside {
+                true => self.is_owner_of(w, d),
+                false => self.home(d) == home && !self.is_owner_of(d, w),
+            })
             .unwrap_or(w)
     }
 
