@@ -411,6 +411,35 @@ fn emptying_the_bin_drops_only_the_trash_undos() {
     assert_eq!(ex.undo, Some("Move"));
 }
 
+/// An item in the bin that cannot go whole is named in the failure by its path in the bin.
+#[test]
+fn a_failed_empty_names_the_entry_by_its_path_in_the_bin() {
+    let _guard = lock(&TRASH_ENV);
+    let home = tempfile::tempdir().expect("a temp dir");
+    let _data_home = DataHome::set(home.path());
+    let src = home.path().join("src");
+    std::fs::create_dir_all(src.join("sub")).expect("mkdir");
+    std::fs::write(src.join("sub/locked"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(home.path().to_path_buf()), &mut ctx);
+    ex.delete_now(std::slice::from_ref(&src), false, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    let sub = home.path().join("Trash/files/src/sub");
+    let _writable_again = Mode0700(sub.clone());
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o500)).expect("chmod");
+
+    ex.empty_bin_now(&mut ctx);
+    ex.finish_puts(&mut ctx);
+    let Some(Dialog::Message { text, .. }) = ex.dialog() else {
+        panic!("the failure is reported");
+    };
+    assert_eq!(
+        text,
+        "Cannot empty the Recycle Bin: 1 item could not be deleted: src/sub/locked: Permission denied (os error 13)"
+    );
+}
+
 #[test]
 fn the_empty_bin_prompt_counts_the_bin() {
     let dir = tempfile::tempdir().expect("a temp dir");

@@ -9,7 +9,7 @@ mod parts;
 mod put;
 
 pub use copy::copy_dir_all;
-pub(crate) use copy::{build_dir, copy_dir_until, copy_new, remove_tree};
+pub(crate) use copy::{build_dir, copy_dir_until, copy_new, in_tree, remove_tree};
 pub use erase::erase;
 pub(crate) use erase::{entries_at, erase_at, erase_counted, erase_stepped, unlink_at};
 pub use fileio::{

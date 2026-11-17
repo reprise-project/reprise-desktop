@@ -1,10 +1,11 @@
 use super::at::{open_dir, stat_fd};
+use super::copy::in_tree;
 use super::{refuse_holding_mount, refuse_mount_point};
 use crate::progress::Meter;
 use std::ffi::{CStr, CString};
 use std::io;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Remove `path` for good: a folder with everything under it, a file or
 /// a link on its own. A mount point, or a folder holding one, is refused
@@ -126,6 +127,7 @@ struct Level {
 
 /// Remove folder `name` in the folder open at `parent` with everything under it, children first,
 /// without following a link or entering another file system. Iterative, so depth costs no stack.
+/// An entry that fails is named by its path under `name` ([`in_tree`]).
 fn remove_tree_at(parent: BorrowedFd, name: &CStr, meter: Option<&Meter>) -> io::Result<()> {
     let dev = stat_fd(parent)?.st_dev;
     let mut stack = vec![level(parent, name, dev)?];
@@ -139,13 +141,14 @@ fn remove_tree_at(parent: BorrowedFd, name: &CStr, meter: Option<&Meter>) -> io:
                 }
                 let at = reopen(parent, &mut stack, dev)?;
                 if is_dir {
-                    let next = level(at, &child, dev)?;
+                    let next =
+                        level(at, &child, dev).map_err(|e| in_tree(&under(&stack, &child), e))?;
                     stack.push(next);
                     if let Some(far) = stack.len().checked_sub(OPEN_LEVELS + 1) {
                         stack[far].fd = None;
                     }
                 } else {
-                    unlink_at(at, &child, 0)?;
+                    unlink_at(at, &child, 0).map_err(|e| in_tree(&under(&stack, &child), e))?;
                     if let Some(m) = meter {
                         m.removed();
                     }
@@ -158,11 +161,27 @@ fn remove_tree_at(parent: BorrowedFd, name: &CStr, meter: Option<&Meter>) -> io:
                     true => parent,
                     false => reopen(parent, &mut stack, dev)?,
                 };
-                unlink_at(up, &done.name, libc::AT_REMOVEDIR)?;
+                unlink_at(up, &done.name, libc::AT_REMOVEDIR)
+                    .map_err(|e| in_tree(&under(&stack, &done.name), e))?;
             }
         }
     }
     Ok(())
+}
+
+/// The path of `name`, in the last of `levels`, under the first; empty with no levels, `name`
+/// being the first itself.
+fn under(levels: &[Level], name: &CStr) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    let Some((_, below)) = levels.split_first() else {
+        return PathBuf::new();
+    };
+    let part = |n: &CStr| Path::new(std::ffi::OsStr::from_bytes(n.to_bytes())).to_path_buf();
+    below
+        .iter()
+        .map(|l| part(&l.name))
+        .chain([part(name)])
+        .collect()
 }
 
 /// Open folder `name` in `at` and list it; another device than `dev` is refused.
@@ -196,14 +215,13 @@ fn reopen<'a>(
         .rposition(|l| l.fd.is_some())
         .map_or(0, |i| i + 1);
     for i in first..=top {
-        let fd = {
-            let at = match i {
-                0 => parent,
-                _ => stack[i - 1].fd.as_ref().expect("opened above").as_fd(),
-            };
-            open_dir(at, &stack[i].name, false)?
+        let named = |e| in_tree(&under(&stack[..i], &stack[i].name), e);
+        let at = match i {
+            0 => parent,
+            _ => stack[i - 1].fd.as_ref().expect("opened above").as_fd(),
         };
-        let st = stat_fd(fd.as_fd())?;
+        let fd = open_dir(at, &stack[i].name, false).map_err(named)?;
+        let st = stat_fd(fd.as_fd()).map_err(named)?;
         if st.st_dev != dev || st.st_ino != stack[i].ino {
             return Err(io::Error::other(
                 "a folder in it was replaced while it was removed",
