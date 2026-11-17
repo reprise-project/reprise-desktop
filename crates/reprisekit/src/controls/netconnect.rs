@@ -95,16 +95,20 @@ fn buttons(ok: &str, (w, h): (i32, i32)) -> [Item; 2] {
     ]
 }
 
-/// Connect to Server with `address` typed, its message wrapped into `lines`. Connect greys
-/// while the address is empty ([`follow`]).
+/// Connect to Server with `address` typed and selected, its message wrapped into `lines`.
+/// Connect greys while the address is empty ([`follow`]).
 pub fn connect_form(lines: &[String], address: &str, icon: Option<Canvas>) -> Form {
     let mut items = vec![Item::picture("icon", ICON, icon), message(lines)];
-    items.extend(field(
-        "address_l",
-        "&Address:",
-        Item::edit(ADDRESS, Rect::default(), address, true),
-        FIRST_Y + 8,
-    ));
+    let address = Item::new(
+        ADDRESS,
+        Rect::default(),
+        Control::Edit {
+            edit: TextEdit::new(address, true),
+            first: Cell::new(0),
+            enabled: true,
+        },
+    );
+    items.extend(field("address_l", "&Address:", address, FIRST_Y + 8));
     items.push(
         Item::label(
             STATUS,
@@ -317,6 +321,22 @@ mod tests {
         assert!(!enabled(&f, OK) && !enabled(&f, ADDRESS) && enabled(&f, CANCEL));
         set_busy(&mut f, false, "Could not connect.");
         assert!(enabled(&f, OK) && enabled(&f, ADDRESS));
+    }
+
+    #[test]
+    fn connect_opens_with_its_address_selected_so_a_typed_character_replaces_it() {
+        use crate::controls::form::{Event, Key};
+        let msg = lines("Type the address.");
+        let mut f = connect_form(&msg, "sftp://user@old/tmp", None);
+        assert_eq!(f.focus(), f.index_of(ADDRESS));
+        f.key(Key::Char('s'));
+        assert_eq!(f.edit_text(ADDRESS), "s");
+        let mut f = connect_form(&msg, "sftp://user@old/tmp", None);
+        assert_eq!(f.key(Key::Enter), Event::Default);
+        assert_eq!(f.edit_text(ADDRESS), "sftp://user@old/tmp");
+        let mut f = connect_form(&msg, "", None);
+        f.key(Key::Char('s'));
+        assert_eq!(f.edit_text(ADDRESS), "s");
     }
 
     #[test]
