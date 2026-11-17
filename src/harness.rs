@@ -38,7 +38,8 @@ use wayland_protocols::{
     },
     xdg::{
         activation::v1::client::{
-            xdg_activation_token_v1::XdgActivationTokenV1, xdg_activation_v1::XdgActivationV1,
+            xdg_activation_token_v1::{self, XdgActivationTokenV1},
+            xdg_activation_v1::XdgActivationV1,
         },
         decoration::zv1::client::{
             zxdg_decoration_manager_v1::ZxdgDecorationManagerV1,
@@ -1220,6 +1221,17 @@ impl TestClient {
             .commit();
     }
 
+    /// Ask for an activation token on input `serial` of the seat, from toplevel `t`'s surface, as
+    /// a program raising a window does; the token comes back in `tokens`.
+    pub fn token_on(&self, serial: u32, t: Toplevel) {
+        let token = (self.side.activation.as_ref())
+            .expect("xdg_activation_v1")
+            .get_activation_token(&self.qh(), ());
+        token.set_serial(serial, self.side.seat.as_ref().expect("wl_seat"));
+        token.set_surface(&self.side.shells[t.shell].surface);
+        token.commit();
+    }
+
     /// A clipboard selection offering `mimes`, set while the client has the keyboard. The source
     /// answers every read with `bytes`.
     pub fn copy(&mut self, mimes: &[&str], bytes: &[u8]) -> wl_data_source::WlDataSource {
@@ -1588,6 +1600,8 @@ pub struct ClientSide {
     pub buttons: Vec<(u32, bool)>,
     /// The serial of the last button event the pointer heard, for a drag it starts.
     pub button_serial: u32,
+    /// Each activation token the compositor handed back, in order.
+    pub tokens: Vec<String>,
     /// Each `reprise_sandboxed_v1` event heard: an app id for `app`, `None` for `done`.
     pub sandboxed: Vec<Option<String>>,
     /// Each `reprise_on_top_v1.changed` heard: whether its toplevel is on top.
@@ -2194,7 +2208,21 @@ wc::delegate_noop!(ClientSide: ignore wl_shm_pool::WlShmPool);
 wc::delegate_noop!(ClientSide: ignore WlBuffer);
 wc::delegate_noop!(ClientSide: ignore wl_seat::WlSeat);
 wc::delegate_noop!(ClientSide: ignore XdgActivationV1);
-wc::delegate_noop!(ClientSide: ignore XdgActivationTokenV1);
+
+impl wc::Dispatch<XdgActivationTokenV1, ()> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &XdgActivationTokenV1,
+        ev: xdg_activation_token_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let xdg_activation_token_v1::Event::Done { token } = ev {
+            st.tokens.push(token);
+        }
+    }
+}
 wc::delegate_noop!(ClientSide: ignore xdg_positioner::XdgPositioner);
 wc::delegate_noop!(ClientSide: ignore xdg_popup::XdgPopup);
 wc::delegate_noop!(ClientSide: ignore ZwpInputMethodManagerV2);

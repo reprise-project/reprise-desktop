@@ -623,7 +623,9 @@ A new window takes the keyboard when it maps if any of these holds:
 
 - it presents a trusted activation token, which Reprise mints when it
   starts a program or you click a tray icon or a notification, and which a
-  program can mint only from an input event in its own focused window, or
+  program can mint only while it has the keyboard, from an input event since
+  the keyboard last came to it from another program or the desktop (a click
+  in its menu or dialog counts after the keyboard returns to its window), or
   within 3 s of a drop on one of its windows. Explorer's
   `org.freedesktop.FileManager1` gets one for the window it opens when the
   caller's process is, descends from or sits in the session of the focused

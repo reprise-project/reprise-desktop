@@ -348,6 +348,9 @@ impl State {
                 }
             }
             self.flush_motion();
+            if surface.is_none() {
+                self.keyboard_turn.left();
+            }
             keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
         }
     }
