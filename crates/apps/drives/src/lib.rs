@@ -38,6 +38,10 @@ use reprisekit::tr;
 
 use model::{Act, Arrival, Entry, Target};
 
+/// How long a balloon asking what to do with a new drive stays up, longer than an ordinary
+/// balloon so a slower user still answers it there and not from the history.
+const ASK_STAYS: std::time::Duration = std::time::Duration::from_secs(30);
+
 const FLYOUT: WinId = WinId::named("flyout");
 const UNLOCK: WinId = WinId::named("unlock");
 const UNLOCK_NEXT: WinId = WinId::named("unlock-next");
@@ -196,22 +200,26 @@ impl DrivesApp {
         let mode = model::OnInsert::parse(&repriseconf::current().drives_on_insert);
         let volume = a.volume().to_string();
         match model::act(a, mode) {
-            Act::Ask(a) => {
-                let name = model::arrival_name(self.snap(), a.volume());
-                let b = model::ask_balloon(&name, matches!(a, Arrival::Unlock(_)));
-                let tag = self.tag();
-                self.asks.insert(tag, a);
-                if let Some(t) = &self.tray {
-                    t.notify_buttons(
-                        &b.summary,
-                        &b.body,
-                        tag,
-                        &b.buttons.each_ref().map(String::as_str),
-                    );
-                }
-            }
+            Act::Ask(a) => self.ask(a),
             Act::Go { arrival, open } => self.go(arrival, open),
             Act::Nothing => log::info!("{volume} arrived; left alone"),
+        }
+    }
+
+    /// The "New drive" balloon asking what to do with `a`.
+    fn ask(&mut self, a: Arrival) {
+        let name = model::arrival_name(self.snap(), a.volume());
+        let b = model::ask_balloon(&name, matches!(a, Arrival::Unlock(_)));
+        let tag = self.tag();
+        self.asks.insert(tag, a);
+        if let Some(t) = &self.tray {
+            t.notify_ask(
+                &b.summary,
+                &b.body,
+                tag,
+                &b.buttons.each_ref().map(String::as_str),
+                ASK_STAYS,
+            );
         }
     }
 
@@ -942,6 +950,20 @@ mod tests {
             app.bolt_asks.is_empty(),
             "a device that stopped waiting drops its balloons"
         );
+    }
+
+    #[test]
+    fn a_new_drive_balloon_asks_to_stay_up_for_30_seconds() {
+        let (tray, sent) = reprisetray::TrayHandle::recording();
+        let mut app = DrivesApp {
+            tray: Some(tray),
+            ..DrivesApp::default()
+        };
+        let sdc = "/org/freedesktop/UDisks2/block_devices/sdc";
+        app.ask(Arrival::Unlock(sdc.into()));
+        app.ask(Arrival::Mount(sdc.into()));
+        let expires: Vec<_> = sent.balloons().into_iter().map(|(_, e)| e).collect();
+        assert_eq!(expires, [Some(std::time::Duration::from_secs(30)); 2]);
     }
 
     #[test]
