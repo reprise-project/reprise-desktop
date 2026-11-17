@@ -208,6 +208,41 @@ fn an_open_combo_highlight_follows_the_pointer() {
 }
 
 #[test]
+fn only_a_row_picked_from_the_open_list_is_chosen() {
+    let mut f = Form::new(vec![Item::combo("c", 10, 10, 120, &["a", "b", "c"], 3)]);
+    f.focus_id("c");
+    let row = |r| {
+        Some(Hit {
+            item: 0,
+            part: Part::Combo(combo::Hit::Row(r)),
+            x: 20,
+        })
+    };
+    assert_eq!(f.key(Key::Down), Event::Changed("c"));
+    assert_eq!(f.key(Key::End), Event::Changed("c"));
+    assert_eq!(f.key(Key::Char('a')), Event::Changed("c"));
+    assert_eq!(f.take_chosen(), None, "steps on the closed combo");
+    f.key(Key::Drop);
+    f.key(Key::Down);
+    assert_eq!(f.key(Key::Escape), Event::Redraw);
+    assert_eq!(f.take_chosen(), None, "Escape");
+    f.key(Key::Drop);
+    f.key(Key::Down);
+    assert_eq!(f.key(Key::Enter), Event::Changed("c"));
+    assert_eq!(f.take_chosen(), Some("c"));
+    assert_eq!(f.take_chosen(), None, "read once");
+    f.key(Key::Drop);
+    assert_eq!(f.key(Key::Enter), Event::Redraw, "the row already picked");
+    assert_eq!(f.take_chosen(), Some("c"));
+    f.key(Key::Drop);
+    assert_eq!(f.click(row(2)), Event::Changed("c"));
+    assert_eq!(f.take_chosen(), Some("c"));
+    f.key(Key::Drop);
+    assert_eq!(f.click(row(2)), Event::Redraw, "the row already picked");
+    assert_eq!(f.take_chosen(), Some("c"));
+}
+
+#[test]
 fn alt_o_in_an_open_colour_popup_presses_other() {
     let red = Color::rgb(255, 0, 0);
     let mut f = Form::new(vec![

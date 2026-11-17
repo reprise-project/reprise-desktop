@@ -70,6 +70,16 @@ impl Form {
         self.open_combo().is_some()
     }
 
+    /// The combo whose open list closed on a row picked from it (a click, or Enter), the row
+    /// already picked too, since the last call. Steps on the closed combo and Escape are no
+    /// choice.
+    pub fn take_chosen(&mut self) -> Option<&'static str> {
+        self.items.iter_mut().find_map(|it| match &mut it.control {
+            Control::Combo(c) => std::mem::take(&mut c.chosen).then_some(it.id),
+            _ => None,
+        })
+    }
+
     pub(super) fn close_popups(&mut self) -> bool {
         let mut closed = false;
         for i in &mut self.items {
