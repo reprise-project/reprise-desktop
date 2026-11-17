@@ -183,6 +183,11 @@ impl Explorer {
         Some(self.shares_changed(snap, ctx))
     }
 
+    /// `p`'s title, a mounted share's folder by the share's name.
+    pub(crate) fn title_of(&self, p: &Place) -> String {
+        p.title_in(&self.shares.shares)
+    }
+
     /// Takes gvfs's mounts, its phones and cameras named after their devices.
     pub(crate) fn shares_changed(&mut self, mut snap: Snapshot, ctx: &mut Ctx) -> Reply {
         reprisefs::portable::dress(&mut snap.shares, &self.portable);
@@ -204,7 +209,6 @@ impl Explorer {
             .filter_map(|s| s.path.parent().map(Path::to_path_buf))
             .collect();
         self.shares = snap;
-        place::set_share_names(&self.shares.shares);
         self.drive_mounts = place::drive_mounts(&self.drives, &self.shares.shares);
         self.refollow |= arrived;
         self.refill_tree_node(&Place::Computer, ctx);

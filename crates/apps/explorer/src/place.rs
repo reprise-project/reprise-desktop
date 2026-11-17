@@ -54,23 +54,6 @@ pub struct Specials<'a> {
     pub trash: Option<&'a Path>,
 }
 
-/// The mounted shares' names by folder, so a share's root is titled by its name rather than
-/// gvfs's folder name.
-static SHARE_NAMES: std::sync::RwLock<Vec<(PathBuf, String)>> = std::sync::RwLock::new(Vec::new());
-
-pub fn set_share_names(shares: &[Share]) {
-    let names = shares.iter().map(|s| (s.path.clone(), s.name.clone()));
-    match SHARE_NAMES.write() {
-        Ok(mut n) => *n = names.collect(),
-        Err(p) => *p.into_inner() = names.collect(),
-    }
-}
-
-fn share_name(p: &Path) -> Option<String> {
-    let names = SHARE_NAMES.read().unwrap_or_else(|p| p.into_inner());
-    names.iter().find(|(d, _)| d == p).map(|(_, n)| n.clone())
-}
-
 /// `p` as the address bar writes it: inside a mounted share or device, its name and the path
 /// below its folder ("Test Phone/Internal shared storage"), else the path itself.
 fn named_address(p: &Path, shares: &[Share]) -> String {
@@ -135,12 +118,12 @@ impl Place {
         }
     }
 
+    /// The place's name; a mounted share's folder keeps gvfs's folder name ([`Place::title_in`]).
     pub fn title(&self) -> String {
         match self {
-            Place::Folder(p) => match (share_name(p), p.file_name()) {
-                (Some(share), _) => share,
-                (None, Some(name)) => name.to_string_lossy().into_owned(),
-                (None, None) => "/".to_string(),
+            Place::Folder(p) => match p.file_name() {
+                Some(name) => name.to_string_lossy().into_owned(),
+                None => "/".to_string(),
             },
             Place::Desktop => "Desktop".to_string(),
             Place::Documents => "Documents".to_string(),
@@ -149,6 +132,15 @@ impl Place {
             Place::RecycleBin => "Recycle Bin".to_string(),
             Place::Network(uri) if uri == ROOT => "Network".to_string(),
             Place::Network(uri) => Address::parse(uri).map_or_else(|| uri.clone(), |a| a.host),
+        }
+    }
+
+    /// The title, the folder of one of the mounted `shares` (phones and cameras among them) by its name.
+    pub fn title_in(&self, shares: &[Share]) -> String {
+        match self {
+            Place::Folder(p) => (shares.iter().find(|s| s.path == *p))
+                .map_or_else(|| self.title(), |s| s.name.clone()),
+            _ => self.title(),
         }
     }
 

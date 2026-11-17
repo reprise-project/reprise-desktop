@@ -526,7 +526,7 @@ fn a_plugged_phone_lists_in_computer_and_its_mount_takes_its_name_and_eject() {
         !ex.share_selected(i),
         "its menu reads Eject, not Disconnect"
     );
-    assert_eq!(Place::Folder(at.clone()).title(), "Test Phone");
+    assert_eq!(ex.title_of(&Place::Folder(at.clone())), "Test Phone");
     assert!(computer_nodes(&ex).contains(&Place::Folder(at)));
 }
 

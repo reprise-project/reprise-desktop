@@ -7,6 +7,7 @@ use crate::fileops::{BinItem, file_label};
 use crate::place::Place;
 use repriseapp::{Ctx, Reply};
 use reprisefs::bincap::Plan;
+use reprisefs::netshare::Share;
 use reprisefs::removal::{Removal, RemoveEvent, RemoveJob, Removed};
 use reprisefs::trash::Bins;
 use reprisefs::undo::{Undo, Undoable};
@@ -125,7 +126,13 @@ impl PendingRemoval {
     }
 
     /// Undo's steps of `undo`, which touches `dirs`; `erase` removes for good what `bins` refuse.
-    pub(crate) fn undo(undo: Undo, erase: bool, dirs: Vec<PathBuf>, bins: Option<Bins>) -> Self {
+    pub(crate) fn undo(
+        undo: Undo,
+        erase: bool,
+        dirs: Vec<PathBuf>,
+        bins: Option<Bins>,
+        shares: &[Share],
+    ) -> Self {
         let (paths, items) = undo
             .steps()
             .iter()
@@ -140,7 +147,7 @@ impl PendingRemoval {
                 (path, Removal::Undo { step, erase })
             })
             .unzip();
-        let title = |p: &std::path::Path| p.parent().map(|d| Place::from_path(d).title());
+        let title = |p: &std::path::Path| p.parent().map(|d| Place::from_path(d).title_in(shares));
         let (kind, from, to) = match undo.steps().first() {
             Some(Undoable::Move { from, to, .. } | Undoable::Rename { from, to }) => {
                 (Kind::Move, title(to), title(from))

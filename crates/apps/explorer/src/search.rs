@@ -5,6 +5,7 @@ use crate::place::{Listed, Place};
 use crate::{Explorer, Focus, Read};
 use repriseapp::listicons::ReadIcons;
 use repriseapp::{Ctx, Reply};
+use reprisefs::netshare::Share;
 use reprisefs::search::Query;
 use reprisekit::controls::shellview;
 use std::path::PathBuf;
@@ -158,9 +159,9 @@ impl Search {
     }
 
     /// The window's title while results are shown.
-    pub fn caption(&self) -> Option<String> {
+    pub fn caption(&self, shares: &[Share]) -> Option<String> {
         let a = self.shown.as_ref()?;
-        Some(format!("Search results in {}", a.place.title()))
+        Some(format!("Search results in {}", a.place.title_in(shares)))
     }
 }
 
@@ -343,7 +344,7 @@ mod tests {
             })
         );
         assert!(!s.running());
-        assert_eq!(s.caption().as_deref(), Some("Search results in data"));
+        assert_eq!(s.caption(&[]).as_deref(), Some("Search results in data"));
     }
 
     #[test]
@@ -410,6 +411,6 @@ mod tests {
         assert!(s.landed(run.serial, false));
         assert!(s.cancel());
         assert_eq!(s.shown(), None);
-        assert_eq!(s.caption(), None);
+        assert_eq!(s.caption(&[]), None);
     }
 }

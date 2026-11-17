@@ -149,13 +149,13 @@ impl Explorer {
     /// Ctrl+T: the folder shown again in a new tab with its own history.
     pub(crate) fn new_tab(&mut self, ctx: &mut Ctx) -> Reply {
         let t = TabState::at(self.place.clone(), self.sv.mode, self.sv.sort);
-        self.tabs.push(t, self.place.title());
+        self.tabs.push(t, self.title_of(&self.place));
         self.switch_tab(self.tabs.list.len() - 1, ctx)
     }
 
     /// Middle-click on a folder and its menu's Open in New Tab: a tab behind the open one.
     pub(crate) fn open_in_new_tab(&mut self, place: Place) -> Reply {
-        let label = place.title();
+        let label = self.title_of(&place);
         let t = TabState::at(place, self.sv.mode, self.sv.sort);
         self.tabs.push(t, label);
         Reply::redraw_all()

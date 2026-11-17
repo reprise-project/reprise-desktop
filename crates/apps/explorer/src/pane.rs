@@ -2,6 +2,7 @@ use crate::Explorer;
 use crate::commands::Command;
 use crate::place::Place;
 use repriseapp::Ctx;
+use reprisefs::netshare::Share;
 use reprisefs::pins::Pin;
 use reprisekit::controls::taskpane::{Row, Section};
 
@@ -163,10 +164,15 @@ fn folder_tasks(sel: Sel) -> Vec<PaneRow> {
     }
 }
 
-pub fn other_places(place: &Place, parent: Option<Place>) -> PaneSection {
+pub fn other_places(place: &Place, parent: Option<Place>, shares: &[Share]) -> PaneSection {
     let link = |p: &Place| PaneRow {
         tip: p.shell().map(|s| s.tip()),
-        ..row(&p.title(), &[p.icon_name()], Command::GoTo(p.clone()), true)
+        ..row(
+            &p.title_in(shares),
+            &[p.icon_name()],
+            Command::GoTo(p.clone()),
+            true,
+        )
     };
     let rows = match place {
         Place::Computer => vec![
@@ -225,12 +231,16 @@ pub fn sections(
     sel: Sel,
     count: usize,
     pins: &[Pin],
+    shares: &[Share],
 ) -> Vec<PaneSection> {
     let mut out = Vec::new();
     if !pins.is_empty() {
         out.push(pinned(pins));
     }
-    out.extend([tasks(place, sel, count), other_places(place, parent)]);
+    out.extend([
+        tasks(place, sel, count),
+        other_places(place, parent, shares),
+    ]);
     out
 }
 
@@ -253,7 +263,14 @@ impl Explorer {
             }
             return;
         }
-        let built = sections(&self.place, parent, sel, self.items.len(), &self.pinned());
+        let built = sections(
+            &self.place,
+            parent,
+            sel,
+            self.items.len(),
+            &self.pinned(),
+            &self.shares.shares,
+        );
         let mut out = Vec::new();
         let mut cmds = Vec::new();
         let mut tips = Vec::new();
@@ -323,7 +340,7 @@ impl Explorer {
             _ => None,
         };
         crate::window::details_text(
-            &self.place.title(),
+            &self.title_of(&self.place),
             self.place.is_system(),
             &chosen,
             dims,
@@ -425,7 +442,14 @@ mod tests {
 
     #[test]
     fn computer_gets_system_tasks_and_three_other_places() {
-        let s = sections(&Place::Computer, Some(Place::Desktop), Sel::None, 4, &[]);
+        let s = sections(
+            &Place::Computer,
+            Some(Place::Desktop),
+            Sel::None,
+            4,
+            &[],
+            &[],
+        );
         assert_eq!(s[0].rows[0].cmd, Command::SystemInformation);
         assert_eq!(
             table(&s[0]),
@@ -477,7 +501,7 @@ mod tests {
         assert_eq!(many.rows[1].cmd, Command::Restore);
         let home = Place::Home.title();
         assert_eq!(
-            texts(&other_places(&Place::RecycleBin, Some(Place::Desktop))),
+            texts(&other_places(&Place::RecycleBin, Some(Place::Desktop), &[])),
             ["Desktop", "Documents", home.as_str(), "Computer"]
         );
     }
@@ -488,25 +512,26 @@ mod tests {
     fn other_places_leads_with_the_parent_and_drops_the_current_place() {
         let home = Place::Home.title();
         let parent = Place::Folder(PathBuf::from("/tmp/work"));
-        let s = other_places(&folder(), Some(parent));
+        let s = other_places(&folder(), Some(parent), &[]);
         assert_eq!(
             texts(&s),
             ["work", "Desktop", "Documents", home.as_str(), "Computer"]
         );
         assert!(s.rows.iter().all(|r| r.enabled));
 
-        let s = other_places(&Place::Documents, Some(Place::Desktop));
+        let s = other_places(&Place::Documents, Some(Place::Desktop), &[]);
         assert_eq!(texts(&s), ["Desktop", home.as_str(), "Computer"]);
         let s = other_places(
             &Place::Folder(PathBuf::from("/home/u/Reports")),
             Some(Place::Home),
+            &[],
         );
         assert_eq!(
             texts(&s),
             [home.as_str(), "Desktop", "Documents", "Computer"]
         );
         assert_eq!(
-            texts(&other_places(&Place::Desktop, None)),
+            texts(&other_places(&Place::Desktop, None, &[])),
             ["Documents", home.as_str(), "Computer"]
         );
     }
@@ -592,7 +617,7 @@ mod tests {
             present,
         };
         let pins = [pin("/home/u/Work", true), pin("/run/media/u/Stick", false)];
-        let s = sections(&folder(), None, Sel::None, 0, &pins);
+        let s = sections(&folder(), None, Sel::None, 0, &pins, &[]);
         assert_eq!(
             table(&s[0]),
             (
@@ -606,7 +631,7 @@ mod tests {
         );
         assert_eq!(s[0].rows[1].cmd, Command::Nothing);
         assert_eq!(s[1].title, "File and Folder Tasks");
-        assert_eq!(sections(&folder(), None, Sel::None, 0, &[]).len(), 2);
+        assert_eq!(sections(&folder(), None, Sel::None, 0, &[], &[]).len(), 2);
     }
 
     #[test]

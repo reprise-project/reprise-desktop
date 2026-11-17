@@ -122,12 +122,17 @@ pub struct Props {
     pub(crate) walk: crate::props_host::WalkStop,
 }
 
-pub fn bin_facts(info: &FileInfo, t: Option<&Trashed>, is_12h: bool) -> filesheet::BinFacts {
+pub fn bin_facts(
+    info: &FileInfo,
+    t: Option<&Trashed>,
+    is_12h: bool,
+    shares: &[reprisefs::netshare::Share],
+) -> filesheet::BinFacts {
     filesheet::BinFacts {
         type_name: info.type_name.clone(),
         origin: t
             .and_then(|t| t.original.parent())
-            .map(|d| crate::place::Place::from_path(d).title())
+            .map(|d| crate::place::Place::from_path(d).title_in(shares))
             .unwrap_or_default(),
         size: bin_size(info),
         deleted: t.and_then(|t| t.deleted).map(|s| format_time(s, is_12h)),
