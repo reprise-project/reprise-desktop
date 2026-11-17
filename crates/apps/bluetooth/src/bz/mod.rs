@@ -435,8 +435,9 @@ pub enum Cmd {
 #[derive(Debug)]
 pub enum BzMsg {
     Snapshot(Snapshot),
+    /// `cmd` failed for the reason in `body`.
     Failed {
-        title: String,
+        cmd: Cmd,
         body: String,
     },
     /// A `Cmd::Connect` finished, which it does detached, so this can
