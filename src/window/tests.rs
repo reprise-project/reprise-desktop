@@ -1997,10 +1997,10 @@ fn a_click_on_a_window_a_modal_box_covers_leaves_the_box_on_top_with_the_keyboar
     let mut h = forgetful();
     let mut c = h.connect();
     let folder = h.map_toplevel(&mut c, "test.app", 400, 300);
-    let progress = h.map_dialog(&mut c, "test.app", Some(folder), "", (300, 200));
+    let sheet = h.map_dialog(&mut c, "test.app", Some(folder), "", (300, 200));
     let failed = h.map_modal(&mut c, "test.app", folder, (120, 60));
     assert_eq!(h.state.focused, Some(failed.id));
-    for (under, what) in [(progress, "its sibling"), (folder, "its parent")] {
+    for (under, what) in [(sheet, "its sibling"), (folder, "its parent")] {
         click_in(&mut h, under.id);
         assert_eq!(
             h.state.focused,
@@ -2009,6 +2009,59 @@ fn a_click_on_a_window_a_modal_box_covers_leaves_the_box_on_top_with_the_keyboar
         );
         assert!(above(&h, failed.id, under.id), "the box stays over {what}");
     }
+}
+
+/// A job's progress box is a prompt that is not modal: it takes clicks, its X and the keyboard
+/// beside a box over its parent, while the box stays over the parent.
+#[test]
+fn a_progress_box_beside_a_modal_box_takes_clicks_and_its_close_box() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let folder = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let progress = h.map_dialog(&mut c, "test.app", Some(folder), PROMPT_TAG, (300, 200));
+    let failed = h.map_modal(&mut c, "test.app", folder, (120, 60));
+    assert_eq!(h.state.focused, Some(failed.id));
+
+    click_in(&mut h, progress.id);
+    assert_eq!(
+        h.state.focused,
+        Some(progress.id),
+        "the progress box takes the keyboard"
+    );
+    assert!(above(&h, progress.id, failed.id), "and comes up");
+    assert!(
+        above(&h, failed.id, folder.id),
+        "the box stays over the folder"
+    );
+    let close = {
+        let win = h.state.win(progress.id).expect("the progress box");
+        let (frame, r) = (
+            win.frame_rect(),
+            win.geom
+                .button_rect(reprisekit::frame::CaptionButton::Close),
+        );
+        (frame.x + r.x + r.width / 2, frame.y + r.y + r.height / 2)
+    };
+    h.click(f64::from(close.0), f64::from(close.1));
+    h.roundtrip(&mut c);
+    assert_eq!(
+        c.side.closes,
+        [progress.shell],
+        "its close box asks it to close"
+    );
+
+    click_in(&mut h, folder.id);
+    assert_eq!(
+        h.state.focused,
+        Some(failed.id),
+        "the folder still gives the box the keyboard"
+    );
+    let own = h.map_modal(&mut c, "test.app", progress, (100, 50));
+    assert_eq!(
+        h.state.modal_target(progress.id),
+        own.id,
+        "a box over the progress box covers it"
+    );
 }
 
 #[test]
@@ -2045,12 +2098,12 @@ fn closing_a_modal_box_gives_the_keyboard_to_its_parent() {
     let mut h = forgetful();
     let mut c = h.connect();
     let folder = h.map_toplevel(&mut c, "test.app", 400, 300);
-    let progress = h.map_dialog(&mut c, "test.app", Some(folder), "", (300, 200));
+    let sibling = h.map_dialog(&mut c, "test.app", Some(folder), "", (300, 200));
     let failed = h.map_modal(&mut c, "test.app", folder, (120, 60));
     let other = h.map_toplevel(&mut c, "test.other", 100, 80);
     h.state.move_to(other.id, 900, 650);
     h.state.focus_window(other.id);
-    click_in(&mut h, progress.id);
+    click_in(&mut h, sibling.id);
     assert_eq!(h.state.focused, Some(failed.id));
     c.destroy(failed);
     h.roundtrip(&mut c);
