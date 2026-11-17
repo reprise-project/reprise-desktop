@@ -304,6 +304,8 @@ enum Cmd {
         buttons: Vec<String>,
         /// An icon name in place of [`Config::notify_icon`].
         icon: Option<String>,
+        /// How long the server keeps it up; `None` leaves it to the server.
+        expire: Option<Duration>,
     },
 }
 
@@ -329,6 +331,7 @@ impl TrayHandle {
             tag: None,
             buttons: Vec::new(),
             icon: None,
+            expire: None,
         });
     }
 
@@ -340,6 +343,7 @@ impl TrayHandle {
             tag: None,
             buttons: Vec::new(),
             icon: Some(icon.into()),
+            expire: None,
         });
     }
 
@@ -350,6 +354,7 @@ impl TrayHandle {
             tag: Some(tag),
             buttons: Vec::new(),
             icon: None,
+            expire: None,
         });
     }
 
@@ -361,6 +366,27 @@ impl TrayHandle {
             tag: Some(tag),
             buttons: buttons.iter().map(|b| b.to_string()).collect(),
             icon: None,
+            expire: None,
+        });
+    }
+
+    /// [`TrayHandle::notify_buttons`] for a balloon asking a decision, kept up for `expire`
+    /// in place of the server's default.
+    pub fn notify_ask(
+        &self,
+        summary: &str,
+        body: &str,
+        tag: u32,
+        buttons: &[&str],
+        expire: Duration,
+    ) {
+        let _ = self.commands.send_blocking(Cmd::Notify {
+            summary: summary.into(),
+            body: escape_markup(body),
+            tag: Some(tag),
+            buttons: buttons.iter().map(|b| b.to_string()).collect(),
+            icon: None,
+            expire: Some(expire),
         });
     }
 
@@ -383,6 +409,36 @@ impl TrayHandle {
             commands: async_channel::unbounded().0,
             token: Arc::new(Mutex::new(Some(handoff))),
         }
+    }
+
+    /// A handle with no tray behind it whose balloons land in the returned [`Sent`]: for the
+    /// applets' tests.
+    #[doc(hidden)]
+    pub fn recording() -> (TrayHandle, Sent) {
+        let (commands, rx) = async_channel::unbounded();
+        let handle = TrayHandle {
+            commands,
+            token: Token::default(),
+        };
+        (handle, Sent(rx))
+    }
+}
+
+/// The balloons a [`TrayHandle::recording`] handle sent.
+#[doc(hidden)]
+pub struct Sent(async_channel::Receiver<Cmd>);
+
+impl Sent {
+    /// Each balloon sent since the last call, as its summary and how long it asked to stay up.
+    pub fn balloons(&self) -> Vec<(String, Option<Duration>)> {
+        std::iter::from_fn(|| self.0.try_recv().ok())
+            .filter_map(|c| match c {
+                Cmd::Notify {
+                    summary, expire, ..
+                } => Some((summary, expire)),
+                Cmd::Set(_) => None,
+            })
+            .collect()
     }
 }
 
@@ -717,7 +773,7 @@ fn actions(clickable: bool, buttons: &[String]) -> Vec<String> {
 const BUTTON_KEY: &str = "button";
 
 /// A balloon: `Notify(app_name, replaces_id, icon, summary, body, actions, hints, timeout)`, with
-/// [`actions`] and [`notify_hints`]. The server's id for it, None when the call failed.
+/// [`actions`], [`notify_hints`] and [`expire_ms`]. The server's id for it, None when the call failed.
 async fn notify(
     conn: &Connection,
     config: &Config,
@@ -725,6 +781,7 @@ async fn notify(
     summary: &str,
     body: &str,
     actions: Vec<String>,
+    expire: Option<Duration>,
 ) -> Option<u32> {
     let proxy = Proxy::new(conn, NOTIFY_NAME, NOTIFY_PATH, NOTIFY_NAME)
         .await
@@ -733,7 +790,16 @@ async fn notify(
     let reply = proxy
         .call_method(
             "Notify",
-            &(config.id, 0u32, icon, summary, body, actions, hints, -1i32),
+            &(
+                config.id,
+                0u32,
+                icon,
+                summary,
+                body,
+                actions,
+                hints,
+                expire_ms(expire),
+            ),
         )
         .await;
     match reply.and_then(|m| m.body().deserialize::<u32>()) {
@@ -743,6 +809,11 @@ async fn notify(
             None
         }
     }
+}
+
+/// `Notify`'s timeout in ms: -1 leaves it to the server.
+fn expire_ms(expire: Option<Duration>) -> i32 {
+    expire.map_or(-1, |d| i32::try_from(d.as_millis()).unwrap_or(i32::MAX))
 }
 
 fn notify_hints(config: &Config) -> HashMap<&'static str, Variant<'static>> {
@@ -913,10 +984,11 @@ async fn run(conn: Connection, shared: Shared, commands: async_channel::Receiver
                 tag,
                 buttons,
                 icon,
+                expire,
             }) => {
                 let actions = actions(tag.is_some(), &buttons);
                 let icon = icon.as_deref().unwrap_or(config.notify_icon);
-                let id = notify(&conn, &config, icon, &summary, &body, actions).await;
+                let id = notify(&conn, &config, icon, &summary, &body, actions, expire).await;
                 if let (Some(id), Some(tag)) = (id, tag) {
                     clickable.0.insert(id, tag);
                 }
@@ -1202,6 +1274,18 @@ mod tests {
             })
             .collect();
         assert_eq!(icons, [Some("audio-headphones".into()), None]);
+    }
+
+    #[test]
+    fn an_ask_balloon_sends_its_time_and_other_balloons_leave_it_to_the_server() {
+        let (tray, sent) = TrayHandle::recording();
+        tray.notify_ask("New drive", "", 1, &["Unlock"], Duration::from_secs(30));
+        tray.notify_buttons("Received", "", 2, &["Open"]);
+        tray.notify("Plain", "");
+        let timeouts: Vec<i32> = (sent.balloons().into_iter())
+            .map(|(_, expire)| expire_ms(expire))
+            .collect();
+        assert_eq!(timeouts, [30_000, -1, -1]);
     }
 
     #[test]
