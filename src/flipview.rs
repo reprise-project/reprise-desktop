@@ -290,6 +290,8 @@ impl State {
             desk_drawn: None,
             desk_timer: None,
         });
+        // A window the preview panel shows stays awake until the stack shows or closes.
+        crate::taskpreview::hold(self);
         crate::taskpreview::hide(self);
         crate::snappickerview::hide(self);
         self.taskbar_hover(None, TaskbarHit::Nothing);
@@ -335,6 +337,7 @@ impl State {
             self.cards_changed();
         }
         self.flip_moved();
+        crate::taskpreview::release(self);
     }
 
     /// Turn the windows off on the stack's output, `area`: their layers,
@@ -858,6 +861,9 @@ impl State {
     /// tree, and show the windows again; with no other stack left, the
     /// frames draw for the desktop again.
     pub(crate) fn destroy_flip(&mut self, st: Stack) {
+        if !st.revealed() {
+            crate::taskpreview::release(self);
+        }
         for t in [st.reveal, st.desk_timer].into_iter().flatten() {
             self.handle.remove(t);
         }
@@ -1162,6 +1168,78 @@ mod tests {
         h.roundtrip(&mut c);
         assert!(h.state.live_previews.shows(a.id), "its card still does");
         assert_eq!(c.side.shells[a.shell].configures, before);
+    }
+
+    #[test]
+    fn opening_the_stack_over_a_minimized_windows_preview_panel_never_suspends_it() {
+        // Picked from its card, closed with no pick, released before the stack shows.
+        for end in ["pick", "cancel", "unseen"] {
+            let mut h = glass();
+            let mut c = h.connect();
+            let a = h.map_toplevel(&mut c, "one", 300, 200);
+            h.map_toplevel(&mut c, "two", 300, 200);
+            h.state.set_minimized(a.id, true);
+            let bar = &h.state.bars[0];
+            let i = (bar.slots.iter().position(|s| s.windows == [a.id])).expect("its task button");
+            let tree = bar.tree;
+            crate::taskpreview::hover(&mut h.state, tree, crate::taskbar::TaskbarHit::Task(i));
+            h.until("the panel", |s| s.task_preview.is_shown());
+            h.roundtrip(&mut c);
+            let heard = &c.side.shells[a.shell].suspended;
+            assert_eq!(
+                heard.last(),
+                Some(&false),
+                "its picture in the panel wakes it"
+            );
+            let heard = heard.len();
+            h.state.open_flip(crate::keys::MOD_LOGO);
+            h.roundtrip(&mut c);
+            assert!(
+                !h.state.task_preview.is_shown(),
+                "the stack takes the panel down"
+            );
+            if end == "unseen" {
+                h.state.switcher_commit();
+                h.roundtrip(&mut c);
+                assert_eq!(
+                    c.side.shells[a.shell].suspended[heard..],
+                    [true],
+                    "one Suspended once nothing shows it"
+                );
+                continue;
+            }
+            h.state.flip_reveal();
+            h.roundtrip(&mut c);
+            assert!(h.state.live_previews.shows(a.id), "its card shows it live");
+            assert_eq!(
+                c.side.shells[a.shell].suspended[heard..],
+                [false; 0],
+                "the panel's picture hands over to the card's with no configure"
+            );
+            if end == "pick" {
+                let st = h.state.switcher.stack.as_ref().unwrap();
+                let k = st.entries.iter().position(|&e| e == Entry::Window(a.id));
+                h.state.flip_select(k.expect("its card"));
+                h.state.switcher_commit();
+                assert!(!h.state.win(a.id).unwrap().minimized, "it came up");
+                h.roundtrip(&mut c);
+                assert!(
+                    !c.side.shells[a.shell].suspended[heard..].contains(&true),
+                    "never suspended between the panel and the pick"
+                );
+                h.state.switcher_cancel();
+                h.state.set_minimized(a.id, true);
+            } else {
+                h.state.switcher_escape();
+                h.state.switcher_cancel();
+            }
+            h.roundtrip(&mut c);
+            assert_eq!(
+                c.side.shells[a.shell].suspended.last(),
+                Some(&true),
+                "no picture outlives the stack, {end}"
+            );
+        }
     }
 
     #[test]
