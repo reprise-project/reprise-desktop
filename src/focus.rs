@@ -71,13 +71,22 @@ impl State {
             self.enter_keyboard(None);
             self.layers_shell.focused = None;
         }
-        if let Some(w) = self.focused.take() {
+        if self.focused.is_some() {
             self.redraw_changed(|s| {
-                s.set_activated(w, false);
-                s.redraw_frame(w);
+                s.unfocus();
                 s.redraw_taskbars();
                 crate::dim::frame(s);
             });
+        }
+    }
+
+    /// No window is focused any more: the one that was goes inactive and its frame draws so,
+    /// since nothing else redraws it while no window takes the focus.
+    pub(crate) fn unfocus(&mut self) {
+        if let Some(w) = self.focused.take() {
+            self.toplevels.dirty = true;
+            self.set_activated(w, false);
+            self.redraw_frame(w);
         }
     }
 
