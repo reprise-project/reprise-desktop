@@ -61,7 +61,7 @@ impl AppChooser {
         options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         if choices.is_empty() {
             log::warn!("AppChooser for {app_id:?}: no choices");
             return Ok((crate::RESPONSE_OTHER, HashMap::new()));
@@ -74,7 +74,7 @@ impl AppChooser {
         let (tx, rx) = mpsc::channel();
         let key = handle.to_string();
         self.live.lock().unwrap().insert(key.clone(), tx);
-        let out = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
+        let out = crate::with_request(server, &handle, &asker, None, move |cancel| {
             ask(&input, rx, cancel)
         })
         .await;

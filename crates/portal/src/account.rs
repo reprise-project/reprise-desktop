@@ -25,7 +25,7 @@ impl Account {
         options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, crate::Results)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         let reason = match options.get("reason") {
             Some(Variant::Str(s)) => s.to_string(),
             _ => String::new(),
@@ -35,7 +35,7 @@ impl Account {
             return Ok((crate::RESPONSE_OTHER, crate::Results::new()));
         };
         let (id, shown) = (app_id.clone(), me.clone());
-        let out = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
+        let out = crate::with_request(server, &handle, &asker, None, move |cancel| {
             let who = crate::permit::who(&crate::remotedesktop::display_name(&id));
             access::ask(&input(&who, &window, &reason, &shown), cancel)
         })

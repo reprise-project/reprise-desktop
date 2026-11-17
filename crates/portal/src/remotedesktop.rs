@@ -185,7 +185,7 @@ impl RemoteDesktop {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, StartResults)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         if live(&self.link).is_none() {
             return Ok((RESPONSE_OTHER, empty()));
         }
@@ -232,7 +232,7 @@ impl RemoteDesktop {
             let parent = parent.clone();
             let ask = self.ask;
             let session = Some((&self.sessions, key.as_str()));
-            let answer = crate::with_request(server, &handle, &self.frontend, session, move |c| {
+            let answer = crate::with_request(server, &handle, &asker, session, move |c| {
                 ask(
                     crate::permit::Kind::RemoteControl(crate::permit::Devices::from_mask(devices)),
                     &id,
@@ -292,7 +292,7 @@ impl RemoteDesktop {
                 };
                 match crate::pick_and_cast(
                     &self.sessions,
-                    &self.frontend,
+                    &asker,
                     server,
                     conn,
                     &handle,

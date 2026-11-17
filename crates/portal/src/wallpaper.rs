@@ -43,7 +43,7 @@ impl Wallpaper {
         options: HashMap<String, zbus::Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<u32> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         let takes = match options.get("set-on") {
             None => true,
             Some(zbus::Variant::Str(s)) => sets_the_desktop(s.as_str()),
@@ -70,33 +70,32 @@ impl Wallpaper {
         let items = vec![file_name(&path)];
         let shown = shows_preview(&app_id, show_preview);
         let id = app_id.clone();
-        let (allowed, bytes) =
-            crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
-                // The prompt decodes the bytes read above, so the picture shown is the one
-                // installed whatever the app's file holds by the time the prompt reads it.
-                let held = match shown.then(|| preview_file(&bytes)).transpose() {
-                    Ok(h) => h,
-                    Err(e) => {
-                        log::warn!("SetWallpaperURI: no preview: {e}");
-                        return (false, bytes);
-                    }
-                };
-                let preview = held.as_ref().map(|(_, p)| p.clone());
-                let input = crate::permit::Input {
-                    parent,
-                    app: crate::remotedesktop::display_name(&id),
-                    items,
-                    preview,
-                    ..Default::default()
-                };
-                let kind = crate::permit::Kind::Wallpaper;
-                let allowed = match remembered_applies(&real, &app_folders(&id)) {
-                    true => crate::permit::ask_remembered(kind, STORE, &id, &[], input, &cancel),
-                    false => crate::permit::ask_with(kind, input, &cancel).allowed(),
-                };
-                (allowed, bytes)
-            })
-            .await?;
+        let (allowed, bytes) = crate::with_request(server, &handle, &asker, None, move |cancel| {
+            // The prompt decodes the bytes read above, so the picture shown is the one
+            // installed whatever the app's file holds by the time the prompt reads it.
+            let held = match shown.then(|| preview_file(&bytes)).transpose() {
+                Ok(h) => h,
+                Err(e) => {
+                    log::warn!("SetWallpaperURI: no preview: {e}");
+                    return (false, bytes);
+                }
+            };
+            let preview = held.as_ref().map(|(_, p)| p.clone());
+            let input = crate::permit::Input {
+                parent,
+                app: crate::remotedesktop::display_name(&id),
+                items,
+                preview,
+                ..Default::default()
+            };
+            let kind = crate::permit::Kind::Wallpaper;
+            let allowed = match remembered_applies(&real, &app_folders(&id)) {
+                true => crate::permit::ask_remembered(kind, STORE, &id, &[], input, &cancel),
+                false => crate::permit::ask_with(kind, input, &cancel).allowed(),
+            };
+            (allowed, bytes)
+        })
+        .await?;
         if !allowed {
             log::info!("SetWallpaperURI for {app_id:?} denied");
             return Ok(crate::RESPONSE_CANCELLED);

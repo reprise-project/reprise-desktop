@@ -109,17 +109,61 @@ pub(crate) fn sender(hdr: &zbus::message::Header<'_>) -> String {
     hdr.sender().map(|s| s.to_string()).unwrap_or_default()
 }
 
+/// The cancel flag of every request with a dialog up, by the unique name that made it.
+type Requests = Arc<Mutex<Vec<(String, Arc<AtomicBool>)>>>;
+
 /// The unique name that owns `FRONTEND`, kept current by `watch_frontends`.
 #[derive(Clone, Default)]
 pub(crate) struct Frontend {
     owner: Arc<Mutex<Option<String>>>,
     conn: Arc<std::sync::OnceLock<zbus::Connection>>,
     identities: Arc<reprisebus::peer::Identities>,
+    requests: Requests,
+}
+
+/// A call [`Frontend::check`] let through, and the unique name it came from.
+pub(crate) struct Caller {
+    frontend: Frontend,
+    name: String,
+}
+
+impl Caller {
+    /// Note `cancel` as this caller's until the guard drops, so its leaving the bus sets it. Set
+    /// at once when the caller left before this.
+    fn hold(&self, cancel: &Arc<AtomicBool>) -> Held {
+        lock(&self.frontend.requests).push((self.name.clone(), cancel.clone()));
+        if !self.frontend.owns(&self.name) {
+            cancel.store(true, Ordering::SeqCst);
+        }
+        Held {
+            requests: self.frontend.requests.clone(),
+            cancel: cancel.clone(),
+        }
+    }
+}
+
+/// Keeps a request's cancel flag in [`Frontend`]'s list while its dialog is up.
+pub(crate) struct Held {
+    requests: Requests,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        lock(&self.requests).retain(|(_, c)| !Arc::ptr_eq(c, &self.cancel));
+    }
 }
 
 impl Frontend {
     fn set(&self, owner: Option<String>) {
         *lock(&self.owner) = owner;
+    }
+
+    /// Cancel every request `name` made that still has a dialog up.
+    fn cancel_requests_of(&self, name: &str) {
+        for (_, cancel) in lock(&self.requests).iter().filter(|(n, _)| n == name) {
+            cancel.store(true, Ordering::SeqCst);
+        }
     }
 
     /// Whether `name` owns `FRONTEND` as `watch_frontends` last heard.
@@ -131,7 +175,7 @@ impl Frontend {
     /// restore data and handles are taken on its word only. The owner of
     /// `FRONTEND` must also run outside any sandbox, since a sandboxed app
     /// may hold that name while xdg-desktop-portal does not.
-    pub(crate) async fn check(&self, hdr: &zbus::message::Header<'_>) -> zbus::fdo::Result<()> {
+    pub(crate) async fn check(&self, hdr: &zbus::message::Header<'_>) -> zbus::fdo::Result<Caller> {
         let cached = lock(&self.owner).clone();
         let sender = hdr.sender().map(|s| s.as_str());
         let conn = self.conn.get();
@@ -149,7 +193,10 @@ impl Frontend {
             _ => reprisebus::peer::AppIdentity::Unknown,
         };
         match identity {
-            reprisebus::peer::AppIdentity::Host { .. } => Ok(()),
+            reprisebus::peer::AppIdentity::Host { .. } => Ok(Caller {
+                frontend: self.clone(),
+                name: sender.unwrap_or_default().to_string(),
+            }),
             _ => Err(zbus::fdo::Error::AccessDenied(format!(
                 "{} owns {FRONTEND} but runs in a sandbox, or can't be told apart from one",
                 sender.unwrap_or("a peer without a name")
@@ -232,9 +279,9 @@ async fn owner_changes(conn: &zbus::Connection) -> zbus::Result<zbus::fdo::NameO
         .await
 }
 
-/// Follow `FRONTEND` to its owner, and end every session and inhibition of
-/// a frontend that left the bus (xdg-desktop-portal restarted or crashed),
-/// since nothing else would ever close them.
+/// Follow `FRONTEND` to its owner, and cancel every dialog and end every session and inhibition
+/// of a frontend that left the bus (xdg-desktop-portal restarted or crashed), since nothing else
+/// would ever close them.
 async fn watch_frontends(
     conn: zbus::Connection,
     mut changes: zbus::fdo::NameOwnerChangedStream,
@@ -251,6 +298,7 @@ async fn watch_frontends(
         if args.new_owner().is_some() {
             continue;
         }
+        frontend.cancel_requests_of(args.name());
         let gone = take_owned_by(&mut sessions.lock().unwrap(), args.name());
         for (key, data) in gone {
             log::info!("Session {key}: {} left the bus", args.name());
@@ -275,37 +323,38 @@ pub(crate) fn check_session(session_handle: &ObjectPath<'_>) -> zbus::fdo::Resul
     check_handle(session_handle, SESSION_PREFIX)
 }
 
-/// Serve the `Request` object at `handle` while a dialog is up, so the
-/// frontend can cancel it through `cancel`. Remove it with
-/// `server.remove::<Request, _>` once the dialog is gone.
+/// Serve the `Request` object at `handle` while a dialog is up, so the frontend can cancel it
+/// through `cancel`, as does `asker` leaving the bus while the returned guard lives. Remove it
+/// with `server.remove::<Request, _>` once the dialog is gone.
 pub(crate) async fn export_request(
     server: &zbus::ObjectServer,
     handle: &ObjectPath<'_>,
     cancel: Arc<AtomicBool>,
-    frontend: &Frontend,
-) -> zbus::fdo::Result<()> {
+    asker: &Caller,
+) -> zbus::fdo::Result<Held> {
     check_handle(handle, REQUEST_PREFIX)?;
     let request = Request {
-        cancel,
+        cancel: cancel.clone(),
         path: handle.to_string(),
-        frontend: frontend.clone(),
+        frontend: asker.frontend.clone(),
     };
     server.at(handle.clone(), request).await?;
-    Ok(())
+    Ok(asker.hold(&cancel))
 }
 
 /// Run `dialog` in the blocking pool with the `Request` at `handle` served, so the frontend's
-/// Close sets the flag it is given, and take the `Request` down after. With `session` (the map
-/// and a key), that session's `picking` holds the flag meanwhile, so its Close cancels too.
+/// Close or `asker` leaving the bus sets the flag it is given, and take the `Request` down
+/// after. With `session` (the map and a key), that session's `picking` holds the flag
+/// meanwhile, so its Close cancels too.
 pub(crate) async fn with_request<T: Send + 'static>(
     server: &zbus::ObjectServer,
     handle: &ObjectPath<'_>,
-    frontend: &Frontend,
+    asker: &Caller,
     session: Option<(&Sessions, &str)>,
     dialog: impl FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
 ) -> zbus::fdo::Result<T> {
     let cancel = Arc::new(AtomicBool::new(false));
-    export_request(server, handle, cancel.clone(), frontend).await?;
+    let _held = export_request(server, handle, cancel.clone(), asker).await?;
     let picking = |flag: Option<Arc<AtomicBool>>| {
         if let Some((sessions, key)) = session
             && let Some(s) = sessions.lock().unwrap().get_mut(key)
@@ -604,7 +653,7 @@ impl ScreenCast {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, StartResults)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         let key = session_handle.to_string();
         let parent = dialog::parent_handle(&parent_window);
         let caller = trusted::session_caller(conn, &key).await;
@@ -617,7 +666,7 @@ impl ScreenCast {
         };
         match pick_and_cast(
             &self.sessions,
-            &self.frontend,
+            &asker,
             server,
             conn,
             &handle,
@@ -674,7 +723,7 @@ pub(crate) enum Pick {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn pick_and_cast(
     sessions: &Sessions,
-    frontend: &Frontend,
+    asker: &Caller,
     server: &zbus::ObjectServer,
     conn: &zbus::Connection,
     handle: &ObjectPath<'_>,
@@ -697,7 +746,7 @@ pub(crate) async fn pick_and_cast(
         Pick::Recorder => cast::Capturer::Recorder,
     };
     let session = Some((sessions, key));
-    let chosen = with_request(server, handle, frontend, session, move |cancel| {
+    let chosen = with_request(server, handle, asker, session, move |cancel| {
         choose(types, restore, &app, persist_mode > 0, parent, cancel, pick)
     })
     .await
@@ -1797,8 +1846,77 @@ mod tests {
             &self,
             #[zbus(header)] hdr: zbus::message::Header<'_>,
         ) -> zbus::fdo::Result<()> {
-            self.0.check(&hdr).await
+            self.0.check(&hdr).await.map(drop)
         }
+    }
+
+    #[test]
+    fn a_dialog_whose_frontend_leaves_the_bus_is_cancelled_and_its_request_goes() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let portal = crate::lockmode::tests::connect(&bus).await;
+            let xdp = crate::lockmode::tests::connect(&bus).await;
+            let name = xdp.unique_name().unwrap().to_string();
+            let frontend = Frontend::default();
+            frontend.set(Some(name.clone()));
+            let changes = owner_changes(&portal).await.unwrap();
+            let (inhibits, _idle) = inhibit::shared();
+            let watch = watch_frontends(
+                portal.clone(),
+                changes,
+                frontend.clone(),
+                Sessions::default(),
+                inhibits,
+            );
+            zruntime::spawn(watch).detach();
+            let asker = Caller {
+                frontend: frontend.clone(),
+                name,
+            };
+            let handle = ObjectPath::try_from(format!("{REQUEST_PREFIX}1_1/t")).unwrap();
+            let shown = Arc::new(AtomicBool::new(false));
+            let up = shown.clone();
+            let dialog = with_request(portal.object_server(), &handle, &asker, None, move |c| {
+                up.store(true, Ordering::SeqCst);
+                let end = std::time::Instant::now() + reprisebus::testbus::REPLY;
+                while !c.load(Ordering::SeqCst) && std::time::Instant::now() < end {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                c.load(Ordering::SeqCst)
+            });
+            let leave = async {
+                while !shown.load(Ordering::SeqCst) {
+                    async_io::Timer::after(std::time::Duration::from_millis(5)).await;
+                }
+                xdp.close().await.unwrap();
+            };
+            let (cancelled, ()) = futures_lite::future::zip(dialog, leave).await;
+            assert!(cancelled.unwrap(), "the dialog is cancelled");
+            let served = portal
+                .object_server()
+                .interface::<_, Request>(&handle)
+                .await;
+            assert!(served.is_err(), "no Request object stays behind");
+            assert!(lock(&frontend.requests).is_empty());
+        });
+    }
+
+    #[test]
+    fn a_dialog_for_a_frontend_that_left_before_it_opened_is_cancelled_at_once() {
+        let frontend = Frontend::default();
+        frontend.set(Some(":1.9".into()));
+        let asker = Caller {
+            frontend: frontend.clone(),
+            name: ":1.5".into(),
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let held = asker.hold(&cancel);
+        assert!(cancel.load(Ordering::SeqCst));
+        drop(held);
+        assert!(lock(&frontend.requests).is_empty());
     }
 
     #[test]

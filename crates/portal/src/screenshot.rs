@@ -58,7 +58,7 @@ impl Screenshot {
         options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         log::info!("Screenshot for {app_id:?}");
         let plan = match plan(&options) {
             Ok(p) => p,
@@ -68,7 +68,7 @@ impl Screenshot {
             }
         };
         let shot = match self
-            .choose(plan, server, &handle, &app_id, &parent_window)
+            .choose(plan, server, &handle, &asker, &app_id, &parent_window)
             .await?
         {
             Ok(Some(shot)) => shot,
@@ -107,13 +107,13 @@ impl Screenshot {
         _options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         log::info!("PickColor for {app_id:?}");
         let Some(pick) = crate::inputlink::live(&self.link).and_then(|l| l.pick_color()) else {
             log::warn!("PickColor: the compositor has no colour picker");
             return Ok((crate::RESPONSE_OTHER, HashMap::new()));
         };
-        Ok(picked(self.heard(server, &handle, &pick).await?))
+        Ok(picked(self.heard(server, &handle, &asker, &pick).await?))
     }
 }
 
@@ -125,6 +125,7 @@ impl Screenshot {
         plan: Plan,
         server: &zbus::ObjectServer,
         handle: &ObjectPath<'_>,
+        asker: &crate::Caller,
         app_id: &str,
         parent_window: &str,
     ) -> zbus::fdo::Result<Result<Option<Shot>, String>> {
@@ -133,7 +134,7 @@ impl Screenshot {
         Ok(match plan {
             Plan::Pick(types) => {
                 let id = app_id.to_string();
-                let picked = crate::with_request(server, handle, &self.frontend, None, move |c| {
+                let picked = crate::with_request(server, handle, asker, None, move |c| {
                     pick(&id, parent, c, types)
                 });
                 Ok(picked.await?.map(Shot::Of))
@@ -142,12 +143,12 @@ impl Screenshot {
                 let id = app_id.to_string();
                 let name = blocking::unblock(move || crate::remotedesktop::display_name(&id)).await;
                 match link.and_then(|l| l.pick_area(&name)) {
-                    Some(p) => Ok(self.heard(server, handle, &p).await?.map(Shot::Area)),
+                    Some(p) => Ok(self.heard(server, handle, asker, &p).await?.map(Shot::Area)),
                     None => Err("the compositor has no region select".into()),
                 }
             }
             Plan::Desktop { ask } => {
-                let denied = ask && !self.allowed(server, handle, app_id, parent).await?;
+                let denied = ask && !self.allowed(server, handle, asker, app_id, parent).await?;
                 Ok((!denied).then_some(Shot::Desktop))
             }
             Plan::ActiveWindow { ask } => {
@@ -158,7 +159,7 @@ impl Screenshot {
                 let Some(window) = query.answer().await else {
                     return Ok(Err("no window has the focus".into()));
                 };
-                let denied = ask && !self.allowed(server, handle, app_id, parent).await?;
+                let denied = ask && !self.allowed(server, handle, asker, app_id, parent).await?;
                 Ok((!denied).then_some(Shot::Of(Target::Toplevel(window))))
             }
         })
@@ -169,11 +170,12 @@ impl Screenshot {
         &self,
         server: &zbus::ObjectServer,
         handle: &ObjectPath<'_>,
+        asker: &crate::Caller,
         app_id: &str,
         parent: Option<String>,
     ) -> zbus::fdo::Result<bool> {
         let id = app_id.to_string();
-        crate::with_request(server, handle, &self.frontend, None, move |cancel| {
+        crate::with_request(server, handle, asker, None, move |cancel| {
             let kind = crate::permit::Kind::Screenshot;
             crate::permit::ask(kind, &id, Vec::new(), false, parent, cancel).allowed()
         })
@@ -181,15 +183,16 @@ impl Screenshot {
     }
 
     /// `pick`'s answer, with the `Request` at `handle` served meanwhile; None once the frontend
-    /// closes it.
+    /// closes it or `asker` leaves the bus.
     async fn heard<T>(
         &self,
         server: &zbus::ObjectServer,
         handle: &ObjectPath<'_>,
+        asker: &crate::Caller,
         pick: &crate::inputlink::PickHandle<T>,
     ) -> zbus::fdo::Result<Option<T>> {
         let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, handle, cancel.clone(), &self.frontend).await?;
+        let _held = crate::export_request(server, handle, cancel.clone(), asker).await?;
         let answer = futures_lite::future::or(pick.answer(), closed(&cancel)).await;
         let _ = server.remove::<crate::Request, _>(handle.clone()).await;
         Ok(answer)
