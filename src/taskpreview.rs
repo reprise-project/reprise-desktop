@@ -154,11 +154,21 @@ pub fn clicked(state: &mut State, cell: Option<usize>) {
     let at = state.pointer_location();
     let (cx, cy) = (at.x.floor() as i32, at.y.floor() as i32);
     let on_close = taskpreview::close_hit(&p.layout, p.hot, cx - r.x, cy - r.y) == Some(i);
+    // The pictures go after the window comes up, so a minimized one is never suspended in between.
+    let pictures: Vec<ThumbId> = (state.task_preview.shown.as_mut())
+        .map(|p| std::mem::take(&mut p.thumbs))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .collect();
     hide(state);
     if on_close {
         state.close(w);
     } else if state.task_windows().contains(&w) {
         state.bring_up(w);
+    }
+    for id in pictures {
+        state.thumb_drop(id);
     }
 }
 
@@ -392,6 +402,32 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picking_a_minimized_window_in_the_preview_panel_never_suspends_it() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "one", 300, 200);
+        h.map_toplevel(&mut c, "two", 300, 200);
+        h.state.set_minimized(a.id, true);
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.shells[a.shell].suspended.last(), Some(&true));
+        let bar = &h.state.bars[0];
+        let (tree, i) = (bar.tree, bar.slots.iter().position(|s| s.windows == [a.id]));
+        show(&mut h.state, tree, i.expect("its task button"));
+        h.roundtrip(&mut c);
+        let heard = &c.side.shells[a.shell].suspended;
+        assert_eq!(heard.last(), Some(&false), "its picture wakes it");
+        let heard = heard.len();
+        clicked(&mut h.state, Some(0));
+        h.roundtrip(&mut c);
+        assert!(!h.state.win(a.id).unwrap().minimized, "it came up");
+        assert!(
+            !c.side.shells[a.shell].suspended[heard..].contains(&true),
+            "never suspended between the pictures and the restore"
+        );
+    }
 
     #[test]
     fn the_preview_bounds_are_the_screen_side_of_the_bar() {
