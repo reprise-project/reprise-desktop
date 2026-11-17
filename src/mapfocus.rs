@@ -1,4 +1,4 @@
-//! Whether a toplevel takes the keyboard when it first maps: when it presents a trusted activation token, belongs to or is owned by the focused window's program, Reprise just started or clicked its program, is one of Reprise's own prompts (a Bluetooth device's included), or nothing has focus. Any other window maps behind the focused one, so a background program cannot pop up mid-typing and read the keys.
+//! Whether a toplevel takes the keyboard when it first maps: when it presents a trusted activation token, belongs to or is owned by the focused window's program, Reprise just started or clicked its program, follows its program's window that just left with the keyboard, is one of Reprise's own prompts (a Bluetooth device's included), or nothing has focus. Any other window maps behind the focused one, so a background program cannot pop up mid-typing and read the keys.
 
 use crate::mutex::lock;
 use std::sync::Mutex;
@@ -59,6 +59,35 @@ pub fn give_back(launch: Launch) {
     }
 }
 
+/// How long after a window leaves with the keyboard a window of its program maps with it in its
+/// place: the box a program puts up once the one before it is answered.
+pub const HANDOVER: Duration = Duration::from_secs(1);
+
+/// A window that left while it had the keyboard: its client, the window the keyboard went to
+/// (`heir`) and when.
+#[derive(Clone, Copy, Debug)]
+pub struct Handover {
+    pub client: usize,
+    pub heir: Option<crate::window::WindowId>,
+    pub at: Instant,
+}
+
+impl Handover {
+    /// Whether a window of `client` mapping at `now` takes the keyboard back: within [`HANDOVER`],
+    /// with the keyboard still on the heir (`focused`), so a window the user turned to since keeps
+    /// it.
+    pub fn hands_to(
+        &self,
+        client: Option<usize>,
+        focused: Option<crate::window::WindowId>,
+        now: Instant,
+    ) -> bool {
+        client == Some(self.client)
+            && focused == self.heir
+            && now.saturating_duration_since(self.at) < HANDOVER
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Arrival<'a> {
     pub activated: bool,
@@ -73,6 +102,8 @@ pub struct Arrival<'a> {
     pub launched: bool,
     /// A prompt another program or device asked for ([`is_prompt_window`]).
     pub prompt: bool,
+    /// Its program's window left with the keyboard a moment ago ([`Handover::hands_to`]).
+    pub handed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -97,7 +128,7 @@ pub fn takes_focus(new: &Arrival, focused: Option<Holder>) -> bool {
     };
     let same_client = new.client.is_some() && new.client == f.client;
     let descends = holds_focus(new.lineage, new.session, Some(f));
-    new.activated || new.launched || new.prompt || same_client || descends || f.owns
+    new.activated || new.launched || new.prompt || new.handed || same_client || descends || f.owns
 }
 
 /// Whether the process `lineage` and `session` describe is the program `focused` holds the

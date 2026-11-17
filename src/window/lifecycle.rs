@@ -599,6 +599,7 @@ impl State {
         self.focus_order.retain(|p| *p != w);
         let launch = self.win_mut(w).and_then(|x| x.launch.take());
         if self.focused == Some(w) {
+            self.note_handover(w);
             self.focused = None;
             self.toplevels.dirty = true;
             if let Some(l) = launch {
