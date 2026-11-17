@@ -326,13 +326,14 @@ fn redraw(state: &mut State) {
     let mut titles = Vec::new();
     let mut app_ids = Vec::new();
     let mut active = Vec::new();
+    let live = state.active_task_window();
     for &w in &windows {
         let Some(win) = state.win(w) else {
             return;
         };
         titles.push(win.title());
         app_ids.push(win.app_id());
-        active.push(state.focused == Some(w) && !win.minimized);
+        active.push(live == Some(w));
     }
     let mut icon = |app_id: &str, px: i32| {
         crate::taskbarview::app_icon(&mut state.icons, &state.app_index, app_id, px)

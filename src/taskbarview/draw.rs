@@ -140,6 +140,7 @@ impl State {
             Cow::Owned(base.scaled(scale))
         };
         let px = theme.icon_size();
+        let active = self.active_task_window();
         let icons = &mut self.icons;
         let pinned = self.config.taskbar.pinned;
         // No band with Toolbars > Quick Launch unchecked, nor while
@@ -240,10 +241,9 @@ impl State {
                 .and_then(|(g, ic)| glow_colour(g, ic))
         };
         let index = &self.app_index;
-        let focused = self.focused;
         let wins = &self.windows;
         let win = |i: usize| wins.iter().find(|w| w.id == windows[i]);
-        let live = |i: &usize| win(*i).is_some_and(|w| focused == Some(w.id) && !w.minimized);
+        let live = |i: &usize| active == Some(windows[*i]);
         let entries: Vec<TaskEntry> = slots
             .iter()
             .map(|slot| {

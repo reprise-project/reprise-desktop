@@ -9,7 +9,8 @@ impl State {
             let v = self.dialogs.views.iter().find(|v| v.id == id)?;
             return Some((v.dialog.title.clone(), self.active_dialog_id() == Some(id)));
         }
-        let live = |w: &crate::window::Window| self.focused == Some(w.id) && !w.minimized;
+        let active = self.active_task_window();
+        let live = |w: &crate::window::Window| active == Some(w.id);
         let wins: Vec<&crate::window::Window> = (bar.slots.get(i)?.windows.iter())
             .filter_map(|&w| self.win(w))
             .collect();
