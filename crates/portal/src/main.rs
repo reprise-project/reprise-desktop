@@ -1367,6 +1367,7 @@ async fn serve(
                 sessions: sessions.clone(),
                 link: link.clone(),
                 frontend: frontend(),
+                config: shortcutconf::read,
             },
         )
         .serve_at(
