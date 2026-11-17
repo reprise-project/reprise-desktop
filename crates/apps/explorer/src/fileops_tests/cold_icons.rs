@@ -170,7 +170,7 @@ fn the_chooser_wears_its_cold_icons_once_they_land() {
         app_with_icon("Viewer", "viewer", "viewer-icon"),
     ]
     .into();
-    ex.choose_program_for(&path, false, &mut ctx);
+    ex.choose_program_for(&path, None, &mut ctx);
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
     let worn = |ex: &Explorer| match ex.dialog() {
         Some(Dialog::ChooseProgram(c)) => {
@@ -293,13 +293,14 @@ fn a_sheets_picks_wear_their_cold_icons_once_they_land_and_a_broken_one_gives_wa
     ex.open_properties(&notes, "notes.txt", "notes.txt", &mut ctx);
     land_until(&mut ex, &mut ctx, |ex| ex.props.is_some());
     assert_eq!(worn(&ex, "opens_icon"), Some(Some(DRAWN)), "Editor's");
-    ex.props_set_opens_with("Viewer".into(), Some("viewer-icon".into()), &mut ctx);
+    let sheet = ex.props.as_ref().expect("the sheet").id();
+    ex.props_set_opens_with(sheet, "Viewer".into(), Some("viewer-icon".into()), &mut ctx);
     assert_eq!(worn(&ex, "opens_icon"), Some(Some(0)), "a stand-in");
     land_until(&mut ex, &mut ctx, |ex| {
         worn(ex, "opens_icon") == Some(Some(THIRD))
     });
     assert_eq!(worn(&ex, "opens_icon"), Some(Some(THIRD)));
-    ex.props_set_opens_with("Player".into(), Some("player-icon".into()), &mut ctx);
+    ex.props_set_opens_with(sheet, "Player".into(), Some("player-icon".into()), &mut ctx);
     land_until(&mut ex, &mut ctx, |ex| worn(ex, "opens_icon") == Some(None));
     assert_eq!(
         worn(&ex, "opens_icon"),

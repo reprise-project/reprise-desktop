@@ -317,7 +317,7 @@ fn a_failure_behind_the_chooser_comes_up_when_it_closes() {
     std::fs::write(dir.join("x.txt"), "x").expect("write");
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
-    ex.choose_program_for(&dir.join("x.txt"), false, &mut ctx);
+    ex.choose_program_for(&dir.join("x.txt"), None, &mut ctx);
 
     ex.run(Command::Paste, &mut ctx);
     ex.pasted(

@@ -90,7 +90,7 @@ fn raise(i: usize) -> Option<Raised> {
             crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
             kept = Some(dest.join("a.txt"));
         }
-        3 => drop(ex.choose_program_for(&dest.join("a.txt"), false, &mut ctx)),
+        3 => drop(ex.choose_program_for(&dest.join("a.txt"), None, &mut ctx)),
         4 => {
             let form = crate::props_dialog::attr_form(
                 &reprisefs::props::AttrMoves::default(),

@@ -155,9 +155,9 @@ pub struct ChooseProgram {
     pub path: PathBuf,
     pub mime: Option<String>,
     pub ow: OpenWith,
-    /// The Properties sheet's Change... raised it: OK writes the default
-    /// and puts the program on the sheet instead of running it.
-    pub set_default: bool,
+    /// The Properties sheet whose Change... raised it: OK writes the default
+    /// and puts the program on that sheet instead of running it.
+    pub sheet: Option<SheetId>,
     pub icon: Option<Canvas>,
     pub row_icons: Vec<Option<Canvas>>,
     /// The icons `icon` and `row_icons` wear stand-ins for ([`ChooseProgram::wear_icons`]).
@@ -279,7 +279,7 @@ impl Dialog {
             Dialog::AttrConfirm(_) | Dialog::Advanced { .. } | Dialog::ChangeIcon { .. } => {
                 Some(crate::props_dialog::PROPS)
             }
-            Dialog::ChooseProgram(cp) if cp.set_default => Some(crate::props_dialog::PROPS),
+            Dialog::ChooseProgram(cp) => cp.sheet.map(|s| s.win),
             Dialog::Message { sheet, .. } => sheet.map(|s| s.win),
             _ => None,
         }

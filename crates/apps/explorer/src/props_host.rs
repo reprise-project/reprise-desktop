@@ -691,11 +691,11 @@ impl Explorer {
                 if let Some(r) = self.checksums_event(ev, ctx) {
                     return r;
                 }
-                if let form::Event::Pressed(CHANGE) = ev {
-                    let path = self.props.as_ref().map(|p| p.info.path.clone());
-                    if let Some(path) = path {
-                        return self.change_default(&path, ctx);
-                    }
+                if let form::Event::Pressed(CHANGE) = ev
+                    && let Some((path, sheet)) =
+                        (self.props.as_ref()).map(|p| (p.info.path.clone(), p.id()))
+                {
+                    return self.change_default(&path, sheet, ctx);
                 }
                 if let form::Event::Pressed(RESTORE) = ev
                     && let Some(item) = self.props.as_ref().and_then(|p| p.restore.clone())
@@ -1200,18 +1200,20 @@ impl Explorer {
 
     /// The sheet's Change...: the Open With chooser with "always" checked and greyed, since this
     /// one only writes the default.
-    fn change_default(&mut self, path: &Path, ctx: &mut Ctx) -> Reply {
-        self.choose_program_for(path, true, ctx)
+    fn change_default(&mut self, path: &Path, sheet: SheetId, ctx: &mut Ctx) -> Reply {
+        self.choose_program_for(path, Some(sheet), ctx)
     }
 
-    /// The sheet's opens-with line names the program Change... picked, and wears its icon.
+    /// Sheet `sheet`'s opens-with line names the program its Change... picked, and wears its
+    /// icon.
     pub(crate) fn props_set_opens_with(
         &mut self,
+        sheet: SheetId,
         name: String,
         icon: Option<String>,
         ctx: &mut Ctx,
     ) {
-        let Some(p) = self.props.as_mut() else {
+        let Some(p) = self.props.as_mut().filter(|p| p.id() == sheet) else {
             return;
         };
         p.general_mut().set_text("v_opens", &name);
