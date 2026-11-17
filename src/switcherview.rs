@@ -950,6 +950,58 @@ mod tests {
         assert!(!c.side.shells[low.shell].suspended[heard..].contains(&true));
     }
 
+    #[test]
+    fn alt_tab_from_the_overview_never_suspends_a_minimized_window() {
+        for end in ["pick", "cancel"] {
+            let text = "[switcher]\npeek = false\n";
+            let mut h = Harness::with_config(crate::config::Config::parse(text).unwrap());
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            let low = h.map_toplevel(&mut c, "low", 300, 200);
+            h.map_toplevel(&mut c, "top", 300, 200);
+            h.state.set_minimized(low.id, true);
+            h.state.open_overview();
+            h.roundtrip(&mut c);
+            let heard = &c.side.shells[low.shell].suspended;
+            assert_eq!(heard.last(), Some(&false), "its cell wakes it");
+            let heard = heard.len();
+            h.state
+                .run_action(&crate::config::Action::Cycle, crate::keys::MOD_ALT);
+            h.roundtrip(&mut c);
+            assert!(h.state.overview.view.is_none(), "the switcher takes over");
+            assert!(h.state.live_previews.shows(low.id), "the switcher shows it");
+            assert_eq!(
+                c.side.shells[low.shell].suspended[heard..],
+                [false; 0],
+                "the cell's picture hands over to the switcher's with no configure"
+            );
+            if end == "pick" {
+                h.state.switcher_commit();
+                h.roundtrip(&mut c);
+                assert!(!h.state.win(low.id).unwrap().minimized, "it came up");
+                assert!(
+                    !c.side.shells[low.shell].suspended[heard..].contains(&true),
+                    "never suspended between the overview and the pick"
+                );
+                h.state.set_minimized(low.id, true);
+                h.roundtrip(&mut c);
+                assert_eq!(
+                    c.side.shells[low.shell].suspended.last(),
+                    Some(&true),
+                    "minimized again, nothing shows it"
+                );
+            } else {
+                h.state.switcher_cancel();
+                h.roundtrip(&mut c);
+                assert_eq!(
+                    c.side.shells[low.shell].suspended[heard..],
+                    [true],
+                    "one Suspended once nothing shows it"
+                );
+            }
+        }
+    }
+
     const ALT: u32 = 56;
     const SHIFT: u32 = 42;
     const GRAVE: u32 = 41;

@@ -45,6 +45,8 @@ pub struct Overviews {
     pub view: Option<OverviewView>,
     taken: Vec<u32>,
     pub corner: crate::hotcorner::Corner,
+    /// The pictures `overview_hold_pictures` took out of the overview, until `overview_drop_held`.
+    held: Vec<ThumbId>,
 }
 
 pub struct OverviewView {
@@ -589,17 +591,30 @@ impl State {
         };
         let w = v.windows.get(i).copied();
         let assist = v.assist.clone();
-        // The pictures go after the window comes up, so a minimized one is never suspended in
-        // between.
-        let pictures: Vec<ThumbId> = (v.grids.iter_mut())
-            .flat_map(|g| std::mem::take(&mut g.thumbs))
-            .flatten()
-            .collect();
+        self.overview_hold_pictures();
         self.close_overview();
         if let Some(w) = w {
             self.overview_bring_up(w, assist);
         }
-        for id in pictures {
+        self.overview_drop_held();
+    }
+
+    /// Take the pictures out of the open overview before closing it for something that brings a
+    /// window up or shows it again; `overview_drop_held` drops them after, so a minimized window is
+    /// never suspended in between.
+    pub fn overview_hold_pictures(&mut self) {
+        self.overview_drop_held();
+        let o = &mut self.overview;
+        if let Some(v) = o.view.as_mut() {
+            o.held = (v.grids.iter_mut())
+                .flat_map(|g| std::mem::take(&mut g.thumbs))
+                .flatten()
+                .collect();
+        }
+    }
+
+    pub fn overview_drop_held(&mut self) {
+        for id in std::mem::take(&mut self.overview.held) {
             self.thumb_drop(id);
         }
     }

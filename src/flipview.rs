@@ -290,7 +290,8 @@ impl State {
             desk_drawn: None,
             desk_timer: None,
         });
-        // A window the preview panel shows stays awake until the stack shows or closes.
+        // A window the preview panel or the overview showed stays awake until the stack shows
+        // or closes.
         crate::taskpreview::hold(self);
         crate::taskpreview::hide(self);
         crate::snappickerview::hide(self);
@@ -338,6 +339,7 @@ impl State {
         }
         self.flip_moved();
         crate::taskpreview::release(self);
+        self.overview_drop_held();
     }
 
     /// Turn the windows off on the stack's output, `area`: their layers,
@@ -863,6 +865,7 @@ impl State {
     pub(crate) fn destroy_flip(&mut self, st: Stack) {
         if !st.revealed() {
             crate::taskpreview::release(self);
+            self.overview_drop_held();
         }
         for t in [st.reveal, st.desk_timer].into_iter().flatten() {
             self.handle.remove(t);
@@ -1239,6 +1242,79 @@ mod tests {
                 Some(&true),
                 "no picture outlives the stack, {end}"
             );
+        }
+    }
+
+    #[test]
+    fn super_tab_from_the_overview_never_suspends_a_minimized_window() {
+        // Picked from its card, closed with no pick, released before the stack shows.
+        for end in ["pick", "cancel", "unseen"] {
+            let mut h = glass();
+            let mut c = h.connect();
+            let a = h.map_toplevel(&mut c, "one", 300, 200);
+            h.map_toplevel(&mut c, "two", 300, 200);
+            h.state.set_minimized(a.id, true);
+            h.state.open_overview();
+            h.roundtrip(&mut c);
+            let heard = &c.side.shells[a.shell].suspended;
+            assert_eq!(heard.last(), Some(&false), "its cell wakes it");
+            let heard = heard.len();
+            h.state
+                .run_action(&crate::config::Action::Flip, crate::keys::MOD_LOGO);
+            h.roundtrip(&mut c);
+            assert!(h.state.overview.view.is_none(), "the stack takes over");
+            assert_eq!(
+                c.side.shells[a.shell].suspended[heard..],
+                [false; 0],
+                "awake until the stack shows"
+            );
+            if end == "unseen" {
+                h.state.switcher_commit();
+                h.roundtrip(&mut c);
+                assert_eq!(
+                    c.side.shells[a.shell].suspended[heard..],
+                    [true],
+                    "one Suspended once nothing shows it"
+                );
+                continue;
+            }
+            h.state.flip_reveal();
+            h.roundtrip(&mut c);
+            assert!(h.state.live_previews.shows(a.id), "its card shows it live");
+            assert_eq!(
+                c.side.shells[a.shell].suspended[heard..],
+                [false; 0],
+                "the cell's picture hands over to the card's with no configure"
+            );
+            if end == "pick" {
+                let st = h.state.switcher.stack.as_ref().unwrap();
+                let k = st.entries.iter().position(|&e| e == Entry::Window(a.id));
+                h.state.flip_select(k.expect("its card"));
+                h.state.switcher_commit();
+                assert!(!h.state.win(a.id).unwrap().minimized, "it came up");
+                h.roundtrip(&mut c);
+                assert!(
+                    !c.side.shells[a.shell].suspended[heard..].contains(&true),
+                    "never suspended between the overview and the pick"
+                );
+                h.state.switcher_cancel();
+                h.state.set_minimized(a.id, true);
+                h.roundtrip(&mut c);
+                assert_eq!(
+                    c.side.shells[a.shell].suspended.last(),
+                    Some(&true),
+                    "minimized again, nothing shows it"
+                );
+            } else {
+                h.state.switcher_escape();
+                h.state.switcher_cancel();
+                h.roundtrip(&mut c);
+                assert_eq!(
+                    c.side.shells[a.shell].suspended[heard..],
+                    [true],
+                    "one Suspended once nothing shows it"
+                );
+            }
         }
     }
 

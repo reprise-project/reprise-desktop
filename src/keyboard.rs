@@ -721,6 +721,9 @@ impl State {
                 self.close_launcher();
                 self.close_clipview();
                 self.close_emoji();
+                // The overview's pictures go once the switcher has made its own: the 3D switcher
+                // makes them as it shows (`flip_reveal`).
+                self.overview_hold_pictures();
                 self.close_overview();
                 crate::snappickerview::hide(self);
                 if *a == Action::CycleApp {
@@ -734,6 +737,9 @@ impl State {
                     self.open_switcher(bind_mods);
                 } else {
                     self.cycle_focus();
+                }
+                if self.switcher.stack.as_ref().is_none_or(|st| st.revealed()) {
+                    self.overview_drop_held();
                 }
             }
             Action::Maximize => {
