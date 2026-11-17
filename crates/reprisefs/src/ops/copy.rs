@@ -30,7 +30,10 @@ pub(crate) fn build_dir(src: &Path, dest: &Path, stop: &AtomicBool) -> io::Resul
     copy_entries(entries, dest, 0, stop, &mut folders)
         .and_then(|()| {
             folders.push((src.to_path_buf(), dest.to_path_buf()));
-            (folders.iter()).try_for_each(|(from, to)| copy_dir_meta(from, to))
+            (folders.iter()).try_for_each(|(from, to)| {
+                let under = to.strip_prefix(dest).unwrap_or(Path::new(""));
+                copy_dir_meta(from, to).map_err(|e| in_tree(under, e))
+            })
         })
         .inspect_err(|_| {
             let _ = remove_tree(dest);
@@ -92,27 +95,84 @@ fn copy_entries(
             hook(&to);
             BEFORE_ENTRY.set(Some(hook));
         }
-        let from = entry.path();
-        let clash = |e: io::Error| twin_name(e, &to);
-        // `symlink_metadata`, not `is_dir`: the latter follows the link.
-        let kind = std::fs::symlink_metadata(&from)?.file_type();
-        if kind.is_symlink() {
-            std::os::unix::fs::symlink(std::fs::read_link(&from)?, &to).map_err(clash)?;
-        } else if kind.is_dir() {
-            if depth + 1 >= MAX_DEPTH {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("The folder is more than {MAX_DEPTH} levels deep."),
-                ));
-            }
-            let entries = read_then_create(&from, &to).map_err(clash)?;
-            copy_entries(entries, &to, depth + 1, stop, folders)?;
-            folders.push((from, to));
-        } else if kind.is_file() {
-            copy_new(&from, &to).map_err(clash)?;
-        }
+        let name = entry.file_name();
+        copy_entry(entry.path(), to, depth, stop, folders)
+            .map_err(|e| in_tree(name.as_ref(), e))?;
     }
     Ok(())
+}
+
+/// One entry of [`copy_entries`], `from` copied to `to`.
+fn copy_entry(
+    from: std::path::PathBuf,
+    to: std::path::PathBuf,
+    depth: usize,
+    stop: &AtomicBool,
+    folders: &mut Vec<(std::path::PathBuf, std::path::PathBuf)>,
+) -> io::Result<()> {
+    let clash = |e: io::Error| twin_name(e, &to);
+    // `symlink_metadata`, not `is_dir`: the latter follows the link.
+    let kind = std::fs::symlink_metadata(&from)?.file_type();
+    if kind.is_symlink() {
+        std::os::unix::fs::symlink(std::fs::read_link(&from)?, &to).map_err(clash)?;
+    } else if kind.is_dir() {
+        if depth + 1 >= MAX_DEPTH {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("The folder is more than {MAX_DEPTH} levels deep."),
+            ));
+        }
+        let entries = read_then_create(&from, &to).map_err(clash)?;
+        copy_entries(entries, &to, depth + 1, stop, folders)?;
+        folders.push((from, to));
+    } else if kind.is_file() {
+        copy_new(&from, &to).map_err(clash)?;
+    }
+    Ok(())
+}
+
+/// `e`, met at `under` inside a folder being copied, named by that path: "sub/locked: Permission
+/// denied". One already named gains `under` in front; the kind stays, the OS error is the `source`.
+/// An error that is its own sentence (a cancel, a twin name, a tree too deep) is about the whole
+/// copy and passes as it is, as does any at an empty `under` (the folder itself).
+pub(crate) fn in_tree(under: &Path, e: io::Error) -> io::Error {
+    let kind = e.kind();
+    let named = match e.get_ref() {
+        _ if under.as_os_str().is_empty() => return e,
+        None => InTree {
+            under: under.to_path_buf(),
+            error: e,
+        },
+        Some(inner) if inner.is::<InTree>() => {
+            let inner = e.into_inner().and_then(|i| i.downcast::<InTree>().ok());
+            let InTree { under: rest, error } = *inner.expect("checked above");
+            InTree {
+                under: under.join(rest),
+                error,
+            }
+        }
+        Some(_) => return e,
+    };
+    io::Error::new(kind, named)
+}
+
+/// The payload of [`in_tree`]'s error.
+#[derive(Debug)]
+struct InTree {
+    under: std::path::PathBuf,
+    error: io::Error,
+}
+
+impl std::fmt::Display for InTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}: {}", self.under.display(), self.error)
+    }
+}
+
+impl std::error::Error for InTree {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
 }
 
 #[cfg(test)]

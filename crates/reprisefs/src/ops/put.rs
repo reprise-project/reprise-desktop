@@ -1,3 +1,4 @@
+use super::copy::in_tree;
 use super::{
     DropOp, MAX_DEPTH, can_write, copy_dir_until, copy_new, inside, refuse_holding_mount,
     refuse_mount_point, resolved, unique_path,
@@ -633,47 +634,54 @@ fn merge_into(
         go_on(stop)?;
         let (from, to) = (entry.path(), dest.join(entry.file_name()));
         let under = rel.join(entry.file_name());
-        let meta = std::fs::symlink_metadata(&from)?;
-        let kind = meta.file_type();
-        if !merges(kind, moving) {
-            continue;
-        }
-        match std::fs::symlink_metadata(&to) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                if moving {
-                    crate::trash::move_to_free_until(&from, &to, stop)?;
-                } else if kind.is_dir() {
-                    copy_dir_until(&from, &to, stop)?;
-                } else if kind.is_symlink() {
-                    std::os::unix::fs::symlink(std::fs::read_link(&from)?, &to)?;
-                } else {
-                    land_part(&to, |part| copy_new(&from, part), |_| Ok(()))?;
+        let mut one = || -> Result<(), PutError> {
+            let meta = std::fs::symlink_metadata(&from)?;
+            let kind = meta.file_type();
+            if !merges(kind, moving) {
+                return Ok(());
+            }
+            match std::fs::symlink_metadata(&to) {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    if moving {
+                        crate::trash::move_to_free_until(&from, &to, stop)?;
+                    } else if kind.is_dir() {
+                        copy_dir_until(&from, &to, stop)?;
+                    } else if kind.is_symlink() {
+                        std::os::unix::fs::symlink(std::fs::read_link(&from)?, &to)?;
+                    } else {
+                        land_part(&to, |part| copy_new(&from, part), |_| Ok(()))?;
+                    }
                 }
-            }
-            Err(e) => return Err(e.into()),
-            Ok(there) if kind.is_dir() && there.is_dir() => {
-                merge_into(&from, &to, moving, (files, &under), stop)?;
-                kept |= moving && from.exists();
-            }
-            Ok(there) if !kind.is_dir() && !there.is_dir() => {
-                let Some(seen) = files.get(&under).filter(|seen| seen.still(&to)) else {
-                    log::info!("reprisefs: merge keeps {}", to.display());
-                    kept = true;
-                    continue;
-                };
-                if let Swap::Numbered(name) | Swap::Displaced(name) =
-                    replace_file(&from, &to, &meta, moving, seen.id(), stop)?
-                {
-                    log::info!(
-                        "reprisefs: {} changed during the merge; {} is beside it",
-                        to.display(),
-                        name.to_string_lossy()
-                    );
+                Err(e) => return Err(e.into()),
+                Ok(there) if kind.is_dir() && there.is_dir() => {
+                    merge_into(&from, &to, moving, (files, &under), stop)?;
+                    kept |= moving && from.exists();
                 }
+                Ok(there) if !kind.is_dir() && !there.is_dir() => {
+                    let Some(seen) = files.get(&under).filter(|seen| seen.still(&to)) else {
+                        log::info!("reprisefs: merge keeps {}", to.display());
+                        kept = true;
+                        return Ok(());
+                    };
+                    if let Swap::Numbered(name) | Swap::Displaced(name) =
+                        replace_file(&from, &to, &meta, moving, seen.id(), stop)?
+                    {
+                        log::info!(
+                            "reprisefs: {} changed during the merge; {} is beside it",
+                            to.display(),
+                            name.to_string_lossy()
+                        );
+                    }
+                }
+                // The preflight found none; one that appeared since stops here.
+                Ok(_) => return Err(PutError::Occupied),
             }
-            // The preflight found none; one that appeared since stops here.
-            Ok(_) => return Err(PutError::Occupied),
-        }
+            Ok(())
+        };
+        one().map_err(|e| match e {
+            PutError::Io(e) => PutError::Io(in_tree(Path::new(&entry.file_name()), e)),
+            other => other,
+        })?;
     }
     // Everything not kept is in `dest` by now; a folder that will not go (a
     // file appeared in it meanwhile) is left behind rather than failing a

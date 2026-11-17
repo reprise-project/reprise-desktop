@@ -1401,6 +1401,87 @@ fn a_failed_copy_of_a_read_only_folder_leaves_nothing_behind() {
     assert!(!dest.exists(), "no partial copy left behind");
 }
 
+/// The box text of a failed copy of `src` into `dir`, and the error's kind.
+fn copy_failure(src: &Path, dir: &Path, replace: Option<&Replacing>) -> (String, io::ErrorKind) {
+    let err = put_in_with(
+        src,
+        "src",
+        false,
+        dir,
+        DropOp::Copy,
+        &[],
+        &|_| None,
+        replace,
+    )
+    .unwrap_err();
+    let PutError::Io(e) = &err else {
+        panic!("an io error, got {err:?}");
+    };
+    (DropOp::Copy.failure("src", &err).1, e.kind())
+}
+
+#[test]
+fn a_failed_folder_copy_names_the_entry_by_its_path_under_the_folder() {
+    use std::os::unix::fs::PermissionsExt;
+    // SAFETY: geteuid takes no arguments and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        // root reads the unreadable file.
+        return;
+    }
+    let t = tempfile::tempdir().unwrap();
+    let (src, dest) = (t.path().join("src"), t.path().join("dest"));
+    fs::create_dir_all(src.join("sub")).unwrap();
+    fs::create_dir(&dest).unwrap();
+    let shut = |p: &Path, mode| fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
+    let denied = "Permission denied (os error 13)";
+
+    fs::write(src.join("f200000"), "x").unwrap();
+    shut(&src.join("f200000"), 0o000);
+    assert_eq!(
+        copy_failure(&src, &dest, None),
+        (
+            format!("Cannot copy src: f200000: {denied}"),
+            io::ErrorKind::PermissionDenied
+        )
+    );
+    fs::remove_file(src.join("f200000")).unwrap();
+
+    fs::write(src.join("sub/locked"), "x").unwrap();
+    shut(&src.join("sub/locked"), 0o000);
+    assert_eq!(
+        copy_failure(&src, &dest, None),
+        (
+            format!("Cannot copy src: sub/locked: {denied}"),
+            io::ErrorKind::PermissionDenied
+        )
+    );
+    assert_eq!(
+        fs::read_dir(&dest).unwrap().count(),
+        0,
+        "no copy and no part"
+    );
+
+    fs::create_dir_all(dest.join("src")).unwrap();
+    let onto = yes(Seen::of(&dest.join("src")));
+    assert_eq!(
+        copy_failure(&src, &dest, onto.as_ref()).0,
+        format!("Cannot copy src: sub/locked: {denied}"),
+        "a merge names the entry under the pasted folder too"
+    );
+    fs::remove_dir(dest.join("src")).unwrap();
+
+    shut(&src, 0o000);
+    let top = copy_failure(&src, &dest, None);
+    shut(&src, 0o755);
+    assert_eq!(
+        top,
+        (
+            format!("Cannot copy src: {denied}"),
+            io::ErrorKind::PermissionDenied
+        )
+    );
+}
+
 #[test]
 fn a_copied_read_only_folder_keeps_its_mode() {
     use std::os::unix::fs::PermissionsExt;
