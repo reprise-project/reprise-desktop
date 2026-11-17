@@ -1200,6 +1200,7 @@ impl TestClient {
             bounds: (0, 0),
             heard: Vec::new(),
             configures: 0,
+            suspended: Vec::new(),
         });
         i
     }
@@ -1497,6 +1498,8 @@ pub struct Shell {
     pub heard: Vec<(i32, i32)>,
     /// How many `xdg_surface.configure`s it heard.
     pub configures: usize,
+    /// Whether each toplevel configure carried the suspended state, oldest first.
+    pub suspended: Vec<bool>,
 }
 
 /// A `wl_keyboard` event: a key's evdev code and whether it went down, or the depressed
@@ -1703,8 +1706,16 @@ impl wc::Dispatch<xdg_toplevel::XdgToplevel, usize> for ClientSide {
         _: &QueueHandle<Self>,
     ) {
         match ev {
-            xdg_toplevel::Event::Configure { width, height, .. } => {
+            xdg_toplevel::Event::Configure {
+                width,
+                height,
+                states,
+            } => {
                 st.shells[i].pending = (width, height);
+                let suspended = xdg_toplevel::State::Suspended as u32;
+                (st.shells[i].suspended).push(
+                    (states.as_chunks::<4>().0.iter()).any(|&b| u32::from_ne_bytes(b) == suspended),
+                );
             }
             xdg_toplevel::Event::ConfigureBounds { width, height } => {
                 st.shells[i].bounds = (width, height);
