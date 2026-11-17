@@ -22,7 +22,11 @@ const STORE: crate::permit::Store = crate::permit::Store {
 
 pub struct Wallpaper {
     pub frontend: crate::Frontend,
+    pub read: Read,
 }
+
+/// The app's picture and the path its file really is, [`read_picture`] outside tests.
+pub type Read = fn(&Path) -> Option<(Vec<u8>, PathBuf)>;
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Wallpaper")]
 impl Wallpaper {
@@ -44,6 +48,24 @@ impl Wallpaper {
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<u32> {
         let asker = self.frontend.check(&hdr).await?;
+        let request = crate::Served::new(server, &handle, &asker).await?;
+        let code = self
+            .set(&request, app_id, parent_window, uri, &options)
+            .await;
+        request.end().await;
+        Ok(code)
+    }
+}
+
+impl Wallpaper {
+    async fn set(
+        &self,
+        request: &crate::Served<'_>,
+        app_id: String,
+        parent_window: String,
+        uri: String,
+        options: &HashMap<String, zbus::Variant<'_>>,
+    ) -> u32 {
         let takes = match options.get("set-on") {
             None => true,
             Some(zbus::Variant::Str(s)) => sets_the_desktop(s.as_str()),
@@ -51,26 +73,26 @@ impl Wallpaper {
         };
         if !takes {
             log::info!("SetWallpaperURI for {app_id:?}: no lock screen picture of its own");
-            return Ok(crate::RESPONSE_OTHER);
+            return crate::RESPONSE_OTHER;
         };
         let Some(path) = file_path(&uri) else {
             log::info!("SetWallpaperURI for {app_id:?}: {uri:?} is not a local file");
-            return Ok(crate::RESPONSE_OTHER);
+            return crate::RESPONSE_OTHER;
         };
         let show_preview = matches!(options.get("show-preview"), Some(zbus::Variant::Bool(true)));
-        let src = path.clone();
-        let Some((bytes, real)) = blocking::unblock(move || read_picture(&src)).await else {
+        let (src, read) = (path.clone(), self.read);
+        let Some((bytes, real)) = blocking::unblock(move || read(&src)).await else {
             log::info!(
                 "SetWallpaperURI for {app_id:?}: {} is no picture",
                 path.display()
             );
-            return Ok(crate::RESPONSE_OTHER);
+            return crate::RESPONSE_OTHER;
         };
         let parent = crate::dialog::parent_handle(&parent_window);
         let items = vec![file_name(&path)];
         let shown = shows_preview(&app_id, show_preview);
         let id = app_id.clone();
-        let (allowed, bytes) = crate::with_request(server, &handle, &asker, None, move |cancel| {
+        let asked = request.ask(None, move |cancel| {
             // The prompt decodes the bytes read above, so the picture shown is the one
             // installed whatever the app's file holds by the time the prompt reads it.
             let held = match shown.then(|| preview_file(&bytes)).transpose() {
@@ -94,12 +116,11 @@ impl Wallpaper {
                 false => crate::permit::ask_with(kind, input, &cancel).allowed(),
             };
             (allowed, bytes)
-        })
-        .await?;
-        if !allowed {
-            log::info!("SetWallpaperURI for {app_id:?} denied");
-            return Ok(crate::RESPONSE_CANCELLED);
-        }
+        });
+        let Some((true, bytes)) = asked.await.filter(|_| !request.closed()) else {
+            log::info!("SetWallpaperURI for {app_id:?} denied or closed");
+            return crate::RESPONSE_CANCELLED;
+        };
         let name = file_name(&path);
         let dir = reprisexdg::data_home()
             .unwrap_or_default()
@@ -108,11 +129,11 @@ impl Wallpaper {
         match blocking::unblock(move || install(&dir, &name, &bytes, &config)).await {
             Ok(to) => {
                 log::info!("SetWallpaperURI for {app_id:?}: {}", to.display());
-                Ok(crate::RESPONSE_OK)
+                crate::RESPONSE_OK
             }
             Err(e) => {
                 log::warn!("SetWallpaperURI for {app_id:?}: {e}");
-                Ok(crate::RESPONSE_OTHER)
+                crate::RESPONSE_OTHER
             }
         }
     }
@@ -210,7 +231,7 @@ fn file_name(path: &Path) -> String {
 
 /// The bytes of the regular file at `path` when its header names a picture the desktop shows,
 /// no side past [`reprisekit::wallpaper::MAX_SIDE`], and the path the opened file resolved to.
-fn read_picture(path: &Path) -> Option<(Vec<u8>, PathBuf)> {
+pub fn read_picture(path: &Path) -> Option<(Vec<u8>, PathBuf)> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
     let f = std::fs::OpenOptions::new()
@@ -451,6 +472,7 @@ mod tests {
         let mut xml = String::new();
         let portal = Wallpaper {
             frontend: crate::Frontend::default(),
+            read: read_picture,
         };
         portal.introspect_to_writer(&mut xml, 0);
         assert!(xml.contains(r#"<method name="SetWallpaperURI">"#), "{xml}");
@@ -507,5 +529,114 @@ mod tests {
         assert!(shows_preview("org.example.Photos", false));
         assert!(shows_preview("", true));
         assert!(!shows_preview("", false));
+    }
+
+    static READ: crate::tests::Gate = crate::tests::Gate::new();
+
+    fn read_held_open(_: &Path) -> Option<(Vec<u8>, PathBuf)> {
+        READ.wait();
+        Some((Vec::new(), PathBuf::from("/tmp/a.png")))
+    }
+
+    #[test]
+    fn a_close_while_the_picture_is_read_answers_cancelled_and_leaves_no_request() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let (client, portal) = crate::tests::portal_with(&bus, |frontend| Wallpaper {
+                frontend,
+                read: read_held_open,
+            })
+            .await;
+            let handle = format!("{}1_1/w", crate::REQUEST_PREFIX);
+            let set = zruntime::spawn({
+                let (client, portal, handle) = (client.clone(), portal.clone(), handle.clone());
+                async move {
+                    let none: HashMap<&str, zbus::Variant<'_>> = HashMap::new();
+                    let handle = ObjectPath::try_from(handle.as_str()).unwrap();
+                    let body = (handle, "org.example.App", "", "file:///tmp/a.png", none);
+                    let reply = crate::tests::call_portal(
+                        &client,
+                        &portal,
+                        "Wallpaper",
+                        "SetWallpaperURI",
+                        &body,
+                    );
+                    reply.await.unwrap().body().deserialize::<u32>().unwrap()
+                }
+            });
+            assert!(READ.reached().await, "the call reads the picture");
+            let closed = crate::tests::close_request(&client, &portal, &handle).await;
+            assert!(closed.is_ok(), "the Close is answered: {closed:?}");
+            READ.open();
+            assert_eq!(set.await.unwrap(), crate::RESPONSE_CANCELLED);
+            assert!(
+                !crate::tests::request_served(&portal, &handle).await,
+                "no Request object stays behind"
+            );
+        });
+    }
+
+    static FIRST_READ: crate::tests::Gate = crate::tests::Gate::new();
+    static READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    /// The first read waits on [`FIRST_READ`]; every later one finds no picture at once.
+    fn first_read_held_open(_: &Path) -> Option<(Vec<u8>, PathBuf)> {
+        if READS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
+            return None;
+        }
+        FIRST_READ.wait();
+        Some((Vec::new(), PathBuf::from("/tmp/a.png")))
+    }
+
+    async fn set_wallpaper(
+        client: &zbus::Connection,
+        portal: &zbus::Connection,
+        handle: &str,
+    ) -> zbus::Result<zbus::Message> {
+        let none: HashMap<&str, zbus::Variant<'_>> = HashMap::new();
+        let handle = ObjectPath::try_from(handle).unwrap();
+        let body = (handle, "org.example.App", "", "file:///tmp/a.png", none);
+        crate::tests::call_portal(client, portal, "Wallpaper", "SetWallpaperURI", &body).await
+    }
+
+    #[test]
+    fn a_second_call_on_a_served_handle_fails_and_the_first_keeps_its_request() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let (client, portal) = crate::tests::portal_with(&bus, |frontend| Wallpaper {
+                frontend,
+                read: first_read_held_open,
+            })
+            .await;
+            let handle = format!("{}1_1/twice", crate::REQUEST_PREFIX);
+            let first = zruntime::spawn({
+                let (client, portal, handle) = (client.clone(), portal.clone(), handle.clone());
+                async move {
+                    let reply = set_wallpaper(&client, &portal, &handle).await.unwrap();
+                    reply.body().deserialize::<u32>().unwrap()
+                }
+            });
+            assert!(
+                FIRST_READ.reached().await,
+                "the first call reads the picture"
+            );
+            let second = set_wallpaper(&client, &portal, &handle).await;
+            assert!(second.is_err(), "the second call fails: {second:?}");
+            assert!(
+                crate::tests::request_served(&portal, &handle).await,
+                "the first call's Request is still served"
+            );
+            let closed = crate::tests::close_request(&client, &portal, &handle).await;
+            assert!(closed.is_ok(), "the Close is answered: {closed:?}");
+            FIRST_READ.open();
+            assert_eq!(first.await.unwrap(), crate::RESPONSE_CANCELLED);
+            assert!(!crate::tests::request_served(&portal, &handle).await);
+        });
     }
 }

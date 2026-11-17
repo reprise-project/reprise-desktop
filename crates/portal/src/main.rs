@@ -323,29 +323,86 @@ pub(crate) fn check_session(session_handle: &ObjectPath<'_>) -> zbus::fdo::Resul
     check_handle(session_handle, SESSION_PREFIX)
 }
 
-/// Serve the `Request` object at `handle` while a dialog is up, so the frontend can cancel it
-/// through `cancel`, as does `asker` leaving the bus while the returned guard lives. Remove it
-/// with `server.remove::<Request, _>` once the dialog is gone.
-pub(crate) async fn export_request(
-    server: &zbus::ObjectServer,
-    handle: &ObjectPath<'_>,
+/// The `Request` object at a call's handle. The frontend hands the app the handle before the
+/// call arrives, so a call that awaits anything before its box serves this first: a Close
+/// meanwhile then lands here. The frontend's Close or `asker` leaving the bus closes it.
+/// [`Served::end`] takes it down.
+pub(crate) struct Served<'a> {
+    server: &'a zbus::ObjectServer,
+    handle: ObjectPath<'a>,
     cancel: Arc<AtomicBool>,
-    asker: &Caller,
-) -> zbus::fdo::Result<Held> {
-    check_handle(handle, REQUEST_PREFIX)?;
-    let request = Request {
-        cancel: cancel.clone(),
-        path: handle.to_string(),
-        frontend: asker.frontend.clone(),
-    };
-    server.at(handle.clone(), request).await?;
-    Ok(asker.hold(&cancel))
+    _held: Held,
 }
 
-/// Run `dialog` in the blocking pool with the `Request` at `handle` served, so the frontend's
-/// Close or `asker` leaving the bus sets the flag it is given, and take the `Request` down
-/// after. With `session` (the map and a key), that session's `picking` holds the flag
-/// meanwhile, so its Close cancels too.
+impl<'a> Served<'a> {
+    pub(crate) async fn new(
+        server: &'a zbus::ObjectServer,
+        handle: &ObjectPath<'a>,
+        asker: &Caller,
+    ) -> zbus::fdo::Result<Served<'a>> {
+        check_handle(handle, REQUEST_PREFIX)?;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let request = Request {
+            cancel: cancel.clone(),
+            path: handle.to_string(),
+            frontend: asker.frontend.clone(),
+        };
+        // A second call with a served handle fails: its `end` would take the first call's down.
+        if server.at(handle.clone(), request).await?.is_some() {
+            return Err(zbus::fdo::Error::Failed(format!("{handle} is in use")));
+        }
+        Ok(Served {
+            server,
+            handle: handle.clone(),
+            _held: asker.hold(&cancel),
+            cancel,
+        })
+    }
+
+    pub(crate) fn closed(&self) -> bool {
+        self.cancel.load(Ordering::SeqCst)
+    }
+
+    /// `dialog`'s answer, or None without running it once the request is closed.
+    pub(crate) async fn ask<T: Send + 'static>(
+        &self,
+        session: Option<(&Sessions, &str)>,
+        dialog: impl FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+    ) -> Option<T> {
+        match self.closed() {
+            true => None,
+            false => Some(self.run(session, dialog).await),
+        }
+    }
+
+    /// Run `dialog` in the blocking pool with the flag a Close sets. With `session` (the map
+    /// and a key), that session's `picking` holds the flag meanwhile, so its Close cancels too.
+    async fn run<T: Send + 'static>(
+        &self,
+        session: Option<(&Sessions, &str)>,
+        dialog: impl FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+    ) -> T {
+        let picking = |f: &dyn Fn(&mut Vec<Arc<AtomicBool>>)| {
+            if let Some((sessions, key)) = session
+                && let Some(s) = sessions.lock().unwrap().get_mut(key)
+            {
+                f(&mut s.picking);
+            }
+        };
+        picking(&|p| p.push(self.cancel.clone()));
+        let cancel = self.cancel.clone();
+        let out = blocking::unblock(move || dialog(cancel)).await;
+        picking(&|p| p.retain(|c| !Arc::ptr_eq(c, &self.cancel)));
+        out
+    }
+
+    pub(crate) async fn end(self) {
+        let _ = self.server.remove::<Request, _>(&self.handle).await;
+    }
+}
+
+/// Run `dialog` with the `Request` at `handle` served, for a call with nothing to await
+/// before its box; see [`Served`].
 pub(crate) async fn with_request<T: Send + 'static>(
     server: &zbus::ObjectServer,
     handle: &ObjectPath<'_>,
@@ -353,20 +410,9 @@ pub(crate) async fn with_request<T: Send + 'static>(
     session: Option<(&Sessions, &str)>,
     dialog: impl FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
 ) -> zbus::fdo::Result<T> {
-    let cancel = Arc::new(AtomicBool::new(false));
-    let _held = export_request(server, handle, cancel.clone(), asker).await?;
-    let picking = |f: &dyn Fn(&mut Vec<Arc<AtomicBool>>)| {
-        if let Some((sessions, key)) = session
-            && let Some(s) = sessions.lock().unwrap().get_mut(key)
-        {
-            f(&mut s.picking);
-        }
-    };
-    picking(&|p| p.push(cancel.clone()));
-    let flag = cancel.clone();
-    let out = blocking::unblock(move || dialog(cancel)).await;
-    let _ = server.remove::<Request, _>(handle.clone()).await;
-    picking(&|p| p.retain(|c| !Arc::ptr_eq(c, &flag)));
+    let request = Served::new(server, handle, asker).await?;
+    let out = request.run(session, dialog).await;
+    request.end().await;
     Ok(out)
 }
 
@@ -1369,6 +1415,7 @@ async fn serve(
             PATH,
             wallpaper::Wallpaper {
                 frontend: frontend(),
+                read: wallpaper::read_picture,
             },
         )
         .serve_at(
@@ -1836,6 +1883,104 @@ mod tests {
         assert_eq!(lock(&f.owner).as_deref(), Some(":1.50"));
         f.replace(&Some(":1.50".into()), Some(":1.51".into()));
         assert_eq!(lock(&f.owner).as_deref(), Some(":1.51"));
+    }
+
+    /// Shut until opened: a test seam's blocking step waits on it, so a test holds a call open
+    /// between its start and its box.
+    pub(crate) struct Gate {
+        open: Mutex<bool>,
+        opened: std::sync::Condvar,
+        reached: AtomicBool,
+    }
+
+    impl Gate {
+        pub(crate) const fn new() -> Gate {
+            Gate {
+                open: Mutex::new(false),
+                opened: std::sync::Condvar::new(),
+                reached: AtomicBool::new(false),
+            }
+        }
+
+        pub(crate) fn wait(&self) {
+            self.reached.store(true, Ordering::SeqCst);
+            let mut open = lock(&self.open);
+            while !*open {
+                open = self.opened.wait(open).unwrap();
+            }
+        }
+
+        pub(crate) fn open(&self) {
+            *lock(&self.open) = true;
+            self.opened.notify_all();
+        }
+
+        /// Whether a call waits on the gate, within 5 s.
+        pub(crate) async fn reached(&self) -> bool {
+            for _ in 0..500 {
+                if self.reached.load(Ordering::SeqCst) {
+                    return true;
+                }
+                async_io::Timer::after(std::time::Duration::from_millis(10)).await;
+            }
+            false
+        }
+    }
+
+    /// `iface` at `PATH` on a portal connection to `bus`, and the client it takes as its
+    /// frontend: (client, portal).
+    pub(crate) async fn portal_with<I: zbus::object_server::Interface>(
+        bus: &crate::lockmode::tests::Bus,
+        iface: impl FnOnce(Frontend) -> I,
+    ) -> (zbus::Connection, zbus::Connection) {
+        let client = crate::lockmode::tests::connect(bus).await;
+        let frontend = Frontend::default();
+        frontend.set(client.unique_name().map(|n| n.to_string()));
+        let portal = zbus::connection::Builder::address(bus.1.as_str())
+            .serve_at(PATH, iface(frontend.clone()))
+            .build()
+            .await
+            .unwrap();
+        let _ = frontend.conn.set(portal.clone());
+        (client, portal)
+    }
+
+    /// `method` of `org.freedesktop.impl.portal.<iface>` on `portal`, called by `client`.
+    pub(crate) async fn call_portal<B>(
+        client: &zbus::Connection,
+        portal: &zbus::Connection,
+        iface: &str,
+        method: &str,
+        body: &B,
+    ) -> zbus::Result<zbus::Message>
+    where
+        B: serde::Serialize + zbus::zvariant::DynamicType,
+    {
+        let dest = portal.unique_name().unwrap().to_string();
+        let iface = format!("org.freedesktop.impl.portal.{iface}");
+        (client.call_method(
+            Some(dest.as_str()),
+            PATH,
+            Some(iface.as_str()),
+            method,
+            body,
+        ))
+        .await
+    }
+
+    /// Close request `handle` on `portal` as the frontend `client` does.
+    pub(crate) async fn close_request(
+        client: &zbus::Connection,
+        portal: &zbus::Connection,
+        handle: &str,
+    ) -> zbus::Result<zbus::Message> {
+        let dest = portal.unique_name().unwrap().to_string();
+        let iface = Some("org.freedesktop.impl.portal.Request");
+        (client.call_method(Some(dest.as_str()), handle, iface, "Close", &())).await
+    }
+
+    pub(crate) async fn request_served(portal: &zbus::Connection, handle: &str) -> bool {
+        (portal.object_server().interface::<_, Request>(handle).await).is_ok()
     }
 
     /// Answers `Check` with what [`Frontend::check`] makes of the caller.
