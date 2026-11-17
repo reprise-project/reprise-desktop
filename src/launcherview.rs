@@ -610,9 +610,7 @@ impl State {
     /// The windows the launcher can find, the most recently focused first: those
     /// with a task button on any desktop.
     fn launcher_window_candidates(&self) -> Vec<WindowId> {
-        let listed = |w: &crate::window::Window| {
-            w.mapped && !w.is_owned() && (w.minimized || !w.skips_taskbar())
-        };
+        let listed = |w: &crate::window::Window| self.has_task_button(w);
         let recent = self.focus_order.iter().rev().copied();
         let rest = self.windows.iter().map(|w| w.id);
         let mut out: Vec<WindowId> = Vec::new();

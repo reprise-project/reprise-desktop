@@ -103,7 +103,7 @@ pub fn window_icon(state: &mut State, lineages: &[Vec<Step>], title: &str) -> Op
     let wins: Vec<_> = state
         .windows
         .iter()
-        .filter(|w| w.mapped && !w.is_owned() && (w.minimized || !w.skips_taskbar()))
+        .filter(|w| state.has_task_button(w))
         .map(|w| (w.id, w.title(), w.claimed_pid()))
         .collect();
     let shown: Vec<Shown> = wins

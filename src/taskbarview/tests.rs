@@ -596,3 +596,53 @@ fn a_resume_redraws_the_clock_and_sets_its_minute_timer_again() {
     let after = h.state.clock_timer.expect("a minute timer");
     assert_ne!(after, before, "set again from the wall clock");
 }
+
+#[test]
+fn a_prompt_or_sheet_of_a_program_with_no_other_task_button_has_one_for_its_family() {
+    use crate::window::{HELP_DIALOG_TAG, PROMPT_TAG};
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut job = h.connect();
+    let progress = h.map_dialog(&mut job, "explorer", None, PROMPT_TAG, (300, 120));
+    let failed = h.map_modal(&mut job, "explorer", progress, (200, 100));
+    assert_eq!(
+        h.state.task_windows(),
+        [progress.id],
+        "one button: the progress window's, none for the box over it"
+    );
+    let mut sheet_only = h.connect();
+    let sheet = h.map_dialog(
+        &mut sheet_only,
+        "explorer",
+        None,
+        HELP_DIALOG_TAG,
+        (300, 400),
+    );
+    assert!(
+        h.state.task_windows().contains(&sheet.id),
+        "the sheet has one"
+    );
+
+    let mut editor = h.connect();
+    let doc = h.map_toplevel(&mut editor, "notepad", 400, 300);
+    let save = h.map_dialog(&mut editor, "notepad", None, PROMPT_TAG, (250, 100));
+    let help = h.map_dialog(&mut editor, "notepad", None, HELP_DIALOG_TAG, (250, 100));
+    let shown = h.state.task_windows();
+    assert!(shown.contains(&doc.id));
+    assert!(
+        !shown.contains(&save.id) && !shown.contains(&help.id),
+        "a program showing a window keeps its prompts and sheets off the taskbar"
+    );
+
+    let bar = &h.state.bars[0];
+    let i = (bar.slots.iter())
+        .position(|s| s.windows == [progress.id])
+        .expect("the progress window's task button");
+    let tree = bar.tree;
+    h.state.task_button_click(tree, i, false);
+    assert_eq!(
+        h.state.focused,
+        Some(failed.id),
+        "the button brings the family up with its box on top"
+    );
+}

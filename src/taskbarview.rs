@@ -344,20 +344,32 @@ pub(crate) fn glow_colour(glow: TaskGlow, icon: &Canvas) -> Option<Color> {
 }
 
 impl State {
-    /// The windows with a task button: mapped, on the current desktop or
-    /// on all of them, not owned by another, and not a message box or help
-    /// dialog unless minimized.
+    /// The windows with a task button on the current desktop ([`State::has_task_button`]).
     pub fn task_windows(&self) -> Vec<WindowId> {
         self.windows
             .iter()
-            .filter(|w| {
-                w.mapped
-                    && !w.is_owned()
-                    && (w.minimized || !w.skips_taskbar())
-                    && self.on_current_desktop(w.id)
-            })
+            .filter(|w| self.has_task_button(w) && self.on_current_desktop(w.id))
             .map(|w| w.id)
             .collect()
+    }
+
+    /// Whether `w` has a task button on its desktop: mapped, not owned by another, and not a
+    /// message box or help dialog unless minimized or its program shows no other task button,
+    /// so a program whose only windows are boxes or sheets can still be brought up.
+    pub fn has_task_button(&self, w: &crate::window::Window) -> bool {
+        use smithay::reexports::wayland_server::Resource;
+        let listed = |x: &crate::window::Window| {
+            x.mapped && !x.is_owned() && (x.minimized || !x.skips_taskbar())
+        };
+        if listed(w) {
+            return true;
+        }
+        let client = w.wl_surface().client();
+        w.mapped
+            && !w.is_owned()
+            && w.xdg().is_some()
+            && !(self.windows.iter())
+                .any(|x| x.id != w.id && listed(x) && x.wl_surface().client() == client)
     }
 
     /// One taskbar per output; the login screen has none.

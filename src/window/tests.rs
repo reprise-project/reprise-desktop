@@ -1597,10 +1597,20 @@ fn one_on_each() -> (
     (h, c, a, b)
 }
 
+/// A window of `c` on another desktop: its task button keeps `c`'s sheets and boxes off the
+/// taskbar, and nothing of it is drawn here.
+fn main_elsewhere(h: &mut crate::harness::Harness, c: &mut crate::harness::TestClient) {
+    let main = h.map_toplevel(c, "app", 300, 200);
+    h.state.move_to(main.id, 1200, 50);
+    h.state.set_desktop_count(2);
+    h.state.move_to_desktop(&[main.id], 1);
+}
+
 #[test]
 fn a_window_without_a_task_button_maps_hides_and_closes_asking_only_its_output() {
     use crate::backend::{take_asks, take_scene_outputs};
     let (mut h, mut c) = side_by_side();
+    main_elsewhere(&mut h, &mut c);
     let t = h.map_toplevel_after(&mut c, "app", 300, 200, |h, c, t| {
         h.state.set_tag(t.id, super::HELP_DIALOG_TAG);
         h.roundtrip(c);
@@ -1639,6 +1649,8 @@ fn framed_by_client_without_a_button() -> (
         h.state.set_tag(t.id, super::HELP_DIALOG_TAG);
         h.roundtrip(c);
     });
+    // Made after the sheet, so it goes after it when the client exits.
+    main_elsewhere(&mut h, &mut c);
     h.state.set_csd(t.id, true);
     h.roundtrip(&mut c);
     h.state.move_to(t.id, 1200, 50);
