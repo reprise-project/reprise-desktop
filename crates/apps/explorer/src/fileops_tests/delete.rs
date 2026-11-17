@@ -403,3 +403,61 @@ fn erasing_a_symlink_to_a_folder_removes_only_the_link() {
     assert!(target.join("x.txt").is_file(), "the target is untouched");
     assert!(ex.dialog().is_none());
 }
+
+/// A folder deleted for good that cannot go whole names the entry inside that failed by its path
+/// under the folder; one that fails itself reads as before.
+#[test]
+fn a_failed_folder_delete_names_the_entry_by_its_path_under_the_folder() {
+    use reprisefs::progress::Decision;
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir().expect("a temp dir");
+    let (dir, src) = (home.path().join("folder"), home.path().join("folder/src"));
+    let _writable = [
+        Mode0700(dir.clone()),
+        Mode0700(src.clone()),
+        Mode0700(src.join("sub")),
+    ];
+    let shut = |p: &Path| {
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o500)).expect("chmod")
+    };
+    let open = |p: &Path| {
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700)).expect("chmod")
+    };
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(home.path().to_path_buf()), &mut ctx);
+    let mut delete = |ex: &mut Explorer| {
+        ex.delete_now(std::slice::from_ref(&src), true, &mut ctx);
+        ex.finish_puts(&mut ctx);
+        ex.answer_failed(Decision::Abort, &mut ctx)
+            .map(|(_, text)| text)
+    };
+    let failed = |under: &str| {
+        Some(format!(
+            "Cannot delete src: {under}Permission denied (os error 13)"
+        ))
+    };
+
+    std::fs::create_dir_all(&src).expect("mkdir");
+    std::fs::write(src.join("f200000"), "x").expect("write");
+    shut(&src);
+    assert_eq!(delete(&mut ex), failed("f200000: "));
+    open(&src);
+
+    std::fs::create_dir(src.join("sub")).expect("mkdir");
+    std::fs::write(src.join("sub/locked"), "x").expect("write");
+    shut(&src.join("sub"));
+    assert_eq!(delete(&mut ex), failed("sub/locked: "));
+    open(&src.join("sub"));
+
+    shut(&dir);
+    assert_eq!(
+        delete(&mut ex),
+        failed(""),
+        "the folder itself is named alone"
+    );
+    open(&dir);
+    assert!(
+        src.exists() && !src.join("sub").exists(),
+        "what went stays gone"
+    );
+}

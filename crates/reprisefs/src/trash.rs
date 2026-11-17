@@ -745,7 +745,8 @@ pub fn restore_free(t: &Trashed) -> io::Result<PathBuf> {
 }
 
 /// Delete everything in the trash at `root` through [`BinDir`], returning how many items went.
-/// A failed item keeps its record and the rest carry on; the error carries the first failure.
+/// A failed item keeps its record and the rest carry on; the error carries the first failure,
+/// named by its path in the bin.
 pub fn empty_in(root: &Path) -> io::Result<usize> {
     empty_with(root, None)
 }
@@ -774,7 +775,8 @@ pub(crate) fn empty_with(root: &Path, meter: Option<&Meter>) -> io::Result<usize
                 m.set_current(&name);
                 m.hold()?;
             }
-            bin.erase(&name, &path, meter)?;
+            (bin.erase(&name, &path, meter))
+                .map_err(|e| crate::ops::in_tree(Path::new(&name), e))?;
             gone(bin.unlink_info(&info_name(&name)))
         })();
         match erased {
