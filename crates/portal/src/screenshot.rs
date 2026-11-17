@@ -14,7 +14,7 @@ use reprisekit::raster::Rect;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, SystemTime};
 use zbus::{ObjectPath, OwnedVariant, Variant};
 
@@ -191,17 +191,16 @@ impl Screenshot {
         asker: &crate::Caller,
         pick: &crate::inputlink::PickHandle<T>,
     ) -> zbus::fdo::Result<Option<T>> {
-        let cancel = Arc::new(AtomicBool::new(false));
-        let _held = crate::export_request(server, handle, cancel.clone(), asker).await?;
-        let answer = futures_lite::future::or(pick.answer(), closed(&cancel)).await;
-        let _ = server.remove::<crate::Request, _>(handle.clone()).await;
+        let request = crate::Served::new(server, handle, asker).await?;
+        let answer = futures_lite::future::or(pick.answer(), closed(&request)).await;
+        request.end().await;
         Ok(answer)
     }
 }
 
 /// None once the frontend closes the request.
-async fn closed<T>(cancel: &AtomicBool) -> Option<T> {
-    while !cancel.load(Ordering::Relaxed) {
+async fn closed<T>(request: &crate::Served<'_>) -> Option<T> {
+    while !request.closed() {
         async_io::Timer::after(Duration::from_millis(100)).await;
     }
     None
