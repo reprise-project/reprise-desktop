@@ -35,6 +35,7 @@ const MAX_PIXELS: u64 = 1 << 26;
 pub struct Screenshot {
     pub frontend: crate::Frontend,
     pub link: Option<crate::inputlink::Link>,
+    pub ask: crate::remotedesktop::Ask,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Screenshot")]
@@ -60,42 +61,12 @@ impl Screenshot {
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         let asker = self.frontend.check(&hdr).await?;
         log::info!("Screenshot for {app_id:?}");
-        let plan = match plan(&options) {
-            Ok(p) => p,
-            Err(e) => {
-                log::info!("Screenshot for {app_id:?}: {e}");
-                return Ok((crate::RESPONSE_OTHER, HashMap::new()));
-            }
-        };
-        let shot = match self
-            .choose(plan, server, &handle, &asker, &app_id, &parent_window)
-            .await?
-        {
-            Ok(Some(shot)) => shot,
-            Ok(None) => {
-                log::info!("Screenshot for {app_id:?} denied");
-                return Ok((crate::RESPONSE_CANCELLED, HashMap::new()));
-            }
-            Err(e) => {
-                log::warn!("Screenshot: {e}");
-                return Ok((crate::RESPONSE_OTHER, HashMap::new()));
-            }
-        };
-        match blocking::unblock(move || take(shot)).await {
-            Ok(path) => {
-                let mut r = HashMap::new();
-                let uri = format!("file://{}", path.display());
-                r.insert(
-                    "uri".to_string(),
-                    Variant::from(uri).try_to_owned().expect("string"),
-                );
-                Ok((crate::RESPONSE_OK, r))
-            }
-            Err(e) => {
-                log::warn!("Screenshot: {e}");
-                Ok((crate::RESPONSE_OTHER, HashMap::new()))
-            }
-        }
+        let request = crate::Served::new(server, &handle, &asker).await?;
+        let answer = self
+            .shoot(&request, &app_id, &parent_window, &options)
+            .await;
+        request.end().await;
+        Ok(answer)
     }
 
     async fn pick_color(
@@ -109,93 +80,139 @@ impl Screenshot {
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         let asker = self.frontend.check(&hdr).await?;
         log::info!("PickColor for {app_id:?}");
-        let Some(pick) = crate::inputlink::live(&self.link).and_then(|l| l.pick_color()) else {
-            log::warn!("PickColor: the compositor has no colour picker");
-            return Ok((crate::RESPONSE_OTHER, HashMap::new()));
+        let request = crate::Served::new(server, &handle, &asker).await?;
+        let pick = crate::inputlink::live(&self.link).and_then(|l| l.pick_color());
+        let answer = match pick {
+            Some(pick) => picked(heard(&request, &pick).await),
+            None => {
+                log::warn!("PickColor: the compositor has no colour picker");
+                (crate::RESPONSE_OTHER, HashMap::new())
+            }
         };
-        Ok(picked(self.heard(server, &handle, &asker, &pick).await?))
+        request.end().await;
+        Ok(answer)
     }
 }
 
 impl Screenshot {
-    /// What `plan` takes once the user picked it or allowed it: None for a cancel or a no, Err
-    /// for nothing to take.
+    /// The answer to a Screenshot call, `request` served throughout: cancelled once it closes.
+    async fn shoot(
+        &self,
+        request: &crate::Served<'_>,
+        app_id: &str,
+        parent_window: &str,
+        options: &HashMap<String, Variant<'_>>,
+    ) -> (u32, HashMap<String, OwnedVariant>) {
+        let plan = match plan(options) {
+            Ok(p) => p,
+            Err(e) => {
+                log::info!("Screenshot for {app_id:?}: {e}");
+                return (crate::RESPONSE_OTHER, HashMap::new());
+            }
+        };
+        let chosen = self.choose(plan, request, app_id, parent_window).await;
+        let shot = match chosen {
+            _ if request.closed() => {
+                log::info!("Screenshot for {app_id:?} closed");
+                return (crate::RESPONSE_CANCELLED, HashMap::new());
+            }
+            Ok(Some(shot)) => shot,
+            Ok(None) => {
+                log::info!("Screenshot for {app_id:?} denied");
+                return (crate::RESPONSE_CANCELLED, HashMap::new());
+            }
+            Err(e) => {
+                log::warn!("Screenshot: {e}");
+                return (crate::RESPONSE_OTHER, HashMap::new());
+            }
+        };
+        match blocking::unblock(move || take(shot)).await {
+            Ok(path) => {
+                let mut r = HashMap::new();
+                let uri = format!("file://{}", path.display());
+                r.insert(
+                    "uri".to_string(),
+                    Variant::from(uri).try_to_owned().expect("string"),
+                );
+                (crate::RESPONSE_OK, r)
+            }
+            Err(e) => {
+                log::warn!("Screenshot: {e}");
+                (crate::RESPONSE_OTHER, HashMap::new())
+            }
+        }
+    }
+
+    /// What `plan` takes once the user picked it or allowed it: None for a cancel, a no or a
+    /// closed `request`, Err for nothing to take.
     async fn choose(
         &self,
         plan: Plan,
-        server: &zbus::ObjectServer,
-        handle: &ObjectPath<'_>,
-        asker: &crate::Caller,
+        request: &crate::Served<'_>,
         app_id: &str,
         parent_window: &str,
-    ) -> zbus::fdo::Result<Result<Option<Shot>, String>> {
+    ) -> Result<Option<Shot>, String> {
         let parent = crate::dialog::parent_handle(parent_window);
         let link = crate::inputlink::live(&self.link);
-        Ok(match plan {
+        match plan {
             Plan::Pick(types) => {
                 let id = app_id.to_string();
-                let picked = crate::with_request(server, handle, asker, None, move |c| {
-                    pick(&id, parent, c, types)
-                });
-                picked.await?.map(|t| t.map(Shot::Of))
+                let picked = request.ask(None, move |c| pick(&id, parent, c, types));
+                picked.await.unwrap_or(Ok(None)).map(|t| t.map(Shot::Of))
             }
             Plan::Area => {
                 let id = app_id.to_string();
                 let name = blocking::unblock(move || crate::remotedesktop::display_name(&id)).await;
+                if request.closed() {
+                    return Ok(None);
+                }
                 match link.and_then(|l| l.pick_area(&name)) {
-                    Some(p) => Ok(self.heard(server, handle, asker, &p).await?.map(Shot::Area)),
+                    Some(p) => Ok(heard(request, &p).await.map(Shot::Area)),
                     None => Err("the compositor has no region select".into()),
                 }
             }
             Plan::Desktop { ask } => {
-                let denied = ask && !self.allowed(server, handle, asker, app_id, parent).await?;
+                let denied = ask && !self.allowed(request, app_id, parent).await;
                 Ok((!denied).then_some(Shot::Desktop))
             }
             Plan::ActiveWindow { ask } => {
                 let Some(query) = link.and_then(|l| l.active_window()) else {
-                    return Ok(Err("the compositor names no active window".into()));
+                    return Err("the compositor names no active window".into());
                 };
                 // Asked before a prompt, which would take the focus.
                 let Some(window) = query.answer().await else {
-                    return Ok(Err("no window has the focus".into()));
+                    return Err("no window has the focus".into());
                 };
-                let denied = ask && !self.allowed(server, handle, asker, app_id, parent).await?;
+                let denied = ask && !self.allowed(request, app_id, parent).await;
                 Ok((!denied).then_some(Shot::Of(Target::Toplevel(window))))
             }
-        })
+        }
     }
 
-    /// Whether the user allows `app_id`'s screenshot in the Access prompt, which offers no Remember.
+    /// Whether the user allows `app_id`'s screenshot in the Access prompt, which offers no
+    /// Remember; false without a prompt once `request` is closed.
     async fn allowed(
         &self,
-        server: &zbus::ObjectServer,
-        handle: &ObjectPath<'_>,
-        asker: &crate::Caller,
+        request: &crate::Served<'_>,
         app_id: &str,
         parent: Option<String>,
-    ) -> zbus::fdo::Result<bool> {
-        let id = app_id.to_string();
-        crate::with_request(server, handle, asker, None, move |cancel| {
+    ) -> bool {
+        let (id, ask) = (app_id.to_string(), self.ask);
+        let asked = request.ask(None, move |cancel| {
             let kind = crate::permit::Kind::Screenshot;
-            crate::permit::ask(kind, &id, Vec::new(), false, parent, cancel).allowed()
-        })
-        .await
+            ask(kind, &id, Vec::new(), false, parent, cancel).allowed()
+        });
+        asked.await == Some(true)
     }
+}
 
-    /// `pick`'s answer, with the `Request` at `handle` served meanwhile; None once the frontend
-    /// closes it or `asker` leaves the bus.
-    async fn heard<T>(
-        &self,
-        server: &zbus::ObjectServer,
-        handle: &ObjectPath<'_>,
-        asker: &crate::Caller,
-        pick: &crate::inputlink::PickHandle<T>,
-    ) -> zbus::fdo::Result<Option<T>> {
-        let request = crate::Served::new(server, handle, asker).await?;
-        let answer = futures_lite::future::or(pick.answer(), closed(&request)).await;
-        request.end().await;
-        Ok(answer)
-    }
+/// `pick`'s answer while `request` is served; None once the frontend closes it or the asker
+/// leaves the bus.
+async fn heard<T>(
+    request: &crate::Served<'_>,
+    pick: &crate::inputlink::PickHandle<T>,
+) -> Option<T> {
+    futures_lite::future::or(pick.answer(), closed(request)).await
 }
 
 /// None once the frontend closes the request.
@@ -752,6 +769,7 @@ mod tests {
             let shots = Screenshot {
                 frontend: frontend.clone(),
                 link,
+                ask: never_asked,
             };
             let portal = zbus::connection::Builder::address(bus.1.as_str())
                 .serve_at(crate::PATH, shots)
@@ -804,6 +822,88 @@ mod tests {
             [crate::RESPONSE_OTHER, crate::RESPONSE_OTHER],
             "without the compositor's link"
         );
+    }
+
+    fn never_asked(
+        _: crate::permit::Kind,
+        _: &str,
+        _: Vec<String>,
+        _: bool,
+        _: Option<String>,
+        _: Arc<AtomicBool>,
+    ) -> crate::permit::Answer {
+        panic!("no prompt in this test");
+    }
+
+    static FOCUSED: crate::tests::Gate = crate::tests::Gate::new();
+    static ASKED_AFTER_FOCUSED: AtomicBool = AtomicBool::new(false);
+
+    fn noted_allowed(
+        _: crate::permit::Kind,
+        _: &str,
+        _: Vec<String>,
+        _: bool,
+        _: Option<String>,
+        _: Arc<AtomicBool>,
+    ) -> crate::permit::Answer {
+        ASKED_AFTER_FOCUSED.store(true, std::sync::atomic::Ordering::SeqCst);
+        crate::permit::Answer::Allow { remember: false }
+    }
+
+    #[test]
+    fn a_close_while_the_focused_window_is_asked_for_shows_no_prompt_and_answers_cancelled() {
+        use crate::inputlink::tests::{fake_held_window, link_on};
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let compositor = fake_held_window(theirs, &FOCUSED, "w7");
+        zbus::block_on(async {
+            let (client, portal) = crate::tests::portal_with(&bus, |frontend| Screenshot {
+                frontend,
+                link: Some(link_on(ours)),
+                ask: noted_allowed,
+            })
+            .await;
+            let handle = format!("{}1_1/s", crate::REQUEST_PREFIX);
+            let shot = zruntime::spawn({
+                let (client, portal, handle) = (client.clone(), portal.clone(), handle.clone());
+                async move {
+                    let handle = ObjectPath::try_from(handle.as_str()).unwrap();
+                    let options = with_target(&[], TARGET_ACTIVE_WINDOW);
+                    let body = (handle, "org.example.App", "", options);
+                    let reply = crate::tests::call_portal(
+                        &client,
+                        &portal,
+                        "Screenshot",
+                        "Screenshot",
+                        &body,
+                    );
+                    let reply = reply.await.unwrap();
+                    let (code, _): (u32, HashMap<String, OwnedVariant>) =
+                        reply.body().deserialize().unwrap();
+                    code
+                }
+            });
+            assert!(
+                FOCUSED.reached().await,
+                "the call asks for the focused window"
+            );
+            let closed = crate::tests::close_request(&client, &portal, &handle).await;
+            assert!(closed.is_ok(), "the Close is answered: {closed:?}");
+            FOCUSED.open();
+            assert_eq!(shot.await.unwrap(), crate::RESPONSE_CANCELLED);
+            assert!(
+                !ASKED_AFTER_FOCUSED.load(std::sync::atomic::Ordering::SeqCst),
+                "no prompt comes up for the closed request"
+            );
+            assert!(
+                !crate::tests::request_served(&portal, &handle).await,
+                "no Request object stays behind"
+            );
+        });
+        assert!(compositor.join().unwrap(), "the query is let go");
     }
 
     #[test]

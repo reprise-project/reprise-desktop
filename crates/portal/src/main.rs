@@ -1335,6 +1335,7 @@ async fn serve(
             screenshot::Screenshot {
                 frontend: frontend(),
                 link: link.clone(),
+                ask: permit::ask,
             },
         )
         .serve_at(

@@ -1545,6 +1545,38 @@ pub(crate) mod tests {
         })
     }
 
+    /// A v13 compositor that answers the first `active_window` with `window` once `held` opens;
+    /// returns whether the query object was destroyed.
+    pub(crate) fn fake_held_window(
+        mut theirs: UnixStream,
+        held: &'static crate::tests::Gate,
+        window: &'static str,
+    ) -> std::thread::JoinHandle<bool> {
+        std::thread::spawn(move || {
+            let input = fake_compositor(&mut theirs, 2, 13);
+            let query = loop {
+                let (object, opcode, body) = request(&mut theirs).unwrap();
+                if (object, opcode) == (input, 13) {
+                    break u32::from_ne_bytes(body[..4].try_into().unwrap());
+                }
+            };
+            held.wait();
+            let mut body = Vec::new();
+            put_string(&mut body, window);
+            send(&mut theirs, query, 0, &body);
+            theirs
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            loop {
+                match request(&mut theirs) {
+                    Ok((o, 0, _)) if o == query => return true,
+                    Ok(_) => {}
+                    Err(_) => return false,
+                }
+            }
+        })
+    }
+
     #[test]
     fn an_area_pick_hears_the_area_and_the_active_window_its_identifier() {
         let (ours, theirs) = UnixStream::pair().unwrap();
