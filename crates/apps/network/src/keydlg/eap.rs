@@ -65,6 +65,8 @@ pub enum Outcome {
 }
 
 pub struct EapDialog {
+    /// The radio it was raised for, which its login dials on.
+    pub device: String,
     pub ssid: Ssid,
     pub ap: String,
     /// The network is in no scan: its profile probes for it by name.
@@ -73,7 +75,7 @@ pub struct EapDialog {
 }
 
 impl EapDialog {
-    pub fn new(ssid: &Ssid, ap: &str) -> EapDialog {
+    pub fn new(device: &str, ssid: &Ssid, ap: &str) -> EapDialog {
         let intro = intro_lines(&ssid.to_string());
         let intro: Vec<&str> = intro.iter().map(String::as_str).collect();
         let methods: Vec<&str> = Eap::ALL.iter().map(|m| m.label()).collect();
@@ -132,6 +134,7 @@ impl EapDialog {
             Item::button_at("cancel", CANCEL_X, BTN_Y, BUTTON_W, "Cancel", true),
         ];
         let mut d = EapDialog {
+            device: device.into(),
             ssid: ssid.clone(),
             ap: ap.into(),
             hidden: false,
@@ -404,7 +407,7 @@ mod tests {
     use reprisekit::raster::Canvas;
 
     fn dialog() -> EapDialog {
-        EapDialog::new(&"eduroam".into(), "/ap/8")
+        EapDialog::new("/dev/1", &"eduroam".into(), "/ap/8")
     }
 
     #[test]

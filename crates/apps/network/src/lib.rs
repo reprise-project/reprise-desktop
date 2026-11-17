@@ -254,8 +254,9 @@ impl NetApp {
         self.status = None;
     }
 
-    /// The chooser for radio `path`, in place of the one open. A chooser already showing `path`
-    /// stays with its pick and key prompts, and comes back as the window to raise.
+    /// The chooser for radio `path`, in place of the one open, whose key prompt or login dialog
+    /// closes unanswered. A chooser already showing `path` stays with its pick and prompts, and
+    /// comes back as the window to raise.
     fn open_chooser(&mut self, path: &str) -> Option<WinId> {
         if self.chooser.as_ref().is_some_and(|c| c.device_path == path) {
             return Some(CHOOSER);
@@ -267,6 +268,7 @@ impl NetApp {
             .find(|d| d.path == path && d.kind == nm::Kind::Wifi)
             .map(|d| chooser::Chooser::new(d, self.forms.text));
         if let Some(c) = found {
+            self.close_chooser();
             self.chooser = Some(c);
             self.sync_refused();
         }
@@ -1073,7 +1075,7 @@ impl NetApp {
                 security: nm::Security::Enterprise,
                 needs_key: true,
             } => {
-                self.eap = Some(keydlg::eap::EapDialog::new(&ssid, &ap));
+                self.eap = Some(keydlg::eap::EapDialog::new(&device, &ssid, &ap));
                 Reply::redraw_all()
             }
             chooser::Outcome::Connect {
@@ -1082,7 +1084,7 @@ impl NetApp {
                 security,
                 needs_key: true,
             } => {
-                self.key = Some(keydlg::KeyDialog::new(&ssid, &ap, security));
+                self.key = Some(keydlg::KeyDialog::new(&device, &ssid, &ap, security));
                 Reply::redraw_all()
             }
             chooser::Outcome::Connect { ap, ssid, .. } => {
@@ -1100,7 +1102,7 @@ impl NetApp {
                 Reply::redraw_all()
             }
             chooser::Outcome::Hidden => {
-                self.key = Some(keydlg::KeyDialog::hidden());
+                self.key = Some(keydlg::KeyDialog::hidden(&device));
                 Reply::redraw_all()
             }
         }
@@ -1136,15 +1138,12 @@ impl NetApp {
                 let Some(k) = self.key.take() else {
                     return Reply::redraw_all();
                 };
-                let Some(device) = self.chooser.as_ref().map(|c| c.device_path.clone()) else {
-                    return Reply::redraw_all();
-                };
-                self.dial(device, k.ap.clone(), k.ssid(), key, k.hidden);
+                self.dial(k.device.clone(), k.ap.clone(), k.ssid(), key, k.hidden);
                 Reply::redraw_all()
             }
             keydlg::Outcome::Enterprise => {
                 if let Some(k) = self.key.take() {
-                    let mut d = keydlg::eap::EapDialog::new(&k.ssid(), &k.ap);
+                    let mut d = keydlg::eap::EapDialog::new(&k.device, &k.ssid(), &k.ap);
                     d.hidden = k.hidden;
                     self.eap = Some(d);
                 }
@@ -1185,11 +1184,14 @@ impl NetApp {
                 let Some(d) = self.eap.take() else {
                     return Reply::redraw_all();
                 };
-                let Some(device) = self.chooser.as_ref().map(|c| c.device_path.clone()) else {
-                    return Reply::redraw_all();
-                };
                 let key = nm::Key::Enterprise(login);
-                self.dial(device, d.ap.clone(), d.ssid.clone(), Some(key), d.hidden);
+                self.dial(
+                    d.device.clone(),
+                    d.ap.clone(),
+                    d.ssid.clone(),
+                    Some(key),
+                    d.hidden,
+                );
                 Reply::redraw_all()
             }
         }
@@ -1722,6 +1724,7 @@ mod tests {
         let mut ctx = test_ctx(keydlg::CLIENT);
         let mut app = NetApp {
             key: Some(keydlg::KeyDialog::new(
+                "/dev/1",
                 &"Lab".into(),
                 "/ap/7",
                 nm::Security::Psk,
@@ -1957,6 +1960,104 @@ mod tests {
         assert!(app.notices.is_empty(), "the notice left with the chooser");
         assert!(app.eap.is_none(), "the login dialog left with the chooser");
         assert!(app.import.is_none(), "Browse left with the login dialog");
+    }
+
+    /// An app with Wi-Fi radios `paths`, whose commands land on the receiver.
+    fn with_radios(paths: &[&str]) -> (NetApp, async_channel::Receiver<nm::Cmd>) {
+        let (nm, sent) = nm::NmHandle::channel();
+        let app = NetApp {
+            nm: Some(nm),
+            snapshot: radios(paths),
+            ..NetApp::default()
+        };
+        (app, sent)
+    }
+
+    fn needs_key(ap: &str, security: nm::Security) -> chooser::Outcome {
+        chooser::Outcome::Connect {
+            ap: ap.into(),
+            ssid: "Lab".into(),
+            security,
+            needs_key: true,
+        }
+    }
+
+    fn type_key(app: &mut NetApp, ctx: &mut Ctx, key: &str) {
+        for field in ["key", "confirm"] {
+            app.key.as_mut().unwrap().form.focus_id(field);
+            app.event(KEY, Event::Pasted(key.into()), ctx);
+        }
+    }
+
+    fn psk_dial(device: &str, ap: &str, key: &str) -> nm::Cmd {
+        nm::Cmd::Connect {
+            device: device.into(),
+            ap: ap.into(),
+            ssid: "Lab".into(),
+            key: Some(nm::Key::Psk(nm::Psk::new(key))),
+            hidden: false,
+        }
+    }
+
+    #[test]
+    fn a_key_prompt_or_login_dialog_closes_unanswered_when_the_chooser_moves_to_another_radio() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        let (mut app, sent) = with_radios(&["/dev/1", "/dev/2"]);
+        let view = |app: &mut NetApp, radio: &str| {
+            let out = folder::Outcome::ViewWireless(radio.into());
+            app.folder_outcome(out, &test_ctx(folder::CLIENT));
+            app.withdraw_orphans();
+        };
+        view(&mut app, "/dev/1");
+        app.chooser_outcome(chooser::Outcome::NeedsAgent);
+        app.chooser_outcome(needs_key("/ap/1", nm::Security::Psk));
+        type_key(&mut app, &mut ctx, "hunter22");
+        view(&mut app, "/dev/2");
+        assert!(app.key.is_none(), "the key prompt left with radio 1");
+        assert!(app.notices.is_empty(), "so did the agent notice");
+        assert!(sent.try_recv().is_err(), "nothing dialled");
+
+        view(&mut app, "/dev/1");
+        app.chooser_outcome(needs_key("/ap/1", nm::Security::Enterprise));
+        app.open_browse(Browse::Eap("ca"), ctx.theme.text);
+        view(&mut app, "/dev/2");
+        assert!(app.eap.is_none(), "the login dialog left with radio 1");
+        assert!(app.import.is_none(), "Browse left with the login dialog");
+        assert!(sent.try_recv().is_err(), "nothing dialled");
+
+        app.chooser_outcome(needs_key("/ap/2", nm::Security::Psk));
+        type_key(&mut app, &mut ctx, "radio2key");
+        app.event(KEY, enter(), &mut ctx);
+        assert_eq!(
+            sent.try_recv(),
+            Ok(psk_dial("/dev/2", "/ap/2", "radio2key"))
+        );
+    }
+
+    #[test]
+    fn a_key_prompt_answered_on_its_radio_dials_what_it_was_raised_for() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        let (mut app, sent) = with_radios(&["/dev/1", "/dev/2"]);
+        let view = |app: &mut NetApp, radio: &str| {
+            let out = folder::Outcome::ViewWireless(radio.into());
+            app.folder_outcome(out, &test_ctx(folder::CLIENT)).raise
+        };
+        view(&mut app, "/dev/1");
+        app.chooser_outcome(needs_key("/ap/1", nm::Security::Psk));
+        type_key(&mut app, &mut ctx, "hunter22");
+        assert_eq!(view(&mut app, "/dev/1"), Some(CHOOSER));
+        let typed = app
+            .key
+            .as_ref()
+            .map(|k| k.form.edit_text("confirm").to_string());
+        assert_eq!(
+            typed.as_deref(),
+            Some("hunter22"),
+            "the prompt stays with its key"
+        );
+        app.chooser.as_mut().unwrap().list.select_row(Some(0));
+        app.event(KEY, enter(), &mut ctx);
+        assert_eq!(sent.try_recv(), Ok(psk_dial("/dev/1", "/ap/1", "hunter22")));
     }
 
     #[test]
