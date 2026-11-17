@@ -316,8 +316,6 @@ impl State {
                     return;
                 }
                 let button = self.row_drag(tree, button, at);
-                // The button keeps its pressed mark in its new slot.
-                crate::taskpreview::pressed(self, tree, button);
                 let key = self
                     .bar(tree)
                     .and_then(|b| crate::taskbar::task_key(&b.slots, button))
@@ -577,6 +575,7 @@ impl State {
                 order,
             );
         }
+        self.task_preview.pins_reordered(order);
         if let Interaction::TaskPress { key, .. } = &mut self.interaction
             && let Some(k) = crate::taskbar::pin_renamed(*key, order)
         {

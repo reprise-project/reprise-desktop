@@ -35,7 +35,7 @@ use crate::{
     output::upload_scaled,
     peek::{self, PeekTarget},
     raster::{Canvas, Rect},
-    taskbar::TaskbarHit,
+    taskbar::{TaskKey, TaskbarHit},
     window::WindowId,
 };
 
@@ -52,9 +52,9 @@ pub struct TaskPreviewView {
     peeking: bool,
     /// The pictures `hold` took out of the panel, until `release`.
     held: Vec<ThumbId>,
-    /// The task button last pressed with the pointer, at the slot a drag moved it to: its panel waits
-    /// until the pointer leaves it.
-    pressed: Option<(TreeId, usize)>,
+    /// The task button last pressed with the pointer, by its bar and key so it is followed through any
+    /// change to the row: its panel waits until the pointer leaves it.
+    pressed: Option<(TreeId, TaskKey<WindowId>)>,
 }
 
 struct Panel {
@@ -81,7 +81,12 @@ pub fn hover(state: &mut State, bar: TreeId, hit: TaskbarHit) {
             return;
         }
     };
-    if state.task_preview.pressed == Some(target) {
+    let pressed = state.task_preview.pressed.filter(|&(b, _)| b == bar);
+    let slots = state
+        .bar(bar)
+        .map(|b| b.slots.as_slice())
+        .unwrap_or_default();
+    if pressed.is_some_and(|(_, key)| crate::taskbar::find_task(slots, &key) == Some(target.1)) {
         return;
     }
     state.task_preview.pressed = None;
@@ -191,7 +196,10 @@ pub fn release(state: &mut State) {
 /// A pointer press on task button `i` of bar `bar`: its panel stays down until the pointer has
 /// left the button, so a pointer resting where it clicked brings none back.
 pub fn pressed(state: &mut State, bar: TreeId, i: usize) {
-    state.task_preview.pressed = Some((bar, i));
+    let key = state
+        .bar(bar)
+        .and_then(|b| crate::taskbar::task_key(&b.slots, i));
+    state.task_preview.pressed = key.map(|k| (bar, k));
 }
 
 /// The pointer is off the task buttons and the panel: as `hide`, and the pressed button shows its
@@ -407,6 +415,13 @@ fn redraw(state: &mut State) {
 }
 
 impl TaskPreviewView {
+    /// The Quick Launch pins were put in `order` (old indices in new order): a pressed pinned
+    /// button keeps its mark under its new pin index.
+    pub fn pins_reordered(&mut self, order: &[usize]) {
+        self.pressed =
+            (self.pressed).and_then(|(b, k)| Some((b, crate::taskbar::pin_renamed(k, order)?)));
+    }
+
     pub fn is_shown(&self) -> bool {
         self.shown.is_some()
     }
@@ -552,45 +567,103 @@ mod tests {
         }
     }
 
+    /// The index of `w`'s task button on the first bar and the screen point at its centre.
+    fn centre(h: &crate::harness::Harness, w: WindowId) -> (usize, f64, f64) {
+        let bar = &h.state.bars[0];
+        let origin = h.state.bar_drawn(&bar.output).shown;
+        let i = (bar.slots.iter().position(|s| s.windows == [w])).expect("a task button");
+        let r = bar.layout.tasks[i];
+        let x = f64::from(origin.x + r.x + r.width / 2);
+        (i, x, f64::from(origin.y + r.y + r.height / 2))
+    }
+
+    fn on(s: &State, i: usize) -> bool {
+        (s.task_preview.shown.as_ref()).is_some_and(|p| p.button == i)
+    }
+
+    #[test]
+    fn a_pressed_task_buttons_panel_stays_down_wherever_a_closing_window_moves_it() {
+        for next in [true, false] {
+            let mut h = crate::harness::Harness::new();
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            let a = h.map_toplevel(&mut c, "one", 300, 200);
+            let b = h.map_toplevel(&mut c, "two", 300, 200);
+            let d = h.map_toplevel(&mut c, "three", 300, 200);
+            let (_, bx, by) = centre(&h, b.id);
+            h.pointer_to(bx, by);
+            h.button(crate::input::BTN_LEFT, true);
+            h.button(crate::input::BTN_LEFT, false);
+            c.destroy(a);
+            h.roundtrip(&mut c);
+            let (ib, bx, by) = centre(&h, b.id);
+            let (id, dx, dy) = centre(&h, d.id);
+            assert_eq!((ib, id), (0, 1), "the row closed up");
+            if next {
+                h.pointer_to(dx, dy);
+                h.until("the panel of the button that took its slot", |s| on(s, id));
+                continue;
+            }
+            h.pointer_to(bx, by);
+            h.run_for(2 * SHOW_MS);
+            assert!(
+                !h.state.task_preview.is_shown(),
+                "no panel for the pressed button in its new slot"
+            );
+            h.pointer_to(512.0, 300.0);
+            h.pointer_to(bx, by);
+            h.until("its panel once the pointer is back", |s| on(s, ib));
+        }
+    }
+
+    /// A Quick Launch pin whose app id is `id`, so a window of that app sits on its button.
+    fn pin(id: &str) -> crate::quicklaunch::QuickItem {
+        let text = format!("[Desktop Entry]\nType=Application\nName={id}\nExec=x\n");
+        let file = format!("{id}.desktop");
+        crate::quicklaunch::QuickItem {
+            entry: crate::quicklaunch::parse(&text, &file.parse().unwrap(), "foot").unwrap(),
+            app: reprisefs::apps::parse_desktop(&text, &file.parse().unwrap()),
+            file,
+        }
+    }
+
     #[test]
     fn a_task_button_dragged_to_another_slot_keeps_its_panel_down_until_the_pointer_comes_back() {
-        let mut h = crate::harness::Harness::new();
-        // A task button drags only while the taskbar is pinned.
-        h.state.config.taskbar.pinned = true;
-        h.output("TEST-1", 1024, 768);
-        let mut c = h.connect();
-        let a = h.map_toplevel(&mut c, "one", 300, 200);
-        let b = h.map_toplevel(&mut c, "two", 300, 200);
-        let centre = |h: &crate::harness::Harness, w| {
-            let bar = &h.state.bars[0];
-            let origin = h.state.bar_drawn(&bar.output).shown;
-            let i = (bar.slots.iter().position(|s| s.windows == [w])).expect("a task button");
-            let r = bar.layout.tasks[i];
-            let x = f64::from(origin.x + r.x + r.width / 2);
-            (i, x, f64::from(origin.y + r.y + r.height / 2))
-        };
-        let on = |s: &State, i| (s.task_preview.shown.as_ref()).is_some_and(|p| p.button == i);
-        let (ia, ax, ay) = centre(&h, a.id);
-        let (ib, bx, _) = centre(&h, b.id);
-        h.pointer_to(ax, ay);
-        h.button(crate::input::BTN_LEFT, true);
-        for n in 1..=8 {
-            h.pointer_to(ax + (bx + 10.0 - ax) * f64::from(n) / 8.0, ay);
+        for pins in [false, true] {
+            let mut h = crate::harness::Harness::new();
+            // A task button drags only while the taskbar is pinned.
+            h.state.config.taskbar.pinned = true;
+            if pins {
+                h.state.quicklaunch = vec![pin("one"), pin("two")];
+            }
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            let a = h.map_toplevel(&mut c, "one", 300, 200);
+            let b = h.map_toplevel(&mut c, "two", 300, 200);
+            let (ia, ax, ay) = centre(&h, a.id);
+            let (ib, bx, _) = centre(&h, b.id);
+            let pinned = h.state.bars[0].slots[ia].pin.is_some();
+            assert_eq!(pinned, pins, "a window of a pinned app sits on its pin");
+            h.pointer_to(ax, ay);
+            h.button(crate::input::BTN_LEFT, true);
+            for n in 1..=8 {
+                h.pointer_to(ax + (bx + 10.0 - ax) * f64::from(n) / 8.0, ay);
+            }
+            h.button(crate::input::BTN_LEFT, false);
+            h.run_for(2 * SHOW_MS);
+            let (na, ax, ay) = centre(&h, a.id);
+            let (nb, bx, by) = centre(&h, b.id);
+            assert_eq!((na, nb), (ib, ia), "the buttons swapped, pins {pins}");
+            assert!(
+                !h.state.task_preview.is_shown(),
+                "no panel while the pointer rests where it dropped it, pins {pins}"
+            );
+            h.pointer_to(bx, by);
+            h.until("the panel of the button in its old slot", |s| on(s, nb));
+            h.pointer_to(512.0, 300.0);
+            h.pointer_to(ax, ay);
+            h.until("its panel once the pointer is back", |s| on(s, na));
         }
-        h.button(crate::input::BTN_LEFT, false);
-        h.run_for(2 * SHOW_MS);
-        let (na, ax, ay) = centre(&h, a.id);
-        let (nb, bx, by) = centre(&h, b.id);
-        assert_eq!((na, nb), (ib, ia), "the buttons swapped");
-        assert!(
-            !h.state.task_preview.is_shown(),
-            "no panel while the pointer rests where it dropped it"
-        );
-        h.pointer_to(bx, by);
-        h.until("the panel of the button in its old slot", |s| on(s, nb));
-        h.pointer_to(512.0, 300.0);
-        h.pointer_to(ax, ay);
-        h.until("its panel once the pointer is back", |s| on(s, na));
     }
 
     #[test]
