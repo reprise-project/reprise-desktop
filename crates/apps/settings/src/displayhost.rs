@@ -3,7 +3,7 @@
 
 use std::time::Instant;
 
-use repriseapp::heads::{Head, HeadRequests};
+use repriseapp::heads::{Head, HeadRequests, TrialEnd};
 use repriseapp::keys::form_input;
 use repriseapp::{Ctx, Event, Reply, WinId};
 use reprisekit::raster::Canvas;
@@ -225,9 +225,12 @@ impl SettingsApp {
         let flow = &mut self.display.flow;
         let effects = match press {
             Press::Cancel => flow.cancel(req),
-            Press::Ok | Press::Apply => {
-                flow.apply(&mut self.display.model, req, press == Press::Ok)
-            }
+            Press::Ok | Press::Apply => flow.apply(
+                &mut self.display.model,
+                req,
+                press == Press::Ok,
+                Instant::now(),
+            ),
         };
         let r = self.display_effects(effects);
         self.sync_apply();
@@ -235,10 +238,10 @@ impl SettingsApp {
     }
 
     pub(crate) fn heads_applied(&mut self, serial: u32, ok: bool, req: &mut HeadRequests) -> Reply {
-        let effects = self
-            .display
-            .flow
-            .applied(serial, ok, &mut self.display.model, req);
+        let effects =
+            self.display
+                .flow
+                .applied(serial, ok, &mut self.display.model, req, Instant::now());
         if let (Some(q), Some(icon)) = (self.display.flow.question.as_mut(), &self.display.icon) {
             q.dialog.form.set_picture(monitordlg::ICON, icon.clone());
         }
@@ -247,6 +250,16 @@ impl SettingsApp {
         let mut r = self.display_effects(effects);
         r.redraw_all = true;
         r.tick = self.display.flow.question.is_some();
+        r
+    }
+
+    /// The trial ended: a kept one writes the keys Yes chose, one the compositor put back
+    /// answers the question No.
+    pub(crate) fn trial_ended(&mut self, end: TrialEnd) -> Reply {
+        let effects = self.display.flow.trial_ended(end);
+        let mut r = self.display_effects(effects);
+        self.sync_apply();
+        r.redraw_all = true;
         r
     }
 

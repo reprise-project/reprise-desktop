@@ -16,6 +16,13 @@
 //! may set several heads at once (an arrangement moves them together). One
 //! cancelled because the outputs changed under it goes again with the new
 //! serial, [`TRIES`] sends at most.
+//!
+//! A configuration on trial (`reprise_output_trial_v1`) waits its turn like
+//! any other; then the model asks for the trial ([`Out::BeginTrial`]) and
+//! sends the configuration, covered by the trial ([`Configure::cover`]), only
+//! once the trial is held. A refused trial fails it unsent. One cancelled goes
+//! again, covered, only while its trial is held; it is never sent plain, so it
+//! cannot land outside its trial.
 
 use std::collections::VecDeque;
 
@@ -102,11 +109,35 @@ pub struct HeadConfig {
 pub type HeadSet = Vec<(String, HeadConfig)>;
 
 /// The configurations a program asked for during one event
-/// (`Ctx::configure_head`), each with the number its answer carries.
+/// (`Ctx::configure_head`), each with the number its answer carries, and what it asked of its
+/// trial.
 #[derive(Debug, Default)]
 pub struct HeadRequests {
     next: u32,
     asked: Vec<(u32, HeadSet)>,
+    trial: Vec<TrialAsk>,
+}
+
+/// What a program asks of `reprise_output_trial_v1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrialAsk {
+    /// Begin a trial of `seconds`, then send configuration `serial` once it is held.
+    Begin {
+        serial: u32,
+        seconds: u32,
+    },
+    Keep,
+    Revert,
+}
+
+/// How a trial the program began ended, as `Event::TrialEnded`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrialEnd {
+    Kept,
+    /// The compositor put the outputs back: on revert, or when the seconds ran out.
+    Reverted,
+    /// The outputs could not be put back.
+    Failed,
 }
 
 impl HeadRequests {
@@ -122,8 +153,31 @@ impl HeadRequests {
         self.next
     }
 
+    /// Queue one configuration as [`configure_all`](Self::configure_all) does, sent once a trial
+    /// of `seconds` is held: the compositor puts the outputs back unless
+    /// [`keep_trial`](Self::keep_trial) comes first. A trial the compositor refuses, or one it
+    /// does not offer, fails the configuration unsent.
+    pub fn configure_on_trial(&mut self, heads: HeadSet, seconds: u32) -> u32 {
+        let serial = self.configure_all(heads);
+        self.trial.push(TrialAsk::Begin { serial, seconds });
+        serial
+    }
+
+    pub fn keep_trial(&mut self) {
+        self.trial.push(TrialAsk::Keep);
+    }
+
+    /// Have the compositor put the outputs back as they ran when the trial began.
+    pub fn revert_trial(&mut self) {
+        self.trial.push(TrialAsk::Revert);
+    }
+
     pub fn take(&mut self) -> Vec<(u32, HeadSet)> {
         std::mem::take(&mut self.asked)
+    }
+
+    pub fn take_trial(&mut self) -> Vec<TrialAsk> {
+        std::mem::take(&mut self.trial)
     }
 }
 
@@ -157,6 +211,15 @@ pub enum In {
     Succeeded(u32),
     Failed(u32),
     Cancelled(u32),
+    /// The trial [`Out::BeginTrial`] asked for is held.
+    TrialStarted,
+    /// It was refused: another trial is held, or the compositor offers none.
+    TrialRefused,
+    /// The trial begun for configuration `serial` ended.
+    TrialEnded {
+        serial: u32,
+        end: TrialEnd,
+    },
 }
 
 /// One head's part of a configuration: `enable_head`, with these set.
@@ -178,6 +241,8 @@ pub struct Configure {
     pub serial: u32,
     /// `test` rather than `apply`.
     pub test: bool,
+    /// Covered by the trial last begun before its apply: applied only while that trial is held.
+    pub cover: bool,
     /// Every head, `None` to disable it.
     pub heads: Vec<(ObjId, Option<ConfigHead>)>,
 }
@@ -185,12 +250,31 @@ pub struct Configure {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Out {
     Heads(Vec<Head>),
-    Applied { serial: u32, ok: bool },
+    Applied {
+        serial: u32,
+        ok: bool,
+    },
     Configure(Configure),
+    /// Begin a trial of `seconds` for configuration `serial`; its answer comes back as
+    /// `In::TrialStarted` or `In::TrialRefused`.
+    BeginTrial {
+        serial: u32,
+        seconds: u32,
+    },
+    TrialEnded(TrialEnd),
 }
 
 /// How often a cancelled configuration is sent before it counts as failed.
 const TRIES: u8 = 3;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum OnTrial {
+    No,
+    /// A trial of these seconds is begun before it is sent.
+    Begin(u32),
+    /// Its trial began: sent covered.
+    Covered,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 enum Job {
@@ -198,6 +282,7 @@ enum Job {
         serial: u32,
         heads: HeadSet,
         tries: u8,
+        trial: OnTrial,
     },
     Probe {
         head: ObjId,
@@ -232,6 +317,13 @@ pub struct Model {
     serial: Option<u32>,
     queue: VecDeque<Job>,
     flight: Option<(u32, Job)>,
+    /// The configuration waiting for the trial [`Out::BeginTrial`] asked for.
+    begun: Option<Job>,
+    /// The configuration serial of the newest trial the program asked for: only its end
+    /// reaches the program.
+    newest_trial: Option<u32>,
+    /// The configuration serial of the trial held, from `started` to its end.
+    held_trial: Option<u32>,
     next_id: u32,
 }
 
@@ -245,6 +337,9 @@ impl Model {
             serial: None,
             queue: VecDeque::new(),
             flight: None,
+            begun: None,
+            newest_trial: None,
+            held_trial: None,
             next_id: 0,
         }
     }
@@ -378,6 +473,27 @@ impl Model {
             In::Succeeded(id) => self.answered(id, Answer::Succeeded, &mut out),
             In::Failed(id) => self.answered(id, Answer::Failed, &mut out),
             In::Cancelled(id) => self.answered(id, Answer::Cancelled, &mut out),
+            In::TrialStarted => {
+                if let Some(job) = self.begun.take() {
+                    if let Job::Apply { serial, .. } = job {
+                        self.held_trial = Some(serial);
+                    }
+                    self.queue.push_front(job);
+                    self.pump(&mut out);
+                }
+            }
+            In::TrialRefused => {
+                if let Some(Job::Apply { serial, .. }) = self.begun.take() {
+                    out.push(Out::Applied { serial, ok: false });
+                    self.pump(&mut out);
+                }
+            }
+            In::TrialEnded { serial, end } => {
+                self.held_trial.take_if(|s| *s == serial);
+                if self.newest_trial == Some(serial) {
+                    out.push(Out::TrialEnded(end));
+                }
+            }
         }
         out
     }
@@ -390,27 +506,46 @@ impl Model {
     /// Queue one configuration setting every head in `heads`, answered
     /// as `serial`.
     pub fn configure_all(&mut self, serial: u32, heads: HeadSet) -> Vec<Out> {
+        self.queue_apply(serial, heads, OnTrial::No)
+    }
+
+    fn queue_apply(&mut self, serial: u32, heads: HeadSet, trial: OnTrial) -> Vec<Out> {
         self.queue.push_back(Job::Apply {
             serial,
             heads,
             tries: 0,
+            trial,
         });
         let mut out = Vec::new();
         self.pump(&mut out);
         out
     }
 
+    /// Queue `heads` as [`configure_all`](Self::configure_all) does, sent only once a trial of
+    /// `seconds` is held.
+    pub fn configure_on_trial(&mut self, serial: u32, heads: HeadSet, seconds: u32) -> Vec<Out> {
+        self.newest_trial = Some(serial);
+        self.queue_apply(serial, heads, OnTrial::Begin(seconds))
+    }
+
     /// The manager is gone: fail the request in flight and every queued
-    /// one, oldest first, and announce no heads. Leaves the model empty.
+    /// one, oldest first, end the trial held as failed (no end comes for it), and announce no
+    /// heads. Leaves the model empty.
     pub fn finish(&mut self) -> Vec<Out> {
         let jobs = self.flight.take().map(|(_, j)| j).into_iter();
         let mut out: Vec<Out> = jobs
+            .chain(self.begun.take())
             .chain(self.queue.drain(..))
             .filter_map(|j| match j {
                 Job::Apply { serial, .. } => Some(Out::Applied { serial, ok: false }),
                 Job::Probe { .. } => None,
             })
             .collect();
+        if let Some(s) = self.held_trial.take()
+            && self.newest_trial == Some(s)
+        {
+            out.push(Out::TrialEnded(TrialEnd::Failed));
+        }
         self.heads.clear();
         self.modes.clear();
         self.serial = None;
@@ -448,13 +583,24 @@ impl Model {
     }
 
     fn pump(&mut self, out: &mut Vec<Out>) {
-        while self.flight.is_none() {
+        while self.flight.is_none() && self.begun.is_none() {
             let Some(serial) = self.serial else {
                 return;
             };
-            let Some(job) = self.queue.pop_front() else {
+            let Some(mut job) = self.queue.pop_front() else {
                 return;
             };
+            if let Job::Apply { serial, trial, .. } = &mut job
+                && let OnTrial::Begin(seconds) = *trial
+            {
+                *trial = OnTrial::Covered;
+                out.push(Out::BeginTrial {
+                    serial: *serial,
+                    seconds,
+                });
+                self.begun = Some(job);
+                return;
+            }
             match self.build(&job, serial) {
                 Some(c) => {
                     self.flight = Some((c.id, job));
@@ -531,6 +677,13 @@ impl Model {
             id: self.next_id,
             serial,
             test: matches!(job, Job::Probe { .. }),
+            cover: matches!(
+                job,
+                Job::Apply {
+                    trial: OnTrial::Covered,
+                    ..
+                }
+            ),
             heads,
         })
     }
@@ -546,13 +699,19 @@ impl Model {
                     serial,
                     heads,
                     tries,
+                    trial,
                 },
                 Answer::Cancelled,
-            ) if tries + 1 < TRIES => self.queue.push_front(Job::Apply {
-                serial,
-                heads,
-                tries: tries + 1,
-            }),
+            ) if tries + 1 < TRIES
+                && (trial != OnTrial::Covered || self.held_trial == Some(serial)) =>
+            {
+                self.queue.push_front(Job::Apply {
+                    serial,
+                    heads,
+                    tries: tries + 1,
+                    trial,
+                })
+            }
             (Job::Apply { serial, .. }, a) => out.push(Out::Applied {
                 serial,
                 ok: a == Answer::Succeeded,
@@ -699,6 +858,7 @@ mod tests {
             id: 1,
             serial: 5,
             test: true,
+            cover: false,
             heads: vec![(
                 10,
                 Some(ConfigHead {
@@ -781,6 +941,7 @@ mod tests {
                 id: 1,
                 serial: 7,
                 test: false,
+                cover: false,
                 heads: vec![
                     (
                         10,
@@ -1007,6 +1168,188 @@ mod tests {
         assert_eq!(h[0].modes.len(), 1);
         m.event(In::HeadFinished(10));
         assert_eq!(m.event(In::Done(7)), vec![Out::Heads(vec![])]);
+    }
+
+    fn smaller_dp1() -> HeadSet {
+        let cfg = HeadConfig {
+            mode: Some(mode(1280, 720, 60_000)),
+            ..HeadConfig::default()
+        };
+        vec![("DP-1".into(), cfg)]
+    }
+
+    #[test]
+    fn a_configuration_on_trial_is_sent_once_the_trial_is_held() {
+        let mut m = Model::new(3);
+        feed(&mut m, dp1());
+        m.event(In::Done(7));
+        assert_eq!(
+            m.configure_on_trial(1, smaller_dp1(), 15),
+            vec![Out::BeginTrial {
+                serial: 1,
+                seconds: 15
+            }],
+            "the trial first"
+        );
+        let out = m.event(In::TrialStarted);
+        assert!(
+            matches!(out.as_slice(), [Out::Configure(c)] if !c.test && c.serial == 7 && c.heads[0].1.and_then(|h| h.mode) == Some(12)),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn a_refused_trial_fails_its_configuration_unsent() {
+        let mut m = Model::new(3);
+        feed(&mut m, dp1());
+        m.event(In::Done(7));
+        m.configure_on_trial(1, smaller_dp1(), 15);
+        assert_eq!(
+            m.event(In::TrialRefused),
+            vec![Out::Applied {
+                serial: 1,
+                ok: false
+            }],
+            "no configuration goes out"
+        );
+        assert!(
+            matches!(m.configure(2, "DP-1", HeadConfig::default()).as_slice(), [Out::Configure(c)] if c.id == 1),
+            "the next request goes on"
+        );
+    }
+
+    #[test]
+    fn a_trial_begins_only_after_the_configuration_before_it() {
+        let mut m = Model::new(3);
+        feed(&mut m, dp1());
+        m.event(In::Done(7));
+        let vrr = HeadConfig {
+            adaptive_sync: Some(true),
+            ..HeadConfig::default()
+        };
+        assert!(matches!(
+            m.configure(1, "DP-1", vrr).as_slice(),
+            [Out::Configure(_)]
+        ));
+        assert_eq!(m.configure_on_trial(2, smaller_dp1(), 15), vec![]);
+        assert_eq!(
+            m.event(In::Succeeded(1)),
+            vec![
+                Out::Applied {
+                    serial: 1,
+                    ok: true
+                },
+                Out::BeginTrial {
+                    serial: 2,
+                    seconds: 15
+                }
+            ],
+            "the trial notes the outputs with the first change made"
+        );
+        assert!(
+            m.finish().contains(&Out::Applied {
+                serial: 2,
+                ok: false
+            }),
+            "a gone manager fails the configuration waiting for its trial"
+        );
+    }
+
+    #[test]
+    fn only_the_newest_trials_end_reaches_the_program() {
+        let mut m = Model::new(3);
+        feed(&mut m, dp1());
+        m.event(In::Done(7));
+        m.configure_on_trial(1, smaller_dp1(), 15);
+        m.event(In::TrialStarted);
+        m.configure_on_trial(2, smaller_dp1(), 15);
+        let ended = |serial| In::TrialEnded {
+            serial,
+            end: TrialEnd::Reverted,
+        };
+        assert_eq!(
+            m.event(ended(1)),
+            vec![],
+            "the program has asked for a newer trial"
+        );
+        assert_eq!(m.event(ended(2)), vec![Out::TrialEnded(TrialEnd::Reverted)]);
+    }
+
+    /// A configure on trial goes out covered (`reprise_output_trial_v1.cover`): the compositor
+    /// applies it only while the trial is held.
+    fn covered(out: &[Out]) -> Option<u32> {
+        match out {
+            [Out::Configure(c)] if c.cover && !c.test => Some(c.id),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_cancelled_trial_configuration_goes_again_covered_only_while_its_trial_is_held() {
+        let mut m = Model::new(3);
+        feed(&mut m, dp1());
+        m.event(In::Done(7));
+        assert!(matches!(
+            m.configure(9, "DP-1", HeadConfig::default()).as_slice(),
+            [Out::Configure(c)] if !c.cover
+        ));
+        m.event(In::Succeeded(1));
+        m.configure_on_trial(1, smaller_dp1(), 15);
+        let first = covered(&m.event(In::TrialStarted)).expect("sent covered");
+        m.event(In::Done(8));
+        let again = covered(&m.event(In::Cancelled(first))).expect("again, covered");
+        m.event(In::TrialEnded {
+            serial: 1,
+            end: TrialEnd::Reverted,
+        });
+        assert_eq!(
+            m.event(In::Cancelled(again)),
+            vec![Out::Applied {
+                serial: 1,
+                ok: false
+            }],
+            "its trial is over: failed, never sent plain"
+        );
+    }
+
+    /// The program stalls between `started` and its configure: the configure goes out after the
+    /// trial ended, and the compositor cancels it.
+    #[test]
+    fn a_trial_configuration_sent_after_its_trial_ended_fails() {
+        let mut m = Model::new(3);
+        feed(&mut m, dp1());
+        m.event(In::Done(7));
+        m.configure_on_trial(1, smaller_dp1(), 15);
+        let id = covered(&m.event(In::TrialStarted)).expect("sent covered");
+        assert_eq!(
+            m.event(In::TrialEnded {
+                serial: 1,
+                end: TrialEnd::Reverted
+            }),
+            vec![Out::TrialEnded(TrialEnd::Reverted)]
+        );
+        assert_eq!(
+            m.event(In::Cancelled(id)),
+            vec![Out::Applied {
+                serial: 1,
+                ok: false
+            }],
+            "a failed apply and nothing sent"
+        );
+    }
+
+    #[test]
+    fn a_finished_manager_ends_the_trial_it_held() {
+        let mut m = Model::new(3);
+        feed(&mut m, dp1());
+        m.event(In::Done(7));
+        m.configure_on_trial(1, smaller_dp1(), 15);
+        let id = covered(&m.event(In::TrialStarted)).expect("sent covered");
+        m.event(In::Succeeded(id));
+        assert_eq!(
+            m.finish(),
+            vec![Out::TrialEnded(TrialEnd::Failed), Out::Heads(vec![])]
+        );
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use repriseapp::heads::{TrialAsk, TrialEnd};
 
 /// DP-1 listed with a smaller resolution picked, Apply or OK pressed
 /// and taken, so the question is up.
@@ -104,56 +105,42 @@ fn apply_greys_once_a_profile_pick_is_written() {
 #[test]
 fn the_questions_close_box_puts_the_old_mode_back_and_keeps_the_sheet() {
     let (mut app, mut ctx) = question_up("question-close", displayhost::Press::Apply);
+    ctx.heads.take_trial();
     let r = app.event(displayhost::MONITOR_WIN, Event::CloseRequest, &mut ctx);
     assert!(!r.quit);
     assert!(app.display.flow.question.is_none());
-    let back = ctx.heads.take();
-    assert_eq!(back.len(), 1);
-    assert_eq!(
-        back[0].1,
-        vec![("DP-1".to_string(), displaypage::test_head("DP-1").state())]
-    );
-    let r = app.event(
-        MAIN,
-        Event::HeadsApplied {
-            serial: back[0].0,
-            ok: true,
-        },
-        &mut ctx,
-    );
+    assert!(ctx.heads.take().is_empty(), "the compositor puts it back");
+    assert_eq!(ctx.heads.take_trial(), [TrialAsk::Revert]);
+    let r = app.event(MAIN, Event::TrialEnded(TrialEnd::Reverted), &mut ctx);
     assert!(!r.quit, "the sheet stays open after the put-back");
     assert!(!app.path.exists(), "nothing written");
 }
 
 #[test]
-fn an_ending_signal_under_the_question_puts_the_old_mode_back() {
-    let (mut app, _) = question_up("question-ending", displayhost::Press::Apply);
-    let mut heads = repriseapp::heads::HeadRequests::default();
-    app.emergency_outputs(&mut heads);
-    let back = heads.take();
-    assert_eq!(
-        back.iter().map(|b| b.1.clone()).collect::<Vec<_>>(),
-        vec![vec![(
-            "DP-1".to_string(),
-            displaypage::test_head("DP-1").state()
-        )]],
-        "one request putting DP-1 back as it ran"
-    );
+fn yes_after_the_compositor_put_the_mode_back_writes_nothing() {
+    let (mut app, mut ctx) = question_up("question-late-yes", displayhost::Press::Ok);
+    let effects = app.display.flow.answer(true, &mut ctx.heads);
+    let r = app.display_effects(effects);
+    assert!(!r.quit, "OK waits for the trial's end");
+    assert_eq!(ctx.heads.take_trial().last(), Some(&TrialAsk::Keep));
+    let r = app.event(MAIN, Event::TrialEnded(TrialEnd::Reverted), &mut ctx);
+    assert!(r.quit, "OK closes the sheet as after No");
+    assert!(!app.path.exists(), "nothing written");
 }
 
 #[test]
-fn an_ending_signal_with_no_question_up_sets_no_output() {
-    let mut app = app("ending-no-question");
-    let mut ctx = test_ctx();
-    app.event(
-        MAIN,
-        Event::Heads(vec![displaypage::test_head("DP-1")]),
-        &mut ctx,
+fn a_trial_the_compositor_put_back_takes_the_question_down_unanswered() {
+    let (mut app, mut ctx) = question_up("question-timeout", displayhost::Press::Apply);
+    ctx.heads.take_trial();
+    let r = app.event(MAIN, Event::TrialEnded(TrialEnd::Reverted), &mut ctx);
+    assert!(r.redraw_all && !r.quit);
+    assert!(
+        !(app.children().iter()).any(|c| c.id == displayhost::MONITOR_WIN),
+        "Monitor Settings is gone"
     );
-    app.display.model.pick_resolution(1);
-    let mut heads = repriseapp::heads::HeadRequests::default();
-    app.emergency_outputs(&mut heads);
-    assert_eq!(heads.take(), vec![], "a pick not applied is left alone");
+    assert!(ctx.heads.take_trial().is_empty(), "nothing left to revert");
+    assert!(!app.path.exists(), "nothing written");
+    assert!(apply_lit(&app), "the picks can be applied again");
 }
 
 #[test]
@@ -179,7 +166,18 @@ fn yes_after_ok_writes_the_output_and_quits() {
     };
     let win = displayhost::MONITOR_WIN;
     assert!(!app.event(win, Event::Pointer(press), &mut ctx).quit);
-    assert!(app.event(win, Event::Pointer(release), &mut ctx).quit);
+    assert!(!app.event(win, Event::Pointer(release), &mut ctx).quit);
+    assert_eq!(ctx.heads.take_trial().last(), Some(&TrialAsk::Keep));
+    assert!(
+        !(app.children().iter()).any(|c| c.id == displayhost::MONITOR_WIN),
+        "the question closes at Yes"
+    );
+    assert!(
+        !app.path.exists(),
+        "written once the compositor kept the trial"
+    );
+    let r = app.event(MAIN, Event::TrialEnded(TrialEnd::Kept), &mut ctx);
+    assert!(r.quit);
     let text = std::fs::read_to_string(&app.path).expect("config written");
     assert!(
         text.contains("name = \"DP-1\"") && text.contains("mode = \"1280x720@60\""),
@@ -226,8 +224,8 @@ fn a_kept_arrangement_writes_every_place_and_the_primary() {
         },
         &mut ctx,
     );
-    let effects = app.display.flow.answer(true, &mut ctx.heads);
-    app.display_effects(effects);
+    app.display.flow.answer(true, &mut ctx.heads);
+    app.event(MAIN, Event::TrialEnded(TrialEnd::Kept), &mut ctx);
     let text = std::fs::read_to_string(&app.path).unwrap();
     assert_eq!(
         outputwrite::read_primary(&text),
@@ -275,8 +273,8 @@ fn ok_waits_for_the_primary_call_and_a_failed_one_keeps_the_sheet_with_a_box() {
         &mut ctx,
     );
     assert!(!r.quit);
-    let effects = app.display.flow.answer(true, &mut ctx.heads);
-    let r = app.display_effects(effects);
+    app.display.flow.answer(true, &mut ctx.heads);
+    let r = app.event(MAIN, Event::TrialEnded(TrialEnd::Kept), &mut ctx);
     assert!(!r.quit, "OK waits for the primary call");
     assert!(app.display.quit_after_primary);
     assert_eq!(app.primary_done(), None, "still running");

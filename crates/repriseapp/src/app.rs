@@ -128,8 +128,8 @@ pub trait Extended {
         Reply::none()
     }
     /// Whether the program sets the outputs: the host then binds
-    /// wlr-output-management, sends `Event::Heads` and carries out
-    /// [`Ctx::configure_head`]. Read once, at start.
+    /// wlr-output-management and `reprise_output_trial_v1`, sends `Event::Heads` and carries out
+    /// [`Ctx::configure_head`] and [`HeadRequests`]' trials. Read once, at start.
     fn output_management(&self) -> bool {
         false
     }
