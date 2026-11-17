@@ -198,6 +198,12 @@ impl State {
             .map(|b| b.over)
     }
 
+    /// Whether dialog `id` waits on a Browse child, starting or up: it takes no key or press but
+    /// Escape and Cancel, which close it and end the child.
+    pub(super) fn under_browse(&self, id: u64) -> bool {
+        self.dialogs.browsing.iter().any(|b| b.over == id) || self.window_over_dialog(id).is_some()
+    }
+
     /// The top mapped window standing over dialog `id`, which takes the keyboard in its place.
     pub(crate) fn window_over_dialog(&self, id: u64) -> Option<WindowId> {
         (self.focus_order.iter().rev().copied())
@@ -319,11 +325,75 @@ mod tests {
             !h.state.win(t.id).unwrap().minimized,
             "it does not minimize"
         );
-        let cancel = Some(crate::dialog::DialogHit::Button(1));
-        h.state.dialog_press(0, cancel, 0);
+        let ok = Some(crate::dialog::DialogHit::Button(0));
+        h.state.dialog_press(0, ok, 0);
         h.state.dialog_release_button();
-        assert_eq!(h.state.dialogs.views.len(), 1, "Run's Cancel did nothing");
+        assert_eq!(h.state.dialogs.views.len(), 1, "Run's OK did nothing");
         assert_eq!(h.state.focused, Some(t.id), "the press went to the child");
+    }
+
+    /// A Run box over `line` with a Browse child that is starting.
+    fn run_with_a_child_starting(line: &str) -> (Harness, u64) {
+        let mut h = Harness::new();
+        crate::fsjobs::setup(&mut h.state);
+        h.output("o", 1024, 768);
+        h.state.open_dialog(Dialog::run(&[line.to_string()]));
+        let run = h.state.dialogs.views[0].id;
+        h.state.dialogs.browsing.push(Browsing {
+            pid: None,
+            over: run,
+            pidfd: None,
+        });
+        crate::spawn::record();
+        (h, run)
+    }
+
+    /// A click through the pointer on button `i` of Run, the only dialog.
+    fn click_button(h: &mut Harness, i: usize) {
+        let v = &h.state.dialogs.views[0];
+        let r = v.layout.buttons[i];
+        let (x, y) = (v.x + r.x + r.width / 2, v.y + r.y + r.height / 2);
+        h.click(f64::from(x), f64::from(y));
+    }
+
+    #[test]
+    fn run_takes_no_key_or_press_but_cancel_while_its_child_starts() {
+        const ENTER: u32 = 28;
+        const ESCAPE: u32 = 1;
+        let (mut h, run) = run_with_a_child_starting("true");
+        h.key(ENTER, true);
+        h.key(ENTER, false);
+        click_button(&mut h, 0);
+        h.run_for(200);
+        assert!(h.state.dialogs.checking.is_empty(), "no line is checked");
+        assert_eq!(
+            crate::spawn::recorded(),
+            Vec::<String>::new(),
+            "nothing runs"
+        );
+        assert_eq!(h.state.dialogs.views.len(), 1, "Run stays up");
+        assert!(h.state.dialogs.browsing.iter().any(|b| b.over == run));
+
+        h.key(ESCAPE, true);
+        h.key(ESCAPE, false);
+        assert!(h.state.dialogs.views.is_empty(), "Escape closes Run");
+        assert!(h.state.dialogs.browsing.is_empty(), "and lets the child go");
+
+        let (mut h, _) = run_with_a_child_starting("true");
+        click_button(&mut h, 1);
+        assert!(h.state.dialogs.views.is_empty(), "Cancel closes Run");
+        assert!(h.state.dialogs.browsing.is_empty());
+    }
+
+    #[test]
+    fn cancel_on_run_under_its_child_ends_the_child() {
+        let mut h = Harness::new();
+        let (_run, _c, t) = run_under_child(&mut h, CHILD + 4);
+        h.state.move_to(t.id, 600, 450);
+        click_button(&mut h, 1);
+        assert!(h.state.dialogs.views.is_empty(), "Cancel closes Run");
+        assert!(h.state.dialogs.browsing.is_empty(), "its child is let go");
+        assert_eq!(h.state.win(t.id).and_then(|w| w.over_dialog), None);
     }
 
     #[test]

@@ -105,9 +105,7 @@ impl State {
         let Some(id) = self.dialogs.views.get(index).map(|v| v.id) else {
             return false;
         };
-        if self.dialogs.views.iter().any(|v| v.parent == Some(id))
-            || self.window_over_dialog(id).is_some()
-        {
+        if self.dialogs.views.iter().any(|v| v.parent == Some(id)) || self.under_browse(id) {
             return true;
         }
         let v = &mut self.dialogs.views[index];
@@ -178,13 +176,20 @@ impl State {
 
     /// A left press on dialog `index` at `hit` (`None` for the bare body). A dialog under the top one is
     /// raised first; one with another dialog or a window opened over it raises that one instead.
+    /// One waiting on a Browse child takes a press on Cancel alone.
     pub fn dialog_press(&mut self, index: usize, hit: Option<DialogHit>, time_msec: u32) {
-        let Some(id) = self.dialogs.views.get(index).map(|v| v.id) else {
+        let Some(v) = self.dialogs.views.get(index) else {
             return;
+        };
+        let id = v.id;
+        let cancel = match hit {
+            Some(DialogHit::Button(i)) => (v.dialog.buttons.get(i))
+                .is_some_and(|b| b.action == crate::dialog::DialogAction::Cancel),
+            _ => false,
         };
         self.raise_dialog(index);
         if self.dialogs.views.last().is_some_and(|v| v.id != id)
-            || self.window_over_dialog(id).is_some()
+            || (self.under_browse(id) && !cancel)
         {
             return;
         }
@@ -249,9 +254,7 @@ impl State {
             return;
         };
         self.raise_dialog(index);
-        if self.dialogs.views.last().is_none_or(|v| v.id != id)
-            || self.window_over_dialog(id).is_some()
-        {
+        if self.dialogs.views.last().is_none_or(|v| v.id != id) || self.under_browse(id) {
             return;
         }
         let px = self.top_dialog_px();
@@ -509,6 +512,14 @@ impl State {
     }
 
     pub fn dialog_paste(&mut self, text: &str) {
+        if self
+            .dialogs
+            .views
+            .last()
+            .is_some_and(|v| self.under_browse(v.id))
+        {
+            return;
+        }
         let outcome = match self.dialogs.views.last_mut() {
             Some(v) => v.dialog.paste(text),
             None => return,
@@ -517,9 +528,10 @@ impl State {
         self.run_path_completions();
     }
 
-    /// A key press for the top dialog; always consumed.
+    /// A key press for the top dialog; always consumed. One waiting on a Browse child takes
+    /// Escape alone.
     pub fn dialog_key(&mut self, k: &DialogKey) {
-        use crate::keys::{KEY_Alt_L, KEY_Alt_R, MOD_ALT, MOD_CTRL, MOD_SHIFT};
+        use crate::keys::{KEY_Alt_L, KEY_Alt_R, KEY_Escape, MOD_ALT, MOD_CTRL, MOD_SHIFT};
         let alt = k.mods & MOD_ALT != 0;
         // Any key brings out focus rectangles, Alt the underlines ([`Cues::key`]); bare Alt redraws here.
         let alt_key = k.syms.iter().any(|&s| s == KEY_Alt_L || s == KEY_Alt_R);
@@ -527,6 +539,15 @@ impl State {
             && v.cues.key(alt || alt_key)
         {
             self.redraw_top_dialog();
+        }
+        if !k.syms.contains(&KEY_Escape)
+            && self
+                .dialogs
+                .views
+                .last()
+                .is_some_and(|v| self.under_browse(v.id))
+        {
+            return;
         }
         let ctrl = k.mods & MOD_CTRL != 0;
         let shift = k.mods & MOD_SHIFT != 0;
