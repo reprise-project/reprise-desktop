@@ -372,6 +372,22 @@ impl State {
                 .any(|x| x.id != w.id && listed(x) && x.wl_surface().client() == client)
     }
 
+    /// The window whose task button is active: the focused window, or for a focused window with
+    /// no button of its own (a box), the nearest one up its owner chain with a button. None while
+    /// that window is minimized.
+    pub fn active_task_window(&self) -> Option<WindowId> {
+        let mut at = self.focused?;
+        // A parent cycle ends after one lap of the window list.
+        for _ in 0..=self.windows.len() {
+            let win = self.win(at)?;
+            if self.has_task_button(win) {
+                return (!win.minimized).then_some(at);
+            }
+            at = self.parent_window(at)?;
+        }
+        None
+    }
+
     /// One taskbar per output; the login screen has none.
     pub fn sync_bars(&mut self) {
         let outputs = if self.host == crate::compositor::Host::Greeter {

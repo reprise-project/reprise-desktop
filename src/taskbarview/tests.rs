@@ -646,3 +646,95 @@ fn a_prompt_or_sheet_of_a_program_with_no_other_task_button_has_one_for_its_fami
         "the button brings the family up with its box on top"
     );
 }
+
+/// The bar's drawn task buttons with their windows and whether each draws active, as the
+/// accessible name reports it too.
+fn drawn_active(h: &mut crate::harness::Harness) -> Vec<(Vec<WindowId>, bool)> {
+    h.state.redraw_taskbars();
+    let bar = &h.state.bars[0];
+    let tasks = &bar.drawn.as_ref().expect("drawn").state.tasks;
+    (bar.slots.iter().zip(tasks))
+        .enumerate()
+        .map(|(i, (s, t))| {
+            let named = h.state.task_button_name(bar, i).map(|(_, a)| a);
+            assert_eq!(named, Some(t.active), "the name says what the button draws");
+            (s.windows.clone(), t.active)
+        })
+        .collect()
+}
+
+fn active_buttons(h: &mut crate::harness::Harness) -> Vec<Vec<WindowId>> {
+    (drawn_active(h).into_iter())
+        .filter_map(|(w, a)| a.then_some(w))
+        .collect()
+}
+
+#[test]
+fn a_task_button_draws_active_while_a_box_of_its_window_has_the_keyboard() {
+    for interface in ["classic", "blue", "glass"] {
+        let toml = format!("[appearance]\ninterface = \"{interface}\"\n");
+        let mut config = crate::config::Config::parse(&toml).unwrap();
+        config.remember_windows = false;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let folder = h.map_toplevel(&mut c, "explorer", 400, 300);
+        let other = h.map_toplevel(&mut c, "notepad", 300, 200);
+        let sheet = h.map_dialog(&mut c, "explorer", Some(folder), "", (300, 200));
+        let advanced = h.map_modal(&mut c, "explorer", sheet, (120, 60));
+        assert_eq!(h.state.focused, Some(advanced.id));
+        assert_eq!(
+            active_buttons(&mut h),
+            [vec![folder.id]],
+            "{interface}: the folder's button while its box has the keyboard"
+        );
+        h.state.focus_window(other.id);
+        assert_eq!(
+            active_buttons(&mut h),
+            [vec![other.id]],
+            "{interface}: the other program's button once it has the keyboard"
+        );
+    }
+}
+
+#[test]
+fn only_the_window_whose_box_has_the_keyboard_draws_active_among_its_programs_buttons() {
+    for interface in ["classic", "blue"] {
+        let toml = format!("[appearance]\ninterface = \"{interface}\"\n");
+        let mut config = crate::config::Config::parse(&toml).unwrap();
+        config.remember_windows = false;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let one = h.map_toplevel(&mut c, "explorer", 400, 300);
+        let two = h.map_toplevel(&mut c, "explorer", 400, 300);
+        let advanced = h.map_modal(&mut c, "explorer", two, (120, 60));
+        assert_eq!(h.state.focused, Some(advanced.id));
+        assert_eq!(
+            drawn_active(&mut h),
+            [(vec![one.id], false), (vec![two.id], true)],
+            "{interface}: the box's window, not its sibling"
+        );
+    }
+}
+
+#[test]
+fn a_combined_button_draws_active_while_a_box_of_one_of_its_windows_has_the_keyboard() {
+    let mut config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+    config.remember_windows = false;
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let one = h.map_toplevel(&mut c, "explorer", 400, 300);
+    let two = h.map_toplevel(&mut c, "explorer", 400, 300);
+    let other = h.map_toplevel(&mut c, "notepad", 300, 200);
+    let advanced = h.map_modal(&mut c, "explorer", two, (120, 60));
+    assert_eq!(h.state.focused, Some(advanced.id));
+    assert_eq!(
+        active_buttons(&mut h),
+        [vec![one.id, two.id]],
+        "the program's one button"
+    );
+    h.state.focus_window(other.id);
+    assert_eq!(active_buttons(&mut h), [vec![other.id]]);
+}
