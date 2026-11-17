@@ -50,7 +50,8 @@ struct Active {
     session: Option<(helper::Session, String)>,
     reports: Option<Receiver<Report>>,
     prompted: bool,
-    /// The hidden prompts this conversation has asked; past the first the field asks anew.
+    /// The prompts this conversation has asked, which each submit names; past the first, or
+    /// for a shown first one, the field asks anew.
     prompts: u32,
     /// The first PAM error or info text since the password prompt (or the
     /// conversation's start), shown on failure instead of the generic text. The
@@ -240,7 +241,8 @@ impl PolkitApp {
 
     /// Give the helper what the dialog submitted, starting a conversation if none
     /// is running for `user`. A password sent before the helper asks waits for its
-    /// prompt, which comes after the earlier PAM steps (the fingerprint reader).
+    /// prompt, which comes after the earlier PAM steps (the fingerprint reader), and
+    /// answers it only if it is hidden.
     fn submit(&mut self, user: String, password: zeroize::Zeroizing<String>) {
         let waker = self.waker.clone();
         let Some(a) = self.active.as_mut() else {
@@ -261,7 +263,7 @@ impl PolkitApp {
         a.held = None;
         a.prompted = false;
         let sent = match &a.session {
-            Some((session, _)) => session.answer(password),
+            Some((session, _)) => session.answer(a.prompts, password),
             None => false,
         };
         if !sent && waker.is_some() {
@@ -658,7 +660,11 @@ mod tests {
         );
         // The password waits in the conversation for its prompt.
         assert_eq!(
-            passwords.try_recv().ok().as_deref().map(|p| p.as_str()),
+            passwords
+                .try_recv()
+                .ok()
+                .map(|a| a.text.to_string())
+                .as_deref(),
             Some("hunter2")
         );
         assert_eq!(act.attempts, 1);
@@ -694,7 +700,7 @@ mod tests {
             panic!("OK submits the code, got {out:?}");
         };
         app.submit(user, password);
-        let got: Vec<String> = answers.try_iter().map(|p| p.to_string()).collect();
+        let got: Vec<String> = answers.try_iter().map(|a| a.text.to_string()).collect();
         assert_eq!(got, ["hunter2", "123456"]);
         app.report(Report::Done(Verdict::Failed));
         assert_eq!(label(&app), "&Password:", "a retry asks for the password");
@@ -728,6 +734,42 @@ mod tests {
         assert!(!secret(&app));
         app.report(Report::Done(Verdict::Failed));
         assert!(secret(&app), "a retry asks for the password");
+    }
+
+    /// Each submit names the prompt the box showed when it was typed: 0 for its own Password
+    /// field, then each prompt in turn.
+    #[test]
+    fn an_answer_names_the_prompt_it_was_typed_under() {
+        let mut app = PolkitApp::default();
+        let (a, _a_rx) = request("a");
+        app.handle(Msg::Begin(a));
+        open(&mut app);
+        let (session, answers) = helper::Session::detached();
+        app.active.as_mut().unwrap().session = Some((session, "root".into()));
+        let pw = |s: &str| zeroize::Zeroizing::new(s.to_string());
+        app.submit("root".into(), pw("hunter2"));
+        app.report(Report::Prompt {
+            text: "Verification code:".into(),
+            echo: true,
+        });
+        app.submit("root".into(), pw("424242"));
+        app.report(Report::Prompt {
+            text: "Password:".into(),
+            echo: false,
+        });
+        app.submit("root".into(), pw("hunter2"));
+        let got: Vec<(u32, String)> = answers
+            .try_iter()
+            .map(|a| (a.prompt, a.text.to_string()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (0, "hunter2".into()),
+                (1, "424242".into()),
+                (2, "hunter2".into())
+            ]
+        );
     }
 
     /// A finger that matches ends the request with no password typed.
