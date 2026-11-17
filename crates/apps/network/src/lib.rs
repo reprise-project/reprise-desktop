@@ -59,7 +59,6 @@ const STATUS: WinId = WinId::named("status");
 const VPN: WinId = WinId::named("vpn");
 const IMPORT: WinId = WinId::named("import");
 const HOTSPOT: WinId = WinId::named("hotspot");
-const NOTICE: WinId = WinId::named("notice");
 const BROWSE_TITLE: &str = "Choose File";
 
 /// Where the sign-in balloon sends the browser when NetworkManager has no
@@ -147,28 +146,6 @@ enum Notice {
     Delete(String),
 }
 
-/// The notice boxes, in turn: a type of its own for `NetApp`'s `Default`.
-struct Notices(Asks<Notice>);
-
-impl Default for Notices {
-    fn default() -> Notices {
-        Notices(Asks::new(NOTICE))
-    }
-}
-
-impl std::ops::Deref for Notices {
-    type Target = Asks<Notice>;
-    fn deref(&self) -> &Asks<Notice> {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for Notices {
-    fn deref_mut(&mut self) -> &mut Asks<Notice> {
-        &mut self.0
-    }
-}
-
 #[derive(Default)]
 struct NetApp {
     tray: Option<reprisetray::TrayHandle>,
@@ -200,7 +177,7 @@ struct NetApp {
     /// The file dialog is a Browse... for this field, not Import.
     browse_for: Option<Browse>,
     hotspot: Option<hotspot::HotspotDialog>,
-    notices: Notices,
+    notices: Asks<Notice>,
     /// The message box's font, loaded in `start`: `children` sizes its window without a `Ctx`.
     dialog_text: Option<Rc<TextRenderer>>,
     /// `Ctx::forms` as of the last event, which `children` and `initial_size` size windows by.
@@ -369,7 +346,11 @@ impl NetApp {
     }
 
     fn tell_over(&mut self, over: Over, title: &str, text: &str) {
-        self.notices.ask(ok_box(title, text), Notice::Tell(over));
+        let b = ok_box(title, text);
+        match self.window_of(&over) {
+            Some(win) => self.notices.ask_over(win, b, Notice::Tell(over)),
+            None => self.notices.ask(b, Notice::Tell(over)),
+        }
     }
 
     /// The window `over` names, `None` once it closed or shows something else.
@@ -1580,11 +1561,7 @@ impl repriseapp::Extended for NetApp {
         let over = match win {
             KEY | EAP => self.chooser.as_ref().map(|_| CHOOSER),
             IMPORT => self.browse_over(),
-            w if self.notices.owns(w) => match self.notices.up() {
-                Some((_, Notice::Tell(over))) => self.window_of(over),
-                _ => None,
-            },
-            _ => None,
+            w => self.notices.parent(w),
         };
         Some(over.unwrap_or(repriseapp::MAIN))
     }
@@ -1939,7 +1916,16 @@ mod tests {
         app.tell_from_sheet("VPN", "The gateway is missing.");
         let (_, win) = shown(&app).unwrap();
         assert_eq!(app.parent(win), Some(VPN));
-        app.show_vpn(ovpn_sheet("/conn/b"));
+    }
+
+    #[test]
+    fn a_problem_for_a_window_that_has_closed_covers_the_folder() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        let mut app = NetApp::default();
+        app.event(repriseapp::MAIN, Event::Wake, &mut ctx);
+        app.tell_over(Over::Chooser("/dev/gone".into()), "Wi-Fi", "No agent.");
+        let (text, win) = shown(&app).unwrap();
+        assert_eq!(text, "No agent.");
         assert_eq!(app.parent(win), Some(repriseapp::MAIN));
     }
 
