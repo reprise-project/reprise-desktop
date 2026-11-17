@@ -38,8 +38,8 @@ use reprisekit::tr;
 
 use model::{Act, Arrival, Entry, Target};
 
-/// How long a balloon asking what to do with a new drive stays up, longer than an ordinary
-/// balloon so a slower user still answers it there and not from the history.
+/// How long a balloon asking what to do with a new drive or device stays up, longer than an
+/// ordinary balloon so a slower user still answers it there and not from the history.
 const ASK_STAYS: std::time::Duration = std::time::Duration::from_secs(30);
 
 const FLYOUT: WinId = WinId::named("flyout");
@@ -320,11 +320,12 @@ impl DrivesApp {
             let tag = self.tag();
             self.bolt_asks.insert(tag, d);
             if let Some(t) = &self.tray {
-                t.notify_buttons(
+                t.notify_ask(
                     &summary,
                     &body,
                     tag,
                     &thunderbolt::buttons().each_ref().map(String::as_str),
+                    ASK_STAYS,
                 );
             }
         }
@@ -964,6 +965,30 @@ mod tests {
         app.ask(Arrival::Mount(sdc.into()));
         let expires: Vec<_> = sent.balloons().into_iter().map(|(_, e)| e).collect();
         assert_eq!(expires, [Some(std::time::Duration::from_secs(30)); 2]);
+    }
+
+    #[test]
+    fn a_thunderbolt_balloon_asks_to_stay_up_for_30_seconds() {
+        use reprisebus::bolt::{Device, Found, Status};
+        let (tray, sent) = reprisetray::TrayHandle::recording();
+        let mut app = DrivesApp {
+            tray: Some(tray),
+            ..DrivesApp::default()
+        };
+        app.bolt_found(Some(Found {
+            domains: 1,
+            devices: vec![Device {
+                path: "/org/freedesktop/bolt/devices/dock".into(),
+                uid: "dock".into(),
+                name: "Dock".into(),
+                vendor: "Acme".into(),
+                status: Status::Connected,
+                stored: false,
+                auto: false,
+            }],
+        }));
+        let expires: Vec<_> = sent.balloons().into_iter().map(|(_, e)| e).collect();
+        assert_eq!(expires, [Some(std::time::Duration::from_secs(30))]);
     }
 
     #[test]
