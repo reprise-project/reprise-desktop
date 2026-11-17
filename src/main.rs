@@ -96,6 +96,7 @@ mod offscreen;
 mod ontopproto;
 mod outputmgmt;
 mod outputpower;
+mod outputtrial;
 mod overviewview;
 mod panels;
 mod peek;

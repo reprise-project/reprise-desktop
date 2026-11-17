@@ -71,6 +71,8 @@ pub(crate) fn activate(state: &mut State) {
     crate::greeterview::came_forward(state);
     crate::idle::resumed(state);
     let Some(b) = state.backend.as_mut() else {
+        // Without a device modes settle at once.
+        crate::outputmgmt::release_held(state);
         return;
     };
     log::info!("session active");

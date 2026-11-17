@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<protocol name="reprise_output_trial_v1">
+  <copyright>
+    reprise private protocol: a display change held on trial by the compositor.
+  </copyright>
+
+  <interface name="reprise_output_trial_manager_v1" version="1">
+    <description summary="put display changes on trial">
+      One global, offered to the clients that get zwlr_output_manager_v1.
+      A client begins a trial before it applies a configuration through
+      wlr-output-management and covers that configuration with it; until
+      the trial is kept, the compositor puts the outputs back as they ran
+      when it began.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Trials already begun go on.
+      </description>
+    </request>
+
+    <request name="begin">
+      <description summary="begin a trial">
+        The compositor notes every output's state now: on or off, mode,
+        position, scale, transform and adaptive sync. The trial is
+        answered at once: started when it is held, or ended with busy
+        when another trial is held, which it leaves alone. One trial is
+        held at a time, by any client. It is held for seconds, counted
+        from begin; 0 counts as 1 and anything over 60 as 60.
+      </description>
+      <arg name="id" type="new_id" interface="reprise_output_trial_v1"/>
+      <arg name="seconds" type="uint" summary="how long it is held before it is put back"/>
+    </request>
+  </interface>
+
+  <interface name="reprise_output_trial_v1" version="1">
+    <description summary="a display change on trial">
+      While held, every configuration applied, by any client, stays
+      unsaved. The trial ends with the outputs put back when its seconds
+      run out, on revert, or when the object is destroyed or its client
+      goes before keep. A put back skips an output that is gone, waits
+      while the session is off its seat and for modes to settle, and is
+      tried once more when it fails. An apply that was still waiting when
+      outputs were put back, or made while a put back waits, is cancelled.
+    </description>
+
+    <enum name="error">
+      <entry name="invalid_configuration" value="0"
+             summary="the configuration was applied, tested or covered already"/>
+    </enum>
+
+    <enum name="reason">
+      <entry name="kept" value="0" summary="kept as applied"/>
+      <entry name="reverted" value="1" summary="the outputs were put back"/>
+      <entry name="failed" value="2" summary="the outputs could not be put back"/>
+      <entry name="busy" value="3" summary="another trial is held; nothing was noted"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the trial">
+        A trial still held ends as on revert, and no ended is sent.
+      </description>
+    </request>
+
+    <request name="keep">
+      <description summary="keep what is applied">
+        Ends the trial with kept; the compositor saves what runs as it
+        saves an apply. Ignored once ended.
+      </description>
+    </request>
+
+    <request name="revert">
+      <description summary="put the outputs back">
+        Ends the trial with reverted or failed once the outputs are put
+        back. Ignored once ended.
+      </description>
+    </request>
+
+    <request name="cover">
+      <description summary="tie a configuration to the trial">
+        Names a configuration of this client's, before its apply or test.
+        The compositor applies a covered configuration only while this
+        trial is held: once the trial has ended, or when it was refused
+        busy, the apply is answered cancelled and changes nothing, so a
+        configuration meant for the trial never lands outside it. Allowed
+        after ended, with that effect. Covering a configuration applied,
+        tested or covered already is the invalid_configuration error.
+      </description>
+      <arg name="configuration" type="object" interface="zwlr_output_configuration_v1"/>
+    </request>
+
+    <event name="started">
+      <description summary="the trial is held">
+        Sent at once after begin. The client applies its configuration,
+        covered, only after this, so a refused trial leaves nothing
+        applied.
+      </description>
+    </event>
+
+    <event name="ended">
+      <description summary="the trial is over">
+        Sent once. Afterwards the object does nothing and should be
+        destroyed.
+      </description>
+      <arg name="reason" type="uint" enum="reason"/>
+    </event>
+  </interface>
+</protocol>

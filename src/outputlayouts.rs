@@ -212,13 +212,37 @@ impl State {
 
     /// As `outputs_reloaded`, but the mode `[[outputs]]` pins for `connectors` was refused. The
     /// connected set's layout is dropped instead of saved, so the next start tries the pin; the
-    /// other sets' layouts move to the new `[[outputs]]` as a save would move them.
+    /// other sets' layouts move to the new `[[outputs]]` as a save would move them. On trial the
+    /// drop waits for the trial's end, in place of its save (`save_layout_after_trial`).
     pub fn outputs_refused(&mut self, connectors: Vec<String>, moved_primary: bool) {
         self.saved_layouts.active = None;
         if moved_primary {
             self.saved_layouts.primary = None;
         }
         self.saved_layouts.refused = connectors;
+        if self.outputs_mgmt.trial.on_trial() {
+            log::info!("monitors: a display change is on trial, the refused pin is written after");
+            return;
+        }
+        self.drop_set_layout();
+    }
+
+    /// What a trial's end saves: the connected set's layout, or, while an `[[outputs]]` pin
+    /// stays `refused` from before the end, the drop `outputs_refused` held back.
+    pub(crate) fn save_layout_after_trial(&mut self, refused: bool) {
+        if refused {
+            self.drop_set_layout();
+        } else {
+            self.save_layout();
+        }
+    }
+
+    /// Whether an `[[outputs]]` pin is refused now.
+    pub(crate) fn pin_refused(&self) -> bool {
+        !self.saved_layouts.refused.is_empty()
+    }
+
+    fn drop_set_layout(&mut self) {
         let mut set = ids_of(&crate::backend::heads(self));
         set.sort();
         let now = displays::outputs_fingerprint(&self.config.outputs);
@@ -264,18 +288,24 @@ impl State {
             return false;
         };
         log::info!("output {name}: the primary one");
+        self.saved_layouts.primary = Some(name.to_string());
         self.save_layout_with(Some(output));
         self.update_layout();
         true
     }
 
-    /// Save what the connected monitors run as their set's layout.
+    /// Save what the connected monitors run as their set's layout. Nothing while a display change
+    /// is on trial (`outputtrial`): its end saves what it keeps or puts back.
     pub(crate) fn save_layout(&mut self) {
         let primary = self.console_primary();
         self.save_layout_with(primary);
     }
 
     fn save_layout_with(&mut self, primary: Option<Output>) {
+        if self.outputs_mgmt.trial.on_trial() {
+            log::info!("monitors: a display change is on trial, no layout saved");
+            return;
+        }
         let heads = crate::backend::heads(self);
         if !heads.iter().any(|h| h.enabled) {
             return;

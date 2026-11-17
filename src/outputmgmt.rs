@@ -6,7 +6,9 @@
 //! anything is applied, so a test answers what an apply would do and a refused
 //! configuration changes nothing; an apply runs head by head through
 //! `State::apply_head`, once modes settle (`backend::modes_settle`), or fails
-//! when it needs a device while the session is off its seat.
+//! when it needs a device while the session is off its seat. While a trial
+//! (`outputtrial`) is held no layout is saved; a configuration a trial covers is
+//! applied only while that trial is held.
 
 use std::collections::HashMap;
 
@@ -102,6 +104,7 @@ pub struct OutputMgmt {
     heads: Vec<HeadState>,
     /// Applies waiting for modes to settle, answered by `release_held`.
     held: Vec<Pending>,
+    pub trial: crate::outputtrial::Trials,
 }
 
 struct ClientData {
@@ -125,6 +128,7 @@ impl OutputMgmt {
             clients: HashMap::new(),
             heads: Vec::new(),
             held: Vec::new(),
+            trial: crate::outputtrial::Trials::default(),
         }
     }
 
@@ -133,9 +137,19 @@ impl OutputMgmt {
         self.heads.iter().map(|h| h.name.clone()).collect()
     }
 
-    /// Whether an apply waits for modes to settle.
+    /// The heads as clients were last told of them.
+    pub fn heads(&self) -> &[HeadState] {
+        &self.heads
+    }
+
+    /// Whether `conf` is a configuration not yet applied or tested.
+    pub fn unused(&self, conf: &ZwlrOutputConfigurationV1) -> bool {
+        (self.clients.values()).any(|d| d.confs.get(conf).is_some_and(|c| !matches!(c, Conf::Used)))
+    }
+
+    /// Whether an apply or a trial's put back waits for modes to settle.
     pub fn holds(&self) -> bool {
-        !self.held.is_empty()
+        !self.held.is_empty() || self.trial.waits()
     }
 
     /// Tell every client what changed from the heads it was last told of to `new`;
@@ -256,15 +270,7 @@ pub fn resolve(
                 ModeAsk::Keep if head.enabled => head.current,
                 ModeAsk::Keep => None,
                 ModeAsk::Index(i) => Some(i).filter(|&i| i < head.modes.len()),
-                ModeAsk::Custom(w, h, mhz) => Some(
-                    head.modes
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, m)| m.width == w && m.height == h)
-                        .filter(|(_, m)| mhz == 0 || (m.refresh_mhz - mhz).abs() <= 1)
-                        .max_by_key(|(_, m)| m.refresh_mhz)?
-                        .0,
-                ),
+                ModeAsk::Custom(w, h, mhz) => Some(custom_mode(&head.modes, w, h, mhz)?),
             }
         };
         if a.enabled && mode.is_none() && !matches!(a.mode, ModeAsk::Keep) {
@@ -290,11 +296,30 @@ pub fn resolve(
     Some(out)
 }
 
-/// Run a resolved configuration head by head, stopping at the first failure
-/// (earlier heads stay applied), then lay out once; one that went through is saved as the
-/// connected set's layout.
+/// The listed mode a custom `w`x`h` at `mhz` (0: any refresh, the highest) asks for: within
+/// 1 mHz, as refresh rates are rounded.
+pub fn custom_mode(modes: &[ModeInfo], w: i32, h: i32, mhz: i32) -> Option<usize> {
+    (modes.iter().enumerate())
+        .filter(|(_, m)| m.width == w && m.height == h)
+        .filter(|(_, m)| mhz == 0 || (m.refresh_mhz - mhz).abs() <= 1)
+        .max_by_key(|(_, m)| m.refresh_mhz)
+        .map(|(i, _)| i)
+}
+
+/// [`apply_unsaved`], and one that went through is saved as the connected set's layout (which
+/// a trial holds back).
 fn apply(state: &mut State, reqs: Vec<(String, HeadRequest)>) -> bool {
     state.save_side_by_side();
+    let ok = apply_unsaved(state, reqs);
+    if ok {
+        state.handle.insert_idle(|state| state.save_layout());
+    }
+    ok
+}
+
+/// Run a resolved configuration head by head, stopping at the first failure
+/// (earlier heads stay applied), then lay out once.
+pub fn apply_unsaved(state: &mut State, reqs: Vec<(String, HeadRequest)>) -> bool {
     let mut ok = true;
     for (name, req) in reqs {
         let output = crate::backend::heads(state)
@@ -312,9 +337,6 @@ fn apply(state: &mut State, reqs: Vec<(String, HeadRequest)>) -> bool {
         }
     }
     state.update_layout();
-    if ok {
-        state.handle.insert_idle(|state| state.save_layout());
-    }
     ok
 }
 
@@ -325,6 +347,10 @@ pub struct Pending {
     conf: ZwlrOutputConfigurationV1,
     /// The heads' serial it was resolved against.
     serial: u32,
+    /// `Trials::put_backs` when it was resolved.
+    put_backs: u32,
+    /// The trial covering it: applied only while that trial is held.
+    trial: Option<crate::outputtrial::proto::reprise_output_trial_v1::RepriseOutputTrialV1>,
 }
 
 /// Apply `p` once the art of any new draw scale it brings is painted off the main thread. The
@@ -380,6 +406,19 @@ fn needs_device(heads: &[HeadState], reqs: &[(String, HeadRequest)]) -> bool {
 /// Apply a waiting configuration and answer it, or hold it until modes settle; cancelled when
 /// the heads changed meanwhile, failed when it needs a device while the session is off its seat.
 pub fn answer(state: &mut State, p: Pending) {
+    let t = &state.outputs_mgmt.trial;
+    if p.trial.as_ref().is_some_and(|trial| !t.holds(trial)) {
+        log::info!("output management: the configuration's trial has ended, it is cancelled");
+        p.conf.cancelled();
+        return;
+    }
+    if p.put_backs != t.put_backs || t.waits() {
+        log::info!(
+            "output management: a trial's outputs are put back first, the configuration is cancelled"
+        );
+        p.conf.cancelled();
+        return;
+    }
     let away = !crate::backend::session_active(state);
     let device = needs_device(&state.outputs_mgmt.heads, &p.reqs);
     let settle = crate::backend::modes_settle(state);
@@ -399,8 +438,9 @@ pub fn answer(state: &mut State, p: Pending) {
 }
 
 /// Answer the applies held for modes to settle (`backend::on_quiet`, or the session's pause),
-/// behind a scale warm under way if there is one.
+/// behind a scale warm under way if there is one; a trial's put back waiting goes first.
 pub fn release_held(state: &mut State) {
+    crate::outputtrial::put_back_waiting(state);
     for p in std::mem::take(&mut state.outputs_mgmt.held) {
         match state.scale_warm.as_mut() {
             Some(w) => w.wait(p),
@@ -572,6 +612,7 @@ impl Dispatch2<ZwlrOutputConfigurationV1, State> for ConfData {
             zwlr_output_configuration_v1::Request::Apply
             | zwlr_output_configuration_v1::Request::Test => {
                 let test = matches!(request, zwlr_output_configuration_v1::Request::Test);
+                let trial = g.trial.take_cover(conf);
                 let asks = match data.confs.get_mut(conf) {
                     Some(st @ Conf::Ongoing(_)) => match std::mem::replace(st, Conf::Used) {
                         Conf::Ongoing(asks) => asks,
@@ -602,12 +643,15 @@ impl Dispatch2<ZwlrOutputConfigurationV1, State> for ConfData {
                     conf.succeeded();
                     return;
                 }
+                let put_backs = g.trial.put_backs;
                 apply_after_warm(
                     state,
                     Pending {
                         reqs,
                         conf: conf.clone(),
                         serial: current,
+                        put_backs,
+                        trial,
                     },
                 );
             }
@@ -619,6 +663,7 @@ impl Dispatch2<ZwlrOutputConfigurationV1, State> for ConfData {
     }
 
     fn destroyed(&self, state: &mut State, client: ClientId, conf: &ZwlrOutputConfigurationV1) {
+        state.outputs_mgmt.trial.take_cover(conf);
         if let Some(data) = state.outputs_mgmt.clients.get_mut(&client) {
             data.confs.remove(conf);
         }

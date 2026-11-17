@@ -83,6 +83,7 @@ use crate::{
 
 mod capture;
 mod lockscreen;
+pub mod outputs;
 pub mod screenshot;
 mod touchpad;
 
@@ -1560,6 +1561,8 @@ impl InputMethod {
 #[derive(Default)]
 pub struct ClientSide {
     registry: Option<wl_registry::WlRegistry>,
+    /// What wlr-output-management told ([`TestClient::manage_outputs`]).
+    pub output_mgmt: outputs::Seen,
     globals: Vec<(u32, String, u32)>,
     compositor: Option<WlCompositor>,
     shm: Option<wl_shm::WlShm>,

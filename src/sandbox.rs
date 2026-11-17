@@ -32,6 +32,7 @@ pub const PRIVILEGED_GLOBALS: &[&str] = &[
     "ext_workspace_manager_v1",
     "zwlr_layer_shell_v1",
     "zwlr_output_manager_v1",
+    "reprise_output_trial_manager_v1",
     "zwlr_output_power_manager_v1",
     "zwlr_data_control_manager_v1",
     "ext_data_control_manager_v1",

@@ -73,7 +73,13 @@ pub fn quiet(state: &State) -> bool {
 /// Whether a mode change may go now; else a reload's output changes wait
 /// (`defer_output_config`) and an output management apply is held.
 pub fn modes_settle(state: &State) -> bool {
-    state.backend.as_ref().is_none_or(Backend::modes_settle)
+    match state.backend.as_ref() {
+        Some(b) => b.modes_settle(),
+        #[cfg(test)]
+        None => super::fake::modes_settle(state),
+        #[cfg(not(test))]
+        None => true,
+    }
 }
 
 /// Keep the config from before a reload whose output changes wait (`modes_settle`); of several
@@ -401,7 +407,12 @@ fn quiet_step(state: &mut State) {
             }
         }
         Step::Config => {
-            if let Some(old) = b.config_from.take()
+            // A trial's put back goes before what waited behind it, which the next quiet runs.
+            if crate::outputtrial::put_back_waiting(state) {
+                return;
+            }
+            let old = state.backend.as_mut().and_then(|b| b.config_from.take());
+            if let Some(old) = old
                 && state.apply_output_config(&old)
             {
                 state.update_layout();

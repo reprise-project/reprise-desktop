@@ -503,15 +503,15 @@ impl State {
     pub fn apply_head(&mut self, output: &Output, req: &HeadRequest) -> bool {
         let name = output.name();
         let driven = self.scene.outputs().contains(output);
+        if let Some(p) = req.adaptive_sync {
+            self.vrr_policy.insert(name.clone(), p);
+        }
         if !req.enabled {
             if driven {
                 log::info!("output {name}: leaving the layout");
                 self.leave_layout(output);
             }
             return true;
-        }
-        if let Some(p) = req.adaptive_sync {
-            self.vrr_policy.insert(name.clone(), p);
         }
         let scale = Scale::Fractional(f64::from(quarter_scale(req.scale as f32)));
         self.set_transform_scale(output, asked_transform(output, req.transform), scale);
