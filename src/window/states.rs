@@ -256,14 +256,16 @@ impl State {
         crate::idle::inhibition_changed(self);
     }
 
-    /// Sets xdg-shell's `suspended` on `w` when it is hidden (minimized or a tab behind another)
-    /// and no live picture shows it (Mini View, a task button's panel, Alt+Tab): a suspended
-    /// client may stop drawing. Returns whether the state changed; the caller sends the configure.
+    /// Sets xdg-shell's `suspended` on `w` when it is hidden (minimized or a tab behind another),
+    /// no live picture shows it (Mini View, a task button's panel, Alt+Tab) and no panel is about
+    /// to: a suspended client may stop drawing. Returns whether the state changed; the caller
+    /// sends the configure.
     pub(crate) fn mark_suspended(&self, w: WindowId) -> bool {
         let Some(win) = self.win(w) else {
             return false;
         };
-        let want = win.hidden() && !self.live_previews.shows(w);
+        let want =
+            win.hidden() && !self.live_previews.shows(w) && !self.task_preview.keeps_awake(w);
         let Some(t) = win.xdg() else {
             return false;
         };

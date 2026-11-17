@@ -50,8 +50,13 @@ pub struct TaskPreviewView {
     pending: Option<(TreeId, usize)>,
     shown: Option<Panel>,
     peeking: bool,
-    /// The pictures `hold` took out of the panel, until `release`.
+    /// The windows of the `pending` button a live picture showed when it armed (a closing overview
+    /// or 3D switcher): they stay awake (`State::mark_suspended`) until the panel shows them or the
+    /// wait ends.
+    awake: Vec<WindowId>,
+    /// The pictures `hold` took out of the panel and the windows it kept awake, until `release`.
     held: Vec<ThumbId>,
+    held_awake: Vec<WindowId>,
     /// The task button last pressed with the pointer, by its bar and key so it is followed through any
     /// change to the row: its panel waits until the pointer leaves it.
     pressed: Option<(TreeId, TaskKey<WindowId>)>,
@@ -99,15 +104,27 @@ pub fn hover(state: &mut State, bar: TreeId, hit: TaskbarHit) {
         show(state, target.0, target.1);
         return;
     }
+    let slot = state.bar(target.0).and_then(|b| b.slots.get(target.1));
+    let awake = (slot
+        .map(|s| s.windows.as_slice())
+        .unwrap_or_default()
+        .iter())
+    .copied()
+    .filter(|&w| state.live_previews.shows(w))
+    .collect();
+    let was = std::mem::replace(&mut state.task_preview.awake, awake);
     state.task_preview.pending = Some(target);
     disarm(state);
+    resuspend(state, was);
     let token = state.handle.insert_source(
         Timer::from_duration(Duration::from_millis(SHOW_MS)),
         |_, _, state| {
             state.task_preview.timer = None;
+            let awake = std::mem::take(&mut state.task_preview.awake);
             if let Some((bar, i)) = state.task_preview.pending.take() {
                 show(state, bar, i);
             }
+            resuspend(state, awake);
             TimeoutAction::Drop
         },
     );
@@ -178,18 +195,32 @@ pub fn clicked(state: &mut State, cell: Option<usize>) {
     release(state);
 }
 
-/// Take the panel's pictures out of it before something that takes it down and may bring one of
-/// its windows up; `release` drops them after, so a minimized window is never suspended in between.
+/// Take the panel's pictures, and the windows a pending panel keeps awake, out of it before
+/// something that takes it down and may bring one of its windows up; `release` drops them after,
+/// so a minimized window is never suspended in between.
 pub fn hold(state: &mut State) {
     release(state);
-    if let Some(p) = state.task_preview.shown.as_mut() {
-        state.task_preview.held = p.thumbs.drain(..).flatten().collect();
+    let v = &mut state.task_preview;
+    v.held_awake = std::mem::take(&mut v.awake);
+    if let Some(p) = v.shown.as_mut() {
+        v.held = p.thumbs.drain(..).flatten().collect();
     }
 }
 
 pub fn release(state: &mut State) {
     for id in std::mem::take(&mut state.task_preview.held) {
         state.thumb_drop(id);
+    }
+    let awake = std::mem::take(&mut state.task_preview.held_awake);
+    resuspend(state, awake);
+}
+
+/// `windows` stopped waiting for the panel: each nothing else shows is suspended again.
+fn resuspend(state: &mut State, windows: Vec<WindowId>) {
+    for w in windows {
+        if state.mark_suspended(w) {
+            state.send_configure(w);
+        }
     }
 }
 
@@ -219,6 +250,8 @@ pub fn hide(state: &mut State) {
     stop_peek(state);
     state.task_preview.pending = None;
     disarm(state);
+    let awake = std::mem::take(&mut state.task_preview.awake);
+    resuspend(state, awake);
     let Some(p) = state.task_preview.shown.take() else {
         return;
     };
@@ -424,6 +457,11 @@ impl TaskPreviewView {
 
     pub fn is_shown(&self) -> bool {
         self.shown.is_some()
+    }
+
+    /// Whether `w` stays awake for a panel about to show it.
+    pub fn keeps_awake(&self, w: WindowId) -> bool {
+        self.awake.contains(&w) || self.held_awake.contains(&w)
     }
 
     pub fn shown_on(&self) -> Option<&Output> {
@@ -663,6 +701,108 @@ mod tests {
             h.pointer_to(512.0, 300.0);
             h.pointer_to(ax, ay);
             h.until("its panel once the pointer is back", |s| on(s, na));
+        }
+    }
+
+    /// A minimized window shown live by the overview or the 3D switcher, which then closes with
+    /// the pointer resting on the window's task button; with the count of configures the window
+    /// heard before the close.
+    fn closed_over_its_button(
+        view: &str,
+    ) -> (
+        crate::harness::Harness,
+        crate::harness::TestClient,
+        crate::harness::Toplevel,
+        usize,
+    ) {
+        let config = crate::config::Config::parse(
+            "[appearance]\ninterface = \"glass\"\n[effects]\nreduce_motion = true\n",
+        )
+        .unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "one", 300, 200);
+        h.map_toplevel(&mut c, "two", 300, 200);
+        h.state.set_minimized(a.id, true);
+        h.roundtrip(&mut c);
+        let (_, x, y) = centre(&h, a.id);
+        if view == "overview" {
+            h.state.open_overview();
+        } else {
+            h.state.open_flip(crate::keys::MOD_LOGO);
+            h.until("the stack", |s| {
+                (s.switcher.stack.as_ref()).is_some_and(|st| st.revealed())
+            });
+        }
+        h.roundtrip(&mut c);
+        let heard = &c.side.shells[a.shell].suspended;
+        assert_eq!(heard.last(), Some(&false), "the {view} shows it live");
+        let heard = heard.len();
+        h.pointer_to(x, y);
+        if view == "overview" {
+            h.state.close_overview();
+        } else {
+            h.state.switcher_escape();
+            let output = h.state.bars[0].output.clone();
+            h.state.flip_frame(&output);
+            assert!(h.state.switcher.leaving.is_none(), "the cards landed");
+        }
+        h.roundtrip(&mut c);
+        assert!(
+            !h.state.live_previews.shows(a.id),
+            "the {view} took its picture"
+        );
+        (h, c, a, heard)
+    }
+
+    #[test]
+    fn a_minimized_window_handed_from_a_closing_overview_or_stack_to_its_panel_hears_nothing() {
+        for view in ["overview", "stack"] {
+            let (mut h, mut c, a, heard) = closed_over_its_button(view);
+            h.until("its panel", |s| s.task_preview.is_shown());
+            h.roundtrip(&mut c);
+            assert_eq!(
+                c.side.shells[a.shell].suspended[heard..],
+                [false; 0],
+                "the {view}'s picture hands over to the panel's with no configure"
+            );
+            h.pointer_to(512.0, 300.0);
+            h.roundtrip(&mut c);
+            assert_eq!(
+                c.side.shells[a.shell].suspended[heard..],
+                [true],
+                "suspended once the panel goes, after the {view}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_minimized_window_waiting_for_its_panel_stays_awake_into_an_overview_opened_again() {
+        let (mut h, mut c, a, heard) = closed_over_its_button("overview");
+        h.state.open_overview();
+        h.roundtrip(&mut c);
+        assert!(h.state.live_previews.shows(a.id), "its cell shows it live");
+        assert_eq!(
+            c.side.shells[a.shell].suspended[heard..],
+            [false; 0],
+            "the wait hands over to the cell's picture with no configure"
+        );
+    }
+
+    #[test]
+    fn a_minimized_window_waiting_for_its_panel_is_suspended_when_the_pointer_leaves_first() {
+        for view in ["overview", "stack"] {
+            let (mut h, mut c, a, heard) = closed_over_its_button(view);
+            h.pointer_to(512.0, 300.0);
+            h.run_for(2 * SHOW_MS);
+            h.roundtrip(&mut c);
+            assert!(!h.state.task_preview.is_shown(), "no panel");
+            assert_eq!(
+                c.side.shells[a.shell].suspended[heard..],
+                [true],
+                "one Suspended once nothing will show it, after the {view}"
+            );
         }
     }
 

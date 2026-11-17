@@ -570,17 +570,19 @@ impl State {
         let Some(v) = self.overview.view.take() else {
             return;
         };
-        for id in v.grids.into_iter().flat_map(|g| g.thumbs).flatten() {
-            self.thumb_drop(id);
-        }
         self.scene.destroy(v.tree);
         for t in v.outlines {
             self.scene.destroy(t);
         }
         self.redraw_all();
         crate::access::touch(self);
+        // The pictures go after the repoint, so a task button the pointer rests on keeps the
+        // windows they show awake for its panel (`taskpreview::hover`).
         let p = self.pointer_location();
         self.repoint(p, InputTime::now());
+        for id in v.grids.into_iter().flat_map(|g| g.thumbs).flatten() {
+            self.thumb_drop(id);
+        }
     }
 
     /// Close the overview and bring up window `i`. Under snap assist it
