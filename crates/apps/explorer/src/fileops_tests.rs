@@ -12,6 +12,8 @@ use std::ffi::OsString;
 
 #[path = "fileops_tests/alone.rs"]
 mod alone;
+#[path = "fileops_tests/box_keys.rs"]
+mod box_keys;
 #[path = "fileops_tests/closing.rs"]
 mod closing;
 #[path = "fileops_tests/cold_icons.rs"]

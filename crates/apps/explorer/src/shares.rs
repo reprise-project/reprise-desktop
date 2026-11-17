@@ -489,6 +489,7 @@ impl Explorer {
                     text: q.message,
                     choices: q.choices,
                     about: Asking::Connection,
+                    focus: None,
                 })
             }
             Step::Done(outcome) => {
@@ -559,6 +560,7 @@ impl Explorer {
                             text,
                             choices: vec!["Disconnect".into(), "Cancel".into()],
                             about: Asking::Disconnect(share),
+                            focus: None,
                         })
                     }
                     Err(netshare::Unmount::Error(e)) => ex.message_box(&title, e, ctx),
