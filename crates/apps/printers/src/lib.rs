@@ -51,7 +51,6 @@ use worker::{Cmd, Msg};
 
 const WIZARD: WinId = WinId::named("wizard");
 const BROWSE: WinId = WinId::named("browse");
-const CONFIRM: WinId = WinId::named("confirm");
 
 const PRINTER_ICON: &str = "printer";
 
@@ -70,12 +69,7 @@ fn question_w(ctx: &Ctx) -> i32 {
 /// What a confirm box asks before it is sent.
 enum Ask {
     Delete(String),
-    /// Raised from window `from`, which the box covers while that window is open.
-    Rename {
-        old: String,
-        new: String,
-        from: WinId,
-    },
+    Rename { old: String, new: String },
 }
 
 impl Ask {
@@ -83,28 +77,6 @@ impl Ask {
         match self {
             Ask::Delete(p) | Ask::Rename { old: p, .. } => p,
         }
-    }
-}
-
-/// The confirm boxes, in turn: a type of its own for `PrintersApp`'s `Default`.
-struct Questions(Asks<Ask>);
-
-impl Default for Questions {
-    fn default() -> Questions {
-        Questions(Asks::new(CONFIRM))
-    }
-}
-
-impl std::ops::Deref for Questions {
-    type Target = Asks<Ask>;
-    fn deref(&self) -> &Asks<Ask> {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for Questions {
-    fn deref_mut(&mut self) -> &mut Asks<Ask> {
-        &mut self.0
     }
 }
 
@@ -126,7 +98,7 @@ struct PrintersApp {
     ids: Ids,
     wizard: Option<addwiz::AddWizard>,
     browse: Option<(Host, FileDlg)>,
-    confirm: Questions,
+    confirm: Asks<Ask>,
     note: ErrorBox,
     icon16: Option<Canvas>,
     icon32: Option<Canvas>,
@@ -502,7 +474,7 @@ impl PrintersApp {
                 max_w: question_w(ctx),
             },
         );
-        self.confirm.ask(b, Ask::Rename { old, new, from });
+        self.confirm.ask_over(from, b, Ask::Rename { old, new });
     }
 
     fn rename(&mut self, old: String, new: String, device_uri: Option<String>) {
@@ -884,7 +856,7 @@ impl PrintersApp {
             Answer::Closed(ask, button) => {
                 match ask {
                     Ask::Delete(printer) if button == Some(0) => self.send(Cmd::Delete(printer)),
-                    Ask::Rename { old, new, .. } if button == Some(0) => {
+                    Ask::Rename { old, new } if button == Some(0) => {
                         self.ports_after = Some(new.clone());
                         self.rename(old, new, None);
                     }
@@ -1078,12 +1050,10 @@ impl repriseapp::Extended for PrintersApp {
         if let Some(&queue) = self.sheet_over.get(&win) {
             return Some(queue);
         }
-        let Some(main) = self.confirm.parent(win) else {
-            return Some(MAIN);
-        };
-        match self.confirm.up() {
-            Some((_, Ask::Rename { from, .. })) if self.props.get(*from).is_some() => Some(*from),
-            _ => Some(main),
+        // Rename? covers the sheet it was asked from while that sheet is open, else the folder.
+        match self.confirm.parent(win) {
+            Some(sheet) if self.props.get(sheet).is_some() => Some(sheet),
+            _ => Some(MAIN),
         }
     }
 
