@@ -560,7 +560,7 @@ impl NetApp {
     }
 
     /// The latest snapshot: the folder's rows, the two windows watching a
-    /// device and the tray item.
+    /// device, the key prompt or login dialog and the tray item.
     fn snapshot_in(&mut self, s: nm::Snapshot) {
         log::debug!(
             "snapshot: {} devices, {} vpns, NetworkManager {}",
@@ -609,7 +609,26 @@ impl NetApp {
             }
             None => self.close_status(),
         }
+        self.follow_scan();
         self.push_state();
+    }
+
+    /// A key prompt or login dialog closes unanswered once its network leaves its radio's scan,
+    /// and dials another access point carrying the network when its own one left. A hidden
+    /// network is in no scan.
+    fn follow_scan(&mut self) {
+        if let Some(k) = self.key.as_mut().filter(|k| !k.hidden) {
+            match ap_for(&self.snapshot, &k.device, &k.ssid(), &k.ap) {
+                Some(ap) => k.ap = ap,
+                None => self.key = None,
+            }
+        }
+        if let Some(d) = self.eap.as_mut().filter(|d| !d.hidden) {
+            match ap_for(&self.snapshot, &d.device, &d.ssid, &d.ap) {
+                Some(ap) => d.ap = ap,
+                None => self.eap = None,
+            }
+        }
     }
 
     /// Drain the store's and the tray's channels. Quits only on the
@@ -1650,6 +1669,15 @@ impl repriseapp::Extended for NetApp {
 }
 
 /// A notice with one OK button.
+/// The access point radio `device` dials for network `ssid`: `held` while it is in the scan, else
+/// the strongest one carrying `ssid`, `None` once none does.
+fn ap_for(s: &nm::Snapshot, device: &str, ssid: &nm::Ssid, held: &str) -> Option<String> {
+    let wifi = s.devices.iter().find(|d| d.path == device)?.wifi.as_ref()?;
+    let aps: Vec<&nm::AccessPoint> = wifi.aps.iter().filter(|a| &a.ssid == ssid).collect();
+    let ap = aps.iter().find(|a| a.path == held).or(aps.first())?;
+    Some(ap.path.clone())
+}
+
 fn ok_box(title: &str, text: &str) -> MsgBox {
     MsgBox::new(
         title,
@@ -2058,6 +2086,69 @@ mod tests {
         app.chooser.as_mut().unwrap().list.select_row(Some(0));
         app.event(KEY, enter(), &mut ctx);
         assert_eq!(sent.try_recv(), Ok(psk_dial("/dev/1", "/ap/1", "hunter22")));
+    }
+
+    /// A snapshot of radio `/dev/1` scanning access points `aps`, each `(path, ssid)`.
+    fn scanning(aps: &[(&str, &str)]) -> nm::Snapshot {
+        let mut s = radios(&["/dev/1"]);
+        s.devices[0].wifi = Some(nm::Wifi {
+            aps: (aps.iter())
+                .map(|(path, ssid)| nm::AccessPoint {
+                    path: path.to_string(),
+                    ssid: (*ssid).into(),
+                    security: nm::Security::Psk,
+                    ..nm::AccessPoint::default()
+                })
+                .collect(),
+            ..nm::Wifi::default()
+        });
+        s
+    }
+
+    /// `s` read by a wake, as NetworkManager sends it.
+    fn scanned(app: &mut NetApp, s: nm::Snapshot) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.nm_rx = Some(rx);
+        tx.send(nm::NmMsg::Snapshot(s)).unwrap();
+        app.event(repriseapp::MAIN, Event::Wake, &mut test_ctx(folder::CLIENT));
+    }
+
+    #[test]
+    fn a_key_prompt_or_login_dialog_closes_unanswered_when_its_network_leaves_the_scan() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        let (mut app, sent) = with_radios(&["/dev/1"]);
+        scanned(&mut app, scanning(&[("/ap/1", "Lab"), ("/ap/2", "Cafe")]));
+        app.open_chooser("/dev/1");
+        app.chooser_outcome(needs_key("/ap/1", nm::Security::Psk));
+        type_key(&mut app, &mut ctx, "hunter22");
+        scanned(&mut app, scanning(&[("/ap/2", "Cafe")]));
+        assert!(app.key.is_none(), "the key prompt left with Lab");
+        assert!(sent.try_recv().is_err(), "nothing dialled");
+
+        scanned(&mut app, scanning(&[("/ap/1", "Lab"), ("/ap/2", "Cafe")]));
+        app.chooser_outcome(needs_key("/ap/1", nm::Security::Enterprise));
+        app.open_browse(Browse::Eap("ca"), ctx.theme.text);
+        scanned(&mut app, scanning(&[("/ap/2", "Cafe")]));
+        assert!(app.eap.is_none(), "the login dialog left with Lab");
+        assert!(app.import.is_none(), "Browse left with the login dialog");
+
+        app.chooser_outcome(chooser::Outcome::Hidden);
+        scanned(&mut app, scanning(&[]));
+        assert!(app.key.is_some(), "a hidden network is in no scan");
+        assert!(sent.try_recv().is_err(), "nothing dialled");
+    }
+
+    #[test]
+    fn a_key_prompt_whose_access_point_left_dials_another_carrying_its_network() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        let (mut app, sent) = with_radios(&["/dev/1"]);
+        scanned(&mut app, scanning(&[("/ap/1", "Lab"), ("/ap/3", "Lab")]));
+        app.open_chooser("/dev/1");
+        app.chooser_outcome(needs_key("/ap/1", nm::Security::Psk));
+        type_key(&mut app, &mut ctx, "hunter22");
+        scanned(&mut app, scanning(&[("/ap/3", "Lab")]));
+        app.event(KEY, enter(), &mut ctx);
+        assert_eq!(sent.try_recv(), Ok(psk_dial("/dev/1", "/ap/3", "hunter22")));
     }
 
     #[test]
