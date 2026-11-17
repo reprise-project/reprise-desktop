@@ -340,7 +340,8 @@ impl State {
         crate::idle::inhibition_changed(self);
         if on {
             self.set_activated(w, false);
-            if self.focused == Some(w) {
+            if let Some(f) = (self.focused).filter(|&f| f == w || self.is_owner_of(w, f)) {
+                self.set_activated(f, false);
                 self.focused = None;
                 self.toplevels.dirty = true;
                 self.focus_top();

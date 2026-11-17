@@ -2110,6 +2110,40 @@ fn focusing_an_owned_window_of_a_program_behind_another_brings_its_owner_up_next
     assert_eq!(h.state.focused, Some(paint.id));
 }
 
+#[test]
+fn a_family_alt_tab_hides_for_the_desktop_takes_the_keyboard_off_its_box() {
+    let mut h = forgetful();
+    h.state.config.switcher.desktop = true;
+    let mut c = h.connect();
+    let folder = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let sheet = h.map_dialog(&mut c, "test.app", Some(folder), "", (300, 200));
+    let advanced = h.map_modal(&mut c, "test.app", sheet, (120, 60));
+    let keyboard = |h: &crate::harness::Harness| {
+        let held = h.state.seat.get_keyboard().and_then(|k| k.current_focus());
+        h.state
+            .windows
+            .iter()
+            .find(|w| held.as_ref() == Some(w.wl_surface()))
+            .map(|w| w.id)
+    };
+    assert_eq!(keyboard(&h), Some(advanced.id));
+    task_button(&mut h, folder.id);
+    alt_tab(&mut h);
+    assert!(
+        h.state.win(folder.id).unwrap().minimized,
+        "Alt+Tab picks the desktop"
+    );
+    assert_eq!(h.state.focused, None, "no hidden window is focused");
+    assert_eq!(keyboard(&h), None, "the hidden box takes no keys");
+    task_button(&mut h, folder.id);
+    assert_eq!(h.state.focused, Some(advanced.id));
+    assert_eq!(
+        keyboard(&h),
+        Some(advanced.id),
+        "the box comes back with the keyboard"
+    );
+}
+
 /// A forgetful harness with TEST-1 (1024x768) and TEST-2 (1280x1024) to its right.
 fn two_screens() -> (
     crate::harness::Harness,
