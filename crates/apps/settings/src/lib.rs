@@ -510,6 +510,8 @@ struct SettingsApp {
     add_for: Pick,
 
     error: ErrorBox,
+    /// The window each error's box covers, by its text, picked when it was raised.
+    error_over: Vec<(String, WinId)>,
     asking: Asks<backuphost::Then>,
     dialog_text: Rc<TextRenderer>,
     dialog_px: u32,
@@ -658,9 +660,14 @@ impl SettingsApp {
         t
     }
 
-    /// The dialog an error box covers: the question, then Browse... over the chooser, then the
-    /// one dialog the main window opened.
+    /// The dialog an error raised now covers: the question, then Browse... over the chooser,
+    /// then the one dialog the main window opened.
     fn dialog_up(&self) -> Option<WinId> {
+        self.dialogs_up().next()
+    }
+
+    /// Every dialog up, in [`SettingsApp::dialog_up`]'s order.
+    fn dialogs_up(&self) -> impl Iterator<Item = WinId> {
         let open = [
             (self.add.is_some(), ADD_WIN),
             (self.chooser.is_some(), CHOOSER_WIN),
@@ -675,7 +682,8 @@ impl SettingsApp {
             (self.rename.is_some(), RENAME_WIN),
             (self.saver_dlg.is_some(), SAVER_WIN),
         ];
-        (self.asking.win()).or_else(|| open.into_iter().find(|&(up, _)| up).map(|(_, w)| w))
+        (self.asking.win().into_iter())
+            .chain(open.into_iter().filter(|&(up, _)| up).map(|(_, w)| w))
     }
 
     fn save_window(&mut self) {
@@ -828,6 +836,7 @@ impl SettingsApp {
             add_host: Host::default(),
             add_for: Pick::Autostart,
             error: ErrorBox::default(),
+            error_over: Vec::new(),
             asking: Asks::new(ASK_WIN),
             dialog_text,
             dialog_px,
@@ -1166,13 +1175,21 @@ impl repriseapp::Extended for SettingsApp {
         self.closing
     }
 
-    /// Browse... covers the chooser it came from, and an error the dialog that is up.
+    /// Browse... covers the chooser it came from. An error covers the dialog that was up when
+    /// it was raised, or once that dialog has closed, the window that dialog covered.
     fn parent(&self, win: WinId) -> Option<WinId> {
         if win == ADD_WIN && self.add_for == Pick::Program && self.chooser.is_some() {
             return Some(CHOOSER_WIN);
         }
         if self.error.owns(win) {
-            return self.dialog_up().or(Some(repriseapp::MAIN));
+            let text = self.error.shown().map(|b| &b.fields.text);
+            let over = (self.error_over.iter())
+                .find(|(t, _)| Some(t) == text)
+                .map_or(repriseapp::MAIN, |&(_, w)| w);
+            if over == repriseapp::MAIN || self.dialogs_up().any(|w| w == over) {
+                return Some(over);
+            }
+            return self.parent(over);
         }
         Some(repriseapp::MAIN)
     }

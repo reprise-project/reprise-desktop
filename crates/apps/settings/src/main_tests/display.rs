@@ -5,10 +5,15 @@ use super::*;
 fn question_up(tag: &str, press: displayhost::Press) -> (SettingsApp, Ctx) {
     let mut app = app(tag);
     let mut ctx = test_ctx();
+    raise_question(&mut app, &mut ctx, press);
+    (app, ctx)
+}
+
+fn raise_question(app: &mut SettingsApp, ctx: &mut Ctx, press: displayhost::Press) {
     app.event(
         MAIN,
         Event::Heads(vec![displaypage::test_head("DP-1")]),
-        &mut ctx,
+        ctx,
     );
     app.display.model.pick_resolution(1);
     app.start_display(press, &mut ctx.heads);
@@ -20,7 +25,7 @@ fn question_up(tag: &str, press: displayhost::Press) -> (SettingsApp, Ctx) {
             serial: asked[0].0,
             ok: true,
         },
-        &mut ctx,
+        ctx,
     );
     assert!(r.tick, "the countdown runs on the main window's ticks");
     assert!(
@@ -29,7 +34,28 @@ fn question_up(tag: &str, press: displayhost::Press) -> (SettingsApp, Ctx) {
             .any(|c| c.id == displayhost::MONITOR_WIN),
         "Monitor Settings is up"
     );
-    (app, ctx)
+}
+
+#[test]
+fn an_error_stays_over_the_window_it_was_raised_over() {
+    let mut app = app("error-parent");
+    let mut ctx = test_ctx();
+    app.fail("The first problem.");
+    let first = app.error.win().expect("the error is up");
+    raise_question(&mut app, &mut ctx, displayhost::Press::Apply);
+    assert_eq!(
+        app.parent(first),
+        Some(MAIN),
+        "the question mapping later leaves the error over the sheet"
+    );
+    app.fail("The second problem.");
+    app.error.close();
+    let second = app.error.win().expect("the second error is up");
+    assert_eq!(
+        app.parent(second),
+        Some(displayhost::MONITOR_WIN),
+        "an error raised under the question covers it"
+    );
 }
 
 #[test]

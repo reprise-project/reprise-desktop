@@ -347,6 +347,12 @@ impl SettingsApp {
         // `dialog-error` is the theme's, so it is `None` until the
         // first event primed it and the box draws without a column.
         let icon = self.err_icon.clone();
+        let raised: Vec<&String> = self.error.boxes().map(|b| &b.fields.text).collect();
+        self.error_over.retain(|(t, _)| raised.contains(&t));
+        if !self.error_over.iter().any(|(t, _)| t == reason) {
+            let over = self.dialog_up().unwrap_or(repriseapp::MAIN);
+            self.error_over.push((reason.to_string(), over));
+        }
         self.error
             .show("Reprise Settings", reason.to_string(), icon);
     }
