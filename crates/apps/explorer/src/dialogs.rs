@@ -403,6 +403,17 @@ impl Explorer {
         }
     }
 
+    /// Connect to Server going busy, taken by its handler ([`Explorer::take_up`]): with a held
+    /// box next, that box comes up in its place and Connect to Server waits behind every box, as
+    /// when a held box is raised over it. Else it comes back for the handler to put up.
+    pub(crate) fn connect_behind_held(&mut self, connect: Dialog) -> Option<Dialog> {
+        if !self.dialogs.up().is_some_and(Dialog::held) {
+            return Some(connect);
+        }
+        self.dialogs.raise(connect);
+        None
+    }
+
     /// Whether the box up stands over no window of this program: the folder window never shows
     /// ([`Explorer::alone`]) and no sheet holds the box.
     fn box_stands_alone(&self) -> bool {
