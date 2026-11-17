@@ -655,6 +655,9 @@ impl State {
         self.remember_window(w, true);
         self.remember_file_dialog(w, false);
         let over = self.win(w).and_then(|x| x.over_dialog);
+        if was_focused {
+            self.owner_next(w);
+        }
         self.forget_window(w);
         self.reset_state(w);
         self.carry_unmapped(w);
@@ -670,6 +673,15 @@ impl State {
             self.focus_after(over);
         }
         self.redraw_taskbars();
+    }
+
+    /// Focused `w`, leaving, puts its shown owner next in `focus_order`, so the keyboard goes back
+    /// to the window it stood over and not to one that came in line behind it since.
+    fn owner_next(&mut self, w: WindowId) {
+        if let Some(o) = self.owner(w).filter(|&o| self.shown_here(o)) {
+            self.focus_order.retain(|&p| p != o);
+            self.focus_order.push(o);
+        }
     }
 
     /// The focus after a window that stood `over` a dialog (`Window::over_dialog`) left it: that
@@ -694,9 +706,11 @@ impl State {
             self.window_closing(w);
         }
         self.finish_window_anim(w);
-        let over = (self.win(w))
-            .filter(|_| self.focused == Some(w))
-            .and_then(|x| x.over_dialog);
+        let focused = self.focused == Some(w);
+        let over = (self.win(w).filter(|_| focused)).and_then(|x| x.over_dialog);
+        if focused {
+            self.owner_next(w);
+        }
         self.forget_window(w);
         if let Some(i) = self.windows.iter().position(|x| x.id == w) {
             let win = self.windows.remove(i);

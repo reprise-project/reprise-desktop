@@ -2506,3 +2506,40 @@ fn a_window_without_an_owner_opens_on_the_pointers_output() {
     let f = frame(&h, w.id);
     assert!(inside(f, area), "{f:?} inside {area:?}");
 }
+
+#[test]
+fn a_closing_box_gives_the_keyboard_to_its_owner_not_a_program_that_mapped_behind_it() {
+    const APP: i32 = i32::MAX - 831;
+    const OTHER: i32 = i32::MAX - 832;
+    let mut h = forgetful();
+    let mut c = h.connect_as(APP);
+    let mut o = h.connect_as(OTHER);
+    let main = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let sheet = h.map_dialog(&mut c, "test.app", Some(main), "", (300, 200));
+    let test_page = h.map_modal(&mut c, "test.app", sheet, (120, 60));
+    let late = h.map_toplevel(&mut o, "test.other", 300, 200);
+    assert_eq!(
+        h.state.focused,
+        Some(test_page.id),
+        "the late window maps behind"
+    );
+
+    c.destroy(test_page);
+    h.roundtrip(&mut c);
+    assert_eq!(
+        h.state.focused,
+        Some(sheet.id),
+        "the sheet the box stood over"
+    );
+    assert_eq!(keyboard(&h), Some(sheet.id), "the sheet has the keyboard");
+    assert_eq!(
+        stale_frames(&mut h, &[main.id, sheet.id, late.id]),
+        [],
+        "only the sheet draws active"
+    );
+    assert_eq!(
+        stacking(&h),
+        [late.id, main.id, sheet.id],
+        "the family stays over the late window"
+    );
+}
