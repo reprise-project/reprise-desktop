@@ -62,17 +62,30 @@ pub enum Modes {
     /// Refused until `idle` runs the retries, as while a commit holds the display.
     Busy,
     Taken,
+    /// The next mode change takes and leaves the display `Busy`, as a modeset still committing
+    /// does.
+    TakenOnce,
 }
 
 pub(super) fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
     let Some(&mode) = output.modes().get(index) else {
         return false;
     };
-    if !state.test_heads.contains(output) || state.test_modes != Modes::Taken {
+    if !state.test_heads.contains(output)
+        || !matches!(state.test_modes, Modes::Taken | Modes::TakenOnce)
+    {
         return false;
+    }
+    if state.test_modes == Modes::TakenOnce {
+        state.test_modes = Modes::Busy;
     }
     output.change_current_state(Some(mode), None, None, None);
     true
+}
+
+/// Modes settle unless the display is `Busy`.
+pub(super) fn modes_settle(state: &State) -> bool {
+    state.test_modes != Modes::Busy
 }
 
 pub(super) fn retry_mode(state: &mut State, output: &Output, index: usize) {
@@ -123,8 +136,8 @@ pub(super) fn vrr_of(state: &State, output: &Output) -> Option<(bool, bool)> {
     driven(state, output).then(|| (v.capable, v.on.contains(&output.name())))
 }
 
-/// The display goes idle: mode and VRR changes take, and the ones refused while busy run as
-/// `Step::Mode` and `on_quiet` run them.
+/// The display goes idle: mode and VRR changes take, and the ones refused while busy and the
+/// output-management changes held run as `Step::Mode` and `on_quiet` run them.
 pub fn idle(state: &mut State) {
     state.test_modes = Modes::Taken;
     state.test_vrr.busy = false;
@@ -135,5 +148,8 @@ pub fn idle(state: &mut State) {
         if set_mode(state, &output, index) {
             state.update_layout();
         }
+    }
+    if state.outputs_mgmt.holds() {
+        crate::outputmgmt::release_held(state);
     }
 }

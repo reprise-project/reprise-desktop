@@ -642,6 +642,7 @@ impl State {
         let ime = crate::textinput::Ime::new(&dh, &seat);
         let tabs_global = crate::tabsproto::advertise(&dh, config.window_tabs, None);
         crate::ontopproto::advertise(&dh);
+        crate::outputtrial::advertise(&dh);
         crate::toplevelsdrag::advertise(&dh);
         let clip = crate::clipboard::Clip::new(&dh);
 
