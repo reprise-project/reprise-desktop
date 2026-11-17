@@ -303,7 +303,8 @@ impl MsgBox {
 
 /// One-OK error boxes in a modal child window: a program's word that something failed. Errors
 /// wait their turn ([`crate::asks`]); the program routes the windows [`ErrorBox::owns`] here.
-pub struct ErrorBox(Asks<()>);
+/// Each box carries the window [`ErrorBox::show_over`] named.
+pub struct ErrorBox(Asks<Option<WinId>>);
 
 impl Default for ErrorBox {
     fn default() -> ErrorBox {
@@ -325,6 +326,16 @@ impl ErrorBox {
     /// Shows `text` under `title`, with `icon` beside it, once the boxes before it are answered.
     /// An error equal in title and text to one up or waiting is shown once.
     pub fn show(&mut self, title: &str, text: String, icon: Option<Canvas>) {
+        self.raise(None, title, text, icon);
+    }
+
+    /// [`ErrorBox::show`] over `parent`, such as the sheet the error is about, in place of the
+    /// boxes' own parent ([`Asks::ask_over`]). [`ErrorBox::withdraw`] takes it when `parent` closes.
+    pub fn show_over(&mut self, parent: WinId, title: &str, text: String, icon: Option<Canvas>) {
+        self.raise(Some(parent), title, text, icon);
+    }
+
+    fn raise(&mut self, over: Option<WinId>, title: &str, text: String, icon: Option<Canvas>) {
         if (self.0.iter()).any(|(b, _)| b.title == title && b.fields.text == text) {
             return;
         }
@@ -337,7 +348,16 @@ impl ErrorBox {
             min_w: 0,
             max_w: crate::dialog_max_w(),
         };
-        self.0.ask(MsgBox::new(title, fields), ());
+        let b = MsgBox::new(title, fields);
+        match over {
+            Some(parent) => self.0.ask_over(parent, b, over),
+            None => self.0.ask(b, None),
+        }
+    }
+
+    /// Takes every box shown over a window `gone` picks, up or waiting: that window closed.
+    pub fn withdraw(&mut self, gone: impl Fn(WinId) -> bool) {
+        self.0.withdraw(|over| over.is_some_and(&gone));
     }
 
     pub fn is_shown(&self) -> bool {
@@ -609,6 +629,20 @@ mod tests {
         assert!(e.owns(second));
         e.event(second, &enter(), &text, &theme);
         assert!(!e.is_shown());
+    }
+
+    #[test]
+    fn an_error_shown_over_a_window_covers_it_and_leaves_when_it_closes() {
+        let (sheet, other) = (crate::window_id(1), crate::window_id(2));
+        let mut e = ErrorBox::default();
+        e.show_over(sheet, "Printers", "about the sheet".into(), None);
+        e.show("Printers", "about the program".into(), None);
+        e.show_over(other, "Printers", "about the other".into(), None);
+        assert_eq!(e.parent(e.win().unwrap()), Some(sheet));
+        e.withdraw(|w| w == sheet);
+        let left: Vec<_> = e.boxes().map(|b| b.fields.text.as_str()).collect();
+        assert_eq!(left, ["about the program", "about the other"]);
+        assert_eq!(e.parent(e.win().unwrap()), Some(crate::MAIN));
     }
 
     #[test]

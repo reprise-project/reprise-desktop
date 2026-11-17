@@ -71,10 +71,11 @@ pub enum Msg {
     Snapshot(Snapshot),
     /// A job left the queue: how it ended.
     JobEnded(Job),
-    /// A request failed: the title and body of its message box.
+    /// A request failed: the title and body of its message box, and the printer it was about.
     Failed {
         title: String,
         body: String,
+        printer: Option<String>,
     },
     Options(String, cups::Result<Options>),
     Devices(cups::Result<Vec<Device>>),
@@ -400,7 +401,8 @@ impl State {
                         match cups::test_page(c, &printer.name) {
                             Ok(_) => self.poster.post(Msg::TestPage(printer.name.clone())),
                             Err(e) => {
-                                if let Some(m) = failed(&Cmd::TestPage(String::new()), &e) {
+                                let test = Cmd::TestPage(printer.name.clone());
+                                if let Some(m) = failed(&test, self.last.as_ref(), &e) {
                                     self.poster.post(m);
                                 }
                             }
@@ -414,7 +416,7 @@ impl State {
         };
         if let Err(e) = result {
             log::warn!("{cmd:?}: {e:?}");
-            if let Some(m) = failed(&cmd, &e) {
+            if let Some(m) = failed(&cmd, self.last.as_ref(), &e) {
                 self.poster.post(m);
             }
         }
@@ -422,12 +424,31 @@ impl State {
     }
 }
 
-/// The message box for a failed request; a dismissed password prompt has none.
-fn failed(cmd: &Cmd, e: &cups::Error) -> Option<Msg> {
+/// The message box for a failed request; a dismissed password prompt has none. `last` names a
+/// job's printer.
+fn failed(cmd: &Cmd, last: Option<&Snapshot>, e: &cups::Error) -> Option<Msg> {
     (*e != cups::Error::Dismissed).then(|| Msg::Failed {
         title: title(cmd).into(),
         body: e.text(),
+        printer: printer(cmd, last).map(str::to_owned),
     })
+}
+
+/// The printer a request is about. A rename names the old one: its windows carry the new name,
+/// and close when the rename fails.
+fn printer<'a>(cmd: &'a Cmd, last: Option<&'a Snapshot>) -> Option<&'a str> {
+    match cmd {
+        Cmd::Pause(p)
+        | Cmd::Resume(p)
+        | Cmd::CancelAll(p)
+        | Cmd::SetDefault(p)
+        | Cmd::Delete(p)
+        | Cmd::TestPage(p)
+        | Cmd::Rename { old: p, .. }
+        | Cmd::Modify { printer: p, .. } => Some(p),
+        Cmd::Job { id, .. } => last?.jobs.iter().find(|j| j.id == *id).map(|j| &*j.printer),
+        _ => None,
+    }
 }
 
 /// The jobs the worker has seen, to tell which ones ended between two reads.
@@ -663,11 +684,35 @@ mod tests {
     #[test]
     fn a_dismissed_prompt_has_no_message_box_and_a_refusal_has_one() {
         let delete = Cmd::Delete("Office".into());
-        assert!(failed(&delete, &cups::Error::Dismissed).is_none());
-        let Some(Msg::Failed { title, body }) = failed(&delete, &cups::Error::NotAuthorized) else {
+        assert!(failed(&delete, None, &cups::Error::Dismissed).is_none());
+        let Some(Msg::Failed {
+            title,
+            body,
+            printer,
+        }) = failed(&delete, None, &cups::Error::NotAuthorized)
+        else {
             panic!("a refused password is told");
         };
         assert_eq!(title, "Could not delete the printer");
         assert_eq!(body, cups::Error::NotAuthorized.text());
+        assert_eq!(printer.as_deref(), Some("Office"));
+    }
+
+    #[test]
+    fn a_failed_job_request_names_the_job_s_printer() {
+        let last = Snapshot {
+            jobs: vec![Job {
+                id: 7,
+                printer: "Laser".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let cancel = |id| Cmd::Job {
+            id,
+            op: JobOp::Cancel,
+        };
+        assert_eq!(printer(&cancel(7), Some(&last)), Some("Laser"));
+        assert_eq!(printer(&cancel(8), Some(&last)), None, "a job gone");
     }
 }
