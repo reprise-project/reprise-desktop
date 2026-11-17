@@ -63,7 +63,10 @@ enum After {
         sheet: u64,
         uid: u32,
     },
-    Add,
+    /// Add Account's Create from dialog number `dialog` (see `adds`).
+    Add {
+        dialog: u64,
+    },
     Remove,
 }
 
@@ -85,6 +88,8 @@ struct AccountsApp {
     /// How many Properties sheets have opened: the open one's number.
     sheets: u64,
     add: Option<adduser::AddUser>,
+    /// How many Add Account dialogs have opened: the open one's number.
+    adds: u64,
     browse: Option<FileDlg>,
     browse_host: Host,
     asking: Asks<Ask>,
@@ -125,6 +130,7 @@ impl AccountsApp {
             props: None,
             sheets: 0,
             add: None,
+            adds: 0,
             browse: None,
             browse_host: Host::default(),
             asking: Asks::new(QUESTION),
@@ -676,7 +682,8 @@ impl AccountsApp {
                 }
             }
         }
-        if after == After::Add && done.is_ok() {
+        let added = after == After::Add { dialog: self.adds } && self.add.is_some();
+        if added && done.is_ok() {
             self.close_add();
         }
         if let Some(d) = &mut self.add {
@@ -691,7 +698,7 @@ impl AccountsApp {
             match (whose, after) {
                 (Some(name), _) => self.fail(format!("The account {name}:\n\n{why}")),
                 (None, After::Props { .. }) if ours => self.fail_over(PROPS, why),
-                (None, After::Add) => self.fail_over(ADD, why),
+                (None, After::Add { .. }) if added => self.fail_over(ADD, why),
                 (None, _) => self.fail(why),
             }
         }
@@ -789,6 +796,21 @@ impl AccountsApp {
         self.error.withdraw(|w| w == PROPS);
     }
 
+    fn open_add(&mut self) {
+        if self.add.is_none() {
+            let taken = self.users.rows.iter().map(|u| u.login.clone()).collect();
+            let mut d = adduser::AddUser::new(taken);
+            d.set_busy(self.job.is_some());
+            self.add = Some(d);
+            self.adds += 1;
+        }
+    }
+
+    /// Add Account's Create.
+    fn create(&mut self, op: Op) {
+        self.run(vec![op], After::Add { dialog: self.adds });
+    }
+
     /// Close Add Account and the error raised from it.
     fn close_add(&mut self) {
         self.add = None;
@@ -878,12 +900,7 @@ impl AccountsApp {
                 ..Reply::none()
             },
             users::Outcome::Add => {
-                if self.add.is_none() {
-                    let taken = self.users.rows.iter().map(|u| u.login.clone()).collect();
-                    let mut d = adduser::AddUser::new(taken);
-                    d.set_busy(self.job.is_some());
-                    self.add = Some(d);
-                }
+                self.open_add();
                 Reply::redraw_all()
             }
             users::Outcome::Remove(uid) => {
@@ -995,7 +1012,7 @@ impl AccountsApp {
             adduser::Outcome::None => Reply::none(),
             adduser::Outcome::Redraw => Reply::redraw(),
             adduser::Outcome::Create(op) => {
-                self.run(vec![op], After::Add);
+                self.create(op);
                 Reply::redraw_all()
             }
             adduser::Outcome::Cancel => {
@@ -1683,20 +1700,70 @@ mod tests {
         let rows = vec![user(1000, "jo", true, true)];
         let mut app = AccountsApp::new();
         app.users.refresh(rows.clone(), vec![None]);
-        app.add = Some(adduser::AddUser::new(vec!["jo".into()]));
-        job_fails(&mut app, After::Add, rows.clone());
+        app.open_add();
+        let after = After::Add { dialog: app.adds };
+        job_fails(&mut app, after, rows.clone());
         assert!(app.add.is_some(), "a failed Create keeps the dialog");
         assert_eq!(error_over(&app), Some(ADD));
 
         app.add_event(Event::CloseRequest, &test_ctx());
         assert!(app.add.is_none());
         assert!(!app.error.is_shown(), "the error left with the dialog");
-        job_fails(&mut app, After::Add, rows);
+        job_fails(&mut app, after, rows);
         assert_eq!(
             error_over(&app),
             Some(MAIN),
             "with no dialog the main window"
         );
+    }
+
+    /// Add Account's Create for `login`.
+    fn create_op(login: &str) -> Op {
+        Op::Create {
+            login: login.into(),
+            real_name: String::new(),
+            admin: false,
+            password: String::new().into(),
+            expire: false,
+        }
+    }
+
+    #[test]
+    fn a_create_failing_after_add_account_was_opened_again_covers_the_main_window() {
+        let mut app = AccountsApp::new();
+        app.users
+            .refresh(vec![user(1000, "jo", true, true)], vec![None]);
+        app.open_add();
+        app.create(create_op("al"));
+        app.add_event(Event::CloseRequest, &test_ctx());
+        app.open_add();
+        assert!(app.accounts_done());
+        assert!(app.add.is_some(), "the new dialog stays");
+        assert_eq!(error_text(&app).as_deref(), Some("no accounts under test"));
+        assert_eq!(error_over(&app), Some(MAIN));
+        app.add_event(Event::CloseRequest, &test_ctx());
+        assert!(app.error.is_shown(), "the failure stays up");
+    }
+
+    #[test]
+    fn a_create_landing_after_add_account_was_opened_again_lists_the_account_and_leaves_the_new_dialog()
+     {
+        let mut app = stub_accounts(
+            vec![user(1000, "jo", true, true)],
+            acct::PasswordMode::Regular,
+        );
+        app.open_add();
+        ROWS.set(vec![
+            user(1000, "jo", true, true),
+            user(1001, "al", false, false),
+        ]);
+        app.create(create_op("al"));
+        app.add_event(Event::CloseRequest, &test_ctx());
+        app.open_add();
+        assert!(app.accounts_done());
+        assert!(app.add.is_some(), "the new dialog stays");
+        let listed: Vec<&str> = app.users.rows.iter().map(|u| u.login.as_str()).collect();
+        assert_eq!(listed, ["jo", "al"]);
     }
 
     #[test]
