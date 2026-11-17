@@ -630,17 +630,22 @@ impl PluginSheet {
         format!("{} Properties", self.sheet.pages[0].edit_text("name"))
     }
 
-    pub fn event(&mut self, ev: propsheet::Event) -> Outcome {
+    /// The name and settings as OK would save them.
+    pub fn values(&self) -> (String, Vec<(String, String)>) {
         let f = &self.sheet.pages[0];
+        let data = match f.item("data").map(|i| &i.control) {
+            Some(Control::Memo(m)) => parse_data(&m.edit.text()),
+            _ => vec![],
+        };
+        (f.edit_text("name").trim().to_string(), data)
+    }
+
+    pub fn event(&mut self, ev: propsheet::Event) -> Outcome {
         let save = || {
-            let name = f.edit_text("name").trim().to_string();
+            let (name, data) = self.values();
             if name.is_empty() {
                 return Outcome::Problem("Type a name for the connection.".into());
             }
-            let data = match f.item("data").map(|i| &i.control) {
-                Some(Control::Memo(m)) => parse_data(&m.edit.text()),
-                _ => vec![],
-            };
             Outcome::SavePlugin { name, data }
         };
         match ev {
