@@ -33,7 +33,9 @@ impl State {
     }
 
     fn shown_here(&self, w: WindowId) -> bool {
-        self.win(w).is_some_and(|x| x.mapped && !x.hidden()) && self.on_current_desktop(w)
+        self.win(w).is_some_and(|x| x.mapped)
+            && !self.minimized_along_chain(w)
+            && self.on_current_desktop(w)
     }
 
     /// Notes focused `w` leaving ([`mapfocus::Handover`]), once `focus_order` has dropped it: the
