@@ -43,7 +43,6 @@ use repriselogin::account::AccountRefusal;
 const PROPS: WinId = WinId::named("props");
 const ADD: WinId = WinId::named("add");
 const BROWSE: WinId = WinId::named("browse");
-const QUESTION: WinId = WinId::named("question");
 
 const RD_PASSWORD: WinId = WinId::named("rd_password");
 const ADD_FINGER: WinId = WinId::named("add_finger");
@@ -133,7 +132,7 @@ impl AccountsApp {
             adds: 0,
             browse: None,
             browse_host: Host::default(),
-            asking: Asks::new(QUESTION),
+            asking: Asks::default(),
             error: ErrorBox::default(),
             job: None,
             mode_read: None,
@@ -341,7 +340,7 @@ impl AccountsApp {
                         max_w: repriseapp::dialog_max_w(),
                     },
                 );
-                self.asking.ask(b, Ask::ClearFingers);
+                self.asking.ask_over(PROPS, b, Ask::ClearFingers);
             }
         }
         Reply::redraw_all()
@@ -1286,17 +1285,16 @@ impl repriseapp::Extended for AccountsApp {
         self.closing
     }
 
-    /// The dialogs and the question raised from the Properties sheet cover it; an error box
-    /// covers the window it was raised from ([`AccountsApp::fail_over`]).
+    /// The dialogs raised from the Properties sheet cover it; a box covers the window it was
+    /// raised over ([`AccountsApp::fail_over`], [`Asks::ask_over`]).
     fn parent(&self, win: WinId) -> Option<WinId> {
         if self.error.owns(win) {
             return self.error.parent(win);
         }
-        let from_sheet = match win {
-            RD_PASSWORD | ADD_FINGER | BROWSE => true,
-            w if self.asking.owns(w) => matches!(self.asking.up(), Some((_, Ask::ClearFingers))),
-            _ => false,
-        };
+        if self.asking.owns(win) {
+            return self.asking.parent(win);
+        }
+        let from_sheet = matches!(win, RD_PASSWORD | ADD_FINGER | BROWSE);
         Some(match from_sheet && self.props.is_some() {
             true => PROPS,
             false => MAIN,
