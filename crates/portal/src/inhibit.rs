@@ -252,45 +252,52 @@ impl Inhibit {
             log::info!("Inhibit: User Switch is not held");
         }
         let owner = crate::sender(&hdr);
-        let logout = match flags & FLAG_LOGOUT {
-            0 => None,
-            _ => Some((app_id.clone(), reason.clone(), app_pid(conn, &handle).await)),
-        };
-        let mut held = Held {
+        let key = handle.to_string();
+        // The Request is served before anything is awaited: the frontend hands the app its
+        // handle first, and a Close it passes on meanwhile takes this entry out, so what is
+        // taken below is given back.
+        let pending = Held {
             owner: owner.clone(),
-            logout,
             ..Held::default()
         };
-        if flags & FLAG_SUSPEND != 0 {
-            let fd = sleep_inhibit(who, &reason).await.map_err(|e| {
-                log::warn!("Inhibit suspend: {e}");
-                zbus::fdo::Error::Failed(format!("{LOGIND}: {e}"))
-            })?;
-            held.sleep = Some(fd);
-        }
-        if flags & FLAG_IDLE != 0 {
-            if !self.shared.take_idle(who, &reason).await {
-                return Err(zbus::fdo::Error::Failed(format!(
-                    "{SCREENSAVER} refused the inhibition"
-                )));
-            }
-            held.idle = true;
-        }
-        let key = handle.to_string();
-        let old = self.shared.held.lock().unwrap().insert(key.clone(), held);
+        let old = self
+            .shared
+            .held
+            .lock()
+            .unwrap()
+            .insert(key.clone(), pending);
         if let Some(old) = old {
             self.shared.release(old);
         }
         let request = InhibitRequest {
-            path: key,
+            path: key.clone(),
             shared: self.shared.clone(),
         };
         if let Err(e) = server.at(handle.clone(), request).await {
-            let held = self.shared.held.lock().unwrap().remove(handle.as_str());
-            if let Some(h) = held {
-                self.shared.release(h);
-            }
+            self.shared.held.lock().unwrap().remove(&key);
             return Err(e.into());
+        }
+        let held = match take(&self.shared, conn, &handle, &app_id, flags, &reason).await {
+            Ok(held) => Held {
+                owner: owner.clone(),
+                ..held
+            },
+            Err(e) => {
+                self.shared.held.lock().unwrap().remove(&key);
+                let _ = server.remove::<InhibitRequest, _>(&handle).await;
+                return Err(e);
+            }
+        };
+        let closed = match self.shared.held.lock().unwrap().get_mut(&key) {
+            Some(slot) => {
+                *slot = held;
+                None
+            }
+            None => Some(held),
+        };
+        if let Some(held) = closed {
+            log::info!("Inhibit {key}: closed before it was held");
+            self.shared.release(held);
         }
         left(conn, &self.frontend, &self.shared, &owner).await
     }
@@ -342,6 +349,40 @@ impl Inhibit {
         session_handle: ObjectPath<'_>,
         state: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
+}
+
+/// What `flags` ask for, for the app `app_id` of request `handle`: a call that cannot hold one
+/// of them holds none.
+async fn take(
+    shared: &Inhibits,
+    conn: &zbus::Connection,
+    handle: &ObjectPath<'_>,
+    app_id: &str,
+    flags: u32,
+    reason: &str,
+) -> zbus::fdo::Result<Held> {
+    let who = if app_id.is_empty() { "unknown" } else { app_id };
+    let mut held = Held::default();
+    if flags & FLAG_LOGOUT != 0 {
+        let pid = app_pid(conn, handle).await;
+        held.logout = Some((app_id.to_string(), reason.to_string(), pid));
+    }
+    if flags & FLAG_SUSPEND != 0 {
+        let fd = sleep_inhibit(who, reason).await.map_err(|e| {
+            log::warn!("Inhibit suspend: {e}");
+            zbus::fdo::Error::Failed(format!("{LOGIND}: {e}"))
+        })?;
+        held.sleep = Some(fd);
+    }
+    if flags & FLAG_IDLE != 0 {
+        if !shared.take_idle(who, reason).await {
+            return Err(zbus::fdo::Error::Failed(format!(
+                "{SCREENSAVER} refused inhibition"
+            )));
+        }
+        held.idle = true;
+    }
+    Ok(held)
 }
 
 fn state(locked: bool, ending: bool) -> HashMap<&'static str, Variant<'static>> {
@@ -960,6 +1001,120 @@ mod tests {
             assert_eq!(
                 *calls.lock().unwrap(),
                 ["inhibit org.example.Player Playing", "uninhibit 7"]
+            );
+        });
+    }
+
+    const IMPL: &str = "org.freedesktop.impl.portal.Inhibit";
+    const IMPL_REQUEST: &str = "org.freedesktop.impl.portal.Request";
+
+    /// A ScreenSaver that answers each Inhibit only once the test sends on its gate.
+    struct GatedSaver {
+        calls: Arc<Mutex<Vec<String>>>,
+        gate: async_channel::Receiver<()>,
+    }
+
+    #[zbus::interface(name = "org.freedesktop.ScreenSaver")]
+    impl GatedSaver {
+        async fn inhibit(&self, app: String, _reason: String) -> u32 {
+            self.calls.lock().unwrap().push(format!("inhibit {app}"));
+            let _ = self.gate.recv().await;
+            7
+        }
+
+        fn un_inhibit(&self, cookie: u32) {
+            let call = format!("uninhibit {cookie}");
+            self.calls.lock().unwrap().push(call);
+        }
+    }
+
+    #[test]
+    fn a_close_before_the_inhibit_is_done_leaves_nothing_held() {
+        let Some(bus) = bus() else {
+            return;
+        };
+        zbus::block_on(async {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let (open, gate) = async_channel::unbounded();
+            let saver = connect(&bus).await;
+            let gated = GatedSaver {
+                calls: calls.clone(),
+                gate,
+            };
+            reprisebus::testbus::serve(&saver, SCREENSAVER_PATH, gated).await;
+            saver.request_name(SCREENSAVER).await.unwrap();
+            let (shared, rx) = super::shared();
+            let frontend = crate::Frontend::default();
+            let client = connect(&bus).await;
+            frontend.set(client.unique_name().map(|n| n.to_string()));
+            let portal = connect(&bus).await;
+            let inhibit = Inhibit {
+                shared: shared.clone(),
+                frontend: frontend.clone(),
+            };
+            reprisebus::testbus::serve(&portal, crate::PATH, inhibit).await;
+            let _ = frontend.conn.set(portal.clone());
+            zruntime::spawn(run_idle(portal.clone(), rx)).detach();
+            let dest = portal.unique_name().unwrap().to_string();
+            let handle = "/org/freedesktop/portal/desktop/request/1_1/a";
+            let options = HashMap::from([("reason", Variant::from("Copying files"))]);
+            let asked = zruntime::spawn({
+                let (client, dest) = (client.clone(), dest.clone());
+                async move {
+                    let body = (
+                        ObjectPath::try_from(handle).unwrap(),
+                        "reprise-explorer",
+                        "",
+                        FLAG_LOGOUT | FLAG_IDLE,
+                        options,
+                    );
+                    (client.call_method(
+                        Some(dest.as_str()),
+                        crate::PATH,
+                        Some(IMPL),
+                        "Inhibit",
+                        &body,
+                    ))
+                    .await
+                    .map(drop)
+                }
+            });
+            for _ in 0..500 {
+                if !calls.lock().unwrap().is_empty() {
+                    break;
+                }
+                async_io::Timer::after(std::time::Duration::from_millis(10)).await;
+            }
+            assert_eq!(*calls.lock().unwrap(), ["inhibit reprise-explorer"]);
+            let closed = client
+                .call_method(
+                    Some(dest.as_str()),
+                    handle,
+                    Some(IMPL_REQUEST),
+                    "Close",
+                    &(),
+                )
+                .await;
+            assert!(closed.is_ok(), "the Close is answered: {closed:?}");
+            open.send(()).await.unwrap();
+            let _ = asked.await;
+            assert!(shared.logout_holders().is_empty(), "no logout inhibitor");
+            assert!(shared.held.lock().unwrap().is_empty());
+            let served = portal
+                .object_server()
+                .interface::<_, InhibitRequest>(handle)
+                .await;
+            assert!(served.is_err(), "no Request object stays behind");
+            for _ in 0..100 {
+                if calls.lock().unwrap().len() == 2 {
+                    break;
+                }
+                async_io::Timer::after(std::time::Duration::from_millis(10)).await;
+            }
+            assert_eq!(
+                *calls.lock().unwrap(),
+                ["inhibit reprise-explorer", "uninhibit 7"],
+                "the idle cookie taken meanwhile is given back"
             );
         });
     }
