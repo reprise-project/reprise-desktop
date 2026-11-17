@@ -1,6 +1,6 @@
 //! Explorer's modal dialogs in a child window: the error box, the delete and replace confirmations, the Open With chooser, the Properties sheet's Advanced Attributes, Confirm Attribute Changes and Change Icon, the Move and Copy folder picker (`browse`), Unlock Drive, and Connect to Server with its password and question boxes.
 //!
-//! One child at a time: a box raised while another is up waits for it ([`Explorer::raise`]). Two stack instead: the chooser's Browse... opens the program picker (`PROGRAM_BROWSE`) over it, and a refused name or a failed Make New Folder in the Move/Copy picker raises its error box (`browse::ERROR`). The error and confirm boxes keep only their text and focused button, so their [`Form`] is rebuilt per event; the chooser keeps an `openwith` control that takes its own events ([`crate::openwith`]).
+//! One child at a time: a box raised while another is up waits for it ([`Explorer::raise`]). Two stack instead: the chooser's Browse... opens the program picker (`PROGRAM_BROWSE`) over it, and a refused name or a failed Make New Folder in the Move/Copy picker raises its error box (`browse::ERROR`). The message, question, confirm and replace boxes keep only their fields and focused button, so their [`Form`] is rebuilt per event ([`Explorer::box_form`]); the chooser keeps an `openwith` control that takes its own events ([`crate::openwith`]).
 
 use crate::icons::{IconSlot, land_picture};
 use crate::place;
@@ -235,6 +235,7 @@ pub enum Dialog {
         text: String,
         choices: Vec<String>,
         about: crate::shares::Asking,
+        focus: Option<&'static str>,
     },
     /// A paste whose next clash waits its turn; once it is up, [`Explorer::ask_pastes`] asks it.
     Paste(Box<(crate::fileops::PendingPut, reprisefs::replace::Asker)>),
@@ -266,6 +267,24 @@ impl Dialog {
             Dialog::AttrConfirm(_) | Dialog::Advanced { .. } | Dialog::ChangeIcon { .. } => true,
             Dialog::ChooseProgram(cp) => cp.set_default,
             _ => false,
+        }
+    }
+
+    /// The button a rebuilt box's keys moved the focus to ([`Explorer::box_form`]); `None` while
+    /// it is on the default.
+    fn focus_slot(&mut self) -> Option<&mut Option<&'static str>> {
+        match self {
+            Dialog::Confirm(Confirm { focus, .. }) | Dialog::Question { focus, .. } => Some(focus),
+            Dialog::Replace(r) => Some(&mut r.focus),
+            _ => None,
+        }
+    }
+
+    fn focus(&self) -> Option<&'static str> {
+        match self {
+            Dialog::Confirm(Confirm { focus, .. }) | Dialog::Question { focus, .. } => *focus,
+            Dialog::Replace(r) => r.focus,
+            _ => None,
         }
     }
 
@@ -766,6 +785,7 @@ impl Explorer {
                 text,
                 choices,
                 about,
+                ..
             } => Some(msgbox::Fields {
                 text: text.clone(),
                 icon: self.error_icon(),
@@ -792,18 +812,6 @@ impl Explorer {
         }
     }
 
-    fn replace_form(&self) -> Option<Form> {
-        let Some(Dialog::Replace(r)) = self.dialogs.up() else {
-            return None;
-        };
-        let (px, u) = (self.forms.fonts.size_px, self.forms.text);
-        let mut f = replacebox::form(&r.fields, &self.dialog_text, px, u);
-        if let Some(id) = r.focus {
-            f.focus_id(id);
-        }
-        Some(self.built(f))
-    }
-
     fn confirm_layout(&self) -> Option<dlgtemplate::Layout> {
         let Some(Dialog::Confirm(c)) = self.dialogs.up() else {
             return None;
@@ -811,17 +819,22 @@ impl Explorer {
         Some(c.layout(&self.dialog_text, self.forms.fonts.size_px, self.forms.text))
     }
 
-    /// The form of whichever text box is up, focus on the button the keys left it on.
+    /// The form of whichever message, question, confirm or replace box is up, focus on the button
+    /// its keys left it on.
     pub fn box_form(&self) -> Option<Form> {
-        if let (Some(lay), Some(Dialog::Confirm(c))) = (self.confirm_layout(), self.dialogs.up()) {
-            let mut f = dlgtemplate::form(&lay, c.icon.icon(), &c.buttons(), c.default_button());
-            if let Some(id) = c.focus {
-                f.focus_id(id);
+        let d = self.dialogs.up()?;
+        let (text, px, u) = (&self.dialog_text, self.forms.fonts.size_px, self.forms.text);
+        let mut f = match d {
+            Dialog::Confirm(c) => {
+                let lay = self.confirm_layout()?;
+                dlgtemplate::form(&lay, c.icon.icon(), &c.buttons(), c.default_button())
             }
-            return Some(self.built(f));
+            Dialog::Replace(r) => replacebox::form(&r.fields, text, px, u),
+            _ => msgbox::form(&self.box_fields()?, text, px, u),
+        };
+        if let Some(id) = d.focus() {
+            f.focus_id(id);
         }
-        let (px, u) = (self.forms.fonts.size_px, self.forms.text);
-        let f = msgbox::form(&self.box_fields()?, &self.dialog_text, px, u);
         Some(self.built(f))
     }
 
@@ -993,7 +1006,7 @@ impl Explorer {
             Some(Dialog::BatchRename(b)) => &b.form,
             Some(Dialog::Connect(b)) => &b.form,
             Some(Dialog::Login(b)) => &b.form,
-            Some(_) => match self.box_form().or_else(|| self.replace_form()) {
+            Some(_) => match self.box_form() {
                 Some(f) => {
                     built = f;
                     &built
@@ -1048,7 +1061,7 @@ impl Explorer {
             Some(Dialog::BatchRename(b)) => &b.form,
             Some(Dialog::Connect(b)) => &b.form,
             Some(Dialog::Login(b)) => &b.form,
-            Some(_) => match self.box_form().or_else(|| self.replace_form()) {
+            Some(_) => match self.box_form() {
                 Some(f) => {
                     built = f;
                     &built
@@ -1118,7 +1131,7 @@ impl Explorer {
                 },
             }
         } else {
-            let Some(mut f) = self.box_form().or_else(|| self.replace_form()) else {
+            let Some(mut f) = self.box_form() else {
                 return Reply::none();
             };
             match ev {
@@ -1146,13 +1159,11 @@ impl Explorer {
         self.dialog_outcome(out, ctx)
     }
 
-    /// Keep the focus of the button `f` is on in the prompt `f` was built for; the next form puts it back so Enter and Space press it.
+    /// Keep the focus of the button `f` is on in the box `f` was built for; the next form puts it
+    /// back so Enter and Space press it.
     fn keep_box_focus(&mut self, f: &Form) {
-        let id = f.focus().map(|i| f.items[i].id);
-        match self.dialogs.up_mut() {
-            Some(Dialog::Confirm(c)) => c.focus = id,
-            Some(Dialog::Replace(r)) => r.focus = id,
-            _ => {}
+        if let Some(slot) = self.dialogs.up_mut().and_then(Dialog::focus_slot) {
+            *slot = f.focus().map(|i| f.items[i].id);
         }
     }
 

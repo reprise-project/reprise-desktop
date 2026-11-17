@@ -149,6 +149,7 @@ fn raise(i: usize) -> Option<Raised> {
                 text: "Go on?".into(),
                 choices: vec!["Yes".into(), "No".into()],
                 about: crate::shares::Asking::Connection,
+                focus: None,
             });
         }
         _ => return None,
