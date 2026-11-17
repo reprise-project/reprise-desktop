@@ -13,7 +13,7 @@ mod users;
 
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
 use repriseapp::asks::{self, Asks};
@@ -79,6 +79,7 @@ enum Ask {
 }
 
 struct AccountsApp {
+    accounts: acct::Sources,
     users: users::Users,
     props: Option<props::Props>,
     /// How many Properties sheets have opened: the open one's number.
@@ -89,6 +90,11 @@ struct AccountsApp {
     asking: Asks<Ask>,
     error: ErrorBox,
     job: Option<(Receiver<Answer>, After)>,
+    /// A read of the open sheet's password mode, and the Apply or OK waiting on it.
+    mode_read: Option<(
+        Receiver<zbus::Result<acct::PasswordMode>>,
+        Option<propsheet::Event>,
+    )>,
     waker: Option<repriseapp::Waker>,
     face: Option<Canvas>,
     text: Option<Rc<TextRenderer>>,
@@ -112,6 +118,7 @@ struct AccountsApp {
 impl AccountsApp {
     fn new() -> AccountsApp {
         AccountsApp {
+            accounts: acct::Sources::default(),
             users: users::Users::new(),
             props: None,
             sheets: 0,
@@ -121,6 +128,7 @@ impl AccountsApp {
             asking: Asks::new(QUESTION),
             error: ErrorBox::default(),
             job: None,
+            mode_read: None,
             waker: None,
             face: None,
             text: None,
@@ -477,18 +485,14 @@ impl AccountsApp {
             acct::remove_pictures(&ops);
             return false;
         }
-        let (tx, rx) = channel();
-        let waker = self.waker.clone();
-        std::thread::spawn(move || {
+        let src = self.accounts;
+        let rx = self.spawn(move || {
             let done = if ops.is_empty() {
                 Ok(())
             } else {
-                acct::apply(&ops)
+                (src.apply)(&ops)
             };
-            let _ = tx.send((done, acct::read()));
-            if let Some(w) = waker {
-                w.wake();
-            }
+            (done, (src.read)())
         });
         self.job = Some((rx, after));
         self.set_busy(true);
@@ -498,8 +502,9 @@ impl AccountsApp {
     /// Greys what would start a second job while one runs.
     fn set_busy(&mut self, busy: bool) {
         self.users.set_busy(busy);
+        let held = matches!(self.mode_read, Some((_, Some(_))));
         if let Some(p) = &mut self.props {
-            p.set_busy(busy);
+            p.set_busy(busy || held);
         }
         if let Some(d) = &mut self.add {
             d.set_busy(busy);
@@ -528,11 +533,56 @@ impl AccountsApp {
     fn wake(&mut self) -> Reply {
         let remote = self.remote_done();
         let fingers = self.fingers_done();
-        if self.accounts_done() || remote || fingers {
+        let mode = self.mode_done();
+        if self.accounts_done() || remote || fingers || mode {
             Reply::redraw_all()
         } else {
             Reply::none()
         }
+    }
+
+    /// Read the open sheet's password mode again, holding `then` (an Apply or OK) until it is
+    /// in. A read already out is dropped.
+    fn read_mode(&mut self, then: Option<propsheet::Event>) {
+        let Some(p) = &self.props else {
+            return;
+        };
+        let (read, path) = (self.accounts.password_mode, p.user.path.clone());
+        let rx = self.spawn(move || read(&path));
+        let held = then.is_some();
+        self.mode_read = Some((rx, then));
+        if held {
+            self.set_busy(self.job.is_some());
+        }
+    }
+
+    /// The open sheet's password mode came back: the sheet takes it, then decides the Apply or
+    /// OK it held. A failed read leaves the mode the sheet had. True when it came.
+    fn mode_done(&mut self) -> bool {
+        let read = match &self.mode_read {
+            Some((rx, _)) => match rx.try_recv() {
+                Ok(read) => read,
+                Err(TryRecvError::Empty) => return false,
+                Err(TryRecvError::Disconnected) => Err(zbus::Error::Failure("no answer".into())),
+            },
+            None => return false,
+        };
+        let then = self.mode_read.take().and_then(|(_, then)| then);
+        if then.is_some() {
+            self.set_busy(self.job.is_some());
+        }
+        let Some(p) = &mut self.props else {
+            return true;
+        };
+        match read {
+            Ok(mode) => p.set_password_mode(mode),
+            Err(e) => log::warn!("reading the account's password mode: {e}"),
+        }
+        if let Some(ev) = then {
+            let out = p.event(ev, picture::save);
+            self.submitted(out);
+        }
+        true
     }
 
     /// The accounts job came back: show the accounts and what it did. True when it had.
@@ -571,6 +621,7 @@ impl AccountsApp {
                 Some(u) => {
                     let p = self.props.as_mut().expect("checked above");
                     p.set_last_admin(last);
+                    p.set_password_mode(u.password_mode);
                     if let After::Props { close, .. } = after
                         && ours
                     {
@@ -646,6 +697,7 @@ impl AccountsApp {
         let mut p = props::Props::new(u, face, last, self.forms.text);
         p.set_busy(self.job.is_some());
         self.props = Some(p);
+        self.read_mode(None);
         self.show_remote();
         self.read_remote(Duration::ZERO);
         self.show_fingers();
@@ -688,6 +740,7 @@ impl AccountsApp {
     /// Close the Properties sheet and the dialogs and question raised from it.
     fn close_props(&mut self) {
         self.props = None;
+        self.mode_read = None;
         self.browse = None;
         self.rd_password = None;
         self.close_add_finger();
@@ -802,7 +855,6 @@ impl AccountsApp {
         let Some(p) = self.props.as_mut() else {
             return Reply::none();
         };
-        let save = |src: &picture::Source| picture::save(src);
         let out = match ev {
             Event::CloseRequest => props::Outcome::Close,
             Event::Blink => {
@@ -811,37 +863,52 @@ impl AccountsApp {
             }
             Event::Pasted(t) => p.paste(t),
             ev => match sheet_input(&mut p.sheet, &ev, ctx) {
-                Some(e) => p.event(e, save),
+                Some(e) => return self.sheet_event(e, ctx),
                 None => return Reply::none(),
             },
         };
+        self.props_outcome(out, ctx)
+    }
+
+    fn sheet_event(&mut self, e: propsheet::Event, ctx: &mut Ctx) -> Reply {
+        let Some(p) = self.props.as_mut() else {
+            return Reply::none();
+        };
+        if p.applies_password(&e) {
+            self.read_mode(Some(e));
+            return Reply::redraw();
+        }
+        let out = p.event(e, picture::save);
+        self.props_outcome(out, ctx)
+    }
+
+    fn props_outcome(&mut self, out: props::Outcome, ctx: &mut Ctx) -> Reply {
         match out {
-            props::Outcome::None => Reply::none(),
-            props::Outcome::Redraw => Reply::redraw(),
-            props::Outcome::Apply(ops) => {
-                let (sheet, uid) = (self.sheets, p.user.uid);
-                if !self.run(
-                    ops,
-                    After::Props {
-                        close: false,
-                        sheet,
-                        uid,
-                    },
-                ) {
-                    p_unapplied(&mut self.props);
-                }
+            props::Outcome::Browse => {
+                self.open_browse(ctx.forms().text);
                 Reply::redraw_all()
             }
-            props::Outcome::ApplyAndClose(ops) => {
-                let (sheet, uid) = (self.sheets, p.user.uid);
-                if !self.run(
-                    ops,
-                    After::Props {
-                        close: true,
-                        sheet,
-                        uid,
-                    },
-                ) {
+            props::Outcome::RemotePassword(action) => self.open_rd_password(action),
+            props::Outcome::Fingers(a) => self.fingers_action(a, ctx),
+            out => self.submitted(out),
+        }
+    }
+
+    /// Carry out what Apply, OK or Cancel on the sheet came to.
+    fn submitted(&mut self, out: props::Outcome) -> Reply {
+        let Some(p) = self.props.as_ref() else {
+            return Reply::none();
+        };
+        let (sheet, uid) = (self.sheets, p.user.uid);
+        let close = matches!(out, props::Outcome::ApplyAndClose(_));
+        match out {
+            props::Outcome::None
+            | props::Outcome::Browse
+            | props::Outcome::RemotePassword(_)
+            | props::Outcome::Fingers(_) => Reply::none(),
+            props::Outcome::Redraw => Reply::redraw(),
+            props::Outcome::Apply(ops) | props::Outcome::ApplyAndClose(ops) => {
+                if !self.run(ops, After::Props { close, sheet, uid }) {
                     p_unapplied(&mut self.props);
                 }
                 Reply::redraw_all()
@@ -850,12 +917,6 @@ impl AccountsApp {
                 self.fail(why);
                 Reply::redraw_all()
             }
-            props::Outcome::Browse => {
-                self.open_browse(ctx.forms().text);
-                Reply::redraw_all()
-            }
-            props::Outcome::RemotePassword(action) => self.open_rd_password(action),
-            props::Outcome::Fingers(a) => self.fingers_action(a, ctx),
             props::Outcome::Close => {
                 self.close_props();
                 Reply::redraw_all()
@@ -1649,6 +1710,121 @@ mod tests {
             matches!(d.step, addfinger::Step::Waiting(_)),
             "the earlier add's end is not the dialog's: {:?}",
             d.step
+        );
+    }
+
+    thread_local! {
+        static ROWS: std::cell::RefCell<Vec<User>> = const { std::cell::RefCell::new(Vec::new()) };
+        static MODE: std::cell::Cell<acct::PasswordMode> =
+            const { std::cell::Cell::new(acct::PasswordMode::Regular) };
+        static APPLIED: std::cell::RefCell<Vec<Vec<Op>>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Accounts whose list is `ROWS` and whose password mode is `MODE` when read; what Apply
+    /// runs lands in `APPLIED`.
+    fn stub_accounts(rows: Vec<User>, mode: acct::PasswordMode) -> AccountsApp {
+        ROWS.set(rows.clone());
+        MODE.set(mode);
+        let mut app = AccountsApp::new();
+        app.accounts = acct::Sources {
+            read: || Ok(ROWS.with_borrow(Clone::clone)),
+            password_mode: |_| Ok(MODE.get()),
+            apply: |ops| {
+                APPLIED.with_borrow_mut(|a| a.push(ops.to_vec()));
+                Ok(())
+            },
+        };
+        let pictures = vec![None; rows.len()];
+        app.users.refresh(rows, pictures);
+        app
+    }
+
+    fn type_password(app: &mut AccountsApp, id: &str, s: &str) {
+        for ch in s.chars() {
+            let page = &mut app.props.as_mut().unwrap().sheet.pages[props::TAB_PASSWORD];
+            page.focus_id(id);
+            let ev = page.key(form::Key::Char(ch));
+            app.sheet_event(
+                propsheet::Event::Page(props::TAB_PASSWORD, ev),
+                &mut test_ctx(),
+            );
+        }
+    }
+
+    fn apply_lit(app: &AccountsApp) -> bool {
+        app.props.as_ref().unwrap().sheet.pages[props::TAB_PASSWORD]
+            .item(propsheet::APPLY)
+            .is_some_and(|i| matches!(i.control, form::Control::Button { enabled: true, .. }))
+    }
+
+    fn you_with(mode: acct::PasswordMode) -> User {
+        User {
+            password_mode: mode,
+            ..user(1000, "jo", true, true)
+        }
+    }
+
+    #[test]
+    fn a_sheet_takes_its_accounts_password_mode_as_it_is_when_it_opens() {
+        use acct::PasswordMode::{Empty, Regular};
+        let mut app = stub_accounts(vec![you_with(Regular)], Empty);
+        app.open_props(1000);
+        app.event(MAIN, Event::Wake, &mut test_ctx());
+        assert_eq!(app.props.as_ref().unwrap().user.password_mode, Empty);
+    }
+
+    #[test]
+    fn a_password_blanked_since_the_sheet_opened_is_changed_without_the_current_one() {
+        use acct::PasswordMode::{Empty, Regular};
+        let mut app = stub_accounts(vec![you_with(Regular)], Regular);
+        let mut ctx = test_ctx();
+        app.open_props(1000);
+        app.event(MAIN, Event::Wake, &mut ctx);
+        type_password(&mut app, "new", "newpass1");
+        type_password(&mut app, "confirm", "newpass1");
+        MODE.set(Empty);
+        assert!(apply_lit(&app));
+        app.sheet_event(propsheet::Event::Apply, &mut ctx);
+        assert!(
+            APPLIED.with_borrow(Vec::is_empty),
+            "Apply waits for the mode"
+        );
+        assert!(!apply_lit(&app), "Apply greys while the mode is read");
+        app.event(MAIN, Event::Wake, &mut ctx);
+        app.event(MAIN, Event::Wake, &mut ctx);
+        assert_eq!(error_text(&app), None);
+        assert_eq!(
+            APPLIED.with_borrow(Clone::clone),
+            [vec![Op::OwnPassword {
+                current: zeroize::Zeroizing::new(String::new()),
+                new: zeroize::Zeroizing::new("newpass1".into()),
+            }]]
+        );
+    }
+
+    #[test]
+    fn a_password_set_since_the_sheet_opened_is_asked_for_before_apply() {
+        use acct::PasswordMode::{Empty, Regular};
+        let mut app = stub_accounts(vec![you_with(Empty)], Empty);
+        let mut ctx = test_ctx();
+        app.open_props(1000);
+        app.event(MAIN, Event::Wake, &mut ctx);
+        type_password(&mut app, "new", "newpass1");
+        type_password(&mut app, "confirm", "newpass1");
+        MODE.set(Regular);
+        app.sheet_event(propsheet::Event::Ok, &mut ctx);
+        app.event(MAIN, Event::Wake, &mut ctx);
+        assert_eq!(
+            error_text(&app).as_deref(),
+            Some("Type your current password first.")
+        );
+        assert!(APPLIED.with_borrow(Vec::is_empty));
+        let p = app.props.as_ref().expect("the sheet stays open");
+        assert_eq!(
+            p.sheet.pages[props::TAB_PASSWORD].edit_text("new"),
+            "newpass1",
+            "the new password stays typed"
         );
     }
 }

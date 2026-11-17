@@ -170,14 +170,7 @@ fn user_of(path: &str, m: &HashMap<String, OwnedVariant>, me: u32) -> Option<Use
         .get("AccountType")
         .and_then(|v| v.downcast_ref::<i32>().ok())
         .unwrap_or(TYPE_STANDARD);
-    let password_mode = match m
-        .get("PasswordMode")
-        .and_then(|v| v.downcast_ref::<i32>().ok())
-    {
-        Some(1) => PasswordMode::AtLogin,
-        Some(2) => PasswordMode::Empty,
-        _ => PasswordMode::Regular,
-    };
+    let password_mode = mode_of(m.get("PasswordMode"));
     Some(User {
         path: path.into(),
         uid,
@@ -190,6 +183,14 @@ fn user_of(path: &str, m: &HashMap<String, OwnedVariant>, me: u32) -> Option<Use
         logged_on: false,
         password_mode,
     })
+}
+
+fn mode_of(v: Option<&OwnedVariant>) -> PasswordMode {
+    match v.and_then(|v| v.downcast_ref::<i32>().ok()) {
+        Some(1) => PasswordMode::AtLogin,
+        Some(2) => PasswordMode::Empty,
+        _ => PasswordMode::Regular,
+    }
 }
 
 pub fn sort(users: &mut [User]) {
@@ -272,6 +273,51 @@ pub fn read() -> zbus::Result<Vec<User>> {
         sort(&mut users);
         Ok(users)
     })
+}
+
+/// The password mode of the account at `path` as AccountsService has it now.
+pub fn password_mode(path: &str) -> zbus::Result<PasswordMode> {
+    zbus::block_on(async {
+        let conn = connect(READ_TIMEOUT).await?;
+        let reply = conn
+            .call_method(
+                Some(DEST),
+                path,
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &(USER_IFACE, "PasswordMode"),
+            )
+            .await?;
+        let v: OwnedVariant = reply.body().deserialize()?;
+        Ok(mode_of(Some(&v)))
+    })
+}
+
+/// Where the accounts are read and changed. Under test none, so nothing reaches the system
+/// bus or `passwd`.
+#[derive(Clone, Copy)]
+pub struct Sources {
+    pub read: fn() -> zbus::Result<Vec<User>>,
+    pub password_mode: fn(&str) -> zbus::Result<PasswordMode>,
+    pub apply: fn(&[Op]) -> Result<(), Failure>,
+}
+
+impl Default for Sources {
+    fn default() -> Sources {
+        if cfg!(test) {
+            Sources {
+                read: || Err(zbus::Error::Failure("no accounts under test".into())),
+                password_mode: |_| Err(zbus::Error::Failure("no accounts under test".into())),
+                apply: |_| Err(Failure::Text("no accounts under test".into())),
+            }
+        } else {
+            Sources {
+                read,
+                password_mode,
+                apply,
+            }
+        }
+    }
 }
 
 /// Why [`apply`] stopped.
