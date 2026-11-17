@@ -402,6 +402,7 @@ impl State {
                 self.interaction = Interaction::Idle;
                 self.slide_release(tree);
                 self.quick_store_order();
+                crate::taskpreview::release(self);
             }
             Interaction::TaskPress { bar: tree, .. } => {
                 let held = self.bar(tree).and_then(|b| self.held_task(b));
@@ -410,6 +411,7 @@ impl State {
                 if let Some(i) = held {
                     self.task_button_click(tree, i, false);
                 }
+                crate::taskpreview::release(self);
             }
             Interaction::QuickPress {
                 bar: tree,
@@ -453,8 +455,12 @@ impl State {
             } => {
                 self.slide_release(tree);
                 self.quick_store_order();
+                crate::taskpreview::release(self);
             }
-            Interaction::TaskPress { bar: tree, .. } => self.redraw_taskbar(tree),
+            Interaction::TaskPress { bar: tree, .. } => {
+                self.redraw_taskbar(tree);
+                crate::taskpreview::release(self);
+            }
             Interaction::QuickPress { bar: tree, .. } => {
                 self.quick_ghost_end();
                 if let Some(b) = self.bar_mut(tree) {

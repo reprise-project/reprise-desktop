@@ -50,6 +50,8 @@ pub struct TaskPreviewView {
     pending: Option<(TreeId, usize)>,
     shown: Option<Panel>,
     peeking: bool,
+    /// The pictures `hold` took out of the panel, until `release`.
+    held: Vec<ThumbId>,
 }
 
 struct Panel {
@@ -154,20 +156,27 @@ pub fn clicked(state: &mut State, cell: Option<usize>) {
     let at = state.pointer_location();
     let (cx, cy) = (at.x.floor() as i32, at.y.floor() as i32);
     let on_close = taskpreview::close_hit(&p.layout, p.hot, cx - r.x, cy - r.y) == Some(i);
-    // The pictures go after the window comes up, so a minimized one is never suspended in between.
-    let pictures: Vec<ThumbId> = (state.task_preview.shown.as_mut())
-        .map(|p| std::mem::take(&mut p.thumbs))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .collect();
+    hold(state);
     hide(state);
     if on_close {
         state.close(w);
     } else if state.task_windows().contains(&w) {
         state.bring_up(w);
     }
-    for id in pictures {
+    release(state);
+}
+
+/// Take the panel's pictures out of it before something that takes it down and may bring one of
+/// its windows up; `release` drops them after, so a minimized window is never suspended in between.
+pub fn hold(state: &mut State) {
+    release(state);
+    if let Some(p) = state.task_preview.shown.as_mut() {
+        state.task_preview.held = p.thumbs.drain(..).flatten().collect();
+    }
+}
+
+pub fn release(state: &mut State) {
+    for id in std::mem::take(&mut state.task_preview.held) {
         state.thumb_drop(id);
     }
 }
@@ -428,6 +437,57 @@ mod tests {
             !c.side.shells[a.shell].suspended[heard..].contains(&true),
             "never suspended between the pictures and the restore"
         );
+    }
+
+    #[test]
+    fn pressing_a_minimized_windows_task_button_under_its_panel_never_suspends_it() {
+        for pinned in [false, true] {
+            let mut h = crate::harness::Harness::new();
+            h.state.config.taskbar.pinned = pinned;
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            let a = h.map_toplevel(&mut c, "one", 300, 200);
+            h.map_toplevel(&mut c, "two", 300, 200);
+            h.state.set_minimized(a.id, true);
+            h.roundtrip(&mut c);
+            let bar = &h.state.bars[0];
+            let i = (bar.slots.iter().position(|s| s.windows == [a.id])).expect("its task button");
+            let (tree, r) = (bar.tree, bar.layout.tasks[i]);
+            let origin = h.state.bar_drawn(&bar.output).shown;
+            show(&mut h.state, tree, i);
+            h.roundtrip(&mut c);
+            let heard = &c.side.shells[a.shell].suspended;
+            assert_eq!(heard.last(), Some(&false), "its picture wakes it");
+            let heard = heard.len();
+            h.pointer_to(
+                f64::from(origin.x + r.x + r.width / 2),
+                f64::from(origin.y + r.y + r.height / 2),
+            );
+            h.button(crate::input::BTN_LEFT, true);
+            h.roundtrip(&mut c);
+            assert!(
+                !h.state.task_preview.is_shown(),
+                "the press takes the panel down"
+            );
+            h.button(crate::input::BTN_LEFT, false);
+            h.roundtrip(&mut c);
+            assert!(
+                !h.state.win(a.id).unwrap().minimized,
+                "it came up, pinned {pinned}"
+            );
+            assert!(
+                !c.side.shells[a.shell].suspended[heard..].contains(&true),
+                "never suspended between the pictures and the restore, pinned {pinned}"
+            );
+            h.state.set_minimized(a.id, true);
+            h.roundtrip(&mut c);
+            let heard = c.side.shells[a.shell].suspended.last();
+            assert_eq!(
+                heard,
+                Some(&true),
+                "no picture outlives the press, pinned {pinned}"
+            );
+        }
     }
 
     #[test]

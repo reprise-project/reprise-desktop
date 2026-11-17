@@ -210,6 +210,17 @@ impl State {
         if !matches!(hit, Hit::Notification) && !press_at.edit_menu {
             crate::notifyview::blur(self);
         }
+        // A task button brings its window up on the press or the release, after the press takes
+        // its preview panel down: the panel's pictures go once the taskbar is done with it.
+        if matches!(
+            hit,
+            Hit::Taskbar {
+                hit: TaskbarHit::Task(_),
+                ..
+            }
+        ) {
+            crate::taskpreview::hold(self);
+        }
         // A press off a popup closes it and goes on to what it landed on.
         for p in Popup::ALL {
             if !p.hit_is(&hit) && !p.keeps_on(&hit, press_at) {
@@ -354,6 +365,10 @@ impl State {
                 if !crate::autohideview::line_pressed(self, bar) {
                     let shift = mods & keys::MOD_SHIFT != 0;
                     self.taskbar_press(bar, hit, button, at, shift, closed);
+                }
+                // A held button lets them go when its press ends or is cancelled.
+                if !matches!(self.interaction, Interaction::TaskPress { .. }) {
+                    crate::taskpreview::release(self);
                 }
             }
             // A menu row acts on the press; a program row may be dragged
