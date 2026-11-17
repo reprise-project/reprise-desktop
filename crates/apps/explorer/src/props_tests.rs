@@ -454,7 +454,7 @@ fn read_only_and_hidden_land_together_down_a_tree() {
     assert_eq!(listed.1.as_deref(), Some("a.txt\n"));
     assert_eq!(locked, 0, "the subfolder is read-only");
     match second_box {
-        Some(crate::dialogs::Dialog::Message { title, text }) => {
+        Some(crate::dialogs::Dialog::Message { title, text, .. }) => {
             assert_eq!(title, "Properties");
             assert!(
                 text.starts_with("Cannot change Reports: "),
@@ -1799,4 +1799,105 @@ fn a_sheet_replaced_by_another_takes_its_box_with_it() {
         ex.dialogs.is_empty(),
         "Advanced Attributes left with a.txt's sheet"
     );
+}
+
+/// Types `name` into the sheet's Name field.
+fn type_sheet_name(ex: &mut crate::Explorer, name: &str) {
+    if let Some(Item {
+        control: Control::Edit { edit, .. },
+        ..
+    }) = ex
+        .props
+        .as_mut()
+        .expect("the sheet")
+        .sheet
+        .open_mut()
+        .item_mut(NAME)
+    {
+        *edit = TextEdit::new(name, false);
+    }
+}
+
+/// The sheet's rename refusal covers the sheet, while a box the folder window raises behind it
+/// covers the folder window; a sheet opened from the folder window in its place takes the
+/// refusal and leaves the folder window's box.
+#[test]
+fn a_refusal_the_sheet_raises_covers_the_sheet_and_leaves_with_it() {
+    use crate::dialogs::Dialog;
+    use crate::place::Place;
+    use repriseapp::MAIN;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+    std::fs::write(&a, "a").expect("write");
+    std::fs::write(&b, "b").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.open_properties(&a, "a", "a", &mut ctx);
+    ex.finish_puts(&mut ctx);
+    type_sheet_name(&mut ex, "b");
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Apply, &mut ctx);
+    assert!(
+        matches!(ex.dialog(), Some(Dialog::Message { text, .. }) if *text == reprisefs::names::taken_text("a.txt"))
+    );
+    assert_eq!(ex.parent_of(ex.dialog_win()), PROPS);
+    ex.message_box("Explorer", "about the folder".into(), &mut ctx);
+
+    ex.open_properties(&b, "b", "b", &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert_eq!(
+        ex.props.as_ref().map(|p| p.title()).as_deref(),
+        Some("b Properties")
+    );
+    assert_eq!(ex.dialogs.len(), 1, "the refusal left with a.txt's sheet");
+    assert!(
+        matches!(ex.dialog(), Some(Dialog::Message { text, .. }) if text == "about the folder")
+    );
+    assert_eq!(ex.parent_of(ex.dialog_win()), MAIN);
+}
+
+/// An attribute write that fails says so over the sheet, and the box stays up over the sheet
+/// read again after the write.
+#[test]
+fn a_failed_attribute_write_covers_the_sheet_read_again_after_it() {
+    use crate::dialogs::Dialog;
+    use crate::place::Place;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, "a").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.open_properties(&f, "a.txt", "a.txt", &mut ctx);
+    ex.finish_puts(&mut ctx);
+    let gone = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    ex.attrs_written(Err(gone), &f, false, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(ex.props.is_some(), "the sheet stays up");
+    assert!(
+        matches!(ex.dialog(), Some(Dialog::Message { text, .. }) if text.starts_with("Cannot change a.txt")),
+        "the error box is up"
+    );
+    assert_eq!(ex.parent_of(ex.dialog_win()), PROPS);
+}
+
+/// The sheet's Apply that outlives its deadline gives up in a box over the sheet.
+#[test]
+fn a_sheets_apply_past_its_deadline_gives_up_over_the_sheet() {
+    use crate::place::Place;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, "a").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.open_properties(&f, "a", "a", &mut ctx);
+    ex.finish_puts(&mut ctx);
+    ex.action_deadline = std::time::Duration::from_millis(20);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let writing = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    type_sheet_name(&mut ex, "c");
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Apply, &mut ctx);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    assert_eq!(ex.parent_of(ex.dialog_win()), PROPS);
+    drop(writing);
+    ex.held = None;
 }

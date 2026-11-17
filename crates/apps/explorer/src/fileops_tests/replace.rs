@@ -96,7 +96,7 @@ fn a_paste_whose_clash_check_passes_the_deadline_gives_up_and_copies_nothing() {
     );
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.clashing.is_empty());
     match ex.dialog() {
-        Some(Dialog::Message { title, text }) => assert_eq!(
+        Some(Dialog::Message { title, text, .. }) => assert_eq!(
             (title.as_str(), text.as_str()),
             (
                 "Error Copying File or Folder",

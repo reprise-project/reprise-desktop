@@ -284,8 +284,9 @@ pub struct Explorer {
     pub props: Option<Props>,
     /// Recycle Bin Properties, in its own modeless window.
     pub(crate) bin_props: Option<bin_props::BinProps>,
-    /// A sheet read and waiting for its icons to land before it goes up.
-    props_due: Option<(props_host::SheetRead, repriseapp::iconjobs::IconWaits)>,
+    /// A sheet read and waiting for its icons to land before it goes up; true for the open sheet
+    /// read again after its Apply.
+    props_due: Option<(props_host::SheetRead, repriseapp::iconjobs::IconWaits, bool)>,
     /// Space's preview of the selected item, in its own modeless window.
     pub(crate) preview: Option<preview::Preview>,
     /// The main window's client size at its last draw: the preview's arrows lay the view out by it.

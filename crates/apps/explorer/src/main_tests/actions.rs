@@ -234,7 +234,7 @@ fn a_zip_that_cannot_be_written_shows_an_error_box_and_leaves_nothing() {
     ex.finish_extracts(reprisefs::progress::Decision::Abort, &mut ctx);
     std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     match ex.dialog() {
-        Some(crate::dialogs::Dialog::Message { title, text }) => {
+        Some(crate::dialogs::Dialog::Message { title, text, .. }) => {
             assert_eq!(title, "Error Compressing File");
             assert!(text.starts_with("Cannot compress a.zip: "), "{text}");
         }

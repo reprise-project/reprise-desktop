@@ -19,6 +19,8 @@ pub(crate) struct Action {
     pub title: &'static str,
     /// The work changes files after [`Gate::change`].
     pub changes: bool,
+    /// The sheet window that asked for it, which the error box covers ([`Explorer::message_over`]).
+    pub sheet: Option<repriseapp::WinId>,
 }
 
 impl Action {
@@ -26,6 +28,7 @@ impl Action {
         Action {
             title,
             changes: false,
+            sheet: None,
         }
     }
 
@@ -33,6 +36,15 @@ impl Action {
         Action {
             title,
             changes: true,
+            sheet: None,
+        }
+    }
+
+    /// The action asked for by the sheet window `sheet`.
+    pub(crate) fn of(self, sheet: repriseapp::WinId) -> Action {
+        Action {
+            sheet: Some(sheet),
+            ..self
         }
     }
 }
@@ -150,7 +162,7 @@ impl Explorer {
                     self.action_deadline
                 );
                 let text = reprisefs::deadline::not_responding(a.action.changes, changing);
-                let r = self.message_box(a.action.title, text, ctx);
+                let r = self.message_over(a.action.sheet, a.action.title, text, ctx);
                 reply = Some(and(reply, r));
                 continue;
             }
@@ -198,7 +210,7 @@ mod tests {
 
     fn message(ex: &Explorer) -> Option<(&str, &str)> {
         match ex.dialog() {
-            Some(Dialog::Message { title, text }) => Some((title, text)),
+            Some(Dialog::Message { title, text, .. }) => Some((title, text)),
             _ => None,
         }
     }

@@ -1420,7 +1420,7 @@ fn a_link_drop_past_its_deadline_writes_nothing() {
     );
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
     match ex.dialog() {
-        Some(crate::dialogs::Dialog::Message { title, text }) => {
+        Some(crate::dialogs::Dialog::Message { title, text, .. }) => {
             assert_eq!(title, "Error Creating Shortcut");
             assert_eq!(text, "The location is not responding. Nothing was changed.");
         }

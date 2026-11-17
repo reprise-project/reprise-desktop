@@ -65,7 +65,7 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
 
     open(1, &mut ex);
     match ex.take_up().expect("the error box is up") {
-        crate::dialogs::Dialog::Message { title, text } => {
+        crate::dialogs::Dialog::Message { title, text, .. } => {
             assert_eq!(title, "b.sh");
             assert_eq!(
                 text,
@@ -325,7 +325,7 @@ fn a_program_that_answers_late_raises_its_box_on_a_later_wake() {
     ex.held = None;
     wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
     match ex.take_up().expect("the error box is up") {
-        crate::dialogs::Dialog::Message { title, text } => {
+        crate::dialogs::Dialog::Message { title, text, .. } => {
             assert_eq!(title, "b.sh");
             assert_eq!(
                 text,
