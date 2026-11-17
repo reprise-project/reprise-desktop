@@ -55,7 +55,7 @@ fn a_search_lists_matches_below_the_folder_until_escape_or_a_navigation() {
     assert_eq!(ex.focus, Focus::View, "the results take the keyboard");
     assert_eq!(ex.place, place, "the window stays in the folder");
     let title = format!("Search results in {}", place.title());
-    assert_eq!(ex.search.caption(), Some(title));
+    assert_eq!(ex.search.caption(&[]), Some(title));
     let deep_entry = ex.sv.entries.iter().find(|e| e.name == "report.txt");
     assert_eq!(
         deep_entry.map(|e| e.folder.clone()),
@@ -65,7 +65,7 @@ fn a_search_lists_matches_below_the_folder_until_escape_or_a_navigation() {
     assert_eq!(ex.sv.fields, shellview::search_fields());
 
     press(&mut ex, keysym::ESCAPE, &mut ctx);
-    assert_eq!(ex.search.caption(), None);
+    assert_eq!(ex.search.caption(&[]), None);
     assert_eq!(names(&ex), ["Report-old.md", "a", "other.txt"]);
     assert_eq!(ex.sv.fields, shellview::details_fields());
 
@@ -73,7 +73,7 @@ fn a_search_lists_matches_below_the_folder_until_escape_or_a_navigation() {
     press(&mut ex, keysym::RETURN, &mut ctx);
     assert_eq!(names(&ex).len(), 2, "the field kept its text");
     ex.run(Command::GoTo(Place::Folder(dir.path().join("a"))), &mut ctx);
-    assert_eq!(ex.search.caption(), None, "a navigation ends the search");
+    assert_eq!(ex.search.caption(&[]), None, "a navigation ends the search");
     assert_eq!(names(&ex), ["b"]);
 }
 

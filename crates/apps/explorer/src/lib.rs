@@ -1224,7 +1224,7 @@ impl Explorer {
             false => Reply::none(),
         };
         self.place = place.clone();
-        self.tabs.set_label(place.title());
+        self.tabs.set_label(self.title_of(&place));
         self.resort();
 
         let icon = chrome::address_icon(&mut self.chrome_waits, &mut ctx.icons, &place);
@@ -1789,7 +1789,9 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
 impl App for Lazy {
     fn title(&self) -> String {
         match &self.inner {
-            Some(ex) => ex.search.caption().unwrap_or_else(|| ex.place.title()),
+            Some(ex) => {
+                (ex.search.caption(&ex.shares.shares)).unwrap_or_else(|| ex.title_of(&ex.place))
+            }
             None => self.start.place.title(),
         }
     }

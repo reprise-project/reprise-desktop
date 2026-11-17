@@ -564,9 +564,9 @@ impl Explorer {
         let from = ops
             .first()
             .and_then(|(src, ..)| src.parent())
-            .map(|p| Place::from_path(p).title())
+            .map(|p| self.title_of(&Place::from_path(p)))
             .unwrap_or_default();
-        let to = Place::from_path(&pending.dir).title();
+        let to = self.title_of(&Place::from_path(&pending.dir));
         let progress = crate::copydlg::Progress::new(job.meter().clone(), kind, from, to);
         self.put = Some(Put {
             job,
@@ -1047,7 +1047,7 @@ impl Explorer {
     /// their Recycle Bin are asked about one at a time first ([`Explorer::too_big_step`]).
     pub(crate) fn delete_now(&mut self, paths: &[PathBuf], erase: bool, ctx: &mut Ctx) -> Reply {
         let paths = paths.to_vec();
-        let from = self.place.title();
+        let from = self.title_of(&self.place);
         use reprisefs::bincap::{Plan, TooBig, TooBigStep};
         // The walk that measures a folder for its bin's cap takes as long as the folder is big, so
         // it runs on a job with no deadline.
@@ -1098,7 +1098,7 @@ impl Explorer {
                 self.raise(Dialog::Confirm(c))
             }
             TooBigStep::Done(plan) => {
-                let from = self.place.title();
+                let from = self.title_of(&self.place);
                 self.spawn_job(ctx, move || {
                     let bins = reprisefs::trash::Bins::system();
                     delete_planned(bins, plan, from)
@@ -1496,7 +1496,13 @@ impl Explorer {
         self.spawn_job(ctx, move || {
             let bins = reprisefs::trash::Bins::system();
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
-                let pending = crate::removing::PendingRemoval::undo(undo, erase, dirs, bins);
+                let pending = crate::removing::PendingRemoval::undo(
+                    undo,
+                    erase,
+                    dirs,
+                    bins,
+                    &ex.shares.shares,
+                );
                 ex.remove(pending, ctx);
                 Reply::redraw()
             })

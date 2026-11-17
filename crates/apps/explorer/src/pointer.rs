@@ -402,7 +402,7 @@ impl Explorer {
                     let mut m = Menu::default();
                     for (n, p) in self.history.back_list().iter().enumerate() {
                         m.row(
-                            reprisekit::controls::menu::MenuItem::entry(p.title()),
+                            reprisekit::controls::menu::MenuItem::entry(self.title_of(p)),
                             Command::Go(n + 1),
                         );
                     }
@@ -413,7 +413,7 @@ impl Explorer {
                     let mut m = Menu::default();
                     for (n, p) in self.history.forward_list().iter().enumerate() {
                         m.row(
-                            reprisekit::controls::menu::MenuItem::entry(p.title()),
+                            reprisekit::controls::menu::MenuItem::entry(self.title_of(p)),
                             Command::GoForward(n + 1),
                         );
                     }

@@ -57,11 +57,11 @@ impl Explorer {
             let (path, name) = (it.path.clone(), it.label().to_string());
             return self.open_properties(&path, &name, &name, ctx);
         }
-        let place = self.place.clone();
+        let (place, shares) = (self.place.clone(), self.shares.shares.clone());
         let (apps, globs) = (self.app_index.clone(), self.globs.clone());
         let scale = ctx.icons.scale();
         let work = move |_: &Gate| {
-            let (path, name, title) = place_sheet_of(&place)?;
+            let (path, name, title) = place_sheet_of(&place, &shares)?;
             Some((glance(&path, &name, &apps, &globs, scale), name, title))
         };
         self.act(
@@ -79,7 +79,7 @@ impl Explorer {
     /// or `None` where there is no sheet ([`place_sheet_of`]).
     #[cfg(test)]
     pub(crate) fn place_sheet(&self) -> Option<(PathBuf, String, String)> {
-        place_sheet_of(&self.place)
+        place_sheet_of(&self.place, &self.shares.shares)
     }
 
     /// The sheet for `path`, its field showing `name` and its caption `title`, once a listing
@@ -260,7 +260,8 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Props {
         let info = g.info.clone();
-        let facts = bin_facts(&info, it.trashed.as_deref(), reprisefs::locale::is_12h());
+        let is_12h = reprisefs::locale::is_12h();
+        let facts = bin_facts(&info, it.trashed.as_deref(), is_12h, &self.shares.shares);
         let icon = props_icon(&g.icon, &info.path, waits, ctx);
         let page = bin_page(&facts, &it.name, icon);
         let sheet = PropSheet::new(&["General"], vec![page], (SHEET_W, BIN_SHEET_H));
@@ -1165,7 +1166,10 @@ fn change_failed_text(path: &Path, e: &dyn std::fmt::Display) -> String {
 /// The path, the sheet field's name and the caption's name for `place`'s own sheet, or `None`
 /// where there is no sheet. Shell folders are titled by their shell names while the field keeps
 /// the real directory name, so OK cannot rename `$HOME` to "<user>'s Home".
-fn place_sheet_of(place: &crate::place::Place) -> Option<(PathBuf, String, String)> {
+fn place_sheet_of(
+    place: &crate::place::Place,
+    shares: &[reprisefs::netshare::Share],
+) -> Option<(PathBuf, String, String)> {
     use crate::place::Place;
     match place {
         Place::Computer | Place::RecycleBin => None,
@@ -1174,13 +1178,13 @@ fn place_sheet_of(place: &crate::place::Place) -> Option<(PathBuf, String, Strin
             // A folder reached through a symlink gets its own sheet, not the link's.
             let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
             let name = match place {
-                Place::Folder(_) => place.title(),
+                Place::Folder(_) => place.title_in(shares),
                 _ => dir
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| place.title()),
             };
-            Some((dir, name, place.title()))
+            Some((dir, name, place.title_in(shares)))
         }
     }
 }
