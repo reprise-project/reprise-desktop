@@ -260,9 +260,9 @@ impl RunAs {
         self.form.focus_id("password");
     }
 
-    /// A new conversation: the field stands for its first prompt, which is expected to be
-    /// `prompt`. It opens hidden whatever `prompt`'s echo: only PAM asking a shown prompt
-    /// (`ask`) makes it plain, so a stale or forged memory never shows a password.
+    /// A new conversation: the field, emptied and not busy, stands for its first prompt, which
+    /// is expected to be `prompt`. It opens hidden whatever `prompt`'s echo: only PAM asking a
+    /// shown prompt (`ask`) makes it plain, so a stale or forged memory never shows a password.
     pub fn open(&mut self, prompt: &Prompt) {
         let label = if *prompt == Prompt::password() {
             PASSWORD_LABEL.into()
@@ -270,10 +270,12 @@ impl RunAs {
             reprisekit::text::escape_mnemonic(&prompt.text)
         };
         self.show(&label, false);
+        self.take_password();
         self.tag = Tag {
             n: 1,
             prompt: prompt.clone(),
         };
+        self.set_busy(false);
     }
 
     /// PAM asks `tag`: the field takes its text and echo, emptied, unless it already stands for

@@ -1091,6 +1091,64 @@ mod tests {
         }
     }
 
+    fn two_users() -> PolkitApp {
+        let mut app = PolkitApp::default();
+        let (mut a, _a_rx) = request("a");
+        a.users = vec!["root".into(), "alice".into()];
+        app.handle(Msg::Begin(a));
+        open(&mut app);
+        let (session, _answers) = helper::Session::detached();
+        app.active.as_mut().unwrap().session = Some((session, "root".into()));
+        app
+    }
+
+    /// The tags the answers that reached the conversation were typed under.
+    fn tags(answers: &std::sync::mpsc::Receiver<helper::Answer>) -> Vec<Tag> {
+        answers.try_iter().map(|a| a.tag).collect()
+    }
+
+    fn pick(app: &mut PolkitApp, i: usize) {
+        let d = &mut app.active.as_mut().unwrap().dialog;
+        d.form.set_combo("user", i);
+        let out = d.event(reprisekit::controls::form::Event::Changed("user"));
+        app.dialog_outcome(out);
+    }
+
+    /// Another user picked while the helper works starts their conversation on their first
+    /// prompt with OK usable.
+    #[test]
+    fn a_user_picked_while_busy_can_submit() {
+        let mut app = two_users();
+        app.first.learn("alice", &code(false));
+        type_ok(&mut app, "hunter2");
+        assert!(app.active.as_ref().unwrap().dialog.busy());
+        pick(&mut app, 1);
+        assert_eq!(label(&app), "Verification code:");
+        let alices = attach(&mut app, "alice");
+        type_ok(&mut app, "424242");
+        assert_eq!(
+            tags(&alices),
+            [Tag {
+                n: 1,
+                prompt: code(false)
+            }]
+        );
+    }
+
+    /// Text typed under a later prompt does not survive a user change into their conversation.
+    #[test]
+    fn a_user_change_empties_the_field() {
+        let mut app = two_users();
+        type_ok(&mut app, "hunter2");
+        app.report(prompt(&Prompt::password()));
+        app.report(prompt(&code(false)));
+        let d = &mut app.active.as_mut().unwrap().dialog;
+        let ev = d.form.paste("1234".into());
+        d.event(ev);
+        pick(&mut app, 1);
+        assert_eq!(app.active.as_ref().unwrap().dialog.password(), "");
+    }
+
     /// A finger that matches ends the request with no password typed.
     #[test]
     fn a_finger_alone_succeeds() {
