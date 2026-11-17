@@ -427,7 +427,7 @@ fn undo_after_the_source_folder_vanished_keeps_the_batch_for_a_retry() {
     ex.run(Command::Undo, &mut ctx);
     ex.finish_puts(&mut ctx);
     match ex.dialog().expect("the failure is reported") {
-        Dialog::Message { title, text } => {
+        Dialog::Message { title, text, .. } => {
             assert_eq!(title, "Error");
             assert!(text.starts_with("Cannot undo: "), "{text}");
         }

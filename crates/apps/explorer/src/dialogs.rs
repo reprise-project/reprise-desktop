@@ -195,6 +195,8 @@ pub enum Dialog {
     Message {
         title: String,
         text: String,
+        /// The Properties sheet that raised it ([`Dialog::sheet`]); `None` for the folder window.
+        sheet: Option<WinId>,
     },
     Confirm(Confirm),
     /// Confirm File or Folder Replace; its form is rebuilt per event.
@@ -261,12 +263,16 @@ impl Dialog {
         !matches!(self, Dialog::Paste(_) | Dialog::Reading(_))
     }
 
-    /// Whether the Properties sheet raised it: it covers the sheet and leaves with it.
-    pub(crate) fn of_sheet(&self) -> bool {
+    /// The sheet that raised it, a file's Properties or Recycle Bin Properties: it covers that
+    /// sheet and leaves with it. `None` for a box of the folder window's or a job's.
+    pub(crate) fn sheet(&self) -> Option<WinId> {
         match self {
-            Dialog::AttrConfirm(_) | Dialog::Advanced { .. } | Dialog::ChangeIcon { .. } => true,
-            Dialog::ChooseProgram(cp) => cp.set_default,
-            _ => false,
+            Dialog::AttrConfirm(_) | Dialog::Advanced { .. } | Dialog::ChangeIcon { .. } => {
+                Some(crate::props_dialog::PROPS)
+            }
+            Dialog::ChooseProgram(cp) if cp.set_default => Some(crate::props_dialog::PROPS),
+            Dialog::Message { sheet, .. } => *sheet,
+            _ => None,
         }
     }
 
@@ -480,13 +486,20 @@ impl Explorer {
     pub(crate) fn parent_of(&self, win: WinId) -> WinId {
         match win {
             crate::browse::ERROR | PROGRAM_BROWSE => self.dialog_win(),
-            w if is_dialog(w)
-                && self.props.is_some()
-                && self.dialog().is_some_and(Dialog::of_sheet) =>
-            {
-                crate::props_dialog::PROPS
-            }
+            w if is_dialog(w) => match self.dialog().and_then(Dialog::sheet) {
+                Some(sheet) if self.sheet_open(sheet) => sheet,
+                _ => repriseapp::MAIN,
+            },
             _ => repriseapp::MAIN,
+        }
+    }
+
+    /// Whether the sheet window `sheet` is up.
+    fn sheet_open(&self, sheet: WinId) -> bool {
+        match sheet {
+            crate::props_dialog::PROPS => self.props.is_some(),
+            crate::bin_props::BIN_PROPS => self.bin_props.is_some(),
+            _ => false,
         }
     }
 
@@ -522,10 +535,23 @@ impl Explorer {
 
     /// Raise a box titled `title` over `text` with the theme's error icon.
     pub fn message_box(&mut self, title: &str, text: String, ctx: &mut Ctx) -> Reply {
+        self.message_over(None, title, text, ctx)
+    }
+
+    /// [`Explorer::message_box`] raised by the sheet window `sheet`: it covers the sheet while
+    /// the sheet is up, and the folder window once the sheet has closed.
+    pub(crate) fn message_over(
+        &mut self,
+        sheet: Option<WinId>,
+        title: &str,
+        text: String,
+        ctx: &mut Ctx,
+    ) -> Reply {
         self.wear_error_icon(ctx);
         self.raise(Dialog::Message {
             title: title.to_string(),
             text,
+            sheet: sheet.filter(|&s| self.sheet_open(s)),
         })
     }
 
@@ -771,7 +797,7 @@ impl Explorer {
 
     fn box_fields(&self) -> Option<msgbox::Fields> {
         match self.dialogs.up()? {
-            Dialog::Message { title, text } => Some(msgbox::Fields {
+            Dialog::Message { title, text, .. } => Some(msgbox::Fields {
                 text: text.clone(),
                 icon: self.error_icon(),
                 buttons: vec!["OK".to_string()],

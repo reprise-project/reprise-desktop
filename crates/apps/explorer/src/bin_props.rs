@@ -168,8 +168,7 @@ impl Explorer {
 
     pub fn bin_props_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         if matches!(ev, Event::CloseRequest) {
-            self.bin_props = None;
-            return Reply::redraw_all();
+            return self.close_bin_props(ctx);
         }
         let Some(b) = self.bin_props.as_mut() else {
             return Reply::none();
@@ -188,13 +187,20 @@ impl Explorer {
         let reply = match b.sheet.event(out) {
             Outcome::None => Reply::none(),
             Outcome::Redraw => Reply::redraw(),
-            Outcome::Close => {
-                self.bin_props = None;
-                Reply::redraw_all()
-            }
+            Outcome::Close => self.close_bin_props(ctx),
             Outcome::Save { settings, close } => self.save_bin_settings(&settings, close, ctx),
         };
         reply.with_clipboard(clip)
+    }
+
+    /// Closes the sheet, the one way it goes, with the boxes it raised ([`Explorer::dismiss`]).
+    fn close_bin_props(&mut self, ctx: &mut Ctx) -> Reply {
+        let mut reply = Reply::redraw_all();
+        for d in (self.dialogs).withdraw(|d| d.sheet() == Some(BIN_PROPS)) {
+            reply = reply.and(self.dismiss(d, ctx));
+        }
+        self.bin_props = None;
+        reply
     }
 
     /// Writes `settings` into `[recycle_bin]`; OK closes the sheet first. A write that fails says
@@ -203,9 +209,10 @@ impl Explorer {
         let Some(path) = self.bin_props.as_ref().map(|b| b.config.clone()) else {
             return Reply::none();
         };
-        if close {
-            self.bin_props = None;
-        }
+        let closed = match close {
+            true => self.close_bin_props(ctx),
+            false => Reply::none(),
+        };
         let policy = policy_of(settings);
         let work = move |gate: &Gate| {
             if !gate.change(&path) {
@@ -216,18 +223,18 @@ impl Explorer {
         };
         let reply = self.act(
             ctx,
-            Action::changes(TITLE),
+            Action::changes(TITLE).of(BIN_PROPS),
             work,
             |ex, saved, ctx| match saved {
                 Ok(()) => Reply::none(),
                 Err(e) => {
                     log::error!("recycle bin: settings not saved: {e}");
                     let text = format!("Cannot save the Recycle Bin settings in config.toml: {e}");
-                    ex.message_box(TITLE, text, ctx)
+                    ex.message_over(Some(BIN_PROPS), TITLE, text, ctx)
                 }
             },
         );
-        reply.and(Reply::redraw_all())
+        closed.and(reply).and(Reply::redraw_all())
     }
 }
 
@@ -372,7 +379,7 @@ mod tests {
         ex.bin_props_event(key(keysym::RETURN), &mut ctx);
         wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
         match ex.dialog() {
-            Some(crate::dialogs::Dialog::Message { title, text }) => {
+            Some(crate::dialogs::Dialog::Message { title, text, .. }) => {
                 assert_eq!(title, TITLE);
                 assert!(
                     text.starts_with("Cannot save the Recycle Bin settings in config.toml: "),
@@ -382,6 +389,34 @@ mod tests {
             _ => panic!("an error box is up"),
         }
         assert_eq!(std::fs::read_to_string(&config).unwrap(), "[recycle_bin\n");
+    }
+
+    /// Apply's failed write says so over the sheet, which takes the box when it closes; OK's
+    /// says so over the folder window, since OK closed the sheet first.
+    #[test]
+    fn an_apply_that_cannot_be_written_says_so_over_the_sheet_and_leaves_with_it() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let config = dir.path().join("config.toml");
+        std::fs::write(&config, "[recycle_bin\n").expect("write");
+        let mut ctx = test_ctx();
+        let mut ex = sheet_up(&config, &mut ctx);
+        ex.save_bin_settings(&settings_of(&Policy::default()), false, &mut ctx);
+        wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+        assert_eq!(ex.parent_of(ex.dialog_win()), BIN_PROPS);
+        ex.message_box("Explorer", "about the folder".into(), &mut ctx);
+
+        ex.bin_props_event(Event::CloseRequest, &mut ctx);
+        assert!(ex.bin_props.is_none(), "the sheet closes");
+        assert_eq!(ex.dialogs.len(), 1, "the sheet's box left with it");
+        assert!(matches!(
+            ex.dialog(),
+            Some(crate::dialogs::Dialog::Message { text, .. }) if text == "about the folder"
+        ));
+
+        let mut ex = sheet_up(&config, &mut ctx);
+        ex.save_bin_settings(&settings_of(&Policy::default()), true, &mut ctx);
+        wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+        assert_eq!(ex.parent_of(ex.dialog_win()), repriseapp::MAIN);
     }
 
     #[test]

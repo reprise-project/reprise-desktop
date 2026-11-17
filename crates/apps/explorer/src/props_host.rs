@@ -208,16 +208,26 @@ impl Explorer {
     /// Puts up the sheet `read` builds once every theme icon it wears is ready: till then it
     /// waits in `props_due` for them to land off the loop ([`repriseapp::iconjobs`]).
     fn open_sheet(&mut self, read: SheetRead, ctx: &mut Ctx) -> Reply {
+        self.due_sheet(read, false, ctx)
+    }
+
+    /// [`Explorer::open_sheet`] for the open sheet read again after its Apply: the boxes it
+    /// raised stay up over it.
+    fn refresh_sheet(&mut self, read: SheetRead, ctx: &mut Ctx) -> Reply {
+        self.due_sheet(read, true, ctx)
+    }
+
+    fn due_sheet(&mut self, read: SheetRead, refresh: bool, ctx: &mut Ctx) -> Reply {
         if let SheetRead::One(g, _) | SheetRead::Bin(g, _) = &read {
             ctx.icons.put_files_at(g.files.clone(), g.scale);
         }
-        self.props_due = Some((read, IconWaits::default()));
+        self.props_due = Some((read, IconWaits::default(), refresh));
         self.build_due(ctx)
     }
 
     /// The waiting sheet goes up if its icons are ready, and its folder walks start.
     fn build_due(&mut self, ctx: &mut Ctx) -> Reply {
-        let Some((read, _)) = self.props_due.take() else {
+        let Some((read, _, refresh)) = self.props_due.take() else {
             return Reply::none();
         };
         let mut waits = IconWaits::default();
@@ -229,13 +239,13 @@ impl Explorer {
             }
         };
         if !waits.is_empty() {
-            self.props_due = Some((read, waits));
+            self.props_due = Some((read, waits, refresh));
             return Reply::none();
         }
         // The sheet this one replaces goes the one way a sheet goes, taking its boxes.
         let reply = match self.props {
-            Some(_) => self.close_props(ctx),
-            None => Reply::redraw_all(),
+            Some(_) if !refresh => self.close_props(ctx),
+            _ => Reply::redraw_all(),
         };
         self.props = props;
         match (&read, self.props.as_ref().and_then(|p| p.set.clone())) {
@@ -248,7 +258,7 @@ impl Explorer {
 
     /// A sheet waiting for its icons goes up once they landed.
     pub(crate) fn take_due_sheet(&mut self, ctx: &mut Ctx) -> Option<Reply> {
-        let (_, waits) = self.props_due.as_ref()?;
+        let (_, waits, _) = self.props_due.as_ref()?;
         waits.landed(&mut ctx.icons).then(|| self.build_due(ctx))
     }
 
@@ -602,7 +612,7 @@ impl Explorer {
     /// cancel answer ([`Explorer::dismiss`]), so none is answered for a sheet that is gone.
     pub(crate) fn close_props(&mut self, ctx: &mut Ctx) -> Reply {
         let mut reply = Reply::redraw_all();
-        for d in self.dialogs.withdraw(crate::dialogs::Dialog::of_sheet) {
+        for d in (self.dialogs).withdraw(|d| d.sheet() == Some(PROPS)) {
             reply = reply.and(self.dismiss(d, ctx));
         }
         self.props = None;
@@ -699,7 +709,7 @@ impl Explorer {
         let title = "Problem with Shortcut";
         self.act(
             ctx,
-            Action::reads(title),
+            Action::reads(title).of(PROPS),
             work,
             move |ex, found, ctx| match found {
                 Ok(found) => Reply {
@@ -710,7 +720,7 @@ impl Explorer {
                     ]],
                     ..Reply::none()
                 },
-                Err(text) => ex.message_box(title, text, ctx),
+                Err(text) => ex.message_over(Some(PROPS), title, text, ctx),
             },
         )
     }
@@ -740,7 +750,7 @@ impl Explorer {
             };
             return self.act(
                 ctx,
-                Action::changes("Properties"),
+                Action::changes("Properties").of(PROPS),
                 work,
                 move |ex, (), ctx| {
                     if attrs.is_empty() && hidden.is_none() {
@@ -752,7 +762,7 @@ impl Explorer {
         }
         let new_name = match p.new_name() {
             Ok(name) => name,
-            Err(text) => return self.message_box("Rename", text, ctx),
+            Err(text) => return self.message_over(Some(PROPS), "Rename", text, ctx),
         };
         let (attrs, hidden) = (p.attrs(), p.hidden());
         let summary = p.summary_moves();
@@ -796,12 +806,12 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::changes("Properties"),
+            Action::changes("Properties").of(PROPS),
             work,
             move |ex, pre, ctx| {
                 let ask = match pre {
                     Ok(ask) => ask,
-                    Err(text) => return ex.message_box("Properties", text, ctx),
+                    Err(text) => return ex.message_over(Some(PROPS), "Properties", text, ctx),
                 };
                 if new_name.is_none() && attrs.is_empty() && hidden.is_none() {
                     return ex.finish_props(&path, close, ctx);
@@ -847,7 +857,7 @@ impl Explorer {
         let work = move |_: &Gate| looked.iter().any(|p| p.is_dir() && folder_has_contents(p));
         self.act(
             ctx,
-            Action::reads("Properties"),
+            Action::reads("Properties").of(PROPS),
             work,
             move |ex, ask, ctx| {
                 if !ask {
@@ -890,7 +900,7 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::changes("Properties"),
+            Action::changes("Properties").of(PROPS),
             work,
             move |ex, w, ctx| {
                 let Some(w) = w else {
@@ -900,11 +910,19 @@ impl Explorer {
                     ex.after_rename(from, to, to.is_dir(), ctx);
                 }
                 let failed = w.failed.first().map(|(p, e)| change_failed_text(p, e));
+                // Raised before Apply reads the sheet again, which keeps its boxes; after OK
+                // closed it, the box covers the folder window.
+                let shown = match &failed {
+                    Some(text) if !close => {
+                        ex.message_over(Some(PROPS), "Properties", text.clone(), ctx)
+                    }
+                    _ => Reply::none(),
+                };
                 let reply = ex.finish_set_props(w.now, close, ctx);
-                if let Some(text) = failed {
-                    ex.message_box("Properties", text, ctx);
+                match failed {
+                    Some(text) if close => reply.and(ex.message_box("Properties", text, ctx)),
+                    _ => reply.and(shown),
                 }
-                reply
             },
         )
     }
@@ -923,9 +941,9 @@ impl Explorer {
                 let work = move |_: &Gate| glance_set_items(&chosen, &apps, &globs);
                 self.act(
                     ctx,
-                    Action::reads("Properties"),
+                    Action::reads("Properties").of(PROPS),
                     work,
-                    move |ex, items, ctx| ex.open_sheet(SheetRead::Set(items, caption), ctx),
+                    move |ex, items, ctx| ex.refresh_sheet(SheetRead::Set(items, caption), ctx),
                 )
             }
             _ => self.close_props(ctx),
@@ -968,12 +986,12 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::changes("Properties"),
+            Action::changes("Properties").of(PROPS),
             work,
             move |ex, done, ctx| {
                 let (renamed, path, write) = match done {
                     None => return Reply::none(),
-                    Some(Err(text)) => return ex.message_box("Rename", text, ctx),
+                    Some(Err(text)) => return ex.message_over(Some(PROPS), "Rename", text, ctx),
                     Some(Ok(done)) => done,
                 };
                 if let Some(to) = &renamed {
@@ -997,7 +1015,7 @@ impl Explorer {
         self.write_props(a.new_name, a.attrs, a.hidden, tree, a.close, ctx)
     }
 
-    fn attrs_written(
+    pub(crate) fn attrs_written(
         &mut self,
         write: std::io::Result<()>,
         path: &Path,
@@ -1007,9 +1025,9 @@ impl Explorer {
         let Err(e) = write else {
             return self.finish_props(path, close, ctx);
         };
-        let reply = self.finish_props(path, false, ctx);
-        self.message_box("Properties", change_failed_text(path, &e), ctx);
-        reply
+        // Raised before the sheet is read again, which keeps its boxes.
+        let shown = self.message_over(Some(PROPS), "Properties", change_failed_text(path, &e), ctx);
+        shown.and(self.finish_props(path, false, ctx))
     }
 
     pub(crate) fn attrs_cancelled(&mut self) -> Reply {
@@ -1075,7 +1093,7 @@ impl Explorer {
             Action::reads("Properties"),
             work,
             move |ex, glanced, ctx| match glanced {
-                Ok(g) if ex.props.is_some() => ex.open_sheet(SheetRead::One(g, caption), ctx),
+                Ok(g) if ex.props.is_some() => ex.refresh_sheet(SheetRead::One(g, caption), ctx),
                 _ => Reply::redraw_all(),
             },
         );
