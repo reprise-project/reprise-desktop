@@ -18,6 +18,7 @@ reprisefs = { path = "../../reprisefs" }
 reprisebus = { path = "../../reprisebus" }
 repriselogin = { path = "../../repriselogin" }
 zbus.workspace = true
+futures-util.workspace = true
 serde.workspace = true
 libc.workspace = true
 log.workspace = true

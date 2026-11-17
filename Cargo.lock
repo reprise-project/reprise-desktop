@@ -4355,6 +4355,7 @@ dependencies = [
 name = "reprise-accounts"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "libc",
  "log",
  "repriseapp",
