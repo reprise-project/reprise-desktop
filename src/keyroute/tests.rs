@@ -697,6 +697,54 @@ fn media_keys_route_before_everything_and_only_on_press() {
 }
 
 #[test]
+fn a_capture_takes_the_sound_brightness_and_playback_keys() {
+    let m = Modes {
+        captured: true,
+        ..Modes::default()
+    };
+    for sym in [
+        KEY_XF86AudioRaiseVolume,
+        KEY_XF86AudioLowerVolume,
+        KEY_XF86AudioMute,
+        KEY_XF86AudioMicMute,
+        KEY_XF86MonBrightnessUp,
+        KEY_XF86MonBrightnessDown,
+        KEY_XF86AudioPlay,
+        KEY_XF86AudioPause,
+        KEY_XF86AudioNext,
+        KEY_XF86AudioPrev,
+        KEY_XF86AudioStop,
+    ] {
+        assert_eq!(r(&m, &press(sym, 0)), KeyRoute::Captured, "{sym:#x}");
+        assert_eq!(r(&m, &release(sym)), KeyRoute::Captured, "{sym:#x}");
+    }
+    let locked = Modes { locked: true, ..m };
+    assert_eq!(
+        r(&locked, &press(KEY_XF86AudioMute, 0)),
+        KeyRoute::Media(Action::Mute),
+        "the lock ends the receiver's hold on them"
+    );
+}
+
+#[test]
+fn a_capture_leaves_the_keys_of_this_machines_hardware() {
+    let m = Modes {
+        captured: true,
+        ..Modes::default()
+    };
+    for (sym, a) in [
+        (KEY_XF86KbdBrightnessUp, Action::KbdBrightnessUp),
+        (KEY_XF86KbdBrightnessDown, Action::KbdBrightnessDown),
+        (KEY_XF86WLAN, Action::Wifi),
+        (KEY_XF86RFKILL, Action::Airplane),
+        (KEY_XF86TouchpadToggle, Action::Touchpad(None)),
+        (KEY_XF86ROTATION_LOCK_TOGGLE, Action::RotationLock),
+    ] {
+        assert_eq!(r(&m, &press(sym, 0)), KeyRoute::Media(a), "{sym:#x}");
+    }
+}
+
+#[test]
 fn the_wifi_and_airplane_mode_keys_go_to_the_lock_while_locked() {
     let locked = Modes {
         locked: true,

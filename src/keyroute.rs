@@ -5,7 +5,9 @@
 //! a bind beats the client, but a modified bind passes a menu) are plain
 //! data and tested as such. The power,
 //! sleep and media keys are the machine's, ahead of the lock and a capture,
-//! except the wifi key, which the lock takes.
+//! except the wifi key, which the lock takes, and the sound, screen
+//! brightness and playback keys, which a capture takes: they act on the
+//! computer the pointer is on.
 //! VT switches come ahead of both, and Super+Shift+Escape stays local under
 //! a capture, so the seat can always be taken back. A client inhibiting
 //! shortcuts gets the binds and the Super tap, but nothing ahead of them,
@@ -310,10 +312,12 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     // and airplane-mode keys are the exception at the lock: nobody there may
     // take the machine off the network. Some firmware sends the touchpad key
     // with Ctrl+Super held; unless that chord is bound, it routes as the bare key.
+    // A capture's receiver gets the ones `follows_capture` names.
     if k.pressed
         && let Some(a) = k.syms.iter().find_map(|&s| media_action_for(s))
         && (k.mods == 0 || (k.mods == MOD_CTRL | MOD_LOGO && matches!(a, Action::Touchpad(_))))
         && !(modes.locked && matches!(a, Action::Wifi | Action::Airplane))
+        && !(modes.captured && !modes.locked && follows_capture(&a))
     {
         let bound =
             |mods| (k.lower.iter()).any(|&l| binds.iter().any(|b| b.mods == mods && b.keysym == l));
@@ -1079,6 +1083,25 @@ pub fn machine_key(syms: &[u32]) -> bool {
                 | KEY_XF86ROTATION_LOCK_TOGGLE
         ) || (KEY_XF86Switch_VT_1..=KEY_XF86Switch_VT_12).contains(&s)
     })
+}
+
+/// Whether a media key goes to a capture's receiver: sound, screen brightness and playback act
+/// on the computer the pointer is on. The keyboard light, radios, touchpad and rotation lock are
+/// this machine's hardware.
+fn follows_capture(a: &Action) -> bool {
+    matches!(
+        a,
+        Action::VolumeUp
+            | Action::VolumeDown
+            | Action::Mute
+            | Action::MicMute
+            | Action::BrightnessUp
+            | Action::BrightnessDown
+            | Action::PlayPause
+            | Action::Next
+            | Action::Prev
+            | Action::Stop
+    )
 }
 
 /// The built-in action of a media keysym; None for any other key.
