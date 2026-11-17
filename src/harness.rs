@@ -642,6 +642,22 @@ impl Harness {
         self.roundtrip(c);
     }
 
+    /// [`Harness::draw_self`] damaging only `damage` (x, y, w, h in buffer pixels), as a
+    /// program redrawing part of itself does.
+    pub fn draw_part(
+        &mut self,
+        c: &mut TestClient,
+        t: Toplevel,
+        argb: u32,
+        damage: (i32, i32, i32, i32),
+    ) {
+        let size = c.side.shells[t.shell].size;
+        let surface = c.side.shells[t.shell].surface.clone();
+        let shm = c.side.shm.as_ref().expect("wl_shm");
+        attach_damaged(shm, &c.qh(), &surface, size, argb, damage);
+        self.roundtrip(c);
+    }
+
     /// [`Harness::draw_self`] with the whole surface marked opaque, as a program drawing no
     /// transparency does.
     pub fn draw_opaque(&mut self, c: &mut TestClient, t: Toplevel, argb: u32) {
@@ -1435,6 +1451,18 @@ fn attach_filled(
     h: i32,
     argb: u32,
 ) {
+    attach_damaged(shm, qh, surface, (w, h), argb, (0, 0, w, h));
+}
+
+/// A `w`x`h` buffer, every pixel `argb`, committed with only `(x, y, dw, dh)` damaged.
+fn attach_damaged(
+    shm: &wl_shm::WlShm,
+    qh: &QueueHandle<ClientSide>,
+    surface: &WlSurface,
+    (w, h): (i32, i32),
+    argb: u32,
+    (x, y, dw, dh): (i32, i32, i32, i32),
+) {
     let size = w * h * 4;
     // SAFETY: plain syscall; the name is a valid C string.
     let raw = unsafe { libc::memfd_create(c"reprise-test".as_ptr(), libc::MFD_CLOEXEC) };
@@ -1451,7 +1479,7 @@ fn attach_filled(
     let buffer = pool.create_buffer(0, w, h, w * 4, wl_shm::Format::Argb8888, qh, ());
     pool.destroy();
     surface.attach(Some(&buffer), 0, 0);
-    surface.damage_buffer(0, 0, w, h);
+    surface.damage_buffer(x, y, dw, dh);
     surface.commit();
 }
 

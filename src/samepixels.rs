@@ -18,13 +18,16 @@
 use crate::compositor::State;
 use crate::raster::Rect;
 use crate::window::WindowId;
-use smithay::backend::renderer::utils::{SurfaceView, with_renderer_surface_state};
+use smithay::backend::renderer::utils::{
+    CommitCounter, RendererSurfaceStateUserData, SurfaceView, with_renderer_surface_state,
+};
 use smithay::reexports::wayland_server::protocol::{wl_shm, wl_surface::WlSurface};
 use smithay::reexports::wayland_server::{Resource, backend::ObjectId};
 use smithay::utils::{Logical, Point, Rectangle, Size};
 use smithay::wayland::alpha_modifier::AlphaModifierSurfaceCachedState;
 use smithay::wayland::compositor::{
-    BufferAssignment, Damage, SubsurfaceCachedState, SurfaceAttributes, get_children, with_states,
+    BufferAssignment, Damage, SubsurfaceCachedState, SurfaceAttributes, TraversalAction,
+    get_children, with_states, with_surface_tree_downward,
 };
 use std::cell::RefCell;
 
@@ -287,6 +290,69 @@ pub fn check(surface: &WlSurface) -> (Pixels, bool) {
         watch.tree = Some(tree);
         (pixels, tree_kept)
     })
+}
+
+/// What [`damage`] last read of a surface: its renderer state's commit and its alpha multiplier.
+#[derive(Default)]
+struct LastRead {
+    commit: Option<CommitCounter>,
+    multiplier: Option<u32>,
+}
+
+/// The damage the tree under `surface` took since the last call, in layout units from its origin;
+/// the whole of a surface read for the first time or whose alpha multiplier changed.
+pub fn damage(surface: &WlSurface) -> Vec<Rectangle<i32, Logical>> {
+    let mut out = Vec::new();
+    with_surface_tree_downward(
+        surface,
+        Point::default(),
+        |_, states, at: &Point<i32, Logical>| {
+            let Some(data) = states.data_map.get::<RendererSurfaceStateUserData>() else {
+                return TraversalAction::SkipChildren;
+            };
+            let data = data.lock().unwrap();
+            let Some(view) = data.view() else {
+                return TraversalAction::SkipChildren;
+            };
+            let at = *at + view.offset;
+            let read = states
+                .data_map
+                .get_or_insert(|| RefCell::new(LastRead::default()));
+            let mut read = read.borrow_mut();
+            let multiplier = (states.cached_state.get::<AlphaModifierSurfaceCachedState>())
+                .current()
+                .multiplier();
+            let since = read.commit.filter(|_| read.multiplier == multiplier);
+            read.commit = Some(data.current_commit());
+            read.multiplier = multiplier;
+            match (since, data.buffer_size()) {
+                (Some(since), Some(size)) => {
+                    let (scale, turn) = (data.buffer_scale(), data.buffer_transform());
+                    let size = size.to_buffer(scale, turn).to_f64();
+                    let (sx, sy) = (
+                        f64::from(view.dst.w) / view.src.size.w,
+                        f64::from(view.dst.h) / view.src.size.h,
+                    );
+                    out.extend(data.damage_since(Some(since)).iter().filter_map(|r| {
+                        let r = (r.to_f64().to_logical(f64::from(scale), turn, &size))
+                            .intersection(view.src)?;
+                        let loc = r.loc - view.src.loc;
+                        let r = Rectangle::<f64, Logical>::new(
+                            (loc.x * sx, loc.y * sy).into(),
+                            (r.size.w * sx, r.size.h * sy).into(),
+                        );
+                        let r = r.to_i32_up::<i32>();
+                        Some(Rectangle::new(r.loc + at, r.size))
+                    }));
+                }
+                _ => out.push(Rectangle::new(at, view.dst)),
+            }
+            TraversalAction::DoChildren(at)
+        },
+        |_, _, _| {},
+        |_, _, _| true,
+    );
+    out
 }
 
 fn plan(attrs: &SurfaceAttributes, kept: &Kept) -> Plan {

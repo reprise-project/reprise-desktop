@@ -92,7 +92,19 @@ impl<R: Renderer, D> Scene<R, D> {
     /// ([`Scene::outputs_of`]) and those that showed it in their last frame, less any it is now
     /// hidden on or covered on (lying wholly under opaque leaves). `None` when no node shows it.
     pub fn outputs_showing(&self, surface: &WlSurface) -> Option<Vec<Output>> {
+        self.outputs_damaged(surface, None).map(|(out, _)| out)
+    }
+
+    /// [`Scene::outputs_showing`] for a commit that changed only the pixels under `damage`, from
+    /// the surface's origin: an output that draws the surface only where glass reads it from under
+    /// opaque leaves, and away from `damage`, is left out. The flag: an output was left out so.
+    pub fn outputs_damaged(
+        &self,
+        surface: &WlSurface,
+        damage: Option<&[Rectangle<i32, Logical>]>,
+    ) -> Option<(Vec<Output>, bool)> {
         let mut found = false;
+        let mut missed = false;
         let mut out: Vec<Output> = Vec::new();
         let covered = self.covered();
         for (id, n) in self.live() {
@@ -103,15 +115,31 @@ impl<R: Renderer, D> Scene<R, D> {
                 continue;
             }
             found = true;
+            let at = self.coords(id).map(|(at, _)| at);
             let entered =
                 (s.entered.iter().filter_map(|w| w.upgrade())).filter(|o| !self.hidden_on(id, o));
             for o in self.outputs_of(id).into_iter().chain(entered) {
-                if !out.contains(&o) && !covered.on(id, &o) {
-                    out.push(o);
+                if out.contains(&o) {
+                    continue;
+                }
+                match (covered.read_at(id, &o), damage.zip(at)) {
+                    (None, _) => out.push(o),
+                    (Some([]), _) => {}
+                    (Some(read), Some((damage, at))) => {
+                        let hit = |d: &Rectangle<i32, Logical>| {
+                            let d = Rectangle::new(d.loc + at, d.size);
+                            read.iter().any(|r| r.overlaps(d))
+                        };
+                        match damage.iter().any(hit) {
+                            true => out.push(o),
+                            false => missed = true,
+                        }
+                    }
+                    (Some(_), None) => out.push(o),
                 }
             }
         }
-        found.then_some(out)
+        found.then_some((out, missed))
     }
 
     /// `surface`'s primary output as [`Scene::surface_pass`] picks it; `None` when no output
