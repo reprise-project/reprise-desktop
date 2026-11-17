@@ -74,6 +74,8 @@ pub enum Outcome {
 /// The key dialog for a network in the list, or for a hidden one (`hidden`), which adds the
 /// network's name and a choice of security above the key rows.
 pub struct KeyDialog {
+    /// The radio it was raised for, which its key dials on.
+    pub device: String,
     ssid: Ssid,
     pub ap: String,
     security: Security,
@@ -82,7 +84,7 @@ pub struct KeyDialog {
 }
 
 impl KeyDialog {
-    pub fn new(ssid: &Ssid, ap: &str, security: Security) -> KeyDialog {
+    pub fn new(device: &str, ssid: &Ssid, ap: &str, security: Security) -> KeyDialog {
         let intro = intro_lines(&ssid.to_string());
         let refs: Vec<&str> = intro.iter().map(|s| s.as_str()).collect();
         let items = vec![
@@ -107,6 +109,7 @@ impl KeyDialog {
             Item::button_at("cancel", CANCEL_X, BTN_Y, BUTTON_W, "Cancel", true),
         ];
         KeyDialog {
+            device: device.into(),
             ssid: ssid.clone(),
             ap: ap.into(),
             security,
@@ -116,7 +119,7 @@ impl KeyDialog {
     }
 
     /// The dialog for a network that is in no scan, joined through no access point ("/").
-    pub fn hidden() -> KeyDialog {
+    pub fn hidden(device: &str) -> KeyDialog {
         let label = |id, i: usize, text: &str| {
             Item::label_at(id, LABEL_X, HIDDEN_ROW_Y[i] + LABEL_DY, LABEL_W, text)
         };
@@ -151,6 +154,7 @@ impl KeyDialog {
             Item::button_at("cancel", CANCEL_X, btn_y, BUTTON_W, "Cancel", true),
         ];
         let mut d = KeyDialog {
+            device: device.into(),
             ssid: Ssid::default(),
             ap: "/".into(),
             security: Security::Open,
@@ -314,7 +318,7 @@ mod tests {
     use reprisekit::raster::Canvas;
 
     fn dialog() -> KeyDialog {
-        KeyDialog::new(&"Neighbour".into(), "/ap/5", Security::Psk)
+        KeyDialog::new("/dev/1", &"Neighbour".into(), "/ap/5", Security::Psk)
     }
 
     /// The dialog fits its text under every interface and text size.
@@ -399,7 +403,7 @@ mod tests {
     #[test]
     fn the_hidden_dialog_fits_its_text() {
         let over = reprisekit::interfaces::form_overflows(|_, _, _| {
-            vec![("hidden".into(), KeyDialog::hidden().form.clone())]
+            vec![("hidden".into(), KeyDialog::hidden("/dev/1").form.clone())]
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
     }
@@ -411,7 +415,7 @@ mod tests {
 
     #[test]
     fn a_hidden_network_takes_a_name_and_its_security() {
-        let mut d = KeyDialog::hidden();
+        let mut d = KeyDialog::hidden("/dev/1");
         assert_eq!(d.ap, "/");
         assert_eq!(d.client(), HIDDEN_CLIENT);
         assert!(!enabled(&d, "connect"), "no name yet");
@@ -438,7 +442,7 @@ mod tests {
         assert!(!live(&d, "key"));
         assert_eq!(label(&d, "connect"), "&Next >");
         assert_eq!(d.event(form::Event::Default), Outcome::Enterprise);
-        let mut long = KeyDialog::hidden();
+        let mut long = KeyDialog::hidden("/dev/1");
         type_into(&mut long, "ssid", &"x".repeat(33));
         assert!(!long.valid(), "33 bytes is one past an SSID");
     }
@@ -459,7 +463,7 @@ mod tests {
 
     #[test]
     fn the_hidden_rows_stack_inside_the_client() {
-        let d = KeyDialog::hidden();
+        let d = KeyDialog::hidden("/dev/1");
         let r = |id: &str| rect(&d, id);
         let rows = ["intro", "ssid", "security", "key", "confirm", "connect"];
         for w in rows.windows(2) {
@@ -485,13 +489,13 @@ mod tests {
 
     #[test]
     fn an_sae_password_takes_any_nonzero_length() {
-        let mut d = KeyDialog::new(&"Lab".into(), "/ap/7", Security::Sae);
+        let mut d = KeyDialog::new("/dev/1", &"Lab".into(), "/ap/7", Security::Sae);
         assert!(!d.valid(), "an empty password is refused");
         type_into(&mut d, "key", "abc");
         type_into(&mut d, "confirm", "abc");
         assert!(d.valid());
         let long = "x".repeat(100);
-        let mut d = KeyDialog::new(&"Lab".into(), "/ap/7", Security::Sae);
+        let mut d = KeyDialog::new("/dev/1", &"Lab".into(), "/ap/7", Security::Sae);
         type_into(&mut d, "key", &long);
         type_into(&mut d, "confirm", &long);
         assert!(d.valid());
