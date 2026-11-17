@@ -84,6 +84,8 @@ pub trait Extended {
     /// message box, a help dialog's for a sheet or chooser, a fixed dialog's
     /// for a program that is one dialog, or none. Read after every event; the host
     /// sends it through xdg-toplevel-tag and asks for the frame or none through xdg-decoration.
+    /// A child prompt that is not modal, such as a job's progress box, takes input beside a box
+    /// over another window of the program; only a box over it gates it.
     fn caption(&self, _win: WinId) -> Caption {
         Caption::Window
     }
