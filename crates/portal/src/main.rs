@@ -1429,6 +1429,7 @@ async fn serve(
             PATH,
             account::Account {
                 frontend: frontend(),
+                whoami: account::whoami,
             },
         )
         .serve_at(

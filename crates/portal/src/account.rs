@@ -12,7 +12,11 @@ const USER_IFACE: &str = "org.freedesktop.Accounts.User";
 
 pub struct Account {
     pub frontend: crate::Frontend,
+    pub whoami: Whoami,
 }
+
+/// This user's account, [`whoami`] outside tests. Blocking.
+pub type Whoami = fn() -> Option<Me>;
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Account")]
 impl Account {
@@ -26,30 +30,40 @@ impl Account {
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, crate::Results)> {
         let asker = self.frontend.check(&hdr).await?;
+        let request = crate::Served::new(server, &handle, &asker).await?;
         let reason = match options.get("reason") {
             Some(Variant::Str(s)) => s.to_string(),
             _ => String::new(),
         };
-        let Some(me) = blocking::unblock(whoami).await else {
+        let me = blocking::unblock(self.whoami).await;
+        let out = match &me {
+            Some(me) => {
+                let (id, shown) = (app_id.clone(), me.clone());
+                let asked = request.ask(None, move |cancel| {
+                    let who = crate::permit::who(&crate::remotedesktop::display_name(&id));
+                    access::ask(&input(&who, &window, &reason, &shown), cancel)
+                });
+                asked.await
+            }
+            None => None,
+        };
+        let out = out.filter(|_| !request.closed());
+        request.end().await;
+        let Some(me) = me else {
             log::warn!("GetUserInformation for {app_id:?}: no account for this user");
             return Ok((crate::RESPONSE_OTHER, crate::Results::new()));
         };
-        let (id, shown) = (app_id.clone(), me.clone());
-        let out = crate::with_request(server, &handle, &asker, None, move |cancel| {
-            let who = crate::permit::who(&crate::remotedesktop::display_name(&id));
-            access::ask(&input(&who, &window, &reason, &shown), cancel)
-        })
-        .await?;
+        let granted = out.is_some_and(|o| o.granted);
         log::info!(
             "GetUserInformation for {app_id:?}: {}",
-            if out.granted { "shared" } else { "cancelled" }
+            if granted { "shared" } else { "cancelled" }
         );
-        Ok(reply(out.granted, &me))
+        Ok(reply(granted, &me))
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Me {
+pub struct Me {
     login: String,
     name: String,
     picture: Option<PathBuf>,
@@ -112,7 +126,7 @@ fn owned(s: &str) -> OwnedVariant {
 
 /// This user's account: AccountsService's name and picture, else the passwd entry's name and no
 /// picture. Blocking.
-fn whoami() -> Option<Me> {
+pub fn whoami() -> Option<Me> {
     // SAFETY: getuid cannot fail and touches no memory.
     let uid = unsafe { libc::getuid() };
     match accounts_service(uid) {
@@ -260,5 +274,56 @@ mod tests {
             ("IconFile", dir.path().to_str().unwrap()),
         ]));
         assert_eq!(folder.picture, None);
+    }
+
+    static WHOAMI: crate::tests::Gate = crate::tests::Gate::new();
+
+    fn jane_held_open() -> Option<Me> {
+        WHOAMI.wait();
+        Some(jane(None))
+    }
+
+    #[test]
+    fn a_close_while_the_account_is_read_answers_cancelled_and_leaves_no_request() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let (client, portal) = crate::tests::portal_with(&bus, |frontend| Account {
+                frontend,
+                whoami: jane_held_open,
+            })
+            .await;
+            let handle = format!("{}1_1/a", crate::REQUEST_PREFIX);
+            let asked = zruntime::spawn({
+                let (client, portal, handle) = (client.clone(), portal.clone(), handle.clone());
+                async move {
+                    let none: HashMap<&str, Variant<'_>> = HashMap::new();
+                    let handle = ObjectPath::try_from(handle.as_str()).unwrap();
+                    let body = (handle, "org.example.App", "", none);
+                    let reply = crate::tests::call_portal(
+                        &client,
+                        &portal,
+                        "Account",
+                        "GetUserInformation",
+                        &body,
+                    );
+                    let reply = reply.await.unwrap();
+                    reply.body().deserialize::<(u32, crate::Results)>().unwrap()
+                }
+            });
+            assert!(WHOAMI.reached().await, "the call reads the account");
+            let closed = crate::tests::close_request(&client, &portal, &handle).await;
+            assert!(closed.is_ok(), "the Close is answered: {closed:?}");
+            WHOAMI.open();
+            let (code, results) = asked.await.unwrap();
+            assert_eq!(code, crate::RESPONSE_CANCELLED);
+            assert!(results.is_empty(), "nothing shared");
+            assert!(
+                !crate::tests::request_served(&portal, &handle).await,
+                "no Request object stays behind"
+            );
+        });
     }
 }
