@@ -366,6 +366,19 @@ impl Props {
         self.sync();
     }
 
+    /// Whether `ev` would apply a typed password, which the account's password mode decides:
+    /// the host reads the mode again and hands `ev` back through [`Props::event`].
+    pub fn applies_password(&self, ev: &propsheet::Event) -> bool {
+        matches!(ev, propsheet::Event::Apply | propsheet::Event::Ok)
+            && !self.busy
+            && self.password_typed()
+    }
+
+    /// The account's password mode as it is now.
+    pub fn set_password_mode(&mut self, mode: PasswordMode) {
+        self.user.password_mode = mode;
+    }
+
     /// The calls for what changed, or why it cannot be applied.
     /// `picture_file` saves a picked picture for AccountsService.
     pub fn ops(
