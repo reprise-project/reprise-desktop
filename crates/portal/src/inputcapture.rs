@@ -161,7 +161,7 @@ impl InputCapture {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         crate::check_session(&session_handle)?;
         let Some(link) = live(&self.link) else {
             return Ok((RESPONSE_OTHER, HashMap::new()));
@@ -180,7 +180,7 @@ impl InputCapture {
         );
         let id = app_id.clone();
         let parent = crate::dialog::parent_handle(&parent_window);
-        let ok = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
+        let ok = crate::with_request(server, &handle, &asker, None, move |cancel| {
             permit(&id, caps, parent, cancel)
         })
         .await?;

@@ -281,7 +281,7 @@ impl GlobalShortcuts {
         _options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, Results)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         let key = session_handle.as_str();
         let Some((app, _)) = session_of(&self.sessions, key) else {
             return Ok((RESPONSE_OTHER, Results::new()));
@@ -304,7 +304,7 @@ impl GlobalShortcuts {
                 let parent = crate::dialog::parent_handle(&parent_window);
                 let id = app.clone();
                 let session = Some((&self.sessions, key));
-                crate::with_request(server, &handle, &self.frontend, session, move |c| {
+                crate::with_request(server, &handle, &asker, session, move |c| {
                     crate::permit::ask(crate::permit::Kind::Shortcuts, &id, items, false, parent, c)
                 })
                 .await?

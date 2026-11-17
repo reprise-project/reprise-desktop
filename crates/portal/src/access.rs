@@ -54,9 +54,9 @@ impl Access {
         options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         let input = Input::from_call(&parent_window, title, subtitle, body, &options);
-        let out = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
+        let out = crate::with_request(server, &handle, &asker, None, move |cancel| {
             ask(&input, cancel)
         })
         .await?;

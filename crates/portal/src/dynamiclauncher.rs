@@ -29,10 +29,10 @@ impl DynamicLauncher {
         options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, crate::Results)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         let ask = Ask::from_call(name, &icon_v, &options);
         let (id, shown) = (app_id.clone(), ask.clone());
-        let out = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
+        let out = crate::with_request(server, &handle, &asker, None, move |cancel| {
             let who = crate::permit::who(&crate::remotedesktop::display_name(&id));
             access::ask(&input(&who, &parent_window, &shown), cancel)
         })

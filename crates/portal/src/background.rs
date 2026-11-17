@@ -67,9 +67,9 @@ impl Background {
         name: String,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         let id = app_id.clone();
-        let answer = crate::with_request(server, &handle, &self.frontend, None, move |cancel| {
+        let answer = crate::with_request(server, &handle, &asker, None, move |cancel| {
             let app = if name.trim().is_empty() {
                 crate::remotedesktop::display_name(&id)
             } else {

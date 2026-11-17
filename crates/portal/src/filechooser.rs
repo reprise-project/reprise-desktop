@@ -232,24 +232,24 @@ impl FileChooser {
         &self,
         server: &zbus::ObjectServer,
         handle: &ObjectPath<'_>,
+        asker: &crate::Caller,
         mut input: Input,
         asked: Vec<PathBuf>,
         app_id: String,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         input.app_id = app_id;
         let filters = input.filters.clone();
-        let out: Output =
-            crate::with_request(server, handle, &self.frontend, None, move |cancel| {
-                input.start = start_in(asked);
-                dialog::run_toml(&["--file"], &input, &cancel)
-                    .and_then(|s| {
-                        toml::from_str(&s)
-                            .map_err(|e| log::warn!("file answer: {e}"))
-                            .ok()
-                    })
-                    .unwrap_or_default()
-            })
-            .await?;
+        let out: Output = crate::with_request(server, handle, asker, None, move |cancel| {
+            input.start = start_in(asked);
+            dialog::run_toml(&["--file"], &input, &cancel)
+                .and_then(|s| {
+                    toml::from_str(&s)
+                        .map_err(|e| log::warn!("file answer: {e}"))
+                        .ok()
+                })
+                .unwrap_or_default()
+        })
+        .await?;
         Ok(reply(&out, &filters))
     }
 }
@@ -267,11 +267,12 @@ impl FileChooser {
         options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         log::info!("OpenFile for {app_id:?}");
         self.run(
             server,
             &handle,
+            &asker,
             base_input(Kind::Open, &parent_window, title, &options),
             asked_folders(&options),
             app_id,
@@ -290,12 +291,19 @@ impl FileChooser {
         options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         log::info!("SaveFile for {app_id:?}");
         let mut input = base_input(Kind::Save, &parent_window, title, &options);
         (input.name, input.name_raw) = start_name(&options);
-        self.run(server, &handle, input, asked_folders(&options), app_id)
-            .await
+        self.run(
+            server,
+            &handle,
+            &asker,
+            input,
+            asked_folders(&options),
+            app_id,
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -309,7 +317,7 @@ impl FileChooser {
         options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
-        self.frontend.check(&hdr).await?;
+        let asker = self.frontend.check(&hdr).await?;
         log::info!("SaveFiles for {app_id:?}");
         let mut input = base_input(Kind::SaveFiles, &parent_window, title, &options);
         let files: Vec<Vec<u8>> = match options.get("files") {
@@ -334,8 +342,15 @@ impl FileChooser {
             return Ok((crate::RESPONSE_OTHER, HashMap::new()));
         }
         input.files = files;
-        self.run(server, &handle, input, asked_folders(&options), app_id)
-            .await
+        self.run(
+            server,
+            &handle,
+            &asker,
+            input,
+            asked_folders(&options),
+            app_id,
+        )
+        .await
     }
 }
 
