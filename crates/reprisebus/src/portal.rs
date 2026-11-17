@@ -121,30 +121,59 @@ where
     B: Serialize + DynamicType,
     R: DeserializeOwned + Type,
 {
+    ask(conn, iface, method, body).await?.answer(wait).await
+}
+
+/// A request the portal took: its method reply, and its Response stream, subscribed before the
+/// call so a Response sent ahead of the reply is kept.
+pub struct Asked {
+    pub reply: zbus::Message,
+    responses: MessageStream,
+}
+
+/// [`request`]'s call, without waiting for the Response.
+pub async fn ask<B>(
+    conn: &Connection,
+    iface: &str,
+    method: &str,
+    body: impl FnOnce(Options) -> B,
+) -> Result<Asked, Error>
+where
+    B: Serialize + DynamicType,
+{
     let owner = owner(conn).await?;
     let token = token();
     let unique = conn.unique_name().map(|n| n.as_str()).unwrap_or_default();
     let rule = response_rule(&request_path(unique, &token), &owner)?;
-    let mut responses = MessageStream::for_match_rule(rule, conn, None).await?;
+    let responses = MessageStream::for_match_rule(rule, conn, None).await?;
     let options = Options::from([("handle_token", Variant::from(token))]);
     let body = body(options);
-    conn.call_method(Some(PORTAL), PORTAL_PATH, Some(iface), method, &body)
-        .await?;
-    let next = responses.next();
-    let answer = match wait {
-        Some(wait) => futures_lite::future::or(async { Some(next.await) }, async {
-            async_io::Timer::after(wait).await;
-            None
-        })
-        .await
-        .ok_or(Error::NoAnswer(wait))?,
-        None => next.await,
-    };
-    let (code, results): (u32, R) = answer.ok_or(Error::Closed)??.body().deserialize()?;
-    match code {
-        0 => Ok(results),
-        1 => Err(Error::Cancelled),
-        _ => Err(Error::Failed),
+    let reply = (conn.call_method(Some(PORTAL), PORTAL_PATH, Some(iface), method, &body)).await?;
+    Ok(Asked { reply, responses })
+}
+
+impl Asked {
+    /// The Response's results on code 0, waiting up to `wait` (`None`: as long as it takes).
+    pub async fn answer<R: DeserializeOwned + Type>(
+        mut self,
+        wait: Option<Duration>,
+    ) -> Result<R, Error> {
+        let next = self.responses.next();
+        let answer = match wait {
+            Some(wait) => futures_lite::future::or(async { Some(next.await) }, async {
+                async_io::Timer::after(wait).await;
+                None
+            })
+            .await
+            .ok_or(Error::NoAnswer(wait))?,
+            None => next.await,
+        };
+        let (code, results): (u32, R) = answer.ok_or(Error::Closed)??.body().deserialize()?;
+        match code {
+            0 => Ok(results),
+            1 => Err(Error::Cancelled),
+            _ => Err(Error::Failed),
+        }
     }
 }
 
