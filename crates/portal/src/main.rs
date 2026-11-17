@@ -701,6 +701,7 @@ impl ScreenCast {
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, StartResults)> {
         let asker = self.frontend.check(&hdr).await?;
+        let request = Served::new(server, &handle, &asker).await?;
         let key = session_handle.to_string();
         let parent = dialog::parent_handle(&parent_window);
         let caller = trusted::session_caller(conn, &key).await;
@@ -711,19 +712,10 @@ impl ScreenCast {
             }
             _ => Pick::Ask,
         };
-        match pick_and_cast(
-            &self.sessions,
-            &asker,
-            server,
-            conn,
-            &handle,
-            &key,
-            &app_id,
-            parent,
-            pick,
-        )
-        .await
-        {
+        let started = pick_and_cast(&self.sessions, &request, conn, &key, &app_id, parent, pick);
+        let started = started.await;
+        request.end().await;
+        match started {
             Ok(st) => Ok((
                 RESPONSE_OK,
                 StartResults {
@@ -770,10 +762,8 @@ pub(crate) enum Pick {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn pick_and_cast(
     sessions: &Sessions,
-    asker: &Caller,
-    server: &zbus::ObjectServer,
+    request: &Served<'_>,
     conn: &zbus::Connection,
-    handle: &ObjectPath<'_>,
     key: &str,
     app_id: &str,
     parent: Option<String>,
@@ -793,18 +783,13 @@ pub(crate) async fn pick_and_cast(
         Pick::Recorder => cast::Capturer::Recorder,
     };
     let session = Some((sessions, key));
-    let chosen = with_request(server, handle, asker, session, move |cancel| {
+    let chosen = request.ask(session, move |cancel| {
         choose(types, restore, &app, persist_mode > 0, parent, cancel, pick)
-    })
-    .await
-    .map_err(|e| {
-        log::warn!("Start: {e}");
-        RESPONSE_OTHER
-    })?;
-    let chosen = match chosen {
-        Ok(Some(c)) => c,
-        Ok(None) => return Err(RESPONSE_CANCELLED),
-        Err(e) => {
+    });
+    let chosen = match chosen.await {
+        Some(Ok(Some(c))) => c,
+        None | Some(Ok(None)) => return Err(RESPONSE_CANCELLED),
+        Some(Err(e)) => {
             log::warn!("Start: {e}");
             return Err(RESPONSE_OTHER);
         }
@@ -855,14 +840,15 @@ pub(crate) async fn pick_and_cast(
     let ended: Vec<_> = (casts.iter_mut())
         .filter_map(|c| Some((c.node_id, c.take_ended()?)))
         .collect();
-    // A second Start hands back the session's earlier casts, and a Close
-    // during this one leaves the new casts unkept. Either stops off the
-    // lock, since `Cast::stop` joins its thread.
+    // A second Start hands back the session's earlier casts, and a Close of
+    // the session or the request during this one leaves the new casts
+    // unkept. Either stops off the lock, since `Cast::stop` joins its thread.
     let (replaced, unkept) = match sessions
         .lock()
         .unwrap()
         .get_mut(key)
         .and_then(SessionData::screencast_mut)
+        .filter(|_| !request.closed())
     {
         Some(s) => (std::mem::replace(&mut s.casts, casts), None),
         None => (Vec::new(), Some(casts)),

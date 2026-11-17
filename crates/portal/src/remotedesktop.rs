@@ -186,163 +186,19 @@ impl RemoteDesktop {
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, StartResults)> {
         let asker = self.frontend.check(&hdr).await?;
-        if live(&self.link).is_none() {
-            return Ok((RESPONSE_OTHER, empty()));
-        }
-        let key = session_handle.to_string();
-        let parent = crate::dialog::parent_handle(&parent_window);
-        let caller = crate::trusted::session_caller(conn, session_handle.as_str()).await;
-        let trust = match caller {
-            Some(_) => {
-                use crate::trusted::{HANDOVER_UNIT, UNIT, unit_facts};
-                crate::trusted::start_trusted(
-                    &app_id,
-                    caller,
-                    unit_facts(conn, UNIT).await.as_ref(),
-                    unit_facts(conn, HANDOVER_UNIT).await.as_ref(),
-                )
-            }
-            None => None,
-        };
-        let trusted = trust.is_some();
-        let (devices, restored, mut requested) = {
-            let mut sessions = self.sessions.lock().unwrap();
-            let Some(s) = sessions.get_mut(&key).and_then(SessionData::remote_mut) else {
-                return Ok((RESPONSE_OTHER, empty()));
-            };
-            if trusted {
-                s.devices = DEVICE_KEYBOARD | DEVICE_POINTER;
-            }
-            s.trusted = trusted;
-            (s.devices, s.restored, s.persist)
-        };
-        if let Some(p) = options
-            .get("persist_mode")
-            .and_then(|v| u32::try_from(v).ok())
-        {
-            requested = p;
-        }
-        if trusted {
-            log::info!("RemoteDesktop.Start for {app_id:?}: trusted");
-            requested = 0;
-        }
-        let mut remember = restored;
-        if !restored && !trusted {
-            let id = app_id.clone();
-            let parent = parent.clone();
-            let ask = self.ask;
-            let session = Some((&self.sessions, key.as_str()));
-            let answer = crate::with_request(server, &handle, &asker, session, move |c| {
-                ask(
-                    crate::permit::Kind::RemoteControl(crate::permit::Devices::from_mask(devices)),
-                    &id,
-                    Vec::new(),
-                    requested > 0,
-                    parent,
-                    c,
-                )
-            })
-            .await?;
-            if !self.sessions.lock().unwrap().contains_key(&key) {
-                return Ok((RESPONSE_CANCELLED, empty()));
-            }
-            match answer {
-                crate::permit::Answer::Allow { remember: r } => {
-                    remember = r;
-                    if r {
-                        self.notices.remembered(&app_id);
-                    }
-                }
-                crate::permit::Answer::Deny | crate::permit::Answer::Dismissed => {
-                    log::info!("RemoteDesktop.Start for {app_id:?} denied");
-                    return Ok((RESPONSE_CANCELLED, empty()));
-                }
-            }
-        }
-        let persist = crate::granted_persist(requested, remember);
-        // The frontend refuses a persist mode on ScreenCast.SelectSources in a remote desktop
-        // session: the share picker offers Remember when this grant is remembered.
-        if let Some(s) =
-            (self.sessions.lock().unwrap().get_mut(&key)).and_then(SessionData::remote_mut)
-        {
-            s.screencast.persist_mode = persist;
-        }
-        // A session that also went through ScreenCast.SelectSources gets its picture here: the
-        // frontend expects `streams` from this Start.
-        let types = (self.sessions.lock().unwrap().get_mut(&key))
-            .and_then(SessionData::remote_mut)
-            .map(|s| s.screencast.types);
-        let mut streams = Vec::new();
-        let mut kept = None;
-        let mut locked = None;
-        match types {
-            None => return Ok((RESPONSE_CANCELLED, empty())),
-            Some(0) => {}
-            Some(_) => {
-                if let Some(trust) = trust {
-                    match crate::lockmode::begin(conn, caller, trust, live(&self.link)).await {
-                        Ok(l) => locked = l,
-                        Err(crate::lockmode::NotBegun) => return Ok((RESPONSE_OTHER, empty())),
-                    }
-                }
-                let pick = if trusted {
-                    crate::lockmode::pick(locked.as_ref())
-                } else {
-                    crate::Pick::Ask
-                };
-                match crate::pick_and_cast(
-                    &self.sessions,
-                    &asker,
-                    server,
-                    conn,
-                    &handle,
-                    &key,
-                    &app_id,
-                    parent,
-                    pick,
-                )
-                .await
-                {
-                    Ok(st) => {
-                        streams = st.streams;
-                        kept = st.remembered;
-                    }
-                    Err(code) => return Ok((code, empty())),
-                }
-            }
-        }
-        log::info!(
-            "RemoteDesktop.Start for {app_id:?}: devices {devices}, persist {persist}, streams {}",
-            streams.len()
-        );
-        let follow = locked.map(|l| l.hold(conn.clone(), self.sessions.clone(), key.clone()));
-        match (self.sessions.lock().unwrap().get_mut(&key)).and_then(SessionData::remote_mut) {
-            Some(s) => {
-                let (lock, follow) = follow.unzip();
-                s.grant(live(&self.link), lock);
-                if let Some(follow) = follow {
-                    zruntime::spawn(follow).detach();
-                }
-            }
-            None => return Ok((RESPONSE_CANCELLED, empty())),
-        }
-        if restored && !trusted {
-            let sessions = self.sessions.clone();
-            let show = (self.notices.clone()).show(conn.clone(), sessions, key, app_id.clone());
-            zruntime::spawn(show).detach();
-        }
-        let restore_data =
-            (persist > 0).then(|| crate::restore_data(&app_id, &grant(devices, kept.as_ref())));
-        Ok((
-            RESPONSE_OK,
-            StartResults {
-                devices,
-                clipboard_enabled: false,
-                persist_mode: persist,
-                restore_data,
-                streams,
-            },
-        ))
+        let request = crate::Served::new(server, &handle, &asker).await?;
+        let out = self
+            .begin(
+                &request,
+                conn,
+                &session_handle,
+                app_id,
+                parent_window,
+                &options,
+            )
+            .await;
+        request.end().await;
+        Ok(out)
     }
 
     #[zbus(name = "ConnectToEIS")]
@@ -488,6 +344,198 @@ impl RemoteDesktop {
     ) -> zbus::fdo::Result<()> {
         Err(unsupported())
     }
+}
+
+impl RemoteDesktop {
+    /// Start once its request is served: the permit box, then the share picker for a session
+    /// that also selected sources. A Close keeps a box not yet up away and closes one that is, and
+    /// a request closed before the grant is granted nothing.
+    async fn begin(
+        &self,
+        request: &crate::Served<'_>,
+        conn: &zbus::Connection,
+        session_handle: &ObjectPath<'_>,
+        app_id: String,
+        parent_window: String,
+        options: &HashMap<String, Variant<'_>>,
+    ) -> (u32, StartResults) {
+        if live(&self.link).is_none() {
+            return (RESPONSE_OTHER, empty());
+        }
+        let key = session_handle.to_string();
+        let parent = crate::dialog::parent_handle(&parent_window);
+        let caller = crate::trusted::session_caller(conn, session_handle.as_str()).await;
+        let trust = match caller {
+            Some(_) => {
+                use crate::trusted::{HANDOVER_UNIT, UNIT, unit_facts};
+                crate::trusted::start_trusted(
+                    &app_id,
+                    caller,
+                    unit_facts(conn, UNIT).await.as_ref(),
+                    unit_facts(conn, HANDOVER_UNIT).await.as_ref(),
+                )
+            }
+            None => None,
+        };
+        let trusted = trust.is_some();
+        let (devices, restored, mut requested) = {
+            let mut sessions = self.sessions.lock().unwrap();
+            let Some(s) = sessions.get_mut(&key).and_then(SessionData::remote_mut) else {
+                return (RESPONSE_OTHER, empty());
+            };
+            if trusted {
+                s.devices = DEVICE_KEYBOARD | DEVICE_POINTER;
+            }
+            s.trusted = trusted;
+            (s.devices, s.restored, s.persist)
+        };
+        if let Some(p) = options
+            .get("persist_mode")
+            .and_then(|v| u32::try_from(v).ok())
+        {
+            requested = p;
+        }
+        if trusted {
+            log::info!("RemoteDesktop.Start for {app_id:?}: trusted");
+            requested = 0;
+        }
+        let mut remember = restored;
+        if !restored && !trusted {
+            let id = app_id.clone();
+            let parent = parent.clone();
+            let ask = self.ask;
+            let session = Some((&self.sessions, key.as_str()));
+            let answer = request.ask(session, move |c| {
+                ask(
+                    crate::permit::Kind::RemoteControl(crate::permit::Devices::from_mask(devices)),
+                    &id,
+                    Vec::new(),
+                    requested > 0,
+                    parent,
+                    c,
+                )
+            });
+            let Some(answer) = answer.await else {
+                return closed(&app_id);
+            };
+            if !self.sessions.lock().unwrap().contains_key(&key) {
+                return (RESPONSE_CANCELLED, empty());
+            }
+            match answer {
+                crate::permit::Answer::Allow { remember: r } => {
+                    remember = r;
+                    if r {
+                        if request.closed() {
+                            return closed(&app_id);
+                        }
+                        self.notices.remembered(&app_id);
+                    }
+                }
+                crate::permit::Answer::Deny | crate::permit::Answer::Dismissed => {
+                    log::info!("RemoteDesktop.Start for {app_id:?} denied");
+                    return (RESPONSE_CANCELLED, empty());
+                }
+            }
+        }
+        let persist = crate::granted_persist(requested, remember);
+        // The frontend refuses a persist mode on ScreenCast.SelectSources in a remote desktop
+        // session: the share picker offers Remember when this grant is remembered.
+        if let Some(s) =
+            (self.sessions.lock().unwrap().get_mut(&key)).and_then(SessionData::remote_mut)
+        {
+            s.screencast.persist_mode = persist;
+        }
+        // A session that also went through ScreenCast.SelectSources gets its picture here: the
+        // frontend expects `streams` from this Start.
+        let types = (self.sessions.lock().unwrap().get_mut(&key))
+            .and_then(SessionData::remote_mut)
+            .map(|s| s.screencast.types);
+        let mut streams = Vec::new();
+        let mut kept = None;
+        let mut locked = None;
+        match types {
+            None => return (RESPONSE_CANCELLED, empty()),
+            Some(0) => {}
+            Some(_) => {
+                if let Some(trust) = trust {
+                    if request.closed() {
+                        return closed(&app_id);
+                    }
+                    match crate::lockmode::begin(conn, caller, trust, live(&self.link)).await {
+                        Ok(l) => locked = l,
+                        Err(crate::lockmode::NotBegun) => return (RESPONSE_OTHER, empty()),
+                    }
+                }
+                let pick = if trusted {
+                    crate::lockmode::pick(locked.as_ref())
+                } else {
+                    crate::Pick::Ask
+                };
+                match crate::pick_and_cast(
+                    &self.sessions,
+                    request,
+                    conn,
+                    &key,
+                    &app_id,
+                    parent,
+                    pick,
+                )
+                .await
+                {
+                    Ok(st) => {
+                        streams = st.streams;
+                        kept = st.remembered;
+                    }
+                    Err(code) => return (code, empty()),
+                }
+            }
+        }
+        if request.closed() {
+            let casts = (self.sessions.lock().unwrap().get_mut(&key))
+                .and_then(SessionData::remote_mut)
+                .map(|s| std::mem::take(&mut s.screencast.casts));
+            crate::stop_casts(casts.unwrap_or_default()).await;
+            return closed(&app_id);
+        }
+        log::info!(
+            "RemoteDesktop.Start for {app_id:?}: devices {devices}, persist {persist}, streams {}",
+            streams.len()
+        );
+        let follow = locked.map(|l| l.hold(conn.clone(), self.sessions.clone(), key.clone()));
+        match (self.sessions.lock().unwrap().get_mut(&key)).and_then(SessionData::remote_mut) {
+            Some(s) => {
+                let (lock, follow) = follow.unzip();
+                s.grant(live(&self.link), lock);
+                if let Some(follow) = follow {
+                    zruntime::spawn(follow).detach();
+                }
+            }
+            None => return (RESPONSE_CANCELLED, empty()),
+        }
+        if restored && !trusted {
+            let sessions = self.sessions.clone();
+            let show = (self.notices.clone()).show(conn.clone(), sessions, key, app_id.clone());
+            zruntime::spawn(show).detach();
+        }
+        let restore_data =
+            (persist > 0).then(|| crate::restore_data(&app_id, &grant(devices, kept.as_ref())));
+        (
+            RESPONSE_OK,
+            StartResults {
+                devices,
+                clipboard_enabled: false,
+                persist_mode: persist,
+                restore_data,
+                streams,
+            },
+        )
+    }
+}
+
+/// Start's answer to a closed request, which grants nothing.
+fn closed(app_id: &str) -> (u32, StartResults) {
+    log::info!("RemoteDesktop.Start for {app_id:?}: closed");
+    (RESPONSE_CANCELLED, empty())
 }
 
 impl RemoteSession {
@@ -1440,5 +1488,175 @@ mod tests {
         );
         assert_eq!(parse_grant("output:DP-1"), None);
         assert_eq!(parse_grant("remote-desktop:3;junk"), None);
+    }
+
+    /// The user manager, answering GetUnit (no such unit) once the test opens its gate.
+    struct HeldManager(&'static crate::tests::Gate);
+
+    #[zbus::interface(name = "org.freedesktop.systemd1.Manager")]
+    impl HeldManager {
+        async fn get_unit(&self, _unit: String) -> zbus::fdo::Result<zbus::OwnedObjectPath> {
+            let gate = self.0;
+            blocking::unblock(move || gate.wait()).await;
+            Err(zbus::fdo::Error::Failed("no such unit".into()))
+        }
+    }
+
+    /// CreateSession, SelectDevices (with a remembered grant when `restore`) and Start on a
+    /// session `desk`'s client made, so Start finds its pid and asks the user manager, which
+    /// holds its answer on `gate`; the Close comes meanwhile. Start's code, the session's key and
+    /// whether the Request is still served.
+    async fn start_closed_during_the_units(
+        desk: &Desk,
+        gate: &'static crate::tests::Gate,
+        restore: bool,
+    ) -> (u32, String, bool) {
+        let manager = "org.freedesktop.systemd1";
+        desk.fakes.request_name(manager).await.unwrap();
+        let held = HeldManager(gate);
+        reprisebus::testbus::serve(&desk.fakes, "/org/freedesktop/systemd1", held).await;
+        let sender = desk.client.unique_name().unwrap();
+        let sender = sender.trim_start_matches(':').replace('.', "_");
+        let session = format!("/org/freedesktop/portal/desktop/session/{sender}/held");
+        let handle = format!("/org/freedesktop/portal/desktop/request/{sender}/held");
+        let (path, request) = (
+            ObjectPath::try_from(session.as_str()).unwrap(),
+            ObjectPath::try_from(handle.as_str()).unwrap(),
+        );
+        let none: HashMap<&str, Variant<'_>> = HashMap::new();
+        let (code, _): (u32, HashMap<String, OwnedVariant>) = desk
+            .call("CreateSession", &(&request, &path, APP, &none))
+            .await;
+        assert_eq!(code, RESPONSE_OK);
+        let mut options: HashMap<&str, Variant<'_>> = HashMap::new();
+        options.insert("types", Variant::U32(DEVICE_KEYBOARD | DEVICE_POINTER));
+        if restore {
+            options.insert("restore_data", token(APP, &grant(3, None)));
+        }
+        let (code, _): (u32, HashMap<String, OwnedVariant>) = desk
+            .call("SelectDevices", &(&request, &path, APP, &options))
+            .await;
+        assert_eq!(code, RESPONSE_OK);
+        let body = (&request, &path, APP, "", &none);
+        let start = desk.call::<_, (u32, HashMap<String, OwnedVariant>)>("Start", &body);
+        let close = async {
+            assert!(gate.reached().await, "Start asks the user manager");
+            let closed = crate::tests::close_request(&desk.client, &desk.portal, &handle);
+            let closed = closed.await;
+            gate.open();
+            closed
+        };
+        let ((code, _), closed) = futures_lite::future::zip(start, close).await;
+        assert!(closed.is_ok(), "the Close is answered: {closed:?}");
+        let served = crate::tests::request_served(&desk.portal, &handle).await;
+        (code, session, served)
+    }
+
+    static UNITS: crate::tests::Gate = crate::tests::Gate::new();
+    static ASKED_AFTER_UNITS: AtomicBool = AtomicBool::new(false);
+
+    fn noted_allowed(
+        _: crate::permit::Kind,
+        _: &str,
+        _: Vec<String>,
+        _: bool,
+        _: Option<String>,
+        _: Arc<AtomicBool>,
+    ) -> crate::permit::Answer {
+        ASKED_AFTER_UNITS.store(true, std::sync::atomic::Ordering::SeqCst);
+        crate::permit::Answer::Allow { remember: false }
+    }
+
+    #[test]
+    fn a_close_while_start_reads_the_units_shows_no_box_and_answers_cancelled() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            return;
+        };
+        zbus::block_on(async {
+            let desk = Desk::on(bus, noted_allowed, &[]).await;
+            let (code, _, served) = start_closed_during_the_units(&desk, &UNITS, false).await;
+            assert_eq!(code, RESPONSE_CANCELLED);
+            assert!(
+                !ASKED_AFTER_UNITS.load(std::sync::atomic::Ordering::SeqCst),
+                "no box"
+            );
+            assert!(!served, "no Request object stays behind");
+        });
+    }
+
+    static REMEMBERED_UNITS: crate::tests::Gate = crate::tests::Gate::new();
+
+    #[test]
+    fn a_close_before_a_remembered_start_is_granted_grants_nothing() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            return;
+        };
+        zbus::block_on(async {
+            let desk = Desk::on(bus, never_asked, &[]).await;
+            let (code, key, served) =
+                start_closed_during_the_units(&desk, &REMEMBERED_UNITS, true).await;
+            assert_eq!(code, RESPONSE_CANCELLED);
+            let granted = (desk.sessions.lock().unwrap().get_mut(&key))
+                .and_then(SessionData::remote_mut)
+                .map(|s| (s.granted, s.keys.is_some()));
+            assert_eq!(granted, Some((false, false)), "not granted, no keys object");
+            async_io::Timer::after(Duration::from_millis(200)).await;
+            assert!(desk.noted.lock().unwrap().is_empty(), "no balloon");
+            assert!(!served, "no Request object stays behind");
+        });
+    }
+
+    static FIRST_BOX: crate::tests::Gate = crate::tests::Gate::new();
+
+    /// The permit box, answering Allow once the test opens [`FIRST_BOX`].
+    fn allowed_when_opened(
+        _: crate::permit::Kind,
+        _: &str,
+        _: Vec<String>,
+        _: bool,
+        _: Option<String>,
+        _: Arc<AtomicBool>,
+    ) -> crate::permit::Answer {
+        FIRST_BOX.wait();
+        crate::permit::Answer::Allow { remember: false }
+    }
+
+    #[test]
+    fn a_close_that_comes_as_the_first_box_is_answered_keeps_the_share_picker_away() {
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            return;
+        };
+        zbus::block_on(async {
+            let desk = Desk::on(bus, allowed_when_opened, &[]).await;
+            let (request, path) = desk.select(1, APP, None).await;
+            let mut options: HashMap<&str, Variant<'_>> = HashMap::new();
+            options.insert("types", Variant::U32(crate::SOURCE_MONITOR));
+            let (code, _): (u32, HashMap<String, OwnedVariant>) = desk
+                .call_on(
+                    "ScreenCast",
+                    "SelectSources",
+                    &(&request, &path, APP, &options),
+                )
+                .await;
+            assert_eq!(code, RESPONSE_OK);
+            let none: HashMap<&str, Variant<'_>> = HashMap::new();
+            let body = (&request, &path, APP, "", &none);
+            let start = desk.call::<_, (u32, HashMap<String, OwnedVariant>)>("Start", &body);
+            let close = async {
+                assert!(FIRST_BOX.reached().await, "the permit box is up");
+                let closed =
+                    crate::tests::close_request(&desk.client, &desk.portal, request.as_str());
+                let closed = closed.await;
+                FIRST_BOX.open();
+                closed
+            };
+            let ((code, _), closed) = futures_lite::future::zip(start, close).await;
+            assert!(closed.is_ok(), "the Close is answered: {closed:?}");
+            assert_eq!(code, RESPONSE_CANCELLED, "no share picker after the Close");
+            assert!(
+                !crate::tests::request_served(&desk.portal, request.as_str()).await,
+                "no Request object stays behind"
+            );
+        });
     }
 }
