@@ -543,8 +543,6 @@ impl State {
                 if let Some(st) = self.switcher.leaving.take() {
                     self.destroy_flip(st);
                 }
-                let p = self.pointer_location();
-                self.repoint(p, InputTime::now());
                 continue;
             }
             if moving || st.stepping {
@@ -859,19 +857,14 @@ impl State {
         crate::access::touch(self);
     }
 
-    /// Take a stack down at once: its timer, live pictures, then its
-    /// tree, and show the windows again; with no other stack left, the
-    /// frames draw for the desktop again.
+    /// Take a stack down at once: its timer, its tree, and show the
+    /// windows again; with no other stack left, the frames draw for the
+    /// desktop again. The pointer finds what lies under it before the live
+    /// pictures go, so a task button it rests on keeps the windows they
+    /// show awake for its panel (`taskpreview::hover`).
     pub(crate) fn destroy_flip(&mut self, st: Stack) {
-        if !st.revealed() {
-            crate::taskpreview::release(self);
-            self.overview_drop_held();
-        }
         for t in [st.reveal, st.desk_timer].into_iter().flatten() {
             self.handle.remove(t);
-        }
-        for id in st.pics.iter().filter_map(|p| p.thumb) {
-            self.thumb_drop(id);
         }
         self.scene.destroy(st.tree);
         self.show_after_flip(&st.hidden);
@@ -881,6 +874,15 @@ impl State {
             self.cards_changed();
         }
         crate::access::touch(self);
+        let p = self.pointer_location();
+        self.repoint(p, InputTime::now());
+        for id in st.pics.iter().filter_map(|p| p.thumb) {
+            self.thumb_drop(id);
+        }
+        if !st.revealed() {
+            crate::taskpreview::release(self);
+            self.overview_drop_held();
+        }
     }
 
     /// Drop `entry` from the open stack and the leaving one
