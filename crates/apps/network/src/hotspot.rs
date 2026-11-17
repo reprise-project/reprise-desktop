@@ -52,7 +52,12 @@ pub struct HotspotDialog {
     pub form: Form,
     /// The client size: taller by the warning a joined radio gets.
     pub client: (i32, i32),
+    /// What the fields held when it opened.
+    opened: Values,
 }
+
+/// The name, the password, and the security and band picked.
+type Values = (String, String, Option<usize>, Option<usize>);
 
 /// The lines saying that starting the hotspot takes the radio off `joined`.
 fn warning(joined: &str) -> Vec<String> {
@@ -137,7 +142,9 @@ impl HotspotDialog {
             device: device.to_string(),
             form: Form::new(items),
             client: (CLIENT.0, CLIENT.1 + grow),
+            opened: Values::default(),
         };
+        d.opened = d.values();
         d.form.focus_id("password");
         d.sync_button();
         d
@@ -145,6 +152,17 @@ impl HotspotDialog {
 
     pub fn window_title() -> String {
         "Create Hotspot".into()
+    }
+
+    fn values(&self) -> Values {
+        let combo = |id| self.form.combo_selected(id);
+        let (ssid, password) = (self.ssid().into(), self.password().into());
+        (ssid, password, combo("security"), combo("band"))
+    }
+
+    /// Whether a field holds something it did not open with.
+    pub fn edited(&self) -> bool {
+        self.values() != self.opened
     }
 
     fn ssid(&self) -> &str {
