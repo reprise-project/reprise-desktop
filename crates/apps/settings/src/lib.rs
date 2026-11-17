@@ -112,8 +112,6 @@ const SAVER_WIN: WinId = WinId::named("saver");
 
 const CHOOSER_WIN: WinId = WinId::named("openwith");
 
-const ASK_WIN: WinId = WinId::named("ask");
-
 struct Chooser {
     mime: String,
     ow: OpenWith,
@@ -510,8 +508,6 @@ struct SettingsApp {
     add_for: Pick,
 
     error: ErrorBox,
-    /// The window each error's box covers, by its text, picked when it was raised.
-    error_over: Vec<(String, WinId)>,
     asking: Asks<backuphost::Then>,
     dialog_text: Rc<TextRenderer>,
     dialog_px: u32,
@@ -836,8 +832,7 @@ impl SettingsApp {
             add_host: Host::default(),
             add_for: Pick::Autostart,
             error: ErrorBox::default(),
-            error_over: Vec::new(),
-            asking: Asks::new(ASK_WIN),
+            asking: Asks::default(),
             dialog_text,
             dialog_px,
             err_icon: None,
@@ -1181,11 +1176,7 @@ impl repriseapp::Extended for SettingsApp {
         if win == ADD_WIN && self.add_for == Pick::Program && self.chooser.is_some() {
             return Some(CHOOSER_WIN);
         }
-        if self.error.owns(win) {
-            let text = self.error.shown().map(|b| &b.fields.text);
-            let over = (self.error_over.iter())
-                .find(|(t, _)| Some(t) == text)
-                .map_or(repriseapp::MAIN, |&(_, w)| w);
+        if let Some(over) = self.error.parent(win) {
             if over == repriseapp::MAIN || self.dialogs_up().any(|w| w == over) {
                 return Some(over);
             }
