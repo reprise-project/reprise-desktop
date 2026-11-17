@@ -246,8 +246,34 @@ fn the_switcher_bind_passes_a_dialog_but_not_a_welcome_panel() {
         "Show Desktop stays the dialog's"
     );
     m.dialog_modal = true;
-    assert_eq!(r(&m, &alt_tab), KeyRoute::Dialog);
-    assert_eq!(r(&m, &super_tab), KeyRoute::Dialog);
+    assert_eq!(r(&m, &alt_tab), KeyRoute::Swallow, "not Tab for the panel");
+    assert_eq!(r(&m, &super_tab), KeyRoute::Swallow);
+    assert_eq!(r(&m, &press(KEY_Tab, 0)), KeyRoute::Dialog);
+}
+
+#[test]
+fn alt_tab_on_a_welcome_panel_moves_nothing() {
+    const ALT: u32 = 56;
+    const TAB: u32 = 15;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    h.map_toplevel(&mut c, "app", 300, 200);
+    h.state.run_action(&Action::TurnOff, 0);
+    let focus = |h: &crate::harness::Harness| match &h.state.dialogs.views[0].dialog.style {
+        crate::dialog::Style::Welcome(w) => w.panel.focus,
+        _ => panic!("Turn Off is a Welcome panel"),
+    };
+    let before = focus(&h);
+    h.key(ALT, true);
+    h.key(TAB, true);
+    h.key(TAB, false);
+    h.key(ALT, false);
+    assert_eq!(focus(&h), before, "the panel's focus stays");
+    assert!(!h.state.switcher.is_open(), "and no switcher opens");
+    h.key(TAB, true);
+    h.key(TAB, false);
+    assert_ne!(focus(&h), before, "Tab alone moves it");
 }
 
 #[test]
