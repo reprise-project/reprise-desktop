@@ -212,6 +212,7 @@ struct Data {
     /// Frames answered so far, for the debug log of the first captures.
     calls: u64,
     damage: DamageState,
+    stale: BufferDamage,
     /// The source's refresh rate in mHz, offered as the maximum frame rate.
     refresh: u32,
     pace: Pace,
@@ -393,6 +394,7 @@ fn run(
         seq: 0,
         calls: 0,
         damage: DamageState::new(),
+        stale: BufferDamage::default(),
         refresh,
         pace: Pace::default(),
         timer: Timer::new()?,
@@ -865,6 +867,7 @@ fn on_add_buffer(d: &mut Data, buf: *mut pw_sys::pw_buffer) -> Result<(), String
                         unfilled(&mut *data.chunk, plane.offset, plane.stride);
                     }
                 }
+                d.stale.lost(buf as usize);
                 d.buffers.push((buf as usize, Buffer::Dma(dma)));
                 return Ok(());
             }
@@ -896,6 +899,7 @@ fn on_add_buffer(d: &mut Data, buf: *mut pw_sys::pw_buffer) -> Result<(), String
         data.mapoffset = 0;
         unfilled(&mut *data.chunk, 0, shm.stride);
     }
+    d.stale.lost(buf as usize);
     d.buffers.push((buf as usize, Buffer::Shm(shm)));
     Ok(())
 }
@@ -923,6 +927,7 @@ fn on_remove_buffer(d: &mut Data, buf: *mut pw_sys::pw_buffer) {
         d.held = None;
     }
     d.buffers.retain(|(k, _)| *k != buf as usize);
+    d.stale.lost(buf as usize);
     // The fds belong to the buffers just dropped.
     // SAFETY: PipeWire passes remove_buffer the live pw_buffer it passed
     // add_buffer; its `datas` has `n_datas` entries.
@@ -1056,7 +1061,10 @@ fn on_timer(stream: &pipewire::stream::Stream, d: &mut Data) {
 
 /// Ask the compositor for a frame into `d.buffers[i]`, the PipeWire buffer at `buf`.
 fn ask(d: &mut Data, i: usize, buf: usize) {
-    let asked = d.wl.ask(&d.session, d.buffers[i].1.capture_buffer());
+    let size = (d.constraints.width, d.constraints.height);
+    let stale = d.stale.of(buf, size);
+    let asked =
+        d.wl.ask(&d.session, d.buffers[i].1.capture_buffer(), &stale);
     d.asked = Some((buf, asked));
     d.pace.asked = Some(Instant::now());
 }
@@ -1145,8 +1153,13 @@ fn hand_on(
         d.damage.invalidate();
         return;
     };
-    if result.is_err() {
-        d.damage.invalidate();
+    let size = (d.constraints.width, d.constraints.height);
+    match &result {
+        Ok(()) => d.stale.filled(buf as usize, d.wl.damage(), size),
+        Err(_) => {
+            d.stale.lost(buf as usize);
+            d.damage.invalidate();
+        }
     }
     d.calls += 1;
     if d.calls <= 8 || d.calls.is_multiple_of(200) {
@@ -1159,7 +1172,6 @@ fn hand_on(
         let sb = (*buf).buffer;
         match result {
             Ok(()) => {
-                let size = (d.constraints.width, d.constraints.height);
                 let damage = d.damage.answered(Some(d.wl.damage()), size);
                 if damage.is_none() {
                     match unchanged(cursor_moved(sb, d), cursor_image_out(sb, d), may_hold) {
@@ -1316,6 +1328,39 @@ impl DamageState {
             Some([]) => None,
             Some(r) => Some(r.to_vec()),
         }
+    }
+}
+
+/// What changed in each buffer since it last held a frame, which a capture into it tells the
+/// compositor (`damage_buffer`): the damage of every frame answered since, into any buffer. A
+/// buffer not listed holds no frame yet, or one lost to a failed capture, and is damaged whole.
+#[derive(Debug, Default)]
+struct BufferDamage(Vec<(usize, Vec<Rect>)>);
+
+impl BufferDamage {
+    /// The damage to send with a capture of a `size` frame into the buffer at `buf`.
+    fn of(&self, buf: usize, size: (u32, u32)) -> Vec<Rect> {
+        match self.0.iter().find(|(k, _)| *k == buf) {
+            Some((_, rects)) => rects.clone(),
+            None => vec![full_rect(size)],
+        }
+    }
+
+    /// The buffer at `buf` holds a `size` frame the compositor said changed `rects` since its last.
+    fn filled(&mut self, buf: usize, rects: &[Rect], size: (u32, u32)) {
+        for (_, stale) in self.0.iter_mut().filter(|(k, _)| *k != buf) {
+            stale.extend_from_slice(rects);
+            *stale = damage_regions(stale, size, MAX_DAMAGE_RECTS);
+        }
+        match self.0.iter_mut().find(|(k, _)| *k == buf) {
+            Some((_, stale)) => stale.clear(),
+            None => self.0.push((buf, Vec::new())),
+        }
+    }
+
+    /// The buffer at `buf` is new, gone or holds no frame known.
+    fn lost(&mut self, buf: usize) {
+        self.0.retain(|(k, _)| *k != buf);
     }
 }
 
@@ -2230,6 +2275,85 @@ mod tests {
             Some(vec![rect(0, 0, 1280, 720)]),
             "the whole 1280x720 frame"
         );
+    }
+
+    #[test]
+    fn a_buffer_that_never_held_a_frame_is_asked_for_whole() {
+        let mut d = BufferDamage::default();
+        assert_eq!(d.of(1, FHD), vec![rect(0, 0, 1920, 1080)]);
+        d.filled(1, &[rect(0, 0, 1920, 1080)], FHD);
+        assert_eq!(
+            d.of(2, FHD),
+            vec![rect(0, 0, 1920, 1080)],
+            "nor does buffer 2"
+        );
+        assert_eq!(d.of(1, FHD), Vec::new(), "buffer 1 holds the latest frame");
+    }
+
+    #[test]
+    fn a_buffer_is_asked_for_the_damage_of_every_frame_since_it_was_filled() {
+        let mut d = BufferDamage::default();
+        for buf in [1, 2, 3] {
+            d.filled(buf, &[], FHD);
+        }
+        let (a, b, c) = (
+            rect(10, 10, 2, 16),
+            rect(400, 300, 8, 8),
+            rect(1000, 50, 30, 20),
+        );
+        d.filled(1, &[a], FHD);
+        d.filled(2, &[b], FHD);
+        assert_eq!(
+            d.of(3, FHD),
+            vec![a, b],
+            "both frames since buffer 3 was filled"
+        );
+        d.filled(3, &[c], FHD);
+        assert_eq!(d.of(1, FHD), vec![b, c], "buffer 1 already holds a");
+        d.filled(1, &[], FHD);
+        assert_eq!(
+            d.of(1, FHD),
+            Vec::new(),
+            "an unchanged frame leaves it current"
+        );
+        assert_eq!(d.of(2, FHD), vec![c]);
+    }
+
+    #[test]
+    fn a_buffer_that_lost_its_frame_is_asked_for_whole_again() {
+        let mut d = BufferDamage::default();
+        d.filled(1, &[], FHD);
+        d.filled(2, &[], FHD);
+        d.lost(1);
+        assert_eq!(
+            d.of(1, FHD),
+            vec![rect(0, 0, 1920, 1080)],
+            "a failed capture"
+        );
+        d.filled(1, &[], FHD);
+        assert_eq!(d.of(1, FHD), Vec::new());
+        assert_eq!(d.of(2, FHD), Vec::new(), "the others keep what they had");
+    }
+
+    #[test]
+    fn a_buffers_damage_past_the_rect_limit_is_its_bounds() {
+        let mut d = BufferDamage::default();
+        d.filled(1, &[], FHD);
+        for i in 0..20 {
+            d.filled(2, &[rect(10 * i, 10 * i, 5, 5)], FHD);
+        }
+        let asked = d.of(1, FHD);
+        assert!(asked.len() <= MAX_DAMAGE_RECTS, "{} rects", asked.len());
+        let inside = |r: Rect, o: &Rect| {
+            r.x >= o.x
+                && r.y >= o.y
+                && r.x + r.width <= o.x + o.width
+                && r.y + r.height <= o.y + o.height
+        };
+        for i in 0..20 {
+            let r = rect(10 * i, 10 * i, 5, 5);
+            assert!(asked.iter().any(|o| inside(r, o)), "{r:?} in {asked:?}");
+        }
     }
 
     #[test]
