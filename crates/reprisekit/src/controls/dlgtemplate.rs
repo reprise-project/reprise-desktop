@@ -6,6 +6,7 @@
 
 use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H, ROW_H};
 use crate::controls::form::{Form, Item};
+use crate::controls::msgbox;
 use crate::raster::{Canvas, Rect};
 use crate::text::{TextRenderer, split_mnemonic, wrap};
 use crate::theme::TextUnits;
@@ -28,6 +29,8 @@ pub enum Template {
 }
 
 struct Metrics {
+    /// The whole dialog's width at 100%, or `None` for the text's own width: its client then
+    /// wraps the text at [`msgbox::WRAP_W`] at the text size.
     width: Option<i32>,
     left: i32,
     top: i32,
@@ -242,7 +245,8 @@ pub fn layout(
     let (w, wrapped) = match cm.width {
         Some(w) => (w, wrap(text, f.text, u.len(w - cm.right) - start, px)),
         None => {
-            let lines = wrap(text, f.text, i32::MAX, px);
+            let cap = msgbox::WRAP_W + 2 * FRAME;
+            let lines = wrap(text, f.text, u.len(cap - cm.right) - start, px);
             let widest = lines
                 .iter()
                 .map(|l| text.measure(l, false, px))
@@ -518,6 +522,50 @@ mod tests {
                 EXPECTED_GAP,
                 "{pct}%: the form's gap"
             );
+        }
+    }
+
+    /// A shell notice takes its text's own width up to the message box cap at the text size: a
+    /// short one keeps its width, a long line wraps at the cap and its lines fit their column.
+    #[test]
+    fn a_shell_notice_wraps_at_the_message_box_cap() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let buttons = ["&Yes".into(), "&No".into()];
+        let fields = |t| Fields {
+            text: t,
+            icon: true,
+            field: false,
+            buttons: &buttons,
+            text_h: None,
+        };
+        let short = "Are you sure you want to delete this icon?";
+        let long = "The contents of the folder will not be deleted. You can restore this icon \
+                    to the desktop on the Background page of Reprise Settings.";
+        for pct in [100, 150, 200] {
+            let theme = Theme::default().with_form_text(pct);
+            let (u, px) = (theme.text, theme.fonts.size_px);
+            let cap = u.len(crate::controls::msgbox::WRAP_W);
+            let lay = |t| layout(Template::ShellNotice, &text, px, &fields(t), u).grown(u);
+            let one = lay(short);
+            assert_eq!(one.lines.len(), 1, "{pct}%: a short notice keeps one line");
+            assert!(one.size.0 - 2 * FRAME < cap, "{pct}%: and its own width");
+            let wrapped = lay(long);
+            let w = wrapped.size.0 - 2 * FRAME;
+            assert!(
+                w <= cap,
+                "{pct}%: the client is {w} px, within the {cap} px cap"
+            );
+            assert!(
+                w > cap * 3 / 4,
+                "{pct}%: {w} px fills most of the {cap} px cap"
+            );
+            assert!(wrapped.lines.len() > 1, "{pct}%: the long line wraps");
+            for (r, line) in &wrapped.lines {
+                assert!(
+                    text.measure(line, false, px) <= r.width,
+                    "{pct}%: {line:?} fits"
+                );
+            }
         }
     }
 
