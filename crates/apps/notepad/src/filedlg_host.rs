@@ -95,7 +95,8 @@ impl Notepad {
         self.open_driven(driven)
     }
 
-    /// A picked file is read into the buffer. Cancel leaves `pending` alone: any action has run by
+    /// A picked file is read into the buffer, after the save prompt when the text changed while
+    /// Open was up (a paste answered late). Cancel leaves `pending` alone: any action has run by
     /// the time Open is up.
     pub(crate) fn open_driven(&mut self, driven: Driven) -> Reply {
         let path = match driven {
@@ -106,9 +107,13 @@ impl Notepad {
                 return Reply::redraw_all();
             }
         };
-        match read_text(&path) {
-            Ok((text, format)) => self.show_document(&text, format, Some(path)),
-            Err(e) => self.open_failed(&path, &e),
+        self.confirm_then(PendingAction::Pick(path))
+    }
+
+    pub(crate) fn open_picked(&mut self, path: &Path) -> Reply {
+        match read_text(path) {
+            Ok((text, format)) => self.show_document(&text, format, Some(path.to_path_buf())),
+            Err(e) => self.open_failed(path, &e),
         }
         Reply::redraw_all()
     }

@@ -241,9 +241,11 @@ impl Notepad {
     }
 
     /// Runs `action` on a clean document; on a dirty one it waits on Save changes, which is
-    /// asked once however often the action is.
+    /// asked once however often the action is. Open closes first, since the prompt's Yes may
+    /// open Save As.
     pub(crate) fn confirm_then(&mut self, action: PendingAction) -> Reply {
         let Some(action) = self.pending.ask(action, self.dirty) else {
+            self.open = None;
             if !(self.asks.iter()).any(|(_, ask)| matches!(ask, Ask::SaveChanges)) {
                 let b = self.savechanges_box();
                 self.asks.ask(b, Ask::SaveChanges);
@@ -276,6 +278,11 @@ impl Notepad {
                     Ok((text, format)) => self.show_document(&text, format, Some(path)),
                     Err(e) => self.open_failed(&path, &e),
                 }
+                Reply::redraw_all()
+            }
+            PendingAction::Pick(path) => self.open_picked(&path),
+            PendingAction::Lossy(text) => {
+                self.show_lossy(&text);
                 Reply::redraw_all()
             }
         }
