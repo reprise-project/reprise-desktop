@@ -18,7 +18,7 @@ const ADDRESS: &str = "address";
 const STATUS: &str = "status";
 const BATTERY_LABEL: &str = "battery_label";
 const BATTERY: &str = "battery";
-const AUTO: &str = "auto";
+pub(crate) const AUTO: &str = "auto";
 const CONNECT: &str = "connect";
 
 const LABEL_X: i32 = 18;
@@ -32,7 +32,7 @@ struct Settings {
 }
 
 /// What Apply changes; None for what stayed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Change {
     pub alias: Option<String>,
     pub trusted: Option<bool>,
@@ -51,7 +51,11 @@ pub enum Outcome {
 pub struct PropsSheet {
     pub path: String,
     pub sheet: PropSheet,
-    applied: Settings,
+    /// The device as BlueZ last reported it; the title follows it.
+    device: Settings,
+    /// Values sent from the sheet. Until BlueZ answers them and a snapshot follows, a field
+    /// holding its sent value is unedited and no snapshot rewrites it.
+    sent: Change,
     pending: Settings,
     /// A change sent from the sheet waits on BlueZ: Apply and OK stay greyed.
     busy: bool,
@@ -94,7 +98,8 @@ impl PropsSheet {
         let mut p = PropsSheet {
             path: d.path.clone(),
             sheet: PropSheet::new(&TABS, vec![page(icon)], CLIENT),
-            applied: s.clone(),
+            device: s.clone(),
+            sent: Change::default(),
             pending: s,
             busy: false,
             leaving: false,
@@ -105,16 +110,25 @@ impl PropsSheet {
     }
 
     pub fn window_title(&self) -> String {
-        format!("{} Properties", self.applied.alias)
+        format!("{} Properties", self.device.alias)
+    }
+
+    /// The name an unedited field holds: the one sent, else the device's.
+    fn base_alias(&self) -> &str {
+        self.sent.alias.as_deref().unwrap_or(&self.device.alias)
+    }
+
+    fn base_trusted(&self) -> bool {
+        self.sent.trusted.unwrap_or(self.device.trusted)
     }
 
     /// Whether the name field holds an unapplied edit (whitespace-only changes do not count).
     fn name_dirty(&self) -> bool {
-        self.pending.alias.trim() != self.applied.alias
+        self.pending.alias.trim() != self.base_alias()
     }
 
     fn trusted_dirty(&self) -> bool {
-        self.pending.trusted != self.applied.trusted
+        self.pending.trusted != self.base_trusted()
     }
 
     fn dirty(&self) -> bool {
@@ -122,24 +136,28 @@ impl PropsSheet {
     }
 
     /// Takes a new device snapshot. Each field resyncs on its own: one with an
-    /// unapplied edit stays. The name field is rewritten only when the name
-    /// changed, so its caret and text survive other updates.
+    /// unapplied edit, or a sent value BlueZ has not answered, stays. The name
+    /// field is rewritten only when its name changed, so its caret and text
+    /// survive other updates.
     pub fn refresh(&mut self, d: &Device) {
         let name_dirty = self.name_dirty();
         let trusted_dirty = self.trusted_dirty();
-        let renamed = d.alias != self.applied.alias;
-        self.applied = Settings {
+        let base = self.base_alias().to_string();
+        self.device = Settings {
             alias: d.alias.clone(),
             trusted: d.trusted,
         };
-        let page = &mut self.sheet.pages[0];
-        if renamed && !name_dirty {
-            self.pending.alias = self.applied.alias.clone();
-            set_edit(page, NAME, &d.alias);
+        if !self.busy {
+            self.sent = Change::default();
+        }
+        if self.base_alias() != base && !name_dirty {
+            self.pending.alias = self.base_alias().to_string();
+            set_edit(&mut self.sheet.pages[0], NAME, &self.pending.alias);
         }
         if !trusted_dirty {
-            self.pending.trusted = self.applied.trusted;
+            self.pending.trusted = self.base_trusted();
         }
+        let page = &mut self.sheet.pages[0];
         page.set_text(TYPE, d.kind.name());
         page.set_text(ADDRESS, &d.address);
         page.set_text(
@@ -180,13 +198,14 @@ impl PropsSheet {
         self.sync();
     }
 
-    /// A change sent from the sheet failed: `d`, as BlueZ has it, is the baseline again, so the
-    /// edit is pending once more.
-    pub fn unapplied(&mut self, d: &Device) {
-        self.applied = Settings {
-            alias: d.alias.clone(),
-            trusted: d.trusted,
-        };
+    /// BlueZ refused `cmd`, a change sent from the sheet: its field's value is an edit of the
+    /// device's again, so Apply sends it anew.
+    pub fn refused(&mut self, cmd: &bz::Cmd) {
+        match cmd {
+            bz::Cmd::SetAlias { .. } => self.sent.alias = None,
+            bz::Cmd::SetTrusted { .. } => self.sent.trusted = None,
+            _ => {}
+        }
         self.sync();
     }
 
@@ -206,11 +225,11 @@ impl PropsSheet {
         }
     }
 
-    /// The change to send, with `applied` caught up to it (name trimmed, so a trailing space is not pending forever).
+    /// The change to send, recorded as sent (name trimmed, so a trailing space is not pending forever).
     fn commit(&mut self) -> Change {
         let c = self.change();
-        self.applied.alias = self.pending.alias.trim().to_string();
-        self.applied.trusted = self.pending.trusted;
+        self.sent.alias = c.alias.clone().or(self.sent.alias.take());
+        self.sent.trusted = c.trusted.or(self.sent.trusted);
         c
     }
 
