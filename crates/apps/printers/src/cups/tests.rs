@@ -595,11 +595,25 @@ fn a_rename_takes_the_address_typed_in_the_same_apply() {
     };
     let typed = DeviceUri("smb://u:p@server/q".into());
     assert_eq!(
-        device_uri(&rename_request("Office", &p, Some(&typed), None, &[])),
+        device_uri(&rename_request(
+            "Office",
+            &p,
+            Some(&typed),
+            None,
+            &[],
+            &ipp::Group::default()
+        )),
         Some(Value::uri("smb://u:p@server/q"))
     );
     assert_eq!(
-        device_uri(&rename_request("Office", &p, None, None, &[])),
+        device_uri(&rename_request(
+            "Office",
+            &p,
+            None,
+            None,
+            &[],
+            &ipp::Group::default()
+        )),
         Some(Value::uri("smb://server/q"))
     );
     assert_eq!(
@@ -912,6 +926,7 @@ fn request_line(r: &Response) -> String {
             attr(JOB, "job-printer-uri")
         ),
         GET_JOB_ATTRIBUTES => format!("read {}", attr(OPERATION, "job-uri")),
+        GET_PRINTER_ATTRIBUTES => format!("read {}", attr(OPERATION, "printer-uri")),
         PAUSE_PRINTER => format!("pause {}", attr(OPERATION, "printer-uri")),
         CUPS_SET_DEFAULT => format!("default {}", attr(OPERATION, "printer-uri")),
         CUPS_DELETE_PRINTER => format!("delete {}", attr(OPERATION, "printer-uri")),
@@ -967,6 +982,7 @@ fn a_renamed_queue_is_made_in_the_old_ones_state_before_its_jobs_move() {
         assert_eq!(
             cupsd.requests(),
             [
+                "read Laser",
                 "add Office",
                 "move 5 to Office",
                 "move 6 to Office",
@@ -987,6 +1003,81 @@ fn a_renamed_queue_is_made_in_the_old_ones_state_before_its_jobs_move() {
 }
 
 #[test]
+fn a_renamed_queue_keeps_its_state_message_reasons_policies_users_banners_and_quotas() {
+    let settings = [
+        ("printer-state-message", vec![Value::text("Out of paper")]),
+        (
+            "printer-state-reasons",
+            vec![
+                Value::keyword("paused"),
+                Value::keyword("media-empty-error"),
+                Value::keyword("connecting-to-device"),
+            ],
+        ),
+        ("printer-error-policy", vec![Value::name("stop-printer")]),
+        ("printer-op-policy", vec![Value::name("authenticated")]),
+        (
+            "job-sheets-default",
+            vec![Value::name("standard"), Value::name("none")],
+        ),
+        (
+            "requesting-user-name-denied",
+            vec![Value::name("bob"), Value::name("eve")],
+        ),
+        ("job-quota-period", vec![Value::Int(86400)]),
+        ("job-k-limit", vec![Value::Int(1024)]),
+        ("job-page-limit", vec![Value::Int(100)]),
+    ];
+    let reported = settings.clone();
+    let cupsd = FakeCupsd::start(move |r| match request_line(r).as_str() {
+        "read Laser" => reported
+            .iter()
+            .fold(ok(), |req, (k, v)| req.add(PRINTER, k, v.clone())),
+        _ => ok(),
+    });
+    let s = laser_with_jobs(PrinterState::Stopped, true);
+    let ppd = Some(b"*PPD-Adobe: \"4.3\"\n".to_vec());
+    assert_eq!(
+        rename_by_peer(&cupsd.client(), "Laser", "Office", None, &s, ppd, &[]),
+        Ok(())
+    );
+    assert_eq!(
+        cupsd.requests(),
+        [
+            "read Laser",
+            "add Office",
+            "add Office",
+            "move 5 to Office",
+            "move 6 to Office",
+            "move 7 to Office",
+            "delete Laser"
+        ],
+        "the reasons follow the PPD in a request of their own"
+    );
+    let seen = cupsd.seen.lock().unwrap();
+    let made = seen[1].first(PRINTER).expect("printer attributes");
+    for (k, v) in settings
+        .iter()
+        .filter(|(k, _)| *k != "printer-state-reasons")
+    {
+        assert_eq!(made.get(k), Some(v.as_slice()), "Office is made with {k}");
+    }
+    assert_eq!(made.get("printer-state-reasons"), None);
+    let reasons = seen[2].first(PRINTER).expect("printer attributes");
+    assert_eq!(
+        reasons.attrs,
+        [ipp::Attr {
+            name: "printer-state-reasons".into(),
+            values: vec![
+                Value::keyword("paused"),
+                Value::keyword("media-empty-error")
+            ],
+        }],
+        "Office takes Laser's reasons but connecting-to-device"
+    );
+}
+
+#[test]
 fn a_move_refused_halfway_puts_the_moved_jobs_back_and_deletes_the_new_queue() {
     let still_waiting = Value::Enum(3);
     let cupsd = FakeCupsd::start(move |r| match request_line(r).as_str() {
@@ -1002,6 +1093,7 @@ fn a_move_refused_halfway_puts_the_moved_jobs_back_and_deletes_the_new_queue() {
     assert_eq!(
         cupsd.requests(),
         [
+            "read Laser",
             "add Office",
             "move 5 to Office",
             "move 6 to Office",
@@ -1037,6 +1129,7 @@ fn a_job_that_finished_or_went_before_its_move_is_left_and_the_rest_move() {
         assert_eq!(
             cupsd.requests(),
             [
+                "read Laser",
                 "add Office",
                 "move 5 to Office",
                 "move 6 to Office",

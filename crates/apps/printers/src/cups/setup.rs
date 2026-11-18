@@ -311,11 +311,13 @@ pub(super) fn add_calls(p: &NewPrinter) -> Vec<Call> {
 }
 
 /// Rename a printer: CUPS has no rename, so a new queue takes the old
-/// one's address, PPD, description, sharing, defaults and state, its jobs
+/// one's address, PPD, description, sharing, defaults, state, state message
+/// and reasons, policies, allowed or denied users, banners and quotas, its jobs
 /// move over (all or none), it becomes the default if the old one was, and
 /// the old one goes.
 /// cups-pk-helper's PrinterRename takes the same steps as root but leaves
-/// the defaults the PPD does not hold, so they follow as calls. The
+/// the defaults the PPD does not hold, so they follow as calls; the state
+/// message, reasons and quotas stay behind on that path. The
 /// user's own default follows the name either way. cupsd reports the address without its user
 /// name and password, so `device_uri`, when given, is the address the new queue takes instead.
 pub fn rename(
@@ -442,14 +444,47 @@ pub(super) fn carried_defaults(o: &Options, has_ppd: bool) -> Vec<(String, Value
     out
 }
 
+/// The attributes a renamed queue copies from the old one's Get-Printer-Attributes as cupsd
+/// reports them; cupsd's Add-Modify-Printer sets each.
+const CARRIED: &[&str] = &[
+    "printer-state-message",
+    "printer-error-policy",
+    "printer-op-policy",
+    "job-sheets-default",
+    "requesting-user-name-allowed",
+    "requesting-user-name-denied",
+    "job-quota-period",
+    "job-k-limit",
+    "job-page-limit",
+];
+
+/// The reasons cupsd derives itself or holds only while a job runs, and drops from printers.conf.
+const PASSING_REASONS: &[&str] = &[
+    "connecting-to-device",
+    "cups-insecure-filter-warning",
+    "cups-missing-filter-warning",
+];
+
+/// Queue `name`'s [`CARRIED`] attributes and its printer-state-reasons.
+fn settings_of(c: &Client, name: &str) -> Result<ipp::Group> {
+    let req = Request::new(GET_PRINTER_ATTRIBUTES)
+        .op_attr("printer-uri", Value::uri(&printer_uri(name)))
+        .requested(&[CARRIED, &["printer-state-reasons"]].concat());
+    Ok(c.call("/", req)?
+        .first(PRINTER)
+        .cloned()
+        .unwrap_or_default())
+}
+
 /// The CUPS-Add-Modify-Printer request creating `new` as a copy of `p`, in its state, at
-/// `device_uri` when given.
+/// `device_uri` when given, with the [`CARRIED`] attributes in `settings`.
 pub(super) fn rename_request(
     new: &str,
     p: &Printer,
     device_uri: Option<&DeviceUri>,
     ppd: Option<Vec<u8>>,
     defaults: &[(String, Value)],
+    settings: &ipp::Group,
 ) -> Request {
     let uri = device_uri.map_or(p.device_uri.as_str(), |u| u.0.as_str());
     let mut req = Request::new(CUPS_ADD_MODIFY_PRINTER)
@@ -470,10 +505,38 @@ pub(super) fn rename_request(
     for (k, v) in defaults {
         req = req.printer_attr(k, v.clone());
     }
+    for a in settings
+        .attrs
+        .iter()
+        .filter(|a| CARRIED.contains(&a.name.as_str()))
+    {
+        req = req.add(PRINTER, &a.name, a.values.clone());
+    }
     if let Some(ppd) = ppd {
         req = req.with_data(ppd);
     }
     req
+}
+
+/// The CUPS-Add-Modify-Printer giving `new` the reasons in `settings` but the
+/// [`PASSING_REASONS`]: a request of its own, since a PPD on the one making `new` clears them.
+/// None when no reason is left.
+fn reasons_request(new: &str, settings: &ipp::Group) -> Option<Request> {
+    let reasons: Vec<Value> = settings
+        .get("printer-state-reasons")
+        .unwrap_or_default()
+        .iter()
+        .filter(|v| {
+            v.as_str()
+                .is_some_and(|r| r != "none" && !PASSING_REASONS.contains(&r))
+        })
+        .cloned()
+        .collect();
+    (!reasons.is_empty()).then(|| {
+        Request::new(CUPS_ADD_MODIFY_PRINTER)
+            .op_attr("printer-uri", Value::uri(&printer_uri(new)))
+            .add(PRINTER, "printer-state-reasons", reasons)
+    })
 }
 
 pub(super) fn rename_by_peer(
@@ -488,8 +551,17 @@ pub(super) fn rename_by_peer(
     let Some(p) = s.printer(old) else {
         return Err(Error::Refused(format!("{old} is no longer there.")));
     };
+    let settings = settings_of(c, old)?;
     // `new` is made stopped when `old` is, so no job starts on it as it moves over.
-    c.call("/admin/", rename_request(new, p, device_uri, ppd, defaults))?;
+    c.call(
+        "/admin/",
+        rename_request(new, p, device_uri, ppd, defaults, &settings),
+    )?;
+    if let Some(req) = reasons_request(new, &settings)
+        && let Err(e) = c.call("/admin/", req)
+    {
+        log::warn!("carrying {old}'s state reasons to {new}: {e:?}");
+    }
     let mut moved = Vec::new();
     for j in s.jobs_of(old) {
         match move_job(c, j.id, new) {
