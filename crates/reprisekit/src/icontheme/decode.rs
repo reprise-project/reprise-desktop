@@ -179,7 +179,7 @@ fn shrink_to_ink(c: &Canvas, px: u32) -> Canvas {
 pub(super) const SVG_MAX_BYTES: usize = 1 << 20;
 /// Work usvg may do to build an SVG's tree and resvg to draw it at its output size, together, in
 /// about nanoseconds of one core's CPU time; the draw gets what the build left. The weights
-/// below are resvg 0.49's.
+/// below are resvg 0.50's.
 pub(super) const SVG_MAX_WORK: f64 = 78e6;
 /// Work to parse and convert one element, each `<use>` copy and each reference converted again
 /// counted once more, and one path vertex.
@@ -254,6 +254,10 @@ const BYTES_MASK: f64 = 6.0;
 const BYTES_PRIMITIVE: f64 = 8.0;
 const BYTES_IIR: f64 = 8.0;
 const BYTES_SHADOW: f64 = 4.0;
+/// Element nesting usvg builds, `<use>` copies included, past which it refuses an SVG: it looks
+/// each element's inherited style up through its ancestors, so a deep tree costs past what
+/// its elements are priced at. Stock themes nest 11 deep at most.
+const SVG_MAX_DEPTH: u32 = 64;
 /// Embedded PNG, JPEG and SVG pictures drawn, each use of one counted again.
 pub(super) const SVG_MAX_IMAGES: usize = 4;
 /// Pixels of every embedded PNG and JPEG drawn, summed; each is decoded again per use.
@@ -427,7 +431,7 @@ impl Cost {
                 (unrotate.pre_concat(ts), stretched(bound, unrotate))
             }
         };
-        let Some(bbox) = g.layer_bounding_box().transform(ts) else {
+        let Some(bbox) = g.layer_bounding_box().and_then(|b| b.transform(ts)) else {
             return;
         };
         // A filter region is not padded for anti-aliasing: it clips.
@@ -550,7 +554,8 @@ impl Cost {
             self.add(WORK_NODE);
             match n {
                 Node::Path(p) if p.is_visible() && p.fill().is_some() => {
-                    self.add(area(p.bounding_box().transform(ts), layer) * WORK_FILL);
+                    let bbox = p.bounding_box().and_then(|b| b.transform(ts));
+                    self.add(area(bbox, layer) * WORK_FILL);
                     self.edges(p, ts, layer);
                 }
                 Node::Text(t) => self.clip_children(t.flattened(), ts, layer),
@@ -575,13 +580,15 @@ impl Cost {
             return;
         }
         if let Some(fill) = p.fill() {
-            let covered = area(p.bounding_box().transform(ts), target);
+            let filled = p.bounding_box().and_then(|b| b.transform(ts));
+            let covered = area(filled, target);
             self.paint(fill.paint(), ts, covered, bound);
             self.edges(p, ts, target);
         }
         if let Some(stroke) = p.stroke() {
             let rows = rows(p, ts, target.1);
-            let covered = area(p.stroke_bounding_box().transform(ts), target);
+            let stroked = p.stroke_bounding_box().and_then(|b| b.transform(ts));
+            let covered = area(stroked, target);
             self.paint(stroke.paint(), ts, covered, bound);
             // The stroker outlines each side of every segment, a dash a closed outline of its own.
             let n = segments(p);
@@ -606,13 +613,15 @@ impl Cost {
             Paint::LinearGradient(g) => self.add(gradient(g.stops().len())),
             Paint::RadialGradient(g) => self.add(gradient(g.stops().len())),
             Paint::Pattern(pattern) => {
-                // resvg draws the tile at the device scale, whatever its size.
+                // resvg draws the tile at the device scale, whatever its size, rounded to whole
+                // pixels, and its content at the scale that fills the rounded tile.
                 let (sx, sy) = ts.pre_concat(pattern.transform()).get_scale();
                 let rect = pattern.rect();
                 let tile = ((rect.width() * sx).round(), (rect.height() * sy).round());
                 let pixels = self.pixmap(tile, BYTES_PIXMAP);
                 self.add(WORK_LAYER_PASS + pixels * WORK_LAYER + covered * WORK_BICUBIC);
-                self.children(pattern.root(), Transform::from_scale(sx, sy), tile, bound);
+                let fill = Transform::from_scale(tile.0 / rect.width(), tile.1 / rect.height());
+                self.children(pattern.root(), fill, tile, bound);
             }
         }
     }
@@ -762,7 +771,8 @@ pub(super) fn parse_xml(
 /// mask or filter is converted for each element naming it, and another `url(#id)` or `href`
 /// converts its target again for each element under the one naming it (each vertex, for a
 /// marker). A `<style>` reference counts against every element, and a path vertex as the part
-/// of an element its work is.
+/// of an element its work is. usvg also searches each element an `<feImage>` names for
+/// reference loops, once, whether its filter is used or not.
 fn built_elements(doc: &roxmltree::Document) -> f64 {
     use std::collections::HashMap;
     type Node<'a, 'i> = roxmltree::Node<'a, 'i>;
@@ -778,6 +788,8 @@ fn built_elements(doc: &roxmltree::Document) -> f64 {
         ids: HashMap<&'a str, Node<'a, 'i>>,
         /// None while a walk of the node is under way.
         seen: HashMap<roxmltree::NodeId, Option<Built>>,
+        /// Elements an `<feImage>` names.
+        pictured: std::collections::HashSet<roxmltree::NodeId>,
     }
     const DEFINITIONS: [&str; 9] = [
         "defs",
@@ -858,6 +870,9 @@ fn built_elements(doc: &roxmltree::Document) -> f64 {
                         let Some(t) = self.ids.get(id).copied() else {
                             continue;
                         };
+                        if name == "href" && n.has_tag_name("feImage") {
+                            self.pictured.insert(t.id());
+                        }
                         let t = self.walk(t, depth + 1);
                         if copy {
                             b.elements += t.elements;
@@ -887,10 +902,16 @@ fn built_elements(doc: &roxmltree::Document) -> f64 {
     let mut w = Walk {
         ids,
         seen: HashMap::new(),
+        pictured: Default::default(),
     };
     let root = w.walk(doc.root_element(), 0);
     let styles = doc.descendants().filter(|n| n.has_tag_name("style"));
-    let mut built = root.built;
+    // After the walk: a picture can name a group around it, still being walked when it is met.
+    let searched: f64 = (w.pictured.iter())
+        .filter_map(|id| w.seen.get(id).copied().flatten())
+        .map(|b| b.elements)
+        .sum();
+    let mut built = root.built + searched;
     for id in styles.flat_map(|n| n.text()).flat_map(urls) {
         if let Some(t) = w.ids.get(id).copied() {
             built += w.walk(t, 0).built * (root.elements + root.vertices);
@@ -994,6 +1015,7 @@ fn drawn_picture(href: &str, budget: f64, d: &mut Decoded) -> Option<(ImageKind,
             resolve_data: Box::new(|_, _, _| None),
             resolve_string: Box::new(|_, _| None),
         },
+        max_depth: SVG_MAX_DEPTH,
         ..Default::default()
     };
     let mime = format!("{}/{}", url.mime_type().type_, url.mime_type().subtype);
@@ -1104,6 +1126,7 @@ fn tree_with(
             }),
             resolve_string: Box::new(|_, _| None),
         },
+        max_depth: SVG_MAX_DEPTH,
         ..Default::default()
     };
     let tree = usvg::Tree::from_xmltree(doc, &options).map_err(|e| e.to_string())?;
