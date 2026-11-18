@@ -3,7 +3,7 @@
 
 use crate::Explorer;
 use crate::copydlg::Progress;
-use crate::fileops::{BinItem, file_label};
+use crate::fileops::BinItem;
 use crate::place::Place;
 use repriseapp::{Ctx, Reply};
 use reprisefs::bincap::Plan;
@@ -36,7 +36,7 @@ pub(crate) struct Undoing {
 
 pub(crate) struct PendingRemoval {
     items: Vec<Removal>,
-    /// The path each item names, for its error box and the undo stack.
+    /// The path each item names, for the undo stack.
     paths: Vec<PathBuf>,
     bins: Option<Bins>,
     purpose: Purpose,
@@ -50,6 +50,8 @@ pub(crate) struct PendingRemoval {
 pub(crate) struct Removing {
     job: RemoveJob,
     paths: Vec<PathBuf>,
+    /// The name each item's error box gives it ([`Removal::name`]).
+    names: Vec<String>,
     purpose: Purpose,
     pub(crate) progress: Progress,
     batch: Vec<Undoable>,
@@ -191,6 +193,9 @@ impl Explorer {
             self.remove_queue.push_back(p);
             return;
         }
+        let names = (p.items.iter())
+            .map(|it| it.name().to_string_lossy().into_owned())
+            .collect();
         let wake = ctx.wake.clone();
         let wake = move || wake.wake();
         // Undo stops at its first failure, as the stack keeps what it did not reverse.
@@ -203,6 +208,7 @@ impl Explorer {
         self.removing = Some(Removing {
             job,
             paths: p.paths,
+            names,
             purpose: p.purpose,
             progress,
             batch: Vec::new(),
@@ -238,11 +244,11 @@ impl Explorer {
                     }
                 }
                 RemoveEvent::Failed { index, error } => {
-                    let path = &r.paths[index];
+                    let name = &r.names[index];
                     let failure = match r.purpose {
                         Purpose::Restore => (
                             "Error Restoring File or Folder",
-                            format!("Cannot restore {}: {error}", file_label(path)),
+                            format!("Cannot restore {name}: {error}"),
                         ),
                         Purpose::Empty => (
                             "Error Deleting File or Folder",
@@ -250,7 +256,7 @@ impl Explorer {
                         ),
                         _ => (
                             "Error Deleting File or Folder",
-                            format!("Cannot delete {}: {error}", file_label(path)),
+                            format!("Cannot delete {name}: {error}"),
                         ),
                     };
                     if r.progress.meter.cancelled() || r.purpose == Purpose::Empty {

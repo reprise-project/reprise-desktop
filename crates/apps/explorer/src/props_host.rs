@@ -195,7 +195,7 @@ impl Explorer {
     }
 
     fn open_bin_item_properties(&mut self, it: reprisefs::listing::Item, ctx: &mut Ctx) -> Reply {
-        let (path, name) = (it.path.clone(), it.name.clone());
+        let (path, name) = (it.path.clone(), it.label().to_string());
         let (apps, globs) = (self.app_index.clone(), self.globs.clone());
         let scale = ctx.icons.scale();
         let work = move |_: &Gate| glance(&path, &name, &apps, &globs, scale);
@@ -216,7 +216,7 @@ impl Explorer {
         match glanced {
             Ok(g) => self.open_sheet(SheetRead::Bin(g, it.clone()), ctx),
             Err(e) => {
-                let text = format!("Cannot show the properties of {}: {e}", it.name);
+                let text = format!("Cannot show the properties of {}: {e}", it.label());
                 self.message_box("Properties", text, ctx)
             }
         }
@@ -338,12 +338,12 @@ impl Explorer {
         let is_12h = reprisefs::locale::is_12h();
         let facts = bin_facts(&info, it.trashed.as_deref(), is_12h, &self.shares.shares);
         let icon = props_icon(&g.icon, &info.path, waits, ctx);
-        let page = bin_page(&facts, &it.name, icon);
+        let page = bin_page(&facts, it.label(), icon);
         let sheet = PropSheet::new(&["General"], vec![page], (SHEET_W, BIN_SHEET_H));
         Props {
             opened_read_only: filesheet::read_only(&sheet.pages[0]),
             opened_name: String::new(),
-            caption: it.name.clone(),
+            caption: it.label().to_string(),
             restore: Some(crate::fileops::BinItem {
                 path: it.path.clone(),
                 record: it.trashed.as_deref().cloned(),

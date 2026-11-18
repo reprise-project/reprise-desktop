@@ -457,3 +457,91 @@ fn the_empty_bin_prompt_counts_the_bin() {
         other => panic!("no confirm box: {:?}", other.is_some()),
     }
 }
+
+/// Two folders named `d` deleted from different places: the second sits in the bin as `d.2`, and
+/// the listing, the Delete question, its sheet, the failures and Empty's question all call it `d`.
+#[test]
+fn a_numbered_duplicate_is_shown_under_its_original_name() {
+    use reprisefs::progress::Decision;
+    use std::os::unix::fs::PermissionsExt;
+    let _guard = lock(&TRASH_ENV);
+    let home = tempfile::tempdir().expect("a temp dir");
+    let _data_home = DataHome::set(home.path());
+    let (one, two) = (home.path().join("one"), home.path().join("two"));
+    for d in [&one, &two] {
+        std::fs::create_dir_all(d.join("d/sub")).expect("mkdir");
+        std::fs::write(d.join("d/sub/locked"), "x").expect("write");
+    }
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(home.path().to_path_buf()), &mut ctx);
+    for d in [&one, &two] {
+        ex.delete_now(&[d.join("d")], false, &mut ctx);
+        ex.finish_puts(&mut ctx);
+    }
+    let numbered = home.path().join("Trash/files/d.2");
+    assert!(numbered.is_dir(), "the second sits in the bin numbered");
+
+    ex.run(Command::GoTo(Place::RecycleBin), &mut ctx);
+    let names: Vec<&str> = ex.sv.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["d", "d"]);
+    let at = |ex: &Explorer| {
+        ex.items
+            .iter()
+            .position(|it| it.path == numbered)
+            .expect("d.2")
+    };
+    let shut = |p: &Path, m: u32| {
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).expect("chmod")
+    };
+
+    ex.sv.selection.set_only(Some(at(&ex)));
+    ex.run(Command::Delete { erase: false }, &mut ctx);
+    let Some(Dialog::Confirm(c)) = ex.take_up() else {
+        panic!("Delete asks first");
+    };
+    assert!(c.text.contains("'d'"), "{}", c.text);
+
+    ex.run(Command::Properties, &mut ctx);
+    assert_eq!(ex.props.take().expect("the sheet").caption, "d");
+
+    let _writable = [Mode0700(two.clone()), Mode0700(numbered.join("sub"))];
+    shut(&two, 0o500);
+    ex.restore_items(vec![ex.bin_item(at(&ex)).expect("d.2")], &mut ctx);
+    ex.finish_puts(&mut ctx);
+    let (_, text) = ex.answer_failed(Decision::Abort, &mut ctx).expect("a box");
+    assert_eq!(text, "Cannot restore d: Permission denied (os error 13)");
+    shut(&two, 0o700);
+
+    shut(&numbered.join("sub"), 0o500);
+    ex.erase_from_bin(vec![ex.bin_item(at(&ex)).expect("d.2")], &mut ctx);
+    ex.finish_puts(&mut ctx);
+    let (_, text) = ex.answer_failed(Decision::Abort, &mut ctx).expect("a box");
+    assert_eq!(
+        text,
+        "Cannot delete d: sub/locked: Permission denied (os error 13)"
+    );
+
+    let first = ex
+        .items
+        .iter()
+        .position(|it| it.path != numbered)
+        .expect("d");
+    ex.restore_items(vec![ex.bin_item(first).expect("d")], &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(one.join("d").is_dir(), "the first is back");
+    assert_eq!(ex.items.len(), 1);
+    ex.confirm_empty_bin(&mut ctx);
+    let Some(Dialog::Confirm(c)) = ex.take_up() else {
+        panic!("Empty asks first");
+    };
+    assert!(c.text.contains("'d'"), "{}", c.text);
+    ex.empty_bin_now(&mut ctx);
+    ex.finish_puts(&mut ctx);
+    let Some(Dialog::Message { text, .. }) = ex.dialog() else {
+        panic!("the failure is reported");
+    };
+    assert_eq!(
+        text,
+        "Cannot empty the Recycle Bin: 1 item could not be deleted: d/sub/locked: Permission denied (os error 13)"
+    );
+}
