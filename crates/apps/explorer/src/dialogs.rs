@@ -452,9 +452,9 @@ impl Explorer {
     }
 
     /// Whether the box up stands over no window of this program: the folder window never shows
-    /// ([`Explorer::alone`]) and no sheet holds the box.
+    /// ([`Explorer::alone`]) or has closed, and no sheet holds the box.
     fn box_stands_alone(&self) -> bool {
-        self.alone && self.parent_of(self.dialog_win()) == repriseapp::MAIN
+        (self.alone || self.closing) && self.parent_of(self.dialog_win()) == repriseapp::MAIN
     }
 
     /// Puts back the box [`Explorer::take_up`] took to handle an event that leaves it up, in the

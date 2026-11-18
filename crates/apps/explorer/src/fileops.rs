@@ -747,9 +747,11 @@ impl Explorer {
     }
 
     /// File > Close or the close box. With work in flight the window hides and [`Explorer::wake`]
-    /// quits once it drains. The hidden window asks nothing: the box up (the taskbar's Close
+    /// quits once it drains and every error it raised since is answered
+    /// ([`Explorer::owes_a_box`]). The hidden window asks nothing: the box up (the taskbar's Close
     /// passes it) and those waiting are dismissed ([`Explorer::dismiss`]), which ends a job held
     /// on a failed item, and every replace prompt answers No, so the rest of its paste is put.
+    /// The sheets and the preview go with the window.
     pub fn close(&mut self, ctx: &mut Ctx) -> Reply {
         self.flush_settings();
         self.closing = self
@@ -763,6 +765,7 @@ impl Explorer {
         }
         self.ask_pastes(ctx);
         self.answer_ends();
+        (self.props, self.props_due, self.bin_props, self.preview) = (None, None, None, None);
         if self.busy() {
             self.closing = true;
             return Reply::none();
@@ -771,6 +774,16 @@ impl Explorer {
             quit: true,
             ..Default::default()
         }
+    }
+
+    /// Whether the closed window still owes an error box, which comes up with no folder window
+    /// till it is answered. A question raised since the close is dismissed unasked.
+    pub(crate) fn owes_a_box(&mut self, ctx: &mut Ctx) -> bool {
+        let question = |d: &Dialog| d.shows() && !matches!(d, Dialog::Message { .. });
+        for d in self.dialogs.withdraw(question) {
+            self.dismiss(d, ctx);
+        }
+        self.dialog().is_some()
     }
 
     /// The title and text of the box a failed item raised ([`Explorer::ask_failed`]), answered

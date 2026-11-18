@@ -115,3 +115,46 @@ fn a_close_after_a_put_gave_up_waits_for_its_stuck_call_to_return() {
         "the window quits once the call returns"
     );
 }
+
+/// A failure that lands after the folder window closed comes up on its own, with a task button,
+/// and the process ends only once it is answered.
+#[test]
+fn a_failure_landing_after_the_window_closed_comes_up_and_the_process_waits_for_it() {
+    use repriseapp::{App, Caption, Extended};
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let one = dir.path().join("one.txt");
+    std::fs::write(&one, "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let renaming = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.sv.selection.set_only(Some(0));
+    ex.sv.edit = Some((0, reprisekit::textedit::TextEdit::new("two.txt", false)));
+    ex.commit_rename(&mut ctx);
+    ex.held = None;
+    let mut app = crate::Lazy {
+        start: crate::parse_args([dir.path().as_os_str().to_os_string()]),
+        inner: Some(ex),
+        units: reprisekit::theme::TextUnits::ONE,
+    };
+    let ex = app.inner.as_mut().expect("the window");
+    assert!(!ex.close(&mut ctx).quit, "the rename is still out");
+    std::fs::remove_file(&one).expect("rm");
+    drop(renaming);
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.inner.as_ref().is_some_and(|ex| ex.dialog().is_none()) {
+        assert!(std::time::Instant::now() < end, "the rename lands");
+        let woke = app.event(crate::MAIN, repriseapp::Event::Wake, &mut ctx);
+        assert!(!woke.quit, "no quit with the failure owed");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let win = app.inner.as_ref().expect("the window").dialog_win();
+    assert!(app.children().iter().any(|c| c.id == win), "the box shows");
+    assert_eq!(app.caption(win), Caption::Fixed, "with a task button");
+    assert!(
+        !app.event(crate::MAIN, repriseapp::Event::Wake, &mut ctx)
+            .quit
+    );
+    assert!(app.event(win, key_event_escape(), &mut ctx).quit);
+}

@@ -1817,8 +1817,7 @@ impl App for Lazy {
 
     fn children(&self) -> Vec<Child> {
         match &self.inner {
-            Some(ex) if !ex.closing => ex.children(),
-            Some(ex) => ex.progress_children(),
+            Some(ex) => ex.children(),
             None => Vec::new(),
         }
     }
@@ -1866,6 +1865,12 @@ impl App for Lazy {
         ex.hold_logout();
         if start.alone.is_some() && !ex.closing && ex.sheet_closed() {
             return reply.and(ex.close(ctx));
+        }
+        if ex.closing && !ex.owes_a_box(ctx) && !ex.busy() {
+            return reply.and(Reply {
+                quit: true,
+                ..Default::default()
+            });
         }
         reply
     }
