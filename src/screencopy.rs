@@ -25,7 +25,7 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_shm::Format},
         },
     },
-    utils::{Logical, Physical, Point, Rectangle, Size},
+    utils::{Buffer as BufferCoords, Logical, Physical, Point, Rectangle, Size},
     wayland::{Dispatch2, GlobalDispatch2, dmabuf, shm},
 };
 
@@ -76,6 +76,8 @@ where
 /// physical pixels, the buffer size and whether the pointer is drawn.
 #[derive(Clone)]
 pub struct FrameInfo {
+    /// The manager the frame came from: its copies of one view share a damage tracker.
+    pub manager: ZwlrScreencopyManagerV1,
     pub output: Output,
     /// The region asked for, output-local logical; None for the whole output.
     pub region: Option<Rectangle<i32, Logical>>,
@@ -100,7 +102,7 @@ where
         &self,
         _state: &mut D,
         _client: &Client,
-        _manager: &ZwlrScreencopyManagerV1,
+        manager: &ZwlrScreencopyManagerV1,
         request: zwlr_screencopy_manager_v1::Request,
         _display: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
@@ -157,6 +159,7 @@ where
             frame,
             FrameState::Pending {
                 info: FrameInfo {
+                    manager: manager.clone(),
                     output,
                     region,
                     region_loc,
@@ -206,7 +209,7 @@ where
         let FrameState::Pending { info, copied } = self else {
             return;
         };
-        let (buffer, with_damage) = match request {
+        let (wl_buffer, with_damage) = match request {
             zwlr_screencopy_frame_v1::Request::Copy { buffer } => (buffer, false),
             zwlr_screencopy_frame_v1::Request::CopyWithDamage { buffer } => (buffer, true),
             _ => return,
@@ -219,7 +222,7 @@ where
             return;
         }
         let size = info.buffer_size;
-        let buffer = if let Ok(dmabuf) = dmabuf::get_dmabuf(&buffer) {
+        let buffer = if let Ok(dmabuf) = dmabuf::get_dmabuf(&wl_buffer) {
             if dmabuf.format().code == Fourcc::Xrgb8888
                 && dmabuf.width() == size.w as u32
                 && dmabuf.height() == size.h as u32
@@ -232,7 +235,7 @@ where
                 );
                 return;
             }
-        } else if shm::with_buffer_contents(&buffer, |_, _, data| {
+        } else if shm::with_buffer_contents(&wl_buffer, |_, _, data| {
             data.format == Format::Xrgb8888
                 && data.width == size.w
                 && data.height == size.h
@@ -240,7 +243,7 @@ where
         })
         .unwrap_or(false)
         {
-            ScreencopyBuffer::Shm(buffer)
+            ScreencopyBuffer::Shm(wl_buffer.clone())
         } else {
             frame.post_error(
                 zwlr_screencopy_frame_v1::Error::InvalidBuffer,
@@ -252,6 +255,7 @@ where
             info: info.clone(),
             frame: frame.clone(),
             buffer,
+            wl_buffer,
             with_damage,
             submitted: false,
         });
@@ -268,6 +272,7 @@ pub struct Screencopy {
     pub info: FrameInfo,
     frame: ZwlrScreencopyFrameV1,
     pub buffer: ScreencopyBuffer,
+    pub wl_buffer: WlBuffer,
     /// `copy_with_damage`: wait for the output's next change.
     pub with_damage: bool,
     submitted: bool,
@@ -283,11 +288,14 @@ impl Drop for Screencopy {
 
 impl Screencopy {
     /// Tell the client the buffer holds the frame presented at `time`
-    /// (monotonic), all of it damaged.
-    pub fn submit(mut self, time: Duration) {
-        let size = self.info.buffer_size;
+    /// (monotonic), which changed since the buffer last held a frame where `damage` lies (buffer
+    /// pixels).
+    pub fn submit(mut self, time: Duration, damage: &[Rectangle<i32, BufferCoords>]) {
         if self.with_damage {
-            self.frame.damage(0, 0, size.w as u32, size.h as u32);
+            for r in damage {
+                let (x, y) = (r.loc.x.max(0) as u32, r.loc.y.max(0) as u32);
+                (self.frame).damage(x, y, r.size.w.max(0) as u32, r.size.h.max(0) as u32);
+            }
         }
         self.frame.flags(Flags::empty());
         let secs = time.as_secs();
