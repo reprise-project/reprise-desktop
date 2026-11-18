@@ -410,9 +410,7 @@ impl NetApp {
         let b = MsgBox::new(
             "Confirm Connection Delete",
             msgbox::Fields {
-                text: wrap(&format!(
-                    "Are you sure you want to delete the connection '{name}'?"
-                )),
+                text: format!("Are you sure you want to delete the connection '{name}'?"),
                 icon: None,
                 buttons: vec!["&Yes".into(), "&No".into()],
                 default: 0,
@@ -1659,7 +1657,7 @@ fn ok_box(title: &str, text: &str) -> MsgBox {
     MsgBox::new(
         title,
         msgbox::Fields {
-            text: wrap(text),
+            text: text.into(),
             icon: None,
             buttons: vec!["OK".into()],
             default: 0,
@@ -1668,11 +1666,6 @@ fn ok_box(title: &str, text: &str) -> MsgBox {
             max_w: repriseapp::dialog_max_w(),
         },
     )
-}
-
-/// A message box's text wrapped to lines the box keeps narrow.
-fn wrap(text: &str) -> String {
-    reprisekit::text::wrap_chars(text, 60).join("\n")
 }
 
 fn home_dir() -> PathBuf {
