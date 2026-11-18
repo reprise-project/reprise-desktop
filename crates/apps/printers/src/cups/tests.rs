@@ -780,13 +780,9 @@ fn a_queue_lists_its_jobs_and_aborted_ones_by_number() {
 }
 
 #[test]
-fn a_rename_deletes_the_old_queue_when_a_follow_up_step_fails() {
+fn a_rename_deletes_the_old_queue_when_making_the_new_one_the_default_fails() {
     let deleted = std::cell::Cell::new(false);
-    let steps = vec![
-        ("made the default printer", Err(Error::NotAuthorized)),
-        ("paused", Err(Error::Refused("Printer busy.".into()))),
-    ];
-    let r = finish_rename("Laser", "Office", steps, || {
+    let r = finish_rename("Laser", "Office", Some(Err(Error::NotAuthorized)), || {
         deleted.set(true);
         Ok(())
     });
@@ -799,15 +795,256 @@ fn a_rename_deletes_the_old_queue_when_a_follow_up_step_fails() {
         )))
     );
 
-    let dismissed = vec![("paused", Err(Error::Dismissed))];
     assert_eq!(
-        finish_rename("Laser", "Office", dismissed, || Ok(())),
+        finish_rename("Laser", "Office", Some(Err(Error::Dismissed)), || Ok(())),
         Err(Error::Refused(
-            "Laser is now called Office, but Office could not be paused.".into()
+            "Laser is now called Office, but Office could not be made the default printer.".into()
         ))
     );
     assert_eq!(
-        finish_rename("Laser", "Office", vec![("paused", Ok(()))], || Ok(())),
+        finish_rename("Laser", "Office", Some(Ok(())), || Ok(())),
         Ok(())
     );
+}
+
+/// A cupsd on a Unix socket: it records every IPP request in order, its operation in `status`,
+/// and answers each with the reply `answer` builds (see [`ok`] and [`refused`]).
+struct FakeCupsd {
+    path: std::path::PathBuf,
+    seen: Arc<std::sync::Mutex<Vec<Response>>>,
+}
+
+impl FakeCupsd {
+    fn start(answer: impl Fn(&Response) -> Request + Send + 'static) -> FakeCupsd {
+        use std::io::{Read, Write};
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("reprise-fake-cupsd-{}-{n}", std::process::id()));
+        std::fs::remove_file(&path).ok();
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for mut s in listener.incoming().map_while(|s| s.ok()) {
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 4096];
+                let whole = |raw: &[u8]| {
+                    let end = raw.windows(4).position(|w| w == b"\r\n\r\n")? + 4;
+                    let head = String::from_utf8_lossy(&raw[..end]).to_lowercase();
+                    let len = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .map_or(0, |n| n.trim().parse().unwrap_or(0));
+                    (raw.len() >= end + len).then(|| raw[end..end + len].to_vec())
+                };
+                let body = loop {
+                    if let Some(body) = whole(&raw) {
+                        break body;
+                    }
+                    match s.read(&mut buf) {
+                        Ok(0) | Err(_) => break Vec::new(),
+                        Ok(n) => raw.extend_from_slice(&buf[..n]),
+                    }
+                };
+                let req = ipp::parse(&body).expect("an IPP request");
+                let reply = answer(&req).encode();
+                log.lock().unwrap().push(req);
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/ipp\r\nContent-Length: {}\r\n\r\n",
+                    reply.len()
+                );
+                s.write_all(head.as_bytes()).ok();
+                s.write_all(&reply).ok();
+            }
+        });
+        FakeCupsd { path, seen }
+    }
+
+    fn client(&self) -> Client {
+        Client {
+            server: Server::Socket(self.path.clone()),
+            user: "ann".into(),
+            helper: Arc::new(pkhelper::fake::Fake::default()),
+        }
+    }
+
+    /// Each request as its operation's name and the printer or job it names, with the queue a
+    /// Move-Job sends to.
+    fn requests(&self) -> Vec<String> {
+        self.seen.lock().unwrap().iter().map(request_line).collect()
+    }
+
+    fn sent(&self, op: u16) -> Response {
+        let seen = self.seen.lock().unwrap();
+        seen.iter().find(|r| r.status == op).cloned().expect("sent")
+    }
+}
+
+impl Drop for FakeCupsd {
+    fn drop(&mut self) {
+        std::fs::remove_file(&self.path).ok();
+    }
+}
+
+fn ok() -> Request {
+    Request::new(0)
+}
+
+/// A refusal with IPP status `status`, saying "Refused.".
+fn refused(status: u16) -> Request {
+    Request::new(status).op_attr("status-message", Value::text("Refused."))
+}
+
+fn request_line(r: &Response) -> String {
+    let attr = |tag, name| {
+        r.first(tag)
+            .and_then(|g| g.str(name))
+            .and_then(|u| u.rsplit('/').next())
+            .unwrap_or("")
+            .to_string()
+    };
+    match r.status {
+        CUPS_ADD_MODIFY_PRINTER => format!("add {}", attr(OPERATION, "printer-uri")),
+        CUPS_MOVE_JOB => format!(
+            "move {} to {}",
+            attr(OPERATION, "job-uri"),
+            attr(JOB, "job-printer-uri")
+        ),
+        GET_JOB_ATTRIBUTES => format!("read {}", attr(OPERATION, "job-uri")),
+        PAUSE_PRINTER => format!("pause {}", attr(OPERATION, "printer-uri")),
+        CUPS_SET_DEFAULT => format!("default {}", attr(OPERATION, "printer-uri")),
+        CUPS_DELETE_PRINTER => format!("delete {}", attr(OPERATION, "printer-uri")),
+        op => format!("0x{op:04x}"),
+    }
+}
+
+fn laser_with_jobs(state: PrinterState, accepting: bool) -> Snapshot {
+    let job = |id, state| Job {
+        id,
+        printer: "Laser".into(),
+        state,
+        ..Job::default()
+    };
+    Snapshot {
+        running: true,
+        printers: vec![Printer {
+            name: "Laser".into(),
+            device_uri: "file:/dev/null".into(),
+            state,
+            accepting,
+            ..Printer::default()
+        }],
+        jobs: vec![
+            job(5, JobState::Pending),
+            job(6, JobState::Pending),
+            job(7, JobState::Held),
+        ],
+        ..Snapshot::default()
+    }
+}
+
+#[test]
+fn a_renamed_queue_is_made_in_the_old_ones_state_before_its_jobs_move() {
+    let cases = [
+        (
+            PrinterState::Stopped,
+            false,
+            5,
+            "a paused queue not accepting",
+        ),
+        (PrinterState::Stopped, true, 5, "a paused queue"),
+        (PrinterState::Idle, true, 3, "an idle queue"),
+    ];
+    for (state, accepting, made_state, case) in cases {
+        let cupsd = FakeCupsd::start(|_| ok());
+        let s = laser_with_jobs(state, accepting);
+        assert_eq!(
+            rename_by_peer(&cupsd.client(), "Laser", "Office", None, &s, None, &[]),
+            Ok(()),
+            "{case}"
+        );
+        assert_eq!(
+            cupsd.requests(),
+            [
+                "add Office",
+                "move 5 to Office",
+                "move 6 to Office",
+                "move 7 to Office",
+                "delete Laser"
+            ],
+            "{case}: the jobs move once Office is made"
+        );
+        let add = cupsd.sent(CUPS_ADD_MODIFY_PRINTER);
+        let made = add.first(PRINTER).expect("printer attributes");
+        assert_eq!(made.int("printer-state"), Some(made_state), "{case}");
+        assert_eq!(
+            made.bool("printer-is-accepting-jobs"),
+            Some(accepting),
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn a_move_refused_halfway_puts_the_moved_jobs_back_and_deletes_the_new_queue() {
+    let still_waiting = Value::Enum(3);
+    let cupsd = FakeCupsd::start(move |r| match request_line(r).as_str() {
+        "move 6 to Office" => refused(0x0404),
+        "read 6" => ok().add(JOB, "job-state", vec![still_waiting.clone()]),
+        _ => ok(),
+    });
+    let s = laser_with_jobs(PrinterState::Stopped, true);
+    assert_eq!(
+        rename_by_peer(&cupsd.client(), "Laser", "Office", None, &s, None, &[]),
+        Err(Error::Refused("Refused.".into()))
+    );
+    assert_eq!(
+        cupsd.requests(),
+        [
+            "add Office",
+            "move 5 to Office",
+            "move 6 to Office",
+            "read 6",
+            "move 5 to Laser",
+            "delete Office"
+        ]
+    );
+}
+
+#[test]
+fn a_job_that_finished_or_went_before_its_move_is_left_and_the_rest_move() {
+    type Answer = fn(&Response) -> Request;
+    let cases: [(&str, Answer); 2] = [
+        ("purged", |r| match request_line(r).as_str() {
+            "move 6 to Office" | "read 6" => refused(0x0406),
+            _ => ok(),
+        }),
+        ("completed", |r| match request_line(r).as_str() {
+            "move 6 to Office" => refused(0x0404),
+            "read 6" => ok().add(JOB, "job-state", vec![Value::Enum(9)]),
+            _ => ok(),
+        }),
+    ];
+    for (case, answer) in cases {
+        let cupsd = FakeCupsd::start(answer);
+        let s = laser_with_jobs(PrinterState::Idle, true);
+        assert_eq!(
+            rename_by_peer(&cupsd.client(), "Laser", "Office", None, &s, None, &[]),
+            Ok(()),
+            "{case}"
+        );
+        assert_eq!(
+            cupsd.requests(),
+            [
+                "add Office",
+                "move 5 to Office",
+                "move 6 to Office",
+                "read 6",
+                "move 7 to Office",
+                "delete Laser"
+            ],
+            "{case}"
+        );
+    }
 }

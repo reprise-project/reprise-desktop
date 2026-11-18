@@ -32,6 +32,7 @@ const CUPS_GET_PPDS: u16 = 0x400C;
 const CUPS_MOVE_JOB: u16 = 0x400D;
 
 const NOT_AUTHENTICATED: u16 = 0x0402;
+const NOT_FOUND: u16 = 0x0406;
 const NOT_AUTHORIZED: u16 = 0x0403;
 const FORBIDDEN: u16 = 0x0401;
 
@@ -131,11 +132,7 @@ impl Client {
     /// Send `req` to `resource` and read the answer; an IPP error status
     /// is an [`Error`].
     pub(crate) fn call(&self, resource: &str, req: Request) -> Result<Response> {
-        let req = req.op_attr("requesting-user-name", Value::name(&self.user));
-        let reply = http::post(&self.server, resource, &req.encode(), &self.user)?;
-        let resp = ipp::parse(&reply.body).map_err(|e| {
-            Error::Refused(format!("CUPS sent a reply Reprise cannot read ({}).", e.0))
-        })?;
+        let resp = self.send(resource, req)?;
         if resp.ok() {
             return Ok(resp);
         }
@@ -146,6 +143,15 @@ impl Client {
                     .map(sentence)
                     .unwrap_or_else(|| format!("CUPS refused the request (status 0x{code:04x}).")),
             ),
+        })
+    }
+
+    /// Send `req` to `resource` and read the answer, whatever its IPP status.
+    fn send(&self, resource: &str, req: Request) -> Result<Response> {
+        let req = req.op_attr("requesting-user-name", Value::name(&self.user));
+        let reply = http::post(&self.server, resource, &req.encode(), &self.user)?;
+        ipp::parse(&reply.body).map_err(|e| {
+            Error::Refused(format!("CUPS sent a reply Reprise cannot read ({}).", e.0))
         })
     }
 }
