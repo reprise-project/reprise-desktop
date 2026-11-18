@@ -1982,6 +1982,44 @@ fn a_failure_landing_after_its_sheet_was_replaced_covers_the_folder_window() {
     assert!(ex.dialog().is_some(), "the failure stays up");
 }
 
+/// An error a sheet raised while another file's sheet was being read stays up to be read once
+/// that sheet replaces it, over the folder window, while the sheet's other boxes leave with it.
+#[test]
+fn an_error_raised_just_before_another_files_sheet_goes_up_stays_over_the_folder_window() {
+    use crate::dialogs::Dialog;
+    use crate::place::Place;
+    use reprisekit::controls::{form, propsheet};
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+    std::fs::write(&a, "a").expect("write");
+    std::fs::write(&b, "b").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    sheet_up(&mut ex, &a, &mut ctx);
+    let id = ex.props.as_ref().expect("a's sheet").id();
+    let advanced = propsheet::Event::Page(0, form::Event::Pressed(ADVANCED));
+    ex.props_outcome(advanced, &mut ctx);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let reading = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.open_properties(&b, "b.txt", "b.txt", &mut ctx);
+    ex.held = None;
+    let text = "Cannot change a.txt".to_string();
+    ex.message_over(Some(id), "Properties", text, &mut ctx);
+    drop(reading);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+        ex.props.as_ref().is_some_and(|p| p.info.path == b)
+    });
+    assert!(
+        matches!(ex.dialog(), Some(Dialog::Message { text, .. }) if text == "Cannot change a.txt"),
+        "a's error is up"
+    );
+    assert_eq!(ex.dialogs.len(), 1, "Advanced left with a's sheet");
+    assert_eq!(ex.parent_of(ex.dialog_win()), repriseapp::MAIN);
+    ex.props_event(repriseapp::Event::CloseRequest, &mut ctx);
+    assert!(ex.dialog().is_some(), "b's sheet closing leaves a's error");
+}
+
 /// The read of a sheet after its Apply, landing after another file's sheet replaced it, leaves
 /// the new sheet showing its own file.
 #[test]
