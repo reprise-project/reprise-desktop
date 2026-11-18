@@ -139,7 +139,9 @@ impl CompositorHandler for State {
 }
 
 impl BufferHandler for State {
-    fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
+    fn buffer_destroyed(&mut self, buffer: &WlBuffer) {
+        self.captures.buffer_gone(buffer);
+    }
 }
 
 impl ShmHandler for State {

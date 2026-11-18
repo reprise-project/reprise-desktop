@@ -751,8 +751,9 @@ impl GlassCtx {
             needed,
         };
         let view = Scale::from(f64::from_bits(b.key.1));
-        let mut draw =
-            |frame: &mut GlesFrame<'_, '_>| draw_damaged(frame, elements, view, &damage, clear);
+        let mut draw = |frame: &mut GlesFrame<'_, '_>| {
+            draw_damaged(frame, elements, view, &damage, clear, None)
+        };
         let draw: Option<reprisefx::Drawing<'_>> =
             (inside && !damage.is_empty()).then_some(&mut draw);
         if let Err(e) = b.picture.update_drawing(renderer, fx, &update, draw) {
@@ -923,16 +924,29 @@ fn shows_glass<E: Element>(made: &[Id], elements: &[E], scale: Scale<f64>) -> bo
     found < made.len()
 }
 
+/// The per-element caches of the framebuffer effects a stream of frames draws, as the damage
+/// tracker keeps them.
+pub(crate) type Effects = HashMap<Id, UserDataMap>;
+
 /// `elements` (front to back) drawn where `damage` lies into the frame's draw binding, as the
-/// damage tracker draws them: hidden parts skipped, the clear under no opaque region.
-fn draw_damaged<E: RenderElement<GlesRenderer>>(
+/// damage tracker draws them: hidden parts skipped, the clear under no opaque region. With
+/// `effects`, a framebuffer effect the damage reaches captures the frame beneath it first, and no
+/// opaque region hides anything, as what lies under one may be what the effect reads; the caller
+/// has grown `damage` to cover each such effect whole.
+pub(crate) fn draw_damaged<E: RenderElement<GlesRenderer>>(
     frame: &mut GlesFrame<'_, '_>,
     elements: &[E],
     scale: Scale<f64>,
     damage: &[Rectangle<i32, Physical>],
     clear: Color32F,
+    mut effects: Option<&mut Effects>,
 ) -> Result<(), GlesError> {
     let output = Rectangle::from_size(frame.output_size());
+    let captures = effects.is_some()
+        && elements.iter().any(|e| {
+            let geometry = e.geometry(scale);
+            e.is_framebuffer_effect() && damage.iter().any(|d| d.overlaps(geometry))
+        });
     let mut opaque: Vec<Rectangle<i32, Physical>> = Vec::new();
     let mut shown = Vec::new();
     for e in elements {
@@ -949,15 +963,17 @@ fn draw_damaged<E: RenderElement<GlesRenderer>>(
             .collect();
         let parts = Rectangle::subtract_rects_many_in_place(parts, opaque.iter().copied());
         let start = opaque.len();
-        opaque.extend(
-            e.opaque_regions(scale)
-                .into_iter()
-                .map(|mut r| {
-                    r.loc += geometry.loc;
-                    r
-                })
-                .filter_map(|r| r.intersection(output)),
-        );
+        if !captures {
+            opaque.extend(
+                e.opaque_regions(scale)
+                    .into_iter()
+                    .map(|mut r| {
+                        r.loc += geometry.loc;
+                        r
+                    })
+                    .filter_map(|r| r.intersection(output)),
+            );
+        }
         shown.push((e, geometry, parts, start..opaque.len()));
     }
     let cleared = Rectangle::subtract_rects_many_in_place(damage.to_vec(), opaque.iter().copied());
@@ -972,7 +988,15 @@ fn draw_damaged<E: RenderElement<GlesRenderer>>(
         };
         parts.iter_mut().for_each(|r| *r = local(*r));
         let own: Vec<_> = opaque[own].iter().map(|r| local(*r)).collect();
-        e.draw(frame, e.src(), geometry, &parts, &own, None)?;
+        let cache = match effects.as_deref_mut() {
+            Some(effects) if e.is_framebuffer_effect() => {
+                let cache = effects.entry(e.id().clone()).or_default();
+                e.capture_framebuffer(frame, e.src(), geometry, cache)?;
+                Some(&*cache)
+            }
+            _ => None,
+        };
+        e.draw(frame, e.src(), geometry, &parts, &own, cache)?;
     }
     Ok(())
 }

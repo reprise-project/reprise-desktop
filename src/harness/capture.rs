@@ -1,12 +1,16 @@
-//! A screen capture client for tests: wlr-screencopy shots and ext-image-copy-capture sessions
-//! of the first output or a listed window, into shm buffers of the size the test gives.
+//! A screen capture client for tests: wlr-screencopy copies and ext-image-copy-capture sessions
+//! of the first output, its pointer or a listed window, into shm buffers of the size the test
+//! gives.
 
 use std::os::{fd::AsFd, unix::net::UnixStream};
 use std::sync::Arc;
 
 use wayland_client::{
     self as wc, Connection, EventQueue,
-    protocol::{wl_buffer::WlBuffer, wl_output::WlOutput, wl_registry, wl_shm, wl_shm_pool},
+    protocol::{
+        wl_buffer::WlBuffer, wl_output::WlOutput, wl_pointer::WlPointer, wl_registry, wl_seat,
+        wl_shm, wl_shm_pool,
+    },
 };
 use wayland_protocols::ext::{
     foreign_toplevel_list::v1::client::{
@@ -19,19 +23,23 @@ use wayland_protocols::ext::{
         ext_output_image_capture_source_manager_v1::ExtOutputImageCaptureSourceManagerV1,
     },
     image_copy_capture::v1::client::{
+        ext_image_copy_capture_cursor_session_v1::ExtImageCopyCaptureCursorSessionV1,
         ext_image_copy_capture_frame_v1::ExtImageCopyCaptureFrameV1,
         ext_image_copy_capture_manager_v1::{ExtImageCopyCaptureManagerV1, Options},
         ext_image_copy_capture_session_v1::{self, ExtImageCopyCaptureSessionV1},
     },
 };
 use wayland_protocols_wlr::screencopy::v1::client::{
-    zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1,
+    zwlr_screencopy_frame_v1::{self, ZwlrScreencopyFrameV1},
     zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
 };
 
 use super::Harness;
 use super::input_client::reprise_input_v1::RepriseInputV1;
 use crate::compositor::ClientState;
+
+/// A wlr `damage` rectangle: x, y, width, height.
+type Damage = (u32, u32, u32, u32);
 
 #[derive(Default)]
 struct Side {
@@ -40,6 +48,10 @@ struct Side {
     buffer_sizes: Vec<(u32, u32)>,
     /// The listed windows, oldest first.
     toplevels: Vec<ExtForeignToplevelHandleV1>,
+    /// The wlr frames that came ready, each with the damage it reported.
+    wlr_ready: Vec<(ZwlrScreencopyFrameV1, Vec<Damage>)>,
+    /// The damage of wlr frames not ready yet.
+    wlr_damage: Vec<(ZwlrScreencopyFrameV1, Damage)>,
 }
 
 pub struct CaptureClient {
@@ -47,6 +59,7 @@ pub struct CaptureClient {
     side: Side,
     shm: wl_shm::WlShm,
     output: WlOutput,
+    pointer: WlPointer,
     wlr: ZwlrScreencopyManagerV1,
     sources: ExtOutputImageCaptureSourceManagerV1,
     window_sources: ExtForeignToplevelImageCaptureSourceManagerV1,
@@ -58,6 +71,8 @@ pub struct CaptureClient {
 pub struct ExtSession {
     session: ExtImageCopyCaptureSessionV1,
     frame: Option<ExtImageCopyCaptureFrameV1>,
+    /// The pointer cursor session a pointer capture session comes from.
+    cursor: Option<ExtImageCopyCaptureCursorSessionV1>,
 }
 
 impl Harness {
@@ -109,6 +124,9 @@ impl Harness {
         let shm = registry.bind(n, v, &qh, ());
         let (n, v) = global("wl_output", 1);
         let output = registry.bind(n, v, &qh, ());
+        let (n, v) = global("wl_seat", 1);
+        let seat: wl_seat::WlSeat = registry.bind(n, v, &qh, ());
+        let pointer = seat.get_pointer(&qh, ());
         let (n, v) = global("zwlr_screencopy_manager_v1", 3);
         let wlr = registry.bind(n, v, &qh, ());
         let (n, v) = global("ext_output_image_capture_source_manager_v1", 1);
@@ -130,6 +148,7 @@ impl Harness {
             side,
             shm,
             output,
+            pointer,
             wlr,
             sources,
             window_sources,
@@ -158,7 +177,16 @@ impl CaptureClient {
     }
 
     /// An Xrgb8888 shm buffer the output's size.
-    fn buffer(&self) -> WlBuffer {
+    pub fn buffer(&self) -> WlBuffer {
+        self.buffer_as(wl_shm::Format::Xrgb8888)
+    }
+
+    /// An Argb8888 shm buffer the output's size, which a pointer capture takes too.
+    pub fn argb_buffer(&self) -> WlBuffer {
+        self.buffer_as(wl_shm::Format::Argb8888)
+    }
+
+    fn buffer_as(&self, format: wl_shm::Format) -> WlBuffer {
         let (w, h) = self.size;
         let size = w * h * 4;
         // SAFETY: plain syscall; the name is a valid C string.
@@ -170,7 +198,7 @@ impl CaptureClient {
         file.set_len(size as u64).expect("memfd size");
         let qh = self.queue.handle();
         let pool = self.shm.create_pool(file.as_fd(), size, &qh, ());
-        let buffer = pool.create_buffer(0, w, h, w * 4, wl_shm::Format::Xrgb8888, &qh, ());
+        let buffer = pool.create_buffer(0, w, h, w * 4, format, &qh, ());
         pool.destroy();
         buffer
     }
@@ -183,6 +211,38 @@ impl CaptureClient {
         self.roundtrip(h);
         frame.destroy();
         self.roundtrip(h);
+    }
+
+    /// A wlr-screencopy `copy_with_damage` of the whole output into a new buffer, the frame kept.
+    pub fn wlr_copy_with_damage(&mut self, h: &mut Harness) -> ZwlrScreencopyFrameV1 {
+        let buffer = self.buffer();
+        self.wlr_copy_with_damage_into(h, &buffer)
+    }
+
+    /// [`CaptureClient::wlr_copy_with_damage`] into `buffer`.
+    pub fn wlr_copy_with_damage_into(
+        &mut self,
+        h: &mut Harness,
+        buffer: &WlBuffer,
+    ) -> ZwlrScreencopyFrameV1 {
+        let frame = self.wlr_send_copy_with_damage(buffer);
+        self.roundtrip(h);
+        frame
+    }
+
+    /// A `copy_with_damage` into `buffer` queued, sent with the next requests.
+    pub fn wlr_send_copy_with_damage(&mut self, buffer: &WlBuffer) -> ZwlrScreencopyFrameV1 {
+        let qh = self.queue.handle();
+        let frame = self.wlr.capture_output(0, &self.output, &qh, ());
+        frame.copy_with_damage(buffer);
+        frame
+    }
+
+    /// The damage `frame` reported once it came ready; None while it is not.
+    pub fn wlr_ready(&self, frame: &ZwlrScreencopyFrameV1) -> Option<&[Damage]> {
+        (self.side.wlr_ready.iter())
+            .find(|(f, _)| f == frame)
+            .map(|(_, d)| d.as_slice())
     }
 
     /// An ext session on the output, no frame asked yet.
@@ -201,6 +261,21 @@ impl CaptureClient {
         self.session_of(h, source)
     }
 
+    /// A session on the pointer's image over the output, no frame asked yet.
+    pub fn cursor_session(&mut self, h: &mut Harness) -> ExtSession {
+        let qh = self.queue.handle();
+        let source = self.sources.create_source(&self.output, &qh, ());
+        let cursor = (self.ext).create_pointer_cursor_session(&source, &self.pointer, &qh, ());
+        let session = cursor.get_capture_session(&qh, ());
+        source.destroy();
+        self.roundtrip(h);
+        ExtSession {
+            session,
+            frame: None,
+            cursor: Some(cursor),
+        }
+    }
+
     fn session_of(&mut self, h: &mut Harness, source: ExtImageCaptureSourceV1) -> ExtSession {
         let qh = self.queue.handle();
         let session = self.ext.create_session(&source, Options::empty(), &qh, ());
@@ -209,21 +284,43 @@ impl CaptureClient {
         ExtSession {
             session,
             frame: None,
+            cursor: None,
         }
     }
 
-    /// One frame of `s`: the previous one goes, a new one is captured.
+    /// One frame of `s` into a new buffer: the previous one goes, a new one is captured.
     pub fn ext_frame(&mut self, h: &mut Harness, s: &mut ExtSession) {
+        let buffer = self.buffer();
+        self.ext_frame_into(h, s, &buffer);
+    }
+
+    /// [`CaptureClient::ext_frame`] into `buffer`.
+    pub fn ext_frame_into(&mut self, h: &mut Harness, s: &mut ExtSession, buffer: &WlBuffer) {
         if let Some(f) = s.frame.take() {
             f.destroy();
         }
         let qh = self.queue.handle();
         let frame = s.session.create_frame(&qh, ());
-        frame.attach_buffer(&self.buffer());
+        frame.attach_buffer(buffer);
         let (w, hh) = self.size;
         frame.damage_buffer(0, 0, w, hh);
         frame.capture();
         s.frame = Some(frame);
+        self.roundtrip(h);
+    }
+
+    /// A frame of `s` into `buffer` captured and destroyed in one go, before it can come ready.
+    pub fn ext_frame_dropped(&mut self, h: &mut Harness, s: &mut ExtSession, buffer: &WlBuffer) {
+        if let Some(f) = s.frame.take() {
+            f.destroy();
+        }
+        let qh = self.queue.handle();
+        let frame = s.session.create_frame(&qh, ());
+        frame.attach_buffer(buffer);
+        let (w, hh) = self.size;
+        frame.damage_buffer(0, 0, w, hh);
+        frame.capture();
+        frame.destroy();
         self.roundtrip(h);
     }
 
@@ -237,6 +334,9 @@ impl CaptureClient {
             f.destroy();
         }
         s.session.destroy();
+        if let Some(c) = s.cursor.take() {
+            c.destroy();
+        }
         self.roundtrip(h);
     }
 }
@@ -266,14 +366,45 @@ wc::delegate_noop!(Side: ignore RepriseInputV1);
 wc::delegate_noop!(Side: ignore wl_shm_pool::WlShmPool);
 wc::delegate_noop!(Side: ignore WlBuffer);
 wc::delegate_noop!(Side: ignore WlOutput);
+wc::delegate_noop!(Side: ignore wl_seat::WlSeat);
+wc::delegate_noop!(Side: ignore WlPointer);
+wc::delegate_noop!(Side: ignore ExtImageCopyCaptureCursorSessionV1);
 wc::delegate_noop!(Side: ignore ZwlrScreencopyManagerV1);
-wc::delegate_noop!(Side: ignore ZwlrScreencopyFrameV1);
 wc::delegate_noop!(Side: ignore ExtOutputImageCaptureSourceManagerV1);
 wc::delegate_noop!(Side: ignore ExtImageCaptureSourceV1);
 wc::delegate_noop!(Side: ignore ExtImageCopyCaptureManagerV1);
 wc::delegate_noop!(Side: ignore ExtImageCopyCaptureFrameV1);
 wc::delegate_noop!(Side: ignore ExtForeignToplevelHandleV1);
 wc::delegate_noop!(Side: ignore ExtForeignToplevelImageCaptureSourceManagerV1);
+
+impl wc::Dispatch<ZwlrScreencopyFrameV1, ()> for Side {
+    fn event(
+        st: &mut Self,
+        frame: &ZwlrScreencopyFrameV1,
+        ev: zwlr_screencopy_frame_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &wc::QueueHandle<Self>,
+    ) {
+        match ev {
+            zwlr_screencopy_frame_v1::Event::Damage {
+                x,
+                y,
+                width,
+                height,
+            } => st.wlr_damage.push((frame.clone(), (x, y, width, height))),
+            zwlr_screencopy_frame_v1::Event::Ready { .. } => {
+                let (ours, rest) = std::mem::take(&mut st.wlr_damage)
+                    .into_iter()
+                    .partition(|(f, _)| f == frame);
+                st.wlr_damage = rest;
+                let damage = ours.into_iter().map(|(_, d)| d).collect();
+                st.wlr_ready.push((frame.clone(), damage));
+            }
+            _ => {}
+        }
+    }
+}
 
 impl wc::Dispatch<ExtForeignToplevelListV1, ()> for Side {
     fn event(
