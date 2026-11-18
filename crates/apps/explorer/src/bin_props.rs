@@ -15,6 +15,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 pub const BIN_PROPS: WinId = WinId::named("bin-props");
 const TITLE: &str = "Recycle Bin Properties";
@@ -37,6 +38,14 @@ pub(crate) struct BinProps {
     full: bool,
     /// Which opening of the sheet window this is ([`crate::dialogs::SheetId`]).
     pub(crate) opened: u64,
+}
+
+/// The order of the sheet's writes of `[recycle_bin]`: each takes a number as OK or Apply asks
+/// for it, and one that runs after a later one wrote writes nothing, so the last asked lands last.
+#[derive(Default)]
+pub(crate) struct Saves {
+    asked: u64,
+    written: Arc<Mutex<u64>>,
 }
 
 impl BinProps {
@@ -228,10 +237,14 @@ impl Explorer {
             false => Reply::none(),
         };
         let policy = policy_of(settings);
+        self.bin_saves.asked += 1;
+        let (n, written) = (self.bin_saves.asked, self.bin_saves.written.clone());
         let work = move |gate: &Gate| {
-            if !gate.change(&path) {
+            let mut last = reprisebus::mutex::lock(&written);
+            if *last > n || !gate.change(&path) {
                 return Ok(());
             }
+            *last = n;
             let saved = repriseconf::edit(&path, |text| policy.write(text));
             saved.map_err(|e| e.to_string()).and_then(|r| r.map(drop))
         };
@@ -455,6 +468,28 @@ mod tests {
         assert_eq!(ex.parent_of(ex.dialog_win()), repriseapp::MAIN);
         ex.bin_props_event(Event::CloseRequest, &mut ctx);
         assert!(ex.dialog().is_some(), "the failure stays up");
+    }
+
+    /// OK pressed while Apply's write is still out: config.toml ends up with OK's settings.
+    #[test]
+    fn ok_pressed_while_applys_write_is_out_leaves_oks_settings() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let config = dir.path().join("config.toml");
+        let mut ctx = test_ctx();
+        let mut ex = sheet_up(&config, &mut ctx);
+        let mut applied = Policy::default();
+        applied.global.remove_immediately = true;
+        let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+        let writing = gate.write().expect("lock");
+        ex.held = Some(gate.clone());
+        ex.save_bin_settings(&settings_of(&applied), false, &mut ctx);
+        ex.held = None;
+        ex.save_bin_settings(&settings_of(&Policy::default()), true, &mut ctx);
+        drop(writing);
+        wake_until(&mut ex, &mut ctx, |ex| ex.acting.is_empty());
+        let text = std::fs::read_to_string(&config).expect("OK wrote");
+        assert!(!Policy::parse(&text).global.remove_immediately, "{text}");
+        assert!(ex.dialog().is_none());
     }
 
     /// Two openings in flight put up one sheet: the second, landing while the first is up,

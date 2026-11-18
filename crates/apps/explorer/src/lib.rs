@@ -284,6 +284,7 @@ pub struct Explorer {
     pub props: Option<Props>,
     /// Recycle Bin Properties, in its own modeless window.
     pub(crate) bin_props: Option<bin_props::BinProps>,
+    bin_saves: bin_props::Saves,
     /// A sheet read and waiting for its icons to land before it goes up; for the open sheet read
     /// again after its Apply, that sheet's [`dialogs::SheetId::opened`].
     props_due: Option<(
@@ -575,6 +576,7 @@ impl Explorer {
             flip: false,
             props: None,
             bin_props: None,
+            bin_saves: Default::default(),
             props_due: None,
             sheets_opened: 0,
             preview: None,
