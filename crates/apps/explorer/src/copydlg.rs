@@ -34,6 +34,9 @@ pub(crate) struct Progress {
     pub to: String,
     pub started: Instant,
     pub shown: Option<Shown>,
+    /// The job's thread was parked when its counts were last read, so they stay as read until it
+    /// is woken ([`Meter::parked`]).
+    parked: bool,
 }
 
 pub(crate) fn status(s: Snapshot, waiting: usize) -> Status {
@@ -68,6 +71,7 @@ impl Progress {
             to,
             started: Instant::now(),
             shown: None,
+            parked: false,
         }
     }
 
@@ -85,13 +89,15 @@ impl Progress {
     /// Take the job's counts in.
     fn tick(&mut self, waiting: usize) -> bool {
         let ms = self.started.elapsed().as_millis() as u64;
+        self.parked = self.meter.parked();
         let st = status(self.meter.snapshot(), waiting);
         self.shown.as_mut().is_some_and(|s| s.cp.update(st, ms))
     }
 
-    /// Whether its window ticks: not while its job waits on a box, which holds the dialog still.
+    /// Whether its window ticks: not while its job is paused or waits on a box, which holds the
+    /// dialog still, once a tick has read the job parked. A paused job may still finish its chunk.
     fn ticks(&self) -> bool {
-        self.shown.as_ref().is_some_and(|s| s.cp.wants_ticks())
+        (self.shown.as_ref()).is_some_and(|s| s.cp.wants_ticks() || !self.parked)
     }
 
     /// The job's share of the task button, once its dialog is up: its fraction done (0 while it
@@ -196,8 +202,9 @@ impl Explorer {
             .collect()
     }
 
-    /// The progress windows whose ticks stopped while their job waited on a box and whose job has
-    /// moved since (an answer, a cancel, another job queued), each due one tick to read it.
+    /// The progress windows whose ticks stopped while their job was paused or waited on a box and
+    /// whose job has moved since (Resume, an answer, a cancel, another job queued), each due one
+    /// tick to read it.
     pub(crate) fn held_progress_moved(&self) -> Vec<WinId> {
         [COPY, REMOVE, EXTRACT]
             .into_iter()
@@ -293,7 +300,10 @@ impl Explorer {
                     p.meter.set_paused(on);
                 }
                 self.progress_tick(win);
-                Reply::redraw()
+                Reply {
+                    tick: self.progress(win).is_some_and(Progress::ticks),
+                    ..Reply::redraw()
+                }
             }
             Outcome::Cancel => {
                 match win {
@@ -392,10 +402,11 @@ mod tests {
     use crate::place::Place;
     use repriseapp::{Event, FileClip, KeyInput, Mods};
     use reprisekit::controls::copyprogress::CopyProgress;
-    use reprisekit::textedit::keysym;
+    use reprisekit::textedit::{EditKey, keysym};
 
-    #[test]
-    fn a_progress_window_stops_ticking_while_its_job_waits_on_its_failure_box() {
+    /// A paste of a missing file and b.txt into a folder window, held on the missing file's
+    /// failure box with its progress window up.
+    fn held_on_its_failure_box() -> (tempfile::TempDir, repriseapp::Ctx, crate::Explorer) {
         let home = tempfile::tempdir().expect("a temp dir");
         let (from, dir) = (home.path().join("from"), home.path().join("to"));
         std::fs::create_dir_all(&from).expect("mkdir");
@@ -416,17 +427,98 @@ mod tests {
         let p = &mut ex.put.as_mut().expect("the paste").progress;
         let cp = CopyProgress::new(p.kind, &p.from, &p.to, Color::rgb(0, 0, 128));
         p.shown = Some(Shown { cp, focused: false });
+        while !p.meter.parked() {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        (home, ctx, ex)
+    }
 
-        let tick = ex.event(COPY, Event::Tick, &mut ctx);
-        assert!(!tick.tick, "no tick while the box waits");
-
-        let enter = Event::Key(KeyInput {
-            sym: keysym::RETURN,
+    fn press(sym: u32) -> Event {
+        Event::Key(KeyInput {
+            sym,
             utf8: None,
             mods: Mods::default(),
             edit: None,
-        });
-        let skipped = ex.event(ex.dialog_win(), enter, &mut ctx);
+        })
+    }
+
+    /// Alt with `c`: the access key of the button whose label underlines it.
+    fn alt(c: char) -> Event {
+        Event::Key(KeyInput {
+            sym: c as u32,
+            utf8: Some(c.into()),
+            mods: Mods {
+                alt: true,
+                ..Mods::default()
+            },
+            edit: Some(EditKey::Insert(c.into())),
+        })
+    }
+
+    /// The paste of [`held_on_its_failure_box`], paused and then let past the box with Skip:
+    /// it holds on its pause before b.txt, and its window ticks until it reads the held job.
+    fn paused_past_its_box() -> (tempfile::TempDir, repriseapp::Ctx, crate::Explorer) {
+        let (home, mut ctx, mut ex) = held_on_its_failure_box();
+        let paused = ex.event(COPY, alt('p'), &mut ctx);
+        assert!(
+            !paused.tick,
+            "a job held on its box stays still when paused"
+        );
+        let skipped = ex.event(ex.dialog_win(), press(keysym::RETURN), &mut ctx);
+        assert_eq!(
+            skipped.tick_wins,
+            [COPY],
+            "Skip lets the window read the job"
+        );
+        let mut ticks = 0;
+        while ex.event(COPY, Event::Tick, &mut ctx).tick {
+            ticks += 1;
+            assert!(ticks < 1000, "a paused job's window stops ticking");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let p = &ex.put.as_ref().expect("the paste").progress;
+        let shown = &p.shown.as_ref().expect("the window").cp.status;
+        assert_eq!(
+            *shown,
+            super::status(p.meter.snapshot(), 0),
+            "the window shows the held job"
+        );
+        assert!(shown.paused && !shown.asking);
+        (home, ctx, ex)
+    }
+
+    #[test]
+    fn a_paused_jobs_window_stops_ticking_once_the_job_holds_and_resume_sets_it_going() {
+        let (home, mut ctx, mut ex) = paused_past_its_box();
+        let resumed = ex.event(COPY, alt('r'), &mut ctx);
+        assert!(resumed.tick, "Resume sets the window ticking");
+        ex.finish_puts(&mut ctx);
+        assert!(home.path().join("to/b.txt").exists(), "the paste went on");
+    }
+
+    #[test]
+    fn cancel_on_a_paused_jobs_window_sets_it_ticking_and_ends_the_job() {
+        let (home, mut ctx, mut ex) = paused_past_its_box();
+        let cancelled = ex.event(COPY, press(keysym::ESCAPE), &mut ctx);
+        assert!(
+            cancelled.tick || cancelled.tick_wins == [COPY],
+            "Cancel sets the window ticking"
+        );
+        ex.finish_puts(&mut ctx);
+        assert!(ex.put.is_none(), "the paste ended");
+        assert!(
+            !home.path().join("to/b.txt").exists(),
+            "nothing more was pasted"
+        );
+    }
+
+    #[test]
+    fn a_progress_window_stops_ticking_while_its_job_waits_on_its_failure_box() {
+        let (_home, mut ctx, mut ex) = held_on_its_failure_box();
+        let tick = ex.event(COPY, Event::Tick, &mut ctx);
+        assert!(!tick.tick, "no tick while the box waits");
+
+        let skipped = ex.event(ex.dialog_win(), press(keysym::RETURN), &mut ctx);
         assert_eq!(skipped.tick_wins, [COPY], "Skip sets the window ticking");
         let tick = ex.event(COPY, Event::Tick, &mut ctx);
         assert!(tick.tick, "ticking again once the job goes on");

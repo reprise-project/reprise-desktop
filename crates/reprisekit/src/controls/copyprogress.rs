@@ -265,10 +265,10 @@ impl CopyProgress {
         changed || self.anim_ms / FRAME_MS != frame
     }
 
-    /// Whether its host ticks it at [`FRAME_MS`]: not while its job waits on a question, when
-    /// nothing in it moves until the answer.
+    /// Whether its host ticks it at [`FRAME_MS`]: not while its job is paused or waits on a
+    /// question, when nothing in it moves (the time line reads Paused or holds its estimate).
     pub fn wants_ticks(&self) -> bool {
-        !self.status.asking
+        !held(&self.status)
     }
 
     fn sample(&mut self) {
@@ -1046,7 +1046,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pause_holds_the_flight_and_drops_no_rate() {
+    fn a_pause_holds_the_flight_wants_no_ticks_and_drops_no_rate() {
         let mut cp = CopyProgress::new(Kind::Copy, "a", "b", SKY);
         cp.update(copying(0, 100), 0);
         cp.update(copying(50, 100), 1000);
@@ -1059,6 +1059,7 @@ mod tests {
         cp.update(paused, 9000);
         assert_eq!(cp.anim_ms, flown, "the sheets stop where they are");
         assert_eq!(cp.remaining(), "Paused");
+        assert!(!cp.wants_ticks(), "nothing moves while paused");
         assert!(cp.event(form::Event::Pressed(PAUSE)) == Outcome::Pause(false));
         let label = |cp: &CopyProgress| match &cp.form.item(PAUSE).unwrap().control {
             form::Control::Button { label, .. } => label.clone(),
@@ -1067,6 +1068,7 @@ mod tests {
         assert_eq!(label(&cp), "&Resume");
         cp.update(copying(50, 100), 9100);
         assert_eq!(label(&cp), "&Pause");
+        assert!(cp.wants_ticks());
     }
 
     #[test]
