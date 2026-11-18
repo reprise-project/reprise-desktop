@@ -51,8 +51,14 @@ pub struct Item {
 }
 
 impl Item {
+    /// The name it is shown under: a shortcut's own, a Recycle Bin item's original
+    /// ([`crate::trash::Trashed::name`]), else its file name.
     pub fn label(&self) -> &str {
-        self.shortcut.as_ref().map_or(&self.name, |s| s.name())
+        match (&self.shortcut, &self.trashed) {
+            (Some(s), _) => s.name(),
+            (None, Some(t)) => &t.name,
+            (None, None) => &self.name,
+        }
     }
 
     /// Lists as a folder: sorts among the folders, shows no size and
@@ -646,6 +652,32 @@ mod tests {
         assert_eq!(items[0].kind, "File Folder");
         assert_eq!(items[4].kind, "TXT File");
     }
+    #[test]
+    fn a_trashed_item_is_labelled_by_its_original_name_and_one_without_a_record_by_its_own() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("Trash");
+        for from in ["a", "b"] {
+            let p = t.path().join(from).join("x.txt");
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "1").unwrap();
+            crate::trash::trash_in(&root, &p).unwrap();
+        }
+        std::fs::write(root.join("files/orphan.2.txt"), "1").unwrap();
+        let mut items = read_dir(&root.join("files"), &MimeDb::empty());
+        for it in &mut items {
+            it.trashed = crate::trash::trashed(&it.path).ok().map(Box::new);
+        }
+        let got: Vec<(&str, &str)> = items.iter().map(|i| (i.name.as_str(), i.label())).collect();
+        assert_eq!(
+            got,
+            [
+                ("orphan.2.txt", "orphan.2.txt"),
+                ("x.2.txt", "x.txt"),
+                ("x.txt", "x.txt")
+            ]
+        );
+    }
+
     #[test]
     fn a_trusted_launcher_is_listed_by_its_name() {
         let t = tempfile::tempdir().unwrap();
