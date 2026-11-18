@@ -112,6 +112,8 @@ const SETUID_HELPER: &str = "/usr/lib/polkit-1/polkit-agent-helper-1";
 /// How long a helper may stay silent (socket) or run (spawned) while we wait on it, so a wedged
 /// helper cannot hold the thread. Time waiting for the user's typing or finger does not count.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(120);
+/// The status line's start for a helper that cannot be reached, or went before it judged anything.
+pub const UNREACHABLE: &str = "Cannot reach the polkit helper";
 
 /// How one attempt ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -581,9 +583,7 @@ fn run(
             converse_child(child, user, &mut password, HELPER_TIMEOUT, stop, report);
         }
         Err(e) => {
-            report(Report::Error(format!(
-                "Cannot reach the polkit helper: {e}"
-            )));
+            report(Report::Error(format!("{UNREACHABLE}: {e}")));
             report(Report::Done(Verdict::Unreachable));
         }
     }
