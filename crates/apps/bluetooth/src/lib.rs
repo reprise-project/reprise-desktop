@@ -311,6 +311,13 @@ impl BtApp {
     fn failed(&mut self, cmd: &bz::Cmd, body: String) {
         let title = bz::failure_title(cmd);
         log::warn!("{title}: {body}");
+        if let bz::Cmd::SetAlias { device, .. } | bz::Cmd::SetTrusted { device, .. } = cmd
+            && let Some(d) = self.device(device).cloned()
+            && let Some(p) = self.props.as_mut().filter(|p| &p.path == device)
+        {
+            p.leaving = false;
+            p.unapplied(&d);
+        }
         let sheet_of = |d: &String| self.props.as_ref().is_some_and(|p| &p.path == d);
         let over = match cmd {
             bz::Cmd::Connect(d)
@@ -560,6 +567,13 @@ impl BtApp {
             && let Some(i) = self.setting.iter().position(|d| d == device)
         {
             self.setting.remove(i);
+            if self
+                .props
+                .as_ref()
+                .is_some_and(|p| p.leaving && !self.setting.contains(&p.path))
+            {
+                self.props = None;
+            }
             self.sync_props_busy();
         }
     }
@@ -886,10 +900,21 @@ impl BtApp {
             }
             props::Outcome::ApplyAndClose(c) => {
                 self.apply_change(&path, c);
-                self.props = None;
-                Reply::redraw_all()
+                self.close_props()
             }
-            props::Outcome::Close => {
+            props::Outcome::Close => self.close_props(),
+        }
+    }
+
+    /// Closes the sheet, or while a change it sent waits on BlueZ, leaves it up until BlueZ
+    /// answers every change: it closes then, or stays with the failure over it.
+    fn close_props(&mut self) -> Reply {
+        match &mut self.props {
+            Some(p) if self.setting.contains(&p.path) => {
+                p.leaving = true;
+                Reply::redraw()
+            }
+            _ => {
                 self.props = None;
                 Reply::redraw_all()
             }
@@ -1594,22 +1619,20 @@ mod tests {
         assert!(!a.error.is_shown(), "the box left with the wizard");
     }
 
-    #[test]
-    fn an_applied_rename_greys_apply_and_ok_until_bluez_answers_it() {
-        let (mut a, rx) = wired();
-        let mut ctx = test_ctx();
-        a.open_props("/a/cans");
+    /// Types "Mine" over the open sheet's name; the SetAlias that Apply or OK sends for it.
+    fn rename_to_mine(a: &mut BtApp, ctx: &mut Ctx) -> bz::Cmd {
         let page = a.props.as_mut().unwrap().sheet.open_mut();
         page.focus_id(props::NAME);
         page.key(form::Key::Edit(EditKey::SelectAll));
-        a.event(PROPS, Event::Pasted("Mine".into()), &mut ctx);
-        a.event(PROPS, key(u32::from(b'a'), true), &mut ctx);
-        let alias = bz::Cmd::SetAlias {
+        a.event(PROPS, Event::Pasted("Mine".into()), ctx);
+        bz::Cmd::SetAlias {
             device: "/a/cans".into(),
             alias: "Mine".into(),
-        };
-        assert_eq!(rx.try_recv().ok(), Some(alias.clone()));
-        let enabled = |a: &BtApp, id: &str| match a
+        }
+    }
+
+    fn sheet_button_enabled(a: &BtApp, id: &str) -> bool {
+        match a
             .props
             .as_ref()
             .and_then(|p| p.sheet.open().item(id))
@@ -1617,18 +1640,94 @@ mod tests {
         {
             Some(form::Control::Button { enabled, .. }) => *enabled,
             other => panic!("{id} is {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ok_on_a_rename_greys_the_sheet_until_bluez_answers_and_then_closes_it() {
+        let (mut a, rx) = wired();
+        let mut ctx = test_ctx();
+        a.open_props("/a/cans");
+        let alias = rename_to_mine(&mut a, &mut ctx);
+        a.event(PROPS, key(keysym::RETURN, false), &mut ctx);
+        assert_eq!(rx.try_recv().ok(), Some(alias.clone()));
+        assert!(a.props.is_some(), "the sheet waits for BlueZ");
+        assert!(!sheet_button_enabled(&a, propsheet::OK));
+        assert!(!sheet_button_enabled(&a, propsheet::APPLY));
+
+        bus_says(&mut a, [bz::BzMsg::Ran(alias)]);
+        assert!(a.props.is_none(), "the sheet closes once BlueZ answers");
+    }
+
+    #[test]
+    fn ok_on_a_rename_bluez_refuses_keeps_the_sheet_and_its_edit_under_the_error() {
+        let (mut a, _rx) = wired();
+        let mut ctx = test_ctx();
+        a.open_props("/a/cans");
+        let alias = rename_to_mine(&mut a, &mut ctx);
+        a.event(PROPS, key(keysym::RETURN, false), &mut ctx);
+        let failed = bz::BzMsg::Failed {
+            cmd: alias.clone(),
+            body: "I/O error: timed out".into(),
         };
+        bus_says(&mut a, [failed, bz::BzMsg::Ran(alias)]);
+
+        let p = a.props.as_ref().expect("the sheet stays");
+        assert_eq!(p.sheet.open().edit_text(props::NAME), "Mine");
+        assert_eq!(p.window_title(), "Cans Properties");
+        assert_eq!(a.error.win().and_then(|w| a.parent(w)), Some(PROPS));
         assert!(
-            !enabled(&a, propsheet::OK),
+            sheet_button_enabled(&a, propsheet::APPLY),
+            "the rename can be sent again"
+        );
+        assert!(sheet_button_enabled(&a, propsheet::OK));
+    }
+
+    #[test]
+    fn cancel_or_the_close_box_while_a_rename_waits_closes_the_sheet_once_bluez_answers() {
+        for close in [key(keysym::ESCAPE, false), Event::CloseRequest] {
+            let (mut a, _rx) = wired();
+            let mut ctx = test_ctx();
+            a.open_props("/a/cans");
+            let alias = rename_to_mine(&mut a, &mut ctx);
+            a.event(PROPS, key(u32::from(b'a'), true), &mut ctx);
+            a.event(PROPS, close, &mut ctx);
+            assert!(a.props.is_some(), "the sheet waits for BlueZ");
+
+            bus_says(&mut a, [bz::BzMsg::Ran(alias)]);
+            assert!(a.props.is_none());
+
+            a.open_props("/a/cans");
+            a.event(PROPS, key(keysym::RETURN, false), &mut ctx);
+            assert!(a.props.is_none(), "OK with nothing to apply closes at once");
+        }
+    }
+
+    #[test]
+    fn an_applied_rename_greys_apply_and_ok_until_bluez_answers_it() {
+        let (mut a, rx) = wired();
+        let mut ctx = test_ctx();
+        a.open_props("/a/cans");
+        let alias = rename_to_mine(&mut a, &mut ctx);
+        a.event(PROPS, key(u32::from(b'a'), true), &mut ctx);
+        assert_eq!(rx.try_recv().ok(), Some(alias.clone()));
+        assert!(
+            !sheet_button_enabled(&a, propsheet::OK),
             "OK greys while the rename waits"
         );
-        assert!(!enabled(&a, propsheet::APPLY));
+        assert!(!sheet_button_enabled(&a, propsheet::APPLY));
         let p = a.props.as_mut().unwrap();
         assert_eq!(p.event(propsheet::Event::Ok), props::Outcome::None);
 
         bus_says(&mut a, [bz::BzMsg::Ran(alias)]);
-        assert!(enabled(&a, propsheet::OK), "OK is back once BlueZ answers");
-        assert!(!enabled(&a, propsheet::APPLY), "nothing left to apply");
+        assert!(
+            sheet_button_enabled(&a, propsheet::OK),
+            "OK is back once BlueZ answers"
+        );
+        assert!(
+            !sheet_button_enabled(&a, propsheet::APPLY),
+            "nothing left to apply"
+        );
     }
 
     #[test]
