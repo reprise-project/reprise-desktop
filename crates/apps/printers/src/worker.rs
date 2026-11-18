@@ -77,6 +77,12 @@ pub enum Msg {
         body: String,
         printer: Option<String>,
     },
+    /// A rename ended, posted before its failure if any: `made` when cupsd has queue `new`.
+    Renamed {
+        old: String,
+        new: String,
+        made: bool,
+    },
     Options(String, cups::Result<Options>),
     Devices(cups::Result<Vec<Device>>),
     /// The network printers avahi-daemon sees; `None` without avahi-daemon.
@@ -359,7 +365,21 @@ impl State {
                 device_uri,
             } => {
                 let snap = self.last.clone().unwrap_or_default();
-                cups::rename(c, old, new, device_uri.as_ref(), &snap)
+                let r = cups::rename(c, old, new, device_uri.as_ref(), &snap);
+                let made = r.is_ok() || cups::snapshot(c).is_ok_and(|s| s.printer(new).is_some());
+                self.poster.post(Msg::Renamed {
+                    old: old.clone(),
+                    new: new.clone(),
+                    made,
+                });
+                if let Err(e) = r {
+                    log::warn!("{cmd:?}: {e:?}");
+                    let about = if made { new } else { old };
+                    if let Some(m) = failed(&cmd, Some(about), &e) {
+                        self.poster.post(m);
+                    }
+                }
+                return true;
             }
             Cmd::Modify { printer, change } => cups::modify(c, printer, change.clone()),
             Cmd::TestPage(p) => cups::test_page(c, p).map(|_| {
@@ -402,7 +422,7 @@ impl State {
                             Ok(_) => self.poster.post(Msg::TestPage(printer.name.clone())),
                             Err(e) => {
                                 let test = Cmd::TestPage(printer.name.clone());
-                                if let Some(m) = failed(&test, self.last.as_ref(), &e) {
+                                if let Some(m) = failed(&test, Some(&printer.name), &e) {
                                     self.poster.post(m);
                                 }
                             }
@@ -416,7 +436,7 @@ impl State {
         };
         if let Err(e) = result {
             log::warn!("{cmd:?}: {e:?}");
-            if let Some(m) = failed(&cmd, self.last.as_ref(), &e) {
+            if let Some(m) = failed(&cmd, printer(&cmd, self.last.as_ref()), &e) {
                 self.poster.post(m);
             }
         }
@@ -424,18 +444,17 @@ impl State {
     }
 }
 
-/// The message box for a failed request; a dismissed password prompt has none. `last` names a
-/// job's printer.
-fn failed(cmd: &Cmd, last: Option<&Snapshot>, e: &cups::Error) -> Option<Msg> {
+/// The message box for a failed request about printer `about`; a dismissed password prompt has
+/// none.
+fn failed(cmd: &Cmd, about: Option<&str>, e: &cups::Error) -> Option<Msg> {
     (*e != cups::Error::Dismissed).then(|| Msg::Failed {
         title: title(cmd).into(),
         body: e.text(),
-        printer: printer(cmd, last).map(str::to_owned),
+        printer: about.map(str::to_owned),
     })
 }
 
-/// The printer a request is about. A rename names the old one: its windows carry the new name,
-/// and close when the rename fails.
+/// The printer a request is about; `last` names a job's printer.
 fn printer<'a>(cmd: &'a Cmd, last: Option<&'a Snapshot>) -> Option<&'a str> {
     match cmd {
         Cmd::Pause(p)
@@ -684,12 +703,13 @@ mod tests {
     #[test]
     fn a_dismissed_prompt_has_no_message_box_and_a_refusal_has_one() {
         let delete = Cmd::Delete("Office".into());
-        assert!(failed(&delete, None, &cups::Error::Dismissed).is_none());
+        let about = printer(&delete, None);
+        assert!(failed(&delete, about, &cups::Error::Dismissed).is_none());
         let Some(Msg::Failed {
             title,
             body,
             printer,
-        }) = failed(&delete, None, &cups::Error::NotAuthorized)
+        }) = failed(&delete, about, &cups::Error::NotAuthorized)
         else {
             panic!("a refused password is told");
         };
