@@ -162,6 +162,8 @@ pub fn caption(sec: nm::Security) -> &'static str {
 
 pub struct Chooser {
     pub device_path: String,
+    /// The radio's connection name as the folder lists it; the window's title.
+    pub name: String,
     pub pane: TaskPane,
     pub rows: Vec<NetRow>,
     pub list: TileList,
@@ -177,6 +179,7 @@ impl Chooser {
     pub fn new(d: &nm::Device, units: TextUnits) -> Chooser {
         let mut c = Chooser {
             device_path: d.path.clone(),
+            name: d.shell_name.clone(),
             pane: TaskPane {
                 sections: pane_sections(),
                 ..Default::default()
@@ -201,6 +204,7 @@ impl Chooser {
     }
 
     pub fn refresh(&mut self, d: &nm::Device) {
+        self.name.clone_from(&d.shell_name);
         if matches!(d.state, nm::State::Connected | nm::State::Failed) {
             self.connecting = None;
         }

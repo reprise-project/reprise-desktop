@@ -1289,10 +1289,10 @@ impl App for NetApp {
     fn children(&self) -> Vec<Child> {
         let u = self.forms.text;
         let mut out = Vec::new();
-        if self.chooser.is_some() {
+        if let Some(c) = &self.chooser {
             out.push(Child {
                 id: CHOOSER,
-                title: "Wireless Network Connection".into(),
+                title: c.name.clone(),
                 size: u.size(chooser::CLIENT),
                 fixed: true,
                 modal: false,
@@ -2046,6 +2046,33 @@ mod tests {
             sent.try_recv(),
             Ok(psk_dial("/dev/2", "/ap/2", "radio2key"))
         );
+    }
+
+    #[test]
+    fn a_radios_chooser_is_titled_after_its_connection() {
+        let ctx = test_ctx(folder::CLIENT);
+        let mut snapshot = radios(&["/dev/1", "/dev/2"]);
+        let kinds: Vec<_> = snapshot.devices.iter().map(|d| d.kind).collect();
+        for (d, name) in snapshot.devices.iter_mut().zip(nm::shell_names(&kinds)) {
+            d.shell_name = name;
+        }
+        let mut app = NetApp {
+            snapshot,
+            ..NetApp::default()
+        };
+        let title = |app: &NetApp| {
+            app.children()
+                .into_iter()
+                .find(|c| c.id == CHOOSER)
+                .map(|c| c.title)
+        };
+        app.folder_outcome(folder::Outcome::ViewWireless("/dev/2".into()), &ctx);
+        assert_eq!(
+            title(&app).as_deref(),
+            Some("Wireless Network Connection 2")
+        );
+        app.folder_outcome(folder::Outcome::ViewWireless("/dev/1".into()), &ctx);
+        assert_eq!(title(&app).as_deref(), Some("Wireless Network Connection"));
     }
 
     #[test]
