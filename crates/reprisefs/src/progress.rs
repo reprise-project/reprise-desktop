@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -79,6 +79,7 @@ pub struct Snapshot {
 
 #[derive(Debug, Default)]
 pub struct Meter {
+    /// Read by the job's calls; set only through [`Meter::cancel`], which wakes a parked job.
     pub(crate) cancel: AtomicBool,
     paused: AtomicBool,
     phase: AtomicU8,
@@ -103,6 +104,10 @@ pub struct Meter {
     asks: AtomicBool,
     /// The [`Decision`] on the failed item, 0 when none is asked for.
     decision: AtomicU8,
+    /// True while the job's thread waits out a pause or a [`Decision`] ([`Meter::park`]).
+    parked: Mutex<bool>,
+    /// Wakes a parked job; every store to `cancel`, `paused` or `decision` notifies it.
+    unpark: Condvar,
 }
 
 /// A file this large is flushed in windows as it is written ([`Writeback`]).
@@ -111,7 +116,6 @@ pub(crate) const WINDOW: u64 = 4 << 20;
 const KICK_EVERY: u64 = 2 << 20;
 /// ...and wait for it once this much is.
 const FLUSH_EVERY: u64 = 8 << 20;
-const PAUSE_POLL: Duration = Duration::from_millis(50);
 
 impl Meter {
     pub fn snapshot(&self) -> Snapshot {
@@ -133,6 +137,7 @@ impl Meter {
 
     pub fn set_paused(&self, on: bool) {
         self.paused.store(on, Ordering::Relaxed);
+        self.wake();
     }
 
     pub(crate) fn paused(&self) -> bool {
@@ -146,6 +151,30 @@ impl Meter {
     /// Stop the job at its next file.
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
+        self.wake();
+    }
+
+    /// Whether the job's thread waits out a pause or a [`Decision`]: its counts stand still
+    /// until it is woken. Read before a [`Meter::snapshot`], true means that snapshot is final.
+    pub fn parked(&self) -> bool {
+        *self.parked.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Hold the job's thread while `wait` is true, asleep until a store [`Meter::wake`]s it.
+    fn park(&self, mut wait: impl FnMut() -> bool) {
+        let mut parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
+        while wait() {
+            *parked = true;
+            parked = (self.unpark.wait(parked)).unwrap_or_else(PoisonError::into_inner);
+        }
+        *parked = false;
+    }
+
+    /// Wake a parked job to read its state again. Taking the lock after the store orders it
+    /// against the wait's check, so no store goes unseen.
+    fn wake(&self) {
+        let _parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
+        self.unpark.notify_all();
     }
 
     /// Count one more file or link removed.
@@ -166,6 +195,7 @@ impl Meter {
     /// Answer the failed item the job holds on.
     pub fn decide(&self, d: Decision) {
         self.decision.store(d as u8, Ordering::Relaxed);
+        self.wake();
     }
 
     /// Whether a failed item waits for the host's [`Decision`].
@@ -186,17 +216,17 @@ impl Meter {
         if !self.asks.load(Ordering::Relaxed) {
             return Decision::Abort;
         }
-        let d = loop {
-            if self.cancelled() {
-                break Decision::Abort;
-            }
-            match self.decision.load(Ordering::Relaxed) {
-                2 => break Decision::Skip,
-                3 => break Decision::Retry,
-                4 => break Decision::Abort,
-                _ => std::thread::sleep(PAUSE_POLL),
-            }
-        };
+        let mut d = Decision::Pending;
+        self.park(|| {
+            d = match self.decision.load(Ordering::Relaxed) {
+                _ if self.cancelled() => Decision::Abort,
+                2 => Decision::Skip,
+                3 => Decision::Retry,
+                4 => Decision::Abort,
+                _ => Decision::Pending,
+            };
+            d == Decision::Pending
+        });
         self.decision.store(0, Ordering::Relaxed);
         self.stir();
         d
@@ -281,9 +311,7 @@ impl Meter {
 
     /// Wait out a pause; `Interrupted` once cancelled.
     pub(crate) fn hold(&self) -> std::io::Result<()> {
-        while self.paused.load(Ordering::Relaxed) && !self.cancelled() {
-            std::thread::sleep(PAUSE_POLL);
-        }
+        self.park(|| self.paused() && !self.cancelled());
         self.stir();
         if self.cancelled() {
             return Err(std::io::Error::new(
@@ -605,6 +633,7 @@ pub(crate) fn sync_fs(file: &std::fs::File) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::RecvTimeoutError;
 
     #[test]
     fn a_walk_counts_files_and_links_and_their_bytes() {
@@ -691,9 +720,100 @@ mod tests {
         m.set_paused(true);
         let held = m.clone();
         let t = std::thread::spawn(move || held.wrote(1));
-        m.cancel.store(true, Ordering::Relaxed);
+        m.cancel();
         let e = t.join().unwrap().unwrap_err();
         assert_eq!(e.kind(), std::io::ErrorKind::Interrupted);
+    }
+
+    /// Runs `wait` on a thread of its own: the thread's `/proc` task folder, and what `wait`
+    /// returns once it does.
+    fn held<T: Send + 'static>(
+        m: &Arc<Meter>,
+        wait: fn(&Meter) -> T,
+    ) -> (PathBuf, std::sync::mpsc::Receiver<T>) {
+        let (task_tx, task) = std::sync::mpsc::channel();
+        let (done_tx, done) = std::sync::mpsc::channel();
+        let m = m.clone();
+        std::thread::spawn(move || {
+            let task = std::fs::read_link("/proc/thread-self").expect("a task link");
+            task_tx.send(task).expect("the test waits");
+            let _ = done_tx.send(wait(&m));
+        });
+        let task = task.recv().expect("the thread starts");
+        (Path::new("/proc").join(task), done)
+    }
+
+    /// The context switches the thread of `task` has made.
+    fn switches(task: &Path) -> u64 {
+        std::fs::read_to_string(task.join("status"))
+            .expect("the thread's status")
+            .lines()
+            .filter(|l| l.contains("ctxt_switches"))
+            .filter_map(|l| l.split_whitespace().last()?.parse::<u64>().ok())
+            .sum()
+    }
+
+    /// The context switches the thread of `task` makes over 500 ms, once settled into its wait.
+    fn switches_while_held(task: &Path) -> u64 {
+        std::thread::sleep(Duration::from_millis(100));
+        let before = switches(task);
+        std::thread::sleep(Duration::from_millis(500));
+        switches(task) - before
+    }
+
+    #[test]
+    fn a_paused_job_or_one_waiting_on_its_answer_sleeps_until_woken() {
+        let soon = Duration::from_secs(2);
+        let m = Arc::new(Meter::default());
+        m.set_paused(true);
+        let (task, done) = held(&m, |m| m.hold().is_ok());
+        let n = switches_while_held(&task);
+        assert!(
+            n <= 1,
+            "a paused job's thread sleeps, not {n} switches in 500 ms"
+        );
+        assert!(m.parked(), "a paused job says it is parked");
+        m.set_paused(false);
+        assert_eq!(done.recv_timeout(soon), Ok(true), "Resume lets it go");
+        assert!(!m.parked());
+
+        m.ask_on_failure();
+        m.ask();
+        let (task, done) = held(&m, Meter::decision);
+        let n = switches_while_held(&task);
+        assert!(
+            n <= 1,
+            "a job waiting on its answer sleeps, not {n} switches in 500 ms"
+        );
+        assert!(m.parked(), "a job waiting on its answer says it is parked");
+        m.decide(Decision::Skip);
+        assert_eq!(
+            done.recv_timeout(soon),
+            Ok(Decision::Skip),
+            "the answer lets it go"
+        );
+    }
+
+    #[test]
+    fn a_wait_on_an_answer_ends_at_once_on_the_answer_a_dropped_question_or_a_cancel() {
+        let answered = |m: &Arc<Meter>| Asked::new(m.clone()).answer(Decision::Retry);
+        assert_eq!(wait_ended_by(answered), Ok(Decision::Retry));
+        assert_eq!(
+            wait_ended_by(|m| drop(Asked::new(m.clone()))),
+            Ok(Decision::Abort)
+        );
+        assert_eq!(wait_ended_by(|m| m.cancel()), Ok(Decision::Abort));
+    }
+
+    /// What a job held on its answer picks once `end` runs, if it does within 2 s.
+    fn wait_ended_by(end: impl FnOnce(&Arc<Meter>)) -> Result<Decision, RecvTimeoutError> {
+        let m = Arc::new(Meter::default());
+        m.ask_on_failure();
+        m.ask();
+        let (_, done) = held(&m, Meter::decision);
+        std::thread::sleep(Duration::from_millis(100));
+        end(&m);
+        done.recv_timeout(Duration::from_secs(2))
     }
 
     /// Polls a [`Headway`] every 25 ms of a made-up clock for 400 ms while `stirring` gives the
