@@ -305,6 +305,13 @@ impl Explorer {
         if let Some(p) = &mut props {
             p.opened = refresh.unwrap_or_else(|| self.next_sheet());
         }
+        // A sheet read again stays on the tab it was on, found by its label.
+        let was = (self.props.as_ref()).map(|p| &p.sheet.tabs.labels[p.sheet.tabs.open]);
+        if let (Some(p), Some(was), Some(_)) = (&mut props, was, refresh)
+            && let Some(i) = p.sheet.tabs.labels.iter().position(|l| l == was)
+        {
+            p.sheet.tabs.open = i;
+        }
         self.props = props;
         match (&read, self.props.as_ref().and_then(|p| p.set.clone())) {
             (SheetRead::Set(..), Some(set)) => self.walk_set_for_props(set, ctx),
