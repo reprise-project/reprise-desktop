@@ -1670,8 +1670,11 @@ fn recorded_accept(client: &mut ironrdp_connector::ClientConnector) -> Vec<Step>
     steps
 }
 
-/// Steps `client` over `stream` until it is connected.
-async fn connect_over<S>(client: &mut ironrdp_connector::ClientConnector, stream: S)
+/// Steps `client` over `stream` until it is connected, and the stream framed as it was left.
+async fn connect_over<S>(
+    client: &mut ironrdp_connector::ClientConnector,
+    stream: S,
+) -> ironrdp_tokio::TokioFramed<S>
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
 {
@@ -1690,6 +1693,7 @@ where
         .await
         .expect("the client connects");
     assert_eq!(client.state.name(), "Connected");
+    framed
 }
 
 /// Both ends of a loopback TCP connection: the client's, then the accepted one and its peer.
@@ -1702,58 +1706,86 @@ async fn loopback() -> (TcpStream, TcpStream, SocketAddr) {
     (client, accepted, peer)
 }
 
+/// A connection handed over past its accept and served by [`connection_server`] through [`run`].
+struct HandedOverSession {
+    client: ironrdp_connector::ClientConnector,
+    framed: ironrdp_tokio::TokioFramed<TcpStream>,
+    peer: SocketAddr,
+    served: tokio::task::JoinHandle<()>,
+    status: watch::Receiver<Status>,
+}
+
+/// The client `make` builds for its peer, handed over as alice and connected.
+async fn handed_over_session(
+    make: impl FnOnce(SocketAddr) -> ironrdp_connector::ClientConnector,
+) -> HandedOverSession {
+    let (client_end, stream, peer) = loopback().await;
+    let mut client = make(peer);
+    let steps = recorded_accept(&mut client);
+    let admission = Admission::HandedOver {
+        user: "alice".into(),
+    };
+    let check = auth::HandedOverLogins::new("alice".into()).check(peer, admission);
+    let handlers = (
+        crate::Grey,
+        crate::input::Input::new(Default::default()).0,
+        None,
+        None,
+        None,
+        crate::client::Handler::asked(Default::default()),
+    );
+    let rdp = connection_server(peer, None, handlers, check.clone());
+    let (status, status_rx) = watch::channel(Status::default());
+    let shared = Rc::new(Shared {
+        user: "alice".into(),
+        status,
+        leave: (),
+        viewers: Rc::default(),
+        console: lock_mode_console(),
+    });
+    let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
+    let viewer = Viewer {
+        id,
+        peer,
+        kicked,
+        ending: Ending::default(),
+        alive: mpsc::channel(1).0,
+    };
+    let resumed = Resumed {
+        security: SecurityProtocol::SSL,
+        steps: steps.into_iter().map(replay_step).collect(),
+    };
+    let on_shown = watch::channel(false).1;
+    let served = tokio::task::spawn_local(run(
+        rdp,
+        stream,
+        Some(resumed),
+        viewer,
+        check,
+        on_shown,
+        shared,
+    ));
+    let framed = connect_over(&mut client, client_end).await;
+    HandedOverSession {
+        client,
+        framed,
+        peer,
+        served,
+        status: status_rx,
+    }
+}
+
 #[tokio::test]
 async fn a_handed_over_connection_runs_to_the_session_at_the_size_its_client_asks() {
     LocalSet::new()
         .run_until(async {
-            let (client_end, stream, peer) = loopback().await;
-            let mut client = handed_over_client(peer);
-            let steps = recorded_accept(&mut client);
-            let admission = Admission::HandedOver {
-                user: "alice".into(),
-            };
-            let check = auth::HandedOverLogins::new("alice".into()).check(peer, admission);
-            let handlers = (
-                crate::Grey,
-                crate::input::Input::new(Default::default()).0,
-                None,
-                None,
-                None,
-                crate::client::Handler::asked(Default::default()),
-            );
-            let rdp = connection_server(peer, None, handlers, check.clone());
-            let (status, mut status_rx) = watch::channel(Status::default());
-            let shared = Rc::new(Shared {
-                user: "alice".into(),
-                status,
-                leave: (),
-                viewers: Rc::default(),
-                console: lock_mode_console(),
-            });
-            let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
-            let viewer = Viewer {
-                id,
+            let HandedOverSession {
+                client,
+                framed,
                 peer,
-                kicked,
-                ending: Ending::default(),
-                alive: mpsc::channel(1).0,
-            };
-            let resumed = Resumed {
-                security: SecurityProtocol::SSL,
-                steps: steps.into_iter().map(replay_step).collect(),
-            };
-            let on_shown = watch::channel(false).1;
-            let served = tokio::task::spawn_local(run(
-                rdp,
-                stream,
-                Some(resumed),
-                viewer,
-                check,
-                on_shown,
-                shared,
-            ));
-            let mut client_end = client_end;
-            connect_over(&mut client, &mut client_end).await;
+                served,
+                status: mut status_rx,
+            } = handed_over_session(handed_over_client).await;
             let ironrdp_connector::ClientConnectorState::Connected { result } = &client.state
             else {
                 unreachable!("connect_over leaves it connected");
@@ -1772,11 +1804,146 @@ async fn a_handed_over_connection_runs_to_the_session_at_the_size_its_client_ask
             assert_eq!(listed.len(), 1);
             assert_eq!(listed[0].address, peer.to_string());
             assert_eq!(listed[0].user, "alice");
-            drop(client_end);
+            drop(framed);
             (tokio::time::timeout(WAIT, served).await)
                 .expect("the connection ends with its client")
                 .unwrap();
             assert!(status_rx.borrow().clients.is_empty());
+        })
+        .await;
+}
+
+/// The client's end of the server's ECHO channel, which answers nothing.
+struct EchoChannel;
+
+ironrdp_core::impl_as_any!(EchoChannel);
+
+impl ironrdp_dvc::DvcProcessor for EchoChannel {
+    fn channel_name(&self) -> &str {
+        "ECHO"
+    }
+
+    fn start(&mut self, _: u32) -> ironrdp_pdu::PduResult<Vec<ironrdp_dvc::DvcMessage>> {
+        Ok(Vec::new())
+    }
+
+    fn process(
+        &mut self,
+        _: u32,
+        _: &[u8],
+    ) -> ironrdp_pdu::PduResult<Vec<ironrdp_dvc::DvcMessage>> {
+        Ok(Vec::new())
+    }
+}
+
+impl ironrdp_dvc::DvcClientProcessor for EchoChannel {}
+
+/// The id of the client's open ECHO channel.
+fn echo_channel(result: &ironrdp_connector::ConnectionResult) -> Option<u32> {
+    let drdynvc = result
+        .static_channels
+        .get_by_type::<ironrdp_dvc::DrdynvcClient>()?
+        .channel_processor_downcast_ref::<ironrdp_dvc::DrdynvcClient>()?;
+    Some(drdynvc.get_dvc::<EchoChannel>()?.channel_id())
+}
+
+/// Answers the server's DRDYNVC PDUs until `done` holds or `within` passes; whether it held.
+async fn answered_until(
+    framed: &mut ironrdp_tokio::TokioFramed<TcpStream>,
+    result: &mut ironrdp_connector::ConnectionResult,
+    within: Duration,
+    done: impl Fn(&ironrdp_connector::ConnectionResult) -> bool,
+) -> bool {
+    use ironrdp_tokio::FramedWrite as _;
+    let deadline = tokio::time::Instant::now() + within;
+    let drdynvc = (result.static_channels)
+        .get_channel_id_by_type::<ironrdp_dvc::DrdynvcClient>()
+        .expect("the client joined DRDYNVC");
+    while !done(result) {
+        let Ok(read) = tokio::time::timeout_at(deadline, framed.read_pdu()).await else {
+            return false;
+        };
+        let (action, frame) = read.expect("the server keeps the connection");
+        if action != ironrdp_pdu::Action::X224 {
+            continue;
+        }
+        let Ok(data) = ironrdp_pdu::mcs::decode_send_data_indication(&frame) else {
+            continue;
+        };
+        if data.channel_id != drdynvc {
+            continue;
+        }
+        let channel = result
+            .static_channels
+            .get_by_channel_id_mut(drdynvc)
+            .unwrap();
+        let answers = channel.process(data.user_data).unwrap();
+        let encoded =
+            ironrdp_svc::client_encode_svc_messages(answers, drdynvc, result.user_channel_id)
+                .unwrap();
+        framed.write_all(&encoded).await.unwrap();
+    }
+    true
+}
+
+/// Sends a DVC Data First PDU on `channel` declaring a message of `length` bytes.
+async fn data_first(
+    framed: &mut ironrdp_tokio::TokioFramed<TcpStream>,
+    result: &ironrdp_connector::ConnectionResult,
+    channel: u32,
+    length: usize,
+) {
+    use ironrdp_dvc::pdu::{DataFirstPdu, DrdynvcClientPdu, DrdynvcDataPdu};
+    use ironrdp_tokio::FramedWrite as _;
+    let drdynvc = (result.static_channels)
+        .get_channel_id_by_type::<ironrdp_dvc::DrdynvcClient>()
+        .unwrap();
+    let first = DataFirstPdu::new(channel, length.try_into().unwrap(), vec![0; 64]);
+    let pdu = DrdynvcClientPdu::Data(DrdynvcDataPdu::DataFirst(first));
+    let message = ironrdp_svc::SvcMessage::from(pdu);
+    let encoded =
+        ironrdp_svc::client_encode_svc_messages(vec![message], drdynvc, result.user_channel_id)
+            .unwrap();
+    framed.write_all(&encoded).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_dynamic_channel_message_over_1_mib_closes_its_channel_and_not_the_session() {
+    LocalSet::new()
+        .run_until(async {
+            let echo = || ironrdp_dvc::DrdynvcClient::new().with_dynamic_channel(EchoChannel);
+            let HandedOverSession {
+                mut client,
+                mut framed,
+                served,
+                ..
+            } = handed_over_session(|peer| handed_over_client(peer).with_static_channel(echo()))
+                .await;
+            let ironrdp_connector::ClientConnectorState::Connected { result } = &mut client.state
+            else {
+                unreachable!("connect_over leaves it connected");
+            };
+            let opened = |r: &_| echo_channel(r).is_some();
+            assert!(
+                answered_until(&mut framed, result, WAIT, opened).await,
+                "the server opens its ECHO channel"
+            );
+            let channel = echo_channel(result).unwrap();
+            let closed = |r: &_| echo_channel(r).is_none();
+
+            data_first(&mut framed, result, channel, MAX_DYNAMIC_MESSAGE).await;
+            let short = Duration::from_millis(300);
+            assert!(
+                !answered_until(&mut framed, result, short, closed).await,
+                "a 1 MiB message keeps the ECHO channel open"
+            );
+
+            data_first(&mut framed, result, channel, MAX_DYNAMIC_MESSAGE + 1).await;
+            assert!(
+                answered_until(&mut framed, result, WAIT, closed).await,
+                "a message one byte over 1 MiB closes the ECHO channel"
+            );
+            assert!(!served.is_finished(), "the session goes on");
         })
         .await;
 }

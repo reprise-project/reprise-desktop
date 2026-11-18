@@ -76,21 +76,21 @@ jpegxl-sys = "=0.12.0"
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 # Our fork's `patches` branch: upstream master plus the server, acceptor and
 # input fixes listed in `git log upstream/master..patches` there.
-ironrdp-acceptor = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-async = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-cliprdr = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-connector = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-core = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-displaycontrol = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-dvc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-egfx = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-graphics = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-pdu = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-rdpsnd = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-server = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0", features = ["egfx"] }
-ironrdp-svc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
-ironrdp-tokio = { git = "https://github.com/reprise-project/IronRDP.git", rev = "fb3b0beec1aac965cd6c7a5a78614dba0c6260b0" }
+ironrdp-acceptor = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-async = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-cliprdr = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-connector = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-core = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-displaycontrol = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-dvc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-egfx = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-graphics = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-pdu = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-rdpsnd = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-server = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293", features = ["egfx"] }
+ironrdp-svc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-tokio = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
 libc = "0.2.191"
 log = "0.4"
 md4 = { version = "0.11", default-features = false }
