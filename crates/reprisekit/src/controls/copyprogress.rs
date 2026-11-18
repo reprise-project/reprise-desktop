@@ -64,8 +64,8 @@ pub enum Phase {
 pub struct Status {
     pub phase: Phase,
     pub paused: bool,
-    /// Held on the question a failed item asks: the time it waits counts for the rate as a
-    /// pause does.
+    /// Held on the question a failed item asks: the time it waits counts for the rate and the
+    /// flight as a pause does.
     pub asking: bool,
     pub bytes: u64,
     pub total_bytes: u64,
@@ -93,7 +93,8 @@ const RATE_MS: u64 = 500;
 /// The longest time the line gives: past it the hours would take three figures, so a longer
 /// estimate (a stalled copy's) reads as none.
 const LONGEST_S: f64 = 99.0 * 3600.0;
-/// The flight's frame time: it moves at about 15 frames a second. A host ticks the dialog at it.
+/// The flight's frame time: it moves at about 15 frames a second. A host ticks the dialog at it
+/// while [`CopyProgress::wants_ticks`].
 pub const FRAME_MS: u64 = 66;
 /// A put done sooner than this never shows the dialog.
 pub const SHOW_AFTER: std::time::Duration = std::time::Duration::from_millis(500);
@@ -118,6 +119,11 @@ pub struct CopyProgress {
     graphed: usize,
     graph: bool,
     pub form: Form,
+}
+
+/// Whether the flight holds still for `s`: paused, or held on a failed item's question.
+fn held(s: &Status) -> bool {
+    s.paused || s.asking
 }
 
 /// The end balloon's summary and body for a `kind` job from `from` to `to` that dealt with
@@ -218,7 +224,9 @@ impl CopyProgress {
         }
         let dt = self.clock.map_or(0, |c| now_ms.saturating_sub(c));
         let frame = self.anim_ms / FRAME_MS;
-        if !status.paused {
+        // A frame flies only when the job ran at both its ends: the host stops ticking a job held
+        // on a question, so the first update after the answer spans the whole wait.
+        if !held(&self.status) && !held(&status) {
             self.anim_ms += dt;
         }
         self.clock = Some(now_ms);
@@ -255,6 +263,12 @@ impl CopyProgress {
         }
         self.sample();
         changed || self.anim_ms / FRAME_MS != frame
+    }
+
+    /// Whether its host ticks it at [`FRAME_MS`]: not while its job waits on a question, when
+    /// nothing in it moves until the answer.
+    pub fn wants_ticks(&self) -> bool {
+        !self.status.asking
     }
 
     fn sample(&mut self) {
@@ -1053,6 +1067,44 @@ mod tests {
         assert_eq!(label(&cp), "&Resume");
         cp.update(copying(50, 100), 9100);
         assert_eq!(label(&cp), "&Pause");
+    }
+
+    #[test]
+    fn the_flight_holds_its_frame_while_the_job_waits_on_a_question_and_goes_on_from_it() {
+        let mut cp = CopyProgress::new(Kind::Copy, "a", "b", SKY);
+        hold(&mut cp, &copying(0, 100), 0, 10 * FRAME_MS);
+        assert_eq!(cp.flight().ms, 10 * FRAME_MS, "ten frames flown");
+        assert!(cp.wants_ticks());
+
+        let asking = Status {
+            asking: true,
+            ..copying(50, 100)
+        };
+        hold(&mut cp, &asking, 11 * FRAME_MS, 40 * FRAME_MS);
+        assert_eq!(
+            cp.flight().ms,
+            10 * FRAME_MS,
+            "the sheets stop where they are"
+        );
+        assert!(
+            !cp.update(asking.clone(), 41 * FRAME_MS),
+            "a held frame draws nothing new"
+        );
+        assert!(!cp.wants_ticks(), "nothing moves until the answer");
+
+        cp.update(copying(50, 100), 60_000);
+        assert_eq!(
+            cp.flight().ms,
+            10 * FRAME_MS,
+            "the time on the question is no flight"
+        );
+        assert!(cp.wants_ticks());
+        assert!(cp.update(copying(50, 100), 60_000 + FRAME_MS));
+        assert_eq!(
+            cp.flight().ms,
+            11 * FRAME_MS,
+            "the next frame after the held one"
+        );
     }
 
     /// `cp` takes `status` every frame from `from` up to `to` ms.

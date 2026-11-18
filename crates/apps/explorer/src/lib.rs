@@ -1659,14 +1659,17 @@ struct Lazy {
 }
 
 impl Explorer {
-    /// An event on window `win`. After every event a paste whose turn came asks its clash.
+    /// An event on window `win`. After every event a paste whose turn came asks its clash, and a
+    /// progress window held still on a box takes a tick once its job moved.
     pub(crate) fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         let reply = route(self, win, ev, ctx);
         // The task pane draws its focus rectangle only while it holds the keyboard.
         if self.focus != Focus::Tasks {
             self.taskpane.focus = None;
         }
-        self.raise_waiting(reply, ctx)
+        let mut reply = self.raise_waiting(reply, ctx);
+        reply.tick_wins.extend(self.held_progress_moved());
+        reply
     }
 }
 
