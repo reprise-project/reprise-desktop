@@ -25,6 +25,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Instant;
@@ -583,6 +584,16 @@ struct ShmCopy {
     copied: Vec<Rectangle<i32, Buffer>>,
 }
 
+/// The rows of a `size` picture that `rects` reach.
+fn rows_of(rects: &[Rectangle<i32, Buffer>], size: Size<i32, Physical>) -> Range<i32> {
+    let area = Rectangle::from_size((size.w, size.h).into());
+    let reached = rects.iter().filter_map(|r| r.intersection(area));
+    let (top, bottom) = reached.fold((size.h, 0), |(t, b), r| {
+        (t.min(r.loc.y), b.max(r.loc.y + r.size.h))
+    });
+    top..bottom.max(top)
+}
+
 fn draw(
     renderer: &mut GlesRenderer,
     readbacks: &mut Readbacks,
@@ -613,7 +624,7 @@ fn draw(
                 .render_output(renderer, &mut fb, 0, elements, clear)
                 .map_err(|e| format!("{e:?}"))?;
             drop(fb);
-            slot.read(renderer)?;
+            slot.read(renderer, 0..size.h)?;
             let sync = crate::gpufence::sync_now(renderer)?;
             crate::gpufence::issued(renderer, &sync);
             Ok(Drawn {
@@ -631,8 +642,10 @@ fn draw(
 }
 
 /// Draws `elements` into `target` where `region` (output pixels) lies, the rest of a dma-buf left
-/// as it was; the caches of the framebuffer effects drawn are `effects`. An shm buffer is drawn
-/// whole into a pooled texture, which holds no earlier frame, and only `region` copied into it.
+/// as it was; the caches of the framebuffer effects drawn are `effects`. An shm buffer's frame is
+/// drawn into a pooled texture, and only `region` copied into the buffer: the texture's other
+/// pixels are never read, unless a framebuffer effect, which reads past its own place, is drawn,
+/// and then it is drawn whole.
 fn draw_region(
     renderer: &mut GlesRenderer,
     readbacks: &mut Readbacks,
@@ -659,19 +672,17 @@ fn draw_region(
             let fourcc = shm_fourcc(buffer, size)?;
             let mut slot = readbacks.slot(renderer, Key { size, fourcc })?;
             let mut fb = renderer.bind(slot.texture()).map_err(|e| e.to_string())?;
-            let _ = paint(
-                renderer,
-                &mut fb,
-                view,
-                drawing,
-                &[output_rect(view)],
-                effects,
-            )?;
+            let whole = [output_rect(view)];
+            let drawn = match elements.iter().any(|e| e.is_framebuffer_effect()) {
+                true => &whole[..],
+                false => region,
+            };
+            let _ = paint(renderer, &mut fb, view, drawing, drawn, effects)?;
             drop(fb);
-            slot.read(renderer)?;
+            let copied: Vec<_> = region.iter().map(|r| to_buffer(view, *r)).collect();
+            slot.read(renderer, rows_of(&copied, size))?;
             let sync = crate::gpufence::sync_now(renderer)?;
             crate::gpufence::issued(renderer, &sync);
-            let copied = region.iter().map(|r| to_buffer(view, *r)).collect();
             Ok(Drawn {
                 sync,
                 shm: Some(ShmCopy {
@@ -734,13 +745,18 @@ fn shm_fourcc(buffer: &WlBuffer, size: Size<i32, Physical>) -> Result<Fourcc, St
 
 impl ShmCopy {
     fn fill(&self, renderer: &mut GlesRenderer) -> Result<(), String> {
-        self.slot.bytes(renderer, |bytes| self.copy(bytes))?
+        let rows = rows_of(&self.copied, self.size);
+        let first = rows.start;
+        self.slot
+            .bytes(renderer, rows, |bytes| self.copy(bytes, first))?
     }
 
-    fn copy(&self, bytes: &[u8]) -> Result<(), String> {
+    /// Copies the picture's rows from `first` on, which `bytes` holds, into the buffer.
+    fn copy(&self, bytes: &[u8], first: i32) -> Result<(), String> {
         let row = self.size.w as usize * 4;
         let rows = self.size.h as usize;
-        if bytes.len() < row * rows {
+        let read = rows_of(&self.copied, self.size);
+        if bytes.len() < read.len() * row {
             return Err("short texture read".into());
         }
         shm::with_buffer_contents_mut(&self.buffer, |pool, pool_len, data| {
@@ -755,21 +771,29 @@ impl ShmCopy {
             }
             // SAFETY: `pool` is the client's mapped pool of `pool_len`
             // bytes, and the check above keeps every row from `offset` inside it.
-            unsafe { copy_rects(bytes, pool.add(offset), stride, self.size, &self.copied) };
+            unsafe {
+                copy_rects(
+                    (bytes, first),
+                    pool.add(offset),
+                    stride,
+                    self.size,
+                    &self.copied,
+                )
+            };
             Ok(())
         })
         .map_err(|e| format!("{e:?}"))?
     }
 }
 
-/// Copies the parts of `picture`, `size` in rows of 4-byte pixels, that `rects` cover into `out`,
-/// whose rows are `stride` bytes apart.
+/// Copies the parts of a `size` picture of 4-byte pixels that `rects` cover into `out`, whose rows
+/// are `stride` bytes apart; `picture` holds its rows from `first` on.
 ///
 /// # Safety
-/// `picture` holds `size.h` rows; `out` is valid for writes of `size.h` rows of `size.w` pixels,
-/// `stride` apart, and `stride` is at least a row.
+/// `picture` holds every row from `first` that `rects` reach; `out` is valid for writes of
+/// `size.h` rows of `size.w` pixels, `stride` apart, and `stride` is at least a row.
 unsafe fn copy_rects(
-    picture: &[u8],
+    (picture, first): (&[u8], i32),
     out: *mut u8,
     stride: usize,
     size: Size<i32, Physical>,
@@ -780,7 +804,7 @@ unsafe fn copy_rects(
     for r in rects.iter().filter_map(|r| r.intersection(area)) {
         let (x, w) = (r.loc.x as usize * 4, r.size.w as usize * 4);
         for y in r.loc.y as usize..(r.loc.y + r.size.h) as usize {
-            let from = &picture[y * row + x..][..w];
+            let from = &picture[(y - first as usize) * row + x..][..w];
             // SAFETY: `r` lies inside the picture, so the row's part lies inside `out`.
             unsafe { std::ptr::copy_nonoverlapping(from.as_ptr(), out.add(y * stride + x), w) };
         }
@@ -2226,7 +2250,15 @@ mod tests {
         let mut out = vec![0u8; stride * 3];
         let region = [Rectangle::<i32, Buffer>::new((1, 1).into(), (2, 5).into())];
         // SAFETY: `out` holds 3 rows `stride` apart, each wider than the picture's.
-        unsafe { super::copy_rects(&picture, out.as_mut_ptr(), stride, size, &region) };
+        unsafe {
+            super::copy_rects(
+                (&picture[4 * 4..], 1),
+                out.as_mut_ptr(),
+                stride,
+                size,
+                &region,
+            )
+        };
         for y in 0..3 {
             for x in 0..4 {
                 let got = &out[y * stride + x * 4..][..4];
@@ -2241,6 +2273,26 @@ mod tests {
         assert!(
             out[16..stride].iter().all(|&b| b == 0),
             "the stride's padding is left"
+        );
+    }
+
+    #[test]
+    fn only_the_rows_the_drawn_region_reaches_are_read_back() {
+        let size = Size::new(1280, 720);
+        let r = |x, y, w, h| Rectangle::<i32, Buffer>::new((x, y).into(), (w, h).into());
+        assert_eq!(super::rows_of(&[r(10, 100, 2, 16)], size), 100..116);
+        assert_eq!(
+            super::rows_of(&[r(10, 100, 2, 16), r(500, 40, 9, 9)], size),
+            40..116
+        );
+        assert_eq!(
+            super::rows_of(&[r(0, 700, 5, 50)], size),
+            700..720,
+            "cut at the bottom"
+        );
+        assert!(
+            super::rows_of(&[], size).is_empty(),
+            "nothing drawn, nothing read"
         );
     }
 
