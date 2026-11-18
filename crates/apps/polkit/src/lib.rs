@@ -68,6 +68,8 @@ struct Active {
     /// The last info text held back by `failure_shown`, shown once the user submits
     /// while the helper still waits on that step.
     held: Option<String>,
+    /// This conversation reported an error, which says why it may end unreachable.
+    explained: bool,
 }
 
 impl Active {
@@ -84,6 +86,7 @@ impl Active {
             notice: None,
             failure_shown: false,
             held: None,
+            explained: false,
         }
     }
 
@@ -100,6 +103,7 @@ impl Active {
         self.dialog.open(&first.get(&user));
         self.notice = None;
         self.held = None;
+        self.explained = false;
         let Some(waker) = waker else {
             return;
         };
@@ -209,6 +213,7 @@ impl PolkitApp {
             }
             Report::Error(t) => {
                 a.failure_shown = false;
+                a.explained = true;
                 a.dialog.set_status(&t);
                 a.notice.get_or_insert(t);
             }
@@ -248,8 +253,11 @@ impl PolkitApp {
                 }
             }
             Report::Done(Verdict::Unreachable) => {
-                // `Report::Error` already put the reason in the status line; nothing was
-                // judged, so no retry is spent.
+                // Nothing was judged, so no retry is spent. An end with no error is a
+                // helper that hung up or timed out.
+                if !a.explained {
+                    a.dialog.set_status(&format!("{}.", helper::UNREACHABLE));
+                }
                 a.session = None;
                 a.reports = None;
                 a.prompted = false;
@@ -648,6 +656,19 @@ mod tests {
         let act = app.active.as_ref().expect("still open");
         assert_eq!(act.attempts, 0);
         assert_eq!(act.dialog.status(), "Cannot reach the polkit helper: x");
+    }
+
+    #[test]
+    fn a_helper_that_hangs_up_without_an_error_shows_it_cannot_be_reached() {
+        let mut app = two_users();
+        app.report(Report::Info(
+            "Place your finger on the fingerprint reader".into(),
+        ));
+        type_ok(&mut app, "hunter2");
+        app.report(Report::Done(Verdict::Unreachable));
+        let act = app.active.as_ref().expect("still open");
+        assert!(!act.dialog.busy());
+        assert_eq!(act.dialog.status(), "Cannot reach the polkit helper.");
     }
 
     #[test]
