@@ -888,7 +888,7 @@ impl Explorer {
 
     pub fn confirm_empty_bin(&mut self, ctx: &mut Ctx) -> Reply {
         let only = (self.items.len() == 1).then(|| &self.items[0]);
-        let one = only.map(|it| (it.name.clone(), it.is_dir));
+        let one = only.map(|it| (it.label().to_string(), it.is_dir));
         self.ask_empty(self.items.len(), one, ctx)
     }
 
