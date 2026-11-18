@@ -102,6 +102,20 @@ pub(crate) mod testfs {
             .expect("returns without blocking")
     }
 
+    /// Whether every sender of `rx` is dropped within `bound`: the threads a job's `wake` went
+    /// into have all returned.
+    pub fn released(rx: &std::sync::mpsc::Receiver<()>, bound: std::time::Duration) -> bool {
+        use std::sync::mpsc::RecvTimeoutError;
+        let until = std::time::Instant::now() + bound;
+        loop {
+            match rx.recv_timeout(until.saturating_duration_since(std::time::Instant::now())) {
+                Ok(()) => {}
+                Err(RecvTimeoutError::Disconnected) => return true,
+                Err(RecvTimeoutError::Timeout) => return false,
+            }
+        }
+    }
+
     /// A stand-in for a stopped network mount, which `ops::resolved` asks before it resolves a path.
     pub mod dead {
         use std::path::{Path, PathBuf};
