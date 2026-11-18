@@ -476,6 +476,18 @@ impl PropsSheet {
         Ok(c)
     }
 
+    /// The rename to `new` failed: the name field goes back to the printer's name, unless
+    /// something else was typed since.
+    pub fn rename_failed(&mut self, new: &str) {
+        if self.pending.name.trim().replace(' ', "_") != new {
+            return;
+        }
+        self.pending.name = self.applied.name.clone();
+        set_edit(&mut self.sheet.pages[GENERAL], NAME, &self.applied.name);
+        let dirty = self.dirty();
+        self.sheet.set_apply_enabled(dirty);
+    }
+
     fn read(&mut self, id: &str) {
         let pages = &self.sheet.pages;
         let o = self.options.clone().unwrap_or_default();
@@ -762,6 +774,23 @@ mod tests {
         p.refresh(&moved, false);
         assert_eq!(p.sheet.pages[GENERAL].edit_text(COMMENT), "Mine");
         assert_eq!(p.sheet.pages[GENERAL].edit_text(LOCATION), "Basement");
+    }
+
+    #[test]
+    fn a_failed_rename_puts_the_name_back_and_keeps_another_edit() {
+        let mut p = PropsSheet::new(&laser(), None);
+        type_into(&mut p, GENERAL, NAME, "Hall Laser");
+        assert!(matches!(
+            p.event(propsheet::Event::Apply, &snap()),
+            Outcome::Apply { .. }
+        ));
+        p.rename_failed("Hall_Laser");
+        assert_eq!(p.sheet.pages[GENERAL].edit_text(NAME), "Laser");
+        assert!(!p.dirty(), "Apply greys again");
+
+        type_into(&mut p, GENERAL, NAME, "Office");
+        p.rename_failed("Hall_Laser");
+        assert_eq!(p.sheet.pages[GENERAL].edit_text(NAME), "Office");
     }
 
     #[test]

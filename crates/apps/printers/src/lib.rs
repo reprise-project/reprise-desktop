@@ -112,6 +112,7 @@ struct PrintersApp {
     balloons: Vec<String>,
     announced: HashSet<String>,
     select: Option<String>,
+    /// Printers cupsd renamed whose new name a snapshot has yet to show: their windows stay.
     renaming: HashSet<String>,
     /// A renamed printer whose Ports tab opens once cupsd has it, to type its password again.
     ports_after: Option<String>,
@@ -288,11 +289,8 @@ impl PrintersApp {
                     title,
                     body,
                     printer,
-                } => {
-                    self.renaming.clear();
-                    self.ports_after = None;
-                    self.notify(printer.as_deref(), &title, body)
-                }
+                } => self.notify(printer.as_deref(), &title, body),
+                Msg::Renamed { old, new, made } => self.renamed(old, new, made),
                 Msg::Options(name, r) => {
                     let printer = self.snapshot.printer(&name).cloned();
                     if let (Some(p), Some(pr)) = (self.props.by_printer_mut(&name), printer) {
@@ -477,18 +475,32 @@ impl PrintersApp {
         self.confirm.ask_over(from, b, Ask::Rename { old, new });
     }
 
-    fn rename(&mut self, old: String, new: String, device_uri: Option<String>) {
-        self.queues.rename(&old, &new);
-        self.props.rename(&old, &new);
-        if self.folder.selected_name() == Some(old.as_str()) {
-            self.select = Some(new.clone());
-        }
-        self.renaming.insert(new.clone());
+    fn rename(&self, old: String, new: String, device_uri: Option<String>) {
         self.send(Cmd::Rename {
             old,
             new,
             device_uri: device_uri.map(cups::DeviceUri),
         });
+    }
+
+    /// The windows of `old` take the name `new` once cupsd `made` it; else a sheet's name field
+    /// goes back to `old`.
+    fn renamed(&mut self, old: String, new: String, made: bool) {
+        if !made {
+            if self.ports_after.as_ref() == Some(&new) {
+                self.ports_after = None;
+            }
+            if let Some(p) = self.props.by_printer_mut(&old) {
+                p.rename_failed(&new);
+            }
+            return;
+        }
+        self.queues.rename(&old, &new);
+        self.props.rename(&old, &new);
+        if self.folder.selected_name() == Some(old.as_str()) {
+            self.select = Some(new.clone());
+        }
+        self.renaming.insert(new);
     }
 
     fn ask_delete(&mut self, printer: String, ctx: &mut Ctx) {
@@ -1382,6 +1394,8 @@ mod tests {
     fn renaming_an_smb_queue_asks_first_then_opens_its_ports_tab() {
         let mut app = two_printers();
         app.snapshot.printers[0].device_uri = "smb://server/q".into();
+        let (worker, sent) = worker::Handle::channel();
+        app.worker = Some(worker);
         let mut ctx = test_ctx(folder::CLIENT);
         let rename = |old: &str| folder::Outcome::Rename {
             old: old.into(),
@@ -1397,7 +1411,15 @@ mod tests {
             w <= QUESTION_W,
             "the question wraps at {QUESTION_W}, not {w}"
         );
-        assert!(!app.renaming.contains("Laser_2"), "nothing sent yet");
+        let renames = |sent: &Receiver<Cmd>| {
+            sent.try_iter()
+                .filter_map(|c| match c {
+                    Cmd::Rename { new, .. } => Some(new),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(renames(&sent), ["Inkjet_2"], "Laser's is not sent yet");
         let enter = repriseapp::KeyInput {
             sym: reprisekit::textedit::keysym::RETURN,
             utf8: None,
@@ -1406,13 +1428,15 @@ mod tests {
         };
         app.confirm_event(win, Event::Key(enter), &ctx);
         assert!(app.confirm.is_empty());
-        assert!(app.renaming.contains("Laser_2"));
-        let (tx, rx) = std::sync::mpsc::channel();
-        app.rx = Some(rx);
+        assert_eq!(renames(&sent), ["Laser_2"]);
         let mut s = app.snapshot.clone();
         s.printers[0].name = "Laser_2".into();
-        tx.send(Msg::Snapshot(s)).unwrap();
-        app.wake();
+        let renamed = Msg::Renamed {
+            old: "Laser".into(),
+            new: "Laser_2".into(),
+            made: true,
+        };
+        worker_says(&mut app, [renamed, Msg::Snapshot(s)]);
         let sheet = app
             .props
             .by_printer_mut("Laser_2")
@@ -1425,6 +1449,8 @@ mod tests {
     fn a_rename_with_its_address_typed_does_not_ask() {
         let mut app = two_printers();
         app.snapshot.printers[0].device_uri = "smb://server/q".into();
+        let (worker, sent) = worker::Handle::channel();
+        app.worker = Some(worker);
         let mut ctx = test_ctx(folder::CLIENT);
         app.start_rename(
             "Laser".into(),
@@ -1434,7 +1460,10 @@ mod tests {
             &mut ctx,
         );
         assert!(app.confirm.is_empty());
-        assert!(app.renaming.contains("Office"));
+        assert!(matches!(
+            &sent.try_iter().collect::<Vec<_>>()[..],
+            [Cmd::Rename { new, device_uri: Some(_), .. }] if new == "Office"
+        ));
     }
 
     #[test]
@@ -1607,6 +1636,48 @@ mod tests {
         assert!(!app.note.is_shown(), "the notice left with the sheet");
         app.event(inkjet_queue, Event::CloseRequest, &mut ctx);
         assert_eq!(app.props.of("Inkjet"), Some(inkjet), "the folder's stays");
+    }
+
+    #[test]
+    fn a_rename_cupsd_did_not_make_leaves_its_windows_on_the_old_name() {
+        let refused = Msg::Failed {
+            title: "Could not rename the printer".into(),
+            body: cups::Error::NotRunning.text(),
+            printer: Some("Laser".into()),
+        };
+        let not_made = || Msg::Renamed {
+            old: "Laser".into(),
+            new: "Office".into(),
+            made: false,
+        };
+        let down = Msg::Snapshot(Snapshot::default());
+        let cases = [
+            ("cupsd down", vec![not_made(), refused, down]),
+            ("prompt dismissed", vec![not_made()]),
+        ];
+        for (case, replies) in cases {
+            let mut app = two_printers();
+            let mut ctx = test_ctx(props::CLIENT);
+            let queue = app.open_queue("Laser").id();
+            let sheet = app.open_props("Laser", props::GENERAL).unwrap().id();
+            app.start_rename("Laser".into(), "Office".into(), None, sheet, &mut ctx);
+            let told = replies.len() > 1;
+            worker_says(&mut app, replies);
+            if told {
+                assert_eq!(notice_over(&app), Some(sheet), "{case}: over the sheet");
+            }
+            worker_says(&mut app, [Msg::Snapshot(two_printers().snapshot)]);
+            assert_eq!(
+                app.queues.get(queue).map(|q| q.printer.as_str()),
+                Some("Laser"),
+                "{case}: the queue window"
+            );
+            assert_eq!(
+                app.props.get(sheet).map(|p| p.window_title()).as_deref(),
+                Some("Laser Properties"),
+                "{case}: the sheet"
+            );
+        }
     }
 
     #[test]
