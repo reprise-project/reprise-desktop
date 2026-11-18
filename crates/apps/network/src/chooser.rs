@@ -171,6 +171,8 @@ pub struct Chooser {
     /// Saved networks whose last join failed on the key: Connect asks for a new one.
     pub refused: HashSet<nm::Ssid>,
     pub button: Form,
+    /// The intro note under the heading, rewrapped to the body's width when a line is wider.
+    intro: Form,
     /// The text units the window is laid out at: its 100% layout grows by them.
     pub units: TextUnits,
 }
@@ -196,6 +198,11 @@ impl Chooser {
                     enabled: false,
                     default: true,
                 },
+            )]),
+            intro: Form::new(vec![Item::lines(
+                "intro",
+                Rect::new(BODY_X, INTRO_Y, BODY_W, LINE_H * INTRO.len() as i32),
+                &INTRO,
             )]),
             units,
         };
@@ -442,22 +449,7 @@ impl Chooser {
             Align::Left,
             px,
         );
-        for (i, line) in INTRO.iter().enumerate() {
-            ctx.text.draw(
-                c,
-                u.rect(Rect::new(
-                    BODY_X,
-                    INTRO_Y + i as i32 * LINE_H,
-                    BODY_W,
-                    LINE_H,
-                )),
-                line,
-                false,
-                cs.window_text,
-                Align::Left,
-                px,
-            );
-        }
+        form::draw(c, &ctx.text, &paint, &self.intro, false, px);
         let lay = tilelist::layout(&self.list, list_r, &ctx.theme.controls());
         tilelist::draw(
             c,
@@ -502,13 +494,7 @@ impl Chooser {
         );
         head.set_role(accesskit::Role::Heading);
         tree.push(ROOT, "heading", head);
-        let intro = u.rect(Rect::new(
-            BODY_X,
-            INTRO_Y,
-            BODY_W,
-            LINE_H * INTRO.len() as i32,
-        ));
-        tree.push(ROOT, "intro", access::label(intro, &INTRO.join(" "), true));
+        self.intro.access(tree, ROOT, &ctx.text, px);
         let lay = tilelist::layout(&self.list, list_r, &ctx.theme.controls());
         let row = tilelist::access(
             &self.list,
@@ -939,6 +925,69 @@ mod tests {
         let (x, y) = slot_point(&ctx, &c, 2);
         c.press(one(x, y), BTN_LEFT, &ctx);
         assert_eq!(c.list.selected_row(), Some(2));
+    }
+
+    /// The chooser at `pct` text size under interface `i`, its text set in `family`.
+    fn themed(i: reprisekit::interface::Interface, pct: u32, family: &str) -> (Ctx, Chooser) {
+        let theme = reprisekit::interfaces::theme_for(i).with_text_size(pct);
+        let mut ctx = crate::tests::test_ctx(theme.text.size(CLIENT));
+        ctx.text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig {
+            family: vec![family.into()],
+            ..theme.fonts.clone()
+        })
+        .into();
+        let c = Chooser::new(&device(), theme.text);
+        (ctx.text_size, ctx.theme) = (pct, theme);
+        (ctx, c)
+    }
+
+    /// The intro wraps in its two rows above the list in either face the UI font falls back
+    /// through, under every interface and at 100%, 125% and 150%: no line runs past the body.
+    #[test]
+    fn the_intro_wraps_above_the_list_in_every_face_and_text_size() {
+        use reprisekit::interface::Interface;
+        for family in ["Tahoma", "DejaVu Sans"] {
+            for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+                for pct in [100, 125, 150] {
+                    let (ctx, c) = themed(i, pct, family);
+                    if !ctx.text.has_face(family) {
+                        reprisekit::pins::skipped(&format!("no {family} installed"));
+                        continue;
+                    }
+                    let mut canvas = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+                    let ((), cuts) = reprisekit::pins::clipped_ink(|| c.draw(&mut canvas, &ctx));
+                    let at = format!("{family}, {}, {pct}%", i.as_str());
+                    let beside: Vec<_> = cuts.into_iter().filter(|c| c.cols > 0).collect();
+                    assert_eq!(beside, Vec::new(), "{at}: no line is cut at its right edge");
+                    let over = c.intro.overflows(&ctx.text, ctx.theme.fonts.size_px);
+                    assert_eq!(over, Vec::new(), "{at}: the intro keeps its two rows");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_chooser_is_pinned_in_every_interface_at_1_and_2() {
+        use reprisekit::interface::Interface;
+        reprisekit::pins::fonts();
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 150] {
+                let (mut ctx, mut c) = themed(i, pct, "Tahoma");
+                c.list.select_row(Some(2));
+                c.sync_button();
+                for d in [1, 2] {
+                    let mut canvas = Canvas::with_scale(ctx.size.0 as u32, ctx.size.1 as u32, d);
+                    ctx.at_scale(d, |ctx| c.draw(&mut canvas, ctx));
+                    let hash = canvas.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
+                        (h ^ u64::from(*p)).wrapping_mul(0x100000001b3)
+                    });
+                    got.push((format!("{} {pct}% @{d}", i.as_str()), hash));
+                }
+            }
+        }
+        let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/chooser.txt");
+        reprisekit::pins::check_file(std::path::Path::new(pins), &got);
     }
 
     /// An unsaved 802.1X network asks for its login; a saved one dials as it is.
