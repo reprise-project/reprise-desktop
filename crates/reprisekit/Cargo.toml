@@ -42,7 +42,7 @@ zune-jpeg = "0.5"
 zeroize.workspace = true
 accesskit = "0.25"
 emojis = "0.9"
-harfrust = "0.15"
+harfrust = "0.16"
 # The glyph cache's hasher: its keys are small and never from outside.
 rustc-hash = "2"
 serde = { workspace = true, features = ["derive"] }
