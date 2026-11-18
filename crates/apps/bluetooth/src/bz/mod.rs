@@ -434,10 +434,18 @@ pub enum Cmd {
 
 #[derive(Debug)]
 pub enum BzMsg {
-    Snapshot(Snapshot),
-    /// `cmd`, one run in turn (not `Pair`, `Connect`, `Receive` or `Airplane`), finished; a
-    /// failure posts its `Failed` first.
-    Ran(Cmd),
+    /// `answered` is how many `Ran`s BlueZ had answered when the read began. Reads and commands
+    /// post from separate tasks, so a read begun before a `Ran`'s answer can land after it.
+    Snapshot {
+        snapshot: Snapshot,
+        answered: u64,
+    },
+    /// `cmd`, one run in turn (not `Pair`, `Connect`, `Receive` or `Airplane`), finished as the
+    /// `answer`th; a failure posts its `Failed` first.
+    Ran {
+        cmd: Cmd,
+        answer: u64,
+    },
     /// `cmd` failed for the reason in `body`.
     Failed {
         cmd: Cmd,
