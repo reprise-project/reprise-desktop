@@ -19,6 +19,9 @@ const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 
 const QUIT_WAIT: Duration = Duration::from_secs(2);
 const CALL_TIMEOUT: Duration = Duration::from_secs(300);
+/// A property set, which BlueZ answers without waiting on the user or a remote device, gets
+/// D-Bus's usual reply timeout; [`CALL_TIMEOUT`] is for calls that do (pairing, connecting).
+const SET_TIMEOUT: Duration = Duration::from_secs(25);
 /// The least time between two reads of every object, so a burst of changes costs one.
 const READ_GAP: Duration = Duration::from_millis(200);
 
@@ -357,10 +360,11 @@ fn commands(
                         if !quiet(&cmd) {
                             poster.post(BzMsg::Failed {
                                 body: error_of(&e),
-                                cmd,
+                                cmd: cmd.clone(),
                             });
                         }
                     }
+                    poster.post(BzMsg::Ran(cmd));
                 }
             }
         }
@@ -509,15 +513,16 @@ async fn set(
     prop: &str,
     value: Variant<'_>,
 ) -> zbus::Result<()> {
-    conn.call_method(
-        Some(NAME),
-        path,
-        Some(PROPERTIES),
-        "Set",
-        &(iface, prop, value),
-    )
-    .await
-    .map(|_| ())
+    let body = (iface, prop, value);
+    let call = conn.call_method(Some(NAME), path, Some(PROPERTIES), "Set", &body);
+    let Ok(rt) = zruntime::SharedRuntime::current() else {
+        return call.await.map(|_| ());
+    };
+    match rt.timeout(SET_TIMEOUT, call).await {
+        Ok(r) => r.map(|_| ()),
+        // The error zbus gives a call past the connection's timeout.
+        Err(_) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out").into()),
+    }
 }
 
 async fn pump(
