@@ -1330,6 +1330,59 @@ fn a_file_that_is_not_utf8_opens_as_an_untitled_copy() {
     assert_eq!(np.path, Some(missing));
 }
 
+/// A paste is answered whenever the clipboard's owner writes it, so it can land while the box
+/// over the main window is up.
+#[test]
+fn a_paste_landing_under_the_open_dialog_asks_to_save_before_the_pick_replaces_it() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    let picked = dir.join("picked.txt");
+    std::fs::write(&picked, "picked").expect("write");
+    let mut np = Notepad::new(None);
+    np.open_dialog();
+    np.host.folder = Some(np.host.folders.id(dir));
+    let mut ctx = test_ctx();
+    np.event(MAIN, Event::Pasted("pasted".into()), &mut ctx);
+
+    np.open_accept("picked.txt", &mut test_icons());
+    assert_eq!(np.edit.text(), "pasted", "the pick leaves the pasted text");
+    assert!(matches!(np.asks.up(), Some((_, Ask::SaveChanges))));
+
+    np.savechanges_answered(Some(1));
+    assert_eq!(np.edit.text(), "picked", "Don't Save opens the pick");
+    assert_eq!(np.path.as_deref(), Some(picked.as_path()));
+}
+
+#[test]
+fn a_paste_landing_under_the_untitled_copy_question_asks_to_save_before_yes_replaces_it() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    std::fs::write(dir.join("latin1.txt"), b"caf\xe9").expect("write");
+    let mut np = Notepad::new(None);
+    np.open_dialog();
+    np.host.folder = Some(np.host.folders.id(dir));
+    np.open_accept("latin1.txt", &mut test_icons());
+    let win = box_win(&np);
+    assert!(matches!(np.asks.up(), Some((_, Ask::Lossy(_)))));
+    let mut ctx = test_ctx();
+    np.event(MAIN, Event::Pasted("pasted".into()), &mut ctx);
+
+    let enter = KeyInput {
+        sym: keysym::RETURN,
+        utf8: None,
+        mods: repriseapp::Mods::default(),
+        edit: None,
+    };
+    np.event(win, Event::Key(enter), &mut ctx);
+    assert_eq!(np.edit.text(), "pasted", "Yes leaves the pasted text");
+    assert!(matches!(np.asks.up(), Some((_, Ask::SaveChanges))));
+    assert!(np.open.is_none(), "Open is not left up beside the prompt");
+
+    np.savechanges_answered(Some(1));
+    assert_eq!(np.edit.text(), "caf\u{fffd}", "Don't Save shows the copy");
+    assert_eq!(np.path, None);
+}
+
 #[test]
 fn a_device_or_folder_on_the_command_line_raises_the_box() {
     for p in ["/dev/zero", "/"] {

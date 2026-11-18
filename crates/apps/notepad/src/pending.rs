@@ -9,6 +9,10 @@ pub enum PendingAction {
     New,
     Open,
     OpenFile(PathBuf),
+    /// A name picked in the Open dialog.
+    Pick(PathBuf),
+    /// The undecodable file's Yes, with its lossy copy.
+    Lossy(String),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

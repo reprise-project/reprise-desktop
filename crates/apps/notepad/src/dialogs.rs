@@ -242,12 +242,8 @@ impl Notepad {
         match ask {
             Ask::SaveChanges => self.savechanges_answered(button),
             Ask::Changed => self.changed_answered(button),
-            Ask::Lossy(text) => {
-                if button == Some(0) {
-                    self.show_lossy(&text);
-                }
-                Reply::redraw_all()
-            }
+            Ask::Lossy(text) if button == Some(0) => self.confirm_then(PendingAction::Lossy(text)),
+            Ask::Lossy(_) => Reply::redraw_all(),
             Ask::Recovered(file) => self.recovered_answered(file, button),
             Ask::Overwrite(path) if button == Some(0) => self.saveas_write(path),
             Ask::Overwrite(_) | Ask::NotFound | Ask::Error => Reply::redraw_all(),
