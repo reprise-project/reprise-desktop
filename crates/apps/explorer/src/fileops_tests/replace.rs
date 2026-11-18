@@ -333,7 +333,7 @@ fn a_paste_whose_prompt_is_still_reading_at_close_keeps_the_clashes_puts_the_res
 
 /// The prompt whose files land after Close answers No and opens no box of its own, so a box a
 /// later step of the same wake raises waits behind the paste waiting at Close, which still puts
-/// what did not clash.
+/// what did not clash. The closed window quits once that box is answered.
 #[test]
 fn a_box_raised_after_a_prompts_read_lands_at_close_waits_behind_the_next_paste() {
     let mut ctx = test_ctx();
@@ -374,19 +374,17 @@ fn a_box_raised_after_a_prompts_read_lands_at_close_waits_behind_the_next_paste(
     }
     ex.message_box("Explorer", "x".into(), &mut ctx);
     ex.raise_waiting(Reply::none(), &mut ctx);
-    let quit = loop {
-        if ex
-            .event(repriseapp::MAIN, repriseapp::Event::Wake, &mut ctx)
-            .quit
-        {
-            break true;
-        }
-        if std::time::Instant::now() > deadline {
-            break false;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(2));
-    };
-    assert!(quit, "the closed window quits once the pastes are done");
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some() && !ex.busy());
+    assert!(
+        matches!(ex.dialog(), Some(Dialog::Message { text, .. }) if text == "x"),
+        "the box comes up once the pastes are done"
+    );
+    ex.event(ex.dialog_win(), key_event_escape(), &mut ctx);
+    assert!(
+        ex.event(repriseapp::MAIN, repriseapp::Event::Wake, &mut ctx)
+            .quit,
+        "the closed window quits once its box is answered"
+    );
     for name in ["a.txt", "b.txt"] {
         assert_eq!(
             std::fs::read_to_string(dest.join(name)).ok().as_deref(),

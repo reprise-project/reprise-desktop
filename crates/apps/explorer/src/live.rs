@@ -164,7 +164,7 @@ impl Explorer {
         let clashed = self.take_clashes(ctx);
         let (landed, picked, broken) = self.land_icons(ctx);
         let browsed = self.take_browse(ctx) | picked;
-        if self.closing && !self.busy() {
+        if self.closing && !self.owes_a_box(ctx) && !self.busy() {
             return opened.unwrap_or_default().and(Reply {
                 quit: true,
                 ..Default::default()
