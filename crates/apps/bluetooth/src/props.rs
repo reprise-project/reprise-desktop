@@ -55,6 +55,9 @@ pub struct PropsSheet {
     pending: Settings,
     /// A change sent from the sheet waits on BlueZ: Apply and OK stay greyed.
     busy: bool,
+    /// OK, Cancel or the close box came while a change waited: the sheet closes once BlueZ
+    /// answers every change, and stays if one fails.
+    pub leaving: bool,
 }
 
 pub(crate) fn set_edit(form: &mut Form, id: &str, s: &str) {
@@ -94,6 +97,7 @@ impl PropsSheet {
             applied: s.clone(),
             pending: s,
             busy: false,
+            leaving: false,
         };
         set_edit(&mut p.sheet.pages[0], NAME, &d.alias);
         p.refresh(d);
@@ -173,6 +177,16 @@ impl PropsSheet {
 
     pub fn set_busy(&mut self, busy: bool) {
         self.busy = busy;
+        self.sync();
+    }
+
+    /// A change sent from the sheet failed: `d`, as BlueZ has it, is the baseline again, so the
+    /// edit is pending once more.
+    pub fn unapplied(&mut self, d: &Device) {
+        self.applied = Settings {
+            alias: d.alias.clone(),
+            trusted: d.trusted,
+        };
         self.sync();
     }
 
