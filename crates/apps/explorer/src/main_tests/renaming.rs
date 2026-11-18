@@ -60,6 +60,31 @@ fn a_rename_whose_relist_lands_late_keeps_the_renamed_item_selected() {
 }
 
 #[test]
+fn enter_on_a_rename_whose_write_is_out_takes_the_box_down_at_once() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("one.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.sv.selection.set_only(Some(0));
+    ex.run(Command::Rename, &mut ctx);
+    let gate: Arc<std::sync::RwLock<()>> = Arc::default();
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+
+    ex.sv.edit = Some((0, reprisekit::textedit::TextEdit::new("two.txt", false)));
+    let reply = press(&mut ex, reprisekit::textedit::keysym::RETURN, &mut ctx);
+    assert!(!ex.acting.is_empty(), "the write is out");
+    assert!(ex.sv.edit.is_none());
+    assert!(reply.redraw, "the window is drawn without the box");
+    assert_eq!(ex.items[0].name, "one.txt");
+
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| ex.acting.is_empty());
+    assert_eq!(ex.items[0].name, "two.txt");
+}
+
+#[test]
 fn a_colliding_rename_is_refused_with_a_box() {
     let dir = tempfile::tempdir().expect("a temp dir");
     for name in ["one.txt", "two.txt"] {

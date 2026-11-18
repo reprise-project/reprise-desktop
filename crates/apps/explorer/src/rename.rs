@@ -108,28 +108,33 @@ impl Explorer {
         Some(Reply::redraw())
     }
 
+    /// Ends the in-place edit at once; its item keeps the old name until the rename lands.
     pub fn commit_rename(&mut self, ctx: &mut Ctx) -> Reply {
         let Some((i, ed)) = self.sv.edit.take() else {
             return Reply::none();
         };
+        Reply::redraw().and(self.rename_to(i, &ed.text, ctx))
+    }
+
+    fn rename_to(&mut self, i: usize, text: &str, ctx: &mut Ctx) -> Reply {
         let Some(it) = self.items.get(i).cloned() else {
-            return Reply::redraw();
+            return Reply::none();
         };
         if it.shortcut.is_some() {
-            return self.rename_shortcut(&it, ed.text.trim(), ctx);
+            return self.rename_shortcut(&it, text.trim(), ctx);
         }
         // Search results list several folders: only the item's own holds a clash.
         let existing: Vec<String> = (self.items.iter())
             .filter(|x| x.path.parent() == it.path.parent())
             .map(|x| x.name.clone())
             .collect();
-        match verdict(&it.name, &ed.text, &existing) {
-            Verdict::Cancel => Reply::redraw(),
+        match verdict(&it.name, text, &existing) {
+            Verdict::Cancel => Reply::none(),
             Verdict::Refuse(text) => self.message_box("Rename", text, ctx),
             Verdict::Rename(name) => {
                 let to = match it.path.parent() {
                     Some(dir) => dir.join(&name),
-                    None => return Reply::redraw(),
+                    None => return Reply::none(),
                 };
                 let (from, dest) = (it.path.clone(), to.clone());
                 let work = move |gate: &Gate| {
@@ -174,7 +179,7 @@ impl Explorer {
 
     fn rename_shortcut(&mut self, it: &Item, typed: &str, ctx: &mut Ctx) -> Reply {
         if typed.is_empty() || typed == it.label() {
-            return Reply::redraw();
+            return Reply::none();
         }
         let (path, typed) = (it.path.clone(), typed.to_string());
         let work = move |gate: &Gate| {
