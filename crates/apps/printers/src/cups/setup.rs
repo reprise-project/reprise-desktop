@@ -311,8 +311,9 @@ pub(super) fn add_calls(p: &NewPrinter) -> Vec<Call> {
 }
 
 /// Rename a printer: CUPS has no rename, so a new queue takes the old
-/// one's address, PPD, description, sharing and defaults, its jobs move
-/// over, it becomes the default if the old one was, and the old one goes.
+/// one's address, PPD, description, sharing, defaults and state, its jobs
+/// move over (all or none), it becomes the default if the old one was, and
+/// the old one goes.
 /// cups-pk-helper's PrinterRename takes the same steps as root but leaves
 /// the defaults the PPD does not hold, so they follow as calls. The
 /// user's own default follows the name either way. cupsd reports the address without its user
@@ -441,7 +442,8 @@ pub(super) fn carried_defaults(o: &Options, has_ppd: bool) -> Vec<(String, Value
     out
 }
 
-/// The CUPS-Add-Modify-Printer request creating `new` as a copy of `p`, at `device_uri` when given.
+/// The CUPS-Add-Modify-Printer request creating `new` as a copy of `p`, in its state, at
+/// `device_uri` when given.
 pub(super) fn rename_request(
     new: &str,
     p: &Printer,
@@ -456,8 +458,15 @@ pub(super) fn rename_request(
         .printer_attr("printer-info", Value::text(&p.info))
         .printer_attr("printer-location", Value::text(&p.location))
         .printer_attr("printer-is-shared", Value::Bool(p.shared))
-        .printer_attr("printer-is-accepting-jobs", Value::Bool(true))
-        .printer_attr("printer-state", Value::Enum(3));
+        .printer_attr("printer-is-accepting-jobs", Value::Bool(p.accepting))
+        .printer_attr(
+            "printer-state",
+            Value::Enum(if p.state == PrinterState::Stopped {
+                5
+            } else {
+                3
+            }),
+        );
     for (k, v) in defaults {
         req = req.printer_attr(k, v.clone());
     }
@@ -467,7 +476,7 @@ pub(super) fn rename_request(
     req
 }
 
-fn rename_by_peer(
+pub(super) fn rename_by_peer(
     c: &Client,
     old: &str,
     new: &str,
@@ -479,38 +488,75 @@ fn rename_by_peer(
     let Some(p) = s.printer(old) else {
         return Err(Error::Refused(format!("{old} is no longer there.")));
     };
+    // `new` is made stopped when `old` is, so no job starts on it as it moves over.
     c.call("/admin/", rename_request(new, p, device_uri, ppd, defaults))?;
+    let mut moved = Vec::new();
     for j in s.jobs_of(old) {
-        let req = Request::new(CUPS_MOVE_JOB)
-            .op_attr("job-uri", Value::uri(&job_uri(j.id)))
-            .add(JOB, "job-printer-uri", vec![Value::uri(&printer_uri(new))]);
-        if let Err(e) = c.call("/jobs/", req) {
-            log::warn!("moving job {} to {new}: {e:?}", j.id);
+        match move_job(c, j.id, new) {
+            Ok(()) => moved.push(j.id),
+            Err(_) if gone(c, j.id) => {}
+            Err(e) => {
+                unmake_rename(c, old, new, &moved);
+                return Err(e);
+            }
         }
     }
-    let mut steps = Vec::new();
-    if s.default.as_deref() == Some(old) {
-        steps.push(("made the default printer", set_default(c, new)));
-    }
-    if p.paused() {
-        steps.push(("paused", pause(c, new)));
-    }
-    finish_rename(old, new, steps, || delete(c, old))
+    let default = (s.default.as_deref() == Some(old)).then(|| set_default(c, new));
+    finish_rename(old, new, default, || delete(c, old))
 }
 
-/// The end of a rename once queue `new` holds `old`'s jobs: `old` goes even when a follow-up
-/// `steps` failed, and the first failed step is the error, since `new` stays either way.
+fn move_job(c: &Client, id: i32, to: &str) -> Result<()> {
+    let req = Request::new(CUPS_MOVE_JOB)
+        .op_attr("job-uri", Value::uri(&job_uri(id)))
+        .add(JOB, "job-printer-uri", vec![Value::uri(&printer_uri(to))]);
+    c.call("/jobs/", req).map(drop)
+}
+
+/// Whether job `id` finished or was purged since the snapshot: cupsd refuses to move such a
+/// job, and it no longer holds up a rename.
+fn gone(c: &Client, id: i32) -> bool {
+    let req = Request::new(GET_JOB_ATTRIBUTES)
+        .op_attr("job-uri", Value::uri(&job_uri(id)))
+        .requested(&["job-state"]);
+    match c.send("/", req) {
+        Ok(r) if r.status == NOT_FOUND => true,
+        Ok(r) if r.ok() => r
+            .first(JOB)
+            .is_some_and(|g| Job::from_group(g).state.done()),
+        _ => false,
+    }
+}
+
+/// Undo a rename whose jobs did not all move: the `moved` ones go back to `old`, and `new` goes
+/// once it holds none.
+fn unmake_rename(c: &Client, old: &str, new: &str, moved: &[i32]) {
+    let mut emptied = true;
+    for &id in moved {
+        if let Err(e) = move_job(c, id, old) {
+            log::warn!("moving job {id} back to {old}: {e:?}");
+            emptied = false;
+        }
+    }
+    if emptied && let Err(e) = delete(c, new) {
+        log::warn!("deleting {new} after a refused move: {e:?}");
+    }
+}
+
+/// The end of a rename once queue `new` holds `old`'s jobs: `old` goes even when making `new`
+/// the default (`default`, when `old` was) failed, and that failure is the error, since `new`
+/// stays either way.
 pub(super) fn finish_rename(
     old: &str,
     new: &str,
-    steps: Vec<(&str, Result<()>)>,
+    default: Option<Result<()>>,
     delete: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
     delete()?;
-    let Some((step, e)) = steps.into_iter().find_map(|(s, r)| Some((s, r.err()?))) else {
+    let Some(Err(e)) = default else {
         return Ok(());
     };
-    let told = format!("{old} is now called {new}, but {new} could not be {step}.");
+    let told =
+        format!("{old} is now called {new}, but {new} could not be made the default printer.");
     Err(Error::Refused(match e.text() {
         why if why.is_empty() => told,
         why => format!("{told} {why}"),
