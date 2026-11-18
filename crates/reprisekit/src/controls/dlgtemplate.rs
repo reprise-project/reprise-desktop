@@ -221,7 +221,7 @@ impl Layout {
 
 /// `template` laid out at 100% for text set at `px`, which grows by `u`: the text wraps at the
 /// width its column grows to, and a column sized to its text reserves the 100% width that grows
-/// to fit it.
+/// to fit it. For a host that draws on a canvas at the output's scale, as a program does.
 pub fn layout(
     template: Template,
     text: &TextRenderer,
@@ -229,6 +229,23 @@ pub fn layout(
     f: &Fields,
     u: TextUnits,
 ) -> Layout {
+    layout_at(template, text, px, f, u, 1)
+}
+
+/// [`layout`] for a host that draws `scale * px` glyphs on a canvas of device pixels with `text`:
+/// the text is measured at that size and rounded up to logical pixels.
+pub fn layout_at(
+    template: Template,
+    text: &TextRenderer,
+    px: u32,
+    f: &Fields,
+    u: TextUnits,
+    scale: i32,
+) -> Layout {
+    let s = scale.max(1);
+    let device_px = px * s as u32;
+    let wrap_in = |room: i32| wrap(text, f.text, room * s, device_px);
+    let design = |device: i32| (device + s - 1) / s;
     let cm = template.metrics();
     let left = cm.left;
     let text_x = if f.icon {
@@ -243,13 +260,13 @@ pub fn layout(
         u.len(text_x)
     };
     let (w, wrapped) = match cm.width {
-        Some(w) => (w, wrap(text, f.text, u.len(w - cm.right) - start, px)),
+        Some(w) => (w, wrap_in(u.len(w - cm.right) - start)),
         None => {
             let cap = msgbox::WRAP_W + 2 * FRAME;
-            let lines = wrap(text, f.text, u.len(cap - cm.right) - start, px);
+            let lines = wrap_in(u.len(cap - cm.right) - start);
             let widest = lines
                 .iter()
-                .map(|l| text.measure(l, false, px))
+                .map(|l| design(text.measure(l, false, device_px)))
                 .max()
                 .unwrap_or(0);
             (u.design(start + widest) + cm.right, lines)
@@ -294,7 +311,7 @@ pub fn layout(
     let widest = f
         .buttons
         .iter()
-        .map(|l| text.ink_width(&split_mnemonic(l).0, false, px))
+        .map(|l| design(text.ink_width(&split_mnemonic(l).0, false, device_px)))
         .max()
         .unwrap_or(0);
     let button_w = cm.button_w.max(u.design(widest) + 2 * BUTTON_LABEL_PAD);
@@ -522,6 +539,57 @@ mod tests {
                 EXPECTED_GAP,
                 "{pct}%: the form's gap"
             );
+        }
+    }
+
+    /// Laid out for a scale 2 output, every template's lines and button labels fit their rects
+    /// at twice the size, as a host drawing on device pixels sets them; at scale 1 `layout_at`
+    /// is `layout`.
+    #[test]
+    fn a_template_laid_out_at_scale_2_fits_its_text_at_twice_the_size() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let device = text.for_output(2);
+        let buttons = [
+            "&Yes".into(),
+            "Yes to &All of These Items".into(),
+            "&No".into(),
+        ];
+        let f = Fields {
+            text: "The contents of the folder will not be deleted. You can restore this icon \
+                   to the desktop on the Background page of Reprise Settings.",
+            icon: true,
+            field: false,
+            buttons: &buttons,
+            text_h: None,
+        };
+        for template in [
+            Template::Run,
+            Template::MessageBox,
+            Template::MultiDelete,
+            Template::KeyAid,
+            Template::ShellNotice,
+        ] {
+            for pct in [100, 150] {
+                let theme = Theme::default().with_text_size(pct);
+                let (u, px) = (theme.text, theme.fonts.size_px);
+                let at = format!("{template:?} at {pct}%");
+                let one = layout(template, &text, px, &f, u);
+                assert_eq!(layout_at(template, &text, px, &f, u, 1), one, "{at}");
+                let two = layout_at(template, device, px, &f, u, 2).grown(u);
+                for (r, line) in &two.lines {
+                    let w = device.measure(line, false, 2 * px);
+                    assert!(
+                        w <= 2 * r.width,
+                        "{at}: {line:?} is {w} px in {}",
+                        2 * r.width
+                    );
+                }
+                for (r, label) in two.buttons.iter().zip(&buttons) {
+                    let w = device.ink_width(&split_mnemonic(label).0, false, 2 * px);
+                    let room = 2 * (r.width - 2 * BUTTON_LABEL_PAD);
+                    assert!(w <= room, "{at}: {label:?} is {w} px in {room}");
+                }
+            }
         }
     }
 

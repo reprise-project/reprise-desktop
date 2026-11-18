@@ -211,8 +211,8 @@ fn confirm_delete_is_pinned_in_every_interface_at_1_and_2() {
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
         let theme = reprisekit::interfaces::theme_for(i);
         for (name, d) in confirm_deletes() {
-            let l = DialogLayout::compute(&theme, &text, &d);
             for s in [1, 2] {
+                let l = DialogLayout::compute_at(&theme, &text, &d, s);
                 let c = draw(
                     &theme.scaled(s),
                     text.for_output(s),

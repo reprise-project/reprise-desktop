@@ -344,6 +344,52 @@ fn every_dialog_fits_its_text_under_every_interface() {
     assert!(over.is_empty(), "{}", over.join("\n"));
 }
 
+/// Every template and form dialog drawn as on a scale 1 and a scale 2 output, under each interface
+/// and face at 100% and 150%: no glyph is cut at the right edge of the rect its line was laid in.
+#[test]
+fn every_dialog_draws_its_text_uncut_at_scale_1_and_2() {
+    use reprisekit::interface::Interface;
+    let mut cut = Vec::new();
+    for family in ["Tahoma", "DejaVu Sans"] {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            ..FontConfig::default()
+        });
+        if !text.has_face(family) {
+            reprisekit::pins::skipped(&format!("no {family} installed"));
+            continue;
+        }
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 150] {
+                let theme = reprisekit::interfaces::theme_for(i).with_text_size(pct);
+                let mut ds = form_dialogs(&theme, &text);
+                ds.extend(template_dialogs().into_iter().map(|mut d| {
+                    d.fit(&theme, &text);
+                    d
+                }));
+                for d in ds {
+                    for s in [1, 2] {
+                        let l = DialogLayout::compute_at(&theme, &text, &d, s);
+                        let (_, cuts) = reprisekit::pins::clipped_ink(|| {
+                            render(&theme.scaled(s), text.for_output(s), &l, &d)
+                        });
+                        for c in cuts.into_iter().filter(|c| c.cols > 0) {
+                            cut.push(format!(
+                                "{family}, {}, {pct}% @{s}, {}: {:?} {} cols cut",
+                                i.as_str(),
+                                d.title,
+                                c.text,
+                                c.cols
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(cut.is_empty(), "{}", cut.join("\n"));
+}
+
 /// At 150% and 200% Run grows inside its frame: its lines sit a grown line apart and fit
 /// their rows, the field holds a grown line, its open list's rows grow, and the buttons sit
 /// inside the dialog under the field. 100% is Run as laid out.

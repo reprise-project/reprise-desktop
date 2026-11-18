@@ -169,6 +169,7 @@ impl State {
             self.ime_field_moved(crate::caret::Editor::Dialog, (x, y));
         }
         if rescale {
+            self.refit_dialog(index);
             self.redraw_dialog(index);
         }
         self.redraw_nodes(outputs, &[]);

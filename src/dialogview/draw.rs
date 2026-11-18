@@ -51,13 +51,14 @@ impl State {
         self.redraw_nodes(Vec::new(), &[tree.into()]);
     }
 
-    /// Fit dialog `index` to the theme and its output's usable area and lay it out again, after
-    /// a tab or theme change; one whose new size runs past the area's edge moves back inside.
+    /// Fit dialog `index` to the theme and its output's usable area and scale and lay it out again;
+    /// one whose new size runs past the area's edge moves back inside.
     pub fn refit_dialog(&mut self, index: usize) {
         let Some(output) = self.dialogs.views.get(index).map(|v| v.output.clone()) else {
             return;
         };
         let area = self.usable_area(Some(&output));
+        let scale = self.draw_scale_at(Some(&output));
         let State {
             config,
             text,
@@ -68,7 +69,7 @@ impl State {
         let theme = &config.theme;
         let before = v.layout.size;
         v.dialog.fit_in(theme, text, (area.width, area.height));
-        v.layout = DialogLayout::compute(theme, text, &v.dialog);
+        v.layout = DialogLayout::compute_at(theme, text, &v.dialog, scale);
         if v.layout.size != before
             && let Some((x, y)) = refit_origin(&v.dialog, (v.x, v.y), v.layout.size, area)
         {
