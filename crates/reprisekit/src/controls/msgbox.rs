@@ -42,6 +42,8 @@ const BUTTON_Y: i32 = 64;
 /// The client height of a one-line box.
 const CLIENT_H: i32 = 98;
 const MIN_W: i32 = 162;
+/// The widest client width a box's text runs to before it wraps, at 100% text size.
+pub const WRAP_W: i32 = 360;
 
 /// What the box shows.
 pub struct Fields {
@@ -64,18 +66,29 @@ pub struct Fields {
     /// The narrowest client width as drawn, for a caption title wider than the text
     /// and buttons ([`crate::look::caption_fit`]); 0 sizes the box to them.
     pub min_w: i32,
-    /// The widest client width as drawn (what the screen leaves): a line wider wraps at its
-    /// spaces. 0 keeps every line whole.
+    /// The widest client width as drawn that the screen leaves, 0 for no limit. The text wraps
+    /// at [`WRAP_W`] at the text size, or here where that is narrower.
     pub max_w: i32,
 }
 
-/// The rows the text takes: each `\n` line, wrapped where `max_w` leaves it too little room.
+/// The client width as drawn that a box's text wraps within at text size `u`: [`WRAP_W`] at that
+/// size, or `max_w` where the screen leaves less.
+fn wrap_w(max_w: i32, u: TextUnits) -> i32 {
+    let cap = u.len(WRAP_W);
+    match max_w {
+        0 => cap,
+        screen => screen.min(cap),
+    }
+}
+
+/// The rows the text takes: each `\n` line, wrapped at its spaces where [`wrap_w`] leaves it
+/// too little room.
 fn lines(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Vec<String> {
     let (tx, step) = text_x(f);
-    let room = f.max_w - u.len(tx) - step - u.len(MARGIN_X);
+    let room = wrap_w(f.max_w, u) - u.len(tx) - step - u.len(MARGIN_X);
     let mut out = Vec::new();
     for line in f.text.split('\n') {
-        if f.max_w > 0 && text.measure(line, false, px) > room {
+        if text.measure(line, false, px) > room {
             out.extend(crate::text::wrap(text, line, room.max(1), px));
         } else {
             out.push(line.to_string());
@@ -512,6 +525,66 @@ mod tests {
             }
             let ok = form.item(OK).unwrap().rect;
             assert_eq!(ok.x, (w - ok.width) / 2, "{pct}%: OK centres in the box");
+        }
+    }
+
+    fn needles() -> String {
+        format!("Cannot find \"{}\"", ["needle"; 12].join(" "))
+    }
+
+    #[test]
+    fn a_long_line_wraps_at_the_cap_and_a_short_one_keeps_its_width() {
+        let (text, px) = rend();
+        let u = TextUnits::ONE;
+        for screen in [0, 1920] {
+            let short = Fields {
+                max_w: screen,
+                ..notfound()
+            };
+            let (tx, step) = text_x(&short);
+            let natural = tx + step + text.measure(&short.text, false, px) + MARGIN_X;
+            assert_eq!(client(&short, &text, px, u).0, natural.max(MIN_W));
+            assert!(matches!(
+                form(&short, &text, px, u).item("text").unwrap().control,
+                Control::Label { .. }
+            ));
+            let long = Fields {
+                text: needles(),
+                max_w: screen,
+                ..notfound()
+            };
+            let w = client(&long, &text, px, u).0;
+            assert!(w <= WRAP_W, "screen {screen}: {w} wraps at {WRAP_W}");
+            let laid = form(&long, &text, px, u);
+            let Control::Lines(lines) = &laid.item("text").unwrap().control else {
+                panic!("screen {screen}: a wrapped message draws as lines");
+            };
+            assert!(lines.len() > 1, "screen {screen}: the line wraps");
+        }
+    }
+
+    #[test]
+    fn the_cap_grows_with_the_text_size_and_a_narrow_screen_takes_less() {
+        let text = TextRenderer::load(&FontConfig::default());
+        for pct in [100, 200] {
+            let theme = Theme::default().with_form_text(pct);
+            let (u, px) = (theme.text, theme.fonts.size_px);
+            let cap = u.len(WRAP_W);
+            let mut f = Fields {
+                text: needles(),
+                ..notfound()
+            };
+            let drawn = |f: &Fields| u.size(client(f, &text, px, u)).0;
+            let w = drawn(&f);
+            assert!(w <= cap, "{pct}%: {w} wraps at {cap}");
+            assert!(w > cap * 3 / 4, "{pct}%: {w} fills most of {cap}");
+            f.max_w = cap / 2;
+            let w = drawn(&f);
+            assert!(
+                w <= cap / 2,
+                "{pct}%: {w} wraps at the screen's {}",
+                cap / 2
+            );
         }
     }
 
