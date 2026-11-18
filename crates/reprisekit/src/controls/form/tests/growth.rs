@@ -326,3 +326,40 @@ fn a_grown_form_keeps_its_origin() {
     let r = f.rect("ok").unwrap();
     assert_eq!((r.x, r.y), (3 + u.len(130), 21 + u.len(140)));
 }
+
+/// A note's rows keep every descender at a text size whose rows grow by a fraction of a pixel:
+/// each row is at least the font's line tall, live or greyed, at scale 1 and 2.
+#[test]
+fn a_grown_notes_rows_keep_their_descenders() {
+    crate::pins::fonts();
+    let t = tr();
+    let cs = &Theme::default().colors;
+    let lines = [
+        "gypsy jogging",
+        "happy puppy",
+        "quietly typing",
+        "yoga pigs",
+        "gulps jumpy",
+    ];
+    let mut cut = Vec::new();
+    for (pct, px) in [(100, 11), (125, 14), (150, 17)] {
+        for s in [1, 2] {
+            for on in [true, false] {
+                let f = Form::new(vec![Item::lines_at("n", 8, 7, 160, &lines).enabled(on)]);
+                let p = Paint {
+                    text: TextUnits::new(px, 11),
+                    ..classic_paint(cs, s)
+                };
+                let mut c = Canvas::new(400 * s as u32, 200 * s as u32);
+                let ((), cuts) =
+                    crate::pins::clipped_ink(|| draw(&mut c, &t, &p, &f, false, px * s as u32));
+                cut.extend(cuts.into_iter().map(|c| (pct, s, on, c.text, c.rows)));
+            }
+        }
+    }
+    assert_eq!(
+        cut,
+        Vec::new(),
+        "(text size, scale, live, line, ink rows cut)"
+    );
+}
