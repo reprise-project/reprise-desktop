@@ -19,6 +19,8 @@ use crate::progress::Meter;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Trashed {
     pub original: PathBuf,
+    /// The name the bin shows it under: `original`'s, which a numbered `files/` entry stands for.
+    pub name: String,
     pub files: PathBuf,
     pub info: PathBuf,
     pub deleted: Option<i64>,
@@ -95,6 +97,7 @@ pub fn trash_in(root: &Path, path: &Path) -> io::Result<Trashed> {
 
     Ok(Trashed {
         original,
+        name: name.clone(),
         files,
         info,
         deleted: Some(when),
@@ -571,12 +574,23 @@ pub fn trashed(files: &Path) -> io::Result<Trashed> {
     {
         return Err(bindir::outside());
     }
+    let name = shown_name(&original, files);
     Ok(Trashed {
         original,
+        name,
         files: files.to_path_buf(),
         info,
         deleted: deletion_date(&body),
     })
+}
+
+/// `original`'s file name, or for a record of no name (`/`) the entry's own in `files/`.
+fn shown_name(original: &Path, files: &Path) -> String {
+    original
+        .file_name()
+        .or(files.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn info_value<'a>(body: &'a str, key: &str) -> Option<&'a str> {
@@ -772,11 +786,11 @@ pub(crate) fn empty_with(root: &Path, meter: Option<&Meter>) -> io::Result<usize
         let path = root.join("files").join(&name);
         let erased = (|| {
             if let Some(m) = meter {
-                m.set_current(&name);
+                m.set_current(&listed_name(&bin, root, &name));
                 m.hold()?;
             }
             (bin.erase(&name, &path, meter))
-                .map_err(|e| crate::ops::in_tree(Path::new(&name), e))?;
+                .map_err(|e| crate::ops::in_tree(Path::new(&listed_name(&bin, root, &name)), e))?;
             gone(bin.unlink_info(&info_name(&name)))
         })();
         match erased {
@@ -811,6 +825,15 @@ pub(crate) fn empty_with(root: &Path, meter: Option<&Meter>) -> io::Result<usize
             ),
         )),
     }
+}
+
+/// The name entry `name` of the trash at `root` shows under ([`Trashed::name`]), read from its
+/// record; `name` itself when the record is missing or unreadable.
+fn listed_name(bin: &BinDir, root: &Path, name: &std::ffi::OsStr) -> std::ffi::OsString {
+    (bin.read_info(&info_name(name)).ok())
+        .and_then(|body| original_path(&body, Some(root)))
+        .and_then(|p| p.file_name().map(std::ffi::OsStr::to_os_string))
+        .unwrap_or_else(|| name.to_os_string())
 }
 
 pub fn trashinfo(original: &Path, when: i64) -> String {
@@ -1538,6 +1561,22 @@ mod tests {
     }
 
     #[test]
+    fn a_numbered_item_is_named_by_its_original_path() {
+        let (t, root) = root();
+        let (a, b) = (t.path().join("a/x.txt"), t.path().join("b/x.txt"));
+        for p in [&a, &b] {
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, "1").unwrap();
+        }
+        trash_in(&root, &a).unwrap();
+        let second = trash_in(&root, &b).unwrap();
+
+        assert_eq!(second.files, root.join("files/x.2.txt"));
+        assert_eq!(second.name, "x.txt");
+        assert_eq!(trashed(&second.files).unwrap().name, "x.txt");
+    }
+
+    #[test]
     fn trashed_without_an_info_file_is_not_found() {
         let (_t, root) = root();
         fs::create_dir_all(root.join("files")).unwrap();
@@ -1752,6 +1791,27 @@ mod tests {
         assert_eq!(left("files"), ["locked"]);
         assert_eq!(left("info"), ["locked.trashinfo"]);
         assert!(!root.join("directorysizes").exists());
+    }
+
+    #[test]
+    fn a_failed_empty_names_a_numbered_item_by_its_original_name() {
+        let (t, root) = root();
+        for from in ["one", "two"] {
+            let d = t.path().join(from).join("d");
+            fs::create_dir_all(d.join("sub")).unwrap();
+            fs::write(d.join("sub/f.txt"), "1").unwrap();
+            trash_in(&root, &d).unwrap();
+        }
+        let locked = root.join("files/d.2/sub");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let e = empty_in(&root).unwrap_err();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert_eq!(
+            e.to_string(),
+            "1 item could not be deleted: d/sub/f.txt: Permission denied (os error 13)"
+        );
     }
 
     #[test]

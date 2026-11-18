@@ -108,9 +108,17 @@ impl Removal {
         progress::walk(&path, false, m)
     }
 
-    fn name(&self) -> &std::ffi::OsStr {
+    /// The item's name for its progress and failure texts: a Recycle Bin entry's as the bin
+    /// shows it ([`Trashed::name`]).
+    pub fn name(&self) -> &std::ffi::OsStr {
         let path = match self {
             Removal::Trash { path, .. } | Removal::Erase(path) => path,
+            Removal::EraseTrashed {
+                record: Some(t), ..
+            }
+            | Removal::Restore {
+                record: Some(t), ..
+            } => return std::ffi::OsStr::new(&t.name),
             Removal::EraseTrashed { files, .. } | Removal::Restore { files, .. } => files,
             Removal::Empty(root) => root,
             Removal::Undo { step, .. } => match step {
