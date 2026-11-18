@@ -545,3 +545,48 @@ fn a_numbered_duplicate_is_shown_under_its_original_name() {
         "Cannot empty the Recycle Bin: 1 item could not be deleted: d/sub/locked: Permission denied (os error 13)"
     );
 }
+
+/// `notes` deleted twice sits in the bin as `notes.2` for its second copy: the Type column, the
+/// Details pane and its sheet read the type of `notes`, a plain "File".
+#[test]
+fn a_numbered_duplicate_is_typed_by_its_original_name() {
+    use reprisekit::controls::form;
+    let _guard = lock(&TRASH_ENV);
+    let home = tempfile::tempdir().expect("a temp dir");
+    let _data_home = DataHome::set(home.path());
+    let (one, two) = (home.path().join("one"), home.path().join("two"));
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(home.path().to_path_buf()), &mut ctx);
+    for d in [&one, &two] {
+        std::fs::create_dir(d).expect("mkdir");
+        std::fs::write(d.join("notes"), "x").expect("write");
+        ex.delete_now(&[d.join("notes")], false, &mut ctx);
+        ex.finish_puts(&mut ctx);
+    }
+    let numbered = home.path().join("Trash/files/notes.2");
+    assert!(numbered.is_file(), "the second sits in the bin numbered");
+
+    ex.run(Command::GoTo(Place::RecycleBin), &mut ctx);
+    let kinds: Vec<&str> = ex.items.iter().map(|it| it.kind.as_str()).collect();
+    assert_eq!(kinds, ["File", "File"]);
+    let at = ex
+        .items
+        .iter()
+        .position(|it| it.path == numbered)
+        .expect("notes.2");
+    assert_eq!(ex.items[at].mime, None);
+    ex.sv.selection.set_only(Some(at));
+    ex.refresh_chrome(&mut ctx);
+    assert!(
+        ex.status.panels[0].text.contains("Type: File "),
+        "{}",
+        ex.status.panels[0].text
+    );
+
+    ex.run(Command::Properties, &mut ctx);
+    let p = ex.props.as_ref().expect("the sheet");
+    assert!(matches!(
+        p.sheet.open().item("v_type").map(|i| &i.control),
+        Some(form::Control::Lines(lines)) if lines == &["File"]
+    ));
+}

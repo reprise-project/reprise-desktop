@@ -336,8 +336,19 @@ impl Explorer {
     ) -> Props {
         let info = g.info.clone();
         let is_12h = reprisefs::locale::is_12h();
-        let facts = bin_facts(&info, it.trashed.as_deref(), is_12h, &self.shares.shares);
-        let icon = props_icon(&g.icon, &info.path, waits, ctx);
+        let mut facts = bin_facts(&info, it.trashed.as_deref(), is_12h, &self.shares.shares);
+        // A bin file takes the type its listing read off its original name (`listing::read_bin`).
+        let by_record = it.trashed.is_some() && !it.is_link && it.shortcut.is_none();
+        let retyped;
+        let sheet_icon = match &g.icon {
+            SheetIcon::File(_) if by_record => {
+                facts.type_name = it.kind.clone();
+                retyped = SheetIcon::File(it.mime.clone());
+                &retyped
+            }
+            icon => icon,
+        };
+        let icon = props_icon(sheet_icon, &info.path, waits, ctx);
         let page = bin_page(&facts, it.label(), icon);
         let sheet = PropSheet::new(&["General"], vec![page], (SHEET_W, BIN_SHEET_H));
         Props {
