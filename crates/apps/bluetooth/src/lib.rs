@@ -312,11 +312,10 @@ impl BtApp {
         let title = bz::failure_title(cmd);
         log::warn!("{title}: {body}");
         if let bz::Cmd::SetAlias { device, .. } | bz::Cmd::SetTrusted { device, .. } = cmd
-            && let Some(d) = self.device(device).cloned()
             && let Some(p) = self.props.as_mut().filter(|p| &p.path == device)
         {
             p.leaving = false;
-            p.unapplied(&d);
+            p.refused(cmd);
         }
         let sheet_of = |d: &String| self.props.as_ref().is_some_and(|p| &p.path == d);
         let over = match cmd {
@@ -351,7 +350,13 @@ impl BtApp {
             match msg {
                 bz::BzMsg::Snapshot(s) => latest = Some(s),
                 bz::BzMsg::Failed { cmd, body } => self.failed(&cmd, body),
-                bz::BzMsg::Ran(cmd) => self.ran(&cmd),
+                // A snapshot posted before the answer was read before it: the sheet takes it first.
+                bz::BzMsg::Ran(cmd) => {
+                    if let Some(s) = latest.take() {
+                        self.snapshot_in(s);
+                    }
+                    self.ran(&cmd)
+                }
                 bz::BzMsg::Connected { device, error } => self.connected(device, error),
                 bz::BzMsg::Paired {
                     device,
@@ -1727,6 +1732,102 @@ mod tests {
         assert!(
             !sheet_button_enabled(&a, propsheet::APPLY),
             "nothing left to apply"
+        );
+    }
+
+    fn props_title(a: &BtApp) -> Option<String> {
+        a.children()
+            .into_iter()
+            .find(|c| c.id == PROPS)
+            .map(|c| c.title)
+    }
+
+    /// BlueZ's snapshot with Cans named `alias`, trusted as `trusted` and its battery at `battery`.
+    fn cans_as(alias: &str, trusted: bool, battery: u8) -> bz::BzMsg {
+        let mut s = snap(true);
+        s.devices[0].alias = alias.into();
+        s.devices[0].trusted = trusted;
+        s.devices[0].battery = Some(battery);
+        bz::BzMsg::Snapshot(s)
+    }
+
+    #[test]
+    fn a_sent_rename_titles_the_sheet_only_once_bluez_reports_the_new_name() {
+        let (mut a, _rx) = wired();
+        let mut ctx = test_ctx();
+        a.open_props("/a/cans");
+        let alias = rename_to_mine(&mut a, &mut ctx);
+        a.event(PROPS, key(keysym::RETURN, false), &mut ctx);
+        assert_eq!(props_title(&a).as_deref(), Some("Cans Properties"));
+
+        let (mut a, _rx) = wired();
+        a.open_props("/a/cans");
+        rename_to_mine(&mut a, &mut ctx);
+        a.event(PROPS, key(u32::from(b'a'), true), &mut ctx);
+        assert_eq!(props_title(&a).as_deref(), Some("Cans Properties"));
+        bus_says(&mut a, [bz::BzMsg::Ran(alias)]);
+        assert_eq!(props_title(&a).as_deref(), Some("Cans Properties"));
+        bus_says(&mut a, [cans_as("Mine", false, 80)]);
+        assert_eq!(props_title(&a).as_deref(), Some("Mine Properties"));
+
+        bus_says(&mut a, [cans_as("Other", false, 80)]);
+        assert_eq!(props_title(&a).as_deref(), Some("Other Properties"));
+        let p = a.props.as_ref().unwrap();
+        assert_eq!(p.sheet.open().edit_text(props::NAME), "Other");
+    }
+
+    #[test]
+    fn a_snapshot_read_before_bluez_answered_a_rename_keeps_the_field() {
+        let (mut a, _rx) = wired();
+        let mut ctx = test_ctx();
+        a.open_props("/a/cans");
+        let alias = rename_to_mine(&mut a, &mut ctx);
+        a.event(PROPS, key(u32::from(b'a'), true), &mut ctx);
+        bus_says(&mut a, [cans_as("Cans", false, 70), bz::BzMsg::Ran(alias)]);
+        let p = a.props.as_ref().unwrap();
+        assert_eq!(p.sheet.open().edit_text(props::NAME), "Mine");
+        assert!(!sheet_button_enabled(&a, propsheet::APPLY));
+    }
+
+    #[test]
+    fn a_snapshot_while_a_change_waits_keeps_it_for_a_failure() {
+        let (mut a, rx) = wired();
+        let mut ctx = test_ctx();
+        a.open_props("/a/cans");
+        let alias = rename_to_mine(&mut a, &mut ctx);
+        a.event(PROPS, key(u32::from(b'm'), true), &mut ctx);
+        a.event(PROPS, key(u32::from(b'a'), true), &mut ctx);
+        let trust = bz::Cmd::SetTrusted {
+            device: "/a/cans".into(),
+            on: true,
+        };
+        let sent: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert_eq!(sent, [alias.clone(), trust.clone()]);
+
+        bus_says(&mut a, [cans_as("Cans", false, 70)]);
+        let page = a.props.as_ref().unwrap().sheet.open();
+        assert_eq!(page.edit_text(props::NAME), "Mine");
+        assert_eq!(page.checked(props::AUTO), Some(true));
+
+        let failed = |cmd: &bz::Cmd| bz::BzMsg::Failed {
+            cmd: cmd.clone(),
+            body: "I/O error: timed out".into(),
+        };
+        bus_says(
+            &mut a,
+            [
+                failed(&alias),
+                bz::BzMsg::Ran(alias),
+                failed(&trust),
+                bz::BzMsg::Ran(trust),
+            ],
+        );
+        let page = a.props.as_ref().unwrap().sheet.open();
+        assert_eq!(page.edit_text(props::NAME), "Mine");
+        assert_eq!(page.checked(props::AUTO), Some(true));
+        assert!(
+            sheet_button_enabled(&a, propsheet::APPLY),
+            "the change can be sent again"
         );
     }
 
