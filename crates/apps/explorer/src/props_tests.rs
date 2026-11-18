@@ -1392,6 +1392,45 @@ fn the_wheel_scrolls_the_change_icon_list() {
     assert_eq!(list(&mut ex).1.left, 1, "one notch, one column");
 }
 
+/// A sheet read again after Apply's write stays on the tab it was on; a sheet opened afresh
+/// opens where it always does, on Shortcut for a launcher.
+#[test]
+fn apply_keeps_the_sheet_on_its_tab() {
+    use crate::place::Place;
+    use reprisekit::controls::propsheet;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (shell, a) = (dir.path().join("shell.desktop"), dir.path().join("a.txt"));
+    reprisefs::apps::write_launcher(
+        &shell,
+        "[Desktop Entry]\nType=Application\nName=Shell\nExec=/bin/sh\n",
+    )
+    .expect("write");
+    std::fs::write(&a, "a").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let open_tab = |ex: &crate::Explorer| {
+        let tabs = &ex.props.as_ref().expect("the sheet").sheet.tabs;
+        tabs.labels[tabs.open].clone()
+    };
+    for (path, tab) in [(&shell, 0), (&a, 1)] {
+        sheet_up(&mut ex, path, &mut ctx);
+        let p = ex.props.as_mut().expect("the sheet");
+        p.sheet.tabs.open = 0;
+        p.sheet.open_mut().set_check(READ_ONLY, true);
+        p.sheet.tabs.open = tab;
+        let was = p.sheet.tabs.labels[tab].clone();
+        let opened = p.opened;
+        ex.props_outcome(propsheet::Event::Apply, &mut ctx);
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+            ex.acting.is_empty() && ex.props_due.is_none()
+        });
+        assert_eq!(ex.props.as_ref().map(|p| p.opened), Some(opened));
+        assert_eq!(open_tab(&ex), was, "{} stays on {was}", path.display());
+    }
+    sheet_up(&mut ex, &shell, &mut ctx);
+    assert_eq!(open_tab(&ex), "Shortcut");
+}
+
 /// A launcher's sheet opens on Shortcut. A typed Start in lights Apply, and
 /// Apply writes Path= keeping the file's other lines; Find Target opens the
 /// program's folder; Change Icon's pick is written as Icon=.
