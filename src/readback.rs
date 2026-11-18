@@ -5,6 +5,7 @@
 
 use std::{
     cell::RefCell,
+    ops::Range,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -184,10 +185,13 @@ impl Slot {
         &mut self.texture
     }
 
-    /// Queues the read of the texture into the buffer, as 4 bytes a pixel in the slot's format,
-    /// rows from the top. The bytes are there once the renderer's next fence is reached.
-    pub fn read(&self, renderer: &mut GlesRenderer) -> Result<(), String> {
+    /// Queues the read of the texture's `rows` into the buffer, as 4 bytes a pixel in the slot's
+    /// format, rows from the top, each where the whole picture puts it. The bytes are there once
+    /// the renderer's next fence is reached.
+    pub fn read(&self, renderer: &mut GlesRenderer, rows: Range<i32>) -> Result<(), String> {
         let Size { w, h, .. } = self.key.size;
+        let rows = rows.start.clamp(0, h)..rows.end.clamp(0, h);
+        let at = rows.start as usize * w as usize * 4;
         let (tex, pbo) = (self.texture.tex_id(), self.pbo.id);
         let error = renderer
             .with_context(|gl| {
@@ -210,12 +214,12 @@ impl Slot {
                     gl.ReadBuffer(ffi::COLOR_ATTACHMENT0);
                     gl.ReadPixels(
                         0,
-                        0,
+                        rows.start,
                         w,
-                        h,
+                        rows.len() as i32,
                         ffi::BGRA_EXT,
                         ffi::UNSIGNED_BYTE,
-                        std::ptr::null_mut(),
+                        at as *mut std::ffi::c_void,
                     );
                     gl.ReadBuffer(ffi::NONE);
                     gl.BindBuffer(ffi::PIXEL_PACK_BUFFER, 0);
@@ -231,14 +235,21 @@ impl Slot {
         }
     }
 
-    /// Runs `with` on the bytes `read` left in the buffer. The GPU must have finished the read:
-    /// mapping an unfinished one waits for it.
+    /// Runs `with` on the bytes of `rows` that `read` left in the buffer. The GPU must have
+    /// finished the read: mapping an unfinished one waits for it.
     pub fn bytes<R>(
         &self,
         renderer: &mut GlesRenderer,
+        rows: Range<i32>,
         with: impl FnOnce(&[u8]) -> R,
     ) -> Result<R, String> {
-        let len = self.key.size.w as usize * self.key.size.h as usize * 4;
+        let Size { w, h, .. } = self.key.size;
+        let rows = rows.start.clamp(0, h)..rows.end.clamp(0, h);
+        let row = w as usize * 4;
+        let (at, len) = (rows.start as usize * row, rows.len() * row);
+        if len == 0 {
+            return Ok(with(&[]));
+        }
         let pbo = self.pbo.id;
         renderer
             .with_context(|gl| {
@@ -248,7 +259,7 @@ impl Slot {
                     gl.BindBuffer(ffi::PIXEL_PACK_BUFFER, pbo);
                     let ptr = gl.MapBufferRange(
                         ffi::PIXEL_PACK_BUFFER,
-                        0,
+                        at as isize,
                         len as isize,
                         ffi::MAP_READ_BIT,
                     );
@@ -356,13 +367,49 @@ mod tests {
     }
 
     fn read(r: &mut GlesRenderer, slot: &Slot) -> Vec<u8> {
-        slot.read(r).unwrap();
+        read_rows(r, slot, 0..slot.key.size.h)
+    }
+
+    fn read_rows(r: &mut GlesRenderer, slot: &Slot, rows: Range<i32>) -> Vec<u8> {
+        slot.read(r, rows.clone()).unwrap();
         let fence = crate::gpufence::fence_now(r).unwrap();
         assert!(crate::gpufence::reached_within(
             &fence,
             Duration::from_secs(5)
         ));
-        slot.bytes(r, <[u8]>::to_vec).unwrap()
+        slot.bytes(r, rows, <[u8]>::to_vec).unwrap()
+    }
+
+    #[test]
+    fn rows_read_alone_are_those_rows_of_the_whole_picture() {
+        use smithay::backend::renderer::{Bind, Frame, Renderer};
+        use smithay::utils::Rectangle;
+        let Some(mut r) = renderer() else {
+            return;
+        };
+        let mut readbacks = Readbacks::default();
+        let k = key(3, 4);
+        let mut slot = readbacks.slot(&mut r, k).unwrap();
+        let mut fb = r.bind(slot.texture()).unwrap();
+        let mut frame = r.render(&mut fb, k.size, Transform::Normal).unwrap();
+        let band = |y| [Rectangle::new((0, y).into(), (3, 1).into())];
+        for (y, colour) in [(0, [1.0, 0.0, 0.0, 1.0]), (1, [0.0, 1.0, 0.0, 1.0])] {
+            frame.clear(colour.into(), &band(y)).unwrap();
+        }
+        for (y, colour) in [(2, [0.0, 0.0, 1.0, 1.0]), (3, [1.0, 1.0, 1.0, 1.0])] {
+            frame.clear(colour.into(), &band(y)).unwrap();
+        }
+        let _ = frame.finish().unwrap();
+        drop(fb);
+        let whole = read(&mut r, &slot);
+        let row = 3 * 4;
+        assert_eq!(
+            read_rows(&mut r, &slot, 1..3),
+            whole[row..3 * row],
+            "rows 1 and 2, green then blue"
+        );
+        assert_eq!(&whole[row..row + 4], [0, 255, 0, 255], "row 1 is green");
+        assert_eq!(read_rows(&mut r, &slot, 2..2), Vec::<u8>::new(), "no rows");
     }
 
     #[test]
