@@ -161,13 +161,24 @@ impl Meter {
     }
 
     /// Hold the job's thread while `wait` is true, asleep until a store [`Meter::wake`]s it.
+    /// Leaving a wait wakes [`watch`] from [`Meter::sleep_while_parked`].
     fn park(&self, mut wait: impl FnMut() -> bool) {
         let mut parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
         while wait() {
             *parked = true;
             parked = (self.unpark.wait(parked)).unwrap_or_else(PoisonError::into_inner);
         }
-        *parked = false;
+        if std::mem::take(&mut *parked) {
+            self.unpark.notify_all();
+        }
+    }
+
+    /// Sleep while the job's thread is parked; true when it was.
+    fn sleep_while_parked(&self) -> bool {
+        let parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
+        let was = *parked;
+        drop((self.unpark.wait_while(parked, |p| *p)).unwrap_or_else(PoisonError::into_inner));
+        was
     }
 
     /// Wake a parked job to read its state again. Taking the lock after the store orders it
@@ -386,8 +397,9 @@ pub(crate) enum Rest {
 const FLUSH_ALLOWANCE: u32 = 20;
 
 /// Cancels the job and runs `give_up` (which reports it as not responding) once `meter` stands
-/// still for `deadline` outside a pause, or one flush lasts [`FLUSH_ALLOWANCE`] deadlines. `ended` is set by whichever ends the job first,
-/// the job or the watch, so only one of them reports its end.
+/// still for `deadline` outside a pause, or one flush lasts [`FLUSH_ALLOWANCE`] deadlines. `ended`
+/// is set by whichever ends the job first, the job or the watch, so only one of them reports its
+/// end. While the job's thread is parked the watch sleeps, and its deadline starts at the wake.
 pub(crate) fn watch(
     meter: &Arc<Meter>,
     ended: &Arc<AtomicBool>,
@@ -404,6 +416,10 @@ pub(crate) fn watch(
             let mut headway = Headway::new(m.stirring().0, Instant::now());
             while !ended.load(Ordering::Acquire) {
                 std::thread::sleep(every);
+                if m.sleep_while_parked() {
+                    headway = Headway::new(m.stirring().0, Instant::now());
+                    continue;
+                }
                 if !headway.stalled(m.stirring(), Instant::now(), deadline, flush_deadline)
                     || ended.swap(true, Ordering::AcqRel)
                 {
@@ -898,6 +914,93 @@ mod tests {
         assert_eq!(given.recv_timeout(Duration::from_secs(30)), Ok(()));
         assert!(m.cancelled());
         assert!(ended.load(Ordering::Acquire), "the watch ended the job");
+    }
+
+    /// Starts a [`watch`] on `m` with a 200 ms deadline, its thread named for `job`: its `/proc`
+    /// task folder, the job's end flag, and when the watch gave up, if it does.
+    fn watched(
+        m: &Arc<Meter>,
+        job: &'static str,
+    ) -> (PathBuf, Arc<AtomicBool>, std::sync::mpsc::Receiver<Instant>) {
+        let ended = Arc::new(AtomicBool::new(false));
+        let (gave_up, given) = std::sync::mpsc::channel();
+        watch(m, &ended, Duration::from_millis(200), job, move |_| {
+            let _ = gave_up.send(Instant::now());
+        });
+        let comm: String = format!("reprisefs-{job}-watch").chars().take(15).collect();
+        let named = |t: &std::fs::DirEntry| {
+            std::fs::read_to_string(t.path().join("comm")).is_ok_and(|c| c.trim_end() == comm)
+        };
+        let task = (0..100)
+            .find_map(|_| {
+                let found = std::fs::read_dir("/proc/self/task")
+                    .expect("the task list")
+                    .flatten()
+                    .find(named);
+                if found.is_none() {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                found
+            })
+            .expect("the watch thread starts");
+        (task.path(), ended, given)
+    }
+
+    #[test]
+    fn a_held_jobs_watch_sleeps_until_the_hold_ends_and_ends_with_the_job() {
+        let soon = Duration::from_secs(2);
+        let m = Arc::new(Meter::default());
+        let (watch_task, ended, given) = watched(&m, "held");
+        m.set_paused(true);
+        let (_, done) = held(&m, |m| m.hold().is_ok());
+        let n = switches_while_held(&watch_task);
+        assert!(
+            n <= 1,
+            "a paused job's watch sleeps, not {n} switches in 500 ms"
+        );
+        m.set_paused(false);
+        assert_eq!(done.recv_timeout(soon), Ok(true), "Resume lets it go");
+
+        m.ask_on_failure();
+        m.ask();
+        let (_, done) = held(&m, Meter::decision);
+        let n = switches_while_held(&watch_task);
+        assert!(
+            n <= 1,
+            "the watch of a job waiting on its answer sleeps, not {n} switches in 500 ms"
+        );
+        m.cancel();
+        assert_eq!(done.recv_timeout(soon), Ok(Decision::Abort));
+        ended.store(true, Ordering::Release);
+        let start = Instant::now();
+        while watch_task.exists() && start.elapsed() < soon {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!watch_task.exists(), "the watch ends with its job");
+        assert!(given.try_recv().is_err(), "the watch never gave up");
+    }
+
+    #[test]
+    fn the_time_a_job_is_held_counts_nothing_towards_its_give_up() {
+        let m = Arc::new(Meter::default());
+        let (_, _, given) = watched(&m, "rest");
+        m.set_paused(true);
+        let (_, done) = held(&m, |m| m.hold().is_ok());
+        assert!(
+            given.recv_timeout(Duration::from_millis(600)).is_err(),
+            "no give-up over three deadlines paused"
+        );
+        let resumed = Instant::now();
+        m.set_paused(false);
+        assert_eq!(done.recv_timeout(Duration::from_secs(2)), Ok(true));
+        let gave_up = given
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a job that stands still once resumed is given up on");
+        assert!(
+            gave_up - resumed >= Duration::from_millis(200),
+            "the give-up comes a deadline after Resume, not {:?}",
+            gave_up - resumed
+        );
     }
 
     #[test]
