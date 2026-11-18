@@ -272,6 +272,16 @@ impl ArchiveJob {
     }
 }
 
+/// A job let go before it finished is cancelled, so a paused one neither sleeps nor keeps its
+/// stopped bsdtar for good.
+impl Drop for ArchiveJob {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.meter.cancel();
+        }
+    }
+}
+
 fn run(
     items: &[Archive],
     limits: fn(&Path) -> Limits,
@@ -1155,6 +1165,42 @@ mod tests {
             "b"
         );
         assert!(!d.join("broken").exists(), "a failure leaves no folder");
+    }
+
+    #[test]
+    fn a_paused_extract_let_go_is_cancelled_and_its_thread_ends() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        std::fs::create_dir_all(d.join("src/d")).unwrap();
+        std::fs::write(d.join("src/d/a"), "a").unwrap();
+        bsdtar(&d.join("src"), &["-cf", "../pack.tar", "d"]);
+        std::fs::remove_dir_all(d.join("src")).unwrap();
+        let (wtx, woke) = mpsc::channel();
+        let meter = Arc::new(Meter::default());
+        meter.set_paused(true);
+        let items = vec![Archive {
+            src: d.join("pack.tar"),
+            here: false,
+        }];
+        let job = ArchiveJob::on_thread(
+            "reprisefs-extract",
+            meter.clone(),
+            move || {
+                let _ = wtx.send(());
+            },
+            move |m, send| run(&items, Limits::of, m, send),
+        );
+        drop(job);
+        assert!(
+            crate::testfs::released(&woke, std::time::Duration::from_secs(5)),
+            "the extraction's thread ends within 5 s"
+        );
+        assert!(meter.cancelled(), "the extraction is cancelled");
+        let left: Vec<_> = std::fs::read_dir(d)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["pack.tar"], "nothing is extracted");
     }
 
     #[test]

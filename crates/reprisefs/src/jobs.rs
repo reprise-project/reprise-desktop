@@ -285,6 +285,15 @@ impl PutJob {
     }
 }
 
+/// A put let go before it finished is cancelled, so a paused one does not sleep for good.
+impl Drop for PutJob {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.meter.cancel();
+        }
+    }
+}
+
 /// What `it` adds to the totals: a move within one drive is a rename, one item of no bytes.
 fn item_totals(it: &PutItem, dir: &Path, m: &Meter) -> Option<Totals> {
     if !writes(it, dir) {
@@ -844,5 +853,38 @@ mod tests {
             "a pause three deadlines long fails nothing: {got:?}"
         );
         assert!(dest.join("a.txt").exists());
+    }
+
+    #[test]
+    fn a_paused_put_let_go_is_cancelled_and_its_threads_end() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("a.txt"), "a").unwrap();
+        let dest = t.path().join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        let (wtx, woke) = channel();
+        let meter = Arc::new(Meter::default());
+        meter.set_paused(true);
+        let job = PutJob::start_until(
+            vec![item(t.path().join("a.txt"), DropOp::Copy)],
+            dest.clone(),
+            Vec::new(),
+            meter.clone(),
+            ACTION_DEADLINE,
+            move || {
+                let _ = wtx.send(());
+            },
+        );
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while !meter.parked() {
+            assert!(std::time::Instant::now() < until, "the paused put parks");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        drop(job);
+        assert!(
+            crate::testfs::released(&woke, Duration::from_secs(5)),
+            "the put's thread and its watch end within 5 s"
+        );
+        assert!(meter.cancelled(), "the put is cancelled");
+        assert!(!dest.join("a.txt").exists(), "nothing lands");
     }
 }

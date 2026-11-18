@@ -313,6 +313,15 @@ impl RemoveJob {
     }
 }
 
+/// A removal let go before it finished is cancelled, so a paused one does not sleep for good.
+impl Drop for RemoveJob {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.meter.cancel();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -555,5 +564,39 @@ mod tests {
         );
         assert!(keep.exists());
         assert_eq!(std::fs::read_dir(root.join("files")).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_paused_removal_let_go_is_cancelled_and_its_threads_end() {
+        let t = tempfile::tempdir().unwrap();
+        let a = t.path().join("a.txt");
+        std::fs::write(&a, "a").unwrap();
+        let (wtx, woke) = channel();
+        let meter = Arc::new(Meter::default());
+        meter.set_paused(true);
+        let job = RemoveJob::start_metered(
+            vec![Removal::Erase(a.clone())],
+            None,
+            meter.clone(),
+            ACTION_DEADLINE,
+            move || {
+                let _ = wtx.send(());
+            },
+        );
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while !meter.parked() {
+            assert!(
+                std::time::Instant::now() < until,
+                "the paused removal parks"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        drop(job);
+        assert!(
+            crate::testfs::released(&woke, Duration::from_secs(5)),
+            "the removal's thread and its watch end within 5 s"
+        );
+        assert!(meter.cancelled(), "the removal is cancelled");
+        assert!(a.exists(), "nothing is removed");
     }
 }
