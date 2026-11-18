@@ -184,6 +184,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                         grow.len((k as i32 + 1) * LINE_H),
                     );
                     let lr = Rect::new(r.x, r.y + top * s, r.width, (bottom - top) * s);
+                    let lr = text.line_box(lr, false, px);
                     if live {
                         text.draw(c, lr, line, false, cs.button_text, Align::Left, px);
                     } else {

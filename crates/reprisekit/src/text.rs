@@ -722,6 +722,21 @@ impl TextRenderer {
         Some(rect.y + (rect.height - (ascent - descent)) / 2 + ascent)
     }
 
+    /// `rect` grown to a line's ascent and descent at `size_px` where it is shorter, its baseline
+    /// kept: a row a fractional text size rounded short draws its text without cutting the ink.
+    pub fn line_box(&self, rect: Rect, bold: bool, size_px: u32) -> Rect {
+        let Some((ascent, descent, _)) = self.line_metrics(bold, size_px) else {
+            return rect;
+        };
+        let line = ascent - descent;
+        match self.baseline(rect, bold, size_px) {
+            Some(baseline) if rect.height < line => {
+                Rect::new(rect.x, baseline - ascent, rect.width, line)
+            }
+            _ => rect,
+        }
+    }
+
     pub fn line(&self, rect: Rect, bold: bool, size_px: u32) -> Option<(i32, i32)> {
         let (ascent, _, height) = self.line_metrics(bold, size_px)?;
         Some((self.baseline(rect, bold, size_px)? - ascent, height))
