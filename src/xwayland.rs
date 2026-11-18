@@ -19,7 +19,7 @@ use smithay::{
             channel::{self, Event as ChannelEvent},
             generic::Generic,
         },
-        wayland_server::{DisplayHandle, protocol::wl_surface::WlSurface},
+        wayland_server::{Client, DisplayHandle, protocol::wl_surface::WlSurface},
     },
     utils::{Logical, Rectangle},
     wayland::{
@@ -37,7 +37,7 @@ use smithay::{
         xwayland_shell::{XWaylandShellHandler, XWaylandShellState},
     },
     xwayland::{
-        X11Surface, X11Wm, XWayland, XWaylandEvent, XwmHandler,
+        X11Surface, X11Wm, XWayland, XWaylandClientData, XWaylandEvent, XwmHandler,
         xwm::{
             MwmDecorationsHint, MwmHints, Reorder, ResizeEdge, SelectionGone, WmInputModel,
             WmWindowProperty, WmWindowType, X11Window, XwmId,
@@ -68,6 +68,8 @@ pub struct Xwayland {
     /// The Xwayland server's pid, which End Program never kills; 0 while
     /// none is known.
     pid: i32,
+    /// The Xwayland server's pidfd, through which `stop` signals it.
+    pidfd: Option<OwnedFd>,
     /// The display, None once X11 programs cannot run.
     sockets: Option<sockets::Sockets>,
     /// The display's cookie, beside `sockets`.
@@ -122,6 +124,7 @@ impl Xwayland {
             wm: None,
             helper: None,
             pid: 0,
+            pidfd: None,
             sockets: None,
             cookie: None,
             watches: Vec::new(),
@@ -272,7 +275,11 @@ fn spawn(state: &mut State) {
                     Ok(wm) => {
                         log::info!("xwayland ready on DISPLAY=:{display_number}");
                         state.xwayland.wm = Some(wm);
-                        state.xwayland.pid = xwayland_pid().unwrap_or(0);
+                        state.xwayland.pidfd = server_pidfd(&client);
+                        state.xwayland.pid = (state.xwayland.pidfd.as_ref())
+                            .and_then(|fd| reprisebus::pidfd::pid_of(fd).ok().flatten())
+                            .and_then(|p| i32::try_from(p).ok())
+                            .unwrap_or(0);
                         state.xwayland.helper = start_helper(state, display_number);
                         state.selections_to_new_x11();
                     }
@@ -298,18 +305,16 @@ fn spawn(state: &mut State) {
 /// Wayland connection dead, and the connection closes on the next client
 /// request Reprise reads, which an idle desktop may not send for long.
 fn stop(state: &mut State) {
-    let pid = state.xwayland.pid;
-    if state.xwayland.source.is_none() || pid <= 0 {
+    let (Some(pidfd), Some(_)) = (&state.xwayland.pidfd, &state.xwayland.source) else {
         return;
-    }
+    };
     log::info!(
         "no X11 program for {:?}; stopping Xwayland",
         helper::IDLE_GRACE
     );
     state.xwayland.helper = None;
-    // SAFETY: plain kill(2) on the server's own pid, which Smithay reaps.
-    if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
-        log::warn!("stopping Xwayland: {}", std::io::Error::last_os_error());
+    if let Err(e) = crate::screenrecord::signal(pidfd, libc::SIGTERM) {
+        log::warn!("stopping Xwayland: {e}");
     }
 }
 
@@ -369,34 +374,12 @@ fn give_up(state: &mut State, why: &str) {
     crate::spawn::unpublish_x11(&state.env);
 }
 
-/// The pid of the Xwayland server Smithay spawned: our child named
-/// `Xwayland` (Smithay keeps the `Child` to itself).
-fn xwayland_pid() -> Option<i32> {
-    let own = std::process::id() as i32;
-    std::fs::read_dir("/proc")
-        .ok()?
-        .filter_map(|e| e.ok()?.file_name().to_str()?.parse::<i32>().ok())
-        .find(|pid| {
-            std::fs::read_to_string(format!("/proc/{pid}/stat"))
-                .ok()
-                .and_then(|s| {
-                    parent_and_name(&s).map(|(ppid, name)| ppid == own && name == "Xwayland")
-                })
-                .unwrap_or(false)
-        })
-}
-
-/// A `/proc/PID/stat` line's parent pid and command name. The name sits
-/// in parentheses and may hold spaces and parentheses itself, so it ends
-/// at the last `)`.
-fn parent_and_name(stat: &str) -> Option<(i32, &str)> {
-    let open = stat.find('(')?;
-    let close = stat.rfind(')')?;
-    let name = stat.get(open + 1..close)?;
-    let mut rest = stat.get(close + 1..)?.split_whitespace();
-    let _state = rest.next()?;
-    let ppid = rest.next()?.parse().ok()?;
-    Some((ppid, name))
+/// A copy of the pidfd Smithay opened on the Xwayland server it spawned.
+fn server_pidfd(client: &Client) -> Option<OwnedFd> {
+    let fd = client.get_data::<XWaylandClientData>()?.pidfd()?;
+    fd.try_clone_to_owned()
+        .map_err(|e| log::warn!("Xwayland pidfd: {e}"))
+        .ok()
 }
 
 /// The helper thread and the loop source its answers come back on.
@@ -1143,6 +1126,7 @@ impl XwmHandler for State {
         self.xwayland.wm = None;
         self.xwayland.helper = None;
         self.xwayland.pid = 0;
+        self.xwayland.pidfd = None;
         let gone: Vec<WindowId> = self
             .windows
             .iter()
@@ -1362,20 +1346,6 @@ mod tests {
             "the first two ten minutes back"
         );
         assert_eq!(early, [at(601)]);
-    }
-
-    #[test]
-    fn a_stat_line_gives_the_parent_and_the_name() {
-        assert_eq!(
-            parent_and_name("4242 (Xwayland) S 977 4242 977 0 -1 4194560"),
-            Some((977, "Xwayland"))
-        );
-        assert_eq!(
-            parent_and_name("12 (a (b) c) R 1 12 12"),
-            Some((1, "a (b) c")),
-            "the name ends at the last parenthesis"
-        );
-        assert_eq!(parent_and_name("12 (cut"), None);
     }
 
     /// Motif hints: dropping either the border or the title leaves the
