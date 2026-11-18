@@ -223,10 +223,12 @@ fn title(cmd: &Cmd) -> &'static str {
     }
 }
 
-/// How long until the next tick, and whether that tick reads cupsd. Idle with the notifier
-/// the tick only looks at the lease.
-fn schedule(watching: bool, busy: bool, notified: bool) -> (Duration, bool) {
-    match (watching || busy, notified) {
+/// How long until the next tick, and whether that tick reads cupsd, after read `last`. Idle
+/// with the notifier the tick only looks at the lease. A cupsd that is down sends no events,
+/// so it is read on the timer until it is back.
+fn schedule(watching: bool, notified: bool, last: &Snapshot) -> (Duration, bool) {
+    let busy = !last.jobs.is_empty();
+    match (watching || busy, notified && last.running) {
         (true, true) => (SAFETY, true),
         (true, false) => (FAST, true),
         (false, true) => (LEASE_CHECK, false),
@@ -236,8 +238,9 @@ fn schedule(watching: bool, busy: bool, notified: bool) -> (Duration, bool) {
 
 impl State {
     fn schedule(&self) -> (Duration, bool) {
-        let busy = self.last.as_ref().is_some_and(|s| !s.jobs.is_empty());
-        schedule(self.watching, busy, self.listening && self.lease.is_some())
+        let down = Snapshot::default();
+        let last = self.last.as_ref().unwrap_or(&down);
+        schedule(self.watching, self.listening && self.lease.is_some(), last)
     }
 
     fn interval(&self) -> Duration {
@@ -677,14 +680,24 @@ mod tests {
         assert_eq!(jobs.newest, Some(8), "a cupsd that is down moves no mark");
     }
 
+    /// A read of a running cupsd, with a job waiting when `busy`.
+    fn read(busy: bool) -> Snapshot {
+        Snapshot {
+            running: true,
+            jobs: busy.then(Job::default).into_iter().collect(),
+            ..Snapshot::default()
+        }
+    }
+
     #[test]
     fn with_the_notifier_cupsd_is_read_on_events_and_a_slow_safety_tick() {
-        assert_eq!(schedule(false, false, true), (LEASE_CHECK, false));
-        assert_eq!(schedule(true, false, true), (SAFETY, true));
-        assert_eq!(schedule(false, true, true), (SAFETY, true));
-        assert_eq!(schedule(false, false, false), (SLOW, true));
-        assert_eq!(schedule(true, false, false), (FAST, true));
-        assert_eq!(schedule(false, true, false), (FAST, true));
+        let (idle, busy) = (read(false), read(true));
+        assert_eq!(schedule(false, true, &idle), (LEASE_CHECK, false));
+        assert_eq!(schedule(true, true, &idle), (SAFETY, true));
+        assert_eq!(schedule(false, true, &busy), (SAFETY, true));
+        assert_eq!(schedule(false, false, &idle), (SLOW, true));
+        assert_eq!(schedule(true, false, &idle), (FAST, true));
+        assert_eq!(schedule(false, false, &busy), (FAST, true));
     }
 
     #[test]
@@ -692,12 +705,19 @@ mod tests {
         // cupsd's default IdleExitTimeout under socket activation.
         const CUPSD_IDLE_EXIT: Duration = Duration::from_secs(60);
         for (watching, busy) in [(true, false), (false, true), (true, true)] {
-            let (wait, reads) = schedule(watching, busy, true);
+            let (wait, reads) = schedule(watching, true, &read(busy));
             assert!(
                 !reads || wait > CUPSD_IDLE_EXIT,
                 "a read every {wait:?} keeps cupsd from exiting after {CUPSD_IDLE_EXIT:?} idle"
             );
         }
+    }
+
+    #[test]
+    fn a_cupsd_that_went_away_is_read_on_the_timer_until_it_is_back() {
+        let down = Snapshot::default();
+        assert_eq!(schedule(false, true, &down), (SLOW, true), "idle");
+        assert_eq!(schedule(true, true, &down), (FAST, true), "a window up");
     }
 
     #[test]
