@@ -387,6 +387,12 @@ fn answer<L>(shared: &Shared<L>, request: Request) {
     }
 }
 
+/// The largest message a client may send on a dynamic channel without a limit of its own (Echo;
+/// EGFX has one). DRDYNVC reassembly is bounded at this plus one static channel chunk.
+const MAX_DYNAMIC_MESSAGE: usize = 1024 * 1024;
+/// The server's own bound on a login, past where [`login_expired`] ends one.
+const NEGOTIATION_BACKSTOP: Duration = Duration::from_secs(300);
+
 /// The server of one connection at `local`: under `tls`, else past a TLS another process ran,
 /// with `handlers` and logging in through `check`.
 fn connection_server<D, I>(
@@ -413,6 +419,8 @@ where
         .with_sound_factory(sound)
         .with_honor_client_desktop_size(Some(client::LARGEST))
         .with_connection_handler(Some(Box::new(client)))
+        .with_max_dynamic_channel_message_size(MAX_DYNAMIC_MESSAGE)
+        .with_negotiation_timeout(NEGOTIATION_BACKSTOP)
         .build()
 }
 
