@@ -514,7 +514,8 @@ impl Wayland {
     pub fn ask_cursor(&mut self, session: &CaptureSession, buf: &ShmBuffer) -> Option<Asked> {
         let (_, capture) = session.cursor.as_ref()?;
         let capture = capture.clone();
-        Some(self.ask_on(&capture, Which::Cursor, buf))
+        let whole = whole(buf);
+        Some(self.ask_on(&capture, Which::Cursor, buf, &whole))
     }
 
     /// [`Wayland::answer`] for the cursor frame last asked for.
@@ -525,11 +526,16 @@ impl Wayland {
         self.take_answer(Which::Cursor)
     }
 
-    /// Ask for one frame into `buf` and return at once; [`Wayland::answer`]
-    /// reads the compositor's reply. A source with no damage replies only
-    /// once it changes. Dropping the `Asked` withdraws the request.
-    pub fn ask(&mut self, session: &CaptureSession, buf: &dyn CaptureBuffer) -> Asked {
-        self.ask_on(&session.session, Which::Main, buf)
+    /// Ask for one frame into `buf`, `stale` saying what changed in it since it last held one,
+    /// and return at once; [`Wayland::answer`] reads the compositor's reply. A source with no
+    /// damage replies only once it changes. Dropping the `Asked` withdraws the request.
+    pub fn ask(
+        &mut self,
+        session: &CaptureSession,
+        buf: &dyn CaptureBuffer,
+        stale: &[Rect],
+    ) -> Asked {
+        self.ask_on(&session.session, Which::Main, buf, stale)
     }
 
     /// The reply to the frame last asked for, if it came: what the socket
@@ -558,11 +564,16 @@ impl Wayland {
         session: &ExtImageCopyCaptureSessionV1,
         which: Which,
         buf: &dyn CaptureBuffer,
+        stale: &[Rect],
     ) -> Asked {
         let frame = session.create_frame(&self.qh, which);
-        let (w, h) = buf.size();
         frame.attach_buffer(buf.wl_buffer());
-        frame.damage_buffer(0, 0, w as i32, h as i32);
+        for r in stale
+            .iter()
+            .filter(|r| r.x >= 0 && r.y >= 0 && r.width > 0 && r.height > 0)
+        {
+            frame.damage_buffer(r.x, r.y, r.width, r.height);
+        }
         frame.capture();
         let s = self.state.session(which);
         s.frame = None;
@@ -586,7 +597,7 @@ impl Wayland {
         buf: &dyn CaptureBuffer,
         wait: Duration,
     ) -> Result<(), CaptureError> {
-        let _asked = self.ask_on(session, which, buf);
+        let _asked = self.ask_on(session, which, buf, &whole(buf));
         let deadline = Instant::now() + wait;
         loop {
             if let Some(r) = self.take_answer(which) {
@@ -612,6 +623,17 @@ impl Wayland {
     pub fn flush(&self) {
         let _ = self.conn.flush();
     }
+}
+
+/// All of `buf`, as damage.
+fn whole(buf: &dyn CaptureBuffer) -> [Rect; 1] {
+    let (w, h) = buf.size();
+    [Rect {
+        x: 0,
+        y: 0,
+        width: w.min(i32::MAX as u32) as i32,
+        height: h.min(i32::MAX as u32) as i32,
+    }]
 }
 
 fn shm_layout(w: u32, h: u32) -> Result<(i32, i32), String> {
