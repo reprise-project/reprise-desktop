@@ -97,6 +97,27 @@ pub fn read_dir(dir: &Path, globs: &MimeDb) -> Vec<Item> {
     read_dir_with(dir, globs, target_of, LINK_WAIT)
 }
 
+/// A trash's `files/` as [`read_dir`] lists it, each item with its record
+/// ([`crate::trash::trashed`]) and a file typed by its original name, which a numbered entry
+/// stands for. An item without a record stays as listed.
+pub fn read_bin(dir: &Path, globs: &MimeDb) -> Vec<Item> {
+    let mut items = read_dir(dir, globs);
+    for it in &mut items {
+        it.trashed = crate::trash::trashed(&it.path).ok().map(Box::new);
+        if let Some(t) = &it.trashed
+            && !it.is_dir
+            && !it.is_link
+            && it.shortcut.is_none()
+        {
+            it.mime = (!globs.is_empty())
+                .then(|| globs.mime_of_name(&t.name))
+                .flatten();
+            it.kind = kind_text_in(globs, Path::new(&t.name), false, it.mime.as_deref());
+        }
+    }
+    items
+}
+
 /// How long a listing waits on its symlinks' targets after the last one answered.
 pub const LINK_WAIT: Duration = Duration::from_secs(2);
 
@@ -663,10 +684,7 @@ mod tests {
             crate::trash::trash_in(&root, &p).unwrap();
         }
         std::fs::write(root.join("files/orphan.2.txt"), "1").unwrap();
-        let mut items = read_dir(&root.join("files"), &MimeDb::empty());
-        for it in &mut items {
-            it.trashed = crate::trash::trashed(&it.path).ok().map(Box::new);
-        }
+        let items = read_bin(&root.join("files"), &MimeDb::empty());
         let got: Vec<(&str, &str)> = items.iter().map(|i| (i.name.as_str(), i.label())).collect();
         assert_eq!(
             got,
@@ -676,6 +694,31 @@ mod tests {
                 ("x.txt", "x.txt")
             ]
         );
+    }
+
+    #[test]
+    fn a_trashed_file_is_typed_by_its_original_name() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("Trash");
+        for name in ["notes", "a.txt"] {
+            for from in ["one", "two"] {
+                let p = t.path().join(from).join(name);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(&p, "1").unwrap();
+                crate::trash::trash_in(&root, &p).unwrap();
+            }
+        }
+        std::fs::write(root.join("files/orphan.2"), "1").unwrap();
+        let db = MimeDb::parse(["50:text/plain:*.txt\n"]);
+        let items = read_bin(&root.join("files"), &db);
+        let typed = |name: &str| {
+            let it = items.iter().find(|i| i.name == name).expect(name);
+            (it.mime.as_deref(), it.kind.as_str())
+        };
+        let text = kind_text_in(&db, Path::new("a.txt"), false, Some("text/plain"));
+        assert_eq!(typed("notes.2"), (None, "File"));
+        assert_eq!(typed("a.2.txt"), (Some("text/plain"), text.as_str()));
+        assert_eq!(typed("orphan.2"), (None, "2 File"));
     }
 
     #[test]

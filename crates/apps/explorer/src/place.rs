@@ -514,14 +514,11 @@ pub fn list(
             }
         }
         Place::RecycleBin => {
-            let mut items: Vec<Item> = bin_dirs()
+            let items: Vec<Item> = bin_dirs()
                 .iter()
-                .flat_map(|dir| reprisefs::listing::read_dir(dir, globs))
+                .flat_map(|dir| reprisefs::listing::read_bin(dir, globs))
                 .filter(|i| show_hidden || !i.hidden)
                 .collect();
-            for it in &mut items {
-                it.trashed = reprisefs::trash::trashed(&it.path).ok().map(Box::new);
-            }
             Listed {
                 items,
                 groups: Vec::new(),
