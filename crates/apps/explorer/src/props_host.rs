@@ -3,7 +3,7 @@
 
 use crate::Explorer;
 use crate::acting::Action;
-use crate::dialogs::SheetId;
+use crate::dialogs::{Dialog, SheetId};
 use crate::props_dialog::{
     ADVANCED, AttrConfirm, BIN_SHEET_H, CHANGE, ICON_PX, PROPS, Props, READ_ONLY, RESTORE, SHEET_W,
     attr_form, attr_tree_picked, bin_facts, bin_page, folder_has_contents, general_page, rows,
@@ -44,6 +44,7 @@ impl Explorer {
     /// selected entry, the combined sheet for several, or for the place itself with nothing
     /// selected (the Recycle Bin's is Recycle Bin Properties).
     pub fn properties(&mut self, ctx: &mut Ctx) -> Reply {
+        self.note_sheet_error_read();
         if self.sv.selection.len() > 1 {
             return self.open_set_properties(ctx);
         }
@@ -76,6 +77,20 @@ impl Explorer {
         )
     }
 
+    /// Another sheet asked for: the sheet's error up has been read, and leaves with the sheet if
+    /// the new one replaces it ([`Explorer::build_due`]).
+    fn note_sheet_error_read(&mut self) {
+        if let Some(Dialog::Message {
+            sheet: Some(s),
+            read,
+            ..
+        }) = self.dialogs.up_mut()
+            && s.win == PROPS
+        {
+            *read = true;
+        }
+    }
+
     /// The path, the sheet field's name and the caption's name for the current place's own sheet,
     /// or `None` where there is no sheet ([`place_sheet_of`]).
     #[cfg(test)]
@@ -92,6 +107,7 @@ impl Explorer {
         title: &str,
         ctx: &mut Ctx,
     ) -> Reply {
+        self.note_sheet_error_read();
         let (path, name, title) = (path.to_path_buf(), name.to_string(), title.to_string());
         let (apps, globs) = (self.app_index.clone(), self.globs.clone());
         let read = name.clone();
@@ -270,9 +286,20 @@ impl Explorer {
             self.props_due = Some((read, waits, refresh));
             return Reply::none();
         }
-        // The sheet this one replaces goes the one way a sheet goes, taking its boxes.
+        // The sheet this one replaces goes the one way a sheet goes, taking its boxes but for
+        // the errors not read yet, which cover the folder window from now on.
         let reply = match self.props {
-            Some(_) if refresh.is_none() => self.close_props(ctx),
+            Some(_) if refresh.is_none() => {
+                for d in self.dialogs.iter_mut() {
+                    if let Dialog::Message { sheet, read, .. } = d
+                        && sheet.is_some_and(|s| s.win == PROPS)
+                        && !*read
+                    {
+                        *sheet = None;
+                    }
+                }
+                self.close_props(ctx)
+            }
             _ => Reply::redraw_all(),
         };
         if let Some(p) = &mut props {

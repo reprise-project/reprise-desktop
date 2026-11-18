@@ -206,6 +206,9 @@ pub enum Dialog {
         text: String,
         /// The Properties sheet that raised it ([`Dialog::sheet`]); `None` for the folder window.
         sheet: Option<SheetId>,
+        /// Up when another file's sheet was asked for, so read: it leaves with the sheet the new
+        /// one replaces, where an error not read yet stays ([`Explorer::note_sheet_error_read`]).
+        read: bool,
     },
     Confirm(Confirm),
     /// Confirm File or Folder Replace; its form is rebuilt per event.
@@ -577,6 +580,7 @@ impl Explorer {
             title: title.to_string(),
             text,
             sheet: sheet.filter(|&s| self.sheet_up(s)),
+            read: false,
         })
     }
 
