@@ -176,7 +176,8 @@ impl BtApp {
         }
     }
 
-    fn snapshot_in(&mut self, s: bz::Snapshot) {
+    /// Takes snapshot `s`, read once BlueZ had answered `answered` commands.
+    fn snapshot_in(&mut self, s: bz::Snapshot, answered: u64) {
         log::debug!(
             "snapshot: adapter {}, {} devices",
             s.adapter.as_ref().map_or("none", |a| a.path.as_str()),
@@ -201,7 +202,7 @@ impl BtApp {
         match live {
             Some(d) => {
                 if let Some(p) = &mut self.props {
-                    p.refresh(&d);
+                    p.refresh(&d, answered);
                 }
             }
             None => self.props = None,
@@ -348,15 +349,9 @@ impl BtApp {
         while let Some(msg) = self.bz_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
             any = true;
             match msg {
-                bz::BzMsg::Snapshot(s) => latest = Some(s),
+                bz::BzMsg::Snapshot { snapshot, answered } => latest = Some((snapshot, answered)),
                 bz::BzMsg::Failed { cmd, body } => self.failed(&cmd, body),
-                // A snapshot posted before the answer was read before it: the sheet takes it first.
-                bz::BzMsg::Ran(cmd) => {
-                    if let Some(s) = latest.take() {
-                        self.snapshot_in(s);
-                    }
-                    self.ran(&cmd)
-                }
+                bz::BzMsg::Ran { cmd, answer } => self.ran(&cmd, answer),
                 bz::BzMsg::Connected { device, error } => self.connected(device, error),
                 bz::BzMsg::Paired {
                     device,
@@ -375,8 +370,8 @@ impl BtApp {
                 }
                 // The request's device may be in this same burst; the box names it by alias.
                 bz::BzMsg::Agent(req) => {
-                    if let Some(s) = latest.take() {
-                        self.snapshot_in(s);
+                    if let Some((s, answered)) = latest.take() {
+                        self.snapshot_in(s, answered);
                     }
                     self.agent(req)
                 }
@@ -398,8 +393,8 @@ impl BtApp {
                 }
             }
         }
-        if let Some(s) = latest {
-            self.snapshot_in(s);
+        if let Some((s, answered)) = latest {
+            self.snapshot_in(s, answered);
         }
         let mut shown = None;
         let mut raised = false;
@@ -567,11 +562,14 @@ impl BtApp {
         self.sync_props_busy();
     }
 
-    fn ran(&mut self, cmd: &bz::Cmd) {
+    fn ran(&mut self, cmd: &bz::Cmd, answer: u64) {
         if let bz::Cmd::SetAlias { device, .. } | bz::Cmd::SetTrusted { device, .. } = cmd
             && let Some(i) = self.setting.iter().position(|d| d == device)
         {
             self.setting.remove(i);
+            if let Some(p) = self.props.as_mut().filter(|p| &p.path == device) {
+                p.answered(answer);
+            }
             if self
                 .props
                 .as_ref()
@@ -1359,7 +1357,7 @@ mod tests {
     #[test]
     fn adapter_loss_closes_props_and_the_pairing_box_and_fails_the_wizard() {
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         a.open_props("/a/cans");
         a.open_wizard();
         let (text, forms) = a.text_forms();
@@ -1377,7 +1375,7 @@ mod tests {
             done: Some(done),
         });
         assert!(a.pair.is_some());
-        a.snapshot_in(bz::Snapshot::default());
+        a.snapshot_in(bz::Snapshot::default(), 0);
         assert!(a.props.is_none());
         assert!(a.pair.is_none());
         assert!(
@@ -1393,19 +1391,19 @@ mod tests {
     #[test]
     fn a_removed_device_closes_its_properties() {
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         a.open_props("/a/cans");
         assert!(a.props.is_some());
         let mut s = snap(true);
         s.devices.clear();
-        a.snapshot_in(s);
+        a.snapshot_in(s, 0);
         assert!(a.props.is_none());
     }
 
     #[test]
     fn the_properties_sheet_takes_drops_on_its_open_page() {
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         assert!(a.drop_form(PROPS).is_none());
         a.open_props("/a/cans");
         let d = a.drop_form(PROPS).expect("the open sheet's page");
@@ -1416,7 +1414,7 @@ mod tests {
     #[test]
     fn agent_requests_route_to_the_wizard_or_the_dialog() {
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         let (d1, w1) = async_channel::bounded(1);
         a.agent(bz::AgentRequest {
             device: "/a/cans".into(),
@@ -1451,7 +1449,7 @@ mod tests {
         let mut a = app();
         let mut s = snap(true);
         s.devices[0].address = "AA:BB:CC:DD:EE:FF".into();
-        a.snapshot_in(s);
+        a.snapshot_in(s, 0);
         let (done, _wait) = async_channel::bounded(1);
         a.agent(bz::AgentRequest {
             device: "/a/cans".into(),
@@ -1475,7 +1473,7 @@ mod tests {
         let mut s = snap(true);
         s.devices[0].address = "AA:BB:CC:DD:EE:FF".into();
         s.devices[0].alias = "Cans\n999999\u{202e}".into();
-        a.snapshot_in(s);
+        a.snapshot_in(s, 0);
         let (done, _wait) = async_channel::bounded(1);
         a.agent(bz::AgentRequest {
             device: "/a/cans".into(),
@@ -1496,7 +1494,7 @@ mod tests {
     #[test]
     fn bluez_cancel_closes_a_waiting_prompt_only() {
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         a.agent(bz::AgentRequest {
             device: "/a/cans".into(),
             ask: Ask::ShowPasskey(123456),
@@ -1528,7 +1526,7 @@ mod tests {
         let mut a = app();
         let (h, rx) = bz::BzHandle::detached();
         a.bz = Some(h);
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         (a, rx)
     }
 
@@ -1556,17 +1554,17 @@ mod tests {
     #[test]
     fn a_connect_failing_after_a_disconnect_shows_no_box() {
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         a.toggle("/a/cans");
         let mut s = snap(true);
         s.devices = vec![cans(true)];
-        a.snapshot_in(s);
+        a.snapshot_in(s, 0);
         a.toggle("/a/cans");
         a.connected("/a/cans".into(), Some("canceled".into()));
         assert!(!a.error.is_shown(), "the user asked to disconnect it");
 
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         a.toggle("/a/cans");
         a.connected("/a/cans".into(), Some("timed out".into()));
         assert_eq!(
@@ -1574,6 +1572,10 @@ mod tests {
             Some("Could not connect"),
             "a Connect failing on its own shows a box"
         );
+    }
+
+    fn ran(cmd: bz::Cmd, answer: u64) -> bz::BzMsg {
+        bz::BzMsg::Ran { cmd, answer }
     }
 
     /// Hands the program the bus thread's `msgs` in one wake.
@@ -1589,7 +1591,7 @@ mod tests {
     #[test]
     fn a_failure_covers_the_sheet_or_wizard_it_is_about_and_leaves_with_it() {
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         a.open_props("/a/cans");
         a.open_wizard();
         let failed = |cmd| bz::BzMsg::Failed {
@@ -1660,7 +1662,7 @@ mod tests {
         assert!(!sheet_button_enabled(&a, propsheet::OK));
         assert!(!sheet_button_enabled(&a, propsheet::APPLY));
 
-        bus_says(&mut a, [bz::BzMsg::Ran(alias)]);
+        bus_says(&mut a, [ran(alias, 1)]);
         assert!(a.props.is_none(), "the sheet closes once BlueZ answers");
     }
 
@@ -1675,7 +1677,7 @@ mod tests {
             cmd: alias.clone(),
             body: "I/O error: timed out".into(),
         };
-        bus_says(&mut a, [failed, bz::BzMsg::Ran(alias)]);
+        bus_says(&mut a, [failed, ran(alias, 1)]);
 
         let p = a.props.as_ref().expect("the sheet stays");
         assert_eq!(p.sheet.open().edit_text(props::NAME), "Mine");
@@ -1699,7 +1701,7 @@ mod tests {
             a.event(PROPS, close, &mut ctx);
             assert!(a.props.is_some(), "the sheet waits for BlueZ");
 
-            bus_says(&mut a, [bz::BzMsg::Ran(alias)]);
+            bus_says(&mut a, [ran(alias, 1)]);
             assert!(a.props.is_none());
 
             a.open_props("/a/cans");
@@ -1724,7 +1726,7 @@ mod tests {
         let p = a.props.as_mut().unwrap();
         assert_eq!(p.event(propsheet::Event::Ok), props::Outcome::None);
 
-        bus_says(&mut a, [bz::BzMsg::Ran(alias)]);
+        bus_says(&mut a, [ran(alias, 1)]);
         assert!(
             sheet_button_enabled(&a, propsheet::OK),
             "OK is back once BlueZ answers"
@@ -1742,13 +1744,17 @@ mod tests {
             .map(|c| c.title)
     }
 
-    /// BlueZ's snapshot with Cans named `alias`, trusted as `trusted` and its battery at `battery`.
-    fn cans_as(alias: &str, trusted: bool, battery: u8) -> bz::BzMsg {
+    /// BlueZ's snapshot with Cans named `alias`, trusted as `trusted` and its battery at `battery`,
+    /// read after `answered` answers.
+    fn cans_as(alias: &str, trusted: bool, battery: u8, answered: u64) -> bz::BzMsg {
         let mut s = snap(true);
         s.devices[0].alias = alias.into();
         s.devices[0].trusted = trusted;
         s.devices[0].battery = Some(battery);
-        bz::BzMsg::Snapshot(s)
+        bz::BzMsg::Snapshot {
+            snapshot: s,
+            answered,
+        }
     }
 
     #[test]
@@ -1765,28 +1771,59 @@ mod tests {
         rename_to_mine(&mut a, &mut ctx);
         a.event(PROPS, key(u32::from(b'a'), true), &mut ctx);
         assert_eq!(props_title(&a).as_deref(), Some("Cans Properties"));
-        bus_says(&mut a, [bz::BzMsg::Ran(alias)]);
+        bus_says(&mut a, [ran(alias, 1)]);
         assert_eq!(props_title(&a).as_deref(), Some("Cans Properties"));
-        bus_says(&mut a, [cans_as("Mine", false, 80)]);
+        bus_says(&mut a, [cans_as("Mine", false, 80, 1)]);
         assert_eq!(props_title(&a).as_deref(), Some("Mine Properties"));
 
-        bus_says(&mut a, [cans_as("Other", false, 80)]);
+        bus_says(&mut a, [cans_as("Other", false, 80, 1)]);
         assert_eq!(props_title(&a).as_deref(), Some("Other Properties"));
         let p = a.props.as_ref().unwrap();
         assert_eq!(p.sheet.open().edit_text(props::NAME), "Other");
     }
 
     #[test]
-    fn a_snapshot_read_before_bluez_answered_a_rename_keeps_the_field() {
-        let (mut a, _rx) = wired();
-        let mut ctx = test_ctx();
-        a.open_props("/a/cans");
-        let alias = rename_to_mine(&mut a, &mut ctx);
-        a.event(PROPS, key(u32::from(b'a'), true), &mut ctx);
-        bus_says(&mut a, [cans_as("Cans", false, 70), bz::BzMsg::Ran(alias)]);
-        let p = a.props.as_ref().unwrap();
-        assert_eq!(p.sheet.open().edit_text(props::NAME), "Mine");
-        assert!(!sheet_button_enabled(&a, propsheet::APPLY));
+    fn a_snapshot_read_before_bluez_answered_keeps_the_sent_name_and_trust_however_late_it_lands() {
+        for in_one_wake in [true, false] {
+            let (mut a, rx) = wired();
+            let mut ctx = test_ctx();
+            a.open_props("/a/cans");
+            let alias = rename_to_mine(&mut a, &mut ctx);
+            a.event(PROPS, key(u32::from(b'm'), true), &mut ctx);
+            a.event(PROPS, key(u32::from(b'a'), true), &mut ctx);
+            let trust = bz::Cmd::SetTrusted {
+                device: "/a/cans".into(),
+                on: true,
+            };
+            let sent: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+            assert_eq!(sent, [alias.clone(), trust.clone()]);
+
+            let (alias, trust) = (ran(alias, 1), ran(trust, 2));
+            let stale = cans_as("Cans", false, 70, 0);
+            if in_one_wake {
+                bus_says(&mut a, [stale, alias, trust]);
+            } else {
+                bus_says(&mut a, [alias, trust]);
+                bus_says(&mut a, [stale]);
+            }
+            let page = a.props.as_ref().unwrap().sheet.open();
+            assert_eq!(
+                page.edit_text(props::NAME),
+                "Mine",
+                "in one wake: {in_one_wake}"
+            );
+            assert_eq!(
+                page.checked(props::AUTO),
+                Some(true),
+                "in one wake: {in_one_wake}"
+            );
+            assert!(!sheet_button_enabled(&a, propsheet::APPLY));
+
+            bus_says(&mut a, [cans_as("Other", false, 70, 2)]);
+            let page = a.props.as_ref().unwrap().sheet.open();
+            assert_eq!(page.edit_text(props::NAME), "Other", "a later change shows");
+            assert_eq!(page.checked(props::AUTO), Some(false));
+        }
     }
 
     #[test]
@@ -1804,7 +1841,7 @@ mod tests {
         let sent: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
         assert_eq!(sent, [alias.clone(), trust.clone()]);
 
-        bus_says(&mut a, [cans_as("Cans", false, 70)]);
+        bus_says(&mut a, [cans_as("Cans", false, 70, 0)]);
         let page = a.props.as_ref().unwrap().sheet.open();
         assert_eq!(page.edit_text(props::NAME), "Mine");
         assert_eq!(page.checked(props::AUTO), Some(true));
@@ -1815,12 +1852,7 @@ mod tests {
         };
         bus_says(
             &mut a,
-            [
-                failed(&alias),
-                bz::BzMsg::Ran(alias),
-                failed(&trust),
-                bz::BzMsg::Ran(trust),
-            ],
+            [failed(&alias), ran(alias, 1), failed(&trust), ran(trust, 2)],
         );
         let page = a.props.as_ref().unwrap().sheet.open();
         assert_eq!(page.edit_text(props::NAME), "Mine");
@@ -1834,13 +1866,13 @@ mod tests {
     #[test]
     fn a_vanished_device_closes_its_remove_box() {
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         let mut ctx = test_ctx();
         a.ask_remove("/a/cans".into(), &mut ctx);
         assert!(!a.remove.is_empty());
         let mut s = snap(true);
         s.devices.clear();
-        a.snapshot_in(s);
+        a.snapshot_in(s, 0);
         assert!(a.remove.is_empty());
     }
 
@@ -1922,7 +1954,7 @@ mod tests {
                 ..cans(false)
             })
             .collect();
-        a.snapshot_in(s);
+        a.snapshot_in(s, 0);
         let cm = ctx.theme.controls();
         let sb = tilelist::layout(&a.devices.list, devices::LIST, &cm)
             .scrollbar
@@ -1974,7 +2006,7 @@ mod tests {
         let mut a = app();
         let mut ctx = test_ctx();
         ctx.theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         a.open_wizard();
         let w = a.wizard.as_mut().unwrap();
         w.step = addwiz::Step::Search;
@@ -2014,7 +2046,7 @@ mod tests {
     fn the_name_field_copies_and_cuts() {
         let mut ctx = test_ctx();
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         a.open_props("/a/cans");
         let page = a.props.as_mut().unwrap().sheet.open_mut();
         page.focus_id("name");
@@ -2045,7 +2077,7 @@ mod tests {
     #[test]
     fn dialogs_open_at_the_text_size() {
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         let mut ctx = Ctx {
             text_size: 150,
             ..test_ctx()
@@ -2087,7 +2119,7 @@ mod tests {
                 ..cans(false)
             })
             .collect();
-        a.snapshot_in(s);
+        a.snapshot_in(s, 0);
         ctx.size = (devices::CLIENT.0, 300);
         a.event(MAIN, Event::Pointer(PointerInput::Leave), &mut ctx);
         let px = ctx.theme.fonts.size_px;
@@ -2158,7 +2190,7 @@ mod tests {
                 ..cans(false)
             })
             .collect();
-        a.snapshot_in(s);
+        a.snapshot_in(s, 0);
         a.event(MAIN, Event::Pointer(PointerInput::Leave), &mut ctx);
         let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
         a.draw(MAIN, &mut c, &ctx);
@@ -2373,7 +2405,7 @@ mod tests {
     #[test]
     fn add_from_the_tray_hands_its_token_to_the_wizard() {
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         let (handoff, tx) = holding_tray(&mut a);
         tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::Add))
             .unwrap();
@@ -2383,7 +2415,7 @@ mod tests {
     #[test]
     fn a_tray_row_that_shows_nothing_drops_its_handoff() {
         let mut a = app();
-        a.snapshot_in(snap(true));
+        a.snapshot_in(snap(true), 0);
         let (_, tx) = holding_tray(&mut a);
         tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::TogglePower))
             .unwrap();

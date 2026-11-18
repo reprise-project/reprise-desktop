@@ -53,10 +53,13 @@ pub struct PropsSheet {
     pub sheet: PropSheet,
     /// The device as BlueZ last reported it; the title follows it.
     device: Settings,
-    /// Values sent from the sheet. Until BlueZ answers them and a snapshot follows, a field
-    /// holding its sent value is unedited and no snapshot rewrites it.
+    /// Values sent from the sheet. Until BlueZ answers them and a snapshot read after the answer
+    /// follows, a field holding its sent value is unedited and no snapshot rewrites it.
     sent: Change,
     pending: Settings,
+    /// The `answer` of the last change BlueZ answered for this device: a snapshot read before
+    /// it keeps `sent`.
+    answered: u64,
     /// A change sent from the sheet waits on BlueZ: Apply and OK stay greyed.
     busy: bool,
     /// OK, Cancel or the close box came while a change waited: the sheet closes once BlueZ
@@ -101,11 +104,12 @@ impl PropsSheet {
             device: s.clone(),
             sent: Change::default(),
             pending: s,
+            answered: 0,
             busy: false,
             leaving: false,
         };
         set_edit(&mut p.sheet.pages[0], NAME, &d.alias);
-        p.refresh(d);
+        p.refresh(d, 0);
         p
     }
 
@@ -135,11 +139,11 @@ impl PropsSheet {
         self.name_dirty() || self.trusted_dirty()
     }
 
-    /// Takes a new device snapshot. Each field resyncs on its own: one with an
-    /// unapplied edit, or a sent value BlueZ has not answered, stays. The name
-    /// field is rewritten only when its name changed, so its caret and text
-    /// survive other updates.
-    pub fn refresh(&mut self, d: &Device) {
+    /// Takes a new device snapshot, read once BlueZ had answered `answered` commands. Each field
+    /// resyncs on its own: one with an unapplied edit, or a sent value BlueZ has not answered or
+    /// answered after this read began, stays. The name field is rewritten only when its name
+    /// changed, so its caret and text survive other updates.
+    pub fn refresh(&mut self, d: &Device, answered: u64) {
         let name_dirty = self.name_dirty();
         let trusted_dirty = self.trusted_dirty();
         let base = self.base_alias().to_string();
@@ -147,7 +151,7 @@ impl PropsSheet {
             alias: d.alias.clone(),
             trusted: d.trusted,
         };
-        if !self.busy {
+        if !self.busy && answered >= self.answered {
             self.sent = Change::default();
         }
         if self.base_alias() != base && !name_dirty {
@@ -191,6 +195,11 @@ impl PropsSheet {
             .into();
         }
         self.sync();
+    }
+
+    /// BlueZ answered a change for this device as its `answer`th command.
+    pub fn answered(&mut self, answer: u64) {
+        self.answered = answer;
     }
 
     pub fn set_busy(&mut self, busy: bool) {
@@ -333,10 +342,13 @@ mod tests {
     #[test]
     fn a_missing_battery_hides_its_row() {
         let mut p = sheet();
-        p.refresh(&Device {
-            battery: None,
-            ..cans()
-        });
+        p.refresh(
+            &Device {
+                battery: None,
+                ..cans()
+            },
+            0,
+        );
         assert_eq!(label(&p, BATTERY_LABEL), "");
         assert_eq!(label(&p, BATTERY), "");
     }
@@ -367,10 +379,13 @@ mod tests {
             p.event(propsheet::Event::Page(0, form::Event::Pressed(CONNECT))),
             Outcome::Toggle
         );
-        p.refresh(&Device {
-            connected: false,
-            ..cans()
-        });
+        p.refresh(
+            &Device {
+                connected: false,
+                ..cans()
+            },
+            0,
+        );
         assert_eq!(label(&p, CONNECT), "&Connect");
         assert_eq!(label(&p, STATUS), "Not connected");
     }
@@ -380,7 +395,7 @@ mod tests {
         let mut p = sheet();
         set_edit(&mut p.sheet.pages[0], NAME, "Bu");
         p.event(propsheet::Event::Page(0, form::Event::Changed(NAME)));
-        p.refresh(&cans());
+        p.refresh(&cans(), 0);
         assert_eq!(p.sheet.pages[0].edit_text(NAME), "Bu");
     }
 
@@ -389,10 +404,13 @@ mod tests {
         let mut p = sheet();
         p.sheet.pages[0].set_check(AUTO, false);
         p.event(propsheet::Event::Page(0, form::Event::Changed(AUTO)));
-        p.refresh(&Device {
-            alias: "Buds".into(),
-            ..cans()
-        });
+        p.refresh(
+            &Device {
+                alias: "Buds".into(),
+                ..cans()
+            },
+            0,
+        );
         assert_eq!(
             p.event(propsheet::Event::Ok),
             Outcome::ApplyAndClose(Change {
@@ -408,10 +426,13 @@ mod tests {
         let mut p = sheet();
         set_edit(&mut p.sheet.pages[0], NAME, "Cans ");
         p.event(propsheet::Event::Page(0, form::Event::Changed(NAME)));
-        p.refresh(&Device {
-            battery: Some(70),
-            ..cans()
-        });
+        p.refresh(
+            &Device {
+                battery: Some(70),
+                ..cans()
+            },
+            0,
+        );
         assert_eq!(p.sheet.pages[0].edit_text(NAME), "Cans ");
     }
 

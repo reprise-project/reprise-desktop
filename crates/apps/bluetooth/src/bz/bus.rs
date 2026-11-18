@@ -7,6 +7,7 @@ use futures_util::future;
 use futures_util::stream::StreamExt;
 use std::collections::{HashMap, HashSet};
 use std::pin::pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -117,7 +118,10 @@ async fn run(poster: Poster, cmds: async_channel::Receiver<Cmd>, done: Sender<()
         Ok(c) => c,
         Err(e) => {
             log::info!("no system bus ({e}); no Bluetooth to show");
-            poster.post(BzMsg::Snapshot(Snapshot::default()));
+            poster.post(BzMsg::Snapshot {
+                snapshot: Snapshot::default(),
+                answered: 0,
+            });
             while let Ok(cmd) = cmds.recv().await {
                 if cmd == Cmd::Quit {
                     let _ = done.send(());
@@ -138,18 +142,29 @@ async fn run(poster: Poster, cmds: async_channel::Receiver<Cmd>, done: Sender<()
     let (wake_tx, wake_rx) = async_channel::unbounded::<Wake>();
     let _pump = pump(&conn, wake_tx.clone()).await;
     follow_switches(wake_tx.clone());
-    let _commands = commands(&conn, cmds, wake_tx, poster.clone(), obex);
-    follow(&conn, &wake_rx, &poster).await;
+    let answered = Arc::new(AtomicU64::new(0));
+    let _commands = commands(&conn, cmds, wake_tx, poster.clone(), obex, answered.clone());
+    follow(&conn, &wake_rx, &poster, &answered).await;
     let _ = done.send(());
 }
 
 /// Posts the snapshot, then reads and posts it again after each wake that may change it, at most
 /// once per [`READ_GAP`]; one equal to the last posted is not posted. Airplane mode is read only
-/// at the start and after a radio switch. Returns on [`Wake::Quit`].
-async fn follow(conn: &Connection, wakes: &async_channel::Receiver<Wake>, poster: &Poster) {
+/// at the start and after a radio switch. Each is stamped with `answered` as its read began.
+/// Returns on [`Wake::Quit`].
+async fn follow(
+    conn: &Connection,
+    wakes: &async_channel::Receiver<Wake>,
+    poster: &Poster,
+    answered: &AtomicU64,
+) {
     let mut airplane = reprisebus::airplane::read(conn).await;
+    let seen = answered.load(Ordering::SeqCst);
     let mut last = snapshot(conn, airplane).await;
-    poster.post(BzMsg::Snapshot(last.clone()));
+    poster.post(BzMsg::Snapshot {
+        snapshot: last.clone(),
+        answered: seen,
+    });
     let mut read_at = Instant::now();
     loop {
         let mut woke = Vec::new();
@@ -177,10 +192,14 @@ async fn follow(conn: &Connection, wakes: &async_channel::Receiver<Wake>, poster
         if woke.contains(&Wake::Switch) {
             airplane = reprisebus::airplane::read(conn).await;
         }
+        let seen = answered.load(Ordering::SeqCst);
         let next = snapshot(conn, airplane).await;
         read_at = Instant::now();
         if next != last {
-            poster.post(BzMsg::Snapshot(next.clone()));
+            poster.post(BzMsg::Snapshot {
+                snapshot: next.clone(),
+                answered: seen,
+            });
             last = next;
         }
     }
@@ -307,6 +326,7 @@ fn commands(
     wakes: async_channel::Sender<Wake>,
     poster: Poster,
     obex: Option<super::obex::Obex>,
+    answered: Arc<AtomicU64>,
 ) -> zruntime::Task<(), zruntime::Shared> {
     let bus = conn.clone();
     let pairings = Pairings::default();
@@ -364,7 +384,8 @@ fn commands(
                             });
                         }
                     }
-                    poster.post(BzMsg::Ran(cmd));
+                    let answer = answered.fetch_add(1, Ordering::SeqCst) + 1;
+                    poster.post(BzMsg::Ran { cmd, answer });
                 }
             }
         }
@@ -705,7 +726,9 @@ mod tests {
                 tx.send(Wake::Quit).await.unwrap();
                 quiet
             };
-            let ((), quiet) = futures_util::future::join(follow(&conn, &rx, &poster), drive).await;
+            let answered = AtomicU64::new(0);
+            let following = follow(&conn, &rx, &poster, &answered);
+            let ((), quiet) = futures_util::future::join(following, drive).await;
             (quiet, reads.load(Ordering::Relaxed))
         });
         assert_eq!(
@@ -718,11 +741,147 @@ mod tests {
         );
         let shown: Vec<bool> = std::iter::from_fn(|| posted.try_recv().ok())
             .map(|m| match m {
-                BzMsg::Snapshot(s) => s.devices[0].connected,
+                BzMsg::Snapshot { snapshot, .. } => snapshot.devices[0].connected,
                 other => panic!("{other:?}"),
             })
             .collect();
         assert_eq!(shown, [false, true], "one snapshot per change");
+    }
+
+    /// BlueZ's object manager, holding each `GetManagedObjects` reply until `gate` lets one go.
+    /// The reply names its device after the read's number and has it trusted as when it came.
+    struct HeldManager {
+        trusted: Arc<Mutex<bool>>,
+        gate: async_channel::Receiver<()>,
+        reads: Arc<AtomicUsize>,
+    }
+
+    #[zbus::interface(name = "org.freedesktop.DBus.ObjectManager")]
+    impl HeldManager {
+        async fn get_managed_objects(&self) -> Objects {
+            let n = self.reads.fetch_add(1, Ordering::SeqCst) + 1;
+            let trusted = *self.trusted.lock().unwrap();
+            let _ = self.gate.recv().await;
+            let device = [
+                ("Alias", Variant::from(format!("Cans {n}"))),
+                ("Trusted", Variant::from(trusted)),
+            ];
+            let device = (device.into_iter())
+                .map(|(k, v)| (k.to_string(), OwnedVariant::try_from(v).unwrap()))
+                .collect();
+            let path = |p: &str| zbus::OwnedObjectPath::try_from(p).unwrap();
+            Objects::from([
+                (
+                    path("/org/bluez/hci0"),
+                    HashMap::from([(ADAPTER_IFACE.to_string(), Props::new())]),
+                ),
+                (
+                    path(DEVICE),
+                    HashMap::from([(DEVICE_IFACE.to_string(), device)]),
+                ),
+            ])
+        }
+    }
+
+    struct TrustedDevice(Arc<Mutex<bool>>);
+
+    #[zbus::interface(name = "org.bluez.Device1")]
+    impl TrustedDevice {
+        #[zbus(property)]
+        fn trusted(&self) -> bool {
+            *self.0.lock().unwrap()
+        }
+        #[zbus(property)]
+        fn set_trusted(&mut self, on: bool) {
+            *self.0.lock().unwrap() = on;
+        }
+    }
+
+    async fn until(what: &str, done: impl Fn() -> bool) {
+        let rt = zruntime::SharedRuntime::current().unwrap();
+        let polled = rt.timeout(Duration::from_secs(5), async {
+            while !done() {
+                pause(10).await;
+            }
+        });
+        polled.await.expect(what);
+    }
+
+    #[test]
+    fn a_read_begun_before_a_command_was_answered_is_stamped_before_it_however_late_it_lands() {
+        let Some(bus) = bus() else {
+            return;
+        };
+        let (poster, posted) = Poster::channel(repriseapp::Waker::noop());
+        zbus::block_on(async {
+            let bluez = connect(&bus.1).await;
+            let trusted = Arc::new(Mutex::new(false));
+            let reads = Arc::new(AtomicUsize::new(0));
+            let (gate_tx, gate) = async_channel::unbounded();
+            let manager = HeldManager {
+                trusted: trusted.clone(),
+                gate,
+                reads: reads.clone(),
+            };
+            reprisebus::testbus::serve(&bluez, "/", manager).await;
+            reprisebus::testbus::serve(&bluez, DEVICE, TrustedDevice(trusted)).await;
+            bluez.request_name(NAME).await.unwrap();
+            let conn = connect(&bus.1).await;
+            let answered = Arc::new(AtomicU64::new(0));
+            let (wakes_tx, wakes) = async_channel::unbounded();
+            let (cmds_tx, cmds) = async_channel::unbounded();
+            let _commands = commands(
+                &conn,
+                cmds,
+                wakes_tx.clone(),
+                poster.clone(),
+                None,
+                answered.clone(),
+            );
+            let drive = async {
+                gate_tx.send(()).await.unwrap();
+                wakes_tx.send(Wake::Objects).await.unwrap();
+                until("the second read is held", || {
+                    reads.load(Ordering::SeqCst) == 2
+                })
+                .await;
+                let trust = Cmd::SetTrusted {
+                    device: DEVICE.into(),
+                    on: true,
+                };
+                cmds_tx.send(trust).await.unwrap();
+                until("the set is answered", || {
+                    answered.load(Ordering::SeqCst) == 1
+                })
+                .await;
+                gate_tx.send(()).await.unwrap();
+                gate_tx.send(()).await.unwrap();
+                wakes_tx.send(Wake::Objects).await.unwrap();
+                until("the third read", || reads.load(Ordering::SeqCst) == 3).await;
+                pause(100).await;
+                cmds_tx.send(Cmd::Quit).await.unwrap();
+            };
+            futures_util::future::join(follow(&conn, &wakes, &poster, &answered), drive).await;
+        });
+        let seen: Vec<String> = std::iter::from_fn(|| posted.try_recv().ok())
+            .map(|m| match m {
+                BzMsg::Snapshot { snapshot, answered } => {
+                    let d = &snapshot.devices[0];
+                    format!("{} trusted {} after {answered}", d.alias, d.trusted)
+                }
+                BzMsg::Ran { answer, .. } => format!("Ran {answer}"),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                "Cans 1 trusted false after 0",
+                "Ran 1",
+                "Cans 2 trusted false after 0",
+                "Cans 3 trusted true after 1"
+            ]
+        );
     }
 
     /// A device whose `Connect` never answers when `hang`, reporting it on `calls`.
@@ -805,7 +964,7 @@ mod tests {
             let conn = connect(&bus.1).await;
             let (cmds_tx, cmds) = async_channel::unbounded();
             let (wakes, _wakes_rx) = async_channel::unbounded();
-            let _commands = commands(&conn, cmds, wakes, poster, None);
+            let _commands = commands(&conn, cmds, wakes, poster, None, Arc::default());
             cmds_tx.send(Cmd::Pair(DEVICE.into())).await.unwrap();
             let rt = zruntime::SharedRuntime::current().unwrap();
             let connecting = rt.timeout(Duration::from_secs(5), async {
@@ -865,7 +1024,7 @@ mod tests {
             let conn = connect(&bus.1).await;
             let (cmds_tx, cmds) = async_channel::unbounded();
             let (wakes, _wakes_rx) = async_channel::unbounded();
-            let _commands = commands(&conn, cmds, wakes, poster, None);
+            let _commands = commands(&conn, cmds, wakes, poster, None, Arc::default());
             cmds_tx.send(Cmd::Pair(DEVICE.into())).await.unwrap();
             let rt = zruntime::SharedRuntime::current().unwrap();
             let reported = rt.timeout(Duration::from_secs(5), async {
