@@ -54,18 +54,6 @@ const BROWSE: WinId = WinId::named("browse");
 
 const PRINTER_ICON: &str = "printer";
 
-/// The widest a question's text runs before it wraps, at 100% text size.
-const QUESTION_W: i32 = 360;
-
-/// A question box's `max_w`: [`QUESTION_W`] at the text size, or less where the screen is narrower.
-fn question_w(ctx: &Ctx) -> i32 {
-    let cap = ctx.forms().text.len(QUESTION_W);
-    match repriseapp::dialog_max_w() {
-        0 => cap,
-        screen => screen.min(cap),
-    }
-}
-
 /// What a confirm box asks before it is sent.
 enum Ask {
     Delete(String),
@@ -469,7 +457,7 @@ impl PrintersApp {
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
-                max_w: question_w(ctx),
+                max_w: repriseapp::dialog_max_w(),
             },
         );
         self.confirm.ask_over(from, b, Ask::Rename { old, new });
@@ -1407,10 +1395,8 @@ mod tests {
         let (ask, win) = question(&app).expect("the question");
         assert!(matches!(ask, Ask::Rename { .. }));
         let w = app.confirm.child(&ctx.text, &ctx.forms()).unwrap().size.0;
-        assert!(
-            w <= QUESTION_W,
-            "the question wraps at {QUESTION_W}, not {w}"
-        );
+        let cap = reprisekit::controls::msgbox::WRAP_W;
+        assert!(w <= cap, "the question wraps at {cap}, not {w}");
         let renames = |sent: &Receiver<Cmd>| {
             sent.try_iter()
                 .filter_map(|c| match c {
@@ -1557,6 +1543,31 @@ mod tests {
         app.props.close(laser_sheet);
         worker_says(&mut app, [sent("Laser")]);
         assert_eq!(notice_over(&app), Some(laser_queue), "Laser's queue");
+    }
+
+    #[test]
+    fn a_long_notice_wraps_at_the_message_box_cap() {
+        let ctx = test_ctx(props::CLIENT);
+        let notice = |body: String| {
+            let mut app = two_printers();
+            let sheet = app.open_props("Laser", props::GENERAL).unwrap().id();
+            let failed = Msg::Failed {
+                title: "Rename".into(),
+                body,
+                printer: Some("Laser".into()),
+            };
+            worker_says(&mut app, [failed]);
+            assert_eq!(notice_over(&app), Some(sheet));
+            app.note.child(&ctx.text, &ctx.forms()).unwrap().size
+        };
+        let one_line = notice("Laser could not be paused.".into());
+        let (w, h) = notice(format!(
+            "Laser is now called Office, but Office could not be paused. {}",
+            cups::Error::NeedsHelper.text()
+        ));
+        let cap = reprisekit::controls::msgbox::WRAP_W;
+        assert!(w <= cap, "the notice wraps at {cap}, not {w}");
+        assert!(h > one_line.1, "the notice takes more than one line");
     }
 
     #[test]
