@@ -651,24 +651,75 @@ pub enum NmMsg {
     KeyRefused(Ssid),
 }
 
-/// The SSID profile `s` joins as a client on radio `iface`: none for a hotspot, ad-hoc or mesh
-/// profile, one bound to another interface, or one with no SSID.
-fn client_ssid(s: &HashMap<String, Props>, iface: &str) -> Option<Ssid> {
+/// A radio as a profile's binding sees it: its interface name and the address NetworkManager
+/// matches `802-11-wireless.mac-address` against.
+#[derive(Debug)]
+pub struct Radio {
+    pub iface: String,
+    pub mac: Option<[u8; 6]>,
+}
+
+impl Radio {
+    /// From the radio's `Device` and `Device.Wireless` properties. NetworkManager matches the
+    /// permanent address, and where it cannot read one, the address the radio had when it
+    /// appeared; `PermHwAddress` is empty then, so the current address stands in.
+    pub fn of(device: &Props, wireless: &Props) -> Radio {
+        Radio {
+            iface: text(device, "Interface"),
+            mac: ["PermHwAddress", "HwAddress"]
+                .into_iter()
+                .find_map(|key| parse_mac(&text(wireless, key))),
+        }
+    }
+}
+
+fn parse_mac(text: &str) -> Option<[u8; 6]> {
+    let mut out = [0; 6];
+    let mut parts = text.split(':');
+    for byte in &mut out {
+        *byte = u8::from_str_radix(parts.next()?, 16).ok()?;
+    }
+    parts.next().is_none().then_some(out)
+}
+
+/// NetworkManager's address rule for a Wi-Fi profile `w`: a `mac-address` must be the radio's,
+/// and the radio must be on no deny list (`mac-address-blacklist` on the bus,
+/// `mac-address-denylist` its newer name). A radio with no address takes only a profile with
+/// no `mac-address`.
+fn mac_allows(w: &Props, mac: Option<[u8; 6]>) -> bool {
+    let bound = (w.get("mac-address"))
+        .and_then(|v| Vec::<u8>::try_from(v.clone()).ok())
+        .unwrap_or_default();
+    let Some(mac) = mac else {
+        return bound.is_empty();
+    };
+    let denied = ["mac-address-denylist", "mac-address-blacklist"]
+        .into_iter()
+        .filter_map(|key| w.get(key))
+        .filter_map(|v| Vec::<String>::try_from(v.clone()).ok())
+        .flatten()
+        .any(|entry| parse_mac(&entry) == Some(mac));
+    (bound.is_empty() || bound == mac) && !denied
+}
+
+/// The SSID profile `s` joins as a client on `radio`: none for a hotspot, ad-hoc or mesh
+/// profile, one bound to another radio, or one with no SSID.
+fn client_ssid(s: &HashMap<String, Props>, radio: &Radio) -> Option<Ssid> {
     let w = s.get("802-11-wireless")?;
     let mode = text(w, "mode");
     let bound = (s.get("connection"))
         .map(|c| text(c, "interface-name"))
         .unwrap_or_default();
     let client = mode.is_empty() || mode == "infrastructure";
-    let here = bound.is_empty() || bound == iface;
+    let here = (bound.is_empty() || bound == radio.iface) && mac_allows(w, radio.mac);
     // A profile for a hidden network can carry no SSID at all; an empty one would match every
     // hidden AP.
     Some(ssid_of(w, "ssid")).filter(|ssid| client && here && !ssid.is_empty())
 }
 
-/// The networks saved for a client join on radio `iface`, each with whether its profile holds
-/// the key.
-pub fn known_on(saved: &[(String, HashMap<String, Props>)], iface: &str) -> HashMap<Ssid, bool> {
+/// The networks saved for a client join on `radio`, each with whether its profile holds the
+/// key.
+pub fn known_on(saved: &[(String, HashMap<String, Props>)], radio: &Radio) -> HashMap<Ssid, bool> {
     saved
         .iter()
         .filter(|(_, s)| {
@@ -677,20 +728,20 @@ pub fn known_on(saved: &[(String, HashMap<String, Props>)], iface: &str) -> Hash
         })
         .filter_map(|(_, s)| {
             let has_key = s.get("802-11-wireless-security").is_none_or(psk_in_profile);
-            Some((client_ssid(s, iface)?, has_key))
+            Some((client_ssid(s, radio)?, has_key))
         })
         .collect()
 }
 
-/// The saved profile a client join of `ssid` on radio `iface` activates.
+/// The saved profile a client join of `ssid` on `radio` activates.
 pub fn client_profile(
     saved: &[(String, HashMap<String, Props>)],
-    iface: &str,
+    radio: &Radio,
     ssid: &Ssid,
 ) -> Option<String> {
     saved
         .iter()
-        .find(|(_, s)| client_ssid(s, iface).as_ref() == Some(ssid))
+        .find(|(_, s)| client_ssid(s, radio).as_ref() == Some(ssid))
         .map(|(path, _)| path.clone())
 }
 
@@ -962,6 +1013,13 @@ mod tests {
         assert_eq!(Eap::Peap.inner(), [Inner::Mschapv2, Inner::Gtc]);
         assert_eq!(Eap::Ttls.inner(), [Inner::Mschapv2, Inner::Pap, Inner::Gtc]);
         assert!(Eap::Tls.inner().is_empty(), "TLS has no tunnel");
+    }
+
+    fn on(iface: &str) -> Radio {
+        Radio {
+            iface: iface.into(),
+            mac: None,
+        }
     }
 
     fn props(entries: Vec<(&str, Variant<'static>)>) -> Props {
@@ -1259,7 +1317,7 @@ mod tests {
             ),
         ];
         assert_eq!(
-            known_on(&saved, "wlan0"),
+            known_on(&saved, &on("wlan0")),
             HashMap::from([("Intrepid 5".into(), true), ("Office".into(), false)])
         );
         assert_eq!(
@@ -1413,7 +1471,7 @@ mod tests {
             ),
         ];
         let known = |iface| {
-            let mut ssids: Vec<String> = (known_on(&saved, iface).into_keys())
+            let mut ssids: Vec<String> = (known_on(&saved, &on(iface)).into_keys())
                 .map(|s| s.to_string())
                 .collect();
             ssids.sort();
@@ -1421,12 +1479,101 @@ mod tests {
         };
         assert_eq!(known("wlan0"), ["Home", "Office"]);
         assert_eq!(known("wlan1"), ["Home"]);
-        let profile = |iface, ssid: &str| client_profile(&saved, iface, &ssid.into());
+        let profile = |iface, ssid: &str| client_profile(&saved, &on(iface), &ssid.into());
         assert_eq!(profile("wlan1", "Desk"), None, "a hotspot is never joined");
         assert_eq!(profile("wlan0", "Desk"), None, "not even on its own radio");
         assert_eq!(profile("wlan1", "Office"), None, "bound to wlan0");
         assert_eq!(profile("wlan0", "Office").as_deref(), Some("/Settings/5"));
         assert_eq!(profile("wlan1", "Home").as_deref(), Some("/Settings/1"));
+    }
+
+    #[test]
+    fn a_profile_bound_by_mac_address_is_known_only_on_the_radio_with_that_permanent_address() {
+        let wlan0 = [2, 0, 0, 0, 0, 0];
+        let wlan1 = [2, 0, 0, 0, 1, 0];
+        let wifi = |ssid: &str, key: &str, value: Variant<'static>| {
+            HashMap::from([
+                (
+                    "connection".to_string(),
+                    props(vec![("type", Variant::from("802-11-wireless"))]),
+                ),
+                (
+                    "802-11-wireless".to_string(),
+                    props(vec![
+                        ("ssid", Variant::from(ssid.as_bytes().to_vec())),
+                        (key, value),
+                    ]),
+                ),
+            ])
+        };
+        let saved = vec![
+            (
+                "/Settings/1".to_string(),
+                wifi("Lab", "mac-address", Variant::from(wlan1.to_vec())),
+            ),
+            (
+                "/Settings/2".to_string(),
+                wifi(
+                    "Cafe",
+                    "mac-address-blacklist",
+                    Variant::from(vec!["02:00:00:00:00:00".to_string()]),
+                ),
+            ),
+            (
+                "/Settings/3".to_string(),
+                wifi(
+                    "Park",
+                    "mac-address-denylist",
+                    Variant::from(vec!["02:00:00:00:01:00".to_string()]),
+                ),
+            ),
+        ];
+        let known = |mac| {
+            let radio = Radio {
+                iface: "wlan9".into(),
+                mac,
+            };
+            let mut ssids: Vec<String> = (known_on(&saved, &radio).into_keys())
+                .map(|s| s.to_string())
+                .collect();
+            ssids.sort();
+            ssids
+        };
+        assert_eq!(known(Some(wlan0)), ["Park"]);
+        assert_eq!(known(Some(wlan1)), ["Cafe", "Lab"]);
+        assert_eq!(
+            known(None),
+            ["Cafe", "Park"],
+            "a radio with no address joins no profile bound by one and is on no deny list"
+        );
+        let lab = |mac| {
+            let radio = Radio {
+                iface: "wlan9".into(),
+                mac: Some(mac),
+            };
+            client_profile(&saved, &radio, &"Lab".into())
+        };
+        assert_eq!(lab(wlan0), None);
+        assert_eq!(lab(wlan1).as_deref(), Some("/Settings/1"));
+
+        let device = props(vec![("Interface", Variant::from("wlan1"))]);
+        let radio = |perm: &str| {
+            let wireless = props(vec![
+                ("PermHwAddress", Variant::from(perm.to_string())),
+                ("HwAddress", Variant::from("02:00:00:00:01:00")),
+            ]);
+            Radio::of(&device, &wireless).mac
+        };
+        assert_eq!(
+            radio("02:00:00:00:00:00"),
+            Some(wlan0),
+            "the permanent address"
+        );
+        assert_eq!(
+            radio(""),
+            Some(wlan1),
+            "no permanent address: the current one"
+        );
     }
 
     #[test]
