@@ -110,14 +110,14 @@ fn confirm_delete_icons_asks_about_the_places_then_the_files() {
     let mut d = Dialog::confirm_delete_icons(hide.clone(), files.clone());
     assert_eq!(d.title, "Confirm Delete");
     let l = DialogLayout::compute(&theme, &text, &d);
-    assert_eq!(l.size, (512, 139));
-    let ys: Vec<i32> = l.lines.iter().map(|(r, _)| r.y).collect();
-    assert_eq!(ys, [33, 59, 72]);
+    let gaps: Vec<i32> = l.lines.windows(2).map(|w| w[1].0.y - w[0].0.y).collect();
     assert_eq!(
-        l.lines[2].1,
-        "To restore them later, use the Background page of Reprise Settings."
+        gaps.iter().filter(|&&g| g == 2 * LINE_H).count(),
+        1,
+        "one blank line under the question: {gaps:?}"
     );
-    assert_eq!(l.buttons[0].y, 102);
+    assert!(gaps.iter().all(|&g| g == LINE_H || g == 2 * LINE_H));
+    assert_eq!(l.buttons[0].y, l.lines.last().unwrap().0.bottom() + 17);
     let yes = Outcome::DeleteIcons {
         hide,
         files: files.clone(),
@@ -139,7 +139,102 @@ fn confirm_delete_icons_asks_about_the_places_then_the_files() {
             .ends_with("\n\nTo restore them later, use the Background page of Reprise Settings.")
     );
     let l = DialogLayout::compute(&theme, &text, &places);
-    assert_eq!(l.size, (404, 126));
+    assert_eq!(l.size, (358, 152));
+}
+
+/// Confirm Delete on system icons, one for each sentence its second paragraph can have.
+fn confirm_deletes() -> Vec<(&'static str, Dialog)> {
+    use crate::desktop::Place;
+    vec![
+        (
+            "computer",
+            Dialog::confirm_hide(Place::Computer, "Computer"),
+        ),
+        (
+            "documents",
+            Dialog::confirm_hide(Place::Documents, "Documents"),
+        ),
+        (
+            "icons",
+            Dialog::confirm_delete_icons(vec!["computer".into()], Vec::new()),
+        ),
+        (
+            "icons and files",
+            Dialog::confirm_delete_icons(vec!["computer".into()], vec!["/d/a".into()]),
+        ),
+    ]
+}
+
+/// Confirm Delete's client wraps its text at the message box cap under every interface and text
+/// size, every line fitting its column, the buttons inside it.
+#[test]
+fn confirm_delete_wraps_at_the_message_box_cap() {
+    use reprisekit::interface::Interface;
+    let text = tahoma();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for pct in [100, 150, 200] {
+            let theme = reprisekit::interfaces::theme_for(i).with_text_size(pct);
+            let (px, cap) = (
+                theme.fonts.size_px,
+                theme.text.len(reprisekit::controls::msgbox::WRAP_W),
+            );
+            for (name, d) in confirm_deletes() {
+                let at = format!("{}, {pct}%, {name}", i.as_str());
+                let l = DialogLayout::compute(&theme, &text, &d);
+                let client = l.frame.expect("a framed dialog").client;
+                assert!(
+                    client.width <= cap,
+                    "{at}: {} px within {cap}",
+                    client.width
+                );
+                for (r, line) in &l.lines {
+                    assert!(
+                        text.measure(line, false, px) <= r.width,
+                        "{at}: {line:?} fits"
+                    );
+                }
+                let (first, last) = (l.buttons[0], l.buttons[l.buttons.len() - 1]);
+                assert!(
+                    first.x > client.x && last.right() < client.right(),
+                    "{at}: buttons"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn confirm_delete_is_pinned_in_every_interface_at_1_and_2() {
+    use reprisekit::interface::Interface;
+    let text = tahoma();
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let theme = reprisekit::interfaces::theme_for(i);
+        for (name, d) in confirm_deletes() {
+            let l = DialogLayout::compute(&theme, &text, &d);
+            for s in [1, 2] {
+                let c = draw(
+                    &theme.scaled(s),
+                    text.for_output(s),
+                    &l,
+                    None,
+                    None,
+                    &d,
+                    false,
+                    Lit::default(),
+                    Cues::NONE,
+                    true,
+                    None,
+                );
+                let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
+                    (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
+                });
+                got.push((format!("{} {name} @{s}", i.as_str()), hash));
+            }
+        }
+    }
+    let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/confirm_delete.txt");
+    reprisekit::pins::check_file(std::path::Path::new(pins), &got);
 }
 
 #[test]
@@ -156,13 +251,8 @@ fn confirm_hide_fits_its_text() {
          To restore it later, use the Background page of Reprise Settings."
     );
     let l = DialogLayout::compute(&theme, &text, &d);
-    assert_eq!(l.size, (418, 126));
     assert_eq!(l.icon.unwrap(), Rect::new(14, 33, 32, 32));
-    assert_eq!(l.lines.len(), 2);
     assert_eq!((l.lines[0].0.x, l.lines[0].0.y), (65, 33));
-    assert_eq!(l.lines[1].0.y, 59);
-    assert_eq!(l.buttons[0], Rect::new(131, 89, 75, 23));
-    assert_eq!(l.buttons[1], Rect::new(212, 89, 75, 23));
     let yes = Outcome::HideSystemIcon("computer".into());
     assert_eq!(d.key(Key::Enter), yes);
     assert_eq!(d.key(Key::Edit(EditKey::Insert("y".into()))), yes);
@@ -180,8 +270,6 @@ fn confirm_hide_fits_its_text() {
     let docs = Dialog::confirm_hide(Place::Documents, "Documents");
     assert_eq!(docs.text.split("\n\n").nth(1), folder_restore);
     let l = DialogLayout::compute(&theme, &text, &docs);
-    assert_eq!(l.size, (707, 126));
-    assert_eq!(l.buttons[0].x, 275);
     let c = draw(
         &theme,
         &text,
