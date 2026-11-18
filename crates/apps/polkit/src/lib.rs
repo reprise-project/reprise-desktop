@@ -63,7 +63,7 @@ struct Active {
     /// minutes-left line); text before the prompt is the fingerprint reader's.
     notice: Option<String>,
     /// The status line shows why the last attempt failed; the next conversation's
-    /// info text does not hide it, an error does.
+    /// info text does not hide it, an error or another user's pick does.
     failure_shown: bool,
     /// The last info text held back by `failure_shown`, shown once the user submits
     /// while the helper still waits on that step.
@@ -91,9 +91,13 @@ impl Active {
     }
 
     /// Hang up on any conversation in flight and start one for the user the dialog
-    /// shows, the field on the first prompt `first` remembers for them. Without a waker (the
-    /// tests) nothing starts.
+    /// shows, the field on the first prompt `first` remembers for them, and the status line
+    /// empty unless it shows why the last attempt failed. Without a waker (the tests) nothing
+    /// starts.
     fn begin(&mut self, waker: Option<&repriseapp::Waker>, first: &FirstPrompts) {
+        if !self.failure_shown {
+            self.dialog.set_status("");
+        }
         self.session = None;
         self.reports = None;
         self.prompted = false;
@@ -308,6 +312,8 @@ impl PolkitApp {
         if let Some(a) = self.active.as_mut()
             && a.session.as_ref().is_none_or(|(_, u)| u != user)
         {
+            // The last attempt was another user's.
+            a.failure_shown = false;
             a.begin(waker.as_ref(), &self.first);
         }
     }
@@ -1181,6 +1187,24 @@ mod tests {
                 prompt: code(false)
             }]
         );
+    }
+
+    #[test]
+    fn a_user_picked_after_a_failure_opens_with_an_empty_status_line() {
+        let mut app = two_users();
+        app.report(Report::Error("Cannot reach the polkit helper: x".into()));
+        app.report(Report::Done(Verdict::Unreachable));
+        pick(&mut app, 1);
+        assert_eq!(app.active.as_ref().unwrap().dialog.status(), "");
+
+        let mut app = two_users();
+        app.report(prompt(&Prompt::password()));
+        app.report(Report::Done(Verdict::Failed));
+        assert_eq!(app.active.as_ref().unwrap().dialog.status(), dialog::FAILED);
+        pick(&mut app, 1);
+        let act = app.active.as_ref().unwrap();
+        assert_eq!(act.dialog.status(), "");
+        assert!(!act.failure_shown, "alice's reader text shows");
     }
 
     /// Text typed under a later prompt does not survive a user change into their conversation.
