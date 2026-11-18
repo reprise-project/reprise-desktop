@@ -267,11 +267,12 @@ pub(super) async fn new_profile_owner(conn: &Connection) -> Option<String> {
 
 /// The saved profile a join of `ssid` on radio `device` activates ([`client_profile`]).
 pub(super) async fn connection_for(conn: &Connection, device: &str, ssid: &Ssid) -> Option<String> {
-    let iface = match proxy(conn, device, DEVICE_IFACE).await {
-        Ok(p) => p.get_property::<String>("Interface").await.ok(),
-        Err(_) => None,
-    };
-    client_profile(&saved(conn).await, &iface.unwrap_or_default(), ssid)
+    let (props, wireless) = futures_util::join!(
+        get_all(conn, device, DEVICE_IFACE),
+        get_all(conn, device, WIRELESS_IFACE),
+    );
+    let radio = Radio::of(&props.unwrap_or_default(), &wireless.unwrap_or_default());
+    client_profile(&saved(conn).await, &radio, ssid)
 }
 
 /// Write a new key into a saved connection. `GetSettings` omits secrets and `Update` replaces

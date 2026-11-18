@@ -178,7 +178,8 @@ pub(super) async fn build(
             .then(|| link.as_ref().and_then(|p| object(p, "ActiveAccessPoint")))
             .flatten();
         let dhcp = object(&props, "Dhcp4Config").is_some();
-        let known_ssids = known_on(saved, &text(&props, "Interface"));
+        let radio = Radio::of(&props, link.as_ref().unwrap_or(&Props::new()));
+        let known_ssids = known_on(saved, &radio);
         let hotspot = object(&props, "ActiveConnection")
             .and_then(|a| profile_of.get(&a))
             .and_then(|c| hotspots.get(c))
