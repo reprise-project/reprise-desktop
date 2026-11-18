@@ -121,9 +121,9 @@ pub enum Verdict {
     /// The helper has already told polkitd.
     Success,
     Failed,
-    /// The helper could not be reached or spawned at all, or hung up
-    /// before it had a password or said FAILURE, so no attempt was
-    /// judged: this consumes no retry.
+    /// The helper could not be reached or spawned at all, or went with no
+    /// verdict before any answer of the conversation went out, so no attempt
+    /// was judged: this consumes no retry.
     Unreachable,
 }
 
@@ -181,10 +181,9 @@ pub fn converse<R: BufRead, W: Write>(
             Some(Line::PromptEchoOn(t))
                 if !std::mem::replace(&mut prompted, true) && is_login_prompt(&t) =>
             {
-                if writeln!(writer, "{user}").is_err() {
-                    break None;
+                if let Err(e) = send(&mut writer, user) {
+                    break unsent(&mut reader, &e);
                 }
-                let _ = writer.flush();
             }
             Some(Line::PromptEchoOff(t) | Line::PromptEchoOn(t)) => {
                 prompted = true;
@@ -195,11 +194,11 @@ pub fn converse<R: BufRead, W: Write>(
                 let Some(p) = password() else {
                     break None;
                 };
-                answered = true;
-                if writer.write_all(p.as_bytes()).is_err() || writer.write_all(b"\n").is_err() {
-                    break None;
+                if let Err(e) = send(&mut writer, &p) {
+                    answered |= e.partly;
+                    break unsent(&mut reader, &e);
                 }
-                let _ = writer.flush();
+                answered = true;
             }
             Some(Line::Error(t)) => report(Report::Error(t.trim_end().to_string())),
             Some(Line::Info(t)) => report(Report::Info(t.trim_end().to_string())),
@@ -207,13 +206,77 @@ pub fn converse<R: BufRead, W: Write>(
             Some(Line::Failure) | None => break Some(Verdict::Failed),
         }
     };
-    // A hang-up after the password went out judged it, as far as we can tell.
+    // No verdict line: once any answer went out, PAM may have judged it (and a second prompt
+    // would tell a guesser the password was right), so it counts.
     let verdict = verdict.unwrap_or(if answered {
         Verdict::Failed
     } else {
         Verdict::Unreachable
     });
     report(Report::Done(verdict));
+}
+
+/// The longest answer the helper reads as one line: `fgets` into PAM_MAX_RESP_SIZE (512)
+/// bytes holds 510 and the newline. The rest of a longer line would answer the next prompt.
+const MAX_ANSWER: usize = 510;
+/// How much of a hung-up helper's output is read for a verdict it printed before going.
+const DRAIN: u64 = 4096;
+
+/// A failed write of one line: whether any of its bytes went out, and whether the helper
+/// hung up.
+struct Unsent {
+    partly: bool,
+    hung_up: bool,
+}
+
+/// Write one answer line, cut to [`MAX_ANSWER`].
+fn send(writer: &mut dyn Write, answer: &str) -> Result<(), Unsent> {
+    use std::io::ErrorKind::{BrokenPipe, ConnectionReset, Interrupted, WriteZero};
+    let answer = &answer.as_bytes()[..answer.len().min(MAX_ANSWER)];
+    let mut line = Zeroizing::new(Vec::with_capacity(answer.len() + 1));
+    line.extend_from_slice(answer);
+    line.push(b'\n');
+    let mut sent = 0;
+    let written = loop {
+        if sent == line.len() {
+            break writer.flush();
+        }
+        match writer.write(&line[sent..]) {
+            Ok(0) => break Err(WriteZero.into()),
+            Ok(n) => sent += n,
+            Err(e) if e.kind() == Interrupted => {}
+            Err(e) => break Err(e),
+        }
+    };
+    written.map_err(|e| {
+        log::warn!("cannot write to the polkit helper: {e}");
+        Unsent {
+            partly: sent > 0,
+            hung_up: matches!(e.kind(), BrokenPipe | ConnectionReset),
+        }
+    })
+}
+
+/// The verdict a hung-up helper printed before it went, if any. A helper still there after
+/// another write error may be waiting on us, so nothing is read from it.
+fn unsent<R: BufRead>(reader: &mut R, e: &Unsent) -> Option<Verdict> {
+    if !e.hung_up {
+        return None;
+    }
+    let mut rest = std::io::Read::take(reader, DRAIN);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match rest.read_line(&mut line) {
+            Ok(0) | Err(_) => return None,
+            Ok(_) => {}
+        }
+        match parse_line(&line) {
+            Some(Line::Success) => return Some(Verdict::Success),
+            Some(Line::Failure) => return Some(Verdict::Failed),
+            _ => {}
+        }
+    }
 }
 
 /// Ends a conversation from outside its thread, even one blocked reading a helper waiting on
@@ -955,6 +1018,157 @@ mod tests {
         );
     }
 
+    /// A helper that goes with no verdict line spends no attempt while no answer of the
+    /// conversation went out (a login name is not one); once one did, PAM may have judged it.
+    #[test]
+    fn a_helper_gone_without_a_verdict_spends_an_attempt_once_an_answer_went_out() {
+        const PASSWORD: &str = "PAM_PROMPT_ECHO_OFF Password: ";
+        const CODE: &str = "PAM_PROMPT_ECHO_OFF Verification code: ";
+        const SHOWN_CODE: &str = "PAM_PROMPT_ECHO_ON Verification code: ";
+        const LOGIN: &str = "PAM_PROMPT_ECHO_ON login: ";
+        for (prompts, reads_last, verdict) in [
+            (&[PASSWORD][..], false, Verdict::Unreachable),
+            (&[SHOWN_CODE], false, Verdict::Unreachable),
+            (&[LOGIN, PASSWORD], false, Verdict::Unreachable),
+            (&[PASSWORD, CODE], false, Verdict::Failed),
+            (&[PASSWORD, SHOWN_CODE], false, Verdict::Failed),
+            (&[PASSWORD, CODE], true, Verdict::Failed),
+        ] {
+            let shown = prompts.iter().filter(|p| **p != LOGIN).count();
+            let (ours, theirs) = UnixStream::pair().unwrap();
+            let helper = std::thread::spawn(move || {
+                let mut r = BufReader::new(theirs.try_clone().unwrap());
+                let mut w = theirs;
+                for (n, prompt) in prompts.iter().enumerate() {
+                    writeln!(w, "{prompt}").unwrap();
+                    if n + 1 < prompts.len() || reads_last {
+                        r.read_line(&mut String::new()).unwrap();
+                    }
+                }
+            });
+            let mut helper = Some(helper);
+            let mut asked = 0;
+            let mut reports = Vec::new();
+            converse(
+                BufReader::new(ours.try_clone().unwrap()),
+                ours,
+                "bob",
+                &mut || {
+                    asked += 1;
+                    if asked == shown && !reads_last {
+                        helper.take().unwrap().join().unwrap();
+                    }
+                    Some(Zeroizing::new(format!("answer {asked}")))
+                },
+                &mut |_| {},
+                &mut |r| reports.push(r),
+            );
+            if let Some(h) = helper {
+                h.join().unwrap();
+            }
+            assert_eq!(
+                reports.last(),
+                Some(&Report::Done(verdict)),
+                "{prompts:?}, last answer read: {reads_last}"
+            );
+        }
+    }
+
+    /// A writer that takes `room` bytes, then fails with `fails`.
+    struct Refusing {
+        room: usize,
+        fails: std::io::ErrorKind,
+    }
+
+    impl Write for Refusing {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.room == 0 {
+                return Err(self.fails.into());
+            }
+            let n = buf.len().min(self.room);
+            self.room -= n;
+            Ok(n)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Any write error that left no byte of an answer out spends no attempt, the login name's
+    /// included; one that left part of an answer out may have reached PAM.
+    #[test]
+    fn a_failed_write_spends_an_attempt_only_once_part_of_an_answer_went_out() {
+        use std::io::ErrorKind::{BrokenPipe, Other};
+        let login = "PAM_PROMPT_ECHO_ON login: \nPAM_PROMPT_ECHO_OFF Password: \n";
+        let password = "PAM_PROMPT_ECHO_OFF Password: \n";
+        let two = "PAM_PROMPT_ECHO_OFF Password: \nPAM_PROMPT_ECHO_ON Verification code: \n";
+        for (lines, room, fails, verdict) in [
+            (login, 0, BrokenPipe, Verdict::Unreachable),
+            (login, 0, Other, Verdict::Unreachable),
+            (login, 2, Other, Verdict::Unreachable),
+            (password, 0, Other, Verdict::Unreachable),
+            (password, 3, Other, Verdict::Failed),
+            (password, 3, BrokenPipe, Verdict::Failed),
+            (two, "pw\n".len(), Other, Verdict::Failed),
+            (two, "pw\n".len(), BrokenPipe, Verdict::Failed),
+        ] {
+            let mut reports = Vec::new();
+            converse(
+                std::io::Cursor::new(lines),
+                Refusing { room, fails },
+                "bob",
+                &mut || Some(Zeroizing::new("pw".to_string())),
+                &mut |_| {},
+                &mut |r| reports.push(r),
+            );
+            assert_eq!(
+                reports.last(),
+                Some(&Report::Done(verdict)),
+                "{lines:?}: {room} bytes taken, then {fails:?}"
+            );
+        }
+    }
+
+    /// A helper that judged and printed its verdict before it went is heard, though our write
+    /// to it failed.
+    #[test]
+    fn a_verdict_printed_before_the_hang_up_wins() {
+        for (said, verdict) in [("FAILURE", Verdict::Failed), ("SUCCESS", Verdict::Success)] {
+            let (ours, theirs) = UnixStream::pair().unwrap();
+            let mut w = theirs;
+            writeln!(w, "PAM_PROMPT_ECHO_OFF Password: \n{said}").unwrap();
+            drop(w);
+            let mut reports = Vec::new();
+            converse(
+                BufReader::new(ours.try_clone().unwrap()),
+                ours,
+                "bob",
+                &mut || Some(Zeroizing::new("pw".to_string())),
+                &mut |_| {},
+                &mut |r| reports.push(r),
+            );
+            assert_eq!(reports.last(), Some(&Report::Done(verdict)), "{said}");
+        }
+    }
+
+    /// The helper reads an answer with `fgets` into PAM_MAX_RESP_SIZE (512) bytes: a longer line
+    /// would leave its rest to answer the next prompt.
+    #[test]
+    fn an_answer_goes_out_cut_to_what_the_helper_reads_as_one_line() {
+        let mut written = Vec::new();
+        converse(
+            std::io::Cursor::new("PAM_PROMPT_ECHO_OFF Password: \n"),
+            &mut written,
+            "bob",
+            &mut || Some(Zeroizing::new("a".repeat(600))),
+            &mut |_| {},
+            &mut |_| {},
+        );
+        assert_eq!(written.len(), 511, "510 bytes and the newline");
+        assert!(written[..510].iter().all(|&b| b == b'a') && written[510] == b'\n');
+    }
+
     /// Dropping the session ends a conversation blocked on a helper
     /// that says nothing (one waiting on the fingerprint reader).
     #[test]
@@ -1556,6 +1770,39 @@ mod tests {
         t.join().unwrap();
         assert!(start.elapsed() < Duration::from_secs(10));
         assert_eq!(reports, [Report::Done(Verdict::Unreachable)]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Over the spawned helper's pipes too: gone at the first prompt spends nothing, gone at the
+    /// second after the password went out spends an attempt.
+    #[test]
+    fn a_spawned_helper_gone_at_a_prompt_spends_an_attempt_once_an_answer_went_out() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("gone");
+        let helper = dir.join("helper");
+        let first = "read c\nexec 0<&-\necho 'PAM_PROMPT_ECHO_OFF Password: '\n";
+        let second = "read c\necho 'PAM_PROMPT_ECHO_OFF Password: '\nread p\nexec 0<&-\n\
+                      echo 'PAM_PROMPT_ECHO_OFF Verification code: '\n";
+        for (script, verdict) in [(first, Verdict::Unreachable), (second, Verdict::Failed)] {
+            let _ = std::fs::remove_file(&helper);
+            std::fs::write(&helper, format!("#!/bin/sh\n{script}")).unwrap();
+            std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let Transport::Child(child) = spawn_helper(&dir, &helper, "bob", "c-10").unwrap()
+            else {
+                panic!("expected the spawned helper");
+            };
+            let mut reports = Vec::new();
+            let mut asked = 0;
+            converse_child(
+                child,
+                "bob",
+                &mut answers("pw", &mut asked),
+                HELPER_TIMEOUT,
+                &Stop::default(),
+                &mut |r| reports.push(r),
+            );
+            assert_eq!(reports.last(), Some(&Report::Done(verdict)), "{script}");
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
 }
