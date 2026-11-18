@@ -357,6 +357,9 @@ impl Host {
         if reply.tick {
             self.arm_tick(win);
         }
+        for w in reply.tick_wins {
+            self.arm_tick(w);
+        }
         self.sync_main();
         self.follow_file_box(win);
         self.sync_children();

@@ -126,6 +126,9 @@ pub struct Reply {
     /// next asks again in its answer to the tick; asking while one is on
     /// its way adds none.
     pub tick: bool,
+    /// More of this program's windows to send a tick as [`Reply::tick`] does, besides the one
+    /// this reply is for.
+    pub tick_wins: Vec<WinId>,
     /// Resize the window this reply is for from its lower-right corner,
     /// the way its size grip does. It must answer a left press still held
     /// (the host uses that press's serial); the compositor refuses it
@@ -238,6 +241,7 @@ impl Reply {
             drag_accept,
             answer_drop,
             tick,
+            mut tick_wins,
             resize,
             size,
             mut redraw_wins,
@@ -294,6 +298,11 @@ impl Reply {
             drag_accept: self.drag_accept.or(drag_accept),
             answer_drop: self.answer_drop.or(answer_drop),
             tick: self.tick || tick,
+            tick_wins: {
+                let mut wins = self.tick_wins;
+                wins.append(&mut tick_wins);
+                wins
+            },
             resize: self.resize || resize,
             size: self.size.or(size),
             redraw_wins: {

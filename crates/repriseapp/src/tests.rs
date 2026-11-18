@@ -911,19 +911,22 @@ fn numbered_window_ids_never_meet_named_ones() {
 }
 
 #[test]
-fn reply_merge_joins_the_windows_to_redraw_and_keeps_the_first_raise() {
+fn reply_merge_joins_the_windows_to_redraw_and_tick_and_keeps_the_first_raise() {
     let first = Reply {
         redraw_wins: vec![WinId::named("a")],
+        tick_wins: vec![WinId::named("a")],
         raise: Some(WinId::named("a")),
         ..Default::default()
     };
     let then = Reply {
         redraw_wins: vec![WinId::named("b")],
+        tick_wins: vec![WinId::named("b")],
         raise: Some(WinId::named("b")),
         ..Default::default()
     };
     let merged = first.and(then);
     assert_eq!(merged.redraw_wins, [WinId::named("a"), WinId::named("b")]);
+    assert_eq!(merged.tick_wins, [WinId::named("a"), WinId::named("b")]);
     assert_eq!(merged.raise, Some(WinId::named("a")));
 }
 
