@@ -435,6 +435,9 @@ pub enum Cmd {
 #[derive(Debug)]
 pub enum BzMsg {
     Snapshot(Snapshot),
+    /// `cmd`, one run in turn (not `Pair`, `Connect`, `Receive` or `Airplane`), finished; a
+    /// failure posts its `Failed` first.
+    Ran(Cmd),
     /// `cmd` failed for the reason in `body`.
     Failed {
         cmd: Cmd,

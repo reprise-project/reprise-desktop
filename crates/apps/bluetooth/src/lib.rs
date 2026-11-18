@@ -78,6 +78,8 @@ struct BtApp {
     connecting: HashSet<String>,
     /// Devices disconnected since their last Connect; a Connect failing for one shows no box.
     disconnected: HashSet<String>,
+    /// A device per SetAlias or SetTrusted not yet answered; its sheet waits on them.
+    setting: Vec<String>,
     battery: battery::Warner,
     /// Dialog renderer, loaded in `start`: `children` and the wake have no `Ctx` to measure with.
     text: Option<Rc<TextRenderer>>,
@@ -115,6 +117,7 @@ impl BtApp {
             icons: icons::Icons::new(),
             connecting: HashSet::new(),
             disconnected: HashSet::new(),
+            setting: Vec::new(),
             battery: battery::Warner::default(),
             text: None,
             forms: Theme::default(),
@@ -341,6 +344,7 @@ impl BtApp {
             match msg {
                 bz::BzMsg::Snapshot(s) => latest = Some(s),
                 bz::BzMsg::Failed { cmd, body } => self.failed(&cmd, body),
+                bz::BzMsg::Ran(cmd) => self.ran(&cmd),
                 bz::BzMsg::Connected { device, error } => self.connected(device, error),
                 bz::BzMsg::Paired {
                     device,
@@ -487,6 +491,7 @@ impl BtApp {
         };
         let next = props::PropsSheet::new(d, self.icons.get(d.kind).clone());
         self.props = Some(next);
+        self.sync_props_busy();
     }
 
     /// Disconnects a connected device, else connects it unless a Connect is pending.
@@ -532,18 +537,36 @@ impl BtApp {
         }
     }
 
-    fn apply_change(&self, path: &str, c: props::Change) {
+    fn apply_change(&mut self, path: &str, c: props::Change) {
         if let Some(alias) = c.alias {
             self.send(bz::Cmd::SetAlias {
                 device: path.into(),
                 alias,
             });
+            self.setting.push(path.into());
         }
         if let Some(on) = c.trusted {
             self.send(bz::Cmd::SetTrusted {
                 device: path.into(),
                 on,
             });
+            self.setting.push(path.into());
+        }
+        self.sync_props_busy();
+    }
+
+    fn ran(&mut self, cmd: &bz::Cmd) {
+        if let bz::Cmd::SetAlias { device, .. } | bz::Cmd::SetTrusted { device, .. } = cmd
+            && let Some(i) = self.setting.iter().position(|d| d == device)
+        {
+            self.setting.remove(i);
+            self.sync_props_busy();
+        }
+    }
+
+    fn sync_props_busy(&mut self) {
+        if let Some(p) = &mut self.props {
+            p.set_busy(self.setting.contains(&p.path));
         }
     }
 
@@ -1569,6 +1592,43 @@ mod tests {
         bus_says(&mut a, [failed(search())]);
         a.event(WIZARD, Event::CloseRequest, &mut ctx);
         assert!(!a.error.is_shown(), "the box left with the wizard");
+    }
+
+    #[test]
+    fn an_applied_rename_greys_apply_and_ok_until_bluez_answers_it() {
+        let (mut a, rx) = wired();
+        let mut ctx = test_ctx();
+        a.open_props("/a/cans");
+        let page = a.props.as_mut().unwrap().sheet.open_mut();
+        page.focus_id(props::NAME);
+        page.key(form::Key::Edit(EditKey::SelectAll));
+        a.event(PROPS, Event::Pasted("Mine".into()), &mut ctx);
+        a.event(PROPS, key(u32::from(b'a'), true), &mut ctx);
+        let alias = bz::Cmd::SetAlias {
+            device: "/a/cans".into(),
+            alias: "Mine".into(),
+        };
+        assert_eq!(rx.try_recv().ok(), Some(alias.clone()));
+        let enabled = |a: &BtApp, id: &str| match a
+            .props
+            .as_ref()
+            .and_then(|p| p.sheet.open().item(id))
+            .map(|i| &i.control)
+        {
+            Some(form::Control::Button { enabled, .. }) => *enabled,
+            other => panic!("{id} is {other:?}"),
+        };
+        assert!(
+            !enabled(&a, propsheet::OK),
+            "OK greys while the rename waits"
+        );
+        assert!(!enabled(&a, propsheet::APPLY));
+        let p = a.props.as_mut().unwrap();
+        assert_eq!(p.event(propsheet::Event::Ok), props::Outcome::None);
+
+        bus_says(&mut a, [bz::BzMsg::Ran(alias)]);
+        assert!(enabled(&a, propsheet::OK), "OK is back once BlueZ answers");
+        assert!(!enabled(&a, propsheet::APPLY), "nothing left to apply");
     }
 
     #[test]

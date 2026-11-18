@@ -53,6 +53,8 @@ pub struct PropsSheet {
     pub sheet: PropSheet,
     applied: Settings,
     pending: Settings,
+    /// A change sent from the sheet waits on BlueZ: Apply and OK stay greyed.
+    busy: bool,
 }
 
 pub(crate) fn set_edit(form: &mut Form, id: &str, s: &str) {
@@ -91,6 +93,7 @@ impl PropsSheet {
             sheet: PropSheet::new(&TABS, vec![page(icon)], CLIENT),
             applied: s.clone(),
             pending: s,
+            busy: false,
         };
         set_edit(&mut p.sheet.pages[0], NAME, &d.alias);
         p.refresh(d);
@@ -165,8 +168,19 @@ impl PropsSheet {
             }
             .into();
         }
-        let dirty = self.dirty();
-        self.sheet.set_apply_enabled(dirty);
+        self.sync();
+    }
+
+    pub fn set_busy(&mut self, busy: bool) {
+        self.busy = busy;
+        self.sync();
+    }
+
+    fn sync(&mut self) {
+        self.sheet.set_apply_enabled(self.dirty() && !self.busy);
+        for page in &mut self.sheet.pages {
+            page.set_enabled(propsheet::OK, !self.busy);
+        }
     }
 
     fn change(&self) -> Change {
@@ -193,8 +207,7 @@ impl PropsSheet {
             AUTO => self.pending.trusted = page.checked(AUTO).unwrap_or(false),
             _ => {}
         }
-        let dirty = self.dirty();
-        self.sheet.set_apply_enabled(dirty);
+        self.sync();
     }
 
     pub fn event(&mut self, ev: propsheet::Event) -> Outcome {
@@ -209,6 +222,7 @@ impl PropsSheet {
             }
             propsheet::Event::Page(_, form::Event::Pressed(CONNECT)) => Outcome::Toggle,
             propsheet::Event::Page(..) => Outcome::Redraw,
+            propsheet::Event::Apply | propsheet::Event::Ok if self.busy => Outcome::None,
             propsheet::Event::Apply if self.dirty() => {
                 let c = self.commit();
                 self.sheet.set_apply_enabled(false);
