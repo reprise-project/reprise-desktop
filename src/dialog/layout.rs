@@ -39,6 +39,8 @@ pub struct DialogLayout {
     pub controls: ControlMetrics,
     /// A Blue Welcome panel's own layout, which `buttons` repeats: its cells, then Cancel.
     pub power: Option<reprisekit::powerpanel::Layout>,
+    /// The output scale its text was measured at ([`DialogLayout::compute_at`]).
+    pub scale: i32,
 }
 
 /// What a point on a dialog lands on.
@@ -116,17 +118,24 @@ pub(super) fn client_shift(theme: &Theme) -> (i32, i32) {
 }
 
 impl DialogLayout {
-    /// Lay `d` out at scale 1 with the text wrapped at `theme`'s font size,
-    /// inside `theme`'s frame. A form dialog must have been fitted to it
-    /// first ([`Dialog::fit`]).
+    /// [`DialogLayout::compute_at`] on a scale 1 output.
+    #[cfg(test)]
     pub fn compute(theme: &Theme, text: &TextRenderer, d: &Dialog) -> DialogLayout {
+        Self::compute_at(theme, text, d, 1)
+    }
+
+    /// Lay `d` out inside `theme`'s frame for an output at `scale`, a form dialog fitted first
+    /// ([`Dialog::fit`]): text is measured as [`super::draw`] sets it there, rounded up.
+    pub fn compute_at(theme: &Theme, text: &TextRenderer, d: &Dialog, scale: i32) -> DialogLayout {
+        let scale = scale.max(1);
         DialogLayout {
             controls: theme.look.controls_at_100().grown(theme.text),
-            ..Self::compute_body(theme, text, d)
+            scale,
+            ..Self::compute_body(theme, text.for_output(scale), d, scale)
         }
     }
 
-    fn compute_body(theme: &Theme, text: &TextRenderer, d: &Dialog) -> DialogLayout {
+    fn compute_body(theme: &Theme, text: &TextRenderer, d: &Dialog, scale: i32) -> DialogLayout {
         let body = match &d.style {
             Style::Welcome(w) if theme.glass().is_some() && !w.always_blue => {
                 Self::compute_welcome_glass(d)
@@ -136,10 +145,10 @@ impl DialogLayout {
             Style::TrayCustomize(t) => {
                 return Self::compute_client(t.client()).framed(theme, d.help);
             }
-            Style::EndProgram => Self::compute_end_program(theme, text.dialog(d.font()), d),
+            Style::EndProgram => Self::compute_end_program(theme, text.dialog(d.font()), d, scale),
             Style::Classic {
                 template, text_h, ..
-            } => return Self::compute_template(theme, text, d, *template, *text_h),
+            } => return Self::compute_template(theme, text, d, *template, *text_h, scale),
         };
         body.grown(theme.text).framed(theme, d.help)
     }
@@ -212,9 +221,10 @@ impl DialogLayout {
         d: &Dialog,
         template: Template,
         text_h: Option<i32>,
+        scale: i32,
     ) -> DialogLayout {
         let u = theme.text;
-        let lay = dlgtemplate::layout(
+        let lay = dlgtemplate::layout_at(
             template,
             text,
             theme.fonts.size_px,
@@ -230,6 +240,7 @@ impl DialogLayout {
                 text_h,
             },
             u,
+            scale,
         )
         .grown(u);
         let mut body = DialogLayout {
@@ -252,8 +263,13 @@ impl DialogLayout {
 
     /// End Program on its fixed template: each `\n`-separated paragraph
     /// of the text wraps in the column and starts at its own height.
-    fn compute_end_program(theme: &Theme, text: &TextRenderer, d: &Dialog) -> DialogLayout {
-        let px = theme.fonts.size_px;
+    fn compute_end_program(
+        theme: &Theme,
+        text: &TextRenderer,
+        d: &Dialog,
+        scale: i32,
+    ) -> DialogLayout {
+        let px = theme.fonts.size_px * scale as u32;
         let width = EP_W - EP_TEXT_RIGHT - EP_TEXT_X;
         // The column is laid out at its ink: the second dialog font's pen
         // sits a column left of it.
@@ -263,7 +279,7 @@ impl DialogLayout {
             .split('\n')
             .zip(EP_PARA_Y)
             .flat_map(|(para, y)| {
-                wrap(text, para, theme.text.len(width), px)
+                wrap(text, para, theme.text.len(width) * scale, px)
                     .into_iter()
                     .enumerate()
                     .map(move |(i, s)| (Rect::new(x, y + i as i32 * LINE_H, width, LINE_H), s))

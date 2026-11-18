@@ -95,9 +95,10 @@ impl State {
         if area.width <= 0 {
             return None;
         }
+        let scale = self.draw_scale_at(Some(&out));
         let theme = &self.config.theme;
         d.fit_in(theme, &self.text, (area.width, area.height));
-        let layout = DialogLayout::compute(theme, &self.text, &d);
+        let layout = DialogLayout::compute_at(theme, &self.text, &d, scale);
         let (x, y) = match d.placement {
             Placement::ByStart => {
                 dialog::by_start(area, self.bar_placement(&out).edge, layout.size)
@@ -483,10 +484,11 @@ impl State {
     }
 
     /// Pull every dialog back inside its output's usable area after a layout change
-    /// (`update_layout`); the tray's Customize page lays itself out in the new area first.
+    /// (`update_layout`), laying out again the tray's Customize page and one whose scale changed.
     pub fn keep_dialogs_inside(&mut self) {
         for i in 0..self.dialogs.views.len() {
-            if self.dialogs.views[i].dialog.tray().is_some() {
+            let v = &self.dialogs.views[i];
+            if v.dialog.tray().is_some() || v.layout.scale != self.draw_scale_at(Some(&v.output)) {
                 self.refit_dialog(i);
                 self.redraw_dialog(i);
             }

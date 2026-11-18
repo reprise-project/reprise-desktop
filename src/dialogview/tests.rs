@@ -260,6 +260,36 @@ fn a_child_whose_parent_closed_raises_alone() {
     assert_eq!(raise_order(&links, 1), vec![0, 2, 1]);
 }
 
+/// A dialog's text is laid out at its output's scale: as it opens, when that output's scale
+/// changes, and when it is moved onto an output at another scale.
+#[test]
+fn a_dialog_lays_its_text_out_at_its_outputs_scale() {
+    use crate::dialog::DialogLayout;
+    use smithay::output::Scale;
+    let mut h = Harness::new();
+    let one = h.output("TEST-1", 1024, 768);
+    let two = h.output("TEST-2", 1024, 768);
+    two.change_current_state(None, None, Some(Scale::Integer(2)), None);
+    h.state.update_layout();
+    h.pointer_to(500.0, 400.0);
+    let d = Dialog::confirm_hide(crate::desktop::Place::Documents, "Documents");
+    let at = |h: &Harness, s| DialogLayout::compute_at(&h.state.config.theme, &h.state.text, &d, s);
+    assert_ne!(at(&h, 1).lines, at(&h, 2).lines, "the text sets wider at 2");
+    let shown = |h: &Harness| h.state.dialogs.views[0].layout.clone();
+    h.state.open_dialog(d.clone());
+    assert_eq!(shown(&h), at(&h, 1), "opened on TEST-1 at 1");
+    one.change_current_state(None, None, Some(Scale::Integer(2)), None);
+    h.state.update_layout();
+    assert_eq!(shown(&h), at(&h, 2), "TEST-1 turned to 2");
+    one.change_current_state(None, None, Some(Scale::Integer(1)), None);
+    h.state.update_layout();
+    assert_eq!(shown(&h), at(&h, 1), "TEST-1 back at 1");
+    let x = h.state.layout_box(Some(&two)).x + 20;
+    h.state.move_dialog(0, x, 40);
+    assert_eq!(h.state.dialogs.views[0].output, two);
+    assert_eq!(shown(&h), at(&h, 2), "moved onto TEST-2 at 2");
+}
+
 #[test]
 fn a_dialog_asks_for_frames_only_on_the_outputs_it_covers() {
     let mut h = crate::harness::Harness::new();
