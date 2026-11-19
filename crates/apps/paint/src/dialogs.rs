@@ -265,9 +265,11 @@ impl Paint {
         }
     }
 
-    /// The dialog's OK: the picture changed as one step. False when a field is out of range or the
-    /// result would pass [`MAX_SIDE`].
+    /// The dialog's OK: the picture changed as one step, with a paste that landed while the
+    /// dialog was up laid down first. False when a field is out of range or the result would
+    /// pass [`MAX_SIDE`].
     fn apply(&mut self, kind: Kind) -> bool {
+        self.doc.finish();
         let Some((_, f)) = &self.dialog else {
             return false;
         };
