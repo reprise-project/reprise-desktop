@@ -154,25 +154,20 @@ glass-dark.png "Message Text" x1
 glass-dark.png "Music" x1
 glass-dark.png "My Music" x3
 glass-dark.png "My Pictures" x3
-glass-dark.png "My" x2
 glass-dark.png "Name" x5
-glass-dark.png "New message" x3
 glass-dark.png "Normal" x1
 glass-dark.png "On the page" x1
 glass-dark.png "OpenDocu..." x3
 glass-dark.png "Other..." x1
 glass-dark.png "Pictures" x1
 glass-dark.png "Pressed" x1
-glass-dark.png "Reply" x2
 glass-dark.png "Reprise" x1
 glass-dark.png "Second" x1
 glass-dark.png "Selected" x1
 glass-dark.png "Size" x5
-glass-dark.png "Sounds good" x1
 glass-dark.png "Text Docu..." x3
 glass-dark.png "Third" x1
 glass-dark.png "Type" x3
-glass-dark.png "Updates are r..." x1
 glass-dark.png "Window Text" x1
 glass-dark.png "notepad" x4
 glass-dark.png "notes.txt" x3
@@ -216,25 +211,20 @@ glass.png "Message Text" x1
 glass.png "Music" x1
 glass.png "My Music" x3
 glass.png "My Pictures" x3
-glass.png "My" x2
 glass.png "Name" x5
-glass.png "New message" x3
 glass.png "Normal" x1
 glass.png "On the page" x1
 glass.png "OpenDocu..." x3
 glass.png "Other..." x1
 glass.png "Pictures" x1
 glass.png "Pressed" x1
-glass.png "Reply" x2
 glass.png "Reprise" x1
 glass.png "Second" x1
 glass.png "Selected" x1
 glass.png "Size" x5
-glass.png "Sounds good" x1
 glass.png "Text Docu..." x3
 glass.png "Third" x1
 glass.png "Type" x3
-glass.png "Updates are r..." x1
 glass.png "Window Text" x1
 glass.png "notepad" x4
 glass.png "notes.txt" x3
@@ -273,14 +263,13 @@ reprisekit-gallery.png "Closed" x1
 reprisekit-gallery.png "Collapsed Tasks" x1
 reprisekit-gallery.png "Combo Drop" x1
 reprisekit-gallery.png "Computer with..." x1
-reprisekit-gallery.png "Computer" x1
 reprisekit-gallery.png "Computer..." x1
 reprisekit-gallery.png "Connected" x1
 reprisekit-gallery.png "Connected, battery 80%" x1
 reprisekit-gallery.png "Ctrl+Alt+" x1
 reprisekit-gallery.png "Date Mo..." x1
 reprisekit-gallery.png "Default" x1
-reprisekit-gallery.png "Desktop" x5
+reprisekit-gallery.png "Desktop" x4
 reprisekit-gallery.png "Disabled" x9
 reprisekit-gallery.png "Documents" x3
 reprisekit-gallery.png "Field" x1
@@ -309,8 +298,7 @@ reprisekit-gallery.png "Message Text" x2
 reprisekit-gallery.png "Music" x2
 reprisekit-gallery.png "My Music" x6
 reprisekit-gallery.png "My Pictures" x5
-reprisekit-gallery.png "My Recent" x1
-reprisekit-gallery.png "My" x2
+reprisekit-gallery.png "My" x1
 reprisekit-gallery.png "Name" x2
 reprisekit-gallery.png "New Folder" x2
 reprisekit-gallery.png "New Text Document.txt" x1
@@ -335,20 +323,17 @@ reprisekit-gallery.png "Program 6" x1
 reprisekit-gallery.png "Program 7" x1
 reprisekit-gallery.png "Programs" x1
 reprisekit-gallery.png "Progress" x1
-reprisekit-gallery.png "Proj..." x1
 reprisekit-gallery.png "Pushed" x1
 reprisekit-gallery.png "Radio" x1
 reprisekit-gallery.png "Read-only" x1
 reprisekit-gallery.png "Recommended Programs:" x2
 reprisekit-gallery.png "Reprise Settings" x1
-reprisekit-gallery.png "Reprise" x1
 reprisekit-gallery.png "Reprise..." x3
 reprisekit-gallery.png "Scroll Bar" x1
 reprisekit-gallery.png "Scroll Lit" x1
 reprisekit-gallery.png "Search" x1
 reprisekit-gallery.png "Selected" x4
 reprisekit-gallery.png "Size" x2
-reprisekit-gallery.png "Sounds good" x1
 reprisekit-gallery.png "Speaker" x1
 reprisekit-gallery.png "Spin" x1
 reprisekit-gallery.png "Stuff" x1

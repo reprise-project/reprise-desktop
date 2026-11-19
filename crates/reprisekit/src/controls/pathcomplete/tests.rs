@@ -592,3 +592,41 @@ fn the_file_dialogs_file_name_completes_from_its_folder_on_a_popup() {
         "Enter takes the row and opens nothing"
     );
 }
+
+/// Every row, lit or not, keeps its ink at every text size under every interface, at scale 2
+/// drawn by the paint and by the canvas.
+#[test]
+fn the_rows_keep_their_ink_at_every_text_size_and_scale() {
+    crate::pins::fonts();
+    let pc = pc_for_draw();
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut cut = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for pct in [100, 125, 150, 175, 200] {
+            let theme = theme_for(i).with_text_size(pct);
+            let lay = layout(&pc, Rect::new(4, -17, 160, 21), None, &theme.controls());
+            for (s, by_canvas) in [(1, false), (2, false), (2, true)] {
+                let (ps, cs) = if by_canvas { (1, s) } else { (s, 1) };
+                let w = ((lay.list.right() + 8) * ps) as u32;
+                let h = ((lay.list.bottom() + 8) * ps) as u32;
+                let mut c = Canvas::with_scale(w, h, cs);
+                let p = Paint {
+                    s: ps,
+                    ..theme.paint()
+                };
+                let px = theme.fonts.size_px * ps as u32;
+                let ((), cuts) =
+                    crate::pins::clipped_ink(|| draw(&pc, &mut c, &text, &p, &lay, px));
+                cut.extend(
+                    cuts.into_iter()
+                        .map(|c| (format!("{i:?} {pct}% x{s} {by_canvas}"), c.text, c.rows)),
+                );
+            }
+        }
+    }
+    assert_eq!(
+        cut,
+        Vec::new(),
+        "(look, text size, scale, by the canvas, row, ink rows cut)"
+    );
+}

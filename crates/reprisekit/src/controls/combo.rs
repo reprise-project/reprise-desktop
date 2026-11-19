@@ -975,6 +975,7 @@ pub fn draw_list_rows(
             let ty = r.y + (r.height - line) / 2;
             let tr = Rect::new(r.x + 2 * s, ty, r.width - 2 * s, line);
             let label = fitted(text, &items[i].text, tr.width, px);
+            let tr = text.ink_box(tr, &label, false, px, c.scale());
             text.draw(c, tr, &label, false, fg, Align::Left, px);
             continue;
         }
@@ -997,6 +998,7 @@ pub fn draw_list_rows(
             draw_focus_ring_screen(c, hl, s, cs.hilight.inverted(), (0, 0));
         }
         let tr = Rect::new(tx, r.y + s, (inner.right() - tx).max(0), r.height);
+        let tr = text.ink_box(tr, &label, false, px, c.scale());
         text.draw(c, tr, &label, false, fg, Align::Left, px);
     }
 }

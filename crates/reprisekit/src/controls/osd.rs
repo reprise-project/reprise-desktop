@@ -150,6 +150,14 @@ fn body(
     // A long title (a player's Identity, say) ends in an ellipsis rather
     // than being cut off mid-glyph at the padding.
     let title = text.ellipsize(&osd.title, title_r.width - percent_w, true, px);
+    let title_r = text.ink_box(title_r, &title, true, px, c.scale());
+    let title_r = text.ink_box(
+        title_r,
+        percent.as_deref().unwrap_or(""),
+        true,
+        px,
+        c.scale(),
+    );
     if glass {
         let baseline = text.baseline(title_r, true, px).unwrap_or(title_r.bottom());
         text.draw_run_over(
@@ -311,6 +319,7 @@ fn put(
     px: u32,
     glass: bool,
 ) {
+    let r = text.ink_box(r, t, bold, px, c.scale());
     if !glass {
         return text.draw(c, r, t, bold, ink, align, px);
     }
@@ -627,6 +636,43 @@ mod tests {
         assert_eq!(line.label, Rect::new(36, 12 + 26 + 6 + 37 + 5, 240, 26));
         assert_eq!(line.bar, Rect::new(284, 12 + 26 + 6 + 37 + 10, 142, 16));
         assert_eq!(line.percent, Rect::new(434, line.label.y, 68, 26));
+    }
+
+    /// Every panel's title, percent and line keeps its ink at every text size and scale under
+    /// every interface.
+    #[test]
+    fn the_panels_keep_their_ink_at_every_text_size_and_scale() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let mut cut = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 125, 150, 175, 200] {
+                for scale in [1, 2] {
+                    let theme = crate::interfaces::theme_for(look)
+                        .with_text_size(pct)
+                        .scaled(scale);
+                    let text = TextRenderer::load(&theme.fonts);
+                    let volume = Osd {
+                        title: "Volume gypsy".into(),
+                        meter: Some(Meter::new(1.0, true)),
+                    };
+                    let ((), cuts) = crate::pins::clipped_ink(|| {
+                        draw(&theme, &text, &volume, None);
+                        draw_lock_key(&theme, &text, LockKey::Caps, true);
+                        draw_lines(&theme, &text, &three());
+                    });
+                    cut.extend(
+                        cuts.into_iter()
+                            .map(|c| (format!("{look:?} {pct}% x{scale}"), c.text, c.rows)),
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            cut,
+            Vec::new(),
+            "(look, text size, scale, line, ink rows cut)"
+        );
     }
 
     #[test]

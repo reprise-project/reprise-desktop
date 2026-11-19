@@ -79,6 +79,7 @@ pub fn banner_wide(text: &TextRenderer, px: u32, w: i32, u: TextUnits) -> Canvas
             width: w - r.x,
             ..r
         };
+        let r = text.ink_box(r, line, false, u.px(px), c.scale());
         text.draw(&mut c, r, line, false, white, Align::Left, u.px(px));
     }
     let mark = Rect::new(PEAK_X - 120, 24, 0, 28);
@@ -88,6 +89,7 @@ pub fn banner_wide(text: &TextRenderer, px: u32, w: i32, u: TextUnits) -> Canvas
         ..mark
     };
     let mark_px = u.px(px * 2);
+    let mark = text.ink_box(mark, BANNER_MARK, true, mark_px, c.scale());
     text.draw(
         &mut c,
         mark,
@@ -563,6 +565,30 @@ mod tests {
         }
         assert_eq!(top("memlabel") + off, EXPECTED_MEMORY);
         assert_eq!(top("memvalue") + off, EXPECTED_MEMORY);
+    }
+
+    /// The banner's wordmark and copyright keep their ink at every text size: drawn grown by
+    /// the text size, and drawn at the grown px.
+    #[test]
+    fn the_banner_text_keeps_its_ink_at_every_text_size() {
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut cut = Vec::new();
+        for pct in [100, 125, 150, 175, 200] {
+            let theme = Theme::default().with_form_text(pct);
+            let u = theme.text;
+            let (_, grown) =
+                crate::pins::clipped_ink(|| banner_wide(&text, 11, u.len(BANNER_W), u));
+            let (_, at_px) = crate::pins::clipped_ink(|| banner(&text, theme.fonts.size_px));
+            for (how, cuts) in [("grown", grown), ("at px", at_px)] {
+                cut.extend(cuts.into_iter().map(|c| (pct, how, c.text, c.rows, c.cols)));
+            }
+        }
+        assert_eq!(
+            cut,
+            Vec::new(),
+            "(text size, drawn, line, ink rows cut, ink columns cut)"
+        );
     }
 
     /// Every text row starts at x53, the memory value at x252.

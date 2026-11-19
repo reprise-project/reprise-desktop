@@ -459,3 +459,44 @@ fn labels_fitted_to_their_ink_keep_it_on_a_scale_2_canvas() {
     }
     assert_eq!(cut, Vec::new(), "(font, scale, label, ink columns cut)");
 }
+
+/// A label, a check box's and a radio's label, a group title, a group box's label and a note
+/// keep a `|` whole: Tahoma's hangs a row past the font's descent at 14 and 22 px. At every text
+/// size, drawn at scale 2 by the paint and by the canvas.
+#[test]
+fn a_bar_hanging_past_the_descent_keeps_its_ink() {
+    crate::pins::fonts();
+    let t = tr();
+    let cs = &Theme::default().colors;
+    let mut cut = Vec::new();
+    for pct in [100, 125, 150, 175, 200] {
+        let px = crate::theme::text_px(11, pct);
+        for (s, by_canvas) in [(1, false), (2, false), (2, true)] {
+            let f = Form::new(vec![
+                Item::group("g", Rect::new(6, 10, 400, 200), "Group 1|1"),
+                Item::group_title("t", 16, 30, 380, "Title 1|1"),
+                Item::label_at("l", 16, 50, 380, "Color|Solid"),
+                Item::check("c", 16, 70, "Check 1|1"),
+                Item::radio("r", 16, 90, "Radio 1|1", "rg"),
+                Item::lines_at("n", 16, 110, 380, &["e.g. 1|1 2|1 1:2|1:2"]),
+            ]);
+            let (ps, cs_) = if by_canvas { (1, s) } else { (s, 1) };
+            let p = Paint {
+                text: TextUnits::new(px, 11),
+                ..classic_paint(cs, ps)
+            };
+            let mut c = Canvas::with_scale(900 * ps as u32, 600 * ps as u32, cs_);
+            let ((), cuts) =
+                crate::pins::clipped_ink(|| draw(&mut c, &t, &p, &f, false, px * ps as u32));
+            cut.extend(
+                cuts.into_iter()
+                    .map(|c| (pct, s, by_canvas, c.text, c.rows)),
+            );
+        }
+    }
+    assert_eq!(
+        cut,
+        Vec::new(),
+        "(text size, scale, by the canvas, line, ink rows cut)"
+    );
+}

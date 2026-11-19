@@ -328,6 +328,7 @@ pub fn draw_balloon_tip(theme: &Theme, text: &TextRenderer, title: &str, body: &
         let title_px = b.title_px * s as u32;
         let th = (b.title_px as i32 + 4) * s;
         let title_box = Rect::new(tx, stem + b.title_y * s, tw, th);
+        let title_box = text.ink_box(title_box, title, false, title_px, c.scale());
         text.draw(
             &mut c,
             title_box,
@@ -340,6 +341,7 @@ pub fn draw_balloon_tip(theme: &Theme, text: &TextRenderer, title: &str, body: &
         let mut y = stem + b.body_y * s;
         for line in balloon_lines(text, theme, body) {
             let r = Rect::new(tx, y, tw, b.line_h * s);
+            let r = text.ink_box(r, &line, false, size, c.scale());
             text.draw(&mut c, r, &line, false, b.text, Align::Left, size);
             y += b.line_h * s;
         }
@@ -363,26 +365,14 @@ pub fn draw_balloon_tip(theme: &Theme, text: &TextRenderer, title: &str, body: &
     let tx = (1 + BALLOON_PAD_X) * s;
     let tw = w - 2 * tx;
     let line_h = (BALLOON_LINE_H + theme.line_growth()) * s;
-    text.draw(
-        &mut c,
-        Rect::new(tx, (STEM_H + BALLOON_TITLE_Y) * s, tw, line_h),
-        title,
-        true,
-        ink,
-        Align::Left,
-        size,
-    );
+    let r = Rect::new(tx, (STEM_H + BALLOON_TITLE_Y) * s, tw, line_h);
+    let r = text.ink_box(r, title, true, size, c.scale());
+    text.draw(&mut c, r, title, true, ink, Align::Left, size);
     let mut y = (STEM_H + BALLOON_BODY_Y + theme.line_growth()) * s;
     for line in balloon_lines(text, theme, body) {
-        text.draw(
-            &mut c,
-            Rect::new(tx, y, tw, line_h),
-            &line,
-            false,
-            ink,
-            Align::Left,
-            size,
-        );
+        let r = Rect::new(tx, y, tw, line_h);
+        let r = text.ink_box(r, &line, false, size, c.scale());
+        text.draw(&mut c, r, &line, false, ink, Align::Left, size);
         y += line_h;
     }
     c
@@ -407,7 +397,8 @@ pub const NOTIFY_BODY_LINES: usize = 10;
 /// rest.
 pub const NOTIFY_BUTTONS: usize = 3;
 /// The button row: 8 px under the body's last line, each label 8 px
-/// inside its button, the "..." button square.
+/// inside its button, the "..." button square. Buttons and the reply field
+/// grow with the text.
 const NOTIFY_ROW_GAP: i32 = 8;
 const NOTIFY_LABEL_PAD: i32 = 8;
 const NOTIFY_MORE_W: i32 = BUTTON_H;
@@ -583,10 +574,13 @@ pub fn notify_layout(
         })
         .collect();
     if more {
-        widths.push(NOTIFY_MORE_W * s);
+        widths.push(theme.text.len(NOTIFY_MORE_W) * s);
     }
     let flow = flow_buttons(&widths, w - 2 * pad, gap);
-    let (bh, y0) = (BUTTON_H * s, text_bottom + NOTIFY_ROW_GAP * s);
+    let (bh, y0) = (
+        theme.text.len(BUTTON_H) * s,
+        text_bottom + NOTIFY_ROW_GAP * s,
+    );
     let row_y = |row: i32| y0 + row * (bh + gap);
     let rows = flow_rows(&flow).max(i32::from(reply.is_some()));
     let (mut buttons, mut labels, mut more_box) = (Vec::new(), Vec::new(), None);
@@ -597,7 +591,7 @@ pub fn notify_layout(
         let sw = label_w.max(BUTTON_W * s);
         let sx = w - pad - sw;
         send = Some(Rect::new(sx, y, sw, bh));
-        let fh = NOTIFY_FIELD_H * s;
+        let fh = theme.text.len(NOTIFY_FIELD_H) * s;
         let fy = y + (bh - fh) / 2;
         field = Some(Rect::new(pad, fy, sx - gap - pad, fh));
     } else {
@@ -882,9 +876,11 @@ pub fn draw_notify_balloon(
         c.blit_canvas(lay.icon_at.0, top + lay.icon_at.1, ic);
     }
     let tb = lay.title_box;
+    let tb = Rect::new(tb.x, top + tb.y, tb.width, tb.height);
+    let tb = text.ink_box(tb, &lay.title, look.is_none(), lay.title_px, c.scale());
     text.draw(
         &mut c,
-        Rect::new(tb.x, top + tb.y, tb.width, tb.height),
+        tb,
         &lay.title,
         look.is_none(),
         title_ink,
@@ -893,15 +889,9 @@ pub fn draw_notify_balloon(
     );
     let mut y = top + lay.body_y;
     for line in &lay.lines {
-        text.draw(
-            &mut c,
-            Rect::new(lay.text_x, y, lay.text_w, lay.line_h),
-            line,
-            false,
-            ink,
-            Align::Left,
-            size,
-        );
+        let r = Rect::new(lay.text_x, y, lay.text_w, lay.line_h);
+        let r = text.ink_box(r, line, false, size, c.scale());
+        text.draw(&mut c, r, line, false, ink, Align::Left, size);
         y += lay.line_h;
     }
     let none = TextEdit::default();
