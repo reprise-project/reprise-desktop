@@ -1642,9 +1642,94 @@ fn the_address_field_and_the_rename_box_copy_and_paste_text() {
     ex.sv.selection.set_only(Some(a));
     ex.run(crate::commands::Command::Rename, &mut ctx);
     assert_eq!(ex.key(ctrl(b'x'), &mut ctx).copy.as_deref(), Some("a"));
+    assert!(ex.key(ctrl(b'v'), &mut ctx).paste);
     ex.paste_text("b/c");
     let (_, ed) = ex.sv.edit.clone().expect("the box is up");
     assert_eq!(ed.text, "bc.txt", "a name takes no slash");
+}
+
+fn ctrl_v() -> repriseapp::KeyInput {
+    repriseapp::KeyInput {
+        sym: u32::from(b'v'),
+        utf8: None,
+        mods: ctrl(),
+        edit: reprisekit::textedit::key_for(u32::from(b'v'), true, false, None),
+    }
+}
+
+fn bare(sym: u32) -> repriseapp::KeyInput {
+    repriseapp::KeyInput {
+        sym,
+        utf8: None,
+        mods: SeatMods::default(),
+        edit: None,
+    }
+}
+
+fn f2() -> repriseapp::KeyInput {
+    bare(reprisekit::textedit::keysym::F2)
+}
+
+#[test]
+fn a_paste_asked_in_the_address_field_lands_there_after_a_click_and_f2_open_a_rename_box() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = explorer(&mut ctx);
+    ex.focus = crate::Focus::Address;
+    ex.address.set_place("/srv/data", None);
+    assert!(ex.key(ctrl_v(), &mut ctx).paste);
+    let a = index_of(&ex, "a.txt");
+    let at = centre(&ex, &ctx, a);
+    press(&mut ex, &mut ctx, at, BTN_LEFT);
+    ex.key(f2(), &mut ctx);
+    assert!(ex.sv.edit.is_some(), "F2 opened the rename box");
+
+    ex.event(
+        repriseapp::MAIN,
+        repriseapp::Event::Pasted("XPASTE".into()),
+        &mut ctx,
+    );
+    let (_, ed) = ex.sv.edit.clone().expect("the box is still up");
+    assert_eq!(ed.text, "a.txt");
+    assert_eq!(ex.address.text(), "/srv/dataXPASTE");
+}
+
+#[test]
+fn a_paste_asked_in_a_rename_box_since_closed_reaches_neither_the_next_box_nor_the_address() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = explorer(&mut ctx);
+    let place = ex.address.text().to_string();
+    ex.sv.selection.set_only(Some(index_of(&ex, "a.txt")));
+    ex.key(f2(), &mut ctx);
+    assert!(ex.key(ctrl_v(), &mut ctx).paste);
+    ex.commit_rename(&mut ctx);
+    ex.key(f2(), &mut ctx);
+
+    ex.event(
+        repriseapp::MAIN,
+        repriseapp::Event::Pasted("XPASTE".into()),
+        &mut ctx,
+    );
+    let (_, ed) = ex.sv.edit.clone().expect("the second box is up");
+    assert_eq!(ed.text, "a.txt");
+    assert_eq!(ex.address.text(), place);
+}
+
+#[test]
+fn a_paste_asked_in_the_address_field_is_dropped_once_escape_puts_the_place_back() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = explorer(&mut ctx);
+    let place = ex.address.text().to_string();
+    ex.focus = crate::Focus::Address;
+    assert!(ex.key(ctrl_v(), &mut ctx).paste);
+    ex.key(bare(reprisekit::textedit::keysym::ESCAPE), &mut ctx);
+    ex.focus = crate::Focus::Address;
+
+    ex.event(
+        repriseapp::MAIN,
+        repriseapp::Event::Pasted("XPASTE".into()),
+        &mut ctx,
+    );
+    assert_eq!(ex.address.text(), place);
 }
 
 #[test]

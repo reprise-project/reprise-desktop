@@ -91,8 +91,8 @@ impl Explorer {
         self.address = AddressBar::new(rows, 0, go);
         self.address_places = places;
         let icon = address_icon(&mut self.chrome_waits, &mut ctx.icons, &self.place);
-        self.address
-            .set_place(&self.place.address_in(&self.shares.shares), icon);
+        let text = self.place.address_in(&self.shares.shares);
+        self.reset_address(&text, icon);
     }
 
     fn address_rows(&mut self, ctx: &mut Ctx) -> (Vec<ListItem>, Vec<Place>) {
