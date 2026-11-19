@@ -8,7 +8,7 @@
 use reprisekit::access::{Gesture, Handler, Published, Reveal, Route, Tree, accesskit};
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 
-use crate::{BTN_LEFT, BTN_RIGHT, DropForm, Host, Mods, PointerInput, WinId};
+use crate::{BTN_LEFT, BTN_RIGHT, DropForm, Event, Host, Mods, PointerInput, WinId};
 use reprisekit::controls::{
     form,
     propsheet::{self, PropSheet},
@@ -217,33 +217,49 @@ impl Host {
                 }
             }
             Msg::Act(win, req) => {
-                let target = match self.reader_route(win, req) {
-                    Route::Reveal { reveal, then } => {
-                        self.reader_reveal(win, reveal);
-                        if !then {
-                            return;
-                        }
-                        self.publish(win);
-                        match self.reader_route(win, req) {
-                            Route::Act(t) => t,
-                            _ => return,
-                        }
-                    }
+                if let Some(req) = self.paste_wait.hold_reader(win, req) {
+                    self.reader_request(win, req, true);
+                }
+            }
+        }
+    }
+
+    /// Carry out a reader's `req` in window `win`; its click goes `live` through
+    /// [`Host::pointer`], or, replayed after a paste, straight to the window.
+    pub(crate) fn reader_request(
+        &mut self,
+        win: WinId,
+        req: reprisekit::access::Request,
+        live: bool,
+    ) {
+        let target = match self.reader_route(win, req) {
+            Route::Reveal { reveal, then } => {
+                self.reader_reveal(win, reveal);
+                if !then {
+                    return;
+                }
+                self.publish(win);
+                match self.reader_route(win, req) {
                     Route::Act(t) => t,
-                    Route::None => return,
-                };
-                let Some(g) = reprisekit::access::gesture(req.act, target) else {
-                    return;
-                };
-                if let Gesture::Focus(at) = g {
-                    self.reader_focus(win, at);
-                    return;
+                    _ => return,
                 }
-                let apart = self.ctx.theme.metrics.double_click_ms.max(0) as u32 + 1000;
-                self.press_time = self.press_time.wrapping_add(apart);
-                for input in reader_input(g, self.press_time) {
-                    self.pointer(win, input);
-                }
+            }
+            Route::Act(t) => t,
+            Route::None => return,
+        };
+        let Some(g) = reprisekit::access::gesture(req.act, target) else {
+            return;
+        };
+        if let Gesture::Focus(at) = g {
+            self.reader_focus(win, at);
+            return;
+        }
+        let apart = self.ctx.theme.metrics.double_click_ms.max(0) as u32 + 1000;
+        self.press_time = self.press_time.wrapping_add(apart);
+        for input in reader_input(g, self.press_time) {
+            match live {
+                true => self.pointer(win, input),
+                false => self.send(win, Event::Pointer(input)),
             }
         }
     }

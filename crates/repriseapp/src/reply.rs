@@ -79,11 +79,16 @@ pub struct Reply {
     pub redraw_all: bool,
     pub quit: bool,
     pub copy: Option<String>,
-    /// Arrives as `Event::Pasted` on the window this reply is for.
+    /// Arrives as `Event::Pasted` on the window this reply is for. Keys and clicks after this
+    /// reply wait for it up to [`PASTE_HOLD`](crate::PASTE_HOLD); a slower paste lands after them.
     pub paste: bool,
+    /// Every paste the program has out, for any window, including one landed and not yet handed
+    /// on, never arrives, and the input waiting on them is dropped but for key and button
+    /// releases; this reply's own pastes are asked after. For a box reused for the next request.
+    pub drop_pastes: bool,
     /// Offered as the primary selection, the text a middle click pastes.
     pub copy_primary: Option<String>,
-    /// Arrives as `Event::PastedPrimary` on the window this reply is for.
+    /// Arrives as `Event::PastedPrimary` on the window this reply is for, as `paste` does.
     pub paste_primary: bool,
     /// Run each argument vector as its own process, no shell, reaped in the background, with a
     /// token asked for on the last input so its window takes the focus even from a running copy.
@@ -96,11 +101,11 @@ pub struct Reply {
     /// its app scope, with its own folder.
     pub spawn_each: Vec<(Vec<OsString>, Option<PathBuf>)>,
     pub copy_files: Option<FileClip>,
-    /// Arrives as `Event::PastedFiles` on the window this reply is for.
+    /// Arrives as `Event::PastedFiles` on the window this reply is for, as `paste` does.
     pub paste_files: bool,
     /// PNG bytes offered on the clipboard as `image/png`.
     pub copy_image: Option<std::sync::Arc<Vec<u8>>>,
-    /// Arrives as `Event::PastedImage` on the window this reply is for.
+    /// Arrives as `Event::PastedImage` on the window this reply is for, as `paste` does.
     pub paste_image: bool,
     /// What another process handed over with a request to show a window, and
     /// that window: its token is presented for it, so the compositor focuses
@@ -225,6 +230,7 @@ impl Reply {
             quit,
             copy,
             paste,
+            drop_pastes,
             copy_primary,
             paste_primary,
             spawn,
@@ -282,6 +288,7 @@ impl Reply {
             quit: self.quit || quit,
             copy: self.copy.or(copy),
             paste: self.paste || paste,
+            drop_pastes: self.drop_pastes || drop_pastes,
             copy_primary: self.copy_primary.or(copy_primary),
             paste_primary: self.paste_primary || paste_primary,
             spawn,

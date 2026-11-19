@@ -284,6 +284,10 @@ impl Host {
         if let Some(clip) = reply.copy_files {
             self.copy_files(clip);
         }
+        // Before this reply's own pastes.
+        if reply.drop_pastes {
+            self.paste_wait.forget();
+        }
         if reply.paste {
             self.paste(win);
         }
