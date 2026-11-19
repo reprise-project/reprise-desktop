@@ -373,6 +373,15 @@ pub fn window_gone(state: &mut State, w: WindowId) {
     crate::captureborder::refresh(state);
 }
 
+/// A capture frame waits for `output`'s next change. A monitor is asked for a frame, which it draws
+/// only if something changed; a virtual screen, whose every tick counts as drawn, for none.
+fn wait_on(state: &mut State, output: &Output) {
+    match crate::backend::is_virtual(output) {
+        true => crate::virtualout::capture_waits(state, output),
+        false => crate::backend::schedule(state, output),
+    }
+}
+
 fn take_waiting(state: &mut State, taken: impl Fn(&Waiting) -> bool) -> Vec<Waiting> {
     let (now, rest): (Vec<Waiting>, Vec<Waiting>) = std::mem::take(&mut state.captures.waiting)
         .into_iter()
@@ -1648,9 +1657,8 @@ impl ScreencopyHandler for State {
         if let Some(waits) = fill_wlr(self, screencopy) {
             let output = waits.info.output.clone();
             self.captures.waiting.push(Waiting::Wlr(waits));
-            // Only the request asks for a frame: if each retry did, a virtual screen would tick for
-            // the copy forever.
-            crate::backend::schedule(self, &output);
+            // Only the request asks: a retry that asked again would ask after every frame.
+            wait_on(self, &output);
         }
         crate::captureborder::wlr_frame(self, key.clone());
         // A recording already bordered and lighting the dot changes neither with its frames.
@@ -1764,7 +1772,7 @@ impl ImageCopyCaptureHandler for State {
                     session: session.clone(),
                     frame,
                 });
-                crate::backend::schedule(self, &o);
+                wait_on(self, &o);
             }
             Some(Shown::Window(w)) => {
                 self.captures.waiting.push(Waiting::Ext {
@@ -2612,20 +2620,9 @@ mod tests {
     #[test]
     fn a_tick_only_the_pointer_asked_for_shows_a_virtual_screens_captures_nothing_new() {
         let Some(mut h) = drawing() else { return };
-        let spec = crate::virtualout::Spec {
-            size: (64, 48),
-            refresh: 60_000,
-            scale: 1.0,
-            transform: Transform::Normal,
-            position: (0, 0),
-        };
-        let kind = crate::virtualout::Kind::Remote;
-        let o = crate::virtualout::create(&mut h.state, "REMOTE-1", spec, kind);
-        h.state.update_layout();
-        h.until("the wallpaper shows", |s| s.wallpaper_ready(&o));
+        let o = remote_screen(&mut h);
         let mut client = h.connect_capture((64, 48));
         let mut s = client.ext_session(&mut h);
-        h.run_for(1100);
         client.ext_frame(&mut h, &mut s);
         let session = h.state.captures.sessions[0].as_ref();
         assert!(!super::fresh(&session).get(), "the first frame is filled");
@@ -2643,20 +2640,9 @@ mod tests {
     #[test]
     fn a_scene_edit_that_asked_no_frame_shows_on_a_virtual_screens_next_pointer_tick() {
         let Some(mut h) = drawing() else { return };
-        let spec = crate::virtualout::Spec {
-            size: (64, 48),
-            refresh: 60_000,
-            scale: 1.0,
-            transform: Transform::Normal,
-            position: (0, 0),
-        };
-        let kind = crate::virtualout::Kind::Remote;
-        let o = crate::virtualout::create(&mut h.state, "REMOTE-1", spec, kind);
-        h.state.update_layout();
-        h.until("the wallpaper shows", |s| s.wallpaper_ready(&o));
+        let o = remote_screen(&mut h);
         let mut client = h.connect_capture((64, 48));
         let mut s = client.ext_session(&mut h);
-        h.run_for(1100);
         client.ext_frame(&mut h, &mut s);
         let session = h.state.captures.sessions[0].as_ref();
         assert!(!super::fresh(&session).get(), "the first frame is filled");
@@ -2705,6 +2691,67 @@ mod tests {
         assert!(
             h.state.captures.waiting.is_empty(),
             "nor does a copy whose client went"
+        );
+    }
+
+    /// A 64x48 remote screen, its first frames over.
+    fn remote_screen(h: &mut Harness) -> smithay::output::Output {
+        let spec = crate::virtualout::Spec {
+            size: (64, 48),
+            refresh: 60_000,
+            scale: 1.0,
+            transform: Transform::Normal,
+            position: (0, 0),
+        };
+        let kind = crate::virtualout::Kind::Remote;
+        let o = crate::virtualout::create(&mut h.state, "REMOTE-1", spec, kind);
+        h.state.update_layout();
+        h.until("the wallpaper shows", |s| s.wallpaper_ready(&o));
+        h.run_for(1100);
+        o
+    }
+
+    #[test]
+    fn captures_waiting_on_an_idle_virtual_screen_ask_for_no_tick_and_a_change_fills_them() {
+        let Some(mut h) = drawing() else { return };
+        let _o = remote_screen(&mut h);
+        let mut client = h.connect_capture((64, 48));
+        let mut ext = client.ext_session(&mut h);
+        let buffer = client.buffer();
+        // The first frames light the sharing dot, which the screen shows at a later tick.
+        client.ext_frame(&mut h, &mut ext);
+        let mut copy = client.wlr_copy_with_damage_into(&mut h, &buffer);
+        for _ in 0..3 {
+            h.run_for(300);
+            crate::backend::take_asks();
+            client.ext_frame(&mut h, &mut ext);
+            copy = client.wlr_copy_with_damage_into(&mut h, &buffer);
+        }
+        let ext_waits = |h: &Harness| {
+            (h.state.captures.waiting.iter()).any(|w| matches!(w, super::Waiting::Ext { .. }))
+        };
+        assert!(
+            ext_waits(&h) && client.wlr_ready(&copy).is_none(),
+            "on a still screen an ext frame and a wlr copy wait for a change"
+        );
+        assert_eq!(
+            crate::backend::take_asks(),
+            [],
+            "and ask the virtual screen for no tick, which would show them nothing new"
+        );
+        h.run_for(200);
+        client.roundtrip(&mut h);
+        assert!(
+            ext_waits(&h) && client.wlr_ready(&copy).is_none(),
+            "they wait on"
+        );
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 20, 20);
+        h.run_for(100);
+        client.roundtrip(&mut h);
+        assert!(
+            !ext_waits(&h) && client.wlr_ready(&copy).is_some(),
+            "a window mapped fills both at the next tick"
         );
     }
 
