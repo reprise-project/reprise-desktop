@@ -152,6 +152,13 @@ pub fn reply_focused(state: &State) -> bool {
     reply_edit(state).is_some()
 }
 
+/// The serial of the balloon whose reply field has the keyboard.
+pub fn reply_serial(state: &State) -> Option<u64> {
+    let v = &state.notify;
+    let b = v.stack.get(replying(v)?)?;
+    b.reply.as_ref()?.focused.then_some(b.serial)
+}
+
 /// The reply field's text while it has the keyboard.
 pub fn reply_edit(state: &State) -> Option<&TextEdit> {
     let v = &state.notify;

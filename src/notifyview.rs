@@ -16,7 +16,7 @@ mod tests;
 
 pub use access::access;
 pub use pointer::{cancel_press, drag, hover, press, release};
-pub use reply::{blink, blur, key, paste, reply_edit, reply_focused};
+pub use reply::{blink, blur, key, paste, reply_edit, reply_focused, reply_serial};
 pub use stack::{output_removed, reposition};
 
 use reprisekit::controls::notifysheet::{SheetGlass, SheetOpening, WarmJob, has_sheets};

@@ -64,7 +64,7 @@ pub struct StartPanelView {
     extent: Rect,
     /// Layout coordinates.
     at: (i32, i32),
-    tree: TreeId,
+    pub(crate) tree: TreeId,
     glass_tree: TreeId,
     backdrop: Backdrop,
     buffer: BufferId,
