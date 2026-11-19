@@ -60,6 +60,9 @@ struct Screen {
     pointer_shown: bool,
     /// The scene's change count at the last frame.
     scene_seen: u64,
+    /// Ticked only by `tick_now`, never by the clock.
+    #[cfg(test)]
+    by_hand: bool,
 }
 
 /// What the next tick does, the highest ask winning.
@@ -140,6 +143,8 @@ pub fn create(state: &mut State, name: &str, spec: Spec, kind: Kind) -> Output {
         last: None,
         pointer_shown: false,
         scene_seen: 0,
+        #[cfg(test)]
+        by_hand: false,
     });
     state.scene.add_output(&output);
     log::info!(
@@ -291,6 +296,10 @@ fn arm(state: &mut State, output: &Output) {
     let Some(s) = screen_mut(state, output) else {
         return;
     };
+    #[cfg(test)]
+    if s.by_hand {
+        return;
+    }
     let at = next_tick(s.last, interval, now);
     match s.timer {
         Some((_, armed)) if armed <= at => return,
@@ -330,9 +339,16 @@ fn tick(state: &mut State, output: &Output) {
     }
 }
 
-/// Run `output`'s tick now, as its clock does.
+/// Run `output`'s tick now, as its clock does. From the first call on, only this ticks it.
 #[cfg(test)]
 pub fn tick_now(state: &mut State, output: &Output) {
+    let Some(s) = screen_mut(state, output) else {
+        return;
+    };
+    s.by_hand = true;
+    if let Some((t, _)) = s.timer.take() {
+        state.handle.remove(t);
+    }
     tick(state, output);
 }
 
