@@ -9,38 +9,19 @@
 
 use std::time::Duration;
 
+use futures_util::StreamExt;
+
 use zeroize::Zeroizing;
 
-/// Runs `ready` on a thread of its own once the accessibility bus answers ([`status`]), retrying
-/// with [`retry_after`]; never runs it if the bus stays silent. accesskit_unix connects once, when
-/// a process makes its first adapter: a call failing while the bus is still starting (a session
-/// restart racing the old session's stop job) leaves the process unseen by readers for good, so a
-/// host makes its first adapter only after `ready`.
+/// Runs `ready` on a thread of its own once the accessibility bus answers ([`status`]), however
+/// late ([`wait_for_bus`]). accesskit_unix connects once, when a process makes its first adapter:
+/// a call failing while the bus is still starting (a session restart racing the old session's stop
+/// job) leaves the process unseen by readers for good, so a host makes its first adapter only after
+/// `ready`. Without a session bus there is nothing to wait on, and `ready` never runs.
 pub fn when_bus_ready(ready: impl FnOnce() + Send + 'static) {
-    let run = move || {
-        let mut attempt = 0;
-        loop {
-            match status() {
-                Ok(()) => {
-                    if attempt > 0 {
-                        log::info!("accessibility bus answered after {attempt} retries");
-                    }
-                    ready();
-                    return;
-                }
-                Err(e) => match retry_after(attempt) {
-                    Some(wait) => {
-                        log::debug!("accessibility bus: {e}; retrying in {wait:?}");
-                        std::thread::sleep(wait);
-                        attempt += 1;
-                    }
-                    None => {
-                        log::warn!("accessibility bus: {e}; screen readers get no trees");
-                        return;
-                    }
-                },
-            }
-        }
+    let run = move || match crate::session() {
+        Ok(session) => wait_for_bus(&session, ready),
+        Err(e) => log::warn!("session bus: {e}; screen readers get no trees"),
     };
     if let Err(e) = std::thread::Builder::new()
         .name("a11y bus wait".into())
@@ -48,6 +29,111 @@ pub fn when_bus_ready(ready: impl FnOnce() + Send + 'static) {
     {
         log::warn!("a11y bus wait thread: {e}");
     }
+}
+
+const LAUNCHER: &str = "org.a11y.Bus";
+
+/// Reads the accessibility bus on `session` until it answers, then runs `ready`; returns without
+/// it when the session bus closes first. With no launcher on the bus and none to start, the
+/// read waits asleep for one to take `org.a11y.Bus`. A launcher there that fails to start or
+/// answer is read again on [`retry_after`]'s timer, and on each new launcher.
+fn wait_for_bus(session: &zbus::Connection, ready: impl FnOnce()) {
+    // Subscribed before the first read, so a launcher that comes during it is seen.
+    let mut launchers = match crate::wait(launchers(session)) {
+        Ok(l) => l,
+        Err(e) => {
+            log::warn!("accessibility bus: cannot follow {LAUNCHER}: {e}");
+            return;
+        }
+    };
+    let mut attempt = 0;
+    loop {
+        let retry = match status(session) {
+            Ok(()) => return ready(),
+            Err(e) if absent(session, &e) => {
+                log::info!("accessibility bus: {e}; waiting for a launcher");
+                None
+            }
+            Err(e) => {
+                let retry = retry_after(attempt);
+                attempt += 1;
+                match retry {
+                    Some(wait) => log::debug!("accessibility bus: {e}; retrying in {wait:?}"),
+                    None => log::info!("accessibility bus: {e}; waiting for a new launcher"),
+                }
+                retry
+            }
+        };
+        match crate::wait(woken(&mut launchers, retry)) {
+            Woke::Launcher(name) => {
+                log::info!("accessibility bus: {LAUNCHER} taken by {name}");
+                attempt = 0;
+            }
+            Woke::Retry => {}
+            Woke::Closed => {
+                log::info!("session bus closed; screen readers get no trees");
+                return;
+            }
+        }
+    }
+}
+
+/// Whether a read failing with `e` found no launcher and none to start: nothing owns
+/// `org.a11y.Bus` and the session bus has no service file for it.
+fn absent(session: &zbus::Connection, e: &zbus::Error) -> bool {
+    crate::error::name(e).is_some_and(|n| n == "org.freedesktop.DBus.Error.ServiceUnknown")
+        && crate::wait(crate::name_owner(session, LAUNCHER)).is_none()
+}
+
+enum Woke {
+    Launcher(String),
+    Retry,
+    Closed,
+}
+
+/// The next launcher in `launchers`, or [`Woke::Retry`] after `retry` when one is given.
+async fn woken(
+    launchers: &mut (impl futures_util::Stream<Item = String> + Unpin),
+    retry: Option<Duration>,
+) -> Woke {
+    let launcher = async {
+        match launchers.next().await {
+            Some(name) => Woke::Launcher(name),
+            None => Woke::Closed,
+        }
+    };
+    let timer = async {
+        match retry {
+            Some(wait) => {
+                async_io::Timer::after(wait).await;
+                Woke::Retry
+            }
+            None => std::future::pending().await,
+        }
+    };
+    futures_lite::future::or(launcher, timer).await
+}
+
+/// The unique names taking `org.a11y.Bus` on `session`, as the bus announces them.
+async fn launchers(
+    session: &zbus::Connection,
+) -> zbus::Result<impl futures_util::Stream<Item = String> + Unpin> {
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .sender(crate::DBUS)
+        .path(crate::DBUS_PATH)
+        .interface(crate::DBUS)
+        .member("NameOwnerChanged")
+        .add_arg(LAUNCHER)
+        .build()?;
+    let changes = zbus::MessageStream::for_match_rule(rule, session, None).await?;
+    Ok(changes.filter_map(|m| {
+        let taken = match m.ok().and_then(|m| crate::owner_item(m, LAUNCHER)) {
+            Some(crate::Item::Owner(owner)) => owner,
+            _ => None,
+        };
+        futures_util::future::ready(taken)
+    }))
 }
 
 /// Runs `restarted` on a thread of its own each time a reader turns on an accessibility bus that
@@ -150,8 +236,8 @@ impl Launcher {
     }
 }
 
-/// The wait before retry `attempt` (from 0) of the bus read: 250 ms doubling to 4 s, giving up
-/// after about a minute.
+/// The wait before timed retry `attempt` (from 0) of a read that found a launcher failing to
+/// start or answer: 250 ms doubling to 4 s, none after about a minute.
 pub fn retry_after(attempt: u32) -> Option<Duration> {
     const FIRST_MS: u64 = 250;
     const MOST_MS: u64 = 4_000;
@@ -161,9 +247,8 @@ pub fn retry_after(attempt: u32) -> Option<Duration> {
 
 /// What accesskit_unix's first adapter goes through: `org.a11y.Status`'s properties on the session
 /// bus, then the accessibility bus and its registry, each started on demand.
-fn status() -> zbus::Result<()> {
+fn status(session: &zbus::Connection) -> zbus::Result<()> {
     zbus::block_on(async {
-        let session = zbus::Connection::session().await?;
         session
             .call_method(
                 Some("org.a11y.Bus"),
@@ -173,7 +258,7 @@ fn status() -> zbus::Result<()> {
                 &("org.a11y.Status",),
             )
             .await?;
-        zbus::connection::Builder::address(a11y_address(&session).await?.as_str())
+        zbus::connection::Builder::address(a11y_address(session).await?.as_str())
             .build()
             .await?
             .call_method(
@@ -285,6 +370,171 @@ async fn a11y_address(session: &zbus::Connection) -> zbus::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testbus::{Bus, CEILING, bus_with_no_services, connect, serve};
+    use std::sync::mpsc::{Receiver, Sender, channel};
+
+    struct FakeStatus;
+
+    #[zbus::interface(name = "org.a11y.Status")]
+    impl FakeStatus {
+        #[zbus(property)]
+        fn is_enabled(&self) -> bool {
+            true
+        }
+    }
+
+    /// A launcher handing out `address`, or with `hang_up`, one that reports the call there and
+    /// never answers it.
+    struct FakeLauncher {
+        address: String,
+        hang_up: Option<Sender<()>>,
+    }
+
+    #[zbus::interface(name = "org.a11y.Bus")]
+    impl FakeLauncher {
+        async fn get_address(&self) -> String {
+            if let Some(asked) = &self.hang_up {
+                let _ = asked.send(());
+                std::future::pending::<()>().await;
+            }
+            self.address.clone()
+        }
+    }
+
+    struct FakeRegistry;
+
+    #[zbus::interface(name = "org.a11y.atspi.Registry")]
+    impl FakeRegistry {}
+
+    /// A launcher owning `org.a11y.Bus` on the session bus at `session`, handing out `a11y`.
+    fn launcher(session: &str, a11y: &str, hang_up: Option<Sender<()>>) -> zbus::Connection {
+        zbus::block_on(async {
+            let conn = connect(session).await;
+            serve(&conn, "/org/a11y/bus", FakeStatus).await;
+            let address = a11y.to_string();
+            serve(&conn, "/org/a11y/bus", FakeLauncher { address, hang_up }).await;
+            conn.request_name("org.a11y.Bus").await.unwrap();
+            conn
+        })
+    }
+
+    /// The registry on the accessibility bus `a11y`.
+    fn registry(a11y: &Bus) -> zbus::Connection {
+        zbus::block_on(async {
+            let conn = connect(&a11y.1).await;
+            serve(&conn, "/org/a11y/atspi/registry", FakeRegistry).await;
+            conn.request_name("org.a11y.atspi.Registry").await.unwrap();
+            conn
+        })
+    }
+
+    /// A [`wait_for_bus`] on a thread of its own: its thread id, and "ready" when it runs `ready`,
+    /// then "ended" when it returns.
+    struct Waiting {
+        tid: libc::pid_t,
+        heard: Receiver<&'static str>,
+    }
+
+    fn start_wait(session: &str) -> Waiting {
+        let conn = zbus::block_on(connect(session));
+        let (tx, heard) = channel();
+        let (tid_tx, tid) = channel();
+        std::thread::spawn(move || {
+            // SAFETY: gettid takes nothing and cannot fail.
+            let _ = tid_tx.send(unsafe { libc::gettid() });
+            wait_for_bus(&conn, || {
+                let _ = tx.send("ready");
+            });
+            let _ = tx.send("ended");
+        });
+        Waiting {
+            tid: tid.recv().unwrap(),
+            heard,
+        }
+    }
+
+    /// How often thread `tid` of this process has gone to sleep.
+    fn sleeps(tid: libc::pid_t) -> u64 {
+        let status = std::fs::read_to_string(format!("/proc/self/task/{tid}/status")).unwrap();
+        status
+            .lines()
+            .find_map(|l| l.strip_prefix("voluntary_ctxt_switches:"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
+    }
+
+    /// Long enough for the wait's first read of the bus to fail.
+    const SETTLE: Duration = Duration::from_millis(500);
+
+    /// How long the accessibility bus stays away before it comes.
+    const LATE: Duration = Duration::from_secs(2);
+
+    #[test]
+    fn the_wait_sleeps_while_no_accessibility_bus_is_on_the_session_bus() {
+        let Some(session) = bus_with_no_services() else {
+            return;
+        };
+        let wait = start_wait(&session.1);
+        std::thread::sleep(SETTLE);
+        let before = sleeps(wait.tid);
+        std::thread::sleep(Duration::from_secs(3));
+        assert_eq!(sleeps(wait.tid) - before, 0, "wakes over 3 s");
+        assert!(wait.heard.try_recv().is_err(), "still waiting");
+        drop(session);
+        assert_eq!(
+            wait.heard.recv_timeout(CEILING),
+            Ok("ended"),
+            "the wait ends with the session bus"
+        );
+    }
+
+    #[test]
+    fn a_bus_already_on_the_session_bus_is_joined_at_once() {
+        let (Some(session), Some(a11y)) = (bus_with_no_services(), bus_with_no_services()) else {
+            return;
+        };
+        let _registry = registry(&a11y);
+        let _launcher = launcher(&session.1, &a11y.1, None);
+        let wait = start_wait(&session.1);
+        assert_eq!(wait.heard.recv_timeout(CEILING), Ok("ready"));
+    }
+
+    #[test]
+    fn an_accessibility_bus_that_comes_after_the_wait_began_is_joined() {
+        let (Some(session), Some(a11y)) = (bus_with_no_services(), bus_with_no_services()) else {
+            return;
+        };
+        let wait = start_wait(&session.1);
+        std::thread::sleep(LATE);
+        assert!(wait.heard.try_recv().is_err(), "nothing to join yet");
+        let _registry = registry(&a11y);
+        let _launcher = launcher(&session.1, &a11y.1, None);
+        assert_eq!(wait.heard.recv_timeout(CEILING), Ok("ready"));
+    }
+
+    #[test]
+    fn a_launcher_gone_before_it_gave_the_address_is_waited_past_to_the_next() {
+        let (Some(session), Some(a11y)) = (bus_with_no_services(), bus_with_no_services()) else {
+            return;
+        };
+        let _registry = registry(&a11y);
+        let wait = start_wait(&session.1);
+        std::thread::sleep(SETTLE);
+        let (asked_tx, asked) = channel();
+        let first = launcher(&session.1, &a11y.1, Some(asked_tx));
+        asked
+            .recv_timeout(CEILING)
+            .expect("the first launcher is asked");
+        zbus::block_on(first.close()).unwrap();
+        assert!(
+            wait.heard.recv_timeout(SETTLE).is_err(),
+            "nothing joined on a gone launcher"
+        );
+        let _second = launcher(&session.1, &a11y.1, None);
+        assert_eq!(wait.heard.recv_timeout(CEILING), Ok("ready"));
+    }
 
     #[test]
     fn a_reader_turning_on_a_restarted_launcher_remakes_the_adapters_once() {
@@ -306,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn retries_double_from_a_quarter_second_to_four_seconds() {
+    fn timed_retries_double_from_a_quarter_second_to_four_seconds() {
         let ms: Vec<u128> = (0..7)
             .map(|a| retry_after(a).unwrap().as_millis())
             .collect();
@@ -314,9 +564,22 @@ mod tests {
     }
 
     #[test]
-    fn retries_give_up_after_about_a_minute() {
+    fn timed_retries_stop_after_about_a_minute() {
         let total: Duration = (0..).map_while(retry_after).sum();
         assert_eq!(total, Duration::from_millis(67_750));
         assert_eq!(retry_after(20), None);
+    }
+
+    #[test]
+    fn a_launcher_whose_registry_is_still_starting_is_read_again() {
+        let (Some(session), Some(a11y)) = (bus_with_no_services(), bus_with_no_services()) else {
+            return;
+        };
+        let _launcher = launcher(&session.1, &a11y.1, None);
+        let wait = start_wait(&session.1);
+        std::thread::sleep(SETTLE);
+        assert!(wait.heard.try_recv().is_err(), "no registry to ping yet");
+        let _registry = registry(&a11y);
+        assert_eq!(wait.heard.recv_timeout(CEILING), Ok("ready"));
     }
 }
