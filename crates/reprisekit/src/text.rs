@@ -80,6 +80,19 @@ impl Glyph {
         cut
     }
 
+    /// The rows below the bitmap's top this glyph inks, as [`Glyph::ink_span`] does columns.
+    fn ink_rows(&self) -> Option<(i32, i32)> {
+        let inked = |y: &usize| {
+            self.bitmap
+                .chunks(self.width.max(1))
+                .nth(*y)
+                .is_some_and(|row| row.iter().any(|&cov| cov >= 0x60))
+        };
+        let t = (0..self.height).find(inked)?;
+        let b = (t..self.height).rev().find(inked)?;
+        Some((t as i32, b as i32 + 1))
+    }
+
     /// The columns right of the pen this glyph inks, faint antialiased fringes left out as in
     /// [`Glyph::ink_cut`]; `None` for a blank glyph.
     fn ink_span(&self) -> Option<(i32, i32)> {
@@ -772,6 +785,30 @@ impl TextRenderer {
             }
             _ => rect,
         }
+    }
+
+    /// [`TextRenderer::line_box`] grown evenly above and below, so its baseline stays, until it
+    /// holds every ink row `text` draws on a canvas at `scale`: a glyph that hangs past the
+    /// font's descent (Tahoma's `|` at 14 and 22 px) keeps its ink.
+    pub fn ink_box(&self, rect: Rect, text: &str, bold: bool, size_px: u32, scale: i32) -> Rect {
+        let r = self.line_box(rect, bold, size_px);
+        let Some(baseline) = self.baseline(r, bold, size_px) else {
+            return r;
+        };
+        let s = scale.max(1);
+        let (mut above, mut below) = (0, 0);
+        for ch in text.chars() {
+            let rows = self.with_glyph(ch, bold, size_px, s as u32, |g| {
+                g.ink_rows()
+                    .map(|(t, b)| (baseline * s - g.top + t, baseline * s - g.top + b))
+            });
+            if let Some(Some((top, bottom))) = rows {
+                above = above.max(r.y * s - top);
+                below = below.max(bottom - r.bottom() * s);
+            }
+        }
+        let grow = (above.max(below).max(0) + s - 1) / s;
+        Rect::new(r.x, r.y - grow, r.width, r.height + 2 * grow)
     }
 
     pub fn line(&self, rect: Rect, bold: bool, size_px: u32) -> Option<(i32, i32)> {

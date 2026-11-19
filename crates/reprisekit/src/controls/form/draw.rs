@@ -75,7 +75,7 @@ impl Form {
 }
 
 /// A check box's or radio's one-line label at `lr`'s origin (device px,
-/// as tall as the item's row, its ink drawn in [`TextRenderer::line_box`]),
+/// as tall as the item's row, its ink drawn in [`TextRenderer::ink_box`]),
 /// greyed as the style's `part` greys it when not `enabled`, with the focus
 /// dots round the row when `cue`.
 #[expect(clippy::too_many_arguments)]
@@ -94,7 +94,7 @@ fn draw_choice_label(
     let (plain, _) = crate::text::split_mnemonic(label);
     let lw = text.measure(&plain, false, px);
     let r = Rect::new(lr.x, lr.y, lw + 2 * s, lr.height);
-    let ink = text.line_box(r, false, px);
+    let ink = text.ink_box(r, &plain, false, px, c.scale());
     if enabled {
         draw_label(
             c,
@@ -161,12 +161,12 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 align,
             } => {
                 let r = if *align == Align::Left { at_ink(r) } else { r };
-                let r = text.line_box(r, false, px);
                 // The fit may widen a label past the page or window that shows it.
                 let shown = clip
                     .map_or(c.bounds(), |v| v.scaled(s).intersect(&c.bounds()))
                     .right();
                 let label = &*ellipsized(form, i, text, label, r.right().min(shown) - r.x, px);
+                let r = text.ink_box(r, label, false, px, c.scale());
                 if *enabled {
                     let ink = match it.on_window {
                         true => cs.window_text,
@@ -187,7 +187,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                         grow.len((k as i32 + 1) * LINE_H),
                     );
                     let lr = Rect::new(r.x, r.y + top * s, r.width, (bottom - top) * s);
-                    let lr = text.line_box(lr, false, px);
+                    let lr = text.ink_box(lr, line, false, px, c.scale());
                     if live {
                         text.draw(c, lr, line, false, cs.button_text, Align::Left, px);
                     } else {
@@ -200,7 +200,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
             Control::GroupTitle(title) => {
                 let dy = p.look.style().map_or(0, |st| st.group_label.nudge.1);
                 let r = at_ink(Rect::new(r.x, r.y + dy * s, r.width, r.height));
-                let r = text.line_box(r, false, px);
+                let r = text.ink_box(r, title, false, px, c.scale());
                 let ink = group_label_ink(p);
                 draw_label(c, text, r, &p.label(title), false, ink, Align::Left, px, s);
             }
@@ -212,7 +212,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 let lw = text.measure(&crate::text::split_mnemonic(label).0, false, px);
                 let lx = r.x + (grow.len(10) - text.lead()) * s;
                 let lr = Rect::new(lx, r.y - grow.len(5) * s, lw, grow.len(LINE_H) * s);
-                let lr = text.line_box(lr, false, px);
+                let lr = text.ink_box(lr, label, false, px, c.scale());
                 draw_group_box(c, text, p, r, lr, label, px);
             }
             Control::Separator => c.etched_divider_t(r.x, r.right() - s, r.y, cs, s),

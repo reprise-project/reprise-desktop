@@ -724,6 +724,51 @@ fn wrapped_button_rows_pins() {
     crate::pins::check("controls/balloon_wrapped_buttons", &got);
 }
 
+/// A balloon tip's and a notification balloon's title, lines, wrapped buttons and reply row keep
+/// their ink at every text size and scale under every interface.
+#[test]
+fn balloons_keep_their_ink_at_every_text_size_and_scale() {
+    use crate::interface::Interface;
+    crate::pins::fonts();
+    let (title, body) = (
+        "Low Disk Gypsy",
+        "The disk of / has only 812 MB free of 20.0 GB.",
+    );
+    let reply = NotifyReply {
+        placeholder: "Reply gypsy",
+        send: "Send gypsy",
+    };
+    let mut cut = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for pct in [100, 125, 150, 175, 200] {
+            for s in [1, 2] {
+                let theme = crate::interfaces::theme_for(i)
+                    .with_text_size(pct)
+                    .scaled(s);
+                let t = TextRenderer::load(&theme.fonts);
+                let hot = Some(NotifyHit::Button(2));
+                let ((), cuts) = crate::pins::clipped_ink(|| {
+                    draw_balloon_tip(&theme, &t, title, body);
+                    let lay = notify_layout(&theme, &t, title, body, &LONG_ACTS[..3], &[], None);
+                    draw_notify_balloon(&theme, &t, &lay, None, &[], None, hot, None);
+                    let lay = notify_layout(&theme, &t, title, body, &[], &[], Some(reply));
+                    draw_notify_balloon(&theme, &t, &lay, None, &[], None, hot, None);
+                });
+                cut.extend(
+                    cuts.into_iter()
+                        .filter(|c| c.rows > 0)
+                        .map(|c| (format!("{i:?} {pct}% x{s}"), c.text, c.rows)),
+                );
+            }
+        }
+    }
+    assert_eq!(
+        cut,
+        Vec::new(),
+        "(look, text size, scale, line, ink rows cut)"
+    );
+}
+
 /// Blue's tip, in every variant, is a black 1 px frame round info_bk
 /// with its ink from 3 px in and 4 px down.
 #[test]

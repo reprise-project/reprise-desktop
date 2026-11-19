@@ -238,6 +238,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: R
             for (j, line) in lines.iter().enumerate() {
                 let ly = label_y + j as i32 * stride;
                 let lr = Rect::new(content_x, ly, content_w, step);
+                let lr = text.ink_box(lr, line, false, px, c.scale());
                 if place.enabled {
                     text.draw(c, lr, line, false, cs.button_text, Align::Center, px);
                 } else {
@@ -614,6 +615,46 @@ mod tests {
         let mut out = Canvas::new(WIDTH as u32, r.height as u32);
         draw(&mut out, &text, &theme.paint(), &pb, r, theme.fonts.size_px);
         crate::raster::write_preview(&out, "placesbar-glass-preview.png");
+    }
+
+    /// Every label line, live or greyed, keeps its ink at every text size, at scale 2 drawn by
+    /// the paint and by the canvas.
+    #[test]
+    fn the_labels_keep_their_ink_at_every_text_size_and_scale() {
+        use crate::theme::{TextUnits, text_px};
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &Theme::default().colors;
+        let mut pb = sample();
+        pb.places[0].enabled = false;
+        let mut cut = Vec::new();
+        for pct in [100, 125, 150, 175, 200] {
+            let px = text_px(11, pct);
+            let u = TextUnits::new(px, 11);
+            let tile = ControlMetrics::CLASSIC.grown(u).places.tile;
+            let r = Rect::new(0, 0, 2 * WIDTH, 5 * tile);
+            for (s, by_canvas) in [(1, false), (2, false), (2, true)] {
+                let (ps, cs_) = if by_canvas { (1, s) } else { (s, 1) };
+                let p = Paint {
+                    text: u,
+                    ..classic_paint(cs, ps)
+                };
+                let (w, h) = (r.width * ps, r.height * ps);
+                let mut c = Canvas::with_scale(w as u32, h as u32, cs_);
+                let ((), cuts) = crate::pins::clipped_ink(|| {
+                    draw(&mut c, &text, &p, &pb, r, px * ps as u32);
+                });
+                cut.extend(
+                    cuts.into_iter()
+                        .map(|c| (pct, s, by_canvas, c.text, c.rows)),
+                );
+            }
+        }
+        assert_eq!(
+            cut,
+            Vec::new(),
+            "(text size, scale, by the canvas, line, ink rows cut)"
+        );
     }
 
     fn sample() -> PlacesBar {

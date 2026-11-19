@@ -510,3 +510,43 @@ fn color_dialog_pins_at_scale_1_and_2() {
     }
     crate::pins::check("colordlg", &got);
 }
+
+/// The widened dialog's labels keep their ink at every text size under every interface, at
+/// scale 2 drawn by the paint and by the canvas.
+#[test]
+fn the_text_keeps_its_ink_at_every_text_size_and_scale() {
+    crate::pins::fonts();
+    let dlg = sample();
+    let mut cut = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for pct in [100, 125, 150, 175, 200] {
+            let base = interfaces::theme_for(i).with_form_text(pct);
+            let text = TextRenderer::load(&base.fonts);
+            let f = form(&dlg);
+            let (w, h) = client(&dlg);
+            let (w, h) = (base.text.len(w), base.text.len(h));
+            for (s, by_canvas) in [(1, false), (2, false), (2, true)] {
+                let (theme, scale) = if by_canvas {
+                    (base.clone(), s)
+                } else {
+                    (base.scaled(s), 1)
+                };
+                let ps = theme.paint().s;
+                let mut c = Canvas::with_scale((w * ps) as u32, (h * ps) as u32, scale);
+                let ((), cuts) = crate::pins::clipped_ink(|| {
+                    draw_window(&mut c, &text, &theme.paint(), &f, &dlg, theme.fonts.size_px);
+                });
+                cut.extend(
+                    cuts.into_iter()
+                        .filter(|c| c.rows > 0)
+                        .map(|c| (format!("{i:?} {pct}% x{s} {by_canvas}"), c.text, c.rows)),
+                );
+            }
+        }
+    }
+    assert_eq!(
+        cut,
+        Vec::new(),
+        "(look, text size, scale, by the canvas, line, ink rows cut)"
+    );
+}

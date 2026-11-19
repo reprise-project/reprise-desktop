@@ -275,6 +275,44 @@ fn at_200_percent_the_look_in_icon_grows() {
     );
 }
 
+/// The dialog's text keeps its ink at every text size, at scale 2 drawn by the paint and by the
+/// canvas: Look in, the places bar, the list and the fields.
+#[test]
+fn the_text_keeps_its_ink_at_every_text_size_and_scale() {
+    crate::pins::fonts();
+    let t = text();
+    let cs = ColorScheme::default();
+    let mut cut = Vec::new();
+    for pct in [100, 125, 150, 175, 200] {
+        let px = crate::theme::text_px(11, pct);
+        let u = TextUnits::new(px, 11);
+        let mut d = sample();
+        d.set_listing(folder(3, None, vec![]));
+        d.set_text(u);
+        let (w, h) = d.client();
+        let r = Rect::new(0, 0, w, h);
+        for (s, by_canvas) in [(1, false), (2, false), (2, true)] {
+            let (ps, scale) = if by_canvas { (1, s) } else { (s, 1) };
+            let p = Paint {
+                text: u,
+                ..classic_paint(&cs, ps)
+            };
+            let mut c = Canvas::with_scale((w * ps) as u32, (h * ps) as u32, scale);
+            let ((), cuts) = crate::pins::clipped_ink(|| d.draw(&mut c, &t, &p, r, px * ps as u32));
+            cut.extend(
+                cuts.into_iter()
+                    .filter(|c| c.rows > 0)
+                    .map(|c| (pct, s, by_canvas, c.text, c.rows)),
+            );
+        }
+    }
+    assert_eq!(
+        cut,
+        Vec::new(),
+        "(text size, scale, by the canvas, line, ink rows cut)"
+    );
+}
+
 #[test]
 fn a_focused_glass_look_in_rings_right_of_its_icon() {
     use crate::interface::Interface;
