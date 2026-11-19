@@ -330,9 +330,14 @@ fn tick(state: &mut State, output: &Output) {
     }
 }
 
-/// A frame with nothing to scan out: it does everything a monitor's flip does (animations, covers,
-/// presentation feedback, frame callbacks, captures) at the tick. `drew` is what its asks changed;
-/// a scene edit or a water step since the last frame makes it the scene.
+/// Run `output`'s tick now, as its clock does.
+#[cfg(test)]
+pub fn tick_now(state: &mut State, output: &Output) {
+    tick(state, output);
+}
+
+/// A tick's frame, doing what a monitor's flip does. Captures get `drew`, or the scene when it or
+/// the water moved or the tick's own work (a commit it let through) asked for a whole frame.
 fn frame(state: &mut State, output: &Output, mut drew: Drew) {
     state.settle_moves();
     let shows_at = state.now();
@@ -366,6 +371,9 @@ fn frame(state: &mut State, output: &Output, mut drew: Drew) {
     crate::power::presented(state, output);
     crate::sessionfade::presented(state, output);
     crate::backend::send_frame_callbacks(state, output);
+    if screen_mut(state, output).is_some_and(|s| s.wants == Some(Wants::Frame)) {
+        drew = Drew::Scene;
+    }
     crate::capture::output_drawn(state, output, drew);
     if captured && let Some(at) = state.water.next_step(output) {
         crate::backend::schedule_step(state, output, at);
