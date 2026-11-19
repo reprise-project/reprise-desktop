@@ -163,6 +163,14 @@ fn a_cursor_move_the_commit_thread_never_takes_ends_lost() {
 }
 
 #[test]
+fn a_pointer_frame_shows_owed_captures_the_scene() {
+    use super::render::pointer_drew;
+    use crate::capture::Drew;
+    assert_eq!(pointer_drew(true), Drew::Scene, "captures owed the scene");
+    assert_eq!(pointer_drew(false), Drew::Pointer, "nothing owed");
+}
+
+#[test]
 fn only_catch_up_asks_make_a_catch_up_frame() {
     assert!(asked(&[Ask::CatchUp]).catch_up);
     assert!(!asked(&[Ask::CatchUp, Ask::Pointer]).catch_up);

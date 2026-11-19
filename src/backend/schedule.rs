@@ -155,6 +155,18 @@ pub(super) fn queue_render(state: &mut State, head: Head) {
     });
 }
 
+/// Ask for the frame a capture waiting on monitor `output` is filled at: a pointer frame, unless
+/// something else asks, that shows captures the scene (`captures_owed`) and draws nothing new
+/// for the screen.
+pub fn schedule_capture(state: &mut State, output: &Output) {
+    if let Some(Screen::Monitor(head)) = screen_of(output)
+        && let Some(s) = surface_mut(state, head)
+    {
+        s.captures_owed = true;
+    }
+    request(state, output, Ask::Pointer);
+}
+
 /// Ask for a desktop water step's frame on `output` that starts at or after `at`
 /// (`framepace::ask_at`). Glass re-blurs the moving water at `[glass] blur_rate`, like a
 /// program's content.

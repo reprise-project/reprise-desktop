@@ -88,8 +88,8 @@ pub(crate) use render::{advance, send_frame_callbacks};
 pub use render::{answer_frames, take_stats};
 use render::{committed, retired, vblank};
 pub use schedule::{
-    Ask, cursor_outputs, schedule, schedule_all, schedule_on, schedule_pointer, schedule_shows_at,
-    schedule_step,
+    Ask, cursor_outputs, schedule, schedule_all, schedule_capture, schedule_on, schedule_pointer,
+    schedule_shows_at, schedule_step,
 };
 #[cfg(test)]
 pub use schedule::{take_asked_outputs, take_asks, take_scene_outputs, take_steps};
@@ -186,7 +186,8 @@ struct Surface {
     catch_up: bool,
     pointer_shown: bool,
     scene_seen: u64,
-    /// A scene frame was lost on its way to the screen (render error, failed send or flip).
+    /// The next frame shows captures the scene: a scene frame was lost on its way to the screen
+    /// (render error, failed send or flip), or a capture waits (`schedule_capture`).
     captures_owed: bool,
     scene_changed: bool,
     backdrop_changed: crate::glass::Under,

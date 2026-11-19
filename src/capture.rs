@@ -398,12 +398,12 @@ pub fn window_gone(state: &mut State, w: WindowId) {
     crate::captureborder::refresh(state);
 }
 
-/// A capture frame waits for `output`'s next change. A monitor is asked for a frame, which it draws
-/// only if something changed; a virtual screen, whose every tick counts as drawn, for none.
+/// A capture frame waits for `output`'s next change. A monitor is asked for a pointer frame that
+/// shows captures the scene; a virtual screen, whose every tick counts as drawn, for none.
 fn wait_on(state: &mut State, output: &Output) {
     match crate::backend::is_virtual(output) {
         true => crate::virtualout::capture_waits(state, output),
-        false => crate::backend::schedule(state, output),
+        false => crate::backend::schedule_capture(state, output),
     }
 }
 
@@ -2851,7 +2851,7 @@ mod tests {
     }
 
     #[test]
-    fn a_copy_with_damage_that_waits_asks_its_monitor_for_a_frame() {
+    fn a_copy_with_damage_that_waits_asks_its_monitor_for_a_pointer_frame() {
         let Some(mut h) = drawing() else { return };
         h.output("TEST-1", 64, 48);
         let mut client = h.connect_capture((64, 48));
@@ -2871,8 +2871,8 @@ mod tests {
         assert_eq!(h.state.captures.waiting.len(), 1, "a copy waits");
         assert_eq!(
             crate::backend::take_asks(),
-            [("TEST-1".to_string(), crate::backend::Ask::Scene)],
-            "and asks the monitor for a frame, which it draws only if anything changed"
+            [("TEST-1".to_string(), crate::backend::Ask::Pointer)],
+            "and asks the monitor for a pointer frame, which shows captures the scene"
         );
     }
 
