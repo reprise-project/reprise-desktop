@@ -573,8 +573,8 @@ impl AccountsApp {
         let Some(p) = &self.props else {
             return;
         };
-        let (read, path) = (self.accounts.password_mode, p.user.path.clone());
-        let rx = self.spawn(move || read(&path));
+        let (read, path, you) = (self.accounts.password_mode, p.user.path.clone(), p.user.you);
+        let rx = self.spawn(move || read(&path, you));
         let held = then.is_some();
         self.mode_read = Some((rx, then));
         if held {
@@ -1953,7 +1953,7 @@ mod tests {
         let mut app = AccountsApp::new();
         app.accounts = acct::Sources {
             read: || Ok(ROWS.with_borrow(Clone::clone)),
-            password_mode: |_| Ok(MODE.get()),
+            password_mode: |_, _| Ok(MODE.get()),
             apply: |ops| {
                 APPLIED.with_borrow_mut(|a| a.push(ops.to_vec()));
                 Ok(())
@@ -1996,6 +1996,28 @@ mod tests {
         app.open_props(1000);
         app.event(MAIN, Event::Wake, &mut test_ctx());
         assert_eq!(app.props.as_ref().unwrap().user.password_mode, Empty);
+    }
+
+    #[test]
+    fn a_sheet_reads_its_password_mode_as_your_own_only_on_your_account() {
+        use acct::PasswordMode::{AtLogin, Empty};
+        let sam = User {
+            password_mode: AtLogin,
+            ..user(1001, "sam", false, false)
+        };
+        let mut app = stub_accounts(vec![you_with(AtLogin), sam], AtLogin);
+        app.accounts.password_mode = |_, you| Ok(if you { Empty } else { AtLogin });
+        let mut ctx = test_ctx();
+        for (uid, mode) in [(1000, Empty), (1001, AtLogin)] {
+            app.open_props(uid);
+            app.event(MAIN, Event::Wake, &mut ctx);
+            assert_eq!(
+                app.props.as_ref().unwrap().user.password_mode,
+                mode,
+                "{uid}"
+            );
+            app.close_props();
+        }
     }
 
     #[test]

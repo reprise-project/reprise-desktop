@@ -52,13 +52,14 @@ pub struct User {
     pub password_mode: PasswordMode,
 }
 
-/// AccountsService's `PasswordMode`, read from the shadow entry.
+/// AccountsService's `PasswordMode`, read from the shadow entry; on your own account
+/// [`yours`] tells an `AtLogin` with no password as `Empty`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PasswordMode {
     #[default]
     Regular,
-    /// The password was last changed on day 0: it must be changed at the next login, and it
-    /// may be empty until then.
+    /// The password was last changed on day 0: it must be changed at the next login. On
+    /// another's account it may be empty until then.
     AtLogin,
     /// An empty password.
     Empty,
@@ -188,6 +189,15 @@ fn user_of(path: &str, m: &HashMap<String, OwnedVariant>, me: u32) -> Option<Use
     })
 }
 
+/// Your own account's mode: AccountsService reports `AtLogin` whenever the password was last
+/// changed on day 0, with or without one, so `has_none` is asked then.
+pub fn yours(mode: PasswordMode, has_none: impl FnOnce() -> bool) -> PasswordMode {
+    match mode {
+        PasswordMode::AtLogin if has_none() => PasswordMode::Empty,
+        _ => mode,
+    }
+}
+
 fn mode_of(v: Option<&OwnedVariant>) -> PasswordMode {
     match v.and_then(|v| v.downcast_ref::<i32>().ok()) {
         Some(1) => PasswordMode::AtLogin,
@@ -272,14 +282,18 @@ pub fn read() -> zbus::Result<Vec<User>> {
         }
         for u in &mut users {
             u.logged_on = !logind::online_sessions(&logind::user_record(u.uid)).is_empty();
+            if u.you {
+                u.password_mode = yours(u.password_mode, passwd::own_has_none);
+            }
         }
         sort(&mut users);
         Ok(users)
     })
 }
 
-/// The password mode of the account at `path` as AccountsService has it now.
-pub fn password_mode(path: &str) -> zbus::Result<PasswordMode> {
+/// The password mode of the account at `path` as AccountsService has it now, told apart
+/// through [`yours`] when it is `you`.
+pub fn password_mode(path: &str, you: bool) -> zbus::Result<PasswordMode> {
     zbus::block_on(async {
         let conn = connect(READ_TIMEOUT).await?;
         let reply = conn
@@ -292,7 +306,12 @@ pub fn password_mode(path: &str) -> zbus::Result<PasswordMode> {
             )
             .await?;
         let v: OwnedVariant = reply.body().deserialize()?;
-        Ok(mode_of(Some(&v)))
+        let mode = mode_of(Some(&v));
+        Ok(if you {
+            yours(mode, passwd::own_has_none)
+        } else {
+            mode
+        })
     })
 }
 
@@ -357,7 +376,7 @@ fn names_mode(m: &zbus::Message) -> bool {
 #[derive(Clone, Copy)]
 pub struct Sources {
     pub read: fn() -> zbus::Result<Vec<User>>,
-    pub password_mode: fn(&str) -> zbus::Result<PasswordMode>,
+    pub password_mode: fn(&str, bool) -> zbus::Result<PasswordMode>,
     pub apply: fn(&[Op]) -> Result<(), Failure>,
 }
 
@@ -366,7 +385,7 @@ impl Default for Sources {
         if cfg!(test) {
             Sources {
                 read: || Err(zbus::Error::Failure("no accounts under test".into())),
-                password_mode: |_| Err(zbus::Error::Failure("no accounts under test".into())),
+                password_mode: |_, _| Err(zbus::Error::Failure("no accounts under test".into())),
                 apply: |_| Err(Failure::Text("no accounts under test".into())),
             }
         } else {
@@ -918,6 +937,18 @@ mod tests {
         put("HomeDirectory", Variant::from("/home/x"));
         put("PasswordMode", Variant::from(2i32));
         m
+    }
+
+    #[test]
+    fn your_account_to_change_at_login_without_a_password_has_none() {
+        assert_eq!(yours(PasswordMode::AtLogin, || true), PasswordMode::Empty);
+        assert_eq!(
+            yours(PasswordMode::AtLogin, || false),
+            PasswordMode::AtLogin
+        );
+        for mode in [PasswordMode::Regular, PasswordMode::Empty] {
+            assert_eq!(yours(mode, || panic!("{mode:?} is not asked again")), mode);
+        }
     }
 
     #[test]
