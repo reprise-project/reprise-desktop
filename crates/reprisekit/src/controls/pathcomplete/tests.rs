@@ -381,6 +381,63 @@ fn one_read_at_a_time_and_a_forgotten_folder_drops_its_late_listing() {
 }
 
 #[test]
+fn a_listing_that_lands_after_the_list_closed_leaves_it_closed() {
+    type Close = fn(&mut PathComplete, &mut TextEdit);
+    let closers: [(&str, Close); 6] = [
+        ("a press off it or the focus leaving", |pc, _| pc.close()),
+        ("Escape", |pc, e| _ = pc.nav(e, Key::Escape)),
+        ("Tab", |pc, e| _ = pc.nav(e, Key::Tab)),
+        ("Shift+Tab", |pc, e| _ = pc.nav(e, Key::ShiftTab)),
+        ("Enter", |pc, e| _ = pc.nav(e, Key::Enter)),
+        ("a reset", |pc, _| pc.reset()),
+    ];
+    for (what, close) in closers {
+        let mut pc = PathComplete::new(Scope::Rooted);
+        let mut edit = TextEdit::new("", false);
+        typed(&mut pc, &mut edit, "~/Dow");
+        let want = pc.take_want().expect("lists the home folder");
+        close(&mut pc, &mut edit);
+        assert!(
+            !pc.set_listing(&mut edit, &want, entries(HOME.1)),
+            "after {what} the late listing changes nothing"
+        );
+        assert!(!pc.is_open(), "after {what} the list stays closed");
+        assert_eq!(shown(&edit), ("~/Dow", ""), "after {what} no tail");
+    }
+}
+
+#[test]
+fn escape_over_a_listed_folder_keeps_the_next_folders_late_listing_from_reopening_it() {
+    let mut pc = PathComplete::new(Scope::Rooted);
+    let mut edit = TextEdit::new("", false);
+    typed(&mut pc, &mut edit, "~/Do");
+    serve(&mut pc, &mut edit, &[HOME]);
+    typed(&mut pc, &mut edit, "cuments/");
+    let docs = pc.take_want().expect("lists Documents");
+    for _ in 0.."cuments/".len() {
+        pc.edit(&mut edit, EditKey::Backspace { word: false });
+    }
+    assert!(pc.is_open(), "the home listing shows again");
+    assert!(pc.nav(&mut edit, Key::Escape));
+    pc.set_listing(&mut edit, &docs, entries(&["a.txt"]));
+    serve(&mut pc, &mut edit, &[HOME]);
+    assert!(!pc.is_open(), "the list stays closed");
+}
+
+#[test]
+fn the_next_key_after_a_closed_list_opens_it_from_the_late_listing() {
+    let mut pc = PathComplete::new(Scope::Rooted);
+    let mut edit = TextEdit::new("", false);
+    typed(&mut pc, &mut edit, "~/D");
+    let want = pc.take_want().expect("lists the home folder");
+    pc.close();
+    pc.set_listing(&mut edit, &want, entries(HOME.1));
+    typed(&mut pc, &mut edit, "o");
+    assert_eq!(pc.take_want(), None, "the late listing is kept");
+    assert_eq!(pc.rows(), ["Documents/", "Downloads/", "Docs.txt"]);
+}
+
+#[test]
 fn a_click_takes_the_row_under_it() {
     let mut pc = PathComplete::new(Scope::Rooted);
     let mut edit = TextEdit::new("", false);

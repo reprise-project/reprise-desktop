@@ -92,6 +92,9 @@ pub struct PathComplete {
     seen: String,
     /// The last key typed or pasted, so a listing that lands may still complete inline.
     typed: bool,
+    /// The list was closed: a listing that lands is kept but opens nothing until the next key,
+    /// paste or take refreshes it.
+    shut: bool,
     /// The list's corner where a host showing it on a popup put it.
     pub list_at: Option<(i32, i32)>,
     /// A host shows the list on a popup: the owner's draw leaves it out.
@@ -113,6 +116,7 @@ impl PathComplete {
             inline: Inline::default(),
             seen: String::new(),
             typed: false,
+            shut: false,
             list_at: None,
             hosted: false,
         }
@@ -131,8 +135,13 @@ impl PathComplete {
         self.inline.tail().is_some()
     }
 
-    /// The list closes; a shown tail stays as typed text.
+    /// The list closes until the next edit; a shown tail stays as typed text.
     pub fn close(&mut self) {
+        self.clear();
+        self.shut = true;
+    }
+
+    fn clear(&mut self) {
         self.rows.clear();
         self.hot = None;
         self.first = 0;
@@ -181,8 +190,8 @@ impl PathComplete {
         self.refresh(edit);
     }
 
-    /// The host's listing of `want`. Names come in any order; `.` and `..` are left out.
-    /// Returns whether the field or the list changed.
+    /// The host's listing of `want`. Names come in any order; `.` and `..` are left out. A list
+    /// closed since the last edit stays closed. Returns whether the field or the list changed.
     pub fn set_listing(
         &mut self,
         edit: &mut TextEdit,
@@ -199,14 +208,17 @@ impl PathComplete {
         entries.retain(|e| e.name != "." && e.name != "..");
         entries.sort_by_cached_key(|e| (!e.dir, e.name.to_lowercase(), e.name.clone()));
         self.listing = Some((want.dir.clone(), entries));
+        if self.shut {
+            return false;
+        }
         let before = (edit.text.clone(), self.rows.clone());
         self.refresh(edit);
         before != (edit.text.clone(), self.rows.clone())
     }
 
     /// A key while the field has the focus; true when the completion took it. Tab takes the
-    /// highlight or the shown tail; Enter with nothing highlighted, Tab with nothing to take and
-    /// Shift+Tab close the list and go on.
+    /// highlight or the shown tail; Enter with nothing highlighted, Tab with nothing to take,
+    /// Shift+Tab and Escape with nothing shown close the list and go on.
     pub fn nav(&mut self, edit: &mut TextEdit, key: Key) -> bool {
         self.sync(edit);
         let open = self.is_open();
@@ -232,7 +244,7 @@ impl PathComplete {
                 self.inline.drop_tail(edit);
                 self.close();
             }
-            Key::Enter | Key::Tab | Key::ShiftTab => {
+            Key::Enter | Key::Tab | Key::ShiftTab | Key::Escape => {
                 self.close();
                 return false;
             }
@@ -294,7 +306,8 @@ impl PathComplete {
     fn refresh(&mut self, edit: &mut TextEdit) {
         let typed = std::mem::take(&mut self.typed);
         let at = self.list_at;
-        self.close();
+        self.shut = false;
+        self.clear();
         self.fill(edit, typed);
         if self.is_open() {
             self.list_at = at;
