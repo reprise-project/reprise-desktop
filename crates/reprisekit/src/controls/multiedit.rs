@@ -1579,6 +1579,7 @@ pub fn draw(
             .map(|p| p.splice(line, edit.caret.col - row.start));
         let line = composed.as_ref().map_or(line, |(t, ..)| t);
         let shown = expand(line, m.tab_cols);
+        let mut row_hl = None;
         let width = text.measure(&shown, m.bold, m.font_px);
         let r = Rect::new(x0, y, width.max(inner.right() - x0).max(1), line_h);
         // From the inset to the box's edge: fitted to its advances, a row's end glyphs would move
@@ -1610,7 +1611,9 @@ pub fn draw(
                 xb += text.measure(" ", m.bold, m.font_px);
             }
             let run = Rect::new(xa, y, (xb - xa).max(0), line_h);
-            c.fill_rect(run.intersect(&clip), cs.hilight);
+            let (bold, px) = (m.bold, m.font_px);
+            let hl = text.highlight(run, &shown, sa..sb, x0, line_r, bold, px, c.scale());
+            hl.fill(c, ink_clip, cs.hilight);
             text.draw_in(
                 c,
                 r,
@@ -1631,6 +1634,8 @@ pub fn draw(
                 cs.hilight_text,
                 m.font_px,
             );
+            text.draw_overhang(c, &hl, line_r.intersect(&ink_clip), cs.hilight_text);
+            row_hl = Some(hl);
         } else {
             text.draw_in(
                 c,
@@ -1661,10 +1666,18 @@ pub fn draw(
                 _ => (edit.caret.col - row.start, true),
             };
             let cx = col_x(col);
-            if caret.shown() && bar_on && cx >= clip.x && cx < clip.right() {
-                c.invert_rect(Rect::new(cx, y, s, line_h));
+            let bar = Rect::new(cx, y, s, line_h);
+            let drawn = cx >= clip.x && cx < clip.right();
+            if caret.shown() && bar_on && drawn {
+                match &row_hl {
+                    Some(hl) => hl.invert_caret(c, bar, clip),
+                    None => c.invert_rect(bar),
+                }
             }
-            caret_bar = Some(Rect::new(cx.clamp(clip.x, clip.right() - s), y, s, line_h));
+            caret_bar = Some(match &row_hl {
+                Some(hl) if drawn => hl.caret(bar, clip),
+                _ => Rect::new(cx.clamp(clip.x, clip.right() - s), y, s, line_h),
+            });
         }
     }
     if caret.focused() {
