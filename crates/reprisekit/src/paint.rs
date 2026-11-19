@@ -160,7 +160,8 @@ impl<'a> Paint<'a> {
 
 /// Draw `edit` left-aligned in `inner` from byte `first` (`edit_first_visible`): selection, caret
 /// and, focused, the canvas' preedit with its `TextSpot`, which a secret field never shows. The
-/// caret sits on the pen's column and inverts what is under it, a glyph's stem included.
+/// caret sits on the pen's column and inverts what is under it, a glyph's stem included. `inner`
+/// sits at least 1 px inside its field's frame: the first glyph's ink may draw there.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_edit(
     c: &mut Canvas,
@@ -198,18 +199,12 @@ pub fn draw_edit(
             inner.x + text.measure(&edit.text[first..i], false, px)
         }
     };
+    let room = Rect::new(inner.x - s, inner.y, inner.width + s, inner.height);
     if edit.text.is_empty() && !edit.cue().is_empty() {
         text.draw(c, inner, edit.cue(), false, cs.gray_text, Align::Left, px);
     } else {
-        text.draw(
-            c,
-            inner,
-            &edit.text[first..],
-            false,
-            cs.button_text,
-            Align::Left,
-            px,
-        );
+        let shown = &edit.text[first..];
+        text.draw_in(c, inner, room, room, shown, false, cs.button_text, px);
     }
     let line = text
         .line(inner, false, px)
@@ -221,14 +216,14 @@ pub fn draw_edit(
         let (x0, x1) = (at(sel.start), at(sel.end).min(inner.right()));
         let run = Rect::new(x0, line.y, x1 - x0, line.height);
         c.fill_rect(run, cs.hilight);
-        text.draw_clipped(
+        text.draw_in(
             c,
             inner,
+            room,
             run,
             &edit.text[first..],
             false,
             cs.hilight_text,
-            Align::Left,
             px,
         );
     }

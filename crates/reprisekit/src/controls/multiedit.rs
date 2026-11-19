@@ -7,7 +7,7 @@ use crate::look::Paint;
 use crate::look::widgets::{draw_edit_frame, draw_hscrollbar, draw_scroll_corner, draw_scrollbar};
 use crate::pointer::Pointer;
 use crate::raster::{Canvas, Rect};
-use crate::text::{Align, TextRenderer};
+use crate::text::TextRenderer;
 use crate::textedit::{
     Caret, Doc, Edit, EditKey, Op, Spot, Surrounding, TextSpot, Undo, index_at_weight, words,
 };
@@ -1558,6 +1558,9 @@ pub fn draw(
     };
     let x0 = inner.x + s - view.left;
     let clip = text_clip(inner, s);
+    // A row's first glyph may ink into the inset left of it, unless the view is scrolled across.
+    let left = if view.left > 0 { clip.x } else { inner.x };
+    let ink_clip = Rect::new(left, clip.y, clip.right() - left, clip.height);
     let mut caret_bar = None;
     let total = edit.row_count(text, m, lay.wrap);
     let caret_row = edit.row_of(text, m, lay.wrap, edit.caret);
@@ -1577,8 +1580,10 @@ pub fn draw(
         let line = composed.as_ref().map_or(line, |(t, ..)| t);
         let shown = expand(line, m.tab_cols);
         let width = text.measure(&shown, m.bold, m.font_px);
-        // Out to the box's edge: fitted to its advances, a row's last glyph moves at scale 2.
         let r = Rect::new(x0, y, width.max(inner.right() - x0).max(1), line_h);
+        // From the inset to the box's edge: fitted to its advances, a row's end glyphs would move
+        // at scale 2.
+        let line_r = Rect::new(x0 - s, y, r.width + s, line_h);
         let row_from = Pos {
             line: li,
             col: row.start,
@@ -1606,35 +1611,35 @@ pub fn draw(
             }
             let run = Rect::new(xa, y, (xb - xa).max(0), line_h);
             c.fill_rect(run.intersect(&clip), cs.hilight);
-            text.draw_clipped(
+            text.draw_in(
                 c,
                 r,
-                clip,
+                line_r,
+                ink_clip,
                 &shown,
                 m.bold,
                 cs.button_text,
-                Align::Left,
                 m.font_px,
             );
-            text.draw_clipped(
+            text.draw_in(
                 c,
                 r,
+                line_r,
                 run.intersect(&clip),
                 &shown,
                 m.bold,
                 cs.hilight_text,
-                Align::Left,
                 m.font_px,
             );
         } else {
-            text.draw_clipped(
+            text.draw_in(
                 c,
                 r,
-                clip,
+                line_r,
+                ink_clip,
                 &shown,
                 m.bold,
                 cs.button_text,
-                Align::Left,
                 m.font_px,
             );
         }

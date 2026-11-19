@@ -900,6 +900,33 @@ impl TextRenderer {
         );
     }
 
+    /// Draw `text` from `rect`'s x on its baseline, clipped to `clip` and `line`, with glyphs kept
+    /// inside `line` as [`TextRenderer::draw_run`] keeps them inside its clip. A row with room left
+    /// of its pen passes that room in `line`, so at scale 2 its first glyph moves only at the
+    /// room's edge. Draws that share `line` place every glyph alike.
+    #[expect(clippy::too_many_arguments)]
+    pub fn draw_in(
+        &self,
+        canvas: &mut Canvas,
+        rect: Rect,
+        line: Rect,
+        clip: Rect,
+        text: &str,
+        bold: bool,
+        color: Color,
+        size_px: u32,
+    ) {
+        let Some(baseline) = self.baseline(rect, bold, size_px) else {
+            return;
+        };
+        let clip = line.intersect(&clip);
+        if !clip.is_empty() {
+            self.draw_line(
+                canvas, rect.x, baseline, clip, line, text, bold, color, size_px,
+            );
+        }
+    }
+
     /// Draw `label` with its access key underlined (`&File` underlines F), the underline `s` px
     /// under the baseline and `s` px thick.
     #[expect(clippy::too_many_arguments)]
