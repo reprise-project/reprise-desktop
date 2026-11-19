@@ -90,16 +90,60 @@ impl Drop for Bus {
 /// A new session bus of the test's own, or None after [`skipped`] when `dbus-daemon` cannot run.
 #[track_caller]
 pub fn bus() -> Option<Bus> {
-    let bus = spawn();
+    let bus = spawn(true);
     if bus.is_none() {
         skipped("no dbus-daemon");
     }
     bus
 }
 
-fn spawn() -> Option<Bus> {
-    let mut child = Command::new("dbus-daemon")
-        .args(["--session", "--nofork", "--print-address"])
+/// A [`bus`] that starts no service: [`bus`] reads this machine's session service files, so a
+/// call to a name one of them covers starts the real service.
+#[track_caller]
+pub fn bus_with_no_services() -> Option<Bus> {
+    let bus = spawn(false);
+    if bus.is_none() {
+        skipped("no dbus-daemon");
+    }
+    bus
+}
+
+/// The session bus configuration without its service folders.
+const NO_SERVICES: &str = r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"#;
+
+/// [`NO_SERVICES`] in the test binary's session folder ([`crate::testsession`]), written once.
+fn no_services() -> Option<&'static std::path::Path> {
+    static FILE: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    let file = FILE.get_or_init(|| {
+        let file = crate::testsession::dir().join("no-services.conf");
+        std::fs::create_dir_all(crate::testsession::dir()).ok()?;
+        std::fs::write(&file, NO_SERVICES).ok()?;
+        Some(file)
+    });
+    file.as_deref()
+}
+
+fn spawn(services: bool) -> Option<Bus> {
+    let mut command = Command::new("dbus-daemon");
+    if services {
+        command.arg("--session");
+    } else {
+        command.arg("--config-file").arg(no_services()?);
+    }
+    let mut child = command
+        .args(["--nofork", "--print-address"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
