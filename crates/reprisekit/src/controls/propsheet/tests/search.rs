@@ -45,6 +45,7 @@ fn a_press_in_the_search_field_takes_the_keyboard_and_edits_report_the_text() {
         "no change, no search"
     );
     edit(&mut s, EditKey::SelectAll);
+    edit(&mut s, EditKey::Paste);
     assert_eq!(s.paste("power\nignored".into()), Event::Search);
     assert_eq!(s.search.text(), "power");
     assert!(matches!(s.focused_edit(), Some(form::FocusedEdit::Line(e)) if e.text == "power"));

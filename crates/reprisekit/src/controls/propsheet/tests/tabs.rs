@@ -385,3 +385,45 @@ fn the_strip_is_a_tab_stop_its_arrows_turn_the_tabs() {
     assert_eq!((s.tabs.open, s.tabs.focused), (0, false));
     assert_eq!(s.open().focus(), Some(0));
 }
+
+fn edit_page() -> Form {
+    Form::new(vec![Item::new(
+        "field",
+        Rect::new(20, 50, 100, 20),
+        Control::Edit {
+            edit: crate::textedit::TextEdit::new(String::new(), false),
+            first: std::cell::Cell::new(0),
+            enabled: true,
+        },
+    )])
+}
+
+#[test]
+fn a_paste_lands_on_the_page_its_paste_key_was_pressed_on_after_the_tab_turns() {
+    let page = edit_page;
+    let mut s = PropSheet::new(&["One", "Two"], vec![page(), page()], (361, 424));
+    assert!(s.focus_control("field"));
+    s.key(form::Key::Edit(EditKey::Paste), None);
+    assert!(s.open_tab(1));
+    assert!(s.focus_control("field"));
+    assert_eq!(
+        s.paste("late".into()),
+        Event::Page(0, form::Event::Changed("field"))
+    );
+    assert_eq!(s.pages[0].edit_text("field"), "late");
+    assert_eq!(s.pages[1].edit_text("field"), "");
+    assert_eq!(s.tabs.open, 1, "the paste turns no tab");
+}
+
+#[test]
+fn a_paste_asked_before_its_page_is_rebuilt_lands_in_the_rebuilt_field() {
+    let mut s = PropSheet::new(&["One"], vec![edit_page()], (361, 424));
+    assert!(s.focus_control("field"));
+    s.key(form::Key::Edit(EditKey::Paste), None);
+    s.set_page(0, edit_page());
+    assert_eq!(
+        s.paste("late".into()),
+        Event::Page(0, form::Event::Changed("field"))
+    );
+    assert_eq!(s.pages[0].edit_text("field"), "late");
+}

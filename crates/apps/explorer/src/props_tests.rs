@@ -1299,6 +1299,50 @@ fn the_sheets_fields_take_the_clipboard() {
     assert_eq!(left, None, "no clipboard for another key");
 }
 
+#[test]
+fn a_late_paste_lands_in_the_name_field_its_ctrl_v_was_pressed_in_after_a_tab() {
+    fn sheet(ex: &crate::Explorer) -> &reprisekit::controls::propsheet::PropSheet {
+        &ex.props.as_ref().expect("the sheet").sheet
+    }
+    use crate::place::Place;
+    use reprisekit::controls::filesheet::NAME;
+    use reprisekit::textedit::keysym;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, "a").expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.open_properties(&f, "a.txt", "a.txt", &mut ctx);
+    let p = ex.props.as_mut().expect("the sheet");
+    assert!(p.sheet.focus_control(NAME));
+    let key = |sym: u32, ctrl: bool| {
+        repriseapp::Event::Key(repriseapp::KeyInput {
+            sym,
+            utf8: None,
+            mods: repriseapp::Mods {
+                ctrl,
+                ..Default::default()
+            },
+            edit: reprisekit::textedit::key_for(sym, ctrl, false, None),
+        })
+    };
+    assert!(ex.props_event(key(u32::from(b'v'), true), &mut ctx).paste);
+    ex.props_event(key(keysym::TAB, false), &mut ctx);
+    let tabbed = sheet(&ex).open().focus();
+    assert_ne!(
+        tabbed,
+        sheet(&ex).open().index_of(NAME),
+        "Tab left the name field"
+    );
+    ex.props_event(repriseapp::Event::Pasted("XPASTE".into()), &mut ctx);
+    assert_eq!(sheet(&ex).pages[0].edit_text(NAME), "XPASTE");
+    assert_eq!(
+        sheet(&ex).open().focus(),
+        tabbed,
+        "the paste moves no focus"
+    );
+}
+
 /// Change Icon... opens on the folder's icon; its OK hands the pick to the
 /// sheet, which lights Apply, and Apply writes the folder's .directory.
 /// Restore Defaults and OK then take the icon off again.

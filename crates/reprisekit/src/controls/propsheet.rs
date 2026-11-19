@@ -119,6 +119,15 @@ pub struct PropSheet {
     pub search: SearchField,
     /// The field has the keyboard: neither the list (`tabs.focused`) nor the page does.
     pub search_focused: bool,
+    /// Where the last paste key was pressed ([`PropSheet::paste`]).
+    paste_to: Option<PasteTo>,
+}
+
+/// The search field, or the page whose edit a paste was asked in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PasteTo {
+    Search,
+    Page(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,6 +225,7 @@ impl PropSheet {
             hscroll: PageScroll::across(),
             search: SearchField::default(),
             search_focused: false,
+            paste_to: None,
         };
         sheet.pages = pages.into_iter().map(|p| sheet.dress(p, false)).collect();
         sheet
@@ -253,6 +263,7 @@ impl PropSheet {
             hscroll: PageScroll::across(),
             search: SearchField::default(),
             search_focused: false,
+            paste_to: None,
         };
         sheet.pages = pages.into_iter().map(|p| sheet.dress(p, false)).collect();
         sheet
@@ -320,8 +331,9 @@ impl PropSheet {
     }
 
     /// Replace page `i` with `page`, built in client coordinates: it gains the
-    /// sheet's buttons, Apply as it stood on the page it replaces. The focus is
-    /// `page`'s own, none while the strip or the search field holds the keyboard.
+    /// sheet's buttons, Apply as it stood on the page it replaces, and the field a paste was
+    /// asked in there. The focus is `page`'s own, none while the strip or the search field holds
+    /// the keyboard.
     pub fn set_page(&mut self, i: usize, page: Form) {
         let Some(old) = self.pages.get(i) else {
             return;
@@ -333,7 +345,9 @@ impl PropSheet {
             )
         };
         let (apply, restore) = (lit(APPLY), old.item(RESTORE).map(|_| lit(RESTORE)));
-        self.pages[i] = self.dress(page, apply);
+        let mut page = self.dress(page, apply);
+        page.carry_paste(old);
+        self.pages[i] = page;
         if let Some(on) = restore {
             self.set_restore(i, true);
             self.pages[i].set_enabled(RESTORE, on);

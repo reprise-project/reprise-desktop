@@ -22,10 +22,71 @@ fn edit_text_reads_an_edit_and_is_empty_for_anything_else() {
 #[test]
 fn a_paste_into_a_field_takes_its_first_line_only() {
     let mut f = edit_form();
+    f.key(Key::Edit(EditKey::Paste));
     assert_eq!(f.paste("pw\nsecond".into()), Event::Changed("find"));
     assert!(matches!(&f.items[1].control, Control::Edit { edit, .. } if edit.text == "pw"));
     f.focus_id("ok");
+    f.key(Key::Edit(EditKey::Paste));
     assert_eq!(f.paste("x".into()), Event::None, "a button takes no paste");
+    assert_eq!(f.edit_text("find"), "pw");
+}
+
+#[test]
+fn a_paste_lands_in_the_field_its_paste_key_was_pressed_in_after_the_focus_moves() {
+    let mut f = edit_form();
+    f.key(Key::Edit(EditKey::Paste));
+    f.key(Key::Tab { back: false });
+    assert_eq!(f.paste("late".into()), Event::Changed("find"));
+    assert_eq!(f.edit_text("find"), "late");
+    assert_eq!(f.focus, Some(2), "the paste leaves the focus on OK");
+}
+
+#[test]
+fn a_form_that_heard_no_paste_key_takes_no_paste() {
+    let mut f = edit_form();
+    assert_eq!(f.paste("x".into()), Event::None);
+    assert_eq!(f.edit_text("find"), "");
+}
+
+#[test]
+fn a_paste_whose_field_left_the_form_is_dropped() {
+    let mut f = edit_form();
+    f.key(Key::Edit(EditKey::Paste));
+    f.items[1] = Item::new(
+        "other",
+        Rect::new(80, 10, 100, 20),
+        Control::Edit {
+            edit: TextEdit::new(String::new(), false),
+            first: Cell::new(0),
+            enabled: true,
+        },
+    );
+    assert_eq!(f.paste("x".into()), Event::None);
+    assert_eq!(f.edit_text("other"), "");
+}
+
+#[test]
+fn a_paste_asked_before_a_rebuild_lands_in_the_rebuilt_field() {
+    let mut old = edit_form();
+    old.key(Key::Edit(EditKey::Paste));
+    old.key(Key::Tab { back: false });
+    let mut items = edit_form().items;
+    items.insert(
+        0,
+        Item::new(
+            "hint",
+            Rect::new(10, 0, 60, 13),
+            Control::Label {
+                text: "Hint".into(),
+                enabled: true,
+                align: Align::Left,
+            },
+        ),
+    );
+    let mut f = Form::new(items);
+    f.carry(&old);
+    assert_eq!(f.paste("late".into()), Event::Changed("find"));
+    assert_eq!(f.edit_text("find"), "late");
 }
 
 /// Alt+letter is an access key even while a field has the focus
@@ -212,6 +273,7 @@ fn field(f: &Form) -> (&TextEdit, usize) {
 fn a_drag_over_a_field_drops_its_text_at_the_drop_caret() {
     let t = tr();
     let mut f = edit_form();
+    f.key(Key::Edit(EditKey::Paste));
     f.paste("hello world".into());
     f.set_focus(None);
     let inner_x = 80 + crate::classic::widgets::FIELD_PAD;
@@ -261,6 +323,7 @@ fn a_read_only_field_takes_the_focus_and_copies_but_no_typing_paste_or_drop() {
     let mut f = read_only_form("3F:9A");
     assert_eq!(f.focus, Some(1), "it still takes the focus");
     assert_eq!(f.key(Key::Char('x')), Event::Redraw);
+    f.key(Key::Edit(EditKey::Paste));
     assert_eq!(f.paste("pasted".into()), Event::Redraw);
     assert_eq!(
         f.key(Key::Edit(EditKey::Home { select: true })),
@@ -315,6 +378,7 @@ fn a_drag_resting_at_a_fields_edge_scrolls_it_without_moving_the_caret() {
     let t = tr();
     let theme = Theme::default();
     let mut f = edit_form();
+    f.key(Key::Edit(EditKey::Paste));
     f.paste("abcdefghijklmnopqrstuvwxyz0123456789".into());
     let mut c = Canvas::new(200, 80);
     draw(&mut c, &t, &classic_paint(&theme.colors, 1), &f, true, PX);
@@ -354,6 +418,7 @@ fn the_drop_caret_is_a_bar_where_the_text_would_land() {
     let theme = Theme::default();
     let cs = &theme.colors;
     let mut f = edit_form();
+    f.key(Key::Edit(EditKey::Paste));
     f.paste("hello world".into());
     f.set_focus(None);
     let inner_x = 80 + crate::classic::widgets::FIELD_PAD;

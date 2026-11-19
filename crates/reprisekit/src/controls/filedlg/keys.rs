@@ -403,6 +403,7 @@ impl FileDlg {
         };
         self.focus = Focus::Shell;
         self.shell.edit = Some((i, TextEdit::rename(&e.name, e.is_dir)));
+        self.renames += 1;
         Event::Redraw
     }
 

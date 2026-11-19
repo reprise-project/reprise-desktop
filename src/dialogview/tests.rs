@@ -634,3 +634,38 @@ fn a_browse_dialog_opens_over_run_on_runs_output_past_a_place_kept_on_another() 
     let want = crate::window::centre_on(r, (f.width, f.height), area);
     assert_eq!((f.x, f.y), want, "centred over Run inside TEST-2");
 }
+
+#[test]
+fn ctrl_v_in_a_form_field_takes_a_paste_reprise_answers_at_once() {
+    use crate::dialog::{FormDialog, Kind, Placement, Style};
+    use crate::dialogview::DialogKey;
+    use reprisekit::controls::form::{Control, Form, Item};
+    let mut h = Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let form = Form::new(vec![Item::new(
+        "field",
+        Rect::new(0, 0, 100, 20),
+        Control::Edit {
+            edit: crate::textedit::TextEdit::new(String::new(), false),
+            first: std::cell::Cell::new(0),
+            enabled: true,
+        },
+    )]);
+    let form = FormDialog::from_client((120, 40), form, Kind::EndSession);
+    h.state.open_dialog(Dialog::new(
+        "Paste",
+        Style::Form(Box::new(form)),
+        Placement::Center,
+    ));
+    h.state.clip_copy("own");
+    h.state.dialog_key(&DialogKey {
+        syms: vec![crate::keys::KEY_v],
+        mods: crate::keys::MOD_CTRL,
+        edit: Some(crate::textedit::EditKey::Paste),
+    });
+    let d = &h.state.dialogs.views.last().expect("the box").dialog;
+    let Style::Form(f) = &d.style else {
+        unreachable!("a form dialog")
+    };
+    assert_eq!(f.form.edit_text("field"), "own");
+}

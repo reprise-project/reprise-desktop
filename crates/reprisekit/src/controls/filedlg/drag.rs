@@ -1,6 +1,6 @@
 //! Drags, drops and pastes onto the File name field.
 
-use super::{FileDlg, Focus, Hit};
+use super::{FileDlg, Focus, Hit, NamePaste};
 use crate::classic::widgets::{LINE_H, edit_first_visible};
 use crate::raster::Rect;
 use crate::text::TextRenderer;
@@ -49,18 +49,30 @@ impl FileDlg {
         true
     }
 
-    /// The clipboard's text into the rename box while it is open (no `/`), else into File name
-    /// while it has the focus, its first line as [`TextEdit::paste`] takes it. `true` when the
-    /// field changed.
+    /// Notes the field the paste key was pressed in, [`FileDlg::focused_edit`], as where the
+    /// clipboard text it asks for goes.
+    pub fn ask_paste(&mut self) {
+        self.paste_to = if self.shell.edit.is_some() {
+            Some(NamePaste::Rename(self.renames))
+        } else {
+            (self.focus == Focus::FileName).then_some(NamePaste::FileName)
+        };
+    }
+
+    /// The clipboard's text into the field its paste key was pressed in ([`FileDlg::ask_paste`]):
+    /// that rename box while it is still open (no `/`), or File name, its first line as
+    /// [`TextEdit::paste`] takes it. `true` when the field changed.
     pub fn paste(&mut self, text: &str) -> bool {
-        if let Some((_, ed)) = &mut self.shell.edit {
-            return ed.paste(text, &['/']);
+        match self.paste_to {
+            Some(NamePaste::Rename(n)) if n == self.renames => {
+                (self.shell.edit.as_mut()).is_some_and(|(_, ed)| ed.paste(text, &['/']))
+            }
+            Some(NamePaste::FileName) if self.filename.paste(text, &[]) => {
+                self.typed = self.filename.text.clone();
+                true
+            }
+            _ => false,
         }
-        if self.focus != Focus::FileName || !self.filename.paste(text, &[]) {
-            return false;
-        }
-        self.typed = self.filename.text.clone();
-        true
     }
 
     /// A drag dropped `line` on File name: it goes in at the drop caret as

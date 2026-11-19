@@ -171,6 +171,7 @@ fn f2_renames_the_selected_entry_in_place() {
     );
     let typed = |d: &mut FileDlg, k| d.key(R, k, None, Mods::default());
     typed(&mut d, form::Key::Edit(EditKey::Insert("n".into())));
+    d.ask_paste();
     assert!(d.paste("ote/s"), "a paste goes into the box");
     match typed(&mut d, form::Key::Enter) {
         Event::Rename { from, to } => {

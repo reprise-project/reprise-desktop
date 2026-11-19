@@ -506,6 +506,7 @@ mod tests {
         let mut d = dialog();
         for id in ["key", "confirm"] {
             d.form.focus_id(id);
+            d.form.ask_paste();
             let ev = d.form.paste("correct horse\n".into());
             d.event(ev);
         }

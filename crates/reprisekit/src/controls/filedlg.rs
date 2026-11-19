@@ -458,6 +458,18 @@ pub struct FileDlg {
     drawn: Drawn,
     /// How its 100% layout grows with the text ([`FileDlg::set_text`]).
     text: TextUnits,
+    /// Rename boxes opened so far, which tells a paste's box from a later one.
+    renames: u64,
+    /// Where the last paste key was pressed ([`FileDlg::paste`]).
+    paste_to: Option<NamePaste>,
+}
+
+/// The field a paste was asked in: a rename box, by [`FileDlg`]'s `renames` when it opened, or
+/// File name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NamePaste {
+    Rename(u64),
+    FileName,
 }
 
 /// [`FileDlg::kept_view`]: the view a relist of the folder shown carries over.
@@ -587,6 +599,8 @@ impl FileDlg {
             expected: None,
             drawn: Drawn::default(),
             text: TextUnits::ONE,
+            renames: 0,
+            paste_to: None,
             fields,
         }
     }
@@ -693,6 +707,7 @@ impl FileDlg {
         let mut ed = TextEdit::rename(typed, true);
         ed.select_all();
         self.shell.edit = Some((i, ed));
+        self.renames += 1;
         true
     }
 

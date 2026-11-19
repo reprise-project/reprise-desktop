@@ -186,6 +186,9 @@ impl Form {
     }
 
     pub fn key(&mut self, key: Key) -> Event {
+        if key == Key::Edit(EditKey::Paste) {
+            self.ask_paste();
+        }
         // A control greyed while focused keeps the focus but takes no key: a second Enter on a
         // button greyed by its own press does nothing until the host lights it again.
         if self.focus.is_some_and(|i| !self.items[i].focusable()) {

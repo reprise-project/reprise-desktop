@@ -682,9 +682,8 @@ impl Props {
     }
 
     pub fn paste(&mut self, t: String) -> Outcome {
-        let ev = self.sheet.open_mut().paste(t);
-        let page = self.sheet.tabs.open;
-        self.event(propsheet::Event::Page(page, ev), |_| Err(String::new()))
+        let ev = self.sheet.paste(t);
+        self.event(ev, |_| Err(String::new()))
     }
 }
 
