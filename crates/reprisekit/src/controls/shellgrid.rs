@@ -247,6 +247,7 @@ pub(crate) fn draw_tile(
             px as i32 + u.len(3) * s,
         );
         let shown = text.ellipsize(line, avail, false, px);
+        let r = text.ink_box(r, &shown, false, px, c.scale());
         text.draw(c, r, &shown, false, fg, Align::Left, px);
     }
     if ring {
@@ -310,6 +311,7 @@ pub(crate) fn draw_thumb(
             label.width,
             px as i32 + u.len(3) * s,
         );
+        let r = text.ink_box(r, line, false, px, c.scale());
         text.draw(c, r, line, false, fg, Align::Center, px);
     }
     if ring {
@@ -813,6 +815,59 @@ mod tests {
             "the overlay's own bottom row is black"
         );
         assert_ne!(bottom(lay.cells[0]), black);
+    }
+
+    /// A tile's or thumbnail's label lines keep their ink at every text size, at scale 2 drawn by
+    /// the paint and by the canvas: brackets and `|` hang past the font's descent.
+    #[test]
+    fn the_labels_keep_their_ink_at_every_text_size_and_scale() {
+        use crate::paint::Paint;
+        crate::pins::fonts();
+        let mut cut = Vec::new();
+        for mode in [Mode::Tiles, Mode::Thumbnails] {
+            let mut sv = iconed(2, mode);
+            sv.entries[0].name = "Quarterly [final]|y.txt".into();
+            sv.entries[0].detail = vec!["Text [jy]|".into(), "4 KB".into()];
+            sv.entries[1].name = "Pictures (jpg)|".into();
+            sv.selection.set_only(Some(1));
+            for pct in [100, 125, 150, 175, 200] {
+                let theme = Theme::default().with_text_size(pct);
+                let text = TextRenderer::load(&theme.fonts);
+                let r = Rect::new(0, 0, 900, 600);
+                let lay = layout(&sv, r, &theme.controls());
+                let px = theme.fonts.size_px;
+                for (s, by_canvas) in [(1, false), (2, false), (2, true)] {
+                    let (ps, scale) = if by_canvas { (1, s) } else { (s, 1) };
+                    let p = Paint {
+                        s: ps,
+                        ..theme.paint()
+                    };
+                    let mut c =
+                        Canvas::with_scale((r.width * ps) as u32, (r.height * ps) as u32, scale);
+                    let ((), cuts) = crate::pins::clipped_ink(|| {
+                        crate::controls::shellview::draw(
+                            &mut c,
+                            &text,
+                            &p,
+                            &sv,
+                            &lay,
+                            None,
+                            px * ps as u32,
+                        );
+                    });
+                    cut.extend(
+                        cuts.into_iter()
+                            .filter(|c| c.rows > 0)
+                            .map(|c| (mode, pct, s, by_canvas, c.text, c.rows)),
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            cut,
+            Vec::new(),
+            "(mode, text size, scale, by the canvas, line, ink rows cut)"
+        );
     }
 
     /// `sv` laid out and drawn in Classic at `pct` text size, with the size's controls and font.

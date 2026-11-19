@@ -462,9 +462,10 @@ pub fn draw_tile(
     if !tile.tag.is_empty() {
         let w = text.measure(tile.tag, false, px);
         let tag_x = right - w;
+        let tr = Rect::new(tag_x, r.y + name_y, w, line_h);
         text.draw(
             c,
-            Rect::new(tag_x, r.y + name_y, w, line_h),
+            text.ink_box(tr, tile.tag, false, px, c.scale()),
             tile.tag,
             false,
             ink,
@@ -474,9 +475,10 @@ pub fn draw_tile(
         title_right = tag_x - TAG_GAP;
     }
     let title = text.ellipsize(tile.title, title_right - tx, true, px);
+    let tr = Rect::new(tx, r.y + name_y, title_right - tx, line_h);
     text.draw(
         c,
-        Rect::new(tx, r.y + name_y, title_right - tx, line_h),
+        text.ink_box(tr, &title, true, px, c.scale()),
         &title,
         true,
         ink,
@@ -484,9 +486,10 @@ pub fn draw_tile(
         px,
     );
     let caption = text.ellipsize(tile.caption, right - tx, false, px);
+    let cr = Rect::new(tx, r.y + caption_y, right - tx, line_h);
     text.draw(
         c,
-        Rect::new(tx, r.y + caption_y, right - tx, line_h),
+        text.ink_box(cr, &caption, false, px, c.scale()),
         &caption,
         false,
         ink,
@@ -809,6 +812,47 @@ mod tests {
                 "{pct}%: the caption ends in its grown line"
             );
         }
+    }
+
+    /// A tile's title, tag and caption keep their ink at every text size and at scale 2: bold
+    /// "Memory" and a caption's brackets reach past the grown 13 px line.
+    #[test]
+    fn tiles_keep_their_ink_at_every_text_size_and_scale() {
+        use crate::theme::text_px;
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &Theme::default().colors;
+        let tile = Tile {
+            icon: None,
+            title: "Memory",
+            tag: "(jy)|",
+            caption: "2.0 GB/8.0 GB (25%) [Qj]|",
+            greyed: false,
+        };
+        let mut cut = Vec::new();
+        for pct in [100, 125, 150, 175, 200] {
+            let px = text_px(11, pct);
+            let u = TextUnits::new(px, 11);
+            let r = Rect::new(0, 0, u.len(400), u.len(TILE_H));
+            for s in [1, 2] {
+                for selected in [false, true] {
+                    let mut c = Canvas::with_scale(r.width as u32, r.height as u32, s);
+                    let ((), cuts) = crate::pins::clipped_ink(|| {
+                        draw_tile(&mut c, &text, cs, r, &tile, selected, px, u);
+                    });
+                    cut.extend(
+                        cuts.into_iter()
+                            .filter(|c| c.rows > 0)
+                            .map(|c| (pct, s, selected, c.text, c.rows)),
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            cut,
+            Vec::new(),
+            "(text size, scale, selected, line, ink rows cut)"
+        );
     }
 
     #[test]

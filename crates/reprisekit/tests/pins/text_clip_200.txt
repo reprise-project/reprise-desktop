@@ -264,8 +264,6 @@ reprisekit-gallery.png "Collapsed Tasks" x1
 reprisekit-gallery.png "Combo Drop" x1
 reprisekit-gallery.png "Computer with..." x1
 reprisekit-gallery.png "Computer..." x1
-reprisekit-gallery.png "Connected" x1
-reprisekit-gallery.png "Connected, battery 80%" x1
 reprisekit-gallery.png "Ctrl+Alt+" x1
 reprisekit-gallery.png "Date Mo..." x1
 reprisekit-gallery.png "Default" x1
@@ -277,17 +275,14 @@ reprisekit-gallery.png "File Folder" x4
 reprisekit-gallery.png "File and Folder Tasks" x1
 reprisekit-gallery.png "File:" x1
 reprisekit-gallery.png "Focused" x1
-reprisekit-gallery.png "Game controller" x1
 reprisekit-gallery.png "Group Box" x1
 reprisekit-gallery.png "Group" x1
-reprisekit-gallery.png "Headphones" x1
 reprisekit-gallery.png "Help" x1
 reprisekit-gallery.png "Hot" x1
 reprisekit-gallery.png "Image Editor" x1
 reprisekit-gallery.png "Image Viewer" x1
 reprisekit-gallery.png "Input" x1
 reprisekit-gallery.png "JPEG Im..." x1
-reprisekit-gallery.png "JPEG Image" x1
 reprisekit-gallery.png "Line 2: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Line 3: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Line 4: the quick brown fox jumps over the lazy dog" x1
@@ -296,15 +291,13 @@ reprisekit-gallery.png "Line 6: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Make New Folder" x1
 reprisekit-gallery.png "Message Text" x2
 reprisekit-gallery.png "Music" x2
-reprisekit-gallery.png "My Music" x6
-reprisekit-gallery.png "My Pictures" x5
-reprisekit-gallery.png "My" x1
+reprisekit-gallery.png "My Music" x3
+reprisekit-gallery.png "My Pictures" x3
 reprisekit-gallery.png "Name" x2
 reprisekit-gallery.png "New Folder" x2
 reprisekit-gallery.png "New Text Document.txt" x1
 reprisekit-gallery.png "None" x1
 reprisekit-gallery.png "Normal" x4
-reprisekit-gallery.png "Not connected" x2
 reprisekit-gallery.png "Notepad" x2
 reprisekit-gallery.png "Open" x1
 reprisekit-gallery.png "Open:" x1
@@ -334,7 +327,6 @@ reprisekit-gallery.png "Scroll Lit" x1
 reprisekit-gallery.png "Search" x1
 reprisekit-gallery.png "Selected" x4
 reprisekit-gallery.png "Size" x2
-reprisekit-gallery.png "Speaker" x1
 reprisekit-gallery.png "Spin" x1
 reprisekit-gallery.png "Stuff" x1
 reprisekit-gallery.png "Super+Shift+B" x1
@@ -344,13 +336,11 @@ reprisekit-gallery.png "Text Docu..." x1
 reprisekit-gallery.png "Trackbar" x1
 reprisekit-gallery.png "Type" x2
 reprisekit-gallery.png "Window Text" x4
-reprisekit-gallery.png "hills.jpg" x4
+reprisekit-gallery.png "hills.jpg" x2
 reprisekit-gallery.png "notepad readme.txt" x2
 reprisekit-gallery.png "notes.txt" x3
 reprisekit-gallery.png "report" x1
-reprisekit-gallery.png "report...." x1
 reprisekit-gallery.png "report.odt" x4
 reprisekit-gallery.png "say nihao to all" x2
-reprisekit-gallery.png "setup.e..." x1
 reprisekit-gallery.png "setup.exe" x3
 reprisekit-gallery.png "user@repris..." x1
