@@ -116,13 +116,15 @@ impl Paint {
         self.saveas = Some(dlg);
     }
 
-    /// Runs `then` once the changes are saved or let go; asks first when there are changes.
+    /// Runs `then` once the changes are saved or let go; asks first when there are changes. Open
+    /// closes when it asks, since the prompt's Yes may open Save As.
     pub(crate) fn confirm(&mut self, then: Then) -> Reply {
         self.commit_text();
         self.doc.finish();
         if !self.doc.dirty {
             return self.run(then);
         }
+        self.open = None;
         let name = self
             .path
             .as_ref()
@@ -155,6 +157,7 @@ impl Paint {
                 self.open_dialog_files();
                 Reply::redraw_all()
             }
+            Then::Pick(path) => self.open_picked(path),
             Then::Quit => Reply {
                 quit: true,
                 ..Reply::none()
@@ -177,6 +180,7 @@ impl Paint {
                 Reply::redraw_all()
             }
             (Prompt::SaveChanges(then), Some(1)) => {
+                self.doc.finish();
                 self.doc.dirty = false;
                 self.forget_rescued();
                 self.run(then)
@@ -208,7 +212,10 @@ impl Paint {
         Kind::of(&path).map(|kind| (path, kind))
     }
 
+    /// Writes the picture as shown: a paste that landed under the box that asked is laid down
+    /// first.
     fn write(&mut self, path: &Path, kind: Kind) -> bool {
+        self.doc.finish();
         match file::save(&self.doc.img, path, kind, self.quality) {
             Ok(()) => {
                 self.doc.dirty = false;
@@ -349,14 +356,24 @@ impl Paint {
         let Some(dlg) = self.open.as_mut() else {
             return Reply::none();
         };
-        let path = match (self.host).drive(dlg, &ev, &self.dialog_text, &self.forms, ctx) {
-            Driven::Reply(r) => return *r,
-            Driven::Picked(path) => path,
+        let driven = (self.host).drive(dlg, &ev, &self.dialog_text, &self.forms, ctx);
+        self.open_driven(driven)
+    }
+
+    /// A pick asks to save first when the picture changed while Open was up (a paste answered
+    /// late).
+    pub(crate) fn open_driven(&mut self, driven: Driven) -> Reply {
+        match driven {
+            Driven::Reply(r) => *r,
+            Driven::Picked(path) => self.confirm(Then::Pick(path)),
             Driven::Cancelled => {
                 self.open = None;
-                return Reply::redraw_all();
+                Reply::redraw_all()
             }
-        };
+        }
+    }
+
+    fn open_picked(&mut self, path: PathBuf) -> Reply {
         match file::load(&path) {
             Ok(img) => {
                 self.doc = Doc::new(img);
@@ -365,7 +382,6 @@ impl Paint {
                 self.zoom = 1;
                 self.hscroll.top = 0;
                 self.vscroll.top = 0;
-                self.hold_scroll(ctx);
             }
             Err(e) => {
                 self.error(tr!(
@@ -382,7 +398,12 @@ impl Paint {
         let Some(dlg) = self.saveas.as_mut() else {
             return Reply::none();
         };
-        let path = match (self.host).drive(dlg, &ev, &self.dialog_text, &self.forms, ctx) {
+        let driven = (self.host).drive(dlg, &ev, &self.dialog_text, &self.forms, ctx);
+        self.saveas_driven(driven)
+    }
+
+    pub(crate) fn saveas_driven(&mut self, driven: Driven) -> Reply {
+        let path = match driven {
             Driven::Reply(r) => return *r,
             Driven::Picked(path) => path,
             Driven::Cancelled => {

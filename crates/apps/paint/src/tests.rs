@@ -1,6 +1,7 @@
 use super::*;
 use crate::bitmap::BLACK;
 use crate::view::Lay;
+use repriseapp::filedlg::Driven;
 use repriseapp::{BTN_LEFT, BTN_RIGHT, KeyInput, Mods, PointerInput};
 use reprisekit::controls::palette;
 use reprisekit::controls::toolbox::{self, Hit};
@@ -560,6 +561,102 @@ fn the_background_points_the_config_at_the_picture() {
     );
     assert!(!text.contains("slideshow"), "{text}");
     assert!(text.contains("style = \"fill\""), "{text}");
+}
+
+/// A 2x1 black picture as the clipboard gives it.
+fn black_png() -> Vec<u8> {
+    file::encode(&Bitmap::new(2, 1, BLACK), file::Kind::Png, 100).unwrap()
+}
+
+/// A paste is answered whenever the clipboard's owner writes it, so it can land while a box over
+/// the picture is up.
+#[test]
+fn a_picture_pasted_under_open_asks_to_save_before_the_pick_replaces_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let picked = dir.path().join("picked.png");
+    file::save(&Bitmap::new(3, 3, WHITE), &picked, file::Kind::Png, 100).unwrap();
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.command(menu::title::FILE, menu::row::OPEN, &ctx);
+    assert!(p.open.is_some(), "Open is up at once over a clean picture");
+    p.event(MAIN, Event::PastedImage(black_png()), &mut ctx);
+
+    p.open_driven(Driven::Picked(picked.clone()));
+    assert_eq!(
+        p.doc.img.get(0, 0),
+        Some(BLACK),
+        "the pick leaves the paste"
+    );
+    let (what, _) = prompt_up(&p).expect("Save changes is up");
+    assert_eq!(what, Prompt::SaveChanges(Then::Pick(picked.clone())));
+    assert!(p.open.is_none(), "Open is not left up beside the prompt");
+
+    p.prompt.close();
+    p.answered(what, Some(1));
+    assert_eq!(
+        p.path.as_deref(),
+        Some(picked.as_path()),
+        "No opens the pick"
+    );
+    assert_eq!((p.doc.img.w, p.doc.img.h), (3, 3));
+}
+
+#[test]
+fn no_on_save_changes_lets_go_of_a_picture_pasted_under_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let picked = dir.path().join("picked.png");
+    file::save(&Bitmap::new(3, 3, WHITE), &picked, file::Kind::Png, 100).unwrap();
+    let mut ctx = test_ctx();
+    let mut p = changed_picture(dir.path(), &mut ctx);
+    p.command(menu::title::FILE, menu::row::OPEN, &ctx);
+    let (what, _) = prompt_up(&p).expect("Save changes is up");
+    p.event(MAIN, Event::PastedImage(black_png()), &mut ctx);
+    p.prompt.close();
+    p.answered(what, Some(1));
+
+    p.open_driven(Driven::Picked(picked.clone()));
+    assert!(
+        prompt_up(&p).is_none(),
+        "No was the answer for the paste too"
+    );
+    assert_eq!(p.path.as_deref(), Some(picked.as_path()));
+}
+
+#[test]
+fn a_picture_pasted_under_save_as_is_in_the_file_saved_before_quitting() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    pick(&mut p, &mut ctx, Tool::Pencil);
+    drag(&mut p, &mut ctx, (1, 1), (6, 1), BTN_LEFT);
+    p.event(MAIN, Event::CloseRequest, &mut ctx);
+    let (what, _) = prompt_up(&p).expect("Save changes is up");
+    p.prompt.close();
+    p.answered(what, Some(0));
+    assert!(
+        p.saveas.is_some(),
+        "Yes on an untitled picture opens Save As"
+    );
+    p.event(MAIN, Event::PastedImage(black_png()), &mut ctx);
+
+    let path = dir.path().join("drawing.png");
+    assert!(p.saveas_driven(Driven::Picked(path.clone())).quit);
+    let saved = file::load(&path).unwrap();
+    assert_eq!(saved.get(0, 0), Some(BLACK), "the paste is saved");
+    assert_eq!(saved.get(3, 1), Some(BLACK), "with the stroke");
+}
+
+#[test]
+fn a_picture_pasted_under_flip_and_rotate_is_flipped_with_the_rest() {
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.doc.img = Bitmap::new(10, 4, WHITE);
+    p.open_dialog(dialogs::Kind::Flip);
+    p.event(MAIN, Event::PastedImage(black_png()), &mut ctx);
+    p.event(DIALOG, key(0xff0d, false), &mut ctx);
+    assert!(p.dialog.is_none());
+    assert_eq!(p.doc.img.get(9, 0), Some(BLACK), "the paste is flipped");
+    assert_eq!(p.doc.img.get(0, 0), Some(WHITE));
 }
 
 #[test]

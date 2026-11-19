@@ -65,10 +65,12 @@ enum Prompt {
 }
 
 /// What runs once the picture is saved or its changes are let go.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Then {
     New,
     Open,
+    /// A file picked in Open.
+    Pick(PathBuf),
     Quit,
     Background,
 }
