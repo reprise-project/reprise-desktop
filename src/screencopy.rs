@@ -191,6 +191,9 @@ pub trait ScreencopyHandler {
     /// Fill `screencopy` now or keep it for the output's next frame; a
     /// dropped one fails.
     fn screencopy_frame(&mut self, screencopy: Screencopy);
+
+    /// The client destroyed `frame`, or went: a copy of it still kept is dropped.
+    fn screencopy_gone(&mut self, frame: &ZwlrScreencopyFrameV1);
 }
 
 impl<D> Dispatch2<ZwlrScreencopyFrameV1, D> for FrameState
@@ -260,6 +263,10 @@ where
             submitted: false,
         });
     }
+
+    fn destroyed(&self, state: &mut D, _client: ClientId, frame: &ZwlrScreencopyFrameV1) {
+        state.screencopy_gone(frame);
+    }
 }
 
 #[derive(Clone)]
@@ -306,6 +313,11 @@ impl Screencopy {
 
     pub fn is_alive(&self) -> bool {
         self.frame.is_alive()
+    }
+
+    /// Whether this is a copy of `frame`.
+    pub fn is(&self, frame: &ZwlrScreencopyFrameV1) -> bool {
+        self.frame == *frame
     }
 
     pub fn client(&self) -> Option<ClientId> {
