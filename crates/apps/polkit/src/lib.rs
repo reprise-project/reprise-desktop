@@ -515,6 +515,7 @@ mod tests {
     fn type_ok(app: &mut PolkitApp, text: &str) {
         let a = app.active.as_mut().expect("a box is open");
         a.dialog.form.focus_id("password");
+        a.dialog.form.ask_paste();
         let ev = a.dialog.form.paste(text.into());
         a.dialog.event(ev);
         let out = a.dialog.event(reprisekit::controls::form::Event::Default);
@@ -528,6 +529,7 @@ mod tests {
     /// The tag OK carries for `text` typed into the field; the submit goes nowhere.
     fn ok_tag(app: &mut PolkitApp, text: &str) -> Tag {
         let d = &mut app.active.as_mut().expect("a box is open").dialog;
+        d.form.ask_paste();
         let ev = d.form.paste(text.into());
         d.event(ev);
         match d.event(reprisekit::controls::form::Event::Default) {
@@ -987,6 +989,7 @@ mod tests {
         assert!(secret(&app), "the box opens hidden");
         assert_eq!(label(&app), "Password:");
         let d = &mut app.active.as_mut().unwrap().dialog;
+        d.form.ask_paste();
         let ev = d.form.paste("hunter2".into());
         d.event(ev);
         app.report(prompt(&Prompt::password()));
@@ -1019,6 +1022,7 @@ mod tests {
             open(&mut app);
             attach(&mut app, "root");
             let d = &mut app.active.as_mut().unwrap().dialog;
+            d.form.ask_paste();
             let ev = d.form.paste("4242".into());
             d.event(ev);
             assert!(secret(&app), "{asked:?}: typed hidden");
@@ -1114,6 +1118,7 @@ mod tests {
             let (session, _answers) = helper::Session::detached();
             app.active.as_mut().unwrap().session = Some((session, "root".into()));
             let d = &mut app.active.as_mut().unwrap().dialog;
+            d.form.ask_paste();
             let ev = d.form.paste("hun".into());
             d.event(ev);
             app.report(prompt(&asked));
@@ -1177,6 +1182,7 @@ mod tests {
         app.report(Report::Done(Verdict::Unreachable));
         assert_eq!(label(&app), "&Password:");
         let d = &mut app.active.as_mut().unwrap().dialog;
+        d.form.ask_paste();
         let ev = d.form.paste("roots".into());
         d.event(ev);
         pick(&mut app, 1);
@@ -1220,6 +1226,7 @@ mod tests {
         app.report(prompt(&Prompt::password()));
         app.report(prompt(&code(false)));
         let d = &mut app.active.as_mut().unwrap().dialog;
+        d.form.ask_paste();
         let ev = d.form.paste("1234".into());
         d.event(ev);
         pick(&mut app, 1);

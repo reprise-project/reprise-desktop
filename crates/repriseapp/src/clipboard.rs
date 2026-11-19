@@ -30,7 +30,8 @@ impl Host {
     /// The clipboard for a file dialog's File name
     /// ([`Extended::drop_file_dialog`](crate::Extended::drop_file_dialog)): Ctrl+C and Ctrl+X put its
     /// selection on the clipboard before the key reaches the dialog, and Ctrl+V asks for the
-    /// clipboard's text, which goes into the field. `true` when the program does not get `ev`.
+    /// clipboard's text, which goes into the field it was pressed in. `true` when the program
+    /// does not get `ev`.
     pub(crate) fn file_dialog_clipboard(&mut self, win: WinId, ev: &Event) -> bool {
         let Some(fd) = self.app.drop_file_dialog(win) else {
             return false;
@@ -53,6 +54,7 @@ impl Host {
                 edit: Some(EditKey::Paste),
                 ..
             }) if fd.dlg.focused_edit().is_some() => {
+                fd.dlg.ask_paste();
                 self.apply(
                     win,
                     Reply {

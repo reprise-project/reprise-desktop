@@ -77,7 +77,8 @@ fn form_key(k: &KeyInput) -> Option<form::Key> {
 /// The clipboard half of an event for a window of forms, given its focused edit
 /// field: Ctrl+C and Ctrl+X put the selection on the clipboard (a secret
 /// field's never), read before the key reaches the form so a cut still has it;
-/// Ctrl+V asks for the clipboard text (`Event::Pasted`). Empty otherwise.
+/// Ctrl+V asks for the clipboard text (`Event::Pasted`), which the form puts in the field
+/// Ctrl+V was pressed in ([`Form::paste`]). Empty otherwise.
 pub fn form_clipboard(focused: Option<form::FocusedEdit>, ev: &Event) -> Reply {
     let Event::Key(KeyInput { edit: Some(k), .. }) = ev else {
         return Reply::none();
@@ -132,8 +133,8 @@ pub(crate) fn take_clipboard() -> Reply {
 /// hit-tested and clicked, a right press on a field readying it for the edit menu, motion tracked, a release released, Leave clearing
 /// what the pointer lit, a drop on a field ([`crate::fielddrop`]) heard as the
 /// open page's, a tick stepping a held scrollbar arrow, a blink timing the tip of an ellipsized
-/// label ([`Form::tip_tick`]), clipboard keys and text for the focused field ([`form_clipboard`],
-/// `Event::Pasted`). `None` is an event the host answers
+/// label ([`Form::tip_tick`]), clipboard keys for the focused field ([`form_clipboard`]) and
+/// `Event::Pasted` for the field Ctrl+V was pressed in. `None` is an event the host answers
 /// itself. First the sheet fits the window ([`PropSheet::fit`], [`PropSheet::fit_tabs`]): a
 /// window cut short or narrow scrolls the page, and one cut narrow wraps the tabs to it. While an arrow is held the host keeps ticking ([`Ctx::want_tick`]).
 pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
@@ -820,6 +821,7 @@ mod tests {
         let px = ctx.theme.fonts.size_px;
         let mut form = Form::new(vec![Item::memo("m", Rect::new(0, 0, 200, 80), "", true)]);
         form.focus_id("m");
+        form.ask_paste();
         let lines: Vec<String> = (0..20).map(|k| format!("line {k}")).collect();
         form.paste(lines.join("\n"));
         let draw = |form: &Form| {

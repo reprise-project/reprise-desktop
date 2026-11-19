@@ -90,19 +90,49 @@ fn save_dlg() -> FileDlg {
 }
 
 #[test]
-fn a_paste_goes_into_file_name_only_while_it_has_the_focus() {
+fn a_paste_goes_into_file_name_when_its_paste_key_was_pressed_there() {
     let mut d = save_dlg();
     d.focus = Focus::FileName;
     d.filename.select_all();
+    d.ask_paste();
+    d.focus = Focus::Shell;
     assert!(d.paste("notes.txt\nsecond line"));
     assert_eq!(
         d.file_name(),
         "notes.txt",
         "its first line replaces the selection"
     );
-    d.focus = Focus::Shell;
-    assert!(!d.paste("other"));
+    d.ask_paste();
+    assert!(!d.paste("other"), "the list takes no paste");
     assert_eq!(d.file_name(), "notes.txt");
+}
+
+#[test]
+fn a_paste_asked_in_file_name_stays_out_of_a_rename_box_opened_since() {
+    let mut d = save_dlg();
+    d.focus = Focus::FileName;
+    d.ask_paste();
+    assert!(d.select_named("b.txt"));
+    d.begin_rename();
+    d.filename.select_all();
+    assert!(d.paste("late"));
+    assert_eq!(d.file_name(), "late");
+    assert_eq!(d.focused_edit().map(|e| e.text.as_str()), Some("b.txt"));
+}
+
+#[test]
+fn a_paste_asked_in_a_rename_box_since_closed_is_dropped() {
+    let mut d = save_dlg();
+    assert!(d.select_named("b.txt"));
+    let name = d.file_name().to_string();
+    d.begin_rename();
+    d.ask_paste();
+    d.commit_rename();
+    assert!(!d.paste("late"), "no box, and File name was not asked");
+    d.begin_rename();
+    assert!(!d.paste("late"), "nor the next box");
+    assert_eq!(d.focused_edit().map(|e| e.text.as_str()), Some("b.txt"));
+    assert_eq!(d.file_name(), name);
 }
 
 #[test]

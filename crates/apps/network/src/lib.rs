@@ -1692,6 +1692,19 @@ mod tests {
     use super::*;
     use repriseapp::{Extended, KeyInput};
 
+    fn ctrl_v() -> Event {
+        let sym = u32::from(b'v');
+        Event::Key(KeyInput {
+            sym,
+            utf8: None,
+            mods: repriseapp::Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+            edit: reprisekit::textedit::key_for(sym, true, false, None),
+        })
+    }
+
     /// A `Ctx` for a window of `size`: the default theme and font, an
     /// icon theme nothing carries.
     pub(crate) fn test_ctx(size: (i32, i32)) -> Ctx {
@@ -1887,6 +1900,7 @@ mod tests {
         assert_eq!(loaded(&mut app, &tx, "/conn/lab").raise, None);
         assert_eq!(title(&app).as_deref(), Some("lab Properties"));
 
+        app.event(VPN, ctrl_v(), &mut ctx);
         app.event(VPN, Event::Pasted("2".into()), &mut ctx);
         let edited = title(&app);
         assert_ne!(
@@ -1991,6 +2005,7 @@ mod tests {
     fn type_key(app: &mut NetApp, ctx: &mut Ctx, key: &str) {
         for field in ["key", "confirm"] {
             app.key.as_mut().unwrap().form.focus_id(field);
+            app.event(KEY, ctrl_v(), ctx);
             app.event(KEY, Event::Pasted(key.into()), ctx);
         }
     }
@@ -2263,6 +2278,7 @@ mod tests {
         assert_eq!(dialog(&app).0, "/dev/2", "an untouched dialog is replaced");
 
         app.hotspot.as_mut().unwrap().form.focus_id("ssid");
+        app.event(HOTSPOT, ctrl_v(), &mut ctx);
         app.event(HOTSPOT, Event::Pasted("Lab".into()), &mut ctx);
         let typed = dialog(&app);
         assert_ne!(typed.1, hotspot::default_ssid(), "the name took the paste");

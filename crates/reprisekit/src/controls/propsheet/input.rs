@@ -7,7 +7,7 @@ use crate::text::TextRenderer;
 use crate::textedit::EditKey;
 
 use super::nav::{StripKey, nav_click, nav_key, page_clicked};
-use super::{APPLY, CANCEL, Event, Hit, Nav, OK, PropSheet};
+use super::{APPLY, CANCEL, Event, Hit, Nav, OK, PasteTo, PropSheet};
 
 impl PropSheet {
     /// Scroll the open page's row fully into view in list mode. Opening a page
@@ -251,6 +251,9 @@ impl PropSheet {
     /// after. `ctrl_tab` is `Some(back)` for Ctrl+Tab and Ctrl+Shift+Tab, which turn
     /// the tabs; `key` is then ignored.
     pub fn key(&mut self, key: form::Key, ctrl_tab: Option<bool>) -> Event {
+        if ctrl_tab.is_none() && key == form::Key::Edit(EditKey::Paste) {
+            self.ask_paste();
+        }
         if ctrl_tab.is_none()
             && self.is_list()
             && let Some(ev) = self.field_key(&key)
@@ -355,17 +358,29 @@ impl PropSheet {
         Some(self.event(i, ev))
     }
 
+    /// Notes where the clipboard text the paste key asks for goes: the search field while it
+    /// has the keyboard, else the open page's focused edit ([`Form::ask_paste`](form::Form::ask_paste)).
+    fn ask_paste(&mut self) {
+        let open = self.tabs.open;
+        self.paste_to = Some(if self.search_focused {
+            PasteTo::Search
+        } else {
+            self.pages[open].ask_paste();
+            PasteTo::Page(open)
+        });
+    }
+
+    /// The clipboard text into the field its paste key was pressed in, though the focus or the
+    /// open page moved since.
     pub fn paste(&mut self, text: String) -> Event {
-        if self.search_focused {
-            return if self.search.edit.paste(&text, &[]) {
-                Event::Search
-            } else {
-                Event::None
-            };
+        match self.paste_to {
+            Some(PasteTo::Search) if self.search.edit.paste(&text, &[]) => Event::Search,
+            Some(PasteTo::Page(i)) if i < self.pages.len() => {
+                let ev = self.pages[i].paste(text);
+                self.event(i, ev)
+            }
+            _ => Event::None,
         }
-        let i = self.tabs.open;
-        let ev = self.pages[i].paste(text);
-        self.event(i, ev)
     }
 
     /// What a drop on a field of the open page changed ([`Form::drop_text`]), as the sheet's.

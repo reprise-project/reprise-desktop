@@ -7,6 +7,7 @@ fn a_field_copies_its_selection_and_takes_a_paste() {
     let mut a = app("field-clipboard");
     let mut ctx = test_ctx();
     a.open_page(Page::WindowBehavior, Some("snap_layouts"));
+    assert!(a.event(MAIN, Event::Key(ctrl(b'v')), &mut ctx).paste);
     a.event(MAIN, Event::Pasted("1|1 2\nmore".into()), &mut ctx);
     let behavior = Page::WindowBehavior.index();
     let text = |a: &SettingsApp| match &a.sheet.pages[behavior]
@@ -21,7 +22,6 @@ fn a_field_copies_its_selection_and_takes_a_paste() {
     a.event(MAIN, Event::Key(ctrl(b'a')), &mut ctx);
     let r = a.event(MAIN, Event::Key(ctrl(b'c')), &mut ctx);
     assert_eq!(r.copy.as_deref(), Some("1|1 2"));
-    assert!(a.event(MAIN, Event::Key(ctrl(b'v')), &mut ctx).paste);
 }
 
 #[test]

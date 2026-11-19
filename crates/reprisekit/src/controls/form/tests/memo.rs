@@ -17,6 +17,7 @@ fn a_memo_edits_lines_and_keeps_its_scrollbar() {
     };
     assert_eq!(f.key(Key::Char('a')), Event::Changed("m"));
     f.key(Key::Space);
+    f.key(Key::Edit(EditKey::Paste));
     assert_eq!(f.paste("b\ncd".into()), Event::Changed("m"));
     assert_eq!(memo(&f), "a b\ncd");
     f.key(Key::Up);
@@ -319,6 +320,7 @@ fn page_keys_move_a_memos_caret_a_page() {
         Control::Memo(m) => (m.edit.caret(), m.view.get().top, m.rows()),
         _ => unreachable!(),
     };
+    f.key(Key::Edit(EditKey::Paste));
     assert_eq!(f.paste(text.join("\n")), Event::Changed("m"));
     shot(&f);
     let rows = memo(&f).2;

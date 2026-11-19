@@ -244,6 +244,8 @@ pub struct Form {
     hosted: bool,
     /// Set on a consent prompt's form ([`Form::set_consent`]).
     consent: Option<consent::Gate>,
+    /// The edit the last paste key was pressed in, by index and id ([`Form::ask_paste`]).
+    paste_to: Option<(usize, &'static str)>,
 }
 
 /// A scrolled form's window onto the surface: every item but those in `keep` draws and takes
@@ -494,6 +496,7 @@ impl Form {
             rendered: Rendered::default(),
             hosted: false,
             consent: None,
+            paste_to: None,
         };
         let first = (0..form.items.len()).find(|&i| form.tab_stop(i));
         form.set_focus(first);

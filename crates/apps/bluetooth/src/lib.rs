@@ -1628,9 +1628,10 @@ mod tests {
 
     /// Types "Mine" over the open sheet's name; the SetAlias that Apply or OK sends for it.
     fn rename_to_mine(a: &mut BtApp, ctx: &mut Ctx) -> bz::Cmd {
-        let page = a.props.as_mut().unwrap().sheet.open_mut();
-        page.focus_id(props::NAME);
-        page.key(form::Key::Edit(EditKey::SelectAll));
+        let sheet = &mut a.props.as_mut().unwrap().sheet;
+        sheet.open_mut().focus_id(props::NAME);
+        sheet.key(form::Key::Edit(EditKey::SelectAll), None);
+        sheet.key(form::Key::Edit(EditKey::Paste), None);
         a.event(PROPS, Event::Pasted("Mine".into()), ctx);
         bz::Cmd::SetAlias {
             device: "/a/cans".into(),

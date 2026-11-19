@@ -575,7 +575,12 @@ impl State {
             Some(k) => k,
             None => return,
         };
-        if let Key::Edit(e) = &key {
+        // Copy and Cut read the selection before the key cuts it. The paste is asked after the
+        // form has noted its field, since Reprise's own clipboard answers at once.
+        let paste = key == Key::Edit(EditKey::Paste);
+        if let Key::Edit(e) = &key
+            && !paste
+        {
             self.clip_edit_key(e);
         }
         let outcome = match self.dialogs.views.last_mut() {
@@ -586,6 +591,9 @@ impl State {
         };
         self.restart_caret();
         self.apply_dialog(outcome);
+        if paste {
+            self.clip_edit_key(&EditKey::Paste);
+        }
         self.run_path_completions();
     }
 }

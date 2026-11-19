@@ -51,11 +51,21 @@ impl Form {
         }
     }
 
-    /// A host's clipboard text for the focused edit field, taken as
-    /// [`TextEdit::paste`] takes it. The text is zeroized once used, since
-    /// the field may be a password.
+    /// Notes the focused edit as where the clipboard text asked for now goes ([`Form::paste`]),
+    /// however late it lands. The paste key does this in [`Form::key`].
+    pub fn ask_paste(&mut self) {
+        self.paste_to = (self.focus)
+            .filter(|_| self.focused_edit().is_some())
+            .map(|i| (i, self.items[i].id));
+    }
+
+    /// A host's clipboard text for the edit its paste was asked in ([`Form::ask_paste`]),
+    /// taken as [`TextEdit::paste`] takes it; nothing while the form no longer holds that field.
+    /// The text is zeroized once used, since the field may be a password.
     pub fn paste(&mut self, mut text: String) -> Event {
-        let field = self.focus.filter(|_| self.open_combo().is_none());
+        let field = (self.paste_to)
+            .filter(|&(i, id)| self.items.get(i).is_some_and(|it| it.id == id))
+            .map(|(i, _)| i);
         let ev = match field.map(|i| (self.items[i].id, &mut self.items[i].control)) {
             Some((id, Control::Memo(m))) => {
                 if m.edit.paste(&text) {

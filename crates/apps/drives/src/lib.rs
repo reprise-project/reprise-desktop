@@ -1014,6 +1014,19 @@ mod tests {
         );
     }
 
+    fn ctrl_v() -> Event {
+        let sym = u32::from(b'v');
+        Event::Key(repriseapp::KeyInput {
+            sym,
+            utf8: None,
+            mods: repriseapp::Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+            edit: reprisekit::textedit::key_for(sym, true, false, None),
+        })
+    }
+
     fn enter() -> Event {
         Event::Key(repriseapp::KeyInput {
             sym: reprisekit::textedit::keysym::RETURN,
@@ -1032,6 +1045,7 @@ mod tests {
         app.go(Arrival::Unlock(sdc.into()), true);
         app.open_unlock(&mut ctx);
         let win = app.unlock_win();
+        let _ = app.event(win, ctrl_v(), &mut ctx);
         let _ = app.event(win, Event::Pasted("secret".into()), &mut ctx);
         let _ = app.event(win, enter(), &mut ctx);
         let _ = app.event(win, Event::CloseRequest, &mut ctx);
@@ -1053,6 +1067,7 @@ mod tests {
         app.go(Arrival::Unlock(sdc.into()), true);
         app.open_unlock(&mut ctx);
         let win = app.unlock_win();
+        let _ = app.event(win, ctrl_v(), &mut ctx);
         let _ = app.event(win, Event::Pasted("secret".into()), &mut ctx);
         let _ = app.event(win, enter(), &mut ctx);
         assert_eq!(

@@ -205,6 +205,7 @@ fn a_spinner_takes_a_right_press_and_the_clipboard_keys() {
     assert_eq!(f.key(Key::Edit(EditKey::Copy)), Event::Redraw);
     assert_eq!(f.key(Key::Edit(EditKey::Cut)), Event::Changed("spin"));
     assert_eq!(spin(&f).shown(), "");
+    f.key(Key::Edit(EditKey::Paste));
     assert_eq!(f.paste(" 42\n".into()), Event::Changed("spin"));
     assert_eq!(spin(&f).value(), 42);
     assert_eq!(
