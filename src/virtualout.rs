@@ -17,7 +17,7 @@ use smithay::{
     wayland::presentation::Refresh,
 };
 
-use crate::{backend::Ask, compositor::State};
+use crate::{backend::Ask, capture::Drew, compositor::State};
 
 /// The highest rate a captured virtual screen draws at.
 pub const MAX_RATE: u32 = 144;
@@ -58,12 +58,18 @@ struct Screen {
     last: Option<Instant>,
     /// The last frame's pointer was on it.
     pointer_shown: bool,
+    /// The scene's change count at the last frame.
+    scene_seen: u64,
 }
 
-/// What the next tick does: answer frame callbacks only, or run a whole frame.
+/// What the next tick does, the highest ask winning.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Wants {
+    /// Answer frame callbacks only.
     Callbacks,
+    /// A whole frame in which only the pointer moved, unless the scene or the water did too.
+    Pointer,
+    /// A whole frame.
     Frame,
 }
 
@@ -71,6 +77,7 @@ pub enum Wants {
 pub fn wants(ask: Ask, captured: bool) -> Option<Wants> {
     match ask {
         Ask::Pointer | Ask::Cursor if !captured => None,
+        Ask::Pointer | Ask::Cursor => Some(Wants::Pointer),
         _ => Some(Wants::Frame),
     }
 }
@@ -132,6 +139,7 @@ pub fn create(state: &mut State, name: &str, spec: Spec, kind: Kind) -> Output {
         timer: None,
         last: None,
         pointer_shown: false,
+        scene_seen: 0,
     });
     state.scene.add_output(&output);
     log::info!(
@@ -305,25 +313,34 @@ fn tick(state: &mut State, output: &Output) {
     match s.wants.take() {
         None => {}
         Some(Wants::Callbacks) => crate::backend::send_frame_callbacks(state, output),
-        Some(Wants::Frame) => frame(state, output),
+        Some(Wants::Pointer) => frame(state, output, Drew::Pointer),
+        Some(Wants::Frame) => frame(state, output, Drew::Scene),
     }
 }
 
 /// A frame with nothing to scan out: it does everything a monitor's flip does (animations, covers,
-/// presentation feedback, frame callbacks, captures) at the tick.
-fn frame(state: &mut State, output: &Output) {
+/// presentation feedback, frame callbacks, captures) at the tick. `drew` is what its asks changed;
+/// a scene edit or a water step since the last frame makes it the scene.
+fn frame(state: &mut State, output: &Output, mut drew: Drew) {
     state.settle_moves();
     let shows_at = state.now();
     crate::surfaceproto::before_frame(state, output, shows_at);
     crate::backend::advance(state, output);
     let captured = state.captures.shows_output(output);
     if captured && let Some(b) = state.backend.as_mut() {
-        state.water.step(&mut b.renderer, output);
+        let stepped = state.water.step(&mut b.renderer, output);
+        if stepped.moved || stepped.fell {
+            drew = Drew::Scene;
+        }
     }
     let pointer = state.pointer_location();
     let on = reprisescene::output_rect(output).is_some_and(|g| g.to_f64().contains(pointer));
+    let changes = state.scene.changes();
     if let Some(s) = screen_mut(state, output) {
         s.pointer_shown = on;
+        if std::mem::replace(&mut s.scene_seen, changes) != changes {
+            drew = Drew::Scene;
+        }
     }
     let pass = state.scene.surface_pass(output);
     let states = Default::default();
@@ -337,7 +354,7 @@ fn frame(state: &mut State, output: &Output) {
     crate::power::presented(state, output);
     crate::sessionfade::presented(state, output);
     crate::backend::send_frame_callbacks(state, output);
-    crate::capture::output_drawn(state, output);
+    crate::capture::output_drawn(state, output, drew);
     if captured && let Some(at) = state.water.next_step(output) {
         crate::backend::schedule_step(state, output, at);
     }
@@ -490,7 +507,7 @@ mod tests {
     fn pointer_and_cursor_changes_draw_only_a_captured_screen() {
         for ask in [Ask::Pointer, Ask::Cursor] {
             assert_eq!(wants(ask, false), None, "{ask:?}");
-            assert_eq!(wants(ask, true), Some(Wants::Frame), "{ask:?}");
+            assert_eq!(wants(ask, true), Some(Wants::Pointer), "{ask:?}");
         }
         for ask in [Ask::Scene, Ask::Content, Ask::Timed, Ask::CatchUp] {
             assert_eq!(wants(ask, false), Some(Wants::Frame), "{ask:?}");
@@ -498,10 +515,18 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_ask_outranks_a_callback_ask() {
+    fn a_frame_ask_outranks_a_pointer_ask_which_outranks_a_callback_ask() {
         assert_eq!(
             Some(Wants::Callbacks).max(Some(Wants::Frame)),
             Some(Wants::Frame)
+        );
+        assert_eq!(
+            Some(Wants::Pointer).max(Some(Wants::Frame)),
+            Some(Wants::Frame)
+        );
+        assert_eq!(
+            Some(Wants::Callbacks).max(Some(Wants::Pointer)),
+            Some(Wants::Pointer)
         );
         assert_eq!(None.max(Some(Wants::Callbacks)), Some(Wants::Callbacks));
     }

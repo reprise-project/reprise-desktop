@@ -17,11 +17,13 @@ use smithay::{
 };
 
 use crate::{
+    capture::Drew,
     compositor::State,
     framepace::Done,
     glass::{Hold, Under},
     reblur::Reblur,
     render::{OutputElement, Parts},
+    waterview::Stepped,
 };
 
 use super::gamma::{Gamma, flush_gamma};
@@ -107,15 +109,15 @@ pub(super) fn render(state: &mut State, head: Head) {
         return render_copy(state, head, &output, &source, started);
     }
     let mut asked_at = None;
+    let mut pointer_only = false;
     if let Some(s) = surface_mut(state, head) {
         s.needs_redraw = false;
         asked_at = s.asked_at.take();
-        if std::mem::take(&mut s.pointer_only)
-            && let Some(drawn) = pointer_frame(state, head, &output, started)
-        {
+        pointer_only = std::mem::take(&mut s.pointer_only);
+        if pointer_only && let Some(drawn) = pointer_frame(state, head, &output, started) {
             // A queued cursor frame finishes on its `Done` (`committed`).
             if !drawn {
-                finish(state, head, &output, false, true, None, started);
+                finish(state, head, &output, None, true, None, started);
             }
             watch(state);
             return;
@@ -149,6 +151,7 @@ pub(super) fn render(state: &mut State, head: Head) {
     };
     s.pointer_shown =
         reprisescene::output_rect(&output).is_some_and(|g| g.to_f64().contains(pointer));
+    let scene_kept = s.scene_seen == scene.changes() && !s.captures_owed;
     s.scene_seen = scene.changes();
     let now = std::time::Instant::now();
     let at = asked_at.unwrap_or(now);
@@ -173,6 +176,7 @@ pub(super) fn render(state: &mut State, head: Head) {
         Reblur::Wait(wait) => Some(wait.saturating_sub(now - at)),
     };
     let stepped = water.step(&mut b.renderer, &output);
+    let drew = capture_drew(pointer_only, scene_kept, &stepped);
     let glass_hold = glass_hold(hold, std::mem::take(&mut s.backdrop_changed), stepped.moved);
     glass.begin(
         &output,
@@ -271,10 +275,12 @@ pub(super) fn render(state: &mut State, head: Head) {
         held,
         feedback,
         pointer: false,
+        drew,
     };
     let flipping = drawn && send_flip(s, modeset, flight);
     if !flipping {
-        finish(state, head, &output, false, empty, held, started);
+        s.captures_owed = captures_owed(s.captures_owed, drew, false);
+        finish(state, head, &output, None, empty, held, started);
     }
     if flipping && modeset {
         crate::sessionfade::modeset(state, &output);
@@ -385,10 +391,12 @@ fn render_copy(
         held: None,
         feedback: None,
         pointer: false,
+        drew: Drew::Scene,
     };
     let flipping = drawn && send_flip(s, modeset, flight);
     if !flipping {
-        finish(state, head, output, false, empty, None, started);
+        s.captures_owed = true;
+        finish(state, head, output, None, empty, None, started);
     }
     if flipping && modeset {
         crate::sessionfade::modeset(state, output);
@@ -462,6 +470,10 @@ pub(super) fn pointer_frame(
     if magnifier.zooms(output) || s.callback_timer.is_some() || s.scene_seen != scene.changes() {
         return None;
     }
+    let drew = match s.captures_owed {
+        true => Drew::Scene,
+        false => Drew::Pointer,
+    };
     let geo = reprisescene::output_rect(output)?;
     if !geo.to_f64().contains(pointer) {
         return (!s.pointer_shown).then_some(false);
@@ -490,6 +502,7 @@ pub(super) fn pointer_frame(
                 held: None,
                 feedback: None,
                 pointer: true,
+                drew,
             };
             Some(send_flip(s, modeset, flight))
         }
@@ -606,10 +619,14 @@ pub(super) fn committed(state: &mut State, head: Head, done: commit::Done<Out>) 
         power_off(state, head);
     }
     if let Some(f) = flight {
-        if ok && let Some(s) = surface_mut(state, head) {
-            count_frame(s, overlay, f.started, f.pointer);
+        if let Some(s) = surface_mut(state, head) {
+            if ok {
+                count_frame(s, overlay, f.started, f.pointer);
+            }
+            s.captures_owed = captures_owed(s.captures_owed, f.drew, ok);
         }
-        finish(state, head, &output, ok, false, f.held, f.started);
+        let drawn = ok.then_some(f.drew);
+        finish(state, head, &output, drawn, false, f.held, f.started);
     }
     if gamma_failed {
         crate::nightlight::gamma_failed(state, &output);
@@ -656,18 +673,19 @@ pub(super) fn glass_hold(hold: Option<Duration>, asked: Under, stepped: bool) ->
     }
 }
 
-/// After a frame on `head` that was `drawn` or `empty`, with its glass
-/// `held` for a wait: pace the next render, send the frame callbacks and
-/// fill the captures that waited for it.
+/// After a frame on `head` that was `drawn` (with what its asks changed) or `empty`, with its
+/// glass `held` for a wait: pace the next render, send the frame callbacks and fill the captures
+/// that waited for it.
 fn finish(
     state: &mut State,
     head: Head,
     output: &Output,
-    drawn: bool,
+    drew: Option<Drew>,
     empty: bool,
     held: Option<Duration>,
     started: std::time::Instant,
 ) {
+    let drawn = drew.is_some();
     if let Some(s) = surface_mut(state, head) {
         let interval = crate::framepace::interval(output.current_mode().map_or(0, |m| m.refresh));
         s.pace.not_before = crate::framepace::next_render(drawn, s.needs_redraw, started, interval);
@@ -679,8 +697,26 @@ fn finish(
     crate::sessionfade::rendered(state, output, empty);
     crate::power::rendered(state, output, drawn, empty);
     callbacks_after_a_frame(state, head, drawn);
-    if drawn {
-        crate::capture::output_drawn(state, output);
+    if let Some(drew) = drew {
+        crate::capture::output_drawn(state, output, drew);
+    }
+}
+
+/// Whether captures are owed the scene after a frame that `drew` and was `shown` on the screen
+/// or not: until a scene frame reaches them, every frame, a cursor plane move too, is a scene one.
+pub(super) fn captures_owed(owed: bool, drew: Drew, shown: bool) -> bool {
+    match drew {
+        Drew::Scene => !shown,
+        Drew::Pointer => owed,
+    }
+}
+
+/// What captures may find new in a frame: only the pointer when only it asked, they have seen the
+/// scene as it is (`scene_kept`) and the water kept still.
+pub(super) fn capture_drew(pointer_only: bool, scene_kept: bool, water: &Stepped) -> Drew {
+    match pointer_only && scene_kept && !water.moved && !water.fell {
+        true => Drew::Pointer,
+        false => Drew::Scene,
     }
 }
 
