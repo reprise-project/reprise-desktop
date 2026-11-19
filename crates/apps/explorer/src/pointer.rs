@@ -831,10 +831,10 @@ impl Explorer {
         }
     }
 
-    /// A press at (`x`, `y`) with the address list open anywhere but on the list or its drop
-    /// arrow closes the list and goes no further: whether it did.
+    /// A press at (`x`, `y`) as [`addressbar::AddressBar::press_outside`] takes it: whether it
+    /// goes no further.
     fn address_press_outside(&mut self, x: i32, y: i32, ctx: &Ctx) -> bool {
-        if self.address.combo.open.is_none() {
+        if self.address.combo.open.is_none() && !self.address.complete.is_open() {
             return false;
         }
         let hit = match self.layout(ctx).address {

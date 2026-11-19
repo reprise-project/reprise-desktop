@@ -162,8 +162,9 @@ impl AddressBar {
         }
     }
 
-    /// A press while the list is open anywhere but on the list or the drop arrow closes the
-    /// list and goes no further. Returns whether it closed.
+    /// A press anywhere but on the completion list closes that list and goes on. A press while
+    /// the drop list is open anywhere but on it or the drop arrow closes it and goes no further.
+    /// Returns whether the press goes no further.
     pub fn press_outside(&mut self, hit: Hit) -> bool {
         let inside = matches!(
             hit,
@@ -172,10 +173,7 @@ impl AddressBar {
         if matches!(hit, Hit::Completion(_)) {
             return false;
         }
-        if self.complete.is_open() {
-            self.complete.close();
-            return true;
-        }
+        self.complete.close();
         if self.combo.open.is_none() || inside {
             return false;
         }
@@ -679,6 +677,51 @@ mod tests {
         assert_eq!(ab.combo.open, None, "a press in the field closes the list");
         ab.combo.toggle();
         assert!(ab.press_outside(Hit::Go), "a press on Go closes the list");
+    }
+
+    /// The field holds `~/D`, its completion list Desktop/, Documents/ and Downloads/.
+    fn completing() -> AddressBar {
+        let mut ab = bar();
+        ab.set_place("", None);
+        for ch in "~/D".chars() {
+            ab.key(EditKey::Insert(ch.to_string()));
+        }
+        while let Some(want) = ab.complete.take_want() {
+            let names = ["Desktop", "Documents", "Downloads"].map(|name| pathcomplete::Entry {
+                name: name.into(),
+                dir: true,
+            });
+            let edit = ab.combo.edit.as_mut().expect("an editable field");
+            ab.complete.set_listing(edit, &want, names.into());
+        }
+        assert_eq!(ab.complete.rows(), ["Desktop/", "Documents/", "Downloads/"]);
+        ab
+    }
+
+    #[test]
+    fn a_press_off_the_completion_list_closes_it_and_goes_on() {
+        for hit in [
+            Hit::Nothing,
+            Hit::Go,
+            Hit::Combo(combo::Hit::Field),
+            Hit::Combo(combo::Hit::Drop),
+        ] {
+            let mut ab = completing();
+            assert!(!ab.press_outside(hit), "a press on {hit:?} goes on");
+            assert!(!ab.complete.is_open(), "a press on {hit:?} closes the list");
+            assert_eq!(ab.text(), "~/D", "the typed text stays");
+        }
+    }
+
+    #[test]
+    fn a_press_on_the_completion_list_takes_its_row() {
+        let mut ab = completing();
+        assert!(!ab.press_outside(Hit::Completion(1)));
+        assert!(ab.complete.is_open(), "the list stays open under the press");
+        let text = TextRenderer::load(&FontConfig::default());
+        let lay = layout(&ab, &text, 11, BAND, &ControlMetrics::CLASSIC);
+        ab.click(Hit::Completion(1), 0, &lay, &text, 11, 1);
+        assert_eq!(ab.text(), "~/Documents/");
     }
 
     #[test]

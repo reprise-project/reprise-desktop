@@ -7,7 +7,7 @@
 use crate::foldertree;
 use crate::place::Place;
 use crate::window;
-use crate::{Explorer, HoverOn, Tip};
+use crate::{Explorer, Focus, HoverOn, Tip};
 use repriseapp::keys::form_clipboard;
 use repriseapp::{Ctx, Event, KeyInput, PointerInput, Reply};
 use reprisefs::listing::Item;
@@ -45,24 +45,30 @@ impl Drop for TipWalk {
 }
 
 impl Explorer {
-    /// Entry point for keys: drops the infotip before acting on the key.
+    /// Entry point for keys: drops the infotip before acting on the key. The address completion
+    /// closes once the key takes the focus off the field.
     pub fn key(&mut self, k: KeyInput, ctx: &mut Ctx) -> Reply {
         let tipped = self.hide_tip();
+        let completing = self.address.complete.is_open();
         let field = self.text_field().map(FocusedEdit::Line);
         let clip = form_clipboard(field, &Event::Key(k.clone()));
         if clip.paste {
             self.ask_paste();
         }
         let mut reply = self.key_inner(k, ctx).with_clipboard(clip);
-        reply.redraw |= tipped;
+        if self.focus != Focus::Address {
+            self.address.complete.close();
+        }
+        reply.redraw |= tipped || (completing && !self.address.complete.is_open());
         reply
     }
 
     pub fn pointer(&mut self, p: PointerInput, ctx: &mut Ctx) -> Reply {
         self.status.grip = !ctx.maximized;
         let tipped = !matches!(p, PointerInput::Motion { .. }) && self.hide_tip();
+        let completing = self.address.complete.is_open();
         let mut reply = self.pointer_inner(p, ctx);
-        reply.redraw |= tipped;
+        reply.redraw |= tipped || (completing && !self.address.complete.is_open());
         reply.tick |= self.tip_pending();
         reply
     }

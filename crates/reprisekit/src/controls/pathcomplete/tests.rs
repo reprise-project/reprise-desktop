@@ -270,6 +270,24 @@ fn tab_takes_the_tail_and_escape_drops_it() {
 }
 
 #[test]
+fn tab_or_shift_tab_with_nothing_to_take_closes_the_list_and_moves_on() {
+    for key in [
+        form::Key::Tab { back: false },
+        form::Key::Tab { back: true },
+    ] {
+        let mut pc = PathComplete::new(Scope::Rooted);
+        let mut edit = TextEdit::new("", false);
+        typed(&mut pc, &mut edit, "~/Do");
+        serve(&mut pc, &mut edit, &[HOME]);
+        assert!(pc.is_open());
+        let nav = nav_key(&key).expect("a completion key");
+        assert!(!pc.nav(&mut edit, nav), "{key:?} moves on");
+        assert!(!pc.is_open(), "{key:?} closes the list");
+        assert_eq!(edit.text, "~/Do");
+    }
+}
+
+#[test]
 fn a_move_over_the_tail_keeps_it_as_typed_text() {
     for (ek, caret) in [
         (EditKey::End { select: false }, 12),
