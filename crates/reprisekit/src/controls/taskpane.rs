@@ -431,7 +431,8 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, tp: &TaskPane, lay: 
                     let mut ly = rr.y;
                     for line in wrapped {
                         let lr = Rect::new(tx * s, ly * s, tw * s, lay.line_h * s);
-                        text.draw(c, lr, line, false, ink, Align::Left, px);
+                        let ink_r = text.line_box(lr, false, px);
+                        text.draw(c, ink_r, line, false, ink, Align::Left, px);
                         if hot {
                             let w = text.measure(line, false, px);
                             c.fill_rect(Rect::new(lr.x, lr.bottom() - s, w, s), ink);
@@ -446,6 +447,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, tp: &TaskPane, lay: 
                 let mut ly = body.y + BODY_TOP_PAD;
                 for (line, bold) in lay.lines.get(i).into_iter().flatten() {
                     let lr = Rect::new(tx * s, ly * s, tw * s, lay.line_h * s);
+                    let lr = text.line_box(lr, *bold, px);
                     text.draw(c, lr, line, *bold, cs.window_text, Align::Left, px);
                     ly += line_h(line, lay.line_h);
                 }

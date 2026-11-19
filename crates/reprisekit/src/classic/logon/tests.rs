@@ -477,3 +477,27 @@ fn the_admin_heading_shows_whole_in_a_wider_face_under_caps_lock_too() {
         assert_admin_heading_whole(&theme, &text, s);
     }
 }
+
+/// The message's lines keep every descender at 100%, 125% and 150% text, at scale 1 and 2.
+#[test]
+fn the_message_keeps_its_descenders_at_every_text_size_and_scale() {
+    crate::pins::fonts();
+    let m = admin_caps();
+    let mut cut = Vec::new();
+    for pct in [100, 125, 150] {
+        for s in [1, 2] {
+            let theme = Theme::default().with_text_size(pct).scaled(s);
+            let text = TextRenderer::load(&theme.fonts);
+            let l = laid_out(&m, &theme, OUTPUT, 4);
+            let mut c = Canvas::new((OUTPUT.width * s) as u32, (OUTPUT.height * s) as u32);
+            let ((), cuts) =
+                crate::pins::clipped_ink(|| draw(&mut c, &m, &l, &theme, text.for_output(s), s));
+            cut.extend(
+                cuts.into_iter()
+                    .filter(|c| c.rows > 0)
+                    .map(|c| (pct, s, c.text, c.rows)),
+            );
+        }
+    }
+    assert_eq!(cut, Vec::new(), "(text size, scale, line, ink rows cut)");
+}

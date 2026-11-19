@@ -723,7 +723,8 @@ impl TextRenderer {
     }
 
     /// `rect` grown to a line's ascent and descent at `size_px` where it is shorter, its baseline
-    /// kept: a row a fractional text size rounded short draws its text without cutting the ink.
+    /// kept: a row shorter than the font's line (a 13 px row rounded at 125%, a radio's row at
+    /// scale 2) draws its text without cutting the ink.
     pub fn line_box(&self, rect: Rect, bold: bool, size_px: u32) -> Rect {
         let Some((ascent, descent, _)) = self.line_metrics(bold, size_px) else {
             return rect;

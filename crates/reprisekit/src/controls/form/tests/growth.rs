@@ -363,3 +363,42 @@ fn a_grown_notes_rows_keep_their_descenders() {
         "(text size, scale, live, line, ink rows cut)"
     );
 }
+
+/// A label, a check box's and a radio's label, a group title and a group box's label keep every
+/// descender at 100%, 125% and 150% text, live or greyed, at scale 1 and 2, on every row a
+/// fractional text size rounds short.
+#[test]
+fn grown_labels_keep_their_descenders() {
+    crate::pins::fonts();
+    let t = tr();
+    let cs = &Theme::default().colors;
+    let mut cut = Vec::new();
+    for (pct, px) in [(100, 11), (125, 14), (150, 17)] {
+        for s in [1, 2] {
+            for on in [true, false] {
+                for dy in 0..4 {
+                    let f = Form::new(vec![
+                        Item::group("g", Rect::new(6, 10 + dy, 220, 150), "Group gypsy"),
+                        Item::group_title("t", 16, 26 + dy, 180, "Title gypsy"),
+                        Item::label_at("l", 16, 44 + dy, 180, "&Label gypsy").enabled(on),
+                        Item::check("c", 16, 62 + dy, "&Check gypsy").enabled(on),
+                        Item::radio("r", 16, 80 + dy, "&Radio gypsy", "rg").enabled(on),
+                    ]);
+                    let p = Paint {
+                        text: TextUnits::new(px, 11),
+                        ..classic_paint(cs, s)
+                    };
+                    let mut c = Canvas::new(500 * s as u32, 400 * s as u32);
+                    let ((), cuts) =
+                        crate::pins::clipped_ink(|| draw(&mut c, &t, &p, &f, false, px * s as u32));
+                    cut.extend(cuts.into_iter().map(|c| (pct, s, on, dy, c.text, c.rows)));
+                }
+            }
+        }
+    }
+    assert_eq!(
+        cut,
+        Vec::new(),
+        "(text size, scale, live, rows down, label, ink rows cut)"
+    );
+}

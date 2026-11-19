@@ -291,6 +291,7 @@ pub fn draw(
     let line_h = message.height / rows as i32;
     for (i, line) in lines.iter().enumerate() {
         let r = Rect::new(message.x, message.y + i as i32 * line_h, width, line_h);
+        let r = text.line_box(r, false, px);
         text.draw(c, r, line, false, cs.button_text, Align::Left, px);
     }
     if let Some(short) = &m.layout {

@@ -345,7 +345,7 @@ fn every_dialog_fits_its_text_under_every_interface() {
 }
 
 /// Every template and form dialog drawn as on a scale 1 and a scale 2 output, under each interface
-/// and face at 100% and 150%: no glyph is cut at the right edge of the rect its line was laid in.
+/// and face at 100% and 150%: no glyph is cut by the rect its line was laid in.
 #[test]
 fn every_dialog_draws_its_text_uncut_at_scale_1_and_2() {
     use reprisekit::interface::Interface;
@@ -373,12 +373,13 @@ fn every_dialog_draws_its_text_uncut_at_scale_1_and_2() {
                         let (_, cuts) = reprisekit::pins::clipped_ink(|| {
                             render(&theme.scaled(s), text.for_output(s), &l, &d)
                         });
-                        for c in cuts.into_iter().filter(|c| c.cols > 0) {
+                        for c in cuts {
                             cut.push(format!(
-                                "{family}, {}, {pct}% @{s}, {}: {:?} {} cols cut",
+                                "{family}, {}, {pct}% @{s}, {}: {:?} {} rows, {} cols cut",
                                 i.as_str(),
                                 d.title,
                                 c.text,
+                                c.rows,
                                 c.cols
                             ));
                         }
