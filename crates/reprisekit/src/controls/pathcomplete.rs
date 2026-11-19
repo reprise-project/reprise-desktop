@@ -49,16 +49,18 @@ pub enum Key {
     Down,
     Enter,
     Tab,
+    ShiftTab,
     Escape,
 }
 
-/// The completion's key for a form key, if it has one; Shift+Tab has none.
+/// The completion's key for a form key, if it has one.
 pub fn nav_key(key: &form::Key) -> Option<Key> {
     Some(match key {
         form::Key::Up => Key::Up,
         form::Key::Down => Key::Down,
         form::Key::Enter => Key::Enter,
         form::Key::Tab { back: false } => Key::Tab,
+        form::Key::Tab { back: true } => Key::ShiftTab,
         form::Key::Escape => Key::Escape,
         _ => return None,
     })
@@ -203,7 +205,8 @@ impl PathComplete {
     }
 
     /// A key while the field has the focus; true when the completion took it. Tab takes the
-    /// highlight or the shown tail; Enter with nothing highlighted closes the list and goes on.
+    /// highlight or the shown tail; Enter with nothing highlighted, Tab with nothing to take and
+    /// Shift+Tab close the list and go on.
     pub fn nav(&mut self, edit: &mut TextEdit, key: Key) -> bool {
         self.sync(edit);
         let open = self.is_open();
@@ -229,7 +232,7 @@ impl PathComplete {
                 self.inline.drop_tail(edit);
                 self.close();
             }
-            Key::Enter => {
+            Key::Enter | Key::Tab | Key::ShiftTab => {
                 self.close();
                 return false;
             }

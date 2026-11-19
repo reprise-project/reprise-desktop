@@ -226,3 +226,88 @@ fn the_open_address_list_lights_the_row_under_the_pointer_and_enter_takes_it() {
     assert_eq!(ex.address.combo.open, None, "Enter closes the list");
     assert_eq!(ex.place, Place::Documents, "and goes to the lit row");
 }
+
+/// browse_fixture's window with nothing selected and the Address field holding the folder's path
+/// and a `/`, typed, its completion list showing sub/ and a.txt.
+fn completing(ctx: &mut Ctx) -> (tempfile::TempDir, Explorer) {
+    use reprisekit::textedit::keysym;
+    let (dir, mut ex) = browse_fixture(ctx);
+    ex.sv.selection.set_only(None);
+    ex.focus = Focus::Address;
+    let typed = format!("{}/", dir.path().display());
+    ex.address.set_place(&typed[..typed.len() - 1], None);
+    ex.key(key_in(keysym::END), ctx);
+    ex.key(
+        repriseapp::KeyInput {
+            sym: '/' as u32,
+            utf8: Some("/".into()),
+            mods: repriseapp::Mods::default(),
+            edit: reprisekit::textedit::key_for('/' as u32, false, false, Some("/")),
+        },
+        ctx,
+    );
+    wake_until(&mut ex, ctx, |ex| ex.address.complete.is_open());
+    assert_eq!(ex.address.complete.rows(), ["sub/", "a.txt"]);
+    assert_eq!(ex.address.text(), typed);
+    (dir, ex)
+}
+
+#[test]
+fn a_press_on_a_file_closes_the_address_completion_and_selects_the_file() {
+    use repriseapp::PointerInput;
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = completing(&mut ctx);
+    let a = ex
+        .items
+        .iter()
+        .position(|it| it.name == "a.txt")
+        .expect("a.txt");
+    let sl = ex.view_layout(ex.layout(&ctx).view, &ctx);
+    let c = sl.cells[a];
+    let (x, y) = (c.x + c.width / 2, c.y + c.height / 2);
+    let px = ctx.theme.fonts.size_px;
+    let r = ex.layout(&ctx).address.expect("the address bar");
+    let al = addressbar::layout(&ex.address, &ctx.text, px, r, &ctx.theme.controls());
+    assert!(
+        !al.complete.list.contains(x, y),
+        "the press lands clear of the list"
+    );
+    let press = PointerInput::Press {
+        x,
+        y,
+        button: crate::BTN_LEFT,
+        time: 0,
+        mods: repriseapp::Mods::default(),
+    };
+    assert!(ex.pointer(press, &mut ctx).redraw);
+    assert!(!ex.address.complete.is_open(), "the list closed");
+    assert_eq!(
+        ex.sv.selection.single(),
+        Some(a),
+        "the press selected a.txt"
+    );
+    ex.key(key_in(reprisekit::textedit::keysym::F2), &mut ctx);
+    assert_eq!(
+        ex.sv.edit.as_ref().map(|e| e.0),
+        Some(a),
+        "F2 renames a.txt"
+    );
+}
+
+#[test]
+fn a_key_moving_the_focus_off_the_address_field_closes_its_completion() {
+    use reprisekit::textedit::keysym;
+    for (sym, shift) in [
+        (keysym::TAB, false),
+        (keysym::ISO_LEFT_TAB, true),
+        (keysym::F3, false),
+    ] {
+        let mut ctx = test_ctx();
+        let (_dir, mut ex) = completing(&mut ctx);
+        let mut k = key_in(sym);
+        k.mods.shift = shift;
+        ex.key(k, &mut ctx);
+        assert_ne!(ex.focus, Focus::Address, "{sym:#x} moves the focus");
+        assert!(!ex.address.complete.is_open(), "{sym:#x} closes the list");
+    }
+}
