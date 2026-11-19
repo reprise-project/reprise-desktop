@@ -513,6 +513,7 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             catch_up: false,
             pointer_shown: false,
             scene_seen: 0,
+            captures_owed: false,
             last_blur: None,
             asked_at: None,
             idle_scheduled: false,

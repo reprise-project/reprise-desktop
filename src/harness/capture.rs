@@ -249,7 +249,14 @@ impl CaptureClient {
     pub fn ext_session(&mut self, h: &mut Harness) -> ExtSession {
         let qh = self.queue.handle();
         let source = self.sources.create_source(&self.output, &qh, ());
-        self.session_of(h, source)
+        self.session_of(h, source, Options::empty())
+    }
+
+    /// An ext session on the output with the pointer drawn in, no frame asked yet.
+    pub fn ext_session_with_pointer(&mut self, h: &mut Harness) -> ExtSession {
+        let qh = self.queue.handle();
+        let source = self.sources.create_source(&self.output, &qh, ());
+        self.session_of(h, source, Options::PaintCursors)
     }
 
     /// An ext session on the window listed last, no frame asked yet.
@@ -258,7 +265,7 @@ impl CaptureClient {
         let qh = self.queue.handle();
         let toplevel = self.side.toplevels.last().expect("a listed window");
         let source = self.window_sources.create_source(toplevel, &qh, ());
-        self.session_of(h, source)
+        self.session_of(h, source, Options::empty())
     }
 
     /// A session on the pointer's image over the output, no frame asked yet.
@@ -276,9 +283,14 @@ impl CaptureClient {
         }
     }
 
-    fn session_of(&mut self, h: &mut Harness, source: ExtImageCaptureSourceV1) -> ExtSession {
+    fn session_of(
+        &mut self,
+        h: &mut Harness,
+        source: ExtImageCaptureSourceV1,
+        options: Options,
+    ) -> ExtSession {
         let qh = self.queue.handle();
-        let session = self.ext.create_session(&source, Options::empty(), &qh, ());
+        let session = self.ext.create_session(&source, options, &qh, ());
         source.destroy();
         self.roundtrip(h);
         ExtSession {
@@ -294,16 +306,33 @@ impl CaptureClient {
         self.ext_frame_into(h, s, &buffer);
     }
 
-    /// [`CaptureClient::ext_frame`] into `buffer`.
+    /// [`CaptureClient::ext_frame`] into `buffer`, which the client says it damaged whole.
     pub fn ext_frame_into(&mut self, h: &mut Harness, s: &mut ExtSession, buffer: &WlBuffer) {
+        self.frame_into(h, s, buffer, true);
+    }
+
+    /// [`CaptureClient::ext_frame`] into `buffer`, which the client says it left as it was.
+    pub fn ext_frame_clean_into(&mut self, h: &mut Harness, s: &mut ExtSession, buffer: &WlBuffer) {
+        self.frame_into(h, s, buffer, false);
+    }
+
+    fn frame_into(
+        &mut self,
+        h: &mut Harness,
+        s: &mut ExtSession,
+        buffer: &WlBuffer,
+        damaged: bool,
+    ) {
         if let Some(f) = s.frame.take() {
             f.destroy();
         }
         let qh = self.queue.handle();
         let frame = s.session.create_frame(&qh, ());
         frame.attach_buffer(buffer);
-        let (w, hh) = self.size;
-        frame.damage_buffer(0, 0, w, hh);
+        if damaged {
+            let (w, hh) = self.size;
+            frame.damage_buffer(0, 0, w, hh);
+        }
         frame.capture();
         s.frame = Some(frame);
         self.roundtrip(h);

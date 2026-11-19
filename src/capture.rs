@@ -4,7 +4,9 @@
 //! its source changed since the session's last delivered frame (and for the first); otherwise it
 //! waits for the output's next drawn frame or the window's next commit that shows something new,
 //! and a `copy_with_damage` waits likewise while its buffer holds the latest picture, so an idle
-//! screen or window costs a screencast nothing.
+//! screen or window costs a screencast nothing. An output frame that would put nothing new in its
+//! buffer waits on, undrawn, and a drawn frame only the pointer asked for ([`Drew::Pointer`])
+//! reaches only captures that draw the pointer.
 //!
 //! An output stream (an ext session, or a wlr client's copies of one view) keeps a damage tracker
 //! and, for each buffer the client cycles, what changed since that buffer last held a frame of it.
@@ -162,6 +164,13 @@ impl Waiting {
             Waiting::Wlr(s) => Some(Shown::Output(s.info.output.clone())),
         }
     }
+
+    fn sees(&self, drew: Drew) -> bool {
+        match self {
+            Waiting::Ext { session, .. } => drew.seen(session.draw_cursor()),
+            Waiting::Wlr(s) => drew.seen(s.info.overlay_cursor),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -223,11 +232,13 @@ impl Captures {
         self.cursor_sessions.retain(|s| !stops(&shown(&s.source())));
     }
 
-    /// The source `on` drew or committed: its sessions' next frames are
-    /// filled at once.
-    fn changed(&self, on: &Option<Shown>) {
+    /// The source `on` drew or committed what `drew` says: the next frames of its sessions that
+    /// show it are filled at once.
+    fn changed(&self, on: &Option<Shown>, drew: Drew) {
         for s in self.sessions.iter().filter(|s| shown(&s.source()) == *on) {
-            fresh(s).mark();
+            if drew.seen(s.draw_cursor()) {
+                fresh(s).mark();
+            }
         }
     }
 
@@ -285,10 +296,26 @@ pub fn constraints_changed(state: &mut State, output: &Output) {
     }
 }
 
-pub fn output_drawn(state: &mut State, output: &Output) {
+/// What a drawn frame of an output may show new, as what asked for it says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Drew {
+    /// Only the pointer moved or changed.
+    Pointer,
+    /// Anything may have changed.
+    Scene,
+}
+
+impl Drew {
+    /// Whether a capture, drawing the pointer `with_cursor`, may see the change.
+    fn seen(self, with_cursor: bool) -> bool {
+        self == Drew::Scene || with_cursor
+    }
+}
+
+pub fn output_drawn(state: &mut State, output: &Output, drew: Drew) {
     let on = Some(Shown::Output(output.clone()));
-    state.captures.changed(&on);
-    for w in take_waiting(state, |s| *s == on) {
+    state.captures.changed(&on, drew);
+    for w in take_waiting(state, |w| w.shows() == on && w.sees(drew)) {
         match w {
             Waiting::Ext { session, frame } => fill_ext(state, output, &session, frame),
             Waiting::Wlr(s) => {
@@ -310,7 +337,7 @@ pub fn window_committed(state: &mut State, w: WindowId, drew: bool, applied: boo
     }
     let on = Some(Shown::Window(w));
     if drew {
-        state.captures.changed(&on);
+        state.captures.changed(&on, Drew::Scene);
     }
     if !applied {
         return;
@@ -322,7 +349,7 @@ pub fn window_committed(state: &mut State, w: WindowId, drew: bool, applied: boo
             }
         }
     }
-    let (due, unchanged): (Vec<Waiting>, Vec<Waiting>) = take_waiting(state, |s| *s == on)
+    let (due, unchanged): (Vec<Waiting>, Vec<Waiting>) = take_waiting(state, |x| x.shows() == on)
         .into_iter()
         .partition(|w| matches!(w, Waiting::Ext { session, .. } if fresh(session).get()));
     if !unchanged.is_empty() {
@@ -343,10 +370,10 @@ pub fn window_gone(state: &mut State, w: WindowId) {
     crate::captureborder::refresh(state);
 }
 
-fn take_waiting(state: &mut State, on: impl Fn(&Option<Shown>) -> bool) -> Vec<Waiting> {
+fn take_waiting(state: &mut State, taken: impl Fn(&Waiting) -> bool) -> Vec<Waiting> {
     let (now, rest): (Vec<Waiting>, Vec<Waiting>) = std::mem::take(&mut state.captures.waiting)
         .into_iter()
-        .partition(|w| on(&w.shows()));
+        .partition(taken);
     state.captures.waiting = rest;
     now
 }
@@ -408,8 +435,9 @@ enum Ask {
 
 /// Render `output`'s picture from `origin` (physical pixels from its
 /// top-left), into a `size` buffer turned by `transform` from the layout,
-/// into `target`, as much of it as `stream` needs. None when a wlr frame waits and nothing
-/// changed. The debug overlay shows only with `[debug] overlay_in_captures`.
+/// into `target`, as much of it as `stream` needs. None when the frame waits: its buffer holds the
+/// latest picture, and an ext client damaged nothing in it. The debug overlay shows only with
+/// `[debug] overlay_in_captures`.
 fn render_into(
     state: &mut State,
     output: &Output,
@@ -487,6 +515,9 @@ fn render_scene_into(
     let (drawn, reported) = match stream.ask {
         Ask::Ext { asked, effects } => {
             let mut region = damage.take(at, stream.buffer, &asked);
+            if region.is_empty() {
+                return Ok(None);
+            }
             grow_over_effects(&mut region, &elements, scale);
             let mut effects = effects.borrow_mut();
             let ids: HashSet<&Id> = elements.iter().map(Element::id).collect();
@@ -1122,7 +1153,7 @@ fn fill_ext(state: &mut State, output: &Output, session: &SessionRef, frame: Fra
             effects,
         },
     };
-    let drawn = render_into(
+    let drawn = match render_into(
         state,
         output,
         (0, 0).into(),
@@ -1130,8 +1161,15 @@ fn fill_ext(state: &mut State, output: &Output, session: &SessionRef, frame: Fra
         session.draw_cursor(),
         Target::of(&buffer),
         stream,
-    )
-    .and_then(|d| d.ok_or_else(|| "nothing drawn".to_string()));
+    ) {
+        Ok(Some(d)) => Ok(d),
+        Ok(None) => {
+            fresh(session).clear();
+            let session = session.clone();
+            return state.captures.waiting.push(Waiting::Ext { session, frame });
+        }
+        Err(e) => Err(e),
+    };
     state.captures.held(&buffer, Some(session_damage(session)));
     let frame_ref = FrameRef::clone(&frame);
     if drawn.is_ok() {
@@ -2480,7 +2518,7 @@ mod tests {
             "a copy into the buffer holding the latest picture waits"
         );
         crate::backend::take_asks();
-        super::output_drawn(&mut h.state, &output);
+        super::output_drawn(&mut h.state, &output, super::Drew::Scene);
         assert_eq!(
             h.state.captures.waiting.len(),
             1,
@@ -2490,6 +2528,140 @@ mod tests {
             crate::backend::take_asks(),
             [],
             "and asks for no frame, which would retry it again"
+        );
+    }
+
+    /// Turns the loop until every capture drawn has reached its client.
+    fn land(h: &mut Harness) {
+        h.until("the captures drawn land", |s| {
+            s.captures.drawing.is_empty()
+                && (s.captures.wlr_streams.iter()).all(|(_, d)| d.borrow().in_flight.is_empty())
+        });
+    }
+
+    #[test]
+    fn a_frame_only_the_pointer_changed_fills_only_captures_that_draw_the_pointer() {
+        let Some(mut h) = drawing() else { return };
+        let output = h.output("TEST-1", 64, 48);
+        let mut client = h.connect_capture((64, 48));
+        let mut bare = client.ext_session(&mut h);
+        let mut with = client.ext_session_with_pointer(&mut h);
+        for s in [&mut bare, &mut with] {
+            client.ext_frame(&mut h, s);
+        }
+        land(&mut h);
+        for s in [&mut bare, &mut with] {
+            client.ext_frame(&mut h, s);
+        }
+        assert_eq!(
+            h.state.captures.waiting.len(),
+            2,
+            "both second frames wait for a change"
+        );
+        let bare_session = h.state.captures.sessions[0].as_ref();
+        super::output_drawn(&mut h.state, &output, super::Drew::Pointer);
+        let waiting: Vec<bool> = (h.state.captures.waiting.iter())
+            .map(|w| matches!(w, super::Waiting::Ext { session, .. } if *session == bare_session))
+            .collect();
+        assert_eq!(
+            waiting,
+            [true],
+            "the capture without the pointer has nothing new and waits on"
+        );
+        assert!(!super::fresh(&bare_session).get());
+        super::output_drawn(&mut h.state, &output, super::Drew::Scene);
+        assert!(
+            h.state.captures.waiting.is_empty(),
+            "a frame anything else asked for fills it"
+        );
+    }
+
+    #[test]
+    fn a_frame_with_nothing_new_for_its_buffer_waits_for_a_change() {
+        let Some(mut h) = drawing() else { return };
+        let output = h.output("TEST-1", 64, 48);
+        let mut client = h.connect_capture((64, 48));
+        let mut s = client.ext_session(&mut h);
+        let buffer = client.buffer();
+        client.ext_frame_into(&mut h, &mut s, &buffer);
+        land(&mut h);
+        client.ext_frame_clean_into(&mut h, &mut s, &buffer);
+        super::output_drawn(&mut h.state, &output, super::Drew::Scene);
+        assert_eq!(
+            h.state.captures.waiting.len(),
+            1,
+            "the output drew nothing the capture shows, and its buffer holds the latest picture"
+        );
+        assert!(h.state.captures.drawing.is_empty(), "nothing is drawn");
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 20, 20);
+        super::output_drawn(&mut h.state, &output, super::Drew::Scene);
+        assert!(
+            h.state.captures.waiting.is_empty(),
+            "a change it shows fills it"
+        );
+    }
+
+    #[test]
+    fn a_tick_only_the_pointer_asked_for_shows_a_virtual_screens_captures_nothing_new() {
+        let Some(mut h) = drawing() else { return };
+        let spec = crate::virtualout::Spec {
+            size: (64, 48),
+            refresh: 60_000,
+            scale: 1.0,
+            transform: Transform::Normal,
+            position: (0, 0),
+        };
+        let kind = crate::virtualout::Kind::Remote;
+        let o = crate::virtualout::create(&mut h.state, "REMOTE-1", spec, kind);
+        h.state.update_layout();
+        h.until("the wallpaper shows", |s| s.wallpaper_ready(&o));
+        let mut client = h.connect_capture((64, 48));
+        let mut s = client.ext_session(&mut h);
+        h.run_for(1100);
+        client.ext_frame(&mut h, &mut s);
+        let session = h.state.captures.sessions[0].as_ref();
+        assert!(!super::fresh(&session).get(), "the first frame is filled");
+        crate::virtualout::ask(&mut h.state, &o, crate::backend::Ask::Pointer);
+        h.run_for(100);
+        assert!(
+            !super::fresh(&session).get(),
+            "the pointer is not in the capture: its next frame waits for a change"
+        );
+        crate::virtualout::ask(&mut h.state, &o, crate::backend::Ask::Scene);
+        h.run_for(100);
+        assert!(super::fresh(&session).get(), "a change fills it at once");
+    }
+
+    #[test]
+    fn a_scene_edit_that_asked_no_frame_shows_on_a_virtual_screens_next_pointer_tick() {
+        let Some(mut h) = drawing() else { return };
+        let spec = crate::virtualout::Spec {
+            size: (64, 48),
+            refresh: 60_000,
+            scale: 1.0,
+            transform: Transform::Normal,
+            position: (0, 0),
+        };
+        let kind = crate::virtualout::Kind::Remote;
+        let o = crate::virtualout::create(&mut h.state, "REMOTE-1", spec, kind);
+        h.state.update_layout();
+        h.until("the wallpaper shows", |s| s.wallpaper_ready(&o));
+        let mut client = h.connect_capture((64, 48));
+        let mut s = client.ext_session(&mut h);
+        h.run_for(1100);
+        client.ext_frame(&mut h, &mut s);
+        let session = h.state.captures.sessions[0].as_ref();
+        assert!(!super::fresh(&session).get(), "the first frame is filled");
+        let root = h.state.scene.root();
+        h.state
+            .scene
+            .rect_create(root, (4, 4), [1.0, 0.0, 0.0, 1.0]);
+        crate::virtualout::ask(&mut h.state, &o, crate::backend::Ask::Pointer);
+        h.run_for(100);
+        assert!(
+            super::fresh(&session).get(),
+            "the pointer tick shows the scene edit to captures that leave the pointer out"
         );
     }
 

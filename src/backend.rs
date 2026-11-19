@@ -186,6 +186,8 @@ struct Surface {
     catch_up: bool,
     pointer_shown: bool,
     scene_seen: u64,
+    /// A frame that would have shown captures the scene never reached the screen.
+    captures_owed: bool,
     scene_changed: bool,
     backdrop_changed: crate::glass::Under,
     last_blur: Option<std::time::Instant>,
@@ -222,6 +224,8 @@ struct InFlight {
     feedback: Option<OutputPresentationFeedback>,
     /// Only the cursor plane moved (`pointer_frame`).
     pointer: bool,
+    /// What the frame's captures may find new.
+    drew: crate::capture::Drew,
 }
 
 /// Main's lock of an output's compositor. Main locks only while the output's thread is idle

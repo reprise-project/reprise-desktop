@@ -104,6 +104,58 @@ fn only_pointer_asks_make_a_pointer_only_frame() {
 }
 
 #[test]
+fn a_pointer_only_frame_shows_captures_only_the_pointer_while_scene_and_water_keep() {
+    use super::render::capture_drew;
+    use crate::{capture::Drew, waterview::Stepped};
+    let still = Stepped::default();
+    let moved = Stepped {
+        moved: true,
+        ..Stepped::default()
+    };
+    let fell = Stepped {
+        fell: true,
+        ..Stepped::default()
+    };
+    assert_eq!(capture_drew(true, true, &still), Drew::Pointer);
+    assert_eq!(capture_drew(false, true, &still), Drew::Scene, "other asks");
+    assert_eq!(
+        capture_drew(true, false, &still),
+        Drew::Scene,
+        "a scene edit"
+    );
+    assert_eq!(capture_drew(true, true, &moved), Drew::Scene, "water moved");
+    assert_eq!(
+        capture_drew(true, true, &fell),
+        Drew::Scene,
+        "a water pane fell"
+    );
+}
+
+#[test]
+fn a_frame_that_never_reached_the_screen_leaves_captures_owed_the_scene() {
+    use super::render::{capture_drew, captures_owed};
+    use crate::{capture::Drew, waterview::Stepped};
+    let still = Stepped::default();
+    let drew = capture_drew(false, true, &still);
+    let owed = captures_owed(false, drew, false);
+    assert_eq!(
+        capture_drew(true, !owed, &still),
+        Drew::Scene,
+        "the next pointer-only frame carries what the lost frame drew"
+    );
+    assert!(
+        captures_owed(owed, Drew::Pointer, true),
+        "a cursor plane move pays nothing back"
+    );
+    let owed = captures_owed(owed, Drew::Scene, true);
+    assert_eq!(
+        capture_drew(true, !owed, &still),
+        Drew::Pointer,
+        "once a scene frame reached the screen"
+    );
+}
+
+#[test]
 fn only_catch_up_asks_make_a_catch_up_frame() {
     assert!(asked(&[Ask::CatchUp]).catch_up);
     assert!(!asked(&[Ask::CatchUp, Ask::Pointer]).catch_up);
