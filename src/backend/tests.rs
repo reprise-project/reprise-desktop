@@ -132,6 +132,37 @@ fn a_pointer_only_frame_shows_captures_only_the_pointer_while_scene_and_water_ke
 }
 
 #[test]
+fn a_cursor_move_the_commit_thread_never_takes_ends_lost() {
+    use super::render::cursor_moved;
+    use crate::capture::{Drew, Ended};
+    use smithay::backend::drm::compositor::CursorMove;
+    for drew in [Drew::Pointer, Drew::Scene] {
+        assert_eq!(cursor_moved(CursorMove::Unavailable, drew, |_| true), None);
+        assert_eq!(
+            cursor_moved(CursorMove::Unchanged, drew, |_| true),
+            Some(Some(Ended::Empty(drew))),
+            "an unmoved cursor is an empty frame"
+        );
+        let mut flipped = None;
+        let queued = cursor_moved(CursorMove::Prepared, drew, |d| {
+            flipped = Some(d);
+            true
+        });
+        assert_eq!(queued, Some(None), "a queued move ends on its flip");
+        assert_eq!(
+            flipped,
+            Some(drew),
+            "the flip carries what captures are owed"
+        );
+        assert_eq!(
+            cursor_moved(CursorMove::Prepared, drew, |_| false),
+            Some(Some(Ended::Lost(drew))),
+            "a move the thread never took is lost"
+        );
+    }
+}
+
+#[test]
 fn only_catch_up_asks_make_a_catch_up_frame() {
     assert!(asked(&[Ask::CatchUp]).catch_up);
     assert!(!asked(&[Ask::CatchUp, Ask::Pointer]).catch_up);
