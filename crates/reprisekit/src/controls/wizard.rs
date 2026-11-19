@@ -140,18 +140,19 @@ impl Wizard {
 
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, w: &Wizard, cues: bool, px: u32) {
     let Paint { cs, s, text: u, .. } = *p;
-    let cw = u.len(CLIENT.0);
-    let rule_y = u.len(RULE_Y);
+    let len = |v: i32| u.len(v) * s;
+    let cw = len(CLIENT.0);
+    let rule_y = len(RULE_Y);
     c.fill_rect(c.bounds(), cs.button_face);
     match &w.style {
         Style::Exterior { title } => {
-            let panel_w = u.len(PANEL_W);
+            let panel_w = len(PANEL_W);
             c.fill_rect(Rect::new(panel_w, 0, cw - panel_w, rule_y), cs.window);
             c.dither_rect_t(Rect::new(0, 0, panel_w, rule_y), PANEL_NAVY, PANEL_BLACK, s);
-            let title_px = u.px(EXT_TITLE_PX);
-            let line_h = title_px as i32 + u.len(4);
-            let x = u.len(EXT_TITLE_AT.0);
-            let tr = Rect::new(x, u.len(EXT_TITLE_AT.1), cw - x - u.len(8), line_h);
+            let title_px = u.px(EXT_TITLE_PX) * s as u32;
+            let line_h = title_px as i32 + len(4);
+            let x = len(EXT_TITLE_AT.0);
+            let tr = Rect::new(x, len(EXT_TITLE_AT.1), cw - x - len(8), line_h);
             for (i, line) in crate::text::wrap_bold(text, title, tr.width, title_px, true)
                 .iter()
                 .enumerate()
@@ -165,21 +166,15 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, w: &Wizard, cues: bo
             subtitle,
             icon,
         } => {
-            let header_h = u.len(HEADER_H);
+            let header_h = len(HEADER_H);
             c.fill_rect(Rect::new(0, 0, cw, header_h), cs.window);
             let (title_r, subtitle_r) = interior_text(u);
-            text.draw(c, title_r, title, true, cs.window_text, Align::Left, px);
-            text.draw(
-                c,
-                subtitle_r,
-                subtitle,
-                false,
-                cs.window_text,
-                Align::Left,
-                px,
-            );
+            for (r, line, bold) in [(title_r, title, true), (subtitle_r, subtitle, false)] {
+                let r = text.line_box(r.scaled(s), bold, px);
+                text.draw(c, r, line, bold, cs.window_text, Align::Left, px);
+            }
             if let Some(icon) = icon {
-                c.blit_over(u.len(ICON_AT.0), u.len(ICON_AT.1), icon);
+                c.blit_over(len(ICON_AT.0), len(ICON_AT.1), icon);
             }
             c.etched_hline_t(0, cw, header_h, cs, s);
         }

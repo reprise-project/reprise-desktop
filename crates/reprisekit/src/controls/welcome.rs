@@ -551,6 +551,40 @@ mod tests {
     }
 
     #[test]
+    fn every_page_draws_its_text_uncut_at_every_text_size_and_scale() {
+        crate::pins::fonts();
+        let mut cut = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 125, 150] {
+                for s in [1, 2] {
+                    let theme = interfaces::theme_for(i).with_form_text(pct).scaled(s);
+                    let text = TextRenderer::load(&theme.fonts);
+                    let picks = Picks {
+                        interface: i,
+                        ..picks()
+                    };
+                    let sample = interfaces::theme_for(i);
+                    let mut w = Welcome::new(picks, sample, links(), &text, &theme);
+                    for page in [Page::Interface, Page::Look, Page::Ready] {
+                        w.go(page, &text, &theme);
+                        let (cw, ch) = theme.text.size(CLIENT);
+                        let mut c = Canvas::new((cw * s) as u32, (ch * s) as u32);
+                        let ((), cuts) = crate::pins::clipped_ink(|| {
+                            draw(&mut c, &text, &theme.paint(), &w, true, theme.fonts.size_px)
+                        });
+                        cut.extend(cuts.into_iter().map(|c| (i, pct, s, page, c.text, c.rows)));
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            cut,
+            Vec::new(),
+            "(interface, text size, scale, page, line, ink rows cut)"
+        );
+    }
+
+    #[test]
     fn a_new_text_size_lays_the_page_out_again() {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
