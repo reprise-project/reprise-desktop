@@ -96,8 +96,18 @@ impl Glyph {
     /// The columns right of the pen this glyph inks, faint antialiased fringes left out as in
     /// [`Glyph::ink_cut`]; `None` for a blank glyph.
     fn ink_span(&self) -> Option<(i32, i32)> {
+        self.span(0x60)
+    }
+
+    /// The columns right of the pen a blit of this glyph visibly sets: a smooth glyph's fringes
+    /// from 1/8 coverage too.
+    fn drawn_span(&self) -> Option<(i32, i32)> {
+        self.span(if self.smooth { 0x20 } else { 0x60 })
+    }
+
+    fn span(&self, min: u8) -> Option<(i32, i32)> {
         let rows = || self.bitmap.chunks(self.width.max(1)).take(self.height);
-        let inked = |x: usize| rows().any(|row| row.get(x).is_some_and(|&cov| cov >= 0x60));
+        let inked = |x: usize| rows().any(|row| row.get(x).is_some_and(|&cov| cov >= min));
         let l = (0..self.width).find(|&x| inked(x))?;
         let r = (l..self.width).rev().find(|&x| inked(x))?;
         Some((self.left + l as i32, self.left + r as i32 + 1))
@@ -227,6 +237,54 @@ pub enum DialogFont {
 type GlyphKey = (Option<char>, bool, u32, u32);
 
 type LineMetrics = (i32, i32, i32);
+
+/// A selection's highlight at a canvas scale, from [`TextRenderer::highlight`].
+pub struct Highlight<'a> {
+    /// The highlight as given, in logical pixels.
+    pub rect: Rect,
+    /// Its device pixels, out to the selected glyphs' ink.
+    pub dev: Rect,
+    s: i32,
+    pen: i32,
+    baseline: Option<i32>,
+    line: Rect,
+    text: &'a str,
+    bold: bool,
+    size_px: u32,
+}
+
+impl Highlight<'_> {
+    /// Fill the highlight's device pixels within `clip` in `color`.
+    pub fn fill(&self, c: &mut Canvas, clip: Rect, color: Color) {
+        let r = self.dev.intersect(&clip.scaled(self.s));
+        c.in_device_px(|c| c.fill_rect(r, color));
+    }
+
+    /// The device pixels a caret `bar` inverts: one that starts past `rect`'s right edge but
+    /// inside `dev` starts past `dev` instead, so it reads beside the highlight as it does at
+    /// scale 1, without passing `clip`'s right edge.
+    fn caret_px(&self, bar: Rect, clip: Rect) -> Rect {
+        let mut b = bar.scaled(self.s);
+        if b.x >= self.rect.right() * self.s && b.x < self.dev.right() {
+            b.x = self.dev.right().min(clip.right() * self.s - b.width);
+        }
+        b
+    }
+
+    /// Invert a caret `bar` where [`Highlight::caret`] puts it.
+    pub fn invert_caret(&self, c: &mut Canvas, bar: Rect, clip: Rect) {
+        let b = self.caret_px(bar, clip);
+        c.in_device_px(|c| c.invert_rect(b));
+    }
+
+    /// The logical pixels holding the caret `bar` as [`Highlight::invert_caret`] draws it within
+    /// `clip`: the damage a blink reports.
+    pub fn caret(&self, bar: Rect, clip: Rect) -> Rect {
+        let (b, s) = (self.caret_px(bar, clip), self.s);
+        let (x0, x1) = (b.x.div_euclid(s), (b.right() + s - 1).div_euclid(s));
+        Rect::new(x0, bar.y, x1 - x0, bar.height)
+    }
+}
 
 pub struct TextRenderer {
     regular: Option<LoadedFace>,
@@ -1013,6 +1071,87 @@ impl TextRenderer {
             g.nudge_into(one, pen, s, line)
         })
         .unwrap_or(0)
+    }
+
+    /// The highlight `hl` of bytes `sel` of `text`, drawn from pen x `pen` in `line`, at canvas
+    /// scale `s`. Its device pixels reach out to the selected glyphs' ink on a side where that
+    /// ink fits `hl` at scale 1, as a glyph can ink a device column past its advance at `s`.
+    #[expect(clippy::too_many_arguments)]
+    pub fn highlight<'a>(
+        &self,
+        hl: Rect,
+        text: &'a str,
+        sel: std::ops::Range<usize>,
+        pen: i32,
+        line: Rect,
+        bold: bool,
+        size_px: u32,
+        s: i32,
+    ) -> Highlight<'a> {
+        let mut h = Highlight {
+            rect: hl,
+            dev: hl.scaled(s),
+            s,
+            pen: pen + self.measure(&text[..sel.start], bold, size_px),
+            baseline: self.baseline(line, bold, size_px),
+            line,
+            text: &text[sel],
+            bold,
+            size_px,
+        };
+        if s == 1 {
+            return h;
+        }
+        let join = |a: Option<(i32, i32)>, (l, r): (i32, i32)| {
+            Some(a.map_or((l, r), |(al, ar)| (al.min(l), ar.max(r))))
+        };
+        let (mut one, mut ink, mut at) = (None, None, h.pen);
+        for ch in h.text.chars() {
+            if let Some((l, r)) = self
+                .with_glyph(ch, bold, size_px, 1, |g| g.ink_span())
+                .flatten()
+            {
+                one = join(one, (at + l, at + r));
+            }
+            let dx = s * at + self.nudge(ch, bold, size_px, s, at, line);
+            let span = self.with_glyph(ch, bold, size_px, s as u32, |g| g.drawn_span());
+            if let Some((l, r)) = span.flatten() {
+                ink = join(ink, (dx + l, dx + r));
+            }
+            at += self.advance(ch, bold, size_px);
+        }
+        let (Some((l1, r1)), Some((l, r))) = (one, ink) else {
+            return h;
+        };
+        let (mut x0, mut x1) = (h.dev.x, h.dev.right());
+        if l1 >= hl.x {
+            x0 = x0.min(l.max(s * line.x));
+        }
+        if r1 <= hl.right() {
+            x1 = x1.max(r.min(s * line.right()));
+        }
+        h.dev = Rect::new(x0, h.dev.y, x1 - x0, h.dev.height);
+        h
+    }
+
+    /// Draw `h`'s selected glyphs in `color` where their ink passes `h.rect` into `h.dev`, within
+    /// `clip`. Only the selected glyphs draw there, so a neighbour's ink in those device columns
+    /// keeps the text colour and a pixel both ink takes `color`.
+    pub fn draw_overhang(&self, c: &mut Canvas, h: &Highlight, clip: Rect, color: Color) {
+        let (s, r, d) = (h.s, h.rect, h.dev);
+        let Some(baseline) = h.baseline.filter(|_| d != r.scaled(s)) else {
+            return;
+        };
+        let x0 = d.x.div_euclid(s);
+        let x1 = (d.right() + s - 1).div_euclid(s);
+        let left = Rect::new(x0, clip.y, r.x - x0, clip.height);
+        let right = Rect::new(r.right(), clip.y, x1 - r.right(), clip.height);
+        for strip in [left, right].map(|strip| strip.intersect(&clip)) {
+            if !strip.is_empty() {
+                let (bold, px) = (h.bold, h.size_px);
+                self.draw_line(c, h.pen, baseline, strip, h.line, h.text, bold, color, px);
+            }
+        }
     }
 
     /// Draw `text` from pen x `pen` on `baseline`, clipped to `clip`. At canvas scale `s` glyphs

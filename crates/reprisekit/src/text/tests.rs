@@ -1194,3 +1194,24 @@ fn a_mnemonic_underline_at_scale_2_moves_with_its_glyph() {
     );
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+#[test]
+fn a_smooth_glyphs_fringe_under_an_eighth_of_coverage_is_not_drawn_ink() {
+    let glyph = |bitmap: Vec<u8>, smooth| Glyph {
+        width: bitmap.len(),
+        bitmap,
+        height: 1,
+        left: 2,
+        top: 0,
+        advance: 4,
+        smooth,
+    };
+    assert_eq!(
+        glyph(vec![0x1f, 0xff, 0x20], true).drawn_span(),
+        Some((3, 5))
+    );
+    assert_eq!(
+        glyph(vec![0x1f, 0xff, 0x5f], false).drawn_span(),
+        Some((3, 4))
+    );
+}

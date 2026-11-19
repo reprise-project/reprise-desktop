@@ -360,34 +360,35 @@ pub fn draw(
     let (tr, align) = text_rect(ud, lay.edit.scaled(s), s);
     let shown = ud.shown();
     if ud.enabled {
+        let x0 = text_x(text, &shown, tr, align, px);
+        let at = |i: usize| x0 + text.measure(&shown[..i], false, px);
+        let sel = ud.edit.as_ref().filter(|_| caret).map(|e| e.selection());
+        let hl = sel.filter(|sel| !sel.is_empty()).map(|sel| {
+            // One text line tall, centred in the field, like the time
+            // field's current part.
+            let (a, b) = (at(sel.start), at(sel.end));
+            let lh = p.text.len(LINE_H) * s;
+            let hl = Rect::new(a, tr.y + (tr.height - lh) / 2, b - a, lh);
+            text.highlight(hl, &shown, sel, x0, tr, false, px, c.scale())
+        });
+        // Filled under the text too, so a neighbour's ink past the highlight keeps its colour.
+        if let Some(hl) = &hl {
+            hl.fill(c, tr, cs.hilight);
+        }
         text.draw(c, tr, &shown, false, cs.button_text, align, px);
         if caret {
-            let x0 = text_x(text, &shown, tr, align, px);
-            let at = |i: usize| x0 + text.measure(&shown[..i], false, px);
-            let (sel, cx) = match &ud.edit {
-                Some(e) => (e.selection(), at(e.caret())),
-                None => (0..0, at(shown.len())),
-            };
-            if !sel.is_empty() {
-                // One text line tall, centred in the field, like the time
-                // field's current part.
-                let (a, b) = (at(sel.start), at(sel.end));
-                let lh = p.text.len(LINE_H) * s;
-                let hl = Rect::new(a, tr.y + (tr.height - lh) / 2, b - a, lh);
-                c.fill_rect(hl, cs.hilight);
-                text.draw_clipped(
-                    c,
-                    tr,
-                    Rect::new(a, tr.y, b - a, tr.height),
-                    &shown,
-                    false,
-                    cs.hilight_text,
-                    align,
-                    px,
-                );
+            let cx = ud.edit.as_ref().map_or(at(shown.len()), |e| at(e.caret()));
+            if let Some(hl) = &hl {
+                c.fill_rect(hl.rect, cs.hilight);
+                let clip = Rect::new(hl.rect.x, tr.y, hl.rect.width, tr.height);
+                text.draw_clipped(c, tr, clip, &shown, false, cs.hilight_text, align, px);
+                text.draw_overhang(c, hl, tr, cs.hilight_text);
             }
             let bar = Rect::new(cx, tr.y + 2 * s, s, tr.height - 4 * s);
-            c.invert_rect(bar);
+            match &hl {
+                Some(hl) => hl.invert_caret(c, bar, tr),
+                None => c.invert_rect(bar),
+            }
             if let Some(e) = &ud.edit {
                 c.report_spot(TextSpot {
                     digits: true,
@@ -983,5 +984,73 @@ mod tests {
         assert_eq!(c.get(101, 296), cs.button_shadow.argb());
         assert_eq!(c.get(103, 296), cs.button_hilight.argb());
         assert_eq!(c.get(102, 297), cs.button_hilight.argb());
+    }
+
+    /// Digits ink inside their advance, so the sweep runs over every pair of printable ASCII chars.
+    #[test]
+    fn a_selected_char_at_scale_2_lights_whole_and_leaves_its_neighbour() {
+        crate::pins::fonts();
+        let cs = &Theme::default().colors;
+        let l = layout(2, 2);
+        let (w, h) = (WIDTH + 4, HEIGHT + 4);
+        let mut faults = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.into()],
+                antialias: false,
+                ..FontConfig::default()
+            });
+            for px in [11, 13] {
+                let field = |t: &str, sel: std::ops::Range<usize>| {
+                    let mut ud = UpDown::new(0, 0, 99);
+                    let mut e = TextEdit::new(t, true);
+                    e.set_selection(sel.end, sel.start);
+                    ud.edit = Some(e);
+                    ud
+                };
+                // The selected copy draws across the field's rows, the highlight's and those
+                // above and under it.
+                let geom = |t: &str| {
+                    let (tr, align) = text_rect(&field(t, 0..0), l.edit, 1);
+                    (text_x(&text, t, tr, align, px), tr, tr.y..tr.bottom())
+                };
+                // The caret, at the selection's start, is inverted again to take it off.
+                let draw = |s: i32, t: &str, sel: std::ops::Range<usize>| {
+                    let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                    c.fill_rect(c.bounds(), cs.button_face);
+                    let paint = classic_paint(cs, 1);
+                    draw(
+                        &mut c,
+                        &text,
+                        &paint,
+                        &field(t, sel.clone()),
+                        &l,
+                        true,
+                        None,
+                        px,
+                    );
+                    let (pen, tr, _) = geom(t);
+                    let cx = pen + text.measure(&t[..sel.start], false, px);
+                    c.invert_rect(Rect::new(cx, tr.y + 2, 1, tr.height - 4));
+                    c.pixels
+                };
+                let found = crate::paint::selection_faults(
+                    &text,
+                    px,
+                    (w, h),
+                    crate::paint::ascii_pairs(),
+                    geom,
+                    draw,
+                    cs.hilight_text,
+                );
+                faults.extend(found.into_iter().map(|f| format!("{family} {px} px: {f}")));
+            }
+        }
+        assert!(
+            faults.is_empty(),
+            "{} faults\n{}",
+            faults.len(),
+            faults.join("\n")
+        );
     }
 }

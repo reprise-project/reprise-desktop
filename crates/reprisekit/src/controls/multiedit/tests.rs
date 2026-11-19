@@ -1431,3 +1431,116 @@ fn a_box_scrolled_at_scale_2_keeps_the_inset_left_of_its_text_clip_clear() {
     });
     assert!(inked.is_empty(), "{}", inked.join("\n"));
 }
+
+#[test]
+fn a_selected_glyph_at_scale_2_lights_whole_and_leaves_its_neighbour() {
+    crate::pins::fonts();
+    let cs = &Theme::default().colors;
+    let (w, h) = (64, 30);
+    let mut faults = Vec::new();
+    for family in ["Tahoma", "DejaVu Sans"] {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            antialias: false,
+            ..FontConfig::default()
+        });
+        for px in [11, 13] {
+            let m = Metrics {
+                bars_always: false,
+                ..Metrics::for_font(&text, px)
+            };
+            let lay = |t: &MultiEdit| layout(&text, &m, t, Rect::new(0, 0, w, h), 1);
+            let inner = lay(&e("")).inner;
+            let (x0, y) = (inner.x + 1, inner.y + 1);
+            let row = Rect::new(x0 - 1, y, inner.right() - x0 + 1, m.line_h);
+            let paint_with = |s: i32, line: &str, sel: std::ops::Range<usize>, caret| {
+                let mut t = e(line);
+                t.place(p(0, sel.start), false);
+                t.place(p(0, sel.end), true);
+                let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                let paint = classic_paint(cs, 1);
+                let v = View::default();
+                draw(&mut c, &text, &paint, &m, &t, v, &lay(&t), caret, None);
+                c.pixels
+            };
+            let draw = |s, t: &str, sel| paint_with(s, t, sel, Caret::Unfocused);
+            let caret = |t: &str, sel, shown| paint_with(2, t, sel, Caret::new(true, shown));
+            let geom = |_: &str| (x0, row, y..y + m.line_h);
+            let pairs = crate::paint::ascii_pairs;
+            let (lit, hilight) = (cs.hilight_text, cs.hilight);
+            let found = crate::paint::selection_faults(&text, px, (w, h), pairs(), geom, draw, lit);
+            let carets = crate::paint::caret_faults(&text, px, w, pairs(), geom, caret, hilight);
+            let found = found.into_iter().chain(carets);
+            faults.extend(found.map(|f| format!("{family} {px} px: {f}")));
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} faults\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+}
+
+#[test]
+fn a_caret_past_a_widened_highlight_at_scale_2_blinks_in_its_damage_and_clip() {
+    crate::pins::fonts();
+    let cs = &Theme::default().colors;
+    let text = TextRenderer::load(&FontConfig {
+        family: vec!["Tahoma".into()],
+        antialias: false,
+        ..FontConfig::default()
+    });
+    let m = Metrics {
+        wrap: true,
+        ..Metrics::for_font(&text, 11)
+    };
+    let mut t = e("m");
+    t.place(p(0, 0), false);
+    t.place(p(0, 1), true);
+    for w in [200, 31] {
+        let lay = layout(&text, &m, &t, Rect::new(0, 0, w, 60), 1);
+        let draw_with = |caret| {
+            let mut c = Canvas::with_scale(w as u32, 60, 2);
+            c.set_blink_only(true);
+            let paint = classic_paint(cs, 1);
+            draw(
+                &mut c,
+                &text,
+                &paint,
+                &m,
+                &t,
+                View::default(),
+                &lay,
+                caret,
+                None,
+            );
+            c
+        };
+        let (mut on, off) = (draw_with(Caret::Shown), draw_with(Caret::Hidden));
+        let damage = on.take_damage().expect("a blink reports its damage");
+        let clip = text_clip(lay.inner, 1).scaled(2);
+        let at = |i: usize| (i as i32 % (2 * w), i as i32 / (2 * w));
+        let changed: Vec<_> = (0..on.pixels.len())
+            .filter(|&i| on.pixels[i] != off.pixels[i])
+            .map(at)
+            .collect();
+        assert!(!changed.is_empty(), "{w} px: the caret blinks");
+        let outside = |r: Rect| changed.iter().filter(|&&(x, y)| !r.contains(x, y)).count();
+        let undamaged = outside(
+            damage
+                .iter()
+                .fold(Rect::default(), |a, r| a.join(r))
+                .scaled(2),
+        );
+        assert_eq!(
+            undamaged, 0,
+            "{w} px: every blinking px lies in the damage {damage:?}"
+        );
+        assert_eq!(
+            outside(clip),
+            0,
+            "{w} px: every blinking px lies in the text clip {clip:?}"
+        );
+    }
+}

@@ -1247,7 +1247,8 @@ fn the_drop_point_inverts_its_column_so_a_stem_under_it_shows_white() {
 
 /// At scale 2 a field's selection recolours its text without moving any of it: drawn in mono,
 /// the selected field with its highlight read as the window and its white as ink is the field
-/// drawn unselected, whatever char ends the selection.
+/// drawn unselected, whatever char ends the selection. Past the highlight that holds in the
+/// device columns the selected glyphs ink, drawn alone, where only their own ink is white.
 #[test]
 fn a_field_selection_at_scale_2_recolours_its_text_in_place() {
     crate::pins::fonts();
@@ -1274,11 +1275,36 @@ fn a_field_selection_at_scale_2_recolours_its_text_in_place() {
                 let (y, h) = text.line(inner, false, px).unwrap();
                 let w = text.measure(&format!("o{ch}"), false, px);
                 let hl = Rect::new(inner.x, y, w, h).intersect(&inner).scaled(2);
-                let read = |i: usize, p: u32| match p {
-                    _ if !hl.contains(i as i32 % 300, i as i32 / 300) => p,
-                    p if p == cs.hilight.argb() => cs.window.argb(),
-                    p if p == cs.hilight_text.argb() => cs.button_text.argb(),
-                    p => p,
+                let own = {
+                    let mut c = Canvas::with_scale(150, 40, 2);
+                    let base = text.baseline(inner, false, px).unwrap();
+                    let (o, room) = (format!("o{ch}"), Rect::new(9, 10, 121, 17));
+                    text.draw_run(&mut c, inner.x, base, room, &o, false, cs.button_text, px);
+                    c.pixels
+                        .iter()
+                        .map(|&p| p == cs.button_text.argb())
+                        .collect::<Vec<_>>()
+                };
+                let rows = hl.y..hl.bottom();
+                let past: Vec<bool> = (0..300)
+                    .map(|x| {
+                        let inked = |y: i32| own[(y * 300 + x) as usize];
+                        !(hl.x..hl.right()).contains(&x) && rows.clone().any(inked)
+                    })
+                    .collect();
+                let read = |i: usize, p: u32| {
+                    let (x, y) = (i as i32 % 300, i as i32 / 300);
+                    let inside = hl.contains(x, y);
+                    if !inside && !(past[x as usize] && rows.contains(&y)) {
+                        return p;
+                    }
+                    match p {
+                        p if p == cs.hilight.argb() => cs.window.argb(),
+                        p if p == cs.hilight_text.argb() && (inside || own[i]) => {
+                            cs.button_text.argb()
+                        }
+                        p => p,
+                    }
                 };
                 let (plain, selected) = (draw(0), draw(2));
                 let off = plain.iter().zip(&selected).enumerate();
@@ -1327,4 +1353,48 @@ fn a_fields_first_glyph_at_scale_2_draws_where_it_draws_with_a_char_before_it() 
         }
     }
     assert!(moved.is_empty(), "{}", moved.join("\n"));
+}
+
+#[test]
+fn a_field_selection_at_scale_2_lights_its_glyph_whole_and_leaves_its_neighbour() {
+    crate::pins::fonts();
+    let cs = &Theme::default().colors;
+    let inner = Rect::new(10, 10, 120, 17);
+    let mut faults = Vec::new();
+    for family in ["Tahoma", "DejaVu Sans"] {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            antialias: false,
+            ..FontConfig::default()
+        });
+        for px in [11, 13] {
+            let (y, h) = text.line(inner, false, px).unwrap();
+            let paint_with = |s: i32, t: &str, sel: std::ops::Range<usize>, caret| {
+                let mut e = TextEdit::new(t, false);
+                e.set_selection(sel.start, sel.end);
+                let mut c = Canvas::with_scale(150, 40, s);
+                c.fill_rect(c.bounds(), cs.window);
+                let paint = classic_paint(cs, 1);
+                draw_edit(&mut c, &text, &e, inner, px, &paint, caret, 0);
+                c.pixels
+            };
+            let draw = |s, t: &str, sel| paint_with(s, t, sel, Caret::Unfocused);
+            let caret = |t: &str, sel, shown| paint_with(2, t, sel, Caret::new(true, shown));
+            let room = Rect::new(inner.x - 1, inner.y, inner.width + 1, inner.height);
+            let geom = |_: &str| (inner.x, room, y..y + h);
+            let pairs = crate::paint::ascii_pairs;
+            let (lit, hilight) = (cs.hilight_text, cs.hilight);
+            let found =
+                crate::paint::selection_faults(&text, px, (150, 40), pairs(), geom, draw, lit);
+            let carets = crate::paint::caret_faults(&text, px, 150, pairs(), geom, caret, hilight);
+            let found = found.into_iter().chain(carets);
+            faults.extend(found.map(|f| format!("{family} {px} px: {f}")));
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} faults\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
 }

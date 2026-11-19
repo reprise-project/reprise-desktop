@@ -160,8 +160,9 @@ impl<'a> Paint<'a> {
 
 /// Draw `edit` left-aligned in `inner` from byte `first` (`edit_first_visible`): selection, caret
 /// and, focused, the canvas' preedit with its `TextSpot`, which a secret field never shows. The
-/// caret sits on the pen's column and inverts what is under it, a glyph's stem included. `inner`
-/// sits at least 1 px inside its field's frame: the first glyph's ink may draw there.
+/// caret sits on the pen's column, or at scale 2 past device columns a selection's highlight adds
+/// there, and inverts what is under it, a glyph's stem included. `inner` sits at least 1 px inside
+/// its field's frame: the first glyph's ink may draw there.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_edit(
     c: &mut Canvas,
@@ -200,32 +201,34 @@ pub fn draw_edit(
         }
     };
     let room = Rect::new(inner.x - s, inner.y, inner.width + s, inner.height);
-    if edit.text.is_empty() && !edit.cue().is_empty() {
-        text.draw(c, inner, edit.cue(), false, cs.gray_text, Align::Left, px);
-    } else {
-        let shown = &edit.text[first..];
-        text.draw_in(c, inner, room, room, shown, false, cs.button_text, px);
-    }
     let line = text
         .line(inner, false, px)
         .map_or(inner, |(y, h)| Rect::new(inner.x, y, inner.width, h))
         .intersect(&inner);
+    let shown = &edit.text[first..];
     let sel = edit.selection();
     let sel = sel.start.max(first)..sel.end.max(first);
-    if !sel.is_empty() {
+    let hl = (!sel.is_empty()).then(|| {
         let (x0, x1) = (at(sel.start), at(sel.end).min(inner.right()));
         let run = Rect::new(x0, line.y, x1 - x0, line.height);
-        c.fill_rect(run, cs.hilight);
-        text.draw_in(
-            c,
-            inner,
-            room,
-            run,
-            &edit.text[first..],
-            false,
-            cs.hilight_text,
-            px,
-        );
+        let sel = sel.start - first..sel.end - first;
+        text.highlight(run, shown, sel, inner.x, room, false, px, c.scale())
+    });
+    let lit = Rect::new(room.x, line.y, room.width, line.height);
+    // The device columns past the run are filled under the text, so a neighbour's ink there
+    // stays the text colour.
+    if let Some(hl) = &hl {
+        hl.fill(c, lit, cs.hilight);
+    }
+    if edit.text.is_empty() && !edit.cue().is_empty() {
+        text.draw(c, inner, edit.cue(), false, cs.gray_text, Align::Left, px);
+    } else {
+        text.draw_in(c, inner, room, room, shown, false, cs.button_text, px);
+    }
+    if let Some(hl) = &hl {
+        c.fill_rect(hl.rect, cs.hilight);
+        text.draw_in(c, inner, room, hl.rect, shown, false, cs.hilight_text, px);
+        text.draw_overhang(c, hl, lit, cs.hilight_text);
     }
     if let Some(run) = run {
         let base = text
@@ -238,7 +241,10 @@ pub fn draw_edit(
     let cx = at(edit.caret()).min(inner.right() - s);
     let bar = Rect::new(cx, line.y, s, line.height);
     if caret.shown() && bar_on {
-        c.invert_rect(bar);
+        match &hl {
+            Some(hl) => hl.invert_caret(c, bar, room),
+            None => c.invert_rect(bar),
+        }
     }
     if caret.focused() {
         c.report_spot(own.spot(inner, bar));
@@ -311,4 +317,168 @@ impl Theme {
     pub fn glass(&self) -> Option<GlassSpec> {
         self.look.style().and_then(|s| s.glass)
     }
+}
+
+/// Where a selection of one char of a two-char text recolours wrongly at scale 2: a neighbour's
+/// ink outside the scale 1 highlight that changes colour from the text drawn unselected, a pixel
+/// changed in a device column outside both the scale 1 highlight and the selected glyph's ink, or
+/// a selected glyph `lit` whole at scale 1 but not across the highlight's rows at scale 2.
+/// `draw(s, text, sel)` returns the pixels of a `w` px wide canvas at scale `s`, any caret shown
+/// at `sel.start`; `geom(text)` gives its pen, the rect its text is laid in and the highlight's
+/// rows.
+#[cfg(test)]
+pub(crate) fn selection_faults(
+    text: &TextRenderer,
+    px: u32,
+    (w, h): (i32, i32),
+    pairs: impl IntoIterator<Item = String>,
+    geom: impl Fn(&str) -> (i32, Rect, std::ops::Range<i32>),
+    draw: impl Fn(i32, &str, std::ops::Range<usize>) -> Vec<u32>,
+    lit: crate::theme::Color,
+) -> Vec<String> {
+    let mut faults = Vec::new();
+    for t in pairs {
+        let (pen, line, rows) = geom(&t);
+        let mask = |s: i32, at: usize| glyph_mask(text, px, (w, h), &t, at, pen, line, s);
+        let rows2 = rows.start * 2..rows.end * 2;
+        for (k, (a, b, run)) in one_char_runs(text, px, &t, pen, &rows)
+            .into_iter()
+            .enumerate()
+        {
+            let other = if k == 0 { b } else { 0 };
+            let run = run.scaled(2);
+            let plain = draw(2, &t, a..a);
+            let (own, near, lit2) = (mask(2, a), mask(2, other), draw(2, &t, a..b));
+            let at = |i: usize, s: i32| (i as i32 % (w * s), i as i32 / (w * s));
+            let recoloured = (0..near.len())
+                .filter(|&i| near[i] && !own[i] && lit2[i] != plain[i])
+                .filter(|&i| !run.contains(at(i, 2).0, at(i, 2).1))
+                .count();
+            let (l, r) = (0..own.len())
+                .filter(|&i| own[i])
+                .map(|i| at(i, 2).0)
+                .fold((run.x, run.right()), |(l, r), x| (l.min(x), r.max(x + 1)));
+            let filled = (0..lit2.len())
+                .filter(|&i| lit2[i] != plain[i] && rows2.contains(&at(i, 2).1))
+                .filter(|&i| !(l..r).contains(&at(i, 2).0))
+                .count();
+            let unlit = |s: i32, own: &[bool], pixels: &[u32], rows: std::ops::Range<i32>| {
+                (0..own.len())
+                    .filter(|&i| own[i] && rows.contains(&at(i, s).1) && pixels[i] != lit.argb())
+                    .count()
+            };
+            let split = match unlit(1, &mask(1, a), &draw(1, &t, a..b), 0..h) {
+                0 => unlit(2, &own, &lit2, rows2.clone()),
+                _ => 0,
+            };
+            if recoloured + filled + split > 0 {
+                let which = ["first", "second"][k];
+                faults.push(format!(
+                    "\"{t}\" {which} selected: {recoloured} neighbour px recoloured, \
+                     {filled} px changed past the ink, {split} own px unlit"
+                ));
+            }
+        }
+    }
+    faults
+}
+
+/// Where a caret at the end of one selected char of a two-char text at scale 2 inverts other
+/// device columns than the two right of the highlight's `hilight` fill. `draw(text, sel, shown)`
+/// returns the scale 2 pixels of a `w` px wide canvas with the caret at `sel.end`; `geom` as in
+/// [`selection_faults`].
+#[cfg(test)]
+pub(crate) fn caret_faults(
+    text: &TextRenderer,
+    px: u32,
+    w: i32,
+    pairs: impl IntoIterator<Item = String>,
+    geom: impl Fn(&str) -> (i32, Rect, std::ops::Range<i32>),
+    draw: impl Fn(&str, std::ops::Range<usize>, bool) -> Vec<u32>,
+    hilight: crate::theme::Color,
+) -> Vec<String> {
+    let w2 = 2 * w;
+    let mut faults = Vec::new();
+    for t in pairs {
+        let (pen, _, rows) = geom(&t);
+        for (k, (a, b, run)) in one_char_runs(text, px, &t, pen, &rows)
+            .into_iter()
+            .enumerate()
+        {
+            let (off, on) = (draw(&t, a..b, false), draw(&t, a..b, true));
+            let filled = |x: i32| {
+                (rows.start * 2..rows.end * 2).any(|y| off[(y * w2 + x) as usize] == hilight.argb())
+            };
+            let mut end = run.right() * 2;
+            while end < w2 && filled(end) {
+                end += 1;
+            }
+            let mut inverted: Vec<i32> = (0..on.len())
+                .filter(|&i| on[i] != off[i])
+                .map(|i| i as i32 % w2)
+                .collect();
+            inverted.sort_unstable();
+            inverted.dedup();
+            if inverted != [end, end + 1] {
+                let which = ["first", "second"][k];
+                faults.push(format!(
+                    "\"{t}\" {which} selected: caret in columns {inverted:?}, fill ends at {end}"
+                ));
+            }
+        }
+    }
+    faults
+}
+
+/// Each char of `t` as its byte range and its scale 1 highlight over `rows`, drawn from `pen`.
+#[cfg(test)]
+fn one_char_runs(
+    text: &TextRenderer,
+    px: u32,
+    t: &str,
+    pen: i32,
+    rows: &std::ops::Range<i32>,
+) -> Vec<(usize, usize, Rect)> {
+    let starts: Vec<usize> = t.char_indices().map(|(i, _)| i).collect();
+    (0..starts.len())
+        .map(|k| {
+            let (a, b) = (starts[k], starts.get(k + 1).copied().unwrap_or(t.len()));
+            let x = pen + text.measure(&t[..a], false, px);
+            let width = text.measure(&t[a..b], false, px);
+            (a, b, Rect::new(x, rows.start, width, rows.len() as i32))
+        })
+        .collect()
+}
+
+/// The device pixels the char of `t` at byte `at` inks alone at scale `s`, drawn in `line` as
+/// the text's run puts it.
+#[cfg(test)]
+#[expect(clippy::too_many_arguments)]
+fn glyph_mask(
+    text: &TextRenderer,
+    px: u32,
+    (w, h): (i32, i32),
+    t: &str,
+    at: usize,
+    pen: i32,
+    line: Rect,
+    s: i32,
+) -> Vec<bool> {
+    let ink = crate::theme::Color::rgb(0x12, 0x34, 0x56);
+    let base = text.baseline(line, false, px).unwrap();
+    let g = &t[at..t[at..]
+        .chars()
+        .next()
+        .map_or(t.len(), |c| at + c.len_utf8())];
+    let mut c = Canvas::with_scale(w as u32, h as u32, s);
+    let x = pen + text.measure(&t[..at], false, px);
+    text.draw_run(&mut c, x, base, line, g, false, ink, px);
+    c.pixels.iter().map(|&p| p == ink.argb()).collect()
+}
+
+/// Every pair of printable ASCII chars, for [`selection_faults`].
+#[cfg(test)]
+pub(crate) fn ascii_pairs() -> impl Iterator<Item = String> {
+    let chars = || ('!'..='~').filter(char::is_ascii_graphic);
+    chars().flat_map(move |a| chars().map(move |b| format!("{a}{b}")))
 }

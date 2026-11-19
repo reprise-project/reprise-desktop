@@ -499,6 +499,7 @@ pub fn draw_cell_at(
         c.ring_t(r, black, black, s);
         let sel = edit.selection();
         let mut caret = None;
+        let dev = c.scale();
         for l in &lay.lines {
             let end = l.start + l.text.len();
             let at = |b: usize| l.at(text, font, b);
@@ -508,22 +509,32 @@ pub fn draw_cell_at(
             // at scale 2.
             let line_r = Rect::new(r.x + s, ly, r.width - 2 * s, line_h);
             let (a, b) = (sel.start.max(l.start), sel.end.min(end + 1));
+            let ga = a.min(end);
+            let glyphs = ga - l.start..b.min(end).max(ga) - l.start;
+            let hl = |b: usize, h: i32| {
+                let hl = Rect::new(at(a), ly, at(b) - at(a), h);
+                text.highlight(hl, &l.text, glyphs.clone(), l.x, line_r, false, font, dev)
+            };
             if a < b {
-                c.fill_rect(Rect::new(at(a), ly, at(b) - at(a), lay.step), cs.hilight);
+                let all = c.bounds();
+                hl(b, lay.step).fill(c, all, cs.hilight);
             }
             text.draw_in(c, pen, line_r, line_r, &l.text, false, black, font);
+            let mut line_hl = None;
             if a < b && a < end {
-                let b = b.min(end);
+                let hl = hl(b.min(end), line_h);
                 text.draw_in(
                     c,
                     pen,
                     line_r,
-                    Rect::new(at(a), ly, at(b) - at(a), line_h),
+                    hl.rect,
                     &l.text,
                     false,
                     cs.hilight_text,
                     font,
                 );
+                text.draw_overhang(c, &hl, line_r, cs.hilight_text);
+                line_hl = Some(hl);
             }
             if let Some(run) = &run {
                 let (a, b) = (run.start.max(l.start), run.end.min(end));
@@ -535,13 +546,16 @@ pub fn draw_cell_at(
                 }
             }
             if caret.is_none() && edit.caret() <= end {
-                caret = Some((at(edit.caret()), ly));
+                caret = Some((at(edit.caret()), ly, line_hl));
             }
         }
-        let (cx, cy) = caret.unwrap_or((r.x + 5 * s, r.y + 2 * s));
+        let (cx, cy, hl) = caret.unwrap_or((r.x + 5 * s, r.y + 2 * s, None));
         let bar = Rect::new(cx, cy, s, lay.step);
         if caret_state.shown() && bar_on {
-            c.invert_rect(bar);
+            match &hl {
+                Some(hl) => hl.invert_caret(c, bar, r.inset(s)),
+                None => c.invert_rect(bar),
+            }
         }
         if caret_state.focused() {
             c.report_spot(own.spot(r, bar));
@@ -2036,5 +2050,64 @@ mod tests {
             .is_none()
         );
         assert!(drag_image(&theme, &t, &[], DESKTOP, (0, 0), Ground::Wallpaper).is_none());
+    }
+
+    #[test]
+    fn a_rename_selection_at_scale_2_lights_its_glyph_whole_and_leaves_its_neighbour() {
+        crate::pins::fonts();
+        let theme = Theme::default();
+        let (cell, font) = (Cell::grown(theme.text), theme.fonts.size_px);
+        let line_h = font as i32 + theme.text.len(3);
+        let mut faults = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.into()],
+                antialias: false,
+                ..FontConfig::default()
+            });
+            let draw = |s: i32, t: &str, sel: std::ops::Range<usize>| {
+                let mut edit = TextEdit::new(t, false);
+                edit.set_selection(sel.start, sel.end);
+                let mut c = Canvas::with_scale(cell.w as u32, cell.h as u32, s);
+                let rename = Some((&edit, Caret::Hidden));
+                let g = Ground::Wallpaper;
+                draw_cell_at(
+                    &mut c,
+                    (0, 0),
+                    cell,
+                    &theme,
+                    &text,
+                    t,
+                    None,
+                    false,
+                    None,
+                    rename,
+                    g,
+                );
+                c.pixels
+            };
+            let geom = |t: &str| {
+                let lay = edit_layout(&theme, &text, &TextEdit::new(t, false), cell.w);
+                let l = &lay.lines[0];
+                let line = Rect::new(lay.rect.x + 1, l.y, lay.rect.width - 2, line_h);
+                (l.x, line, l.y..l.y + line_h)
+            };
+            let found = crate::paint::selection_faults(
+                &text,
+                font,
+                (cell.w, cell.h),
+                crate::paint::ascii_pairs(),
+                geom,
+                draw,
+                theme.colors.hilight_text,
+            );
+            faults.extend(found.into_iter().map(|f| format!("{family}: {f}")));
+        }
+        assert!(
+            faults.is_empty(),
+            "{} faults\n{}",
+            faults.len(),
+            faults.join("\n")
+        );
     }
 }
