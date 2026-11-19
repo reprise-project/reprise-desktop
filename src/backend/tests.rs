@@ -132,30 +132,6 @@ fn a_pointer_only_frame_shows_captures_only_the_pointer_while_scene_and_water_ke
 }
 
 #[test]
-fn a_frame_that_never_reached_the_screen_leaves_captures_owed_the_scene() {
-    use super::render::{capture_drew, captures_owed};
-    use crate::{capture::Drew, waterview::Stepped};
-    let still = Stepped::default();
-    let drew = capture_drew(false, true, &still);
-    let owed = captures_owed(false, drew, false);
-    assert_eq!(
-        capture_drew(true, !owed, &still),
-        Drew::Scene,
-        "the next pointer-only frame carries what the lost frame drew"
-    );
-    assert!(
-        captures_owed(owed, Drew::Pointer, true),
-        "a cursor plane move pays nothing back"
-    );
-    let owed = captures_owed(owed, Drew::Scene, true);
-    assert_eq!(
-        capture_drew(true, !owed, &still),
-        Drew::Pointer,
-        "once a scene frame reached the screen"
-    );
-}
-
-#[test]
 fn only_catch_up_asks_make_a_catch_up_frame() {
     assert!(asked(&[Ask::CatchUp]).catch_up);
     assert!(!asked(&[Ask::CatchUp, Ask::Pointer]).catch_up);

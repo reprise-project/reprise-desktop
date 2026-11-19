@@ -186,7 +186,7 @@ struct Surface {
     catch_up: bool,
     pointer_shown: bool,
     scene_seen: u64,
-    /// A frame that would have shown captures the scene never reached the screen.
+    /// A scene frame was lost on its way to the screen (render error, failed send or flip).
     captures_owed: bool,
     scene_changed: bool,
     backdrop_changed: crate::glass::Under,
