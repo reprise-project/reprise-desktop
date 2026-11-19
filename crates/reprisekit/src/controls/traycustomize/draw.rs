@@ -68,7 +68,8 @@ impl TrayCustomize {
                 lay.intro.width,
                 pitch,
             );
-            text.draw(c, r.scaled(s), line, false, cs.button_text, Align::Left, px);
+            let r = text.line_box(r.scaled(s), false, px);
+            text.draw(c, r, line, false, cs.button_text, Align::Left, px);
         }
         let prompt = lay.prompt.scaled(s);
         text.draw(
@@ -352,7 +353,7 @@ impl TrayCustomize {
             draw_label(
                 c,
                 text,
-                lr,
+                text.line_box(lr, false, px),
                 &label,
                 false,
                 cs.window_text,

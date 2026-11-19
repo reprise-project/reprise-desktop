@@ -826,14 +826,15 @@ fn draw_column(
     // A line's title is plain text: an `&` in a program's name is no
     // access key.
     let title = text.ellipsize(&col.title, cl.title.width, false, px);
+    let title_r = text.line_box(cl.title, false, px);
     if live {
-        text.draw(c, cl.title, &title, false, cs.button_text, Align::Left, px);
+        text.draw(c, title_r, &title, false, cs.button_text, Align::Left, px);
     } else {
         draw_disabled_label(
             c,
             text,
             p,
-            cl.title,
+            title_r,
             &crate::text::escape_mnemonic(&title),
             Align::Left,
             px,

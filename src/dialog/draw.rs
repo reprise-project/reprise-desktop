@@ -136,7 +136,7 @@ pub fn draw(
     for (r, line) in &layout.lines {
         text.draw(
             &mut c,
-            r.scaled(s),
+            text.line_box(r.scaled(s), false, px),
             line,
             false,
             cs.button_text,
@@ -148,7 +148,7 @@ pub fn draw(
         draw_label(
             &mut c,
             text,
-            lr.scaled(s),
+            text.line_box(lr.scaled(s), false, px),
             &paint.label(&field.label),
             false,
             cs.button_text,

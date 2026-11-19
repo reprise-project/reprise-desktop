@@ -1000,3 +1000,23 @@ fn the_output_combos_are_pinned_in_each_look() {
     }
     crate::pins::check("controls/mixer_outputs", &got);
 }
+
+/// Each line's title keeps every descender at 100%, 125%, 150% and 200% text.
+#[test]
+fn the_titles_keep_their_descenders_at_every_text_size() {
+    crate::pins::fonts();
+    let mut cut = Vec::new();
+    for pct in [100, 125, 150, 200] {
+        let theme = Theme::default().with_text_size(pct);
+        let m = Mixer::new(&lines(), true);
+        let ((), cuts) = crate::pins::clipped_ink(|| {
+            drawn(&theme, &m);
+        });
+        cut.extend(
+            cuts.into_iter()
+                .filter(|c| c.rows > 0)
+                .map(|c| (pct, c.text, c.rows)),
+        );
+    }
+    assert_eq!(cut, Vec::new(), "(text size, line, ink rows cut)");
+}

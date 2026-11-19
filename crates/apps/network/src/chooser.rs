@@ -541,7 +541,9 @@ pub fn draw_row(c: &mut Canvas, ctx: &Ctx, r: Rect, row: &NetRow, selected: bool
         signalbars::five(row.strength),
         !greyed,
     );
-    let name_r = Rect::new(r.x + TEXT_X, name_y, r.width, line_h);
+    let name_r = ctx
+        .text
+        .line_box(Rect::new(r.x + TEXT_X, name_y, r.width, line_h), true, px);
     ctx.text
         .draw(c, name_r, &row.ssid.to_string(), true, ink, Align::Left, px);
     if !row.tag.is_empty() {
@@ -549,7 +551,8 @@ pub fn draw_row(c: &mut Canvas, ctx: &Ctx, r: Rect, row: &NetRow, selected: bool
         let tag_x = bars_x - TAG_GAP - w;
         ctx.text.draw(
             c,
-            Rect::new(tag_x, name_y, w, line_h),
+            ctx.text
+                .line_box(Rect::new(tag_x, name_y, w, line_h), false, px),
             &row.tag,
             false,
             ink,
@@ -565,7 +568,8 @@ pub fn draw_row(c: &mut Canvas, ctx: &Ctx, r: Rect, row: &NetRow, selected: bool
     let cap_x = r.x + TEXT_X + if lock { LOCK_W } else { 0 };
     ctx.text.draw(
         c,
-        Rect::new(cap_x, caption_y, r.width, line_h),
+        ctx.text
+            .line_box(Rect::new(cap_x, caption_y, r.width, line_h), false, px),
         caption(row.security),
         false,
         ink,
@@ -584,14 +588,16 @@ fn draw_hidden_row(c: &mut Canvas, ctx: &Ctx, r: Rect, selected: bool) {
         cs.window_text
     };
     c.fill_rect(r, if selected { cs.hilight } else { cs.window });
+    let px = ctx.theme.fonts.size_px;
+    let line = Rect::new(r.x + TEXT_X, r.y + u.len(NAME_Y), r.width, u.len(LINE_H));
     ctx.text.draw(
         c,
-        Rect::new(r.x + TEXT_X, r.y + u.len(NAME_Y), r.width, u.len(LINE_H)),
+        ctx.text.line_box(line, false, px),
         HIDDEN_ROW,
         false,
         ink,
         Align::Left,
-        ctx.theme.fonts.size_px,
+        px,
     );
 }
 
@@ -964,6 +970,36 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The network rows' names and captions and the task pane's links and lines keep every
+    /// descender under every interface at 100%, 125% and 150%, at scale 1 and 2.
+    #[test]
+    fn every_line_keeps_its_descenders_at_every_text_size_and_scale() {
+        use reprisekit::interface::Interface;
+        reprisekit::pins::fonts();
+        let mut cut = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 125, 150] {
+                let (mut ctx, c) = themed(i, pct, "Tahoma");
+                for d in [1, 2] {
+                    let mut canvas = Canvas::with_scale(ctx.size.0 as u32, ctx.size.1 as u32, d);
+                    let ((), cuts) = reprisekit::pins::clipped_ink(|| {
+                        ctx.at_scale(d, |ctx| c.draw(&mut canvas, ctx))
+                    });
+                    cut.extend(
+                        cuts.into_iter().filter(|c| c.rows > 0).map(|c| {
+                            format!("{} {pct}% @{d}: {:?} {}", i.as_str(), c.text, c.rows)
+                        }),
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            cut,
+            Vec::<String>::new(),
+            "(interface, size, scale: line, ink rows cut)"
+        );
     }
 
     #[test]

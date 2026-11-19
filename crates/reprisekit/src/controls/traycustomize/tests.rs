@@ -1204,3 +1204,35 @@ fn tab_closes_the_open_behaviour_list_and_a_letter_picks_on_the_closed_one() {
         "a: Always hide, then Always show"
     );
 }
+
+/// The intro's lines and the check box's label keep every descender at 100%, 125% and 150%
+/// text, in either wording.
+#[test]
+fn the_intro_and_the_check_label_keep_their_descenders_at_every_text_size() {
+    crate::pins::fonts();
+    let text = text();
+    let mut cut = Vec::new();
+    for pct in [100, 125, 150] {
+        for (w, theme) in [
+            (Wording::Classic, Theme::default()),
+            (Wording::Glass, glass_theme()),
+        ] {
+            let theme = theme.with_text_size(pct);
+            let px = theme.fonts.size_px;
+            let e = entry("mail", "Mail", false, Behaviour::Show);
+            let t = TrayCustomize::new(w, vec![e], Vec::new(), None, theme.controls());
+            let l = t.layout(&text, px, (0, 0));
+            let (cw, ch) = t.client();
+            let mut c = Canvas::new(cw as u32, ch as u32);
+            let ((), cuts) = crate::pins::clipped_ink(|| {
+                t.draw(&mut c, &text, &theme.paint(), &l, Cues::NONE, px)
+            });
+            cut.extend(
+                cuts.into_iter()
+                    .filter(|c| c.rows > 0)
+                    .map(|c| (pct, c.text, c.rows)),
+            );
+        }
+    }
+    assert_eq!(cut, Vec::new(), "(text size, line, ink rows cut)");
+}
