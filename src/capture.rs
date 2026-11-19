@@ -2522,6 +2522,8 @@ mod tests {
         let mut client = h.connect_capture((64, 48));
         let buffer = client.buffer();
         let first = client.wlr_copy_with_damage_into(&mut h, &buffer);
+        land(&mut h);
+        client.roundtrip(&mut h);
         assert!(
             client.wlr_ready(&first).is_some(),
             "the first copy comes ready"
@@ -2748,10 +2750,37 @@ mod tests {
         let mut c = h.connect();
         h.map_toplevel(&mut c, "test.app", 20, 20);
         h.run_for(100);
+        land(&mut h);
         client.roundtrip(&mut h);
         assert!(
             !ext_waits(&h) && client.wlr_ready(&copy).is_some(),
             "a window mapped fills both at the next tick"
+        );
+    }
+
+    #[test]
+    fn a_copy_with_damage_that_waits_asks_its_monitor_for_a_frame() {
+        let Some(mut h) = drawing() else { return };
+        h.output("TEST-1", 64, 48);
+        let mut client = h.connect_capture((64, 48));
+        let buffer = client.buffer();
+        let first = client.wlr_copy_with_damage_into(&mut h, &buffer);
+        land(&mut h);
+        client.roundtrip(&mut h);
+        assert!(
+            client.wlr_ready(&first).is_some(),
+            "the first copy comes ready"
+        );
+        // The first copy that waits borders the recording, which asks for a frame of its own.
+        client.wlr_copy_with_damage_into(&mut h, &buffer).destroy();
+        client.roundtrip(&mut h);
+        crate::backend::take_asks();
+        let _again = client.wlr_copy_with_damage_into(&mut h, &buffer);
+        assert_eq!(h.state.captures.waiting.len(), 1, "a copy waits");
+        assert_eq!(
+            crate::backend::take_asks(),
+            [("TEST-1".to_string(), crate::backend::Ask::Scene)],
+            "and asks the monitor for a frame, which it draws only if anything changed"
         );
     }
 
@@ -2763,6 +2792,8 @@ mod tests {
         let buffer = client.buffer();
         let first = client.wlr_send_copy_with_damage(&buffer);
         let second = client.wlr_send_copy_with_damage(&buffer);
+        client.roundtrip(&mut h);
+        land(&mut h);
         client.roundtrip(&mut h);
         let whole = Some(&[(0, 0, 64, 48)][..]);
         assert_eq!(
@@ -2784,6 +2815,8 @@ mod tests {
         let mut client = h.connect_capture((64, 48));
         let buffer = client.buffer();
         let first = client.wlr_copy_with_damage_into(&mut h, &buffer);
+        land(&mut h);
+        client.roundtrip(&mut h);
         assert!(client.wlr_ready(&first).is_some(), "the copy comes ready");
         let held = |h: &Harness| -> usize {
             (h.state.captures.wlr_streams.iter())
@@ -3238,6 +3271,18 @@ mod tests {
 
     #[test]
     fn glass_in_a_partial_capture_draws_as_a_whole_capture_does() {
+        glass_drawn_in_part_as_whole(true);
+    }
+
+    #[test]
+    fn a_session_past_the_glass_cache_cap_draws_glass_in_part_as_a_whole_capture_does() {
+        glass_drawn_in_part_as_whole(false);
+    }
+
+    /// Three frames of glass over a moving patch, each drawn only where the buffer needs it, end
+    /// as the last drawn whole. The glass caches are `kept` from frame to frame, as for an ext
+    /// session among those copied last, or new each frame, as for one past them.
+    fn glass_drawn_in_part_as_whole(kept: bool) {
         let Ok(mut renderer) = reprisefx::headless::renderer() else {
             reprisekit::pins::skipped("no renderer");
             return;
@@ -3282,7 +3327,7 @@ mod tests {
             ]
         };
         let mut d = SessionDamage::<u32>::default();
-        let mut effects = Default::default();
+        let mut effects = crate::glass::Effects::default();
         let mut target = filled(&mut renderer, size, CLEAR);
         let scribble = rect(166, 108, 4, 4);
         for (at, asked) in [
@@ -3313,6 +3358,9 @@ mod tests {
             assert!(covers(&region, geometry), "{region:?} over the glass");
             if at != (140, 90) {
                 assert!(area(&region) < 320 * 200, "{region:?} is part of the frame");
+            }
+            if !kept {
+                effects = Default::default();
             }
             let mut fb = renderer.bind(&mut target).expect("bound");
             let drawing = (&shown[..], CLEAR);
