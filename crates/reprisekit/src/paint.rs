@@ -221,10 +221,11 @@ pub fn draw_edit(
         let (x0, x1) = (at(sel.start), at(sel.end).min(inner.right()));
         let run = Rect::new(x0, line.y, x1 - x0, line.height);
         c.fill_rect(run, cs.hilight);
-        text.draw(
+        text.draw_clipped(
             c,
-            Rect::new(x0, inner.y, inner.right() - x0, inner.height),
-            &edit.text[sel.clone()],
+            inner,
+            run,
+            &edit.text[first..],
             false,
             cs.hilight_text,
             Align::Left,

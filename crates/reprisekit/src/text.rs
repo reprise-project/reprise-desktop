@@ -80,6 +80,42 @@ impl Glyph {
         cut
     }
 
+    /// The columns right of the pen this glyph inks, faint antialiased fringes left out as in
+    /// [`Glyph::ink_cut`]; `None` for a blank glyph.
+    fn ink_span(&self) -> Option<(i32, i32)> {
+        let rows = || self.bitmap.chunks(self.width.max(1)).take(self.height);
+        let inked = |x: usize| rows().any(|row| row.get(x).is_some_and(|&cov| cov >= 0x60));
+        let l = (0..self.width).find(|&x| inked(x))?;
+        let r = (l..self.width).rev().find(|&x| inked(x))?;
+        Some((self.left + l as i32, self.left + r as i32 + 1))
+    }
+
+    /// Whether this glyph's bitmap, drawn at scale `s` from logical pen x `pen`, lies within
+    /// `line`'s columns.
+    fn boxed_in(&self, pen: i32, s: i32, line: Rect) -> bool {
+        self.left >= s * (line.x - pen) && self.left + self.width as i32 <= s * (line.right() - pen)
+    }
+
+    /// How far to move this glyph, drawn at scale `s` from logical pen x `pen`, so its ink stays
+    /// within `line`'s columns, when `one`, its ink at scale 1, does: as far as it can without
+    /// leaving the other side.
+    fn nudge_into(&self, one: Option<(i32, i32)>, pen: i32, s: i32, line: Rect) -> i32 {
+        let (lo, hi) = (s * (line.x - pen), s * (line.right() - pen));
+        let (Some((l, r)), Some((l1, r1))) = (self.ink_span(), one) else {
+            return 0;
+        };
+        if pen + l1 < line.x || pen + r1 > line.right() {
+            return 0;
+        }
+        if r > hi {
+            -(r - hi).min((l - lo).max(0))
+        } else if l < lo {
+            (lo - l).min((hi - r).max(0))
+        } else {
+            0
+        }
+    }
+
     const EMPTY: Glyph = Glyph {
         bitmap: Vec::new(),
         width: 0,
@@ -889,13 +925,36 @@ impl TextRenderer {
         let (dx, w, total) = self.span_and_measure(&plain, m, bold, px);
         let start = align.pen(r, total);
         self.draw_run(c, start, baseline, r, &plain, bold, color, px);
-        let ul = Rect::new(start + dx, baseline + s, w, s);
-        c.fill_rect(ul.intersect(&r), color);
+        let cs = c.scale();
+        let nudge = plain
+            .chars()
+            .nth(m)
+            .filter(|_| cs > 1)
+            .map_or(0, |ch| self.nudge(ch, bold, px, cs, start + dx, r));
+        let ul = Rect::new(start + dx, baseline + s, w, s).scaled(cs);
+        let ul = Rect::new(ul.x + nudge, ul.y, ul.width, ul.height);
+        c.in_device_px(|c| c.fill_rect(ul.intersect(&r.scaled(cs)), color));
+    }
+
+    /// How far [`TextRenderer::draw_run`] moves `ch` drawn at scale `s` from pen x `pen` in `line`.
+    fn nudge(&self, ch: char, bold: bool, size_px: u32, s: i32, pen: i32, line: Rect) -> i32 {
+        let scaled = s as u32;
+        if self.with_glyph(ch, bold, size_px, scaled, |g| g.boxed_in(pen, s, line)) != Some(false) {
+            return 0;
+        }
+        let one = self
+            .with_glyph(ch, bold, size_px, 1, |g| g.ink_span())
+            .flatten();
+        self.with_glyph(ch, bold, size_px, scaled, |g| {
+            g.nudge_into(one, pen, s, line)
+        })
+        .unwrap_or(0)
     }
 
     /// Draw `text` from pen x `pen` on `baseline`, clipped to `clip`. At canvas scale `s` glyphs
     /// rasterize at `s * size_px` but the pen moves by the `size_px` advances, keeping the logical
-    /// width carets are measured against.
+    /// width carets are measured against. A glyph there can ink wider than `s` times itself at
+    /// `size_px`, so one whose ink fits `clip` at scale 1 but would leave it moves back inside.
     #[expect(clippy::too_many_arguments)]
     pub fn draw_run(
         &self,
@@ -913,8 +972,9 @@ impl TextRenderer {
         );
     }
 
-    /// [`TextRenderer::draw_run`], with ink outside `line`, the rect the text was laid in, noted
-    /// for [`crate::pins::clipped_ink`].
+    /// [`TextRenderer::draw_run`] clipped to `clip`, with glyphs kept inside `line`, the rect the
+    /// text was laid in, and ink outside it noted for [`crate::pins::clipped_ink`]. Draws that share
+    /// `line` place every glyph alike whatever their clips.
     #[expect(clippy::too_many_arguments)]
     fn draw_line(
         &self,
@@ -933,8 +993,13 @@ impl TextRenderer {
         let mut cut = (0, 0);
         for ch in text.chars() {
             let logical = (s > 1).then(|| self.advance(ch, bold, size_px));
+            let nudge = if s > 1 {
+                self.nudge(ch, bold, size_px, s, pen, line)
+            } else {
+                0
+            };
             let drawn = self.with_glyph(ch, bold, size_px, s as u32, |g| {
-                let gx = pen * s + g.left;
+                let gx = pen * s + g.left + nudge;
                 let gy = baseline * s - g.top;
                 if let Some(keep) = watch {
                     let (rows, cols) = g.ink_cut(gx, gy, keep);

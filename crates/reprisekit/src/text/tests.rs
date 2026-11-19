@@ -1040,3 +1040,157 @@ fn ink_cut_by_a_line_too_short_for_it_is_listed_and_a_scrolled_view_cut_is_not()
         "nothing is noted outside a watch"
     );
 }
+
+/// Every printable ASCII char at either end of a run, Tahoma and DejaVu Sans, mono and
+/// antialiased, 11 to 17 px, regular and bold.
+fn each_end_glyph(mut f: impl FnMut(&TextRenderer, String, bool, u32, &str)) {
+    for (family, antialias) in ["Tahoma", "DejaVu Sans"]
+        .into_iter()
+        .flat_map(|f| [(f, false), (f, true)])
+    {
+        let r = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            antialias,
+            ..FontConfig::default()
+        });
+        for px in 11..=17 {
+            for bold in [false, true] {
+                for ch in ('!'..='~').filter(char::is_ascii_graphic) {
+                    let what = format!("{family} aa {antialias} {px} px bold {bold}");
+                    f(&r, format!("{ch}o{ch}"), bold, px, &what);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_run_fitted_to_its_advances_or_its_ink_keeps_its_ink_at_scale_2_as_at_scale_1() {
+    crate::pins::fonts();
+    let mut cut = Vec::new();
+    each_end_glyph(|r, run, bold, px, what| {
+        let h = 3 * px as i32;
+        let fits = [
+            ("advances", r.measure(&run, bold, px)),
+            ("ink", r.ink_width(&run, bold, px)),
+        ];
+        for (fit, w) in fits {
+            let rect = Rect::new(4, 0, w, h);
+            let cols = |s| {
+                let mut c = Canvas::with_scale(40 + h as u32, h as u32, s);
+                let black = Color::rgb(0, 0, 0);
+                let ((), cuts) = crate::pins::clipped_ink(|| {
+                    r.draw(&mut c, rect, &run, bold, black, Align::Left, px);
+                });
+                cuts.iter().map(|c| c.cols).sum::<u32>()
+            };
+            if cols(1) == 0 && cols(2) > 0 {
+                cut.push(format!(
+                    "{what}, fitted to its {fit}: {run:?} {} cols",
+                    cols(2)
+                ));
+            }
+        }
+    });
+    assert!(cut.is_empty(), "{}", cut.join("\n"));
+}
+
+#[test]
+fn a_glyph_with_room_in_its_line_draws_at_scale_2_where_its_pen_puts_it() {
+    crate::pins::fonts();
+    let mut moved = Vec::new();
+    each_end_glyph(|r, run, bold, px, what| {
+        let h = 3 * px as i32;
+        let baseline = r.baseline(Rect::new(0, 0, 1, h), bold, px).unwrap();
+        let draw = |line: Option<Rect>| {
+            let mut c = Canvas::with_scale(60 + h as u32, h as u32, 2);
+            let line = line.unwrap_or(c.bounds());
+            r.draw_run(
+                &mut c,
+                20,
+                baseline,
+                line,
+                &run,
+                bold,
+                Color::rgb(0, 0, 0),
+                px,
+            );
+            c.pixels
+        };
+        let room = Rect::new(17, 0, r.measure(&run, bold, px) + 6, h);
+        if draw(Some(room)) != draw(None) {
+            moved.push(format!("{what}: {run:?}"));
+        }
+    });
+    assert!(moved.is_empty(), "{}", moved.join("\n"));
+}
+
+#[test]
+fn a_mnemonic_underline_at_scale_2_moves_with_its_glyph() {
+    crate::pins::fonts();
+    let (mut wrong, mut moved) = (Vec::new(), 0);
+    each_end_glyph(|r, run, bold, px, what| {
+        let ch = run.chars().next().unwrap();
+        if ch == '&' {
+            return;
+        }
+        let h = 3 * px as i32;
+        let w = 40 + h as u32;
+        let black = Color::rgb(0, 0, 0);
+        let fitted = Rect::new(4, 0, r.measure(&run, bold, px), h);
+        let baseline = r.baseline(fitted, bold, px).unwrap();
+        let pen = fitted.x + r.measure(&run[..run.len() - ch.len_utf8()], bold, px);
+        let ul_row = 2 * (baseline + 1) * 2 * w as i32;
+        let left = |c: &Canvas, rows: std::ops::Range<i32>| {
+            rows.flat_map(|y| (0..2 * w as i32).map(move |x| (x, y)))
+                .filter(|&(x, y)| c.pixels[(y * 2 * w as i32 + x) as usize] != 0)
+                .map(|(x, _)| x)
+                .min()
+        };
+        let mut plain = Canvas::with_scale(w, h as u32, 2);
+        r.draw(&mut plain, fitted, &run, bold, black, Align::Left, px);
+        if plain.pixels[ul_row as usize..][..4 * w as usize]
+            .iter()
+            .any(|&p| p != 0)
+        {
+            return;
+        }
+        let mut marked = Canvas::with_scale(w, h as u32, 2);
+        let label = format!("{}&{ch}", &run[..run.len() - ch.len_utf8()]);
+        r.draw_marked(&mut marked, fitted, &label, bold, black, Align::Left, px, 1);
+        let ul = left(&marked, 2 * (baseline + 1)..2 * (baseline + 2));
+        let glyph = |line: Option<Rect>| {
+            let mut c = Canvas::with_scale(w, h as u32, 2);
+            let all = c.bounds();
+            let s = ch.to_string();
+            r.draw_line(
+                &mut c,
+                pen,
+                baseline,
+                all,
+                line.unwrap_or(all),
+                &s,
+                bold,
+                black,
+                px,
+            );
+            left(&c, 0..2 * h)
+        };
+        let (Some(ul), Some(at), Some(free)) = (ul, glyph(Some(fitted)), glyph(None)) else {
+            return;
+        };
+        moved += (at != free) as usize;
+        if ul - 2 * pen != at - free {
+            wrong.push(format!(
+                "{what}: {run:?} glyph moved {} underline {}",
+                at - free,
+                ul - 2 * pen
+            ));
+        }
+    });
+    assert!(
+        moved > 0,
+        "some last glyph moves in a rect fitted to its advances"
+    );
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

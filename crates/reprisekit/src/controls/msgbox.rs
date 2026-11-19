@@ -293,6 +293,62 @@ mod tests {
         );
     }
 
+    /// A program draws its box on a canvas at the output's scale, the pen on the advances it was
+    /// laid out by: a line that fills its column keeps its last glyph's ink at scale 1 and 2.
+    #[test]
+    fn a_line_that_fills_its_column_keeps_its_ink_at_scale_1_and_2() {
+        use crate::interface::Interface;
+        let texts = [
+            "Cannot find \"zzzzq\". Make sure you typed the name correctly.",
+            "The contents of the folder will not be deleted. You can restore this icon to the \
+             desktop on the Background page of Reprise Settings.",
+            "Are you sure you want to delete the Documents icon from the desktop?\nTo restore \
+             it later, use the Background page of Reprise Settings.",
+        ];
+        let mut cut = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.into()],
+                ..FontConfig::default()
+            });
+            if !text.has_face(family) {
+                crate::pins::skipped(&format!("no {family} installed"));
+                continue;
+            }
+            for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+                for pct in [100, 125, 150] {
+                    let theme = crate::interfaces::theme_for(i).with_text_size(pct);
+                    let (u, px) = (theme.text, theme.fonts.size_px);
+                    for t in texts {
+                        let f = Fields {
+                            text: t.into(),
+                            ..notfound()
+                        };
+                        let (w, h) = u.size(client(&f, &text, px, u));
+                        let box_ = form(&f, &text, px, u);
+                        for s in [1, 2] {
+                            let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                            let paint = theme.paint();
+                            let ((), cuts) = crate::pins::clipped_ink(|| {
+                                crate::controls::form::draw(&mut c, &text, &paint, &box_, false, px)
+                            });
+                            cut.extend(cuts.into_iter().map(|c| {
+                                format!(
+                                    "{family}, {}, {pct}% @{s}: {:?} {} rows, {} cols cut",
+                                    i.as_str(),
+                                    c.text,
+                                    c.rows,
+                                    c.cols
+                                )
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(cut.is_empty(), "{}", cut.join("\n"));
+    }
+
     #[test]
     fn the_box_lays_out_on_its_grid() {
         crate::pins::fonts();

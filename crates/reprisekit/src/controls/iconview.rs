@@ -503,25 +503,20 @@ pub fn draw_cell_at(
             let end = l.start + l.text.len();
             let at = |b: usize| l.at(text, font, b);
             let ly = y0 + l.y;
+            // The line runs to the box's border, so its last glyph keeps its pen at scale 2.
+            let line_r = Rect::new(l.x, ly, r.right() - s - l.x, line_h);
             let (a, b) = (sel.start.max(l.start), sel.end.min(end + 1));
             if a < b {
                 c.fill_rect(Rect::new(at(a), ly, at(b) - at(a), lay.step), cs.hilight);
             }
-            text.draw(
-                c,
-                Rect::new(l.x, ly, l.width, line_h),
-                &l.text,
-                false,
-                black,
-                Align::Left,
-                font,
-            );
+            text.draw(c, line_r, &l.text, false, black, Align::Left, font);
             if a < b && a < end {
                 let b = b.min(end);
-                text.draw(
+                text.draw_clipped(
                     c,
+                    line_r,
                     Rect::new(at(a), ly, at(b) - at(a), line_h),
-                    &l.text[a - l.start..b - l.start],
+                    &l.text,
                     false,
                     cs.hilight_text,
                     Align::Left,

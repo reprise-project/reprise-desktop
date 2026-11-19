@@ -375,13 +375,14 @@ pub fn draw(
                 let lh = p.text.len(LINE_H) * s;
                 let hl = Rect::new(a, tr.y + (tr.height - lh) / 2, b - a, lh);
                 c.fill_rect(hl, cs.hilight);
-                text.draw(
+                text.draw_clipped(
                     c,
-                    Rect::new(a, tr.y, tr.right() - a, tr.height),
-                    &shown[sel],
+                    tr,
+                    Rect::new(a, tr.y, b - a, tr.height),
+                    &shown,
                     false,
                     cs.hilight_text,
-                    Align::Left,
+                    align,
                     px,
                 );
             }
