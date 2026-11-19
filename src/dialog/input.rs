@@ -184,8 +184,9 @@ impl Dialog {
             f.complete.take(e, i);
             return Outcome::Redraw;
         }
-        if f.complete.is_open() {
-            f.complete.close();
+        let completing = f.complete.is_open();
+        f.complete.close();
+        if completing {
             return Outcome::Redraw;
         }
         let c = &mut f.combo;
@@ -650,6 +651,9 @@ impl Dialog {
     pub fn press_button(&mut self, i: usize) -> bool {
         if !self.buttons.get(i).is_some_and(|b| b.enabled) {
             return false;
+        }
+        if let Some(f) = self.field.as_mut() {
+            f.complete.close();
         }
         self.pointer.press(Some(i), false);
         true

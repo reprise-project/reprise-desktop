@@ -311,3 +311,76 @@ fn a_key_moving_the_focus_off_the_address_field_closes_its_completion() {
         assert!(!ex.address.complete.is_open(), "{sym:#x} closes the list");
     }
 }
+
+/// The folder typed into Address is still being read when a press on a file takes the focus off
+/// the field: the listing that lands after leaves the list shut, and the next key opens it.
+#[test]
+fn a_press_off_the_address_field_while_its_folder_reads_keeps_the_late_list_shut() {
+    use repriseapp::PointerInput;
+    use reprisekit::controls::pathcomplete::Entry;
+    use reprisekit::textedit::EditKey;
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = browse_fixture(&mut ctx);
+    ex.sv.selection.set_only(None);
+    ex.focus = Focus::Address;
+    let folder = dir.path().display().to_string();
+    ex.address.set_place(&folder, None);
+    let edit = ex.address.combo.edit.as_mut().expect("the address field");
+    edit.set_selection(folder.len(), folder.len());
+    ex.address.complete.edit(edit, EditKey::Insert("/".into()));
+    let want = (ex.address.complete.take_want()).expect("the typed folder is read");
+    assert!(
+        !ex.address.complete.is_open(),
+        "nothing shows while it reads"
+    );
+
+    let a = ex
+        .items
+        .iter()
+        .position(|it| it.name == "a.txt")
+        .expect("a.txt");
+    let sl = ex.view_layout(ex.layout(&ctx).view, &ctx);
+    let c = sl.cells[a];
+    let press = PointerInput::Press {
+        x: c.x + c.width / 2,
+        y: c.y + c.height / 2,
+        button: crate::BTN_LEFT,
+        time: 0,
+        mods: repriseapp::Mods::default(),
+    };
+    ex.pointer(press, &mut ctx);
+    assert_ne!(ex.focus, Focus::Address, "the press takes the focus");
+
+    let entries = vec![
+        Entry {
+            name: "sub".into(),
+            dir: true,
+        },
+        Entry {
+            name: "a.txt".into(),
+            dir: false,
+        },
+    ];
+    let edit = ex.address.combo.edit.as_mut().expect("the address field");
+    ex.address.complete.set_listing(edit, &want, entries);
+    assert!(
+        !ex.address.complete.is_open(),
+        "the listing that lands leaves the list shut"
+    );
+
+    ex.focus = Focus::Address;
+    ex.key(
+        repriseapp::KeyInput {
+            sym: 's' as u32,
+            utf8: Some("s".into()),
+            mods: repriseapp::Mods::default(),
+            edit: reprisekit::textedit::key_for('s' as u32, false, false, Some("s")),
+        },
+        &mut ctx,
+    );
+    assert_eq!(
+        ex.address.complete.rows(),
+        ["sub/"],
+        "the next key opens the list"
+    );
+}
