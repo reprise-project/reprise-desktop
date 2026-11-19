@@ -275,10 +275,16 @@ impl Host {
     /// The pastes landed and the input that waited go on, up to one that asks for another paste.
     pub(crate) fn replay_input(&mut self) {
         while let Some((win, held)) = self.paste_wait.pop() {
+            let before = self.boxes();
             match held {
-                Held::Event(ev) => self.send(win, ev),
+                Held::Event(ev) => {
+                    let to = self.paste_wait.aim(win, &ev, self.gate(win));
+                    self.send(to, ev)
+                }
                 Held::Reader(req) => self.reader_request(win, req, false),
             }
+            let after = self.boxes();
+            self.paste_wait.opened(&before, &after);
         }
     }
 

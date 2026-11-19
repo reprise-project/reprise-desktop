@@ -2,7 +2,9 @@
 //! program's keys, pointer, input-method commits, screen reader requests and close requests from
 //! the compositor wait here, and once the paste lands they go on in the order they came. Input
 //! waits at most [`PASTE_HOLD`] from the ask: then it goes on, and the paste still lands when it
-//! comes, within the read's own limit.
+//! comes, within the read's own limit. A key or commit typed ahead for a window that a box opened
+//! by replayed input (not by a landed paste) now gates goes to that box, where a program that
+//! handled each input at once would have had it; pointer input keeps its window, and the gate.
 //!
 //! Only user input waits: drawing, timers, wakes, focus, drags and the compositor's other events
 //! go on. A drag is answered live (the compositor asks for an accept on every motion) and its drop
@@ -44,6 +46,12 @@ pub struct PasteWait {
     landed: Vec<(PasteId, WinId, Event)>,
     held: VecDeque<(WinId, Held)>,
     next: u64,
+    /// The boxes input replayed in this wait opened, still open.
+    boxes: Vec<WinId>,
+    /// The keysyms [`PasteWait::aim`] sent down to a box, and that box, until they come up.
+    downs: Vec<(u32, WinId)>,
+    /// What [`PasteWait::pop`] last handed on was held input, not a landed paste.
+    replayed: bool,
 }
 
 impl PasteWait {
@@ -137,6 +145,47 @@ impl PasteWait {
         None
     }
 
+    /// Where input `ev` for `win` goes on, `gate` being the box that gates `win` now (None for
+    /// input that did not wait): a key or input-method commit held for a window that a box opened
+    /// by input replayed in this wait now gates goes to that box, and a key's release goes where
+    /// its press went, also once the wait is over.
+    pub fn aim(&mut self, win: WinId, ev: &Event, gate: Option<WinId>) -> WinId {
+        match ev {
+            Event::Key(k) => match gate.filter(|g| self.boxes.contains(g)) {
+                Some(b) => {
+                    if k.sym != 0 {
+                        self.downs.push((k.sym, b));
+                    }
+                    b
+                }
+                None => win,
+            },
+            Event::KeyUp(k) => match self.downs.iter().position(|d| d.0 == k.sym) {
+                Some(i) => self.downs.remove(i).1,
+                None => win,
+            },
+            _ => win,
+        }
+    }
+
+    /// Key `sym` went down (not a repeat): a release still owed to a box for an earlier press of
+    /// it never comes.
+    pub fn pressed(&mut self, sym: u32) {
+        self.downs.retain(|d| d.0 != sym);
+    }
+
+    /// The modal boxes open `before` and `after` the input [`PasteWait::pop`] last handed on went
+    /// on: one that held input opened takes the keys typed ahead for the windows it gates
+    /// ([`PasteWait::aim`]). A box a landed paste opens does not: the keys held behind it were
+    /// typed before it was asked for.
+    pub fn opened(&mut self, before: &[WinId], after: &[WinId]) {
+        self.boxes.retain(|b| after.contains(b));
+        if self.replayed {
+            let new = after.iter().filter(|b| !before.contains(b));
+            self.boxes.extend(new);
+        }
+    }
+
     /// What goes on next: a landed paste asked before every paste that still holds input, then,
     /// once none holds it, the input that waited.
     pub fn pop(&mut self) -> Option<(WinId, Held)> {
@@ -147,12 +196,18 @@ impl PasteWait {
             .map(|(i, _)| i);
         if let Some(i) = first {
             let (_, win, ev) = self.landed.remove(i);
+            self.replayed = false;
             return Some((win, Held::Event(ev)));
         }
-        match holder {
+        let next = match holder {
             None => self.held.pop_front(),
             Some(_) => None,
+        };
+        self.replayed = next.is_some();
+        if next.is_none() && !self.holding() {
+            self.boxes.clear();
         }
+        next
     }
 }
 
@@ -197,16 +252,20 @@ mod tests {
     fn name(k: &KeyInput) -> String {
         match k.sym {
             keysym::ESCAPE => "Escape".into(),
+            keysym::RETURN => "Enter".into(),
             sym => char::from_u32(sym).map_or("?".into(), String::from),
         }
     }
 
-    /// A program whose Ctrl+V asks for the clipboard and whose Ctrl+O raises a box; it notes
-    /// what it handled, and a paste landing while its box is up.
+    /// A program whose Ctrl+V asks for the clipboard, whose Ctrl+O raises a box and whose Ctrl+S,
+    /// or a paste of "clash", opens a modal BOX over MAIN that Escape closes; it notes what it
+    /// handled, and a paste landing while its box is up.
     #[derive(Default)]
     struct Prog {
         handled: Vec<String>,
         box_up: bool,
+        modal: bool,
+        closed: bool,
     }
 
     impl Prog {
@@ -219,8 +278,21 @@ mod tests {
                     self.box_up = true;
                     "Ctrl+O".into()
                 }
+                Held::Event(Event::Key(k)) if k.mods.ctrl && k.sym == 's' as u32 => {
+                    self.modal = true;
+                    "Ctrl+S".into()
+                }
+                Held::Event(Event::Key(k)) if win == BOX && k.sym == keysym::ESCAPE => {
+                    self.modal = false;
+                    self.closed = true;
+                    "Escape".into()
+                }
                 Held::Event(Event::Key(k)) => name(k),
                 Held::Event(Event::KeyUp(k)) => format!("{} up", name(k)),
+                Held::Event(Event::Pasted(t)) if t == "clash" => {
+                    self.modal = true;
+                    "clash opens the box".into()
+                }
                 Held::Event(Event::Pasted(t)) if self.box_up => format!("{t} under the box"),
                 Held::Event(Event::Pasted(t)) => t.clone(),
                 Held::Event(other) => format!("{other:?}"),
@@ -254,15 +326,56 @@ mod tests {
             }
         }
 
-        fn key(&mut self, win: WinId, k: KeyInput) {
-            if let Some(ev) = self.wait.hold(win, Event::Key(k)) {
-                self.send(win, Held::Event(ev));
+        /// The modal BOX gating `win`.
+        fn gate(&self, win: WinId) -> Option<WinId> {
+            (win == MAIN && self.prog.modal).then_some(BOX)
+        }
+
+        fn boxes(&self) -> Vec<WinId> {
+            self.gate(MAIN).into_iter().collect()
+        }
+
+        /// `input` for `win` past the gate: a key for a window under the box, or for the box
+        /// once Escape closed it, is dropped.
+        fn deliver(&mut self, win: WinId, input: Held) {
+            let key = matches!(input, Held::Event(Event::Key(_) | Event::KeyUp(_)));
+            if key && (self.gate(win).is_some() || (win == BOX && self.prog.closed)) {
+                return;
             }
+            self.send(win, input);
+        }
+
+        /// The user's `ev` for `win`, as the host takes it: a press clears a release owed to a
+        /// box, and input that does not wait is aimed with no gate.
+        fn input(&mut self, win: WinId, ev: Event) {
+            if let Event::Key(k) = &ev {
+                self.wait.pressed(k.sym);
+            }
+            if let Some(ev) = self.wait.hold(win, ev) {
+                let to = self.wait.aim(win, &ev, None);
+                self.deliver(to, Held::Event(ev));
+            }
+        }
+
+        fn key(&mut self, win: WinId, k: KeyInput) {
+            self.input(win, Event::Key(k));
+        }
+
+        /// `k` goes down and comes back up.
+        fn tap(&mut self, win: WinId, k: KeyInput) {
+            self.input(win, Event::Key(k.clone()));
+            self.input(win, Event::KeyUp(k));
         }
 
         fn go_on(&mut self) {
             while let Some((win, input)) = self.wait.pop() {
-                self.send(win, input);
+                let before = self.boxes();
+                let to = match &input {
+                    Held::Event(ev) => self.wait.aim(win, ev, self.gate(win)),
+                    Held::Reader(_) => win,
+                };
+                self.deliver(to, input);
+                self.wait.opened(&before, &self.boxes());
             }
         }
 
@@ -472,6 +585,181 @@ mod tests {
             s.handled(),
             ["BOX Ctrl+V", "MAIN a"],
             "the paste is not delivered"
+        );
+    }
+
+    fn enter() -> KeyInput {
+        KeyInput {
+            sym: keysym::RETURN,
+            utf8: None,
+            mods: Mods::default(),
+            edit: None,
+        }
+    }
+
+    #[test]
+    fn keys_typed_ahead_of_a_box_a_replayed_key_opens_go_to_that_box() {
+        let mut s = Seat::new();
+        s.tap(MAIN, key('v', true));
+        s.tap(MAIN, key('s', true));
+        for ch in ['n', 'a'] {
+            s.tap(MAIN, key(ch, false));
+        }
+        s.tap(MAIN, enter());
+        s.answer(0, "pasted");
+        assert_eq!(
+            s.handled(),
+            [
+                "MAIN Ctrl+V",
+                "MAIN pasted",
+                "MAIN v up",
+                "MAIN Ctrl+S",
+                "BOX n",
+                "BOX n up",
+                "BOX a",
+                "BOX a up",
+                "BOX Enter",
+                "BOX Enter up"
+            ],
+            "the release of the key that opened the box stays behind its gate"
+        );
+        assert!(!s.wait.holding());
+    }
+
+    #[test]
+    fn keys_after_a_paste_the_box_asks_for_still_go_to_the_box() {
+        let mut s = Seat::new();
+        s.key(MAIN, key('v', true));
+        s.key(MAIN, key('s', true));
+        s.key(MAIN, key('v', true));
+        s.key(MAIN, key('n', false));
+        s.answer(0, "one");
+        s.answer(1, "two");
+        assert_eq!(
+            s.handled(),
+            [
+                "MAIN Ctrl+V",
+                "MAIN one",
+                "MAIN Ctrl+S",
+                "BOX Ctrl+V",
+                "BOX two",
+                "BOX n"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_held_escape_closes_the_box_and_the_keys_after_it_go_to_the_window_again() {
+        let mut s = Seat::new();
+        s.tap(MAIN, key('v', true));
+        s.tap(MAIN, key('s', true));
+        s.key(MAIN, key('x', false));
+        s.tap(MAIN, escape());
+        s.input(MAIN, Event::KeyUp(key('x', false)));
+        s.key(MAIN, key('y', false));
+        s.answer(0, "pasted");
+        assert_eq!(
+            s.handled(),
+            [
+                "MAIN Ctrl+V",
+                "MAIN pasted",
+                "MAIN v up",
+                "MAIN Ctrl+S",
+                "BOX x",
+                "BOX Escape",
+                "MAIN y"
+            ],
+            "a release follows its press to the closed box, not to MAIN"
+        );
+    }
+
+    #[test]
+    fn keys_live_or_held_behind_a_box_no_replayed_key_opened_are_dropped() {
+        let mut s = Seat::new();
+        s.tap(MAIN, key('v', true));
+        s.key(MAIN, key('a', false));
+        s.prog.modal = true;
+        s.answer(0, "pasted");
+        s.tap(MAIN, key('s', true));
+        s.prog.modal = false;
+        s.key(MAIN, key('v', true));
+        s.key(MAIN, key('s', true));
+        s.answer(1, "two");
+        s.key(MAIN, key('b', false));
+        assert_eq!(
+            s.handled(),
+            [
+                "MAIN Ctrl+V",
+                "MAIN pasted",
+                "MAIN Ctrl+V",
+                "MAIN two",
+                "MAIN Ctrl+S"
+            ],
+            "a box opened by something else, and live typing behind a box, keep the gate"
+        );
+    }
+
+    #[test]
+    fn keys_held_behind_a_box_a_landed_paste_opens_are_dropped() {
+        let mut s = Seat::new();
+        s.tap(MAIN, key('v', true));
+        s.tap(MAIN, enter());
+        s.answer(0, "clash");
+        assert_eq!(
+            s.handled(),
+            ["MAIN Ctrl+V", "MAIN clash opens the box"],
+            "Enter, typed before the box was asked for, does not answer it"
+        );
+    }
+
+    #[test]
+    fn a_box_one_wait_noted_takes_no_keys_held_in_the_next() {
+        let mut s = Seat::new();
+        s.key(MAIN, key('v', true));
+        s.key(MAIN, key('s', true));
+        s.answer(0, "one");
+        s.key(BOX, key('v', true));
+        s.key(MAIN, key('k', false));
+        s.answer(1, "two");
+        assert_eq!(
+            s.handled(),
+            [
+                "MAIN Ctrl+V",
+                "MAIN one",
+                "MAIN Ctrl+S",
+                "BOX Ctrl+V",
+                "BOX two"
+            ],
+            "k, typed at MAIN behind the box, is dropped"
+        );
+    }
+
+    #[test]
+    fn a_release_after_the_wait_follows_its_press_to_the_box_until_the_key_goes_down_again() {
+        let mut s = Seat::new();
+        s.tap(MAIN, key('v', true));
+        s.tap(MAIN, key('s', true));
+        s.key(MAIN, key('n', false));
+        s.key(MAIN, key('a', false));
+        s.answer(0, "pasted");
+        s.input(MAIN, Event::KeyUp(key('n', false)));
+        s.tap(BOX, escape());
+        s.tap(MAIN, key('a', false));
+        assert_eq!(
+            s.handled(),
+            [
+                "MAIN Ctrl+V",
+                "MAIN pasted",
+                "MAIN v up",
+                "MAIN Ctrl+S",
+                "BOX n",
+                "BOX a",
+                "BOX n up",
+                "BOX Escape",
+                "MAIN a",
+                "MAIN a up"
+            ],
+            "a's first release never came; its second press comes up at MAIN"
         );
     }
 }

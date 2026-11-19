@@ -157,10 +157,12 @@ impl Host {
         self.input(win, Event::Pointer(input));
     }
 
-    /// The user's `ev` for `win`, which waits behind a paste still out ([`crate::pastewait`]).
+    /// The user's `ev` for `win`, which waits behind a paste still out ([`crate::pastewait`]);
+    /// a key's release follows its press to a box ([`crate::PasteWait::aim`]).
     pub(crate) fn input(&mut self, win: WinId, ev: Event) {
         if let Some(ev) = self.paste_wait.hold(win, ev) {
-            self.send(win, ev);
+            let to = self.paste_wait.aim(win, &ev, None);
+            self.send(to, ev);
         }
     }
 
@@ -408,7 +410,9 @@ impl KeyboardHandler for Host {
     ) {
         self.last_serial = serial;
         self.input_serial = serial;
-        self.down_syms.press(event.raw_code, self.key_sym(&event));
+        let sym = self.key_sym(&event);
+        self.down_syms.press(event.raw_code, sym);
+        self.paste_wait.pressed(sym);
         self.key(event, false);
     }
     fn repeat_key(

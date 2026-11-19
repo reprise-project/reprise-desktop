@@ -24,12 +24,20 @@ impl Host {
     /// Each window and the modal child gating its input, if any: none for a flyout or the modal
     /// itself.
     pub(crate) fn gates(&self) -> Vec<(WinId, Option<WinId>)> {
-        self.slots
-            .iter()
-            .map(|s| {
-                let flyout = s.window.toplevel().is_none();
-                (s.id, self.modal(s.id).filter(|&m| m != s.id && !flyout))
-            })
+        self.slots.iter().map(|s| (s.id, self.gate(s.id))).collect()
+    }
+
+    /// The modal child gating `win`'s input, as [`Host::gates`].
+    pub(crate) fn gate(&self, win: WinId) -> Option<WinId> {
+        let flyout = (self.slots.iter()).any(|s| s.id == win && s.window.toplevel().is_none());
+        self.modal(win).filter(|&m| m != win && !flyout)
+    }
+
+    /// The modal children open.
+    pub(crate) fn boxes(&self) -> Vec<WinId> {
+        (self.slots.iter())
+            .filter(|s| s.modal)
+            .map(|s| s.id)
             .collect()
     }
 

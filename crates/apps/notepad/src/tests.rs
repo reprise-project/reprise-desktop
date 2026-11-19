@@ -2163,3 +2163,76 @@ fn an_icon_that_decodes_late_reaches_a_waiting_box() {
         "the box up and the one waiting both have the icon"
     );
 }
+
+/// Ctrl+V, Ctrl+S, a file name and Enter typed while the paste is out: once it lands, Save As
+/// opens and saves under that name.
+#[test]
+fn a_name_typed_ahead_of_save_as_during_a_paste_saves_under_it() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("typed.txt");
+    let mut np = Notepad::new(None);
+    let mut ctx = test_ctx();
+    let mut wait = repriseapp::PasteWait::default();
+    let mut asked = Vec::new();
+    let boxes = |np: &Notepad| -> Vec<WinId> {
+        let kids = np.children().into_iter();
+        kids.filter(|c| c.modal).map(|c| c.id).collect()
+    };
+    let gate = |np: &Notepad, win: WinId| boxes(np).last().copied().filter(|_| win == MAIN);
+    let mut send = |np: &mut Notepad,
+                    win: WinId,
+                    ev: Event,
+                    asked: &mut Vec<_>,
+                    w: &mut repriseapp::PasteWait| {
+        let key = matches!(ev, Event::Key(_) | Event::KeyUp(_));
+        if key && gate(np, win).is_some() {
+            return;
+        }
+        if np.event(win, ev, &mut ctx).paste {
+            asked.push(w.begin(win));
+        }
+    };
+    let typed = |ch: char| KeyInput {
+        sym: ch as u32,
+        utf8: Some(ch.to_string()),
+        mods: repriseapp::Mods::default(),
+        edit: Some(EditKey::Insert(ch.to_string())),
+    };
+    let ctrl = |ch: char| KeyInput {
+        sym: ch as u32,
+        utf8: None,
+        mods: repriseapp::Mods {
+            ctrl: true,
+            ..Default::default()
+        },
+        edit: (ch == 'v').then_some(EditKey::Paste),
+    };
+    repriseapp::fake_clipboard_text(true);
+    let mut keys = vec![ctrl('v'), ctrl('s')];
+    keys.extend(path.to_str().expect("utf-8 path").chars().map(typed));
+    keys.push(KeyInput {
+        sym: keysym::RETURN,
+        utf8: None,
+        mods: repriseapp::Mods::default(),
+        edit: None,
+    });
+    for k in keys {
+        if let Some(ev) = wait.hold(MAIN, Event::Key(k)) {
+            send(&mut np, MAIN, ev, &mut asked, &mut wait);
+        }
+    }
+    repriseapp::fake_clipboard_text(false);
+    assert_eq!(asked.len(), 1, "Ctrl+V asked for the clipboard");
+    wait.land(asked[0], Some(Event::Pasted("pasted".into())));
+    while let Some((win, held)) = wait.pop() {
+        let repriseapp::Held::Event(ev) = held else {
+            continue;
+        };
+        let before = boxes(&np);
+        let to = wait.aim(win, &ev, gate(&np, win));
+        send(&mut np, to, ev, &mut asked, &mut wait);
+        wait.opened(&before, &boxes(&np));
+    }
+    assert!(np.saveas.is_none(), "Enter saved and closed Save As");
+    assert_eq!(std::fs::read_to_string(&path).expect("saved"), "pasted");
+}
