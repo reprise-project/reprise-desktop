@@ -1291,3 +1291,40 @@ fn a_field_selection_at_scale_2_recolours_its_text_in_place() {
     }
     assert!(moved.is_empty(), "{}", moved.join("\n"));
 }
+
+/// At scale 2 a field's first glyph draws where it draws behind a space: the field's 1 px inside
+/// its frame is room for its ink, so typing in front of it moves it by whole advances.
+#[test]
+fn a_fields_first_glyph_at_scale_2_draws_where_it_draws_with_a_char_before_it() {
+    crate::pins::fonts();
+    let cs = &Theme::default().colors;
+    let mut moved = Vec::new();
+    for (family, antialias) in ["Tahoma", "DejaVu Sans"]
+        .into_iter()
+        .flat_map(|f| [(f, false), (f, true)])
+    {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            antialias,
+            ..FontConfig::default()
+        });
+        for px in [11, 13] {
+            let space = text.measure(" ", false, px);
+            for ch in ('!'..='~').filter(char::is_ascii_graphic) {
+                let draw = |lead: &str, x: i32| {
+                    let mut c = Canvas::with_scale(150, 40, 2);
+                    c.fill_rect(c.bounds(), cs.window);
+                    let e = TextEdit::new(format!("{lead}{ch}"), false);
+                    let inner = Rect::new(x, 10, 130 - x, 17);
+                    let paint = classic_paint(cs, 1);
+                    draw_edit(&mut c, &text, &e, inner, px, &paint, Caret::Unfocused, 0);
+                    c.pixels
+                };
+                if draw("", 20) != draw(" ", 20 - space) {
+                    moved.push(format!("{family} aa {antialias} {px} px: {ch:?}"));
+                }
+            }
+        }
+    }
+    assert!(moved.is_empty(), "{}", moved.join("\n"));
+}

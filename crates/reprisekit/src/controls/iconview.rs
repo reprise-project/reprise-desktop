@@ -503,23 +503,25 @@ pub fn draw_cell_at(
             let end = l.start + l.text.len();
             let at = |b: usize| l.at(text, font, b);
             let ly = y0 + l.y;
-            // The line runs to the box's border, so its last glyph keeps its pen at scale 2.
-            let line_r = Rect::new(l.x, ly, r.right() - s - l.x, line_h);
+            let pen = Rect::new(l.x, ly, l.width, line_h);
+            // The line runs across the box inside its border, so its end glyphs keep their pens
+            // at scale 2.
+            let line_r = Rect::new(r.x + s, ly, r.width - 2 * s, line_h);
             let (a, b) = (sel.start.max(l.start), sel.end.min(end + 1));
             if a < b {
                 c.fill_rect(Rect::new(at(a), ly, at(b) - at(a), lay.step), cs.hilight);
             }
-            text.draw(c, line_r, &l.text, false, black, Align::Left, font);
+            text.draw_in(c, pen, line_r, line_r, &l.text, false, black, font);
             if a < b && a < end {
                 let b = b.min(end);
-                text.draw_clipped(
+                text.draw_in(
                     c,
+                    pen,
                     line_r,
                     Rect::new(at(a), ly, at(b) - at(a), line_h),
                     &l.text,
                     false,
                     cs.hilight_text,
-                    Align::Left,
                     font,
                 );
             }
@@ -527,7 +529,7 @@ pub fn draw_cell_at(
                 let (a, b) = (run.start.max(l.start), run.end.min(end));
                 if a < b {
                     let base = text
-                        .baseline(Rect::new(l.x, ly, l.width, line_h), false, font)
+                        .baseline(pen, false, font)
                         .unwrap_or(ly + line_h - 3 * s);
                     c.fill_rect(Rect::new(at(a), base + s, at(b) - at(a), s), black);
                 }
@@ -1454,6 +1456,74 @@ mod tests {
         assert_eq!(c.get(x1, by + 2), black);
         assert_eq!(c.get(x1, by + 14), black);
         assert!((0..CELL).all(|x| c.get(x, by + 15) != hl));
+    }
+
+    /// At scale 2 a rename line's first glyph draws where its pen puts it: the box's padding is
+    /// room for its ink.
+    #[test]
+    fn a_rename_lines_first_glyph_at_scale_2_draws_where_its_pen_puts_it() {
+        crate::pins::fonts();
+        let mut moved = Vec::new();
+        for (family, antialias) in ["Tahoma", "DejaVu Sans"]
+            .into_iter()
+            .flat_map(|f| [(f, false), (f, true)])
+        {
+            for px in [11, 13] {
+                let fonts = FontConfig {
+                    family: vec![family.into()],
+                    antialias,
+                    size_px: px,
+                    ..FontConfig::default()
+                };
+                let t = TextRenderer::load(&fonts);
+                let theme = Theme {
+                    fonts,
+                    ..Theme::default()
+                };
+                let cell = Cell::grown(theme.text);
+                let white = theme.colors.window;
+                for ch in ('!'..='~').filter(char::is_ascii_graphic) {
+                    let edit = TextEdit::new(ch.to_string(), false);
+                    let mut got = Canvas::with_scale(120, 120, 2);
+                    let rename = Some((&edit, Caret::Hidden));
+                    let (name, ground) = ("", Ground::Window);
+                    draw_cell_at(
+                        &mut got,
+                        (20, 0),
+                        cell,
+                        &theme,
+                        &t,
+                        name,
+                        None,
+                        false,
+                        None,
+                        rename,
+                        ground,
+                    );
+                    let mut lay = edit_layout(&theme, &t, &edit, cell.w);
+                    lay.shift(20);
+                    let (l, r) = (&lay.lines[0], lay.rect.inset(1));
+                    let line_h = px as i32 + theme.text.len(3);
+                    let baseline = t
+                        .baseline(Rect::new(l.x, l.y, 1, line_h), false, px)
+                        .unwrap();
+                    let mut want = Canvas::with_scale(120, 120, 2);
+                    want.fill_rect(r, white);
+                    let ink = theme.colors.window_text;
+                    let all = want.bounds();
+                    t.draw_run(&mut want, l.x, baseline, all, &l.text, false, ink, px);
+                    let r = r.scaled(2);
+                    let inside =
+                        (r.y..r.bottom()).flat_map(|y| (r.x..r.right()).map(move |x| (x, y)));
+                    if inside.into_iter().any(|(x, y)| {
+                        got.pixels[(y * 240 + x) as usize] != want.pixels[(y * 240 + x) as usize]
+                    }) {
+                        moved.push(format!("{family} aa {antialias} {px} px: {ch:?}"));
+                    }
+                }
+            }
+        }
+        assert!(moved.is_empty(), "{}", moved.join("\n"));
     }
 
     #[test]

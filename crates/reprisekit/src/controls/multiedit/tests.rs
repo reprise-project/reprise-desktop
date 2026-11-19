@@ -1322,3 +1322,112 @@ fn a_selected_last_glyph_at_scale_2_keeps_its_ink_inside_its_highlight() {
     });
     assert!(dark.is_empty(), "{}", dark.join("\n"));
 }
+
+/// Each printable ASCII char, in Tahoma and DejaVu Sans, mono and antialiased, 11 and 13 px, with
+/// `f` drawing a flat box at `r` holding a given text scrolled `left` px, as device pixels of a
+/// 240x60 scale 2 canvas (480 a row), and the width of a space.
+fn each_row_start(mut f: impl FnMut(char, &dyn Fn(&str, Rect, i32) -> Vec<u32>, i32, &str)) {
+    let cs = &Theme::default().colors;
+    for (family, antialias) in ["Tahoma", "DejaVu Sans"]
+        .into_iter()
+        .flat_map(|f| [(f, false), (f, true)])
+    {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            antialias,
+            ..FontConfig::default()
+        });
+        for px in [11, 13] {
+            let m = Metrics {
+                font_px: px,
+                flat: true,
+                bars_always: false,
+                ..Metrics::for_font(&text, px)
+            };
+            let run = |s: &str, r: Rect, left: i32| {
+                let t = e(s);
+                let mut c = Canvas::with_scale(240, 60, 2);
+                c.fill_rect(c.bounds(), cs.window);
+                let v = View {
+                    left,
+                    ..View::default()
+                };
+                let lay = layout(&text, &m, &t, r, 1);
+                let paint = classic_paint(cs, 1);
+                draw(
+                    &mut c,
+                    &text,
+                    &paint,
+                    &m,
+                    &t,
+                    v,
+                    &lay,
+                    Caret::Unfocused,
+                    None,
+                );
+                c.pixels
+            };
+            let space = text.measure(" ", false, px);
+            for ch in ('!'..='~').filter(char::is_ascii_graphic) {
+                f(ch, &run, space, &format!("{family} aa {antialias} {px} px"));
+            }
+        }
+    }
+}
+
+#[test]
+fn a_rows_first_glyph_draws_at_scale_2_where_it_draws_with_a_char_before_it() {
+    crate::pins::fonts();
+    let mut moved = Vec::new();
+    each_row_start(|ch, run, space, what| {
+        let at = |x: i32| Rect::new(x, 0, 200 - x, 60);
+        if run(&ch.to_string(), at(20), 0) != run(&format!(" {ch}"), at(20 - space), 0) {
+            moved.push(format!("{what}: {ch:?}"));
+        }
+    });
+    assert!(moved.is_empty(), "{}", moved.join("\n"));
+}
+
+/// Scrolled across, a box shows inside its text clip what an unscrolled box that far left shows:
+/// no glyph moves as it reaches the clip's left edge.
+#[test]
+fn a_box_scrolled_at_scale_2_draws_its_glyphs_where_their_pens_put_them() {
+    crate::pins::fonts();
+    let mut moved = Vec::new();
+    each_row_start(|ch, run, _, what| {
+        let row = format!("{ch}o{ch}o{ch}o{ch}");
+        for left in 1..=8 {
+            let scrolled = run(&row, Rect::new(20, 0, 180, 60), left);
+            let shifted = run(&row, Rect::new(20 - left, 0, 180 + left, 60), 0);
+            let clip =
+                (2 * 21..2 * 199).flat_map(|x| (2..2 * 59).map(move |y| (y * 480 + x) as usize));
+            if clip.clone().any(|i| scrolled[i] != shifted[i]) {
+                moved.push(format!("{what}: {row:?} {left} px"));
+            }
+        }
+    });
+    assert!(moved.is_empty(), "{}", moved.join("\n"));
+}
+
+#[test]
+fn a_box_scrolled_at_scale_2_keeps_the_inset_left_of_its_text_clip_clear() {
+    crate::pins::fonts();
+    let mut inked = Vec::new();
+    each_row_start(|ch, run, _, what| {
+        if !matches!(ch, 'J' | 'j') {
+            return;
+        }
+        let r = Rect::new(20, 0, 180, 60);
+        let blank = run("", r, 0);
+        let row = format!("{ch}o{ch}o{ch}o{ch}");
+        for left in 1..=8 {
+            let scrolled = run(&row, r, left);
+            let inset =
+                (2 * 20..2 * 21).flat_map(|x| (0..120).map(move |y| (y * 480 + x) as usize));
+            if inset.clone().any(|i| scrolled[i] != blank[i]) {
+                inked.push(format!("{what}: {row:?} {left} px"));
+            }
+        }
+    });
+    assert!(inked.is_empty(), "{}", inked.join("\n"));
+}
