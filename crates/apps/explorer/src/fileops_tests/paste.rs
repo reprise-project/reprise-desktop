@@ -785,3 +785,67 @@ fn a_failure_read_with_the_end_of_its_put_ends_the_put_and_says_why() {
         _ => panic!("the failure is shown"),
     }
 }
+
+/// Ctrl+V onto a taken name, then Enter, typed while the clipboard is slow: the paste lands and
+/// asks to replace, and the Enter, typed before the question was up, does not answer Yes.
+#[test]
+fn enter_typed_ahead_of_a_paste_does_not_answer_the_replace_prompt_it_raises() {
+    let mut ctx = test_ctx();
+    let t = tempfile::tempdir().expect("a temp dir");
+    let (src, dest) = (t.path().join("src"), t.path().join("dest"));
+    for (d, body) in [(&src, "new"), (&dest, "old")] {
+        std::fs::create_dir_all(d).expect("mkdir");
+        std::fs::write(d.join("a.txt"), body).expect("write");
+    }
+    let mut ex = crate::tests::test_explorer(Place::Folder(dest.clone()), &mut ctx);
+    let boxes = |ex: &Explorer| -> Vec<repriseapp::WinId> {
+        let kids = ex.children().into_iter();
+        kids.filter(|c| c.modal).map(|c| c.id).collect()
+    };
+    let mut wait = repriseapp::PasteWait::default();
+    let mut asked_for = Vec::new();
+    let ctrl_v = repriseapp::KeyInput {
+        sym: 'v' as u32,
+        utf8: None,
+        mods: repriseapp::Mods {
+            ctrl: true,
+            ..Default::default()
+        },
+        edit: None,
+    };
+    for ev in [repriseapp::Event::Key(ctrl_v), enter()] {
+        if let Some(ev) = wait.hold(repriseapp::MAIN, ev)
+            && ex.event(repriseapp::MAIN, ev, &mut ctx).paste_files
+        {
+            asked_for.push(wait.begin(repriseapp::MAIN));
+        }
+    }
+    assert_eq!(asked_for.len(), 1, "Ctrl+V asked for the clipboard");
+    let clip = FileClip {
+        cut: false,
+        paths: vec![src.join("a.txt")],
+    };
+    wait.land(asked_for[0], Some(repriseapp::Event::PastedFiles(clip)));
+    while let Some((win, held)) = wait.pop() {
+        let repriseapp::Held::Event(ev) = held else {
+            continue;
+        };
+        let before = boxes(&ex);
+        let gate = before.last().copied().filter(|_| win == repriseapp::MAIN);
+        let to = wait.aim(win, &ev, gate);
+        let key = matches!(ev, repriseapp::Event::Key(_) | repriseapp::Event::KeyUp(_));
+        if !(key && gate.is_some() && to == repriseapp::MAIN) {
+            ex.event(to, ev, &mut ctx);
+        }
+        wait.opened(&before, &boxes(&ex));
+    }
+    assert_eq!(
+        asked(&ex),
+        Some(("Confirm File Replace", "a.txt".to_string()))
+    );
+    ex.finish_puts(&mut ctx);
+    assert_eq!(
+        std::fs::read_to_string(dest.join("a.txt")).expect("read"),
+        "old"
+    );
+}
