@@ -2715,6 +2715,44 @@ mod tests {
     }
 
     #[test]
+    fn a_fifo_commit_a_pointer_tick_lets_through_shows_to_captures_without_the_pointer() {
+        use wayland_protocols::wp::fifo::v1::client::{
+            wp_fifo_manager_v1::WpFifoManagerV1, wp_fifo_v1::WpFifoV1,
+        };
+        let Some(mut h) = drawing() else { return };
+        h.state.config.remote_desktop.frame_rate = 1;
+        let o = remote_screen(&mut h);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "fifo", 20, 20);
+        let mut client = h.connect_capture((64, 48));
+        let mut s = client.ext_session(&mut h);
+        for _ in 0..3 {
+            crate::virtualout::tick_now(&mut h.state, &o);
+            land(&mut h);
+            client.ext_frame(&mut h, &mut s);
+        }
+        assert_eq!(h.state.captures.waiting.len(), 1, "a frame waits");
+        crate::virtualout::ask(&mut h.state, &o, crate::backend::Ask::Pointer);
+        let surface = c.side.shells[t.shell].surface.clone();
+        let manager: WpFifoManagerV1 = c.bind("wp_fifo_manager_v1", 1);
+        let fifo: WpFifoV1 = manager.get_fifo(&surface, &c.qh(), ());
+        fifo.set_barrier();
+        surface.commit();
+        fifo.wait_barrier();
+        h.draw_self(&mut c, t, 0xff00_ff00);
+        assert_eq!(
+            h.state.captures.waiting.len(),
+            1,
+            "the window's new colour waits on the barrier"
+        );
+        crate::virtualout::tick_now(&mut h.state, &o);
+        assert!(
+            h.state.captures.waiting.is_empty(),
+            "the pointer tick whose frame callbacks pass the barrier shows the new colour"
+        );
+    }
+
+    #[test]
     fn a_waiting_copy_is_let_go_once_its_frame_or_its_client_goes() {
         let Some(mut h) = drawing() else { return };
         h.output("TEST-1", 64, 48);
