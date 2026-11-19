@@ -1205,3 +1205,55 @@ fn the_reply_row_reads_as_a_field_and_send() {
         "Send comes alive"
     );
 }
+
+/// Every tip box keeps its text's ink, descenders and `|` included, at 100%, 125% and 150% text,
+/// in every interface, at scale 1 and 2: the compositor's tips on a scaled theme, programs' on a
+/// scale 2 canvas.
+#[test]
+fn every_tip_keeps_its_ink_at_every_text_size_and_scale() {
+    use crate::controls::{form, infotip, regionselect};
+    use crate::interface::Interface;
+    crate::pins::fonts();
+    let label = "Typing | gypsy_quay";
+    let speed = "Network speed\n\u{2193} 2.0 KB/s \u{2191} 2.9 KB/s";
+    let facts = [
+        String::from("Type: Typing gypsy"),
+        String::from("Size: 1 KB"),
+    ];
+    let mode = regionselect::RegionSelect::new((0, 0), false);
+    let mut cut = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for pct in [100, 125, 150] {
+            let base = crate::interfaces::theme_for(i).with_text_size(pct);
+            let text = TextRenderer::load(&base.fonts);
+            for s in [1, 2] {
+                let theme = base.scaled(s);
+                let t = text.for_output(s);
+                let ((), cuts) = crate::pins::clipped_ink(|| {
+                    draw_tip(&theme, t, label);
+                    draw_tip(&theme, t, speed);
+                    draw_info_tip(&theme, t, "Shows the typing gypsy quay.");
+                    regionselect::draw_mode(&theme, t, &mode);
+                    draw_tip_at(&base, &text, label, s);
+                    infotip::draw(&base, &text, &facts, s);
+                    let mut c = Canvas::with_scale(400, 200, s);
+                    c.report_tip(crate::raster::ReportedTip {
+                        text: label.into(),
+                        at: (10, 10),
+                    });
+                    form::draw_tip(&mut c, &text, &base);
+                });
+                cut.extend(
+                    cuts.into_iter()
+                        .filter(|c| c.rows > 0)
+                        .map(|c| (format!("{i:?} {pct}% x{s}"), c.text, c.rows)),
+                );
+            }
+        }
+    }
+    assert_eq!(
+        cut,
+        Vec::new(),
+        "(look, text size, scale, line, ink rows cut)"
+    );
+}

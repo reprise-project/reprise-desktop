@@ -86,10 +86,15 @@ pub(crate) fn draw_box(
         canvas_scale,
     );
     let ink = tooltip::draw_box(&mut c, &p, Rect::new(0, 0, w, h));
+    let inside = Rect::new(0, 0, w, h).inset(s);
     let mut y = m.top * s;
     for line in lines {
         let r = Rect::new(m.left * s, y, w - (m.left + m.right) * s, line_h);
-        text.draw(&mut c, r, line, false, ink, Align::Left, size);
+        // Only the frame cuts a line's rows: descenders and `|` hang below a font-size text box.
+        let clip = Rect::new(r.x, inside.y, r.width, inside.height);
+        if let Some(baseline) = text.baseline(r, false, size) {
+            text.draw_run(&mut c, r.x, baseline, clip, line, false, ink, size);
+        }
         y += line_pitch(theme);
     }
     c
