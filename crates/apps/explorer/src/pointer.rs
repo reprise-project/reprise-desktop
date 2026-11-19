@@ -835,6 +835,7 @@ impl Explorer {
     /// goes no further.
     fn address_press_outside(&mut self, x: i32, y: i32, ctx: &Ctx) -> bool {
         if self.address.combo.open.is_none() && !self.address.complete.is_open() {
+            self.address.complete.close();
             return false;
         }
         let hit = match self.layout(ctx).address {

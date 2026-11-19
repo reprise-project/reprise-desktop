@@ -921,6 +921,45 @@ fn run_writes_a_completed_name_with_a_space_escaped_and_runs_it_as_one_word() {
     );
 }
 
+/// A press off the field, on the dialog or on Browse..., while the typed folder is still being
+/// read: the listing that lands after leaves the list shut, and the next key opens it.
+#[test]
+fn a_press_off_runs_field_while_its_folder_reads_keeps_the_late_list_shut() {
+    use reprisekit::controls::pathcomplete::Entry;
+    for (on, button) in [("the dialog", None), ("Browse...", Some(2))] {
+        let mut d = Dialog::run(&[]);
+        for ch in "~/Do".chars() {
+            d.key(Key::Edit(EditKey::Insert(ch.to_string())));
+        }
+        let f = d.field.as_mut().unwrap();
+        let want = f.complete.take_want().expect("Run lists the typed folder");
+        match button {
+            Some(i) => assert!(d.press_button(i), "{on} takes the press"),
+            None => assert_eq!(d.click(None), Outcome::Nothing),
+        }
+        let entries = ["Documents", "Downloads"]
+            .map(|n| Entry {
+                name: n.into(),
+                dir: true,
+            })
+            .to_vec();
+        let f = d.field.as_mut().unwrap();
+        f.complete
+            .set_listing(f.combo.edit.as_mut().unwrap(), &want, entries);
+        assert!(
+            !f.complete.is_open(),
+            "a press on {on}: the listing that lands leaves the list shut"
+        );
+        d.key(Key::Edit(EditKey::Insert("w".into())));
+        let f = d.field.as_ref().unwrap();
+        assert_eq!(
+            f.complete.rows(),
+            ["Downloads/"],
+            "a press on {on}: the next key opens the list"
+        );
+    }
+}
+
 #[test]
 fn the_wheel_scrolls_runs_completion_list_when_it_has_a_scrollbar() {
     use reprisekit::controls::pathcomplete::Entry;
