@@ -2,12 +2,13 @@
 //! keys on the icons. Delete and Properties go through `desktopfiles`.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use reprisekit::textedit::EditKey;
 use smithay::input::keyboard::Keycode;
 
 use crate::{
-    clipboard::{FileClip, PasteTarget, file_offers},
+    clipboard::{FileClip, file_offers},
     compositor::State,
     desktop::{self, DesktopEntry, IconMove},
     desktopview::{DesktopCommand, aimed_in},
@@ -58,6 +59,9 @@ pub fn properties_row(commands: &[Option<DesktopCommand>]) -> Option<DesktopComm
         .find(|c| matches!(c, IconProperties | BinProperties))
         .cloned()
 }
+
+/// Counts renames for the whole run: `DesktopView::rename_serial`.
+static RENAMES: AtomicU64 = AtomicU64::new(0);
 
 impl State {
     pub fn is_renaming(&self) -> bool {
@@ -271,6 +275,7 @@ impl State {
             index,
             desktop::rename_edit(entry, self.config.desktop_extensions),
         ));
+        view.rename_serial = RENAMES.fetch_add(1, Ordering::Relaxed);
         view.rename_clicks.reset();
         view.rename_drop = None;
         view.selection.set_only(Some(index));
@@ -304,11 +309,11 @@ impl State {
         if matches!(&key, EditKey::Insert(s) if s.contains('/')) {
             return;
         }
-        let Some((index, edit)) = self.desktop.as_ref().and_then(|d| d.rename.as_ref()) else {
+        let Some((_, edit)) = self.desktop.as_ref().and_then(|d| d.rename.as_ref()) else {
             return;
         };
         match key {
-            EditKey::Paste => self.clip_paste(PasteTarget::Rename(*index)),
+            EditKey::Paste => self.clip_edit_key(&key),
             EditKey::Copy | EditKey::Cut => {
                 let text = edit.selected_text().to_string();
                 self.clip_copy(&text);

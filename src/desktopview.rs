@@ -78,6 +78,8 @@ pub struct DesktopView {
     last_click: DoubleClick<Option<usize>>,
     /// An in-progress inline rename: the icon index and the edit.
     pub rename: Option<(usize, TextEdit)>,
+    /// Which rename `rename` is, unique for the run (`PasteTarget::Rename`).
+    pub rename_serial: u64,
     /// Left presses in the rename box, paired into the double click that selects a word.
     pub(crate) rename_clicks: DoubleClick<()>,
     /// Where a drag resting on the rename box would drop its text (`dialogdrop`): the box
@@ -259,6 +261,7 @@ pub(crate) fn create(
         focus_ring: false,
         last_click: DoubleClick::default(),
         rename: None,
+        rename_serial: 0,
         rename_clicks: DoubleClick::default(),
         rename_drop: None,
         watch,

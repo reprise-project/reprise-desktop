@@ -31,6 +31,7 @@ use reprisefs::dropdata::GNOME_FILES;
 pub use reprisefs::fileclip::FileClip;
 use reprisefs::fileclip::{self, KDE_CUT};
 use reprisefs::pipe::{PASTE_TIMEOUT, PasteBuf};
+use reprisescene::TreeId;
 
 use crate::compositor::State;
 
@@ -91,15 +92,17 @@ impl Clip {
     }
 }
 
+/// One opening of a field of Reprise's own that asked for a paste: the dialog's id, the panel's
+/// scene tree, the rename's serial, the balloon's serial. A paste answered once it closed is dropped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PasteTarget {
     Dialog(u64),
-    Rename(usize),
-    Launcher,
-    StartPanel,
-    ClipView,
-    EmojiView,
-    NotifyReply,
+    Rename(u64),
+    Launcher(TreeId),
+    StartPanel(TreeId),
+    ClipView(TreeId),
+    EmojiView(TreeId),
+    NotifyReply(u64),
 }
 
 pub fn file_offers(clip: &FileClip) -> Option<Vec<Offer>> {
@@ -547,13 +550,15 @@ impl State {
             Editor::Rename => self
                 .desktop
                 .as_ref()
-                .and_then(|d| d.rename.as_ref())
-                .map(|(i, _)| PasteTarget::Rename(*i)),
-            Editor::Launcher => Some(PasteTarget::Launcher),
-            Editor::StartPanel => Some(PasteTarget::StartPanel),
-            Editor::ClipView => Some(PasteTarget::ClipView),
-            Editor::EmojiView => Some(PasteTarget::EmojiView),
-            Editor::NotifyReply => Some(PasteTarget::NotifyReply),
+                .filter(|d| d.rename.is_some())
+                .map(|d| PasteTarget::Rename(d.rename_serial)),
+            Editor::Launcher => Some(PasteTarget::Launcher(self.launcher.as_ref()?.tree)),
+            Editor::StartPanel => Some(PasteTarget::StartPanel(self.start_panel.as_ref()?.tree)),
+            Editor::ClipView => Some(PasteTarget::ClipView(self.panels.clipview.as_ref()?.tree)),
+            Editor::EmojiView => Some(PasteTarget::EmojiView(self.panels.emojiview.as_ref()?.tree)),
+            Editor::NotifyReply => {
+                crate::notifyview::reply_serial(self).map(PasteTarget::NotifyReply)
+            }
         }
     }
 
@@ -616,16 +621,16 @@ impl State {
     fn deliver_paste(&mut self, target: PasteTarget, text: String) {
         let mut text = text;
         if self.focused_paste_target() != Some(target) {
-            log::debug!("paste: the field it was asked for lost the keyboard; dropped");
+            log::debug!("paste: the field it was asked for closed or lost the keyboard; dropped");
         } else {
             match target {
                 PasteTarget::Dialog(_) => self.dialog_paste(&text),
                 PasteTarget::Rename(_) => self.rename_paste(&text),
-                PasteTarget::Launcher => self.launcher_paste(&text),
-                PasteTarget::StartPanel => self.start_panel_paste(&text),
-                PasteTarget::ClipView => self.clipview_paste(&text),
-                PasteTarget::EmojiView => self.emoji_paste(&text),
-                PasteTarget::NotifyReply => crate::notifyview::paste(self, &text),
+                PasteTarget::Launcher(_) => self.launcher_paste(&text),
+                PasteTarget::StartPanel(_) => self.start_panel_paste(&text),
+                PasteTarget::ClipView(_) => self.clipview_paste(&text),
+                PasteTarget::EmojiView(_) => self.emoji_paste(&text),
+                PasteTarget::NotifyReply(_) => crate::notifyview::paste(self, &text),
             }
         }
         zeroize::Zeroize::zeroize(&mut text);
@@ -1103,5 +1108,163 @@ mod tests {
         assert!(buf.push(&big));
         assert_eq!(read_some(&b"y"[..], &mut buf), Got::TooLarge);
         assert_eq!(buf.bytes().len(), reprisefs::pipe::MAX_PASTE_BYTES);
+    }
+    /// Ctrl+V in the field `open` leaves with the keyboard, the copying client's answer held
+    /// until `reopen` has closed that field and opened another of its kind.
+    fn paste_answered_after(
+        h: &mut crate::harness::Harness,
+        open: impl FnOnce(&mut State),
+        reopen: impl FnOnce(&mut State),
+    ) -> crate::harness::TestClient {
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        c.copy(&["text/plain"], b"late");
+        h.roundtrip(&mut c);
+        recorded(h, 1);
+        open(&mut h.state);
+        h.state.clip_edit_key(&reprisekit::textedit::EditKey::Paste);
+        h.dispatch();
+        reopen(&mut h.state);
+        answered(h, &mut c);
+        c
+    }
+
+    /// The copying client answers the paste asked of it, and the loop reads it.
+    fn answered(h: &mut crate::harness::Harness, c: &mut crate::harness::TestClient) {
+        h.roundtrip(c);
+        h.run_for(50);
+        h.roundtrip(c);
+    }
+
+    #[test]
+    fn a_paste_answered_after_its_box_closed_stays_out_of_the_next_box_of_its_kind() {
+        type Open = fn(&mut State);
+        type Text = fn(&State) -> Option<String>;
+        let boxes: [(&str, Open, Open, Text); 4] = [
+            (
+                "Run",
+                |s| {
+                    s.config.launcher_files = false;
+                    s.toggle_launcher();
+                },
+                |s| {
+                    s.close_launcher();
+                    s.toggle_launcher();
+                },
+                |s| s.launcher.as_ref().map(|v| v.model.edit().text.clone()),
+            ),
+            (
+                "Start search",
+                |s| s.toggle_start_panel_from_keys(),
+                |s| {
+                    s.close_start_panel();
+                    s.toggle_start_panel_from_keys();
+                },
+                |s| s.start_panel.as_ref().map(|v| v.model.edit().text.clone()),
+            ),
+            (
+                "clipboard history",
+                |s| s.toggle_clipview(),
+                |s| {
+                    s.close_clipview();
+                    s.toggle_clipview();
+                },
+                |s| (s.panels.clipview.as_ref()).map(|v| v.model.edit().text.clone()),
+            ),
+            (
+                "emoji picker",
+                |s| s.toggle_emoji(),
+                |s| {
+                    s.close_emoji();
+                    s.toggle_emoji();
+                },
+                |s| (s.panels.emojiview.as_ref()).map(|v| v.model.edit().text.clone()),
+            ),
+        ];
+        let mut wrong = Vec::new();
+        for (name, open, reopen, text) in boxes {
+            let mut config = crate::config::Config::default();
+            config.startmenu_style = crate::config::StartMenuStyle::Glass;
+            let mut h = crate::harness::Harness::with_config(config);
+            h.output("TEST-1", 1024, 768);
+            let mut c = paste_answered_after(&mut h, open, reopen);
+            let late = text(&h.state);
+            h.state.clip_edit_key(&reprisekit::textedit::EditKey::Paste);
+            answered(&mut h, &mut c);
+            let own = text(&h.state);
+            if late.as_deref() != Some("") || own.as_deref() != Some("late") {
+                wrong.push((name, late, own));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "each second box stays empty, then takes its own paste: {wrong:?}"
+        );
+    }
+
+    #[test]
+    fn a_paste_answered_after_its_rename_ended_stays_out_of_the_next_rename_there() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let desk = crate::harness::scratch().join("late-rename-paste");
+        std::fs::create_dir_all(&desk).unwrap();
+        std::fs::write(desk.join("notes"), "").unwrap();
+        crate::desktopview::create(&mut h.state, desk.clone(), Default::default(), None);
+        h.state.rescan_desktop();
+        let listed = |s: &State| {
+            (s.desktop.as_ref()?.entries.iter()).position(|e| e.path == desk.join("notes"))
+        };
+        h.until("the file listed", |s| listed(s).is_some());
+        let i = listed(&h.state).unwrap();
+        paste_answered_after(
+            &mut h,
+            |s| s.begin_rename(i),
+            |s| {
+                s.cancel_rename();
+                s.begin_rename(i);
+            },
+        );
+        let rename = h.state.desktop.as_ref().and_then(|d| d.rename.as_ref());
+        assert_eq!(rename.map(|(_, e)| e.text.as_str()), Some("notes"));
+    }
+
+    #[test]
+    fn a_paste_answered_after_its_reply_was_sent_stays_out_of_the_next_reply() {
+        use crate::tray::notify::INLINE_REPLY;
+        let replies = |id: u32| {
+            let mut n = crate::tray::Notification::new(id, format!("n{id}"), String::new());
+            n.actions = vec![(INLINE_REPLY.into(), "Reply".into())];
+            n.reply = Some(crate::tray::Reply {
+                placeholder: String::new(),
+                send: crate::tray::REPLY_SEND.into(),
+            });
+            n
+        };
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        paste_answered_after(
+            &mut h,
+            |s| {
+                crate::notifyview::show(s, replies(1));
+                crate::notifyview::show(s, replies(2));
+                crate::notifyview::invoke(s, 1, INLINE_REPLY);
+                crate::notifyview::paste(s, "see you");
+            },
+            |s| {
+                let enter = crate::dialogview::DialogKey {
+                    syms: vec![crate::keys::KEY_Return],
+                    mods: 0,
+                    edit: None,
+                };
+                crate::notifyview::key(s, &enter);
+                assert!(
+                    s.notify.log.get(1).is_some_and(|e| e.replied),
+                    "reply 1 sent"
+                );
+                crate::notifyview::invoke(s, 2, INLINE_REPLY);
+            },
+        );
+        let typed = crate::notifyview::reply_edit(&h.state).map(|e| e.text.as_str());
+        assert_eq!(typed, Some(""), "notification 2's reply field");
     }
 }

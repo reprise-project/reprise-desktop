@@ -26,7 +26,7 @@ pub struct ClipView {
     pub scale: i32,
     /// The output it opened on; None with no output.
     output: Option<Output>,
-    tree: TreeId,
+    pub(crate) tree: TreeId,
     glass_tree: TreeId,
     glass: Backdrop,
     buffer: BufferId,
