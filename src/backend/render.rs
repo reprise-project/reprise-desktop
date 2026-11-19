@@ -476,10 +476,7 @@ pub(super) fn pointer_frame(
     if magnifier.zooms(output) || s.callback_timer.is_some() || s.scene_seen != scene.changes() {
         return None;
     }
-    let drew = match s.captures_owed {
-        true => Drew::Scene,
-        false => Drew::Pointer,
-    };
+    let drew = pointer_drew(s.captures_owed);
     let geo = reprisescene::output_rect(output)?;
     if !geo.to_f64().contains(pointer) {
         return (!s.pointer_shown).then_some(Some(Ended::Empty(drew)));
@@ -522,6 +519,14 @@ pub(super) fn cursor_moved(
         CursorMove::Unavailable => None,
         CursorMove::Unchanged => Some(Some(Ended::Empty(drew))),
         CursorMove::Prepared => Some((!flip(drew)).then_some(Ended::Lost(drew))),
+    }
+}
+
+/// What a pointer-only frame shows captures: the scene while they are owed it, else the pointer.
+pub(super) fn pointer_drew(captures_owed: bool) -> Drew {
+    match captures_owed {
+        true => Drew::Scene,
+        false => Drew::Pointer,
     }
 }
 
