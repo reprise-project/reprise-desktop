@@ -728,7 +728,7 @@ impl WindowHandler for Host {
         let Some(id) = self.slot_of(window.wl_surface()) else {
             return;
         };
-        self.send(id, Event::CloseRequest);
+        self.input(id, Event::CloseRequest);
     }
 
     fn configure(

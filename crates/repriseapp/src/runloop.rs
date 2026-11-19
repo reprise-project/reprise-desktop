@@ -313,6 +313,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         blink_armed: false,
         shm_trouble: Default::default(),
         shm_retry: false,
+        paste_wait: Default::default(),
     };
     // Started before the roundtrip, so the theme warms while the compositor answers.
     if host.app.hidden() {
@@ -418,6 +419,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
                 host.decode_wanted_icons();
                 // Everything that dirties a slot is a source here, so nothing needs polling.
                 turn(&mut event_loop, host, &conn)?;
+                host.settle_pastes();
                 if host.icons_deferred && !host.slots.is_empty() {
                     host.watch_icons();
                 }

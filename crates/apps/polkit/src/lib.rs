@@ -134,6 +134,9 @@ struct PolkitApp {
     /// The text size the active dialog opened at.
     units: TextUnits,
     first: FirstPrompts,
+    /// A request ended since the last reply: the pastes it asked for must not reach the next
+    /// one, which reuses its box.
+    ended: bool,
 }
 
 impl PolkitApp {
@@ -185,6 +188,7 @@ impl PolkitApp {
     /// the same wake as a Done(Success) wins; polkitd ignores the late SUCCESS.
     fn finish(&mut self, out: Outcome) {
         if let Some(mut a) = self.active.take() {
+            self.ended = true;
             a.dialog.wipe();
             let _ = a.request.done.send_blocking(out);
         }
@@ -425,7 +429,7 @@ impl App for PolkitApp {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
-        let reply = match (win, ev) {
+        let mut reply = match (win, ev) {
             (_, Event::Wake) => self.wake(ctx),
             (RUNAS, ev) => {
                 let field = self
@@ -443,8 +447,9 @@ impl App for PolkitApp {
         // whatever is next in the queue right here.
         if self.active.is_none() && !self.queue.is_empty() {
             self.open_next_in(ctx);
-            return Reply::redraw_all();
+            reply = Reply::redraw_all();
         }
+        reply.drop_pastes |= std::mem::take(&mut self.ended);
         reply
     }
 
@@ -1352,6 +1357,175 @@ mod tests {
         assert_eq!(a_rx.try_recv(), Ok(Outcome::Success));
         open(&mut app);
         assert_eq!(app.active.as_ref().unwrap().request.cookie, "b");
+    }
+
+    fn test_ctx() -> Ctx {
+        Ctx {
+            theme: reprisekit::theme::Theme::default(),
+            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default())
+                .into(),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: dialog::CLIENT,
+            maximized: false,
+            origin: (0, 0),
+            wake: repriseapp::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            output_size: None,
+            at_pick: false,
+            text_size: 100,
+        }
+    }
+
+    /// Two requests queued, the first's box open on its password field, with the host's paste
+    /// wait in front of it: what the host does with input, the pastes asked and
+    /// `Reply::drop_pastes`.
+    struct Seat {
+        app: PolkitApp,
+        wait: repriseapp::PasteWait,
+        ctx: Ctx,
+        asked: Vec<repriseapp::PasteId>,
+        first: async_channel::Receiver<Outcome>,
+    }
+
+    impl Seat {
+        fn new() -> Seat {
+            let mut app = PolkitApp::default();
+            let (a, first) = request("a");
+            let (b, _) = request("b");
+            app.handle(Msg::Begin(a));
+            app.handle(Msg::Begin(b));
+            open(&mut app);
+            let a = app.active.as_mut().unwrap();
+            a.dialog.form.focus_id("password");
+            Seat {
+                app,
+                wait: Default::default(),
+                ctx: test_ctx(),
+                asked: Vec::new(),
+                first,
+            }
+        }
+
+        fn send(&mut self, ev: Event) {
+            self.send_to(RUNAS, ev);
+        }
+
+        fn send_to(&mut self, win: WinId, ev: Event) {
+            let reply = self.app.event(win, ev, &mut self.ctx);
+            if reply.drop_pastes {
+                self.wait.forget();
+            }
+            if reply.paste {
+                self.asked.push(self.wait.begin(RUNAS));
+            }
+        }
+
+        fn key(&mut self, sym: u32, ctrl: bool) {
+            let edit = ctrl.then_some(reprisekit::textedit::EditKey::Paste);
+            let mods = repriseapp::Mods {
+                ctrl,
+                ..Default::default()
+            };
+            self.press(repriseapp::KeyInput {
+                sym,
+                utf8: None,
+                mods,
+                edit,
+            });
+        }
+
+        fn typed(&mut self, ch: char) {
+            self.press(repriseapp::KeyInput {
+                sym: ch as u32,
+                utf8: Some(ch.to_string()),
+                mods: Default::default(),
+                edit: Some(reprisekit::textedit::EditKey::Insert(ch.to_string())),
+            });
+        }
+
+        fn press(&mut self, k: repriseapp::KeyInput) {
+            if let Some(ev) = self.wait.hold(RUNAS, Event::Key(k)) {
+                self.send(ev);
+            }
+        }
+
+        fn go_on(&mut self) {
+            while let Some((_, held)) = self.wait.pop() {
+                match held {
+                    repriseapp::Held::Event(ev) => self.send(ev),
+                    repriseapp::Held::Reader(_) => {}
+                }
+            }
+        }
+
+        fn answer(&mut self, text: &str) {
+            let ev = Some(Event::Pasted(text.into()));
+            self.wait.land(self.asked[0], ev);
+            self.go_on();
+        }
+
+        /// The first request ended with `first` and the second's box is up with an empty field.
+        fn assert_next_request_empty(&self, first: Outcome) {
+            assert_eq!(self.first.try_recv(), Ok(first));
+            let a = self.app.active.as_ref().unwrap();
+            assert_eq!(a.request.cookie, "b");
+            assert_eq!(
+                a.dialog.form.edit_text("password"),
+                "",
+                "the next request's field is empty"
+            );
+        }
+    }
+
+    #[test]
+    fn a_paste_still_out_when_escape_is_pressed_lands_in_its_own_request_not_the_next() {
+        use reprisekit::textedit::keysym;
+        let mut s = Seat::new();
+        s.key('v' as u32, true);
+        assert_eq!(s.asked.len(), 1, "Ctrl+V asks for the clipboard");
+        s.key(keysym::ESCAPE, false);
+        s.answer("hunter2");
+        s.assert_next_request_empty(Outcome::Cancelled);
+    }
+
+    #[test]
+    fn a_paste_landing_after_its_hold_and_escape_never_reaches_the_next_request() {
+        use reprisekit::textedit::keysym;
+        let mut s = Seat::new();
+        s.key('v' as u32, true);
+        s.key(keysym::ESCAPE, false);
+        if s.wait.release(s.asked[0]) {
+            s.go_on();
+        }
+        assert_eq!(s.app.active.as_ref().unwrap().request.cookie, "b");
+        s.answer("hunter2");
+        s.assert_next_request_empty(Outcome::Cancelled);
+    }
+
+    #[test]
+    fn keys_held_behind_a_paste_when_polkitd_withdraws_the_request_never_reach_the_next() {
+        use reprisekit::textedit::keysym;
+        let mut s = Seat::new();
+        s.key('v' as u32, true);
+        "hunter2".chars().for_each(|c| s.typed(c));
+        s.key(keysym::RETURN, false);
+        s.app.handle(Msg::Cancel("a".into()));
+        s.send_to(repriseapp::MAIN, Event::Wake);
+        s.go_on();
+        s.assert_next_request_empty(Outcome::Withdrawn);
+        s.answer("pasted");
+        let b = s.app.active.as_ref().unwrap();
+        assert_eq!(
+            b.dialog.form.edit_text("password"),
+            "",
+            "nothing lands later"
+        );
+        assert!(!b.dialog.busy(), "the next request is not submitted");
     }
 
     #[test]

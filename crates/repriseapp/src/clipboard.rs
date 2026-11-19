@@ -1,7 +1,8 @@
 //! Copy and paste: the clipboard, the primary selection and the text types a paste reads.
 
-use crate::{Event, FileClip, Host, KeyInput, Reply, WinId};
-use reprisefs::pipe::PasteBuf;
+use crate::pastewait::{Held, PASTE_HOLD, PasteId};
+use crate::{Event, FileClip, Host, KeyInput, MAIN, Reply, WinId};
+use reprisefs::pipe::{PASTE_TIMEOUT, PasteBuf};
 use reprisekit::textedit::EditKey;
 use smithay_client_toolkit::{
     data_device_manager::{ReadPipe, data_offer::SelectionOffer},
@@ -14,7 +15,7 @@ use std::cell::RefCell;
 use std::io::Read;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
 pub(crate) const TEXT_MIME: &str = "text/plain;charset=utf-8";
@@ -91,7 +92,10 @@ impl Host {
 
     pub(crate) fn paste_primary(&mut self, win: WinId) {
         if let Some(pipe) = self.primary.receive() {
-            self.read_offer(win, pipe, |buf| Event::PastedPrimary(buf.into_text()));
+            let id = self.await_paste(win);
+            self.read_paste(id, pipe, PASTE_TIMEOUT, PasteBuf::default(), |buf| {
+                buf.map(|b| Event::PastedPrimary(b.into_text()))
+            });
         }
     }
 
@@ -119,9 +123,14 @@ impl Host {
         let Ok(read_pipe) = offer.receive(mime.to_string()) else {
             return;
         };
-        self.read_offer(win, read_pipe, move |buf| {
-            Event::Pasted(pasted_text(mime, buf))
-        });
+        let id = self.await_paste(win);
+        self.read_paste(
+            id,
+            read_pipe,
+            PASTE_TIMEOUT,
+            PasteBuf::default(),
+            move |buf| buf.map(|b| Event::Pasted(pasted_text(mime, b))),
+        );
     }
 
     /// Read the clipboard's files for `win`: a cut marked in [`reprisefs::fileclip::KDE_CUT`]
@@ -136,31 +145,50 @@ impl Host {
         };
         let sandboxed = offer.with_mime_types(reprisefs::dropdata::sandboxed);
         if !source.kde_cut {
-            return self.paste_files_as(win, source.files, false, sandboxed);
+            return self.paste_files_as(win, None, source.files, false, sandboxed);
         }
         let Ok(read_pipe) = offer.receive(fileclip::KDE_CUT.to_string()) else {
             return;
         };
-        read_capped(
+        let id = self.await_paste(win);
+        let asked = Instant::now();
+        let reading = read_capped(
             &self.loop_handle,
             read_pipe,
-            reprisefs::pipe::PASTE_TIMEOUT,
+            PASTE_TIMEOUT,
             move |host: &mut Host, buf| {
                 let cut = buf.is_some_and(|b| fileclip::is_cut_marker(b.bytes()));
-                host.paste_files_as(win, source.files, cut, sandboxed);
+                host.paste_files_as(win, Some((id, asked)), source.files, cut, sandboxed);
             },
         );
+        if !reading {
+            self.paste_wait.land(id, None);
+        }
     }
 
-    fn paste_files_as(&mut self, win: WinId, mime: &'static str, kde_cut: bool, sandboxed: bool) {
-        let Some(offer) = self.selection_offer() else {
+    /// The files read as `mime`, for a new paste, or for paste `id` asked at `asked` and out
+    /// since (a cut marker read first), whose read shares [`PASTE_TIMEOUT`] with the marker's.
+    fn paste_files_as(
+        &mut self,
+        win: WinId,
+        out: Option<(PasteId, Instant)>,
+        mime: &'static str,
+        kde_cut: bool,
+        sandboxed: bool,
+    ) {
+        let pipe = (self.selection_offer()).and_then(|o| o.receive(mime.to_string()).ok());
+        let Some(pipe) = pipe else {
+            if let Some((id, _)) = out {
+                self.paste_landed(id, None);
+            }
             return;
         };
-        let Ok(read_pipe) = offer.receive(mime.to_string()) else {
-            return;
+        let (id, timeout) = match out {
+            Some((id, asked)) => (id, PASTE_TIMEOUT.saturating_sub(asked.elapsed())),
+            None => (self.await_paste(win), PASTE_TIMEOUT),
         };
-        self.read_offer(win, read_pipe, move |buf| {
-            Event::PastedFiles(pasted_files(mime, buf.bytes(), kde_cut, sandboxed))
+        self.read_paste(id, pipe, timeout, PasteBuf::default(), move |buf| {
+            buf.map(|b| Event::PastedFiles(pasted_files(mime, b.bytes(), kde_cut, sandboxed)))
         });
     }
 
@@ -186,52 +214,96 @@ impl Host {
             self.send(win, Event::PastedImage(Vec::new()));
             return;
         };
-        read_capped_in(
-            &self.loop_handle,
-            pipe,
-            reprisefs::pipe::PASTE_TIMEOUT,
-            PasteBuf::capped(MAX_IMAGE_BYTES),
-            move |host: &mut Host, buf| {
-                let bytes = buf.map(|b| b.bytes().to_vec()).unwrap_or_default();
-                host.send(win, Event::PastedImage(bytes));
-            },
-        );
+        let id = self.await_paste(win);
+        let buf = PasteBuf::capped(MAX_IMAGE_BYTES);
+        self.read_paste(id, pipe, PASTE_TIMEOUT, buf, |buf| {
+            Some(Event::PastedImage(
+                buf.map(|b| b.bytes().to_vec()).unwrap_or_default(),
+            ))
+        });
     }
 
     pub(crate) fn selection_offer(&self) -> Option<SelectionOffer> {
         self.data_device.as_ref()?.data().selection_offer()
     }
 
-    fn read_offer(
-        &mut self,
-        win: WinId,
-        read_pipe: ReadPipe,
-        make_event: impl FnOnce(PasteBuf) -> Event + 'static,
-    ) {
-        read_capped(
-            &self.loop_handle,
-            read_pipe,
-            reprisefs::pipe::PASTE_TIMEOUT,
-            move |host: &mut Host, buf| {
-                if let Some(buf) = buf {
-                    host.send(win, make_event(buf));
+    /// A paste for `win` is out: input waits on it until it lands, or for [`PASTE_HOLD`].
+    fn await_paste(&mut self, win: WinId) -> PasteId {
+        let id = self.paste_wait.begin(win);
+        let timer = Timer::from_duration(PASTE_HOLD);
+        let _ = self
+            .loop_handle
+            .insert_source(timer, move |_, _, host: &mut Host| {
+                if host.paste_wait.release(id) {
+                    log::info!("paste: no answer in {PASTE_HOLD:?}; input goes on");
+                    host.replay_input();
                 }
-            },
+                TimeoutAction::Drop
+            });
+        id
+    }
+
+    /// Read paste `id` from `pipe` into `buf` for up to `timeout`; `make_event` turns what came
+    /// (None when the read failed) into what its window gets. A pipe the loop refuses lands as
+    /// nothing; the input it held goes on at the turn's end.
+    fn read_paste(
+        &mut self,
+        id: PasteId,
+        pipe: ReadPipe,
+        timeout: Duration,
+        buf: PasteBuf,
+        make_event: impl FnOnce(Option<PasteBuf>) -> Option<Event> + 'static,
+    ) {
+        let reading = read_capped_in(
+            &self.loop_handle,
+            pipe,
+            timeout,
+            buf,
+            move |host: &mut Host, buf| host.paste_landed(id, make_event(buf)),
         );
+        if !reading {
+            self.paste_wait.land(id, None);
+        }
+    }
+
+    /// Paste `id`'s answer `ev` came: it goes to its window, then the input that waited on it.
+    fn paste_landed(&mut self, id: PasteId, ev: Option<Event>) {
+        self.paste_wait.land(id, ev);
+        self.replay_input();
+    }
+
+    /// The pastes landed and the input that waited go on, up to one that asks for another paste.
+    pub(crate) fn replay_input(&mut self) {
+        while let Some((win, held)) = self.paste_wait.pop() {
+            match held {
+                Held::Event(ev) => self.send(win, ev),
+                Held::Reader(req) => self.reader_request(win, req, false),
+            }
+        }
+    }
+
+    /// At a turn's end: drops the pastes out for windows that closed, then hands on what no paste
+    /// holds any longer.
+    pub(crate) fn settle_pastes(&mut self) {
+        let open = |w: WinId| w == MAIN || self.slots.iter().any(|s| s.id == w);
+        if self.paste_wait.close(open) {
+            log::info!("paste: its window closed; dropped");
+        }
+        self.replay_input();
     }
 }
 
 /// Read `pipe` on the loop until its writer closes it, then hand the
 /// bytes to `done`. The writer is any client: an offer past the cap, or
 /// one still open after `timeout` (written to or not), is dropped and
-/// `done` gets None. `done` runs once, unless the loop refuses the pipe.
+/// `done` gets None. `done` runs once; false when the loop refuses the pipe and it never runs.
 pub(crate) fn read_capped<D: 'static>(
     handle: &LoopHandle<'static, D>,
     pipe: ReadPipe,
     timeout: Duration,
     done: impl FnOnce(&mut D, Option<PasteBuf>) + 'static,
-) {
-    read_capped_in(handle, pipe, timeout, PasteBuf::default(), done);
+) -> bool {
+    read_capped_in(handle, pipe, timeout, PasteBuf::default(), done)
 }
 
 /// [`read_capped`] into `buf`, whose cap holds.
@@ -241,7 +313,7 @@ fn read_capped_in<D: 'static>(
     timeout: Duration,
     mut buf: PasteBuf,
     done: impl FnOnce(&mut D, Option<PasteBuf>) + 'static,
-) {
+) -> bool {
     type Done<D> = Rc<RefCell<Option<Box<dyn FnOnce(&mut D, Option<PasteBuf>)>>>>;
     let done: Done<D> = Rc::new(RefCell::new(Some(Box::new(done))));
     let finish = |done: &Done<D>, data: &mut D, buf: Option<PasteBuf>| {
@@ -267,7 +339,7 @@ fn read_capped_in<D: 'static>(
         }
     });
     let Ok(token) = token else {
-        return;
+        return false;
     };
     let remover = handle.clone();
     let _ = handle.insert_source(Timer::from_duration(timeout), move |_, _, data| {
@@ -275,6 +347,7 @@ fn read_capped_in<D: 'static>(
         finish(&done, data, None);
         TimeoutAction::Drop
     });
+    true
 }
 
 const PNG_MIME: &str = "image/png";

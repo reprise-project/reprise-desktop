@@ -214,7 +214,7 @@ impl Host {
             gap.as_millis() as u32
         };
         let key = r.key.clone();
-        self.key(key);
+        self.key(key, true);
         TimeoutAction::ToDuration(gap)
     }
 }

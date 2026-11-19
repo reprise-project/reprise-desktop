@@ -182,6 +182,9 @@ shake, the dim, the hidden frame rate and window memory.
   name or shortcode; Enter types it. It wants a colour emoji font.
 - **Path completion.** Typing a path in Run, Explorer's address bar or a file
   dialog completes it inline and lists the matches.
+- **Pastes keep their place.** In Reprise's programs, keys and clicks after
+  a paste wait until it is in, so Ctrl+V then Ctrl+O pastes, then opens. They
+  wait at most 5 seconds; a slower paste still lands when it arrives.
 - **Edit menu.** A right-click, Shift+F10 or the Menu key in Reprise's text
   fields opens Undo, Redo, Cut, Copy, Paste, Delete and Select All.
 - **Screenshots.** PrtSc for the screen, Alt+PrtSc for the window,

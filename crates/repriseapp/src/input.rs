@@ -123,7 +123,12 @@ impl Host {
         });
     }
 
-    pub(crate) fn key(&mut self, mut event: KeyEvent) {
+    /// A key press; a `repeat` while input waits on a paste is dropped.
+    pub(crate) fn key(&mut self, mut event: KeyEvent, repeat: bool) {
+        if repeat && self.paste_wait.holding() {
+            event.utf8.zeroize();
+            return;
+        }
         self.echo_key(&event, true);
         let input = self.key_input(&event);
         event.utf8.zeroize();
@@ -136,7 +141,7 @@ impl Host {
             s.cues.key(alt);
             s.dirty |= s.cues.keys != was;
         }
-        self.send(win, Event::Key(input));
+        self.input(win, Event::Key(input));
     }
 
     fn key_up(&mut self, mut event: KeyEvent) {
@@ -145,11 +150,18 @@ impl Host {
         input.sym = self.down_syms.release(event.raw_code, input.sym);
         event.utf8.zeroize();
         let win = self.focus.unwrap_or(MAIN);
-        self.send(win, Event::KeyUp(input));
+        self.input(win, Event::KeyUp(input));
     }
 
     pub(crate) fn pointer(&mut self, win: WinId, input: PointerInput) {
-        self.send(win, Event::Pointer(input));
+        self.input(win, Event::Pointer(input));
+    }
+
+    /// The user's `ev` for `win`, which waits behind a paste still out ([`crate::pastewait`]).
+    pub(crate) fn input(&mut self, win: WinId, ev: Event) {
+        if let Some(ev) = self.paste_wait.hold(win, ev) {
+            self.send(win, ev);
+        }
     }
 
     /// Binds the keyboard `new_capability` left due, once a window has shown its first frame;
@@ -255,7 +267,7 @@ impl Host {
                         mods: Mods::default(),
                         edit: Some(key),
                     };
-                    self.send(win, Event::Key(input));
+                    self.input(win, Event::Key(input));
                 }
                 self.mark_dirty(win);
             }
@@ -397,7 +409,7 @@ impl KeyboardHandler for Host {
         self.last_serial = serial;
         self.input_serial = serial;
         self.down_syms.press(event.raw_code, self.key_sym(&event));
-        self.key(event);
+        self.key(event, false);
     }
     fn repeat_key(
         &mut self,
@@ -407,7 +419,7 @@ impl KeyboardHandler for Host {
         _: u32,
         event: KeyEvent,
     ) {
-        self.key(event);
+        self.key(event, true);
     }
     fn release_key(
         &mut self,
