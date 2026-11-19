@@ -1,7 +1,7 @@
 //! Passwords: crypt(3) hashing for AccountsService's `SetPassword`, and
 //! changing your own through `passwd` on a pseudo-terminal (`passwd`
 //! checks the current password itself; AccountsService would want an
-//! administrator's).
+//! administrator's), and asking `passwd -S` whether yours has one.
 
 use std::ffi::CStr;
 use std::io::{Read, Write};
@@ -189,6 +189,33 @@ const QUIET: Duration = Duration::from_secs(20);
 const PASSWD: &str = "/usr/bin/passwd";
 /// How long an answer waits for `passwd` to turn echo off after its prompt.
 const ECHO_WAIT: Duration = Duration::from_secs(1);
+
+/// Whether your own account has no password, as `passwd -S` (setuid, so it reads your shadow
+/// entry) says; false when it cannot tell.
+pub fn own_has_none() -> bool {
+    let out = Command::new(PASSWD)
+        .arg("-S")
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    match out {
+        Ok(o) if o.status.success() => says_none(&String::from_utf8_lossy(&o.stdout)),
+        Ok(o) => {
+            log::warn!("passwd -S: {}", o.status);
+            false
+        }
+        Err(e) => {
+            log::warn!("passwd -S could not start: {e}");
+            false
+        }
+    }
+}
+
+/// A `passwd -S` line's second field: `NP` no password, `P` one, `L` locked.
+fn says_none(status: &str) -> bool {
+    status.split_whitespace().nth(1) == Some("NP")
+}
 
 pub fn change_own(current: &str, new: &str) -> Result<(), String> {
     talk(Command::new(PASSWD), current, new)
@@ -419,6 +446,19 @@ mod tests {
             d.feed("\npasswd: password updated successfully\n"),
             Step::Wait
         );
+    }
+
+    #[test]
+    fn passwd_status_says_none_only_for_np() {
+        assert!(says_none("jo NP 1970-01-01 -1 -1 -1 -1\n"));
+        for line in [
+            "jo P 1970-01-01 -1 -1 -1 -1\n",
+            "jo L 2026-11-19 0 99999 7 -1\n",
+            "jo NP",
+            "",
+        ] {
+            assert_eq!(says_none(line), line == "jo NP", "{line:?}");
+        }
     }
 
     #[test]
