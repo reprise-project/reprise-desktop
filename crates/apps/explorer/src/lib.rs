@@ -262,6 +262,12 @@ pub struct Explorer {
     pub paste: Option<fileops::PasteTo>,
     /// The folder or launcher the item menu was opened on, for its Paste.
     pub menu_paste: Option<fileops::PasteTo>,
+    /// Where an asked-for text paste goes ([`Explorer::paste_text`]).
+    paste_field: Option<rename::PasteField>,
+    /// Rename boxes opened so far.
+    renames: u64,
+    /// Times the Address field went back to the place's text ([`Explorer::reset_address`]).
+    address_resets: u64,
     /// Scanned once; Open, Open With and the chooser read it.
     pub app_index: AppIndex,
     /// Indices into `app_index`, parallel to the Open With and Send To rows.
@@ -565,6 +571,9 @@ impl Explorer {
             undos: reprisefs::undo::UndoStack::default(),
             paste: None,
             menu_paste: None,
+            paste_field: None,
+            renames: 0,
+            address_resets: 0,
             app_index,
             open_with_apps: Vec::new(),
             open_with_path: None,
@@ -1238,8 +1247,7 @@ impl Explorer {
         self.resort();
 
         let icon = chrome::address_icon(&mut self.chrome_waits, &mut ctx.icons, &place);
-        self.address
-            .set_place(&place.address_in(&self.shares.shares), icon);
+        self.reset_address(&place.address_in(&self.shares.shares), icon);
         self.tree_follow_with(&place, tree, ctx);
         self.refresh_chrome(ctx);
         // The listing is new: every earlier thumbnail request is stale.

@@ -11,6 +11,16 @@ use reprisekit::controls::form::{self, Form};
 use reprisekit::textedit::{TextEdit, keysym};
 use std::path::{Path, PathBuf};
 
+/// The text field a Ctrl+V asked the clipboard for. A rename box and an Address edit carry
+/// [`Explorer::renames`] and [`Explorer::address_resets`] at the ask, so the answer reaches only
+/// that box or edit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PasteField {
+    Rename(u64),
+    Address(u64),
+    Search,
+}
+
 impl Explorer {
     pub(crate) fn after_rename(
         &mut self,
@@ -34,7 +44,7 @@ impl Explorer {
     }
 
     /// The text field with the keyboard: the rename box, else the Address or Search field while
-    /// it has the focus. Its clipboard keys and pastes go there.
+    /// it has the focus. Its clipboard keys go there; a paste goes where its Ctrl+V was pressed.
     pub(crate) fn text_field(&self) -> Option<&TextEdit> {
         if let Some((_, e)) = &self.sv.edit {
             return Some(e);
@@ -46,24 +56,47 @@ impl Explorer {
         }
     }
 
-    /// The clipboard's text into [`Explorer::text_field`]; a name takes no `/`.
-    pub(crate) fn paste_text(&mut self, text: &str) -> Reply {
-        let changed = match (&mut self.sv.edit, self.focus) {
-            (Some((_, e)), _) => e.paste(text, &['/']),
-            (None, Focus::Address) => self
-                .address
-                .combo
-                .edit
-                .as_mut()
-                .is_some_and(|e| e.paste(text, &[])),
-            (None, Focus::Search) => self.search_field.edit.paste(text, &[]),
-            _ => false,
+    /// Notes the field a Ctrl+V asks the clipboard for: [`Explorer::text_field`]'s.
+    pub(crate) fn ask_paste(&mut self) {
+        self.paste_field = match (&self.sv.edit, self.focus) {
+            (Some(_), _) => Some(PasteField::Rename(self.renames)),
+            (None, Focus::Address) => Some(PasteField::Address(self.address_resets)),
+            (None, Focus::Search) => Some(PasteField::Search),
+            _ => None,
         };
-        if changed {
+    }
+
+    /// The clipboard's text into the field its Ctrl+V was pressed in, while that rename box is
+    /// still up or the Address still holds that edit; a name takes no `/`.
+    pub(crate) fn paste_text(&mut self, text: &str) -> Reply {
+        let field = match self.paste_field {
+            Some(PasteField::Rename(n)) if n == self.renames => {
+                self.sv.edit.as_mut().map(|(_, e)| (e, &['/'][..]))
+            }
+            Some(PasteField::Address(n)) if n == self.address_resets => {
+                self.address.combo.edit.as_mut().map(|e| (e, &[][..]))
+            }
+            Some(PasteField::Search) => Some((&mut self.search_field.edit, &[][..])),
+            _ => None,
+        };
+        let Some((edit, refused)) = field else {
+            log::debug!(
+                "paste for {:?} dropped: its field is gone",
+                self.paste_field
+            );
+            return Reply::none();
+        };
+        if edit.paste(text, refused) {
             Reply::redraw()
         } else {
             Reply::none()
         }
+    }
+
+    /// Puts the place's own text back in the Address field, ending the edit a paste may wait for.
+    pub(crate) fn reset_address(&mut self, text: &str, icon: Option<reprisekit::raster::Canvas>) {
+        self.address.set_place(text, icon);
+        self.address_resets += 1;
     }
 
     pub fn begin_rename(&mut self, ctx: &mut Ctx) -> Reply {
@@ -80,6 +113,7 @@ impl Explorer {
             return Reply::none();
         };
         self.focus = Focus::View;
+        self.renames += 1;
         self.sv.edit = Some((
             i,
             TextEdit::rename(it.label(), it.is_dir || it.shortcut.is_some()),

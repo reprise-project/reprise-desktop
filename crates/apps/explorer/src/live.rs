@@ -50,6 +50,9 @@ impl Explorer {
         let tipped = self.hide_tip();
         let field = self.text_field().map(FocusedEdit::Line);
         let clip = form_clipboard(field, &Event::Key(k.clone()));
+        if clip.paste {
+            self.ask_paste();
+        }
         let mut reply = self.key_inner(k, ctx).with_clipboard(clip);
         reply.redraw |= tipped;
         reply
