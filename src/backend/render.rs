@@ -114,17 +114,10 @@ pub(super) fn render(state: &mut State, head: Head) {
         s.needs_redraw = false;
         asked_at = s.asked_at.take();
         pointer_only = std::mem::take(&mut s.pointer_only);
-        if pointer_only && let Some(drawn) = pointer_frame(state, head, &output, started) {
+        if pointer_only && let Some(ended) = pointer_frame(state, head, &output, started) {
             // A queued cursor frame finishes on its `Done` (`committed`).
-            if !drawn {
-                finish(
-                    state,
-                    head,
-                    &output,
-                    Ended::Empty(Drew::Pointer),
-                    None,
-                    started,
-                );
+            if let Some(ended) = ended {
+                finish(state, head, &output, ended, None, started);
             }
             watch(state);
             return;
@@ -460,13 +453,13 @@ fn own_cursor(
 
 /// A frame asked for by pointer motion alone (`Ask::Pointer`): when the last
 /// frame put the pointer on its own plane, move the plane and queue that.
-/// Some(whether a frame was queued); None when the frame must be drawn normally.
+/// None when the frame must be drawn normally, else as `cursor_moved`.
 pub(super) fn pointer_frame(
     state: &mut State,
     head: Head,
     output: &Output,
     started: std::time::Instant,
-) -> Option<bool> {
+) -> Option<Option<Ended>> {
     let (pointer, own) = crate::console::pointer::drawn_on(state, output, state.pointer_location());
     let State {
         backend,
@@ -489,7 +482,7 @@ pub(super) fn pointer_frame(
     };
     let geo = reprisescene::output_rect(output)?;
     if !geo.to_f64().contains(pointer) {
-        return (!s.pointer_shown).then_some(false);
+        return (!s.pointer_shown).then_some(Some(Ended::Empty(drew)));
     }
     let parts = Parts {
         scene,
@@ -506,19 +499,29 @@ pub(super) fn pointer_frame(
     let moved = compositor.reposition_cursor(element);
     let modeset = compositor.surface().commit_pending();
     drop(compositor);
+    cursor_moved(moved, drew, |drew| {
+        let flight = InFlight {
+            started,
+            held: None,
+            feedback: None,
+            pointer: true,
+            drew,
+        };
+        send_flip(s, modeset, flight)
+    })
+}
+
+/// How a pointer-only frame showing captures `drew` goes after its plane `moved`: None when it
+/// must be drawn normally, Some(None) once `flip` queued it, else how it ended here.
+pub(super) fn cursor_moved(
+    moved: CursorMove,
+    drew: Drew,
+    flip: impl FnOnce(Drew) -> bool,
+) -> Option<Option<Ended>> {
     match moved {
         CursorMove::Unavailable => None,
-        CursorMove::Unchanged => Some(false),
-        CursorMove::Prepared => {
-            let flight = InFlight {
-                started,
-                held: None,
-                feedback: None,
-                pointer: true,
-                drew,
-            };
-            Some(send_flip(s, modeset, flight))
-        }
+        CursorMove::Unchanged => Some(Some(Ended::Empty(drew))),
+        CursorMove::Prepared => Some((!flip(drew)).then_some(Ended::Lost(drew))),
     }
 }
 
