@@ -253,6 +253,18 @@ pub fn ask(state: &mut State, output: &Output, ask: Ask) {
     want_tick(state, output, want);
 }
 
+/// A capture waits for `output`'s next change. A tick would show it nothing new, so none is asked
+/// for: a tick already armed moves up to the capture rate, and water, which steps only while the
+/// screen is captured, asks for its own.
+pub fn capture_waits(state: &mut State, output: &Output) {
+    if let Some(at) = state.water.next_step(output) {
+        crate::backend::schedule_step(state, output, at);
+    }
+    if screen_mut(state, output).is_some_and(|s| s.wants.is_some()) {
+        arm(state, output);
+    }
+}
+
 /// A commit that shows nothing new: its frame callbacks go at the next tick.
 pub fn answer_frames(state: &mut State) {
     let outputs: Vec<Output> = (state.virtual_outputs.screens.iter())
