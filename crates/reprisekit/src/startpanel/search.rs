@@ -224,16 +224,18 @@ pub fn field(
             let run = Rect::new(x0, row.y, x1 - x0, row.height).intersect(&clip);
             let cs = &style.colors;
             canvas.fill_rect(run, cs.hilight);
-            text.draw_run_over(
-                canvas,
-                x0,
-                y,
-                run,
-                &query[start..sel.end],
-                false,
-                cs.hilight_text,
-                size,
-            );
+            canvas.with_clip(run, |canvas| {
+                text.draw_run_over(
+                    canvas,
+                    pen,
+                    y,
+                    clip,
+                    &query[first..],
+                    false,
+                    cs.hilight_text,
+                    size,
+                );
+            });
         }
         if let Some(run) = run {
             let (x0, x1) = (x_of(run.start), x_of(run.end).min(clip.right()));

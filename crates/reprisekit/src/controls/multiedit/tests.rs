@@ -1189,3 +1189,136 @@ fn a_sideways_scroll_steps_character_cells_to_the_text_end() {
         "a wrapping box stays put"
     );
 }
+
+/// At scale 2 the selected part of a line draws over the line in the same places, so no ink of
+/// the line's colour shows inside the highlight, whatever char ends the selection.
+#[test]
+fn a_selection_at_scale_2_shows_no_line_ink_inside_its_highlight() {
+    crate::pins::fonts();
+    let cs = &Theme::default().colors;
+    let mut ghosts = Vec::new();
+    for (family, antialias) in ["Tahoma", "DejaVu Sans"]
+        .into_iter()
+        .flat_map(|f| [(f, false), (f, true)])
+    {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            antialias,
+            ..FontConfig::default()
+        });
+        for px in [11, 13] {
+            let m = Metrics {
+                font_px: px,
+                ..Metrics::for_font(&text, px)
+            };
+            for ch in ('!'..='~').filter(char::is_ascii_graphic) {
+                let mut t = e(&format!("o{ch}o"));
+                t.place(p(0, 0), false);
+                t.place(p(0, 2), true);
+                let lay = layout(&text, &m, &t, Rect::new(0, 0, 200, 60), 1);
+                let mut c = Canvas::with_scale(200, 60, 2);
+                let paint = classic_paint(cs, 1);
+                let (v, caret) = (View::default(), Caret::Unfocused);
+                draw(&mut c, &text, &paint, &m, &t, v, &lay, caret, None);
+                let x0 = lay.inner.x + 1;
+                let xb = x0 + text.measure(&format!("o{ch}"), false, px);
+                let hl = Rect::new(x0, lay.inner.y + 1, xb - x0, m.line_h).scaled(2);
+                let dark = (hl.y..hl.bottom())
+                    .flat_map(|y| (hl.x..hl.right()).map(move |x| (x, y)))
+                    .filter(|&(x, y)| {
+                        let p = c.pixels[(y * 400 + x) as usize];
+                        (p >> 16) & 0xff < 0x60 && p & 0xff < 0x60
+                    })
+                    .count();
+                if dark > 0 {
+                    ghosts.push(format!(
+                        "{family} aa {antialias} {px} px: \"o{ch}\"|o {dark} px"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(ghosts.is_empty(), "{}", ghosts.join("\n"));
+}
+
+/// A one-line box at (0, 0) 200x60 on a scale 2 canvas, as its device pixels (400 a row): each
+/// printable ASCII char with `f` drawing the box holding a given text with a given selection,
+/// in Tahoma and DejaVu Sans, mono and antialiased, 11 and 13 px. `f` also gets the left of the
+/// highlight of a selection from char 1.
+fn each_row_end(
+    mut f: impl FnMut(char, &dyn Fn(&str, Option<(usize, usize)>) -> Vec<u32>, usize, &str),
+) {
+    let cs = &Theme::default().colors;
+    for (family, antialias) in ["Tahoma", "DejaVu Sans"]
+        .into_iter()
+        .flat_map(|f| [(f, false), (f, true)])
+    {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            antialias,
+            ..FontConfig::default()
+        });
+        for px in [11, 13] {
+            let m = Metrics {
+                font_px: px,
+                ..Metrics::for_font(&text, px)
+            };
+            let lay = |t: &MultiEdit| layout(&text, &m, t, Rect::new(0, 0, 200, 60), 1);
+            let run = |s: &str, sel: Option<(usize, usize)>| {
+                let mut t = e(s);
+                if let Some((a, b)) = sel {
+                    t.place(p(0, a), false);
+                    t.place(p(0, b), true);
+                }
+                let mut c = Canvas::with_scale(200, 60, 2);
+                let (v, caret) = (View::default(), Caret::Unfocused);
+                draw(
+                    &mut c,
+                    &text,
+                    &classic_paint(cs, 1),
+                    &m,
+                    &t,
+                    v,
+                    &lay(&t),
+                    caret,
+                    None,
+                );
+                c.pixels
+            };
+            let xa = 2 * (lay(&e("o")).inner.x + 1 + text.measure("o", false, px));
+            for ch in ('!'..='~').filter(char::is_ascii_graphic) {
+                let what = format!("{family} aa {antialias} {px} px");
+                f(ch, &run, xa as usize, &what);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_rows_last_glyph_draws_at_scale_2_where_it_draws_with_a_char_after_it() {
+    crate::pins::fonts();
+    let mut moved = Vec::new();
+    each_row_end(|ch, run, _, what| {
+        if run(&format!("o{ch}"), None) != run(&format!("o{ch} "), None) {
+            moved.push(format!("{what}: \"o{ch}\""));
+        }
+    });
+    assert!(moved.is_empty(), "{}", moved.join("\n"));
+}
+
+/// Left of a row's selected last char the box shows what it shows when a char follows it.
+#[test]
+fn a_selected_last_glyph_at_scale_2_keeps_its_ink_inside_its_highlight() {
+    crate::pins::fonts();
+    let mut dark = Vec::new();
+    each_row_end(|ch, run, xa, what| {
+        let left = |s: &str| -> Vec<u32> {
+            let px = run(s, Some((1, 2)));
+            px.chunks(400).flat_map(|row| row[..xa].to_vec()).collect()
+        };
+        if left(&format!("o{ch}")) != left(&format!("o{ch} ")) {
+            dark.push(format!("{what}: \"o|{ch}|\""));
+        }
+    });
+    assert!(dark.is_empty(), "{}", dark.join("\n"));
+}

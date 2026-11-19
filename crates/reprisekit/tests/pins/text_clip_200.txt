@@ -360,8 +360,7 @@ reprisekit-gallery.png "Trackbar" x1
 reprisekit-gallery.png "Type" x2
 reprisekit-gallery.png "Window Text" x4
 reprisekit-gallery.png "hills.jpg" x4
-reprisekit-gallery.png "notepad readme.txt" x1
-reprisekit-gallery.png "notepad" x1
+reprisekit-gallery.png "notepad readme.txt" x2
 reprisekit-gallery.png "notes.txt" x3
 reprisekit-gallery.png "report" x1
 reprisekit-gallery.png "report...." x1

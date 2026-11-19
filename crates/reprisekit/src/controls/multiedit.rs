@@ -1577,7 +1577,8 @@ pub fn draw(
         let line = composed.as_ref().map_or(line, |(t, ..)| t);
         let shown = expand(line, m.tab_cols);
         let width = text.measure(&shown, m.bold, m.font_px);
-        let r = Rect::new(x0, y, width.max(1), line_h);
+        // Out to the box's edge: fitted to its advances, a row's last glyph moves at scale 2.
+        let r = Rect::new(x0, y, width.max(inner.right() - x0).max(1), line_h);
         let row_from = Pos {
             line: li,
             col: row.start,
@@ -1617,9 +1618,9 @@ pub fn draw(
             );
             text.draw_clipped(
                 c,
-                run,
-                clip,
-                &shown[sa..sb],
+                r,
+                run.intersect(&clip),
+                &shown,
                 m.bold,
                 cs.hilight_text,
                 Align::Left,

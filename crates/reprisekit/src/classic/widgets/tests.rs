@@ -1244,3 +1244,50 @@ fn the_drop_point_inverts_its_column_so_a_stem_under_it_shows_white() {
         "the bar is the pen's column, over the A's foot"
     );
 }
+
+/// At scale 2 a field's selection recolours its text without moving any of it: drawn in mono,
+/// the selected field with its highlight read as the window and its white as ink is the field
+/// drawn unselected, whatever char ends the selection.
+#[test]
+fn a_field_selection_at_scale_2_recolours_its_text_in_place() {
+    crate::pins::fonts();
+    let cs = &Theme::default().colors;
+    let mut moved = Vec::new();
+    for family in ["Tahoma", "DejaVu Sans"] {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            antialias: false,
+            ..FontConfig::default()
+        });
+        for px in [11, 13] {
+            for ch in ('!'..='~').filter(char::is_ascii_graphic) {
+                let inner = Rect::new(10, 10, 120, 17);
+                let draw = |sel: usize| {
+                    let mut e = TextEdit::new(format!("o{ch}o"), false);
+                    e.set_selection(0, sel);
+                    let mut c = Canvas::with_scale(150, 40, 2);
+                    c.fill_rect(c.bounds(), cs.window);
+                    let paint = classic_paint(cs, 1);
+                    draw_edit(&mut c, &text, &e, inner, px, &paint, Caret::Unfocused, 0);
+                    c.pixels
+                };
+                let (y, h) = text.line(inner, false, px).unwrap();
+                let w = text.measure(&format!("o{ch}"), false, px);
+                let hl = Rect::new(inner.x, y, w, h).intersect(&inner).scaled(2);
+                let read = |i: usize, p: u32| match p {
+                    _ if !hl.contains(i as i32 % 300, i as i32 / 300) => p,
+                    p if p == cs.hilight.argb() => cs.window.argb(),
+                    p if p == cs.hilight_text.argb() => cs.button_text.argb(),
+                    p => p,
+                };
+                let (plain, selected) = (draw(0), draw(2));
+                let off = plain.iter().zip(&selected).enumerate();
+                let off = off.filter(|&(i, (&a, &b))| a != read(i, b)).count();
+                if off > 0 {
+                    moved.push(format!("{family} {px} px: \"o{ch}\"|o {off} px"));
+                }
+            }
+        }
+    }
+    assert!(moved.is_empty(), "{}", moved.join("\n"));
+}

@@ -402,3 +402,60 @@ fn grown_labels_keep_their_descenders() {
         "(text size, scale, live, rows down, label, ink rows cut)"
     );
 }
+
+/// A program draws its form on a canvas at the output's scale: a label as wide as its ink at
+/// scale 1 keeps all of it at scale 2, in Tahoma and in DejaVu Sans.
+#[test]
+fn labels_fitted_to_their_ink_keep_it_on_a_scale_2_canvas() {
+    crate::pins::fonts();
+    let cs = &Theme::default().colors;
+    let words = [
+        "Documents icon from",
+        "Click OK",
+        "Status: Idle",
+        "Default",
+        "Memory",
+        "Wireless network",
+        "Share this folder",
+        "Save As",
+        "Format",
+        "Read-only",
+        "Advanced",
+        "Archive",
+        "Size on disk",
+        "Type of file",
+        "Opens with",
+        "Network",
+    ];
+    let mut cut = Vec::new();
+    for family in ["Tahoma", "DejaVu Sans"] {
+        let t = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            ..FontConfig::default()
+        });
+        let px = 11;
+        for w in words {
+            let f = Form::new(vec![Item::label_at(
+                "l",
+                16,
+                44,
+                t.ink_width(w, false, px),
+                w,
+            )]);
+            let p = Paint {
+                text: TextUnits::new(px, 11),
+                ..classic_paint(cs, 1)
+            };
+            for s in [1, 2] {
+                let mut c = Canvas::with_scale(300, 100, s);
+                let ((), cuts) = crate::pins::clipped_ink(|| draw(&mut c, &t, &p, &f, false, px));
+                assert!(
+                    f.rendered.ellipsized.borrow().is_empty(),
+                    "{family}: {w:?} fits its ink"
+                );
+                cut.extend(cuts.into_iter().map(|c| (family, s, c.text, c.cols)));
+            }
+        }
+    }
+    assert_eq!(cut, Vec::new(), "(font, scale, label, ink columns cut)");
+}
