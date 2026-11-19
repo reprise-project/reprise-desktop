@@ -17,7 +17,7 @@ use smithay::{
 };
 
 use crate::{
-    capture::Drew,
+    capture::{Drew, Ended},
     compositor::State,
     framepace::Done,
     glass::{Hold, Under},
@@ -117,7 +117,14 @@ pub(super) fn render(state: &mut State, head: Head) {
         if pointer_only && let Some(drawn) = pointer_frame(state, head, &output, started) {
             // A queued cursor frame finishes on its `Done` (`committed`).
             if !drawn {
-                finish(state, head, &output, None, true, None, started);
+                finish(
+                    state,
+                    head,
+                    &output,
+                    Ended::Empty(Drew::Pointer),
+                    None,
+                    started,
+                );
             }
             watch(state);
             return;
@@ -279,8 +286,11 @@ pub(super) fn render(state: &mut State, head: Head) {
     };
     let flipping = drawn && send_flip(s, modeset, flight);
     if !flipping {
-        s.captures_owed = captures_owed(s.captures_owed, drew, false);
-        finish(state, head, &output, None, empty, held, started);
+        let ended = match empty {
+            true => Ended::Empty(drew),
+            false => Ended::Lost(drew),
+        };
+        finish(state, head, &output, ended, held, started);
     }
     if flipping && modeset {
         crate::sessionfade::modeset(state, &output);
@@ -395,8 +405,11 @@ fn render_copy(
     };
     let flipping = drawn && send_flip(s, modeset, flight);
     if !flipping {
-        s.captures_owed = true;
-        finish(state, head, output, None, empty, None, started);
+        let ended = match empty {
+            true => Ended::Empty(Drew::Scene),
+            false => Ended::Lost(Drew::Scene),
+        };
+        finish(state, head, output, ended, None, started);
     }
     if flipping && modeset {
         crate::sessionfade::modeset(state, output);
@@ -619,14 +632,14 @@ pub(super) fn committed(state: &mut State, head: Head, done: commit::Done<Out>) 
         power_off(state, head);
     }
     if let Some(f) = flight {
-        if let Some(s) = surface_mut(state, head) {
-            if ok {
-                count_frame(s, overlay, f.started, f.pointer);
-            }
-            s.captures_owed = captures_owed(s.captures_owed, f.drew, ok);
+        if ok && let Some(s) = surface_mut(state, head) {
+            count_frame(s, overlay, f.started, f.pointer);
         }
-        let drawn = ok.then_some(f.drew);
-        finish(state, head, &output, drawn, false, f.held, f.started);
+        let ended = match ok {
+            true => Ended::Shown(f.drew),
+            false => Ended::Lost(f.drew),
+        };
+        finish(state, head, &output, ended, f.held, f.started);
     }
     if gamma_failed {
         crate::nightlight::gamma_failed(state, &output);
@@ -673,19 +686,18 @@ pub(super) fn glass_hold(hold: Option<Duration>, asked: Under, stepped: bool) ->
     }
 }
 
-/// After a frame on `head` that was `drawn` (with what its asks changed) or `empty`, with its
-/// glass `held` for a wait: pace the next render, send the frame callbacks and fill the captures
-/// that waited for it.
+/// After a frame on `head` that `ended` so, with its glass `held` for a wait: pace the next
+/// render, send the frame callbacks and tell the captures.
 fn finish(
     state: &mut State,
     head: Head,
     output: &Output,
-    drew: Option<Drew>,
-    empty: bool,
+    ended: Ended,
     held: Option<Duration>,
     started: std::time::Instant,
 ) {
-    let drawn = drew.is_some();
+    let drawn = matches!(ended, Ended::Shown(_));
+    let empty = matches!(ended, Ended::Empty(_));
     if let Some(s) = surface_mut(state, head) {
         let interval = crate::framepace::interval(output.current_mode().map_or(0, |m| m.refresh));
         s.pace.not_before = crate::framepace::next_render(drawn, s.needs_redraw, started, interval);
@@ -697,17 +709,10 @@ fn finish(
     crate::sessionfade::rendered(state, output, empty);
     crate::power::rendered(state, output, drawn, empty);
     callbacks_after_a_frame(state, head, drawn);
-    if let Some(drew) = drew {
-        crate::capture::output_drawn(state, output, drew);
-    }
-}
-
-/// Whether captures are owed the scene after a frame that `drew` and was `shown` on the screen
-/// or not: until a scene frame reaches them, every frame, a cursor plane move too, is a scene one.
-pub(super) fn captures_owed(owed: bool, drew: Drew, shown: bool) -> bool {
-    match drew {
-        Drew::Scene => !shown,
-        Drew::Pointer => owed,
+    let owed = surface_mut(state, head).is_some_and(|s| s.captures_owed);
+    let owed = crate::capture::frame_ended(state, output, owed, ended);
+    if let Some(s) = surface_mut(state, head) {
+        s.captures_owed = owed;
     }
 }
 

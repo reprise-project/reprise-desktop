@@ -315,6 +315,31 @@ impl Drew {
     }
 }
 
+/// How a monitor's frame ended, with what its asks changed: on the screen, drawn with nothing new
+/// for the screen, or lost on its way (a render error, a send or flip that failed).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ended {
+    Shown(Drew),
+    Empty(Drew),
+    Lost(Drew),
+}
+
+/// Fills `output`'s waiting captures unless the frame was lost; returns whether they are owed the
+/// scene after. An empty frame fills them too: a zoomed screen shows less than they do.
+pub fn frame_ended(state: &mut State, output: &Output, owed: bool, ended: Ended) -> bool {
+    let (drew, told) = match ended {
+        Ended::Shown(drew) | Ended::Empty(drew) => (drew, true),
+        Ended::Lost(drew) => (drew, false),
+    };
+    if told {
+        output_drawn(state, output, drew);
+    }
+    match drew {
+        Drew::Scene => !told,
+        Drew::Pointer => owed,
+    }
+}
+
 pub fn output_drawn(state: &mut State, output: &Output, drew: Drew) {
     let on = Some(Shown::Output(output.clone()));
     state.captures.changed(&on, drew);
@@ -2591,6 +2616,35 @@ mod tests {
             h.state.captures.waiting.is_empty(),
             "a frame anything else asked for fills it"
         );
+    }
+
+    /// A zoomed monitor shows part of the picture, so a change outside its view draws an empty
+    /// frame; a capture shows the whole picture.
+    #[test]
+    fn an_empty_frame_fills_the_captures_waiting_on_its_monitor_and_a_lost_one_leaves_them_owed() {
+        use super::{Drew, Ended, frame_ended};
+        let Some(mut h) = drawing() else { return };
+        let output = h.output("TEST-1", 64, 48);
+        let mut client = h.connect_capture((64, 48));
+        let mut s = client.ext_session(&mut h);
+        client.ext_frame(&mut h, &mut s);
+        land(&mut h);
+        client.ext_frame(&mut h, &mut s);
+        assert_eq!(h.state.captures.waiting.len(), 1, "the next frame waits");
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 20, 20);
+        let owed = frame_ended(&mut h.state, &output, false, Ended::Lost(Drew::Scene));
+        assert!(
+            owed,
+            "a lost scene frame leaves the captures owed the scene"
+        );
+        assert_eq!(h.state.captures.waiting.len(), 1, "the frame waits on");
+        let owed = frame_ended(&mut h.state, &output, owed, Ended::Empty(Drew::Scene));
+        assert!(
+            h.state.captures.waiting.is_empty(),
+            "an empty scene frame fills it with the window"
+        );
+        assert!(!owed, "and pays the scene back");
     }
 
     #[test]
