@@ -48,7 +48,10 @@ use smithay::{
     output::{Output, WeakOutput},
     reexports::{
         calloop::timer::{TimeoutAction, Timer},
-        wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
+        wayland_protocols_wlr::screencopy::v1::server::{
+            zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1,
+            zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
+        },
         wayland_server::{
             Resource,
             protocol::{wl_buffer::WlBuffer, wl_pointer::WlPointer, wl_shm},
@@ -1658,6 +1661,10 @@ impl ScreencopyHandler for State {
         crate::captureborder::refresh(self);
         crate::privacy::captures_changed(self);
     }
+
+    fn screencopy_gone(&mut self, frame: &ZwlrScreencopyFrameV1) {
+        (self.captures.waiting).retain(|w| !matches!(w, Waiting::Wlr(s) if s.is(frame)));
+    }
 }
 
 impl ImageCaptureSourceHandler for State {}
@@ -2662,6 +2669,42 @@ mod tests {
         assert!(
             super::fresh(&session).get(),
             "the pointer tick shows the scene edit to captures that leave the pointer out"
+        );
+    }
+
+    #[test]
+    fn a_waiting_copy_is_let_go_once_its_frame_or_its_client_goes() {
+        let Some(mut h) = drawing() else { return };
+        h.output("TEST-1", 64, 48);
+        let mut client = h.connect_capture((64, 48));
+        let buffer = client.buffer();
+        let first = client.wlr_copy_with_damage_into(&mut h, &buffer);
+        land(&mut h);
+        client.roundtrip(&mut h);
+        assert!(
+            client.wlr_ready(&first).is_some(),
+            "the first copy comes ready"
+        );
+        for _ in 0..3 {
+            let waits = client.wlr_copy_with_damage_into(&mut h, &buffer);
+            assert_eq!(h.state.captures.waiting.len(), 1, "a copy waits");
+            waits.destroy();
+            client.roundtrip(&mut h);
+        }
+        assert!(
+            h.state.captures.waiting.is_empty(),
+            "a copy whose frame is destroyed stops waiting, and lets go of its buffer"
+        );
+        let _last = client.wlr_copy_with_damage_into(&mut h, &buffer);
+        let Some(super::Waiting::Wlr(s)) = h.state.captures.waiting.first() else {
+            panic!("the copy waits");
+        };
+        let id = s.client().expect("its client");
+        h.state.drop_client(id);
+        h.dispatch();
+        assert!(
+            h.state.captures.waiting.is_empty(),
+            "nor does a copy whose client went"
         );
     }
 
