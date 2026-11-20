@@ -136,8 +136,7 @@ impl Meter {
     }
 
     pub fn set_paused(&self, on: bool) {
-        self.paused.store(on, Ordering::Relaxed);
-        self.wake();
+        self.wake(|| self.paused.store(on, Ordering::Relaxed));
     }
 
     pub(crate) fn paused(&self) -> bool {
@@ -148,10 +147,13 @@ impl Meter {
         self.cancel.load(Ordering::Relaxed)
     }
 
-    /// Stop the job at its next file.
+    /// Stop the job at its next file. A paused job's pause ends with it, in one step, so the job
+    /// never sees the pause gone before the cancel and goes on to another file.
     pub fn cancel(&self) {
-        self.cancel.store(true, Ordering::Relaxed);
-        self.wake();
+        self.wake(|| {
+            self.cancel.store(true, Ordering::Relaxed);
+            self.paused.store(false, Ordering::Relaxed);
+        });
     }
 
     /// Whether the job's thread waits out a pause or a [`Decision`]: its counts stand still
@@ -181,10 +183,11 @@ impl Meter {
         was
     }
 
-    /// Wake a parked job to read its state again. Taking the lock after the store orders it
-    /// against the wait's check, so no store goes unseen.
-    fn wake(&self) {
+    /// Run `store` and wake a parked job to read its state again. The store runs under the lock
+    /// the wait checks under, so the check sees all of it or none, and no store goes unseen.
+    fn wake(&self, store: impl FnOnce()) {
         let _parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
+        store();
         self.unpark.notify_all();
     }
 
@@ -205,8 +208,7 @@ impl Meter {
 
     /// Answer the failed item the job holds on.
     pub fn decide(&self, d: Decision) {
-        self.decision.store(d as u8, Ordering::Relaxed);
-        self.wake();
+        self.wake(|| self.decision.store(d as u8, Ordering::Relaxed));
     }
 
     /// Whether a failed item waits for the host's [`Decision`].
@@ -737,6 +739,7 @@ mod tests {
         let held = m.clone();
         let t = std::thread::spawn(move || held.wrote(1));
         m.cancel();
+        assert!(!m.snapshot().paused, "a cancel ends the pause");
         let e = t.join().unwrap().unwrap_err();
         assert_eq!(e.kind(), std::io::ErrorKind::Interrupted);
     }

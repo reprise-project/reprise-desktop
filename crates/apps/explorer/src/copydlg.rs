@@ -322,7 +322,7 @@ impl Explorer {
     pub(crate) fn cancel_puts(&mut self) {
         self.put_queue.clear();
         if let Some(put) = &self.put {
-            stop(&put.progress.meter);
+            put.progress.meter.cancel();
         }
     }
 
@@ -331,7 +331,7 @@ impl Explorer {
     pub(crate) fn cancel_removals(&mut self) {
         self.remove_queue.clear();
         if let Some(r) = &self.removing {
-            stop(&r.progress.meter);
+            r.progress.meter.cancel();
         }
     }
 
@@ -388,11 +388,6 @@ pub(crate) fn combined(jobs: &[(f64, bool)]) -> Option<(f64, bool)> {
     }
     let fraction = jobs.iter().map(|j| j.0).sum::<f64>() / jobs.len() as f64;
     Some((fraction, jobs.iter().all(|j| j.1)))
-}
-
-pub(crate) fn stop(meter: &Meter) {
-    meter.set_paused(false);
-    meter.cancel();
 }
 
 #[cfg(test)]
