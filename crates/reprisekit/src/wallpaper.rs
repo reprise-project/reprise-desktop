@@ -8,6 +8,13 @@ use crate::theme::Color;
 /// The largest side of a wallpaper picture the desktop shows, in pixels.
 pub const MAX_SIDE: u32 = 16384;
 
+/// The most bytes of file, and of decoded pixels, one wallpaper picture may take: the image
+/// crate's own allocation cap, so every format meets the same one.
+pub const MAX_BYTES: u64 = 512 << 20;
+
+/// How long reprise-decode may decode one JPEG XL or AVIF wallpaper.
+pub const DECODE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Position {
     Center,

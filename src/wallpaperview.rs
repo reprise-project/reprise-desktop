@@ -230,7 +230,8 @@ const DESKTOP_FADE: Duration = Duration::from_millis(250);
 const STILL_WARM_DELAY: Duration = Duration::from_secs(2);
 
 /// The wallpaper's decodes and drawings, run one at a time: switching desktops through several
-/// pictures holds the one showing, the one fading out and at most one in the making.
+/// pictures holds the one showing, the one fading out and at most one in the making. A decode in
+/// reprise-decode is stopped once a newer wallpaper is set, so it never holds up that one.
 #[derive(Default)]
 pub struct Jobs {
     /// The serial of the wallpaper set last.
@@ -243,10 +244,15 @@ impl Jobs {
         self.latest.fetch_add(1, Ordering::AcqRel) + 1
     }
 
+    /// Whether a wallpaper newer than `serial` was set.
+    fn replaced(&self, serial: u64) -> bool {
+        self.latest.load(Ordering::Acquire) != serial
+    }
+
     /// `f`, once no other job runs, unless wallpaper `serial` was replaced by then.
     fn run<T>(&self, serial: u64, f: impl FnOnce() -> T) -> Option<T> {
         let _one = self.one.lock().unwrap_or_else(|e| e.into_inner());
-        (self.latest.load(Ordering::Acquire) == serial).then(f)
+        (!self.replaced(serial)).then(f)
     }
 }
 
@@ -348,60 +354,68 @@ impl State {
         }
     }
 
-    /// Decode the wallpaper cut to `cut` on a thread. On the loop it
-    /// replaces the image and recomposes every output, unless the
-    /// wallpaper or the cut wanted changed meanwhile; a file that fails to
-    /// decode leaves no wallpaper.
+    /// Decode the wallpaper cut to `cut` on a thread; it lands in [`State::wallpaper_loaded`].
     fn load_wallpaper(&mut self, path: PathBuf, cut: Cut) {
+        let Some(serial) = self.wallpaper.as_ref().map(|w| w.serial) else {
+            return;
+        };
         let (tx, rx) = channel::channel::<Option<Loaded>>();
         let inserted = self.handle.insert_source(rx, move |event, _, state| {
-            let channel::Event::Msg(loaded) = event else {
-                return;
-            };
-            let Some(w) = state.wallpaper.as_mut() else {
-                return;
-            };
-            if w.path != path || w.loading != Some(cut) {
-                return;
-            }
-            w.loading = None;
-            match loaded {
-                Some(l) => {
-                    w.land_image(l);
-                    for (_, node) in &mut w.nodes {
-                        node.fit = None;
-                        node.composing = None;
-                    }
-                    state.refit_wallpaper();
-                    crate::lockview::refit(state);
-                    state.warm_switcher_still_soon();
-                }
-                None => {
-                    state.clear_wallpaper();
-                    crate::greeterview::background_failed(state);
-                }
+            if let channel::Event::Msg(loaded) = event {
+                state.wallpaper_loaded(serial, cut, loaded);
             }
         });
         if let Err(e) = inserted {
             log::warn!("wallpaper: {}", e.error);
             return;
         }
-        let Some((file, serial)) = self.wallpaper.as_ref().map(|w| (w.path.clone(), w.serial))
-        else {
-            return;
-        };
         let jobs = self.wallpaper_jobs.clone();
         let spawned = std::thread::Builder::new()
             .name("wallpaper".into())
             .spawn(move || {
                 // A skipped decode sends nothing: the wallpaper that wanted it is gone.
-                if let Some(loaded) = jobs.run(serial, || crate::wallpaper::load(&file, Some(cut)))
+                let wanted = crate::wallpaper::Wanted {
+                    deadline: reprisekit::wallpaper::DECODE_DEADLINE,
+                    stop: &|| jobs.replaced(serial),
+                };
+                if let Some(loaded) =
+                    jobs.run(serial, || crate::wallpaper::load(&path, Some(cut), wanted))
                 {
                     let _ = tx.send(loaded);
                 }
             });
         if let Err(e) = spawned {
             log::warn!("wallpaper: no decode thread: {e}");
+        }
+    }
+
+    /// Wallpaper `serial`'s decode cut to `cut` lands: it replaces the image and recomposes every
+    /// output, and a file that failed to decode leaves no wallpaper. A decode for another cut, or
+    /// for a wallpaper since replaced (even by the same file), is dropped: a stopped one lands as
+    /// None.
+    fn wallpaper_loaded(&mut self, serial: u64, cut: Cut, loaded: Option<Loaded>) {
+        let Some(w) = self.wallpaper.as_mut() else {
+            return;
+        };
+        if w.serial != serial || w.loading != Some(cut) {
+            return;
+        }
+        w.loading = None;
+        match loaded {
+            Some(l) => {
+                w.land_image(l);
+                for (_, node) in &mut w.nodes {
+                    node.fit = None;
+                    node.composing = None;
+                }
+                self.refit_wallpaper();
+                crate::lockview::refit(self);
+                self.warm_switcher_still_soon();
+            }
+            None => {
+                self.clear_wallpaper();
+                crate::greeterview::background_failed(self);
+            }
         }
     }
 
@@ -1097,6 +1111,37 @@ mod tests {
             "the first wallpaper was replaced"
         );
         assert_eq!(jobs.run(second, || 2), Some(2));
+    }
+
+    #[test]
+    fn a_stopped_decode_of_a_picture_set_again_since_does_not_clear_it() {
+        let dir =
+            std::env::temp_dir().join(format!("reprise-wallpaperview-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.png"), dir.join("b.png"));
+        for p in [&a, &b] {
+            image::RgbaImage::from_pixel(4, 4, image::Rgba([9, 9, 9, 255]))
+                .save(p)
+                .unwrap();
+        }
+        let mut h = crate::harness::Harness::with_config(crate::config::Config::default());
+        h.output("A-1", 320, 200);
+        h.state.set_wallpaper(Some(&a));
+        let w = h.state.wallpaper.as_ref().unwrap();
+        let (first, cut) = (w.serial, w.loading.expect("a decode for A"));
+        h.state.set_wallpaper(Some(&b));
+        h.state.set_wallpaper(Some(&a));
+        h.state.wallpaper_loaded(first, cut, None);
+        assert_eq!(
+            shown(&h),
+            Some(a.as_path()),
+            "the first A's decode was stopped"
+        );
+        h.until("A's own decode lands", |s| {
+            s.wallpaper.as_ref().is_some_and(|w| w.image.is_some())
+        });
+        assert_eq!(shown(&h), Some(a.as_path()));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Desktops 2 and 3 have their own built-ins, desktop 1 the main one.

@@ -277,6 +277,7 @@ fn prompt(
             }
             None => false,
         }),
+        job: None,
     }
 }
 

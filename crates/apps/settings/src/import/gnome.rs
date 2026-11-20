@@ -210,7 +210,8 @@ pub(super) fn settings(dump: &str) -> Vec<Setting> {
         .and_then(Value::str)
         .map(|s| s == "prefer-dark");
     let picture = |key: &str| get(BACKGROUND, key).and_then(Value::str).and_then(uri_path);
-    let dark_picture = picture("picture-uri-dark").filter(|p| super::shows(p));
+    let dark_picture = picture("picture-uri-dark")
+        .filter(|p| reprisefs::pictures::is_picture(std::path::Path::new(p)));
     let picture = match dark {
         Some(true) => dark_picture.or_else(|| picture("picture-uri")),
         _ => picture("picture-uri"),

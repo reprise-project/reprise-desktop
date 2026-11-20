@@ -3,20 +3,16 @@
 //! [`Unread::TooLarge`]; a crash, or an abort after a panic, as [`Unread::Unreadable`].
 
 use std::io::Read;
-use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use reprise_decode_protocol::{BadReply, Format, Limits, PROGRAM, Picture, Reply, Request};
-use repriseconfine::helper::{self, signal_name};
+use reprise_decode_protocol::client::{self, NoPicture, SLACK};
+use reprise_decode_protocol::{Format, Limits, PROGRAM, Picture, Request};
+use repriseconfine::helper;
 
 use super::{
     Budget, Decoded, HELPER_TIME_LIMIT, ImageDecoder, Unread, fit_buffer, is_avif, is_jxl,
 };
-
-/// How long past its decode's deadline reprise-decode may take to start, confine itself and
-/// reply before it is killed.
-const SLACK: Duration = Duration::from_secs(5);
 
 /// One format through reprise-decode, the picture fitted here.
 pub struct HelperDecoder {
@@ -31,12 +27,17 @@ impl HelperDecoder {
     /// JPEG XL's first frame, by reprise-decode beside this program or in /usr/bin, under
     /// [`HELPER_TIME_LIMIT`].
     pub fn jxl() -> HelperDecoder {
-        HelperDecoder::new(Format::Jxl, helper::find(PROGRAM), HELPER_TIME_LIMIT)
+        HelperDecoder::installed(Format::Jxl, HELPER_TIME_LIMIT)
     }
 
     /// An AVIF's first picture, found and limited as [`HelperDecoder::jxl`].
     pub fn avif() -> HelperDecoder {
-        HelperDecoder::new(Format::Avif, helper::find(PROGRAM), HELPER_TIME_LIMIT)
+        HelperDecoder::installed(Format::Avif, HELPER_TIME_LIMIT)
+    }
+
+    /// `format` by the reprise-decode beside this program or in /usr/bin, under `deadline`.
+    pub fn installed(format: Format, deadline: Duration) -> HelperDecoder {
+        HelperDecoder::new(format, helper::find(PROGRAM), deadline)
     }
 
     /// `format` by the reprise-decode at `path`.
@@ -104,75 +105,21 @@ impl HelperDecoder {
             format: self.format,
             len,
         };
-        let mut c = helper::command(path);
-        c.args(limits.to_args());
-        let cap = limits.reply_cap();
-        let head = request.to_bytes();
-        let input = head.as_slice().chain(file.take(len));
-        let ran = helper::run(c, input, cap, self.deadline + self.slack).map_err(|e| {
-            log::warn!("{name} not decoded: cannot start {}: {e}", path.display());
-            Unread::Unreadable
-        })?;
-        let ok = ran.status.as_ref().is_ok_and(|s| s.success());
-        let said = ran.said.trim();
-        let warn = |why: &str| {
-            log::warn!("{name} not decoded: {why}; reprise-decode said: {said}");
-            Unread::Unreadable
-        };
-        match Reply::parse(ran.reply, limits) {
-            _ if ran.late => {
-                log::debug!("{name}: reprise-decode ran past its deadline and was killed");
-                Err(Unread::Unreadable)
-            }
-            _ if ran.past_cap => Err(warn(&format!(
-                "reprise-decode replied past {} bytes",
-                cap.max
-            ))),
-            Ok(Reply::Picture(p)) if ok => Ok(p),
-            Ok(Reply::TooLarge) => Err(Unread::TooLarge),
-            Ok(Reply::Unreadable(why)) => {
+        let kill_after = self.deadline + self.slack;
+        client::decode(path, request, file, limits, kill_after, &|| false).map_err(|no| match no {
+            NoPicture::TooLarge(why) => {
                 log::debug!("{name}: {why}");
-                Err(Unread::Unreadable)
+                Unread::TooLarge
             }
-            Ok(Reply::Failed(why)) => Err(warn(&why)),
-            Err(BadReply::Tag(tag)) => Err(warn(&format!("reprise-decode replied {tag}"))),
-            Err(BadReply::Size) => Err(warn("reprise-decode replied a picture of the wrong size")),
-            _ => match ran.status {
-                Ok(s) => match s.signal() {
-                    Some(libc::SIGSYS) => Err(warn(
-                        "reprise-decode was killed by SIGSYS: a system call outside its seccomp \
-                         filter",
-                    )),
-                    Some(signal @ (libc::SIGSEGV | libc::SIGBUS)) => Err(warn(&format!(
-                        "the decoder crashed ({})",
-                        signal_name(signal)
-                    ))),
-                    // rav1d's API is extern "C", so a panic inside it aborts, after the panic
-                    // message.
-                    Some(libc::SIGABRT) if said.contains("panicked") => {
-                        Err(warn("the decoder panicked"))
-                    }
-                    // The soft CPU limit, set at the deadline.
-                    Some(libc::SIGXCPU) => {
-                        log::debug!("{name}: reprise-decode ran past its CPU time and stopped");
-                        Err(Unread::Unreadable)
-                    }
-                    // Any other abort is how a decoder meets an allocation it was refused, a
-                    // SIGKILL the OOM killer.
-                    Some(signal) => {
-                        log::debug!(
-                            "{name}: reprise-decode was killed by {}",
-                            signal_name(signal)
-                        );
-                        Err(Unread::TooLarge)
-                    }
-                    None => Err(warn(&format!(
-                        "reprise-decode stopped ({s}) without a reply"
-                    ))),
-                },
-                Err(e) => Err(warn(&format!("reprise-decode was lost: {e}"))),
-            },
-        }
+            NoPicture::Unreadable(why) => {
+                log::debug!("{name}: {why}");
+                Unread::Unreadable
+            }
+            NoPicture::Broken(why) => {
+                log::warn!("{name} not decoded: {why}");
+                Unread::Unreadable
+            }
+        })
     }
 }
 

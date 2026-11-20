@@ -9,7 +9,7 @@ use crate::backgroundpage::label;
 
 pub use reprisefs::pictures::is_picture;
 
-pub const FILTER: &str = "Background Files (*.bmp;*.jpg;*.jpeg;*.dib;*.png)";
+pub const FILTER: &str = "Background Files (*.bmp;*.jpg;*.jpeg;*.dib;*.png;*.jxl;*.avif)";
 const DEPTH: usize = 3;
 
 pub fn refusal(path: &Path) -> Option<String> {
@@ -282,11 +282,23 @@ mod tests {
 
     #[test]
     fn pictures_are_known_by_their_extension_in_any_case() {
-        for ok in ["a.bmp", "a.jpg", "a.JPEG", "a.dib", "a.png"] {
+        for ok in [
+            "a.bmp", "a.jpg", "a.JPEG", "a.dib", "a.png", "a.jxl", "a.AVIF",
+        ] {
             assert!(is_picture(Path::new(ok)), "{ok}");
         }
         for no in ["a.gif", "a.webp", "a.txt", "png"] {
             assert!(!is_picture(Path::new(no)), "{no}");
+        }
+    }
+
+    #[test]
+    fn the_browse_filter_lists_every_picture_extension() {
+        for e in reprisefs::pictures::EXTS {
+            assert!(
+                FILTER.contains(&format!("*.{e};")) || FILTER.contains(&format!("*.{e})")),
+                "{e}"
+            );
         }
     }
 

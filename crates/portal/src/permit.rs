@@ -27,6 +27,11 @@ const ITEMS_Y: i32 = 12 + LINE_H + 8;
 /// The space a preview takes: the monitor and a line's gap under it.
 const PREVIEW_H: i32 = MONITOR_SIZE.1 + LINE_H;
 const PREVIEW_MAX: (u32, u32) = (304, 224);
+/// The preview's status line, right of the monitor: its gap from it, its drop below the
+/// monitor's top and its height in lines.
+const STATUS_GAP: i32 = 8;
+const STATUS_DY: i32 = 16;
+const STATUS_LINES: i32 = 4;
 const ITEM_IDS: [&str; MAX_ITEMS + 1] = [
     "item0", "item1", "item2", "item3", "item4", "item5", "item6",
 ];
@@ -317,6 +322,42 @@ pub struct Input {
     pub preview: Option<String>,
 }
 
+/// The preview's status line while the picture decodes, and when it cannot be shown.
+const LOADING: &str = "Loading the picture...";
+const CANNOT_SHOW: &str = "This picture cannot be shown, so it cannot be set.";
+
+/// The picture at `path` fitted inside [`PREVIEW_MAX`], None where the desktop would show none.
+fn preview(path: &std::path::Path) -> Option<Canvas> {
+    let file = std::fs::File::open(path).ok()?;
+    crate::wallpaperpreview::preview(file, PREVIEW_MAX)
+        .map_err(|why| log::info!("the Wallpaper prompt shows no preview: {why:?}"))
+        .ok()
+}
+
+/// The decoded preview on the monitor, or when there is none, [`CANNOT_SHOW`]. Allow lights only
+/// for a picture shown.
+fn show_preview(form: &mut Form, picture: Option<Canvas>) {
+    let status = match picture {
+        Some(picture) => {
+            if let Some(Control::Monitor(screen)) = form.item_mut("preview").map(|i| &mut i.control)
+            {
+                *screen = Screen::Picture(picture);
+            }
+            form.set_enabled("allow", true);
+            Vec::new()
+        }
+        None => vec![CANNOT_SHOW.to_string()],
+    };
+    form.set_lines("status", &status);
+}
+
+fn allow_enabled(form: &Form) -> bool {
+    matches!(
+        form.item("allow").map(|i| &i.control),
+        Some(Control::Button { enabled: true, .. })
+    )
+}
+
 /// The child's side; the argument after `--permit` names the kind.
 pub fn run_dialog() {
     let kind = std::env::args()
@@ -329,24 +370,16 @@ pub fn run_dialog() {
     };
     let answer = Arc::new(Mutex::new(Answer::Dismissed));
     let icon = dialog::icons().get(kind.icon(), dialog::ICON_PX);
-    let mut form = build_form(kind, &input);
-    if let Some(path) = &input.preview
-        && let Some(Control::Monitor(screen)) = form.item_mut("preview").map(|i| &mut i.control)
-        && let Some(d) = repriseapp::decode::Decoders::built_in()
-            .decode_file(std::path::Path::new(path), PREVIEW_MAX)
-    {
-        *screen = Screen::Picture(d.canvas);
-    }
+    let form = build_form(kind, &input);
     let size = client_size(&input);
-    repriseapp::run(Box::new(prompt(
-        kind,
-        form,
-        size,
-        icon,
-        input.parent,
-        answer.clone(),
-    )))
-    .unwrap_or_else(|e| e.exit());
+    let mut p = prompt(kind, form, size, icon, input.parent, answer.clone());
+    p.job = input.preview.map(|path| {
+        dialog::Job::new(move || {
+            let picture = preview(std::path::Path::new(&path));
+            Box::new(move |form: &mut Form| show_preview(form, picture))
+        })
+    });
+    repriseapp::run(Box::new(p)).unwrap_or_else(|e| e.exit());
     match *answer.lock().unwrap() {
         Answer::Allow { remember: false } => println!("yes"),
         Answer::Allow { remember: true } => println!("yes remember"),
@@ -397,10 +430,11 @@ fn client_size(input: &Input) -> (i32, i32) {
     (CLIENT.0, CLIENT.1 + grown_h(input))
 }
 
-/// The dialog's controls: who is asking, the listed lines, the preview
-/// (black until the child decodes the picture), what it gets, the Remember check box when offered, Allow and Deny. Deny is the default
-/// button, so Enter never grants by accident, and Remember starts off. A consent form
-/// ([`Form::set_consent`]): a bare letter presses nothing.
+/// The dialog's controls: who is asking, the listed lines, the preview, what it gets, the
+/// Remember check box when offered, Allow and Deny. Deny is the default button, so Enter never
+/// grants by accident, and Remember starts off. A consent form ([`Form::set_consent`]): a bare
+/// letter presses nothing. A preview starts black beside [`LOADING`], with Allow greyed until
+/// [`show_preview`] shows the picture.
 fn build_form(kind: Kind, input: &Input) -> Form {
     let (w, _) = CLIENT;
     let dy = grown_h(input);
@@ -417,6 +451,10 @@ fn build_form(kind: Kind, input: &Input) -> Form {
         let (mw, mh) = MONITOR_SIZE;
         let at = Rect::new(TEXT_X, ITEMS_Y + list_h(input), mw, mh);
         items.push(Item::new("preview", at, Control::Monitor(Screen::Black)));
+        let x = at.right() + STATUS_GAP;
+        let status = Rect::new(x, at.y + STATUS_DY, w - 11 - x, STATUS_LINES * LINE_H);
+        let loading = Control::Lines(vec![LOADING.into()]);
+        items.push(Item::new("status", status, loading).live());
     }
     items.push(note);
     if input.offer_remember {
@@ -440,6 +478,9 @@ fn build_form(kind: Kind, input: &Input) -> Form {
     let mut f = Form::new(items);
     f.focus_id("deny");
     f.set_consent();
+    if input.preview.is_some() {
+        f.set_enabled("allow", false);
+    }
     f
 }
 
@@ -472,10 +513,14 @@ fn prompt(
         accept: "allow",
         cancel: "deny",
         on_accept: Box::new(move |form| {
+            if !allow_enabled(form) {
+                return false;
+            }
             let remember = form.checked("remember").unwrap_or(false);
             *answer.lock().unwrap() = Answer::Allow { remember };
             true
         }),
+        job: None,
     }
 }
 
@@ -495,6 +540,20 @@ mod tests {
         for kind in Kind::ALL {
             let over = crate::dialog::overflows(|_, _| build_form(kind, &input));
             assert!(over.is_empty(), "{kind:?}:\n{}", over.join("\n"));
+        }
+        let previewed = Input {
+            preview: Some("/proc/1/fd/9".into()),
+            ..input
+        };
+        for status in [LOADING, CANNOT_SHOW] {
+            let over = crate::dialog::overflows(|_, _| {
+                let mut f = build_form(Kind::Wallpaper, &previewed);
+                if status == CANNOT_SHOW {
+                    show_preview(&mut f, None);
+                }
+                f
+            });
+            assert!(over.is_empty(), "{status:?}:\n{}", over.join("\n"));
         }
     }
 
@@ -766,6 +825,151 @@ mod tests {
             cs.button_hilight.argb(),
             "Allow's raised edge at y 129"
         );
+    }
+
+    /// A Wallpaper prompt with a preview, Remember offered.
+    fn wallpaper() -> (Input, Form) {
+        let input = Input {
+            app: "Wallpapers".into(),
+            offer_remember: true,
+            items: vec!["dunes.jxl".into()],
+            preview: Some("/proc/1/fd/9".into()),
+            ..Default::default()
+        };
+        let f = build_form(Kind::Wallpaper, &input);
+        (input, f)
+    }
+
+    /// What pressing Allow on `f` answers.
+    fn allow_answers(f: Form) -> Answer {
+        let answer = Arc::new(Mutex::new(Answer::Dismissed));
+        let mut p = prompt(Kind::Wallpaper, f, CLIENT, None, None, answer.clone());
+        p.decide(reprisekit::controls::form::Event::Pressed("allow"));
+        *answer.lock().unwrap()
+    }
+
+    fn status(f: &Form) -> Vec<String> {
+        match &f.item("status").unwrap().control {
+            Control::Lines(l) => l.clone(),
+            other => panic!("the status is lines, not {other:?}"),
+        }
+    }
+
+    /// 304x224 of a vertical gradient, a decoded preview.
+    fn picture() -> Canvas {
+        let mut c = Canvas::new(PREVIEW_MAX.0, PREVIEW_MAX.1);
+        for (i, p) in c.pixels.iter_mut().enumerate() {
+            let y = (i as u32 / PREVIEW_MAX.0) as u8;
+            *p = 0xFF00_0000 | u32::from(y) << 8 | 0x40;
+        }
+        c
+    }
+
+    #[test]
+    fn a_previewed_prompt_greys_allow_until_the_picture_shows() {
+        use reprisekit::controls::form::{Event, Key};
+        let (_, mut f) = wallpaper();
+        assert!(!allow_enabled(&f));
+        assert_eq!(status(&f), [LOADING]);
+        assert_ne!(f.key(Key::Access('a')), Event::Pressed("allow"));
+        assert_eq!(allow_answers(f.clone()), Answer::Dismissed);
+        show_preview(&mut f, Some(picture()));
+        assert!(allow_enabled(&f));
+        assert!(status(&f).is_empty());
+        assert_eq!(
+            f.item("preview").unwrap().control,
+            Control::Monitor(Screen::Picture(picture()))
+        );
+        assert_eq!(f.key(Key::Access('a')), Event::Pressed("allow"));
+        assert_eq!(allow_answers(f), Answer::Allow { remember: false });
+    }
+
+    #[test]
+    fn a_picture_that_cannot_be_previewed_cannot_be_allowed() {
+        use reprisekit::controls::form::{Event, Key};
+        let (_, mut f) = wallpaper();
+        show_preview(&mut f, None);
+        assert!(!allow_enabled(&f));
+        assert_eq!(status(&f), [CANNOT_SHOW]);
+        assert_eq!(
+            f.item("preview").unwrap().control,
+            Control::Monitor(Screen::Black)
+        );
+        assert_ne!(f.key(Key::Access('a')), Event::Pressed("allow"));
+        assert_eq!(allow_answers(f), Answer::Dismissed);
+    }
+
+    #[test]
+    fn a_prompt_without_a_preview_allows_at_once() {
+        let input = Input {
+            app: "Wallpapers".into(),
+            ..Default::default()
+        };
+        let f = build_form(Kind::Wallpaper, &input);
+        assert!(allow_enabled(&f) && f.item("status").is_none());
+        assert_eq!(allow_answers(f), Answer::Allow { remember: false });
+    }
+
+    /// The Wallpaper prompt loading its preview, showing it and unable to show it, in each
+    /// interface at 100% and 150% text.
+    #[test]
+    fn wallpaper_prompt_pixels() {
+        use reprisekit::controls::form;
+        use reprisekit::interface::Interface;
+        use reprisekit::text::TextRenderer;
+        reprisekit::pins::fonts();
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 150] {
+                let theme = reprisekit::interfaces::theme_for(i).with_form_text(pct);
+                let text = TextRenderer::load(&theme.fonts);
+                for state in ["loading", "shown", "cannot-show"] {
+                    let (input, mut f) = wallpaper();
+                    match state {
+                        "shown" => show_preview(&mut f, Some(picture())),
+                        "cannot-show" => show_preview(&mut f, None),
+                        _ => {}
+                    }
+                    let (w, h) = theme.text.size(client_size(&input));
+                    let mut c = Canvas::new(w as u32, h as u32);
+                    c.fill_rect(c.bounds(), theme.colors.button_face);
+                    form::draw(&mut c, &text, &theme.paint(), &f, true, theme.fonts.size_px);
+                    let hash = c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
+                        (h ^ u64::from(*p)).wrapping_mul(0x100000001b3)
+                    });
+                    got.push((format!("{}-{pct}-{state}", i.as_str()), hash));
+                }
+            }
+        }
+        let file = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/pins/wallpaper_prompt.txt"
+        );
+        reprisekit::pins::check_file(std::path::Path::new(file), &got);
+    }
+
+    /// Writes target/permit-wallpaper-<state>.png for a visual check.
+    #[test]
+    #[ignore]
+    fn render_wallpaper() {
+        use reprisekit::controls::form;
+        use reprisekit::text::TextRenderer;
+        use reprisekit::theme::{FontConfig, Theme};
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        for state in ["loading", "shown", "cannot-show"] {
+            let (input, mut f) = wallpaper();
+            match state {
+                "shown" => show_preview(&mut f, Some(picture())),
+                "cannot-show" => show_preview(&mut f, None),
+                _ => {}
+            }
+            let (w, h) = client_size(&input);
+            let mut c = Canvas::new(w as u32, h as u32);
+            c.fill_rect(c.bounds(), theme.colors.button_face);
+            form::draw(&mut c, &text, &theme.paint(), &f, true, theme.fonts.size_px);
+            reprisekit::raster::write_preview(&c, &format!("permit-wallpaper-{state}.png"));
+        }
     }
 
     /// Writes target/permit-shortcuts.png for a visual check.

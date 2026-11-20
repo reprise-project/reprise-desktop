@@ -1,11 +1,14 @@
 //! What a program and reprise-decode say to each other. The program starts
 //! `reprise-decode --file BYTES --pixels BYTES --deadline SECONDS`, writes a [`Request`] and the file to its
 //! stdin, and reads a [`Reply`] from its stdout. Its stderr is for the program's log only.
+//! [`client`] is that program's side.
 
 use std::io::{self, Write};
 use std::time::Duration;
 
 use repriseconfine::helper::{ReplyCap, TEXT_MAX, printable};
+
+pub mod client;
 
 pub const PROGRAM: &str = "reprise-decode";
 
@@ -191,6 +194,13 @@ impl Picture {
     pub fn rgba(&self) -> &[u8] {
         &self.reply[PICTURE_HEAD..]
     }
+
+    /// [`Picture::rgba`] in the reply's own buffer.
+    pub fn into_rgba(self) -> Vec<u8> {
+        let mut reply = self.reply;
+        reply.drain(..PICTURE_HEAD);
+        reply
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -305,6 +315,8 @@ mod tests {
         }
         assert_eq!(Reply::parse(Vec::new(), LIMITS), Err(BadReply::Empty));
         assert_eq!(Reply::parse(vec![9, 1], LIMITS), Err(BadReply::Tag(9)));
+        let rgba = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert_eq!(Picture::new(2, 1, &rgba).unwrap().into_rgba(), rgba);
         assert!(Picture::new(2, 2, &[0; 8]).is_none());
         for (w, h) in [(0, 0), (0, 5), (5, 0)] {
             assert!(Picture::new(w, h, &[]).is_none(), "{w}x{h}");

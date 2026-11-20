@@ -197,36 +197,7 @@ impl ImageDecoder for ImageCrateDecoder {
     }
 }
 
-/// Whether `bytes` start as a JPEG XL codestream or container.
-pub fn is_jxl(bytes: &[u8]) -> bool {
-    bytes.starts_with(&[0xff, 0x0a]) || bytes.starts_with(reprisefs::imagesize::JXL_CONTAINER)
-}
-
-/// Whether `bytes` start as an AVIF: an ISOBMFF `ftyp` naming the AVIF brands, or the HEIF
-/// brands with an AV1 configuration among the first boxes.
-pub fn is_avif(bytes: &[u8]) -> bool {
-    let size = match bytes.get(..8) {
-        Some(&[a, b, c, d, b'f', b't', b'y', b'p']) => u32::from_be_bytes([a, b, c, d]) as usize,
-        _ => return false,
-    };
-    let Some(ftyp) = bytes.get(8..size) else {
-        return false;
-    };
-    // The major brand, the minor version, then the compatible brands.
-    let brands: Vec<&[u8; 4]> = (ftyp.as_chunks::<4>().0.iter().enumerate())
-        .filter_map(|(i, b)| (i != 1).then_some(b))
-        .collect();
-    let named = |names: &[&[u8; 4]]| brands.iter().any(|b| names.contains(b));
-    let av1 = || {
-        bytes[..bytes.len().min(HEIF_HEAD)]
-            .windows(4)
-            .any(|w| w == b"av1C")
-    };
-    named(&[b"avif", b"avis"]) || named(&[b"mif1", b"msf1"]) && av1()
-}
-
-/// How far into a HEIF [`is_avif`] looks for an AV1 configuration.
-const HEIF_HEAD: usize = 4096;
+pub use reprisefs::imagesize::{is_avif, is_jxl};
 
 /// The format of `bytes` that only reprise-decode reads, if any.
 pub fn helper_format(bytes: &[u8]) -> Option<Format> {
@@ -508,20 +479,16 @@ mod tests {
     }
 
     #[test]
-    fn an_avif_is_known_by_its_brands() {
-        assert!(is_avif(AVIF_HEAD));
-        let seq = b"\0\0\0\x18ftypavis\0\0\0\0msf1miaf";
-        assert!(is_avif(seq));
-        let heif_av1 = b"\0\0\0\x14ftypmif1\0\0\0\0miaf\0\0\0\x0cav1C\x81\0\0\0";
-        assert!(is_avif(heif_av1), "HEIF brands with an AV1 configuration");
-        let heic = b"\0\0\0\x18ftypheic\0\0\0\0mif1heic\0\0\0\x0chvcC\0\0\0\0";
-        assert!(!is_avif(heic));
-        assert!(!is_avif(b"\0\0\0\x18ftypisom\0\0\0\0isomavc1"), "an MP4");
-        assert!(!is_avif(&AVIF_HEAD[..10]));
+    fn jpeg_xl_and_avif_are_the_helpers_formats() {
         assert_eq!(
             helper_format(AVIF_HEAD),
             Some(reprise_decode_protocol::Format::Avif)
         );
+        assert_eq!(
+            helper_format(&[0xff, 0x0a, 0, 0]),
+            Some(reprise_decode_protocol::Format::Jxl)
+        );
+        assert_eq!(helper_format(b"\x89PNG\r\n\x1a\n"), None);
     }
 
     #[test]

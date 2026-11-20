@@ -10,7 +10,7 @@
 //! and cancel buttons at the bottom right.
 
 use repriseapp::keys::form_input;
-use repriseapp::{App, Ctx, Event, Reply, WinId};
+use repriseapp::{App, Ctx, Event, Reply, Waker, WinId};
 use reprisekit::access::Tree;
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
@@ -24,6 +24,7 @@ use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::{Arc, Mutex};
 
 /// Run our own binary with `args`, write `input` to its stdin and return its
 /// stdout once it exits 0. None when it fails to start or exits non-zero, or
@@ -271,6 +272,25 @@ pub enum Refusal {
 
 pub type OnCancel = Box<dyn FnMut(&Form, Refusal)>;
 
+/// What a prompt's form gets once its [`Job`] is done.
+pub type Landed = Box<dyn FnOnce(&mut Form) + Send>;
+
+/// Work a prompt runs on a thread of its own once its window opens, so a slow one never holds the
+/// window back; what it returns is applied to the form on the UI thread.
+pub struct Job {
+    run: Option<Box<dyn FnOnce() -> Landed + Send>>,
+    landed: Arc<Mutex<Option<Landed>>>,
+}
+
+impl Job {
+    pub fn new(run: impl FnOnce() -> Landed + Send + 'static) -> Job {
+        Job {
+            run: Some(Box::new(run)),
+            landed: Arc::default(),
+        }
+    }
+}
+
 /// A prompt's window: `icon` over `form`, fixed at `size` (100% text), owned by `parent`
 /// and, when `modal`, blocking it. `accept` runs `on_accept`, which returns
 /// whether the prompt is answered; any other close runs `on_cancel` and quits.
@@ -285,6 +305,7 @@ pub struct Prompt {
     pub on_cancel: OnCancel,
     pub parent: Option<String>,
     pub modal: bool,
+    pub job: Option<Job>,
 }
 
 impl Prompt {
@@ -329,9 +350,39 @@ impl App for Prompt {
         start_forms().text.size(self.size)
     }
 
+    fn start(&mut self, waker: Waker) -> repriseapp::Start {
+        if let Some(job) = &mut self.job
+            && let Some(run) = job.run.take()
+        {
+            let landed = job.landed.clone();
+            let spawned = std::thread::Builder::new()
+                .name("prompt-job".into())
+                .spawn(move || {
+                    let done = run();
+                    *landed.lock().unwrap_or_else(|e| e.into_inner()) = Some(done);
+                    waker.wake();
+                });
+            if let Err(e) = spawned {
+                log::warn!("prompt: no thread for its job: {e}");
+            }
+        }
+        repriseapp::Start::Continue
+    }
+
     fn event(&mut self, _win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         match ev {
             Event::CloseRequest => self.cancelled(Refusal::Dismissed),
+            Event::Wake => {
+                let landed = (self.job.as_ref())
+                    .and_then(|j| j.landed.lock().unwrap_or_else(|e| e.into_inner()).take());
+                match landed {
+                    Some(apply) => {
+                        apply(&mut self.form);
+                        Reply::redraw()
+                    }
+                    None => Reply::none(),
+                }
+            }
             // A text size change: a fixed window takes only the size it is asked for.
             Event::Resized => Reply {
                 size: Some(ctx.forms().text.size(self.size)),
@@ -461,6 +512,7 @@ mod tests {
             on_cancel: Box::new(|_, _| {}),
             parent: None,
             modal: false,
+            job: None,
         };
         let mut ctx = test_ctx(175);
         let reply = p.event(repriseapp::MAIN, Event::Resized, &mut ctx);
@@ -473,6 +525,40 @@ mod tests {
         );
         let reply = p.event(repriseapp::MAIN, Event::Resized, &mut test_ctx(100));
         assert_eq!(reply.size, Some(size), "and its own size back at 100%");
+    }
+
+    #[test]
+    fn a_prompts_job_runs_off_its_ui_thread_and_lands_on_the_next_wake() {
+        let ui = std::thread::current().id();
+        let mut p = Prompt {
+            title: "Allow?".into(),
+            size: (360, 140),
+            form: Form::new(header(360, "p".into(), "n".into()).into()),
+            icon: None,
+            accept: "allow",
+            cancel: "deny",
+            on_accept: Box::new(|_| true),
+            on_cancel: Box::new(|_, _| {}),
+            parent: None,
+            modal: false,
+            job: Some(Job::new(move || {
+                assert_ne!(std::thread::current().id(), ui, "not on the UI thread");
+                Box::new(|f: &mut Form| f.set_text("note", "done"))
+            })),
+        };
+        let mut ctx = test_ctx(100);
+        assert!(!p.event(repriseapp::MAIN, Event::Wake, &mut ctx).redraw);
+        p.start(Waker::noop());
+        let start = Instant::now();
+        while p.job.as_ref().unwrap().landed.lock().unwrap().is_none() {
+            assert!(start.elapsed() < Duration::from_secs(5), "the job lands");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(p.event(repriseapp::MAIN, Event::Wake, &mut ctx).redraw);
+        let Some(Control::Label { text, .. }) = p.form.item("note").map(|i| &i.control) else {
+            panic!("the note is a label");
+        };
+        assert_eq!(text, "done");
     }
 
     #[test]
