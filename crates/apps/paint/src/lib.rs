@@ -22,6 +22,7 @@ use bitmap::{Bitmap, WHITE};
 use doc::{Doc, Tool};
 use repriseapp::asks::Asks;
 use repriseapp::colordlg::ColorDialog;
+use repriseapp::decode::Decoders;
 use repriseapp::filedlg::Host;
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{self, MsgBox};
@@ -131,6 +132,8 @@ struct Paint {
     app_icon: Option<Canvas>,
     warn_icon: Option<Canvas>,
     glyphs: view::Glyphs,
+    /// What a paste reads the clipboard's picture with.
+    decoders: Decoders,
 }
 
 impl Paint {
@@ -190,6 +193,7 @@ impl Paint {
             app_icon: None,
             warn_icon: None,
             glyphs: view::Glyphs::default(),
+            decoders: Decoders::default_set(),
         };
         if let Some((p, e)) = failed {
             paint.error(tr!(

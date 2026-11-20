@@ -48,7 +48,7 @@ impl Paint {
         if bytes.is_empty() {
             return Reply::none();
         }
-        match file::decode(bytes) {
+        match file::decode_with(&self.decoders, bytes) {
             Ok(pic) => {
                 self.commit_text();
                 self.pick_tool(Tool::Select);

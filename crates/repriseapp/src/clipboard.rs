@@ -363,8 +363,9 @@ const PNG_MIME: &str = "image/png";
 /// The largest picture a paste reads.
 const MAX_IMAGE_BYTES: usize = 256 << 20;
 
-/// The picture types an image paste reads, best first: PNG, then the others the decoders read.
-const IMAGE_MIMES: [&str; 9] = [
+/// The picture types an image paste reads, best first: PNG, then the others the `image` crate
+/// reads, then JPEG XL and AVIF, which take a reprise-decode run.
+const IMAGE_MIMES: [&str; 11] = [
     PNG_MIME,
     "image/bmp",
     "image/x-bmp",
@@ -374,6 +375,8 @@ const IMAGE_MIMES: [&str; 9] = [
     "image/tiff",
     "image/x-portable-pixmap",
     "image/x-icon",
+    "image/jxl",
+    "image/avif",
 ];
 
 /// The type an image paste reads out of a selection offering `types`, if it offers a picture.
@@ -515,5 +518,21 @@ mod tests {
             Some("image/bmp")
         );
         assert_eq!(image_mime(&types(&[TEXT_MIME, "image/svg+xml"])), None);
+    }
+
+    #[test]
+    fn an_image_paste_takes_jpeg_xl_and_avif_only_when_nothing_cheaper_is_offered() {
+        for cheaper in [PNG_MIME, "image/bmp", "image/jpeg"] {
+            let offered = types(&["image/jxl", "image/avif", cheaper]);
+            assert_eq!(image_mime(&offered), Some(cheaper));
+        }
+        assert_eq!(
+            image_mime(&types(&[TEXT_MIME, "image/avif", "image/jxl"])),
+            Some("image/jxl")
+        );
+        assert_eq!(
+            image_mime(&types(&[TEXT_MIME, "image/avif"])),
+            Some("image/avif")
+        );
     }
 }

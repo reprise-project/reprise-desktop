@@ -232,6 +232,79 @@ fn an_empty_paste_changes_nothing() {
     assert!(p.doc.sel.is_none() && p.prompt.is_empty());
 }
 
+const JXL: &[u8] = &[0xff, 0x0a, 0, 0];
+const AVIF: &[u8] = b"\0\0\0\x1cftypavif\0\0\0\0avifmif1miaf\0\0\x01\x0ameta";
+
+/// Paint decoding JPEG XL and AVIF with a reprise-decode stand-in at `dir` that runs `body` after
+/// reading its request.
+fn with_fake_helper(dir: &Path, body: &str) -> Paint {
+    use repriseapp::decode::{Format, HelperDecoder};
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("reprise-decode");
+    std::fs::write(&path, format!("#!/bin/sh\ncat >/dev/null\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut p = Paint::new(None);
+    p.decoders = Decoders::built_in();
+    for format in [Format::Jxl, Format::Avif] {
+        (p.decoders).register(Box::new(HelperDecoder::at(format, path.clone())));
+    }
+    p
+}
+
+fn prompt_text(p: &Paint) -> Option<String> {
+    p.prompt.up().map(|(b, _)| b.fields.text.clone())
+}
+
+#[test]
+fn a_pasted_jpeg_xl_or_avif_is_decoded_by_reprise_decode_and_floats() {
+    let dir = tempfile::tempdir().unwrap();
+    // A 2x1 picture: black, then transparent.
+    let reply = r"\000\002\000\000\000\001\000\000\000\000\000\000\377\000\000\000\000";
+    for bytes in [JXL, AVIF] {
+        let mut ctx = test_ctx();
+        let mut p = with_fake_helper(dir.path(), &format!("printf '{reply}'"));
+        p.event(MAIN, Event::PastedImage(bytes.to_vec()), &mut ctx);
+        assert!(p.prompt.is_empty(), "{:?}", prompt_text(&p));
+        let s = p.doc.sel.as_ref().expect("the paste is a selection");
+        assert!(s.float.is_some());
+        assert_eq!(s.rect, Rect::new(0, 0, 2, 1));
+    }
+}
+
+#[test]
+fn a_pasted_picture_reprise_decode_cannot_read_says_what_an_unreadable_png_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.event(
+        MAIN,
+        Event::PastedImage(b"\x89PNG\r\n\x1a\ncut".to_vec()),
+        &mut ctx,
+    );
+    let png = prompt_text(&p).expect("an unreadable PNG is refused");
+    for body in ["exit 0", "kill -ABRT $$"] {
+        for bytes in [JXL, AVIF] {
+            let mut p = with_fake_helper(dir.path(), body);
+            p.event(MAIN, Event::PastedImage(bytes.to_vec()), &mut ctx);
+            assert_eq!(prompt_text(&p).as_ref(), Some(&png), "{body}");
+            assert!(p.doc.sel.is_none());
+        }
+    }
+}
+
+#[test]
+fn a_pasted_jpeg_xl_past_the_budget_is_refused_before_reprise_decode_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let ran = dir.path().join("ran");
+    let mut ctx = test_ctx();
+    let mut p = with_fake_helper(dir.path(), &format!("touch '{}'", ran.display()));
+    // A codestream whose SizeHeader claims 20000x20000.
+    let big = vec![0xff, 0x0a, 0xfc, 0x70, 0x22, 0x01];
+    p.event(MAIN, Event::PastedImage(big), &mut ctx);
+    assert_eq!(prompt_text(&p), Some(tr!("paste-failed")));
+    assert!(!ran.exists(), "reprise-decode never started");
+}
+
 #[test]
 fn text_typed_in_the_box_lands_on_the_picture_when_clicked_outside() {
     let mut ctx = test_ctx();

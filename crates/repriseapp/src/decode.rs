@@ -11,6 +11,7 @@ use reprisekit::raster::Canvas;
 
 pub(crate) mod helper;
 pub use helper::HelperDecoder;
+pub use reprise_decode_protocol::Format;
 
 /// A decoded image: `canvas` already fitted to the caller's `max` (never
 /// upscaled, box-filtered down), `width`/`height` the source's own
@@ -228,8 +229,7 @@ pub fn is_avif(bytes: &[u8]) -> bool {
 const HEIF_HEAD: usize = 4096;
 
 /// The format of `bytes` that only reprise-decode reads, if any.
-pub fn helper_format(bytes: &[u8]) -> Option<reprise_decode_protocol::Format> {
-    use reprise_decode_protocol::Format;
+pub fn helper_format(bytes: &[u8]) -> Option<Format> {
     if is_jxl(bytes) {
         Some(Format::Jxl)
     } else if is_avif(bytes) {

@@ -38,7 +38,12 @@ impl Kind {
 
 /// `bytes` as a picture, turned upright by its Exif orientation, transparent pixels on white.
 pub fn decode(bytes: &[u8]) -> Result<Bitmap, String> {
-    let d = Decoders::default_set()
+    decode_with(&Decoders::default_set(), bytes)
+}
+
+/// [`decode`] by `decoders`.
+pub fn decode_with(decoders: &Decoders, bytes: &[u8]) -> Result<Bitmap, String> {
+    let d = decoders
         .decode(bytes, (u32::MAX, u32::MAX), Budget::viewer())
         .map_err(|e| match e {
             Unread::TooLarge => tr!("picture-too-large"),
