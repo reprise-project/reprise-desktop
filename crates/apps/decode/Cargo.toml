@@ -1,0 +1,26 @@
+[package]
+name = "reprise-decode"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Reprise's picture decoder: a confined process that turns a JPEG XL file into its pixels for a program that opens one"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-decode"
+path = "src/main.rs"
+
+[dependencies]
+jxl.workspace = true
+libc.workspace = true
+reprise-decode-protocol = { path = "../../reprisedecodeproto" }
+repriseconfine = { path = "../../repriseconfine" }
+
+[dev-dependencies]
+# Builds the JPEG XL test pictures.
+jpegxl-sys.workspace = true

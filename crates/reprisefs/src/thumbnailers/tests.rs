@@ -429,8 +429,15 @@ fn the_jail_shares_only_the_system_the_input_and_the_scratch_folder() {
         systemd_run: "/usr/bin/systemd-run".into(),
     };
     let (input, scratch) = ("/home/u/Videos/a.mp4", "/run/user/1000/reprise-thumb-1");
+    let helper = "/home/u/build/reprise-decode";
+    let helpers = [helper.into(), "/usr/bin/reprise-decode".into()];
     let argv = jail
-        .wrap(vec!["true".into()], Path::new(input), Path::new(scratch))
+        .wrap(
+            vec!["true".into()],
+            &helpers,
+            Path::new(input),
+            Path::new(scratch),
+        )
         .unwrap();
     let args: Vec<&str> = argv.iter().map(|a| a.to_str().unwrap()).collect();
     for flag in [
@@ -448,8 +455,13 @@ fn the_jail_shares_only_the_system_the_input_and_the_scratch_folder() {
     };
     assert_eq!(after("--bind"), [scratch], "the one writable bind");
     let system = ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/lib32"];
-    for from in after("--ro-bind") {
-        assert!(from == input || system.contains(&from), "{from}");
+    let bound = after("--ro-bind");
+    assert!(bound.contains(&helper), "a helper outside /usr: {bound:?}");
+    for from in bound {
+        assert!(
+            from == input || from == helper || system.contains(&from),
+            "{from}"
+        );
     }
     let tried = after("--ro-bind-try");
     assert!(

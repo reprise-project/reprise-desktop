@@ -123,7 +123,7 @@ What Reprise needs, and what each release ships:
 | libinput | 1.26, for tablet pad dials | 1.31 | 1.25 |
 | PipeWire | 1.4 | 1.6 | 1.0 |
 | FFmpeg | 8, for Remote Desktop's colour conversion | 8.0 | 6.1 |
-| libjxl | 0.11.1, for JPEG XL screenshots and pictures | 0.11.1 | 0.7 |
+| libjxl | 0.11.1, for JPEG XL screenshots | 0.11.1 | 0.7 |
 | dbus-daemon | 1.15, for peer credentials with a process fd | 1.16 | 1.14 |
 | Linux | 6.14 for remote logins, 6.16 for libei input | 7.0 | 6.8, or 7.0 with HWE |
 | Rust | 1.99 | 1.93, so rustup | 1.75, so rustup |
@@ -306,9 +306,10 @@ user's server.
   in; it loads libEGL at run time, from the Mesa and libglvnd listed below,
   and on NVIDIA libcuda from `nvidia-utils` to copy the drawn pictures into
   CUDA
-- JPEG XL screenshots are written, and `.jxl` pictures opened, through libjxl
-  0.11.1 or later (libjxl and libjxl_threads) with the `jpegxl-rs` and
-  `jpegxl-sys` crates
+- JPEG XL screenshots are written through libjxl 0.11.1 or later (libjxl and
+  libjxl_threads) with the `jpegxl-rs` and `jpegxl-sys` crates. Only
+  `libreprise_encode_jxl.so` links them; `.jxl` pictures open without libjxl,
+  through `reprise-decode` and the pure-Rust `jxl` crate
 
 ### To run
 
@@ -346,8 +347,10 @@ user's server.
   sound to the client in and recordings code Opus sound with). FFmpeg's libx265
   and libsvtav1 code H.265 and AV1 recordings on the CPU; without them those
   codecs record only on a GPU encoder
-- libjxl, for JPEG XL screenshots and for opening `.jxl` pictures in the
-  image viewer, Explorer's previews and thumbnails and the file dialogs
+- libjxl, for JPEG XL screenshots only. `reprise-encode` loads it through
+  `/usr/lib/reprise/libreprise_encode_jxl.so`; when that fails, a JPEG XL
+  screenshot is saved as PNG with a notice, the session log says why, and
+  the rest of Reprise is unaffected
 - dbus-broker, or dbus-daemon 1.15 or later, whose peer credentials carry a
   process fd: Remote Desktop and the Inhibit portal check by it which process
   owns a name. On an older bus Settings reads Remote Desktop as off, its

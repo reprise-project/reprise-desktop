@@ -222,6 +222,12 @@ impl State {
                                     "The JPEG XL encoder could not start, {as_png} Log out and \
                                      back in after an update."
                                 ),
+                                Failed::Unavailable(_) => format!(
+                                    "Cannot encode it: the JPEG XL library did not load, {as_png}"
+                                ),
+                                Failed::Killed(_) => {
+                                    format!("Cannot encode it: the encoder was killed, {as_png}")
+                                }
                                 Failed::Codec(e) => format!("Cannot encode it: {e}, {as_png}"),
                             };
                             let note = (!wants_png).then_some(note.as_str());

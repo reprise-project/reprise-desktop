@@ -1,0 +1,23 @@
+[package]
+name = "reprise-encode-jxl"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "The JPEG XL codec reprise-encode loads: the one Reprise object that links libjxl, so a missing or broken libjxl only stops JPEG XL screenshots"
+
+[lints]
+workspace = true
+
+# The cdylib is what reprise-encode loads; the rlib runs the tests in-process.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jpegxl-rs.workspace = true
+jpegxl-sys.workspace = true
+
+[dev-dependencies]
+libc.workspace = true

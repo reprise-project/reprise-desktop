@@ -1,0 +1,25 @@
+[package]
+name = "reprise-encode"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Reprise's screenshot encoder: a confined process that turns a screenshot's pixels into a JPEG XL file, and the protocol the compositor speaks to it"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-encode"
+path = "src/main.rs"
+
+[dependencies]
+libc.workspace = true
+repriseconfine = { path = "../../repriseconfine" }
+
+# The codec's rlib for in-process tests; the binary only ever dlopens its cdylib, so it links no libjxl.
+[dev-dependencies]
+jpegxl-rs.workspace = true
+reprise-encode-jxl = { path = "../../repriseencodejxl" }

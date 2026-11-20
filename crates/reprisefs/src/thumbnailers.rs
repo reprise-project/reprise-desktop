@@ -29,6 +29,8 @@ pub struct Thumbnailer {
     exec: String,
     try_exec: Option<String>,
     mimes: Vec<String>,
+    /// Programs it starts, bound read-only into the jail at their own paths.
+    helpers: Vec<PathBuf>,
 }
 
 impl Thumbnailer {
@@ -51,6 +53,7 @@ impl Thumbnailer {
             exec,
             try_exec: try_exec.filter(|t| !t.is_empty()),
             mimes,
+            helpers: Vec::new(),
         })
     }
 
@@ -61,7 +64,14 @@ impl Thumbnailer {
             exec,
             try_exec: None,
             mimes: Vec::new(),
+            helpers: Vec::new(),
         }
+    }
+
+    /// The thumbnailer with `program` reachable in the jail at its path.
+    pub fn with_helper(mut self, program: PathBuf) -> Thumbnailer {
+        self.helpers.push(program);
+        self
     }
 
     /// The program runs: its `TryExec`, else its first argument, is an executable file (by
@@ -235,7 +245,13 @@ impl Jail {
     }
 
     /// The command line running `argv` here, reading `input` and writing in `scratch`.
-    fn wrap(&self, argv: Vec<OsString>, input: &Path, scratch: &Path) -> Option<Vec<OsString>> {
+    fn wrap(
+        &self,
+        argv: Vec<OsString>,
+        helpers: &[PathBuf],
+        input: &Path,
+        scratch: &Path,
+    ) -> Option<Vec<OsString>> {
         let Jail::Bwrap { bwrap, systemd_run } = self else {
             return Some(argv);
         };
@@ -274,8 +290,10 @@ impl Jail {
             out.extend(["--ro-bind-try", shared, shared].map(os));
         }
         out.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"].map(os));
-        if !program.starts_with("/usr") && !program.starts_with("/opt") {
-            out.extend([os("--ro-bind"), os(&program), os(&program)]);
+        for bound in std::iter::once(&program).chain(helpers) {
+            if !bound.starts_with("/usr") && !bound.starts_with("/opt") {
+                out.extend([os("--ro-bind"), os(bound), os(bound)]);
+            }
         }
         out.extend([os("--ro-bind"), os(input), os(input)]);
         out.extend([
@@ -344,7 +362,7 @@ impl Runner {
         self.jail_starts(&scratch.0)?;
         let output = scratch.0.join("thumbnail.png");
         let argv = (self.jail)
-            .wrap(t.argv(input, &output, size), input, &scratch.0)
+            .wrap(t.argv(input, &output, size), &t.helpers, input, &scratch.0)
             .ok_or_else(|| RunError::Failed(format!("{}: no program to run", t.id)))?;
         let status = self.wait(&argv, &scratch.0).map_err(|e| e.of(&t.id))?;
         if !status.success() {
@@ -392,7 +410,7 @@ impl Runner {
         }
         let no = |why: String| RunError::NoJail(why);
         let argv = (self.jail)
-            .wrap(vec![os("true")], input, scratch)
+            .wrap(vec![os("true")], &[], input, scratch)
             .ok_or_else(|| no("no true to run".into()))?;
         match self.wait(&argv, scratch) {
             Ok(status) if status.success() => Ok(()),

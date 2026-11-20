@@ -300,13 +300,18 @@ impl<'a> Make<'a> {
     }
 }
 
-/// `helper` run as a thumbnailer: [`JXL_FLAG`] for the square, the input and the output.
+/// `helper` run as a thumbnailer: [`JXL_FLAG`] with this program's reprise-decode, bound into
+/// the jail, then the square, the input and the output.
 fn jxl_helper(helper: &std::path::Path) -> Option<Thumbnailer> {
+    use reprise_decode_protocol::PROGRAM;
+    let decoder = repriseconfine::helper::find(PROGRAM).unwrap_or_else(|why| {
+        log::debug!("JPEG XL thumbnails: {why}");
+        std::path::Path::new("/usr/bin").join(PROGRAM)
+    });
     let exe = reprisefs::apps::exec_quote(helper.to_str()?);
-    Some(Thumbnailer::command(
-        "jxl",
-        format!("{exe} {JXL_FLAG} %s %i %o"),
-    ))
+    let dec = reprisefs::apps::exec_quote(decoder.to_str()?);
+    let t = Thumbnailer::command("jxl", format!("{exe} {JXL_FLAG} {dec} %s %i %o"));
+    Some(t.with_helper(decoder))
 }
 
 /// The picture file at `path` an app named, fitted inside `max`: a JPEG XL by [`JXL_FLAG`] in the
@@ -347,32 +352,23 @@ pub fn picture_in(
     })
 }
 
-/// The thumbnail helper's mode `--jxl-thumbnail EDGE INPUT OUTPUT`: the JPEG XL at INPUT fitted
-/// inside an EDGE square, written to OUTPUT as a PNG carrying the picture's size.
+/// The thumbnail helper's mode `--jxl-thumbnail DECODER EDGE INPUT OUTPUT`: the JPEG XL at INPUT,
+/// streamed to reprise-decode at DECODER, fitted inside an EDGE square, written to OUTPUT as a
+/// PNG carrying the picture's size.
 pub const JXL_FLAG: &str = "--jxl-thumbnail";
-
-/// What libjxl may hold in the jail: [`MEMORY_MAX`](reprisefs::thumbnailers::MEMORY_MAX) less the
-/// file, the decoded picture and the program, so libjxl refuses before the scope is killed.
-const JAIL_JXL_ALLOC: u64 = reprisefs::thumbnailers::MEMORY_MAX
-    - crate::decode::MAX_FILE_BYTES
-    - crate::decode::MAX_DECODED_BYTES
-    - (32 << 20);
 
 /// [`JXL_FLAG`] with the arguments after the flag.
 pub fn serve_jxl(args: &[std::ffi::OsString]) -> Result<(), String> {
-    let [edge, input, output] = args else {
-        return Err(format!("usage: {JXL_FLAG} EDGE INPUT OUTPUT"));
+    let [decoder, edge, input, output] = args else {
+        return Err(format!("usage: {JXL_FLAG} DECODER EDGE INPUT OUTPUT"));
     };
+    let decoder = crate::decode::HelperDecoder::jxl_at(decoder.into());
     let edge = (edge.to_str().and_then(|e| e.parse::<u32>().ok()))
         .ok_or("EDGE is a number")?
         .clamp(1, reprisefs::thumbnailers::MAX_SIDE);
     let budget = crate::decode::Budget::THUMBNAIL;
-    let bytes = std::fs::File::open(input)
-        .and_then(|f| crate::decode::read_capped_from(f, budget.file))
-        .map_err(|e| e.to_string())?;
-    let alloc = JAIL_JXL_ALLOC as usize;
-    let img = crate::decode::decode_jxl(&bytes, (edge, edge), budget.pixels, alloc)
-        .map_err(|e| format!("{e:?}"))?;
+    let file = std::fs::File::open(input).map_err(|e| e.to_string())?;
+    let img = (decoder.decode_file(file, (edge, edge), budget)).map_err(|e| format!("{e:?}"))?;
     let (width, height) = img.canvas.device_size();
     let pixels = straight_rgba(&img.canvas);
     let thumb = Rgba {
@@ -1343,7 +1339,7 @@ mod tests {
         )
         .unwrap();
         let mut decoders = Decoders::default_set();
-        let body = format!("cp '{}' \"$4\"", sized.display());
+        let body = format!("cp '{}' \"$5\"", sized.display());
         let (mut make, in_process) = with_jxl_helper(&mut decoders, dir.path(), &body);
         make.installed = None;
         // A JPEG XL is told by its bytes, whatever its name.
@@ -1355,10 +1351,11 @@ mod tests {
         assert_eq!((made.dims, made.sized), ((800, 600), true));
         let again = thumbnail(&mut make, 128, Some(&mut cache), &photo, &fs()).expect("cached");
         assert_eq!(again.dims, (800, 600));
-        let want = format!("{JXL_FLAG} 128 {} ", photo.display());
+        let want = format!(" 128 {} ", photo.display());
         let runs = jxl_runs(dir.path());
         assert_eq!(runs.len(), 1, "the second ask is a cache hit");
-        assert!(runs[0].starts_with(&want), "{runs:?} runs {want}OUTPUT");
+        assert!(runs[0].starts_with(JXL_FLAG), "{runs:?}");
+        assert!(runs[0].contains(&want), "{runs:?} runs {want}OUTPUT");
         assert_eq!(in_process.load(Ordering::SeqCst), 0, "no in-process decode");
     }
 
@@ -1416,12 +1413,15 @@ mod tests {
     fn the_jpeg_xl_helper_writes_the_fitted_picture_with_its_size() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("a.jxl");
-        let px: Vec<u8> = (0..40 * 30).flat_map(|_| [200, 100, 50, 255]).collect();
-        std::fs::write(&src, crate::decode::encode_jxl(40, 30, &[&px], false)).unwrap();
+        std::fs::write(&src, JXL_BYTES).unwrap();
+        // A 40x30 picture.
+        let picture = r"printf '\000\050\000\000\000\036\000\000\000'; head -c 4800 /dev/zero";
+        let decoder = crate::decode::helper::tests::fake_at(dir.path(), picture);
         let out = dir.path().join("out.png");
         let args = [
+            decoder.into_os_string(),
             "20".into(),
-            src.into_os_string(),
+            src.clone().into_os_string(),
             out.clone().into_os_string(),
         ];
         serve_jxl(&args).expect("a thumbnail");
@@ -1429,9 +1429,13 @@ mod tests {
         let c = reprisekit::icontheme::png_to_canvas(&png, 4096).unwrap();
         assert_eq!(c.device_size(), (20, 15));
         assert_eq!(reprisefs::thumbnails::image_dims(&png), Some((40, 30)));
-        let broken = dir.path().join("b.jxl");
-        std::fs::write(&broken, JXL_BYTES).unwrap();
-        let args = ["20".into(), broken.into_os_string(), out.into_os_string()];
+        let broken = crate::decode::helper::tests::fake_at(dir.path(), r"printf '\002cut short'");
+        let args = [
+            broken.into_os_string(),
+            "20".into(),
+            src.into_os_string(),
+            out.into_os_string(),
+        ];
         assert!(serve_jxl(&args).is_err());
     }
 
@@ -1444,15 +1448,14 @@ mod tests {
         let helper = dir.path().join("fake-helper");
         let runs = dir.path().join("jxl-runs");
         let script = format!(
-            "#!/bin/sh\necho \"$@\" >> '{}'\ncp '{}' \"$4\"\n",
+            "#!/bin/sh\necho \"$@\" >> '{}'\ncp '{}' \"$5\"\n",
             runs.display(),
             wide.display()
         );
         std::fs::write(&helper, script).unwrap();
         std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
         let photo = dir.path().join("photo.jxl");
-        let px: Vec<u8> = (0..4 * 3).flat_map(|_| [9, 9, 9, 255]).collect();
-        std::fs::write(&photo, crate::decode::encode_jxl(4, 3, &[&px], false)).unwrap();
+        std::fs::write(&photo, JXL_BYTES).unwrap();
         let runner = Runner::new(
             dir.path(),
             Duration::from_secs(5),
@@ -1461,7 +1464,11 @@ mod tests {
         let c = picture_in(Some(&runner), &helper, &photo, (60, 60)).expect("the helper's");
         assert_eq!((c.width, c.height), (60, 30));
         let asked = std::fs::read_to_string(&runs).unwrap();
-        assert!(asked.starts_with(&format!("{JXL_FLAG} 60 {} ", photo.display())));
+        assert!(asked.starts_with(JXL_FLAG), "{asked}");
+        assert!(
+            asked.contains(&format!(" 60 {} ", photo.display())),
+            "{asked}"
+        );
         assert!(picture_in(None, &helper, &photo, (60, 60)).is_none());
         let c = picture_in(None, &helper, &wide, (60, 60)).expect("decoded here");
         assert_eq!((c.width, c.height), (60, 30));
