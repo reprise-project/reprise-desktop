@@ -12,4 +12,5 @@ description = "What a program and reprise-decode, Reprise's picture decoder, say
 workspace = true
 
 [dependencies]
+libc.workspace = true
 repriseconfine = { path = "../repriseconfine" }

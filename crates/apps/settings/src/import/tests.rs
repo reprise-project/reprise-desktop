@@ -254,7 +254,7 @@ fn a_picture_reprise_cant_show_or_find_is_greyed() {
     assert_eq!(
         cells(&p.lines[0]),
         (
-            "Reprise shows JPEG, PNG and BMP pictures",
+            "Reprise shows JPEG, PNG, BMP, JPEG XL and AVIF pictures",
             "/usr/share/backgrounds/gnome/blobs-d.svg",
             true
         )

@@ -378,21 +378,10 @@ impl Plan {
     }
 }
 
-const PICTURES: [&str; 5] = ["jpg", "jpeg", "png", "bmp", "dib"];
-
-/// Whether the wallpaper decodes pictures of `path`'s kind.
-fn shows(path: &str) -> bool {
-    let ext = Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase);
-    ext.is_some_and(|e| PICTURES.contains(&e.as_str()))
-}
-
 /// Why a found wallpaper can't be taken, if it can't.
 fn picture_refused(path: &str, sys: &dyn System) -> Option<&'static str> {
-    if !shows(path) {
-        return Some("Reprise shows JPEG, PNG and BMP pictures");
+    if !reprisefs::pictures::is_picture(Path::new(path)) {
+        return Some("Reprise shows JPEG, PNG, BMP, JPEG XL and AVIF pictures");
     }
     (!sys.is_file(Path::new(path))).then_some("the file is missing")
 }

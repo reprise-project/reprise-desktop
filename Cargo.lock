@@ -4708,6 +4708,7 @@ dependencies = [
  "log",
  "pipewire",
  "reis",
+ "reprise-decode-protocol",
  "reprise-encode",
  "repriseapp-pins",
  "repriseaudio",
@@ -4874,6 +4875,7 @@ dependencies = [
 name = "reprise-decode-protocol"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "repriseconfine",
 ]
 
@@ -5128,6 +5130,7 @@ dependencies = [
  "futures-lite",
  "gbm",
  "image",
+ "jpeg-decoder",
  "libc",
  "log",
  "pipewire",

@@ -91,7 +91,7 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 #                            # a name from another interface takes that interface's default and the config notice names it; Glass ignores the key
 
 # [wallpaper]                # the picture under the desktop icons, drawn over [colors] background
-# image = "/usr/share/backgrounds/picture.jpg"   # bmp, jpg, png or dib; "" or a file that does not decode shows the colour alone
+# image = "/usr/share/backgrounds/picture.jpg"   # bmp, jpg, png, dib, jxl or avif; "" or a file that does not decode shows the colour alone
 # image = "reprise:tarn/dusk"   # a built-in drawn picture, see below; unset, classic shows the colour alone, blue tarn/blue, glass flow/glass
 #                            # built-ins: caustic, reeded, panes (sky ruby green violet dark), ridges, tarn (dawn day dusk night blue),
 #                            # terraces (spring harvest dusk frost blue), fold (teal steel sand night), contour (teal night paper dusk),

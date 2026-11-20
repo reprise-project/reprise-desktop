@@ -116,7 +116,7 @@ memory, or 512 MiB, says it is too large to show.
 - **Delete** sends the picture to the Recycle Bin, asking first as Explorer
   does, and the next picture shows.
 - **Set as Desktop Background** (File menu), greyed for formats the desktop
-  does not draw (anything but PNG, JPEG and BMP).
+  does not draw (anything but PNG, JPEG, BMP, JPEG XL and AVIF).
 - **Copy** (Ctrl+C) puts the file on the clipboard, and **Open** (Ctrl+O)
   picks another picture.
 
@@ -457,7 +457,7 @@ kept. When both desktops left settings, a box picks which one to import from.
 
 | Found | Becomes |
 | --- | --- |
-| Wallpaper (the dark one under a dark style) | `[wallpaper] image` and `position`; JPEG, PNG and BMP only |
+| Wallpaper (the dark one under a dark style) | `[wallpaper] image` and `position`; JPEG, PNG, BMP, JPEG XL and AVIF only |
 | Dark style | Glass `mode = "dark"`, Classic's One Dark scheme; greyed under Blue |
 | Keyboard layouts, variants, model, options, layout per window | `[keyboard]` |
 | Key repeat rate and delay | `[keyboard] repeat_rate`, `repeat_delay` |

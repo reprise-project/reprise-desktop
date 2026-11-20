@@ -109,7 +109,7 @@ and geometry at each screen's size in `crates/reprisekit/src/wallpapers/`.
 They hold no image files and share the project's license. Beside them the
 Background page lists pictures from `/usr/share/backgrounds`,
 `/usr/share/wallpapers` and your Pictures folder, and Browse... adds any other
-bmp, jpg, png or dib file.
+bmp, jpg, png, dib, jxl or avif file.
 Reprise ships no picture files and plays no event sounds.
 
 ## Data

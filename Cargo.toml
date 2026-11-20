@@ -180,6 +180,7 @@ repriselogin = { path = "crates/repriselogin" }
 reprisepam = { path = "crates/reprisepam" }
 reprise-encode = { path = "crates/apps/encode" }
 repriseconfine = { path = "crates/repriseconfine" }
+reprise-decode-protocol = { path = "crates/reprisedecodeproto" }
 accesskit_unix.workspace = true
 toml_edit.workspace = true
 libc.workspace = true

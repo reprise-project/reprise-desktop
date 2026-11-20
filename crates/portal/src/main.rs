@@ -36,6 +36,7 @@ mod shortcutconf;
 mod stills;
 mod trusted;
 mod wallpaper;
+mod wallpaperpreview;
 mod wayland;
 
 use cast::Cast;
@@ -1404,6 +1405,7 @@ async fn serve(
             wallpaper::Wallpaper {
                 frontend: frontend(),
                 read: wallpaper::read_picture,
+                open: Default::default(),
             },
         )
         .serve_at(

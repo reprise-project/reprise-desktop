@@ -137,7 +137,8 @@ fn compose(
                 w,
                 h,
             };
-            let loaded = crate::wallpaper::load(&new.path, Some(cut))?;
+            let loaded =
+                crate::wallpaper::load(&new.path, Some(cut), crate::wallpaper::Wanted::WHOLE)?;
             let black = reprisekit::theme::Color::rgb(0, 0, 0);
             let shown = crate::wallpaper::composed_known(
                 &loaded.image,

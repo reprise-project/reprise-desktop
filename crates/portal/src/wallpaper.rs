@@ -4,8 +4,10 @@
 //! `$XDG_DATA_HOME/reprise/wallpapers`, so a document portal path that goes
 //! away with the app does not take the background with it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use toml_edit::{DocumentMut, Value};
 use zbus::ObjectPath;
 
@@ -23,10 +25,42 @@ const STORE: crate::permit::Store = crate::permit::Store {
 pub struct Wallpaper {
     pub frontend: crate::Frontend,
     pub read: Read,
+    pub open: Open,
 }
 
-/// The app's picture and the path its file really is, [`read_picture`] outside tests.
-pub type Read = fn(&Path) -> Option<(Vec<u8>, PathBuf)>;
+/// The app's picture in a sealed memfd and the path its file really is, [`read_picture`] outside
+/// tests.
+pub type Read = fn(&Path) -> Option<(File, PathBuf)>;
+
+/// The most wallpaper requests open at once, each holding up to
+/// [`reprisekit::wallpaper::MAX_BYTES`] of picture from its read to its install.
+const MAX_OPEN: usize = 4;
+
+/// The app ids with a wallpaper request open. An app has one at a time.
+#[derive(Clone, Default)]
+pub struct Open(Arc<Mutex<HashSet<String>>>);
+
+impl Open {
+    /// `app_id`'s turn until it drops; None while one of its requests is open or [`MAX_OPEN`] are.
+    fn take(&self, app_id: &str) -> Option<Turn> {
+        let mut open = reprisebus::mutex::lock(&self.0);
+        (open.len() < MAX_OPEN && open.insert(app_id.to_owned())).then(|| Turn {
+            open: self.clone(),
+            app_id: app_id.to_owned(),
+        })
+    }
+}
+
+struct Turn {
+    open: Open,
+    app_id: String,
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        reprisebus::mutex::lock(&self.open.0).remove(&self.app_id);
+    }
+}
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Wallpaper")]
 impl Wallpaper {
@@ -79,9 +113,13 @@ impl Wallpaper {
             log::info!("SetWallpaperURI for {app_id:?}: {uri:?} is not a local file");
             return crate::RESPONSE_OTHER;
         };
+        let Some(_turn) = self.open.take(&app_id) else {
+            log::info!("SetWallpaperURI for {app_id:?}: refused while another request is open");
+            return crate::RESPONSE_OTHER;
+        };
         let show_preview = matches!(options.get("show-preview"), Some(zbus::Variant::Bool(true)));
         let (src, read) = (path.clone(), self.read);
-        let Some((bytes, real)) = blocking::unblock(move || read(&src)).await else {
+        let Some((picture, real)) = blocking::unblock(move || read(&src)).await else {
             log::info!(
                 "SetWallpaperURI for {app_id:?}: {} is no picture",
                 path.display()
@@ -93,16 +131,9 @@ impl Wallpaper {
         let shown = shows_preview(&app_id, show_preview);
         let id = app_id.clone();
         let asked = request.ask(None, move |cancel| {
-            // The prompt decodes the bytes read above, so the picture shown is the one
+            // The prompt decodes the memfd read above, so the picture shown is the one
             // installed whatever the app's file holds by the time the prompt reads it.
-            let held = match shown.then(|| preview_file(&bytes)).transpose() {
-                Ok(h) => h,
-                Err(e) => {
-                    log::warn!("SetWallpaperURI: no preview: {e}");
-                    return (false, bytes);
-                }
-            };
-            let preview = held.as_ref().map(|(_, p)| p.clone());
+            let preview = shown.then(|| fd_path(&picture));
             let input = crate::permit::Input {
                 parent,
                 app: crate::remotedesktop::display_name(&id),
@@ -115,9 +146,9 @@ impl Wallpaper {
                 true => crate::permit::ask_remembered(kind, STORE, &id, &[], input, &cancel),
                 false => crate::permit::ask_with(kind, input, &cancel).allowed(),
             };
-            (allowed, bytes)
+            (allowed, picture)
         });
-        let Some((true, bytes)) = asked.await.filter(|_| !request.closed()) else {
+        let Some((true, picture)) = asked.await.filter(|_| !request.closed()) else {
             log::info!("SetWallpaperURI for {app_id:?} denied or closed");
             return crate::RESPONSE_CANCELLED;
         };
@@ -126,7 +157,7 @@ impl Wallpaper {
             .unwrap_or_default()
             .join("reprise/wallpapers");
         let config = repriseconf::config_path();
-        match blocking::unblock(move || install(&dir, &name, &bytes, &config)).await {
+        match blocking::unblock(move || install(&dir, &name, &picture, &config)).await {
             Ok(to) => {
                 log::info!("SetWallpaperURI for {app_id:?}: {}", to.display());
                 crate::RESPONSE_OK
@@ -139,9 +170,9 @@ impl Wallpaper {
     }
 }
 
-/// `bytes` in a sealed memfd, and the path another process of the user opens it by.
-fn preview_file(bytes: &[u8]) -> std::io::Result<(std::fs::File, String)> {
-    use std::io::Write;
+/// `from`, read to its end, in a sealed memfd: the one copy of the picture the portal holds.
+/// Refused once it passes `cap` bytes, without reading further.
+fn sealed_copy(from: impl std::io::Read, cap: u64) -> std::io::Result<File> {
     use std::os::fd::{AsRawFd, FromRawFd};
     let flags = libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING;
     // SAFETY: the name is a NUL-terminated string that outlives the call.
@@ -150,15 +181,23 @@ fn preview_file(bytes: &[u8]) -> std::io::Result<(std::fs::File, String)> {
         return Err(std::io::Error::last_os_error());
     }
     // SAFETY: `fd` is a fresh descriptor that nothing else owns.
-    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-    file.write_all(bytes)?;
+    let mut file = unsafe { File::from_raw_fd(fd) };
+    // From a file, std copies in the kernel (copy_file_range, sendfile), through no buffer here.
+    if std::io::copy(&mut from.take(cap + 1), &mut file)? > cap {
+        return Err(std::io::ErrorKind::FileTooLarge.into());
+    }
     let seals = libc::F_SEAL_WRITE | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_SEAL;
     // SAFETY: `file` is an open memfd; F_ADD_SEALS takes an int argument.
     if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_ADD_SEALS, seals) } < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    let path = format!("/proc/{}/fd/{}", std::process::id(), file.as_raw_fd());
-    Ok((file, path))
+    Ok(file)
+}
+
+/// The path another process of the user opens `file` by, at offset 0 of its own.
+fn fd_path(file: &File) -> String {
+    use std::os::fd::AsRawFd;
+    format!("/proc/{}/fd/{}", std::process::id(), file.as_raw_fd())
 }
 
 /// Whether `set-on` puts the picture on the desktop: `background`, or `both`, the lock screen
@@ -229,9 +268,10 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_else(|| "Wallpaper".into())
 }
 
-/// The bytes of the regular file at `path` when its header names a picture the desktop shows,
-/// no side past [`reprisekit::wallpaper::MAX_SIDE`], and the path the opened file resolved to.
-pub fn read_picture(path: &Path) -> Option<(Vec<u8>, PathBuf)> {
+/// The regular file at `path` in a sealed memfd when its content is of a format the desktop shows
+/// ([`reprisefs::pictures::Format`]), no larger than [`reprisekit::wallpaper::MAX_BYTES`] and no
+/// side past [`reprisekit::wallpaper::MAX_SIDE`], and the path the opened file resolved to.
+pub fn read_picture(path: &Path) -> Option<(File, PathBuf)> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
     let f = std::fs::OpenOptions::new()
@@ -239,31 +279,56 @@ pub fn read_picture(path: &Path) -> Option<(Vec<u8>, PathBuf)> {
         .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
         .open(path)
         .ok()?;
-    if !f.metadata().ok()?.file_type().is_file() {
+    let meta = f.metadata().ok()?;
+    let cap = reprisekit::wallpaper::MAX_BYTES;
+    if !meta.file_type().is_file() || meta.len() > cap {
         return None;
     }
     let real = std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd())).ok()?;
-    let bytes = repriseapp::decode::read_capped_from(f, repriseapp::decode::MAX_FILE_BYTES).ok()?;
-    let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
-        .with_guessed_format()
-        .ok()?
-        .into_dimensions()
-        .ok()?;
+    let picture = sealed_copy(f, cap).ok()?;
+    let (w, h) = dimensions(&picture)?;
     let max = reprisekit::wallpaper::MAX_SIDE;
-    (w <= max && h <= max).then_some((bytes, real))
+    (w <= max && h <= max).then_some((picture, real))
 }
 
-/// Write `bytes` as `name` in `dir`, point `[wallpaper]` in `config` at the copy and delete the
-/// copy in `dir` the config named before.
-fn install(dir: &Path, name: &str, bytes: &[u8], config: &Path) -> Result<PathBuf, String> {
-    use std::io::Write;
+/// The size `picture`'s header states, read from its start; None for a format the desktop does not
+/// show. JPEG XL and AVIF state it in their first [`reprisefs::imagesize::HEAD_BYTES`].
+fn dimensions(picture: &File) -> Option<(u32, u32)> {
+    use reprisefs::pictures::Format;
+    use std::io::{Read, Seek};
+    let mut reader = std::io::BufReader::new(picture);
+    reader.rewind().ok()?;
+    let mut head = Vec::new();
+    (&mut reader)
+        .take(reprisefs::imagesize::HEAD_BYTES as u64)
+        .read_to_end(&mut head)
+        .ok()?;
+    let mut header = |format| {
+        reader.rewind().ok()?;
+        image::ImageReader::with_format(&mut reader, format)
+            .into_dimensions()
+            .ok()
+    };
+    match Format::of(&head)? {
+        Format::Jxl | Format::Avif => reprisefs::imagesize::dimensions(&head),
+        Format::Bmp => header(image::ImageFormat::Bmp),
+        Format::Jpeg => header(image::ImageFormat::Jpeg),
+        Format::Png => header(image::ImageFormat::Png),
+    }
+}
+
+/// Copy `picture`, from its start, as `name` into `dir`, point `[wallpaper]` in `config` at the
+/// copy and delete the copy in `dir` the config named before.
+fn install(dir: &Path, name: &str, mut picture: &File, config: &Path) -> Result<PathBuf, String> {
+    use std::io::Seek;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let (mut file, to) =
         reprisefs::ops::create_new_numbered(dir, name).map_err(|e| e.to_string())?;
     let mut before = None;
-    let written = file
-        .write_all(bytes)
-        .and_then(|()| file.sync_all())
+    let written = picture
+        .rewind()
+        .and_then(|()| std::io::copy(&mut picture, &mut file))
+        .and_then(|_| file.sync_all())
         .map_err(|e| e.to_string())
         .and_then(|()| {
             repriseconf::edit(config, |text| {
@@ -302,7 +367,8 @@ mod tests {
     #[test]
     fn the_preview_reads_the_bytes_it_was_given_and_cannot_be_rewritten() {
         use std::io::Write;
-        let (mut file, path) = preview_file(b"picture").unwrap();
+        let mut file = sealed_copy(&b"picture"[..], 64).unwrap();
+        let path = fd_path(&file);
         assert_eq!(std::fs::read(&path).unwrap(), b"picture");
         assert!(file.write_all(b"other").is_err(), "the memfd is sealed");
         let reopened = std::fs::OpenOptions::new().write(true).open(&path);
@@ -315,16 +381,15 @@ mod tests {
     }
 
     #[test]
-    fn the_prompt_decodes_a_preview_by_its_path() {
+    fn the_prompt_previews_the_copy_by_its_path() {
         let mut png = Vec::new();
         image::RgbaImage::from_pixel(4, 3, image::Rgba([9, 9, 9, 255]))
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .unwrap();
-        let (_file, path) = preview_file(&png).unwrap();
-        let decoded = repriseapp::decode::Decoders::default_set()
-            .decode_file(Path::new(&path), (64, 64))
-            .unwrap();
-        assert_eq!((decoded.width, decoded.height), (4, 3));
+        let copy = sealed_copy(png.as_slice(), reprisekit::wallpaper::MAX_BYTES).unwrap();
+        let file = File::open(fd_path(&copy)).unwrap();
+        let shown = crate::wallpaperpreview::preview(file, (64, 64)).unwrap();
+        assert_eq!((shown.width, shown.height), (4, 3));
     }
 
     #[test]
@@ -387,21 +452,39 @@ mod tests {
             w.write_image_data(&[1, 2, 3]).unwrap();
         }
         std::fs::write(&png, &bytes).unwrap();
-        assert_eq!(
-            read_picture(&png),
-            Some((bytes.clone(), std::fs::canonicalize(&png).unwrap()))
-        );
+        let (copy, real) = read_picture(&png).unwrap();
+        assert_eq!(real, std::fs::canonicalize(&png).unwrap());
+        assert_eq!(std::fs::read(fd_path(&copy)).unwrap(), bytes);
         let text = dir.path().join("note.png");
         std::fs::write(&text, "not a picture").unwrap();
-        assert_eq!(read_picture(&text), None);
-        assert_eq!(read_picture(dir.path()), None);
+        assert!(read_picture(&text).is_none());
+        assert!(read_picture(dir.path()).is_none());
         let jxl = dir.path().join("red.jxl");
         std::fs::write(&jxl, crate::access::RED_2X2_JXL).unwrap();
-        assert_eq!(read_picture(&jxl), None, "the desktop shows no JPEG XL");
+        assert!(read_picture(&jxl).is_some(), "a JPEG XL by its size header");
+        let cut = dir.path().join("cut.jxl");
+        std::fs::write(&cut, [0xff, 0x0a]).unwrap();
+        assert!(read_picture(&cut).is_none(), "a JPEG XL stating no size");
+        for format in [
+            image::ImageFormat::Gif,
+            image::ImageFormat::WebP,
+            image::ImageFormat::Tiff,
+        ] {
+            let mut other = Vec::new();
+            image::RgbaImage::from_pixel(2, 2, image::Rgba([9, 9, 9, 255]))
+                .write_to(&mut std::io::Cursor::new(&mut other), format)
+                .unwrap();
+            let path = dir.path().join("other");
+            std::fs::write(&path, &other).unwrap();
+            assert!(
+                read_picture(&path).is_none(),
+                "the desktop shows no {format:?}"
+            );
+        }
         let to = dir.path().join("wallpapers");
         assert_eq!(file_name(&png), "dot.png");
         let config = dir.path().join("config.toml");
-        let copied = install(&to, "dot.png", &bytes, &config).unwrap();
+        let copied = install(&to, "dot.png", &copy, &config).unwrap();
         assert_eq!(copied, to.join("dot.png"));
         assert_eq!(std::fs::read(&copied).unwrap(), bytes);
         let written = std::fs::read_to_string(&config).unwrap();
@@ -409,6 +492,10 @@ mod tests {
             written.contains(&format!("image = \"{}\"", copied.display())),
             "{written}"
         );
+    }
+
+    fn memfd(bytes: &[u8]) -> File {
+        sealed_copy(bytes, reprisekit::wallpaper::MAX_BYTES).unwrap()
     }
 
     fn png(w: u32, h: u32) -> Vec<u8> {
@@ -427,7 +514,7 @@ mod tests {
         let max = reprisekit::wallpaper::MAX_SIDE;
         let wide = dir.path().join("wide.png");
         std::fs::write(&wide, png(max + 1, 1)).unwrap();
-        assert_eq!(read_picture(&wide), None);
+        assert!(read_picture(&wide).is_none());
         let widest = dir.path().join("widest.png");
         std::fs::write(&widest, png(max, 1)).unwrap();
         assert!(read_picture(&widest).is_some());
@@ -438,11 +525,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let to = dir.path().join("wallpapers");
         let config = dir.path().join("config.toml");
-        let bytes = png(1, 1);
-        let first = install(&to, "a.png", &bytes, &config).unwrap();
-        let again = install(&to, "a.png", &bytes, &config).unwrap();
+        let picture = memfd(&png(1, 1));
+        let first = install(&to, "a.png", &picture, &config).unwrap();
+        let again = install(&to, "a.png", &picture, &config).unwrap();
         assert_ne!(first, again);
-        let last = install(&to, "b.png", &bytes, &config).unwrap();
+        let last = install(&to, "b.png", &picture, &config).unwrap();
         let left: Vec<PathBuf> = std::fs::read_dir(&to)
             .unwrap()
             .map(|e| e.unwrap().path())
@@ -458,9 +545,9 @@ mod tests {
         std::fs::create_dir_all(&to).unwrap();
         let own = to.join("my-own-photo.jpg");
         std::fs::write(&own, b"photo").unwrap();
-        let bytes = png(1, 1);
-        let first = install(&to, "a.png", &bytes, &config).unwrap();
-        let last = install(&to, "b.png", &bytes, &config).unwrap();
+        let picture = memfd(&png(1, 1));
+        let first = install(&to, "a.png", &picture, &config).unwrap();
+        let last = install(&to, "b.png", &picture, &config).unwrap();
         assert!(own.exists(), "my-own-photo.jpg is kept");
         assert!(!first.exists(), "a.png is replaced by b.png");
         assert!(last.exists());
@@ -473,6 +560,7 @@ mod tests {
         let portal = Wallpaper {
             frontend: crate::Frontend::default(),
             read: read_picture,
+            open: Open::default(),
         };
         portal.introspect_to_writer(&mut xml, 0);
         assert!(xml.contains(r#"<method name="SetWallpaperURI">"#), "{xml}");
@@ -533,9 +621,35 @@ mod tests {
 
     static READ: crate::tests::Gate = crate::tests::Gate::new();
 
-    fn read_held_open(_: &Path) -> Option<(Vec<u8>, PathBuf)> {
+    static HELD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    static HELD_OF_A: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// A memfd for a fake read, its inode noted in `held`.
+    fn held_memfd(held: &std::sync::atomic::AtomicU64) -> File {
+        use std::os::unix::fs::MetadataExt;
+        let file = sealed_copy(&b"picture"[..], 64).unwrap();
+        let ino = file.metadata().unwrap().ino();
+        held.store(ino, std::sync::atomic::Ordering::SeqCst);
+        file
+    }
+
+    /// Whether this process still holds the memfd [`held_memfd`] noted in `held`.
+    fn holds_the_memfd(held: &std::sync::atomic::AtomicU64) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        let ino = held.load(std::sync::atomic::Ordering::SeqCst);
+        std::fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .flatten()
+            .any(|fd| {
+                let memfd = std::fs::read_link(fd.path())
+                    .is_ok_and(|l| l.to_string_lossy().starts_with("/memfd:reprise-wallpaper"));
+                memfd && std::fs::metadata(fd.path()).is_ok_and(|m| m.ino() == ino)
+            })
+    }
+
+    fn read_held_open(_: &Path) -> Option<(File, PathBuf)> {
         READ.wait();
-        Some((Vec::new(), PathBuf::from("/tmp/a.png")))
+        Some((held_memfd(&HELD), PathBuf::from("/tmp/a.png")))
     }
 
     #[test]
@@ -548,6 +662,7 @@ mod tests {
             let (client, portal) = crate::tests::portal_with(&bus, |frontend| Wallpaper {
                 frontend,
                 read: read_held_open,
+                open: Open::default(),
             })
             .await;
             let handle = format!("{}1_1/w", crate::REQUEST_PREFIX);
@@ -576,6 +691,7 @@ mod tests {
                 !crate::tests::request_served(&portal, &handle).await,
                 "no Request object stays behind"
             );
+            assert!(!holds_the_memfd(&HELD), "the picture's memfd is closed");
         });
     }
 
@@ -583,12 +699,28 @@ mod tests {
     static READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
     /// The first read waits on [`FIRST_READ`]; every later one finds no picture at once.
-    fn first_read_held_open(_: &Path) -> Option<(Vec<u8>, PathBuf)> {
+    fn first_read_held_open(_: &Path) -> Option<(File, PathBuf)> {
         if READS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
             return None;
         }
         FIRST_READ.wait();
-        Some((Vec::new(), PathBuf::from("/tmp/a.png")))
+        Some((
+            sealed_copy(std::io::empty(), 0).unwrap(),
+            PathBuf::from("/tmp/a.png"),
+        ))
+    }
+
+    async fn set_wallpaper_of(
+        client: &zbus::Connection,
+        portal: &zbus::Connection,
+        handle: &str,
+        app_id: &str,
+        uri: &str,
+    ) -> zbus::Result<zbus::Message> {
+        let none: HashMap<&str, zbus::Variant<'_>> = HashMap::new();
+        let handle = ObjectPath::try_from(handle).unwrap();
+        let body = (handle, app_id, "", uri, none);
+        crate::tests::call_portal(client, portal, "Wallpaper", "SetWallpaperURI", &body).await
     }
 
     async fn set_wallpaper(
@@ -596,10 +728,14 @@ mod tests {
         portal: &zbus::Connection,
         handle: &str,
     ) -> zbus::Result<zbus::Message> {
-        let none: HashMap<&str, zbus::Variant<'_>> = HashMap::new();
-        let handle = ObjectPath::try_from(handle).unwrap();
-        let body = (handle, "org.example.App", "", "file:///tmp/a.png", none);
-        crate::tests::call_portal(client, portal, "Wallpaper", "SetWallpaperURI", &body).await
+        set_wallpaper_of(
+            client,
+            portal,
+            handle,
+            "org.example.App",
+            "file:///tmp/a.png",
+        )
+        .await
     }
 
     #[test]
@@ -612,6 +748,7 @@ mod tests {
             let (client, portal) = crate::tests::portal_with(&bus, |frontend| Wallpaper {
                 frontend,
                 read: first_read_held_open,
+                open: Open::default(),
             })
             .await;
             let handle = format!("{}1_1/twice", crate::REQUEST_PREFIX);
@@ -637,6 +774,141 @@ mod tests {
             FIRST_READ.open();
             assert_eq!(first.await.unwrap(), crate::RESPONSE_CANCELLED);
             assert!(!crate::tests::request_served(&portal, &handle).await);
+        });
+    }
+
+    #[test]
+    fn a_picture_is_read_once_into_a_sealed_memfd() {
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("grey.png");
+        let bytes = png(300, 200);
+        std::fs::write(&path, &bytes).unwrap();
+        let (copy, _) = read_picture(&path).unwrap();
+        let link = std::fs::read_link(fd_path(&copy)).unwrap();
+        assert!(
+            link.to_string_lossy()
+                .starts_with("/memfd:reprise-wallpaper"),
+            "{link:?}"
+        );
+        // SAFETY: `copy` is an open file; F_GET_SEALS takes no argument.
+        let seals = unsafe { libc::fcntl(copy.as_raw_fd(), libc::F_GET_SEALS) };
+        let all = libc::F_SEAL_WRITE | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_SEAL;
+        assert_eq!(seals & all, all, "sealed before it is handed on");
+        assert_eq!(std::fs::read(fd_path(&copy)).unwrap(), bytes);
+        let to = dir.path().join("wallpapers");
+        let config = dir.path().join("config.toml");
+        let installed = install(&to, "grey.png", &copy, &config).unwrap();
+        assert_eq!(std::fs::read(installed).unwrap(), bytes);
+    }
+
+    #[test]
+    fn a_copy_stops_reading_past_its_cap() {
+        use std::io::Read;
+        let cap = 1 << 20;
+        let endless = sealed_copy(std::io::repeat(7), cap);
+        assert_eq!(
+            endless.map(drop).map_err(|e| e.kind()),
+            Err(std::io::ErrorKind::FileTooLarge)
+        );
+        let full = sealed_copy(std::io::repeat(7).take(cap), cap).unwrap();
+        assert_eq!(full.metadata().unwrap().len(), cap);
+    }
+
+    #[test]
+    fn a_file_past_the_desktops_budget_is_refused_unread() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("huge.png");
+        std::fs::write(&path, png(1, 1)).unwrap();
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(reprisekit::wallpaper::MAX_BYTES + 1).unwrap();
+        assert!(read_picture(&path).is_none());
+    }
+
+    #[test]
+    fn an_app_has_one_request_open_and_all_apps_at_most_four() {
+        let open = Open::default();
+        let first = open.take("org.example.A").unwrap();
+        assert!(
+            open.take("org.example.A").is_none(),
+            "a second of A's waits for none"
+        );
+        drop(first);
+        let again = open.take("org.example.A");
+        assert!(again.is_some(), "A asks again once its first request ends");
+        let others: Vec<Turn> = ["B", "C", "D"]
+            .iter()
+            .map(|id| open.take(&format!("org.example.{id}")).unwrap())
+            .collect();
+        assert_eq!(others.len() + 1, MAX_OPEN);
+        assert!(open.take("org.example.E").is_none(), "past MAX_OPEN");
+        drop(again);
+        assert!(open.take("org.example.E").is_some());
+    }
+
+    static HELD_READ: crate::tests::Gate = crate::tests::Gate::new();
+    static OTHER_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    /// `/tmp/held.png` waits on [`HELD_READ`]; any other path counts in [`OTHER_READS`] and is no
+    /// picture.
+    fn held_or_counted(path: &Path) -> Option<(File, PathBuf)> {
+        if path != Path::new("/tmp/held.png") {
+            OTHER_READS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return None;
+        }
+        HELD_READ.wait();
+        Some((held_memfd(&HELD_OF_A), path.to_owned()))
+    }
+
+    #[test]
+    fn a_second_request_of_an_app_with_one_open_is_refused_unread() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let Some(bus) = crate::lockmode::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        zbus::block_on(async {
+            let (client, portal) = crate::tests::portal_with(&bus, |frontend| Wallpaper {
+                frontend,
+                read: held_or_counted,
+                open: Open::default(),
+            })
+            .await;
+            let handle = |n: u32| format!("{}1_1/app{n}", crate::REQUEST_PREFIX);
+            let answer = |reply: zbus::Result<zbus::Message>| {
+                reply.unwrap().body().deserialize::<u32>().unwrap()
+            };
+            let (a, b, other) = ("org.example.A", "org.example.B", "file:///tmp/other.png");
+            let first = zruntime::spawn({
+                let (client, portal, handle) = (client.clone(), portal.clone(), handle(1));
+                async move {
+                    answer(
+                        set_wallpaper_of(&client, &portal, &handle, a, "file:///tmp/held.png")
+                            .await,
+                    )
+                }
+            });
+            assert!(
+                HELD_READ.reached().await,
+                "A's first call reads its picture"
+            );
+            let second = set_wallpaper_of(&client, &portal, &handle(2), a, other).await;
+            assert_eq!(answer(second), crate::RESPONSE_OTHER);
+            assert_eq!(OTHER_READS.load(SeqCst), 0, "A's second call reads nothing");
+            let of_b = set_wallpaper_of(&client, &portal, &handle(3), b, other).await;
+            assert_eq!(answer(of_b), crate::RESPONSE_OTHER);
+            assert_eq!(OTHER_READS.load(SeqCst), 1, "B's call is read meanwhile");
+            let closed = crate::tests::close_request(&client, &portal, &handle(1)).await;
+            assert!(closed.is_ok(), "the Close is answered: {closed:?}");
+            HELD_READ.open();
+            assert_eq!(first.await.unwrap(), crate::RESPONSE_CANCELLED);
+            assert!(
+                !holds_the_memfd(&HELD_OF_A),
+                "the first call's memfd is closed"
+            );
+            let again = set_wallpaper_of(&client, &portal, &handle(4), a, other).await;
+            assert_eq!(answer(again), crate::RESPONSE_OTHER);
+            assert_eq!(OTHER_READS.load(SeqCst), 2, "A's next call is read");
         });
     }
 }

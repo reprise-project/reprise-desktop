@@ -1,13 +1,14 @@
 //! The parent's side of a confined helper program: found beside the running program or installed
 //! in /usr/bin, started with an empty environment, fed its request on stdin, its reply read from
-//! stdout up to a cap, killed at a deadline that runs from the start, and reaped by pid.
+//! stdout up to a cap, killed at a deadline that runs from the start or once its caller stops
+//! it, and reaped by pid.
 
 use std::io::{self, Read};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The most of a helper's reply text, or of its stderr, that reaches a log line or a notice.
 pub const TEXT_MAX: usize = 1024;
@@ -128,6 +129,8 @@ pub struct Ran {
     pub past_cap: bool,
     /// It ran past the deadline and was killed.
     pub late: bool,
+    /// Its caller stopped it ([`run_until`]) and it was killed.
+    pub stopped: bool,
     /// The last [`TEXT_MAX`] bytes of its stderr, [`printable`].
     pub said: String,
 }
@@ -136,11 +139,20 @@ pub struct Ran {
 /// running `deadline` after it started, or writing past `cap`, is killed. It dies with the
 /// calling thread, and starts with every fd above 2 closed and no signal blocked. The error is
 /// the spawn's.
-pub fn run(
+pub fn run(c: Command, input: impl Read, cap: ReplyCap, deadline: Duration) -> io::Result<Ran> {
+    run_until(c, input, cap, deadline, &|| false)
+}
+
+/// How often [`run_until`] asks whether its helper is still wanted.
+const STOP_POLL: Duration = Duration::from_millis(50);
+
+/// [`run`], also killing the helper once `stop` returns true.
+pub fn run_until(
     mut c: Command,
     mut input: impl Read,
     cap: ReplyCap,
     deadline: Duration,
+    stop: &(dyn Fn() -> bool + Sync),
 ) -> io::Result<Ran> {
     c.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -167,17 +179,29 @@ pub fn run(
     let pid = child.id() as libc::pid_t;
     let (stdin, stdout, stderr) = (child.stdin.take(), child.stdout.take(), child.stderr.take());
     let (done, finished) = mpsc::channel::<()>();
-    let (reply, past_cap, said, late) = std::thread::scope(|scope| {
+    let (reply, past_cap, said, (late, stopped)) = std::thread::scope(|scope| {
         let watch = std::thread::Builder::new()
             .name("helper-watch".into())
             .spawn_scoped(scope, move || {
-                let late = finished.recv_timeout(deadline) == Err(mpsc::RecvTimeoutError::Timeout);
-                if late {
+                let end = Instant::now() + deadline;
+                let ended = loop {
+                    let left = end.saturating_duration_since(Instant::now());
+                    if finished.recv_timeout(left.min(STOP_POLL))
+                        != Err(mpsc::RecvTimeoutError::Timeout)
+                    {
+                        break (false, false);
+                    }
+                    let ended = (Instant::now() >= end, stop());
+                    if ended != (false, false) {
+                        break ended;
+                    }
+                };
+                if ended != (false, false) {
                     // SAFETY: a plain signal; the child is reaped only after this thread is
                     // joined, so `pid` is still the child's.
                     unsafe { libc::kill(pid, libc::SIGKILL) };
                 }
-                late
+                ended
             });
         if watch.is_err() {
             // SAFETY: as above, the child is not reaped yet.
@@ -201,15 +225,16 @@ pub fn run(
         }
         exited(pid);
         drop(done);
-        let late = watch.is_ok_and(|w| w.join().unwrap_or(false));
+        let ended = watch.map_or((false, false), |w| w.join().unwrap_or((false, false)));
         let said = said.and_then(|t| t.join().ok()).unwrap_or_default();
-        (reply, past_cap, said, late)
+        (reply, past_cap, said, ended)
     });
     Ok(Ran {
         status: child.wait(),
         reply,
         past_cap,
         late,
+        stopped,
         said,
     })
 }
@@ -320,6 +345,16 @@ mod tests {
         assert!(ran.late);
         assert_eq!(ran.status.unwrap().signal(), Some(libc::SIGKILL));
         assert!(start.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn a_stopped_helper_is_killed_before_its_deadline() {
+        let start = Instant::now();
+        let stop = || start.elapsed() > Duration::from_millis(200);
+        let ran = run_until(sh("exec sleep 30"), io::empty(), cap(16), LONG, &stop).unwrap();
+        assert!(ran.stopped && !ran.late);
+        assert_eq!(ran.status.unwrap().signal(), Some(libc::SIGKILL));
+        assert!(start.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

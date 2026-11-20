@@ -460,7 +460,8 @@ fn request_photos(state: &mut State) {
 }
 
 /// On a thread: pick at random the picture after `current` in `folder` (Pictures when None) and decode
-/// it fitted to `w` x `h`. A file that does not decode is skipped.
+/// it fitted to `w` x `h`. A file that does not decode is skipped, up to 8 tries within one
+/// [`DECODE_DEADLINE`](reprisekit::wallpaper::DECODE_DEADLINE).
 fn decode_next(
     folder: Option<&Path>,
     current: Option<&Path>,
@@ -474,14 +475,41 @@ fn decode_next(
         .as_deref()
         .map(reprisefs::pictures::in_folder)
         .unwrap_or_default();
+    pick_fitted(
+        &list,
+        current,
+        reprisekit::wallpaper::DECODE_DEADLINE,
+        |path, deadline| {
+            let wanted = crate::wallpaper::Wanted {
+                deadline,
+                ..crate::wallpaper::Wanted::WHOLE
+            };
+            crate::wallpaper::load_fit(path, w, h, wanted)
+        },
+    )
+}
+
+/// The first of up to 8 random picks from `list` after `current` that `load` decodes, given what
+/// is left of `budget` as its deadline; no try starts with under a second left.
+fn pick_fitted(
+    list: &[PathBuf],
+    current: Option<&Path>,
+    budget: Duration,
+    mut load: impl FnMut(&Path, Duration) -> Option<Canvas>,
+) -> (Option<PathBuf>, Option<Canvas>) {
+    let by = Instant::now() + budget;
     let mut current = current.map(Path::to_path_buf);
     for _ in 0..list.len().min(8) {
+        let left = by.saturating_duration_since(Instant::now());
+        if left < Duration::from_secs(1) {
+            break;
+        }
         let Some(path) =
-            reprisefs::pictures::next(&list, current.as_deref(), true, reprisefs::pictures::roll())
+            reprisefs::pictures::next(list, current.as_deref(), true, reprisefs::pictures::roll())
         else {
             break;
         };
-        if let Some(picture) = crate::wallpaper::load_fit(&path, w, h) {
+        if let Some(picture) = load(&path, left) {
             return (Some(path), Some(picture));
         }
         current = Some(path);
@@ -493,6 +521,28 @@ fn decode_next(
 mod tests {
     use super::*;
     use smithay::input::pointer::CursorIcon;
+
+    #[test]
+    fn photo_tries_share_one_deadline() {
+        let list: Vec<PathBuf> = (0..8).map(|i| PathBuf::from(format!("{i}.jxl"))).collect();
+        let mut given = Vec::new();
+        let budget = Duration::from_millis(2500);
+        let picked = pick_fitted(&list, None, budget, |_, deadline| {
+            given.push(deadline);
+            std::thread::sleep(Duration::from_millis(800));
+            None
+        });
+        assert_eq!(picked, (None, None));
+        assert_eq!(given.len(), 2, "two tries fit in 2.5 s: {given:?}");
+        assert!(given[0] <= budget && given[1] < given[0], "{given:?}");
+        let mut tries = 0;
+        let picked = pick_fitted(&list, None, budget, |_, _| {
+            tries += 1;
+            (tries == 3).then(|| Canvas::new(1, 1))
+        });
+        assert_eq!(tries, 3);
+        assert!(picked.0.is_some() && picked.1.is_some());
+    }
 
     fn running(kind: Kind) -> SaverState {
         SaverState {

@@ -1,17 +1,24 @@
 //! Wallpaper: decode an image file and compose it into an output's pixels
-//! per the Position setting over the desktop colour.
+//! per the Position setting over the desktop colour. JPEG XL and AVIF decode in the confined
+//! reprise-decode, the rest here with the image crate.
 
 use crate::raster::Canvas;
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
-use reprisekit::wallpaper::MAX_SIDE;
+use reprise_decode_protocol::client::{self, SLACK};
+use reprise_decode_protocol::{Format, Limits, PROGRAM, Request};
+
+use reprisefs::pictures;
+use reprisekit::wallpaper::{DECODE_DEADLINE, MAX_BYTES, MAX_SIDE};
 pub use reprisekit::wallpaper::{Position, compose, composed_known};
 use reprisekit::wallpapers::{self, Builtin};
 
 /// `path` decoded by its content, refused past `MAX_SIDE` a side before it is read whole.
 pub fn decode(path: &Path) -> image::ImageResult<image::DynamicImage> {
-    decode_with(path, MAX_SIDE, image::Limits::default().max_alloc)
+    decode_with(path, MAX_SIDE, Some(MAX_BYTES))
 }
 
 /// `decode` refusing past `max_side` a side and `max_alloc` bytes of decoder memory.
@@ -132,14 +139,18 @@ pub struct Loaded {
     pub cut: Option<Cut>,
 }
 
-/// Decode `path` (JPEG, PNG or BMP) to a premultiplied canvas reduced to `cut`
+/// Decode `path` (JPEG, PNG, BMP, JPEG XL or AVIF) to a premultiplied canvas reduced to `cut`
 /// (see `reduce`), or None with a log line. Under a Stretch, Fill or Fit cut a JPEG decodes at the
 /// smallest DCT scale covering it; Center and Tile show pixels 1:1, so they decode at full size.
-pub fn load(path: &Path, cut: Option<Cut>) -> Option<Loaded> {
+pub fn load(path: &Path, cut: Option<Cut>, wanted: Wanted) -> Option<Loaded> {
+    load_with(path, cut, &Helper::INSTALLED, wanted)
+}
+
+fn load_with(path: &Path, cut: Option<Cut>, helper: &Helper, wanted: Wanted) -> Option<Loaded> {
     if let Some(b) = builtin(path) {
         return Some(draw_builtin(b, cut));
     }
-    let d = decoded_for(path, cut)?;
+    let d = decoded_for(path, cut, helper, wanted)?;
     let mut loaded = reduce(d.w, d.h, |x, y| d.px(x, y), cut);
     if (d.w, d.h) != d.full {
         loaded.cut = cut;
@@ -147,24 +158,25 @@ pub fn load(path: &Path, cut: Option<Cut>) -> Option<Loaded> {
     Some(loaded)
 }
 
-fn decoded_for(path: &Path, cut: Option<Cut>) -> Option<Decoded> {
+fn decoded_for(path: &Path, cut: Option<Cut>, helper: &Helper, wanted: Wanted) -> Option<Decoded> {
+    let full = || decoded(path, helper, wanted);
     match cut {
         Some(c) if c.position == Position::Stretch => {
-            jpeg_scaled(path, |_, _| (c.w, c.h)).or_else(|| decoded(path))
+            jpeg_scaled(path, |_, _| (c.w, c.h)).or_else(full)
         }
         Some(c) if matches!(c.position, Position::Fill | Position::Fit) => {
             let cover = |sw, sh| reprisekit::wallpaper::cover_size(sw, sh, c.w, c.h);
-            jpeg_scaled(path, cover).or_else(|| decoded(path))
+            jpeg_scaled(path, cover).or_else(full)
         }
-        _ => decoded(path),
+        _ => full(),
     }
 }
 
 /// `path` fitted whole into `w` x `h` and centred on black (`saver::fit`). A JPEG decodes at the
 /// smallest DCT scale that still covers the fit, so a large photo never exists at full size.
-pub fn load_fit(path: &Path, w: u32, h: u32) -> Option<Canvas> {
+pub fn load_fit(path: &Path, w: u32, h: u32, wanted: Wanted) -> Option<Canvas> {
     let fit = |sw, sh| reprisekit::saver::fit_size(sw, sh, w, h);
-    let d = jpeg_scaled(path, fit).or_else(|| decoded(path))?;
+    let d = jpeg_scaled(path, fit).or_else(|| decoded(path, &Helper::INSTALLED, wanted))?;
     Some(reprisekit::saver::fit_from(d.w, d.h, w, h, |fw, fh| {
         Canvas::resample_box_from(d.w, d.h, fw, fh, |x, y| d.px(x, y))
     }))
@@ -195,7 +207,137 @@ impl Decoded {
     }
 }
 
-fn decoded(path: &Path) -> Option<Decoded> {
+/// The picture at `path` in the format its content names ([`pictures::Format`]), None with a log
+/// line for a file of no format the desktop shows, or one that does not decode.
+fn decoded(path: &Path, helper: &Helper, wanted: Wanted) -> Option<Decoded> {
+    let mut head = Vec::new();
+    let read = std::fs::File::open(path).and_then(|f| f.take(4096).read_to_end(&mut head));
+    if let Err(e) = read {
+        log::warn!("wallpaper {}: {e}", path.display());
+        return None;
+    }
+    match pictures::Format::of(&head) {
+        Some(pictures::Format::Jxl) => helper.decoded(path, Format::Jxl, wanted),
+        Some(pictures::Format::Avif) => helper.decoded(path, Format::Avif, wanted),
+        Some(_) => image_decoded(path),
+        None => {
+            log::warn!(
+                "wallpaper {}: not a BMP, JPEG, PNG, JPEG XL or AVIF picture",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
+/// How long a decode in reprise-decode may take, and `stop`, which ends it early once it returns
+/// true (a newer wallpaper).
+#[derive(Clone, Copy)]
+pub struct Wanted<'a> {
+    pub deadline: Duration,
+    pub stop: &'a (dyn Fn() -> bool + Sync),
+}
+
+impl Wanted<'static> {
+    /// The whole [`DECODE_DEADLINE`], never stopped.
+    pub const WHOLE: Wanted<'static> = Wanted {
+        deadline: DECODE_DEADLINE,
+        stop: &never,
+    };
+}
+
+fn never() -> bool {
+    false
+}
+
+/// How JPEG XL and AVIF wallpapers reach reprise-decode.
+struct Helper {
+    /// None: the installed one, found beside the compositor or in /usr/bin.
+    program: Option<PathBuf>,
+    /// The most bytes of file, and of decoded RGBA, one wallpaper may take.
+    budget: u64,
+}
+
+/// The first bytes of a file read for its size header before it goes to reprise-decode.
+const HELPER_HEAD: u64 = 64 << 10;
+
+impl Helper {
+    const INSTALLED: Helper = Helper {
+        program: None,
+        budget: MAX_BYTES,
+    };
+
+    /// The `format` picture at `path`, None with a log line naming why.
+    fn decoded(&self, path: &Path, format: Format, wanted: Wanted) -> Option<Decoded> {
+        let name = match format {
+            Format::Jxl => "JPEG XL",
+            Format::Avif => "AVIF",
+        };
+        match self.picture(path, format, wanted) {
+            Ok(d) => Some(d),
+            Err(why) if (wanted.stop)() => {
+                log::debug!("wallpaper {}: {name} not decoded: {why}", path.display());
+                None
+            }
+            Err(why) => {
+                log::warn!("wallpaper {}: {name} not decoded: {why}", path.display());
+                None
+            }
+        }
+    }
+
+    fn picture(&self, path: &Path, format: Format, wanted: Wanted) -> Result<Decoded, String> {
+        let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        let len = file.metadata().map_err(|e| e.to_string())?.len();
+        if len > self.budget {
+            return Err(format!("the file passes {} bytes", self.budget));
+        }
+        let mut head = Vec::new();
+        (&mut file)
+            .take(HELPER_HEAD)
+            .read_to_end(&mut head)
+            .map_err(|e| e.to_string())?;
+        if let Some((w, h)) = reprisefs::imagesize::dimensions(&head) {
+            self.fits(w, h)?;
+        }
+        let program = match &self.program {
+            Some(p) => p.clone(),
+            None => repriseconfine::helper::find(PROGRAM)?,
+        };
+        let limits = Limits {
+            file: self.budget,
+            pixels: self.budget,
+            deadline: wanted.deadline,
+        };
+        let request = Request { format, len };
+        let input = head.as_slice().chain(file);
+        let kill_after = wanted.deadline + SLACK;
+        let p = client::decode(&program, request, input, limits, kill_after, wanted.stop)
+            .map_err(|no| no.why().to_owned())?;
+        let (w, h) = (p.width, p.height);
+        self.fits(w, h)?;
+        Ok(Decoded {
+            w,
+            h,
+            full: (w, h),
+            n: 4,
+            bytes: p.into_rgba(),
+        })
+    }
+
+    /// Refuses a `w` x `h` picture past `MAX_SIDE` a side or the budget.
+    fn fits(&self, w: u32, h: u32) -> Result<(), String> {
+        if w > MAX_SIDE || h > MAX_SIDE {
+            return Err(format!("{w}x{h} passes {MAX_SIDE} a side"));
+        }
+        if u64::from(w) * u64::from(h) * 4 > self.budget {
+            return Err(format!("{w}x{h} passes {} bytes of pixels", self.budget));
+        }
+        Ok(())
+    }
+}
+
+fn image_decoded(path: &Path) -> Option<Decoded> {
     let img = match decode(path) {
         Ok(i) => i,
         Err(e) => {
@@ -460,7 +602,7 @@ mod tests {
             w: 4,
             h: 5,
         };
-        let loaded = load(&path, Some(cut));
+        let loaded = load(&path, Some(cut), Wanted::WHOLE);
         std::fs::remove_file(&path).unwrap();
         let loaded = loaded.unwrap();
         assert_eq!((loaded.image.width, loaded.image.height), (4, 2));
@@ -550,13 +692,15 @@ mod tests {
     fn a_stretched_jpeg_decodes_at_the_smallest_scale_covering_both_sides() {
         let path = written("stretch.jpg", image::ImageFormat::Jpeg);
         let cut = |position, w, h| Some(Cut { position, w, h });
-        let size = |c| decoded_for(&path, c).map(|d| (d.w, d.h, d.full));
+        let size = |c| {
+            decoded_for(&path, c, &Helper::INSTALLED, Wanted::WHOLE).map(|d| (d.w, d.h, d.full))
+        };
         let quarter = size(cut(Position::Stretch, 16, 12));
         let wide = size(cut(Position::Stretch, 30, 6));
         let centred = size(cut(Position::Center, 16, 12));
         let filled = size(cut(Position::Fill, 16, 8));
         let fitted = size(cut(Position::Fit, 30, 6));
-        let loaded = load(&path, cut(Position::Stretch, 16, 12)).unwrap();
+        let loaded = load(&path, cut(Position::Stretch, 16, 12), Wanted::WHOLE).unwrap();
         std::fs::remove_file(&path).unwrap();
         assert_eq!(quarter, Some((16, 12, (64, 48))), "16x12 from 1/4");
         assert_eq!(
@@ -590,7 +734,7 @@ mod tests {
             ("fit.png", image::ImageFormat::Png),
         ] {
             let path = written(name, format);
-            let c = load_fit(&path, 16, 16).unwrap();
+            let c = load_fit(&path, 16, 16, Wanted::WHOLE).unwrap();
             std::fs::remove_file(&path).unwrap();
             assert_eq!((c.width, c.height), (16, 16), "{name}");
             assert_eq!(
@@ -605,5 +749,188 @@ mod tests {
                 "{name}: blue, got {mid:08x}"
             );
         }
+    }
+
+    /// A fresh folder for one test's files.
+    fn folder(test: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("reprise-wallpaper-{}-{test}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A reprise-decode stand-in in `dir` that leaves `ran` behind and runs `body` after reading
+    /// its request.
+    fn fake_helper(dir: &Path, body: &str, budget: u64) -> Helper {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("reprise-decode");
+        let ran = dir.join("ran");
+        let script = format!(
+            "#!/bin/sh\ncat >/dev/null\ntouch '{}'\n{body}\n",
+            ran.display()
+        );
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Helper {
+            program: Some(path),
+            budget,
+        }
+    }
+
+    /// 2x1: opaque red, then half-transparent blue.
+    const PICTURE_REPLY: &str =
+        r"printf '\000\002\000\000\000\001\000\000\000\377\000\000\377\000\000\377\200'";
+
+    /// A JPEG XL codestream's first bytes, stating no size `imagesize` reads.
+    const JXL: &[u8] = &[0xff, 0x0a, 0, 0];
+    const AVIF: &[u8] = b"\0\0\0\x1cftypavif\0\0\0\0avifmif1miaf\0\0\x01\x0ameta";
+
+    #[test]
+    fn jpeg_xl_and_avif_decode_in_the_helper_and_other_formats_here() {
+        let dir = folder("routing");
+        let helper = fake_helper(&dir, PICTURE_REPLY, 1 << 20);
+        let ran = dir.join("ran");
+        for (name, bytes) in [("a.jxl", JXL), ("a.avif", AVIF)] {
+            let path = dir.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            let loaded = load_with(&path, None, &helper, Wanted::WHOLE).expect(name);
+            assert_eq!((loaded.image.width, loaded.image.height), (2, 1), "{name}");
+            assert_eq!(loaded.image.get(0, 0), 0xFFFF_0000, "{name}: opaque red");
+            assert_eq!(
+                loaded.image.get(1, 0),
+                0x8000_0080,
+                "{name}: blue premultiplied"
+            );
+            assert!(ran.exists(), "{name} went to the helper");
+            std::fs::remove_file(&ran).unwrap();
+        }
+        let png = dir.join("a.png");
+        image::RgbImage::from_pixel(3, 2, image::Rgb([0, 255, 0]))
+            .save(&png)
+            .unwrap();
+        let loaded = load_with(&png, None, &helper, Wanted::WHOLE).unwrap();
+        assert_eq!(loaded.image.get(0, 0), 0xFF00_FF00);
+        assert!(!ran.exists(), "a PNG decodes here");
+        let named_jxl = dir.join("b.jxl");
+        std::fs::copy(&png, &named_jxl).unwrap();
+        assert!(load_with(&named_jxl, None, &helper, Wanted::WHOLE).is_some());
+        assert!(!ran.exists(), "a file goes by its content, not its name");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_helper_decode_leaves_no_wallpaper_and_says_why() {
+        let dir = folder("failed");
+        let path = dir.join("a.jxl");
+        std::fs::write(&path, JXL).unwrap();
+        let missing = Helper {
+            program: Some(dir.join("none")),
+            budget: 1 << 20,
+        };
+        assert!(load_with(&path, None, &missing, Wanted::WHOLE).is_none());
+        let why = missing
+            .picture(&path, Format::Jxl, Wanted::WHOLE)
+            .err()
+            .unwrap();
+        assert!(why.starts_with("cannot start"), "{why}");
+        for (body, said) in [
+            ("printf '\\002cut short'", "cut short"),
+            ("printf '\\003another version'", "another version"),
+            ("echo bad >&2; exit 1", "without a reply"),
+            ("kill -SYS $$", "seccomp"),
+            ("printf '\\001'", "past 1048576 bytes of pixels"),
+        ] {
+            let helper = fake_helper(&dir, body, 1 << 20);
+            assert!(
+                load_with(&path, None, &helper, Wanted::WHOLE).is_none(),
+                "{body}"
+            );
+            let why = helper
+                .picture(&path, Format::Jxl, Wanted::WHOLE)
+                .err()
+                .unwrap();
+            assert!(why.contains(said), "{body}: {why}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_helper_decode_stops_once_its_picture_is_no_longer_wanted() {
+        let dir = folder("stopped");
+        let path = dir.join("a.jxl");
+        std::fs::write(&path, JXL).unwrap();
+        let helper = fake_helper(&dir, "exec sleep 30", 1 << 20);
+        let start = std::time::Instant::now();
+        let stop = || start.elapsed() > Duration::from_millis(200);
+        let wanted = Wanted {
+            deadline: DECODE_DEADLINE,
+            stop: &stop,
+        };
+        assert!(load_with(&path, None, &helper, wanted).is_none());
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "stopped well before its 60 s deadline"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_file_of_no_format_the_desktop_shows_is_refused_undecoded() {
+        let dir = folder("formats");
+        let helper = fake_helper(&dir, PICTURE_REPLY, 1 << 20);
+        for (name, bytes) in [
+            ("a.gif", &b"GIF89a\x01\0\x01\0\0\0\0;"[..]),
+            ("a.webp", b"RIFF\x1a\0\0\0WEBPVP8L\x0d\0\0\0\x2f\0\0\0\0"),
+        ] {
+            let path = dir.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            assert!(
+                load_with(&path, None, &helper, Wanted::WHOLE).is_none(),
+                "{name}"
+            );
+            assert!(!dir.join("ran").exists(), "{name} never reaches the helper");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_wallpaper_past_the_budget_is_refused() {
+        let dir = folder("budget");
+        let ran = dir.join("ran");
+        // A codestream whose SizeHeader states 20000x20000.
+        let huge = dir.join("huge.jxl");
+        std::fs::write(&huge, [0xff, 0x0a, 0xfc, 0x70, 0x22, 0x01]).unwrap();
+        let helper = fake_helper(&dir, PICTURE_REPLY, u64::MAX);
+        let why = helper
+            .picture(&huge, Format::Jxl, Wanted::WHOLE)
+            .err()
+            .unwrap();
+        assert_eq!(why, "20000x20000 passes 16384 a side");
+        assert!(
+            !ran.exists(),
+            "a stated size past the limits is refused unsent"
+        );
+        let small = dir.join("a.jxl");
+        std::fs::write(&small, JXL).unwrap();
+        let tight = fake_helper(&dir, PICTURE_REPLY, 7);
+        assert!(
+            load_with(&small, None, &tight, Wanted::WHOLE).is_none(),
+            "8 bytes of pixels past 7"
+        );
+        assert!(ran.exists());
+        std::fs::remove_file(&ran).unwrap();
+        let tiny = fake_helper(&dir, PICTURE_REPLY, 3);
+        let why = tiny
+            .picture(&small, Format::Jxl, Wanted::WHOLE)
+            .err()
+            .unwrap();
+        assert_eq!(why, "the file passes 3 bytes");
+        assert!(!ran.exists(), "a file past the budget is not sent");
+        assert_eq!(
+            Helper::INSTALLED.budget,
+            image::Limits::default().max_alloc.unwrap()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

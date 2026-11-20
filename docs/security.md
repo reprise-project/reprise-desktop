@@ -699,8 +699,15 @@ What a consent prompt remembers, and where:
   as focused.
 - **Wallpaper:** an app with `yes` in table `wallpaper` sets a picture it
   can read itself without a prompt; one with `no` is refused. Otherwise
-  Reprise's prompt shows the bytes it will install, and Remember keeps an
-  Allow. A Deny is never kept.
+  Reprise's prompt shows the bytes it will install, from a sealed copy in
+  memory that goes with the request, and Allow stays greyed until they show:
+  a picture the desktop would not show (unreadable, past its 16384 a side or
+  512 MiB of file or pixels, a JPEG XL or AVIF past its 60 s) cannot be
+  allowed. Remember keeps an Allow. A Deny is never kept. Only a BMP, JPEG,
+  PNG, JPEG XL or AVIF is taken, the formats the desktop shows; a WebP, GIF
+  or TIFF is refused. An app has one wallpaper request open at a time and
+  all apps four, so the portal holds at most four of those copies; a request
+  past that fails at once, unread.
 - **InputCapture:** asks each session. Remember keeps an Allow in table
   `input-capture` with the devices granted. The grant goes by app id
   alone, so an unsandboxed program naming itself after a remembered app gets
@@ -846,13 +853,15 @@ ends, so stop the share first.
   bubblewrap: new namespaces, `/usr` and the input file read-only, a scratch
   folder its one writable place, no home, session bus or display socket, a
   memory cap and a deadline. JPEG XL and AVIF thumbnails, Explorer's Space
-  preview and the Account prompt's picture decode in the same jail, and the
-  portal's other prompts never decode JPEG XL or AVIF. Without bubblewrap none of
+  preview and the Account prompt's picture decode in the same jail, and of the
+  portal's other prompts only the Wallpaper prompt decodes JPEG XL or AVIF, in
+  `reprise-decode` below. Without bubblewrap none of
   these runs and the file keeps its icon. The other built-in decoders run in the
   process showing the folder, and one that panics marks its file failed.
 - **Picture decoder.** No program decodes a JPEG XL or an AVIF itself:
-  Image Viewer, Paint, Settings, User Accounts and the jailed thumbnails
-  each start `reprise-decode`, the one program that links the decoders
+  Image Viewer, Paint, Settings, User Accounts, the Wallpaper prompt, the
+  compositor for a wallpaper or a Photos screen saver picture, and the jailed
+  thumbnails each start `reprise-decode`, the one program that links the decoders
   (jxl-rs, a Rust decoder whose unsafe code sits in a few modules and its
   SIMD, not libjxl; and rav1d, a Rust port of dav1d with much unsafe code
   of its own and dav1d's assembly, which runs in this confined process

@@ -8,7 +8,38 @@ use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
 /// The extensions of the formats the compositor decodes a wallpaper from.
-pub const EXTS: [&str; 5] = ["bmp", "dib", "jpg", "jpeg", "png"];
+pub const EXTS: [&str; 7] = ["bmp", "dib", "jpg", "jpeg", "png", "jxl", "avif"];
+
+/// A format the compositor decodes a wallpaper from, told by content: BMP, JPEG and PNG in the
+/// image crate, JPEG XL and AVIF in reprise-decode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    Bmp,
+    Jpeg,
+    Png,
+    Jxl,
+    Avif,
+}
+
+impl Format {
+    /// The format `head`, a file's first bytes, starts; None for one the compositor cannot show.
+    pub fn of(head: &[u8]) -> Option<Format> {
+        use crate::imagesize::{is_avif, is_jxl};
+        if is_jxl(head) {
+            Some(Format::Jxl)
+        } else if is_avif(head) {
+            Some(Format::Avif)
+        } else if head.starts_with(b"\x89PNG\r\n\x1a\n") {
+            Some(Format::Png)
+        } else if head.starts_with(&[0xff, 0xd8, 0xff]) {
+            Some(Format::Jpeg)
+        } else if head.starts_with(b"BM") {
+            Some(Format::Bmp)
+        } else {
+            None
+        }
+    }
+}
 
 /// Whether `p` has one of [`EXTS`], in any case.
 pub fn is_picture(p: &Path) -> bool {
@@ -110,6 +141,25 @@ pub fn roll() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wallpaper_format_is_told_by_content() {
+        let avif = b"\0\0\0\x1cftypavif\0\0\0\0avifmif1miaf";
+        for (head, want) in [
+            (&b"\x89PNG\r\n\x1a\n\0"[..], Some(Format::Png)),
+            (&[0xff, 0xd8, 0xff, 0xe0][..], Some(Format::Jpeg)),
+            (b"BM\0\0", Some(Format::Bmp)),
+            (&[0xff, 0x0a, 0, 0][..], Some(Format::Jxl)),
+            (crate::imagesize::JXL_CONTAINER, Some(Format::Jxl)),
+            (avif, Some(Format::Avif)),
+            (b"GIF89a\0\0", None),
+            (b"RIFF\0\0\0\0WEBPVP8 ", None),
+            (b"II*\0", None),
+            (b"", None),
+        ] {
+            assert_eq!(Format::of(head), want, "{head:?}");
+        }
+    }
 
     #[test]
     fn names_sort_ignoring_case_with_numbers_by_value() {
