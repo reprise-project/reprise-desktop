@@ -207,6 +207,8 @@ fn ci_installs_every_pkgbuild_dependency() {
         for dep in deps(&text, "depends")
             .into_iter()
             .chain(deps(&text, "makedepends"))
+            // A soname entry is provided by the package listed beside it.
+            .filter(|dep| !dep.ends_with(".so"))
         {
             for (what, installed) in &lists {
                 assert!(
