@@ -11,7 +11,7 @@ arch=('x86_64')
 url="https://github.com/reprise-project/reprise-desktop"
 license=('GPL-3.0-or-later')
 depends=('seatd' 'libseat.so' 'systemd' 'systemd-libs' 'libinput>=1.26' 'libinput.so' 'libdrm' 'mesa' 'libglvnd' 'libdisplay-info' 'libdisplay-info.so' 'libxkbcommon' 'xorg-xwayland' 'freetype2' 'fontconfig' 'pam' 'libpam.so' 'libxcrypt' 'libcrypt.so' 'dbus>=1.15' 'pipewire>=1:1.4' 'zlib' 'ffmpeg' 'libavcodec.so' 'libavfilter.so' 'libavformat.so' 'libavutil.so' 'libswscale.so' 'libjxl>=0.11.1' 'libjxl.so' 'libjxl_threads.so')
-makedepends=('cargo' 'clang' 'pkgconf' 'git' 'python')
+makedepends=('cargo' 'clang' 'nasm' 'pkgconf' 'git' 'python')
 optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for'
             'ttf-dejavu: fallback font' 'noto-fonts-cjk: Chinese, Japanese and Korean text'
             'wqy-bitmapfont: crisp Chinese text in Reprise'\''s own text with antialias = false'

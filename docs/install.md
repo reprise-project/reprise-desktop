@@ -268,6 +268,8 @@ user's server.
 ### To build
 
 - Rust, clang, pkg-config and git
+- nasm 2.14 or later, which assembles the AV1 decoder's (`rav1d`) x86-64
+  assembly at build time
 - cargo-nextest 0.9.149 or later, to run the tests (`cargo test` works
   without it)
 - Reprise Terminal's emulation comes from the `alacritty_terminal` crate,
@@ -311,8 +313,8 @@ user's server.
   `libreprise_encode_jxl.so` links them; `.jxl` pictures open without libjxl,
   through `reprise-decode` and the pure-Rust `jxl` crate
 - AVIF pictures open through `reprise-decode` with the `rav1d` crate, a Rust
-  port of the dav1d AV1 decoder, built in without its assembly, so the build
-  needs no nasm and AVIF needs no runtime library
+  port of the dav1d AV1 decoder, built in with dav1d's x86-64 assembly; AVIF
+  needs no runtime library
 
 ### To run
 

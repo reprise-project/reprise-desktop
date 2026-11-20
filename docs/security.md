@@ -855,7 +855,8 @@ ends, so stop the share first.
   each start `reprise-decode`, the one program that links the decoders
   (jxl-rs, a Rust decoder whose unsafe code sits in a few modules and its
   SIMD, not libjxl; and rav1d, a Rust port of dav1d with much unsafe code
-  of its own, built without dav1d's assembly), and get the picture's pixels
+  of its own and dav1d's assembly, which runs in this confined process
+  only), and get the picture's pixels
   back; the jailed ones stream the file to it from the open file. The AVIF
   container is read by Reprise's own safe Rust before rav1d sees a byte,
   and rav1d decodes on the one thread with its frame size held to the
