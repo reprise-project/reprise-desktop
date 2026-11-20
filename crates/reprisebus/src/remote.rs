@@ -1,5 +1,6 @@
 //! Reprise's Remote Desktop server, `reprise-rdp`, from a program on the session bus: what it
-//! reports, ending its connections, a new certificate, and turning its user unit on or off.
+//! reports, ending its connections, a new certificate, turning its user unit on or off, and why
+//! that unit failed.
 
 use crate::{Props, prop};
 use zbus::Connection;
@@ -14,6 +15,13 @@ const SYSTEMD: &str = "org.freedesktop.systemd1";
 const SYSTEMD_PATH: &str = "/org/freedesktop/systemd1";
 const MANAGER: &str = "org.freedesktop.systemd1.Manager";
 const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
+/// The server's exit while another process holds [`NAME`]: [`UNIT`]'s `RestartPreventExitStatus=`
+/// keeps systemd from restarting it into the start limit, which would fail the hand-over socket.
+pub const NAME_HELD: u8 = 75;
+/// The dynamic loader's exit status when a library does not load.
+const LIBRARY_MISSING: i32 = 127;
+/// The summary of [`tell_failed`]'s notice.
+const FAILED_SUMMARY: &str = "Remote Desktop could not start";
 /// [`Error::NoClient`]'s name.
 pub const NO_CLIENT: &str = "org.reprise.RemoteDesktop.Error.NoClient";
 
@@ -68,6 +76,114 @@ pub fn from_props(props: &Props) -> Status {
         encoders: prop(props, "Encoders").unwrap_or_default(),
         fingerprint: text("Fingerprint"),
         thumbprint: text("Thumbprint"),
+    }
+}
+
+/// How the server's last run ended, as systemd tells it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ended {
+    /// The service's `Result`: `success`, `exit-code`, `signal`, `start-limit-hit`, ...
+    pub result: String,
+    pub exit: Exit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Exit {
+    Status(i32),
+    Signal,
+    /// systemd did not say how it ended.
+    Unknown,
+}
+
+impl Ended {
+    /// From the `$MONITOR_SERVICE_RESULT`, `$MONITOR_EXIT_CODE` and `$MONITOR_EXIT_STATUS` that
+    /// systemd gives an `OnFailure=` unit, as `var` reads them.
+    pub fn from_monitor(var: impl Fn(&str) -> Option<String>) -> Ended {
+        let status = var("MONITOR_EXIT_STATUS");
+        let exit = match var("MONITOR_EXIT_CODE").as_deref() {
+            Some("exited") => status
+                .and_then(|s| s.parse().ok())
+                .map_or(Exit::Unknown, Exit::Status),
+            Some("killed" | "dumped") => Exit::Signal,
+            _ => Exit::Unknown,
+        };
+        Ended {
+            result: var("MONITOR_SERVICE_RESULT").unwrap_or_default(),
+            exit,
+        }
+    }
+
+    /// From the service's `Result`, `ExecMainCode` (a `CLD_*` code, 0 before any run) and
+    /// `ExecMainStatus`.
+    pub fn from_main(result: String, code: i32, status: i32) -> Ended {
+        let exit = match code {
+            libc::CLD_EXITED => Exit::Status(status),
+            libc::CLD_KILLED | libc::CLD_DUMPED => Exit::Signal,
+            _ => Exit::Unknown,
+        };
+        Ended { result, exit }
+    }
+
+    /// Why the server is off, in plain words; None for an end not to tell of: a clean stop, or
+    /// [`NAME_HELD`].
+    pub fn why(&self) -> Option<String> {
+        match self.exit {
+            _ if self.result == "success" => None,
+            Exit::Status(s) if s == i32::from(NAME_HELD) => None,
+            Exit::Status(LIBRARY_MISSING) => Some("A library it needs did not load.".into()),
+            Exit::Status(s) => Some(format!("It stopped with status {s}.")),
+            Exit::Signal | Exit::Unknown => Some("It kept crashing.".into()),
+        }
+    }
+}
+
+/// How [`UNIT`] ended while systemd holds it failed; None while it runs, starts or is off.
+pub fn failed() -> Option<Ended> {
+    let read = || -> zbus::Result<Option<Ended>> {
+        let conn = crate::session()?;
+        let unit = crate::units::unit_interface(&conn, UNIT, "Unit")?;
+        if crate::wait(unit.get_property::<String>("ActiveState"))? != "failed" {
+            return Ok(None);
+        }
+        let service = crate::units::unit_interface(&conn, UNIT, "Service")?;
+        Ok(Some(Ended::from_main(
+            crate::wait(service.get_property("Result"))?,
+            crate::wait(service.get_property("ExecMainCode"))?,
+            crate::wait(service.get_property("ExecMainStatus"))?,
+        )))
+    };
+    read().unwrap_or_else(|e| {
+        log::debug!("{UNIT}: {e}");
+        None
+    })
+}
+
+/// The body of the notice for `ended`, unless the user turned the server off (`enabled` false),
+/// the session is ending (`session` false) or [`Ended::why`] has nothing to tell.
+pub fn failed_notice(ended: &Ended, enabled: bool, session: bool) -> Option<String> {
+    let why = ended.why().filter(|_| enabled && session)?;
+    Some(format!("{why} The journal has the details."))
+}
+
+/// The `OnFailure=` handler of [`UNIT`] (data/systemd/reprise-rdp-failed.service): a notice
+/// saying why the server is off, per [`failed_notice`]. The process's exit status.
+pub fn tell_failed() -> i32 {
+    let ended = Ended::from_monitor(|k| std::env::var(k).ok());
+    let enabled = enabled();
+    let session = crate::units::session_running();
+    let Some(body) = failed_notice(&ended, enabled, session) else {
+        log::info!(
+            "{UNIT} stopped ({ended:?}); no notice (enabled: {enabled}, session running: {session})"
+        );
+        return 0;
+    };
+    log::warn!("{UNIT} could not start ({ended:?}); `journalctl --user -u {UNIT}` has its output");
+    match crate::notify::notify("Remote Desktop", "reprise", FAILED_SUMMARY, &body) {
+        Ok(()) => 0,
+        Err(e) => {
+            log::warn!("{FAILED_SUMMARY}: no notice: {e}");
+            1
+        }
     }
 }
 
@@ -270,6 +386,70 @@ mod tests {
 
     fn owned(v: Variant<'_>) -> OwnedVariant {
         v.try_to_owned().unwrap()
+    }
+
+    fn monitor(result: &str, code: &str, status: &str) -> Ended {
+        let env = HashMap::from([
+            ("MONITOR_SERVICE_RESULT", result),
+            ("MONITOR_EXIT_CODE", code),
+            ("MONITOR_EXIT_STATUS", status),
+        ]);
+        Ended::from_monitor(|k| env.get(k).map(|v| v.to_string()))
+    }
+
+    fn notice(ended: &Ended) -> Option<String> {
+        failed_notice(ended, true, true)
+    }
+
+    #[test]
+    fn a_library_that_did_not_load_is_named_as_the_reason() {
+        assert_eq!(
+            notice(&monitor("start-limit-hit", "exited", "127")).as_deref(),
+            Some("A library it needs did not load. The journal has the details.")
+        );
+        assert_eq!(
+            notice(&Ended::from_main("exit-code".into(), libc::CLD_EXITED, 127)).as_deref(),
+            Some("A library it needs did not load. The journal has the details.")
+        );
+    }
+
+    #[test]
+    fn another_exit_status_is_named_by_its_number() {
+        assert_eq!(
+            notice(&monitor("start-limit-hit", "exited", "1")).as_deref(),
+            Some("It stopped with status 1. The journal has the details.")
+        );
+    }
+
+    #[test]
+    fn a_signal_or_a_start_limit_without_an_exit_reads_as_crashing() {
+        let crashing = Some("It kept crashing. The journal has the details.");
+        assert_eq!(
+            notice(&monitor("start-limit-hit", "dumped", "SEGV")).as_deref(),
+            crashing
+        );
+        assert_eq!(
+            notice(&monitor("signal", "killed", "KILL")).as_deref(),
+            crashing
+        );
+        let limit = Ended::from_monitor(|k| {
+            (k == "MONITOR_SERVICE_RESULT").then(|| "start-limit-hit".to_string())
+        });
+        assert_eq!(limit.exit, Exit::Unknown);
+        assert_eq!(notice(&limit).as_deref(), crashing);
+        assert_eq!(
+            Ended::from_main("signal".into(), libc::CLD_KILLED, libc::SIGSEGV).exit,
+            Exit::Signal
+        );
+    }
+
+    #[test]
+    fn no_notice_for_a_held_name_a_clean_stop_a_server_turned_off_or_an_ending_session() {
+        assert_eq!(notice(&monitor("exit-code", "exited", "75")), None);
+        assert_eq!(notice(&Ended::from_main("success".into(), 0, 0)), None);
+        let library = monitor("start-limit-hit", "exited", "127");
+        assert_eq!(failed_notice(&library, false, true), None);
+        assert_eq!(failed_notice(&library, true, false), None);
     }
 
     #[test]

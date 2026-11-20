@@ -143,6 +143,27 @@ fn remote_label(a: &SettingsApp, id: &str) -> String {
 }
 
 #[test]
+fn a_remote_desktop_server_whose_unit_failed_says_why_on_the_page() {
+    let mut a = app("remote");
+    let failed = remotehost::Remote {
+        enabled: true,
+        stopped: Some("A library it needs did not load.".into()),
+        ..remotehost::Remote::default()
+    };
+    remote_read(&mut a, failed, None);
+    assert_eq!(
+        remote_label(&a, "status"),
+        "Not running. A library it needs did not load."
+    );
+    let starting = remotehost::Remote {
+        enabled: true,
+        ..remotehost::Remote::default()
+    };
+    remote_read(&mut a, starting, None);
+    assert_eq!(remote_label(&a, "status"), "Not answering");
+}
+
+#[test]
 fn the_remote_desktop_page_follows_what_the_server_says() {
     let mut a = app("remote");
     let status = reprisebus::remote::Status {

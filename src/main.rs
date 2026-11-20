@@ -268,6 +268,10 @@ struct Cli {
     /// starts it)
     #[arg(long, hide = true, value_name = "USER")]
     rdp_password_conversation: Option<String>,
+    /// Tell the user why the Remote Desktop server is off and exit (its unit's `OnFailure=`
+    /// handler, data/systemd/reprise-rdp-failed.service, starts it)
+    #[arg(long, hide = true)]
+    remote_desktop_failed: bool,
     /// Start a new session after the last one crashed, the crashes of this login so far (the
     /// restart passes it; see `crash`)
     #[arg(long, hide = true, value_name = "CRASHES")]
@@ -315,6 +319,9 @@ fn main() {
             user,
             lockfinger::PasswordFor::RemoteDesktop,
         ));
+    }
+    if cli.remote_desktop_failed {
+        std::process::exit(reprisebus::remote::tell_failed());
     }
     crash::install(cli.after_crash);
     if let Err(e) = fdlimit::raise() {

@@ -311,6 +311,22 @@ fn both_pkgbuilds_install_every_dbus_activation_file_and_its_unit() {
     }
 }
 
+#[test]
+fn both_pkgbuilds_install_every_systemd_unit() {
+    let units = file_names("data/systemd");
+    assert!(units.contains("reprise-rdp-failed.service"), "{units:?}");
+    for path in PKGBUILDS {
+        let text = std::fs::read_to_string(root().join(path)).expect("PKGBUILD reads");
+        for unit in &units {
+            let install = format!("install -Dm644 data/systemd/{unit} ");
+            assert!(
+                text.lines().any(|l| l.trim().starts_with(&install)),
+                "{path} installs {unit}"
+            );
+        }
+    }
+}
+
 /// Every double-quoted string in `js`.
 fn quoted(js: &str) -> BTreeSet<&str> {
     js.split('"').skip(1).step_by(2).collect()

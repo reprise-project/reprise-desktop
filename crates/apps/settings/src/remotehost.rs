@@ -13,12 +13,14 @@ const POLL: Duration = Duration::from_secs(2);
 /// How long a switch turned on waits for the server to answer before showing what it found.
 const START_WAIT: Duration = Duration::from_secs(2);
 
-/// What the page shows: the unit's switch, what the server reports, this computer's address,
-/// and whether the login manager runs remote logins, with its certificate's fingerprint.
+/// What the page shows: the unit's switch, what the server reports, why its unit failed, this
+/// computer's address, and whether the login manager runs remote logins, with its certificate's
+/// fingerprint.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Remote {
     pub(crate) enabled: bool,
     pub(crate) status: Option<Status>,
+    pub(crate) stopped: Option<String>,
     pub(crate) address: Option<String>,
     pub(crate) manager: bool,
     pub(crate) machine_fingerprint: Option<pages::Prints>,
@@ -48,10 +50,16 @@ pub(crate) fn disconnect(page: &Form, status: Option<&Status>) -> Option<Act> {
 fn read() -> Remote {
     let status = remote::status();
     let manager = reprisebus::login::manager_runs();
+    let enabled = remote::enabled();
+    let stopped = (enabled && status.is_none())
+        .then(remote::failed)
+        .flatten()
+        .and_then(|e| e.why());
     Remote {
-        enabled: remote::enabled(),
+        enabled,
         address: status.as_ref().and_then(|_| address()),
         status,
+        stopped,
         manager,
         machine_fingerprint: manager.then(loginhost::machine_fingerprint).flatten(),
     }
@@ -210,5 +218,8 @@ impl SettingsApp {
             keep.as_deref(),
             machine.as_ref(),
         );
+        if let (Some(why), None) = (&r.stopped, &machine) {
+            pages::show_remote_stopped(&mut self.sheet.pages[at], why);
+        }
     }
 }

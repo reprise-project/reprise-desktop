@@ -142,6 +142,7 @@ package() {
   install -Dm644 data/sysusers.d/reprise-login.conf "$pkgdir/usr/lib/sysusers.d/reprise-login.conf"
   install -Dm644 data/tmpfiles.d/reprise-login.conf "$pkgdir/usr/lib/tmpfiles.d/reprise-login.conf"
   install -Dm644 data/systemd/app-org.reprise.RemoteDesktop.service "$pkgdir/usr/lib/systemd/user/app-org.reprise.RemoteDesktop.service"
+  install -Dm644 data/systemd/reprise-rdp-failed.service "$pkgdir/usr/lib/systemd/user/reprise-rdp-failed.service"
   install -Dm644 data/apps/org.reprise.RemoteDesktop.desktop "$pkgdir/usr/share/applications/org.reprise.RemoteDesktop.desktop"
   install -Dm755 target/release/reprise-portal "$pkgdir/usr/bin/reprise-portal"
   install -Dm644 data/portal/reprise.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/reprise.portal"

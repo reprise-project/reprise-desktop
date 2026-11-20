@@ -151,7 +151,7 @@ fn main() -> ExitCode {
                 control::NAME
             ),
         }
-        return ExitCode::from(NAME_HELD);
+        return ExitCode::from(reprisebus::remote::NAME_HELD);
     }
     shutdown::follow(shutdowns);
     let identity = identity.map(watch::channel);
@@ -324,10 +324,6 @@ fn run_to_end(
     sink::settle();
     code
 }
-
-/// The exit when another process holds the bus name: the units' `RestartPreventExitStatus=` keeps
-/// systemd from restarting the server into the start limit, which would fail the hand-over socket.
-const NAME_HELD: u8 = 75;
 
 /// The only peer the hand-over socket takes: reprise-login runs as root.
 const ROOT: u32 = 0;
@@ -655,7 +651,7 @@ mod tests {
                 .filter_map(|code| code.parse().ok())
                 .collect();
             assert!(
-                prevented.contains(&super::NAME_HELD),
+                prevented.contains(&reprisebus::remote::NAME_HELD),
                 "{unit}: {prevented:?}"
             );
         }
