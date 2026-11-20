@@ -5,6 +5,10 @@
 //! past [`heap_budget`] a large request gets null, which jxl-rs answers with an out-of-memory
 //! error. The image and each frame may also state no more samples (pixels times channels) than
 //! the budget's RGBA bytes, and Level 5's limits stay on.
+//!
+//! jxl-rs copies the input it is handed into its section buffers and frees a group's once the
+//! group is drawn, so the file goes in [`CHUNK`]s and is never held whole. That leaves the room
+//! for 16-bit samples of a PQ, HLG or linear picture, which band at 8 bits once turned to sRGB.
 
 use std::time::{Duration, Instant};
 
@@ -18,8 +22,16 @@ use crate::colour::ToSrgb;
 use crate::{Refused, Rgba, heapcap};
 
 /// What a decode may hold at once, per byte of the pixel budget: an image in XYB at the budget
-/// takes about 2.3 times its RGBA, and a reference frame 4 more (f32 a channel).
+/// takes its samples (twice its RGBA at 16 bits) and jxl-rs's own heap ([`OWN_HEAP`]), and a
+/// reference frame 4 more (f32 a channel).
 const HEAP_PER_PIXEL_BYTE: u64 = 3;
+
+/// The most input handed to jxl-rs at once.
+const CHUNK: usize = 256 << 10;
+
+/// What jxl-rs holds of its own while drawing a picture, past half the picture's RGBA: its
+/// tables, row buffers and a chunk of input, in bytes.
+const OWN_HEAP: u64 = 8 << 20;
 
 /// The heap a decode may hold under a pixel budget of `pixel_bytes`.
 pub fn heap_budget(pixel_bytes: u64) -> u64 {
@@ -48,12 +60,14 @@ fn decode(bytes: &[u8], pixel_bytes: u64, time_limit: Duration) -> Result<Rgba, 
         deadline: Instant::now() + time_limit,
         late: false,
     };
-    let mut input = bytes;
+    let (mut at, mut window) = (0, CHUNK);
     let mut out: Option<Out> = None;
     loop {
         if clock.check().is_err() {
             return Err(Refused::Time);
         }
+        let end = bytes.len().min(at + window);
+        let mut input = &bytes[at..end];
         let left = input.len();
         let mut bufs = out.as_mut().map(|o| {
             let (w, h) = o.size;
@@ -65,11 +79,14 @@ fn decode(bytes: &[u8], pixel_bytes: u64, time_limit: Duration) -> Result<Rgba, 
             bufs.as_mut().map(|b| &mut b[..]),
             Some(&mut clock),
         );
+        at = end - input.len();
         match event.map_err(|e| refusal(e, clock.late))? {
             Event::BasicInfo => out = Some(Out::start(&mut dec, pixel_bytes)?),
             Event::FrameHeader => {}
             Event::FrameComplete { .. } => return out.ok_or(Refused::Broken).map(Out::finish),
-            Event::NeedMoreInput { .. } if input.len() < left => {}
+            Event::NeedMoreInput { .. } if input.len() < left => window = CHUNK,
+            // Nothing read: jxl-rs wants more than the window holds at once.
+            Event::NeedMoreInput { .. } if end < bytes.len() => window *= 2,
             Event::NeedMoreInput { .. } | Event::Complete => return Err(Refused::Broken),
         }
     }
@@ -128,10 +145,12 @@ impl Out {
             Some(JxlColorProfile::Simple(enc)) if xyb => ToSrgb::from(enc, intensity)?,
             _ => None,
         };
-        // 8-bit PQ, HLG or linear samples band once turned to sRGB. 16-bit ones cost a byte more
-        // per byte of RGBA, so a picture over half the pixel budget keeps 8 bits within the heap
-        // budget.
-        let room = (w as u64).saturating_mul(h as u64).saturating_mul(8) <= pixel_bytes;
+        // 16-bit samples are turned to RGBA in place. A picture too small beside jxl-rs's own
+        // heap for them to fit keeps 8 bits.
+        let channels = if grey { 2 } else { 4 };
+        let pixels = (w as u64).saturating_mul(h as u64);
+        let deep = pixels * channels * 2;
+        let room = deep + pixels * 2 + OWN_HEAP <= heap_budget(pixel_bytes);
         let to_srgb = match to_srgb {
             Some(t) if t.bands_at_8_bits() && room => Some(t.at_max(u16::MAX, intensity)?),
             other => other,
@@ -146,7 +165,7 @@ impl Out {
         }
         let out = Out {
             size: (w, h),
-            channels: if grey { 2 } else { 4 },
+            channels: channels as usize,
             px: Vec::new(),
             to_srgb,
         };
@@ -338,12 +357,34 @@ mod tests {
         }
         .encode();
         let got = first_frame(&bytes, 1 << 24, NO_HURRY).unwrap().px;
-        let codes: std::collections::BTreeSet<u8> =
-            got[..w as usize * 4].iter().step_by(4).copied().collect();
-        let top = codes.last().copied().unwrap_or(0);
+        assert_every_code_to_the_top(&got[..w as usize * 4], 200);
+    }
+
+    #[test]
+    fn a_pq_picture_at_nine_tenths_of_its_budget_keeps_a_step_for_each_srgb_code() {
+        // A ramp up to 1000 nits (PQ 0.7518), white at 1000: read as 8-bit samples its sRGB
+        // misses codes from about 200 up.
+        let (w, h) = (2048, 1536);
+        let px = grey16(w, h, |x| (x * 49271 / w) as u16);
+        let bytes = Picture {
+            colour: Colour::Hdr(Tf::PQ, 1000.0),
+            sixteen: true,
+            ..Picture::new(w, h, &[(&px, 1)])
+        }
+        .encode();
+        let budget = u64::from(w * h * 4) * 10 / 9;
+        let got = first_frame(&bytes, budget, NO_HURRY).unwrap().px;
+        assert_every_code_to_the_top(&got[..w as usize * 4], 250);
+    }
+
+    /// Asserts the red samples of RGBA `row` take every code from 0 up to their largest, at
+    /// least `top`.
+    fn assert_every_code_to_the_top(row: &[u8], top: u8) {
+        let codes: std::collections::BTreeSet<u8> = row.iter().step_by(4).copied().collect();
+        let max = codes.last().copied().unwrap_or(0);
         assert!(
-            top >= 200 && codes.len() == usize::from(top) + 1,
-            "every sRGB code up to {top}: {codes:?}"
+            max >= top && codes.len() == usize::from(max) + 1,
+            "every sRGB code up to {max}: {codes:?}"
         );
     }
 
@@ -381,6 +422,18 @@ mod tests {
             }
             .encode()
         };
+        let deep: Vec<u8> = (0..w * w * 3)
+            .flat_map(|i| ((i.wrapping_mul(2_654_435_761) >> 13) as u16).to_ne_bytes())
+            .collect();
+        let hdr = |tf| {
+            Picture {
+                colour: Colour::Hdr(tf, 1000.0),
+                sixteen: true,
+                channels: 3,
+                ..Picture::new(w, w, &[(&deep, 1)])
+            }
+            .encode()
+        };
         vec![
             ("lossless", encode(w, w, &[&big], false), None),
             (
@@ -406,6 +459,8 @@ mod tests {
                 encode(w, w, &[&big, &big], false),
                 None,
             ),
+            ("PQ", hdr(Tf::PQ), None),
+            ("HLG", hdr(Tf::HLG), None),
             ("fifty layers", layered(w, w, 50), Some(Refused::Memory)),
             ("one reference frame", refs(1), Some(Refused::Memory)),
             ("three reference frames", refs(3), Some(Refused::Memory)),
