@@ -138,7 +138,13 @@ pub fn page_shell(mut c: Canvas, theme: &Theme, text: &TextRenderer, with_blue: 
     );
 
     {
-        let l = switcher::SwitcherLayout::compute(3, 1, Rect::new(580, 3150, 330, 107), false);
+        let l = switcher::SwitcherLayout::compute(
+            3,
+            1,
+            Rect::new(580, 3150, 330, 107),
+            false,
+            theme.text,
+        );
         let mut panel = Canvas::new(l.rect.width as u32, l.rect.height as u32);
         let mut icon = Canvas::new(32, 32);
         icon.fill_rect(Rect::new(2, 4, 28, 24), Color::rgb(80, 193, 255));
@@ -970,7 +976,13 @@ pub fn page_desk(
     }
 
     {
-        let l = switcher::SwitcherLayout::compute(3, 1, Rect::new(20, 6680, 428, 357), true);
+        let l = switcher::SwitcherLayout::compute(
+            3,
+            1,
+            Rect::new(20, 6680, 428, 357),
+            true,
+            theme.text,
+        );
         let mut panel = Canvas::new(l.rect.width as u32, l.rect.height as u32);
         let mut icon = Canvas::new(32, 32);
         icon.fill_rect(Rect::new(2, 4, 28, 24), Color::rgb(80, 193, 255));

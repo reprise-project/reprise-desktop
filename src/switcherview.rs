@@ -4,6 +4,7 @@
 use reprisekit::controls::switcher::{self, SwitcherLayout, ThumbCell};
 use reprisekit::interfaces;
 use reprisekit::taskpreview::fit;
+use reprisekit::theme::TextUnits;
 use reprisescene::{BufferId, Input, TreeId};
 use smithay::{backend::input::InputTime, output::Output, utils::Rectangle};
 
@@ -100,17 +101,20 @@ pub struct Switcher {
 impl Switcher {
     /// The layout for `selected` among the current entries; thumbnails go
     /// on `grid`, the look's sized by `[switcher] size`, and icons on `icons` when the look has an
-    /// icon grid (no preview well then), else on the fixed icon panel.
+    /// icon grid (no preview well then), else on the icon panel, its title field grown by `text`.
     fn compute_layout(
         &self,
         grid: switcher::Grid,
         icons: Option<switcher::Grid>,
+        text: TextUnits,
     ) -> SwitcherLayout {
         let n = self.entries.len();
         match (self.thumbnails, icons) {
             (true, _) => SwitcherLayout::thumbnails(n, self.selected, self.area, grid),
             (false, Some(icons)) => SwitcherLayout::thumbnails(n, self.selected, self.area, icons),
-            (false, None) => SwitcherLayout::compute(n, self.selected, self.area, self.preview),
+            (false, None) => {
+                SwitcherLayout::compute(n, self.selected, self.area, self.preview, text)
+            }
         }
     }
 }
@@ -258,7 +262,7 @@ impl State {
             mods,
             area,
             output: out,
-            layout: SwitcherLayout::compute(0, 0, area, false),
+            layout: SwitcherLayout::compute(0, 0, area, false, TextUnits::ONE),
             tree,
             glass_tree,
             buffer,
@@ -276,6 +280,7 @@ impl State {
         sw.layout = sw.compute_layout(
             interfaces::switcher_grid(theme).sized(self.config.switcher.size),
             interfaces::switcher_icon_grid(theme),
+            theme.text,
         );
         self.switcher.panel = Some(sw);
         self.redraw_switcher();
@@ -411,11 +416,12 @@ impl State {
     fn relayout_switcher(&mut self) {
         let grid = interfaces::switcher_grid(&self.config.theme).sized(self.config.switcher.size);
         let icons = interfaces::switcher_icon_grid(&self.config.theme);
+        let text = self.config.theme.text;
         let Some(sw) = self.switcher.panel.as_mut() else {
             return;
         };
         let first = sw.layout.first;
-        sw.layout = sw.compute_layout(grid, icons);
+        sw.layout = sw.compute_layout(grid, icons, text);
         if sw.layout.first != first {
             sw.hot = None;
         }

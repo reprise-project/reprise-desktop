@@ -215,12 +215,13 @@ pub fn access<S: AsRef<str>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::FontConfig;
+    use crate::theme::{FontConfig, TextUnits};
 
     #[test]
     fn the_selected_entry_has_the_focus_and_other_pages_no_bounds() {
         let titles: Vec<String> = (0..23).map(|i| format!("Window {i}")).collect();
-        let layout = SwitcherLayout::compute(23, 22, Rect::new(0, 0, 800, 600), false);
+        let layout =
+            SwitcherLayout::compute(23, 22, Rect::new(0, 0, 800, 600), false, TextUnits::ONE);
         let mut t = Tree::window("", (layout.rect.width, layout.rect.height));
         let focus = access(&titles, 22, &layout, &mut t, access::ROOT);
         let n = t.get(focus).unwrap();
@@ -242,7 +243,7 @@ mod tests {
     #[test]
     fn three_windows_lay_out_one_row() {
         let area = Rect::new(0, 0, 1920, 1050);
-        let l = SwitcherLayout::compute(3, 1, area, false);
+        let l = SwitcherLayout::compute(3, 1, area, false, TextUnits::ONE);
         assert_eq!(l.rect, Rect::new(795, 471, 330, 107));
         assert_eq!(l.cells.len(), 3);
         assert_eq!(l.cells[0], Rect::new(101, 19, 43, 43));
@@ -253,7 +254,7 @@ mod tests {
 
     #[test]
     fn nine_windows_wrap_after_seven_and_grow_a_row() {
-        let l = SwitcherLayout::compute(9, 1, Rect::new(0, 0, 1920, 1050), false);
+        let l = SwitcherLayout::compute(9, 1, Rect::new(0, 0, 1920, 1050), false, TextUnits::ONE);
         assert_eq!(l.rect.height, 150);
         assert_eq!(l.cells[0], Rect::new(15, 19, 43, 43));
         assert_eq!(l.cells[6].x, 15 + 6 * 43);
@@ -263,11 +264,12 @@ mod tests {
 
     #[test]
     fn past_twenty_one_windows_the_selection_pages() {
-        let l = SwitcherLayout::compute(25, 22, Rect::new(0, 0, 1920, 1050), false);
+        let l = SwitcherLayout::compute(25, 22, Rect::new(0, 0, 1920, 1050), false, TextUnits::ONE);
         assert_eq!(l.first, 21);
         assert_eq!(l.cells.len(), 4);
         assert_eq!(l.rect.height, 107);
-        let full = SwitcherLayout::compute(25, 20, Rect::new(0, 0, 1920, 1050), false);
+        let full =
+            SwitcherLayout::compute(25, 20, Rect::new(0, 0, 1920, 1050), false, TextUnits::ONE);
         assert_eq!(full.first, 0);
         assert_eq!(full.cells.len(), 21);
         assert_eq!(full.rect.height, 19 + 3 * 43 + 10 + 25 + 10);
@@ -277,7 +279,7 @@ mod tests {
     fn draw_frames_selected_cell_and_names_it() {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
-        let l = SwitcherLayout::compute(2, 1, Rect::new(0, 0, 800, 600), false);
+        let l = SwitcherLayout::compute(2, 1, Rect::new(0, 0, 800, 600), false, TextUnits::ONE);
         let mut c = Canvas::new(l.rect.width as u32, l.rect.height as u32);
         draw(
             &mut c,
@@ -314,7 +316,7 @@ mod tests {
         let theme = Theme::default();
         let cs = &theme.colors;
         let text = TextRenderer::load(&FontConfig::default());
-        let l = SwitcherLayout::compute(3, 1, Rect::new(0, 0, 800, 600), false);
+        let l = SwitcherLayout::compute(3, 1, Rect::new(0, 0, 800, 600), false, TextUnits::ONE);
         let mut c = Canvas::new(l.rect.width as u32, l.rect.height as u32);
         draw(
             &mut c,
@@ -354,7 +356,7 @@ mod tests {
     fn a_later_page_draws_one_icon_per_shown_cell() {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
-        let l = SwitcherLayout::compute(25, 22, Rect::new(0, 0, 800, 600), false);
+        let l = SwitcherLayout::compute(25, 22, Rect::new(0, 0, 800, 600), false, TextUnits::ONE);
         let red = crate::theme::Color::rgb(255, 0, 0);
         let mut icon = Canvas::new(32, 32);
         icon.fill_rect(icon.bounds(), red);
@@ -377,9 +379,64 @@ mod tests {
         assert_eq!(c.get(sel.x, sel.y), theme.colors.hilight.argb());
     }
 
+    /// The title field grows with the text size, 25 px at 100%, and holds a bold title's ink at
+    /// every size and at scale 2, in Classic's and Blue's icon panels with and without the well.
+    #[test]
+    fn the_title_field_grows_with_the_text_and_keeps_its_ink() {
+        use crate::{interface::Interface, interfaces::theme_for};
+        crate::pins::fonts();
+        let area = Rect::new(0, 0, 1920, 1050);
+        let mut heights = Vec::new();
+        let mut cut = Vec::new();
+        for i in [Interface::Classic, Interface::Blue] {
+            for pct in [100, 150, 200] {
+                let base = theme_for(i).with_text_size(pct);
+                for preview in [false, true] {
+                    let l = SwitcherLayout::compute(3, 1, area, preview, base.text);
+                    heights.push((i, pct, preview, l.field.height));
+                    for s in [1, 2] {
+                        let theme = base.scaled(s);
+                        let text = TextRenderer::load(&theme.fonts);
+                        let l = l.scaled(s);
+                        let mut c = Canvas::new(l.rect.width as u32, l.rect.height as u32);
+                        let ((), cuts) = crate::pins::clipped_ink(|| {
+                            draw(
+                                &mut c,
+                                &theme,
+                                &text,
+                                &l,
+                                "Quarterly [jpg] (final)|",
+                                &[None, None, None],
+                                1,
+                                None,
+                                None,
+                            );
+                        });
+                        cut.extend(
+                            cuts.into_iter()
+                                .filter(|c| c.rows > 0)
+                                .map(|c| (i, pct, s, preview, c.text, c.rows)),
+                        );
+                    }
+                }
+            }
+        }
+        let want: Vec<_> = [Interface::Classic, Interface::Blue]
+            .into_iter()
+            .flat_map(|i| [(100, 25), (150, 39), (200, 50)].map(move |(p, h)| (i, p, h)))
+            .flat_map(|(i, p, h)| [false, true].map(move |w| (i, p, w, h)))
+            .collect();
+        assert_eq!(
+            cut,
+            Vec::new(),
+            "(interface, text size, scale, well, line, ink rows cut)"
+        );
+        assert_eq!(heights, want, "(interface, text size, well, field height)");
+    }
+
     #[test]
     fn scaled_layout_doubles_everything() {
-        let l = SwitcherLayout::compute(3, 1, Rect::new(0, 0, 800, 600), true);
+        let l = SwitcherLayout::compute(3, 1, Rect::new(0, 0, 800, 600), true, TextUnits::ONE);
         let s = l.scaled(2);
         assert_eq!(s.rect, l.rect.scaled(2));
         assert_eq!(s.cells[1], l.cells[1].scaled(2));
@@ -389,7 +446,7 @@ mod tests {
 
     #[test]
     fn the_preview_well_sits_above_the_cells_and_widens_the_panel() {
-        let l = SwitcherLayout::compute(3, 1, Rect::new(0, 0, 1920, 1050), true);
+        let l = SwitcherLayout::compute(3, 1, Rect::new(0, 0, 1920, 1050), true, TextUnits::ONE);
         assert_eq!(l.preview, Some(Rect::new(14, 14, 400, 250)));
         assert_eq!(l.cells[0], Rect::new(150, 269, 43, 43));
         assert_eq!(l.field, Rect::new(14, 322, 400, 25));
@@ -451,7 +508,7 @@ mod tests {
     fn draw_sinks_the_well_and_centres_the_stand_in_icon() {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
-        let l = SwitcherLayout::compute(2, 1, Rect::new(0, 0, 800, 600), true);
+        let l = SwitcherLayout::compute(2, 1, Rect::new(0, 0, 800, 600), true, TextUnits::ONE);
         let red = crate::theme::Color::rgb(255, 0, 0);
         let mut icon = Canvas::new(32, 32);
         icon.fill_rect(icon.bounds(), red);
