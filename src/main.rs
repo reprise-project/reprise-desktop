@@ -285,13 +285,6 @@ struct Cli {
 }
 
 fn main() {
-    // The encoder child replies on stdout, which the journal setup below takes over.
-    if std::env::args_os()
-        .nth(1)
-        .is_some_and(|a| a == shotfile::CHILD_FLAG)
-    {
-        std::process::exit(shotfile::child_main());
-    }
     let locale = spawn::take_user_locale();
     malloc::pin_mmap_threshold();
     spawn::block_signals();

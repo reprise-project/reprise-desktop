@@ -16,6 +16,7 @@ members = [
     "crates/reprisescene",
     "crates/reprisefx",
     "crates/reprisevideo",
+    "crates/repriseconfine",
     "crates/apps/notepad",
     "crates/apps/notes",
     "crates/apps/about",
@@ -47,6 +48,10 @@ members = [
     "crates/apps/record",
     "crates/apps/login",
     "crates/apps/login-rdp",
+    "crates/apps/encode",
+    "crates/apps/encode-jxl",
+    "crates/apps/decode",
+    "crates/apps/decode-protocol",
     "crates/apps/reprise-apps",
     "crates/portal",
 ]
@@ -73,6 +78,7 @@ inotify = { version = "0.11", default-features = false }
 # The pins hold libjxl 0.11.1 as the floor: jpegxl-sys refuses an older libjxl than its tag.
 jpegxl-rs = { version = "=0.13.0", default-features = false }
 jpegxl-sys = "=0.12.0"
+jxl = "0.8.0"
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 # Our fork's `patches` branch: upstream master plus the server, acceptor and
 # input fixes listed in `git log upstream/master..patches` there.
@@ -171,6 +177,8 @@ repriseaudio = { path = "crates/repriseaudio" }
 reprisexdg = { path = "crates/reprisexdg" }
 repriselogin = { path = "crates/repriselogin" }
 reprisepam = { path = "crates/reprisepam" }
+reprise-encode = { path = "crates/apps/encode" }
+repriseconfine = { path = "crates/repriseconfine" }
 accesskit_unix.workspace = true
 toml_edit.workspace = true
 libc.workspace = true
@@ -188,8 +196,6 @@ futures-lite.workspace = true
 async-process = "2"
 futures-util.workspace = true
 image.workspace = true
-jpegxl-rs.workspace = true
-jpegxl-sys.workspace = true
 jpeg-decoder = { version = "0.3", default-features = false }
 pipewire.workspace = true
 reis = { version = "0.7", default-features = false }

@@ -25,6 +25,7 @@ ironrdp-tokio.workspace = true
 libc.workspace = true
 log.workspace = true
 reprisebus = { path = "../../reprisebus" }
+repriseconfine = { path = "../../repriseconfine" }
 repriselogin = { path = "../../repriselogin" }
 reprisetls = { path = "../../reprisetls" }
 tokio = { workspace = true, features = ["rt", "net", "time", "macros", "io-util", "sync"] }

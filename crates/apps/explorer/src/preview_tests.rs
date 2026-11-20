@@ -33,7 +33,7 @@ fn fake_helper(dir: &Path, sample: &Path) -> Jailed {
     let exe = dir.join("helper");
     let body = format!(
         "#!/bin/sh\ncase \"$1\" in\n--font-sample) [ \"$4\" = 1 ] && cp '{0}' \"$6\" ;;\n\
-         --jxl-thumbnail) cp '{0}' \"$4\" ;;\nesac\n",
+         --jxl-thumbnail) cp '{0}' \"$5\" ;;\nesac\n",
         sample.display()
     );
     std::fs::write(&exe, body).expect("write");

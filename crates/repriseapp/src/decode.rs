@@ -1,7 +1,7 @@
 //! Pluggable image decoders: turn file bytes into a [`Canvas`] fitted to a caller-supplied maximum size, plus the source's own dimensions. [`ImageDecoder`] is `Send + Sync` because Explorer's thumbnail worker decodes from a thread.
 //!
 //! [`Decoders::default_set`] registers [`ImageCrateDecoder`] (the `image`
-//! crate's formats, listed on it) and [`JxlDecoder`]; a caller with a format
+//! crate's formats, listed on it) and [`HelperDecoder::jxl`]; a caller with a format
 //! neither covers can [`Decoders::register`] another before or after them.
 
 use std::path::Path;
@@ -9,9 +9,8 @@ use std::path::Path;
 use reprisekit::icon::premultiply;
 use reprisekit::raster::Canvas;
 
-mod jxl;
-#[cfg(test)]
-pub(crate) use jxl::tests::encode as encode_jxl;
+pub(crate) mod helper;
+pub use helper::HelperDecoder;
 
 /// A decoded image: `canvas` already fitted to the caller's `max` (never
 /// upscaled, box-filtered down), `width`/`height` the source's own
@@ -46,11 +45,11 @@ impl Decoders {
     pub fn default_set() -> Decoders {
         let mut d = Decoders { list: Vec::new() };
         d.register(Box::new(ImageCrateDecoder));
-        d.register(Box::new(JxlDecoder));
+        d.register(Box::new(HelperDecoder::jxl()));
         d
     }
 
-    /// [`Decoders::default_set`] without [`JxlDecoder`], for a picture an app hands over: a JPEG
+    /// [`Decoders::default_set`] without JPEG XL, for a picture an app hands over: a JPEG
     /// XL from one decodes only in the thumbnailers' jail ([`crate::thumbs::picture`]).
     pub fn without_jxl() -> Decoders {
         let mut d = Decoders { list: Vec::new() };
@@ -122,11 +121,6 @@ impl Budget {
             file: pixels.max(MAX_FILE_BYTES),
             pixels,
         }
-    }
-
-    /// What libjxl may hold at once while decoding one picture.
-    pub(crate) fn jxl_alloc(self) -> usize {
-        usize::try_from(4 * self.pixels).unwrap_or(usize::MAX)
     }
 }
 
@@ -200,49 +194,15 @@ impl ImageDecoder for ImageCrateDecoder {
     }
 }
 
-/// JPEG XL's first frame through libjxl, refused when it states more pixels than the budget,
-/// libjxl would hold more than four times them, or the decode runs past [`JXL_TIME_LIMIT`].
-pub struct JxlDecoder;
-
 /// Whether `bytes` start as a JPEG XL codestream or container.
 pub fn is_jxl(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xff, 0x0a]) || bytes.starts_with(reprisefs::imagesize::JXL_CONTAINER)
 }
 
-/// How long one JPEG XL may decode: twice a slow core's time for a lossless picture at
-/// [`MAX_DECODED_BYTES`] (effort 9), where a few bytes a layer can keep libjxl composing layers
+/// How long one JPEG XL may decode in reprise-decode: twice a slow core's time for a lossless picture at
+/// [`MAX_DECODED_BYTES`] (effort 9), where a few bytes a layer can keep a decoder composing layers
 /// for hours.
 pub const JXL_TIME_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
-
-impl ImageDecoder for JxlDecoder {
-    fn probe(&self, bytes: &[u8]) -> bool {
-        is_jxl(bytes)
-    }
-
-    fn decode(&self, bytes: &[u8], max: (u32, u32), budget: Budget) -> Result<Decoded, Unread> {
-        decode_jxl(bytes, max, budget.pixels, budget.jxl_alloc())
-    }
-}
-
-/// [`JxlDecoder`] with libjxl's allocations capped at `alloc` bytes rather than [`Budget`]'s.
-pub(crate) fn decode_jxl(
-    bytes: &[u8],
-    max: (u32, u32),
-    pixels: u64,
-    alloc: usize,
-) -> Result<Decoded, Unread> {
-    let p = jxl::first_frame(bytes, pixels, alloc, JXL_TIME_LIMIT).map_err(|e| match e {
-        jxl::Refused::Size | jxl::Refused::Memory => Unread::TooLarge,
-        jxl::Refused::Time | jxl::Refused::Broken => Unread::Unreadable,
-    })?;
-    let img = image::RgbaImage::from_raw(p.width, p.height, p.px).ok_or(Unread::Unreadable)?;
-    let (fw, fh) = reprisekit::raster::fit_size(p.width, p.height, max);
-    Ok(Decoded {
-        canvas: fit_buffer(&img, fw, fh),
-        width: p.width,
-        height: p.height,
-    })
-}
 
 /// The file extensions [`Decoders::default_set`] reads, lower case.
 pub const EXTS: [&str; 20] = [
@@ -350,9 +310,10 @@ fn open_capped(bytes: &[u8], pixels: u64) -> Result<impl image::ImageDecoder + '
     Ok(decoder)
 }
 
-fn fit_buffer<P>(img: &image::ImageBuffer<P, Vec<u8>>, w: u32, h: u32) -> Canvas
+fn fit_buffer<P, C>(img: &image::ImageBuffer<P, C>, w: u32, h: u32) -> Canvas
 where
     P: image::Pixel<Subpixel = u8>,
+    C: std::ops::Deref<Target = [u8]>,
 {
     Canvas::resample_box_from(img.width(), img.height(), w, h, |x, y| {
         let [r, g, b, a] = img.get_pixel(x, y).to_rgba().0;
@@ -494,105 +455,11 @@ mod tests {
         assert_eq!(decoded.canvas.get(0, 0), premultiply(argb));
     }
 
-    fn rgba_gradient(w: u32, h: u32) -> image::RgbaImage {
-        image::RgbaImage::from_fn(w, h, |x, y| {
-            image::Rgba([x as u8 * 6, y as u8 * 8, 90, 255])
-        })
-    }
-
-    fn jxl_of(img: image::RgbaImage) -> Vec<u8> {
-        jxl::tests::encode(img.width(), img.height(), &[img.as_raw()], false)
-    }
-
-    /// A codestream whose SizeHeader claims 20000x20000 (the 18-bit height form, ratio 1:1),
-    /// then default image metadata.
-    fn jxl_header_claiming_20000_square() -> Vec<u8> {
-        vec![0xff, 0x0a, 0xfc, 0x70, 0x22, 0x01]
-    }
-
     #[test]
     fn the_set_for_an_apps_picture_decodes_no_jxl() {
-        let bytes = jxl_of(rgba_gradient(4, 3));
-        assert!(
-            Decoders::default_set()
-                .decode(&bytes, (8, 8), Budget::THUMBNAIL)
-                .is_ok()
-        );
-        assert!(
-            Decoders::without_jxl()
-                .decode(&bytes, (8, 8), Budget::THUMBNAIL)
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn decodes_a_jxl_through_the_default_set() {
-        let bytes = jxl_of(rgba_gradient(40, 30));
-        let d = Decoders::default_set()
-            .decode(&bytes, (20, 20), Budget::THUMBNAIL)
-            .unwrap();
-        assert_eq!((d.width, d.height, d.canvas.width), (40, 30, 20));
-        let full = JxlDecoder
-            .decode(&bytes, (96, 96), Budget::THUMBNAIL)
-            .unwrap();
-        assert_eq!(
-            full.canvas.get(39, 29),
-            0xff00_0000 | (234 << 16) | (232 << 8) | 90
-        );
-        assert!(is_image(Path::new("/home/u/Pictures/Screenshot.JXL")));
-    }
-
-    #[test]
-    fn a_jxl_past_the_byte_budget_or_cut_short_decodes_to_nothing() {
-        let big = jxl_header_claiming_20000_square();
-        assert_eq!(
-            reprisefs::imagesize::dimensions(&big),
-            Some((20_000, 20_000))
-        );
-        assert!(JxlDecoder.probe(&big));
-        assert_eq!(
-            JxlDecoder.decode(&big, (96, 96), Budget::THUMBNAIL).err(),
-            Some(Unread::TooLarge)
-        );
-        let whole = jxl_of(rgba_gradient(40, 30));
-        assert!(
-            JxlDecoder
-                .decode(&whole[..whole.len() / 2], (96, 96), Budget::THUMBNAIL)
-                .err()
-                == Some(Unread::Unreadable)
-        );
-        assert!(!JxlDecoder.probe(&encode_png(1, 1, &[0, 0, 0, 255])));
-    }
-
-    #[test]
-    fn a_large_jxl_decodes_within_the_time_limit() {
-        let (w, h) = (4000, 3000);
-        let px: Vec<u8> = (0..w * h * 4u32)
-            .map(|i| (i / 4 % w / 16 + (i.wrapping_mul(2_654_435_761) >> 29)) as u8)
-            .collect();
-        let effort = [(
-            jpegxl_sys::encoder::encode::JxlEncoderFrameSettingId::Effort,
-            2,
-        )];
-        let bytes = jxl::tests::encode_with(w, h, &[(&px, 1)], false, &effort);
-        let d = JxlDecoder
-            .decode(&bytes, (96, 96), Budget::THUMBNAIL)
-            .unwrap();
-        assert_eq!((d.width, d.height), (w, h));
-    }
-
-    /// Premultiplied samples come out of libjxl unpremultiplied and are multiplied once.
-    #[test]
-    fn a_premultiplied_jxl_is_multiplied_by_alpha_once() {
-        let bytes = jxl::tests::encode(1, 1, &[&[100, 50, 24, 128]], true);
-        let d = JxlDecoder
-            .decode(&bytes, (96, 96), Budget::THUMBNAIL)
-            .unwrap();
-        let [a, r, g, b] = d.canvas.get(0, 0).to_be_bytes();
-        assert_eq!(a, 128);
-        for (got, want) in [(r, 100), (g, 50), (b, 24)] {
-            assert!(got.abs_diff(want) <= 1, "{got} vs {want}");
-        }
+        let jxl = [0xff, 0x0a, 0, 0];
+        assert!(Decoders::default_set().list.iter().any(|d| d.probe(&jxl)));
+        assert!(Decoders::without_jxl().list.iter().all(|d| !d.probe(&jxl)));
     }
 
     #[test]
@@ -607,7 +474,7 @@ mod tests {
         assert_eq!(
             image::ImageFormat::from_extension("jxl"),
             None,
-            "JxlDecoder reads it"
+            "reprise-decode reads it"
         );
         assert!(is_image(Path::new("/home/u/Pictures/Beach.JPG")));
         assert!(!is_image(Path::new("/home/u/notes.txt")));

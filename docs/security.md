@@ -847,15 +847,44 @@ ends, so stop the share first.
   folder its one writable place, no home, session bus or display socket, a
   memory cap and a deadline. JPEG XL thumbnails, Explorer's Space preview
   and the Account prompt's picture decode in the same jail, and the
-  portal's other prompts never decode JPEG XL; Image Viewer is the one
-  in-process JPEG XL decoder. Without bubblewrap none of these runs and the
-  file keeps its icon. The other built-in decoders run in the
+  portal's other prompts never decode JPEG XL. Without bubblewrap none of
+  these runs and the file keeps its icon. The other built-in decoders run in the
   process showing the folder, and one that panics marks its file failed.
+- **Picture decoder.** No program decodes a JPEG XL itself: Image
+  Viewer, Paint, Settings, User Accounts and the jailed thumbnails each
+  start `reprise-decode`, the one program that links the decoder (jxl-rs, a
+  Rust decoder whose unsafe code sits in a few modules and its SIMD, not
+  libjxl), and get the picture's pixels back; the jailed ones stream the
+  file to it from the open file.
+  It inherits no environment but `LD_LIBRARY_PATH` and, before it reads the
+  file, confines itself as the screenshot encoder below does, with an
+  address space of the file, four times the picture's pixel budget, its
+  stack and 256 MiB, CPU time at its deadline, and a seccomp filter that
+  also lets the clock and random bytes through and starts no thread. Its
+  heap is held to three times the pixel budget: past that a request of
+  64 KiB or more fails, which the decoder meets with an error or an abort.
+  An abort, a kill or a picture past the budget reads as too large to open,
+  and a crash (SIGSEGV, SIGBUS), the CPU limit or the deadline as
+  unreadable; the caller kills it 5 s past its 60 s deadline and reads at
+  most the budget's pixels of its reply.
 - **App scopes.** A program started from a desktop entry runs in a systemd
   scope `app-reprise-<app id>-<n>.scope`, for identification and cleanup,
   not confinement. polkit judges a scoped program by the user's display
   session, and each Reprise session's agent fails a prompt for a program of
   another session, so a prompt never shows on the wrong screen.
+- **Screenshot encoder.** A JPEG XL screenshot is encoded in
+  `reprise-encode`, a process of its own that inherits no environment but
+  `LD_LIBRARY_PATH`, loads libjxl and then, before it reads the pixels or starts
+  a thread, confines itself: no new privileges, no open file but its
+  standard input, output and error, not dumpable, capped address space and
+  CPU time, a Landlock ruleset that refuses every file and network access
+  the kernel knows, and a seccomp filter that fails every open and kills it
+  on any other system call but reading and writing those three, memory,
+  futex waits and wakes, threads, fault handlers, signals to itself and
+  exit. It is the OOM killer's
+  first pick, runs at nice 10 and is killed after 10 minutes; the
+  compositor reads at most twice the pixels' size of its reply. A crash, a kill or a libjxl that won't load saves the
+  screenshot as PNG with a notice, and the session log says why.
 - **Account passwords.** User Accounts never removes a password: Add
   Account needs one, and "Ask for a new password at the next login" expires
   the current one (`chage -d 0`). The change happens at the next login that

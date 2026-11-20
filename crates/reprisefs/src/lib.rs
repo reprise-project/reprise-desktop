@@ -9,7 +9,6 @@ reprisebus::test_session!();
 
 reprisekit::strings!("reprisefs");
 
-pub mod allocbudget;
 pub mod apps;
 pub mod autostart;
 pub mod batchrename;

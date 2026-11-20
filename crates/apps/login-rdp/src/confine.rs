@@ -2,19 +2,11 @@
 //! systemd passed and the connections accepted on it, and reaches reprise-login over AF_UNIX.
 
 use std::io;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
-const LANDLOCK_CREATE_RULESET_VERSION: libc::c_uint = 1;
+use repriseconfine::landlock::{self, ACCESS_NET_BIND_TCP, ACCESS_NET_CONNECT_TCP, Handled};
+
 /// The first Landlock ABI with TCP rules (Linux 6.7).
-const LANDLOCK_NET_ABI: libc::c_long = 4;
-const LANDLOCK_ACCESS_NET_BIND_TCP: u64 = 1;
-const LANDLOCK_ACCESS_NET_CONNECT_TCP: u64 = 2;
-
-#[repr(C)]
-struct RulesetAttr {
-    handled_access_fs: u64,
-    handled_access_net: u64,
-}
+const LANDLOCK_NET_ABI: i64 = 4;
 
 /// The layers [`confine`] applied; each is missing on some kernels or arches.
 #[derive(Clone, Copy, Debug)]
@@ -28,181 +20,68 @@ pub struct Confined {
 /// Confines the calling thread and every thread it starts later, so it runs before the runtime
 /// starts any.
 pub fn confine() -> io::Result<Confined> {
-    // SAFETY: PR_SET_NO_NEW_PRIVS takes no pointers; the unused arguments are zero.
-    if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let seccomp = seccomp::install()?;
+    repriseconfine::no_new_privs()?;
+    let seccomp = seccomp()?;
     let landlock = refuse_tcp_connects()?;
     Ok(Confined { seccomp, landlock })
 }
 
-/// Another arch's filter would need its own `AUDIT_ARCH` and, on i686, `socketcall(2)`.
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-mod seccomp {
-    pub fn install() -> std::io::Result<bool> {
-        Ok(false)
-    }
+fn seccomp() -> io::Result<bool> {
+    Ok(false)
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-mod seccomp {
-    use std::io;
+fn seccomp() -> io::Result<bool> {
+    repriseconfine::seccomp::install(&filter())?;
+    Ok(true)
+}
 
-    /// `AUDIT_ARCH_*` of the native system calls; any other arch is refused.
-    #[cfg(target_arch = "x86_64")]
-    const ARCH: u32 = 0xc000_003e;
-    #[cfg(target_arch = "aarch64")]
-    const ARCH: u32 = 0xc000_00b7;
-    /// x32 system calls carry x86_64's arch and set this bit in their number.
-    const X32_BIT: u32 = 0x4000_0000;
-
-    /// Offsets into `seccomp_data`; an argument's low 32 bits come first on little-endian.
-    const NR: u32 = 0;
-    const ARCH_AT: u32 = 4;
-    const fn arg(n: u32) -> u32 {
-        16 + 8 * n
-    }
-
-    /// Installs [`filter`]; true once it is in.
-    pub fn install() -> io::Result<bool> {
-        let filter = filter();
-        let program = libc::sock_fprog {
-            len: filter.len() as libc::c_ushort,
-            filter: filter.as_ptr().cast_mut(),
-        };
-        // SAFETY: program points at `filter`, which outlives the call; the kernel copies it.
-        let set = unsafe {
-            libc::prctl(
-                libc::PR_SET_SECCOMP,
-                libc::SECCOMP_MODE_FILTER,
-                &raw const program,
-                0,
-                0,
-            )
-        };
-        if set != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(true)
-    }
-
-    /// New IPv4 and IPv6 sockets fail with EAFNOSUPPORT, as under `RestrictAddressFamilies`.
-    /// io_uring fails with ENOSYS: its requests make sockets this filter never sees. A send
-    /// with MSG_FASTOPEN fails with EPERM: it connects without `connect(2)`, and a Landlock
-    /// without the 7.2 Fast Open fix lets it through.
-    fn filter() -> Vec<libc::sock_filter> {
-        let mut f = vec![
-            load(ARCH_AT),
-            jump(libc::BPF_JEQ, ARCH, 1, 0),
-            refuse(libc::ENOSYS),
-        ];
-        f.push(load(NR));
-        if cfg!(target_arch = "x86_64") {
-            f.extend([jump(libc::BPF_JGE, X32_BIT, 0, 1), refuse(libc::ENOSYS)]);
-        }
+/// New IPv4 and IPv6 sockets fail with EAFNOSUPPORT, as under `RestrictAddressFamilies`.
+/// io_uring fails with ENOSYS: its requests make sockets this filter never sees. A send
+/// with MSG_FASTOPEN fails with EPERM: it connects without `connect(2)`, and a Landlock
+/// without the 7.2 Fast Open fix lets it through.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn filter() -> Vec<libc::sock_filter> {
+    use repriseconfine::seccomp::{NR, arg, jump, load, native, nr, refuse, ret_allow};
+    let mut f = native(refuse(libc::ENOSYS));
+    f.extend([
+        jump(libc::BPF_JEQ, nr(libc::SYS_socket), 0, 4),
+        load(arg(0)),
+        jump(libc::BPF_JEQ, libc::AF_INET as u32, 1, 0),
+        jump(libc::BPF_JEQ, libc::AF_INET6 as u32, 0, 1),
+        refuse(libc::EAFNOSUPPORT),
+        load(NR),
+        jump(libc::BPF_JEQ, nr(libc::SYS_io_uring_setup), 0, 1),
+        refuse(libc::ENOSYS),
+    ]);
+    // The flags argument of each send call; sendmmsg ignores each message's msg_flags.
+    for (call, flags) in [
+        (libc::SYS_sendto, 3),
+        (libc::SYS_sendmsg, 2),
+        (libc::SYS_sendmmsg, 3),
+    ] {
         f.extend([
-            jump(libc::BPF_JEQ, nr(libc::SYS_socket), 0, 4),
-            load(arg(0)),
-            jump(libc::BPF_JEQ, libc::AF_INET as u32, 1, 0),
-            jump(libc::BPF_JEQ, libc::AF_INET6 as u32, 0, 1),
-            refuse(libc::EAFNOSUPPORT),
             load(NR),
-            jump(libc::BPF_JEQ, nr(libc::SYS_io_uring_setup), 0, 1),
-            refuse(libc::ENOSYS),
+            jump(libc::BPF_JEQ, nr(call), 0, 3),
+            load(arg(flags)),
+            jump(libc::BPF_JSET, libc::MSG_FASTOPEN as u32, 0, 1),
+            refuse(libc::EPERM),
         ]);
-        // The flags argument of each send call; sendmmsg ignores each message's msg_flags.
-        for (call, flags) in [
-            (libc::SYS_sendto, 3),
-            (libc::SYS_sendmsg, 2),
-            (libc::SYS_sendmmsg, 3),
-        ] {
-            f.extend([
-                load(NR),
-                jump(libc::BPF_JEQ, nr(call), 0, 3),
-                load(arg(flags)),
-                jump(libc::BPF_JSET, libc::MSG_FASTOPEN as u32, 0, 1),
-                refuse(libc::EPERM),
-            ]);
-        }
-        f.push(statement(
-            libc::BPF_RET | libc::BPF_K,
-            libc::SECCOMP_RET_ALLOW,
-        ));
-        f
     }
-
-    fn nr(call: libc::c_long) -> u32 {
-        call as u32
-    }
-
-    fn statement(code: u32, k: u32) -> libc::sock_filter {
-        libc::sock_filter {
-            code: code as u16,
-            jt: 0,
-            jf: 0,
-            k,
-        }
-    }
-
-    fn load(offset: u32) -> libc::sock_filter {
-        statement(libc::BPF_LD | libc::BPF_W | libc::BPF_ABS, offset)
-    }
-
-    /// Skips `jt` instructions when `op` holds against `k`, else `jf`.
-    fn jump(op: u32, k: u32, jt: u8, jf: u8) -> libc::sock_filter {
-        libc::sock_filter {
-            code: (libc::BPF_JMP | op | libc::BPF_K) as u16,
-            jt,
-            jf,
-            k,
-        }
-    }
-
-    fn refuse(errno: i32) -> libc::sock_filter {
-        statement(
-            libc::BPF_RET | libc::BPF_K,
-            libc::SECCOMP_RET_ERRNO | errno as u32,
-        )
-    }
+    f.push(ret_allow());
+    f
 }
 
 /// Refuses every TCP connect and bind; false when the kernel has no Landlock TCP rules.
 fn refuse_tcp_connects() -> io::Result<bool> {
-    // SAFETY: the version query takes no attribute.
-    let abi = unsafe {
-        libc::syscall(
-            libc::SYS_landlock_create_ruleset,
-            std::ptr::null::<RulesetAttr>(),
-            0usize,
-            LANDLOCK_CREATE_RULESET_VERSION,
-        )
-    };
-    if abi < LANDLOCK_NET_ABI {
+    if landlock::abi() < LANDLOCK_NET_ABI {
         return Ok(false);
     }
-    let attr = RulesetAttr {
-        handled_access_fs: 0,
-        handled_access_net: LANDLOCK_ACCESS_NET_BIND_TCP | LANDLOCK_ACCESS_NET_CONNECT_TCP,
-    };
-    // SAFETY: attr is live and its size is passed.
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_landlock_create_ruleset,
-            &raw const attr,
-            std::mem::size_of::<RulesetAttr>(),
-            0,
-        )
-    };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: landlock_create_ruleset returned a new fd nothing else owns.
-    let ruleset = unsafe { OwnedFd::from_raw_fd(fd as i32) };
-    // SAFETY: ruleset is an open Landlock ruleset fd; no flags.
-    if unsafe { libc::syscall(libc::SYS_landlock_restrict_self, ruleset.as_raw_fd(), 0) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
+    landlock::restrict_self(Handled {
+        net: ACCESS_NET_BIND_TCP | ACCESS_NET_CONNECT_TCP,
+        ..Handled::default()
+    })?;
     Ok(true)
 }
 
