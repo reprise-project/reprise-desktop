@@ -79,6 +79,8 @@ inotify = { version = "0.11", default-features = false }
 jpegxl-rs = { version = "=0.13.0", default-features = false }
 jpegxl-sys = "=0.12.0"
 jxl = "0.8.0"
+# No asm: dav1d's assembly would need nasm to build and is code outside Rust's checks.
+rav1d = { version = "1.1.0", default-features = false, features = ["bitdepth_8", "bitdepth_16"] }
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 # Our fork's `patches` branch: upstream master plus the server, acceptor and
 # input fixes listed in `git log upstream/master..patches` there.
@@ -221,6 +223,13 @@ split-debuginfo = "unpacked"
 # On dev, not test, so build and test share one reprisekit: its tests run in 11 s, not 86 s.
 [profile.dev.package.reprisekit]
 opt-level = 2
+
+# rav1e encodes the AVIF test pictures, about 20 times slower unoptimised and twice as slow
+# with its debug assertions.
+[profile.dev.package.rav1e]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
 
 # One codegen unit runs the programs on about 4% fewer instructions. Thin LTO
 # saves more but makes a workspace rebuild five times slower.

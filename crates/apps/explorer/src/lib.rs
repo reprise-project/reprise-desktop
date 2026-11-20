@@ -2252,9 +2252,9 @@ pub fn main(args: Vec<std::ffi::OsString>) {
         }
         return;
     }
-    if args.first().is_some_and(|a| a == thumbs::JXL_FLAG) {
-        if let Err(e) = thumbs::serve_jxl(&args[1..]) {
-            log::warn!("JPEG XL thumbnail: {e}");
+    if args.first().is_some_and(|a| a == thumbs::DECODE_FLAG) {
+        if let Err(e) = thumbs::serve_decode(&args[1..]) {
+            log::warn!("JPEG XL or AVIF thumbnail: {e}");
             std::process::exit(1);
         }
         return;

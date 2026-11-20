@@ -415,7 +415,7 @@ fn launcher_icon(bytes: &[u8]) -> Option<Canvas> {
     }
     let px = PICTURE_PX as u32;
     let max = 4 * px;
-    let raster = repriseapp::decode::Decoders::without_jxl().decode(
+    let raster = repriseapp::decode::Decoders::built_in().decode(
         bytes,
         (max, max),
         repriseapp::decode::Budget::THUMBNAIL,

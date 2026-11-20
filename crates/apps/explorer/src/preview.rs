@@ -46,7 +46,7 @@ pub(crate) enum Loaded {
 }
 
 /// The file at `path` for its preview, pictures fitted inside `max` device px at `scale`: decoded
-/// (a JPEG XL and a font's sample by `jailed`), read as text, or else the largest thumbnail
+/// (a JPEG XL, an AVIF and a font's sample by `jailed`), read as text, or else the largest thumbnail
 /// `cache` holds (another program's thumbnailer may have made one for a PDF or a video). Anything
 /// but a regular file is never opened, since the open may never return.
 pub(crate) fn read(
@@ -92,9 +92,9 @@ pub(crate) fn read(
         .unwrap_or(Loaded::Nothing)
 }
 
-/// How a font's sample and a JPEG XL's picture are drawn: by `exe` [`FONT_SAMPLE`] and
-/// [`JXL_FLAG`](repriseapp::thumbs::JXL_FLAG) in the thumbnailers' jail, so neither file is parsed
-/// in Explorer. No runner draws none.
+/// How a font's sample and a JPEG XL's or AVIF's picture are drawn: by `exe` [`FONT_SAMPLE`] and
+/// [`DECODE_FLAG`](repriseapp::thumbs::DECODE_FLAG) in the thumbnailers' jail, so none of them is
+/// parsed in Explorer. No runner draws none.
 pub(crate) struct Jailed {
     pub runner: Option<reprisefs::thumbnailers::Runner>,
     pub exe: std::path::PathBuf,

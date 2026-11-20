@@ -9,17 +9,15 @@ use std::io;
 use reprise_decode_protocol::Limits;
 use repriseconfine::child::{self, Confined};
 
-use crate::jxl::HEAP_PER_PIXEL_BYTE;
-
 /// Room for the executable, its libraries and the main heap's slack.
 const PROGRAM: u64 = 256 << 20;
 /// The main thread's stack when RLIMIT_STACK sets none.
 const STACK: u64 = 8 << 20;
 
-/// The address space holds the file, the decoder's heap budget, a picture's worth of the small
-/// allocations the budget never refuses, and the stack. The CPU time is the deadline.
+/// The address space holds the file, the larger decoder's heap budget, a picture's worth of the
+/// small allocations the budget never refuses, and the stack. The CPU time is the deadline.
 pub fn limits(limits: Limits, stack: u64) -> child::Limits {
-    let heap = limits.pixels.saturating_mul(HEAP_PER_PIXEL_BYTE + 1);
+    let heap = crate::heap_budget(limits.pixels).saturating_add(limits.pixels);
     child::Limits {
         address_space: PROGRAM
             .saturating_add(stack)
@@ -75,7 +73,7 @@ mod tests {
         let set = limits(l, 8 << 20);
         assert_eq!(
             set.address_space,
-            (256 << 20) + (8 << 20) + (64 << 20) + 4 * (96 << 20)
+            (256 << 20) + (8 << 20) + (64 << 20) + 5 * (96 << 20) + (4 << 20)
         );
         assert_eq!((set.cpu_seconds, set.arenas), (60, 1));
     }

@@ -26,6 +26,7 @@ allow = [
     "0BSD",
     "Unlicense",
     "MPL-2.0",
+    "CC0-1.0", # to_method, through rav1d
     "WTFPL",
     "GPL-3.0-or-later",
 ]
@@ -79,6 +80,9 @@ skip = [
     { crate = "rand@0.9.5", reason = "ironrdp-server; picky has 0.10" },
     { crate = "rand_core@0.9.5", reason = "rand 0.9 via ironrdp-server" },
     { crate = "getrandom@0.3.4", reason = "ironrdp-rdpdr, sspi and rand_core 0.9" },
+    { crate = "zerocopy@0.7.35", reason = "rav1d" },
+    { crate = "zerocopy-derive@0.7.35", reason = "zerocopy 0.7 via rav1d" },
+    { crate = "num-derive@0.4.2", reason = "jxl and rav1e; ironrdp-ainput has 0.5" },
 ]
 
 [sources]
