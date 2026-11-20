@@ -1060,7 +1060,7 @@ impl AccountsApp {
             mode: DlgMode::Open,
             multiple: false,
             filters: vec![
-                "Pictures (*.png;*.jpg;*.jpeg;*.bmp)".into(),
+                "Pictures (*.png;*.jpg;*.jpeg;*.bmp;*.jxl;*.avif)".into(),
                 "All Files (*.*)".into(),
             ],
         };

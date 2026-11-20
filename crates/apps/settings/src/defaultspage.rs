@@ -93,6 +93,7 @@ pub const KINDS: [Kind; 7] = [
             "image/bmp",
             "image/tiff",
             "image/jxl",
+            "image/avif",
         ],
         always: 1,
     },

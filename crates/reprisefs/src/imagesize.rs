@@ -1,5 +1,5 @@
 //! An image's width and height from a file's first bytes, without decoding it:
-//! PNG, JPEG, GIF, BMP, WebP and JPEG XL.
+//! PNG, JPEG, GIF, BMP, WebP, JPEG XL and HEIF stills (AVIF among them).
 
 /// How much of a file [`dimensions`] may need. Every format but JPEG states
 /// its size in the first 30 bytes; a JPEG's frame header follows APPn segments
@@ -23,6 +23,8 @@ pub fn dimensions(head: &[u8]) -> Option<(u32, u32)> {
         jxl_codestream(&head[2..])
     } else if head.starts_with(JXL_CONTAINER) {
         jxl_container(head)
+    } else if head.get(4..8) == Some(b"ftyp") {
+        heif(head)
     } else {
         None
     }?;
@@ -196,6 +198,71 @@ fn jxl_container(head: &[u8]) -> Option<(u32, u32)> {
     code.strip_prefix(&[0xff, 0x0a]).and_then(jxl_codestream)
 }
 
+/// The `ispe` of a HEIF still's primary item, from a `meta` box among the first boxes.
+fn heif(head: &[u8]) -> Option<(u32, u32)> {
+    let meta = boxes(head).find(|b| b.0 == *b"meta")?.1;
+    let (mut primary, mut iprp) = (None, None);
+    for (kind, body) in boxes(meta.get(4..)?) {
+        match &kind {
+            b"pitm" if body.first() == Some(&0) => primary = u16_be(body, 4).map(u32::from),
+            b"pitm" => primary = u32_be(body, 4),
+            b"iprp" => iprp = Some(body),
+            _ => {}
+        }
+    }
+    let (primary, iprp) = (primary?, iprp?);
+    let ipco: Vec<_> = boxes(boxes(iprp).find(|b| b.0 == *b"ipco")?.1).collect();
+    for (_, ipma) in boxes(iprp).filter(|b| b.0 == *b"ipma") {
+        let (wide_id, wide_index) = (*ipma.first()? != 0, ipma.get(3)? & 1 != 0);
+        let mut at = 8;
+        for _ in 0..u32_be(ipma, 4)? {
+            let id = if wide_id {
+                u32_be(ipma, at)?
+            } else {
+                u16_be(ipma, at)?.into()
+            };
+            at += if wide_id { 4 } else { 2 };
+            let count = *ipma.get(at)?;
+            at += 1;
+            for _ in 0..count {
+                let index = if wide_index {
+                    usize::from(u16_be(ipma, at)? & 0x7fff)
+                } else {
+                    usize::from(ipma.get(at)? & 0x7f)
+                };
+                at += if wide_index { 2 } else { 1 };
+                let property = index.checked_sub(1).and_then(|i| ipco.get(i));
+                if id == primary
+                    && let Some((kind, body)) = property
+                    && kind == b"ispe"
+                {
+                    return Some((u32_be(body, 4)?, u32_be(body, 8)?));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The ISOBMFF boxes in `b` end to end, each one's type and body, up to one cut short.
+fn boxes(b: &[u8]) -> impl Iterator<Item = ([u8; 4], &[u8])> {
+    let mut at = 0usize;
+    std::iter::from_fn(move || {
+        let kind = bytes::<4>(b, at.checked_add(4)?)?;
+        let (start, end) = match u32_be(b, at)? {
+            0 => (at + 8, b.len()),
+            1 => {
+                let size = u64::from_be_bytes(bytes(b, at + 8)?);
+                (at + 16, at.checked_add(usize::try_from(size).ok()?)?)
+            }
+            n => (at + 8, at.checked_add(n as usize)?),
+        };
+        let body = b.get(start..end)?;
+        at = end;
+        Some((kind, body))
+    })
+}
+
 fn bytes<const N: usize>(head: &[u8], at: usize) -> Option<[u8; N]> {
     head.get(at..at.checked_add(N)?)?.try_into().ok()
 }
@@ -219,6 +286,45 @@ fn u32_le(head: &[u8], at: usize) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn heif_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut b = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        b.extend(kind);
+        b.extend(body);
+        b
+    }
+
+    /// An AVIF's first boxes: item 2 is primary, item 1 a 64x64 thumbnail listed first.
+    fn avif_head(w: u32, h: u32) -> Vec<u8> {
+        let ispe = |w: u32, h: u32| {
+            heif_box(
+                b"ispe",
+                &[[0; 4], w.to_be_bytes(), h.to_be_bytes()].concat(),
+            )
+        };
+        let ipco = heif_box(b"ipco", &[ispe(64, 64), ispe(w, h)].concat());
+        let ipma = heif_box(
+            b"ipma",
+            &[0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 1, 0x81, 0, 2, 1, 0x82],
+        );
+        let meta = [
+            &[0, 0, 0, 0][..],
+            &heif_box(b"pitm", &[0, 0, 0, 0, 0, 2]),
+            &heif_box(b"iprp", &[ipco, ipma].concat()),
+        ]
+        .concat();
+        let mut v = heif_box(b"ftyp", b"avif\0\0\0\0avifmif1miaf");
+        v.extend(heif_box(b"meta", &meta));
+        v.extend(heif_box(b"mdat", &[0; 16]));
+        v
+    }
+
+    #[test]
+    fn an_avif_states_its_primary_items_size() {
+        assert_eq!(dimensions(&avif_head(4032, 3024)), Some((4032, 3024)));
+        let head = avif_head(800, 600);
+        assert_eq!(dimensions(&head[..40]), None, "cut short before its ispe");
+    }
 
     fn png_head(w: u32, h: u32) -> Vec<u8> {
         let mut v = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();

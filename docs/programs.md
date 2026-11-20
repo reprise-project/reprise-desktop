@@ -100,7 +100,7 @@ and keeps them; they come back at the next login from the `reprise-notes
 ## Image Viewer
 
 The default for pictures, in any format Explorer's thumbnails read (PNG, JPEG,
-GIF, BMP, WebP, TIFF, ICO, QOI, PNM, HDR, OpenEXR and JPEG XL). It opens fitted
+GIF, BMP, WebP, TIFF, ICO, QOI, PNM, HDR, OpenEXR, JPEG XL and AVIF). It opens fitted
 to the window, never past 100%. A picture past an eighth of the machine's
 memory, or 512 MiB, says it is too large to show.
 

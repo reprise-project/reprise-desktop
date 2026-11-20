@@ -129,6 +129,8 @@ build() {
   # Named explicitly: the workspace has a root package, so a bare build
   # would build only that.
   cargo build --profile "$_profile" --locked -p reprise -p reprise-portal -p reprise-apps -p reprise-rdp -p reprise-record -p reprise-login -p reprise-login-rdp -p reprise-encode -p reprise-encode-jxl -p reprise-decode
+  # The notices read cargo metadata offline, which needs every package, dev ones included.
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
   packaging/third-party-notices >"$srcdir/THIRD-PARTY-NOTICES"
 }
 

@@ -33,7 +33,7 @@ fn fake_helper(dir: &Path, sample: &Path) -> Jailed {
     let exe = dir.join("helper");
     let body = format!(
         "#!/bin/sh\ncase \"$1\" in\n--font-sample) [ \"$4\" = 1 ] && cp '{0}' \"$6\" ;;\n\
-         --jxl-thumbnail) cp '{0}' \"$5\" ;;\nesac\n",
+         --decode-thumbnail) cp '{0}' \"$5\" ;;\nesac\n",
         sample.display()
     );
     std::fs::write(&exe, body).expect("write");
@@ -66,27 +66,33 @@ fn a_font_sample_is_drawn_by_the_helper_and_none_without_a_jail() {
 }
 
 #[test]
-fn a_jpeg_xl_is_drawn_by_the_helper_and_none_without_a_jail() {
+fn a_jpeg_xl_or_avif_is_drawn_by_the_helper_and_none_without_a_jail() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let sample = dir.path().join("sample.png");
     std::fs::write(&sample, png(120, 80)).expect("write");
-    let photo = dir.path().join("red.png");
     let red_2x2_jxl = [
         0xff, 0x0a, 0x08, 0x10, 0xb0, 0x12, 0x08, 0x00, 0x10, 0x00, 0x30, 0x00, 0x4b, 0x18, 0x8b,
         0x15, 0xc2, 0x49, 0x41, 0x4e, 0x7f, 0x00, 0xf4, 0x07,
     ];
-    std::fs::write(&photo, red_2x2_jxl).expect("write");
-    let mut jailed = fake_helper(dir.path(), &sample);
-    let at = |jailed: &Jailed| read(&photo, Route::Picture, None, jailed, (400, 300), 1);
-    match at(&jailed) {
-        Loaded::Picture(c) => assert_eq!((c.width, c.height), (120, 80)),
-        _ => panic!("the helper's picture lands"),
+    let avif_head = b"\0\0\0\x14ftypavif\0\0\0\0avif\0\0\0\x08mdat";
+    for (name, bytes) in [
+        ("red.png", &red_2x2_jxl[..]),
+        ("photo.avif", &avif_head[..]),
+    ] {
+        let photo = dir.path().join(name);
+        std::fs::write(&photo, bytes).expect("write");
+        let mut jailed = fake_helper(dir.path(), &sample);
+        let at = |jailed: &Jailed| read(&photo, Route::Picture, None, jailed, (400, 300), 1);
+        match at(&jailed) {
+            Loaded::Picture(c) => assert_eq!((c.width, c.height), (120, 80), "{name}"),
+            _ => panic!("{name}: the helper's picture lands"),
+        }
+        jailed.runner = None;
+        assert!(
+            matches!(at(&jailed), Loaded::Nothing),
+            "{name}: no jail, no picture"
+        );
     }
-    jailed.runner = None;
-    assert!(
-        matches!(at(&jailed), Loaded::Nothing),
-        "no jail, no picture"
-    );
 }
 
 #[test]

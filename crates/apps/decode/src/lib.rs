@@ -1,10 +1,15 @@
-//! reprise-decode turns a picture file into its pixels in a process of its own, so a decoder's
+//! reprise-decode turns a picture file (JPEG XL or AVIF) into its pixels in a process of its own, so a decoder's
 //! crash, abort or runaway allocation costs that process and never the program that asked. The
 //! program starts it as `reprise-decode --file BYTES --pixels BYTES --deadline SECONDS` and
 //! speaks [`reprise_decode_protocol`] to it.
 
+pub mod avif;
+#[cfg(test)]
+mod avif_pictures;
+mod colour;
 pub mod confine;
 pub mod heapcap;
+pub mod heif;
 pub mod jxl;
 #[cfg(test)]
 mod pictures;
@@ -16,6 +21,32 @@ use reprise_decode_protocol::{Format, Limits, PROTOCOL, REQUEST_LEN, Reply, Requ
 #[cfg(test)]
 #[global_allocator]
 static HEAP: heapcap::Capped = heapcap::Capped;
+
+/// The most heap a decode of either format may hold under a pixel budget of `pixel_bytes`.
+pub fn heap_budget(pixel_bytes: u64) -> u64 {
+    jxl::heap_budget(pixel_bytes).max(avif::heap_budget(pixel_bytes))
+}
+
+/// Why a file gave no picture.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Refused {
+    /// The picture, or one of its frames, states more than the pixel budget.
+    Size,
+    /// The decode asked for more than its heap budget, the file passes the decoder's own limits,
+    /// or the heap budget cannot be held because [`heapcap::Capped`] is not the global allocator.
+    Memory,
+    /// The decode ran past its time limit.
+    Time,
+    /// Not a file of its format the decoder reads, or cut short.
+    Broken,
+}
+
+/// Unpremultiplied 8-bit sRGB RGBA, rows top to bottom, with the file's orientation applied.
+pub struct Rgba {
+    pub width: u32,
+    pub height: u32,
+    pub px: Vec<u8>,
+}
 
 /// Answers the request on `input` on `output`. A file longer than `limits.file` is refused unread.
 pub fn serve(input: &mut impl Read, output: &mut impl Write, limits: Limits) -> io::Result<()> {
@@ -35,23 +66,31 @@ pub fn serve(input: &mut impl Read, output: &mut impl Write, limits: Limits) -> 
                 return Reply::TooLarge.write_to(output);
             }
             input.take(r.len).read_to_end(&mut bytes)?;
-            match r.format {
-                Format::Jxl => match jxl::first_frame(&bytes, limits.pixels, limits.deadline) {
-                    Ok(p) => {
-                        drop(bytes);
-                        return reprise_decode_protocol::write_picture(
-                            output, p.width, p.height, &p.px,
-                        );
-                    }
-                    Err(jxl::Refused::Size | jxl::Refused::Memory) => Reply::TooLarge,
-                    Err(jxl::Refused::Time) => Reply::Unreadable(format!(
-                        "the decode ran past its {} s limit",
-                        limits.deadline.as_secs()
-                    )),
-                    Err(jxl::Refused::Broken) => {
-                        Reply::Unreadable("not a JPEG XL this decoder reads, or cut short".into())
-                    }
-                },
+            let (decoded, name) = match r.format {
+                Format::Jxl => (
+                    jxl::first_frame(&bytes, limits.pixels, limits.deadline),
+                    "a JPEG XL",
+                ),
+                Format::Avif => (
+                    avif::first_frame(&bytes, limits.pixels, limits.deadline),
+                    "an AVIF",
+                ),
+            };
+            drop(bytes);
+            match decoded {
+                Ok(p) => {
+                    return reprise_decode_protocol::write_picture(
+                        output, p.width, p.height, &p.px,
+                    );
+                }
+                Err(Refused::Size | Refused::Memory) => Reply::TooLarge,
+                Err(Refused::Time) => Reply::Unreadable(format!(
+                    "the decode ran past its {} s limit",
+                    limits.deadline.as_secs()
+                )),
+                Err(Refused::Broken) => {
+                    Reply::Unreadable(format!("not {name} this decoder reads, or cut short"))
+                }
             }
         }
     };
@@ -110,6 +149,34 @@ mod tests {
         );
         let cut = &file[..file.len() / 2];
         assert!(matches!(ask(jxl(cut), cut, LIMITS), Reply::Unreadable(_)));
+    }
+
+    #[test]
+    fn an_avif_request_gets_the_picture_or_why_not() {
+        use crate::avif_pictures::*;
+        let rgb = noise_rgb(8, 6, 8);
+        let file = single(av1_rgb(8, 6, &rgb, Coding::EXACT), vec![ispe(8, 6)]);
+        let avif = |file: &[u8]| {
+            Request {
+                format: Format::Avif,
+                len: file.len() as u64,
+            }
+            .to_bytes()
+        };
+        let Reply::Picture(p) = ask(avif(&file), &file, LIMITS) else {
+            panic!("a picture")
+        };
+        assert_eq!((p.width, p.height), (8, 6));
+        let small = Limits {
+            pixels: 8 * 6 * 4 - 1,
+            ..LIMITS
+        };
+        assert_eq!(ask(avif(&file), &file, small), Reply::TooLarge);
+        let cut = &file[..file.len() / 2];
+        assert_eq!(
+            ask(avif(cut), cut, LIMITS),
+            Reply::Unreadable("not an AVIF this decoder reads, or cut short".into())
+        );
     }
 
     #[test]

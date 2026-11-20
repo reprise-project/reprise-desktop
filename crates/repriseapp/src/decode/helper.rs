@@ -1,6 +1,6 @@
 //! Formats decoded in reprise-decode, a confined process of its own: a decoder's crash, abort or
 //! runaway allocation costs that process and never the program. An abort or a kill reads as
-//! [`Unread::TooLarge`], a crash as [`Unread::Unreadable`].
+//! [`Unread::TooLarge`]; a crash, or an abort after a panic, as [`Unread::Unreadable`].
 
 use std::io::Read;
 use std::os::unix::process::ExitStatusExt;
@@ -10,7 +10,9 @@ use std::time::Duration;
 use reprise_decode_protocol::{BadReply, Format, Limits, PROGRAM, Picture, Reply, Request};
 use repriseconfine::helper::{self, signal_name};
 
-use super::{Budget, Decoded, ImageDecoder, JXL_TIME_LIMIT, Unread, fit_buffer, is_jxl};
+use super::{
+    Budget, Decoded, HELPER_TIME_LIMIT, ImageDecoder, Unread, fit_buffer, is_avif, is_jxl,
+};
 
 /// How long past its decode's deadline reprise-decode may take to start, confine itself and
 /// reply before it is killed.
@@ -27,14 +29,19 @@ pub struct HelperDecoder {
 
 impl HelperDecoder {
     /// JPEG XL's first frame, by reprise-decode beside this program or in /usr/bin, under
-    /// [`JXL_TIME_LIMIT`].
+    /// [`HELPER_TIME_LIMIT`].
     pub fn jxl() -> HelperDecoder {
-        HelperDecoder::new(Format::Jxl, helper::find(PROGRAM), JXL_TIME_LIMIT)
+        HelperDecoder::new(Format::Jxl, helper::find(PROGRAM), HELPER_TIME_LIMIT)
     }
 
-    /// [`HelperDecoder::jxl`] by the reprise-decode at `path`.
-    pub fn jxl_at(path: PathBuf) -> HelperDecoder {
-        HelperDecoder::new(Format::Jxl, Ok(path), JXL_TIME_LIMIT)
+    /// An AVIF's first picture, found and limited as [`HelperDecoder::jxl`].
+    pub fn avif() -> HelperDecoder {
+        HelperDecoder::new(Format::Avif, helper::find(PROGRAM), HELPER_TIME_LIMIT)
+    }
+
+    /// `format` by the reprise-decode at `path`.
+    pub fn at(format: Format, path: PathBuf) -> HelperDecoder {
+        HelperDecoder::new(format, Ok(path), HELPER_TIME_LIMIT)
     }
 
     pub(crate) fn new(
@@ -53,6 +60,7 @@ impl HelperDecoder {
     fn name(&self) -> &'static str {
         match self.format {
             Format::Jxl => "JPEG XL",
+            Format::Avif => "AVIF",
         }
     }
 
@@ -139,13 +147,18 @@ impl HelperDecoder {
                         "the decoder crashed ({})",
                         signal_name(signal)
                     ))),
+                    // rav1d's API is extern "C", so a panic inside it aborts, after the panic
+                    // message.
+                    Some(libc::SIGABRT) if said.contains("panicked") => {
+                        Err(warn("the decoder panicked"))
+                    }
                     // The soft CPU limit, set at the deadline.
                     Some(libc::SIGXCPU) => {
                         log::debug!("{name}: reprise-decode ran past its CPU time and stopped");
                         Err(Unread::Unreadable)
                     }
-                    // An abort is how a decoder meets an allocation it was refused, a SIGKILL
-                    // the OOM killer.
+                    // Any other abort is how a decoder meets an allocation it was refused, a
+                    // SIGKILL the OOM killer.
                     Some(signal) => {
                         log::debug!(
                             "{name}: reprise-decode was killed by {}",
@@ -167,6 +180,7 @@ impl ImageDecoder for HelperDecoder {
     fn probe(&self, bytes: &[u8]) -> bool {
         match self.format {
             Format::Jxl => is_jxl(bytes),
+            Format::Avif => is_avif(bytes),
         }
     }
 
@@ -249,7 +263,7 @@ pub(crate) mod tests {
         );
         std::fs::write(&path, script).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let d = HelperDecoder::new(Format::Jxl, Ok(path), JXL_TIME_LIMIT);
+        let d = HelperDecoder::new(Format::Jxl, Ok(path), HELPER_TIME_LIMIT);
         assert_eq!(decode(&d).err(), Some(Unread::TooLarge));
         let seen = std::fs::read_to_string(&seen).unwrap();
         let mut lines = seen.lines();
@@ -272,6 +286,15 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_helper_that_aborts_after_a_panic_reads_as_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let panic = "echo \"thread 'main' panicked at src/lib.rs:1:1:\" >&2; \
+                     echo 'panic in a function that cannot unwind' >&2; kill -ABRT $$";
+        let d = fake(dir.path(), panic);
+        assert_eq!(decode(&d).err(), Some(Unread::Unreadable));
+    }
+
+    #[test]
     fn a_broken_or_missing_helper_reads_as_unreadable() {
         let dir = tempfile::tempdir().unwrap();
         for body in [
@@ -290,10 +313,13 @@ pub(crate) mod tests {
             assert_eq!(decode(&d).err(), Some(Unread::Unreadable), "{body}");
         }
         let missing = dir.path().join("none");
-        let d = HelperDecoder::new(Format::Jxl, Ok(missing), JXL_TIME_LIMIT);
+        let d = HelperDecoder::new(Format::Jxl, Ok(missing), HELPER_TIME_LIMIT);
         assert_eq!(decode(&d).err(), Some(Unread::Unreadable));
-        let unfound =
-            HelperDecoder::new(Format::Jxl, Err("no reprise-decode".into()), JXL_TIME_LIMIT);
+        let unfound = HelperDecoder::new(
+            Format::Jxl,
+            Err("no reprise-decode".into()),
+            HELPER_TIME_LIMIT,
+        );
         assert_eq!(decode(&unfound).err(), Some(Unread::Unreadable));
     }
 
@@ -329,7 +355,7 @@ pub(crate) mod tests {
             .collect();
         let src = dir.path().join("a.jxl");
         std::fs::write(&src, &file).unwrap();
-        let d = HelperDecoder::jxl_at(path);
+        let d = HelperDecoder::at(Format::Jxl, path);
         let open = || std::fs::File::open(&src).unwrap();
         assert_eq!(
             d.decode_file(open(), (96, 96), Budget::THUMBNAIL).err(),
@@ -359,7 +385,7 @@ pub(crate) mod tests {
             reprisefs::imagesize::dimensions(&big),
             Some((20_000, 20_000))
         );
-        let d = HelperDecoder::new(Format::Jxl, Err("never run".into()), JXL_TIME_LIMIT);
+        let d = HelperDecoder::new(Format::Jxl, Err("never run".into()), HELPER_TIME_LIMIT);
         assert!(d.probe(&big));
         assert_eq!(
             d.decode(&big, (96, 96), Budget::THUMBNAIL).err(),

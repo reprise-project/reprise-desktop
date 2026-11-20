@@ -2,6 +2,8 @@
 //! so a host run can skip them (`cargo test -- --skip spawned_`); they run on test machines.
 //! `REPRISE_DECODE_BIN` points the tests at a reprise-decode away from the build tree.
 
+#[path = "../src/avif_pictures.rs"]
+mod avif_pictures;
 #[path = "../src/pictures.rs"]
 mod pictures;
 
@@ -35,8 +37,12 @@ fn helper() -> Command {
 }
 
 fn decode(file: &[u8]) -> (Reply, helper::Ran) {
+    decode_as(Format::Jxl, file)
+}
+
+fn decode_as(format: Format, file: &[u8]) -> (Reply, helper::Ran) {
     let request = Request {
-        format: Format::Jxl,
+        format,
         len: file.len() as u64,
     };
     let mut ran = helper::run(
@@ -102,6 +108,62 @@ fn spawned_each_picture_decodes_through_the_confined_helper_as_in_process() {
         assert!(p.rgba() == want.px, "{name}: the pixels differ");
         assert!(ran.status.unwrap().success(), "{name}");
     }
+}
+
+#[test]
+fn spawned_each_avif_decodes_through_the_confined_helper_as_in_process() {
+    use avif_pictures::*;
+    use rav1e::prelude::ChromaSampling;
+    let (w, h) = (64, 48);
+    let deep = Coding {
+        bits: 10,
+        sampling: ChromaSampling::Cs420,
+        full_range: false,
+        cicp: (9, 16, 9),
+        quantizer: 60,
+        grain: false,
+    };
+    let alpha: Vec<u8> = (0..w * h).map(|i| (i * 5 % 256) as u8).collect();
+    let rgba: Vec<u8> = (0..w * h)
+        .flat_map(|i| [(i % w * 4) as u8, 90, 200, alpha[i]])
+        .collect();
+    let picture = |c: Coding| av1_rgb(w, h, &noise_rgb(w, h, c.bits), c);
+    let size = ispe(w as u32, h as u32);
+    let files = [
+        ("8-bit", single(picture(Coding::EXACT), vec![size.clone()])),
+        (
+            "10-bit PQ 4:2:0, turned",
+            single(
+                picture(deep),
+                vec![size.clone(), nclx(9, 16, 9, false), irot(1)],
+            ),
+        ),
+        ("ravif with alpha", ravif(w, h, &rgba, false)),
+        (
+            "sequence",
+            sequence(
+                w as u16,
+                h as u16,
+                &[picture(Coding::EXACT), picture(Coding::EXACT)],
+            ),
+        ),
+    ];
+    for (name, file) in files {
+        let want =
+            reprise_decode::avif::first_frame(&file, LIMITS.pixels, LIMITS.deadline).unwrap();
+        let (reply, ran) = decode_as(Format::Avif, &file);
+        let Reply::Picture(p) = reply else {
+            panic!("{name}: {reply:?}, said {}", ran.said)
+        };
+        assert_eq!((p.width, p.height), (want.width, want.height), "{name}");
+        assert!(p.rgba() == want.px, "{name}: the pixels differ");
+        assert!(ran.status.unwrap().success(), "{name}");
+    }
+    let file = single(picture(Coding::EXACT), vec![size]);
+    let (reply, _) = decode_as(Format::Avif, &file[..file.len() - 20]);
+    assert!(matches!(reply, Reply::Unreadable(_)), "{reply:?}");
+    let huge = single(vec![0x12, 0, 0x0a, 0x0a], vec![ispe(30_000, 30_000)]);
+    assert_eq!(decode_as(Format::Avif, &huge).0, Reply::TooLarge);
 }
 
 #[test]

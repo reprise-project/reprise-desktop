@@ -427,7 +427,7 @@ fn the_desktop_defaults_open_every_type_the_viewer_declares() {
         .split(';')
         .filter(|t| !t.is_empty())
         .collect();
-    assert!(declared.contains(&"image/jxl"));
+    assert!(declared.contains(&"image/jxl") && declared.contains(&"image/avif"));
     for t in declared {
         let line = format!("{t}=reprise-imageviewer.desktop");
         assert!(defaults.lines().any(|l| l == line), "{line} in the list");
