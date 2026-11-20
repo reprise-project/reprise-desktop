@@ -78,9 +78,11 @@ impl PhoneApp {
             .name("reprise-phone-settings".into())
             .spawn(move || {
                 let mut cmd = std::process::Command::new(SETTINGS_ARGV);
-                if let Some(t) = token {
-                    cmd.env("XDG_ACTIVATION_TOKEN", t);
+                reprisebus::instance::Handoff {
+                    token,
+                    by_key: false,
                 }
+                .apply(&mut cmd);
                 if let Err(e) = reprisefs::scope::hold(&mut cmd, &SETTINGS_APP) {
                     log::warn!("{SETTINGS_ARGV} runs unscoped: {e}");
                 }

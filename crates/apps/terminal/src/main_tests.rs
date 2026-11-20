@@ -180,6 +180,48 @@ fn scale_change_resizes_pty() {
     assert!(one.0 > 0 && want.0 > 0);
 }
 
+/// Ctrl+Shift+N and a Ctrl+click on a web address answer with their start, so the host starts
+/// it with a token asked for on that key or click; a plain click on the address starts nothing.
+#[test]
+fn a_new_window_and_a_clicked_address_start_from_the_reply() {
+    let mut ctx = test_ctx();
+    let line = "see https://example.org/a now";
+    let mut t = terminal(&["sh", "-c", &format!("cd / && printf '{line}' && exec cat")]);
+    t.follow_scale(MAIN, 1, &mut ctx);
+    until("the address shows", || row_text(&t, 0) == line);
+    until("the tab is in /", || {
+        t.w.tabs.current().and_then(Tab::cwd).as_deref() == Some(Path::new("/"))
+    });
+    let r = t.event(MAIN, key(0x6e, true, true), &mut ctx);
+    assert_eq!(
+        (r.spawn, r.spawn_dir),
+        (vec![argv(&["reprise-terminal"])], Some("/".into()))
+    );
+
+    t.draw(MAIN, &mut Canvas::new(640, 400), &ctx);
+    let (x, y) = cell_point(&mut t, &ctx, 6, 0, false);
+    let click = |ctrl| PointerInput::Press {
+        x,
+        y,
+        button: BTN_LEFT,
+        time: 0,
+        mods: Mods {
+            ctrl,
+            ..Mods::default()
+        },
+    };
+    let r = pointer(&mut t, &mut ctx, click(true));
+    assert_eq!(r.spawn, [argv(&["xdg-open", "https://example.org/a"])]);
+    let release = PointerInput::Release {
+        x,
+        y,
+        button: BTN_LEFT,
+        mods: Mods::default(),
+    };
+    pointer(&mut t, &mut ctx, release);
+    assert!(pointer(&mut t, &mut ctx, click(false)).spawn.is_empty());
+}
+
 #[test]
 fn new_tab_inherits_cwd() {
     let mut ctx = test_ctx();

@@ -740,6 +740,8 @@ impl Explorer {
             || self.extracting.is_some()
             || self.jobs_pending > 0
             || !self.opening.is_empty()
+            || !self.launches.is_empty()
+            || !self.starting.is_empty()
             || self.dialogs.iter().any(|d| matches!(d, Dialog::Reading(_)))
             || !self.acting.is_empty()
             || !self.send.sends.is_empty()

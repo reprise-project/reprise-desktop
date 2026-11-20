@@ -358,7 +358,7 @@ impl Explorer {
             }
 
             Command::OpenTerminal => match self.selected_folder().map(|it| it.path.clone()) {
-                Some(dir) => self.open_terminal(&dir, ctx),
+                Some(dir) => self.open_terminal(&dir),
                 None => Reply::none(),
             },
             Command::Pin(pin) => {
@@ -381,7 +381,7 @@ impl Explorer {
                 None => Reply::none(),
             },
             Command::OpenTerminalHere => match self.place.path() {
-                Some(dir) if !self.place.read_only() => self.open_terminal(&dir, ctx),
+                Some(dir) if !self.place.read_only() => self.open_terminal(&dir),
                 _ => Reply::none(),
             },
             Command::Mode(m) => {

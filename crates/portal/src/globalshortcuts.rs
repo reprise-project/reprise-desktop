@@ -405,14 +405,11 @@ impl GlobalShortcuts {
         &self,
         _session_handle: ObjectPath<'_>,
         _parent_window: String,
-        _options: HashMap<String, Variant<'_>>,
+        options: HashMap<String, Variant<'_>>,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
         self.frontend.check(&hdr).await?;
-        match std::process::Command::new("reprise-settings")
-            .args(["--page", "keyboard"])
-            .spawn()
-        {
+        match keyboard_page(&options).spawn() {
             // Reap it when it exits; the portal outlives it.
             Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
             Err(e) => log::warn!("GlobalShortcuts: reprise-settings: {e}"),
@@ -498,9 +495,34 @@ async fn relay(
     }
 }
 
+/// Settings' Keyboard page, handed the request's activation token and never the portal's own.
+fn keyboard_page(options: &HashMap<String, Variant<'_>>) -> std::process::Command {
+    let mut cmd = std::process::Command::new("reprise-settings");
+    cmd.args(["--page", "keyboard"]);
+    reprisebus::instance::Handoff {
+        token: crate::email::activation_token(options),
+        by_key: false,
+    }
+    .apply(&mut cmd);
+    cmd
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_keyboard_page_gets_the_requests_token_and_never_the_portals() {
+        let token_of = |options: &HashMap<String, Variant<'_>>| {
+            let cmd = keyboard_page(options);
+            let env = cmd.get_envs().find(|(k, _)| *k == "XDG_ACTIVATION_TOKEN");
+            env.map(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+        };
+        let mut options = HashMap::new();
+        options.insert("activation_token".to_string(), Variant::from("t1"));
+        assert_eq!(token_of(&options), Some(Some("t1".into())));
+        assert_eq!(token_of(&HashMap::new()), Some(None), "removed without one");
+    }
 
     #[test]
     fn a_denied_app_or_one_at_its_session_share_opens_no_session() {

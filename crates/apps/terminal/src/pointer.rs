@@ -249,8 +249,11 @@ impl Terminal {
             return Reply::none();
         };
         let cell = (hit.col, hit.row);
-        if button == BTN_LEFT && mods.ctrl && self.open_url(cell) {
-            return Reply::none();
+        if button == BTN_LEFT
+            && mods.ctrl
+            && let Some(open) = self.open_url(cell)
+        {
+            return open;
         }
         let Some(tab) = self.w.tabs.current() else {
             return Reply::none();
@@ -408,19 +411,17 @@ impl Terminal {
         }
     }
 
-    /// Open the URL drawn at `cell` with xdg-open; false when there is none.
-    fn open_url(&self, (col, row): CellAt) -> bool {
+    /// Open the URL drawn at `cell` with xdg-open; None when there is none.
+    fn open_url(&self, (col, row): CellAt) -> Option<Reply> {
         if row >= self.w.snap.rows {
-            return false;
+            return None;
         }
         let line: String = self.w.snap.row(row).iter().map(|c| c.ch).collect();
-        let Some(url) = urls::at(&line, col) else {
-            return false;
-        };
-        if let Err(e) = repriseapp::spawn_in(&["xdg-open".into(), url.clone().into()], None, None) {
-            log::warn!("cannot open {url}: {e}");
-        }
-        true
+        let url = urls::at(&line, col)?;
+        Some(Reply {
+            spawn: vec![vec!["xdg-open".into(), url.into()]],
+            ..Reply::none()
+        })
     }
 }
 

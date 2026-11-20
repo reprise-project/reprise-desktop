@@ -183,6 +183,10 @@ pub enum Event {
         serial: u32,
         ok: bool,
     },
+    /// One token [`Reply::handoffs`](crate::Reply::handoffs) asked for, in the order asked, on
+    /// `MAIN`; tokenless without xdg-activation or a seat, while the program quits, or once the
+    /// token has not come in 35 s.
+    Handoff(reprisebus::instance::Handoff),
     /// The trial begun with the newest
     /// [`HeadRequests::configure_on_trial`](crate::heads::HeadRequests::configure_on_trial) is
     /// over, on `MAIN`; an older trial's end is not told. A refused trial is not told: its

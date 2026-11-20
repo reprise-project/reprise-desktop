@@ -246,6 +246,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         kb_settle: false,
         key_last: started.by_key,
         start_token: started.token,
+        hands: Default::default(),
         down_syms: Default::default(),
         press_time: 0,
         compositor,

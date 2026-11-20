@@ -26,6 +26,7 @@ pub mod fielddrop;
 mod filebox;
 pub mod filedlg;
 mod grip;
+mod hands;
 mod hangup;
 pub mod heads;
 pub mod iconjobs;
@@ -302,6 +303,8 @@ struct Host {
     /// The activation token this process was started with, presented once for the main window
     /// before it maps, so a launch from the focused program opens in front.
     start_token: Option<String>,
+    /// The tokens `Reply::handoffs` asked for, given as `Event::Handoff` ([`Host::hand`]).
+    hands: hands::Hands,
     down_syms: input::DownSyms,
     /// The time the last pointer press carried, real or a reader's
     /// (`access_msg`): a reader's click is stamped a second past the

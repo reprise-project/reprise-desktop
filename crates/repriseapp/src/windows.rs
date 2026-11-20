@@ -1,5 +1,6 @@
 //! Making, syncing and sizing the main window, child windows and the flyout.
 
+use crate::hands::LIFE;
 use crate::reply::spawn_handing;
 use crate::runloop::NoEvents;
 use crate::sizing::{Fit, at_pick, bounded, opening_size, regrown, sane_side, sane_size};
@@ -10,6 +11,7 @@ use crate::{
 use reprisebus::instance::Handoff;
 use reprisekit::cues::Cues;
 use reprisekit::raster::{Canvas, Rect};
+use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay_client_toolkit::reexports::protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_keyboard_shortcuts_inhibitor_v1;
 use smithay_client_toolkit::reexports::protocols::xdg::{
     dialog::v1::client::{xdg_dialog_v1, xdg_wm_dialog_v1},
@@ -31,6 +33,7 @@ use smithay_client_toolkit::{
 };
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::time::Instant;
 use wayland_client::{Connection, QueueHandle, protocol::wl_output};
 
 /// What an xdg-activation token is asked for; `new_token` carries it out.
@@ -39,6 +42,8 @@ pub(crate) enum TokenFor {
     Raise(WinId),
     /// Start this command line with it in this folder ([`Host::start`]); `true` after a key.
     Start(Vec<OsString>, Option<PathBuf>, bool),
+    /// Give it to the program as the `Event::Handoff` [`Host::hand`] queued under this id.
+    Hand(u64),
 }
 
 impl Host {
@@ -59,6 +64,33 @@ impl Host {
                 by_key: self.key_last,
             };
             spawn_handing(&argv, dir.as_deref(), &handoff);
+        }
+    }
+
+    /// Ask for a token as [`Host::start`] does for window `win`, for the program to hand on: it
+    /// arrives as `Event::Handoff`, after those asked before it ([`crate::hands`]). Tokenless
+    /// where `start` spawns tokenless.
+    pub(crate) fn hand(&mut self, win: WinId) {
+        let now = Instant::now();
+        if !(self.activation.is_some() && self.seat.is_some() && !self.exit) {
+            return self.hands.tokenless(self.key_last, now);
+        }
+        let id = self.hands.ask(self.key_last, now);
+        self.request_token(win, TokenFor::Hand(id));
+        let _ = self.loop_handle.insert_source(
+            Timer::from_duration(LIFE),
+            |deadline, _, host: &mut Host| {
+                host.hands.expire(deadline);
+                host.give_hands();
+                TimeoutAction::Drop
+            },
+        );
+    }
+
+    /// Gives the program each handoff no longer pending, oldest first, up to one still pending.
+    pub(crate) fn give_hands(&mut self) {
+        while let Some(handoff) = self.hands.pop() {
+            self.deliver(MAIN, Event::Handoff(handoff));
         }
     }
 
@@ -825,6 +857,10 @@ impl ActivationHandler for Host {
                     by_key: *by_key,
                 };
                 spawn_handing(argv, dir.as_deref(), &handoff);
+            }
+            TokenFor::Hand(id) => {
+                self.hands.answer(*id, token);
+                self.give_hands();
             }
         }
     }
