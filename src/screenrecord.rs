@@ -38,6 +38,8 @@ const ENDED_EARLY: i32 = 3;
 const SOUND_STOPPED: i32 = 4;
 /// The recorder's exit status when it was stopped before it wrote anything.
 const STOPPED_UNSTARTED: i32 = 5;
+/// The dynamic loader's exit status when a library does not load.
+const LIBRARY_MISSING: i32 = 127;
 
 /// What a recording records: an output, or an area of it in output-local logical pixels.
 #[derive(Clone, Debug, PartialEq)]
@@ -406,11 +408,7 @@ impl State {
                 ..
             } => {
                 remove_later(self, made);
-                let why = match (last_line.is_empty(), status) {
-                    (false, _) => last_line,
-                    (true, Some(code)) => format!("The recorder stopped with status {code}."),
-                    (true, None) => "The recorder was killed.".to_string(),
-                };
+                let why = failed_why(status, last_line);
                 log::warn!("screen recording failed: {why}");
                 crate::notifyview::notice(self, "Screen recording failed", &why);
             }
@@ -617,6 +615,17 @@ fn wait(mut child: std::process::Child, made: Made, killed: &AtomicBool) -> Ende
     }
 }
 
+/// Why a recorder that ended with `status` (None: killed) and `last_line` on stderr failed. The
+/// loader's own line for a library that did not load stays in the log.
+fn failed_why(status: Option<i32>, last_line: String) -> String {
+    match (status, last_line.is_empty()) {
+        (Some(LIBRARY_MISSING), _) => "A library the recorder needs did not load.".to_string(),
+        (_, false) => last_line,
+        (Some(code), true) => format!("The recorder stopped with status {code}."),
+        (None, true) => "The recorder was killed.".to_string(),
+    }
+}
+
 /// Remove an unused or failed recording's file on a file job.
 fn remove_later(state: &mut State, made: Made) {
     state.spawn_fs_job(move || {
@@ -681,6 +690,22 @@ fn file_name(tm: &libc::tm) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_recorder_whose_library_did_not_load_says_so_in_place_of_the_loader_line() {
+        let loader = "reprise-record: error while loading shared libraries: libjxl.so.0.11: \
+                      cannot open shared object file: No such file or directory";
+        assert_eq!(
+            failed_why(Some(127), loader.into()),
+            "A library the recorder needs did not load."
+        );
+        assert_eq!(failed_why(Some(1), "no output".into()), "no output");
+        assert_eq!(
+            failed_why(Some(1), String::new()),
+            "The recorder stopped with status 1."
+        );
+        assert_eq!(failed_why(None, String::new()), "The recorder was killed.");
+    }
 
     #[test]
     fn a_stop_interrupts_the_recorder_and_after_it_was_reaped_signals_nothing() {

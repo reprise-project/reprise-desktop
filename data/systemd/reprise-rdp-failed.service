@@ -1,0 +1,6 @@
+[Unit]
+Description=Notice that the Reprise Remote Desktop server could not start
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/reprise --remote-desktop-failed

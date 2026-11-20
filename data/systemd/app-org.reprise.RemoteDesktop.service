@@ -2,11 +2,15 @@
 Description=Reprise Remote Desktop server
 PartOf=graphical-session.target
 After=graphical-session.target wireplumber.service
+OnFailure=reprise-rdp-failed.service
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/reprise-rdp
 Restart=on-failure
+# A restart skips the failed state, so OnFailure= fires once: at the start limit, or on an exit
+# Restart= skips.
+RestartMode=direct
 # 75: another process holds org.reprise.RemoteDesktop; the server stays off until started again.
 RestartPreventExitStatus=75
 # One 1600x900 H.264 viewer peaks at about 170 MB; 1 GiB leaves room for a 4K screen, four

@@ -55,7 +55,11 @@ or the `tailscale0` interface).
   `app-org.reprise.RemoteDesktop.service`; clearing it stops and disables
   the unit. With it off nothing listens. The line under the check box says
   where it listens ("Listening on port 3389 at 192.168.1.20"), and the next
-  one which video encoder it uses.
+  one which video encoder it uses. A server that cannot start (a library it
+  needs does not load, or it keeps stopping until systemd gives up) brings a
+  "Remote Desktop could not start" notice saying why, once, and the line
+  reads "Not running." with the same reason; the journal below has the
+  detail.
 - **Under reprise-login.** The login manager takes the connections, for
   every user in `reprise-remote`, and the session's own server never
   listens. [install.md](install.md#remote-logins) has the steps and

@@ -97,6 +97,59 @@ pub fn session_programs() -> HashSet<PathBuf> {
 
 const DEST: &str = "org.freedesktop.systemd1";
 
+/// Whether `graphical-session.target` is active with no stop job queued: false from the moment a
+/// session starts ending. Blocking; false when the manager does not answer.
+pub fn session_running() -> bool {
+    let running = || -> zbus::Result<bool> {
+        let conn = crate::session()?;
+        let target = unit_interface(&conn, "graphical-session.target", "Unit")?;
+        if crate::wait(target.get_property::<String>("ActiveState"))? != "active" {
+            return Ok(false);
+        }
+        let (job, path) = crate::wait(target.get_property::<(u32, zbus::OwnedObjectPath)>("Job"))?;
+        if job == 0 {
+            return Ok(true);
+        }
+        let job = crate::wait(Proxy::new(
+            &conn,
+            DEST,
+            path,
+            "org.freedesktop.systemd1.Job",
+        ))?;
+        Ok(crate::wait(job.get_property::<String>("JobType"))? != "stop")
+    };
+    running().unwrap_or_else(|e| {
+        log::info!("graphical-session.target: {e}");
+        false
+    })
+}
+
+/// The `org.freedesktop.systemd1.<iface>` interface of `name`, uncached; an error when the
+/// manager has not loaded it. Blocking.
+pub(crate) fn unit_interface(
+    conn: &zbus::Connection,
+    name: &str,
+    iface: &str,
+) -> zbus::Result<Proxy<'static>> {
+    let path: zbus::OwnedObjectPath = crate::wait(conn.call_method(
+        Some(DEST),
+        "/org/freedesktop/systemd1",
+        Some("org.freedesktop.systemd1.Manager"),
+        "GetUnit",
+        &(name,),
+    ))?
+    .body()
+    .deserialize()?;
+    crate::wait(
+        zbus::proxy::Builder::new(conn)
+            .destination(DEST)
+            .path(path)
+            .interface(format!("org.freedesktop.systemd1.{iface}"))
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build(),
+    )
+}
+
 /// How long one walk waits in all for start jobs queued at login.
 const SETTLE: Duration = Duration::from_secs(3);
 

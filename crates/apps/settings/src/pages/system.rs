@@ -881,6 +881,11 @@ pub fn selected_client<'a>(page: &Form, status: Option<&'a Status>) -> Option<&'
     Some(client.address.as_str())
 }
 
+/// The status line of a server whose unit failed, `why` it stopped, in place of "Not answering".
+pub fn show_remote_stopped(page: &mut Form, why: &str) {
+    page.set_text(REMOTE_STATUS, &format!("Not running. {why}"));
+}
+
 /// The status line: off, not answering, listening on its port at `address`, or why it cannot listen.
 pub(super) fn remote_status(
     status: Option<&Status>,
