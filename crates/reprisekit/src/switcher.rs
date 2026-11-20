@@ -9,10 +9,11 @@
 //! picture box. [`hit`] finds the entry under the pointer in either. `controls::switcher` draws Classic's panels.
 
 use crate::raster::{Canvas, Insets, Rect};
+use crate::theme::TextUnits;
 
 /// The icon panel: 330 px wide whatever the count, 43 px icon cells from 19 px below the top, at most
-/// 7 per row and 3 rows (more windows page), a 25 px title field 14 px in from the sides, 10 px under
-/// the icons and 10 px above the bottom.
+/// 7 per row and 3 rows (more windows page), a 25 px title field (grown with the text size) 14 px in
+/// from the sides, 10 px under the icons and 10 px above the bottom.
 pub const WIDTH: i32 = 330;
 pub const CELL: i32 = 43;
 pub const COLS: usize = 7;
@@ -149,8 +150,15 @@ pub struct SwitcherLayout {
 
 impl SwitcherLayout {
     /// Lay out `count` entries as icons with `selected` on the shown page: the row of cells is centred
-    /// (left-aligned rows below), the panel grows 43 px per row and is centred in `area`. `preview` adds the well above.
-    pub fn compute(count: usize, selected: usize, area: Rect, preview: bool) -> SwitcherLayout {
+    /// (left-aligned rows below), the panel grows 43 px per row and is centred in `area`. `preview` adds the well above;
+    /// the title field grows with `text`.
+    pub fn compute(
+        count: usize,
+        selected: usize,
+        area: Rect,
+        preview: bool,
+        text: TextUnits,
+    ) -> SwitcherLayout {
         let page = COLS * MAX_ROWS;
         let first = (selected / page) * page;
         let shown = count.saturating_sub(first).min(page);
@@ -174,7 +182,7 @@ impl SwitcherLayout {
             })
             .collect();
         let field_y = top + rows * CELL + FIELD_GAP;
-        let field = Rect::new(SIDE, field_y, width - 2 * SIDE, FIELD_H);
+        let field = Rect::new(SIDE, field_y, width - 2 * SIDE, text.len(FIELD_H));
         let height = field.bottom() + BOTTOM;
         let x = area.x + (area.width - width) / 2;
         let y = area.y + (area.height - height) / 2;
@@ -437,7 +445,7 @@ mod tests {
             l.input_area(),
             Rect::new(13, 12, l.rect.width, l.rect.height)
         );
-        let c = SwitcherLayout::compute(3, 0, Rect::new(0, 0, 1920, 1040), false);
+        let c = SwitcherLayout::compute(3, 0, Rect::new(0, 0, 1920, 1040), false, TextUnits::ONE);
         assert_eq!(c.input_area(), Rect::new(0, 0, c.rect.width, c.rect.height));
     }
 
