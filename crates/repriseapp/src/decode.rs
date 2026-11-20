@@ -1,8 +1,8 @@
 //! Pluggable image decoders: turn file bytes into a [`Canvas`] fitted to a caller-supplied maximum size, plus the source's own dimensions. [`ImageDecoder`] is `Send + Sync` because Explorer's thumbnail worker decodes from a thread.
 //!
 //! [`Decoders::default_set`] registers [`ImageCrateDecoder`] (the `image`
-//! crate's formats, listed on it) and [`HelperDecoder::jxl`]; a caller with a format
-//! neither covers can [`Decoders::register`] another before or after them.
+//! crate's formats, listed on it), [`HelperDecoder::jxl`] and [`HelperDecoder::avif`]; a caller
+//! with a format none covers can [`Decoders::register`] another before or after them.
 
 use std::path::Path;
 
@@ -46,12 +46,14 @@ impl Decoders {
         let mut d = Decoders { list: Vec::new() };
         d.register(Box::new(ImageCrateDecoder));
         d.register(Box::new(HelperDecoder::jxl()));
+        d.register(Box::new(HelperDecoder::avif()));
         d
     }
 
-    /// [`Decoders::default_set`] without JPEG XL, for a picture an app hands over: a JPEG
-    /// XL from one decodes only in the thumbnailers' jail ([`crate::thumbs::picture`]).
-    pub fn without_jxl() -> Decoders {
+    /// [`Decoders::default_set`] without the formats reprise-decode reads, for a picture an app
+    /// hands over: a JPEG XL or AVIF from one decodes only in the thumbnailers' jail
+    /// ([`crate::thumbs::picture`]).
+    pub fn built_in() -> Decoders {
         let mut d = Decoders { list: Vec::new() };
         d.register(Box::new(ImageCrateDecoder));
         d
@@ -163,7 +165,7 @@ pub struct ImageCrateDecoder;
 
 impl ImageDecoder for ImageCrateDecoder {
     fn probe(&self, bytes: &[u8]) -> bool {
-        image::guess_format(bytes).is_ok()
+        image::guess_format(bytes).is_ok_and(|f| f.reading_enabled())
     }
 
     fn decode(&self, bytes: &[u8], max: (u32, u32), budget: Budget) -> Result<Decoded, Unread> {
@@ -199,15 +201,53 @@ pub fn is_jxl(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xff, 0x0a]) || bytes.starts_with(reprisefs::imagesize::JXL_CONTAINER)
 }
 
-/// How long one JPEG XL may decode in reprise-decode: twice a slow core's time for a lossless picture at
-/// [`MAX_DECODED_BYTES`] (effort 9), where a few bytes a layer can keep a decoder composing layers
-/// for hours.
-pub const JXL_TIME_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+/// Whether `bytes` start as an AVIF: an ISOBMFF `ftyp` naming the AVIF brands, or the HEIF
+/// brands with an AV1 configuration among the first boxes.
+pub fn is_avif(bytes: &[u8]) -> bool {
+    let size = match bytes.get(..8) {
+        Some(&[a, b, c, d, b'f', b't', b'y', b'p']) => u32::from_be_bytes([a, b, c, d]) as usize,
+        _ => return false,
+    };
+    let Some(ftyp) = bytes.get(8..size) else {
+        return false;
+    };
+    // The major brand, the minor version, then the compatible brands.
+    let brands: Vec<&[u8; 4]> = (ftyp.as_chunks::<4>().0.iter().enumerate())
+        .filter_map(|(i, b)| (i != 1).then_some(b))
+        .collect();
+    let named = |names: &[&[u8; 4]]| brands.iter().any(|b| names.contains(b));
+    let av1 = || {
+        bytes[..bytes.len().min(HEIF_HEAD)]
+            .windows(4)
+            .any(|w| w == b"av1C")
+    };
+    named(&[b"avif", b"avis"]) || named(&[b"mif1", b"msf1"]) && av1()
+}
+
+/// How far into a HEIF [`is_avif`] looks for an AV1 configuration.
+const HEIF_HEAD: usize = 4096;
+
+/// The format of `bytes` that only reprise-decode reads, if any.
+pub fn helper_format(bytes: &[u8]) -> Option<reprise_decode_protocol::Format> {
+    use reprise_decode_protocol::Format;
+    if is_jxl(bytes) {
+        Some(Format::Jxl)
+    } else if is_avif(bytes) {
+        Some(Format::Avif)
+    } else {
+        None
+    }
+}
+
+/// How long one picture may decode in reprise-decode: twice a slow core's time for a lossless
+/// JPEG XL at [`MAX_DECODED_BYTES`] (effort 9), where a few bytes a layer can keep a decoder
+/// composing layers for hours.
+pub const HELPER_TIME_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The file extensions [`Decoders::default_set`] reads, lower case.
-pub const EXTS: [&str; 20] = [
+pub const EXTS: [&str; 21] = [
     "png", "apng", "jpg", "jpeg", "jfif", "gif", "bmp", "webp", "tif", "tiff", "ico", "qoi", "pbm",
-    "pgm", "ppm", "pnm", "pam", "hdr", "exr", "jxl",
+    "pgm", "ppm", "pnm", "pam", "hdr", "exr", "jxl", "avif",
 ];
 
 /// Whether `path`'s extension is one of [`EXTS`], in any case.
@@ -455,27 +495,50 @@ mod tests {
         assert_eq!(decoded.canvas.get(0, 0), premultiply(argb));
     }
 
+    /// The first bytes of an AVIF as libavif and ravif write it.
+    const AVIF_HEAD: &[u8] = b"\0\0\0\x1cftypavif\0\0\0\0avifmif1miaf\0\0\x01\x0ameta";
+
     #[test]
-    fn the_set_for_an_apps_picture_decodes_no_jxl() {
+    fn the_set_for_an_apps_picture_decodes_no_jxl_or_avif() {
         let jxl = [0xff, 0x0a, 0, 0];
-        assert!(Decoders::default_set().list.iter().any(|d| d.probe(&jxl)));
-        assert!(Decoders::without_jxl().list.iter().all(|d| !d.probe(&jxl)));
+        for bytes in [&jxl[..], AVIF_HEAD] {
+            assert!(Decoders::default_set().list.iter().any(|d| d.probe(bytes)));
+            assert!(Decoders::built_in().list.iter().all(|d| !d.probe(bytes)));
+        }
+    }
+
+    #[test]
+    fn an_avif_is_known_by_its_brands() {
+        assert!(is_avif(AVIF_HEAD));
+        let seq = b"\0\0\0\x18ftypavis\0\0\0\0msf1miaf";
+        assert!(is_avif(seq));
+        let heif_av1 = b"\0\0\0\x14ftypmif1\0\0\0\0miaf\0\0\0\x0cav1C\x81\0\0\0";
+        assert!(is_avif(heif_av1), "HEIF brands with an AV1 configuration");
+        let heic = b"\0\0\0\x18ftypheic\0\0\0\0mif1heic\0\0\0\x0chvcC\0\0\0\0";
+        assert!(!is_avif(heic));
+        assert!(!is_avif(b"\0\0\0\x18ftypisom\0\0\0\0isomavc1"), "an MP4");
+        assert!(!is_avif(&AVIF_HEAD[..10]));
+        assert_eq!(
+            helper_format(AVIF_HEAD),
+            Some(reprise_decode_protocol::Format::Avif)
+        );
     }
 
     #[test]
     fn every_listed_extension_is_a_format_the_decoder_reads() {
         for e in EXTS {
-            if e == "jxl" {
+            if e == "jxl" || e == "avif" {
                 continue;
             }
             let f = image::ImageFormat::from_extension(e).unwrap_or_else(|| panic!("{e}"));
             assert!(f.reading_enabled(), "{e}");
         }
-        assert_eq!(
-            image::ImageFormat::from_extension("jxl"),
-            None,
-            "reprise-decode reads it"
-        );
+        for e in ["jxl", "avif"] {
+            assert!(
+                image::ImageFormat::from_extension(e).is_none_or(|f| !f.reading_enabled()),
+                "reprise-decode reads {e}"
+            );
+        }
         assert!(is_image(Path::new("/home/u/Pictures/Beach.JPG")));
         assert!(!is_image(Path::new("/home/u/notes.txt")));
     }

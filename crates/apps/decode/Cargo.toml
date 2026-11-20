@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-description = "Reprise's picture decoder: a confined process that turns a JPEG XL file into its pixels for a program that opens one"
+description = "Reprise's picture decoder: a confined process that turns a JPEG XL or AVIF file into its pixels for a program that opens one"
 
 [lints]
 workspace = true
@@ -18,9 +18,13 @@ path = "src/main.rs"
 [dependencies]
 jxl.workspace = true
 libc.workspace = true
+rav1d.workspace = true
 reprise-decode-protocol = { path = "../../reprisedecodeproto" }
 repriseconfine = { path = "../../repriseconfine" }
 
 [dev-dependencies]
 # Builds the JPEG XL test pictures.
 jpegxl-sys.workspace = true
+# Build the AVIF test pictures.
+ravif = { version = "0.13", default-features = false }
+rav1e = { version = "0.8.1", default-features = false }

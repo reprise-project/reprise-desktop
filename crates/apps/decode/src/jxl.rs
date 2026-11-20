@@ -2,52 +2,35 @@
 //! deadline.
 //!
 //! jxl-rs takes no allocator, so its heap is held by [`crate::heapcap`] on the decoding thread:
-//! past [`HEAP_PER_PIXEL_BYTE`] times the pixel budget a large request gets null, which jxl-rs
-//! answers with an out-of-memory error. The image and each frame may also state no more samples
-//! (pixels times channels) than the budget's RGBA bytes, and Level 5's limits stay on.
+//! past [`heap_budget`] a large request gets null, which jxl-rs answers with an out-of-memory
+//! error. The image and each frame may also state no more samples (pixels times channels) than
+//! the budget's RGBA bytes, and Level 5's limits stay on.
 
 use std::time::{Duration, Instant};
 
 use jxl::api::{
-    AlphaMode, Endianness, Event, JxlColorEncoding, JxlColorProfile, JxlColorType, JxlDataFormat,
-    JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlParallelRunner, JxlParallelRunnerFun,
-    JxlPixelFormat, JxlPrimaries, JxlTransferFunction, JxlWhitePoint,
+    AlphaMode, Endianness, Event, JxlColorProfile, JxlColorType, JxlDataFormat, JxlDecoder,
+    JxlDecoderOptions, JxlOutputBuffer, JxlParallelRunner, JxlParallelRunnerFun, JxlPixelFormat,
 };
 use jxl::error::Error;
 
-use crate::heapcap;
+use crate::colour::ToSrgb;
+use crate::{Refused, Rgba, heapcap};
 
-/// What a decode may hold at once, per byte of the pixel budget: an XYB picture at the budget
+/// What a decode may hold at once, per byte of the pixel budget: an image in XYB at the budget
 /// takes about 2.3 times its RGBA, and a reference frame 4 more (f32 a channel).
-pub const HEAP_PER_PIXEL_BYTE: u64 = 3;
+const HEAP_PER_PIXEL_BYTE: u64 = 3;
 
-/// Why a JPEG XL gave no picture.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Refused {
-    /// The image or one of its frames states more than the pixel budget.
-    Size,
-    /// The decode asked for more than its heap budget, the file passes Level 5's limits, or the
-    /// heap budget cannot be held because [`heapcap::Capped`] is not the global allocator.
-    Memory,
-    /// The decode ran past its time limit.
-    Time,
-    /// Not a JPEG XL jxl-rs reads, or cut short.
-    Broken,
-}
-
-/// Unpremultiplied 8-bit sRGB RGBA, rows top to bottom, with the file's orientation applied.
-pub struct Rgba {
-    pub width: u32,
-    pub height: u32,
-    pub px: Vec<u8>,
+/// The heap a decode may hold under a pixel budget of `pixel_bytes`.
+pub fn heap_budget(pixel_bytes: u64) -> u64 {
+    pixel_bytes.saturating_mul(HEAP_PER_PIXEL_BYTE)
 }
 
 /// The first frame of `bytes` (an animation's first, composed), refused when the image or a
-/// frame states more samples than `pixel_bytes`, the decode holds more than
-/// [`HEAP_PER_PIXEL_BYTE`] times that, or it takes longer than `time_limit`.
+/// frame states more samples than `pixel_bytes`, the decode holds more than [`heap_budget`], or
+/// it takes longer than `time_limit`.
 pub fn first_frame(bytes: &[u8], pixel_bytes: u64, time_limit: Duration) -> Result<Rgba, Refused> {
-    let heap = pixel_bytes.saturating_mul(HEAP_PER_PIXEL_BYTE);
-    let heap = usize::try_from(heap).unwrap_or(usize::MAX);
+    let heap = usize::try_from(heap_budget(pixel_bytes)).unwrap_or(usize::MAX);
     match heapcap::within(heap, || decode(bytes, pixel_bytes, time_limit)) {
         Ok((Err(_), spent)) if spent.refused => Err(Refused::Memory),
         Ok((got, _)) => got,
@@ -139,6 +122,8 @@ impl Out {
         // The colour type picks the output profile, so it is set before the profile is read.
         (dec.set_pixel_format(format(JxlDataFormat::U8 { bit_depth: 8 })))
             .map_err(|_| Refused::Broken)?;
+        // jxl-rs writes an XYB picture in its own colour space when it can (Display P3, BT.2100
+        // PQ, ...) and has no setter for the output profile.
         let to_srgb = match dec.output_color_profile() {
             Some(JxlColorProfile::Simple(enc)) if xyb => ToSrgb::from(enc, intensity)?,
             _ => None,
@@ -148,7 +133,7 @@ impl Out {
         // budget.
         let room = (w as u64).saturating_mul(h as u64).saturating_mul(8) <= pixel_bytes;
         let to_srgb = match to_srgb {
-            Some(t) if t.bands_at_8_bits() && room => Some(t.at_16_bits(intensity)?),
+            Some(t) if t.bands_at_8_bits() && room => Some(t.at_max(u16::MAX, intensity)?),
             other => other,
         };
         if to_srgb.as_ref().is_some_and(|t| t.max == u16::MAX) {
@@ -229,212 +214,6 @@ fn zeroed(n: usize) -> Result<Vec<u8>, Refused> {
     v.try_reserve_exact(n).map_err(|_| Refused::Memory)?;
     v.resize(n, 0);
     Ok(v)
-}
-
-/// jxl-rs writes an XYB picture in its own colour space when it can (Display P3, BT.2100 PQ,
-/// ...), and has no setter for the output profile, so those samples are turned to sRGB here.
-struct ToSrgb {
-    tf: JxlTransferFunction,
-    /// The largest sample: 255, or 65535 for 16-bit samples.
-    max: u16,
-    /// Each sample's linear value.
-    linear: Vec<f32>,
-    /// HLG's OOTF from scene to display light: the luminance weights of linear RGB, and the
-    /// exponent of luminance each sample is multiplied by.
-    ootf: Option<([f32; 3], f32)>,
-    /// From the picture's linear RGB to linear sRGB; None for grey.
-    matrix: Option<[[f32; 3]; 3]>,
-    /// sRGB's 8-bit sample for each linear value in 1/65535 steps.
-    encode: Vec<u8>,
-}
-
-impl ToSrgb {
-    /// None for sRGB itself or a colour space this cannot turn.
-    fn from(enc: &JxlColorEncoding, intensity_target: f32) -> Result<Option<ToSrgb>, Refused> {
-        let (tf, matrix, luma) = match enc {
-            JxlColorEncoding::RgbColorSpace {
-                white_point,
-                primaries,
-                transfer_function,
-                ..
-            } => {
-                let same = *primaries == JxlPrimaries::SRGB && *white_point == JxlWhitePoint::D65;
-                let matrix = (!same).then(|| to_srgb_matrix(primaries, white_point));
-                let luma = rgb_to_xyz(primaries.to_xy_coords(), white_point.to_xy_coords())
-                    .map(|m| m[1].map(|v| v as f32));
-                (transfer_function, matrix.flatten(), luma)
-            }
-            JxlColorEncoding::GrayscaleColorSpace {
-                transfer_function, ..
-            } => (transfer_function, None, Some([1.0 / 3.0; 3])),
-            JxlColorEncoding::XYB { .. } => return Ok(None),
-        };
-        if *tf == JxlTransferFunction::SRGB && matrix.is_none() {
-            return Ok(None);
-        }
-        let ootf = match tf {
-            JxlTransferFunction::HLG => luma.map(|l| (l, hlg_system_gamma(intensity_target) - 1.0)),
-            _ => None,
-        };
-        let linear = linear_table(tf, u16::from(u8::MAX), intensity_target)?;
-        let mut encode = Vec::new();
-        encode
-            .try_reserve_exact(1 << 16)
-            .map_err(|_| Refused::Memory)?;
-        encode.extend((0..=u16::MAX).map(|v| {
-            let l = f64::from(v) / 65535.0;
-            let s = if l <= 0.003_130_8 {
-                l * 12.92
-            } else {
-                1.055 * l.powf(1.0 / 2.4) - 0.055
-            };
-            (s * 255.0).round() as u8
-        }));
-        Ok(Some(ToSrgb {
-            tf: tf.clone(),
-            max: u16::from(u8::MAX),
-            linear,
-            ootf,
-            matrix,
-            encode,
-        }))
-    }
-
-    fn bands_at_8_bits(&self) -> bool {
-        use JxlTransferFunction::{HLG, Linear, PQ};
-        matches!(self.tf, PQ | HLG | Linear)
-    }
-
-    fn at_16_bits(self, intensity_target: f32) -> Result<ToSrgb, Refused> {
-        Ok(ToSrgb {
-            max: u16::MAX,
-            linear: linear_table(&self.tf, u16::MAX, intensity_target)?,
-            ..self
-        })
-    }
-
-    /// The 8-bit sRGB RGBA of samples `rgb` at alpha `a`, each up to `max`.
-    fn pixel(&self, rgb: [u16; 3], a: u16) -> [u8; 4] {
-        let mut l = rgb.map(|v| self.linear[usize::from(v)]);
-        if let Some((luma, exponent)) = self.ootf {
-            let y = luma[0] * l[0] + luma[1] * l[1] + luma[2] * l[2];
-            if y > 0.0 {
-                let m = y.powf(exponent);
-                l = l.map(|v| v * m);
-            }
-        }
-        if let Some(m) = &self.matrix {
-            l = m.map(|row| row[0] * l[0] + row[1] * l[1] + row[2] * l[2]);
-        }
-        let encode = |l: f32| self.encode[(l.clamp(0.0, 1.0) * 65535.0).round() as usize];
-        let max = u32::from(self.max);
-        let a = ((u32::from(a) * 255 + max / 2) / max) as u8;
-        [encode(l[0]), encode(l[1]), encode(l[2]), a]
-    }
-}
-
-fn linear_table(
-    tf: &JxlTransferFunction,
-    max: u16,
-    intensity_target: f32,
-) -> Result<Vec<f32>, Refused> {
-    let mut linear = Vec::new();
-    (linear.try_reserve_exact(usize::from(max) + 1)).map_err(|_| Refused::Memory)?;
-    let top = f32::from(max);
-    linear.extend((0..=max).map(|v| to_linear(tf, f32::from(v) / top, intensity_target)));
-    Ok(linear)
-}
-
-/// HLG's system gamma on a display of `intensity` nits, 1.2 at 1000 (BT.2100's extended form).
-fn hlg_system_gamma(intensity: f32) -> f32 {
-    (1.2 * 1.111f64.powf((f64::from(intensity) / 1000.0).log2())) as f32
-}
-
-/// The linear value of sample `v` (0 to 1) under `tf`: for PQ 1 is `intensity_target` nits, for
-/// HLG scene light with 1 its peak, before the OOTF.
-fn to_linear(tf: &JxlTransferFunction, v: f32, intensity_target: f32) -> f32 {
-    let v = f64::from(v);
-    let l = match tf {
-        JxlTransferFunction::Linear => v,
-        JxlTransferFunction::SRGB if v <= 0.04045 => v / 12.92,
-        JxlTransferFunction::SRGB => ((v + 0.055) / 1.055).powf(2.4),
-        JxlTransferFunction::BT709 if v < 0.081 => v / 4.5,
-        JxlTransferFunction::BT709 => ((v + 0.099) / 1.099).powf(1.0 / 0.45),
-        JxlTransferFunction::DCI => v.powf(2.6),
-        // The encoding exponent, under 1.
-        JxlTransferFunction::Gamma(g) => v.powf(1.0 / f64::from(*g)),
-        JxlTransferFunction::PQ => {
-            let (m1, m2) = (2610.0 / 16384.0, 2523.0 / 4096.0 * 128.0);
-            let (c1, c2, c3) = (
-                3424.0 / 4096.0,
-                2413.0 / 4096.0 * 32.0,
-                2392.0 / 4096.0 * 32.0,
-            );
-            let p = v.powf(1.0 / m2);
-            let nits = ((p - c1).max(0.0) / (c2 - c3 * p)).powf(1.0 / m1) * 10000.0;
-            nits / f64::from(intensity_target)
-        }
-        JxlTransferFunction::HLG if v <= 0.5 => v * v / 3.0,
-        JxlTransferFunction::HLG => {
-            let (a, b, c) = (0.178_832_77, 0.284_668_92, 0.559_910_73);
-            (((v - c) / a).exp() + b) / 12.0
-        }
-    };
-    l as f32
-}
-
-/// The matrix from linear RGB under `primaries` and `white` to linear sRGB, the white point
-/// adapted to D65 by Bradford; None for degenerate primaries.
-fn to_srgb_matrix(primaries: &JxlPrimaries, white: &JxlWhitePoint) -> Option<[[f32; 3]; 3]> {
-    let src = rgb_to_xyz(primaries.to_xy_coords(), white.to_xy_coords())?;
-    let d65 = JxlWhitePoint::D65.to_xy_coords();
-    let srgb = rgb_to_xyz(JxlPrimaries::SRGB.to_xy_coords(), d65)?;
-    const BRADFORD: [[f64; 3]; 3] = [
-        [0.8951, 0.2664, -0.1614],
-        [-0.7502, 1.7135, 0.0367],
-        [0.0389, -0.0685, 1.0296],
-    ];
-    let cone = |xy| mul_vec(&BRADFORD, xyz(xy));
-    let (from, to) = (cone(white.to_xy_coords()), cone(d65));
-    let scale =
-        std::array::from_fn(|i| std::array::from_fn(|j| f64::from(i == j) * to[i] / from[i]));
-    let adapt = mul(&invert(&BRADFORD)?, &mul(&scale, &BRADFORD));
-    let m = mul(&invert(&srgb)?, &mul(&adapt, &src));
-    Some(m.map(|row| row.map(|v| v as f32)))
-}
-
-/// The XYZ of white `xy` at Y 1.
-fn xyz((x, y): (f32, f32)) -> [f64; 3] {
-    let (x, y) = (f64::from(x), f64::from(y));
-    [x / y, 1.0, (1.0 - x - y) / y]
-}
-
-/// Linear RGB to XYZ for primaries `rgb` and white `w`, white at Y 1.
-fn rgb_to_xyz(rgb: [(f32, f32); 3], w: (f32, f32)) -> Option<[[f64; 3]; 3]> {
-    let cols = rgb.map(xyz);
-    let p = std::array::from_fn(|i| cols.map(|c| c[i]));
-    let s = mul_vec(&invert(&p)?, xyz(w));
-    Some(std::array::from_fn(|i| {
-        std::array::from_fn(|j| p[i][j] * s[j])
-    }))
-}
-
-fn mul(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
-    std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| a[i][k] * b[k][j]).sum()))
-}
-
-fn mul_vec(a: &[[f64; 3]; 3], v: [f64; 3]) -> [f64; 3] {
-    a.map(|row| row[0] * v[0] + row[1] * v[1] + row[2] * v[2])
-}
-
-fn invert(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
-    let c = |i: usize, j: usize| {
-        let (r, s) = ((i + 1) % 3, (i + 2) % 3);
-        let (t, u) = ((j + 1) % 3, (j + 2) % 3);
-        m[r][t] * m[s][u] - m[r][u] * m[s][t]
-    };
-    let det: f64 = (0..3).map(|j| m[0][j] * c(0, j)).sum();
-    (det.abs() > 1e-12).then(|| std::array::from_fn(|i| std::array::from_fn(|j| c(j, i) / det)))
 }
 
 /// jxl-rs's runner: each job inline on the calling thread, none started past `deadline`. jxl-rs

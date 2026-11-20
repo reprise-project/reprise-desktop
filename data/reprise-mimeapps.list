@@ -30,6 +30,7 @@ image/x-portable-anymap=reprise-imageviewer.desktop
 image/vnd.radiance=reprise-imageviewer.desktop
 image/x-exr=reprise-imageviewer.desktop
 image/jxl=reprise-imageviewer.desktop
+image/avif=reprise-imageviewer.desktop
 application/vnd.flatpak.ref=reprise-install.desktop
 application/vnd.flatpak=reprise-install.desktop
 application/x-alpm-package=reprise-install.desktop

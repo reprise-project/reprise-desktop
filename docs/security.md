@@ -845,28 +845,37 @@ ends, so stop the share first.
   their installed `.thumbnailer` with no click, so each runs under
   bubblewrap: new namespaces, `/usr` and the input file read-only, a scratch
   folder its one writable place, no home, session bus or display socket, a
-  memory cap and a deadline. JPEG XL thumbnails, Explorer's Space preview
-  and the Account prompt's picture decode in the same jail, and the
-  portal's other prompts never decode JPEG XL. Without bubblewrap none of
+  memory cap and a deadline. JPEG XL and AVIF thumbnails, Explorer's Space
+  preview and the Account prompt's picture decode in the same jail, and the
+  portal's other prompts never decode JPEG XL or AVIF. Without bubblewrap none of
   these runs and the file keeps its icon. The other built-in decoders run in the
   process showing the folder, and one that panics marks its file failed.
-- **Picture decoder.** No program decodes a JPEG XL itself: Image
-  Viewer, Paint, Settings, User Accounts and the jailed thumbnails each
-  start `reprise-decode`, the one program that links the decoder (jxl-rs, a
-  Rust decoder whose unsafe code sits in a few modules and its SIMD, not
-  libjxl), and get the picture's pixels back; the jailed ones stream the
-  file to it from the open file.
+- **Picture decoder.** No program decodes a JPEG XL or an AVIF itself:
+  Image Viewer, Paint, Settings, User Accounts and the jailed thumbnails
+  each start `reprise-decode`, the one program that links the decoders
+  (jxl-rs, a Rust decoder whose unsafe code sits in a few modules and its
+  SIMD, not libjxl; and rav1d, a Rust port of dav1d with much unsafe code
+  of its own, built without dav1d's assembly), and get the picture's pixels
+  back; the jailed ones stream the file to it from the open file. The AVIF
+  container is read by Reprise's own safe Rust before rav1d sees a byte,
+  and rav1d decodes on the one thread with its frame size held to the
+  pixel budget.
   It inherits no environment but `LD_LIBRARY_PATH` and, before it reads the
   file, confines itself as the screenshot encoder below does, with an
-  address space of the file, four times the picture's pixel budget, its
-  stack and 256 MiB, CPU time at its deadline, and a seccomp filter that
-  also lets the clock and random bytes through and starts no thread. Its
-  heap is held to three times the pixel budget: past that a request of
-  64 KiB or more fails, which the decoder meets with an error or an abort.
+  address space of the file, five times the picture's pixel budget and
+  4 MiB, its stack and 256 MiB, CPU time at its deadline, and a seccomp
+  filter that also lets the clock and random bytes through and starts no
+  thread. Its heap is held to three times the pixel budget for a JPEG XL
+  and four times and 4 MiB of rav1d's own state for an AVIF: past that a
+  request of 64 KiB or more fails, which the decoder meets with an error or
+  an abort. rav1d can't be stopped inside a picture, so an AVIF's deadline
+  is checked after the container is read and between pictures; the CPU
+  limit and the caller's kill stop the rest. rav1d's API is `extern "C"`, so a panic inside it aborts the
+  process rather than unwinding.
   An abort, a kill or a picture past the budget reads as too large to open,
-  and a crash (SIGSEGV, SIGBUS), the CPU limit or the deadline as
-  unreadable; the caller kills it 5 s past its 60 s deadline and reads at
-  most the budget's pixels of its reply.
+  and a crash (SIGSEGV, SIGBUS), an abort after a panic, the CPU limit or
+  the deadline as unreadable; the caller kills it 5 s past its 60 s
+  deadline and reads at most the budget's pixels of its reply.
 - **App scopes.** A program started from a desktop entry runs in a systemd
   scope `app-reprise-<app id>-<n>.scope`, for identification and cleanup,
   not confinement. polkit judges a scoped program by the user's display

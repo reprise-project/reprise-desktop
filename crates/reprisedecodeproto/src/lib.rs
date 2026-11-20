@@ -16,12 +16,14 @@ pub const PROTOCOL: u8 = 1;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     Jxl = 1,
+    Avif = 2,
 }
 
 impl Format {
     fn of(byte: u8) -> Option<Format> {
         match byte {
             1 => Some(Format::Jxl),
+            2 => Some(Format::Avif),
             _ => None,
         }
     }
@@ -274,7 +276,13 @@ mod tests {
         assert_eq!(Request::from_bytes(&b), Ok(r));
         let mut avif = b;
         avif[1] = 2;
-        assert_eq!(Request::from_bytes(&avif), Err(Unknown::Format(2)));
+        assert_eq!(
+            Request::from_bytes(&avif).map(|r| r.format),
+            Ok(Format::Avif)
+        );
+        let mut other = b;
+        other[1] = 3;
+        assert_eq!(Request::from_bytes(&other), Err(Unknown::Format(3)));
         let mut newer = b;
         newer[0] = PROTOCOL + 1;
         assert_eq!(

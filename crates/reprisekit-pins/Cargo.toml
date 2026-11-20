@@ -11,6 +11,7 @@ description = "No code: turns on, for every build, the union of features the wor
 # One shared reprisekit across `cargo build/test -p`: ask for the union of features
 # here. After a dependency change, rerun `scripts/kit-units`.
 [dependencies]
+arrayvec = { version = "0.7", features = ["std"] }
 bitflags = { version = "2", default-features = false, features = ["std"] }
 bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "derive", "extern_crate_alloc", "wasm_simd"] }
 crossbeam-utils = "0.8"

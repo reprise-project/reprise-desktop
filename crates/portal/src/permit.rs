@@ -332,7 +332,7 @@ pub fn run_dialog() {
     let mut form = build_form(kind, &input);
     if let Some(path) = &input.preview
         && let Some(Control::Monitor(screen)) = form.item_mut("preview").map(|i| &mut i.control)
-        && let Some(d) = repriseapp::decode::Decoders::without_jxl()
+        && let Some(d) = repriseapp::decode::Decoders::built_in()
             .decode_file(std::path::Path::new(path), PREVIEW_MAX)
     {
         *screen = Screen::Picture(d.canvas);

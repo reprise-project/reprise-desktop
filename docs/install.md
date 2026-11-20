@@ -310,6 +310,9 @@ user's server.
   libjxl_threads) with the `jpegxl-rs` and `jpegxl-sys` crates. Only
   `libreprise_encode_jxl.so` links them; `.jxl` pictures open without libjxl,
   through `reprise-decode` and the pure-Rust `jxl` crate
+- AVIF pictures open through `reprise-decode` with the `rav1d` crate, a Rust
+  port of the dav1d AV1 decoder, built in without its assembly, so the build
+  needs no nasm and AVIF needs no runtime library
 
 ### To run
 

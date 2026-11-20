@@ -103,6 +103,8 @@ build() {
   export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
   # Named explicitly: the workspace has a root package, so a bare `cargo build --release` would skip the programs package() installs.
   cargo build --release --locked -p reprise -p reprise-portal -p reprise-apps -p reprise-rdp -p reprise-record -p reprise-login -p reprise-login-rdp -p reprise-encode -p reprise-encode-jxl -p reprise-decode
+  # The notices read cargo metadata offline, which needs every package, dev ones included.
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
   packaging/third-party-notices >"$srcdir/THIRD-PARTY-NOTICES"
 }
 
