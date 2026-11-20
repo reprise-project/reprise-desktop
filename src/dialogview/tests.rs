@@ -669,3 +669,52 @@ fn ctrl_v_in_a_form_field_takes_a_paste_reprise_answers_at_once() {
     };
     assert_eq!(f.form.edit_text("field"), "own");
 }
+
+/// A press on Run's caption, close box or ? box while the typed folder is still being read: the
+/// press still drags or holds its box, the listing that lands after leaves the list shut, and the
+/// next key opens it.
+#[test]
+fn a_press_on_runs_caption_or_its_boxes_while_its_folder_reads_keeps_the_late_list_shut() {
+    use crate::dialog::DialogHit;
+    use crate::input::Interaction;
+    use crate::textedit::EditKey;
+    use reprisekit::controls::pathcomplete::Entry;
+    for hit in [DialogHit::Caption, DialogHit::Close, DialogHit::Help] {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut run = Dialog::run(&[]);
+        for ch in "~/Do".chars() {
+            run.key(Key::Edit(EditKey::Insert(ch.to_string())));
+        }
+        let f = run.field.as_mut().unwrap();
+        let want = f.complete.take_want().expect("Run lists the typed folder");
+        h.state.open_dialog(run);
+        h.state.dialog_press(0, Some(hit), 0);
+        let d = &mut h.state.dialogs.views[0].dialog;
+        let held = match hit {
+            DialogHit::Caption => matches!(h.state.interaction, Interaction::DialogMove { .. }),
+            DialogHit::Close => d.caption_box.holding(),
+            _ => d.help_box.holding(),
+        };
+        assert!(held, "a press on {hit:?} drags Run or holds its box");
+        let entries = ["Documents", "Downloads"]
+            .map(|n| Entry {
+                name: n.into(),
+                dir: true,
+            })
+            .to_vec();
+        let f = d.field.as_mut().unwrap();
+        f.complete
+            .set_listing(f.combo.edit.as_mut().unwrap(), &want, entries);
+        assert!(
+            !f.complete.is_open(),
+            "a press on {hit:?}: the listing that lands leaves the list shut"
+        );
+        d.key(Key::Edit(EditKey::Insert("w".into())));
+        assert_eq!(
+            d.field.as_ref().unwrap().complete.rows(),
+            ["Downloads/"],
+            "a press on {hit:?}: the next key opens the list"
+        );
+    }
+}
