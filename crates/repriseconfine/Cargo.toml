@@ -1,0 +1,15 @@
+[package]
+name = "repriseconfine"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Landlock rulesets and seccomp filters for the programs Reprise confines (reprise-login's Remote Desktop front, the screenshot encoder, the picture decoder), and the parent's side of running a helper"
+
+[lints]
+workspace = true
+
+[dependencies]
+libc.workspace = true

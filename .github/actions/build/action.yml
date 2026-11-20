@@ -44,6 +44,11 @@ runs:
       run: |
         dir=$(runuser -u builder -- env HOME=/home/builder scripts/test-fonts.sh)
         echo "REPRISE_TEST_FONTS=$dir" >> "$GITHUB_ENV"
+    # reprise-encode's spawned tests load the JPEG XL codec from beside the helper; test builds
+    # make no cdylib.
+    - if: inputs.checks != 'lint'
+      shell: bash
+      run: runuser -u builder -- env HOME=/home/builder cargo build --locked -p reprise-encode-jxl
     - if: inputs.checks != 'lint' && inputs.affected != 'true'
       shell: bash
       run: runuser -u builder -- env HOME=/home/builder REPRISE_TEST_FONTS="$REPRISE_TEST_FONTS" cargo nextest run --workspace --locked --profile ci

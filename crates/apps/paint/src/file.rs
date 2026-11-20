@@ -187,27 +187,6 @@ mod tests {
         assert!(r < 60 && bl > 200, "bottom is blue");
     }
 
-    /// A lossless 3x2 JPEG XL of 0xC81E1E.
-    const JXL: [u8; 26] = [
-        0xff, 0x0a, 0x08, 0x40, 0x10, 0x09, 0x08, 0x00, 0x01, 0x00, 0x38, 0x00, 0x4b, 0x18, 0x8b,
-        0x15, 0xc2, 0x49, 0x82, 0xe5, 0x01, 0xc4, 0x38, 0x00, 0xa6, 0x02,
-    ];
-
-    #[test]
-    fn a_picture_past_the_viewer_budget_is_too_large_and_junk_is_unreadable() {
-        let huge =
-            b"P7\nWIDTH 65535\nHEIGHT 65535\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n";
-        assert_eq!(decode(huge).err(), Some(tr!("picture-too-large")));
-        assert_eq!(decode(b"not a picture").err(), Some(tr!("unreadable")));
-    }
-
-    #[test]
-    fn a_jpeg_xl_opens() {
-        let b = decode(&JXL).unwrap();
-        assert_eq!((b.w, b.h), (3, 2));
-        assert!(b.px.iter().all(|&c| c == 0xFFC8_1E1E), "{:08x?}", b.px);
-    }
-
     #[test]
     fn extensions_pick_the_kind() {
         assert_eq!(Kind::of(Path::new("/home/u/a.JPEG")), Some(Kind::Jpeg));
