@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Run `argv` as a process of its own in working directory `dir` (the caller's when `None` or not
-/// a folder, [`reprisefs::apps::start_dir`]), no shell between, reaped in the background: a
-/// [`Reply::spawn`] for a caller that needs the exec's error, as a program file that will not
-/// start reports it. With a `scope` the child waits before its exec until it is in that app scope
+/// a folder, [`reprisefs::apps::start_dir`]), no shell between, reaped in the background, with no
+/// activation token: for a start no input asked for, or for a process that shows no window. With
+/// a `scope` the child waits before its exec until it is in that app scope
 /// ([`reprisefs::scope::hold`]), so this blocks on the session bus.
 pub fn spawn_in(
     argv: &[OsString],
@@ -20,8 +20,9 @@ pub fn spawn_in(
     spawn_handed(argv, dir, scope, &Handoff::default())
 }
 
-/// [`spawn_in`] handed `handoff` ([`Handoff::apply`]), for a program starting another on a
-/// request that carried its own activation token.
+/// [`spawn_in`] handed `handoff` ([`Handoff::apply`]): an `Event::Handoff`'s, for a program that
+/// starts a process itself in place of [`Reply::spawn`] (off the loop, or to report the exec's
+/// error), or the token a request carried.
 pub fn spawn_handed(
     argv: &[OsString],
     dir: Option<&Path>,
@@ -93,6 +94,9 @@ pub struct Reply {
     /// Run each argument vector as its own process, no shell, reaped in the background, with a
     /// token asked for on the last input so its window takes the focus even from a running copy.
     pub spawn: Vec<Vec<OsString>>,
+    /// Tokens to ask for as `spawn` does, each arriving as `Event::Handoff`, for a program that
+    /// starts the process itself ([`spawn_handed`]): off the loop, or to report its exec error.
+    pub handoffs: usize,
     /// The app `spawn` runs as: each process starts in that app's scope (`reprisefs::scope`).
     pub spawn_app: Option<AppId>,
     /// The folder `spawn` runs in, a desktop entry's `Path=`; the program's own when None.
@@ -237,6 +241,7 @@ impl Reply {
             spawn_app,
             spawn_dir,
             spawn_each: then_each,
+            handoffs,
             copy_files,
             paste_files,
             copy_image,
@@ -295,6 +300,7 @@ impl Reply {
             spawn_app,
             spawn_dir,
             spawn_each,
+            handoffs: self.handoffs + handoffs,
             copy_files: self.copy_files.or(copy_files),
             paste_files: self.paste_files || paste_files,
             copy_image: self.copy_image.or(copy_image),

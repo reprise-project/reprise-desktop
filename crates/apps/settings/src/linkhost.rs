@@ -34,16 +34,20 @@ pub(crate) fn launch(entry: &AppEntry, terminal: &str) -> Reply {
     }
 }
 
-/// Start program `id`'s shown entry in its app scope, from a process with no Settings window;
-/// false when it has none or the start fails.
+/// Start program `id`'s shown entry in its app scope, from a process with no Settings window,
+/// handed this process's own token; false when it has none or the start fails.
 pub(crate) fn start(id: &str) -> bool {
-    let Some(e) = find(id, &dirs()) else {
+    start_in(id, &dirs(), &reprisebus::instance::Handoff::from_env())
+}
+
+fn start_in(id: &str, dirs: &[PathBuf], handoff: &reprisebus::instance::Handoff) -> bool {
+    let Some(e) = find(id, dirs) else {
         return false;
     };
     let Ok(argv) = launch_argv(&e, &repriseconf::current().terminal) else {
         return false;
     };
-    match repriseapp::spawn_in(&argv, e.path.as_deref(), Some(&e.id.app_id())) {
+    match repriseapp::spawn_handed(&argv, e.path.as_deref(), Some(&e.id.app_id()), handoff) {
         Ok(()) => true,
         Err(err) => {
             log::warn!("start {id}: {err}");
@@ -159,6 +163,37 @@ mod tests {
         );
         assert!(find("reprise-printers.desktop", &[d2]).is_some());
         assert_eq!(find("reprise-updates.desktop", &[d]), None);
+    }
+
+    #[test]
+    fn a_start_with_no_window_hands_on_its_token() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = dir("start", &[]);
+        let script = d.join("show-token");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf %s \"${XDG_ACTIVATION_TOKEN-none}\" >part && mv part token\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let entry = format!("{SHOWN}{}\nPath={}\n", script.display(), d.display());
+        std::fs::write(d.join("reprise-test-token.desktop"), entry).unwrap();
+        let handoff = reprisebus::instance::Handoff {
+            token: Some("t1".into()),
+            by_key: false,
+        };
+        assert!(start_in(
+            "reprise-test-token.desktop",
+            std::slice::from_ref(&d),
+            &handoff
+        ));
+        let token = d.join("token");
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !token.exists() {
+            assert!(std::time::Instant::now() < end, "the program started");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(std::fs::read_to_string(token).unwrap(), "t1");
     }
 
     #[test]

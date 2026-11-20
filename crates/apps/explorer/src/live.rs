@@ -169,6 +169,7 @@ impl Explorer {
         let acted = self.take_acting(ctx);
         let sent = self.take_send_reads(ctx);
         let opened = self.take_opened(ctx);
+        self.starting.retain(|j| j.take().is_none());
         let tipped = self.poll_tip_walk(ctx);
         let clashed = self.take_clashes(ctx);
         let (landed, picked, broken) = self.land_icons(ctx);

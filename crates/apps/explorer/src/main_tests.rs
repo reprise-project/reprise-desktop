@@ -58,13 +58,15 @@ pub(crate) fn test_env() {
         }
         scratch_bin();
         // A script opened in a test runs under this terminal, which records its arguments; started
-        // with none, it marks the folder it opened in.
+        // with none, it leaves the token it was handed (`none` without one) in the folder it opened
+        // in.
         use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(&state).expect("mkdir");
         let term = state.join("term");
         let argv = state.join("term-argv");
         let script = format!(
-            "#!/bin/sh\n[ $# -eq 0 ] && exec touch opened-here\n\
+            "#!/bin/sh\n[ $# -eq 0 ] && printf %s \"${{XDG_ACTIVATION_TOKEN-none}}\" >opened && \
+             exec mv opened opened-here\n\
              printf '%s\\n' \"$@\" >'{}'\nshift\nexec \"$@\"\n",
             argv.display()
         );
@@ -98,6 +100,15 @@ pub(crate) fn test_ctx() -> Ctx {
         at_pick: false,
         text_size: 100,
     }
+}
+
+/// Hands `ex` the token one of its replies asked for ([`Reply::handoffs`]), as the host does.
+pub(crate) fn hand(ex: &mut Explorer, token: Option<&str>, ctx: &mut Ctx) -> Reply {
+    let handoff = Handoff {
+        token: token.map(str::to_string),
+        by_key: false,
+    };
+    ex.event(MAIN, Event::Handoff(handoff), ctx)
 }
 
 /// An Explorer on default settings and no `.desktop` index.

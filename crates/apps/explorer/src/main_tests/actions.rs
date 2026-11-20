@@ -330,29 +330,86 @@ fn a_launcher_lists_runs_and_renames_by_its_name() {
     assert_eq!(ex.sv.entries[1].name, "Shell");
 }
 
-/// Open in Terminal starts the config's terminal on its own in the folder picked or shown.
+/// The token the test terminal ([`test_env`]) was handed in `folder`, once it has started there.
+fn terminal_token_in(folder: &Path) -> String {
+    let marker = folder.join("opened-here");
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !marker.exists() {
+        assert!(
+            std::time::Instant::now() < end,
+            "the terminal opened in {folder:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    std::fs::read_to_string(&marker).expect("read")
+}
+
+/// Open in Terminal asks for a token and starts the config's terminal on its own in the folder
+/// picked or shown once it is in, handed that token; one that came tokenless hands none.
 #[test]
-fn open_in_terminal_starts_the_terminal_in_the_folder() {
+fn open_in_terminal_starts_the_terminal_in_the_folder_with_its_token() {
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::create_dir(dir.path().join("sub")).expect("mkdir");
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    let opened = |folder: &Path| {
-        let marker = folder.join("opened-here");
-        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !marker.exists() {
-            assert!(
-                std::time::Instant::now() < end,
-                "the terminal opened in {folder:?}"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    };
+    ex.sv.selection.set_only(Some(0));
+    assert_eq!(ex.run(Command::OpenTerminal, &mut ctx).handoffs, 1);
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(
+        !dir.path().join("sub/opened-here").exists(),
+        "nothing starts before the token"
+    );
+    hand(&mut ex, Some("first"), &mut ctx);
+    assert_eq!(terminal_token_in(&dir.path().join("sub")), "first");
+    assert_eq!(ex.run(Command::OpenTerminalHere, &mut ctx).handoffs, 1);
+    hand(&mut ex, None, &mut ctx);
+    assert_eq!(terminal_token_in(dir.path()), "none");
+    assert_eq!(
+        hand(&mut ex, Some("stray"), &mut ctx),
+        Reply::none(),
+        "a token with no start waiting starts nothing"
+    );
+}
+
+#[test]
+fn two_launches_asked_before_their_tokens_start_in_order_with_their_own() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir(dir.path().join("sub")).expect("mkdir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.sv.selection.set_only(Some(0));
     ex.run(Command::OpenTerminal, &mut ctx);
-    opened(&dir.path().join("sub"));
     ex.run(Command::OpenTerminalHere, &mut ctx);
-    opened(dir.path());
+    hand(&mut ex, Some("first"), &mut ctx);
+    hand(&mut ex, Some("second"), &mut ctx);
+    assert_eq!(terminal_token_in(&dir.path().join("sub")), "first");
+    assert_eq!(terminal_token_in(dir.path()), "second");
+}
+
+/// A window closed while Open in Terminal waits for its token, or while the terminal is still
+/// starting, quits only once the terminal has started.
+#[test]
+fn closing_waits_for_a_pending_terminal_to_start() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.run(Command::OpenTerminalHere, &mut ctx);
+    assert!(!ex.close(&mut ctx).quit, "the launch waits for its token");
+
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let held = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    hand(&mut ex, Some("t"), &mut ctx);
+    assert!(ex.busy(), "the terminal is still starting");
+    assert!(!ex.wake(&mut ctx).quit);
+    drop(held);
+    ex.held = None;
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !ex.wake(&mut ctx).quit {
+        assert!(std::time::Instant::now() < end, "the closed window quits");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(terminal_token_in(dir.path()), "t");
 }
 
 /// Documents, Home and a plain folder's nodes pin from the tree menu; Computer and the Recycle

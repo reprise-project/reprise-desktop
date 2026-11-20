@@ -350,6 +350,7 @@ impl Notepad {
             | Event::Suspended(_)
             | Event::Heads(_)
             | Event::HeadsApplied { .. }
+            | Event::Handoff(_)
             | Event::TrialEnded(_) => Reply::none(),
         }
     }

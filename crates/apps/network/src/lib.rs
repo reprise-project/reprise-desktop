@@ -321,9 +321,11 @@ impl NetApp {
         log::info!("opening the sign-in page through {uri}");
         let mut cmd = std::process::Command::new("xdg-open");
         cmd.arg(uri);
-        if let Some(t) = token {
-            cmd.env("XDG_ACTIVATION_TOKEN", t);
+        reprisebus::instance::Handoff {
+            token,
+            by_key: false,
         }
+        .apply(&mut cmd);
         match cmd.spawn() {
             // Reaped on a thread so it leaves no zombie behind.
             Ok(mut child) => {

@@ -1,9 +1,10 @@
 use super::*;
 
-/// Opening an executable script runs it in its own folder; a +x picture and a script without
-/// the execute bit open in their programs, and a script whose interpreter is missing gets a box.
+/// Opening an executable script runs it in its own folder once the token it asks for is in,
+/// handed that token; a +x picture and a script without the execute bit open in their programs,
+/// and a script whose interpreter is missing gets a box.
 #[test]
-fn opening_an_executable_script_runs_it_in_its_folder() {
+fn opening_an_executable_script_runs_it_in_its_folder_with_its_token() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().expect("a temp dir");
     let put = |name: &str, bytes: &[u8], mode: u32| {
@@ -12,7 +13,11 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).expect("chmod");
         p
     };
-    put("a.sh", b"#!/bin/sh\ntouch ran\n", 0o755);
+    put(
+        "a.sh",
+        b"#!/bin/sh\nprintf %s \"$XDG_ACTIVATION_TOKEN\" >part && mv part ran\n",
+        0o755,
+    );
     put("b.sh", b"#!/no/such/shell\n", 0o755);
     let photo = put("c.png", b"\x89PNG\r\n\x1a\n", 0o755);
     let plain = put("d.sh", b"#!/bin/sh\ntouch ran\n", 0o644);
@@ -21,9 +26,9 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
     ex.app_index = opener_index();
     let names: Vec<&str> = ex.sv.entries.iter().map(|e| e.name.as_str()).collect();
     assert_eq!(names, ["a.sh", "b.sh", "c.png", "d.sh"]);
-    let mut open_as = |i: usize, how, ex: &mut Explorer| {
+    let open_as = |i: usize, how, ex: &mut Explorer, ctx: &mut Ctx| {
         ex.sv.selection.set_only(Some(i));
-        ex.open_selected_as(how, &mut ctx)
+        ex.open_selected_as(how, ctx)
     };
     let marker = dir.path().join("ran");
     let ran = || {
@@ -35,18 +40,27 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        let token = std::fs::read_to_string(&marker).unwrap();
         std::fs::remove_file(&marker).unwrap();
+        token
     };
 
+    let reply = open_as(0, ScriptOpen::Run, &mut ex, &mut ctx);
+    assert!(reply.spawn.is_empty(), "run, not opened");
+    assert_eq!(reply.handoffs, 1, "a token is asked for");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(!marker.exists(), "nothing runs before the token");
+    hand(&mut ex, Some("run"), &mut ctx);
+    assert_eq!(ran(), "run");
+    assert!(ex.dialog().is_none());
+    let open =
+        |i: usize, ex: &mut Explorer, ctx: &mut Ctx| open_as(i, ScriptOpen::Terminal, ex, ctx);
     assert!(
-        open_as(0, ScriptOpen::Run, &mut ex).spawn.is_empty(),
+        open(0, &mut ex, &mut ctx).spawn.is_empty(),
         "run, not opened"
     );
-    ran();
-    assert!(ex.dialog().is_none());
-    let mut open = |i: usize, ex: &mut Explorer| open_as(i, ScriptOpen::Terminal, ex);
-    assert!(open(0, &mut ex).spawn.is_empty(), "run, not opened");
-    ran();
+    hand(&mut ex, Some("in a terminal"), &mut ctx);
+    assert_eq!(ran(), "in a terminal");
     assert!(ex.dialog().is_none());
     let state = std::env::temp_dir().join(format!("reprise-explorer-tests-{}", std::process::id()));
     let term_argv = std::fs::read_to_string(state.join("term-argv")).expect("the terminal ran");
@@ -63,7 +77,8 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
         "the script is the last argument"
     );
 
-    open(1, &mut ex);
+    open(1, &mut ex, &mut ctx);
+    hand(&mut ex, Some("b"), &mut ctx);
     match ex.take_up().expect("the error box is up") {
         crate::dialogs::Dialog::Message { title, text, .. } => {
             assert_eq!(title, "b.sh");
@@ -76,9 +91,14 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
     }
 
     for (i, path) in [(2, photo), (3, plain)] {
-        let spawn = open(i, &mut ex).spawn;
-        assert_eq!(spawn.len(), 1);
-        assert_eq!(spawn[0].last(), Some(&path.into_os_string()), "opened");
+        let reply = open(i, &mut ex, &mut ctx);
+        assert_eq!(reply.spawn.len(), 1);
+        assert_eq!(
+            reply.spawn[0].last(),
+            Some(&path.into_os_string()),
+            "opened"
+        );
+        assert_eq!(reply.handoffs, 0, "the host asks for the opener's token");
     }
 }
 
@@ -166,6 +186,8 @@ fn opening_an_executable_script_asks_before_it_runs() {
     ex.open_selected(&mut ctx);
     let reply = ex.dialog_outcome(Event::Default, &mut ctx);
     assert!(reply.spawn.is_empty(), "Run runs it, not an opener");
+    assert_eq!(reply.handoffs, 1, "Run asks for the token");
+    hand(&mut ex, Some("run"), &mut ctx);
     let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while !marker.exists() {
         assert!(std::time::Instant::now() < end, "Run ran the script");
@@ -214,6 +236,7 @@ fn opening_an_elf_file_asks_run_or_cancel() {
 
     ex.open_selected(&mut ctx);
     ex.dialog_outcome(Event::Pressed(BUTTON_IDS[0]), &mut ctx);
+    hand(&mut ex, Some("run"), &mut ctx);
     match ex.take_up() {
         Some(crate::dialogs::Dialog::Message { text, .. }) => assert_eq!(
             text,
@@ -294,8 +317,9 @@ fn opening_a_file_no_program_takes_asks_open_with() {
     }
 }
 
-/// Opening a program file reads it on a listing thread: on a dead mount the window goes on at
-/// once, and a run that fails raises its box on the wake after the answer.
+/// Opening a program file reads it and runs it on a listing thread: on a dead mount the window
+/// goes on at once, a late read asks for the token on its wake, and a run that fails raises its
+/// box on the wake after the answer.
 #[test]
 fn a_program_that_answers_late_raises_its_box_on_a_later_wake() {
     use std::os::unix::fs::PermissionsExt;
@@ -319,8 +343,21 @@ fn a_program_that_answers_late_raises_its_box_on_a_later_wake() {
         ex.open_selected_as(ScriptOpen::Run, &mut ctx),
         Reply::none()
     );
-    assert!(ex.dialog().is_none(), "no box before the answer");
+    drop(closed);
+    ex.held = None;
+    let end = std::time::Instant::now() + LIST_WAIT;
+    while ex.wake(&mut ctx).handoffs == 0 {
+        assert!(
+            std::time::Instant::now() < end,
+            "the late read asks for the token"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    assert_eq!(hand(&mut ex, Some("late"), &mut ctx), Reply::none());
+    assert!(ex.dialog().is_none(), "no box before the answer");
     drop(closed);
     ex.held = None;
     wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());

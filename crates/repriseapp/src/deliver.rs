@@ -321,6 +321,9 @@ impl Host {
         for (argv, dir) in reply.spawn_each {
             self.start(win, argv, dir);
         }
+        for _ in 0..reply.handoffs {
+            self.hand(win);
+        }
         if let Some(accept) = reply.drag_accept {
             self.drag_accept(win, accept);
         }
@@ -410,6 +413,7 @@ impl Host {
             }
         }
         self.drain_head_requests();
+        self.give_hands();
     }
 }
 

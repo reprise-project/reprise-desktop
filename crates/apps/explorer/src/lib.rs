@@ -55,6 +55,7 @@ use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, FileDrop, MAIN, PointerInput, Reply,
     WinId,
 };
+use reprisebus::instance::Handoff;
 use reprisefs::folderwatch::Watch;
 use reprisefs::history::History;
 use reprisefs::listing::Item;
@@ -118,7 +119,18 @@ pub struct Tip {
     pub plain: bool,
 }
 
-/// What opening a file came to: a program run, or the opening of a file in its program.
+/// A start that waits on its token, asked for with [`Reply::handoffs`].
+pub(crate) enum Launch {
+    /// The configured terminal's command line, in this folder.
+    Terminal(Vec<std::ffi::OsString>, PathBuf),
+    /// The program file at this path, run as this command line in its folder and app scope.
+    Run(
+        PathBuf,
+        Vec<std::ffi::OsString>,
+        Option<reprisefs::apps::AppId>,
+    ),
+}
+
 /// Where [`Explorer::open_folder`] opens a folder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Follow {
@@ -126,7 +138,11 @@ pub(crate) enum Follow {
     NewTab,
 }
 
+/// What opening a file came to: a program run, or the opening of a file in its program.
 pub(crate) enum Opened {
+    /// A program file to run as this command line in this app scope, once its token is in
+    /// ([`Launch::Run`]).
+    Run(Vec<std::ffi::OsString>, Option<reprisefs::apps::AppId>),
     Ran(std::io::Result<()>),
     /// A file `confirm_scripts` asks about first, as [`Asked`] says; a script runs as the
     /// [`ScriptOpen`] says once Run is picked.
@@ -413,6 +429,10 @@ pub struct Explorer {
     following: Option<(Place, Follow, Job<PathBuf>)>,
     /// Opened files whose opening ([`Explorer::open_file`]) has not answered.
     opening: Vec<(PathBuf, Job<Opened>)>,
+    /// Starts waiting on their tokens, in the order asked ([`Explorer::launch`]).
+    launches: std::collections::VecDeque<Launch>,
+    /// Terminals [`Explorer::launch`] is starting, which a close waits for.
+    starting: Vec<Job<()>>,
     /// The `--select` entries or a renamed item, and their folder, waiting on that folder's listing.
     selecting: Option<(Place, Vec<PathBuf>)>,
     watch: Option<Watch>,
@@ -652,6 +672,8 @@ impl Explorer {
             going: None,
             following: None,
             opening: Vec::new(),
+            launches: Default::default(),
+            starting: Vec::new(),
             selecting: None,
             pins: (!cfg!(test)).then(|| {
                 let wake = ctx.wake.clone();
@@ -1449,20 +1471,46 @@ impl Explorer {
         self.open_file(&it.path, it.exec, open, how, ctx)
     }
 
-    /// Starts the configured terminal in `dir`, in its program's app scope. The spawn runs on a
-    /// listing thread: it waits for the child's chdir, which never returns on a dead mount.
-    pub(crate) fn open_terminal(&self, dir: &Path, ctx: &Ctx) -> Reply {
+    /// Starts the configured terminal in `dir`, in its program's app scope, once its token is in
+    /// ([`Explorer::launch`]).
+    pub(crate) fn open_terminal(&mut self, dir: &Path) -> Reply {
         let terminal = repriseconf::current().terminal.clone();
         let app = reprisefs::apps::terminal_app(&terminal, &self.app_index);
         let argv = reprisefs::apps::terminal_argv(&terminal);
         let argv = reprisefs::scope::in_scope(&argv, app.as_ref());
-        let dir = dir.to_path_buf();
-        drop(self.spawn_read(ctx, move || {
-            if let Err(e) = repriseapp::spawn_in(&argv, Some(&dir), None) {
-                log::warn!("explorer: terminal {terminal:?} in {}: {e}", dir.display());
+        self.launches
+            .push_back(Launch::Terminal(argv, dir.to_path_buf()));
+        Reply {
+            handoffs: 1,
+            ..Reply::none()
+        }
+    }
+
+    /// Starts the oldest launch waiting with `handoff`, the token its reply asked for. The spawn
+    /// runs on a listing thread: it waits for the child's chdir, which never returns on a dead
+    /// mount, and a run's for its app scope on the session bus.
+    pub(crate) fn launch(&mut self, handoff: Handoff, ctx: &mut Ctx) -> Reply {
+        match self.launches.pop_front() {
+            None => Reply::none(),
+            Some(Launch::Terminal(argv, dir)) => {
+                let job = self.spawn_read(ctx, move || {
+                    if let Err(e) = repriseapp::spawn_handed(&argv, Some(&dir), None, &handoff) {
+                        log::warn!("explorer: terminal {argv:?} in {}: {e}", dir.display());
+                    }
+                });
+                self.starting.push(job);
+                Reply::none()
             }
-        }));
-        Reply::none()
+            Some(Launch::Run(path, argv, scope)) => {
+                let dir = path.parent().map(Path::to_path_buf);
+                let run = move || {
+                    let ran =
+                        repriseapp::spawn_handed(&argv, dir.as_deref(), scope.as_ref(), &handoff);
+                    Opened::Ran(ran)
+                };
+                self.open_off_loop(path, run, ctx)
+            }
+        }
     }
 
     /// Runs the program file at `path`, or opens another file in its type's program, unless `how`
@@ -1513,11 +1561,22 @@ impl Explorer {
             }
             let scope =
                 (path.file_name()).and_then(|n| reprisefs::apps::AppId::new(&n.to_string_lossy()));
-            let argv = reprisefs::program::run_argv(&path, open, &terminal, end);
-            Opened::Ran(
-                argv.and_then(|argv| repriseapp::spawn_in(&argv, path.parent(), scope.as_ref())),
-            )
+            match reprisefs::program::run_argv(&path, open, &terminal, end) {
+                Ok(argv) => Opened::Run(argv, scope),
+                Err(e) => Opened::Ran(Err(e)),
+            }
         };
+        self.open_off_loop(at, read, ctx)
+    }
+
+    /// Runs `read` for the opening of `at` on a listing thread, answered now or, late, by
+    /// [`Explorer::take_opened`].
+    fn open_off_loop(
+        &mut self,
+        at: PathBuf,
+        read: impl FnOnce() -> Opened + Send + 'static,
+        ctx: &mut Ctx,
+    ) -> Reply {
         match self.read_job(ctx, read) {
             Ok(opened) => self.opened(&at, opened, ctx),
             Err(job) => {
@@ -1549,6 +1608,7 @@ impl Explorer {
                 spawn: r.spawn,
                 spawn_app: r.spawn_app,
                 spawn_dir: r.spawn_dir,
+                handoffs: r.handoffs,
                 ..Reply::none()
             });
         }
@@ -1566,6 +1626,14 @@ impl Explorer {
             },
             Opened::Open(Err(refused)) => self.exec_refused(&refused, ctx),
             Opened::Choose => self.choose_program_for(path, None, ctx),
+            Opened::Run(argv, scope) => {
+                self.launches
+                    .push_back(Launch::Run(path.to_path_buf(), argv, scope));
+                Reply {
+                    handoffs: 1,
+                    ..Reply::redraw()
+                }
+            }
             Opened::Ran(Ok(())) => Reply::redraw(),
             Opened::Ask(open, asked) => self.ask_run(path, open, asked, ctx),
             Opened::Ran(Err(e)) => {
@@ -1747,6 +1815,7 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         Event::PastedFiles(clip) => ex.pasted(clip, ctx),
         Event::Pasted(text) => ex.paste_text(&text),
         Event::Wake => ex.wake(ctx),
+        Event::Handoff(handoff) => ex.launch(handoff, ctx),
         Event::Blink => {
             ex.flush_settings();
             // The Address and Search fields' carets are the only things in the window that blink.

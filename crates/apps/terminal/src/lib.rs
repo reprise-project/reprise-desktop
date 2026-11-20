@@ -825,10 +825,11 @@ impl Terminal {
             }
             Shortcut::NewWindow => {
                 let (argv, cwd) = self.new_window();
-                if let Err(e) = repriseapp::spawn_in(&argv, cwd.as_deref(), None) {
-                    log::warn!("cannot open another window: {e}");
+                Reply {
+                    spawn: vec![argv],
+                    spawn_dir: cwd,
+                    ..Reply::none()
                 }
-                Reply::none()
             }
             Shortcut::Copy => self.copy(),
             Shortcut::Paste => self.paste(),

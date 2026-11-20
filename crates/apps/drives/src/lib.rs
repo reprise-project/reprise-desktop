@@ -551,9 +551,11 @@ impl DrivesApp {
         let token = self.tray.as_ref().and_then(|t| t.take_activation_token());
         let mut cmd = std::process::Command::new(program.as_ref());
         cmd.args(args);
-        if let Some(t) = token {
-            cmd.env("XDG_ACTIVATION_TOKEN", t);
+        reprisebus::instance::Handoff {
+            token,
+            by_key: false,
         }
+        .apply(&mut cmd);
         match cmd.spawn() {
             Ok(mut child) => {
                 std::thread::spawn(move || child.wait());

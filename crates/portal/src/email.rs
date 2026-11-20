@@ -161,7 +161,7 @@ fn attachment_path(a: &str) -> Option<PathBuf> {
 }
 
 /// The caller's activation token when it is printable ASCII without spaces.
-fn activation_token(o: &HashMap<String, Variant<'_>>) -> Option<String> {
+pub(crate) fn activation_token(o: &HashMap<String, Variant<'_>>) -> Option<String> {
     match o.get("activation_token") {
         Some(Variant::Str(s))
             if !s.is_empty() && s.len() <= 256 && s.bytes().all(|b| b.is_ascii_graphic()) =>

@@ -212,6 +212,16 @@ fn reply_merge_starts_each_spawn_in_the_folder_it_asked_for() {
     );
 }
 
+#[test]
+fn reply_merge_keeps_every_token_asked_for() {
+    let asks = |handoffs| Reply {
+        handoffs,
+        ..Default::default()
+    };
+    assert_eq!(asks(1).and(asks(2)).handoffs, 3);
+    assert_eq!(asks(1).and(Reply::redraw()).handoffs, 1);
+}
+
 struct Picker {
     dlg: reprisekit::controls::filedlg::FileDlg,
     host: filedlg::Host,
