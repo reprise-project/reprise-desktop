@@ -104,7 +104,8 @@ pub struct Meter {
     asks: AtomicBool,
     /// The [`Decision`] on the failed item, 0 when none is asked for.
     decision: AtomicU8,
-    /// True while the job's thread waits out a pause or a [`Decision`] ([`Meter::park`]).
+    /// Set by the job's thread as it goes to sleep in a wait ([`Meter::park`]), cleared by the
+    /// store that wakes it ([`Meter::wake`]), so a reader never sees a woken job as parked.
     parked: Mutex<bool>,
     /// Wakes a parked job; every store to `cancel`, `paused` or `decision` notifies it.
     unpark: Condvar,
@@ -156,22 +157,19 @@ impl Meter {
         });
     }
 
-    /// Whether the job's thread waits out a pause or a [`Decision`]: its counts stand still
-    /// until it is woken. Read before a [`Meter::snapshot`], true means that snapshot is final.
+    /// Whether the job's thread sleeps in a pause or a wait for a [`Decision`], no store having
+    /// woken it since. Read before a [`Meter::snapshot`], true means that snapshot stands until
+    /// the next pause, answer or cancel.
     pub fn parked(&self) -> bool {
         *self.parked.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Hold the job's thread while `wait` is true, asleep until a store [`Meter::wake`]s it.
-    /// Leaving a wait wakes [`watch`] from [`Meter::sleep_while_parked`].
     fn park(&self, mut wait: impl FnMut() -> bool) {
         let mut parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
         while wait() {
             *parked = true;
             parked = (self.unpark.wait(parked)).unwrap_or_else(PoisonError::into_inner);
-        }
-        if std::mem::take(&mut *parked) {
-            self.unpark.notify_all();
         }
     }
 
@@ -183,11 +181,12 @@ impl Meter {
         was
     }
 
-    /// Run `store` and wake a parked job to read its state again. The store runs under the lock
+    /// Run `store` and wake a parked job and [`watch`] to read it. The store runs under the lock
     /// the wait checks under, so the check sees all of it or none, and no store goes unseen.
     fn wake(&self, store: impl FnOnce()) {
-        let _parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
         store();
+        *parked = false;
         self.unpark.notify_all();
     }
 
@@ -811,6 +810,36 @@ mod tests {
             Ok(Decision::Skip),
             "the answer lets it go"
         );
+    }
+
+    /// Spins until the job on `m` parks.
+    fn parks(m: &Meter) {
+        while !m.parked() {
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn a_job_reads_unparked_from_the_store_that_wakes_it_until_it_parks_again() {
+        let m = Arc::new(Meter::default());
+        m.ask_on_failure();
+        m.ask();
+        let (_, done) = held(&m, Meter::decision);
+        parks(&m);
+        m.set_paused(true);
+        parks(&m);
+        m.decide(Decision::Skip);
+        assert!(!m.parked(), "Skip wakes the job and it goes on");
+        assert_eq!(
+            done.recv_timeout(Duration::from_secs(2)),
+            Ok(Decision::Skip)
+        );
+
+        let (_, done) = held(&m, |m| m.hold().is_ok());
+        parks(&m);
+        m.set_paused(false);
+        assert!(!m.parked(), "Resume wakes the job and it goes on");
+        assert_eq!(done.recv_timeout(Duration::from_secs(2)), Ok(true));
     }
 
     #[test]

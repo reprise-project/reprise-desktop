@@ -34,8 +34,8 @@ pub(crate) struct Progress {
     pub to: String,
     pub started: Instant,
     pub shown: Option<Shown>,
-    /// The job's thread was parked when its counts were last read, so they stay as read until it
-    /// is woken ([`Meter::parked`]).
+    /// The job's thread was parked when its counts were last read, so they stand until this
+    /// process pauses, answers or cancels it ([`Meter::parked`]).
     parked: bool,
 }
 
@@ -396,24 +396,30 @@ mod tests {
     use crate::commands::Command;
     use crate::place::Place;
     use repriseapp::{Event, FileClip, KeyInput, Mods};
-    use reprisekit::controls::copyprogress::CopyProgress;
+    use reprisekit::controls::copyprogress::{CopyProgress, Status};
     use reprisekit::textedit::{EditKey, keysym};
 
-    /// A paste of a missing file and b.txt into a folder window, held on the missing file's
-    /// failure box with its progress window up.
+    /// The bytes in the folder [`held_on_its_failure_box`] fails on.
+    const SKIPPED: u64 = 4096;
+
+    /// A paste of Reports, a folder of [`SKIPPED`] bytes, into its own subfolder inbox, then of
+    /// b.txt, held on Reports' failure box with its progress window up.
     fn held_on_its_failure_box() -> (tempfile::TempDir, repriseapp::Ctx, crate::Explorer) {
         let home = tempfile::tempdir().expect("a temp dir");
-        let (from, dir) = (home.path().join("from"), home.path().join("to"));
-        std::fs::create_dir_all(&from).expect("mkdir");
+        let (reports, dir) = (
+            home.path().join("Reports"),
+            home.path().join("Reports/inbox"),
+        );
         std::fs::create_dir_all(&dir).expect("mkdir");
-        std::fs::write(from.join("b.txt"), "b").expect("write");
+        std::fs::write(reports.join("x.bin"), vec![0; SKIPPED as usize]).expect("write");
+        std::fs::write(home.path().join("b.txt"), "b").expect("write");
         let mut ctx = crate::tests::test_ctx();
         let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
         ex.run(Command::Paste, &mut ctx);
         ex.pasted(
             FileClip {
                 cut: false,
-                paths: vec![from.join("gone.txt"), from.join("b.txt")],
+                paths: vec![reports, home.path().join("b.txt")],
             },
             &mut ctx,
         );
@@ -426,6 +432,23 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         (home, ctx, ex)
+    }
+
+    /// What the paste's window shows.
+    fn shown(ex: &crate::Explorer) -> &Status {
+        let p = &ex.put.as_ref().expect("the paste").progress;
+        &p.shown.as_ref().expect("the window").cp.status
+    }
+
+    /// Ticks the paste's window while it asks for ticks, `ticking` being the reply that started it.
+    fn tick_till_still(ex: &mut crate::Explorer, ctx: &mut repriseapp::Ctx, mut ticking: bool) {
+        let mut ticks = 0;
+        while ticking {
+            ticking = ex.event(COPY, Event::Tick, ctx).tick;
+            ticks += 1;
+            assert!(ticks < 1000, "a held job's window stops ticking");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
     }
 
     fn press(sym: u32) -> Event {
@@ -451,13 +474,15 @@ mod tests {
     }
 
     /// The paste of [`held_on_its_failure_box`], paused and then let past the box with Skip:
-    /// it holds on its pause before b.txt, and its window ticks until it reads the held job.
+    /// it holds on its pause before b.txt, and its window ticks until it reads the held job with
+    /// the skipped bytes counted. Either hold may let the window tick a while before it stops.
     fn paused_past_its_box() -> (tempfile::TempDir, repriseapp::Ctx, crate::Explorer) {
         let (home, mut ctx, mut ex) = held_on_its_failure_box();
-        let paused = ex.event(COPY, alt('p'), &mut ctx);
+        let paused = ex.event(COPY, alt('p'), &mut ctx).tick;
+        tick_till_still(&mut ex, &mut ctx, paused);
         assert!(
-            !paused.tick,
-            "a job held on its box stays still when paused"
+            shown(&ex).paused && shown(&ex).asking,
+            "a job held on its box stays on it when paused"
         );
         let skipped = ex.event(ex.dialog_win(), press(keysym::RETURN), &mut ctx);
         assert_eq!(
@@ -465,20 +490,19 @@ mod tests {
             [COPY],
             "Skip lets the window read the job"
         );
-        let mut ticks = 0;
-        while ex.event(COPY, Event::Tick, &mut ctx).tick {
-            ticks += 1;
-            assert!(ticks < 1000, "a paused job's window stops ticking");
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
-        let p = &ex.put.as_ref().expect("the paste").progress;
-        let shown = &p.shown.as_ref().expect("the window").cp.status;
+        tick_till_still(&mut ex, &mut ctx, true);
         assert_eq!(
-            *shown,
+            shown(&ex).bytes,
+            SKIPPED,
+            "the window counts the skipped folder's bytes"
+        );
+        let p = &ex.put.as_ref().expect("the paste").progress;
+        assert_eq!(
+            *shown(&ex),
             super::status(p.meter.snapshot(), 0),
             "the window shows the held job"
         );
-        assert!(shown.paused && !shown.asking);
+        assert!(shown(&ex).paused && !shown(&ex).asking);
         (home, ctx, ex)
     }
 
@@ -488,7 +512,10 @@ mod tests {
         let resumed = ex.event(COPY, alt('r'), &mut ctx);
         assert!(resumed.tick, "Resume sets the window ticking");
         ex.finish_puts(&mut ctx);
-        assert!(home.path().join("to/b.txt").exists(), "the paste went on");
+        assert!(
+            home.path().join("Reports/inbox/b.txt").exists(),
+            "the paste went on"
+        );
     }
 
     #[test]
@@ -502,7 +529,7 @@ mod tests {
         ex.finish_puts(&mut ctx);
         assert!(ex.put.is_none(), "the paste ended");
         assert!(
-            !home.path().join("to/b.txt").exists(),
+            !home.path().join("Reports/inbox/b.txt").exists(),
             "nothing more was pasted"
         );
     }
