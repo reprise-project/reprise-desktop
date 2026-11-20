@@ -2,6 +2,7 @@ build-essential
 ca-certificates
 clang
 libclang-dev
+nasm
 pkg-config
 git
 python3

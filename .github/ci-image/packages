@@ -15,6 +15,7 @@ libjxl
 libxcrypt
 libxkbcommon
 mesa
+nasm
 pam
 pipewire
 pkgconf
