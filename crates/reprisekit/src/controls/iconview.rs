@@ -581,6 +581,7 @@ pub fn draw_cell_at(
             line.width,
             line_h,
         );
+        let r = text.ink_box(r, &line.text, false, font, c.scale());
         if let Some(ink) = shadow {
             let off = LABEL_SHADOW * s;
             let under = Rect::new(r.x + off, r.y + off, r.width, r.height);
@@ -1812,6 +1813,64 @@ mod tests {
             "the label stands {} rows at 200%, {} at 100%",
             label(&c),
             label(&small)
+        );
+    }
+
+    /// A label's lines keep their ink in every interface at every text size, at scale 2 drawn by
+    /// the theme and by the canvas: brackets and `|` hang past the font's descent.
+    #[test]
+    fn labels_keep_their_ink_at_every_text_size_and_scale() {
+        use crate::{interface::Interface, interfaces::theme_for};
+        crate::pins::fonts();
+        let mut cut = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 125, 150, 175, 200] {
+                let base = theme_for(i).with_text_size(pct);
+                let t = TextRenderer::load(&base.fonts);
+                for name in ["Quarterly [final]|y.txt", "Pictures (jpg)|"] {
+                    for picked in [false, true] {
+                        let sel = picked.then_some(Selection {
+                            ring: true,
+                            origin: (0, 0),
+                        });
+                        for (s, by_canvas) in [(1, false), (2, false), (2, true)] {
+                            let ((), cuts) = crate::pins::clipped_ink(|| {
+                                if by_canvas {
+                                    let cell = Cell::grown(base.text);
+                                    let mut c = Canvas::with_scale(cell.w as u32, cell.h as u32, s);
+                                    draw_cell_at(
+                                        &mut c,
+                                        (0, 0),
+                                        cell,
+                                        &base,
+                                        &t,
+                                        name,
+                                        None,
+                                        false,
+                                        sel,
+                                        None,
+                                        Ground::Wallpaper,
+                                    );
+                                } else {
+                                    let theme = base.scaled(s);
+                                    let t = TextRenderer::load(&theme.fonts);
+                                    draw_cell(&theme, &t, name, None, false, sel, None, None);
+                                }
+                            });
+                            cut.extend(
+                                cuts.into_iter()
+                                    .filter(|c| c.rows > 0)
+                                    .map(|c| (i, pct, s, by_canvas, picked, c.text, c.rows)),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            cut,
+            Vec::new(),
+            "(interface, text size, scale, by the canvas, selected, line, ink rows cut)"
         );
     }
 
