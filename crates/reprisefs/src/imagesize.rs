@@ -1,5 +1,9 @@
 //! An image's width and height from a file's first bytes, without decoding it:
 //! PNG, JPEG, GIF, BMP, WebP, JPEG XL and HEIF stills (AVIF among them).
+//!
+//! The size is the picture shown upright, as the decoders turn it: a JPEG's or a PNG's Exif
+//! orientation (read before its image data), a JPEG XL's orientation and a HEIF's `irot`. A
+//! WebP's Exif chunk follows its image data and is not read.
 
 /// How much of a file [`dimensions`] may need. Every format but JPEG states
 /// its size in the first 30 bytes; a JPEG's frame header follows APPn segments
@@ -31,11 +35,26 @@ pub fn dimensions(head: &[u8]) -> Option<(u32, u32)> {
     (dims.0 > 0 && dims.1 > 0).then_some(dims)
 }
 
+/// IHDR's size, turned by an `eXIf` chunk between it and the first IDAT.
 fn png(head: &[u8]) -> Option<(u32, u32)> {
     if head.get(12..16) != Some(b"IHDR") {
         return None;
     }
-    Some((u32_be(head, 16)?, u32_be(head, 20)?))
+    let size = (u32_be(head, 16)?, u32_be(head, 20)?);
+    let mut at = 8usize;
+    let mut turned = false;
+    while let (Some(len), Some(kind)) = (u32_be(head, at), head.get(at + 4..at + 8)) {
+        let body = at + 8;
+        let end = body.checked_add(usize::try_from(len).ok()?)?;
+        match kind {
+            b"IDAT" => break,
+            b"eXIf" => turned = head.get(body..end).is_some_and(exif_turned),
+            _ => {}
+        }
+        // The chunk's data, then its CRC.
+        at = end.checked_add(4)?;
+    }
+    Some(upright(size, turned))
 }
 
 /// Walk the segments from SOI to the first SOFn frame header, which
@@ -43,6 +62,7 @@ fn png(head: &[u8]) -> Option<(u32, u32)> {
 /// means there is none.
 fn jpeg(head: &[u8]) -> Option<(u32, u32)> {
     let mut at = 2;
+    let mut turned = false;
     loop {
         if *head.get(at)? != 0xff {
             return None;
@@ -64,13 +84,62 @@ fn jpeg(head: &[u8]) -> Option<(u32, u32)> {
         if matches!(marker, 0xc0..=0xcf) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
             let h = u16_be(head, at + 3)?;
             let w = u16_be(head, at + 5)?;
-            return Some((w.into(), h.into()));
+            return Some(upright((w.into(), h.into()), turned));
         }
         if len < 2 {
             return None;
         }
+        // The last Exif APP1 is the one that counts.
+        if marker == 0xe1
+            && let Some(tiff) = head
+                .get(at + 2..at + len)
+                .and_then(|b| b.strip_prefix(b"Exif\0\0"))
+        {
+            turned = exif_turned(tiff);
+        }
         at += len;
     }
+}
+
+/// Whether Exif `tiff` (from its byte-order mark) tags the picture with an orientation that
+/// swaps its sides (5 to 8): the first IFD0 entry for tag 0x112 that is one SHORT.
+fn exif_turned(tiff: &[u8]) -> bool {
+    let big = match tiff.get(..4) {
+        Some(b"II*\0") => false,
+        Some(b"MM\0*") => true,
+        _ => return false,
+    };
+    let u16_at = |at| {
+        if big {
+            u16_be(tiff, at)
+        } else {
+            u16_le(tiff, at)
+        }
+    };
+    let u32_at = |at| {
+        if big {
+            u32_be(tiff, at)
+        } else {
+            u32_le(tiff, at)
+        }
+    };
+    let orientation = || -> Option<u16> {
+        let ifd = usize::try_from(u32_at(4)?).ok()?;
+        for i in 0..usize::from(u16_at(ifd)?) {
+            let at = ifd + 2 + 12 * i;
+            let (tag, kind, count) = (u16_at(at)?, u16_at(at + 2)?, u32_at(at + 4)?);
+            if tag == 0x112 && kind == 3 && count == 1 {
+                return u16_at(at + 8);
+            }
+        }
+        None
+    };
+    matches!(orientation(), Some(5..=8))
+}
+
+/// `size` with its sides swapped when the picture is shown `turned` a quarter.
+fn upright((w, h): (u32, u32), turned: bool) -> (u32, u32) {
+    if turned { (h, w) } else { (w, h) }
 }
 
 /// The DIB header after the 14-byte file header: the old 12-byte core
@@ -126,8 +195,8 @@ fn webp(head: &[u8]) -> Option<(u32, u32)> {
 /// The signature box a JPEG XL container starts with.
 pub const JXL_CONTAINER: &[u8] = b"\0\0\0\x0cJXL \r\n\x87\n";
 
-/// The codestream's SizeHeader, right after its `FF 0A`: a bit stream read least significant
-/// bit first.
+/// The codestream's SizeHeader, right after its `FF 0A`, then the ImageMetadata's orientation
+/// (3 bits after `all_default` and `extra_fields`): a bit stream read least significant bit first.
 fn jxl_codestream(code: &[u8]) -> Option<(u32, u32)> {
     let mut at = 0usize;
     let mut bits = |n: u32| -> Option<u32> {
@@ -156,13 +225,15 @@ fn jxl_codestream(code: &[u8]) -> Option<(u32, u32)> {
             u32::try_from(u64::from(h) * num / den).ok()?
         }
     };
-    Some((w, h))
+    let all_default = bits(1)? == 1;
+    let turned = !all_default && bits(1)? == 1 && bits(3)? + 1 >= 5;
+    Some(upright((w, h), turned))
 }
 
 /// The codestream's first bytes from the boxes after the signature: a whole `jxlc`, or the
 /// `jxlp` parts (each after its 4-byte index) joined in order, as a part may end mid-header.
 fn jxl_container(head: &[u8]) -> Option<(u32, u32)> {
-    /// Past the longest SizeHeader (68 bits) after its `FF 0A`.
+    /// Past the longest SizeHeader (68 bits) and the orientation after its `FF 0A`.
     const ENOUGH: usize = 16;
     let mut code = Vec::new();
     let mut at = JXL_CONTAINER.len();
@@ -198,7 +269,8 @@ fn jxl_container(head: &[u8]) -> Option<(u32, u32)> {
     code.strip_prefix(&[0xff, 0x0a]).and_then(jxl_codestream)
 }
 
-/// The `ispe` of a HEIF still's primary item, from a `meta` box among the first boxes.
+/// The `ispe` of a HEIF still's primary item, from a `meta` box among the first boxes, turned by
+/// its `irot`s. Like the decoder, the last `ispe` associated counts and the turns add up.
 fn heif(head: &[u8]) -> Option<(u32, u32)> {
     let meta = boxes(head).find(|b| b.0 == *b"meta")?.1;
     let (mut primary, mut iprp) = (None, None);
@@ -212,6 +284,7 @@ fn heif(head: &[u8]) -> Option<(u32, u32)> {
     }
     let (primary, iprp) = (primary?, iprp?);
     let ipco: Vec<_> = boxes(boxes(iprp).find(|b| b.0 == *b"ipco")?.1).collect();
+    let (mut size, mut turns) = (None, 0u32);
     for (_, ipma) in boxes(iprp).filter(|b| b.0 == *b"ipma") {
         let (wide_id, wide_index) = (*ipma.first()? != 0, ipma.get(3)? & 1 != 0);
         let mut at = 8;
@@ -232,16 +305,18 @@ fn heif(head: &[u8]) -> Option<(u32, u32)> {
                 };
                 at += if wide_index { 2 } else { 1 };
                 let property = index.checked_sub(1).and_then(|i| ipco.get(i));
-                if id == primary
-                    && let Some((kind, body)) = property
-                    && kind == b"ispe"
-                {
-                    return Some((u32_be(body, 4)?, u32_be(body, 8)?));
+                let Some((kind, body)) = property.filter(|_| id == primary) else {
+                    continue;
+                };
+                match kind {
+                    b"ispe" => size = Some((u32_be(body, 4)?, u32_be(body, 8)?)),
+                    b"irot" => turns += u32::from(*body.first()? & 3),
+                    _ => {}
                 }
             }
         }
     }
-    None
+    Some(upright(size?, turns % 2 == 1))
 }
 
 /// The ISOBMFF boxes in `b` end to end, each one's type and body, up to one cut short.
@@ -294,23 +369,34 @@ mod tests {
         b
     }
 
-    /// An AVIF's first boxes: item 2 is primary, item 1 a 64x64 thumbnail listed first.
-    fn avif_head(w: u32, h: u32) -> Vec<u8> {
-        let ispe = |w: u32, h: u32| {
-            heif_box(
-                b"ispe",
-                &[[0; 4], w.to_be_bytes(), h.to_be_bytes()].concat(),
-            )
-        };
-        let ipco = heif_box(b"ipco", &[ispe(64, 64), ispe(w, h)].concat());
-        let ipma = heif_box(
-            b"ipma",
-            &[0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 1, 0x81, 0, 2, 1, 0x82],
+    fn ispe(w: u32, h: u32) -> Vec<u8> {
+        heif_box(
+            b"ispe",
+            &[[0; 4], w.to_be_bytes(), h.to_be_bytes()].concat(),
+        )
+    }
+
+    /// An AVIF's first boxes: item 2 is primary with `props` after its `ispe` (the first property
+    /// the thumbnail's), item 1 a 64x64 thumbnail with an `irot`, listed first. Without `ipma`
+    /// no item has a property.
+    fn avif_with(w: u32, h: u32, props: &[Vec<u8>], ipma: bool) -> Vec<u8> {
+        let ipco = heif_box(
+            b"ipco",
+            &[&[ispe(64, 64), heif_box(b"irot", &[1]), ispe(w, h)], props]
+                .concat()
+                .concat(),
         );
+        let mut assoc = vec![0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 2, 0x81, 0x82, 0, 2];
+        assoc.push(1 + props.len() as u8);
+        assoc.extend((3..=3 + props.len() as u8).map(|i| 0x80 | i));
+        let iprp = match ipma {
+            true => [ipco, heif_box(b"ipma", &assoc)].concat(),
+            false => ipco,
+        };
         let meta = [
             &[0, 0, 0, 0][..],
             &heif_box(b"pitm", &[0, 0, 0, 0, 0, 2]),
-            &heif_box(b"iprp", &[ipco, ipma].concat()),
+            &heif_box(b"iprp", &iprp),
         ]
         .concat();
         let mut v = heif_box(b"ftyp", b"avif\0\0\0\0avifmif1miaf");
@@ -319,11 +405,90 @@ mod tests {
         v
     }
 
+    fn avif_head(w: u32, h: u32) -> Vec<u8> {
+        avif_with(w, h, &[], true)
+    }
+
     #[test]
     fn an_avif_states_its_primary_items_size() {
         assert_eq!(dimensions(&avif_head(4032, 3024)), Some((4032, 3024)));
         let head = avif_head(800, 600);
         assert_eq!(dimensions(&head[..40]), None, "cut short before its ispe");
+        assert_eq!(
+            dimensions(&avif_with(800, 600, &[], false)),
+            None,
+            "no ipma, no ispe for the primary item"
+        );
+    }
+
+    #[test]
+    fn an_avif_states_its_size_turned_by_its_irot() {
+        let irot = |q: u8| heif_box(b"irot", &[q]);
+        let imir = |m: u8| heif_box(b"imir", &[m]);
+        let cases = [
+            (vec![irot(0)], (800, 600)),
+            (vec![irot(1)], (600, 800)),
+            (vec![irot(2)], (800, 600)),
+            (vec![irot(3)], (600, 800)),
+            (vec![imir(0)], (800, 600)),
+            (vec![imir(1), irot(1)], (600, 800)),
+            (vec![irot(1), irot(3)], (800, 600)),
+            (vec![irot(0xfd)], (600, 800)),
+        ];
+        for (props, want) in cases {
+            assert_eq!(dimensions(&avif_with(800, 600, &props, true)), Some(want));
+        }
+        assert_eq!(
+            dimensions(&avif_with(800, 600, &[heif_box(b"irot", &[])], true)),
+            None,
+            "an irot without its angle"
+        );
+    }
+
+    /// Every cut and every byte of `head` set to 0, 0xff and flipped at its top bit.
+    fn mangled(head: &[u8]) -> impl Iterator<Item = Vec<u8>> + '_ {
+        let cuts = (0..head.len()).map(|n| head[..n].to_vec());
+        let bytes = (0..head.len()).flat_map(move |i| {
+            [0, 0xff, head[i] ^ 0x80].map(|b| {
+                let mut v = head.to_vec();
+                v[i] = b;
+                v
+            })
+        });
+        cuts.chain(bytes)
+    }
+
+    #[test]
+    fn a_hostile_head_is_read_without_a_panic() {
+        let heads = [
+            avif_with(800, 600, &[heif_box(b"irot", &[1])], true),
+            jpeg_exif(exif_le(6), 800, 600),
+            png_exif(&exif_be(8)),
+            jxl_oriented(1921, 1081, 0, 6),
+        ];
+        for head in &heads {
+            for v in mangled(head) {
+                let _ = dimensions(&v);
+            }
+        }
+        // An ipma claiming 2^32 - 1 items and a full head of zero bytes after it.
+        let mut iprp = heif_box(b"ipco", &ispe(8, 8));
+        let mut ipma = vec![1, 0, 0, 1, 0xff, 0xff, 0xff, 0xff];
+        ipma.resize(HEAD_BYTES - 200, 0);
+        iprp.extend(heif_box(b"ipma", &ipma));
+        let meta = [
+            &[0, 0, 0, 0][..],
+            &heif_box(b"pitm", &[0, 0, 0, 0, 0, 2]),
+            &heif_box(b"iprp", &iprp),
+        ]
+        .concat();
+        let mut head = heif_box(b"ftyp", b"avif\0\0\0\0avifmif1miaf");
+        head.extend(heif_box(b"meta", &meta));
+        assert_eq!(dimensions(&head), None);
+        // An Exif IFD of 65535 entries running past its segment.
+        let mut tiff = b"II*\0\x08\0\0\0\xff\xff".to_vec();
+        tiff.resize(60_000, 0);
+        assert_eq!(dimensions(&jpeg_exif(tiff, 800, 600)), Some((800, 600)));
     }
 
     fn png_head(w: u32, h: u32) -> Vec<u8> {
@@ -351,6 +516,85 @@ mod tests {
         v
     }
 
+    /// A TIFF header and an IFD0 of a Make entry and an Orientation entry (SHORT, count 1).
+    fn exif_le(orientation: u16) -> Vec<u8> {
+        let mut v = b"II*\0\x08\0\0\0\x02\0".to_vec();
+        v.extend([0x0f, 0x01, 2, 0, 4, 0, 0, 0, b'A', b'B', b'C', 0]);
+        v.extend([0x12, 0x01, 3, 0, 1, 0, 0, 0]);
+        v.extend(orientation.to_le_bytes());
+        v.extend([0, 0, 0, 0, 0, 0]);
+        v
+    }
+
+    fn exif_be(orientation: u16) -> Vec<u8> {
+        let mut v = b"MM\0*\0\0\0\x08\0\x01".to_vec();
+        v.extend([0x01, 0x12, 0, 3, 0, 0, 0, 1]);
+        v.extend(orientation.to_be_bytes());
+        v.extend([0, 0, 0, 0, 0, 0]);
+        v
+    }
+
+    /// A JPEG whose APP1 holds Exif `tiff`.
+    fn jpeg_exif(tiff: Vec<u8>, w: u16, h: u16) -> Vec<u8> {
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.extend(tiff);
+        let mut v = vec![0xff, 0xd8, 0xff, 0xe1];
+        v.extend(((app1.len() + 2) as u16).to_be_bytes());
+        v.extend(app1);
+        v.extend(&jpeg_head(0xc0, 0, w, h)[2..]);
+        v
+    }
+
+    /// An 800x600 PNG with an `eXIf` chunk of `tiff` before its IDAT.
+    fn png_exif(tiff: &[u8]) -> Vec<u8> {
+        let mut v = png_head(800, 600);
+        v.extend([0; 4]);
+        for (kind, body) in [(b"eXIf", tiff), (b"IDAT", &[0; 4][..])] {
+            v.extend((body.len() as u32).to_be_bytes());
+            v.extend(kind);
+            v.extend(body);
+            v.extend([0; 4]);
+        }
+        v
+    }
+
+    #[test]
+    fn a_jpeg_or_png_states_its_size_turned_by_its_exif_orientation() {
+        for (o, want) in [
+            (1, (800, 600)),
+            (3, (800, 600)),
+            (5, (600, 800)),
+            (6, (600, 800)),
+            (8, (600, 800)),
+            (9, (800, 600)),
+        ] {
+            assert_eq!(
+                dimensions(&jpeg_exif(exif_le(o), 800, 600)),
+                Some(want),
+                "JPEG {o}"
+            );
+            assert_eq!(
+                dimensions(&jpeg_exif(exif_be(o), 800, 600)),
+                Some(want),
+                "JPEG {o}"
+            );
+            assert_eq!(dimensions(&png_exif(&exif_le(o))), Some(want), "PNG {o}");
+        }
+        let mut late = png_head(800, 600);
+        late.extend([0; 4]);
+        for (kind, body) in [(b"IDAT", &[0; 4][..]), (b"eXIf", &exif_le(6))] {
+            late.extend((body.len() as u32).to_be_bytes());
+            late.extend(kind);
+            late.extend(body);
+            late.extend([0; 4]);
+        }
+        assert_eq!(
+            dimensions(&late),
+            Some((800, 600)),
+            "an eXIf after IDAT is not read"
+        );
+    }
+
     fn bmp_head(dib: u32, w: i32, h: i32) -> Vec<u8> {
         let mut v = b"BM".to_vec();
         v.extend([0; 12]);
@@ -374,10 +618,15 @@ mod tests {
         v
     }
 
-    /// A codestream signature and its SizeHeader, bits least significant first: the small form
-    /// (sides in eighths up to 256) when both sides allow it, else the 9-, 13-, 18- or 30-bit form
-    /// with an explicit width (`ratio` 0) or a width from `ratio`.
     fn jxl_head(w: u32, h: u32, ratio: u32) -> Vec<u8> {
+        jxl_oriented(w, h, ratio, 1)
+    }
+
+    /// A codestream signature, its SizeHeader and its ImageMetadata up to `orientation`, bits
+    /// least significant first: the small form (sides in eighths up to 256) when both sides allow
+    /// it, else the 9-, 13-, 18- or 30-bit form with an explicit width (`ratio` 0) or a width
+    /// from `ratio`.
+    fn jxl_oriented(w: u32, h: u32, ratio: u32, orientation: u32) -> Vec<u8> {
         let mut bits: Vec<bool> = Vec::new();
         let mut put = |v: u32, n: u32| bits.extend((0..n).map(|i| v >> i & 1 == 1));
         let small =
@@ -402,6 +651,13 @@ mod tests {
                 put(w / 8 - 1, 5);
             } else {
                 side(&mut put, w);
+            }
+        }
+        match orientation {
+            1 => put(1, 1),
+            o => {
+                put(0b10, 2);
+                put(o - 1, 3);
             }
         }
         let mut v = vec![0xff, 0x0a];
@@ -467,6 +723,22 @@ mod tests {
             "jxlp parts join across the header"
         );
         assert_eq!(dimensions(&[0xff, 0x0a, 0x00]), None, "cut short");
+    }
+
+    #[test]
+    fn a_jxl_states_its_size_turned_by_its_orientation() {
+        for (o, want) in [
+            (1, (64, 48)),
+            (2, (64, 48)),
+            (4, (64, 48)),
+            (5, (48, 64)),
+            (6, (48, 64)),
+            (7, (48, 64)),
+            (8, (48, 64)),
+        ] {
+            assert_eq!(dimensions(&jxl_oriented(64, 48, 0, o)), Some(want), "{o}");
+        }
+        assert_eq!(dimensions(&jxl_oriented(0, 1080, 5, 6)), Some((1080, 1920)));
     }
 
     #[test]

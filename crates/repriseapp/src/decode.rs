@@ -665,6 +665,11 @@ mod tests {
             .decode(&bytes, (96, 96), Budget::THUMBNAIL)
             .unwrap();
         assert_eq!((decoded.width, decoded.height), (4, 8));
+        assert_eq!(
+            reprisefs::imagesize::dimensions(&bytes),
+            Some((4, 8)),
+            "the header read states the size shown"
+        );
         assert_eq!((decoded.canvas.width, decoded.canvas.height), (4, 8));
         let [_, r, _, b] = decoded.canvas.get(1, 1).to_be_bytes();
         assert!(
