@@ -908,3 +908,44 @@ fn typed_text_wraps_at_the_box_and_lands_with_the_same_breaks() {
     }
     check_pins("textbox", &[("wrapped".into(), hash(&c))]);
 }
+
+#[test]
+fn the_magnifiers_zoom_labels_keep_the_100_percent_font_at_every_text_size() {
+    reprisekit::pins::fonts();
+    let mut got = Vec::new();
+    for s in [1, 2] {
+        let mut at_100 = None;
+        for pct in [100, 150, 200] {
+            let mut ctx = test_ctx();
+            ctx.size = (480, 480);
+            ctx.theme = Theme::default().with_text_size(pct);
+            ctx.text_size = pct;
+            for n in view::MAGNIFY {
+                let g = view::zoom_glyph(&format!("{n}x"), s, &ctx);
+                let (w, h) = (32 * s, 12 * s);
+                let inked = |x: i32, y: i32| g.pixels[(y * w + x) as usize] >> 24 != 0;
+                assert!(
+                    (0..w).all(|x| !inked(x, 0) && !inked(x, h - 1))
+                        && (0..h).all(|y| !inked(0, y) && !inked(w - 1, y)),
+                    "{n}x at {pct}% and scale {s} keeps clear of its cell's edges"
+                );
+            }
+            let mut p = Paint::new(None);
+            pick(&mut p, &mut ctx, Tool::Magnifier);
+            let r = toolbox::layout(&p.toolbox(1, &ctx), p.lay(&ctx).tools).well;
+            let mut c = Canvas::with_scale(480, 480, s);
+            ctx.at_scale(s, |ctx| p.draw(MAIN, &mut c, ctx));
+            if std::env::var_os("REPRISE_PAINT_PREVIEW").is_some() {
+                reprisekit::raster::write_preview(&c, &format!("paint-zoom-{pct}-{s}"));
+            }
+            let well = hash(&c.copy_rect(r));
+            assert_eq!(
+                *at_100.get_or_insert(well),
+                well,
+                "the zoom labels at {pct}% and scale {s} draw as at 100%"
+            );
+            got.push((format!("{pct}% {s}"), well));
+        }
+    }
+    check_pins("zoom", &got);
+}

@@ -551,10 +551,11 @@ impl Paint {
     }
 }
 
-/// A zoom option's label as a mask in a 32x12 cell.
-fn zoom_glyph(label: &str, s: i32, ctx: &Ctx) -> Canvas {
+/// A zoom option's label as a mask in a 32x12 cell, at the 100% font: the tool box and its
+/// options keep their size at every text size.
+pub(crate) fn zoom_glyph(label: &str, s: i32, ctx: &Ctx) -> Canvas {
     let mut c = Canvas::with_scale(32, 12, s);
-    let px = ctx.theme.fonts.size_px;
+    let px = ctx.base_px();
     let text = ctx.text.for_output(s);
     c.in_device_px(|d| {
         let r = Rect::new(0, 0, 32 * s, 12 * s);
