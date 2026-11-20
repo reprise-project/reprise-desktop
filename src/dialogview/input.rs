@@ -195,6 +195,13 @@ impl State {
             return;
         }
         let top = self.dialogs.views.len() - 1;
+        if matches!(
+            hit,
+            Some(DialogHit::Caption | DialogHit::Close | DialogHit::Help)
+        ) && self.dialogs.views[top].dialog.close_completion()
+        {
+            self.redraw_dialog(top);
+        }
         if matches!(hit, Some(DialogHit::Caption)) {
             // The raise renumbered the stack; the pressed dialog is the top one now.
             let pos = self.pointer_location();

@@ -652,11 +652,20 @@ impl Dialog {
         if !self.buttons.get(i).is_some_and(|b| b.enabled) {
             return false;
         }
-        if let Some(f) = self.field.as_mut() {
-            f.complete.close();
-        }
+        self.close_completion();
         self.pointer.press(Some(i), false);
         true
+    }
+
+    /// Closes the field's completion until the next edit, so a listing that lands later opens
+    /// nothing. True when a list showed.
+    pub fn close_completion(&mut self) -> bool {
+        let Some(f) = self.field.as_mut() else {
+            return false;
+        };
+        let showed = f.complete.is_open();
+        f.complete.close();
+        showed
     }
 
     pub fn holding_button(&self) -> bool {
