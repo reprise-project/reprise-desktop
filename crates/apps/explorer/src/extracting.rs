@@ -247,9 +247,7 @@ impl Explorer {
     pub(crate) fn cancel_extracts(&mut self) {
         self.extract_queue.clear();
         if let Some(ex) = &self.extracting {
-            let m = ex.job.meter();
-            m.set_paused(false);
-            m.cancel();
+            ex.job.meter().cancel();
         }
     }
 
