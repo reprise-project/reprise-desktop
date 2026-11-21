@@ -123,7 +123,8 @@ impl UpDown {
     }
 
     /// An editing key: digits go in at the caret (over the selection), caret keys and
-    /// Backspace / Delete work the number, and the value follows, clamped. `None`
+    /// Backspace / Delete work the number, and the value follows, clamped. Typed digits
+    /// drop the leading zeros (a lone 0 stays), which a deletion leaves until then. `None`
     /// for a key the field does not take, which the form reads as a dialog key.
     /// `Some(changed)` says whether the value changed.
     pub fn key(&mut self, key: &EditKey) -> Option<bool> {
@@ -134,9 +135,20 @@ impl UpDown {
                 if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
                     return None;
                 }
-                let kept = edit.text.len() - edit.selection().len();
-                if kept + s.len() > digits {
+                let sel = edit.selection();
+                let typed = format!("{}{s}{}", &edit.text[..sel.start], &edit.text[sel.end..]);
+                let zeros = typed.bytes().take_while(|&b| b == b'0').count();
+                let zeros = zeros.min(typed.len() - 1);
+                if typed.len() - zeros > digits {
                     return Some(false);
+                }
+                if zeros > 0 {
+                    let caret = (sel.start + s.len()).saturating_sub(zeros);
+                    let all = edit.text.len();
+                    edit.set_selection(0, all);
+                    edit.key(EditKey::Insert(typed[zeros..].to_string()));
+                    edit.place(caret, false);
+                    return Some(self.follow());
                 }
             }
             EditKey::Backspace { .. }
@@ -154,11 +166,16 @@ impl UpDown {
             EditKey::DeleteSurrounding { .. } => return None,
         }
         edit.key(key.clone());
-        let typed = edit.text.parse::<i32>().unwrap_or(self.min);
-        let next = self.bound(typed);
+        Some(self.follow())
+    }
+
+    /// Take the edited digits' value, clamped, or `min` for an empty field. Whether it changed.
+    fn follow(&mut self) -> bool {
+        let typed = self.edit.as_ref().and_then(|e| e.text.parse::<i32>().ok());
+        let next = self.bound(typed.unwrap_or(self.min));
         let changed = next != self.value;
         self.value = next;
-        Some(changed)
+        changed
     }
 
     /// Clipboard text: a number (blanks around it dropped) goes in at the caret as typed digits
@@ -582,6 +599,55 @@ mod tests {
             ud.key(&EditKey::Insert("a".into())),
             None,
             "a letter is not taken"
+        );
+    }
+
+    #[test]
+    fn a_digit_typed_after_a_zero_replaces_it() {
+        let mut ud = UpDown::new(0, 0, 99999);
+        ud.enter();
+        ud.place(1);
+        assert_eq!(ud.key(&EditKey::Insert("1047".into())), Some(true));
+        assert_eq!((ud.value(), ud.shown().as_str()), (1047, "1047"));
+        assert!(ud.digit('9'), "the zero took no digit of the five");
+        assert_eq!((ud.value(), ud.shown().as_str()), (10479, "10479"));
+        assert!(!ud.digit('1'), "five digits at most");
+
+        let mut zero = UpDown::new(0, 0, 99);
+        zero.enter();
+        zero.place(1);
+        assert!(!zero.digit('0'));
+        assert_eq!(zero.shown(), "0", "a lone zero stays");
+        assert!(zero.digit('5'));
+        assert_eq!((zero.value(), zero.shown().as_str()), (5, "5"));
+        zero.place(0);
+        assert!(!zero.digit('0'));
+        assert_eq!(zero.shown(), "5", "a zero in front is dropped");
+
+        let mut before = UpDown::new(0, 0, 99);
+        before.enter();
+        before.place(0);
+        assert!(before.digit('5'));
+        assert_eq!((before.value(), before.shown().as_str()), (50, "50"));
+    }
+
+    #[test]
+    fn a_deleted_leading_digit_leaves_its_zeros_until_the_next_digit() {
+        let mut ud = UpDown::new(1047, 0, 9999);
+        ud.enter();
+        ud.place(1);
+        assert!(ud.backspace());
+        assert_eq!((ud.value(), ud.shown().as_str()), (47, "047"));
+        assert!(ud.digit('2'));
+        assert_eq!((ud.value(), ud.shown().as_str()), (2047, "2047"));
+        assert!(ud.backspace());
+        ud.place(1);
+        assert!(ud.digit('3'));
+        assert_eq!((ud.value(), ud.shown().as_str()), (347, "347"));
+        assert_eq!(
+            ud.edit().map(TextEdit::caret),
+            Some(1),
+            "the caret follows the 3"
         );
     }
 
@@ -1154,7 +1220,7 @@ mod tests {
         crate::pins::check("controls/updown_selected_descenders", &got);
     }
 
-    /// "01047" in a 0..=99999 field is wider than the field: the caret stays inside it, at the
+    /// "21047" in a 0..=99999 field is wider than the field: the caret stays inside it, at the
     /// end the last digit shows whole and Home brings the first back whole, at scale 1 and 2.
     #[test]
     fn an_overflowing_number_follows_its_caret() {
@@ -1171,14 +1237,13 @@ mod tests {
             });
             let mut ud = UpDown::new(0, 0, 99999);
             ud.enter();
-            ud.place(1);
-            assert_eq!(ud.key(&EditKey::Insert("1047".into())), Some(true));
-            assert_eq!(ud.shown(), "01047");
+            assert_eq!(ud.key(&EditKey::Insert("21047".into())), Some(true));
+            assert_eq!(ud.shown(), "21047");
             let (tr, _) = text_rect(&ud, l.edit, 1);
-            let wide = text.measure("01047", false, 11);
+            let wide = text.measure("21047", false, 11);
             assert!(
                 wide > tr.width,
-                "{family}: \"01047\" is {wide} px, the field {} px",
+                "{family}: \"21047\" is {wide} px, the field {} px",
                 tr.width
             );
             // Each end: the key, the digit that shows whole there, its pen and the caret's column.
@@ -1191,7 +1256,7 @@ mod tests {
                     seven,
                     tr.right(),
                 ),
-                ("Home", EditKey::Home { select: false }, "0", tr.x, tr.x),
+                ("Home", EditKey::Home { select: false }, "2", tr.x, tr.x),
             ];
             for (name, key, digit, pen, cx) in ends {
                 ud.key(&key);
