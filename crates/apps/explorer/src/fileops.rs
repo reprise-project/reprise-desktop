@@ -18,13 +18,20 @@ use reprisefs::ops::DropOp;
 use reprisefs::replace::{self, Answer, Asker, Clash, Step, Verdict};
 use reprisefs::sendto::{self, SendTo};
 use reprisefs::undo::Undoable;
+use reprisekit::controls::menu::{ContextBitmaps, MenuStyle};
 use reprisekit::controls::openwith::{Check, OpenWith, Program};
 use reprisekit::controls::replacebox;
 use reprisekit::raster::Canvas;
+use reprisekit::theme::Theme;
 use std::path::{Path, PathBuf};
 
-/// The icon size of the Open With and Send To rows, in the menus and the chooser.
+/// The icon size of the Open With chooser's rows.
 pub(crate) const ROW_PX: i32 = 16;
+
+/// The icon size of the Open With and Send To menus' rows: the menu's icon column at the text size.
+pub(crate) fn menu_icon_px(theme: &Theme) -> i32 {
+    MenuStyle::context(theme, ContextBitmaps::Icons).icon_px()
+}
 
 /// An item picked in the Recycle Bin: its entry under `files/` and the record it was listed with;
 /// Restore and Delete re-check the record ([`reprisefs::trash::check_listed`]).
@@ -1209,7 +1216,7 @@ impl Explorer {
         self.put_all(&paths, &dir, &|_| Some(DropOp::Shortcut), false, ctx)
     }
 
-    /// Send To rows for the selection as (label, enabled, 16 px icon), cached so the menu's row
+    /// Send To rows for the selection as (label, enabled, icon), cached so the menu's row
     /// index resolves to a destination; stand-ins noted in `waits` while an icon decodes.
     pub fn build_send_to(
         &mut self,
@@ -1217,9 +1224,10 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Vec<(String, bool, Option<Canvas>)> {
         self.send_to = self.send_rows(ctx);
+        let px = menu_icon_px(&ctx.theme);
         (self.send_to.iter())
             .map(|r| {
-                let icon = waits.first(&mut ctx.icons, &[r.icon], ROW_PX);
+                let icon = waits.first(&mut ctx.icons, &[r.icon], px);
                 (r.label.clone(), r.enabled, icon)
             })
             .collect()
@@ -1302,11 +1310,12 @@ impl Explorer {
             .map(|m| reprisefs::apps::open_with(&self.app_index, &m))
             .unwrap_or_default();
         let apps = self.open_with_apps.clone();
+        let px = menu_icon_px(&ctx.theme);
         apps.iter()
             .filter_map(|&a| self.app_index.get(a).cloned())
             .map(|app| {
                 let name = app.icon.as_deref();
-                let icon = name.and_then(|n| waits.first(&mut ctx.icons, &[n], ROW_PX));
+                let icon = name.and_then(|n| waits.first(&mut ctx.icons, &[n], px));
                 (app.name.clone(), icon)
             })
             .collect()

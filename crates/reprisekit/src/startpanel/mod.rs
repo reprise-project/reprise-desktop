@@ -239,9 +239,9 @@ impl StartPanel {
         self.room = Some(room);
     }
 
-    /// The device px at scale `s` of a row icon `design` px at 100% text, as large as at 100% at least.
+    /// The device px at scale `s` of a row icon `design` px at 100% text ([`TextUnits::icon`]).
     pub fn icon_px(&self, design: i32, s: i32) -> i32 {
-        self.text.len(design).max(design) * s
+        self.text.icon(design) * s
     }
 
     pub fn mode(&self) -> Mode {
