@@ -487,3 +487,23 @@ fn a_header_lit_during_a_thumb_drag_redraws_at_once() {
     assert_eq!(top(&mut a), 0, "the thumb stays at the top");
     assert!(r.redraw, "the header column the drag passes lights");
 }
+
+#[test]
+fn an_access_key_after_a_page_list_click_gives_its_field_the_arrows() {
+    let (mut a, mut ctx) = (app("access-after-list"), test_ctx());
+    press_page_row(&mut a, &mut ctx, Page::ScreenCapture);
+    assert!(a.sheet.tabs.focused, "the click focuses the list");
+    let alt = Mods {
+        alt: true,
+        ..Mods::default()
+    };
+    a.key(
+        key_input(u32::from(b'd'), alt, Some("d")),
+        &ctx.forms().controls(),
+    );
+    assert_eq!(focused_id(&a), Some(capturepage::DELAY));
+    assert_eq!(holders(&a), PAGE);
+    plain_key(&mut a, &ctx, keysym::UP);
+    assert_eq!(registry::open(&a.sheet), Page::ScreenCapture);
+    assert_eq!(a.want.screenshot_delay, 1, "Up steps the delay");
+}

@@ -70,31 +70,6 @@ fn enter_on_a_found_page_already_open_focuses_the_control_it_found() {
     assert!(!a.shortcuts_focus, "the shortcut list lets go");
 }
 
-/// A left press on `page`'s row of the page list, in a window that shows the whole sheet.
-fn press_page_row(a: &mut SettingsApp, ctx: &mut Ctx, page: Page) {
-    ctx.size = (1920, 1080);
-    a.event(MAIN, Event::Resized, ctx);
-    let px = a.sheet.open().units().px(ctx.theme.fonts.size_px);
-    let inner = a
-        .sheet
-        .layout(&ctx.text, px)
-        .list
-        .expect("a page list")
-        .inner;
-    let x = inner.x + 20;
-    let y = (inner.y..inner.bottom())
-        .find(|&y| a.sheet.hit(x, y, &ctx.text, px) == Some(propsheet::Hit::Tab(page.index())))
-        .expect("the page's row shows");
-    let press = PointerInput::Press {
-        x,
-        y,
-        button: BTN_LEFT,
-        time: 0,
-        mods: Mods::default(),
-    };
-    a.event(MAIN, Event::Pointer(press), ctx);
-}
-
 #[test]
 fn a_found_page_clicked_in_the_list_focuses_the_control_it_found() {
     for open_first in [false, true] {
