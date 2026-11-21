@@ -4,7 +4,7 @@ use super::outputs::{Scan, ScanAction, asks_scan, scan_action};
 use super::render::{
     Due, INACTIVE_CALLBACK, callback_interval, due_now, glass_hold, waits_for_frame,
 };
-use super::schedule::{Asked, pointer_ask_renders};
+use super::schedule::{Asked, Pending, pointer_ask_renders};
 use super::steps::{MODE_TRIES, PendingMode, Step, next_step};
 use super::{Ask, CrtcNow, StartPlan, pick_gpu, start_plan};
 use crate::config::OutputMode;
@@ -168,6 +168,62 @@ fn a_pointer_frame_shows_owed_captures_the_scene() {
     use crate::capture::Drew;
     assert_eq!(pointer_drew(true), Drew::Scene, "captures owed the scene");
     assert_eq!(pointer_drew(false), Drew::Pointer, "nothing owed");
+}
+
+fn pending(asks: &[Ask], capture: bool) -> Pending {
+    let mut p = Pending::default();
+    for ask in asks {
+        p.asked.add(*ask);
+    }
+    if capture {
+        p.capture();
+    }
+    p
+}
+
+#[test]
+fn a_capture_alone_asks_a_pointer_frame_that_shows_captures_the_scene() {
+    use super::render::pointer_drew;
+    use crate::capture::Drew;
+    let p = pending(&[], true);
+    assert!(p.captures_owed, "captures are owed the scene");
+    assert!(p.asked.redraw, "one frame is asked");
+    assert!(
+        p.asked.pointer_only,
+        "the frame draws nothing new for the screen"
+    );
+    assert_eq!(p.asked.backdrop, crate::glass::Under::Nothing);
+    assert_eq!(pointer_drew(p.captures_owed), Drew::Scene);
+}
+
+#[test]
+fn a_capture_merged_with_a_content_ask_draws_one_whole_frame_that_fills_it() {
+    use super::render::capture_drew;
+    use crate::{capture::Drew, waterview::Stepped};
+    let content_first = pending(&[Ask::Content], true);
+    let mut capture_first = pending(&[], true);
+    capture_first.asked.add(Ask::Content);
+    assert_eq!(
+        content_first, capture_first,
+        "the order of the asks does not matter"
+    );
+    let p = content_first;
+    assert!(p.captures_owed && p.asked.redraw);
+    assert!(
+        !p.asked.pointer_only,
+        "the content ask draws the whole frame"
+    );
+    assert_eq!(
+        capture_drew(p.asked.pointer_only, true, &Stepped::default()),
+        Drew::Scene,
+        "the whole frame fills the capture"
+    );
+}
+
+#[test]
+fn an_output_nothing_asked_of_draws_nothing() {
+    let p = pending(&[], false);
+    assert!(!p.asked.redraw && !p.captures_owed);
 }
 
 #[test]
