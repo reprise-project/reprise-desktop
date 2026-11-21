@@ -177,7 +177,8 @@ pub fn run_until(
     }
     let mut child = c.spawn()?;
     let pid = child.id() as libc::pid_t;
-    let (stdin, stdout, stderr) = (child.stdin.take(), child.stdout.take(), child.stderr.take());
+    let (stdin, mut stdout, stderr) =
+        (child.stdin.take(), child.stdout.take(), child.stderr.take());
     let (done, finished) = mpsc::channel::<()>();
     let (reply, past_cap, said, (late, stopped)) = std::thread::scope(|scope| {
         let watch = std::thread::Builder::new()
@@ -217,12 +218,16 @@ pub fn run_until(
         if let Some(mut stdin) = stdin {
             let _ = io::copy(&mut input, &mut stdin);
         }
-        let reply = stdout.map_or_else(Vec::new, |out| read_reply(out, cap));
+        let reply = stdout
+            .as_mut()
+            .map_or_else(Vec::new, |out| read_reply(out, cap));
         let past_cap = reply.len() > cap.max;
         if past_cap {
             // SAFETY: as above, the child is not reaped yet.
             unsafe { libc::kill(pid, libc::SIGKILL) };
         }
+        // Closed only after the kill, so a helper past the cap dies of SIGKILL, never SIGPIPE.
+        drop(stdout);
         exited(pid);
         drop(done);
         let ended = watch.map_or((false, false), |w| w.join().unwrap_or((false, false)));
