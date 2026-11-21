@@ -30,6 +30,8 @@ const REMEMBER: Rect = Rect::new(9, 366, 13, 13);
 const DELAY_LABEL: Rect = Rect::new(9, 370, 44, 13);
 const DELAY: Rect = Rect::new(57, 366, updown::WIDTH, updown::HEIGHT);
 const DELAY_UNITS: Rect = Rect::new(DELAY.x + updown::WIDTH + 6, 370, 60, 13);
+/// The Sources tree's least height on a short work area, five rows.
+const TREE_MIN_H: i32 = 90;
 const HEADER_ICON: &str = "preferences-desktop-display";
 pub const SCREEN_ICON: &str = "computer";
 const FALLBACK_ICON: &str = "application-x-executable";
@@ -330,6 +332,42 @@ fn build_form(
     f
 }
 
+/// Lays the dialog out for a client `h` px tall at 100% text: short of [`CLIENT`], the Sources
+/// tree gives up the difference down to [`TREE_MIN_H`] and the rows under it move up with it.
+fn fit(form: &mut Form, h: i32) {
+    let short = (CLIENT.1 - h).clamp(0, TREE.height - TREE_MIN_H);
+    let cut = |r: Rect| Rect::new(r.x, r.y, r.width, r.height - short);
+    let up = |r: Rect| Rect::new(r.x, r.y - short, r.width, r.height);
+    let rects = [
+        ("group", cut(GROUP)),
+        ("tree", cut(TREE)),
+        ("remember", up(REMEMBER)),
+        ("delay_label", up(DELAY_LABEL)),
+        ("delay", up(DELAY)),
+        ("delay_units", up(DELAY_UNITS)),
+    ];
+    for (id, r) in rects {
+        if let Some(it) = form.item_mut(id) {
+            it.rect = r;
+        }
+    }
+    for id in ["share", "cancel"] {
+        if let Some(it) = form.item_mut(id) {
+            it.rect.y = BUTTON_Y - short;
+        }
+    }
+    if let Some(it) = form.item_mut("tree")
+        && let Control::Tree(tv) = &mut it.control
+    {
+        let lay = reprisekit::controls::treeview::layout_without_text(
+            tv,
+            it.rect,
+            &ControlMetrics::CLASSIC,
+        );
+        tv.follow(&lay);
+    }
+}
+
 fn prompt(
     purpose: Purpose,
     rows: Vec<Row>,
@@ -364,6 +402,7 @@ fn prompt(
             None => false,
         }),
         job: None,
+        fit: Some(fit),
     }
 }
 
@@ -511,6 +550,66 @@ mod tests {
                 )
             });
             assert!(over.is_empty(), "{purpose:?}: {}", over.join("\n"));
+        }
+    }
+
+    /// On a 720x450 work area (a 1440x900 screen at scale 2, or a 720x450 one) the screenshot and
+    /// share dialogs keep Take or Share and Cancel inside the window, at scale 1 and 2, under
+    /// every interface, the picked source still picked.
+    #[test]
+    fn a_short_work_area_keeps_the_buttons_in_the_window() {
+        use reprisekit::frame::{Chrome, FrameGeometry};
+        use reprisekit::interface::Interface;
+        use reprisekit::text::TextRenderer;
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = reprisekit::interfaces::theme_for(i);
+            let m = &theme.metrics;
+            let total = (720, 450 - m.taskbar_height);
+            let (_, h) =
+                FrameGeometry::client_size_for_total(m, total.0, total.1, false, Chrome::DIALOG);
+            assert!(h < CLIENT.1, "{i:?}: the dialog is taller than {h}");
+            for (purpose, remember, delay) in [
+                (Purpose::Share, true, None),
+                (Purpose::Screenshot, false, Some(3)),
+            ] {
+                let form = build_form(purpose, &rows(), Some(2), remember, delay, "", |_| None);
+                let mut p = prompt(purpose, rows(), form, None, None, Arc::default());
+                let mut ctx = crate::dialog::test_ctx(100);
+                ctx.theme = theme.clone();
+                ctx.size = (CLIENT.0, h);
+                repriseapp::App::event(
+                    &mut p,
+                    repriseapp::MAIN,
+                    repriseapp::Event::Resized,
+                    &mut ctx,
+                );
+                let at = |id| p.form.item(id).unwrap().rect;
+                let (take, cancel) = (at("share"), at("cancel"));
+                assert!(
+                    cancel.bottom() <= h,
+                    "{i:?} {purpose:?}: {cancel:?} ends by {h}"
+                );
+                let foot = at(if remember { "remember" } else { "delay" });
+                assert!(at("group").bottom() <= foot.y && foot.bottom() <= take.y);
+                assert_eq!(selection(&rows(), &p.form), Some(2), "the pick stays");
+                for scale in [1, 2] {
+                    let t = theme.scaled(scale);
+                    let text = TextRenderer::load(&t.fonts);
+                    let mut c = Canvas::new((CLIENT.0 * scale) as u32, (h * scale) as u32);
+                    c.fill_rect(c.bounds(), t.colors.button_face);
+                    form::draw(&mut c, &text, &t.paint(), &p.form, true, t.fonts.size_px);
+                    let face = t.colors.button_face.argb();
+                    for b in [take, cancel] {
+                        let foot = (b.bottom() - 3) * scale..b.bottom() * scale;
+                        let xs = b.x * scale..b.right() * scale;
+                        assert!(
+                            foot.flat_map(|y| xs.clone().map(move |x| (x, y)))
+                                .any(|(x, y)| c.get(x, y) != face),
+                            "{i:?} {purpose:?} x{scale}: {b:?}'s foot is drawn"
+                        );
+                    }
+                }
+            }
         }
     }
 

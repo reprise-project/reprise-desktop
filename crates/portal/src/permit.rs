@@ -521,6 +521,7 @@ fn prompt(
             true
         }),
         job: None,
+        fit: None,
     }
 }
 
