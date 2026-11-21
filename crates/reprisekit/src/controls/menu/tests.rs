@@ -2075,3 +2075,84 @@ fn a_level_taller_than_the_screen_wraps_into_columns_inside_it() {
     );
     assert!(first_of_second.x > p.levels()[0].layout.rows[0].x);
 }
+
+/// Draws a submenu and a context menu with icons in each look at 100-200% text, scale 1 and 2:
+/// the icon column grows with the text, each icon stands whole in its row with no label ink on it,
+/// and no line's ink is cut. Hashes each menu at 200%.
+#[test]
+fn menu_icons_grow_with_the_text_and_labels_clear_them() {
+    crate::pins::fonts();
+    const INK: u32 = 0xFF12_3456;
+    let labels = ["Accessories", "Documents", "Games"];
+    let (mut sizes, mut cut, mut hashes) = (Vec::new(), Vec::new(), Vec::new());
+    for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for pct in [100, 125, 150, 175, 200] {
+            let base = crate::interfaces::theme_for(interface).with_text_size(pct);
+            let text = TextRenderer::load(&base.fonts);
+            let styles = [
+                ("submenu", MenuStyle::submenu(&base)),
+                ("context", MenuStyle::context(&base, ContextBitmaps::Icons)),
+            ];
+            for (kind, style) in styles {
+                let icon = style.icon_px();
+                assert_eq!(icon, base.text.icon(16), "{interface:?} {kind} at {pct}%");
+                sizes.push((interface, kind, pct, icon));
+                for s in [1, 2] {
+                    let mut ic = Canvas::new((icon * s) as u32, (icon * s) as u32);
+                    ic.pixels.fill(INK);
+                    let mut items: Vec<MenuItem> = (labels.iter())
+                        .map(|&l| MenuItem::entry(l).icon(Some(ic.clone())))
+                        .collect();
+                    items[1] = items[1].clone().submenu(true);
+                    let style = style.fit(&text, &items, base.fonts.size_px, i32::MAX);
+                    let l = MenuLayout::compute_styled(&style, &items, usize::MAX).scaled(s);
+                    let theme = base.scaled(s);
+                    let text = text.for_output(s);
+                    let mut c = Canvas::new(l.width as u32, l.height as u32);
+                    let ((), cuts) = crate::pins::clipped_ink(|| {
+                        draw_menu(&mut c, &theme, text, &l, &items, None, "", false);
+                    });
+                    cut.extend(
+                        (cuts.into_iter())
+                            .filter(|c| c.rows > 0 || c.cols > 0)
+                            .map(|c| (interface, kind, pct, s, c.text)),
+                    );
+                    let at = format!("{interface:?} {kind} at {pct}% scale {s}");
+                    for r in &l.rows {
+                        let y = r.y + (r.height - icon * s) / 2;
+                        let x = r.x + l.icon_x;
+                        assert!(
+                            y >= r.y && y + icon * s <= r.bottom(),
+                            "{at}: the icon stands in its row"
+                        );
+                        let row = c.copy_rect(*r);
+                        let inked = row.pixels.iter().filter(|&&p| p == INK).count();
+                        assert_eq!(
+                            inked,
+                            (icon * s * icon * s) as usize,
+                            "{at}: the icon is whole and no label ink lies on it"
+                        );
+                        let label = c.copy_rect(Rect::new(x + icon * s, r.y, s, r.height));
+                        assert!(
+                            label.pixels.iter().all(|&p| p != INK),
+                            "{at}: the icon ends at its column"
+                        );
+                    }
+                    if pct == 200 {
+                        hashes.push((format!("{interface:?} {kind} {s}"), crate::pins::fnv(&c)));
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cut, Vec::new(), "(look, menu, text size, scale, line)");
+    let at = |pct| {
+        (sizes.iter())
+            .filter(|&&(_, _, p, _)| p == pct)
+            .map(|&(_, _, _, icon)| icon)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(at(100), vec![16; 6], "16 px at 100% in every look");
+    assert_eq!(at(200), vec![32; 6], "32 px at 200%");
+    crate::pins::check("controls/menu_icons_200", &hashes);
+}

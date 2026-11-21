@@ -111,7 +111,7 @@ use taskbar::{
     render_taskbar_cells, render_taskbar_drag, render_taskbar_edges, render_taskbar_hidden,
     render_taskbar_keys, render_taskbar_top, render_tray_arrow, render_tray_arrow_schemes,
 };
-use text_size::render_text_size;
+use text_size::{render_menu_icons, render_text_size};
 use views::{
     render_backgrounds, render_file_preview, render_grid_drag, render_image_view,
     render_locate_rings, render_savers, render_show_desktop, render_termgrid,
@@ -370,6 +370,10 @@ fn write_text_size(pct: u32) {
         write_preview(
             &render_blue_start_panel(1, pct),
             &format!("reprisekit-gallery-blue-start-menu-{pct}.png"),
+        );
+        write_preview(
+            &render_menu_icons(pct),
+            &format!("reprisekit-gallery-menu-icons-{pct}.png"),
         );
     }
 }

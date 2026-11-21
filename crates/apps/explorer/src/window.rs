@@ -514,11 +514,12 @@ impl Popup {
         Popup { waits, ..self }
     }
 
-    /// Theme icons landed: the rows that waited wear theirs, `name` giving each row's icon name
-    /// by its command. True when they did.
+    /// Theme icons landed: the rows that waited wear theirs at `px`, `name` giving each row's icon
+    /// name by its command. True when they did.
     pub fn land_icons(
         &mut self,
         icons: &mut IconCache,
+        px: i32,
         name: impl Fn(&Command) -> Option<String>,
     ) -> bool {
         if !self.waits.landed(icons) {
@@ -527,7 +528,7 @@ impl Popup {
         let mut waits = IconWaits::default();
         (self.menu).wear_icons(&mut |cmd| {
             let name = name(cmd)?;
-            Some(waits.first(icons, &[&name], crate::fileops::ROW_PX))
+            Some(waits.first(icons, &[&name], px))
         });
         self.waits = waits;
         self.tree = self.menu.tree();

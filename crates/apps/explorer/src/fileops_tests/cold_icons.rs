@@ -239,6 +239,41 @@ fn the_item_menus_rows_wear_their_cold_icons_once_they_land() {
     assert_eq!(worn(&ex), want);
 }
 
+/// At 200% text the Open With and Send To rows' icons, stand-ins and landed, are 32 px.
+#[test]
+fn at_200_percent_text_the_item_menus_row_icons_are_32_px() {
+    let (art, dir) = (tempfile::tempdir(), tempfile::tempdir());
+    let (art, dir) = (art.expect("a temp dir"), dir.expect("a temp dir"));
+    std::fs::write(dir.path().join("a.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    ctx.theme = ctx.theme.with_text_size(200);
+    ctx.icons = svg_theme(art.path(), &[("editor-icon", DRAWN)], &[]);
+    let mut ex = explorer_in(dir.path(), &mut ctx);
+    ex.app_index = vec![app_with_icon("Editor", "editor", "editor-icon")].into();
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| !ex.items.is_empty());
+    for it in &mut ex.items {
+        it.mime = Some("text/plain".into());
+    }
+    ex.entry_menu_at(0, (10, 10), &mut ctx, false);
+    let editor = |ex: &Explorer| -> Option<(u32, u32, Option<u32>)> {
+        let t = ex.popup.as_ref().expect("the menu is up").tree();
+        let subs = (0..t.items().len()).filter_map(|r| t.child(r));
+        (subs.flat_map(|sub| sub.items().iter())).find_map(|i| match i {
+            MenuItem::Entry {
+                label,
+                icon: Some(ic),
+                ..
+            } if label == "Editor" => Some((ic.width, ic.height, mid(&Some(ic.clone())))),
+            _ => None,
+        })
+    };
+    assert_eq!(editor(&ex), Some((32, 32, Some(0))), "a 32 px stand-in");
+    land_until(&mut ex, &mut ctx, |ex| {
+        editor(ex).is_some_and(|e| e.2 == Some(DRAWN))
+    });
+    assert_eq!(editor(&ex), Some((32, 32, Some(DRAWN))));
+}
+
 /// The Open With and Send To rows [`the_item_menus_rows_wear_their_cold_icons_once_they_land`]
 /// looks at, in the menu's order.
 const ROWS: [&str; 4] = [

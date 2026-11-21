@@ -1,8 +1,9 @@
 use super::MenuItem;
+use crate::icon::ICON_SIZE;
 use crate::metrics::StartMenuMetrics;
 use crate::raster::{Insets, Rect};
 use crate::text::TextRenderer;
-use crate::theme::{Metrics, Theme, line_growth};
+use crate::theme::{Metrics, TextUnits, Theme, line_growth};
 
 /// Inset of a menu's rows from its edges: the border plus its pad. The
 /// Start menu's comes from its look ([`StartMenuMetrics`]).
@@ -46,6 +47,8 @@ pub struct MenuStyle {
     pub band: i32,
     pub text_x: i32,
     pub icon_x: i32,
+    /// The rows' icon edge (logical px): [`MenuStyle::icon_px`].
+    pub icon: i32,
     pub separator_h: i32,
     pub right_pad: i32,
     /// How far in from the menu's edges its rows sit, border included
@@ -59,6 +62,7 @@ pub struct MenuStyle {
 }
 
 impl MenuStyle {
+    /// A Start submenu: its icon column grows with the text size ([`MenuStyle::grown_icons`]).
     pub fn submenu(theme: &Theme) -> MenuStyle {
         let sm = theme.look.controls_at_100().start_menu;
         MenuStyle {
@@ -67,6 +71,7 @@ impl MenuStyle {
             lit_arrow_menu_text: sm.lit_arrow_menu_text,
             ..Self::compact(&theme.metrics)
         }
+        .grown_icons(theme.text)
     }
 
     pub(super) fn compact(m: &Metrics) -> MenuStyle {
@@ -76,6 +81,7 @@ impl MenuStyle {
             band: 0,
             text_x: TEXT_X,
             icon_x: ICON_X,
+            icon: ICON_SIZE,
             separator_h: SEPARATOR_H,
             right_pad: RIGHT_PAD,
             inset: INSET,
@@ -87,9 +93,18 @@ impl MenuStyle {
     }
 
     /// A look with a [`MenuLook`](crate::style::MenuLook) lays every
-    /// context menu out its own way, bitmaps or not: its rows, its
-    /// separators, its gutter and the label past it.
+    /// context menu out its own way: its rows, its separators, its gutter and
+    /// the label past it. With `Icons` the icon column grows with the text
+    /// size ([`MenuStyle::grown_icons`]).
     pub fn context(theme: &Theme, bitmaps: ContextBitmaps) -> MenuStyle {
+        let style = Self::context_at_100(theme, bitmaps);
+        match bitmaps {
+            ContextBitmaps::Icons => style.grown_icons(theme.text),
+            ContextBitmaps::None | ContextBitmaps::Glyphs => style,
+        }
+    }
+
+    fn context_at_100(theme: &Theme, bitmaps: ContextBitmaps) -> MenuStyle {
         let m = &theme.metrics;
         let grow = line_growth(theme.fonts.size_px / theme.scale.max(1) as u32);
         if let Some(ml) = theme.look.style().and_then(|st| st.menu) {
@@ -99,6 +114,7 @@ impl MenuStyle {
                 band: 0,
                 text_x: ml.text_x,
                 icon_x: ml.icon_x,
+                icon: ICON_SIZE,
                 separator_h: ml.separator,
                 right_pad: ml.right_pad,
                 inset: ml.inset,
@@ -119,6 +135,7 @@ impl MenuStyle {
             band: 0,
             text_x,
             icon_x,
+            icon: ICON_SIZE,
             separator_h: 9,
             right_pad,
             inset: INSET,
@@ -145,12 +162,14 @@ impl MenuStyle {
     pub fn root(theme: &Theme) -> MenuStyle {
         let m = &theme.metrics;
         let sm = theme.look.controls_at_100().start_menu;
-        let style = MenuStyle {
+        let icon = (m.startmenu_item_height - 8).max(ICON_SIZE);
+        MenuStyle {
             width: m.startmenu_width,
             row_height: m.startmenu_item_height,
             band: theme.text.len(m.startmenu_band_width),
-            text_x: 0,
+            text_x: ROOT_ICON_X + icon + ROOT_LABEL_GAP,
             icon_x: ROOT_ICON_X,
+            icon,
             separator_h: SEPARATOR_H,
             right_pad: ROOT_RIGHT_PAD,
             inset: sm.root,
@@ -158,22 +177,31 @@ impl MenuStyle {
             lit_arrow_menu_text: sm.lit_arrow_menu_text,
             shortcut_pad: ROOT_RIGHT_PAD,
             gutter: 0,
-        };
-        MenuStyle {
-            text_x: ROOT_ICON_X + style.icon_px() + ROOT_LABEL_GAP,
-            ..style
         }
     }
 
-    /// Icon edge length that fits this style's rows (logical px): the
-    /// classic 16 px for compact rows, the row height minus a margin for the
-    /// root menu's tall ones.
-    pub fn icon_px(&self) -> i32 {
-        if self.band > 0 {
-            (self.row_height - 8).max(crate::icon::ICON_SIZE)
-        } else {
-            crate::icon::ICON_SIZE
+    /// This style with its 16 px icon column grown for text `u`: the icon grows as
+    /// [`TextUnits::icon`] does, and the label, and a gutter, widen with it so the label keeps
+    /// its 100% gap past the icon.
+    fn grown_icons(self, u: TextUnits) -> MenuStyle {
+        let more = u.icon(ICON_SIZE) - ICON_SIZE;
+        MenuStyle {
+            icon: ICON_SIZE + more,
+            text_x: self.text_x + more,
+            gutter: if self.gutter > 0 {
+                self.gutter + more
+            } else {
+                0
+            },
+            ..self
         }
+    }
+
+    /// Icon edge length that fits this style's rows (logical px): 16 px at 100% text growing
+    /// with the text size, the row height minus a margin for the root menu's tall rows. Hosts
+    /// load the rows' icons at it.
+    pub fn icon_px(&self) -> i32 {
+        self.icon
     }
 
     /// Widens to fit the longest label in `items` up to `max_width` (longer ones are ellipsized); `width` is a minimum.
@@ -251,6 +279,7 @@ pub struct MenuLayout {
     pub band: i32,
     pub text_x: i32,
     pub icon_x: i32,
+    pub icon: i32,
     pub inset: Insets,
     pub separator_x: i32,
     pub lit_arrow_menu_text: bool,
@@ -309,6 +338,7 @@ impl MenuLayout {
             band: style.band,
             text_x: style.text_x,
             icon_x: style.icon_x,
+            icon: style.icon,
             inset,
             separator_x: style.separator_x,
             lit_arrow_menu_text: style.lit_arrow_menu_text,
@@ -340,6 +370,7 @@ impl MenuLayout {
             band: self.band,
             text_x: self.text_x,
             icon_x: self.icon_x,
+            icon: self.icon,
             separator_h: self.separator_h,
             right_pad: self.right_pad,
             inset: self.inset,
@@ -373,6 +404,7 @@ impl MenuLayout {
             band: self.band * n,
             text_x: self.text_x * n,
             icon_x: self.icon_x * n,
+            icon: self.icon * n,
             inset: self.inset.scaled(n),
             separator_x: self.separator_x * n,
             lit_arrow_menu_text: self.lit_arrow_menu_text,

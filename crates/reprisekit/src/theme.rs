@@ -430,6 +430,11 @@ impl TextUnits {
         (2 * v as i64 * n + d).div_euclid(2 * d) as i32
     }
 
+    /// An icon `design` px long at 100% text, grown with the text size and never smaller.
+    pub fn icon(self, design: i32) -> i32 {
+        self.len(design).max(design)
+    }
+
     /// `px` (a font size or a device px count at 100%) at the text size.
     pub fn px(self, px: u32) -> u32 {
         self.len(px as i32).max(0) as u32

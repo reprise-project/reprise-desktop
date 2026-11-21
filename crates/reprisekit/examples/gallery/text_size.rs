@@ -331,3 +331,54 @@ fn text_size_controls(theme: &Theme, text: &TextRenderer) -> Canvas {
     bar.draw(&mut c, text, theme, &lay);
     c
 }
+
+/// A Start submenu and a context menu with icons in each look, a look a row, at `pct` text and
+/// at scale 1 and 2: the icon column grows with the text.
+pub fn render_menu_icons(pct: u32) -> Canvas {
+    use reprisekit::controls::menu::{ContextBitmaps, MenuLayout, MenuStyle, draw_menu_at};
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let (cell_w, cell_h) = (330, 160);
+    let mut c = Canvas::new(
+        (6 * cell_w) as u32,
+        (looks.len() as i32 * cell_h * 2) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (row, &look) in looks.iter().enumerate() {
+        let base = interfaces::theme_for(look).with_text_size(pct);
+        let text = TextRenderer::load(&base.fonts);
+        let styles = [
+            MenuStyle::submenu(&base),
+            MenuStyle::context(&base, ContextBitmaps::Icons),
+        ];
+        for (k, style) in styles.into_iter().enumerate() {
+            for (j, s) in [1, 2].into_iter().enumerate() {
+                let square = |rgb: Color| {
+                    let px = style.icon_px() * s;
+                    let mut i = Canvas::new(px as u32, px as u32);
+                    i.fill_rect(Rect::new(s, s, px - 2 * s, px - 2 * s), rgb);
+                    i
+                };
+                let folder = Color::rgb(230, 200, 90);
+                let program = Color::rgb(40, 120, 220);
+                let items = [
+                    MenuItem::entry("Accessories")
+                        .icon(Some(square(folder)))
+                        .submenu(true),
+                    MenuItem::entry("Calculator").icon(Some(square(program))),
+                    MenuItem::Separator,
+                    MenuItem::entry("Notepad").icon(Some(square(program))),
+                ];
+                let style = style.fit(&text, &items, base.fonts.size_px, cell_w - 20);
+                let l = MenuLayout::compute_styled(&style, &items, usize::MAX).scaled(s);
+                let at = (
+                    (3 * k + j) as i32 * cell_w + 10,
+                    row as i32 * cell_h * 2 + 10,
+                );
+                let theme = base.scaled(s);
+                let text = text.for_output(s);
+                draw_menu_at(&mut c, at, &theme, text, &l, &items, Some(1), "", false);
+            }
+        }
+    }
+    c
+}
