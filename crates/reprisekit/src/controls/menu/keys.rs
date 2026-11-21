@@ -1,5 +1,6 @@
 //! What a key does to an open menu, for every host: the compositor's menus and the programs'.
 
+use super::layout::MenuLayout;
 use super::{KeyStops, MenuItem, enter_row, rows_for_key, step_selection};
 use crate::textedit::keysym;
 
@@ -107,6 +108,35 @@ pub fn key_act(
                 }
             }
         }
+    }
+}
+
+/// [`key_act`] for a menu laid out as `layout`: across its columns Left and Right step to the row
+/// level with the highlight, except Right on a submenu row and Left in the first column.
+pub fn key_act_in(
+    items: &[MenuItem],
+    layout: &MenuLayout,
+    current: Option<usize>,
+    key: MenuKey,
+    stops: KeyStops,
+) -> KeyAct {
+    let beside = |row: usize, column: usize| {
+        layout.level_in(row, column, |i| {
+            items.get(i).is_some_and(|it| stops.stops_on(it))
+        })
+    };
+    let across = match (key, current) {
+        (MenuKey::Right, Some(row)) if !row_has_submenu(items, row) => {
+            beside(row, layout.column_of(row) + 1)
+        }
+        (MenuKey::Left, Some(row)) => {
+            (layout.column_of(row).checked_sub(1)).and_then(|column| beside(row, column))
+        }
+        _ => None,
+    };
+    match across {
+        Some(row) => KeyAct::Select(Some(row)),
+        None => key_act(items, current, key, stops),
     }
 }
 

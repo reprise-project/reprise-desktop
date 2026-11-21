@@ -14,10 +14,10 @@ mod shadow;
 
 pub use access::{access_menu, access_row};
 pub use draw::{BULLET_D, draw_menu, draw_menu_at};
-pub use keys::{KeyAct, MenuKey, key_act, row_has_submenu};
+pub use keys::{KeyAct, MenuKey, key_act, key_act_in, row_has_submenu};
 pub use layout::{
     ARROW_RIGHT_INSET, BULLET_X, CHECK_X, ContextBitmaps, MenuLayout, MenuStyle, place_popup,
-    place_submenu, place_submenu_beside, place_submenu_inset, relist, submenu_max_rows,
+    place_submenu, place_submenu_beside, place_submenu_inset, relist,
 };
 pub use popup::{Level, MenuAction, MenuCtx, MenuTree, PopupMenu, submenu_anchor};
 pub use shadow::{
@@ -171,6 +171,14 @@ impl KeyStops {
             KeyStops::Enabled
         }
     }
+
+    /// Whether the arrow keys stop on `item`.
+    pub fn stops_on(self, item: &MenuItem) -> bool {
+        match self {
+            KeyStops::Enabled => item.selectable(),
+            KeyStops::Entries => matches!(item, MenuItem::Entry { .. }),
+        }
+    }
 }
 
 pub fn step_selection(
@@ -190,10 +198,7 @@ pub fn step_selection(
     };
     (1..=n)
         .map(|k| (start + k * step).rem_euclid(n) as usize)
-        .find(|&i| match stops {
-            KeyStops::Enabled => items[i].selectable(),
-            KeyStops::Entries => matches!(items[i], MenuItem::Entry { .. }),
-        })
+        .find(|&i| stops.stops_on(&items[i]))
 }
 
 pub fn default_row(items: &[MenuItem]) -> Option<usize> {
