@@ -1,4 +1,3 @@
-blue-variants.png " Desktop" x10
 blue-variants.png "Apply" x10
 blue-variants.png "Blue: common controls" x1
 blue-variants.png "Blue: explorer bar" x1
@@ -73,7 +72,6 @@ blue-variants.png "Olive Green: task pane" x1
 blue-variants.png "Olive Green: toolbar" x1
 blue-variants.png "Olive Green: tooltip" x1
 blue-variants.png "Open" x10
-blue-variants.png "Reprise" x10
 blue-variants.png "S  M  T  W  T  F  S" x20
 blue-variants.png "Sapphire: common controls" x1
 blue-variants.png "Sapphire: explorer bar" x1
@@ -117,7 +115,6 @@ blue-variants.png "Steel: task pane" x1
 blue-variants.png "Steel: toolbar" x1
 blue-variants.png "Steel: tooltip" x1
 blue-variants.png "Type" x30
-glass-dark.png " Desktop" x1
 glass-dark.png "(None)" x6
 glass-dark.png "0 KB" x2
 glass-dark.png "1 KB" x5
@@ -161,7 +158,6 @@ glass-dark.png "OpenDocu..." x3
 glass-dark.png "Other..." x1
 glass-dark.png "Pictures" x1
 glass-dark.png "Pressed" x1
-glass-dark.png "Reprise" x1
 glass-dark.png "Second" x1
 glass-dark.png "Selected" x1
 glass-dark.png "Size" x5
@@ -173,7 +169,6 @@ glass-dark.png "notepad" x4
 glass-dark.png "notes.txt" x3
 glass-dark.png "report.odt" x3
 glass-dark.png "setup.exe" x3
-glass.png " Desktop" x1
 glass.png "(None)" x6
 glass.png "0 KB" x2
 glass.png "1 KB" x5
@@ -218,7 +213,6 @@ glass.png "OpenDocu..." x3
 glass.png "Other..." x1
 glass.png "Pictures" x1
 glass.png "Pressed" x1
-glass.png "Reprise" x1
 glass.png "Second" x1
 glass.png "Selected" x1
 glass.png "Size" x5

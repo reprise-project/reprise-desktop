@@ -12,7 +12,8 @@ pub(super) const SEPARATOR_H: i32 = 8;
 pub(super) const ICON_X: i32 = 0;
 pub(super) const TEXT_X: i32 = 24;
 const ROOT_ICON_X: i32 = 6;
-pub(super) const ROOT_TEXT_X: i32 = 42;
+/// From a Start menu row's icon to its label; the icon grows with the row.
+const ROOT_LABEL_GAP: i32 = 12;
 pub const CHECK_X: i32 = 4;
 /// How far below the centred position the check glyph sits: its top
 /// row is 6 px down a 17 px row.
@@ -25,7 +26,10 @@ pub(super) const ARROW_SPACE: i32 = ARROW_RIGHT_INSET + 4;
 /// context menu's is its style's `right_pad`.
 pub(super) const RIGHT_PAD: i32 = 20;
 pub(super) const ROOT_RIGHT_PAD: i32 = 26;
+/// The banner's start up from the band's bottom, and its font's px over the UI font's, at 100%
+/// text: both grow with the text size, as the band does.
 pub(super) const BANNER_PAD: i32 = 4;
+pub(super) const BANNER_OVER: i32 = 3;
 const SHORTCUT_GAP: i32 = 24;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,14 +141,15 @@ impl MenuStyle {
         Self::context(theme, bitmaps)
     }
 
+    /// The Start menu: its band, its rows' icons and the labels past them grow with the text size.
     pub fn root(theme: &Theme) -> MenuStyle {
         let m = &theme.metrics;
         let sm = theme.look.controls_at_100().start_menu;
-        MenuStyle {
+        let style = MenuStyle {
             width: m.startmenu_width,
             row_height: m.startmenu_item_height,
-            band: m.startmenu_band_width,
-            text_x: ROOT_TEXT_X,
+            band: theme.text.len(m.startmenu_band_width),
+            text_x: 0,
             icon_x: ROOT_ICON_X,
             separator_h: SEPARATOR_H,
             right_pad: ROOT_RIGHT_PAD,
@@ -153,6 +158,10 @@ impl MenuStyle {
             lit_arrow_menu_text: sm.lit_arrow_menu_text,
             shortcut_pad: ROOT_RIGHT_PAD,
             gutter: 0,
+        };
+        MenuStyle {
+            text_x: ROOT_ICON_X + style.icon_px() + ROOT_LABEL_GAP,
+            ..style
         }
     }
 

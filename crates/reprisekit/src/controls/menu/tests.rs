@@ -1,7 +1,5 @@
 use super::draw::centred;
-use super::layout::{
-    ARROW_SPACE, BORDER, ICON_X, RIGHT_PAD, ROOT_RIGHT_PAD, ROOT_TEXT_X, SEPARATOR_H, TEXT_X,
-};
+use super::layout::{ARROW_SPACE, BORDER, ICON_X, RIGHT_PAD, ROOT_RIGHT_PAD, SEPARATOR_H, TEXT_X};
 use super::*;
 use crate::access::{self, Tree};
 use crate::controls::hosted::{Anchor, Spot};
@@ -830,10 +828,10 @@ fn root_style_reserves_band_and_tall_rows() {
             m.startmenu_item_height
         )
     );
-    assert_eq!(l.text_x, ROOT_TEXT_X);
+    assert_eq!(l.text_x, 42);
     let s = l.scaled(2);
     assert_eq!(s.band, 2 * m.startmenu_band_width);
-    assert_eq!(s.text_x, 2 * ROOT_TEXT_X);
+    assert_eq!(s.text_x, 2 * 42);
     assert_eq!(s.column_width, 2 * l.column_width);
 }
 
@@ -864,12 +862,7 @@ fn fit_widens_for_long_labels_only() {
     let root = MenuStyle::root(&Theme::default()).fit(&text, &items(), 11, i32::MAX);
     assert_eq!(
         root.width,
-        Metrics::default().startmenu_band_width
-            + BORDER
-            + ROOT_TEXT_X
-            + longest
-            + ROOT_RIGHT_PAD
-            + BORDER
+        Metrics::default().startmenu_band_width + BORDER + 42 + longest + ROOT_RIGHT_PAD + BORDER
     );
 }
 
@@ -906,6 +899,77 @@ fn band_is_drawn_with_gradient_and_banner() {
     let has_text = (BORDER..BORDER + l.band)
         .any(|x| (BORDER..l.height - BORDER).any(|y| c.get(x, y) == white));
     assert!(has_text, "expected banner pixels in the band");
+}
+
+/// The Start menu's band and its banner grow with the text size, and the labels start past the
+/// grown icons: the banner keeps its ink across the band at every size and at scale 2.
+#[test]
+fn the_start_band_grows_with_the_text_and_holds_the_banner() {
+    crate::pins::fonts();
+    let start = vec![
+        MenuItem::entry("Programs").submenu(true),
+        MenuItem::entry("Documents").submenu(true),
+        MenuItem::entry("Settings").submenu(true),
+        MenuItem::entry("Run..."),
+        MenuItem::Separator,
+        MenuItem::entry("Shut Down..."),
+    ];
+    let (mut sizes, mut cut, mut hashes) = (Vec::new(), Vec::new(), Vec::new());
+    for pct in [100, 125, 150, 175, 200] {
+        let base = Theme::default().with_text_size(pct);
+        let style = MenuStyle::root(&base);
+        sizes.push((pct, style.band, style.icon_px(), style.text_x));
+        let text = TextRenderer::load(&base.fonts);
+        let style = style.fit(&text, &start, base.fonts.size_px, i32::MAX);
+        for s in [1, 2] {
+            let theme = base.scaled(s);
+            let text = text.for_output(s);
+            let l = MenuLayout::compute_styled(&style, &start, usize::MAX).scaled(s);
+            let mut c = Canvas::new(l.width as u32, l.height as u32);
+            let ((), cuts) = crate::pins::clipped_ink(|| {
+                draw_menu(
+                    &mut c,
+                    &theme,
+                    text,
+                    &l,
+                    &start,
+                    None,
+                    "Reprise Desktop",
+                    false,
+                );
+            });
+            cut.extend(
+                cuts.into_iter()
+                    .filter(|c| c.rows > 0)
+                    .map(|c| (pct, s, c.text, c.rows)),
+            );
+            if pct == 100 || pct == 200 {
+                let band = c.copy_rect(Rect::new(
+                    l.inset.left,
+                    l.inset.top,
+                    l.band,
+                    l.height - l.inset.top - l.inset.bottom,
+                ));
+                let hash = band.pixels.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
+                    (h ^ u64::from(p)).wrapping_mul(0x0000_0100_0000_01b3)
+                });
+                hashes.push((format!("{pct}% {s}"), hash));
+            }
+        }
+    }
+    assert_eq!(cut, Vec::new(), "(text size, scale, line, ink rows cut)");
+    assert_eq!(
+        sizes,
+        vec![
+            (100, 21, 24, 42),
+            (125, 27, 27, 45),
+            (150, 32, 31, 49),
+            (175, 36, 33, 51),
+            (200, 42, 37, 55)
+        ],
+        "(text size, band, icon, label x)"
+    );
+    crate::pins::check("classic/start_band", &hashes);
 }
 
 #[test]
