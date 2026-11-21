@@ -244,8 +244,8 @@ pub fn sections(
     out
 }
 
-/// Everything `sections` reads: while it holds, only Details can differ.
-pub type PaneKey = (Place, Option<Place>, Sel, usize);
+/// Everything `sections` reads, and the rows' icon size: while it holds, only Details can differ.
+pub type PaneKey = (Place, Option<Place>, Sel, usize, i32);
 
 impl Explorer {
     pub fn build_taskpane(&mut self, ctx: &mut Ctx) {
@@ -254,7 +254,14 @@ impl Explorer {
         }
         let sel = self.pane_selection();
         let parent = self.place.parent_in(&self.drive_mounts);
-        let key = (self.place.clone(), parent.clone(), sel, self.items.len());
+        let icon_px = reprisekit::controls::taskpane::icon_px(ctx.theme.text);
+        let key = (
+            self.place.clone(),
+            parent.clone(),
+            sel,
+            self.items.len(),
+            icon_px,
+        );
         let mut details = Section::lines("Details", self.details_lines());
         details.open = self.pane_open(&details.title);
         if self.pane_key.as_ref() == Some(&key) {
@@ -283,7 +290,7 @@ impl Explorer {
                         &mut self.chrome_waits,
                         &mut ctx.icons,
                         &r.icons,
-                        16,
+                        icon_px,
                     ),
                     text: r.text.clone(),
                     enabled: r.enabled,
@@ -603,6 +610,34 @@ mod tests {
         ex.sv.selection.clear();
         ex.refresh_chrome(&mut ctx);
         assert!(ex.taskpane.sections[0].open, "a change of kind rebuilds");
+    }
+
+    #[test]
+    fn the_rows_icons_follow_the_text_size() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let mut ctx = crate::tests::test_ctx();
+        let base = ctx.theme.clone();
+        ctx.theme = base.with_text_size(200);
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        ex.follow_scale(1, &mut ctx);
+        let sizes = |ex: &Explorer| -> Vec<(u32, u32)> {
+            (ex.taskpane.sections.iter())
+                .filter_map(|s| match &s.body {
+                    reprisekit::controls::taskpane::Body::Links(rows) => Some(rows),
+                    reprisekit::controls::taskpane::Body::Lines(_) => None,
+                })
+                .flatten()
+                .map(|r| r.icon.as_ref().map_or((0, 0), |i| (i.width, i.height)))
+                .collect()
+        };
+        let at_200 = sizes(&ex);
+        assert!(!at_200.is_empty());
+        assert!(at_200.iter().all(|&s| s == (32, 32)), "{at_200:?}");
+        ctx.theme = base;
+        ex.follow_scale(1, &mut ctx);
+        let at_100 = sizes(&ex);
+        assert_eq!(at_100.len(), at_200.len());
+        assert!(at_100.iter().all(|&s| s == (16, 16)), "{at_100:?}");
     }
 
     #[test]

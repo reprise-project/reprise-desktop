@@ -434,3 +434,54 @@ pub fn render_list_icons(pct: u32) -> Canvas {
     }
     c
 }
+
+/// A task pane's links with icons in each look, a look a row, at `pct` text and at scale 1 and 2:
+/// the icon column grows with the text.
+pub fn render_taskpane_icons(pct: u32) -> Canvas {
+    use reprisekit::controls::taskpane::{self, Row, Section, TaskPane};
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let (cell_w, cell_h) = (440, 300);
+    let mut c = Canvas::new(
+        (3 * cell_w) as u32,
+        (looks.len() as i32 * cell_h * 2) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (row, &look) in looks.iter().enumerate() {
+        let base = interfaces::theme_for(look).with_text_size(pct);
+        let text = TextRenderer::load(&base.fonts);
+        let (px, u) = (base.fonts.size_px, base.text);
+        let icon = taskpane::icon_px(u);
+        for (j, s) in [1, 2].into_iter().enumerate() {
+            let square = |rgb: Color| {
+                let n = icon * s;
+                let mut i = Canvas::new(n as u32, n as u32);
+                i.fill_rect(Rect::new(s, s, n - 2 * s, n - 2 * s), rgb);
+                Some(i)
+            };
+            let folder = Color::rgb(230, 200, 90);
+            let web = Color::rgb(40, 120, 220);
+            let tp = TaskPane {
+                sections: vec![
+                    Section::links(
+                        "File and Folder Tasks",
+                        vec![
+                            Row::new("Make a new folder", square(folder)),
+                            Row::new("Publish this folder to the Web", square(web)),
+                        ],
+                    ),
+                    Section::links("Other Places", vec![Row::new("Desktop", square(web))]),
+                ],
+                ..Default::default()
+            };
+            let r = Rect::new(0, 0, u.len(200), cell_h - 20);
+            let lay = taskpane::layout(&tp, &text, px, r, &base.controls());
+            let theme = base.scaled(s);
+            let mut pane = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
+            let text = text.for_output(s);
+            taskpane::draw(&mut pane, text, &theme.paint(), &tp, &lay, px * s as u32);
+            let at = (j as i32 * cell_w + 10, row as i32 * cell_h * 2 + 10);
+            c.blit_canvas(at.0, at.1, &pane);
+        }
+    }
+    c
+}
