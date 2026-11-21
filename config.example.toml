@@ -117,8 +117,10 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 # blur = 2                   # 1 (lightest, least GPU work) to 5 (strongest)
 # streaks = true             # false: no reflection streaks over frosted glass
 # fast_drag = true           # while a window is dragged or sized: the blur at a quarter
-#                            # of the resolution, the same spread; the full one again once
-#                            # let go. At output scale 2 and up the blur is always this one
+#                            # of the resolution, the same spread, brought up to date after
+#                            # each frame, so the glass trails the window by one frame; the
+#                            # full, current one again once let go. At output scale 2 and up
+#                            # the blur is always at a quarter
 # blur_frames = true         # glass over another window's frame and glass, a dialog's
 #                            # or the taskbar's shows them blurred; false: one blur less
 #                            # per such glass

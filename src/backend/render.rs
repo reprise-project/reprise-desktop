@@ -29,7 +29,7 @@ use crate::{
 use super::gamma::{Gamma, flush_gamma};
 use super::links::retrain_link;
 use super::outputs::power_off;
-use super::schedule::queue_render;
+use super::schedule::{Ask, queue_render, request};
 use super::steps::{on_quiet, watch};
 use super::{
     Flip, Head, InFlight, Out, Screen, Surface, Work, commit, lock, schedule, schedule_step,
@@ -178,16 +178,16 @@ pub(super) fn render(state: &mut State, head: Head) {
     let stepped = water.step(&mut b.renderer, &output);
     let drew = capture_drew(pointer_only, scene_kept, &stepped);
     let glass_hold = glass_hold(hold, std::mem::take(&mut s.backdrop_changed), stepped.moved);
-    glass.begin(
-        &output,
-        config.glass,
-        crate::glass::quality(interaction, &config.glass),
-        glass_hold,
-    );
+    let quality = crate::glass::quality(interaction, &config.glass);
+    glass.begin(&output, config.glass, quality, glass_hold);
     let clear = crate::render::clear_color(&config.theme.colors);
     let filter = crate::magnifier::filter_matrix(&config.accessibility);
     let wanted = crate::glass::wanted(config);
-    glass.update_screen_backdrop(&mut b.renderer, scene, &output, clear, wanted);
+    let late =
+        wanted && crate::glass::trails(quality, glass_hold) && glass.show_last(scene, &output);
+    if !late {
+        glass.update_screen_backdrop(&mut b.renderer, scene, &output, clear, wanted);
+    }
     magnifier.still = config.effects.reduce_motion;
     let was_zoomed = magnifier.any_zoomed();
     let mut build = |renderer: &mut GlesRenderer| {
@@ -278,6 +278,7 @@ pub(super) fn render(state: &mut State, head: Head) {
         drew,
     };
     let flipping = drawn && send_flip(s, modeset, flight);
+    let late_changed = late && glass.update_late(&mut b.renderer, scene, &output, clear);
     if !flipping {
         let ended = match empty {
             true => Ended::Empty(drew),
@@ -293,6 +294,9 @@ pub(super) fn render(state: &mut State, head: Head) {
     }
     if zoom_dropped {
         state.sync_caret_reports();
+    }
+    if late_changed {
+        request(state, &output, Ask::Glass);
     }
     if state.magnifier.panning(&output)
         || stepped.fell
