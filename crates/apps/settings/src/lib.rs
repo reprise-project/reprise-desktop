@@ -351,6 +351,9 @@ fn take<T>(rx: &Receiver<T>) -> Result<Option<T>, ()> {
 struct SettingsApp {
     path: PathBuf,
     loaded: model::Settings,
+    /// The keys `config.toml` sets as last read or written ([`model::keys_in`]), at any value:
+    /// Restore Defaults takes a page's out even where they hold its defaults.
+    in_file: Vec<repriseconf::Key>,
     want: model::Settings,
     sheet: PropSheet,
     /// Each page's hit for the search field's query (`searchhost`); empty while the field is.
@@ -699,6 +702,7 @@ impl SettingsApp {
     fn open(path: PathBuf, system_layout: String) -> SettingsApp {
         let (text, open_error) = read_config(&path);
         let loaded = model::load(&text);
+        let in_file = model::keys_in(&text);
         let xkb = reprisefs::xkb::load("");
         let mut sheet = registry::sheet(
             &loaded,
@@ -730,6 +734,7 @@ impl SettingsApp {
             path,
             want: loaded.clone(),
             loaded,
+            in_file,
             sheet,
             search_hits: Vec::new(),
             entries: Vec::new(),

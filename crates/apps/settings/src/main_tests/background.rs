@@ -350,3 +350,68 @@ fn restore_defaults_takes_the_connected_monitors_own_pictures_away() {
     assert_eq!(a.loaded, a.want, "nothing is left pending");
     assert!(!lit(&a), "greyed once the connected monitors have none");
 }
+
+/// Restore Defaults on Background lists and takes out a key the file sets at its default (Glass's
+/// position is stretch), so the page's keys leave the file whatever their values.
+#[test]
+fn restore_defaults_takes_out_the_pages_keys_the_file_sets_at_their_defaults() {
+    let dir = tmp("restore-position");
+    let path = dir.join("config.toml");
+    std::fs::write(
+        &path,
+        "[appearance]\ninterface = \"glass\"\n\n[wallpaper]\nposition = \"stretch\"\n",
+    )
+    .unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let bg = Page::Background;
+    let lit = |a: &SettingsApp| match a.sheet.pages[bg.index()].item(propsheet::RESTORE) {
+        Some(it) => matches!(it.control, form::Control::Button { enabled: true, .. }),
+        None => panic!("Background has Restore Defaults"),
+    };
+    assert_eq!(a.loaded.wallpaper_position, "stretch", "Glass's default");
+    assert!(lit(&a), "the file sets a Background key");
+    assert_eq!(
+        apply::restore_question(bg, &a.restorable(bg)),
+        "Restore the defaults on the Background page?\n\
+         These settings are taken out of config.toml:\n    wallpaper.position"
+    );
+    a.restore_defaults(bg);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(text, "[appearance]\ninterface = \"glass\"\n");
+    assert_eq!(
+        model::load(&text),
+        a.loaded,
+        "the file reads back as the sheet holds it"
+    );
+    assert_eq!(a.loaded, a.want, "nothing is left pending");
+    assert!(
+        !lit(&a),
+        "greyed once the file sets none of the page's keys"
+    );
+}
+
+/// A key written or taken out at its default reads the same, but Restore Defaults follows it.
+#[test]
+fn restore_defaults_follows_a_key_another_program_sets_at_its_default() {
+    let dir = tmp("restore-external");
+    let path = dir.join("config.toml");
+    let glass = "[appearance]\ninterface = \"glass\"\n";
+    std::fs::write(&path, glass).unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let bg = Page::Background;
+    let lit = |a: &SettingsApp| match a.sheet.pages[bg.index()].item(propsheet::RESTORE) {
+        Some(it) => matches!(it.control, form::Control::Button { enabled: true, .. }),
+        None => panic!("Background has Restore Defaults"),
+    };
+    assert!(!lit(&a), "the file sets no Background key");
+    std::fs::write(
+        &path,
+        format!("{glass}\n[wallpaper]\nposition = \"stretch\"\n"),
+    )
+    .unwrap();
+    assert!(a.config_changed(), "the file sets one more key");
+    assert!(lit(&a), "lit once the file sets wallpaper.position");
+    std::fs::write(&path, glass).unwrap();
+    assert!(a.config_changed(), "the file sets one key fewer");
+    assert!(!lit(&a), "greyed once the file drops it");
+}

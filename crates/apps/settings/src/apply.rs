@@ -16,8 +16,8 @@ use repriseapp::{Ctx, Event, Reply, WinId};
 
 pub(crate) const RUN_AS_QUESTION: &str = "Turn off Run As?\nFrom the next log on, programs that need an administrator password (Software Updates, Network Connections, drives) cannot ask for one.";
 
-/// What Restore Defaults takes out of `config.toml` on a page: its keys off their defaults and,
-/// on Background, the connected monitors' own wallpaper keys as (connector, key).
+/// What Restore Defaults takes out of `config.toml` on a page: its keys off their defaults or set
+/// in the file and, on Background, the connected monitors' own wallpaper keys as (connector, key).
 #[derive(Debug, Default)]
 pub(crate) struct Restorable {
     pub keys: Vec<Key>,
@@ -192,7 +192,8 @@ impl SettingsApp {
             let i = p.index();
             let keys = pages::keys_of(&self.sheet.pages[i]);
             self.sheet.set_restore(i, !keys.is_empty());
-            let on = !self.off_default(keys, &mut apart).is_empty()
+            let on = keys.iter().any(|k| self.in_file.contains(k))
+                || !self.off_default(keys, &mut apart).is_empty()
                 || !self.own_wallpapers(p).is_empty();
             self.sheet.pages[i].set_enabled(propsheet::RESTORE, on);
         }
@@ -208,12 +209,15 @@ impl SettingsApp {
         model::defaults(interface)
     }
 
-    /// The keys page `p`'s controls write that the file or the sheet holds off their defaults,
-    /// and the monitors' own wallpaper keys it restores.
+    /// The keys page `p`'s controls write that the file sets or the sheet holds off their
+    /// defaults, and the monitors' own wallpaper keys it restores.
     pub(crate) fn restorable(&self, p: Page) -> Restorable {
         let keys = pages::keys_of(&self.sheet.pages[p.index()]);
+        let off = self.off_default(keys.clone(), &mut Apart::default());
         Restorable {
-            keys: self.off_default(keys, &mut Apart::default()),
+            keys: (keys.into_iter())
+                .filter(|k| off.contains(k) || self.in_file.contains(k))
+                .collect(),
             outputs: self.own_wallpapers(p),
         }
     }
@@ -276,9 +280,11 @@ impl SettingsApp {
             }
         };
         own(&mut next);
-        let saved = repriseconf::edit(&self.path, |text| model::save(text, &next, &self.loaded));
+        let saved = repriseconf::edit(&self.path, |text| {
+            model::save(text, &next, &self.loaded).and_then(|t| model::without_keys(&t, &keys))
+        });
         match saved {
-            Ok(Ok(_)) => {}
+            Ok(Ok(text)) => self.in_file = model::keys_in(&text),
             Ok(Err(e)) => {
                 log::warn!(
                     "{} does not parse, refusing to rewrite it: {e}",
@@ -323,7 +329,10 @@ impl SettingsApp {
                     self.fail("config.toml does not parse; nothing was written.");
                     ok = false;
                 }
-                Ok(Ok(_)) => self.loaded = self.want.clone(),
+                Ok(Ok(text)) => {
+                    self.loaded = self.want.clone();
+                    self.in_file = model::keys_in(&text);
+                }
                 Err(e) => {
                     log::warn!("write {}: {e}", self.path.display());
                     self.fail("config.toml could not be written.");
@@ -413,15 +422,22 @@ impl SettingsApp {
 
     /// Reread `config.toml` after a write from elsewhere: the controls the user has not moved show
     /// the file's values, moved ones keep theirs, and Apply still writes only the moved ones. False
-    /// when the file is unreadable, does not parse, or reads as the sheet already had it.
+    /// when the file is unreadable, does not parse, or reads as the sheet already had it and sets
+    /// the same keys.
     pub(crate) fn config_changed(&mut self) -> bool {
         let (text, err) = read_config(&self.path);
         if err.is_some() || text.parse::<toml_edit::DocumentMut>().is_err() {
             return false;
         }
+        let in_file = model::keys_in(&text);
+        let keys_moved = in_file != self.in_file;
+        self.in_file = in_file;
         let fresh = model::load(&text);
         if fresh == self.loaded {
-            return false;
+            if keys_moved {
+                self.sync_restore();
+            }
+            return keys_moved;
         }
         model::rebase(&mut self.want, &self.loaded, &fresh);
         self.loaded = fresh;
