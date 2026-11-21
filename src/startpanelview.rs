@@ -28,7 +28,6 @@ use search::ResultKind;
 pub use picture::UserPictures;
 
 const PICTURE: i32 = 48;
-const RESULT_ICON: i32 = 16;
 
 pub struct StartPanelView {
     pub model: StartPanel,
@@ -132,7 +131,8 @@ impl State {
         model.user = user.clone();
         model.text = self.config.theme.text;
         self.refresh_recent();
-        let (rows, places) = self.start_places(model.shape, scale, &user);
+        let place_px = lists::place_px(&model, scale);
+        let (rows, places) = self.start_places(model.shape, place_px, &user);
         model.places = rows;
         model.user_picture = self.start_user_picture(px);
         let opening = self.config.menu_opening();

@@ -9,7 +9,7 @@ use crate::shape::{self, CLEAR, Px, Stops};
 use crate::startpanel::bluelayout::BUTTON_PEN;
 use crate::startpanel::layout::Layout;
 use crate::startpanel::search::Grow;
-use crate::startpanel::{ALL_PROGRAMS, LOG_OFF, Spot, StartPanel, TURN_OFF};
+use crate::startpanel::{ALL_PROGRAMS, LOG_OFF, PROGRAM_ICON, Spot, StartPanel, TURN_OFF};
 use crate::style::State;
 use crate::text::TextRenderer;
 use crate::theme::Color;
@@ -21,8 +21,8 @@ const FOOT_CORNER: f64 = 5.0;
 const ACCENT_H: i32 = 2;
 const PICTURE_PX: i32 = 48;
 const PICTURE_CORNER: f64 = 3.0;
-/// The program rows' icons and the places' icons, design px.
-pub const ICON_PX: i32 = 32;
+/// The places' icons, design px at 100% text: they grow with the text as the program rows'
+/// [`PROGRAM_ICON`] do.
 pub const PLACE_ICON_PX: i32 = 24;
 const TILE_PX: i32 = 24;
 const ARROW: (i32, i32) = (16, 18);
@@ -133,9 +133,9 @@ pub fn draw(
 
     let lit = p.lit();
     let size = g.px(TEXT_PX);
-    let icon_size = |c: &Canvas| (c.width as i32, c.height as i32);
-    let kept = |r: Rect, (dx, dy): (i32, i32), (w, h): (i32, i32)| {
-        (r.x + g.kept(dx, w / d), r.y + g.kept(dy, h / d))
+    let icon_at = |r: Rect, (dx, dy): (i32, i32), size: i32, c: &Canvas| {
+        let (w, h) = (c.width as i32, c.height as i32);
+        (r.x + g.centred(dx, size, w), r.y + g.centred(dy, size, h))
     };
     let first_rule = p
         .places
@@ -161,7 +161,7 @@ pub fn draw(
                     canvas.fill_rect(r, hot);
                 }
                 if let Some(icon) = &row.icon {
-                    let (x, y) = kept(r, at::PROGRAM_ICON, icon_size(icon));
+                    let (x, y) = icon_at(r, at::PROGRAM_ICON, PROGRAM_ICON, icon);
                     canvas.blit_over(x, y, icon);
                 }
                 let ink = if is_lit { hot_ink } else { s.system.menu_text };
@@ -212,7 +212,7 @@ pub fn draw(
                     canvas.fill_rect(r, hot);
                 }
                 if let Some(icon) = &place.picture {
-                    let (x, y) = kept(r, at::PLACE_ICON, icon_size(icon));
+                    let (x, y) = icon_at(r, at::PLACE_ICON, PLACE_ICON_PX, icon);
                     canvas.blit_over(x, y, icon);
                 }
                 let ink = if is_lit { hot_ink } else { m.places_ink };
@@ -248,8 +248,9 @@ pub fn draw(
                 if state != State::Normal {
                     canvas.blit_over(r.x, r.y, &button_light(r, d, state));
                 }
-                let (x, y) = kept(r, at::TILE, (TILE_PX * d, TILE_PX * d));
-                canvas.blit_over(x, y, &tile_image(choice, d, state));
+                let tile = tile_image(choice, p.icon_px(TILE_PX, 1), d, state);
+                let (x, y) = icon_at(r, at::TILE, TILE_PX, &tile);
+                canvas.blit_over(x, y, &tile);
                 let pen = r.x + g.len(BUTTON_PEN);
                 let base = r.y + g.len(at::BUTTON_BASE);
                 let clip = Rect::new(pen, r.y, r.right() - pen, r.height);
@@ -405,14 +406,15 @@ fn button_light(r: Rect, d: i32, state: State) -> Canvas {
     })
 }
 
-/// A bottom-band button's tile: the power panel's tile for `choice`, lit while hot or held.
-fn tile_image(choice: Choice, d: i32, state: State) -> Canvas {
+/// A bottom-band button's tile, `size` design px: the power panel's tile for `choice`, lit while
+/// hot or held.
+fn tile_image(choice: Choice, size: i32, d: i32, state: State) -> Canvas {
     let state = match state {
         State::Hot => TileState::Hot,
         State::Pressed => TileState::Pressed,
         _ => TileState::Normal,
     };
-    powerpanel::icon(choice, state, TILE_PX, d)
+    powerpanel::icon(choice, state, size, d)
 }
 
 #[cfg(test)]
@@ -564,8 +566,8 @@ mod tests {
     #[test]
     fn a_tile_has_three_states_a_clear_corner_and_a_smooth_curve_at_scale_2() {
         for tile in [Choice::LogOff, Choice::TurnOff] {
-            let states =
-                [State::Normal, State::Hot, State::Pressed].map(|st| tile_image(tile, 2, st));
+            let states = [State::Normal, State::Hot, State::Pressed]
+                .map(|st| tile_image(tile, TILE_PX, 2, st));
             assert_ne!(states[0].pixels, states[1].pixels, "{tile:?} hot");
             assert_ne!(states[0].pixels, states[2].pixels, "{tile:?} pressed");
             let c = &states[0];
@@ -575,7 +577,7 @@ mod tests {
                 (0..6).any(|k| (1..255).contains(&(c.get(k, 1) >> 24))),
                 "{tile:?} curve"
             );
-            let one = tile_image(tile, 1, State::Normal);
+            let one = tile_image(tile, TILE_PX, 1, State::Normal);
             assert_eq!((one.width, one.height), (24, 24));
         }
     }

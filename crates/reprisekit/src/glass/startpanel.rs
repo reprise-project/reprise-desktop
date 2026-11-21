@@ -12,7 +12,8 @@ pub use crate::startpanel::search::{
     HEADER_PX, INK_CUE, INK_GREYED, INK_GROUP, INK_STRONG, TEXT_PX,
 };
 use crate::startpanel::{
-    ALL_PROGRAMS, BACK, Mode, NO_RESULTS, SHUT_DOWN, Spot, StartPanel, TreeRow,
+    ALL_PROGRAMS, BACK, Mode, NO_RESULTS, PROGRAM_ICON, SHUT_DOWN, SMALL_ICON, Spot, StartPanel,
+    TreeRow,
 };
 use crate::style::{Layout as Stack, Part, PartImage, State, Style};
 use crate::text::TextRenderer;
@@ -264,11 +265,17 @@ fn draw_contents(
     let at = |r: Rect| Rect::new(r.x - o.x, r.y - o.y, r.width, r.height);
     let g = search::Grow { s, u: p.text };
     let off = |r: Rect, (dx, dy): (i32, i32)| (r.x - o.x + g.len(dx), r.y - o.y + g.len(dy));
-    // An icon or glyph keeps its size as the text grows; its centre moves with the rest.
+    // A glyph keeps its size as the text grows; its centre moves with the rest.
     let kept = |r: Rect, (dx, dy): (i32, i32), (w, h): (i32, i32)| {
         (r.x - o.x + g.kept(dx, w), r.y - o.y + g.kept(dy, h))
     };
-    let icon_size = |c: &Canvas| (c.width as i32 / s, c.height as i32 / s);
+    let icon_at = |r: Rect, (dx, dy): (i32, i32), size: i32, c: &Canvas| {
+        let (w, h) = (c.width as i32, c.height as i32);
+        (
+            r.x - o.x + g.centred(dx, size, w),
+            r.y - o.y + g.centred(dy, size, h),
+        )
+    };
     let glyph_at =
         |r: Rect, off: (i32, i32), part: Part| kept(r, off, search::glyph_size(style, part));
     let mode = p.mode();
@@ -318,7 +325,7 @@ fn draw_contents(
                     d.part(b, Part::StartNewPin, State::Normal);
                 }
                 if let Some(icon) = &row.icon {
-                    let (x, y) = kept(r, at::PROGRAM_ICON, icon_size(icon));
+                    let (x, y) = icon_at(r, at::PROGRAM_ICON, PROGRAM_ICON, icon);
                     d.canvas.blit_over(x, y, icon);
                 }
                 let right = if row.jump {
@@ -361,7 +368,7 @@ fn draw_contents(
                 let indent = depth * crate::startpanel::layout::TREE_INDENT;
                 if let Some(icon) = icon {
                     let off = (at::TREE_ICON.0 + indent, at::TREE_ICON.1);
-                    let (x, y) = kept(r, off, icon_size(icon));
+                    let (x, y) = icon_at(r, off, SMALL_ICON, icon);
                     d.canvas.blit_over(x, y, icon);
                 }
                 let (x, y) = off(r, (at::TREE_PEN + indent, at::TREE_BASE));
@@ -383,7 +390,7 @@ fn draw_contents(
                     d.part(b, Part::StartHotJump, State::Normal);
                 }
                 if let Some(icon) = &row.icon {
-                    let (x, y) = kept(r, at::JUMP_ICON, icon_size(icon));
+                    let (x, y) = icon_at(r, at::JUMP_ICON, SMALL_ICON, icon);
                     d.canvas.blit_over(x, y, icon);
                 }
                 let (x, y) = off(r, (at::JUMP_PEN, at::JUMP_BASE));

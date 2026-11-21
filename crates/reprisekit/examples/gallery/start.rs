@@ -7,11 +7,14 @@ use reprisekit::text::TextRenderer;
 use reprisekit::textedit::EditKey;
 use reprisekit::theme::{Color, FontConfig};
 
-/// The Start panel over a flat blue desktop: Home, the program tree, Search, a jump list, and Home under Classic.
-pub fn render_start_panel() -> Canvas {
+/// The Start panel over a flat blue desktop at `pct` text: Home, the program tree, Search, a jump
+/// list, and Home under Classic.
+pub fn render_start_panel(pct: u32) -> Canvas {
     use reprisekit::startpanel::{
         self as sp, Mode, PlaceRow, ProgramRow, ResultGroup, ResultRow, Spot, StartPanel, TreeRow,
     };
+    let u = reprisekit::theme::Theme::default().with_text_size(pct).text;
+    let grown = |px: u32| u.len(px as i32).max(px as i32) as u32;
     let square = |px: u32, c: Color| {
         let mut i = Canvas::new(px, px);
         let n = px as i32;
@@ -22,21 +25,22 @@ pub fn render_start_panel() -> Canvas {
     let prog = |name: &str, jump: bool| ProgramRow {
         detail: None,
         name: name.into(),
-        icon: Some(square(32, blue)),
+        icon: Some(square(grown(32), blue)),
         jump,
         new_pin: false,
     };
     let row = |name: &str| ResultRow {
         name: name.into(),
-        icon: Some(square(16, blue)),
+        icon: Some(square(grown(16), blue)),
     };
     let app = |name: &str, depth: u8| TreeRow::App {
         name: name.into(),
-        icon: Some(square(16, blue)),
+        icon: Some(square(grown(16), blue)),
         depth,
     };
     let base = || {
         let mut p = StartPanel::new();
+        p.text = u;
         p.pinned = vec![prog("Text Editor", false)];
         p.frequent = [
             ("Calculator", false),
@@ -154,7 +158,7 @@ pub fn render_start_panel() -> Canvas {
     let glass_theme = cued(interfaces::theme_for(Interface::Glass));
     let classic = cued(interfaces::theme_for(Interface::Classic));
     let text = interfaces::start_panel_text(&glass_theme);
-    let (cell_w, cell_h) = (520, 540);
+    let (cell_w, cell_h) = (u.len(520), u.len(540));
     let mut c = Canvas::new(3 * cell_w as u32, 2 * cell_h as u32);
     c.fill_rect(c.bounds(), Color::rgb(67, 149, 209));
     let panels = [
@@ -175,11 +179,14 @@ pub fn render_start_panel() -> Canvas {
     c
 }
 
-/// The Blue Start menu at scale `n`: Blue at rest, a lit pinned row, a lit place and a hot Log Off,
-/// then Olive Green with All Programs lit and Silver with Turn Off Computer pressed.
-pub fn render_blue_start_panel(n: i32) -> Canvas {
+/// The Blue Start menu at scale `n` and `pct` text: Blue at rest, a lit pinned row, a lit place
+/// and a hot Log Off, then Olive Green with All Programs lit and Silver with Turn Off Computer
+/// pressed.
+pub fn render_blue_start_panel(n: i32, pct: u32) -> Canvas {
     use reprisekit::blue::Variant;
     use reprisekit::startpanel::{self as sp, PlaceRow, ProgramRow, Shape, Spot, StartPanel};
+    let u = reprisekit::theme::Theme::default().with_text_size(pct).text;
+    let grown = |px: i32| u.len(px).max(px);
     let square = |px: i32, c: Color| {
         let px = px * n;
         let mut i = Canvas::new(px as u32, px as u32);
@@ -189,7 +196,7 @@ pub fn render_blue_start_panel(n: i32) -> Canvas {
     let blue = Color::rgb(40, 120, 220);
     let prog = |name: &str, detail: Option<&str>| ProgramRow {
         name: name.into(),
-        icon: Some(square(32, blue)),
+        icon: Some(square(grown(32), blue)),
         jump: false,
         new_pin: false,
         detail: detail.map(String::from),
@@ -197,6 +204,7 @@ pub fn render_blue_start_panel(n: i32) -> Canvas {
     let base = || {
         let mut p = StartPanel::new();
         p.shape = Shape::Blue;
+        p.text = u;
         p.user = "user".into();
         p.user_picture = Some(square(48, Color::rgb(240, 120, 30)));
         p.pinned = vec![
@@ -228,7 +236,7 @@ pub fn render_blue_start_panel(n: i32) -> Canvas {
         .iter()
         .map(|&(label, rule)| PlaceRow {
             label: label.into(),
-            picture: Some(square(24, Color::rgb(230, 200, 90))),
+            picture: Some(square(grown(24), Color::rgb(230, 200, 90))),
             rule_before: rule,
             submenu: label == "Recent Items",
         })
@@ -249,12 +257,13 @@ pub fn render_blue_start_panel(n: i32) -> Canvas {
         (lit(Spot::AllPrograms), Variant::Olive, None),
         (lit(Spot::Shutdown), Variant::Silver, Some(Spot::Shutdown)),
     ];
-    let (cell_w, cell_h) = (400 * n, 500 * n);
+    let (cell_w, cell_h) = (u.len(400) * n, u.len(500) * n);
     let mut c = Canvas::new(3 * cell_w as u32, 2 * cell_h as u32);
     c.fill_rect(c.bounds(), Color::rgb(67, 149, 209));
     for (k, (p, variant, pressed)) in panels.iter().enumerate() {
         let mut p = p.clone();
-        p.foot_labels = reprisekit::blue::startpanel::foot_labels(&text, sp::search::Grow::at(n));
+        let g = sp::search::Grow { s: n, u };
+        p.foot_labels = reprisekit::blue::startpanel::foot_labels(&text, g);
         let p = &p;
         let l = sp::layout::layout(p).scaled(n);
         let mut panel = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);

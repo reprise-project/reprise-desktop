@@ -5,17 +5,16 @@ use std::path::{Path, PathBuf};
 
 use reprisefs::apps::{AppEntry, Group};
 use reprisekit::startpanel::{
-    Mode, PlaceRow, ProgramRow, ResultRow, Shape, Spot, StartPanel, TreeRow,
+    Mode, PROGRAM_ICON, PlaceRow, ProgramRow, ResultRow, SMALL_ICON, Shape, Spot, StartPanel,
+    TreeRow,
 };
 
 use crate::compositor::State;
 use crate::config::MenuEntry;
 use crate::raster::Canvas;
 
-use super::{PICTURE, RESULT_ICON};
+use super::PICTURE;
 
-const PROGRAM_ICON: i32 = 32;
-const TREE_ICON: i32 = 16;
 const JUMP_TITLE: &str = "Recent";
 
 pub(super) fn one_per_name(apps: &[AppEntry]) -> Vec<bool> {
@@ -123,11 +122,12 @@ fn shows_stand_in(m: &StartPanel) -> bool {
         .any(blank)
 }
 
-/// The logical px of a place row's picture: the Blue menu's are 24 px icons.
-fn place_px(shape: Shape) -> i32 {
-    match shape {
-        Shape::Glass => PICTURE,
-        Shape::Blue => reprisekit::blue::startpanel::PLACE_ICON_PX,
+/// The device px at `scale` of `m`'s place rows' pictures: Glass's are the user picture's
+/// size, Blue's 24 px icons that grow with the text.
+pub(super) fn place_px(m: &StartPanel, scale: i32) -> i32 {
+    match m.shape {
+        Shape::Glass => PICTURE * scale,
+        Shape::Blue => m.icon_px(reprisekit::blue::startpanel::PLACE_ICON_PX, scale),
     }
 }
 
@@ -181,13 +181,13 @@ pub(super) fn replace_tree(model: &mut StartPanel, rows: Vec<TreeRow>) {
 }
 
 impl State {
-    /// The panel's places for the document folders the last check left, with their pictures at
-    /// `scale` (the Blue menu's 24 px icons), and `startmenu::places()` or `blue_places()` without
-    /// its rules.
+    /// The panel's places for the document folders the last check left, with their pictures
+    /// `px` device px ([`place_px`]), and `startmenu::places()` or `blue_places()` without its
+    /// rules.
     pub(super) fn start_places(
         &mut self,
         shape: Shape,
-        scale: i32,
+        px: i32,
         user: &str,
     ) -> (Vec<PlaceRow>, Vec<MenuEntry>) {
         let dirs = self.recent.document_dirs();
@@ -196,7 +196,6 @@ impl State {
             Shape::Glass => crate::startmenu::places(recent, &dirs),
             Shape::Blue => crate::startmenu::blue_places(recent, &dirs),
         };
-        let px = place_px(shape) * scale;
         let mut rows = Vec::new();
         let mut places = Vec::new();
         let mut rule = false;
@@ -224,10 +223,12 @@ impl State {
             return;
         };
         let scale = self.draw_scale_at(Some(&output)).max(1);
-        let Some(shape) = self.start_panel.as_ref().map(|v| v.model.shape) else {
+        let Some((shape, px)) =
+            (self.start_panel.as_ref()).map(|v| (v.model.shape, place_px(&v.model, scale)))
+        else {
             return;
         };
-        let (rows, places) = self.start_places(shape, scale, &crate::lock::current_user());
+        let (rows, places) = self.start_places(shape, px, &crate::lock::current_user());
         let Some(v) = self.start_panel.as_mut() else {
             return;
         };
@@ -293,7 +294,7 @@ impl State {
                 }
             })
             .collect();
-        let px = PROGRAM_ICON * scale;
+        let px = v.model.icon_px(PROGRAM_ICON, scale);
         let mut rows = programs
             .iter()
             .zip(&v.jumps)
@@ -323,13 +324,13 @@ impl State {
         let Some(scale) = self.start_panel_scale() else {
             return;
         };
-        let px = RESULT_ICON * scale;
         let State {
             start_panel, icons, ..
         } = self;
         let Some(v) = start_panel.as_mut() else {
             return;
         };
+        let px = v.model.icon_px(SMALL_ICON, scale);
         v.model.jump = v
             .jumps
             .get(i)
@@ -353,7 +354,7 @@ impl State {
         };
         let kept = one_per_name(app_index);
         let (mut rows, map) = tree_rows(app_index, &reprisefs::apps::group(app_index), &kept);
-        let px = TREE_ICON * scale;
+        let px = v.model.icon_px(SMALL_ICON, scale);
         let folder = unread(icons, "folder", px);
         for row in &mut rows {
             if let TreeRow::Folder { icon, .. } = row {
@@ -377,6 +378,16 @@ impl State {
         if !file && !(self.start_panel.as_ref()).is_some_and(|v| shows_stand_in(&v.model)) {
             return;
         }
+        let before = self.start_panel.as_ref().map(|v| v.model.clone());
+        self.refill_start_icons(scale, file);
+        if self.start_panel.as_ref().map(|v| &v.model) != before.as_ref() {
+            self.redraw_start_panel();
+        }
+    }
+
+    /// Looks every icon the open panel shows up again at its text size; `file` also lists the
+    /// search results again, so their file rows pick their icon names again.
+    pub(super) fn refill_start_icons(&mut self, scale: i32, file: bool) {
         let State {
             start_panel,
             app_index,
@@ -387,13 +398,12 @@ impl State {
         let Some(v) = start_panel.as_mut() else {
             return;
         };
-        let before = v.model.clone();
-        let px = PROGRAM_ICON * scale;
+        let px = v.model.icon_px(PROGRAM_ICON, scale);
         let rows = v.model.pinned.iter_mut().chain(&mut v.model.frequent);
         for (row, &i) in rows.zip(&v.programs) {
             row.icon = app_icon(icons, &app_index[i], px);
         }
-        let px = TREE_ICON * scale;
+        let px = v.model.icon_px(SMALL_ICON, scale);
         let folder = (v.model.tree.iter())
             .any(|r| matches!(r, TreeRow::Folder { .. }))
             .then(|| unread(icons, "folder", px))
@@ -406,7 +416,7 @@ impl State {
         refill_tree(&mut v.model.tree, &v.tree_apps, |i| {
             app_icon(icons, &app_index[i], px)
         });
-        let px = place_px(v.model.shape) * scale;
+        let px = place_px(&v.model, scale);
         for (row, e) in v.model.places.iter_mut().zip(&v.places) {
             if let MenuEntry::Item { icon, .. } = e {
                 row.picture = icon.as_deref().and_then(|n| unread(icons, n, px));
@@ -415,7 +425,7 @@ impl State {
         if let Mode::Jump(i) = v.model.mode()
             && let Some(files) = v.jumps.get(i)
         {
-            let px = RESULT_ICON * scale;
+            let px = v.model.icon_px(SMALL_ICON, scale);
             for (row, f) in v.model.jump.iter_mut().zip(files) {
                 row.icon = unread(icons, reprisefs::icons::icon_for_file(f), px);
             }
@@ -427,9 +437,6 @@ impl State {
         let mut results = (v.model.results.iter()).flat_map(|g| &g.rows);
         if v.model.mode() == Mode::Search && (file || results.any(|r| blank(&r.icon))) {
             self.start_panel_show_results();
-        }
-        if self.start_panel.as_ref().is_some_and(|v| v.model != before) {
-            self.redraw_start_panel();
         }
     }
 
@@ -485,7 +492,7 @@ impl State {
             }
             changed = true;
             if v.model.mode() == Mode::Jump(k) {
-                let rows = jump_rows(icons, &files, RESULT_ICON * scale);
+                let rows = jump_rows(icons, &files, v.model.icon_px(SMALL_ICON, scale));
                 v.model.relist_jump(rows, |i| {
                     reprisekit::selection::follow(old, &files, i, |_| true)
                 });

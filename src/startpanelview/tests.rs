@@ -1285,3 +1285,45 @@ fn the_panels_fade_in_steps_on_its_outputs_frames_over_its_time() {
         "shown whole at its end"
     );
 }
+
+/// At 200% text the Blue menu asks for its program icons at the text size it stands at: the full
+/// size on a screen tall enough, the stepped-down size its fit picks on a short one.
+#[test]
+fn the_blue_menus_icons_load_at_the_text_size_it_fits_at() {
+    use reprisekit::startpanel::PROGRAM_ICON;
+    let file = "/srv/icons/chess.png";
+    for (height, full) in [(1200, true), (560, false)] {
+        let config = crate::config::Config::parse(
+            "[appearance]\ninterface = \"blue\"\n[accessibility]\ntext_size = 200\n",
+        )
+        .unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1920, height);
+        let mut chess = app("Chess", "Game");
+        chess.icon = Some(file.into());
+        h.state.app_index = vec![chess];
+        h.state.launches.pin(&h.state.app_index[0].id);
+        h.state.icons.take_wanted();
+        let bar = h.state.bars[0].tree;
+        h.state.toggle_start(bar);
+        let m = &h.state.start_panel.as_ref().expect("the menu opened").model;
+        assert_eq!(m.pinned.len(), 1);
+        assert_eq!(
+            m.text == h.state.config.theme.text,
+            full,
+            "{height} px: {:?}",
+            m.text
+        );
+        let px = m.icon_px(PROGRAM_ICON, 1);
+        let asked: Vec<i32> = (h.state.icons.take_wanted().into_iter())
+            .filter(|(name, _)| name == file)
+            .map(|(_, px)| px)
+            .collect();
+        assert_eq!(asked.last(), Some(&px), "{height} px: asked {asked:?}");
+        if full {
+            assert_eq!(px, 64);
+        } else {
+            assert!(px < 64, "{px}");
+        }
+    }
+}

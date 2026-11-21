@@ -6,8 +6,8 @@
 //! page. `REPRISE_GALLERY_LOOK=classic` leaves the Blue bands blank and skips
 //! the Blue, Glass and taskbar PNGs. `REPRISE_GALLERY_TEXT_SIZE=<percent>` writes
 //! only a message box, a property sheet, window controls, panes and the shell
-//! view's icon modes in each look at that text size, About's system view, the caption tabs and
-//! the popups (media keys, notification and clipboard history, emoji).
+//! view's icon modes in each look at that text size, About's system view, the caption tabs,
+//! the popups (media keys, notification and clipboard history, emoji) and the Start menus.
 
 #[path = "gallery_checksums/mod.rs"]
 mod gallery_checksums;
@@ -272,7 +272,7 @@ fn main() {
             &format!("reprisekit-gallery-desktop-labels@{}.png", n.max(1)),
         );
         write_preview(
-            &render_blue_start_panel(n.max(1)),
+            &render_blue_start_panel(n.max(1), 100),
             &format!("reprisekit-gallery-blue-start-menu@{}.png", n.max(1)),
         );
         write_preview(
@@ -362,6 +362,14 @@ fn write_text_size(pct: u32) {
         write_preview(
             &render_popups_text_size(pct),
             &format!("reprisekit-gallery-popups-text-size-{pct}.png"),
+        );
+        write_preview(
+            &render_start_panel(pct),
+            &format!("reprisekit-gallery-start-panel-{pct}.png"),
+        );
+        write_preview(
+            &render_blue_start_panel(1, pct),
+            &format!("reprisekit-gallery-blue-start-menu-{pct}.png"),
         );
     }
 }
@@ -574,9 +582,12 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
             &render_glass_popups(),
             "reprisekit-gallery-glass-popups.png",
         );
-        write_preview(&render_start_panel(), "reprisekit-gallery-start-panel.png");
         write_preview(
-            &render_blue_start_panel(1),
+            &render_start_panel(100),
+            "reprisekit-gallery-start-panel.png",
+        );
+        write_preview(
+            &render_blue_start_panel(1, 100),
             "reprisekit-gallery-blue-start-menu.png",
         );
         write_preview(
