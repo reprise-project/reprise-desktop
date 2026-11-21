@@ -1436,3 +1436,137 @@ fn recent_items_narrows_to_the_room_beside_its_row() {
         }
     }
 }
+
+/// With the taskbar on the screen's right edge, Recent Items has no room right of its row and
+/// stands left of the panel in Glass and Blue at 200% text: whole on a 1920x1080 screen, narrowed
+/// to the room on a 1300x700 one, and its right edge stays on the panel's left when a longer
+/// name is listed while it is open. The pointer crossing the program rows on its way keeps it
+/// open.
+#[test]
+fn by_a_right_edge_taskbar_recent_items_stands_left_of_the_panel() {
+    let dir = crate::harness::scratch().join("recent-items-left");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = |name: &str| {
+        let p = dir.join(name);
+        std::fs::write(&p, "").unwrap();
+        p
+    };
+    let xbel = dir.join("recently-used.xbel");
+    let write = |paths: &[&Path]| {
+        let marks: String = (paths.iter().enumerate())
+            .map(|(i, p)| {
+                format!(
+                    "<bookmark href=\"file://{}\" modified=\"2026-01-0{}T00:00:00Z\"></bookmark>\n",
+                    p.display(),
+                    9 - i
+                )
+            })
+            .collect();
+        std::fs::write(&xbel, format!("<xbel>{marks}</xbel>")).unwrap();
+    };
+    let long = file("Screenshot 2026-11-14 13-29-45 whole desktop.png");
+    let short = file("wheel.txt");
+    let longer = file("Quarterly report planning meeting, second draft, with notes.odt");
+    for interface in ["glass", "blue"] {
+        for (sw, sh, whole) in [(1920, 1080, true), (1300, 700, false)] {
+            let at = format!("{interface} {sw}x{sh}");
+            write(&[&short, &long]);
+            let config = crate::config::Config::parse(&format!(
+                "[appearance]\ninterface = \"{interface}\"\n[accessibility]\ntext_size = 200\n\
+                 [privacy]\nrecent_files = true\n[taskbar]\nposition = \"right\"\n"
+            ))
+            .unwrap();
+            let mut h = crate::harness::Harness::with_config(config);
+            h.output("TEST-1", sw, sh);
+            h.state.recent = crate::recentdocs::RecentDocs::reading(xbel.clone());
+            let bar = h.state.bars[0].tree;
+            h.state.toggle_start(bar);
+            let v = h.state.start_panel.as_ref().expect("the menu opened");
+            let i = (v.model.places.iter())
+                .position(|p| p.submenu)
+                .expect("a Recent Items row");
+            h.state.open_recent_items(i);
+            let row = h.state.start_spot_rect(Spot::Place(i)).unwrap();
+            let panel = h.state.start_panel_rect().unwrap();
+            let usable = h.state.usable_area(None);
+            let least = h.state.config.theme.text.len(super::menus::RECENT_LEAST);
+            assert!(
+                usable.right() - row.right() < least,
+                "{at}: {row:?} by the edge"
+            );
+            let menu = |h: &crate::harness::Harness| {
+                let m = h.state.menus.first().expect("Recent Items is open");
+                (
+                    Rect::new(m.x, m.y, m.layout.width, m.layout.height),
+                    m.items.len(),
+                )
+            };
+            let (r, n) = menu(&h);
+            assert_eq!(n, 2, "{at}");
+            assert_eq!(r.right(), panel.x, "{at}: {r:?} left of {panel:?}");
+            assert_eq!(r.x == usable.x, !whole, "{at}: {r:?} narrowed to the room");
+            write(&[&longer, &short, &long]);
+            h.state.refresh_recent();
+            let (r2, n) = menu(&h);
+            assert_eq!(n, 3, "{at}: relisted");
+            assert_eq!(r2.right(), panel.x, "{at}: {r2:?} still left of the panel");
+            assert!(r2.x >= usable.x, "{at}: {r2:?} on the screen");
+            h.state.start_panel_pointer(Some(Spot::Program(0)));
+            assert!(
+                !h.state.menus.is_empty(),
+                "{at}: crossing the programs keeps it"
+            );
+            h.state
+                .start_panel_pointer(Some(Spot::Place(usize::from(i == 0))));
+            if interface == "blue" {
+                assert!(h.state.menus.is_empty(), "{at}: another place closes it");
+            }
+        }
+    }
+}
+
+/// Blue's All Programs at 200% text with a folder per category, by a bottom and a right-edge
+/// taskbar on 720x450 and 960x540 screens: it stands at its row's right edge, over the panel's
+/// right column and inside the work area's width, without flipping back over its row.
+#[test]
+fn on_short_screens_blues_all_programs_stands_right_of_its_row() {
+    let categories = [
+        "Utility",
+        "Graphics",
+        "Game",
+        "System",
+        "Network",
+        "AudioVideo",
+        "Office",
+        "Development",
+        "Education",
+        "Science",
+        "Settings",
+        "Accessibility",
+    ];
+    for edge in ["bottom", "right"] {
+        for (sw, sh) in [(720, 450), (960, 540)] {
+            let at = format!("{edge} {sw}x{sh}");
+            let config = crate::config::Config::parse(&format!(
+                "[appearance]\ninterface = \"blue\"\n[accessibility]\ntext_size = 200\n\
+                 [taskbar]\nposition = \"{edge}\"\n"
+            ))
+            .unwrap();
+            let mut h = crate::harness::Harness::with_config(config);
+            h.output("TEST-1", sw, sh);
+            h.state.app_index = (categories.iter().enumerate())
+                .map(|(i, c)| app(&format!("App {i}"), c))
+                .collect();
+            let bar = h.state.bars[0].tree;
+            h.state.toggle_start(bar);
+            h.state.start_panel_click(Spot::AllPrograms);
+            let row = h.state.start_spot_rect(Spot::AllPrograms).unwrap();
+            let usable = h.state.usable_area(None);
+            let m = &h.state.menus[0];
+            assert_eq!(m.items.len(), categories.len(), "{at}");
+            let r = Rect::new(m.x, m.y, m.layout.width, m.layout.height);
+            assert_eq!(r.x, row.right(), "{at}: {r:?} beside {row:?}");
+            assert!(r.right() <= usable.right(), "{at}: {r:?} in {usable:?}");
+        }
+    }
+}

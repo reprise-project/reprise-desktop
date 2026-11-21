@@ -281,6 +281,7 @@ mod tests {
             dirs: false,
             icon_px: 16,
             widest: None,
+            grows_left: false,
         };
         let jump = MenuKind::JumpList {
             rows: vec![

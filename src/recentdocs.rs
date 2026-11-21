@@ -348,7 +348,7 @@ impl State {
         let mut depth = 0;
         while depth < self.menus.len() {
             let m = &self.menus[depth];
-            let (y, old_h) = (m.y, m.layout.height);
+            let (y, old_h, old_right) = (m.y, m.layout.height, m.x + m.layout.width);
             let fresh = match &m.kind {
                 MenuKind::Documents { dirs, icon_px, .. } => {
                     Some(self.documents_rows(*icon_px, *dirs))
@@ -387,7 +387,15 @@ impl State {
                 continue;
             }
             let (tree, new_w, new_h) = (m.tree, m.layout.width, m.layout.height);
-            let x = m.x.min(usable.right() - new_w).max(usable.x);
+            let left = matches!(
+                m.kind,
+                MenuKind::Documents {
+                    grows_left: true,
+                    ..
+                }
+            );
+            let x = if left { old_right - new_w } else { m.x };
+            let x = x.min(usable.right() - new_w).max(usable.x);
             let y = keep_bottom(y, old_h, new_h, usable);
             (m.x, m.y) = (x, y);
             self.scene.set_position(tree, x, y);
@@ -709,6 +717,7 @@ mod tests {
             dirs: true,
             icon_px: 16,
             widest: None,
+            grows_left: false,
         };
         (items, kind)
     }

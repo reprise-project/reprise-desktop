@@ -16,6 +16,24 @@ use crate::startmenu::{MenuItem, StartRow, place_popup};
 /// characters.
 pub(super) const RECENT_LEAST: i32 = 160;
 
+/// Where a flyout `size` from the panel's row `row` stands, its top at `y`: right of the row
+/// when it fits there, else left of `panel`, else as `place_popup` puts it from the row.
+fn beside_panel(row: Rect, panel: Rect, y: i32, size: (i32, i32), usable: Rect) -> (i32, i32) {
+    let right = row.right() + size.0 <= usable.right();
+    let left = panel.x - size.0 >= usable.x;
+    let x = match (right, left) {
+        (false, true) => panel.x - size.0,
+        _ => row.right(),
+    };
+    place_popup((x, y), size, usable)
+}
+
+/// The room a flyout from `row` has clear of `panel`: right of the row or left of the panel,
+/// whichever is wider.
+fn room_beside(row: Rect, panel: Rect, usable: Rect) -> i32 {
+    (usable.right() - row.right()).max(panel.x - usable.x)
+}
+
 pub(super) fn shutdown_options_at(
     edge: Edge,
     arrow: Rect,
@@ -33,13 +51,14 @@ pub(super) fn shutdown_options_at(
 }
 
 impl State {
-    /// Moves the popup open off the panel to hang at `at`, as `place_popup` puts it.
-    pub(super) fn move_start_popup(&mut self, at: (i32, i32)) {
-        let Some(m) = self.menus.first() else {
+    /// Moves the popup open off the panel to stand by its row `row` again ([`beside_panel`]).
+    pub(super) fn move_start_popup(&mut self, row: Rect) {
+        let (Some(m), Some(panel)) = (self.menus.first(), self.start_panel_rect()) else {
             return;
         };
         let usable = self.usable_area(Some(&m.output));
-        let (x, y) = place_popup(at, (m.layout.width, m.layout.height), usable);
+        let size = (m.layout.width, m.layout.height);
+        let (x, y) = beside_panel(row, panel, row.y, size, usable);
         if (x, y) == (m.x, m.y) {
             return;
         }
@@ -106,13 +125,17 @@ impl State {
         self.push_start_popup(at, items, kind, place, Skin::Options);
     }
 
-    /// Recent Items beside its row. Too wide for the room there, it narrows to that room and cuts
-    /// long names with an ellipsis; a room under [`RECENT_LEAST`] leaves it to `place_popup`.
+    /// Recent Items beside its row, else left of the panel (a panel by the screen's right edge).
+    /// Too wide for the wider of those rooms, it narrows to it and cuts long names with an
+    /// ellipsis; a room under [`RECENT_LEAST`] leaves it to `place_popup`.
     pub(super) fn open_recent_items(&mut self, i: usize) {
         if !self.config.recent_files {
             return;
         }
-        let Some(row) = self.start_spot_rect(Spot::Place(i)) else {
+        let (Some(row), Some(panel)) = (
+            self.start_spot_rect(Spot::Place(i)),
+            self.start_panel_rect(),
+        ) else {
             return;
         };
         let Some(output) = self.start_panel.as_ref().map(|v| v.output.clone()) else {
@@ -127,12 +150,18 @@ impl State {
         self.refresh_recent();
         let (items, mut kind, icons) = self.documents_rows(px, false);
         let skin = self.start_flyout_skin();
-        let room = self.usable_area(Some(&output)).right() - row.right();
+        let room = room_beside(row, panel, self.usable_area(Some(&output)));
         let least = self.config.theme.text.len(RECENT_LEAST);
         if let MenuKind::Documents { widest, .. } = &mut kind {
             *widest = (room >= least).then_some(room);
         }
-        self.push_start_popup((row.right(), row.y), items, kind, place_popup, skin);
+        let place = |_, size, usable| beside_panel(row, panel, row.y, size, usable);
+        self.push_start_popup((row.right(), row.y), items, kind, place, skin);
+        if let Some(m) = self.menus.first_mut()
+            && let MenuKind::Documents { grows_left, .. } = &mut m.kind
+        {
+            *grows_left = m.x + m.layout.width <= panel.x;
+        }
         self.set_row_icons(0, icons);
         self.light_flyout_from_keys(Spot::Place(i));
     }
@@ -201,6 +230,20 @@ impl State {
                 .map(Spot::Place),
             _ => None,
         }
+    }
+
+    /// The pointer on a program row on its way to a flyout standing left of the panel, which
+    /// stays open for it.
+    pub(super) fn crossing_to_flyout(&self, spot: Option<Spot>) -> bool {
+        let kind = self.menus.first().map(|m| &m.kind);
+        let left = matches!(
+            kind,
+            Some(MenuKind::Documents {
+                grows_left: true,
+                ..
+            })
+        );
+        left && matches!(spot, Some(Spot::Program(_)))
     }
 
     /// Closes the menu [`State::start_flyout`] names, as the pointer moved to another row.
