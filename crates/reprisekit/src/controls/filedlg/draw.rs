@@ -1,5 +1,5 @@
 use super::{CLIENT, FileDlg, Focus, MARGIN, cancel_label, lookin_icon};
-use crate::classic::widgets::{self, edit_first_visible};
+use crate::classic::widgets::edit_first_visible;
 use crate::controls::combo;
 use crate::controls::form;
 use crate::controls::pathcomplete;
@@ -7,7 +7,9 @@ use crate::controls::placesbar;
 use crate::controls::shellview;
 use crate::controls::toolbar;
 use crate::look::Paint;
-use crate::look::widgets::{draw_button, draw_edit_field, draw_edit_text, draw_label};
+use crate::look::widgets::{
+    draw_button, draw_edit_field, draw_edit_text, draw_edit_text_dropping, draw_label,
+};
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
@@ -92,20 +94,15 @@ impl FileDlg {
             Some((_, first)) => first.min(self.filename.text.len()),
             None => edit_first_visible(text, &self.filename, inner.width, px, 0),
         };
-        draw_edit_text(
-            c,
-            text,
-            &self.filename,
-            inner,
-            px,
-            p,
-            Caret::new(self.focus == Focus::FileName, self.name_drop.is_none()),
-            first,
-        );
-        if let Some((x, _)) = self.name_drop {
-            let tail = &self.filename.text[first..];
-            let at = first + crate::textedit::index_at(text, tail, x * s - inner.x, px);
-            widgets::draw_edit_drop_point(c, text, &self.filename, inner, px, p, first, at);
+        let caret = Caret::new(self.focus == Focus::FileName, true);
+        match self.name_drop {
+            Some((x, _)) => {
+                let tail = &self.filename.text[first..];
+                let at = first + crate::textedit::index_at(text, tail, x * s - inner.x, px);
+                let name = &self.filename;
+                draw_edit_text_dropping(c, text, name, inner, px, p, caret, first, at);
+            }
+            None => draw_edit_text(c, text, &self.filename, inner, px, p, caret, first),
         }
         draw_button(
             c,

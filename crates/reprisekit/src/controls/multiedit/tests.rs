@@ -212,13 +212,14 @@ fn the_drop_point_draws_a_bar_at_its_position() {
     let c = draw_with(View::default(), Some(p(1, 1)));
     let x = lay.inner.x + 1 + text.measure("a", false, m.font_px);
     let y = lay.inner.y + 1 + m.line_h;
-    let inverted = |y| 0xFF00_0000 | (!before.get(x, y) & 0x00FF_FFFF);
-    assert!(
-        (y..y + m.line_h).all(|y| c.get(x, y) == inverted(y)),
-        "the bar"
+    let paper = theme.colors.window.argb();
+    let (bar, _) = crate::paint::inverted_bar(&before, &c, paper);
+    assert_eq!(
+        (bar.y, bar.width, bar.height),
+        (y, 1, m.line_h),
+        "1 px wide, one line tall"
     );
-    assert_eq!(c.get(x + 1, y), before.get(x + 1, y), "1 px wide");
-    assert_eq!(c.get(x, y - 1), before.get(x, y - 1), "one line tall");
+    assert!([x - 1, x].contains(&bar.x), "at the point: {bar:?}");
 
     let scrolled = View {
         top: 1,
@@ -1093,10 +1094,10 @@ fn a_blink_only_frame_damages_just_the_caret_bar() {
     );
 }
 
-/// The A's foot inks the pen's column: the caret stands in the free column left of it, and the
-/// drop point, on the pen, inverts the foot.
+/// The A's foot inks the pen's column: the caret and the drop point stand in the free column left
+/// of it.
 #[test]
-fn the_caret_stands_off_a_stem_on_its_pen_and_the_drop_point_inverts_it() {
+fn the_caret_and_the_drop_point_stand_off_a_stem_on_their_pen() {
     crate::pins::fonts();
     let text = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
@@ -1137,11 +1138,21 @@ fn the_caret_stands_off_a_stem_on_its_pen_and_the_drop_point_inverts_it() {
     );
     let drop = draw_with(Caret::Hidden, Some(p(0, 0)));
     let bar = crate::paint::inverted_bar(&off, &drop, paper);
-    assert_eq!(bar, (pen, true), "drop point");
+    assert_eq!(
+        bar,
+        (
+            Rect {
+                x: pen.x - 1,
+                ..pen
+            },
+            false
+        ),
+        "drop point"
+    );
 }
 
 #[test]
-fn a_drop_point_at_the_caret_hides_the_caret_so_its_bar_stays_inverted() {
+fn a_drop_point_at_the_caret_hides_the_caret() {
     crate::pins::fonts();
     let text = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
@@ -1166,17 +1177,13 @@ fn a_drop_point_at_the_caret_hides_the_caret_so_its_bar_stays_inverted() {
         c
     };
     let off = draw_with(Caret::Hidden, None);
-    let x = lay.inner.x + 1 + text.measure("A", false, m.font_px);
-    let pen = Rect::new(x, lay.inner.y + 1, 1, m.line_h);
     let paper = theme.colors.window.argb();
-    for caret in [Caret::Shown, Caret::Hidden] {
-        let both = draw_with(caret, Some(p(0, 1)));
-        assert_eq!(
-            crate::paint::inverted_bar(&off, &both, paper).0,
-            pen,
-            "{caret:?}: only the drop bar inverts column 1"
-        );
-    }
+    let drop = draw_with(Caret::Hidden, Some(p(0, 1)));
+    assert_eq!(crate::paint::inverted_bar(&off, &drop, paper).0.width, 1);
+    assert!(
+        draw_with(Caret::Shown, Some(p(0, 1))) == drop,
+        "a shown caret adds nothing to the drop bar"
+    );
 }
 
 #[test]

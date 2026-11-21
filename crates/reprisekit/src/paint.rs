@@ -174,6 +174,38 @@ pub fn draw_edit(
     caret: Caret,
     first: usize,
 ) {
+    edit_field(c, text, edit, inner, px, p, caret, first, None);
+}
+
+/// [`draw_edit`] while a drag over the field would drop its text at byte `at`: the caret's bar
+/// stands there instead, whatever the blink.
+#[expect(clippy::too_many_arguments)]
+pub fn draw_edit_dropping(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    edit: &TextEdit,
+    inner: Rect,
+    px: u32,
+    p: &Paint,
+    caret: Caret,
+    first: usize,
+    at: usize,
+) {
+    edit_field(c, text, edit, inner, px, p, caret, first, Some(at));
+}
+
+#[expect(clippy::too_many_arguments)]
+fn edit_field(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    edit: &TextEdit,
+    inner: Rect,
+    px: u32,
+    p: &Paint,
+    caret: Caret,
+    first: usize,
+    drop: Option<usize>,
+) {
     let Paint { cs, s, .. } = *p;
     let unfocused;
     let own = if caret.focused() {
@@ -226,9 +258,13 @@ pub fn draw_edit(
     if let Some(hl) = &hl {
         hl.fill(c, room, cs.hilight);
     }
-    let cx = at(edit.caret()).min(inner.right() - s);
-    let bar = Rect::new(cx, line.y, s, line.height);
-    let shown_bar = (caret.shown() && bar_on).then(|| CaretBar::ground(c, bar, hl.as_ref(), room));
+    let bar_at = |i: usize| Rect::new(at(i).min(inner.right() - s), line.y, s, line.height);
+    let bar = bar_at(edit.caret());
+    let drawn = match drop {
+        Some(i) => Some(bar_at(edit.text.floor_char_boundary(i))),
+        None => (caret.shown() && bar_on).then_some(bar),
+    };
+    let shown_bar = drawn.map(|b| CaretBar::ground(c, b, hl.as_ref(), room));
     if edit.text.is_empty() && !edit.cue().is_empty() {
         text.draw(c, inner, edit.cue(), false, cs.gray_text, Align::Left, px);
     } else {

@@ -1522,11 +1522,10 @@ pub fn select_drag(
 }
 
 /// Draw the control: edge, box, lines from `view.top`, selection on `hilight` while focused, the
-/// caret (a 1 px [`CaretBar`]) in the blink's shown half or, while a drag would `drop` text, a bar
-/// inverting what it covers at that point instead, and the scrollbars the layout calls for. A row
-/// selected from its start takes the inset column left of the text, so such rows share their left
-/// edge. On a blink-only frame the caret bar is the damage (an empty rect when it is scrolled out
-/// of view).
+/// caret (a 1 px [`CaretBar`]) in the blink's shown half or, while a drag would `drop` text, the
+/// same bar at that point instead, and the scrollbars the layout calls for. A row selected from its
+/// start takes the inset column left of the text, so such rows share their left edge. On a
+/// blink-only frame the caret bar is the damage (an empty rect when it is scrolled out of view).
 #[expect(clippy::too_many_arguments)]
 pub fn draw(
     c: &mut Canvas,
@@ -1540,7 +1539,7 @@ pub fn draw(
     drop: Option<Pos>,
 ) {
     let Paint { cs, s, .. } = *p;
-    // Both bars invert, so a caret under the drop point would cancel it.
+    // The drop point's bar stands in for the caret.
     let caret = match drop {
         Some(_) => Caret::new(caret.focused(), false),
         None => caret,
@@ -1639,6 +1638,11 @@ pub fn draw(
             let placed = drawn.then(|| CaretBar::ground(c, bar, hl, ink_clip));
             (bar, bar_on, placed)
         });
+        let drop_bar = drop
+            .filter(|&at| edit.row_of(text, m, lay.wrap, at) == ri)
+            .map(|at| Rect::new(x0 + x_of(text, m, edit, lay, at), y, s, line_h))
+            .filter(|bar| bar.x >= clip.x && bar.x < clip.right())
+            .map(|bar| CaretBar::ground(c, bar, row_hl.as_ref().map(|(hl, _)| hl), ink_clip));
         text.draw_in(
             c,
             r,
@@ -1680,6 +1684,9 @@ pub fn draw(
                 placed.draw(c, cs.hilight_text);
             }
         }
+        if let Some(bar) = drop_bar {
+            bar.draw(c, cs.hilight_text);
+        }
     }
     if caret.focused() {
         // A caret scrolled out of the box reports the nearest row, so the candidates stay by it.
@@ -1697,9 +1704,6 @@ pub fn draw(
             c.report_damage(caret_bar.map(|(_, drawn)| drawn).unwrap_or_default());
         }
     }
-    if let Some(at) = drop {
-        draw_drop_point(c, text, s, m, edit, view, lay, at);
-    }
     if let Some(sb) = lay.vscroll {
         let (visible, total) = vextent(text, m, edit, lay);
         let lit = axis_lit(view.bars.lit(), Axis::Vertical);
@@ -1713,31 +1717,6 @@ pub fn draw(
     if let Some(corner) = lay.corner() {
         draw_scroll_corner(c, p, corner, false);
     }
-}
-
-/// Where a drag over the control would drop its text: a bar the caret's size at `at`, inverting
-/// what is under it as the caret does.
-#[expect(clippy::too_many_arguments)]
-fn draw_drop_point(
-    c: &mut Canvas,
-    text: &TextRenderer,
-    s: i32,
-    m: &Metrics,
-    edit: &MultiEdit,
-    view: View,
-    lay: &Layout,
-    at: Pos,
-) {
-    let at_row = edit.row_of(text, m, lay.wrap, at);
-    let Some(row) = at_row.checked_sub(view.top).filter(|r| *r < lay.rows) else {
-        return;
-    };
-    let inner = lay.inner;
-    let clip = text_clip(inner, s);
-    let line_h = m.line_h * s;
-    let x = inner.x + s - view.left + x_of(text, m, edit, lay, at);
-    let y = inner.y + s + row as i32 * line_h;
-    c.invert_rect(Rect::new(x, y, s, line_h).intersect(&clip));
 }
 
 /// A document past this many bytes gives its node only the text in view as its value.

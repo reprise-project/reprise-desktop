@@ -606,6 +606,23 @@ pub fn draw_edit_text(
     classic::widgets::draw_edit(c, text, edit, inner, px, p, caret, first)
 }
 
+/// [`draw_edit_text`] while a drag over the field would drop its text at byte `at`, its bar
+/// shown there in the caret's place.
+#[expect(clippy::too_many_arguments)]
+pub fn draw_edit_text_dropping(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    edit: &crate::textedit::TextEdit,
+    inner: Rect,
+    px: u32,
+    p: &Paint,
+    caret: crate::textedit::Caret,
+    first: usize,
+    at: usize,
+) {
+    classic::widgets::draw_edit_dropping(c, text, edit, inner, px, p, caret, first, at)
+}
+
 /// A greyed single-line edit's field; returns the inner rect for text, as
 /// [`draw_sunken_field`] does. The style fills with what sits behind the field
 /// ([`Paint::fill_back`]), or with `window` inside its Disabled frame when it

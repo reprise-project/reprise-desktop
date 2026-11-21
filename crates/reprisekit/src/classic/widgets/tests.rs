@@ -1231,8 +1231,9 @@ fn the_caret_stands_off_a_stem_on_its_pen() {
     }
 }
 
+/// The A's foot inks the pen's column: the drop point stands in the free column left of it.
 #[test]
-fn the_drop_point_inverts_its_column_so_a_stem_under_it_shows_white() {
+fn the_drop_point_stands_off_a_stem_on_its_pen() {
     let (theme, text) = setup();
     crate::pins::fonts();
     let cs = &theme.colors;
@@ -1243,21 +1244,22 @@ fn the_drop_point_inverts_its_column_so_a_stem_under_it_shows_white() {
     let mut off = Canvas::new(80, 35);
     off.fill_rect(off.bounds(), cs.window);
     draw_edit(&mut off, &text, &e, inner, px, &p, Caret::Hidden, 0);
-    let mut on = off.clone();
-    draw_edit_drop_point(&mut on, &text, &e, inner, px, &p, 0, 0);
+    let mut on = Canvas::new(80, 35);
+    on.fill_rect(on.bounds(), cs.window);
+    draw_edit_dropping(&mut on, &text, &e, inner, px, &p, Caret::Shown, 0, 0);
     let (top, h) = text.line(inner, false, px).unwrap();
     assert_eq!(
         crate::paint::inverted_bar(&off, &on, cs.window.argb()),
-        (Rect::new(inner.x, top, 1, h), true),
-        "the bar is the pen's column, over the A's foot"
+        (Rect::new(inner.x - 1, top, 1, h), false),
+        "the bar is the column left of the pen, off the A's foot"
     );
 }
 
 /// At scale 2 a field's selection recolours its text without moving any of it: drawn in mono,
 /// the selected field with its highlight read as the window and its white as ink is the field
-/// drawn unselected, whatever char ends the selection. The highlight reaches up and down to the
-/// rows the selected glyphs ink and a pixel past the columns they ink, and past it that
-/// holds in the device columns they ink, drawn alone, where only their own ink is white.
+/// drawn unselected, whatever char ends the selection. The highlight reaches a pixel past the
+/// rows and the columns the selected glyphs ink, and past it that holds in the device columns
+/// they ink, drawn alone, where only their own ink is white.
 #[test]
 fn a_field_selection_at_scale_2_recolours_its_text_in_place() {
     crate::pins::fonts();
