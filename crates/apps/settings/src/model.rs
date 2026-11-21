@@ -17,7 +17,9 @@ pub use choices::*;
 pub(crate) use fields::INTERFACE;
 #[cfg(test)]
 pub use io::keys;
-pub use io::{copy_keys, keys_apart, load, rebase, save, switch_interface, validate};
+pub use io::{
+    copy_keys, keys_apart, keys_in, load, rebase, save, switch_interface, validate, without_keys,
+};
 pub(crate) use repriseconf::fields::text_to_list;
 pub use shortcuts::{
     ACTIONS, ProgramShortcut, Row, Shortcut, action_text, check_keys, check_program_keys,
