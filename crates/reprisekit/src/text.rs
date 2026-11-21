@@ -261,9 +261,34 @@ pub struct Highlight<'a> {
     text: &'a str,
     bold: bool,
     size_px: u32,
+    /// The selected glyphs' ink columns: logical ones at scale 1, then device ones at `s`.
+    ink: Option<((i32, i32), (i32, i32))>,
+    /// The device column past the ink of the glyph before the selection, and the first column of
+    /// the ink of the glyph after it.
+    beside: (Option<i32>, Option<i32>),
 }
 
 impl Highlight<'_> {
+    /// Widened to hold a pixel (`s` device pixels) of highlight on each side of the selected ink
+    /// that fits `rect` on that side at scale 1, within `room` and up to the next glyph's ink, so
+    /// that ink never meets the pixels past the highlight.
+    pub fn clear_of_ink(mut self, room: Rect) -> Self {
+        let Some(((l1, r1), (l, r))) = self.ink else {
+            return self;
+        };
+        let (before, after) = self.beside;
+        let (mut x0, mut x1) = (self.dev.x, self.dev.right());
+        let s = self.s;
+        if l1 >= self.rect.x {
+            x0 = x0.min((l - s).max(s * room.x).max(before.unwrap_or(l - s)));
+        }
+        if r1 <= self.rect.right() {
+            x1 = x1.max((r + s).min(s * room.right()).min(after.unwrap_or(r + s)));
+        }
+        self.dev = Rect::new(x0, self.dev.y, x1 - x0, self.dev.height);
+        self
+    }
+
     /// Fill the highlight's device pixels within `clip` in `color`.
     pub fn fill(&self, c: &mut Canvas, clip: Rect, color: Color) {
         let r = self.dev.intersect(&clip.scaled(self.s));
@@ -271,12 +296,15 @@ impl Highlight<'_> {
     }
 
     /// The device pixels a caret `bar` inverts: one that starts past `rect`'s right edge but
-    /// inside `dev` starts past `dev` instead, so it reads beside the highlight as it does at
-    /// scale 1, without passing `clip`'s right edge.
+    /// inside `dev` starts past `dev` instead, and one on `rect`'s left edge with `dev` reaching
+    /// past it ends before `dev`, within `clip`, so it reads beside the highlight and leaves the
+    /// selected ink whole.
     fn caret_px(&self, bar: Rect, clip: Rect) -> Rect {
-        let mut b = bar.scaled(self.s);
-        if b.x >= self.rect.right() * self.s && b.x < self.dev.right() {
-            b.x = self.dev.right().min(clip.right() * self.s - b.width);
+        let (mut b, s) = (bar.scaled(self.s), self.s);
+        if b.x >= self.rect.right() * s && b.x < self.dev.right() {
+            b.x = self.dev.right().min(clip.right() * s - b.width);
+        } else if b.x == self.rect.x * s && self.dev.x < b.x {
+            b.x = (self.dev.x - b.width).max(clip.x * s);
         }
         b
     }
@@ -1144,6 +1172,7 @@ impl TextRenderer {
         size_px: u32,
         s: i32,
     ) -> Highlight<'a> {
+        let (a, b) = (sel.start, sel.end);
         let mut h = Highlight {
             rect: hl,
             dev: hl.scaled(s),
@@ -1154,16 +1183,17 @@ impl TextRenderer {
             text: &text[sel],
             bold,
             size_px,
+            ink: None,
+            beside: (None, None),
         };
         let join = |a: Option<(i32, i32)>, (l, r): (i32, i32)| {
             Some(a.map_or((l, r), |(al, ar)| (al.min(l), ar.max(r))))
         };
         let (mut one, mut ink, mut rows, mut at) = (None, None, None, h.pen);
         for ch in h.text.chars() {
-            if s > 1
-                && let Some((l, r)) = self
-                    .with_glyph(ch, bold, size_px, 1, |g| g.ink_span())
-                    .flatten()
+            if let Some((l, r)) = self
+                .with_glyph(ch, bold, size_px, 1, |g| g.ink_span())
+                .flatten()
             {
                 one = join(one, (at + l, at + r));
             }
@@ -1187,6 +1217,27 @@ impl TextRenderer {
             }
             at += self.advance(ch, bold, size_px);
         }
+        let drawn = |ch: char, at: i32| {
+            let nudge = if s > 1 {
+                self.nudge(ch, bold, size_px, s, at, line)
+            } else {
+                0
+            };
+            self.with_glyph(ch, bold, size_px, s as u32, |g| g.drawn_span())
+                .flatten()
+                .map(|(l, r)| (s * at + nudge + l, s * at + nudge + r))
+        };
+        let before = text[..a].chars().next_back();
+        h.beside = (
+            before
+                .and_then(|ch| drawn(ch, h.pen - self.advance(ch, bold, size_px)))
+                .map(|(_, r)| r),
+            text[b..]
+                .chars()
+                .next()
+                .and_then(|ch| drawn(ch, at))
+                .map(|(l, _)| l),
+        );
         if let (Some(base), Some((t, b))) = (h.baseline, rows) {
             let y0 = h.dev.y.min((s * base + t).max(s * line.y));
             let y1 = h.dev.bottom().max((s * base + b).min(s * line.bottom()));
@@ -1195,6 +1246,10 @@ impl TextRenderer {
         let (Some((l1, r1)), Some((l, r))) = (one, ink) else {
             return h;
         };
+        h.ink = Some(((l1, r1), (l, r)));
+        if s == 1 {
+            return h;
+        }
         let (mut x0, mut x1) = (h.dev.x, h.dev.right());
         if l1 >= hl.x {
             x0 = x0.min(l.max(s * line.x));
@@ -1206,6 +1261,15 @@ impl TextRenderer {
         h
     }
 
+    /// Whether `ch` inks the column at its pen at scale 1, so a highlight from that pen widens a
+    /// pixel left of it.
+    #[cfg(test)]
+    pub(crate) fn inks_at_pen(&self, ch: char, px: u32) -> bool {
+        self.with_glyph(ch, false, px, 1, |g| g.ink_span())
+            .flatten()
+            .is_some_and(|(l, _)| l == 0)
+    }
+
     /// Draw `h`'s selected glyphs in `color` where their ink passes `h.rect` into `h.dev`, within
     /// `clip`. Only the selected glyphs draw there, so a neighbour's ink in those device pixels
     /// keeps the text colour and a pixel both ink takes `color`.
@@ -1214,8 +1278,10 @@ impl TextRenderer {
         let Some(baseline) = h.baseline.filter(|_| d != r.scaled(s)) else {
             return;
         };
-        let (x0, y0) = (d.x.div_euclid(s), d.y.div_euclid(s));
-        let x1 = (d.right() + s - 1).div_euclid(s);
+        // The pixels Highlight::clear_of_ink adds beside the ink hold none to draw.
+        let (l, r_ink) = h.ink.map_or((d.x, d.right()), |(_, ink)| ink);
+        let (x0, y0) = (d.x.max(l).div_euclid(s), d.y.div_euclid(s));
+        let x1 = (d.right().min(r_ink) + s - 1).div_euclid(s);
         let y1 = (d.bottom() + s - 1).div_euclid(s);
         let ring = [
             Rect::new(x0, y0, r.x - x0, y1 - y0),

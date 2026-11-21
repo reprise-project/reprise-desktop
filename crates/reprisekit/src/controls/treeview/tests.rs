@@ -1146,8 +1146,9 @@ fn the_rename_box_rings_the_row_and_keeps_the_labels_place() {
     assert_eq!(c.get(r.right() - 1, y + 8), black, "right ring");
     assert_eq!(c.get(r.x + 3, y), black, "top ring on the row's top");
     assert_eq!(c.get(r.x + 3, y + ROW_H - 1), black, "bottom ring");
-    assert_eq!(c.get(label - 1, y + 2), cs.window.argb(), "white before");
-    assert_eq!(c.get(label, y + 2), cs.hilight.argb(), "highlight top");
+    let hl_x = label - i32::from(text.inks_at_pen('P', px));
+    assert_eq!(c.get(hl_x - 1, y + 2), cs.window.argb(), "white before");
+    assert_eq!(c.get(hl_x, y + 2), cs.hilight.argb(), "highlight top");
     assert_eq!(c.get(label, y + 14), cs.hilight.argb(), "highlight bottom");
     assert_eq!(c.get(label, y + 15), cs.window.argb(), "white under it");
     assert_eq!(c.get(label + w, y + 8), black, "the caret after the name");

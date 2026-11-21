@@ -953,10 +953,12 @@ fn the_rename_box_is_a_black_border_on_white_over_the_name() {
     assert_eq!(c.get(b.x + 2, b.y), cs.window_frame.argb(), "top border");
     assert_eq!(c.get(b.x + 2, b.bottom() - 1), cs.window_frame.argb());
     assert_eq!(c.get(b.x + 1, mid), cs.window.argb(), "white inside");
-    // The whole name is selected: text sits on the highlight from EDIT_PAD_L, EDIT_PAD_R of white after.
+    // The whole name is selected: text sits on the highlight from EDIT_PAD_L, a pixel before it
+    // when the first glyph inks its pen's column, EDIT_PAD_R of white after.
     let sel_y = b.y + EDIT_INSET;
-    assert_eq!(c.get(b.x + EDIT_PAD_L, sel_y), cs.hilight.argb());
-    assert_eq!(c.get(b.x + EDIT_PAD_L - 1, sel_y), cs.window.argb());
+    let hl_x = b.x + EDIT_PAD_L - i32::from(text.inks_at_pen('s', px));
+    assert_eq!(c.get(hl_x, sel_y), cs.hilight.argb());
+    assert_eq!(c.get(hl_x - 1, sel_y), cs.window.argb());
     assert_eq!(c.get(b.right() - 3, mid), cs.window.argb());
     assert_eq!(c.get(b.x - 1, mid), cs.window.argb());
 }
