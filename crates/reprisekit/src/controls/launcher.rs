@@ -11,7 +11,9 @@
 //! after each name.
 //! Arrows step over headings.
 //! The panel grows with the text size; the bevels and the 32 px icon keep their size, and a row's
-//! 16 px icon grows with the text ([`row_icon_px`]).
+//! 16 px icon grows with the text ([`row_icon_px`]). In a work area narrower than the panel the
+//! field and list narrow to it; in a shorter one the list shows the lines that fit and scrolls
+//! through the rest with the keys and the wheel ([`Launcher::fit`], [`settle`]).
 //!
 //! Under a look with glass the panel is a piece of glass and the field and rows
 //! are the Start menu's search mode's ([`crate::startpanel::search`]): its search
@@ -24,12 +26,13 @@
 //! `set_windows`, `set_settings`, `set_rows` and `set_found`.
 
 use crate::access::accesskit;
-use crate::classic::widgets::{ROW_H as FIELD_H, edit_first_visible};
+use crate::classic::widgets::{BarHit, ROW_H as FIELD_H, edit_first_visible};
 use crate::completion::Inline;
 use crate::controls::listbox;
 use crate::controls::listbox::ListBox;
+use crate::controls::scrollbar::RowScroll;
 use crate::look::panel;
-use crate::look::widgets::{Interaction, draw_edit_field, draw_edit_text};
+use crate::look::widgets::{Interaction, draw_edit_field, draw_edit_text, draw_scrollbar};
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::startpanel::layout::{GROUP_GAP, HEADER_H, RESULT_H};
 use crate::startpanel::search;
@@ -124,6 +127,10 @@ pub struct Launcher {
     found: Vec<Section>,
     /// The top match's tail shown in `edit`.
     inline: Inline,
+    /// The work area the panel fits in (logical width, height), see [`Launcher::fit`].
+    room: Option<(i32, i32)>,
+    /// The highlight moved since [`settle`] last scrolled it into view.
+    reveal: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -186,7 +193,15 @@ impl Launcher {
             settings: Vec::new(),
             found: Vec::new(),
             inline: Inline::default(),
+            room: None,
+            reveal: false,
         }
+    }
+
+    /// Fits the panel in the work area `room` (logical width, height): narrower, the field and
+    /// list narrow to it; shorter, the list shows the lines that fit and scrolls through the rest.
+    pub fn fit(&mut self, room: (i32, i32)) {
+        self.room = Some(room);
     }
 
     pub fn query(&self) -> &str {
@@ -295,6 +310,7 @@ impl Launcher {
                 self.list.selected = before;
             }
         }
+        self.reveal = true;
     }
 
     /// Rebuild the list from the rows held, highlighting row `keep` if still a row,
@@ -337,6 +353,7 @@ impl Launcher {
         self.list.greyed = greyed;
         self.list.detail = detail;
         self.icons = icons;
+        self.reveal = true;
     }
 
     /// The calculator's row for the current query (its answer, "= 14"), or None.
@@ -469,6 +486,7 @@ impl Launcher {
             return false;
         };
         self.list.selected = Some(i);
+        self.reveal = true;
         true
     }
 
@@ -564,41 +582,164 @@ pub struct Layout {
     /// with no rows (the panel is the head alone).
     pub list: Option<Rect>,
     /// Under a look with glass, each list row's rect: an app or found row,
-    /// for the heading its group header from the capitals' top. Empty
-    /// otherwise, where the list box lays its rows out.
+    /// for the heading its group header from the capitals' top, a line
+    /// scrolled out an empty rect. Empty otherwise, where the list box lays
+    /// its rows out.
     pub rows: Vec<Rect>,
+    /// Under a look with glass, the scrollbar down the pane's right while the list is cut to
+    /// the room.
+    pub bar: Option<Rect>,
     pub width: i32,
     pub height: i32,
 }
 
 pub fn layout(l: &Launcher, theme: &Theme) -> Layout {
     let u = theme.text;
+    let cut = l.room.map_or(0, |(w, _)| (u.len(W) - w).max(0));
     if panel::glass(theme).is_some() {
-        return glass_layout(l, u);
+        return glass_layout(l, theme, cut);
     }
     let field_x = PAD + ICON + PAD;
     let field = Rect::new(field_x, (HEAD_H - FIELD_H) / 2, W - field_x - PAD, FIELD_H);
     // The list box's bevel keeps its 2 px and its rows their grown height, so it
-    // holds every row whole.
+    // holds every row it shows whole.
     let list = (!l.list.items.is_empty()).then(|| {
         let row_h = controls(theme).list_row;
-        let (x, right) = (u.len(PAD), u.len(W - PAD));
-        let h = l.list.items.len() as i32 * row_h + 4;
+        let (x, right) = (u.len(PAD), u.len(W - PAD) - cut);
+        let h = box_rows(l, theme) as i32 * row_h + 4;
         Rect::new(x, u.len(HEAD_H), right - x, h)
     });
     Layout {
         icon: icon_rect(u),
-        field: u.rect(field),
+        field: narrowed(u.rect(field), cut),
         list,
         rows: Vec::new(),
-        width: u.len(W),
+        bar: None,
+        width: u.len(W) - cut,
         height: list.map_or(u.len(HEAD_H), |r| r.bottom() + u.len(PAD)),
     }
+}
+
+fn narrowed(r: Rect, cut: i32) -> Rect {
+    Rect::new(r.x, r.y, r.width - cut, r.height)
 }
 
 /// The look's control sizes at the theme's text size, as the list box lays its rows out.
 fn controls(theme: &Theme) -> crate::controls::metrics::ControlMetrics {
     theme.look.controls_at_100().grown(theme.text)
+}
+
+/// The list box's rows the room holds whole, at least one; every row with no room given.
+fn box_rows(l: &Launcher, theme: &Theme) -> usize {
+    let n = l.list.items.len();
+    let Some((_, h)) = l.room else {
+        return n;
+    };
+    let u = theme.text;
+    let fit = (h - u.len(HEAD_H) - u.len(PAD) - 4) / controls(theme).list_row;
+    (fit.max(1) as usize).min(n)
+}
+
+/// Which lines are headings.
+fn headings(l: &Launcher) -> Vec<bool> {
+    l.lines()
+        .iter()
+        .map(|line| matches!(line, Line::Heading(_)))
+        .collect()
+}
+
+/// Under glass, the lines from `top` the room holds, at least one: a group gap goes over each
+/// header but the first shown.
+fn glass_shown(heads: &[bool], u: TextUnits, room: Option<(i32, i32)>, top: usize) -> usize {
+    let Some((_, room)) = room else {
+        return heads.len().saturating_sub(top);
+    };
+    let mut y = HEAD_H + PANE_PAD;
+    let mut k = 0;
+    for (i, &head) in heads.iter().enumerate().skip(top) {
+        if head && i > top {
+            y += GROUP_GAP;
+        }
+        y += if head { HEADER_H } else { RESULT_H };
+        if k > 0 && u.len(y + 1 + PANE_PAD + PAD) > room {
+            break;
+        }
+        k += 1;
+    }
+    k
+}
+
+/// The lines shown from `top`.
+fn shown(l: &Launcher, theme: &Theme, heads: &[bool], top: usize) -> usize {
+    if panel::glass(theme).is_some() {
+        glass_shown(heads, theme.text, l.room, top)
+    } else {
+        box_rows(l, theme).min(heads.len().saturating_sub(top))
+    }
+}
+
+/// The furthest the list scrolls: the first top that shows its last line.
+fn last_top(l: &Launcher, theme: &Theme, heads: &[bool]) -> usize {
+    let n = heads.len();
+    (0..n)
+        .find(|&t| t + shown(l, theme, heads, t) >= n)
+        .unwrap_or(0)
+}
+
+/// Scrolls the list cut to the room so the highlight shows after a key, a reader or new rows
+/// moved it (a group's first row with its heading), and so no room is left under its last line.
+/// The host calls it before laying the panel out.
+pub fn settle(l: &mut Launcher, theme: &Theme) {
+    let heads = headings(l);
+    let mut top = l.list.top.min(last_top(l, theme, &heads));
+    if std::mem::take(&mut l.reveal)
+        && let Some(s) = l.list.selected
+    {
+        if s > 0 && heads[s - 1] && s <= top {
+            top = s - 1;
+        } else if s < top {
+            top = s;
+        }
+        while s >= top + shown(l, theme, &heads, top) {
+            top += 1;
+        }
+    }
+    l.list.top = top;
+}
+
+/// The wheel over the panel: the list scrolls `rows` lines, the highlight staying. True when
+/// it moved.
+pub fn wheel(l: &mut Launcher, theme: &Theme, rows: i32) -> bool {
+    let heads = headings(l);
+    let last = last_top(l, theme, &heads) as i32;
+    let top = (l.list.top as i32 + rows).clamp(0, last) as usize;
+    let moved = top != l.list.top;
+    l.list.top = top;
+    moved
+}
+
+/// Under glass, the scrollbar's lines: those shown from the top of all.
+fn glass_scroll(l: &Launcher, theme: &Theme) -> RowScroll {
+    let heads = headings(l);
+    RowScroll {
+        top: l.list.top,
+        visible: shown(l, theme, &heads, l.list.top),
+        total: heads.len(),
+    }
+}
+
+/// A press on the list's scrollbar: an arrow scrolls a line, the track a page. True when
+/// the list moved.
+pub fn bar_press(l: &mut Launcher, theme: &Theme, b: BarHit) -> bool {
+    let page = shown(l, theme, &headings(l), l.list.top) as i32;
+    let rows = match b {
+        BarHit::Back => -1,
+        BarHit::Forward => 1,
+        BarHit::PageBack => -page,
+        BarHit::PageForward => page,
+        BarHit::Thumb(_) | BarHit::Track => 0,
+    };
+    rows != 0 && wheel(l, theme, rows)
 }
 
 /// The 32 px icon on its grown centre.
@@ -611,37 +752,59 @@ fn icon_rect(u: TextUnits) -> Rect {
     )
 }
 
-/// The glass panel at 100% text with every edge grown by `u`; the 32 px icon
-/// keeps its size, its centre moving with the rest.
-fn glass_layout(l: &Launcher, u: TextUnits) -> Layout {
+/// The glass panel at 100% text with every edge grown by the text size, then `cut` narrower;
+/// the 32 px icon keeps its size, its centre moving with the rest. Lines scrolled out get empty
+/// rects; a list cut to the room gives the rest of its rows' width to the scrollbar.
+fn glass_layout(l: &Launcher, theme: &Theme, cut: i32) -> Layout {
+    let u = theme.text;
     let field_x = PAD + ICON + PAD;
     let field_h = search::FIELD.1;
     let field = Rect::new(field_x, (HEAD_H - field_h) / 2, W - field_x - PAD, field_h);
-    let n = l.list.items.len();
+    let heads = headings(l);
+    let n = heads.len();
+    let top = l.list.top.min(n);
+    let end = top + glass_shown(&heads, u, l.room, top);
     let (x, w) = (PAD + PANE_PAD, W - 2 * (PAD + PANE_PAD));
     let mut y = HEAD_H + PANE_PAD;
-    let mut rows = Vec::with_capacity(n);
-    for i in 0..n {
-        if l.heading(i).is_some() {
-            if i > 0 {
+    let mut rows = vec![Rect::default(); n];
+    for (i, row) in rows.iter_mut().enumerate().take(end).skip(top) {
+        if heads[i] {
+            if i > top {
                 y += GROUP_GAP;
             }
-            rows.push(Rect::new(x + HEADER_IN, y, w - 2 * HEADER_IN, HEADER_H));
+            *row = Rect::new(x + HEADER_IN, y, w - 2 * HEADER_IN, HEADER_H);
             y += HEADER_H;
         } else {
-            rows.push(Rect::new(x, y, w, RESULT_H));
+            *row = Rect::new(x, y, w, RESULT_H);
             y += RESULT_H;
         }
     }
     // The last lit box runs a row past its 21 px.
     let bottom = y + 1 + PANE_PAD;
     let list = (n > 0).then(|| Rect::new(PAD, HEAD_H, W - 2 * PAD, bottom - HEAD_H));
+    let grown = |r: Rect| narrowed(u.rect(r), cut);
+    let pane = list.map(grown);
+    let bar = pane.filter(|_| end - top < n).map(|pane| {
+        let (w, pad) = (controls(theme).scroll, u.len(PANE_PAD));
+        Rect::new(
+            pane.right() - pad - w,
+            pane.y + pad,
+            w,
+            pane.height - 2 * pad,
+        )
+    });
+    let beside = bar.map_or(0, |b| b.width);
+    let row = |r: Rect| match r.width {
+        0 => r,
+        _ => narrowed(grown(r), beside),
+    };
     Layout {
         icon: icon_rect(u),
-        field: u.rect(field),
-        list: list.map(|r| u.rect(r)),
-        rows: rows.into_iter().map(|r| u.rect(r)).collect(),
-        width: u.len(W),
+        field: grown(field),
+        list: pane,
+        rows: rows.into_iter().map(row).collect(),
+        bar,
+        width: u.len(W) - cut,
         height: u.len(list.map_or(HEAD_H, |r| r.bottom() + PAD)),
     }
 }
@@ -649,6 +812,8 @@ fn glass_layout(l: &Launcher, u: TextUnits) -> Layout {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Row(Pick),
+    /// The list box's scrollbar ([`bar_press`]).
+    Bar(BarHit),
     Field,
     Panel,
 }
@@ -657,6 +822,11 @@ pub fn hit(l: &Launcher, x: i32, y: i32, theme: &Theme) -> Hit {
     let lay = layout(l, theme);
     if lay.field.contains(x, y) {
         return Hit::Field;
+    }
+    if let Some(sb) = lay.bar.filter(|sb| sb.contains(x, y)) {
+        return glass_scroll(l, theme)
+            .hit(sb, controls(theme).thumb_min, x, y)
+            .map_or(Hit::Panel, Hit::Bar);
     }
     if !lay.rows.is_empty() {
         let i = lay.rows.iter().position(|r| r.contains(x, y));
@@ -667,10 +837,10 @@ pub fn hit(l: &Launcher, x: i32, y: i32, theme: &Theme) -> Hit {
     }
     if let Some(frame) = lay.list {
         let ll = listbox::layout(&l.list, frame, &controls(theme));
-        if let Some(listbox::Hit::Row(i)) = listbox::hit(&l.list, &ll, x, y)
-            && let Some(p) = l.pick(i)
-        {
-            return Hit::Row(p);
+        match listbox::hit(&l.list, &ll, x, y) {
+            Some(listbox::Hit::Row(i)) => return l.pick(i).map_or(Hit::Panel, Hit::Row),
+            Some(listbox::Hit::Bar(b)) => return Hit::Bar(b),
+            _ => {}
         }
     }
     Hit::Panel
@@ -681,7 +851,7 @@ pub fn hit(l: &Launcher, x: i32, y: i32, theme: &Theme) -> Hit {
 pub fn row_rect(l: &Launcher, i: usize, theme: &Theme) -> Option<Rect> {
     let lay = layout(l, theme);
     if !lay.rows.is_empty() {
-        return lay.rows.get(i).copied();
+        return lay.rows.get(i).copied().filter(|r| r.width > 0);
     }
     let ll = listbox::layout(&l.list, lay.list?, &controls(theme));
     let shown = i.checked_sub(l.list.top)?;
@@ -714,7 +884,11 @@ pub fn draw(
         let g = search::Grow { s, u: theme.text };
         return panel::draw(style, spec, lay.width, lay.height, s, |c| {
             c.set_preedit(preedit.cloned());
-            glass_body(c, style, l, &lay, icon, caret, g)
+            glass_body(c, style, l, &lay, icon, caret, g);
+            if let Some(sb) = lay.bar {
+                let rows = glass_scroll(l, theme);
+                draw_scrollbar(c, p, sb.scaled(s), rows.top, rows.visible, rows.total, None);
+            }
         });
     }
     let mut c = Canvas::new((lay.width * s) as u32, (lay.height * s) as u32);
@@ -750,7 +924,7 @@ fn glass_body(
     let pane = pane.scaled(s);
     draw_pane(c, style, pane, s);
     let size = g.px(search::TEXT_PX);
-    for (i, r) in lay.rows.iter().enumerate() {
+    for (i, r) in lay.rows.iter().enumerate().filter(|(_, r)| r.width > 0) {
         let r = r.scaled(s);
         if let Some(group) = l.group_of(i) {
             let title = format!("{} ({})", l.title(group), l.group_rows(group));
@@ -832,12 +1006,13 @@ fn body(
     if let Some(frame) = lay.list {
         let ll = listbox::layout(&l.list, frame, &controls(theme));
         listbox::draw(c, text, p, &l.list, &ll, &l.icons, None, px);
-        for (h, label) in (0..l.list.items.len()).filter_map(|i| Some((i, l.heading(i)?))) {
+        let shown = l.list.top..(l.list.top + ll.visible).min(l.list.items.len());
+        for (h, label) in shown.filter_map(|i| Some((i, l.heading(i)?))) {
             // From past the heading's label to the list's right edge, on
             // the row's middle.
             let label_w = text.measure(label, false, px) / s;
             let x0 = ll.inner.x + listbox::text_x(&l.list, &ll, &l.icons) + label_w + RULE_GAP;
-            let y = ll.inner.y + h as i32 * ll.row_h + ll.row_h / 2 - 1;
+            let y = ll.inner.y + (h - l.list.top) as i32 * ll.row_h + ll.row_h / 2 - 1;
             c.etched_hline_t(x0 * s, (ll.inner.right() - RULE_GAP) * s, y * s, cs, s);
         }
     }
@@ -1752,6 +1927,113 @@ mod tests {
             }
         }
         crate::pins::check("controls/launcher_program_section", &got);
+    }
+
+    /// Eight programs, four settings and eight files: 22 lines.
+    fn with_every_section() -> Launcher {
+        let mut l = Launcher::new();
+        typed(&mut l, "no");
+        let names: Vec<String> = (1..=8).map(|i| format!("Notes {i}")).collect();
+        l.set_settings(rows(&["Notifications", "Network", "Mouse", "Sounds"]));
+        l.set_rows(rows(&names.iter().map(String::as_str).collect::<Vec<_>>()));
+        let names: Vec<String> = (1..=8).map(|i| format!("note{i}.txt")).collect();
+        let found: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "~")).collect();
+        set_files(&mut l, files(&found));
+        assert_eq!(l.list.items.len(), 22);
+        l
+    }
+
+    /// At 200% in the work areas of 720x450 and 960x540 screens, the panel narrows to the room
+    /// and its list shows the lines that fit: the keys scroll the highlight into view (a group's
+    /// first row with its heading), the wheel scrolls without moving it, and under Classic and
+    /// Blue the list box's scrollbar arrow scrolls a line.
+    #[test]
+    fn in_a_short_work_area_the_panel_narrows_and_its_list_scrolls() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let big = crate::interfaces::theme_for(i).with_text_size(200);
+            for room in [(720, 420), (960, 510)] {
+                let at = format!("{i:?} {room:?}");
+                let mut l = with_every_section();
+                l.fit(room);
+                settle(&mut l, &big);
+                let lay = layout(&l, &big);
+                assert_eq!(lay.width, (2 * W).min(room.0), "{at}");
+                assert!(lay.height <= room.1, "{at}: {} tall", lay.height);
+                let shown: Vec<usize> = (0..22)
+                    .filter(|&k| row_rect(&l, k, &big).is_some())
+                    .collect();
+                let n = shown.len();
+                assert!((6..22).contains(&n), "{at}: {n} lines show");
+                assert_eq!(shown.first(), Some(&0), "{at}: from the top");
+                let in_panel = |l: &Launcher, k: usize| {
+                    let lay = layout(l, &big);
+                    row_rect(l, k, &big).is_some_and(|r| r.y >= 0 && r.bottom() <= lay.height)
+                };
+                for _ in 0..19 {
+                    l.key(Key::Down);
+                }
+                settle(&mut l, &big);
+                assert_eq!(l.picked(), Some(Pick::Found(0, 7)), "{at}");
+                assert!(in_panel(&l, 21), "{at}: the last row scrolled in");
+                assert!(!in_panel(&l, 0), "{at}: the first scrolled out");
+                if room == (720, 420) {
+                    for scale in [1, 2] {
+                        let theme = Theme {
+                            scale,
+                            ..big.clone()
+                        };
+                        let c = draw(&theme, &text, &l, None, false, None);
+                        let m = panel::margin(&theme);
+                        let size = (lay.width + m.left + m.right, lay.height + m.top + m.bottom);
+                        let want = (size.0 * scale, size.1 * scale);
+                        assert_eq!((c.width as i32, c.height as i32), want, "{at} @{scale}");
+                        got.push((format!("{i:?} {scale}"), fnv(&c)));
+                    }
+                }
+                let top = l.list.top;
+                assert!(wheel(&mut l, &big, -1), "{at}");
+                assert_eq!(l.list.top, top - 1, "{at}: a line up");
+                assert!(wheel(&mut l, &big, 1), "{at}");
+                assert_eq!(l.list.top, top, "{at}");
+                assert!(
+                    !wheel(&mut l, &big, 1),
+                    "{at}: no further than the last line"
+                );
+                assert!(wheel(&mut l, &big, -100), "{at}");
+                assert_eq!(l.list.top, 0, "{at}");
+                settle(&mut l, &big);
+                assert_eq!(
+                    (l.list.top, l.picked()),
+                    (0, Some(Pick::Found(0, 7))),
+                    "{at}: kept"
+                );
+                l.key(Key::Down);
+                settle(&mut l, &big);
+                assert!(in_panel(&l, 21), "{at}: a key brings the highlight back");
+                for _ in 0..7 {
+                    l.key(Key::Up);
+                }
+                settle(&mut l, &big);
+                assert_eq!(l.picked(), Some(Pick::Found(0, 0)), "{at}");
+                assert!(
+                    in_panel(&l, 13),
+                    "{at}: the Files heading over its first row"
+                );
+                if i != Interface::Glass {
+                    let list = layout(&l, &big).list.unwrap();
+                    let (x, y) = (list.right() - 4, list.y + 6);
+                    assert_eq!(hit(&l, x, y, &big), Hit::Bar(BarHit::Back), "{at}");
+                    let top = l.list.top;
+                    assert!(bar_press(&mut l, &big, BarHit::Back), "{at}");
+                    assert_eq!(l.list.top, top - 1, "{at}");
+                }
+            }
+        }
+        crate::pins::check("controls/launcher_short_room", &got);
     }
 
     fn fnv(c: &Canvas) -> u64 {

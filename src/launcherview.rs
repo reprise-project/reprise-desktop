@@ -100,8 +100,11 @@ impl State {
         }
         let glass_tree = self.scene.tree_create(tree);
         let buffer = self.scene.buffer_create(tree);
+        let mut model = Launcher::new();
+        model.fit((area.width, area.height));
+        self.panels.wheel = Default::default();
         self.launcher = Some(LauncherView {
-            model: Launcher::new(),
+            model,
             matches: Vec::new(),
             windows: Vec::new(),
             answer: None,
@@ -187,10 +190,28 @@ impl State {
     }
 
     pub fn launcher_clicked(&mut self, hit: Hit) {
-        if let Hit::Row(p) = hit {
-            self.apply_launcher(Event::Launch(p));
-        } else {
-            self.restart_caret();
+        match hit {
+            Hit::Row(p) => self.apply_launcher(Event::Launch(p)),
+            Hit::Bar(b) => {
+                if let Some(v) = self.launcher.as_mut() {
+                    launcher::bar_press(&mut v.model, &self.config.theme, b);
+                }
+                self.redraw_launcher();
+            }
+            Hit::Field | Hit::Panel => {
+                self.restart_caret();
+                self.redraw_launcher();
+            }
+        }
+    }
+
+    /// The wheel over the panel scrolls a list cut to the work area.
+    pub fn launcher_wheel(&mut self, discrete: i32, continuous: f64) {
+        let rows = self.panels.wheel.lines(discrete, continuous);
+        let Some(v) = self.launcher.as_mut() else {
+            return;
+        };
+        if rows != 0 && launcher::wheel(&mut v.model, &self.config.theme, rows) {
             self.redraw_launcher();
         }
     }
@@ -527,9 +548,10 @@ impl State {
     }
 
     pub fn redraw_launcher(&mut self) {
-        let Some(v) = self.launcher.as_ref() else {
+        let Some(v) = self.launcher.as_mut() else {
             return;
         };
+        launcher::settle(&mut v.model, &self.config.theme);
         let tree = v.tree;
         let was = self.scene.outputs_of(tree);
         let lay = launcher::layout(&v.model, &self.config.theme);
@@ -858,6 +880,70 @@ mod tests {
             );
         }
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// At 200% text in every look, on 720x450 and 960x540 screens at scale 1 and 2, the panel
+    /// opens inside the work area and the last program row scrolls into it.
+    #[test]
+    fn at_200_percent_the_panel_fits_a_short_screens_work_area() {
+        use smithay::output::Scale;
+        let apps: Vec<_> = (1..=8)
+            .map(|i| reprisefs::apps::AppEntry {
+                name: format!("Notes {i}"),
+                exec_line: "notes".into(),
+                terminal: false,
+                id: format!("Notes{i}.desktop").parse().unwrap(),
+                icon: None,
+                startup_wm_class: None,
+                categories: Vec::new(),
+                mime_types: Vec::new(),
+                shown: true,
+                path: None,
+            })
+            .collect();
+        for interface in ["glass", "classic", "blue"] {
+            for (w, h_px) in [(720, 450), (960, 540)] {
+                for scale in [1, 2] {
+                    let at = format!("{interface} {w}x{h_px} @{scale}");
+                    let toml = format!(
+                        "[appearance]\ninterface = \"{interface}\"\n[accessibility]\ntext_size = 200\n"
+                    );
+                    let config = crate::config::Config::parse(&toml).unwrap();
+                    let mut h = crate::harness::Harness::with_config(config);
+                    let out = h.output("TEST-1", w * scale, h_px * scale);
+                    out.change_current_state(None, None, Some(Scale::Integer(scale)), None);
+                    h.state.update_layout();
+                    h.state.app_index = apps.clone();
+                    h.state.toggle_launcher();
+                    typed(&mut h, "notes");
+                    for _ in 0..7 {
+                        let v = h.state.launcher.as_mut().unwrap();
+                        let event = v.model.key(Key::Down);
+                        h.state.apply_launcher(event);
+                    }
+                    let v = h.state.launcher.as_ref().unwrap();
+                    assert_eq!(v.model.picked(), Some(Pick::App(7)), "{at}");
+                    let theme = &h.state.config.theme;
+                    let lay = launcher::layout(&v.model, theme);
+                    let panel = Rect::new(v.at.0, v.at.1, lay.width, lay.height);
+                    let usable = h.state.usable_area(Some(&out));
+                    assert_eq!((usable.width, usable.x), (w, 0), "{at}");
+                    assert!(
+                        panel.x >= usable.x
+                            && panel.y >= usable.y
+                            && panel.right() <= usable.right()
+                            && panel.bottom() <= usable.bottom(),
+                        "{at}: {panel:?} in {usable:?}"
+                    );
+                    let line = v.model.list.selected.unwrap();
+                    let row = launcher::row_rect(&v.model, line, theme);
+                    assert!(
+                        row.is_some_and(|r| r.y >= 0 && r.bottom() <= lay.height),
+                        "{at}: the highlight shows, {row:?}"
+                    );
+                }
+            }
+        }
     }
 
     /// The calculator row's icon.
