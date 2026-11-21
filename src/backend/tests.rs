@@ -221,16 +221,50 @@ fn a_capture_merged_with_a_content_ask_draws_one_whole_frame_that_fills_it() {
 }
 
 #[test]
+fn a_capture_merged_with_a_catch_up_blurs_the_owed_glass_in_that_frame() {
+    use crate::reblur::{Reblur, when};
+    let cap = Some(Duration::from_millis(33));
+    let since_blur = Some(Duration::from_millis(10));
+    let catch_up_first = pending(&[Ask::CatchUp], true);
+    let mut capture_first = pending(&[], true);
+    capture_first.asked.add(Ask::CatchUp);
+    for p in [catch_up_first, capture_first] {
+        assert!(p.captures_owed && p.asked.redraw && !p.asked.pointer_only);
+        assert!(p.asked.catch_up, "the frame stays a catch-up");
+        let content_only = !p.asked.scene && !p.asked.catch_up;
+        assert_eq!(when(content_only, since_blur, cap), Reblur::Now);
+    }
+}
+
+#[test]
 fn an_output_nothing_asked_of_draws_nothing() {
     let p = pending(&[], false);
     assert!(!p.asked.redraw && !p.captures_owed);
 }
 
 #[test]
-fn only_catch_up_asks_make_a_catch_up_frame() {
+fn a_catch_up_frame_stays_one_only_while_the_other_asks_leave_glass_as_it_was() {
+    use crate::glass::{Drawn, Under};
     assert!(asked(&[Ask::CatchUp]).catch_up);
-    assert!(!asked(&[Ask::CatchUp, Ask::Pointer]).catch_up);
-    assert!(!asked(&[Ask::Content, Ask::CatchUp]).catch_up);
+    for other in [Ask::Pointer, Ask::Cursor, Ask::Timed] {
+        assert!(asked(&[Ask::CatchUp, other]).catch_up, "{other:?} after");
+        assert!(asked(&[other, Ask::CatchUp]).catch_up, "{other:?} before");
+    }
+    let commit = Ask::Commit(Drawn {
+        r: Rectangle::new((0, 0).into(), (10, 10).into()),
+        window: None,
+    });
+    for other in [Ask::Scene, Ask::Content, commit] {
+        assert!(!asked(&[Ask::CatchUp, other]).catch_up, "{other:?} after");
+        assert!(!asked(&[other, Ask::CatchUp]).catch_up, "{other:?} before");
+    }
+    assert!(!asked(&[Ask::Pointer]).catch_up);
+    let mut drawn = Asked {
+        backdrop: Under::Anywhere,
+        ..Asked::default()
+    };
+    drawn.add(Ask::CatchUp);
+    assert!(drawn.catch_up, "a frame nothing asked yet starts afresh");
     let a = asked(&[Ask::CatchUp]);
     assert!(a.redraw && !a.scene && !a.pointer_only);
     assert_eq!(a.backdrop, crate::glass::Under::Nothing);
