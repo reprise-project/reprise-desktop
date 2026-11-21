@@ -643,13 +643,14 @@ impl Dialog {
         }
     }
 
-    /// The pointer went down on classic button `i`: it draws pushed until
-    /// the release. False (and nothing held) for a disabled button.
+    /// The pointer went down on classic button `i`: it takes the focus, and the ring with it,
+    /// and draws pushed until the release. False (and nothing held) for a disabled button.
     pub fn press_button(&mut self, i: usize) -> bool {
         if !self.buttons.get(i).is_some_and(|b| b.enabled) {
             return false;
         }
         self.close_completion();
+        self.focus_button(i);
         self.pointer.press(Some(i), false);
         true
     }

@@ -950,6 +950,10 @@ fn a_press_off_runs_field_while_its_folder_reads_keeps_the_late_list_shut() {
             !f.complete.is_open(),
             "a press on {on}: the listing that lands leaves the list shut"
         );
+        if button.is_some() {
+            // The press gave Browse... the focus; Tab wraps back to the field.
+            d.key(Key::Tab { back: false });
+        }
         d.key(Key::Edit(EditKey::Insert("w".into())));
         let f = d.field.as_ref().unwrap();
         assert_eq!(

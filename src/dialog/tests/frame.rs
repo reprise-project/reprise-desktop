@@ -584,3 +584,19 @@ fn a_blue_client_area_starts_under_the_styles_caption() {
     assert_eq!(blue.page.map(|p| (p.x, p.y)), Some((3, 29)));
     assert_eq!(blue.size, (classic.size.0, classic.size.1 + 8));
 }
+
+/// A press on a Welcome panel's button gives it the focus; let go off it, nothing acts.
+#[test]
+fn a_press_on_a_welcome_button_takes_the_focus() {
+    use reprisekit::powerpanel::Part;
+    let mut d = turn_off();
+    let focus = |d: &Dialog| match &d.style {
+        Style::Welcome(w) => w.panel.focus,
+        _ => unreachable!(),
+    };
+    assert_eq!(focus(&d), Part::Big(1));
+    assert!(d.press_button(2));
+    assert_eq!(focus(&d), Part::Big(2));
+    assert_eq!(d.release_button(None), Some(Outcome::Redraw));
+    assert_eq!(focus(&d), Part::Big(2));
+}

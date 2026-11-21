@@ -563,3 +563,55 @@ fn the_program_question_offers_run_or_cancel_with_cancel_on_enter() {
         }
     );
 }
+
+/// A press on a box's button moves the focus and the default ring to it. Dragged off and let go,
+/// it acts on nothing and keeps them: Enter presses it and a reader hears it as the default.
+#[test]
+fn a_press_moves_the_focus_and_default_to_the_pressed_button() {
+    use reprisekit::access::accesskit::Role;
+    let path = std::path::PathBuf::from("/d/a.iso");
+    let mut d = Dialog::ask_mount(path.clone());
+    assert!(d.buttons[1].default, "Cancel starts as the default");
+    assert!(d.press_button(0));
+    let defaults: Vec<bool> = d.buttons.iter().map(|b| b.default).collect();
+    assert_eq!(defaults, [true, false], "the held Mount has the ring");
+    assert!(d.drag_button(None));
+    assert_eq!(d.release_button(None), Some(Outcome::Redraw));
+    let (t, focus) = tree_of(&d);
+    let mount = t.get(focus).unwrap();
+    assert_eq!(mount.label(), Some("Mount"));
+    assert_eq!(mount.role(), Role::DefaultButton);
+    let cancel = t
+        .nodes()
+        .find(|(_, n)| n.label() == Some("Cancel"))
+        .unwrap();
+    assert_eq!(cancel.1.role(), Role::Button);
+    assert_eq!(d.key(Key::Enter), Outcome::MountImage(path));
+}
+
+/// In Run a press on a button takes the focus from the field and closes its open list, as Tab
+/// would; let go off it, Enter presses that button.
+#[test]
+fn a_press_on_runs_button_takes_the_focus_from_the_field() {
+    let mut d = Dialog::run(&history());
+    d.key(Key::Drop);
+    assert!(d.field.as_ref().unwrap().combo.open.is_some());
+    assert!(d.press_button(1));
+    assert_eq!(d.button_focus, Some(1));
+    assert!(
+        d.field.as_ref().unwrap().combo.open.is_none(),
+        "the list shut"
+    );
+    assert_eq!(d.release_button(None), Some(Outcome::Redraw));
+    assert_eq!(d.button_focus, Some(1));
+    assert_eq!(d.key(Key::Enter), Outcome::Close);
+}
+
+/// A press on a greyed button holds nothing and leaves the focus where it was.
+#[test]
+fn a_press_on_a_greyed_button_keeps_the_focus() {
+    let mut d = Dialog::key_aid_prompt(crate::keyfilter::Aid::StickyKeys, false);
+    assert!(!d.press_button(2));
+    let defaults: Vec<bool> = d.buttons.iter().map(|b| b.default).collect();
+    assert_eq!(defaults, [true, false, false]);
+}
