@@ -1,5 +1,6 @@
 //! Virtual outputs: screens in the layout with no monitor behind them, drawn only into captures.
 //! Each frame clock ticks only when asked, at the capture rate while captured, else once a second.
+//! A timed commit asks for the first tick at or after its time, and no tick before it.
 
 use std::time::{Duration, Instant};
 
@@ -53,6 +54,9 @@ struct Screen {
     kind: Kind,
     global: GlobalId,
     wants: Option<Wants>,
+    /// The earliest time (`State::now`) asked by `ask_at`. The first tick at or after it draws a
+    /// whole frame, even when the commit applied or went elsewhere meanwhile.
+    timed: Option<Duration>,
     /// The clock's deadline, armed while something waits for a frame.
     timer: Option<(RegistrationToken, Instant)>,
     last: Option<Instant>,
@@ -139,6 +143,7 @@ pub fn create(state: &mut State, name: &str, spec: Spec, kind: Kind) -> Output {
         kind,
         global,
         wants: Some(Wants::Frame),
+        timed: None,
         timer: None,
         last: None,
         pointer_shown: false,
@@ -157,6 +162,23 @@ pub fn create(state: &mut State, name: &str, spec: Spec, kind: Kind) -> Output {
     );
     arm(state, &output);
     output
+}
+
+/// When the clock ticks next: at `next_tick` when the screen `wants` anything, else at the later
+/// of `next_tick` and `timed`. None when nothing waits.
+fn due(
+    wants: Option<Wants>,
+    timed: Option<Instant>,
+    last: Option<Instant>,
+    interval: Duration,
+    now: Instant,
+) -> Option<Instant> {
+    let next = next_tick(last, interval, now);
+    match (wants, timed) {
+        (Some(_), _) => Some(next),
+        (None, Some(t)) => Some(next.max(t)),
+        (None, None) => None,
+    }
 }
 
 /// A name no virtual screen of `kind` made this session had: `HEADLESS-1`, `HEADLESS-2`, ... for
@@ -258,6 +280,17 @@ pub fn ask(state: &mut State, output: &Output, ask: Ask) {
     want_tick(state, output, want);
 }
 
+/// A commit timed for `at` (monotonic, `State::now`) shows on `output`: the first tick at or after
+/// `at` draws a whole frame. Of two such asks the earlier stands; `surfaceproto::before_frame`
+/// asks again for the later.
+pub fn ask_at(state: &mut State, output: &Output, at: Duration) {
+    let Some(s) = screen_mut(state, output) else {
+        return;
+    };
+    s.timed = Some(s.timed.map_or(at, |t| t.min(at)));
+    arm(state, output);
+}
+
 /// A capture waits for `output`'s next change. A tick would show it nothing new, so none is asked
 /// for: a tick already armed moves up to the capture rate, and water, which steps only while the
 /// screen is captured, asks for its own.
@@ -265,7 +298,7 @@ pub fn capture_waits(state: &mut State, output: &Output) {
     if let Some(at) = state.water.next_step(output) {
         crate::backend::schedule_step(state, output, at);
     }
-    if screen_mut(state, output).is_some_and(|s| s.wants.is_some()) {
+    if screen_mut(state, output).is_some_and(|s| s.wants.is_some() || s.timed.is_some()) {
         arm(state, output);
     }
 }
@@ -288,10 +321,13 @@ fn want_tick(state: &mut State, output: &Output, want: Wants) {
     arm(state, output);
 }
 
-/// Arm the clock for the next tick, or earlier than armed when a capture began meanwhile.
+/// Arm the clock for the next tick (`due`), or earlier than armed when a capture began meanwhile.
 fn arm(state: &mut State, output: &Output) {
     let captured = state.captures.shows_output(output);
     let interval = interval(captured, state.config.remote_desktop.frame_rate);
+    // Instant and State::now read one monotonic clock. Reading `mono` first puts the deadline at
+    // or after `timed`, so the tick finds it due.
+    let mono = state.now();
     let now = Instant::now();
     let Some(s) = screen_mut(state, output) else {
         return;
@@ -300,7 +336,10 @@ fn arm(state: &mut State, output: &Output) {
     if s.by_hand {
         return;
     }
-    let at = next_tick(s.last, interval, now);
+    let timed = (s.timed).and_then(|t| now.checked_add(t.saturating_sub(mono)));
+    let Some(at) = due(s.wants, timed, s.last, interval, now) else {
+        return;
+    };
     match s.timer {
         Some((_, armed)) if armed <= at => return,
         Some((t, _)) => state.handle.remove(t),
@@ -326,17 +365,43 @@ fn arm(state: &mut State, output: &Output) {
 }
 
 fn tick(state: &mut State, output: &Output) {
+    let now = Instant::now();
+    // One reading decides a timed commit due and is the time its frame shows at.
+    let shows_at = state.now();
     let Some(s) = screen_mut(state, output) else {
         return;
     };
     s.timer = None;
-    s.last = Some(Instant::now());
+    s.last = Some(now);
+    if s.timed.is_some_and(|t| t <= shows_at) {
+        s.timed = None;
+        s.wants = s.wants.max(Some(Wants::Frame));
+    }
     match s.wants.take() {
         None => {}
         Some(Wants::Callbacks) => crate::backend::send_frame_callbacks(state, output),
-        Some(Wants::Pointer) => frame(state, output, Drew::Pointer),
-        Some(Wants::Frame) => frame(state, output, Drew::Scene),
+        Some(Wants::Pointer) => frame(state, output, Drew::Pointer, shows_at),
+        Some(Wants::Frame) => frame(state, output, Drew::Scene, shows_at),
     }
+    // A tick that drew no frame ran no before_frame to ask again for a timed commit not yet due.
+    if screen_mut(state, output).is_some_and(|s| s.timed.is_some()) {
+        arm(state, output);
+    }
+}
+
+/// The deadline `output`'s clock is armed for, and what its tick does then besides a timed
+/// commit's frame.
+#[cfg(test)]
+pub fn armed(state: &State, output: &Output) -> Option<(Instant, Option<Wants>)> {
+    let s = (state.virtual_outputs.screens.iter()).find(|s| &s.output == output)?;
+    s.timer.map(|(_, at)| (at, s.wants))
+}
+
+/// When `output`'s clock last ticked.
+#[cfg(test)]
+pub fn last_tick(state: &State, output: &Output) -> Option<Instant> {
+    let s = (state.virtual_outputs.screens.iter()).find(|s| &s.output == output)?;
+    s.last
 }
 
 /// Run `output`'s tick now, as its clock does. From the first call on, only this ticks it.
@@ -352,11 +417,11 @@ pub fn tick_now(state: &mut State, output: &Output) {
     tick(state, output);
 }
 
-/// A tick's frame, doing what a monitor's flip does. Captures get `drew`, or the scene when it or
-/// the water moved or the tick's own work (a commit it let through) asked for a whole frame.
-fn frame(state: &mut State, output: &Output, mut drew: Drew) {
+/// A tick's frame showing at `shows_at`, doing what a monitor's flip does. Captures get `drew`, or
+/// the scene when it or the water moved or the tick's own work (a commit it let through) asked for
+/// a whole frame.
+fn frame(state: &mut State, output: &Output, mut drew: Drew, shows_at: Duration) {
     state.settle_moves();
-    let shows_at = state.now();
     crate::surfaceproto::before_frame(state, output, shows_at);
     crate::backend::advance(state, output);
     let captured = state.captures.shows_output(output);
@@ -536,6 +601,31 @@ mod tests {
         assert_eq!(
             next_tick(Some(now - Duration::from_millis(40)), i, now),
             now + Duration::from_millis(60)
+        );
+    }
+
+    #[test]
+    fn a_timed_commit_alone_ticks_at_its_time_and_never_sooner_than_the_rate() {
+        let now = Instant::now();
+        let i = Duration::from_millis(100);
+        let last = Some(now - Duration::from_millis(40));
+        let later = now + Duration::from_secs(10);
+        assert_eq!(due(None, None, last, i, now), None, "nothing waits");
+        assert_eq!(
+            due(Some(Wants::Frame), Some(later), last, i, now),
+            Some(now + Duration::from_millis(60)),
+            "an ask ticks at the rate, before the timed commit"
+        );
+        assert_eq!(due(None, Some(later), last, i, now), Some(later));
+        assert_eq!(
+            due(None, Some(now + Duration::from_millis(20)), last, i, now),
+            Some(now + Duration::from_millis(60)),
+            "a time sooner than the rate allows waits for the rate"
+        );
+        assert_eq!(
+            due(None, Some(now - Duration::from_secs(1)), None, i, now),
+            Some(now),
+            "a time gone by ticks now"
         );
     }
 

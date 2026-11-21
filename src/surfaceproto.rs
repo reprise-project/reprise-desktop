@@ -278,10 +278,7 @@ pub fn hidden_rate_changed(state: &mut State) {
 /// phase with the output's flips: a frame it asked for could start just before the refresh it
 /// meant to follow and show the commit a refresh late.
 fn ask_frame(state: &mut State, output: &Output, at: Duration) {
-    // A time past what an Instant holds asks nothing; before_frame asks again.
-    if let Some(at) = std::time::Instant::now().checked_add(at.saturating_sub(state.now())) {
-        crate::backend::schedule_shows_at(state, output, at);
-    }
+    crate::backend::schedule_shows_at(state, output, at);
 }
 
 /// The fastest output's refresh interval; 60 Hz with no output.
@@ -446,7 +443,7 @@ fn tick(state: &mut State) -> bool {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::harness::{Harness, TestClient};
+    use crate::harness::{Harness, TestClient, Toplevel};
     use smithay::output::Mode;
     use wayland_client::{Proxy, protocol::wl_surface::WlSurface as ClientSurface};
     use wayland_protocols::wp::{
@@ -710,6 +707,165 @@ mod tests {
         assert_eq!(buffer_scale(&server), 1, "the frame shows before its time");
         before_frame(&mut h.state, &output, at);
         assert_eq!(buffer_scale(&server), 2, "the frame shows at its time");
+    }
+
+    /// The standby, an uncaptured virtual screen ticking once a second, with a drawn window on it
+    /// and its clock run until idle; the window's surface on both sides.
+    fn on_standby() -> (Harness, Output, TestClient, Toplevel, WlSurface) {
+        let mut h = Harness::new();
+        crate::standby::rdp_changed(&mut h.state, true);
+        h.dispatch();
+        let output = h.state.scene.outputs()[0].clone();
+        assert!(crate::backend::is_virtual(&output));
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "timed", 200, 150);
+        h.draw_self(&mut c, t, 0xff00_8000);
+        h.run_for(1100);
+        assert_eq!(crate::virtualout::armed(&h.state, &output), None, "idle");
+        let surface = c.side.shells[t.shell].surface.clone();
+        let server = server_side(&h, &c, &surface);
+        assert_eq!(
+            h.state.scene.surface_primary_output(&server).as_ref(),
+            Some(&output)
+        );
+        (h, output, c, t, server)
+    }
+
+    fn apart(a: std::time::Instant, b: std::time::Instant) -> Duration {
+        a.max(b) - a.min(b)
+    }
+
+    #[test]
+    fn a_timed_commit_on_a_virtual_screen_arms_its_tick_for_its_time_and_asks_none_before() {
+        let (mut h, output, mut c, t, server) = on_standby();
+        let surface = c.side.shells[t.shell].surface.clone();
+        let lead = Duration::from_secs(60);
+        let expect = std::time::Instant::now() + lead;
+        let at = h.state.now() + lead;
+        commit_timed(&mut h, &mut c, &surface, at);
+        let (armed, wants) =
+            crate::virtualout::armed(&h.state, &output).expect("the clock is armed");
+        assert_eq!(wants, None, "nothing asks a tick before the commit's time");
+        assert!(
+            apart(armed, expect) < Duration::from_millis(5),
+            "the tick is armed 60 s ahead, {:?} off",
+            apart(armed, expect)
+        );
+        assert_eq!(buffer_scale(&server), 1, "the commit waits");
+    }
+
+    #[test]
+    fn later_timed_commits_on_a_virtual_screen_keep_the_earliest_tick_and_ask_no_frame() {
+        let (mut h, output, mut c, t, server) = on_standby();
+        let surface = c.side.shells[t.shell].surface.clone();
+        let manager: WpCommitTimingManagerV1 = c.bind("wp_commit_timing_manager_v1", 1);
+        let timer: WpCommitTimerV1 = manager.get_timer(&surface, &c.qh(), ());
+        let expect = std::time::Instant::now() + Duration::from_secs(60);
+        let now = h.state.now();
+        for (lead, scale) in [(60, 2), (120, 3)] {
+            let at = now + Duration::from_secs(lead);
+            let secs = at.as_secs();
+            timer.set_timestamp((secs >> 32) as u32, secs as u32, at.subsec_nanos());
+            surface.set_buffer_scale(scale);
+            surface.commit();
+            h.roundtrip(&mut c);
+        }
+        for _ in 0..3 {
+            let now = h.state.now();
+            before_frame(&mut h.state, &output, now);
+        }
+        let (armed, wants) =
+            crate::virtualout::armed(&h.state, &output).expect("the clock is armed");
+        assert_eq!(wants, None, "the asks again add no frame");
+        assert!(
+            apart(armed, expect) < Duration::from_millis(5),
+            "the tick stays armed for the first commit, {:?} off",
+            apart(armed, expect)
+        );
+        assert_eq!(buffer_scale(&server), 1, "both commits wait");
+    }
+
+    /// The standby's next tick, as its clock arms it for an ask now.
+    fn next_tick(h: &Harness, output: &Output) -> std::time::Instant {
+        let last = crate::virtualout::last_tick(&h.state, output);
+        crate::virtualout::next_tick(last, Duration::from_secs(1), std::time::Instant::now())
+    }
+
+    #[test]
+    fn an_untimed_or_overdue_commit_on_a_virtual_screen_asks_its_next_tick() {
+        let (mut h, output, mut c, t, server) = on_standby();
+        let surface = c.side.shells[t.shell].surface.clone();
+        let now = h.state.now();
+        commit_timed(&mut h, &mut c, &surface, now - Duration::from_millis(1));
+        let (armed, wants) =
+            crate::virtualout::armed(&h.state, &output).expect("the clock is armed");
+        let next = next_tick(&h, &output);
+        assert_eq!(wants, None);
+        assert!(
+            apart(armed, next) < Duration::from_millis(5),
+            "an overdue commit ticks at the next tick, {:?} off",
+            apart(armed, next)
+        );
+        crate::virtualout::tick_now(&mut h.state, &output);
+        assert_eq!(buffer_scale(&server), 2, "the next tick applies it");
+
+        let (mut h, output, mut c, t, _) = on_standby();
+        h.draw_self(&mut c, t, 0xff00_0080);
+        let (armed, wants) =
+            crate::virtualout::armed(&h.state, &output).expect("the clock is armed");
+        let next = next_tick(&h, &output);
+        assert_eq!(wants, Some(crate::virtualout::Wants::Frame));
+        assert!(
+            apart(armed, next) < Duration::from_millis(5),
+            "an untimed commit ticks at the next tick, {:?} off",
+            apart(armed, next)
+        );
+    }
+
+    #[test]
+    fn a_virtual_screens_tick_before_a_timed_commits_time_leaves_it_waiting() {
+        let (mut h, output, mut c, t, server) = on_standby();
+        let surface = c.side.shells[t.shell].surface.clone();
+        let at = h.state.now() + Duration::from_millis(200);
+        commit_timed(&mut h, &mut c, &surface, at);
+        crate::virtualout::tick_now(&mut h.state, &output);
+        assert_eq!(buffer_scale(&server), 1, "too early");
+        std::thread::sleep(Duration::from_millis(250));
+        crate::virtualout::tick_now(&mut h.state, &output);
+        assert_eq!(
+            buffer_scale(&server),
+            2,
+            "the tick past its time applies it"
+        );
+    }
+
+    #[test]
+    fn a_virtual_screens_tick_for_another_ask_arms_its_clock_again_for_a_timed_commit() {
+        let asks: [fn(&mut State, &Output); 2] = [
+            |state, _| crate::virtualout::answer_frames(state),
+            |state, output| crate::virtualout::ask(state, output, crate::backend::Ask::Scene),
+        ];
+        for ask in asks {
+            let (mut h, output, mut c, t, server) = on_standby();
+            let surface = c.side.shells[t.shell].surface.clone();
+            let expect = std::time::Instant::now() + Duration::from_secs(60);
+            let at = h.state.now() + Duration::from_secs(60);
+            commit_timed(&mut h, &mut c, &surface, at);
+            ask(&mut h.state, &output);
+            let (armed, _) =
+                crate::virtualout::armed(&h.state, &output).expect("the clock is armed");
+            assert!(armed < expect, "the other ask ticks first");
+            h.run_for(1100);
+            let (armed, wants) = crate::virtualout::armed(&h.state, &output)
+                .expect("the clock is armed again for the commit");
+            assert_eq!(wants, None);
+            assert!(
+                apart(armed, expect) < Duration::from_millis(5),
+                "the tick is armed 60 s ahead, {:?} off",
+                apart(armed, expect)
+            );
+            assert_eq!(buffer_scale(&server), 1, "the commit waits");
+        }
     }
 
     /// As a FIFO swapchain presents: a commit timed for `at`, waiting on the last barrier and
