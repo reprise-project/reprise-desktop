@@ -304,7 +304,8 @@ pub fn hit(ud: &UpDown, lay: &Layout, x: i32, y: i32, text: &TextRenderer, px: u
     } else if lay.field.contains(x, y) {
         let (tr, align) = text_rect(ud, lay.edit, 1);
         let shown = ud.shown();
-        let x0 = text_x(text, &shown, tr, align, px);
+        let caret = ud.edit.as_ref().map(TextEdit::caret);
+        let x0 = text_x(text, &shown, tr, align, caret, px);
         Some(Hit::Edit(crate::textedit::index_at(
             text,
             &shown,
@@ -328,11 +329,23 @@ fn text_rect(ud: &UpDown, edit: Rect, s: i32) -> (Rect, Align) {
     }
 }
 
-fn text_x(text: &TextRenderer, shown: &str, tr: Rect, align: Align, px: u32) -> i32 {
-    match align {
+/// The pen of `shown` in `tr`: aligned, then moved so the caret at byte `caret` stays inside `tr`
+/// when the number is wider than it.
+fn text_x(
+    text: &TextRenderer,
+    shown: &str,
+    tr: Rect,
+    align: Align,
+    caret: Option<usize>,
+    px: u32,
+) -> i32 {
+    let x0 = match align {
         Align::Left => tr.x,
         _ => tr.right() - text.measure(shown, false, px),
-    }
+    };
+    let Some(at) = caret else { return x0 };
+    let before = text.measure(&shown[..at], false, px);
+    x0.max(tr.x - before).min(tr.right() - before)
 }
 
 /// Draw it; `caret` is whether the field has the focus.
@@ -360,9 +373,11 @@ pub fn draw(
     let (tr, align) = text_rect(ud, lay.edit.scaled(s), s);
     let shown = ud.shown();
     if ud.enabled {
-        let x0 = text_x(text, &shown, tr, align, px);
+        let edit = ud.edit.as_ref().filter(|_| caret);
+        let x0 = text_x(text, &shown, tr, align, edit.map(TextEdit::caret), px);
+        let pen = Rect::new(x0, tr.y, tr.width, tr.height);
         let at = |i: usize| x0 + text.measure(&shown[..i], false, px);
-        let sel = ud.edit.as_ref().filter(|_| caret).map(|e| e.selection());
+        let sel = edit.map(TextEdit::selection);
         let hl = sel.filter(|sel| !sel.is_empty()).map(|sel| {
             // One text line tall, centred in the field, like the time
             // field's current part.
@@ -375,12 +390,12 @@ pub fn draw(
         if let Some(hl) = &hl {
             hl.fill(c, tr, cs.hilight);
         }
-        text.draw(c, tr, &shown, false, cs.button_text, align, px);
+        text.draw_in(c, pen, tr, tr, &shown, false, cs.button_text, px);
         if caret {
             let cx = ud.edit.as_ref().map_or(at(shown.len()), |e| at(e.caret()));
             if let Some(hl) = &hl {
                 c.fill_rect(hl.rect, cs.hilight);
-                text.draw_clipped(c, tr, hl.rect, &shown, false, cs.hilight_text, align, px);
+                text.draw_in(c, pen, tr, hl.rect, &shown, false, cs.hilight_text, px);
                 text.draw_overhang(c, hl, tr, cs.hilight_text);
             }
             let bar = Rect::new(cx, tr.y + 2 * s, s, tr.height - 4 * s);
@@ -675,7 +690,7 @@ mod tests {
         ud.enter();
         let shown = ud.shown();
         let (tr, align) = text_rect(&ud, l.edit, 1);
-        let x0 = text_x(&text, &shown, tr, align, 11);
+        let x0 = text_x(&text, &shown, tr, align, None, 11);
         let mut inked = 0;
         for at in 0..=shown.len() {
             ud.place(at);
@@ -1011,7 +1026,7 @@ mod tests {
                 let geom = |t: &str| {
                     let (tr, align) = text_rect(&field(t, 0..0), l.edit, 1);
                     let top = tr.y + (tr.height - LINE_H) / 2;
-                    (text_x(&text, t, tr, align, px), tr, top..top + LINE_H)
+                    (text_x(&text, t, tr, align, None, px), tr, top..top + LINE_H)
                 };
                 // The caret, at the selection's start, is inverted again to take it off.
                 let draw = |s: i32, t: &str, sel: std::ops::Range<usize>| {
@@ -1081,10 +1096,10 @@ mod tests {
                         let paint = classic_paint(cs, 1);
                         draw(&mut c, &text, &paint, &ud, &l, true, None, px);
                         let (tr, align) = text_rect(&ud, l.edit, 1);
-                        let cx = text_x(&text, t, tr, align, px)
-                            + text.measure(&t[..sel.start], false, px);
+                        let pen = text_x(&text, t, tr, align, Some(sel.start), px);
+                        let cx = pen + text.measure(&t[..sel.start], false, px);
                         c.invert_rect(Rect::new(cx, tr.y + 2, 1, tr.height - 4));
-                        (c.pixels, text_x(&text, t, tr, align, px), tr)
+                        (c.pixels, pen, tr)
                     };
                     for (t, sel) in crate::paint::descender_cases() {
                         let (plain, _, _) = draw(t, sel.start..sel.start);
@@ -1137,5 +1152,80 @@ mod tests {
             }
         }
         crate::pins::check("controls/updown_selected_descenders", &got);
+    }
+
+    /// "01047" in a 0..=99999 field is wider than the field: the caret stays inside it, at the
+    /// end the last digit shows whole and Home brings the first back whole, at scale 1 and 2.
+    #[test]
+    fn an_overflowing_number_follows_its_caret() {
+        crate::pins::fonts();
+        let cs = &Theme::default().colors;
+        let l = layout(2, 2);
+        let (w, h) = (WIDTH + 4, HEIGHT + 4);
+        let mut got = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.into()],
+                antialias: false,
+                ..FontConfig::default()
+            });
+            let mut ud = UpDown::new(0, 0, 99999);
+            ud.enter();
+            ud.place(1);
+            assert_eq!(ud.key(&EditKey::Insert("1047".into())), Some(true));
+            assert_eq!(ud.shown(), "01047");
+            let (tr, _) = text_rect(&ud, l.edit, 1);
+            let wide = text.measure("01047", false, 11);
+            assert!(
+                wide > tr.width,
+                "{family}: \"01047\" is {wide} px, the field {} px",
+                tr.width
+            );
+            // Each end: the key, the digit that shows whole there, its pen and the caret's column.
+            let seven = tr.right() - text.measure("7", false, 11);
+            let ends = [
+                (
+                    "End",
+                    EditKey::End { select: false },
+                    "7",
+                    seven,
+                    tr.right(),
+                ),
+                ("Home", EditKey::Home { select: false }, "0", tr.x, tr.x),
+            ];
+            for (name, key, digit, pen, cx) in ends {
+                ud.key(&key);
+                for s in [1, 2] {
+                    let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                    c.fill_rect(c.bounds(), cs.button_face);
+                    draw(
+                        &mut c,
+                        &text,
+                        &classic_paint(cs, 1),
+                        &ud,
+                        &l,
+                        true,
+                        None,
+                        11,
+                    );
+                    got.push((format!("{family} {name} @{s}"), crate::pins::fnv(&c)));
+                    c.invert_rect(Rect::new(cx, tr.y + 2, 1, tr.height - 4));
+                    let mut alone = Canvas::with_scale(w as u32, h as u32, s);
+                    let at = Rect::new(pen, tr.y, tr.width, tr.height);
+                    text.draw_in(&mut alone, at, tr, tr, digit, false, cs.button_text, 11);
+                    let ink = cs.button_text.argb();
+                    let (dw, dh) = (w * s, h * s);
+                    let cut = (0..dh)
+                        .flat_map(|y| (0..dw).map(move |x| (x, y)))
+                        .filter(|&(x, y)| {
+                            let i = (y * dw + x) as usize;
+                            alone.pixels[i] == ink && c.pixels[i] != ink
+                        })
+                        .count();
+                    assert_eq!(cut, 0, "{family} {name} @{s}: {digit}'s ink px missing");
+                }
+            }
+        }
+        crate::pins::check("controls/updown_overflow", &got);
     }
 }
