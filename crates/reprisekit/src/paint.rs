@@ -214,11 +214,10 @@ pub fn draw_edit(
         let sel = sel.start - first..sel.end - first;
         text.highlight(run, shown, sel, inner.x, room, false, px, c.scale())
     });
-    let lit = Rect::new(room.x, line.y, room.width, line.height);
-    // The device columns past the run are filled under the text, so a neighbour's ink there
+    // The device pixels past the run are filled under the text, so a neighbour's ink there
     // stays the text colour.
     if let Some(hl) = &hl {
-        hl.fill(c, lit, cs.hilight);
+        hl.fill(c, room, cs.hilight);
     }
     if edit.text.is_empty() && !edit.cue().is_empty() {
         text.draw(c, inner, edit.cue(), false, cs.gray_text, Align::Left, px);
@@ -228,7 +227,7 @@ pub fn draw_edit(
     if let Some(hl) = &hl {
         c.fill_rect(hl.rect, cs.hilight);
         text.draw_in(c, inner, room, hl.rect, shown, false, cs.hilight_text, px);
-        text.draw_overhang(c, hl, lit, cs.hilight_text);
+        text.draw_overhang(c, hl, room, cs.hilight_text);
     }
     if let Some(run) = run {
         let base = text
@@ -474,6 +473,63 @@ fn glyph_mask(
     let x = pen + text.measure(&t[..at], false, px);
     text.draw_run(&mut c, x, base, line, g, false, ink, px);
     c.pixels.iter().map(|&p| p == ink.argb()).collect()
+}
+
+/// Where a selection of `t`'s bytes `sel` draws off its highlight at scale `s`: pixels outside
+/// the box of `hilight` pixels that differ from the text drawn unselected, and pixels the
+/// selected glyphs ink alone that are not `lit`. `plain` and `selected` are the pixels of a `w`
+/// px wide canvas; `pen` and `line` as in [`selection_faults`]'s `geom`.
+#[cfg(test)]
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn off_highlight(
+    text: &TextRenderer,
+    px: u32,
+    (w, h): (i32, i32),
+    (t, sel): (&str, std::ops::Range<usize>),
+    (pen, line): (i32, Rect),
+    s: i32,
+    (plain, selected): (&[u32], &[u32]),
+    (hilight, lit): (crate::theme::Color, crate::theme::Color),
+) -> (usize, usize) {
+    let ws = w * s;
+    let at = |i: usize| (i as i32 % ws, i as i32 / ws);
+    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for (x, y) in (0..selected.len())
+        .filter(|&i| selected[i] == hilight.argb())
+        .map(at)
+    {
+        (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+    }
+    let off = (0..selected.len())
+        .filter(|&i| selected[i] != plain[i])
+        .filter(|&i| {
+            let (x, y) = at(i);
+            !(x0..x1).contains(&x) || !(y0..y1).contains(&y)
+        })
+        .count();
+    let mut own = vec![false; selected.len()];
+    for (i, _) in t[sel.clone()].char_indices() {
+        let mask = glyph_mask(text, px, (w, h), t, sel.start + i, pen, line, s);
+        own.iter_mut().zip(mask).for_each(|(o, m)| *o |= m);
+    }
+    let unlit = (0..own.len())
+        .filter(|&i| own[i] && selected[i] != lit.argb())
+        .count();
+    (off, unlit)
+}
+
+/// Texts with descenders, a `|` and a `j` whose tail runs under its neighbour, each with every
+/// one-char selection and the whole text selected, for [`off_highlight`].
+#[cfg(test)]
+pub(crate) fn descender_cases() -> Vec<(&'static str, std::ops::Range<usize>)> {
+    ["gypqj", "ajo", "o|g@", "1j9"]
+        .into_iter()
+        .flat_map(|t| {
+            (0..t.len())
+                .map(move |i| (t, i..i + 1))
+                .chain([(t, 0..t.len())])
+        })
+        .collect()
 }
 
 /// Every pair of printable ASCII chars, for [`selection_faults`].
