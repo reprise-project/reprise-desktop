@@ -349,10 +349,8 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("allow_boost", "Allow volume above 100%"),
         ],
         Page::ScreenCapture => &[
-            (
-                "screenshot_save",
-                "Save each screenshot as a file in Pictures/Screenshots",
-            ),
+            ("screenshot_save", "Save in Pictures/Screenshots"),
+            ("screenshot_delay", "Screenshot delay"),
             ("screenshot_format", "Format:"),
             ("screenshot_png_compression", "PNG compression"),
             ("screenshot_jpg_quality", "JPG quality"),

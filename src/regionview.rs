@@ -41,9 +41,12 @@ fn rgba(argb: u32) -> [f32; 4] {
 
 impl State {
     /// The bind: open the overlay, in Record mode for `record`. No-op while locked or already
-    /// open.
+    /// open; Shift+PrtSc while a screenshot waits for its delay cancels that one instead.
     pub fn open_region(&mut self, record: bool) {
         if self.panels.region.is_some() || self.desktop_locked() {
+            return;
+        }
+        if !record && self.cancel_waiting_shot() {
             return;
         }
         let p = self.pointer_location();
@@ -179,7 +182,7 @@ impl State {
             },
             (None, Some(a)) => a.cancelled(),
             (Some(r), None) if v.model.records() => self.record_area(r),
-            (Some(r), None) => self.screenshot_area(r),
+            (Some(r), None) => self.shoot(crate::screenshot::Take::Area(r)),
             (None, None) => {}
         }
         self.repoint(self.pointer_location(), InputTime::now());

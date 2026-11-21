@@ -753,6 +753,7 @@ fn save_round_trips_every_field() {
         screenshot_jxl_lossless: false,
         screenshot_jxl_quality: 80,
         screenshot_jxl_effort: 3,
+        screenshot_delay: 5,
         recording_codec: "av1".into(),
         recording_encoder: "vaapi".into(),
         recording_rate: "constant".into(),

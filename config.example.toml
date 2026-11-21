@@ -335,6 +335,10 @@ suspend_after = 0            # run [power] standby
 # jxl_lossless = true        # keeps every pixel; false saves at jxl_quality
 # jxl_quality = 90           # 1 to 100, for a lossy JPEG XL; 100 saves at 99 (jxl_lossless keeps every pixel)
 # jxl_effort = 7             # 1 (fastest) to 9 (smallest file); 8 and 9 take many seconds a shot, and shots save one at a time
+# delay = 0                  # seconds, 0 to 10, from a screenshot key (or Shift+PrtSc's pick) to the
+#                            # picture; a screenshot key pressed meanwhile, or a lock, cancels it. An
+#                            # app's interactive screenshot dialog starts at it; an app's other shots
+#                            # never wait
 # record_sound = false       # screen recordings (Videos/Screencasts) also carry what plays
 
 # [recording]                # how screen recordings are coded, read as each one starts (Settings > Screen Capture);

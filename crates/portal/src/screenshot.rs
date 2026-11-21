@@ -4,8 +4,10 @@
 //! focused window for an Active Window target, as a PNG returned as a `file://` URI. A pick or a
 //! drag is the consent; the rest ask through the Access prompt unless the frontend's permission
 //! store settled it ([`plan`]). The files are a hand-over to the app, kept in the runtime dir for
-//! `KEEP` up to `MAX_KEPT_BYTES`. PickColor opens the compositor's colour picker and needs no
-//! prompt; the click is the consent.
+//! `KEEP` up to `MAX_KEPT_BYTES`. Only an interactive call's share dialog waits: the seconds its
+//! Delay box sets after Take, the box starting at `[screenshot] delay` ([`offers_delay`]). A wait
+//! that ends with the desktop locked takes nothing. PickColor opens the compositor's colour picker
+//! and needs no prompt; the click is the consent.
 
 use crate::stills::{Output, grab};
 use crate::wayland::{Target, Wayland};
@@ -36,6 +38,8 @@ pub struct Screenshot {
     pub frontend: crate::Frontend,
     pub link: Option<crate::inputlink::Link>,
     pub ask: crate::remotedesktop::Ask,
+    /// The desktop's lock, as the Inhibit monitor follows it.
+    pub lock: crate::inhibit::Shared,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Screenshot")]
@@ -110,13 +114,19 @@ impl Screenshot {
                 return (crate::RESPONSE_OTHER, HashMap::new());
             }
         };
-        let chosen = self.choose(plan, request, app_id, parent_window).await;
-        let shot = match chosen {
+        let delay = match offers_delay(&plan, options) {
+            true => Some(blocking::unblock(|| repriseconf::current().screenshot.delay).await),
+            false => None,
+        };
+        let chosen = self
+            .choose(plan, request, app_id, parent_window, delay)
+            .await;
+        let (shot, wait) = match chosen {
             _ if request.closed() => {
                 log::info!("Screenshot for {app_id:?} closed");
                 return (crate::RESPONSE_CANCELLED, HashMap::new());
             }
-            Ok(Some(shot)) => shot,
+            Ok(Some(chosen)) => chosen,
             Ok(None) => {
                 log::info!("Screenshot for {app_id:?} denied");
                 return (crate::RESPONSE_CANCELLED, HashMap::new());
@@ -126,6 +136,27 @@ impl Screenshot {
                 return (crate::RESPONSE_OTHER, HashMap::new());
             }
         };
+        if wait > 0 {
+            let waited = async {
+                async_io::Timer::after(Duration::from_secs(wait.into())).await;
+                Some(())
+            };
+            if futures_lite::future::or(waited, closed(request))
+                .await
+                .is_none()
+            {
+                log::info!("Screenshot for {app_id:?} closed during its delay");
+                return (crate::RESPONSE_CANCELLED, HashMap::new());
+            }
+            if self.lock.known_locked() {
+                log::info!("Screenshot for {app_id:?}: the desktop locked during its delay");
+                return (crate::RESPONSE_CANCELLED, HashMap::new());
+            }
+        }
+        if request.closed() {
+            log::info!("Screenshot for {app_id:?} closed");
+            return (crate::RESPONSE_CANCELLED, HashMap::new());
+        }
         match blocking::unblock(move || take(shot)).await {
             Ok(path) => {
                 let mut r = HashMap::new();
@@ -143,22 +174,25 @@ impl Screenshot {
         }
     }
 
-    /// What `plan` takes once the user picked it or allowed it: None for a cancel, a no or a
-    /// closed `request`, Err for nothing to take.
+    /// What `plan` takes once the user picked it or allowed it, and the seconds to wait first:
+    /// those set in the share dialog's Delay box, offered from `delay`, else 0. None for a
+    /// cancel, a no or a closed `request`, Err for nothing to take.
     async fn choose(
         &self,
         plan: Plan,
         request: &crate::Served<'_>,
         app_id: &str,
         parent_window: &str,
-    ) -> Result<Option<Shot>, String> {
+        delay: Option<u8>,
+    ) -> Result<Option<(Shot, u8)>, String> {
         let parent = crate::dialog::parent_handle(parent_window);
         let link = crate::inputlink::live(&self.link);
-        match plan {
+        let shot = match plan {
             Plan::Pick(types) => {
                 let id = app_id.to_string();
-                let picked = request.ask(None, move |c| pick(&id, parent, c, types));
-                picked.await.unwrap_or(Ok(None)).map(|t| t.map(Shot::Of))
+                let picked = request.ask(None, move |c| pick(&id, parent, c, types, delay));
+                let picked = picked.await.unwrap_or(Ok(None));
+                return picked.map(|p| p.map(|(t, wait)| (Shot::Of(t), wait)));
             }
             Plan::Area => {
                 let id = app_id.to_string();
@@ -167,13 +201,13 @@ impl Screenshot {
                     return Ok(None);
                 }
                 match link.and_then(|l| l.pick_area(&name)) {
-                    Some(p) => Ok(heard(request, &p).await.map(Shot::Area)),
-                    None => Err("the compositor has no region select".into()),
+                    Some(p) => heard(request, &p).await.map(Shot::Area),
+                    None => return Err("the compositor has no region select".into()),
                 }
             }
             Plan::Desktop { ask } => {
                 let denied = ask && !self.allowed(request, app_id, parent).await;
-                Ok((!denied).then_some(Shot::Desktop))
+                (!denied).then_some(Shot::Desktop)
             }
             Plan::ActiveWindow { ask } => {
                 let Some(query) = link.and_then(|l| l.active_window()) else {
@@ -184,9 +218,10 @@ impl Screenshot {
                     return Err("no window has the focus".into());
                 };
                 let denied = ask && !self.allowed(request, app_id, parent).await;
-                Ok((!denied).then_some(Shot::Of(Target::Toplevel(window))))
+                (!denied).then_some(Shot::Of(Target::Toplevel(window)))
             }
-        }
+        };
+        Ok(shot.map(|s| (s, 0)))
     }
 
     /// Whether the user allows `app_id`'s screenshot in the Access prompt, which offers no
@@ -267,6 +302,14 @@ fn plan(options: &HashMap<String, Variant<'_>>) -> Result<Plan, String> {
     }
 }
 
+/// Whether the call's share dialog shows a Delay box, the only wait a Screenshot call makes:
+/// an interactive pick. A drag, a prompt or a non-interactive Window target's pick takes the
+/// picture at once.
+fn offers_delay(plan: &Plan, options: &HashMap<String, Variant<'_>>) -> bool {
+    let interactive = matches!(options.get("interactive"), Some(Variant::Bool(true)));
+    interactive && matches!(plan, Plan::Pick(_))
+}
+
 /// What [`take`] captures.
 #[derive(Debug)]
 enum Shot {
@@ -284,14 +327,16 @@ fn needs_consent(options: &HashMap<String, Variant<'_>>) -> bool {
     flag("interactive") || !flag("permission_store_checked")
 }
 
-/// The screen or window, of the `types` kinds, the user picks for `app_id`; None on Cancel or a
-/// frontend Close, Err when no picker could be shown. Blocking.
+/// The screen or window, of the `types` kinds, the user picks for `app_id`, and the seconds set
+/// in the Delay box offered from `delay`; None on Cancel or a frontend Close, Err when no picker
+/// could be shown. Blocking.
 fn pick(
     app_id: &str,
     parent: Option<String>,
     cancel: Arc<AtomicBool>,
     types: u32,
-) -> Result<Option<Target>, String> {
+    delay: Option<u8>,
+) -> Result<Option<(Target, u8)>, String> {
     let wl = Wayland::connect()?;
     let types = match wl.can_capture_toplevels() {
         true => types,
@@ -310,11 +355,11 @@ fn pick(
         &crate::remotedesktop::display_name(app_id),
         entries,
         None,
-        false,
+        delay.map_or(crate::picker::Extra::Nothing, crate::picker::Extra::Delay),
         parent,
         cancel,
     );
-    Ok(picked.map(|(target, _)| target))
+    Ok(picked.map(|p| (p.target, p.delay)))
 }
 
 /// Capture `shot` and write it out; blocking. An area leaves out the pointer that dragged it.
@@ -681,6 +726,39 @@ mod tests {
     }
 
     #[test]
+    fn only_an_interactive_pick_offers_a_delay() {
+        let waits = |options: HashMap<String, Variant<'static>>| {
+            offers_delay(&plan(&options).unwrap(), &options)
+        };
+        let interactive = [("interactive", true), ("permission_store_checked", true)];
+        let checked = [("permission_store_checked", true)];
+        for t in [TARGET_SCREEN, TARGET_WINDOW] {
+            assert!(waits(with_target(&interactive, t)), "target {t}");
+        }
+        assert!(waits(opts(&interactive)), "no target");
+        for t in [TARGET_AREA, TARGET_ACTIVE_WINDOW] {
+            assert!(
+                !waits(with_target(&interactive, t)),
+                "interactive target {t}"
+            );
+        }
+        for pairs in [&[][..], &checked] {
+            assert!(!waits(opts(pairs)), "non-interactive {pairs:?}");
+            for t in [
+                TARGET_SCREEN,
+                TARGET_WINDOW,
+                TARGET_AREA,
+                TARGET_ACTIVE_WINDOW,
+            ] {
+                assert!(
+                    !waits(with_target(pairs, t)),
+                    "non-interactive {pairs:?} {t}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_pick_or_a_drag_is_the_consent_and_the_rest_ask_unless_the_store_settled_it() {
         let both = crate::SOURCE_MONITOR | crate::SOURCE_WINDOW;
         let checked = [("permission_store_checked", true)];
@@ -770,6 +848,7 @@ mod tests {
                 frontend: frontend.clone(),
                 link,
                 ask: never_asked,
+                lock: crate::inhibit::shared().0,
             };
             let portal = zbus::connection::Builder::address(bus.1.as_str())
                 .serve_at(crate::PATH, shots)
@@ -864,6 +943,7 @@ mod tests {
                 frontend,
                 link: Some(link_on(ours)),
                 ask: noted_allowed,
+                lock: crate::inhibit::shared().0,
             })
             .await;
             let handle = format!("{}1_1/s", crate::REQUEST_PREFIX);

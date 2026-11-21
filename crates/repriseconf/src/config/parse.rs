@@ -811,6 +811,9 @@ impl Config {
             if let Some(v) = s.jxl_effort {
                 shot.jxl_effort = num("jxl_effort", v, (1, 9))?;
             }
+            if let Some(v) = s.delay {
+                shot.delay = v.clamp(0, i64::from(super::SHOT_DELAY_MAX)) as u8;
+            }
         }
         if let Some(l) = file.lock {
             if let Some(v) = l.away_device {

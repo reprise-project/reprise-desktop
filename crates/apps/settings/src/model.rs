@@ -71,6 +71,8 @@ pub struct Settings {
     /// names them.
     pub hot_corner: String,
     pub screenshot_save: bool,
+    /// `[screenshot] delay`: seconds, 0 to [`repriseconf::config::SHOT_DELAY_MAX`].
+    pub screenshot_delay: i64,
     pub screenshot_record_sound: bool,
     /// `[screenshot] format`, `png_compression` (as [`SHOT_FORMATS`] and [`PNG_COMPRESSIONS`]
     /// name them), `jpg_quality`, `jxl_lossless`, `jxl_quality` and `jxl_effort`.
@@ -527,6 +529,7 @@ impl Settings {
             switcher_size: named(SWITCHER_SIZES, switcher_size, &c.switcher.size),
             hot_corner: c.hot_corner.name().into(),
             screenshot_save: c.screenshot.save,
+            screenshot_delay: shot.delay.into(),
             screenshot_record_sound: c.screenshot.record_sound,
             screenshot_format: shot.format.extension().into(),
             screenshot_png_compression: shot.png_compression.name().into(),

@@ -190,6 +190,12 @@ shake, the dim, the hidden frame rate and window memory.
   fields opens Undo, Redo, Cut, Copy, Paste, Delete and Select All.
 - **Screenshots.** PrtSc for the screen, Alt+PrtSc for the window,
   Ctrl+Alt+PrtSc for its content, Shift+PrtSc for a region or a window.
+- **Screenshot delay.** `[screenshot] delay` (0 to 10 seconds, Settings >
+  Screen Capture) waits before the picture, so a menu or a tooltip can be
+  opened first; Shift+PrtSc waits after the pick. A screenshot key pressed
+  while one waits cancels it, and so does locking the desktop. An app's
+  interactive screenshot dialog has its own Delay box, which starts at the
+  same value; an app's other screenshots never wait.
 - **Screenshot files.** Each shot goes to the clipboard and, if you like, to
   Pictures/Screenshots as PNG, JPG or JPEG XL (`[screenshot] format`).
 - **Screen recordings.** Ctrl+Shift+Alt+R records the screen under the

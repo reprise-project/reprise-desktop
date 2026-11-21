@@ -76,6 +76,10 @@ impl LockSources {
     fn locked(&self) -> bool {
         self.desktop.or(self.hint).unwrap_or(true)
     }
+
+    fn known_locked(&self) -> bool {
+        self.desktop.or(self.hint) == Some(true)
+    }
 }
 
 pub type Shared = Arc<Inhibits>;
@@ -119,6 +123,12 @@ impl Inhibits {
             .collect();
         v.sort_by(|a, b| a.0.cmp(b.0));
         v.into_iter().map(|(_, l)| l.clone()).collect()
+    }
+
+    /// Whether a source says the desktop is locked; false while neither has answered, where a
+    /// monitor reads locked.
+    pub fn known_locked(&self) -> bool {
+        self.lock.lock().unwrap().known_locked()
     }
 
     fn monitor_state(&self) -> HashMap<&'static str, Variant<'static>> {
@@ -868,6 +878,16 @@ mod tests {
             sender("/org/freedesktop/portal/desktop/session/1_2/t"),
             None
         );
+    }
+
+    #[test]
+    fn the_lock_is_known_only_once_a_source_answers_and_the_compositor_wins() {
+        let s = |desktop, hint| LockSources { desktop, hint };
+        assert!(!s(None, None).known_locked());
+        assert!(s(None, None).locked(), "a monitor reads locked meanwhile");
+        assert!(s(None, Some(true)).known_locked());
+        assert!(s(Some(true), Some(false)).known_locked());
+        assert!(!s(Some(false), Some(true)).known_locked());
     }
 
     #[test]
