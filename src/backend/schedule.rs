@@ -192,15 +192,20 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
     }
 }
 
-/// Ask for the frame on `output` that shows at the first refresh at or after `at`
-/// (`framepace::start_for`): a timed commit's.
-pub fn schedule_shows_at(state: &mut State, output: &Output, at: std::time::Instant) {
+/// Ask for the frame on `output` that shows at the first refresh at or after `at` (monotonic,
+/// `State::now`; `framepace::start_for`), or on a virtual screen the first tick at or after it
+/// (`virtualout::ask_at`): a timed commit's.
+pub fn schedule_shows_at(state: &mut State, output: &Output, at: std::time::Duration) {
     #[cfg(test)]
     ASKED.with_borrow_mut(|a| a.push((output.name(), Ask::Timed)));
     let head = match screen_of(output) {
         Some(Screen::Monitor(head)) => head,
-        Some(Screen::Virtual) => return crate::virtualout::ask(state, output, Ask::Timed),
+        Some(Screen::Virtual) => return crate::virtualout::ask_at(state, output, at),
         None => return,
+    };
+    // A time past what an Instant holds asks nothing; before_frame asks again.
+    let Some(at) = std::time::Instant::now().checked_add(at.saturating_sub(state.now())) else {
+        return;
     };
     let Some(s) = surface_mut(state, head) else {
         return;
