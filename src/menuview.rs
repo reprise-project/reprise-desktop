@@ -83,6 +83,8 @@ pub enum MenuKind {
         /// The widest the menu grows when narrower than the screen: the room beside the Start
         /// panel's Recent Items row, past which a long name is cut with an ellipsis.
         widest: Option<i32>,
+        /// Stands left of the Start panel: a relist keeps its right edge.
+        grows_left: bool,
     },
     Tray {
         id: String,

@@ -127,7 +127,7 @@ impl State {
     }
 
     pub fn start_panel_pointer(&mut self, spot: Option<Spot>) {
-        if spot.is_some() && spot != self.start_flyout() {
+        if spot.is_some() && spot != self.start_flyout() && !self.crossing_to_flyout(spot) {
             self.close_start_flyout();
         }
         if !self.menus.is_empty() {
@@ -341,6 +341,13 @@ impl State {
             &v.tree_apps,
             (&v.result_apps, &v.result_kinds),
         )
+    }
+
+    /// The panel on the screen.
+    pub(super) fn start_panel_rect(&self) -> Option<Rect> {
+        let v = self.start_panel.as_ref()?;
+        let r = layout::layout(&v.model).panel;
+        Some(Rect::new(r.x + v.at.0, r.y + v.at.1, r.width, r.height))
     }
 
     pub(super) fn start_spot_rect(&self, s: Spot) -> Option<Rect> {

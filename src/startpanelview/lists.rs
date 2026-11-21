@@ -251,7 +251,7 @@ impl State {
         self.redraw_start_panel();
         if popup {
             match anchor.and_then(|i| self.start_spot_rect(Spot::Place(i))) {
-                Some(row) => self.move_start_popup((row.right(), row.y)),
+                Some(row) => self.move_start_popup(row),
                 None => self.close_menu(),
             }
         }
