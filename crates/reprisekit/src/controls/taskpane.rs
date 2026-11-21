@@ -8,6 +8,7 @@ use crate::look::widgets::taskpane as look;
 use crate::look::widgets::{Interaction, draw_scrollbar};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer, wrap, wrap_bold};
+use crate::theme::TextUnits;
 use accesskit::{NodeId, Role};
 
 pub const ROW_H: i32 = 20;
@@ -111,6 +112,8 @@ pub struct Layout {
     pub text_dx: i32,
     /// A line of text's pitch ([`TaskMetrics::line`]).
     pub line_h: i32,
+    /// A link's icon edge: [`icon_px`] when a link wears an icon, else the 100% column.
+    pub icon: i32,
     pub headers: Vec<Rect>,
     pub rows: Vec<Vec<Rect>>,
     pub link_lines: Vec<Vec<Vec<String>>>,
@@ -166,12 +169,27 @@ fn lines_of(text: &TextRenderer, lines: &[(String, bool)], w: i32, px: u32) -> V
     out
 }
 
+/// A link's icon edge at text `u` (logical px): 16 at 100%, grown with the text. Hosts load the
+/// rows' icons at it.
+pub fn icon_px(u: TextUnits) -> i32 {
+    u.icon(ICON)
+}
+
 /// Every section's header, body and rows inside `r`, offset by `tp.top`. When the sections need more room than `r` has, a scrollbar takes the pane's right edge and the layout is redone in what is left.
 pub fn layout(tp: &TaskPane, text: &TextRenderer, px: u32, r: Rect, cm: &ControlMetrics) -> Layout {
-    let mut lay = lay_in(tp, text, px, r, None, &cm.task);
+    let links = tp.sections.iter().filter_map(|s| match &s.body {
+        Body::Links(rows) => Some(rows),
+        Body::Lines(_) => None,
+    });
+    let icon = if links.flatten().any(|r| r.icon.is_some()) {
+        icon_px(cm.text)
+    } else {
+        ICON
+    };
+    let mut lay = lay_in(tp, text, px, r, None, &cm.task, icon);
     if lay.content_h > r.height {
         let sb = Rect::new(r.right() - cm.scroll, r.y, cm.scroll, r.height);
-        lay = lay_in(tp, text, px, r, Some(sb), &cm.task);
+        lay = lay_in(tp, text, px, r, Some(sb), &cm.task, icon);
     }
     lay.thumb_min = cm.thumb_min;
     lay
@@ -184,11 +202,12 @@ fn lay_in(
     r: Rect,
     sb: Option<Rect>,
     tm: &TaskMetrics,
+    icon: i32,
 ) -> Layout {
     let pane_w = r.width - sb.map_or(0, |s| s.width);
     let sect_w = (pane_w - tm.section_inset).max(1);
     let sect_x = r.x + tm.section_x;
-    let text_x = sect_x + TEXT_INSET + ICON + ICON_GAP + tm.text_dx;
+    let text_x = sect_x + TEXT_INSET + icon + ICON_GAP + tm.text_dx;
     let text_w = (text_right(sect_x, sect_w) - text_x).max(1);
     let lead = tm.lead.min(r.width);
     let foot = tm.foot.min(r.height);
@@ -197,6 +216,7 @@ fn lay_in(
         back: Rect::new(r.x + lead, r.y, r.width - lead, r.height - foot),
         text_dx: tm.text_dx,
         line_h: tm.line,
+        icon,
         scrollbar: sb,
         ..Default::default()
     };
@@ -229,7 +249,7 @@ fn lay_in(
                 let mut ry = y + BODY_TOP_PAD;
                 for row in links {
                     let wrapped = wrap(text, &row.text, text_w, px);
-                    let h = (wrapped.len().max(1) as i32 * tm.line).max(ICON) + ROW_PAD;
+                    let h = (wrapped.len().max(1) as i32 * tm.line).max(icon) + ROW_PAD;
                     rows.push(Rect::new(sect_x + TEXT_INSET, ry, sect_w - TEXT_INSET, h));
                     row_lines.push(wrapped);
                     ry += h;
@@ -422,9 +442,11 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, tp: &TaskPane, lay: 
                         continue;
                     };
                     if let Some(icon) = &row.icon {
-                        c.blit_over(rr.x * s, rr.y * s, icon);
+                        let slot = lay.icon * s;
+                        let (w, h) = (icon.width as i32, icon.height as i32);
+                        c.blit_over(rr.x * s + (slot - w) / 2, rr.y * s + (slot - h) / 2, icon);
                     }
-                    let tx = rr.x + ICON + ICON_GAP + lay.text_dx;
+                    let tx = rr.x + lay.icon + ICON_GAP + lay.text_dx;
                     let tw = (text_right(body.x, body.width) - tx).max(1);
                     let hot = row.enabled && tp.hot == Some((i, j));
                     let ink = look::link_ink(p, row.enabled, hot);
@@ -980,6 +1002,119 @@ mod tests {
             last.bottom() <= short.bottom() && last.y >= short.y,
             "{last:?}"
         );
+    }
+
+    /// Draws a pane of links with icons in each look at 100-200% text, scale 1 and 2: the icon
+    /// column grows with the text, each icon stands whole in its row, the label keeps its gap past
+    /// it, and no line's ink is cut. Hashes each pane at 200%.
+    #[test]
+    fn link_icons_grow_with_the_text_and_labels_clear_them() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        const INK: u32 = 0xFF12_3456;
+        let labels = [
+            "Make a new folder",
+            "Publish this folder to the Web",
+            "Desktop",
+        ];
+        let (mut sizes, mut cut, mut hashes) = (Vec::new(), Vec::new(), Vec::new());
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 125, 150, 175, 200] {
+                let base = crate::interfaces::theme_for(i).with_text_size(pct);
+                let text = TextRenderer::load(&base.fonts);
+                let (px, cm) = (base.fonts.size_px, base.controls());
+                let icon = icon_px(base.text);
+                sizes.push((pct, icon));
+                for s in [1, 2] {
+                    let mut ic = Canvas::new((icon * s) as u32, (icon * s) as u32);
+                    ic.pixels.fill(INK);
+                    let tp = TaskPane {
+                        sections: vec![Section::links(
+                            "File and Folder Tasks",
+                            (labels.iter())
+                                .map(|&l| Row::new(l, Some(ic.clone())))
+                                .collect(),
+                        )],
+                        ..Default::default()
+                    };
+                    let r = Rect::new(0, 0, base.text.len(200), base.text.len(240));
+                    let lay = layout(&tp, &text, px, r, &cm);
+                    let unlabelled = Layout {
+                        link_lines: vec![vec![Vec::new(); labels.len()]],
+                        ..lay.clone()
+                    };
+                    assert_eq!(lay.icon, icon, "{i:?} at {pct}%");
+                    let theme = base.scaled(s);
+                    let drawn = |lay: &Layout| {
+                        let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
+                        let ((), cuts) = crate::pins::clipped_ink(|| {
+                            let text = text.for_output(s);
+                            draw(&mut c, text, &theme.paint(), &tp, lay, px * s as u32);
+                        });
+                        (c, cuts)
+                    };
+                    let mut bare_links = tp.clone();
+                    bare_links.sections[0].body =
+                        Body::Links(labels.iter().map(|&l| Row::new(l, None)).collect());
+                    assert_eq!(
+                        layout(&bare_links, &text, px, r, &cm).icon,
+                        ICON,
+                        "{i:?} at {pct}%: links without icons keep the 100% column"
+                    );
+                    let (c, cuts) = drawn(&lay);
+                    let (bare, _) = drawn(&unlabelled);
+                    cut.extend(
+                        (cuts.into_iter())
+                            .filter(|c| c.rows > 0 || c.cols > 0)
+                            .map(|c| (i, pct, s, c.text)),
+                    );
+                    let at = format!("{i:?} at {pct}% scale {s}");
+                    for rr in &lay.rows[0] {
+                        let row = rr.scaled(s);
+                        assert!(
+                            (icon + ROW_PAD) * s <= row.height,
+                            "{at}: the icon stands in its row"
+                        );
+                        let inked = (c.copy_rect(row).pixels.iter())
+                            .filter(|&&p| p == INK)
+                            .count();
+                        assert_eq!(
+                            inked,
+                            (icon * s * icon * s) as usize,
+                            "{at}: the icon is whole and no label ink lies on it"
+                        );
+                        let gap = Rect::new(row.x + icon * s, row.y, ICON_GAP * s, row.height);
+                        assert_eq!(
+                            c.copy_rect(gap).pixels,
+                            bare.copy_rect(gap).pixels,
+                            "{at}: the gap past the icon holds no icon or label ink"
+                        );
+                        let label =
+                            Rect::new(gap.right(), row.y, row.right() - gap.right(), row.height);
+                        assert_ne!(
+                            c.copy_rect(label).pixels,
+                            bare.copy_rect(label).pixels,
+                            "{at}: the label draws past the gap"
+                        );
+                    }
+                    if pct == 200 {
+                        hashes.push((format!("{i:?} {s}"), crate::pins::fnv(&c)));
+                    }
+                }
+            }
+        }
+        assert_eq!(cut, Vec::new(), "(look, text size, scale, line)");
+        let at = |pct| {
+            (sizes.iter())
+                .filter(move |&&(p, _)| p == pct)
+                .map(|&(_, icon)| icon)
+        };
+        assert!(
+            at(100).all(|icon| icon == ICON),
+            "16 px at 100% in every look"
+        );
+        assert!(at(200).all(|icon| icon == 32), "32 px at 200%");
+        crate::pins::check("controls/taskpane_icons_200", &hashes);
     }
 
     fn link_text(tp: &TaskPane, i: usize, j: usize) -> &str {
