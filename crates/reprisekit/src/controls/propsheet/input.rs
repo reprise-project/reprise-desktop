@@ -290,7 +290,8 @@ impl PropSheet {
         }
         let i = self.tabs.open;
         let ev = self.pages[i].key(key);
-        self.settle_search();
+        // An access key that focused a control moves the keyboard off the strip, as a press does.
+        self.page_clicked();
         match self.event(i, ev) {
             Event::None if self.reveal_focus() => Event::Redraw,
             ev => {

@@ -360,6 +360,27 @@ fn the_lists_keys_step_the_pages() {
     assert_eq!(s.tabs.open, 0, "the page's own control takes the arrows");
 }
 
+#[test]
+fn an_access_key_takes_the_keyboard_from_the_list_or_the_strip() {
+    let pages = || vec![check_page("&Night"), check_page("&Effects")];
+    let rows = [
+        pagelist::Item::Page("Night"),
+        pagelist::Item::Page("Effects"),
+    ];
+    let list = PropSheet::with_list(&[("All", &rows)], pages(), (398, 424));
+    let strip = PropSheet::new(&["Night", "Effects"], pages(), (371, 424));
+    for mut s in [list, strip] {
+        s.tab_click(1);
+        s.focus_list();
+        s.key(form::Key::Access('e'), None);
+        assert!(!s.tabs.focused, "the checked box takes the keyboard");
+        assert_eq!(s.open().focus(), Some(0));
+        s.key(form::Key::Up, None);
+        s.key(form::Key::Left, None);
+        assert_eq!(s.tabs.open, 1, "the arrows stay on the page");
+    }
+}
+
 /// A press on a page's row opens that page and gives the list the
 /// focus; a press on a heading opens nothing; a row under the pointer
 /// lights nothing.
