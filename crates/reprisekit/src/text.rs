@@ -263,6 +263,8 @@ pub struct Highlight<'a> {
     size_px: u32,
     /// The selected glyphs' ink columns: logical ones at scale 1, then device ones at `s`.
     ink: Option<((i32, i32), (i32, i32))>,
+    /// The device rows the selected glyphs ink.
+    ink_rows: Option<(i32, i32)>,
     /// The device column past the ink of the glyph before the selection, and the first column of
     /// the ink of the glyph after it.
     beside: (Option<i32>, Option<i32>),
@@ -270,14 +272,15 @@ pub struct Highlight<'a> {
 
 impl Highlight<'_> {
     /// Widened to hold a pixel (`s` device pixels) of highlight on each side of the selected ink
-    /// that fits `rect` on that side at scale 1, within `room` and up to the next glyph's ink, so
-    /// that ink never meets the pixels past the highlight.
+    /// that fits `rect` on that side at scale 1, up to the next glyph's ink, and above and below
+    /// it, all within `room`, so that ink never meets the pixels past the highlight.
     pub fn clear_of_ink(mut self, room: Rect) -> Self {
         let Some(((l1, r1), (l, r))) = self.ink else {
             return self;
         };
         let (before, after) = self.beside;
         let (mut x0, mut x1) = (self.dev.x, self.dev.right());
+        let (mut y0, mut y1) = (self.dev.y, self.dev.bottom());
         let s = self.s;
         if l1 >= self.rect.x {
             x0 = x0.min((l - s).max(s * room.x).max(before.unwrap_or(l - s)));
@@ -285,7 +288,11 @@ impl Highlight<'_> {
         if r1 <= self.rect.right() {
             x1 = x1.max((r + s).min(s * room.right()).min(after.unwrap_or(r + s)));
         }
-        self.dev = Rect::new(x0, self.dev.y, x1 - x0, self.dev.height);
+        if let Some((t, b)) = self.ink_rows {
+            y0 = y0.min((t - s).max(s * room.y));
+            y1 = y1.max((b + s).min(s * room.bottom()));
+        }
+        self.dev = Rect::new(x0, y0, x1 - x0, y1 - y0);
         self
     }
 
@@ -1276,6 +1283,7 @@ impl TextRenderer {
             bold,
             size_px,
             ink: None,
+            ink_rows: None,
             beside: (None, None),
         };
         let join = |a: Option<(i32, i32)>, (l, r): (i32, i32)| {
@@ -1331,6 +1339,7 @@ impl TextRenderer {
                 .map(|(l, _)| l),
         );
         if let (Some(base), Some((t, b))) = (h.baseline, rows) {
+            h.ink_rows = Some((s * base + t, s * base + b));
             let y0 = h.dev.y.min((s * base + t).max(s * line.y));
             let y1 = h.dev.bottom().max((s * base + b).min(s * line.bottom()));
             h.dev = Rect::new(h.dev.x, y0, h.dev.width, y1 - y0);
