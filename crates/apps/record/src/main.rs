@@ -2,14 +2,15 @@
 //! `--microphone` the default source mixed in), into an MP4 file the compositor made and handed it
 //! open, until SIGINT or SIGTERM or until the screen goes.
 //! On failure, or exiting [`ENDED_EARLY`] or [`SOUND_STOPPED`], its last line on stderr is the
-//! reason. Its settings are `[recording]`.
+//! reason; exiting [`MICROPHONE_STOPPED`], the saved notice's line. Its settings are `[recording]`.
 //!
 //! Exits: 0 once the file is closed; [`ENDED_EARLY`] when the recording stopped by itself after
 //! its file was started (the screen changed size or format, the encoder or a write failed, or
 //! frames the encoder cannot read lasted `UNREADABLE_FOR`), the file closed and playable;
 //! [`SOUND_STOPPED`] when a `--sound` recording ran to its end and closed its file but the capture
-//! of what plays stopped before; [`STOPPED_UNSTARTED`] when a stop came before its file was
-//! started, the file left empty; 1 on any other failure, a file started but not closed included.
+//! of what plays stopped before; [`MICROPHONE_STOPPED`] likewise when the microphone's did, or
+//! never opened; [`STOPPED_UNSTARTED`] when a stop came before its file was started, the file left
+//! empty; 1 on any other failure, a file started but not closed included.
 //!
 //! `--probe` prints what codes here and exits 0, or 1 when FFmpeg fails to start: a `video CODEC
 //! ENCODER` line for each encoder choice that codes a test frame in that codec (`video h265
@@ -34,7 +35,7 @@ use repriseconf::remote::EncoderChoice;
 use reprisevideo::encode::probe::{self, Backend};
 use reprisevideo::encode::rate::RateControl;
 use reprisevideo::encode::{Codec, choice};
-use reprisevideo::monitor::Tap;
+use reprisevideo::monitor::{NO_MICROPHONE, Tap};
 use reprisevideo::stream::{self, DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer};
 use sound::{Sound, Source};
 use std::os::fd::RawFd;
@@ -74,6 +75,10 @@ fn main() -> ExitCode {
         Ok(Outcome::SoundStopped(e)) => {
             eprintln!("{e}");
             ExitCode::from(SOUND_STOPPED)
+        }
+        Ok(Outcome::MicrophoneStopped(e)) => {
+            eprintln!("{e}");
+            ExitCode::from(MICROPHONE_STOPPED)
         }
         Ok(Outcome::Stopped) => {
             log::info!("stopped before the recording started");
@@ -152,6 +157,8 @@ const ENDED_EARLY: u8 = 3;
 const SOUND_STOPPED: u8 = 4;
 /// The exit status of a recorder stopped before its file was started; nothing was written.
 const STOPPED_UNSTARTED: u8 = 5;
+/// The exit status of a recording saved whole whose microphone stopped before its end.
+const MICROPHONE_STOPPED: u8 = 6;
 
 #[derive(Debug, PartialEq)]
 enum Outcome {
@@ -160,6 +167,9 @@ enum Outcome {
     EndedEarly(String),
     /// Why the sound stopped in a recording that ran to its end.
     SoundStopped(String),
+    /// The saved notice's line for a microphone that stopped, or never opened, in a recording that
+    /// ran to its end with what plays.
+    MicrophoneStopped(String),
     /// A stop came before the file was started.
     Stopped,
 }
@@ -244,20 +254,21 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<Outcome, String> {
     drop((stream, cast));
     let closed = file.finish();
     let heard = file.sound.as_ref().is_some_and(Sound::heard_microphone);
-    if args.microphone && !heard && !file.microphone_stopped {
+    if args.microphone && !heard && file.microphone_stopped.is_none() {
         log::info!("the microphone sent no sound; the recording has what plays only");
     }
-    let sound = file.sound_stopped.take();
-    outcome(file.started(), file.started_writing(), ended, sound, closed)
+    let lost = (file.sound_stopped.take(), file.microphone_stopped.take());
+    outcome(file.started(), file.started_writing(), ended, lost, closed)
 }
 
-/// What a recording comes to: `ended` is how coding ended, `sound` why the sound stopped when it
-/// did, `closed` how the file closed; a file started but not closed does not play.
+/// What a recording comes to: `ended` is how coding ended, `lost` why the sound and why the
+/// microphone stopped when they did, `closed` how the file closed; a file started but not closed
+/// does not play.
 fn outcome(
     started: bool,
     writing: bool,
     ended: Result<End, String>,
-    sound: Option<String>,
+    lost: (Option<String>, Option<String>),
     closed: Result<(), String>,
 ) -> Result<Outcome, String> {
     let none = || "No picture of the screen came.".to_string();
@@ -266,7 +277,14 @@ fn outcome(
         (false, ..) | (true, false, Ok(_), _) => Err(none()),
         (true, false, Err(e), _) | (true, true, _, Err(e)) => Err(e),
         (true, true, Err(e), Ok(())) => Ok(Outcome::EndedEarly(e)),
-        (true, true, Ok(_), Ok(())) => Ok(sound.map_or(Outcome::Saved, Outcome::SoundStopped)),
+        (true, true, Ok(_), Ok(())) => Ok(match lost {
+            (Some(why), _) => Outcome::SoundStopped(why),
+            (None, Some(why)) if why == NO_MICROPHONE => Outcome::MicrophoneStopped(why),
+            (None, Some(why)) => {
+                Outcome::MicrophoneStopped(format!("The microphone stopped: {why}"))
+            }
+            (None, None) => Outcome::Saved,
+        }),
     }
 }
 
@@ -486,8 +504,8 @@ struct File<'a> {
     stopping: Arc<AtomicBool>,
     /// Why the capture of what plays ended while the recording ran.
     sound_stopped: Option<String>,
-    /// Whether the microphone's capture ended while the recording ran.
-    microphone_stopped: bool,
+    /// Why the microphone's capture ended, or did not open, while the recording ran.
+    microphone_stopped: Option<String>,
     movie: Option<Movie>,
     output: Option<ffmpeg::format::context::Output>,
     /// When the first frame came: the movie's time 0.
@@ -537,7 +555,7 @@ impl<'a> File<'a> {
             listen: None,
             stopping: Arc::default(),
             sound_stopped: None,
-            microphone_stopped: false,
+            microphone_stopped: None,
             movie: None,
             output: None,
             start: None,
@@ -609,7 +627,7 @@ impl<'a> File<'a> {
                 }
                 Event::MicrophoneStopped(why) if self.hears(Source::Microphone) => {
                     log::info!("recording the microphone: {why}; recording on without it");
-                    self.microphone_stopped = true;
+                    self.microphone_stopped.get_or_insert(why);
                 }
                 Event::MicrophoneStopped(_) => {}
             }
@@ -629,7 +647,7 @@ impl<'a> File<'a> {
             Ok(capture) => self.captures.push((Source::Microphone, capture)),
             Err(e) => {
                 log::warn!("recording the microphone: {e}");
-                self.microphone_stopped = true;
+                self.microphone_stopped = Some(e);
             }
         }
     }
@@ -1375,50 +1393,100 @@ mod tests {
         let full = "Cannot finish the recording: No space left on device";
         let none = "No picture of the screen came.";
         assert_eq!(
-            outcome(true, true, stop(), None, Ok(())),
+            outcome(true, true, stop(), (None, None), Ok(())),
             Ok(Outcome::Saved)
         );
         assert_eq!(
-            outcome(true, true, ended(), None, Ok(())),
+            outcome(true, true, ended(), (None, None), Ok(())),
             Ok(Outcome::Saved)
         );
         let gone = "PipeWire ended the capture.";
         assert_eq!(
-            outcome(true, true, stop(), Some(gone.into()), Ok(())),
+            outcome(true, true, stop(), (Some(gone.into()), None), Ok(())),
             Ok(Outcome::SoundStopped(gone.into()))
         );
+        let unplugged = "The source went away.";
         assert_eq!(
-            outcome(true, true, stop(), Some(gone.into()), e(full)),
-            fails(full)
+            outcome(true, true, stop(), (None, Some(unplugged.into())), Ok(())),
+            Ok(Outcome::MicrophoneStopped(
+                "The microphone stopped: The source went away.".into()
+            ))
         );
         assert_eq!(
-            outcome(true, true, e(changed), None, Ok(())),
+            outcome(
+                true,
+                true,
+                stop(),
+                (None, Some(NO_MICROPHONE.into())),
+                Ok(())
+            ),
+            Ok(Outcome::MicrophoneStopped(
+                "No microphone was found.".into()
+            )),
+            "never opened"
+        );
+        assert_eq!(
+            outcome(
+                true,
+                true,
+                ended(),
+                (Some(gone.into()), Some(unplugged.into())),
+                Ok(())
+            ),
+            Ok(Outcome::SoundStopped(gone.into())),
+            "what plays outranks the microphone"
+        );
+        assert_eq!(
+            outcome(
+                true,
+                true,
+                e(changed),
+                (None, Some(unplugged.into())),
+                Ok(())
+            ),
             Ok(Outcome::EndedEarly(changed.into()))
         );
         assert_eq!(
-            outcome(true, true, stop(), None, e(full)),
+            outcome(true, true, stop(), (Some(gone.into()), None), e(full)),
+            fails(full)
+        );
+        assert_eq!(
+            outcome(true, true, e(changed), (None, None), Ok(())),
+            Ok(Outcome::EndedEarly(changed.into()))
+        );
+        assert_eq!(
+            outcome(true, true, stop(), (None, None), e(full)),
             fails(full),
             "no index"
         );
-        assert_eq!(outcome(true, true, e(changed), None, e(full)), fails(full));
+        assert_eq!(
+            outcome(true, true, e(changed), (None, None), e(full)),
+            fails(full)
+        );
         let refused = "No AV1 encoder could code the screen.";
         assert_eq!(
-            outcome(true, false, e(refused), None, Ok(())),
+            outcome(true, false, e(refused), (None, None), Ok(())),
             fails(refused)
         );
-        assert_eq!(outcome(true, false, ended(), None, Ok(())), fails(none));
         assert_eq!(
-            outcome(false, false, e("every source ended"), None, Ok(())),
+            outcome(true, false, ended(), (None, None), Ok(())),
             fails(none)
         );
-        assert_eq!(outcome(false, false, ended(), None, Ok(())), fails(none));
         assert_eq!(
-            outcome(false, false, stop(), None, Ok(())),
+            outcome(false, false, e("every source ended"), (None, None), Ok(())),
+            fails(none)
+        );
+        assert_eq!(
+            outcome(false, false, ended(), (None, None), Ok(())),
+            fails(none)
+        );
+        assert_eq!(
+            outcome(false, false, stop(), (None, None), Ok(())),
             Ok(Outcome::Stopped),
             "stopped before the first frame"
         );
         assert_eq!(
-            outcome(true, false, stop(), None, Ok(())),
+            outcome(true, false, stop(), (None, None), Ok(())),
             Ok(Outcome::Stopped)
         );
     }
@@ -1600,7 +1668,10 @@ mod tests {
             assert!(tx.send(event).is_ok());
         }
         assert_eq!(file.run(&events), Ok(End::Stopped));
-        assert!(file.microphone_stopped);
+        assert_eq!(
+            file.microphone_stopped.as_deref(),
+            Some("The source went away.")
+        );
         assert_eq!(file.sound_stopped, None, "no sound stopped notice");
     }
 
@@ -1675,7 +1746,7 @@ mod tests {
             "stopped before the file finishes"
         );
         assert!(file.captures.is_empty());
-        assert!(!file.microphone_stopped, "a stop the recorder made");
+        assert_eq!(file.microphone_stopped, None, "a stop the recorder made");
     }
 
     #[test]

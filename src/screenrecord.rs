@@ -38,6 +38,9 @@ const ENDED_EARLY: i32 = 3;
 const SOUND_STOPPED: i32 = 4;
 /// The recorder's exit status when it was stopped before it wrote anything.
 const STOPPED_UNSTARTED: i32 = 5;
+/// The recorder's exit status for a recording saved whole whose microphone stopped; its last
+/// stderr line is the notice's line.
+const MICROPHONE_STOPPED: i32 = 6;
 /// The dynamic loader's exit status when a library does not load.
 const LIBRARY_MISSING: i32 = 127;
 
@@ -400,6 +403,15 @@ impl State {
                 log::warn!("screen recording lost its sound: {last_line}");
                 let note = format!("The sound stopped: {last_line}");
                 saved_notice(self, SAVED, &made.path, Some(&note));
+            }
+            Ended::Exited {
+                made,
+                status: Some(MICROPHONE_STOPPED),
+                last_line,
+                ..
+            } => {
+                log::warn!("screen recording lost its microphone: {last_line}");
+                saved_notice(self, SAVED, &made.path, Some(&last_line));
             }
             Ended::Exited {
                 made,
@@ -969,31 +981,46 @@ mod tests {
     }
 
     #[test]
-    fn a_recording_whose_sound_stopped_is_saved_and_says_why() {
+    fn a_recording_whose_sound_or_microphone_stopped_is_saved_and_says_why() {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
         let dir = std::env::temp_dir().join(format!("reprise-record-sound-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("Screencast.mp4");
-        let file = std::fs::File::create(&path).unwrap();
-        let made = Made::of(&file, path.clone()).unwrap();
-        let ended = Ended::Exited {
-            made,
-            ok: false,
-            status: Some(SOUND_STOPPED),
-            last_line: "The sink went away.".into(),
-            killed: false,
-            empty: false,
-        };
-        h.state.recording_ended(None, ended);
-        assert!(path.exists(), "kept");
-        let n = &h.state.notify.log.get(crate::notifyview::OWN_ID).unwrap().n;
-        assert_eq!(n.summary, "Screen recording saved");
-        assert_eq!(
-            n.body,
-            "Screencast.mp4\nThe sound stopped: The sink went away."
-        );
-        assert!(n.actions.iter().any(|(key, _)| key == "folder"));
+        for (status, why, body) in [
+            (
+                SOUND_STOPPED,
+                "The sink went away.",
+                "Screencast.mp4\nThe sound stopped: The sink went away.",
+            ),
+            (
+                MICROPHONE_STOPPED,
+                "The microphone stopped: The source went away.",
+                "Screencast.mp4\nThe microphone stopped: The source went away.",
+            ),
+            (
+                MICROPHONE_STOPPED,
+                "No microphone was found.",
+                "Screencast.mp4\nNo microphone was found.",
+            ),
+        ] {
+            let file = std::fs::File::create(&path).unwrap();
+            let made = Made::of(&file, path.clone()).unwrap();
+            let ended = Ended::Exited {
+                made,
+                ok: false,
+                status: Some(status),
+                last_line: why.into(),
+                killed: false,
+                empty: false,
+            };
+            h.state.recording_ended(None, ended);
+            assert!(path.exists(), "kept");
+            let n = &h.state.notify.log.get(crate::notifyview::OWN_ID).unwrap().n;
+            assert_eq!(n.summary, "Screen recording saved");
+            assert_eq!(n.body, body);
+            assert!(n.actions.iter().any(|(key, _)| key == "folder"));
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
