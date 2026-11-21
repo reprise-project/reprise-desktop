@@ -441,6 +441,11 @@ impl repriseapp::Extended for Prompt {
         self.modal
     }
 
+    /// The dialog caption even when the request names no window to own it.
+    fn caption(&self, _win: WinId) -> repriseapp::Caption {
+        repriseapp::Caption::Fixed
+    }
+
     fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let px = self.form.units().px(ctx.base_px());
         repriseapp::oneshot::access_form(&self.form, tree, &ctx.text, px);
