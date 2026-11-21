@@ -415,6 +415,66 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_that_does_not_open_fails_the_zip() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        std::fs::create_dir_all(d.join("Docs/locked")).unwrap();
+        std::fs::write(d.join("Docs/locked/f.txt"), "shut").unwrap();
+        std::fs::write(d.join("Docs/open.txt"), "open").unwrap();
+        let locked = d.join("Docs/locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let c = Compress {
+            paths: vec![d.join("Docs")],
+            zip: d.join("Docs.zip"),
+        };
+        let got = events(&c, &Meter::default(), None);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // SAFETY: geteuid takes no arguments and cannot fail.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let want =
+            "Cannot compress Docs.zip: Docs/locked: Couldn't visit directory: Permission denied";
+        assert!(
+            matches!(&got[..], [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished]
+                if text == want),
+            "{got:?}"
+        );
+        assert_eq!(names_in(d), ["Docs"], "no zip or temp file is left");
+    }
+
+    #[test]
+    fn a_link_to_a_folder_that_does_not_open_is_zipped_as_the_link() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        std::fs::create_dir_all(d.join("Docs")).unwrap();
+        std::fs::create_dir(d.join("shut")).unwrap();
+        std::fs::write(d.join("shut/f.txt"), "shut").unwrap();
+        std::os::unix::fs::symlink("../shut", d.join("Docs/link")).unwrap();
+        std::fs::set_permissions(d.join("shut"), std::fs::Permissions::from_mode(0o000)).unwrap();
+        let c = Compress {
+            paths: vec![d.join("Docs")],
+            zip: d.join("Docs.zip"),
+        };
+        let got = events(&c, &Meter::default(), None);
+        std::fs::set_permissions(d.join("shut"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            matches!(
+                &got[..],
+                [ArchiveEvent::Landed { .. }, ArchiveEvent::Finished]
+            ),
+            "{got:?}"
+        );
+        let listed = std::process::Command::new("bsdtar")
+            .args(["-tvf".as_ref(), d.join("Docs.zip").as_os_str()])
+            .output()
+            .unwrap();
+        let listed = String::from_utf8_lossy(&listed.stdout);
+        assert!(listed.contains("Docs/link -> ../shut"), "{listed}");
+        assert!(!listed.contains("f.txt"), "{listed}");
+    }
+
+    #[test]
     fn a_quoted_name_under_none_of_the_items_is_left_as_bsdtar_said() {
         let t = tempfile::tempdir().unwrap();
         let a = t.path().join("a.txt");
