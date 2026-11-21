@@ -1234,7 +1234,7 @@ fn a_selection_at_scale_2_shows_no_line_ink_inside_its_highlight() {
                 let lay = layout(&text, &m, &t, Rect::new(0, 0, 200, 60), 1);
                 let mut c = Canvas::with_scale(200, 60, 2);
                 let paint = classic_paint(cs, 1);
-                let (v, caret) = (View::default(), Caret::Unfocused);
+                let (v, caret) = (View::default(), Caret::Hidden);
                 draw(&mut c, &text, &paint, &m, &t, v, &lay, caret, None);
                 let x0 = lay.inner.x + 1;
                 let xb = x0 + text.measure(&format!("o{ch}"), false, px);
@@ -1287,7 +1287,7 @@ fn each_row_end(
                     t.place(p(0, b), true);
                 }
                 let mut c = Canvas::with_scale(200, 60, 2);
-                let (v, caret) = (View::default(), Caret::Unfocused);
+                let (v, caret) = (View::default(), Caret::Hidden);
                 draw(
                     &mut c,
                     &text,
@@ -1479,7 +1479,7 @@ fn a_selected_glyph_at_scale_2_lights_whole_and_leaves_its_neighbour() {
                 draw(&mut c, &text, &paint, &m, &t, v, &lay(&t), caret, None);
                 c.pixels
             };
-            let draw = |s, t: &str, sel| paint_with(s, t, sel, Caret::Unfocused);
+            let draw = |s, t: &str, sel| paint_with(s, t, sel, Caret::Hidden);
             let caret = |t: &str, sel, shown| paint_with(2, t, sel, Caret::new(true, shown));
             let geom = |_: &str| (x0, row, y..y + m.line_h);
             let pairs = crate::paint::ascii_pairs;
@@ -1697,4 +1697,48 @@ fn rows_selected_from_their_start_share_one_left_edge() {
             "row {row}: the frame stays"
         );
     }
+}
+
+/// Without the focus the box hides its selection and keeps its caret where it was; the focus
+/// coming back shows the selection again.
+#[test]
+fn an_unfocused_box_hides_its_selection() {
+    crate::pins::fonts();
+    let text = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let m = Metrics::default();
+    let mut t = e("one\ntwo");
+    t.place(p(0, 1), false);
+    t.place(p(1, 2), true);
+    let lay = layout(&text, &m, &t, Rect::new(0, 0, 120, 60), 1);
+    let paint = classic_paint(&theme.colors, 1);
+    let draw_as = |t: &MultiEdit, caret| {
+        let mut c = Canvas::new(120, 60);
+        draw(
+            &mut c,
+            &text,
+            &paint,
+            &m,
+            t,
+            View::default(),
+            &lay,
+            caret,
+            None,
+        );
+        c
+    };
+    let hl = theme.colors.hilight.argb();
+    let lit = |c: &Canvas| (0..60).any(|y| (0..120).any(|x| c.get(x, y) == hl));
+    assert!(
+        lit(&draw_as(&t, Caret::Hidden)),
+        "focused, the selection shows"
+    );
+    let away = draw_as(&t, Caret::Unfocused);
+    assert!(!lit(&away), "unfocused, it is hidden");
+    let mut collapsed = t.clone();
+    collapsed.place(t.caret, false);
+    assert!(
+        away == draw_as(&collapsed, Caret::Unfocused),
+        "drawn as the caret alone"
+    );
 }

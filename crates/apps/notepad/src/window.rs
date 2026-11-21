@@ -129,7 +129,8 @@ impl Notepad {
             &self.edit,
             self.view,
             &el,
-            reprisekit::textedit::Caret::new(self.focused, ctx.caret_on),
+            // Find's window keeps the selection shown without a caret.
+            reprisekit::textedit::Caret::new(self.edit_focused(), self.focused && ctx.caret_on),
             self.drop_point(ctx),
         );
         if let Some(corner) = el.corner().filter(|_| !ctx.maximized && !self.status_bar) {

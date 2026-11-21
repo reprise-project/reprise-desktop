@@ -2026,6 +2026,40 @@ fn only_the_window_with_the_keyboard_draws_and_blinks_its_caret() {
     assert_eq!(draw(&mut np, &ctx).pixels, unfocused.pixels);
 }
 
+/// The selection shows while the window or its Find window holds the keyboard, so a found
+/// match stays lit, and hides once the keyboard leaves both.
+#[test]
+fn the_selection_shows_while_notepad_or_its_find_window_has_the_keyboard() {
+    let mut ctx = test_ctx();
+    let mut np = Notepad::new(None);
+    np.edit = MultiEdit::new("one two");
+    np.edit.place(multiedit::Pos { line: 0, col: 4 }, false);
+    np.edit.place(multiedit::Pos { line: 0, col: 7 }, true);
+    np.find = Some(finddlg::find_form(&finddlg::FindFields {
+        query: "two".into(),
+        match_case: false,
+        down: true,
+    }));
+    let hl = ctx.theme.colors.hilight.argb();
+    let lit = |np: &mut Notepad, ctx: &Ctx| {
+        let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+        np.draw_main(&mut c, ctx);
+        c.pixels.contains(&hl)
+    };
+    np.event(MAIN, Event::Focus(true), &mut ctx);
+    assert!(lit(&mut np, &ctx), "with the keyboard");
+    np.event(MAIN, Event::Focus(false), &mut ctx);
+    assert!(!lit(&mut np, &ctx), "the keyboard elsewhere");
+    let r = np.event(FIND, Event::Focus(true), &mut ctx);
+    assert!(r.redraw_all, "Find taking the keyboard redraws the edit");
+    assert!(lit(&mut np, &ctx), "Find has the keyboard");
+    np.event(FIND, Event::Focus(false), &mut ctx);
+    assert!(!lit(&mut np, &ctx), "Find lost it too");
+    np.event(FIND, Event::Focus(true), &mut ctx);
+    np.find = None;
+    assert!(!lit(&mut np, &ctx), "Find closed");
+}
+
 #[test]
 fn time_date_writes_the_time_then_the_locales_short_date() {
     let at = reprisefs::locale::mktime(2026, 11, 14, 21, 5, 0);

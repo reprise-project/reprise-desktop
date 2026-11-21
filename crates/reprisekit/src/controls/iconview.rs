@@ -390,7 +390,8 @@ impl EditLayout {
 /// once the keyboard has been used, draws the dotted focus ring. A look with its
 /// own desktop box ([`crate::style::Part::DesktopItem`]) draws that instead.
 /// `rename` draws the in-progress edit box in place of the label, with `preedit`
-/// wrapped in at the caret. A box wider than the cell returns a wider canvas
+/// wrapped in at the caret; without the focus it hides its selection
+/// ([`TextEdit::unfocused`]). A box wider than the cell returns a wider canvas
 /// with the cell centred, so the caller offsets it by half the difference.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_cell(
@@ -480,6 +481,13 @@ pub fn draw_cell_at(
     let line_h = font as i32 + theme.text.len(3) * s;
 
     if let Some((own, caret_state)) = rename {
+        let unfocused;
+        let own = if caret_state.focused() {
+            own
+        } else {
+            unfocused = own.unfocused();
+            &*unfocused
+        };
         let preedit = c.preedit().filter(|_| caret_state.focused()).cloned();
         let composed;
         let (edit, run, bar_on) = match &preedit {
@@ -2266,6 +2274,32 @@ mod tests {
             "{} faults\n{}",
             faults.len(),
             faults.join("\n")
+        );
+    }
+
+    /// Without the focus the rename box draws as its caret alone: the selection hides until the
+    /// focus comes back.
+    #[test]
+    fn an_unfocused_rename_box_hides_its_selection() {
+        crate::pins::fonts();
+        let theme = Theme::default();
+        let t = text();
+        let mut edit = TextEdit::new("Notes", false);
+        edit.set_selection(0, 5);
+        let draw = |edit: &TextEdit, caret| {
+            let rename = Some((edit, caret));
+            draw_cell(&theme, &t, "Notes", None, false, None, rename, None)
+        };
+        let away = draw(&edit, Caret::Unfocused);
+        assert!(
+            away.pixels != draw(&edit, Caret::Hidden).pixels,
+            "focused, the selection shows"
+        );
+        let mut collapsed = edit.clone();
+        collapsed.set_selection(edit.caret(), edit.caret());
+        assert!(
+            away.pixels == draw(&collapsed, Caret::Unfocused).pixels,
+            "unfocused, it is hidden"
         );
     }
 }
