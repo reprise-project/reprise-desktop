@@ -380,8 +380,7 @@ pub fn draw(
             let cx = ud.edit.as_ref().map_or(at(shown.len()), |e| at(e.caret()));
             if let Some(hl) = &hl {
                 c.fill_rect(hl.rect, cs.hilight);
-                let clip = Rect::new(hl.rect.x, tr.y, hl.rect.width, tr.height);
-                text.draw_clipped(c, tr, clip, &shown, false, cs.hilight_text, align, px);
+                text.draw_clipped(c, tr, hl.rect, &shown, false, cs.hilight_text, align, px);
                 text.draw_overhang(c, hl, tr, cs.hilight_text);
             }
             let bar = Rect::new(cx, tr.y + 2 * s, s, tr.height - 4 * s);
@@ -1008,11 +1007,11 @@ mod tests {
                     ud.edit = Some(e);
                     ud
                 };
-                // The selected copy draws across the field's rows, the highlight's and those
-                // above and under it.
+                // The highlight is one text line tall, centred in the field.
                 let geom = |t: &str| {
                     let (tr, align) = text_rect(&field(t, 0..0), l.edit, 1);
-                    (text_x(&text, t, tr, align, px), tr, tr.y..tr.bottom())
+                    let top = tr.y + (tr.height - LINE_H) / 2;
+                    (text_x(&text, t, tr, align, px), tr, top..top + LINE_H)
                 };
                 // The caret, at the selection's start, is inverted again to take it off.
                 let draw = |s: i32, t: &str, sel: std::ops::Range<usize>| {
@@ -1052,5 +1051,91 @@ mod tests {
             faults.len(),
             faults.join("\n")
         );
+    }
+
+    /// A selection holds the selected glyphs' ink, descenders included, in its highlight and
+    /// changes nothing off it, so a neighbour's tail under a selected char keeps its ink, at
+    /// scale 1 and 2.
+    #[test]
+    fn a_selection_holds_its_descenders_and_leaves_its_neighbours_tail() {
+        crate::pins::fonts();
+        let cs = &Theme::default().colors;
+        let l = layout(2, 2);
+        let (w, h) = (WIDTH + 4, HEIGHT + 4);
+        let mut faults = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.into()],
+                antialias: false,
+                ..FontConfig::default()
+            });
+            for px in [11, 13] {
+                for s in [1, 2] {
+                    let draw = |t: &str, sel: std::ops::Range<usize>| {
+                        let mut ud = UpDown::new(0, 0, 99);
+                        let mut e = TextEdit::new(t, true);
+                        e.set_selection(sel.end, sel.start);
+                        ud.edit = Some(e);
+                        let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                        c.fill_rect(c.bounds(), cs.button_face);
+                        let paint = classic_paint(cs, 1);
+                        draw(&mut c, &text, &paint, &ud, &l, true, None, px);
+                        let (tr, align) = text_rect(&ud, l.edit, 1);
+                        let cx = text_x(&text, t, tr, align, px)
+                            + text.measure(&t[..sel.start], false, px);
+                        c.invert_rect(Rect::new(cx, tr.y + 2, 1, tr.height - 4));
+                        (c.pixels, text_x(&text, t, tr, align, px), tr)
+                    };
+                    for (t, sel) in crate::paint::descender_cases() {
+                        let (plain, _, _) = draw(t, sel.start..sel.start);
+                        let (selected, pen, tr) = draw(t, sel.clone());
+                        let (off, unlit) = crate::paint::off_highlight(
+                            &text,
+                            px,
+                            (w, h),
+                            (t, sel.clone()),
+                            (pen, tr),
+                            s,
+                            (&plain, &selected),
+                            (cs.hilight, cs.hilight_text),
+                        );
+                        if off + unlit > 0 {
+                            faults.push(format!(
+                                "{family} {px} px @{s} \"{t}\" {sel:?}: {off} px changed off the \
+                                 highlight, {unlit} selected px not lit"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(faults.is_empty(), "{}", faults.join("\n"));
+    }
+
+    #[test]
+    fn a_selected_descender_pins_at_scale_1_and_2() {
+        crate::pins::fonts();
+        let cs = &Theme::default().colors;
+        let l = layout(2, 2);
+        let mut got = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.into()],
+                antialias: false,
+                ..FontConfig::default()
+            });
+            for s in [1, 2] {
+                let mut ud = UpDown::new(0, 0, 99);
+                let mut e = TextEdit::new("1jgy", true);
+                e.set_selection(3, 1);
+                ud.edit = Some(e);
+                let mut c = Canvas::with_scale((WIDTH + 4) as u32, (HEIGHT + 4) as u32, s);
+                c.fill_rect(c.bounds(), cs.button_face);
+                let paint = classic_paint(cs, 1);
+                draw(&mut c, &text, &paint, &ud, &l, true, None, 11);
+                got.push((format!("{family} @{s}"), crate::pins::fnv(&c)));
+            }
+        }
+        crate::pins::check("controls/updown_selected_descenders", &got);
     }
 }
