@@ -25,7 +25,8 @@ pub enum Ask {
     /// A new cursor image: drawn over everything, so glass has nothing new under it.
     Cursor,
     /// Glass a held frame left behind its own window's program (`GlassCtx::owes`): blurs at once
-    /// without moving `[glass] blur_rate`'s cap.
+    /// without moving `[glass] blur_rate`'s cap, also in a frame the pointer, the cursor, a
+    /// capture or a timed commit asked too.
     CatchUp,
     /// The frame a timed commit shows in: the commit asks for what it changes once it applies.
     Timed,
@@ -35,7 +36,7 @@ pub enum Ask {
 pub(super) struct Asked {
     pub(super) redraw: bool,
     pub(super) pointer_only: bool,
-    /// Only `Ask::CatchUp` asked.
+    /// `Ask::CatchUp` asked, and nothing that may change what glass shows (`backdrop`).
     pub(super) catch_up: bool,
     pub(super) scene: bool,
     /// Where the asks may have changed what glass shows: nowhere for the pointer and the cursor.
@@ -44,15 +45,17 @@ pub(super) struct Asked {
 
 impl Asked {
     pub(super) fn add(&mut self, ask: Ask) {
-        self.pointer_only = (self.pointer_only || !self.redraw) && ask == Ask::Pointer;
-        self.catch_up = (self.catch_up || !self.redraw) && ask == Ask::CatchUp;
-        self.redraw = true;
-        self.scene |= ask == Ask::Scene;
-        self.backdrop = self.backdrop.and(match ask {
+        let under = match ask {
             Ask::Scene | Ask::Content => Under::Anywhere,
             Ask::Commit(d) => Under::Within(d),
             Ask::Pointer | Ask::Cursor | Ask::CatchUp | Ask::Timed => Under::Nothing,
-        });
+        };
+        let quiet = (!self.redraw || self.backdrop == Under::Nothing) && under == Under::Nothing;
+        self.catch_up = quiet && (ask == Ask::CatchUp || (self.redraw && self.catch_up));
+        self.pointer_only = (self.pointer_only || !self.redraw) && ask == Ask::Pointer;
+        self.redraw = true;
+        self.scene |= ask == Ask::Scene;
+        self.backdrop = self.backdrop.and(under);
     }
 }
 
