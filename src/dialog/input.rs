@@ -317,13 +317,10 @@ impl Dialog {
         redraw_if(f.combo.drag_bar(&cl, &f.thumb, y))
     }
 
-    /// A message box or a Welcome panel: a dialog whose only controls are
-    /// its buttons, so the keyboard focus is always on one of them.
+    /// A message box: a dialog whose only controls are its buttons, so the
+    /// keyboard focus is always on one of them.
     fn buttons_only(&self) -> bool {
-        matches!(
-            self.style,
-            Style::Classic { .. } | Style::EndProgram | Style::Welcome(_)
-        ) && self.field.is_none()
+        matches!(self.style, Style::Classic { .. } | Style::EndProgram) && self.field.is_none()
     }
 
     /// Move focus to the next enabled button (`forward`) or the previous. Tab wraps (`wrap`);
