@@ -465,6 +465,7 @@ fn prompt(
         parent: input.parent.clone(),
         modal: input.modal,
         job: None,
+        fit: None,
     }
 }
 

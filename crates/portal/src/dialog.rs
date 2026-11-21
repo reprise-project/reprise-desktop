@@ -306,6 +306,9 @@ pub struct Prompt {
     pub parent: Option<String>,
     pub modal: bool,
     pub job: Option<Job>,
+    /// Lays `form` out for a client this many px tall at 100% text, for a prompt that can give up
+    /// height when the work area holds less than `size`.
+    pub fit: Option<fn(&mut Form, i32)>,
 }
 
 impl Prompt {
@@ -383,12 +386,19 @@ impl App for Prompt {
                     None => Reply::none(),
                 }
             }
-            // A text size change: a fixed window takes only the size it is asked for.
-            Event::Resized => Reply {
-                size: Some(ctx.forms().text.size(self.size)),
-                redraw: true,
-                ..Default::default()
-            },
+            // A text size change: a fixed window takes only the size it is asked for, held to the
+            // work area.
+            Event::Resized => {
+                let u = ctx.forms().text;
+                if let Some(fit) = self.fit {
+                    fit(&mut self.form, u.within(ctx.size.1));
+                }
+                Reply {
+                    size: Some(u.size(self.size)),
+                    redraw: true,
+                    ..Default::default()
+                }
+            }
             ev => match form_input(&mut self.form, &ev, ctx) {
                 Some(e) => self.decide(e),
                 None => Reply::none(),
@@ -513,6 +523,7 @@ mod tests {
             parent: None,
             modal: false,
             job: None,
+            fit: None,
         };
         let mut ctx = test_ctx(175);
         let reply = p.event(repriseapp::MAIN, Event::Resized, &mut ctx);
@@ -545,6 +556,7 @@ mod tests {
                 assert_ne!(std::thread::current().id(), ui, "not on the UI thread");
                 Box::new(|f: &mut Form| f.set_text("note", "done"))
             })),
+            fit: None,
         };
         let mut ctx = test_ctx(100);
         assert!(!p.event(repriseapp::MAIN, Event::Wake, &mut ctx).redraw);
