@@ -775,6 +775,37 @@ mod tests {
     }
 
     #[test]
+    fn prtsc_over_an_open_start_menu_shoots_and_leaves_it_open() {
+        const SHIFT: u32 = 42;
+        const SYSRQ: u32 = 99;
+        for style in [
+            crate::config::StartMenuStyle::Classic,
+            crate::config::StartMenuStyle::Blue,
+        ] {
+            let mut h = crate::harness::Harness::new();
+            h.state.config.startmenu_style = style;
+            h.output("TEST-1", 1024, 768);
+            h.state.toggle_start_from_keys();
+            h.dispatch();
+            let open = |s: &State| !s.menus.is_empty() || s.start_panel.is_some();
+            assert!(open(&h.state), "{style:?} Start is open");
+            h.key(SYSRQ, true);
+            h.key(SYSRQ, false);
+            assert_eq!(h.state.shots.taken, [Take::Screen], "{style:?}");
+            assert!(open(&h.state), "{style:?} Start stays open for the picture");
+            h.key(SHIFT, true);
+            h.key(SYSRQ, true);
+            h.key(SYSRQ, false);
+            h.key(SHIFT, false);
+            assert!(
+                h.state.panels.region.is_some(),
+                "{style:?} the overlay opens"
+            );
+            assert!(open(&h.state), "{style:?} Start stays open under it");
+        }
+    }
+
+    #[test]
     fn the_folder_is_under_pictures_else_home() {
         let pics = Some(PathBuf::from("/h/Pictures"));
         let home = Some(PathBuf::from("/h"));

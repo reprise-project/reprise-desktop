@@ -464,8 +464,11 @@ impl State {
             KeyRoute::IconPaste => self.paste_on_desktop(None, false),
             KeyRoute::IconRefresh => self.rescan_desktop(),
             KeyRoute::Binds(actions) => {
-                // A bind past an open menu closes it; Start's own toggles it.
-                if modes.menus_open && !actions.contains(&Action::StartMenu) {
+                // A bind past an open menu closes it; Start's own toggles it, and a
+                // capture leaves it in the picture.
+                let keeps = actions.contains(&Action::StartMenu)
+                    || actions.iter().all(crate::keyroute::reads_screen);
+                if modes.menus_open && !keeps {
                     self.close_menu();
                 }
                 for a in &actions {

@@ -609,11 +609,78 @@ fn a_modified_bind_runs_over_an_open_menu() {
     ] {
         assert_eq!(rm(&press(sym, mods)), KeyRoute::Binds(vec![a]));
     }
-    assert_eq!(
-        rm(&press(KEY_Print, 0)),
-        KeyRoute::Menu(KEY_Print),
-        "a bare bind stays the menu's"
-    );
+}
+
+#[test]
+fn the_prtsc_keys_binds_run_over_menus_and_popups() {
+    let bind = |mods, keysym, action| Keybind {
+        mods,
+        keysym,
+        action,
+    };
+    let binds = [
+        bind(0, KEY_Print, Action::Screenshot),
+        bind(MOD_SHIFT, KEY_Print, Action::ScreenshotRegion),
+        bind(MOD_ALT, KEY_Sys_Req, Action::ScreenshotWindow),
+        bind(MOD_CTRL | MOD_ALT, KEY_Sys_Req, Action::ScreenshotContent),
+        bind(0, KEY_F12, Action::Screenshot),
+        bind(0, KEY_r, Action::RecordScreen),
+    ];
+    let open = |set: fn(&mut Modes)| {
+        let mut m = Modes::default();
+        set(&mut m);
+        m
+    };
+    let popups = [
+        open(|m| m.menus_open = true),
+        open(|m| m.start_panel_open = true),
+        open(|m| m.launcher_open = true),
+        open(|m| m.overview_open = true),
+        open(|m| m.clipview_open = true),
+        open(|m| m.emojiview_open = true),
+        open(|m| m.projector_open = true),
+        open(|m| m.notify_reply_focused = true),
+        open(|m| {
+            m.snap_picker_open = true;
+            m.snap_picker_keys = true;
+        }),
+        open(|m| {
+            m.menus_open = true;
+            m.dialog_has_keyboard = true;
+            m.dialog_modal = true;
+        }),
+    ];
+    for m in &popups {
+        for (sym, mods, a) in [
+            (KEY_Print, 0, Action::Screenshot),
+            (KEY_Print, MOD_SHIFT, Action::ScreenshotRegion),
+            (KEY_Sys_Req, MOD_ALT, Action::ScreenshotWindow),
+            (KEY_Sys_Req, MOD_CTRL | MOD_ALT, Action::ScreenshotContent),
+        ] {
+            assert_eq!(
+                route(m, &press(sym, mods), &binds, &[]).route,
+                KeyRoute::Binds(vec![a]),
+                "{mods:#x}+{sym:#x} runs over {m:?}"
+            );
+        }
+    }
+    let menu = &popups[0];
+    for (sym, mods) in [
+        (KEY_F12, 0),
+        (KEY_r, 0),
+        (KEY_R, MOD_SHIFT),
+        (KEY_r, MOD_ALT),
+        (KEY_Down, 0),
+        (KEY_Return, 0),
+        (KEY_Escape, 0),
+        (KEY_Alt_L, 0),
+    ] {
+        assert_eq!(
+            route(menu, &press(sym, mods), &binds, &[]).route,
+            KeyRoute::Menu(sym),
+            "{mods:#x}+{sym:#x} stays the menu's"
+        );
+    }
 }
 
 #[test]

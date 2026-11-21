@@ -2,8 +2,8 @@
 //! seat handler decodes a press once into a `KeyPress`, snapshots the modal
 //! state into `Modes`, and `route` says what happens. Nothing here touches
 //! Smithay, so the ordering rules (a lock beats a menu beats a dialog beats
-//! a bind beats the client, but a modified bind passes a menu) are plain
-//! data and tested as such. The power,
+//! a bind beats the client, but a modified bind or PrtSc passes a menu) are
+//! plain data and tested as such. The power,
 //! sleep and media keys are the machine's, ahead of the lock and a capture,
 //! except the wifi key, which the lock takes, and the sound, screen
 //! brightness and playback keys, which a capture takes: they act on the
@@ -446,6 +446,14 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         fire_super,
     };
     let switch = || switch_bind(modes, k, binds);
+    // No menu or popup uses the PrtSc key, so its binds run over them at
+    // any modifiers; a capture leaves them open for the picture (`keyboard`).
+    if k.pressed && owns_presses(modes) && (k.has(KEY_Print) || k.has(KEY_Sys_Req)) {
+        let actions = bound(k, binds);
+        if !actions.is_empty() {
+            return with(KeyRoute::Binds(actions));
+        }
+    }
     if modes.menus_open && k.pressed {
         return with(menu_press(modes, k, binds));
     }
@@ -683,6 +691,19 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     with(KeyRoute::Client)
 }
 
+/// Whether an open menu or popup takes every press but a few binds of its own.
+fn owns_presses(m: &Modes) -> bool {
+    m.menus_open
+        || m.overview_open
+        || m.snap_picker_keys
+        || m.projector_open
+        || m.start_panel_open
+        || m.launcher_open
+        || m.clipview_open
+        || m.emojiview_open
+        || m.notify_reply_focused
+}
+
 /// A press in the open switcher: Escape cancels it, Tab or a switcher's
 /// bind steps it; anything else (the arrows too) is swallowed.
 fn switcher_key(k: &KeyPress, binds: &[Keybind]) -> KeyRoute {
@@ -714,10 +735,11 @@ fn switch_bind(modes: &Modes, k: &KeyPress, binds: &[Keybind]) -> Option<KeyRout
 }
 
 /// A press over the open menu stack. A bind with Ctrl, Alt or Super runs
-/// (the menus close first, `keyboard`), unless a Welcome panel has the
-/// keyboard; during a drag only those `runs_during_drag` allows. Any other
-/// press drives the menu, but a letter or digit under Super, or under Ctrl
-/// outside a drag (where Ctrl picks the drop action), is no access key.
+/// (the menus close first unless it `reads_screen`, `keyboard`), unless a
+/// Welcome panel has the keyboard; during a drag only those
+/// `runs_during_drag` allows. Any other press drives the menu, but a letter
+/// or digit under Super, or under Ctrl outside a drag (where Ctrl picks the
+/// drop action), is no access key.
 fn menu_press(modes: &Modes, k: &KeyPress, binds: &[Keybind]) -> KeyRoute {
     let welcome = modes.dialog_has_keyboard && modes.dialog_modal;
     if !welcome && k.mods & !MOD_SHIFT != 0 {
@@ -837,6 +859,21 @@ fn passes_dialog(a: &Action) -> bool {
             | Action::Touchpad(_)
             | Action::Airplane
             | Action::RotationLock
+    )
+}
+
+/// Whether a bind's action takes a picture or a colour off the screen: an
+/// open menu stays open for it.
+pub fn reads_screen(a: &Action) -> bool {
+    matches!(
+        a,
+        Action::Screenshot
+            | Action::ScreenshotWindow
+            | Action::ScreenshotRegion
+            | Action::ScreenshotContent
+            | Action::RecordScreen
+            | Action::RecordRegion
+            | Action::ColorPicker
     )
 }
 
