@@ -385,7 +385,7 @@ pub(crate) fn draw_grid(
                     origin: (cell.x / s, cell.y / s),
                 });
                 let rename = match &sv.edit {
-                    Some((j, ed)) if *j == i => Some((ed, Caret::new(!sv.edit_away, true))),
+                    Some((j, ed)) if *j == i => Some((ed, Caret::new(p.active, true))),
                     _ => None,
                 };
                 let icon = entry_icon(e, Mode::Icons);

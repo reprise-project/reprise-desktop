@@ -79,6 +79,28 @@ struct Redraw {
 }
 
 impl State {
+    /// Whether the rename box holds the keyboard: it is the field the caret follows and no
+    /// window, layer surface or dialog has taken the keyboard while the rename waits.
+    pub(crate) fn rename_has_keyboard(&self) -> bool {
+        self.editor() == Some(crate::caret::Editor::Rename)
+            && self.desktop_has_keyboard()
+            && !self.dialog_has_keyboard()
+    }
+
+    /// Redraws a waiting rename box once the keyboard has moved to or from it. Called where the
+    /// keyboard or the field with it changes: the seat's focus and the caret's restart and stop.
+    pub(crate) fn follow_rename_keyboard(&mut self) {
+        if !self.is_renaming() {
+            return;
+        }
+        self.handle.insert_idle(|s| {
+            let keyed = s.desktop.as_ref().map(|d| d.rename_keyed);
+            if keyed.is_some_and(|k| k != s.rename_has_keyboard()) {
+                s.relayout_desktop();
+            }
+        });
+    }
+
     /// Lay out the desktop widgets, then the icons round the cells they cover, and redraw what
     /// changed.
     pub fn relayout_desktop(&mut self) {
@@ -89,9 +111,7 @@ impl State {
             Some(o) => (self.usable_area(Some(o)), self.draw_scale_at(Some(o))),
             None => (Rect::default(), 1),
         };
-        // A window or another field of ours can take the keyboard while the rename waits.
-        let keyboard =
-            self.editor() == Some(crate::caret::Editor::Rename) && self.desktop_has_keyboard();
+        let keyboard = self.rename_has_keyboard();
         let caret = Caret::new(keyboard, self.caret.on);
         let preedit = self.ime_field_preedit(crate::caret::Editor::Rename);
         let grid = self.desktop_grid();
@@ -105,6 +125,7 @@ impl State {
         let Some(mut view) = self.desktop.take() else {
             return;
         };
+        view.rename_keyed = keyboard;
         let was = self.scene.outputs_of(view.tree);
         view.cells = if out.is_none() {
             Vec::new()

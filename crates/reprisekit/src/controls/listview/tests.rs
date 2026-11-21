@@ -963,9 +963,8 @@ fn the_rename_box_is_a_black_border_on_white_over_the_name() {
     assert_eq!(c.get(b.x - 1, mid), cs.window.argb());
 }
 
-/// While its window lacks the keyboard the rename box hides its selection.
 #[test]
-fn the_rename_box_hides_its_selection_while_its_window_lacks_the_keyboard() {
+fn the_rename_box_hides_its_selection_while_its_window_is_inactive() {
     crate::pins::fonts();
     let theme = Theme::default();
     let mut lv = view(3);
@@ -973,15 +972,20 @@ fn the_rename_box_hides_its_selection_while_its_window_lacks_the_keyboard() {
     let r = Rect::new(0, 0, 300, 100);
     let px = theme.fonts.size_px;
     let text = TextRenderer::load(&FontConfig::default());
-    let b = lv.edit_rect(&layout(&lv, r, &ControlMetrics::CLASSIC), 1, &text, px);
-    let lit = |lv: &ListView| {
-        let (c, ..) = render(lv, r);
+    let lay = layout(&lv, r, &ControlMetrics::CLASSIC);
+    let b = lv.edit_rect(&lay, 1, &text, px);
+    let lit = |active: bool| {
+        let mut c = Canvas::new(r.width as u32, r.height as u32);
+        let p = Paint {
+            active,
+            ..classic_paint(&theme.colors, 1)
+        };
+        draw(&mut c, &text, &p, &lv, &lay, None, px);
         (b.x..b.right())
             .any(|x| (b.y..b.bottom()).any(|y| c.get(x, y) == theme.colors.hilight.argb()))
     };
-    assert!(lit(&lv), "with the keyboard");
-    lv.edit_away = true;
-    assert!(!lit(&lv), "without it");
+    assert!(lit(true), "active");
+    assert!(!lit(false), "inactive");
 }
 
 #[test]

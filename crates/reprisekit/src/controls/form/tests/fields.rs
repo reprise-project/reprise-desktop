@@ -680,3 +680,30 @@ fn show_edit_text_shows_a_read_only_field_from_its_start_with_nothing_selected()
     assert_eq!(edit.text, "3F:9A:01");
     assert_eq!((edit.anchor(), edit.caret(), first.get()), (0, 0, 0));
 }
+
+#[test]
+fn a_focused_field_hides_its_selection_and_caret_while_its_window_is_inactive() {
+    crate::pins::fonts();
+    let t = tr();
+    let cs = &Theme::default().colors;
+    let mut f = edit_form();
+    f.key(Key::Edit(EditKey::Paste));
+    f.paste("found".into());
+    f.key(Key::Edit(EditKey::SelectAll));
+    let shot = |f: &Form, active: bool| {
+        let mut c = Canvas::new(200, 40);
+        c.fill_rect(c.bounds(), cs.button_face);
+        let p = Paint {
+            active,
+            ..classic_paint(cs, 1)
+        };
+        draw(&mut c, &t, &p, f, false, PX);
+        c
+    };
+    let hl = cs.hilight.argb();
+    assert!(
+        shot(&f, true).pixels.contains(&hl),
+        "active, the selection shows"
+    );
+    assert!(!shot(&f, false).pixels.contains(&hl), "inactive, it hides");
+}

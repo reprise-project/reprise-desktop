@@ -122,7 +122,7 @@ fn draw_choice_label(
 
 /// Draw the form onto `c`, already filled with face (and the page `p.back` names on a
 /// sheet). Popups draw last. `cues` shows the dotted focus rectangles, hidden until the
-/// keyboard is used.
+/// keyboard is used. The focused field draws its caret and selection only while `p.active`.
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: bool, px: u32) {
     let Paint { cs, s, .. } = *p;
     form.drawn_with(p);
@@ -148,6 +148,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
     for (i, it) in form.items.iter().enumerate() {
         let focused = form.focus == Some(i) && it.focusable();
         let cue = focused && cues;
+        let keyed = focused && p.active;
         let placed = form.at(it);
         let r = placed.scaled(s);
         let clip = form.clip_of(it);
@@ -297,7 +298,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     Some(gcs) => Paint { cs: gcs, ..*p },
                     None => *p,
                 };
-                let caret = Caret::new(focused && *enabled, form.caret);
+                let caret = Caret::new(keyed && *enabled, form.caret);
                 match drop {
                     Some(d) => {
                         let tail = &shown.text[from..];
@@ -341,7 +342,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
             }
             Control::UpDown(u) => {
                 let lay = updown::layout_for(u, placed, &cm, grow);
-                updown::draw(c, text, p, u, &lay, focused, form.spin_lit(i), px);
+                updown::draw(c, text, p, u, &lay, keyed, form.spin_lit(i), px);
             }
             Control::TrackBar(t) => {
                 let at = placed;
@@ -471,12 +472,12 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
             Control::Clock(face) => clockface::draw(c, p, placed, *face),
             Control::Time(tf) => {
                 let lay = timefield::layout(placed, &cm);
-                timefield::draw(c, text, p, tf, &lay, focused, form.spin_lit(i), px);
+                timefield::draw(c, text, p, tf, &lay, keyed, form.spin_lit(i), px);
             }
             Control::HotKey(h) => {
                 let ptr = form.pointer.of((i, Light::Body));
                 let field = hotkey::layout(placed);
-                hotkey::draw(c, text, p, h, field, focused, form.caret, ptr, px);
+                hotkey::draw(c, text, p, h, field, keyed, form.caret, ptr, px);
             }
             Control::IconList(l) => {
                 let lay = icon_list_layout(it.grows, placed, &cm);
@@ -508,7 +509,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     Some(gcs) => Paint { cs: gcs, ..*p },
                     None => *p,
                 };
-                let caret = Caret::new(focused && memo.enabled, form.caret);
+                let caret = Caret::new(keyed && memo.enabled, form.caret);
                 multiedit::draw(c, text, &mp, &m, &memo.edit, view, &lay, caret, None);
             }
         };
