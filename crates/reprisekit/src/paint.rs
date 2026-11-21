@@ -213,6 +213,7 @@ pub fn draw_edit(
         let run = Rect::new(x0, line.y, x1 - x0, line.height);
         let sel = sel.start - first..sel.end - first;
         text.highlight(run, shown, sel, inner.x, room, false, px, c.scale())
+            .clear_of_ink(room)
     });
     // The device pixels past the run are filled under the text, so a neighbour's ink there
     // stays the text colour.
@@ -320,8 +321,9 @@ impl Theme {
 
 /// Where a selection of one char of a two-char text recolours wrongly at scale 2: a neighbour's
 /// ink outside the scale 1 highlight that changes colour from the text drawn unselected, a pixel
-/// changed in a device column outside both the scale 1 highlight and the selected glyph's ink, or
-/// a selected glyph `lit` whole at scale 1 but not across the highlight's rows at scale 2.
+/// changed in a device column outside both the scale 1 highlight and the selected glyph's ink
+/// with two columns either side, or a selected glyph `lit` whole at scale 1 but not across the
+/// highlight's rows at scale 2.
 /// `draw(s, text, sel)` returns the pixels of a `w` px wide canvas at scale `s`, any caret shown
 /// at `sel.start`; `geom(text)` gives its pen, the rect its text is laid in and the highlight's
 /// rows.
@@ -356,7 +358,9 @@ pub(crate) fn selection_faults(
             let (l, r) = (0..own.len())
                 .filter(|&i| own[i])
                 .map(|i| at(i, 2).0)
-                .fold((run.x, run.right()), |(l, r), x| (l.min(x), r.max(x + 1)));
+                .fold((run.x, run.right()), |(l, r), x| {
+                    (l.min(x - 2), r.max(x + 3))
+                });
             let filled = (0..lit2.len())
                 .filter(|&i| lit2[i] != plain[i] && rows2.contains(&at(i, 2).1))
                 .filter(|&i| !(l..r).contains(&at(i, 2).0))
@@ -476,9 +480,11 @@ fn glyph_mask(
 }
 
 /// Where a selection of `t`'s bytes `sel` draws off its highlight at scale `s`: pixels outside
-/// the box of `hilight` pixels that differ from the text drawn unselected, and pixels the
-/// selected glyphs ink alone that are not `lit`. `plain` and `selected` are the pixels of a `w`
-/// px wide canvas; `pen` and `line` as in [`selection_faults`]'s `geom`.
+/// the box of `hilight` pixels that differ from the text drawn unselected, pixels the selected
+/// glyphs ink alone that are not `lit`, and `lit` ink beside a pixel no glyph inks that is `lit`
+/// too, in a column no other glyph inks in the highlight's rows, where the glyph's edge is lost.
+/// `plain` and `selected` are the pixels of a `w` px wide canvas; `pen` and `line` as in
+/// [`selection_faults`]'s `geom`.
 #[cfg(test)]
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn off_highlight(
@@ -490,7 +496,7 @@ pub(crate) fn off_highlight(
     s: i32,
     (plain, selected): (&[u32], &[u32]),
     (hilight, lit): (crate::theme::Color, crate::theme::Color),
-) -> (usize, usize) {
+) -> (usize, usize, usize) {
     let ws = w * s;
     let at = |i: usize| (i as i32 % ws, i as i32 / ws);
     let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
@@ -515,14 +521,33 @@ pub(crate) fn off_highlight(
     let unlit = (0..own.len())
         .filter(|&i| own[i] && selected[i] != lit.argb())
         .count();
-    (off, unlit)
+    let mut neighbour = vec![false; ws as usize];
+    for i in (0..own.len()).filter(|&i| !own[i] && plain[i] != lit.argb()) {
+        let (x, y) = at(i);
+        neighbour[x as usize] |= (y0..y1).contains(&y);
+    }
+    let lost = |i: usize| {
+        !own[i]
+            && selected[i] == lit.argb()
+            && plain[i] == lit.argb()
+            && !neighbour[at(i).0 as usize]
+    };
+    let merged = (0..own.len())
+        .filter(|&i| own[i] && selected[i] == lit.argb())
+        .filter(|&i| {
+            let x = at(i).0;
+            (x > 0 && lost(i - 1)) || (x + 1 < ws && lost(i + 1))
+        })
+        .count();
+    (off, unlit, merged)
 }
 
-/// Texts with descenders, a `|` and a `j` whose tail runs under its neighbour, each with every
-/// one-char selection and the whole text selected, for [`off_highlight`].
+/// Texts with descenders, a `|`, a `j` whose tail runs under its neighbour and digits inked from
+/// their first column, each with every one-char selection and the whole text selected, for
+/// [`off_highlight`].
 #[cfg(test)]
 pub(crate) fn descender_cases() -> Vec<(&'static str, std::ops::Range<usize>)> {
-    ["gypqj", "ajo", "o|g@", "1j9"]
+    ["gypqj", "ajo", "o|g@", "1j9", "8605"]
         .into_iter()
         .flat_map(|t| {
             (0..t.len())
