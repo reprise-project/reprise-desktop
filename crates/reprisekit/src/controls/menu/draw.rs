@@ -1,6 +1,7 @@
 use super::MenuItem;
 use super::layout::{
-    ARROW_RIGHT_INSET, ARROW_SPACE, BANNER_PAD, BULLET_X, CHECK_DY, CHECK_X, MenuLayout,
+    ARROW_RIGHT_INSET, ARROW_SPACE, BANNER_OVER, BANNER_PAD, BULLET_X, CHECK_DY, CHECK_X,
+    MenuLayout,
 };
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::text::{Align, TextRenderer};
@@ -76,12 +77,12 @@ fn draw_band(canvas: &mut Canvas, theme: &Theme, text: &TextRenderer, band: Rect
     for x in 0..band.height {
         strip.vline(x, 0, band.width, band_color(&stops, x as f32 / denom));
     }
-    let size = theme.fonts.size_px + 3 * (s as u32);
+    let size = theme.fonts.size_px + (theme.text.len(BANNER_OVER) * s) as u32;
     let (bold, regular) = match banner.rsplit_once(' ') {
         Some((head, tail)) => (head.to_string(), format!(" {tail}")),
         None => (banner.to_string(), String::new()),
     };
-    let mut pen = BANNER_PAD * s;
+    let mut pen = theme.text.len(BANNER_PAD) * s;
     for (part, is_bold) in [(bold, true), (regular, false)] {
         if part.is_empty() {
             continue;
