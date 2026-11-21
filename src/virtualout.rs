@@ -408,13 +408,6 @@ pub fn armed(state: &State, output: &Output) -> Option<(Instant, Option<Wants>)>
     s.timer.map(|(_, at)| (at, s.wants))
 }
 
-/// What `output`'s next tick does besides a timed commit's frame.
-#[cfg(test)]
-pub fn wanted(state: &State, output: &Output) -> Option<Wants> {
-    let s = (state.virtual_outputs.screens.iter()).find(|s| &s.output == output)?;
-    s.wants
-}
-
 /// When `output`'s clock last ticked.
 #[cfg(test)]
 pub fn last_tick(state: &State, output: &Output) -> Option<Instant> {

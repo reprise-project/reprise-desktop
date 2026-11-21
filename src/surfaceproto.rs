@@ -443,7 +443,7 @@ fn tick(state: &mut State) -> bool {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::harness::{Harness, TestClient, Toplevel};
+    use crate::harness::{Harness, Presented, TestClient, Toplevel};
     use smithay::output::Mode;
     use wayland_client::{Proxy, protocol::wl_surface::WlSurface as ClientSurface};
     use wayland_protocols::wp::{
@@ -856,32 +856,71 @@ mod tests {
             .any(|(o, a)| *o == output.name() && matches!(a, crate::backend::Ask::Commit(_)))
     }
 
+    /// Ticks the standby's clock for a frame now and waits for it, so its next tick is a whole
+    /// second away.
+    fn fresh_tick(h: &mut Harness, output: &Output) -> std::time::Instant {
+        let last = crate::virtualout::last_tick(&h.state, output).expect("the standby ticked");
+        crate::virtualout::ask(&mut h.state, output, crate::backend::Ask::Scene);
+        tick_after(h, output, last)
+    }
+
+    /// Runs the loop until the standby's clock ticks after `last`; that tick's time.
+    fn tick_after(
+        h: &mut Harness,
+        output: &Output,
+        last: std::time::Instant,
+    ) -> std::time::Instant {
+        let o = output.clone();
+        h.until("the standby's tick", move |s| {
+            crate::virtualout::last_tick(s, &o) != Some(last)
+        });
+        crate::virtualout::last_tick(&h.state, output).expect("the standby ticked")
+    }
+
+    /// What the standby's armed clock ticks for besides a timed commit, `None` when unarmed.
+    fn armed_for(h: &Harness, output: &Output) -> Option<Option<crate::virtualout::Wants>> {
+        crate::virtualout::armed(&h.state, output).map(|(_, wants)| wants)
+    }
+
     #[test]
-    fn a_timed_commit_a_virtual_tick_applies_leaves_no_frame_wanted() {
+    fn a_timed_commit_a_virtual_tick_applies_takes_one_frame_and_leaves_its_clock_unarmed() {
         let (mut h, output, mut c, t, _) = on_standby();
+        let surface = c.side.shells[t.shell].surface.clone();
+        let shown = c.presentation_feedback(&surface);
+        let last = fresh_tick(&mut h, &output);
         draw_overdue(&mut h, &mut c, t, 0xff00_0080);
-        crate::backend::take_asks();
-        crate::virtualout::tick_now(&mut h.state, &output);
-        assert!(commit_asked(&output), "the tick applies the commit");
+        let ticked = tick_after(&mut h, &output, last);
         assert_eq!(
-            crate::virtualout::wanted(&h.state, &output),
+            armed_for(&h, &output),
             None,
-            "the tick's frame showed the commit"
+            "no clock stays armed after the frame that showed the commit"
+        );
+        h.run_for(1100);
+        assert_eq!(
+            crate::virtualout::last_tick(&h.state, &output),
+            Some(ticked),
+            "no tick after it"
+        );
+        h.roundtrip(&mut c);
+        assert!(
+            matches!(*shown.lock().unwrap(), Some(Presented::Shown { .. })),
+            "the tick's frame presented the commit"
         );
     }
 
     #[test]
     fn an_animation_stepped_in_a_virtual_tick_that_applies_a_timed_commit_gets_its_next_tick() {
         let (mut h, output, mut c, t, _) = on_standby();
+        let last = fresh_tick(&mut h, &output);
         h.state.config.accessibility.visual_bell = crate::config::VisualBell::Screen;
         h.state.flash_bell(None, std::time::Instant::now());
         draw_overdue(&mut h, &mut c, t, 0xff00_0080);
         crate::backend::take_asks();
-        crate::virtualout::tick_now(&mut h.state, &output);
+        tick_after(&mut h, &output, last);
         assert!(commit_asked(&output), "the tick applies the commit");
         assert_eq!(
-            crate::virtualout::wanted(&h.state, &output),
-            Some(crate::virtualout::Wants::Frame),
+            armed_for(&h, &output),
+            Some(Some(crate::virtualout::Wants::Frame)),
             "the flash's next step"
         );
     }
@@ -889,13 +928,14 @@ mod tests {
     #[test]
     fn a_commit_after_a_virtual_tick_that_applied_a_timed_one_gets_the_next_tick() {
         let (mut h, output, mut c, t, _) = on_standby();
+        let last = fresh_tick(&mut h, &output);
         draw_overdue(&mut h, &mut c, t, 0xff00_0080);
-        crate::virtualout::tick_now(&mut h.state, &output);
-        assert_eq!(crate::virtualout::wanted(&h.state, &output), None);
+        tick_after(&mut h, &output, last);
+        assert_eq!(armed_for(&h, &output), None);
         h.draw_self(&mut c, t, 0xff80_0000);
         assert_eq!(
-            crate::virtualout::wanted(&h.state, &output),
-            Some(crate::virtualout::Wants::Frame),
+            armed_for(&h, &output),
+            Some(Some(crate::virtualout::Wants::Frame)),
             "the new commit's frame"
         );
     }
