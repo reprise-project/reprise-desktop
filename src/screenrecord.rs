@@ -308,7 +308,7 @@ impl State {
             file.as_raw_fd(),
             &r.target.output.name(),
             r.target.area,
-            self.config.screenshot.record_sound,
+            Heard::of(&self.config.screenshot),
         );
         let spawned = crate::spawn::spawn_waited(&argv, &self.env, Some(file.as_fd()));
         drop(file);
@@ -489,8 +489,29 @@ pub fn pick_output(area: Rect, outputs: &[Rect]) -> Option<(usize, Rect)> {
     ))
 }
 
-/// The recorder's command line; it writes only into descriptor `fd`, which it inherits.
-pub fn recorder_argv(fd: RawFd, output: &str, area: Option<Rect>, sound: bool) -> Vec<OsString> {
+/// What a recording hears besides the screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heard {
+    Nothing,
+    Played,
+    /// What plays with the default source mixed in.
+    PlayedAndMicrophone,
+}
+
+impl Heard {
+    /// `record_microphone` mixes into the sound `record_sound` records, so alone it records none.
+    pub fn of(shot: &repriseconf::config::ScreenshotConfig) -> Heard {
+        match (shot.record_sound, shot.record_microphone) {
+            (false, _) => Heard::Nothing,
+            (true, false) => Heard::Played,
+            (true, true) => Heard::PlayedAndMicrophone,
+        }
+    }
+}
+
+/// The recorder's command line; it writes only into descriptor `fd`, which it inherits. Only
+/// [`Heard::PlayedAndMicrophone`] lets it open the microphone.
+pub fn recorder_argv(fd: RawFd, output: &str, area: Option<Rect>, heard: Heard) -> Vec<OsString> {
     let mut argv: Vec<OsString> = vec![
         PROGRAM.into(),
         "--fd".into(),
@@ -502,8 +523,10 @@ pub fn recorder_argv(fd: RawFd, output: &str, area: Option<Rect>, sound: bool) -
         argv.push("--area".into());
         argv.push(format!("{},{},{},{}", a.x, a.y, a.width, a.height).into());
     }
-    if sound {
-        argv.push("--sound".into());
+    match heard {
+        Heard::Nothing => {}
+        Heard::Played => argv.push("--sound".into()),
+        Heard::PlayedAndMicrophone => argv.extend(["--sound".into(), "--microphone".into()]),
     }
     argv
 }
@@ -1041,7 +1064,7 @@ mod tests {
             a.iter().map(|s| s.to_string_lossy().into_owned()).collect()
         };
         assert_eq!(
-            words(recorder_argv(7, "DP-1", None, false)),
+            words(recorder_argv(7, "DP-1", None, Heard::Nothing)),
             [PROGRAM, "--fd", "7", "--output", "DP-1"]
         );
         assert_eq!(
@@ -1049,9 +1072,31 @@ mod tests {
                 7,
                 "DP-1",
                 Some(Rect::new(10, 20, 300, 200)),
-                true
+                Heard::Played
             ))[5..],
             ["--area", "10,20,300,200", "--sound"]
+        );
+        assert_eq!(
+            words(recorder_argv(7, "DP-1", None, Heard::PlayedAndMicrophone))[5..],
+            ["--sound", "--microphone"]
+        );
+    }
+
+    #[test]
+    fn the_microphone_is_heard_only_with_both_keys_on() {
+        let shot = |record_sound, record_microphone| repriseconf::config::ScreenshotConfig {
+            record_sound,
+            record_microphone,
+            ..Default::default()
+        };
+        assert_eq!(Heard::of(&shot(false, false)), Heard::Nothing);
+        assert_eq!(Heard::of(&shot(false, true)), Heard::Nothing);
+        assert_eq!(Heard::of(&shot(true, false)), Heard::Played);
+        assert_eq!(Heard::of(&shot(true, true)), Heard::PlayedAndMicrophone);
+        assert_eq!(
+            Heard::of(&Default::default()),
+            Heard::Nothing,
+            "off by default"
         );
     }
 

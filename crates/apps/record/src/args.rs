@@ -13,6 +13,8 @@ pub struct Args {
     pub area: Option<Area>,
     /// Record what plays too.
     pub sound: bool,
+    /// Mix the default source into what plays; only with `sound`.
+    pub microphone: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,7 +33,7 @@ pub enum Command {
 }
 
 pub const USAGE: &str = "usage: reprise-record --fd N --output NAME [--area X,Y,WIDTH,HEIGHT] \
-                         [--sound]\n       reprise-record --probe";
+                         [--sound [--microphone]]\n       reprise-record --probe";
 
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, String> {
     let args: Vec<OsString> = args.into_iter().collect();
@@ -45,7 +47,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, String
 impl Args {
     fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         let mut args = args.into_iter();
-        let (mut fd, mut output, mut area, mut sound) = (None, None, None, false);
+        let (mut fd, mut output, mut area) = (None, None, None);
+        let (mut sound, mut microphone) = (false, false);
         while let Some(arg) = args.next() {
             let mut value = |name: &str| {
                 args.next()
@@ -68,14 +71,19 @@ impl Args {
                     area = Some(parse_area(&text.to_string_lossy())?);
                 }
                 Some("--sound") => sound = true,
+                Some("--microphone") => microphone = true,
                 _ => return Err(format!("unknown argument {arg:?}; {USAGE}")),
             }
+        }
+        if microphone && !sound {
+            return Err(format!("--microphone needs --sound; {USAGE}"));
         }
         Ok(Args {
             fd: fd.ok_or_else(|| format!("--fd is missing; {USAGE}"))?,
             output: output.ok_or_else(|| format!("--output is missing; {USAGE}"))?,
             area,
             sound,
+            microphone,
         })
     }
 }
@@ -131,6 +139,7 @@ mod tests {
                 output: "DP-1".into(),
                 area: None,
                 sound: false,
+                microphone: false,
             })
         );
         let args = parse(&[
@@ -143,7 +152,7 @@ mod tests {
             "7",
         ])
         .unwrap();
-        assert!(args.sound);
+        assert!(args.sound && !args.microphone);
         assert_eq!(
             args.area,
             Some(Area {
@@ -175,6 +184,10 @@ mod tests {
             let e = parse(&["--fd", "3", "--output", "o", "--area", area]).unwrap_err();
             assert!(e.starts_with("--area takes"), "{area}: {e}");
         }
+        let alone = parse(&["--fd", "3", "--output", "o", "--microphone"]).unwrap_err();
+        assert!(alone.starts_with("--microphone needs --sound"), "{alone}");
+        let both = parse(&["--fd", "3", "--output", "o", "--microphone", "--sound"]).unwrap();
+        assert!(both.sound && both.microphone);
         assert!(
             parse(&["--frobnicate"])
                 .unwrap_err()

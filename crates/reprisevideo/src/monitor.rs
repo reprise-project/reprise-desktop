@@ -1,4 +1,5 @@
-//! What plays, captured from a sink's monitor on a PipeWire connection of its own.
+//! What plays, captured from a sink's monitor, or the microphone, on a PipeWire connection of its
+//! own.
 
 use pipewire::properties::properties;
 use pipewire::spa;
@@ -25,6 +26,19 @@ pub fn on_pipewire(
         &Cell<bool>,
     ) -> Result<(), String>,
 ) -> Result<(), String> {
+    connect(stopped, log::Level::Warn, body)
+}
+
+/// [`on_pipewire`], logging an error on an object other than the core at `object_errors`.
+fn connect(
+    stopped: pipewire::channel::Receiver<()>,
+    object_errors: log::Level,
+    body: impl FnOnce(
+        &pipewire::main_loop::MainLoopRc,
+        &pipewire::core::CoreRc,
+        &Cell<bool>,
+    ) -> Result<(), String>,
+) -> Result<(), String> {
     let main_loop = pipewire::main_loop::MainLoopRc::new(None).map_err(|e| e.to_string())?;
     let context = pipewire::context::ContextRc::new(&main_loop, None).map_err(|e| e.to_string())?;
     let core = context.connect_rc(None).map_err(|e| e.to_string())?;
@@ -44,10 +58,14 @@ pub fn on_pipewire(
     let _errors = core
         .add_listener_local()
         .error(move |id, _, res, message| {
-            log::warn!("sound: PipeWire object {id}: {message} ({res})");
-            if id == pipewire::core::PW_ID_CORE
-                && let Some(l) = weak.upgrade()
-            {
+            let core = id == pipewire::core::PW_ID_CORE;
+            let level = if core {
+                log::Level::Warn
+            } else {
+                object_errors
+            };
+            log::log!(level, "sound: PipeWire object {id}: {message} ({res})");
+            if core && let Some(l) = weak.upgrade() {
                 l.quit();
             }
         })
@@ -55,13 +73,22 @@ pub fn on_pipewire(
     body(&main_loop, &core, &stopping)
 }
 
-/// Capture the monitor of sink `target` (the default sink, followed as it changes, for None) into
-/// `samples`: S16LE stereo at `rate`, in the chunks PipeWire hands over, each with the time of the
-/// cycle that queued it, so chunks the thread takes late in a burst keep their own times. Runs until a stop from
-/// `stopped`, a core error or, with a `target`, the sink going; a stream error is the Err. The
-/// stream is called `name` for program `app`.
+/// What [`capture`] listens to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tap<'a> {
+    /// The monitor of the sink of this name; the default sink, followed as it changes, for None.
+    Monitor(Option<&'a str>),
+    /// The default source, followed as it changes. The stream is linked from a source, so the
+    /// taskbar's microphone shows while it runs.
+    Microphone,
+}
+
+/// Capture `tap` into `samples`: S16LE stereo at `rate`, in the chunks PipeWire hands over, each
+/// with the time of the cycle that queued it, so chunks the thread takes late in a burst keep
+/// their own times. Runs until a stop from `stopped`, a core error or, for a named sink, the sink
+/// going; a stream error is the Err. The stream is called `name` for program `app`.
 pub fn capture(
-    target: Option<&str>,
+    tap: Tap,
     app: &str,
     name: &str,
     rate: u32,
@@ -69,16 +96,19 @@ pub fn capture(
     stopped: pipewire::channel::Receiver<()>,
 ) -> Result<(), String> {
     pipewire::init();
-    on_pipewire(stopped, |main_loop, core, _| {
+    // The stream's error, as WirePlumber's when no source is there, is the Err the caller logs.
+    connect(stopped, log::Level::Debug, |main_loop, core, _| {
         let mut props = properties! {
             *pipewire::keys::MEDIA_TYPE => "Audio",
             *pipewire::keys::MEDIA_CATEGORY => "Capture",
             *pipewire::keys::APP_NAME => app,
-            "stream.capture.sink" => "true",
         };
-        if let Some(target) = target {
-            props.insert("target.object", target);
-            props.insert("node.dont-reconnect", "true");
+        if let Tap::Monitor(target) = tap {
+            props.insert("stream.capture.sink", "true");
+            if let Some(target) = target {
+                props.insert("target.object", target);
+                props.insert("node.dont-reconnect", "true");
+            }
         }
         props.insert("node.latency", format!("{}/{rate}", rate / 50));
         let stream = StreamRc::new(core.clone(), name, props).map_err(|e| e.to_string())?;

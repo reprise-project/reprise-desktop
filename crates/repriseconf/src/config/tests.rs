@@ -393,6 +393,9 @@ fn screenshot_save_defaults_on_and_is_configurable() {
     assert!(!Config::default().screenshot.record_sound);
     let c = Config::parse("[screenshot]\nrecord_sound = true\n").unwrap();
     assert!(c.screenshot.record_sound && c.screenshot.save);
+    assert!(!c.screenshot.record_microphone, "the microphone stays off");
+    let c = Config::parse("[screenshot]\nrecord_microphone = true\n").unwrap();
+    assert!(c.screenshot.record_microphone && !c.screenshot.record_sound);
 }
 
 #[test]

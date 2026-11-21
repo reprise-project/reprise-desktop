@@ -747,6 +747,7 @@ fn save_round_trips_every_field() {
         hot_corner: "top-right".into(),
         screenshot_save: false,
         screenshot_record_sound: true,
+        screenshot_record_microphone: true,
         screenshot_format: "jxl".into(),
         screenshot_png_compression: "best".into(),
         screenshot_jpg_quality: 75,

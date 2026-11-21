@@ -499,7 +499,7 @@ all open it. Reading GNOME's settings needs the `dconf` command.
   `app-org.reprise.RemoteDesktop`, lets RDP clients use the session
   ([remote-desktop.md](remote-desktop.md), [security.md](security.md#remote-desktop)).
 - **Screen recorder.** `reprise-record` records a screen or an area, with sound
-  if asked, into an MP4 under Videos/Screencasts as [`[recording]`](configuration.md#recording)
+  and the microphone if asked, into an MP4 under Videos/Screencasts as [`[recording]`](configuration.md#recording)
   says. It reads the screen through the portal ([security.md](security.md#sandboxed-programs)).
 - **Remote logins.** Under `reprise-login` with remote logins on,
   `reprise-login-rdp` listens on the port instead and hands each login to the

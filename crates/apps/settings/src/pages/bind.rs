@@ -169,6 +169,7 @@ pub(super) fn binds() -> Vec<Bind> {
         ),
         Bind::Num(cap::KEYFRAME, lens!(recording_keyframe_interval)),
         Bind::Flag(cap::RECORD_SOUND, lens!(screenshot_record_sound)),
+        Bind::Flag(cap::RECORD_MICROPHONE, lens!(screenshot_record_microphone)),
         Bind::Named(cap::AUDIO_CODEC, lens!(recording_audio_codec), AUDIO_CODECS),
         Bind::Num(cap::AUDIO_BITRATE, lens!(recording_audio_bitrate)),
         Bind::Flag(cap::AUDIO_VBR, lens!(recording_audio_vbr)),

@@ -204,6 +204,12 @@ shake, the dim, the hidden frame rate and window memory.
   (`[recording]`, [configuration.md](configuration.md#recording)).
 - **Settings > Screen Capture** sets the screenshot format and the
   recording's codecs, rates and sound.
+- **Microphone in recordings.** With "Record what plays" and "Record the
+  microphone" both on, a recording's sound has the default microphone mixed
+  in, and the taskbar's microphone shows from its first frame until Stop
+  (`[screenshot] record_microphone`). A recording running when the desktop
+  locks keeps hearing it, and a change to either box applies from the next
+  recording.
 - **Colour picker.** Super+Shift+C shows a loupe at the pointer; a click or
   Enter copies the colour as `#rrggbb`.
 

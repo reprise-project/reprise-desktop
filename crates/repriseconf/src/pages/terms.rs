@@ -364,10 +364,8 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("recording_bitrate", "Bitrate:"),
             ("recording_frame_rate", "Frame rate:"),
             ("recording_keyframe_interval", "Keyframe after:"),
-            (
-                "screenshot_record_sound",
-                "Record what plays in screen recordings",
-            ),
+            ("screenshot_record_sound", "Record what plays"),
+            ("screenshot_record_microphone", "Record the microphone"),
             ("recording_audio_codec", "Audio codec"),
             ("recording_audio_bitrate", "Audio bitrate"),
             ("recording_audio_vbr", "Variable bitrate"),

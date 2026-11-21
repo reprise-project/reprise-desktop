@@ -786,6 +786,9 @@ impl Config {
             if let Some(v) = s.record_sound {
                 cfg.screenshot.record_sound = v;
             }
+            if let Some(v) = s.record_microphone {
+                cfg.screenshot.record_microphone = v;
+            }
             let shot = &mut cfg.screenshot;
             if let Some(f) = s.format {
                 shot.format = f.parse()?;
