@@ -129,6 +129,7 @@ pub(super) fn render(state: &mut State, head: Head) {
     let (pointer, own) =
         crate::console::pointer::drawn_on(state, &output, state.pointer_location());
     let focus = state.magnifier_focus(&output);
+    let dragged = crate::glass::dragged_tree(state);
     let State {
         backend,
         scene,
@@ -183,8 +184,12 @@ pub(super) fn render(state: &mut State, head: Head) {
     let clear = crate::render::clear_color(&config.theme.colors);
     let filter = crate::magnifier::filter_matrix(&config.accessibility);
     let wanted = crate::glass::wanted(config);
-    let late =
-        wanted && crate::glass::trails(quality, glass_hold) && glass.show_last(scene, &output);
+    let late = wanted
+        && glass.trails_on(
+            &output,
+            crate::glass::drag_shows_on(scene, dragged, &output),
+        )
+        && glass.show_last(scene, &output);
     if !late {
         glass.update_screen_backdrop(&mut b.renderer, scene, &output, clear, wanted);
     }

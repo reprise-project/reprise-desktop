@@ -1668,7 +1668,8 @@ fn trail_settings() -> Settings {
     }
 }
 
-/// One screen frame of `scene` on `output` as the backend draws it at `quality`.
+/// One screen frame of `scene` on `output` as the backend draws it at `quality`, the dragged
+/// window on it.
 fn screen_frame(
     renderer: &mut GlesRenderer,
     ctx: &GlassCtx,
@@ -1677,9 +1678,22 @@ fn screen_frame(
     quality: Quality,
     points: &[(i32, i32)],
 ) -> Screen {
+    screen_frame_dragging(renderer, ctx, scene, output, quality, points, true)
+}
+
+/// As `screen_frame`, `dragged` saying whether the dragged window shows on `output`.
+fn screen_frame_dragging(
+    renderer: &mut GlesRenderer,
+    ctx: &GlassCtx,
+    scene: &DeskScene,
+    output: &Output,
+    quality: Quality,
+    points: &[(i32, i32)],
+    dragged: bool,
+) -> Screen {
     let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
     ctx.begin(output, trail_settings(), quality, Hold::No);
-    let late = trails(quality, Hold::No) && ctx.show_last(scene, output);
+    let late = ctx.trails_on(output, dragged) && ctx.show_last(scene, output);
     if !late {
         ctx.update_screen_backdrop(renderer, scene, output, clear, true);
     }
@@ -1915,6 +1929,132 @@ fn a_capture_between_trailing_frames_of_a_still_drag_changes_no_picture() {
         private(&ctx),
         texture,
         "the lower glass keeps its private backdrop"
+    );
+}
+
+/// A 320x200 output named `name` with its left edge at `x`.
+fn test_output_at(name: &str, x: i32) -> Output {
+    let o = Output::new(
+        name.into(),
+        smithay::output::PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: smithay::output::Subpixel::Unknown,
+            make: "Reprise".into(),
+            model: "test".into(),
+            serial_number: String::new(),
+        },
+    );
+    let mode = smithay::output::Mode {
+        size: (320, 200).into(),
+        refresh: 60_000,
+    };
+    o.change_current_state(
+        Some(mode),
+        Some(Transform::Normal),
+        Some(smithay::output::Scale::Integer(1)),
+        Some((x, 0).into()),
+    );
+    o
+}
+
+/// Outputs A and B side by side over white, a 120x80 sheet of glass at (20, 20) of each, a black
+/// 300x100 box at (0, 100) for a drag to move, and a hidden black spot under B's sheet.
+fn two_outputs(ctx: &Rc<GlassCtx>) -> (DeskScene, [Output; 2], TreeId, TreeId, [Backdrop; 2]) {
+    let mut scene = DeskScene::new();
+    let outputs = [test_output_at("A", 0), test_output_at("B", 320)];
+    for o in &outputs {
+        scene.add_output(o);
+    }
+    let root = scene.root();
+    let desktop = scene.tree_create(root);
+    scene.rect_create(desktop, (640, 200), [1.0; 4]);
+    let spot = scene.tree_create(desktop);
+    scene.set_position(spot, 360, 40);
+    scene.rect_create(spot, (60, 40), [0.0, 0.0, 0.0, 1.0]);
+    scene.set_enabled(spot, false);
+    let dragged = scene.tree_create(desktop);
+    scene.set_position(dragged, 0, 100);
+    scene.rect_create(dragged, (300, 100), [0.0, 0.0, 0.0, 1.0]);
+    let windows = scene.tree_create(root);
+    let glass =
+        [20, 340].map(|x| glass_window(&mut scene, ctx, windows, (x, 20), (120, 80), None).1);
+    (scene, outputs, dragged, spot, glass)
+}
+
+/// One screen frame on `output` with `dragged` the tree a drag moves.
+fn drag_frame(
+    renderer: &mut GlesRenderer,
+    ctx: &GlassCtx,
+    scene: &DeskScene,
+    output: &Output,
+    dragged: TreeId,
+    points: &[(i32, i32)],
+) -> Screen {
+    let on = drag_shows_on(scene, Some(dragged), output);
+    screen_frame_dragging(renderer, ctx, scene, output, Quality::Coarse, points, on)
+}
+
+#[test]
+fn only_the_output_a_drag_shows_on_trails() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let (mut scene, [a, b], dragged, spot, _glass) = two_outputs(&ctx);
+    let at = [(60, 55)];
+    drag_frame(&mut renderer, &ctx, &scene, &a, dragged, &[]);
+    let first = drag_frame(&mut renderer, &ctx, &scene, &b, dragged, &at);
+    scene.set_position(dragged, 10, 100);
+    scene.set_enabled(spot, true);
+    let on_a = drag_frame(&mut renderer, &ctx, &scene, &a, dragged, &[]);
+    assert!(on_a.late, "the output the drag shows on trails");
+    let on_b = drag_frame(&mut renderer, &ctx, &scene, &b, dragged, &at);
+    assert!(!on_b.late, "the other output draws its glass first");
+    assert!(
+        on_b.red[0] < first.red[0],
+        "and shows the spot in the same frame: {:?} against {:?}",
+        on_b.red,
+        first.red
+    );
+}
+
+#[test]
+fn trailing_follows_a_drag_across_outputs_and_the_output_it_left_trails_once_then_draws_fresh() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let (mut scene, [a, b], dragged, _spot, _glass) = two_outputs(&ctx);
+    let under = [(110, 90)];
+    let frames = |scene: &DeskScene, renderer: &mut GlesRenderer| {
+        (
+            drag_frame(renderer, &ctx, scene, &a, dragged, &under),
+            drag_frame(renderer, &ctx, scene, &b, dragged, &[]),
+        )
+    };
+    frames(&scene, &mut renderer);
+    scene.set_position(dragged, 10, 100);
+    let (on_a, on_b) = frames(&scene, &mut renderer);
+    assert!(on_a.late && !on_b.late, "the drag on A trails there only");
+    scene.set_position(dragged, 60, 60);
+    let (on_a, on_b) = frames(&scene, &mut renderer);
+    assert!(on_a.late && on_b.late, "across both, both trail");
+    scene.set_position(dragged, 330, 60);
+    let (left, on_b) = frames(&scene, &mut renderer);
+    assert!(on_b.late, "on B alone, B trails");
+    assert!(left.late, "A, which the box just left, trails once more");
+    assert!(left.changed, "its late update asks a frame");
+    let (fresh, _) = frames(&scene, &mut renderer);
+    assert!(!fresh.late, "that frame draws A's glass first");
+    assert!(
+        fresh.red[0] > left.red[0],
+        "and shows the box gone: {:?} after {:?}",
+        fresh.red,
+        left.red
     );
 }
 
