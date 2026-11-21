@@ -831,6 +831,25 @@ impl GlassCtx {
         self.update_backdrop(renderer, scene, output, clear, wanted);
     }
 
+    /// As `update_screen_backdrop`, for a frame that copies `output` (a capture, a mirror): what
+    /// the screen's glass owes its own window's program (`owes`) stays owed, as the screen
+    /// showed none of it.
+    pub fn update_copy_backdrop(
+        &self,
+        renderer: &mut GlesRenderer,
+        scene: &DeskScene,
+        output: &Output,
+        clear: Color32F,
+        wanted: bool,
+    ) {
+        let name = output.name();
+        let owed = (self.backdrops.borrow().get(&name)).is_some_and(|b| b.owed);
+        self.update_screen_backdrop(renderer, scene, output, clear, wanted);
+        if let Some(b) = self.backdrops.borrow_mut().get_mut(&name) {
+            b.owed |= owed;
+        }
+    }
+
     /// Have the frame begun for the output named `name` draw its glass from `b`'s picture and the
     /// private ones its glass drew from, as they stand.
     fn show_pictures(&self, name: &str, b: &OutputBackdrop) {

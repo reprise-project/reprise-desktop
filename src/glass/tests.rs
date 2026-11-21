@@ -1180,8 +1180,50 @@ fn a_frame_held_for_a_commit_in_its_own_glass_owes_that_glass_a_catch_up() {
     frame(&mut renderer, Hold::No);
     assert!(!ctx.owes(&output), "a frame that blurs settles it");
     frame(&mut renderer, Hold::Keep(Under::Within(drawn(40, 40))));
-    assert!(ctx.take_owed(&output));
+    assert!(ctx.take_owed(&output), "a held frame owes again");
     assert!(!ctx.owes(&output), "the catch-up asked settles it");
+}
+
+#[test]
+fn a_capture_of_a_screen_that_owes_a_catch_up_leaves_it_owed() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let mut scene = DeskScene::new();
+    let root = scene.root();
+    let desktop = scene.tree_create(root);
+    scene.rect_create(desktop, (320, 200), [1.0; 4]);
+    let windows = scene.tree_create(root);
+    let (video, _glass) = glass_window(&mut scene, &ctx, windows, (20, 20), (120, 80), None);
+    let output = test_output_of(320, 200);
+    let settings = Settings {
+        streaks: false,
+        ..Settings::default()
+    };
+    let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
+    let inside = Drawn {
+        r: Rectangle::new((40, 40).into(), (80, 40).into()),
+        window: Some(video.into()),
+    };
+    for hold in [Hold::No, Hold::Keep(Under::Within(inside))] {
+        ctx.begin(&output, settings, Quality::Full, hold);
+        ctx.update_screen_backdrop(&mut renderer, &scene, &output, clear, true);
+    }
+    assert!(
+        ctx.owes(&output),
+        "the held frame owes its window's glass a catch-up"
+    );
+    let hold = ctx.capture_hold(&output);
+    assert_eq!(hold, Hold::No, "the capture draws the program as it is");
+    ctx.begin(&output, settings, Quality::Full, hold);
+    ctx.update_copy_backdrop(&mut renderer, &scene, &output, clear, true);
+    assert!(
+        ctx.take_owed(&output),
+        "the screen still owes it after the capture"
+    );
 }
 
 #[test]
@@ -1838,7 +1880,7 @@ fn capture_update(renderer: &mut GlesRenderer, ctx: &GlassCtx, scene: &DeskScene
     let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
     let hold = ctx.capture_hold(output);
     ctx.begin(output, trail_settings(), Quality::Coarse, hold);
-    ctx.update_screen_backdrop(renderer, scene, output, clear, true);
+    ctx.update_copy_backdrop(renderer, scene, output, clear, true);
 }
 
 #[test]

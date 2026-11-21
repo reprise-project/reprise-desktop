@@ -356,7 +356,7 @@ fn render_copy(
         crate::glass::quality(interaction, &config.glass),
         glass_hold(None, Under::Anywhere, false),
     );
-    glass.update_screen_backdrop(&mut b.renderer, scene, source, clear, wanted);
+    glass.update_copy_backdrop(&mut b.renderer, scene, source, clear, wanted);
     let parts = Parts {
         scene,
         cursor,

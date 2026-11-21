@@ -528,7 +528,7 @@ fn render_scene_into(
     );
     let clear = clear_color(&config.theme.colors);
     let wanted = crate::glass::wanted(config);
-    glass.update_screen_backdrop(renderer, scene, drawn_from, clear, wanted);
+    glass.update_copy_backdrop(renderer, scene, drawn_from, clear, wanted);
     let parts = Parts {
         scene,
         cursor,
