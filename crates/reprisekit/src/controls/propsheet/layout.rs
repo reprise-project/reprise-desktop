@@ -11,8 +11,8 @@ use crate::text::TextRenderer;
 use crate::theme::TextUnits;
 
 use super::{
-    BUTTON_IDS, Buttons, Layout, MARGIN, Nav, PAGE_BOTTOM, PAGE_EDGE, PAGE_TOP, PropSheet, RESTORE,
-    SEARCH_GAP, SEARCH_H, STRIP, buttons, is_button, shift,
+    BUTTON_IDS, Buttons, Layout, MARGIN, Nav, OK, PAGE_BOTTOM, PAGE_EDGE, PAGE_TOP, PropSheet,
+    RESTORE, SEARCH_GAP, SEARCH_H, STRIP, buttons, is_button, shift,
 };
 
 impl PropSheet {
@@ -251,13 +251,18 @@ impl PropSheet {
         self.bars() != (false, false)
     }
 
-    /// The row follows the client's bottom right; Restore Defaults keeps under the page's left edge.
+    /// The row follows the client's bottom right; Restore Defaults keeps under the page's left
+    /// edge, or left of it to stay clear of OK ([`PropSheet::restore_x`]).
     fn move_buttons(&mut self, dx: i32, dy: i32) {
-        for page in &mut self.pages {
-            for it in page.items.iter_mut().filter(|it| is_button(it)) {
-                if it.id != RESTORE {
-                    it.rect.x += dx;
-                }
+        for k in 0..self.pages.len() {
+            let row = self.pages[k].items.iter_mut();
+            for it in row.filter(|it| is_button(it) && it.id != RESTORE) {
+                it.rect.x += dx;
+                it.rect.y += dy;
+            }
+            let x = self.pages[k].item(OK).map(|ok| self.restore_x(ok.rect.x));
+            if let (Some(x), Some(it)) = (x, self.pages[k].item_mut(RESTORE)) {
+                it.rect.x = x;
                 it.rect.y += dy;
             }
         }
