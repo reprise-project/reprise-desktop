@@ -218,31 +218,7 @@ pub fn draw_sunken_field(c: &mut Canvas, p: &Paint, r: Rect, fill: Color) -> Rec
 
 pub use crate::textedit::edit_first_visible;
 
-pub use crate::paint::draw_edit;
-
-/// Where a drag over a single-line field would drop its text: a bar the caret's size at byte
-/// `at`, inverting what [`draw_edit`] drew from `first`, a stem under it included.
-#[expect(clippy::too_many_arguments)]
-pub fn draw_edit_drop_point(
-    c: &mut Canvas,
-    text: &TextRenderer,
-    edit: &TextEdit,
-    inner: Rect,
-    px: u32,
-    p: &Paint,
-    first: usize,
-    at: usize,
-) {
-    let s = p.s;
-    let first = first.min(edit.text.len());
-    let at = edit.text.floor_char_boundary(at.max(first));
-    let line = text
-        .line(inner, false, px)
-        .map_or(inner, |(y, h)| Rect::new(inner.x, y, inner.width, h))
-        .intersect(&inner);
-    let x = (inner.x + text.measure(&edit.text[first..at], false, px)).min(inner.right() - s);
-    c.invert_rect(Rect::new(x, line.y, s, line.height).intersect(&inner));
-}
+pub use crate::paint::{draw_edit, draw_edit_dropping};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Arrow {

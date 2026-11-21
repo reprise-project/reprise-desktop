@@ -1,6 +1,6 @@
 use crate::art::clockface;
 use crate::classic::widgets::{
-    self, Axis, CheckState, LINE_H, draw_focus_ring, draw_label, edit_first_visible,
+    Axis, CheckState, LINE_H, draw_focus_ring, draw_label, edit_first_visible,
 };
 use crate::controls::arrange;
 use crate::controls::calendar;
@@ -17,8 +17,8 @@ use crate::controls::updown;
 use crate::look::Paint;
 use crate::look::widgets::{
     draw_button, draw_checkbox_state, draw_checkbox_state_disabled, draw_disabled_field,
-    draw_disabled_label, draw_edit_field, draw_edit_text, draw_group_box, draw_progress,
-    draw_radio, draw_radio_disabled, draw_trackbar, draw_well, group_label_ink,
+    draw_disabled_label, draw_edit_field, draw_edit_text, draw_edit_text_dropping, draw_group_box,
+    draw_progress, draw_radio, draw_radio_disabled, draw_trackbar, draw_well, group_label_ink,
 };
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -297,20 +297,15 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     Some(gcs) => Paint { cs: gcs, ..*p },
                     None => *p,
                 };
-                draw_edit_text(
-                    c,
-                    text,
-                    shown,
-                    inner,
-                    px,
-                    &ep,
-                    Caret::new(focused && *enabled, form.caret && drop.is_none()),
-                    from,
-                );
-                if let Some(d) = drop {
-                    let tail = &shown.text[from..];
-                    let at = from + crate::textedit::index_at(text, tail, d.x * s - inner.x, px);
-                    widgets::draw_edit_drop_point(c, text, shown, inner, px, p, from, at);
+                let caret = Caret::new(focused && *enabled, form.caret);
+                match drop {
+                    Some(d) => {
+                        let tail = &shown.text[from..];
+                        let at =
+                            from + crate::textedit::index_at(text, tail, d.x * s - inner.x, px);
+                        draw_edit_text_dropping(c, text, shown, inner, px, &ep, caret, from, at);
+                    }
+                    None => draw_edit_text(c, text, shown, inner, px, &ep, caret, from),
                 }
             }
             Control::Combo(combo) => {

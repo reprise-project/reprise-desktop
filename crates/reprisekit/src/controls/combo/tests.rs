@@ -897,9 +897,9 @@ fn a_drag_resting_at_the_fields_edge_scrolls_it_and_the_drop_caret_shows() {
         2,
         "the drop caret moved from one column to another: {cols:?}"
     );
-    assert_eq!(
-        cols[0], lay.text.x,
-        "the field's left edge, where it rested"
+    assert!(
+        [lay.text.x - 1, lay.text.x].contains(&cols[0]),
+        "the field's left edge, where it rested, or beside a stem there: {cols:?}"
     );
     assert!(
         (x - 4..=x + 4).contains(&cols[1]),

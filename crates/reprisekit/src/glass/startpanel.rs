@@ -1396,9 +1396,10 @@ mod tests {
             "the caret at the end stands near the field's right, inside it: {x}"
         );
         let home = EditKey::Home { select: false };
+        // The a inks its pen's column, so the caret stands left of it.
         assert_eq!(
             caret_x(&typed(long, Some(home))),
-            Some(field.x + at::CARET.0)
+            Some(field.x + at::CARET.0 - 1)
         );
     }
 

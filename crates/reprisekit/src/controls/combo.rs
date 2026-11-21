@@ -6,8 +6,8 @@
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{
-    BarHit, FIELD_PAD, LINE_H, ROW_H, RingInk, ScrollHit, access_edit, draw_edit_drop_point,
-    draw_focus_ring_screen, edit_first_visible,
+    BarHit, FIELD_PAD, LINE_H, ROW_H, RingInk, ScrollHit, access_edit, draw_focus_ring_screen,
+    edit_first_visible,
 };
 use crate::controls::hosted::{Anchor, Hosted, Spot};
 use crate::controls::metrics::ControlMetrics;
@@ -16,7 +16,7 @@ use crate::controls::scrollbar::ThumbDrag;
 use crate::look::Paint;
 use crate::look::widgets::{
     ComboLook, draw_combo_drop, draw_combo_frame, draw_disabled_label, draw_drop_list,
-    draw_edit_text, draw_scrollbar,
+    draw_edit_text, draw_edit_text_dropping, draw_scrollbar,
 };
 use crate::pointer::Axis;
 use crate::pointer::Interaction;
@@ -822,15 +822,13 @@ pub fn draw(
             None => edit_first_visible(text, edit, tr.width, px, from),
         };
         combo.first.set(first);
-        let caret = match combo.drop_x {
-            Some(_) => Caret::new(caret.focused(), false),
-            None => caret,
-        };
-        draw_edit_text(c, text, edit, tr, px, p, caret, first);
-        if let Some(x) = combo.drop_x {
-            let tail = &edit.text[first..];
-            let at = first + crate::textedit::index_at(text, tail, x * s - tr.x, px);
-            draw_edit_drop_point(c, text, edit, tr, px, p, first, at);
+        match combo.drop_x {
+            Some(x) => {
+                let tail = &edit.text[first..];
+                let at = first + crate::textedit::index_at(text, tail, x * s - tr.x, px);
+                draw_edit_text_dropping(c, text, edit, tr, px, p, caret, first, at);
+            }
+            None => draw_edit_text(c, text, edit, tr, px, p, caret, first),
         }
     } else if list_button {
         text.draw(c, tr, &value, false, cs.button_text, Align::Left, px);

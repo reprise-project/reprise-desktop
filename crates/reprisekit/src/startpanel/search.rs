@@ -9,7 +9,7 @@ use std::rc::Rc;
 use super::SEARCH_CUE;
 use crate::raster::{Canvas, Rect};
 use crate::style::{Part, State, Style};
-use crate::text::TextRenderer;
+use crate::text::{CaretBar, TextRenderer};
 use crate::textedit::{TextEdit, edit_first_visible};
 use crate::theme::{Color, FontConfig, TextUnits};
 
@@ -153,8 +153,8 @@ pub fn glyph(canvas: &mut Canvas, style: &Style, (x, y): (i32, i32), part: Part,
 /// The search field in its box `r` holding `edit`, its lines in `text` and the cue in `cue`
 /// ([`italic`]): the box and halo, then the cue in italic grey while empty, else the text, scrolled by
 /// whole characters to keep the caret in the field, its selection on the style's selection colour while
-/// `focused`; the caret while `focused` and `caret` (the blink) is on, inverting the opaque face and
-/// ink under it; the magnifier, or the clear glyph once there is text, at the box's right.
+/// `focused`; the caret while `focused` and `caret` (the blink) is on, a [`CaretBar`] on the opaque
+/// face; the magnifier, or the clear glyph once there is text, at the box's right.
 ///
 /// While `focused` it also shows the canvas' preedit at the caret, underlined under the baseline with
 /// the caret inside it, and reports its [`crate::textedit::TextSpot`] on the canvas, as `draw_edit` does.
@@ -189,7 +189,7 @@ pub fn field(
     let own = edit;
     let preedit = canvas.preedit().filter(|_| focused).cloned();
     let composed;
-    let (edit, run, bar_on) = match &preedit {
+    let (edit, composing, bar_on) = match &preedit {
         Some(p) => {
             let (e, run, bar_on) = p.compose(own);
             composed = e;
@@ -202,17 +202,33 @@ pub fn field(
     let (cx, cy, ch) = at::CARET;
     let row = Rect::new(r.x, r.y + g.len(cy), r.width, g.len(ch));
     let mut bar = Rect::new(r.x + g.len(cx), row.y, s, row.height);
+    let lit = style.colors.hilight_text;
     if query.is_empty() {
+        let placed = (caret && focused).then(|| CaretBar::ground(canvas, bar, None, clip));
         let (x, y) = (r.x + g.len(at::CUE_PEN), r.y + g.len(at::CUE_BASE));
         line(canvas, cue, x, y, clip, SEARCH_CUE, ink(INK_CUE), size);
-        if caret && focused {
-            canvas.invert_rect(bar);
+        if let Some(placed) = placed {
+            placed.draw(canvas, lit);
         }
     } else {
         let (pen, y) = (r.x + g.len(at::TYPED_PEN), r.y + g.len(at::CUE_BASE));
         let room = clip.right() - pen - s;
         let first = edit_first_visible(text, edit, room, size, 0);
         let x_of = |i: usize| pen + text.measure(&query[first..i.max(first)], false, size);
+        let sel = edit.selection();
+        let run = (focused && sel.end > first && !sel.is_empty()).then(|| {
+            let (x0, x1) = (x_of(sel.start.max(first)), x_of(sel.end).min(clip.right()));
+            Rect::new(x0, row.y, x1 - x0, row.height).intersect(&clip)
+        });
+        let cs = &style.colors;
+        // Filled under the text too, so the caret's bar reads it as ground, not ink.
+        if let Some(run) = run {
+            canvas.fill_rect(run, cs.hilight);
+        }
+        let x = x_of(edit.caret().min(query.len())) + g.len(cx) - g.len(at::TYPED_PEN);
+        bar.x = x.min(clip.right() - s);
+        let placed = (caret && focused && x < clip.right())
+            .then(|| CaretBar::ground(canvas, Rect { x, ..bar }, None, clip));
         text.draw_run_over(
             canvas,
             pen,
@@ -223,12 +239,7 @@ pub fn field(
             ink(INK_STRONG),
             size,
         );
-        let sel = edit.selection();
-        if focused && sel.end > first && !sel.is_empty() {
-            let start = sel.start.max(first);
-            let (x0, x1) = (x_of(start), x_of(sel.end).min(clip.right()));
-            let run = Rect::new(x0, row.y, x1 - x0, row.height).intersect(&clip);
-            let cs = &style.colors;
+        if let Some(run) = run {
             canvas.fill_rect(run, cs.hilight);
             canvas.with_clip(run, |canvas| {
                 text.draw_run_over(
@@ -243,15 +254,13 @@ pub fn field(
                 );
             });
         }
-        if let Some(run) = run {
-            let (x0, x1) = (x_of(run.start), x_of(run.end).min(clip.right()));
+        if let Some(composing) = composing {
+            let (x0, x1) = (x_of(composing.start), x_of(composing.end).min(clip.right()));
             let ul = Rect::new(x0, y + s, x1 - x0, s).intersect(&clip);
             canvas.fill_rect(ul, ink(INK_STRONG));
         }
-        let x = x_of(edit.caret().min(query.len())) + g.len(cx) - g.len(at::TYPED_PEN);
-        bar.x = x.min(clip.right() - s);
-        if caret && focused && x < clip.right() {
-            canvas.invert_rect(Rect::new(x, row.y, s, row.height));
+        if let Some(placed) = placed {
+            placed.draw(canvas, lit);
         }
     }
     if focused {
@@ -390,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn the_caret_at_0_inverts_the_opaque_face_so_the_first_stem_shows_white_in_light_and_dark() {
+    fn the_caret_at_0_stands_off_the_first_stem_on_the_opaque_face_in_light_and_dark() {
         use crate::glass::{Mode, Settings};
         crate::pins::fonts();
         let text = TextRenderer::load(&FontConfig::default());
@@ -421,12 +430,12 @@ mod tests {
             let (off, on) = (draw(false), draw(true));
             assert_eq!(
                 crate::paint::inverted_bar(&off, &on, 0xFFFF_FFFF),
-                (Rect::new(pen, top, 1, at::CARET.2), true),
-                "{mode:?}: the caret is the pen's column, over the A's foot"
+                (Rect::new(pen - 1, top, 1, at::CARET.2), false),
+                "{mode:?}: the caret is the column left of the pen, off the A's foot"
             );
             for y in top..top + at::CARET.2 {
                 assert_eq!(
-                    off.get(pen, y) >> 24,
+                    off.get(pen - 1, y) >> 24,
                     0xFF,
                     "{mode:?}: opaque face at row {y}"
                 );
