@@ -637,18 +637,21 @@ mod tests {
     fn a_file_of_many_full_canvas_layers_is_refused_at_its_deadline() {
         let px = 8 * 1024 * 1024 * 4;
         let few = layered(1024, 1024, 3);
+        let start = Instant::now();
         assert_eq!(
             first_frame(&few, px, NO_HURRY).unwrap().px[..4],
             [90, 90, 90, 255]
         );
-        let many = layered(1024, 1024, 20_000);
+        // The bound is in layers timed here: an unoptimised layer takes from 0.2 s to over 1 s.
+        let three_layers = start.elapsed();
+        let many = layered(1024, 1024, 1_000);
         let limit = Duration::from_millis(300);
         let start = Instant::now();
         assert_eq!(first_frame(&many, px, limit).err(), Some(Refused::Time));
         let took = start.elapsed();
         assert!(
-            took < limit + Duration::from_secs(1),
-            "stops within a layer of the deadline, took {took:?}"
+            took < limit + 2 * three_layers,
+            "stops within a few layers of the deadline, took {took:?} (3 layers: {three_layers:?})"
         );
     }
 
