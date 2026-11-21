@@ -326,8 +326,8 @@ impl Theme {
 /// Where a selection of one char of a two-char text recolours wrongly at scale 2: a neighbour's
 /// ink outside the scale 1 highlight that changes colour from the text drawn unselected, a pixel
 /// changed in a device column outside both the scale 1 highlight and the selected glyph's ink
-/// with two columns either side, or a selected glyph `lit` whole at scale 1 but not across the
-/// highlight's rows at scale 2.
+/// with two columns either side (and, selected from the text's start, the column left of its
+/// pen), or a selected glyph `lit` whole at scale 1 but not across the highlight's rows at scale 2.
 /// `draw(s, text, sel)` returns the pixels of a `w` px wide canvas at scale `s`, any caret shown
 /// at `sel.start`; `geom(text)` gives its pen, the rect its text is laid in and the highlight's
 /// rows.
@@ -365,6 +365,7 @@ pub(crate) fn selection_faults(
                 .fold((run.x, run.right()), |(l, r), x| {
                     (l.min(x - 2), r.max(x + 3))
                 });
+            let l = if a == 0 { l.min(2 * (pen - 1)) } else { l };
             let filled = (0..lit2.len())
                 .filter(|&i| lit2[i] != plain[i] && rows2.contains(&at(i, 2).1))
                 .filter(|&i| !(l..r).contains(&at(i, 2).0))
@@ -550,6 +551,60 @@ pub(crate) fn off_highlight(
         })
         .count();
     (off, unlit, merged)
+}
+
+/// A row of text for [`lost_selected_ink`]: its text, its selected bytes, its pen x and the rect
+/// its text is laid in.
+#[cfg(test)]
+pub(crate) type SelectedRow<'a> = (&'a str, std::ops::Range<usize>, i32, Rect);
+
+/// Where a selection over `rows` loses a selected glyph's edge at scale `s`: the device pixels
+/// of its ink drawn `lit` beside (left, right, above or below) a pixel of `room` that is `lit`
+/// both drawn `plain` and `selected` and that no glyph of `rows` inks. `plain` and `selected`
+/// are the pixels of a `w` px wide canvas.
+#[cfg(test)]
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn lost_selected_ink(
+    text: &TextRenderer,
+    px: u32,
+    (w, h): (i32, i32),
+    rows: &[SelectedRow],
+    room: Rect,
+    s: i32,
+    (plain, selected): (&[u32], &[u32]),
+    lit: crate::theme::Color,
+) -> Vec<(i32, i32)> {
+    let n = (w * s * h * s) as usize;
+    let (mut own, mut ink) = (vec![false; n], vec![false; n]);
+    for (t, sel, pen, line) in rows {
+        for (i, _) in t.char_indices() {
+            let mask = glyph_mask(text, px, (w, h), t, i, *pen, *line, s);
+            let mine = sel.contains(&i);
+            for k in (0..n).filter(|&k| mask[k]) {
+                ink[k] = true;
+                own[k] |= mine;
+            }
+        }
+    }
+    let ws = (w * s) as usize;
+    let at = |i: usize| ((i % ws) as i32, (i / ws) as i32);
+    let room = room.scaled(s);
+    let lit = lit.argb();
+    let paper = |i: usize| {
+        let (x, y) = at(i);
+        !ink[i] && selected[i] == lit && plain[i] == lit && room.contains(x, y)
+    };
+    (0..n)
+        .filter(|&i| own[i] && selected[i] == lit)
+        .filter(|&i| {
+            let x = i % ws;
+            (x > 0 && paper(i - 1))
+                || (x + 1 < ws && paper(i + 1))
+                || (i >= ws && paper(i - ws))
+                || (i + ws < n && paper(i + ws))
+        })
+        .map(at)
+        .collect()
 }
 
 /// The device pixels any char of `t` inks alone at scale `s`, as [`glyph_mask`] draws each.

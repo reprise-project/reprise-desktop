@@ -296,6 +296,13 @@ impl Highlight<'_> {
         self
     }
 
+    /// Widened left to logical x `x`, so rows selected from their start share one left edge.
+    pub fn starting_by(mut self, x: i32) -> Self {
+        let x0 = self.dev.x.min(self.s * x);
+        self.dev = Rect::new(x0, self.dev.y, self.dev.right() - x0, self.dev.height);
+        self
+    }
+
     /// Fill the highlight's device pixels within `clip` in `color`.
     pub fn fill(&self, c: &mut Canvas, clip: Rect, color: Color) {
         let r = self.dev.intersect(&clip.scaled(self.s));

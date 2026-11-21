@@ -77,7 +77,11 @@ fn a_memo_at_scale_two_lines_its_selection_and_clicks_up_with_its_text() {
         .filter(|&x| c.get(x, row) == cs.hilight.argb())
         .collect();
     let w = t.measure("abc", false, 2 * PX);
-    assert_eq!(lit.first(), Some(&x0));
+    assert_eq!(
+        lit.first(),
+        Some(&(x0 - 1)),
+        "from the inset left of the text"
+    );
     assert_eq!(lit.last(), Some(&(x0 + w - 1)), "the run is {w} px wide");
 
     // A line three boxes long, the caret at its end: the view scrolls
