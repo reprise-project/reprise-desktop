@@ -820,12 +820,11 @@ mod tests {
         assert_eq!(heads(&h), ["Files", "Contents"]);
     }
 
-    /// At 200% text a Glass row's icon is 32 px; a list box row's keeps 16.
     #[test]
-    fn at_200_percent_text_a_glass_program_rows_icon_is_32_px() {
+    fn at_200_percent_text_a_program_rows_icon_is_32_px_in_every_look() {
         use reprisekit::icontheme::{IconCache, IconTheme};
         let root = crate::icon::svg_theme(&["chess-test"], &[]);
-        for (interface, px) in [("glass", 32), ("classic", 16)] {
+        for interface in ["glass", "classic", "blue"] {
             let toml = format!(
                 "[appearance]\ninterface = \"{interface}\"\n[accessibility]\ntext_size = 200\n"
             );
@@ -852,7 +851,7 @@ mod tests {
             let m = &h.state.launcher.as_ref().expect("the launcher").model;
             let icons: Vec<_> = m.icons.iter().flatten().collect();
             assert_eq!(icons.len(), 1, "{interface}: the Chess row's icon");
-            assert_eq!((icons[0].width, icons[0].height), (px, px), "{interface}");
+            assert_eq!((icons[0].width, icons[0].height), (32, 32), "{interface}");
             assert!(
                 crate::icon::red(icons[0]),
                 "{interface}: the theme's icon landed"

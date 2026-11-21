@@ -518,6 +518,9 @@ struct SettingsApp {
     wallpapers: Vec<PathBuf>,
     picture: Option<backgroundpage::Picture>,
     wallpaper_icons: Option<(Option<Canvas>, Option<Canvas>)>,
+    /// The icon size the list boxes' icons were last looked up at
+    /// ([`reprisekit::controls::listbox::icon_px`]); None before the first.
+    list_icon_px: Option<i32>,
     folder_icon: Option<Canvas>,
     thumbs: Vec<Option<Canvas>>,
     thumbing: Option<Receiver<Vec<Option<Canvas>>>>,
@@ -845,6 +848,7 @@ impl SettingsApp {
             wallpapers,
             picture: None,
             wallpaper_icons: None,
+            list_icon_px: None,
             folder_icon: None,
             thumbs: Vec::new(),
             thumbing: None,

@@ -2,6 +2,11 @@
 //!
 //! One process: a tray speaker that follows the default sink, the volume popup a click on it opens, and the properties sheet a double click or Adjust Audio Properties opens. Open Volume Control and the sheet's Volume... buttons start reprise-volume, the mixer window. `--tray` starts with the sheet hidden (what the autostart entry uses); closing the sheet hides it again, only Exit in the tray menu quits.
 
+/// The icon size of the sheet's list rows at the forms' text size.
+fn list_icon_px(ctx: &Ctx) -> i32 {
+    reprisekit::controls::listbox::icon_px(&ctx.forms().controls())
+}
+
 #[cfg(test)]
 reprisebus::test_session!();
 
@@ -220,7 +225,8 @@ impl Sound {
     }
 
     fn push_app_icons(&mut self, ctx: &mut Ctx) {
-        self.icons = self.app_icons.icons(&self.snapshot.apps, &ctx.icons);
+        let small = list_icon_px(ctx);
+        self.icons = self.app_icons.icons(&self.snapshot.apps, &ctx.icons, small);
         self.speaker = ctx.icons.get(SPEAKER, 32);
         if let Some(s) = &mut self.sheet {
             s.set_app_icons(self.icons.clone());
@@ -288,11 +294,27 @@ impl Sound {
     }
 
     fn ensure(&mut self, ctx: &mut Ctx) {
+        let small = list_icon_px(ctx);
+        let small_icons = |ctx: &mut Ctx| {
+            [
+                ctx.icons.get("audio-speakers", small),
+                ctx.icons.get("audio-input-microphone", small),
+            ]
+        };
+        if self.sheet.is_some() && !self.iconless {
+            if let Some(s) = self.sheet.as_mut().filter(|s| s.small_px() != small) {
+                s.set_small_icons(small, small_icons(ctx));
+                self.push_app_icons(ctx);
+            }
+            return;
+        }
+        let [speaker_small, mic_small] = small_icons(ctx);
         let icons = sheet::Icons {
             speaker: ctx.icons.get("audio-speakers", 32),
             mic: ctx.icons.get("audio-input-microphone", 32),
-            speaker_small: ctx.icons.get("audio-speakers", 16),
-            mic_small: ctx.icons.get("audio-input-microphone", 16),
+            speaker_small,
+            mic_small,
+            small_px: small,
         };
         if self.build(Some(icons)) {
             self.push_app_icons(ctx);

@@ -118,10 +118,6 @@ pub fn builtin(s: &str) -> Option<Builtin> {
     Builtin::from_uri(s)?.ok()
 }
 
-pub fn thumb_size(scale: i32) -> u32 {
-    16 * scale.max(1) as u32
-}
-
 /// `b` in `glass`'s colour drawn at `w` x `h` through the drawn-picture
 /// cache: a list thumbnail or the monitor's screen.
 pub fn draw_builtin(b: Builtin, glass: &reprisekit::glass::Settings, w: u32, h: u32) -> Canvas {
@@ -134,10 +130,10 @@ pub fn draw_builtin(b: Builtin, glass: &reprisekit::glass::Settings, w: u32, h: 
     Canvas::from_pixels(w, h, px)
 }
 
-/// `b`'s row icon at `scale`: the picture drawn into the 16 px square.
-pub fn thumb(b: Builtin, glass: &reprisekit::glass::Settings, scale: i32) -> Canvas {
-    let n = thumb_size(scale);
-    let mut t = Canvas::with_scale(16, 16, scale);
+/// `b`'s row icon at `scale`: the picture drawn into the list's `px` square.
+pub fn thumb(b: Builtin, glass: &reprisekit::glass::Settings, px: i32, scale: i32) -> Canvas {
+    let n = (px * scale.max(1)) as u32;
+    let mut t = Canvas::with_scale(px as u32, px as u32, scale);
     t.pixels = draw_builtin(b, glass, n, n).pixels;
     t
 }

@@ -183,7 +183,7 @@ pub(crate) struct Providers {
     installed: Option<Vec<Installed>>,
     pub(crate) job: Option<Receiver<Vec<Installed>>>,
     rows: Vec<Row>,
-    icons_due: bool,
+    pub(crate) icons_due: bool,
 }
 
 impl SettingsApp {

@@ -320,3 +320,45 @@ fn the_page_scrollbar_over_the_side_list_scrolls_the_page() {
     assert!(app.sheet.page_offset().1 < 0, "the page scrolled down");
     assert_eq!(app.shortcuts.selection.focus, selected);
 }
+
+#[test]
+fn the_quick_launch_rows_icons_load_at_the_text_size_and_again_when_it_changes() {
+    let mut a = app("quick-icons");
+    let root = tmp("quick-icons-theme");
+    let apps = root.join("hicolor/scalable/apps");
+    std::fs::create_dir_all(&apps).unwrap();
+    std::fs::write(
+        root.join("hicolor/index.theme"),
+        "[Icon Theme]\nName=Hicolor\nDirectories=scalable/apps\n\n[scalable/apps]\nSize=32\nMinSize=8\nMaxSize=256\nType=Scalable\n",
+    )
+    .unwrap();
+    std::fs::write(
+        apps.join("application-x-executable.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="red"/></svg>"#,
+    )
+    .unwrap();
+    let mut ctx = test_ctx();
+    ctx.icons = reprisekit::icontheme::IconCache::new(IconTheme::load("hicolor", &[root]));
+    a.quick = vec![quickpage::Launcher {
+        file: "notes.desktop".into(),
+        name: "Notes".into(),
+        icon: None,
+    }];
+    let page = Page::StartMenu.index();
+    quickpage::fill(&mut a.sheet.pages[page], &a.quick, None);
+    a.quick_icons_due = true;
+    let side = |a: &SettingsApp| match &a.sheet.pages[page].item(quickpage::LIST).unwrap().control {
+        form::Control::ListBox { icons, .. } => icons[0].as_ref().map(|c| (c.width, c.height)),
+        _ => None,
+    };
+    ctx.text_size = 200;
+    a.prime_icons(&mut ctx);
+    assert_eq!(side(&a), Some((32, 32)), "32 px at 200% text");
+    ctx.text_size = 100;
+    a.prime_icons(&mut ctx);
+    assert_eq!(
+        side(&a),
+        Some((16, 16)),
+        "16 px once the text is back at 100%"
+    );
+}

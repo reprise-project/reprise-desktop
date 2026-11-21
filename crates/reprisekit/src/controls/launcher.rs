@@ -10,8 +10,8 @@
 //! by contents, a program's results) under its own heading the same way, the detail dimmed
 //! after each name.
 //! Arrows step over headings.
-//! The panel grows with the text size; the bevels, the 32 px icon and a list box row's icon keep
-//! their size.
+//! The panel grows with the text size; the bevels and the 32 px icon keep their size, and a row's
+//! 16 px icon grows with the text ([`row_icon_px`]).
 //!
 //! Under a look with glass the panel is a piece of glass and the field and rows
 //! are the Start menu's search mode's ([`crate::startpanel::search`]): its search
@@ -540,14 +540,10 @@ pub const W: i32 = 420;
 pub const HEAD_H: i32 = 48;
 pub const ICON: i32 = 32;
 
-/// A row's icon edge (logical px): under glass the Start menu search's 16 px grown with the text
-/// ([`search::result`] centres it in the grown row), else the list box's 16 px.
+/// A row's icon edge (logical px): 16 px grown with the text, in the list box ([`listbox::icon_px`])
+/// and under glass in the Start menu search's rows ([`search::result`] centres it in the grown row).
 pub fn row_icon_px(theme: &Theme) -> i32 {
-    let design = crate::startpanel::SMALL_ICON;
-    match panel::glass(theme) {
-        Some(_) => theme.text.icon(design),
-        None => design,
-    }
+    listbox::icon_px(&controls(theme))
 }
 const PAD: i32 = 8;
 /// Between the heading's label and its rule, and the rule and the list's
@@ -840,7 +836,7 @@ fn body(
             // From past the heading's label to the list's right edge, on
             // the row's middle.
             let label_w = text.measure(label, false, px) / s;
-            let x0 = ll.inner.x + listbox::TEXT_X + label_w + RULE_GAP;
+            let x0 = ll.inner.x + listbox::text_x(&l.list, &ll, &l.icons) + label_w + RULE_GAP;
             let y = ll.inner.y + h as i32 * ll.row_h + ll.row_h / 2 - 1;
             c.etched_hline_t(x0 * s, (ll.inner.right() - RULE_GAP) * s, y * s, cs, s);
         }

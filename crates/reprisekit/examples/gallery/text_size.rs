@@ -382,3 +382,55 @@ pub fn render_menu_icons(pct: u32) -> Canvas {
     }
     c
 }
+
+/// A list box with icons and one with check boxes and icons in each look, a look a row, at `pct`
+/// text and at scale 1 and 2: the icon column grows with the text.
+pub fn render_list_icons(pct: u32) -> Canvas {
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let (cell_w, cell_h) = (480, 140);
+    let mut c = Canvas::new((4 * cell_w) as u32, (looks.len() as i32 * cell_h) as u32);
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (row, &look) in looks.iter().enumerate() {
+        let base = interfaces::theme_for(look).with_text_size(pct);
+        let text = TextRenderer::load(&base.fonts);
+        let cm = base.controls();
+        for (k, checked) in [false, true].into_iter().enumerate() {
+            let mut lb = listbox::ListBox::new(
+                vec!["Calculator".into(), "Notepad".into(), "Paint".into()],
+                Some(1),
+            );
+            lb.detail = vec![String::new(), "~/Documents".into(), String::new()];
+            if checked {
+                lb.checks = vec![true, false, true];
+            }
+            let frame = Rect::new(0, 0, base.text.len(220), 3 * cm.list_row + 4);
+            let lay = listbox::layout(&lb, frame, &cm);
+            for (j, s) in [1, 2].into_iter().enumerate() {
+                let px = lay.icon * s;
+                let mut icon = Canvas::new(px as u32, px as u32);
+                icon.fill_rect(
+                    Rect::new(s, s, px - 2 * s, px - 2 * s),
+                    Color::rgb(40, 120, 220),
+                );
+                let theme = base.scaled(s);
+                let mut list = Canvas::new((frame.width * s) as u32, (frame.height * s) as u32);
+                let icons = vec![Some(icon); 3];
+                let font = theme.fonts.size_px;
+                let text = text.for_output(s);
+                listbox::draw(
+                    &mut list,
+                    text,
+                    &theme.paint(),
+                    &lb,
+                    &lay,
+                    &icons,
+                    None,
+                    font,
+                );
+                let x = (2 * k + j) as i32 * cell_w + 10;
+                c.blit_canvas(x, row as i32 * cell_h + 10, &list);
+            }
+        }
+    }
+    c
+}

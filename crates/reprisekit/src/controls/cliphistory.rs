@@ -1,6 +1,6 @@
 //! The clipboard history popup: a flyout panel ([`crate::flyout`]) with a
 //! filter field on top and a list box of what was copied, newest first. A
-//! row is a one-line text preview or an image's size, its 16 px icon slot
+//! row is a one-line text preview or an image's size, its icon slot
 //! holding the image's thumbnail. Typing filters the rows with `fuzzy`;
 //! Up, Down, Page Up and Page Down move the highlight, Enter picks it,
 //! Delete removes it, Escape closes. Pure: the host owns the history and
@@ -31,7 +31,7 @@ pub struct Row {
     /// The host's name for the entry; events carry it back.
     pub id: u64,
     pub label: String,
-    /// 16 px at the drawing scale, or None for no icon.
+    /// [`listbox::icon_px`] at the drawing scale, or None for no icon.
     pub icon: Option<Canvas>,
 }
 
