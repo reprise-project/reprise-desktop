@@ -1248,8 +1248,8 @@ fn the_drop_point_inverts_its_column_so_a_stem_under_it_shows_white() {
 /// At scale 2 a field's selection recolours its text without moving any of it: drawn in mono,
 /// the selected field with its highlight read as the window and its white as ink is the field
 /// drawn unselected, whatever char ends the selection. The highlight reaches up and down to the
-/// rows the selected glyphs ink, and past it that holds in the device columns they ink, drawn
-/// alone, where only their own ink is white.
+/// rows the selected glyphs ink and a pixel past the columns they ink, and past it that
+/// holds in the device columns they ink, drawn alone, where only their own ink is white.
 #[test]
 fn a_field_selection_at_scale_2_recolours_its_text_in_place() {
     crate::pins::fonts();
@@ -1300,8 +1300,13 @@ fn a_field_selection_at_scale_2_recolours_its_text_in_place() {
                         !(hl.x..hl.right()).contains(&x) && rows.clone().any(inked)
                     })
                     .collect();
+                let lit_or_past = |x: i32| hl.x <= x && x < hl.right() || past[x as usize];
+                let beside = |x: i32| (x - 2..=x + 2).filter(|&x| x >= 0).any(lit_or_past);
                 let read = |i: usize, p: u32| {
                     let (x, y) = (i as i32 % 300, i as i32 / 300);
+                    if p == cs.hilight.argb() && rows.contains(&y) && beside(x) {
+                        return cs.window.argb();
+                    }
                     let inside = hl.contains(x, y);
                     if !inside && !(past[x as usize] && rows.contains(&y)) {
                         return p;
@@ -1435,7 +1440,7 @@ fn a_field_selection_holds_its_descenders_in_the_highlight() {
                 };
                 for (t, sel) in crate::paint::descender_cases() {
                     let (plain, selected) = (draw(t, 0..0), draw(t, sel.clone()));
-                    let (off, unlit) = crate::paint::off_highlight(
+                    let (off, unlit, merged) = crate::paint::off_highlight(
                         &text,
                         px,
                         (150, 40),
@@ -1445,10 +1450,11 @@ fn a_field_selection_holds_its_descenders_in_the_highlight() {
                         (&plain, &selected),
                         (cs.hilight, cs.hilight_text),
                     );
-                    if off + unlit > 0 {
+                    if off + unlit + merged > 0 {
                         faults.push(format!(
                             "{family} {px} px @{s} \"{t}\" {sel:?}: {off} px changed off the \
-                             highlight, {unlit} selected px not lit"
+                             highlight, {unlit} selected px not lit, {merged} lit px beside lit \
+                         background"
                         ));
                     }
                 }
