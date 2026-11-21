@@ -350,9 +350,9 @@ fn draw_label(
 ) {
     text.draw(canvas, r, shown, bold, fg, Align::Left, size);
     // An ellipsized label keeps a prefix of `label` before its three
-    // dots; an access key past that prefix is not drawn.
+    // dots (or is only the dots that fit); an access key past that prefix is not drawn.
     let visible = if ellipsized {
-        shown.chars().count() - 3
+        shown.chars().count().saturating_sub(3)
     } else {
         usize::MAX
     };
