@@ -94,6 +94,15 @@ fn arrive<K: PartialEq>(tracks: &mut Vec<Track<K>>, key: K, now: Instant) {
     }
 }
 
+/// A waiting `copy_with_damage` frame of `key` was filled at `now`: the recording ran all the
+/// while it waited, so it holds as after a frame of a sustained run.
+fn filled<K: PartialEq>(tracks: &mut [Track<K>], key: &K, now: Instant) {
+    if let Some(t) = tracks.iter_mut().find(|t| t.key == *key) {
+        t.last = now;
+        t.sustained = true;
+    }
+}
+
 /// Drop the tracks that are neither waiting nor fresh.
 fn prune<K: PartialEq>(tracks: &mut Vec<Track<K>>, waiting: &[K], now: Instant) {
     tracks.retain(|t| waiting.contains(&t.key) || now.duration_since(t.last) <= SUSTAIN.max(HOLD));
@@ -320,6 +329,12 @@ pub fn wlr_frame(state: &mut State, key: WlrKey) {
     }
 }
 
+/// A `copy_with_damage` frame of `key` that waited was filled: the border and the dot hold
+/// until the recorder's next copy.
+pub fn wlr_filled(state: &mut State, key: &WlrKey) {
+    filled(&mut state.capture_border.tracks, key, Instant::now());
+}
+
 /// Whether the wlr capture `key` is bordered and shared now: a recording, or a damage frame of it
 /// waits.
 pub fn wlr_live(state: &State, key: &WlrKey) -> bool {
@@ -480,6 +495,31 @@ mod tests {
         assert_eq!(tracks.len(), 1);
         prune(&mut tracks, &[], late);
         assert!(tracks.is_empty());
+    }
+
+    #[test]
+    fn a_recording_resumed_after_a_still_wait_keeps_its_border_until_its_next_copies() {
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let mut tracks = Vec::new();
+        arrive(&mut tracks, 'a', at(0));
+        arrive(&mut tracks, 'a', at(16));
+        assert_eq!(live_wlr(&tracks, &['a'], at(5016)).count(), 1, "waiting");
+        filled(&mut tracks, &'a', at(5016));
+        for t in [5016, 5040] {
+            assert_eq!(
+                live_wlr(&tracks, &[], at(t)).count(),
+                1,
+                "{t} ms: the filled copy holds the border"
+            );
+        }
+        let end = at(5016 + HOLD.as_millis() as u64 + 1);
+        assert_eq!(live_wlr(&tracks, &[], end).count(), 0, "a lone fill holds");
+        arrive(&mut tracks, 'a', at(5040));
+        arrive(&mut tracks, 'a', at(5056));
+        let t = 5056 + HOLD.as_millis() as u64;
+        assert_eq!(live_wlr(&tracks, &[], at(t)).count(), 1, "a run again");
+        assert_eq!(live_wlr(&tracks, &[], at(t + 1)).count(), 0, "hold over");
     }
 
     #[test]

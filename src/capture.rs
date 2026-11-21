@@ -347,8 +347,14 @@ pub fn output_drawn(state: &mut State, output: &Output, drew: Drew) {
         match w {
             Waiting::Ext { session, frame } => fill_ext(state, output, &session, frame),
             Waiting::Wlr(s) => {
-                if let Some(waits) = fill_wlr(state, s) {
-                    state.captures.waiting.push(Waiting::Wlr(waits));
+                let key = (s.with_damage && s.is_alive()).then(|| wlr_key(&s));
+                match fill_wlr(state, s) {
+                    Some(waits) => state.captures.waiting.push(Waiting::Wlr(waits)),
+                    None => {
+                        if let Some(key) = key {
+                            crate::captureborder::wlr_filled(state, &key);
+                        }
+                    }
                 }
             }
         }
@@ -2863,6 +2869,43 @@ mod tests {
             UNCAPTURED,
             "a recorder that stopped copying but keeps its manager leaves the screen at one a second"
         );
+    }
+
+    #[test]
+    fn a_wlr_recording_stays_bordered_while_its_copy_waits_out_a_still_spell_and_after_it_fills() {
+        let Some(mut h) = drawing() else { return };
+        let o = remote_screen(&mut h);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "still", 20, 20);
+        let mut client = h.connect_capture((64, 48));
+        record_twice(&mut h, &mut client);
+        let buffer = client.buffer();
+        let latest = client.wlr_copy_with_damage_into(&mut h, &buffer);
+        land(&mut h);
+        client.roundtrip(&mut h);
+        assert!(
+            client.wlr_ready(&latest).is_some(),
+            "a copy into a new buffer comes ready"
+        );
+        let resumed = client.wlr_copy_with_damage_into(&mut h, &buffer);
+        assert_eq!(h.state.captures.waiting.len(), 1, "a copy waits");
+        run_past_hold(&mut h);
+        let recorded = |h: &Harness| crate::captureborder::recorded_wlr(&h.state).len();
+        assert_eq!(recorded(&h), 1, "recorded while the copy waits");
+        let _ = refresh_shown(&mut h, &mut c, (t, 0xff00_8000), &o);
+        land(&mut h);
+        client.roundtrip(&mut h);
+        assert!(
+            client.wlr_ready(&resumed).is_some(),
+            "the waiting copy fills"
+        );
+        assert_eq!(
+            recorded(&h),
+            1,
+            "recorded between the filled copy and the recorder's next"
+        );
+        run_past_hold(&mut h);
+        assert_eq!(recorded(&h), 0, "the hold ends after the filled copy");
     }
 
     #[test]
