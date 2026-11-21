@@ -370,6 +370,41 @@ fn underline_is_dropped_when_the_ellipsis_cuts_the_mnemonic() {
     }
 }
 
+#[test]
+fn a_label_narrower_than_its_dots_draws_the_dots_that_fit_without_an_underline() {
+    let theme = wide_theme();
+    let text = TextRenderer::load(&FontConfig::default());
+    let size = theme.fonts.size_px;
+    let items = vec![MenuItem::entry("Open").mnemonic(Some(0))];
+    let mut l = MenuLayout::compute(&theme.metrics, &items);
+    let text_w = text.measure("..", false, size);
+    l.rows[0].width = l.text_x + ARROW_SPACE + text_w;
+    l.width = l.rows[0].width + 2 * BORDER;
+    assert_eq!(text.ellipsize("Open", text_w, false, size), "..");
+    let draw = |keyboard| {
+        let mut c = Canvas::new(l.width as u32, l.height as u32);
+        draw_menu(&mut c, &theme, &text, &l, &items, None, "", keyboard);
+        c
+    };
+    let (plain, keyed) = (draw(false), draw(true));
+    let r = l.rows[0];
+    let fg = theme.colors.menu_text.argb();
+    let dots = (r.y..r.bottom())
+        .flat_map(|y| (r.x + l.text_x..r.x + l.text_x + text_w).map(move |x| (x, y)))
+        .filter(|&(x, y)| plain.get(x, y) == fg)
+        .count();
+    assert!(dots > 0, "the two dots are drawn");
+    for y in 0..l.height {
+        for x in 0..l.width {
+            assert_eq!(
+                keyed.get(x, y),
+                plain.get(x, y),
+                "no access-key underline at {x},{y}"
+            );
+        }
+    }
+}
+
 /// A frame of `items` unrolling from `from` halfway in at scale `s`: the menu and its
 /// shadow moved by the frame's shift and cut to its clip, as the compositor's scene shows it.
 fn unrolled(theme: &Theme, items: &[MenuItem], from: UnrollFrom, s: i32) -> Canvas {
