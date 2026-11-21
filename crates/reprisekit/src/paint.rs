@@ -159,10 +159,11 @@ impl<'a> Paint<'a> {
 }
 
 /// Draw `edit` left-aligned in `inner` from byte `first` (`edit_first_visible`): selection, caret
-/// and, focused, the canvas' preedit with its `TextSpot`, which a secret field never shows. The
-/// caret sits on the pen's column, or at scale 2 past device columns a selection's highlight adds
-/// there, and inverts what is under it, a glyph's stem included. `inner` sits at least 1 px inside
-/// its field's frame: the first glyph's ink may draw there.
+/// and, focused, the canvas' preedit with its `TextSpot`, which a secret field never shows. An
+/// unfocused field hides its selection ([`TextEdit::unfocused`]). The caret sits on the pen's
+/// column, or at scale 2 past device columns a selection's highlight adds there, and inverts what
+/// is under it, a glyph's stem included. `inner` sits at least 1 px inside its field's frame: the
+/// first glyph's ink may draw there.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_edit(
     c: &mut Canvas,
@@ -175,7 +176,13 @@ pub fn draw_edit(
     first: usize,
 ) {
     let Paint { cs, s, .. } = *p;
-    let own = edit;
+    let unfocused;
+    let own = if caret.focused() {
+        edit
+    } else {
+        unfocused = edit.unfocused();
+        &*unfocused
+    };
     // With a preedit the text is drawn with it spliced in, selection gone (text-input-v3 removes
     // it).
     let preedit = c

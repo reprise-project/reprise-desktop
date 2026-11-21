@@ -274,14 +274,13 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 } else {
                     draw_disabled_field(c, p, r)
                 };
-                // A field without the focus hides its selection until the
-                // focus comes back.
-                let shown = match (edit.is_secret(), focused) {
-                    (true, _) => std::borrow::Cow::Owned(edit.masked()),
-                    (false, true) => std::borrow::Cow::Borrowed(edit),
-                    (false, false) => edit.unfocused(),
+                let masked;
+                let shown = if edit.is_secret() {
+                    masked = edit.masked();
+                    &masked
+                } else {
+                    edit
                 };
-                let shown = &*shown;
                 // Kept in step here because only this place holds what computes it; `inner` is the text
                 // area in device px.
                 // A drag resting on the field scrolls it (`drag_tick`), so the caret no longer pins
