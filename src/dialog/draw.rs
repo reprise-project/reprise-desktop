@@ -133,10 +133,11 @@ pub fn draw(
     // The dialog's own text and buttons, in the font it is set in; the
     // frame and a form's pages above pick their own.
     let text = text.dialog(d.font());
+    let ink_scale = c.scale();
     for (r, line) in &layout.lines {
         text.draw(
             &mut c,
-            text.line_box(r.scaled(s), false, px),
+            text.ink_box(r.scaled(s), line, false, px, ink_scale),
             line,
             false,
             cs.button_text,
@@ -148,7 +149,13 @@ pub fn draw(
         draw_label(
             &mut c,
             text,
-            text.line_box(lr.scaled(s), false, px),
+            text.ink_box(
+                lr.scaled(s),
+                &reprisekit::text::split_mnemonic(&field.label).0,
+                false,
+                px,
+                ink_scale,
+            ),
             &paint.label(&field.label),
             false,
             cs.button_text,

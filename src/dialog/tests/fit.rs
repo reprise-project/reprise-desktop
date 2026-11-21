@@ -474,3 +474,88 @@ fn prompts_and_form_dialogs_grow_with_the_text_size() {
     let c = render(&theme, &text, &l, &prompt);
     assert_eq!((c.width as i32, c.height as i32), l.size);
 }
+
+/// Every kind of template box, with a `|` in its text where the text names a file or program.
+fn bar_dialogs() -> Vec<Dialog> {
+    use reprisefs::program::{Program, ScriptOpen};
+    vec![
+        Dialog::run_not_found("a|b"),
+        Dialog::ask_run("/d/a|b.sh".into(), ScriptOpen::Terminal, Program::Script),
+        Dialog::ask_open("/d/a|b.txt".into(), None, false),
+        Dialog::ask_mount("/d/a|b.iso".into()),
+        Dialog::confirm_hide(crate::desktop::Place::Computer, "a|b"),
+        Dialog::confirm_delete_icons(vec!["computer".into()], vec!["/d/a|b".into()]),
+        Dialog::key_aid_prompt(crate::keyfilter::Aid::StickyKeys, false),
+        Dialog::end_program("a|b", 42),
+        Dialog::run(&history()),
+        Dialog::rename_desktop(0, Some(&"a|b".into())),
+    ]
+}
+
+/// Draws `d` fitted to `theme` as on a scale `s` output.
+fn drawn_at(theme: &Theme, text: &TextRenderer, mut d: Dialog, s: i32) -> Canvas {
+    d.fit(theme, text);
+    let l = DialogLayout::compute_at(theme, text, &d, s);
+    render(&theme.scaled(s), text.for_output(s), &l, &d)
+}
+
+/// A box's text and Run's field label keep a `|` whole: Tahoma's hangs a row past the font's
+/// descent at 14 and 22 px. At every text size, at scale 1 and 2, under each interface.
+#[test]
+fn a_bar_hanging_past_the_descent_keeps_its_ink() {
+    use reprisekit::interface::Interface;
+    let text = tahoma();
+    let mut cut = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for pct in [100, 125, 150, 175, 200] {
+            let theme = reprisekit::interfaces::theme_for(i).with_text_size(pct);
+            for d in bar_dialogs() {
+                let title = d.title.clone();
+                for s in [1, 2] {
+                    let (_, cuts) =
+                        reprisekit::pins::clipped_ink(|| drawn_at(&theme, &text, d.clone(), s));
+                    cut.extend(cuts.into_iter().map(|c| {
+                        (
+                            format!("{} {pct}% @{s} {title}", i.as_str()),
+                            c.text,
+                            c.rows,
+                        )
+                    }));
+                }
+            }
+        }
+    }
+    assert_eq!(
+        cut,
+        Vec::new(),
+        "(look, text size, scale, box, line, ink rows cut)"
+    );
+}
+
+/// Run's not-found box and the mount question with a `|` in the name, at the text sizes and
+/// scale where the bar hangs past the descent, under each interface.
+#[test]
+fn boxes_with_a_bar_are_pinned_at_grown_text_and_scale_2() {
+    use reprisekit::interface::Interface;
+    let text = tahoma();
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for pct in [125, 175, 200] {
+            let theme = reprisekit::interfaces::theme_for(i).with_text_size(pct);
+            for (name, d) in [
+                ("not found", Dialog::run_not_found("a|b")),
+                ("mount", Dialog::ask_mount("/d/a|b.iso".into())),
+            ] {
+                for s in [1, 2] {
+                    let c = drawn_at(&theme, &text, d.clone(), s);
+                    let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
+                        (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
+                    });
+                    got.push((format!("{} {name} {pct}% @{s}", i.as_str()), hash));
+                }
+            }
+        }
+    }
+    let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/dialog_bar.txt");
+    reprisekit::pins::check_file(std::path::Path::new(pins), &got);
+}
