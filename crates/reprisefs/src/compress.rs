@@ -163,9 +163,52 @@ fn zip(c: &Compress, m: &Meter, path: Option<&OsStr>) -> Result<PathBuf, Failure
     let read = extract::lines_ticking(&mut child, err, m, each, tick);
     let ok = extract::finish(child, &read).map_err(undo)?;
     if !ok {
-        return Err(undo(Failure::Tool(extract::said(&last, "bsdtar stopped."))));
+        let why = extract::said(&last, "bsdtar stopped.");
+        return Err(undo(Failure::Tool(locate(why, &c.paths))));
     }
     ops::rename_numbered(&tmp, &c.zip).map_err(|e| undo(io_err(e)))
+}
+
+/// bsdtar's reason with the entry it quotes by its file name alone (`` Can't open `b.txt' ``)
+/// quoted by its path under the zipped items' folder instead: the first entry under `paths` of
+/// that name that does not open, else the first of that name. Unchanged when none has the name.
+fn locate(why: String, paths: &[PathBuf]) -> String {
+    let Some((head, rest)) = why.split_once('`') else {
+        return why;
+    };
+    let Some((name, tail)) = rest.split_once('\'').filter(|(name, _)| !name.is_empty()) else {
+        return why;
+    };
+    let mut first = None;
+    let unreadable = paths
+        .iter()
+        .find_map(|p| named(p, Path::new(name), &mut first));
+    let Some(found) = unreadable.or(first) else {
+        return why;
+    };
+    let dir = ops::members(paths).0;
+    let shown = found.strip_prefix(dir).unwrap_or(&found);
+    format!("{head}'{}'{tail}", shown.display())
+}
+
+/// The first entry at or under `path` whose path ends with `name` and does not open, noting the
+/// first of that name in `first`. Links are not followed.
+fn named(path: &Path, name: &Path, first: &mut Option<PathBuf>) -> Option<PathBuf> {
+    let meta = path.symlink_metadata().ok()?;
+    if path.ends_with(name) {
+        if !meta.is_symlink() && std::fs::File::open(path).is_err() {
+            return Some(path.to_path_buf());
+        }
+        first.get_or_insert_with(|| path.to_path_buf());
+    }
+    if !meta.is_dir() {
+        return None;
+    }
+    std::fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .find_map(|e| named(&e.path(), name, first))
 }
 
 /// The entries bsdtar writes for `path`, it and everything under it when a folder, and their
@@ -319,7 +362,7 @@ mod tests {
         let delayed = "echo 'bsdtar: Error exit delayed from previous errors.' >&2";
         for (said, why) in [
             (
-                "echo \"bsdtar: Can't open 'a.txt': Permission denied\" >&2",
+                "printf \"bsdtar: Can't open \\140a.txt': Permission denied\\n\" >&2",
                 "Can't open 'a.txt': Permission denied",
             ),
             ("printf 'a a.txtbsdtar: Write error\\n' >&2", "Write error"),
@@ -344,6 +387,40 @@ mod tests {
             );
             assert_eq!(names_in(d), ["a.txt"], "the temp file is removed");
         }
+    }
+
+    #[test]
+    fn an_unreadable_entry_is_named_by_its_path_in_the_folder() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        std::fs::create_dir_all(d.join("Docs/sub")).unwrap();
+        std::fs::write(d.join("Docs/secret.txt"), "kept").unwrap();
+        let secret = d.join("Docs/sub/secret.txt");
+        std::fs::write(&secret, "shut").unwrap();
+        std::fs::write(d.join("a.txt"), "a").unwrap();
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let c = Compress {
+            paths: vec![d.join("Docs"), d.join("a.txt")],
+            zip: d.join("Docs.zip"),
+        };
+        let got = events(&c, &Meter::default(), None);
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let want = "Cannot compress Docs.zip: Can't open 'Docs/sub/secret.txt': Permission denied";
+        assert!(
+            matches!(&got[..], [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished]
+                if text == want),
+            "{got:?}"
+        );
+        assert_eq!(names_in(d), ["Docs", "a.txt"]);
+    }
+
+    #[test]
+    fn a_quoted_name_under_none_of_the_items_is_left_as_bsdtar_said() {
+        let t = tempfile::tempdir().unwrap();
+        let a = t.path().join("a.txt");
+        std::fs::write(&a, "a").unwrap();
+        let why = "Can't open `gone.txt': No such file or directory";
+        assert_eq!(locate(why.into(), &[a]), why);
     }
 
     #[test]
