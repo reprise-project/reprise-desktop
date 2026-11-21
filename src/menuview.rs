@@ -80,6 +80,9 @@ pub enum MenuKind {
         /// The document folders head the list (the Start menu's Documents, not Recent Items).
         dirs: bool,
         icon_px: i32,
+        /// The widest the menu grows when narrower than the screen: the room beside the Start
+        /// panel's Recent Items row, past which a long name is cut with an ellipsis.
+        widest: Option<i32>,
     },
     Tray {
         id: String,
@@ -209,6 +212,17 @@ pub enum MenuPick {
 }
 
 impl MenuKind {
+    /// How wide the menu may grow on `usable`: its width, or a Recent Items menu's room beside
+    /// its row.
+    pub(crate) fn widest(&self, usable: Rect) -> i32 {
+        match self {
+            MenuKind::Documents {
+                widest: Some(w), ..
+            } => (*w).min(usable.width),
+            _ => usable.width,
+        }
+    }
+
     pub fn pick(&self, idx: usize) -> MenuPick {
         match self {
             MenuKind::Entries(entries) => match entries.get(idx) {

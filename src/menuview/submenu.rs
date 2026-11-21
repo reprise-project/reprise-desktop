@@ -284,6 +284,7 @@ impl State {
             tips,
             dirs: with_dirs,
             icon_px: px,
+            widest: None,
         };
         (items, kind, icons)
     }
