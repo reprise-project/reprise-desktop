@@ -262,3 +262,31 @@ fn enter_on_a_file_accepts_its_name() {
         other => panic!("expected Accept, got {other:?}"),
     }
 }
+
+#[test]
+fn the_file_name_field_hides_its_selection_without_the_focus() {
+    let t = text();
+    let theme = Theme::default();
+    let cs = &theme.colors;
+    let mut d = sample();
+    d.filename = crate::textedit::TextEdit::new("notes.txt", false);
+    d.filename.select_all();
+    let lit = |d: &FileDlg| {
+        let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
+        d.draw(&mut c, &t, &classic_paint(cs, 1), R, 11);
+        let f = d.layout(&t, 11, R, &d.drawn.0.get()).filename;
+        (f.y..f.bottom())
+            .flat_map(|y| (f.x..f.right()).map(move |x| (x, y)))
+            .filter(|&(x, y)| c.get(x, y) == cs.hilight.argb())
+            .count()
+    };
+    d.focus = Focus::FileName;
+    assert!(lit(&d) > 0, "the focused field shows its selection");
+    for focus in [Focus::Accept, Focus::Cancel, Focus::FileType] {
+        d.focus = focus;
+        assert_eq!(lit(&d), 0, "{focus:?} focused: no highlight in the name");
+    }
+    d.focus = Focus::FileName;
+    assert!(lit(&d) > 0, "the selection comes back with the focus");
+    assert!(d.filename.all_selected(), "the selection itself is kept");
+}

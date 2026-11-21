@@ -1270,7 +1270,7 @@ fn a_field_selection_at_scale_2_recolours_its_text_in_place() {
                     let mut c = Canvas::with_scale(150, 40, 2);
                     c.fill_rect(c.bounds(), cs.window);
                     let paint = classic_paint(cs, 1);
-                    draw_edit(&mut c, &text, &e, inner, px, &paint, Caret::Unfocused, 0);
+                    draw_edit(&mut c, &text, &e, inner, px, &paint, Caret::Hidden, 0);
                     c.pixels
                 };
                 let (y, h) = text.line(inner, false, px).unwrap();
@@ -1356,7 +1356,7 @@ fn a_fields_first_glyph_at_scale_2_draws_where_it_draws_with_a_char_before_it() 
                     let e = TextEdit::new(format!("{lead}{ch}"), false);
                     let inner = Rect::new(x, 10, 130 - x, 17);
                     let paint = classic_paint(cs, 1);
-                    draw_edit(&mut c, &text, &e, inner, px, &paint, Caret::Unfocused, 0);
+                    draw_edit(&mut c, &text, &e, inner, px, &paint, Caret::Hidden, 0);
                     c.pixels
                 };
                 if draw("", 20) != draw(" ", 20 - space) {
@@ -1391,7 +1391,7 @@ fn a_field_selection_at_scale_2_lights_its_glyph_whole_and_leaves_its_neighbour(
                 draw_edit(&mut c, &text, &e, inner, px, &paint, caret, 0);
                 c.pixels
             };
-            let draw = |s, t: &str, sel| paint_with(s, t, sel, Caret::Unfocused);
+            let draw = |s, t: &str, sel| paint_with(s, t, sel, Caret::Hidden);
             let caret = |t: &str, sel, shown| paint_with(2, t, sel, Caret::new(true, shown));
             let room = Rect::new(inner.x - 1, inner.y, inner.width + 1, inner.height);
             let geom = |_: &str| (inner.x, room, y..y + h);
@@ -1435,7 +1435,7 @@ fn a_field_selection_holds_its_descenders_in_the_highlight() {
                     let mut c = Canvas::with_scale(150, 40, s);
                     c.fill_rect(c.bounds(), cs.window);
                     let paint = classic_paint(cs, 1);
-                    draw_edit(&mut c, &text, &e, inner, px, &paint, Caret::Unfocused, 0);
+                    draw_edit(&mut c, &text, &e, inner, px, &paint, Caret::Hidden, 0);
                     c.pixels
                 };
                 for (t, sel) in crate::paint::descender_cases() {

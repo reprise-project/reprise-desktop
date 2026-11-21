@@ -227,6 +227,20 @@ mod tests {
     }
 
     #[test]
+    fn an_unfocused_field_hides_its_selection() {
+        let mut sf = SearchField::default();
+        sf.key(EditKey::Insert("report".into()));
+        sf.focus();
+        let lit = |focused: bool| {
+            let (c, theme, f) = render(&sf, focused);
+            inks(&c, f.inset(2), theme.colors.window).contains(&theme.colors.hilight.argb())
+        };
+        assert!(lit(true), "the focused field shows its selected query");
+        assert!(!lit(false), "without the focus no highlight");
+        assert!(sf.edit.all_selected(), "the selection itself is kept");
+    }
+
+    #[test]
     fn a_click_places_the_caret() {
         let text = TextRenderer::load(&FontConfig::default());
         let mut sf = SearchField::default();
