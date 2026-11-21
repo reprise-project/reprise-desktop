@@ -1277,3 +1277,70 @@ fn the_widget_boxes_tick_what_stands_and_write_desktop_widgets() {
     tick(&mut s, &mut got, p, "widget_meter", false);
     assert_eq!(got.desktop_widgets, ["clock", "calendar"]);
 }
+
+fn two_monitors(model: &str) -> Vec<backgroundpage::Monitor> {
+    ["Virtual-1", "Virtual-2"]
+        .into_iter()
+        .enumerate()
+        .map(|(i, name)| backgroundpage::Monitor {
+            name: name.into(),
+            label: match model {
+                "" => format!("{}. {name}", i + 1),
+                m => format!("{}. {m} on {name}", i + 1),
+            },
+        })
+        .collect()
+}
+
+/// The Use for row with two monitors: all of them picked, the second picked, everywhere with
+/// four desktops too, and the second of two with a long make and model, cut before its
+/// connector.
+#[test]
+fn the_use_for_row_with_monitors_pins_its_pixels_at_scale_1_and_2() {
+    use crate::backgroundpage::{USE_FOR, follow, follow_use_for, page};
+    let form_for = |monitors: &[backgroundpage::Monitor], desktops: i64, pick: usize| {
+        let mut f = page(crate::pages::Area::MIN);
+        let s = Settings {
+            desktops,
+            ..Settings::default()
+        };
+        follow(&mut f, &s);
+        follow_use_for(&mut f, &s, monitors);
+        f.set_combo(USE_FOR, pick);
+        f
+    };
+    let (plain, long) = (two_monitors(""), two_monitors("Red Hat, Inc. QEMU Monitor"));
+    let form = |desktops: i64, pick: usize| form_for(&plain, desktops, pick);
+    let cut = form_for(&long, 1, 2);
+    match cut.item(USE_FOR).map(|i| &i.control) {
+        Some(Control::Combo(c)) => assert_eq!(
+            c.items.iter().map(|i| i.keep).collect::<Vec<_>>(),
+            [0, " on Virtual-1".len(), " on Virtual-2".len()],
+            "a monitor row keeps its connector"
+        ),
+        _ => panic!("Use for is a combo"),
+    }
+    let row = Rect::new(219, 270, 159, 25);
+    let states = [form(1, 0), form(1, 2), form(4, 0), cut];
+    let rows: Vec<[u64; 3]> = (states.iter())
+        .flat_map(|f| [row_pins_at(f, row, 1), row_pins_at(f, row, 2)])
+        .collect();
+    assert!(
+        rows[0] != rows[2] && rows[0] != rows[4],
+        "the second monitor and everywhere differ from all monitors"
+    );
+    check_rows(
+        "use_for_monitors_row",
+        &[
+            "all monitors x1",
+            "all monitors x2",
+            "monitor 2 x1",
+            "monitor 2 x2",
+            "everywhere x1",
+            "everywhere x2",
+            "long monitor 2 x1",
+            "long monitor 2 x2",
+        ],
+        &rows,
+    );
+}

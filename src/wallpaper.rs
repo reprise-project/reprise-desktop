@@ -132,6 +132,12 @@ impl Drawn {
     pub fn any(&self) -> Option<&Arc<Canvas>> {
         self.pictures.first()
     }
+
+    /// No size counts as being drawn any more: the drawings under way were for a wallpaper since
+    /// replaced, so `want` asks for them again.
+    pub fn forget_drawing(&mut self) {
+        self.drawing.clear();
+    }
 }
 
 pub struct Loaded {

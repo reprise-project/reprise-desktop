@@ -63,6 +63,7 @@ pub fn load(text: &str) -> Settings {
         s.startmenu = menu;
     }
     s.tablet_pads = crate::tabletpage::read(&doc);
+    s.output_wallpapers = crate::outputwrite::read_wallpapers(&doc);
     if let Some(locker) = get(&doc, &LOCKER).and_then(Item::as_str) {
         s.power_locker = locker.to_string();
     }
@@ -121,6 +122,11 @@ pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, Stri
     }
     crate::startmenu::write(&mut doc, &want.startmenu, &base.startmenu, &have.startmenu);
     crate::tabletpage::write(&mut doc, &want.tablet_pads, &base.tablet_pads);
+    crate::outputwrite::write_wallpapers(
+        &mut doc,
+        &want.output_wallpapers,
+        &base.output_wallpapers,
+    )?;
     Ok(doc.to_string())
 }
 
@@ -146,6 +152,11 @@ pub fn rebase(want: &mut Settings, base: &Settings, fresh: &Settings) {
     follow(&mut want.denied, &base.denied, &fresh.denied);
     follow(&mut want.startmenu, &base.startmenu, &fresh.startmenu);
     follow(&mut want.tablet_pads, &base.tablet_pads, &fresh.tablet_pads);
+    follow(
+        &mut want.output_wallpapers,
+        &base.output_wallpapers,
+        &fresh.output_wallpapers,
+    );
     follow(
         &mut want.power_locker,
         &base.power_locker,

@@ -48,6 +48,37 @@ fn ellipsize_keeps_fitting_text_and_trims_the_rest() {
     assert_eq!(r.ellipsize("abc", dots - 1, false, 11), "..");
     assert_eq!(r.ellipsize("abc", 0, false, 11), "");
 }
+
+#[test]
+fn ellipsize_keeping_cuts_before_the_kept_end_then_from_the_start() {
+    let r = TextRenderer::load(&FontConfig::default());
+    let w = |s: &str| r.measure(s, false, 11);
+    let label = "2. Red Hat, Inc. QEMU Monitor on Virtual-2";
+    let keep = " on Virtual-2".len();
+    let cut = |width| r.ellipsize_keeping(label, keep, width, false, 11);
+    assert_eq!(cut(w(label)), label);
+    assert_eq!(
+        cut(w("2. Red Hat... on Virtual-2")),
+        "2. Red Hat... on Virtual-2"
+    );
+    assert_eq!(
+        cut(w("2... on Virtual-2")),
+        "2... on Virtual-2",
+        "no dot or space runs into the ellipsis"
+    );
+    assert_eq!(
+        cut(w("...Virtual-2")),
+        "...Virtual-2",
+        "the start gives way"
+    );
+    for width in w("...") + 1..w(label) {
+        assert!(w(&cut(width)) <= width, "{width}: {}", cut(width));
+    }
+    assert_eq!(
+        r.ellipsize_keeping(label, 0, w(label) - 40, false, 11),
+        r.ellipsize(label, w(label) - 40, false, 11)
+    );
+}
 use crate::raster::{Canvas, Rect};
 use crate::theme::{Color, FontConfig};
 

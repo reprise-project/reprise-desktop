@@ -100,6 +100,7 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 #                            # A built-in always fills the screen; position does not apply
 # position = "fill"          # fill (cover the screen evenly, cropped) | fit (whole, on the colour) | stretch | tile | center
 # desktops = ["", "reprise:tarn/dusk"]   # each virtual desktop's own picture, entry 1 for desktop 1; "" shows image (or the slideshow)
+#                            # a monitor can have its own picture too: [[outputs]] wallpaper, below
 # slideshow = "~/Pictures/Wallpapers"   # a folder whose pictures take turns in place of image, each fading into the next
 # interval = 30              # minutes each slideshow picture shows, 1 to 1440; the desktop menu's Next desktop background skips ahead
 # shuffle = false            # true: the slideshow picks at random instead of by file name (case ignored, numbers by value)
@@ -326,6 +327,8 @@ suspend_after = 0            # run [power] standby
 # transform = "90"           # normal, 90, 180, 270, flipped, flipped-90, flipped-180, flipped-270
 # adaptive_sync = "fullscreen"  # true, false or "fullscreen"; overrides the top-level adaptive_sync for this output
 # icc_profile = "~/.local/share/icc/studio.icc"  # an ICC profile whose calibration curves (vcgt) go into this output's gamma table, night light on top; the Display page's Color profile list sets it
+# wallpaper = "~/Pictures/left.jpg"   # this output's own picture, shown on every desktop in place of [wallpaper]'s image, desktops and slideshow; "" or none shows those. Settings > Background's Use for writes it
+# wallpaper_position = "fit" # how this output places its picture, in place of [wallpaper] position
 
 # [screenshot]               # every screenshot goes to the clipboard; Settings > Screen Capture sets these
 # save = true                # and to Pictures/Screenshots (or ~/Screenshots) as a file in the format below

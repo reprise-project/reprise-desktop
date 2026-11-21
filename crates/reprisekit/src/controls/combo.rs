@@ -39,6 +39,9 @@ pub struct ListItem {
     pub icon: Option<Canvas>,
     pub indent: i32,
     pub greyed: bool,
+    /// The last `keep` bytes of `text` stay whole when the row is cut to an ellipsis
+    /// ([`TextRenderer::ellipsize_keeping`]).
+    pub keep: usize,
 }
 
 impl ListItem {
@@ -48,6 +51,7 @@ impl ListItem {
             icon: None,
             indent: 0,
             greyed: false,
+            keep: 0,
         }
     }
 
@@ -57,6 +61,7 @@ impl ListItem {
             icon,
             indent,
             greyed: false,
+            keep: 0,
         }
     }
 }
@@ -773,7 +778,11 @@ pub fn draw(
         }
     }
     let tr = lay.text.scaled(s);
-    let value = fitted(text, combo.text(), tr.width, px);
+    let keep = match combo.edit {
+        Some(_) => 0,
+        None => combo.items.get(combo.selected).map_or(0, |i| i.keep),
+    };
+    let value = fitted(text, combo.text(), keep, tr.width, px);
     if !combo.enabled {
         // Under a style's edit border the ring of what sits behind the
         // combo runs 3 px left of the drop button, inside the text rect's
@@ -871,12 +880,18 @@ pub fn draw(
     draw_combo_drop(c, p, lay.drop.scaled(s), combo.enabled, lit.drop, editable);
 }
 
-/// `s` whole while its ink fits `width`, else cut to an ellipsis.
-fn fitted<'t>(text: &TextRenderer, s: &'t str, width: i32, px: u32) -> std::borrow::Cow<'t, str> {
+/// `s` whole while its ink fits `width`, else cut to an ellipsis keeping its last `keep` bytes.
+fn fitted<'t>(
+    text: &TextRenderer,
+    s: &'t str,
+    keep: usize,
+    width: i32,
+    px: u32,
+) -> std::borrow::Cow<'t, str> {
     if text.ink_width(s, false, px) <= width {
         s.into()
     } else {
-        text.ellipsize(s, width, false, px)
+        text.ellipsize_keeping(s, keep, width, false, px)
     }
 }
 
@@ -974,7 +989,7 @@ pub fn draw_list_rows(
             let line = p.text.len(LINE_H) * s;
             let ty = r.y + (r.height - line) / 2;
             let tr = Rect::new(r.x + 2 * s, ty, r.width - 2 * s, line);
-            let label = fitted(text, &items[i].text, tr.width, px);
+            let label = fitted(text, &items[i].text, items[i].keep, tr.width, px);
             let tr = text.ink_box(tr, &label, false, px, c.scale());
             text.draw(c, tr, &label, false, fg, Align::Left, px);
             continue;
@@ -989,7 +1004,13 @@ pub fn draw_list_rows(
             c.blit_over(ix + dx, r.y + dy, icon);
         }
         let tx = ix + (slot + ICON_GAP) * s;
-        let label = fitted(text, &items[i].text, inner.right() - s - tx, px);
+        let label = fitted(
+            text,
+            &items[i].text,
+            items[i].keep,
+            inner.right() - s - tx,
+            px,
+        );
         let tw = text.measure(&label, false, px);
         if highlighted == Some(i) {
             let hl = Rect::new(tx - s, r.y + s, tw + 2 * s, r.height - s).intersect(&inner);

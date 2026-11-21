@@ -110,6 +110,9 @@ impl SettingsApp {
         self.display.model.set_heads(heads);
         self.display.model.layouts_saved = self.display.layouts.exists();
         displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
+        self.fill_wallpapers();
+        self.want_preview();
+        self.show_monitor();
         let effects = self.display.flow.heads_changed(&self.display.model, req);
         let mut r = self.display_effects(effects);
         self.sync_apply();

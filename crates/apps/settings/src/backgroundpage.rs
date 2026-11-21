@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use reprisekit::classic::assets::MONITOR_SCREEN;
 use reprisekit::classic::widgets::BUTTON_W;
 use reprisekit::controls::colorbutton::ColorButton;
+use reprisekit::controls::combo::ListItem;
 use reprisekit::controls::form::{Control, Form, Item, Screen};
 use reprisekit::controls::listbox::ListBox;
 use reprisekit::raster::{Canvas, Rect};
@@ -29,10 +30,15 @@ pub const MONITOR: &str = "monitor";
 pub const MODE: &str = "wallpaper_mode";
 pub const WALLPAPER: &str = "wallpaper";
 pub const BROWSE: &str = "browse";
-/// Which desktops a pick is for: all, or one with a picture of its own.
+/// What a pick is for: every desktop and monitor, or one desktop or monitor with a picture of
+/// its own.
 pub const USE_FOR: &str = "wallpaper_for";
 const USE_FOR_LABEL: &str = "use_for_label";
 pub const ALL_DESKTOPS: &str = "All desktops";
+pub const ALL_MONITORS: &str = "All monitors";
+/// The first Use for row with both desktops and monitors listed.
+pub const EVERYWHERE: &str = "Everywhere";
+pub const POSITION: &str = "wallpaper_position";
 /// The file name extensions combo and its label, greyed while the desktop shows no files.
 pub const EXTENSIONS: &str = "desktop_extensions";
 const EXTENSIONS_LABEL: &str = "extensions_label";
@@ -165,7 +171,7 @@ pub fn page(a: Area) -> Form {
         ),
         button(BROWSE, right, 196 + dh, "B&rowse..."),
         Item::label_at("position_label", RX, 230 + dh, BUTTON_W, "&Position:"),
-        choice("wallpaper_position", RX, 246 + dh, BUTTON_W, POSITIONS),
+        choice(POSITION, RX, 246 + dh, BUTTON_W, POSITIONS),
         Item::label_at("color_label", right, 230 + dh, BUTTON_W, "&Color:"),
         Item::new(
             "background",
@@ -176,14 +182,7 @@ pub fn page(a: Area) -> Form {
             )),
         ),
         Item::label_at(USE_FOR_LABEL, RX, 276 + dh, 44, "Use &for:"),
-        Item::combo(
-            USE_FOR,
-            RX + 48,
-            272 + dh,
-            rw(Area::MIN) - 48,
-            &[ALL_DESKTOPS],
-            1,
-        ),
+        use_for(dh),
         Item::group(
             "widgets_group",
             Rect::new(RX, 300 + dh, rw(a), 82),
@@ -227,48 +226,128 @@ pub fn page(a: Area) -> Form {
     ])
 }
 
+/// The Use for combo, whose monitor rows are named by their make and model, any length.
+fn use_for(dh: i32) -> Item {
+    let mut item = Item::combo(
+        USE_FOR,
+        RX + 48,
+        272 + dh,
+        rw(Area::MIN) - 48,
+        &[ALL_DESKTOPS],
+        1,
+    );
+    if let Control::Combo(c) = &mut item.control {
+        c.elide = true;
+    }
+    item
+}
+
 pub fn slideshow(s: &Settings) -> bool {
     !s.slideshow.is_empty()
 }
 
-/// The desktop the Use for combo picks, None for all of them.
-pub fn target(form: &Form) -> Option<usize> {
-    form.combo_selected(USE_FOR)?.checked_sub(1)
+/// A connected monitor the Use for list offers: its connector name and its Display page label.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Monitor {
+    pub name: String,
+    pub label: String,
 }
 
-/// The Use for combo's rows: all desktops, then each of the `s.desktops` by name.
-pub fn use_for_rows(s: &Settings) -> Vec<String> {
-    let n = if s.desktops > 1 {
+impl Monitor {
+    /// The end of `label` a row cut to an ellipsis keeps: " on " and the connector, or the
+    /// connector alone.
+    fn keep(&self) -> usize {
+        let Some(head) = self.label.strip_suffix(&self.name) else {
+            return 0;
+        };
+        self.name.len() + if head.ends_with(" on ") { 4 } else { 0 }
+    }
+}
+
+/// What a pick on the page is for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Target {
+    All,
+    Desktop(usize),
+    /// A monitor by connector name.
+    Monitor(String),
+}
+
+fn desktop_rows(s: &Settings) -> usize {
+    if s.desktops > 1 {
         s.desktops as usize
     } else {
         0
+    }
+}
+
+/// What the Use for combo picks: its rows are [`use_for_rows`] of `s` and `monitors`.
+pub fn target(form: &Form, s: &Settings, monitors: &[Monitor]) -> Target {
+    let Some(i) = form.combo_selected(USE_FOR).and_then(|i| i.checked_sub(1)) else {
+        return Target::All;
     };
-    std::iter::once(ALL_DESKTOPS.to_string())
+    let n = desktop_rows(s);
+    if i < n {
+        return Target::Desktop(i);
+    }
+    (monitors.get(i - n)).map_or(Target::All, |m| Target::Monitor(m.name.clone()))
+}
+
+/// The Use for combo's rows: everywhere, then each of the `s.desktops` by name, then each of
+/// `monitors` (the host lists them while two or more are connected).
+pub fn use_for_rows(s: &Settings, monitors: &[Monitor]) -> Vec<String> {
+    let n = desktop_rows(s);
+    let first = match (n > 0, monitors.is_empty()) {
+        (true, false) => EVERYWHERE,
+        (false, false) => ALL_MONITORS,
+        _ => ALL_DESKTOPS,
+    };
+    std::iter::once(first.to_string())
         .chain((0..n).map(|i| repriseconf::config::desktop_name(&s.desktop_names, i)))
+        .chain(monitors.iter().map(|m| m.label.clone()))
         .collect()
 }
 
-/// `s` as the page shows it for `desktop`: that desktop's picture (its own, else the one for
-/// all), never a slideshow.
-pub fn view(s: &Settings, desktop: Option<usize>) -> Cow<'_, Settings> {
-    let Some(n) = desktop else {
-        return Cow::Borrowed(s);
-    };
-    let own = s.wallpaper_desktops.get(n).filter(|p| !p.is_empty());
-    Cow::Owned(Settings {
-        wallpaper: own.unwrap_or(&s.wallpaper).clone(),
-        slideshow: String::new(),
-        ..s.clone()
-    })
+/// `s` as the page shows it for `target`: that desktop's picture (its own, else the one for all),
+/// or that monitor's picture and position (its own, else the ones for all); never a slideshow.
+pub fn view<'a>(s: &'a Settings, target: &Target) -> Cow<'a, Settings> {
+    match target {
+        Target::All => Cow::Borrowed(s),
+        Target::Desktop(n) => {
+            let own = s.wallpaper_desktops.get(*n).filter(|p| !p.is_empty());
+            Cow::Owned(Settings {
+                wallpaper: own.unwrap_or(&s.wallpaper).clone(),
+                slideshow: String::new(),
+                ..s.clone()
+            })
+        }
+        Target::Monitor(name) => {
+            let own = s.output_wallpapers.iter().find(|o| o.name == *name);
+            let or = |v: Option<&String>, all: &String| {
+                v.filter(|v| !v.is_empty()).unwrap_or(all).clone()
+            };
+            Cow::Owned(Settings {
+                wallpaper: or(own.map(|o| &o.wallpaper), &s.wallpaper),
+                wallpaper_position: or(own.map(|o| &o.position), &s.wallpaper_position),
+                slideshow: String::new(),
+                ..s.clone()
+            })
+        }
+    }
+}
+
+/// Whether `picked` is the picture for all: none, or `s`'s own picture while no slideshow runs.
+fn is_shared(s: &Settings, picked: &str) -> bool {
+    picked.is_empty()
+        || (!slideshow(s)
+            && (picked == s.wallpaper
+                || (builtin(picked).is_none() && expand(picked) == expand(&s.wallpaper))))
 }
 
 /// Give desktop `n` the picture `picked`; the picture for all desktops (or none) leaves it
 /// without one of its own. Trailing empty entries are dropped.
 pub fn set_for_desktop(s: &mut Settings, n: usize, picked: String) {
-    let shared = picked.is_empty()
-        || (!slideshow(s)
-            && (picked == s.wallpaper
-                || (builtin(&picked).is_none() && expand(&picked) == expand(&s.wallpaper))));
+    let shared = is_shared(s, &picked);
     let list = &mut s.wallpaper_desktops;
     if list.len() <= n {
         list.resize(n + 1, String::new());
@@ -276,6 +355,62 @@ pub fn set_for_desktop(s: &mut Settings, n: usize, picked: String) {
     list[n] = if shared { String::new() } else { picked };
     while list.last().is_some_and(String::is_empty) {
         list.pop();
+    }
+}
+
+/// Which of a monitor's own keys a pick sets.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OwnKey {
+    Wallpaper,
+    Position,
+}
+
+impl OwnKey {
+    /// The `[[outputs]]` key it stands for.
+    pub fn key(self) -> &'static str {
+        match self {
+            OwnKey::Wallpaper => "wallpaper",
+            OwnKey::Position => "wallpaper_position",
+        }
+    }
+
+    /// `o`'s value for it; "" for none.
+    pub fn of(self, o: &crate::model::OutputWallpaper) -> &str {
+        match self {
+            OwnKey::Wallpaper => &o.wallpaper,
+            OwnKey::Position => &o.position,
+        }
+    }
+}
+
+/// Give monitor `name` its own `value` for `key`; the value for all monitors (or none) leaves it
+/// without one. An entry left with neither is dropped.
+pub fn set_for_monitor(s: &mut Settings, name: &str, key: OwnKey, value: String) {
+    let shared = match key {
+        OwnKey::Wallpaper => is_shared(s, &value),
+        OwnKey::Position => value.is_empty() || value == s.wallpaper_position,
+    };
+    let list = &mut s.output_wallpapers;
+    let i = (list.iter().position(|o| o.name == name)).unwrap_or_else(|| {
+        list.push(crate::model::OutputWallpaper {
+            name: name.to_string(),
+            ..Default::default()
+        });
+        list.len() - 1
+    });
+    let field = match key {
+        OwnKey::Wallpaper => &mut list[i].wallpaper,
+        OwnKey::Position => &mut list[i].position,
+    };
+    *field = if shared { String::new() } else { value };
+    list.retain(|o| !o.wallpaper.is_empty() || !o.position.is_empty());
+}
+
+/// A pick for all monitors: each of `connected` (by connector name) shows it, so their own
+/// `key` goes. A monitor not connected keeps its own.
+pub fn clear_for_monitors(s: &mut Settings, connected: &[String], key: OwnKey) {
+    for name in connected {
+        set_for_monitor(s, name, key, String::new());
     }
 }
 
@@ -488,33 +623,16 @@ pub fn show(form: &mut Form, s: &Settings, want: &str, picture: Option<&Picture>
     }
 }
 
-/// Show Picture or Slideshow, grey the position while there is no
-/// wallpaper, the slideshow's controls without a slideshow, the water
-/// style while water is off and the stirring note unless the style is a fluid, and show
-/// on the Color button the desktop colour `s` gives while `[colors]
-/// background` is unset.
+/// Grey the file name extensions while the desktop shows no files, the water style while water is
+/// off and the stirring note unless the style is a fluid, and show on the Color button the desktop
+/// colour `s` gives while `[colors] background` is unset. The rows that follow what Use for picks
+/// follow too while it picks all or a desktop; [`follow_use_for`] fills it and follows a monitor.
 pub fn follow(form: &mut Form, s: &Settings) {
-    let rows = use_for_rows(s);
-    if let Some(Control::Combo(c)) = form.item_mut(USE_FOR).map(|i| &mut i.control)
-        && !c.items.iter().map(|i| &i.text).eq(rows.iter())
-    {
-        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
-        c.items = reprisekit::controls::combo::Combo::new(&rows, 0, rows.len()).items;
-        c.rows = rows.len();
-        c.selected = c.selected.min(rows.len() - 1);
-    }
-    form.set_enabled(USE_FOR_LABEL, rows.len() > 1);
-    form.set_enabled(USE_FOR, rows.len() > 1);
-    let desktop = target(form);
-    form.set_enabled(MODE, desktop.is_none());
-    let s = &*view(s, desktop);
-    let show = slideshow(s);
-    form.set_combo(MODE, show as usize);
-    let has = (!s.wallpaper.is_empty() && builtin(&s.wallpaper).is_none()) || show;
-    form.set_enabled("position_label", has);
-    form.set_enabled("wallpaper_position", has);
-    for id in SLIDE_CONTROLS {
-        form.set_enabled(id, show);
+    let picked = form.combo_selected(USE_FOR).unwrap_or(0);
+    match picked.checked_sub(1) {
+        None => follow_target(form, s, &Target::All),
+        Some(n) if n < desktop_rows(s) => follow_target(form, s, &Target::Desktop(n)),
+        Some(_) => {}
     }
     form.set_enabled(EXTENSIONS_LABEL, s.desktop_icons);
     form.set_enabled(EXTENSIONS, s.desktop_icons);
@@ -525,6 +643,52 @@ pub fn follow(form: &mut Form, s: &Settings) {
         && let Some(Control::Color(b)) = form.item_mut("background").map(|i| &mut i.control)
     {
         b.color = crate::appearancepage::theme(s).colors.background;
+    }
+}
+
+/// Fill the Use for combo from `s` and `monitors` (the row picked stays picked while listed), then
+/// follow what it picks.
+pub fn follow_use_for(form: &mut Form, s: &Settings, monitors: &[Monitor]) {
+    let rows = use_for_rows(s, monitors);
+    if let Some(Control::Combo(c)) = form.item_mut(USE_FOR).map(|i| &mut i.control)
+        && !c.items.iter().map(|i| &i.text).eq(rows.iter())
+    {
+        let was = c.items.get(c.selected).map(|i| i.text.clone());
+        let at = was.and_then(|w| rows.iter().position(|r| *r == w));
+        let firsts = rows.len() - monitors.len();
+        c.items = (rows.iter().enumerate())
+            .map(|(i, r)| ListItem {
+                keep: i.checked_sub(firsts).map_or(0, |m| monitors[m].keep()),
+                ..ListItem::new(r.as_str())
+            })
+            .collect();
+        c.rows = rows.len();
+        c.selected = at.unwrap_or(0);
+    }
+    form.set_enabled(USE_FOR_LABEL, rows.len() > 1);
+    form.set_enabled(USE_FOR, rows.len() > 1);
+    let t = target(form, s, monitors);
+    follow_target(form, s, &t);
+}
+
+/// Show for `t` Picture or Slideshow (only all of them takes a slideshow), the position, greyed
+/// while there is no picture file, and the slideshow's controls, greyed without one.
+fn follow_target(form: &mut Form, s: &Settings, t: &Target) {
+    form.set_enabled(MODE, *t == Target::All);
+    let s = &*view(s, t);
+    let show = slideshow(s);
+    form.set_combo(MODE, show as usize);
+    let has = (!s.wallpaper.is_empty() && builtin(&s.wallpaper).is_none()) || show;
+    form.set_enabled("position_label", has);
+    form.set_enabled(POSITION, has);
+    if let Some(i) = POSITIONS
+        .iter()
+        .position(|(v, _)| *v == s.wallpaper_position)
+    {
+        form.set_combo(POSITION, i);
+    }
+    for id in SLIDE_CONTROLS {
+        form.set_enabled(id, show);
     }
 }
 
@@ -561,6 +725,7 @@ mod tests {
                     ..Settings::default()
                 };
                 follow(&mut f, &s);
+                follow_use_for(&mut f, &s, &[]);
                 f.set_combo(EXTENSIONS, 2);
                 let mut c = Canvas::new(row.right() as u32, row.bottom() as u32);
                 c.fill_rect(c.bounds(), theme.colors.button_face);
@@ -603,17 +768,17 @@ mod tests {
             desktop_names: vec!["Work".into()],
             ..Settings::default()
         };
-        assert_eq!(view(&s, None).slideshow, "~/Slides");
-        assert_eq!(view(&s, Some(0)).wallpaper, "~/w/a.jpg");
+        assert_eq!(view(&s, &Target::All).slideshow, "~/Slides");
+        assert_eq!(view(&s, &Target::Desktop(0)).wallpaper, "~/w/a.jpg");
         assert_eq!(
-            view(&s, Some(0)).slideshow,
+            view(&s, &Target::Desktop(0)).slideshow,
             "",
             "a desktop shows one picture"
         );
-        assert_eq!(view(&s, Some(1)).wallpaper, "reprise:tarn/dusk");
-        assert_eq!(view(&s, Some(2)).wallpaper, "~/w/a.jpg");
+        assert_eq!(view(&s, &Target::Desktop(1)).wallpaper, "reprise:tarn/dusk");
+        assert_eq!(view(&s, &Target::Desktop(2)).wallpaper, "~/w/a.jpg");
         assert_eq!(
-            use_for_rows(&s),
+            use_for_rows(&s, &[]),
             [ALL_DESKTOPS, "Work", "Desktop 2", "Desktop 3"]
         );
         set_for_desktop(&mut s, 2, "/p/c.png".into());
@@ -631,7 +796,150 @@ mod tests {
             "the picture for all drops it"
         );
         s.desktops = 1;
-        assert_eq!(use_for_rows(&s), [ALL_DESKTOPS]);
+        assert_eq!(use_for_rows(&s, &[]), [ALL_DESKTOPS]);
+    }
+
+    #[test]
+    fn a_monitor_shows_its_own_picture_and_position_else_the_ones_for_all() {
+        let monitors = vec![
+            Monitor {
+                name: "DP-1".into(),
+                label: "1. DP-1".into(),
+            },
+            Monitor {
+                name: "HDMI-A-1".into(),
+                label: "2. Dell U2412M on HDMI-A-1".into(),
+            },
+        ];
+        let mut s = Settings {
+            desktops: 2,
+            wallpaper: "~/w/a.jpg".into(),
+            wallpaper_position: "fill".into(),
+            slideshow: "~/Slides".into(),
+            ..Settings::default()
+        };
+        assert_eq!(
+            use_for_rows(&s, &monitors),
+            [
+                EVERYWHERE,
+                "Desktop 1",
+                "Desktop 2",
+                "1. DP-1",
+                "2. Dell U2412M on HDMI-A-1"
+            ]
+        );
+        let mut f = page(Area::MIN);
+        follow_use_for(&mut f, &s, &monitors);
+        f.set_combo(USE_FOR, 4);
+        let hdmi = Target::Monitor("HDMI-A-1".into());
+        assert_eq!(target(&f, &s, &monitors), hdmi);
+        f.set_combo(USE_FOR, 2);
+        assert_eq!(target(&f, &s, &monitors), Target::Desktop(1));
+        assert_eq!(view(&s, &hdmi).wallpaper, "~/w/a.jpg");
+        assert_eq!(view(&s, &hdmi).slideshow, "", "a monitor shows one picture");
+        set_for_monitor(
+            &mut s,
+            "HDMI-A-1",
+            OwnKey::Wallpaper,
+            "reprise:tarn/dusk".into(),
+        );
+        set_for_monitor(&mut s, "HDMI-A-1", OwnKey::Position, "center".into());
+        set_for_monitor(&mut s, "DP-1", OwnKey::Position, "fill".into());
+        assert_eq!(
+            s.output_wallpapers,
+            [crate::model::OutputWallpaper {
+                name: "HDMI-A-1".into(),
+                wallpaper: "reprise:tarn/dusk".into(),
+                position: "center".into(),
+            }],
+            "the position for all is no position of its own"
+        );
+        assert_eq!(view(&s, &hdmi).wallpaper, "reprise:tarn/dusk");
+        assert_eq!(view(&s, &hdmi).wallpaper_position, "center");
+        assert_eq!(
+            view(&s, &Target::Monitor("DP-1".into())).wallpaper_position,
+            "fill"
+        );
+        set_for_monitor(&mut s, "HDMI-A-1", OwnKey::Wallpaper, String::new());
+        assert_eq!(s.output_wallpapers[0].wallpaper, "", "(None) drops it");
+        clear_for_monitors(&mut s, &["HDMI-A-1".into()], OwnKey::Position);
+        assert!(
+            s.output_wallpapers.is_empty(),
+            "an entry left with neither goes"
+        );
+        let one = Settings {
+            desktops: 1,
+            ..Settings::default()
+        };
+        assert_eq!(use_for_rows(&one, &monitors[..0]), [ALL_DESKTOPS]);
+        assert_eq!(
+            use_for_rows(&one, &monitors),
+            [ALL_MONITORS, "1. DP-1", "2. Dell U2412M on HDMI-A-1"]
+        );
+    }
+
+    #[test]
+    fn all_monitors_keeps_a_disconnected_monitors_own_picture() {
+        let mut s = Settings {
+            output_wallpapers: ["DP-1", "DP-2"]
+                .map(|n| crate::model::OutputWallpaper {
+                    name: n.into(),
+                    wallpaper: "/w/own.png".into(),
+                    position: "tile".into(),
+                })
+                .to_vec(),
+            ..Settings::default()
+        };
+        clear_for_monitors(&mut s, &["DP-1".into()], OwnKey::Wallpaper);
+        let names: Vec<(&str, &str, &str)> = (s.output_wallpapers.iter())
+            .map(|o| (o.name.as_str(), o.wallpaper.as_str(), o.position.as_str()))
+            .collect();
+        assert_eq!(
+            names,
+            [("DP-1", "", "tile"), ("DP-2", "/w/own.png", "tile")]
+        );
+    }
+
+    #[test]
+    fn a_monitor_picked_greys_the_mode_and_shows_its_position() {
+        let monitors = vec![
+            Monitor {
+                name: "DP-1".into(),
+                label: "1. DP-1".into(),
+            },
+            Monitor {
+                name: "DP-2".into(),
+                label: "2. DP-2".into(),
+            },
+        ];
+        let s = Settings {
+            wallpaper: "/w/a.jpg".into(),
+            wallpaper_position: "fill".into(),
+            output_wallpapers: vec![crate::model::OutputWallpaper {
+                name: "DP-2".into(),
+                wallpaper: String::new(),
+                position: "tile".into(),
+            }],
+            desktops: 1,
+            ..Settings::default()
+        };
+        let mut f = page(Area::MIN);
+        follow_use_for(&mut f, &s, &monitors);
+        f.set_combo(USE_FOR, 2);
+        follow_use_for(&mut f, &s, &monitors);
+        let combo = |f: &Form, id: &str| match &f.item(id).unwrap().control {
+            Control::Combo(c) => (c.enabled, c.selected),
+            _ => panic!("{id} is a combo"),
+        };
+        assert!(!combo(&f, MODE).0, "a monitor shows one picture");
+        assert_eq!(combo(&f, POSITION), (true, 3), "DP-2 tiles");
+        follow_use_for(&mut f, &s, &monitors[..1]);
+        assert_eq!(
+            f.combo_selected(USE_FOR),
+            Some(0),
+            "a monitor unplugged is no longer picked"
+        );
+        assert_eq!(combo(&f, POSITION), (true, 0));
     }
 
     /// The Use for row with all desktops picked, with a desktop picked, and greyed with one desktop.
@@ -661,6 +969,7 @@ mod tests {
                     ..Settings::default()
                 };
                 follow(&mut f, &s);
+                follow_use_for(&mut f, &s, &[]);
                 f.set_combo(USE_FOR, pick);
                 let mut c = Canvas::new(row.right() as u32, row.bottom() as u32);
                 c.fill_rect(c.bounds(), theme.colors.button_face);
@@ -769,7 +1078,8 @@ mod tests {
         assert_eq!(monitor_file(&s, &[]), "reprise:ridges/dusk");
         let mut f = page(Area::MIN);
         follow(&mut f, &s);
-        match &f.item("wallpaper_position").unwrap().control {
+        follow_use_for(&mut f, &s, &[]);
+        match &f.item(POSITION).unwrap().control {
             Control::Combo(c) => assert!(!c.enabled),
             _ => panic!("the position is a combo"),
         }
@@ -855,6 +1165,7 @@ mod tests {
         let mut f = page(Area::MIN);
         let mut s = Settings::default();
         follow(&mut f, &s);
+        follow_use_for(&mut f, &s, &[]);
         assert_eq!(f.combo_selected(MODE), Some(0));
         let on = |f: &Form, id: &str| match &f.item(id).unwrap().control {
             Control::Check { enabled, .. } => *enabled,
@@ -864,6 +1175,7 @@ mod tests {
         assert!(!on(&f, INTERVAL) && !on(&f, "slideshow_shuffle"));
         s.slideshow = "~/Pictures".into();
         follow(&mut f, &s);
+        follow_use_for(&mut f, &s, &[]);
         assert_eq!(f.combo_selected(MODE), Some(1));
         assert!(on(&f, INTERVAL) && on(&f, "slideshow_shuffle"));
     }

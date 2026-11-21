@@ -7,6 +7,8 @@ use repriseconf::config::VrrPolicy;
 use repriseconf::displays::{Layouts, Monitor, monitor_ids, outputs_fingerprint};
 use repriseconf::hz_string;
 use repriseconf::projection::Home;
+
+use crate::model::OutputWallpaper;
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, TableLike, Value, value};
 
 /// What to record for one output; a None leaves that key as it is.
@@ -107,10 +109,9 @@ fn entries(doc: &DocumentMut) -> Vec<&dyn TableLike> {
     }
 }
 
-/// `doc` with the entry called `name` updated (or added at the end) to carry `keys`. Err when `outputs` is not a list of tables or `keys` holds a value the compositor would refuse; `doc` is unchanged on Err.
-pub fn set_output_in(doc: &mut DocumentMut, name: &str, keys: &OutputKeys) -> Result<(), String> {
-    check_keys(keys)?;
-    check_outputs(doc)?;
+/// The `[[outputs]]` entry called `name`, added at the end when there is none. `check_outputs`
+/// must have passed.
+fn entry_mut<'a>(doc: &'a mut DocumentMut, name: &str) -> &'a mut Table {
     // Trailing comments belong to the document and would print after a new entry; they move in front of it instead.
     let listed = entries(doc)
         .iter()
@@ -133,9 +134,94 @@ pub fn set_output_in(doc: &mut DocumentMut, name: &str, keys: &OutputKeys) -> Re
         outputs.push(t);
         outputs.len() - 1
     });
-    let table = outputs
+    outputs
         .get_mut(index)
-        .expect("a found entry or the one just pushed");
+        .expect("a found entry or the one just pushed")
+}
+
+/// Each `[[outputs]]` entry's own `wallpaper` and `wallpaper_position`, for the entries that set
+/// either.
+pub fn read_wallpapers(doc: &DocumentMut) -> Vec<OutputWallpaper> {
+    let text = |t: &dyn TableLike, k: &str| {
+        (t.get(k).and_then(Item::as_str))
+            .unwrap_or_default()
+            .to_string()
+    };
+    entries(doc)
+        .into_iter()
+        .filter_map(|t| {
+            let o = OutputWallpaper {
+                name: t.get("name")?.as_str()?.to_string(),
+                wallpaper: text(t, "wallpaper"),
+                position: text(t, "wallpaper_position"),
+            };
+            (!o.wallpaper.is_empty() || !o.position.is_empty()).then_some(o)
+        })
+        .collect()
+}
+
+/// Write the outputs' own wallpaper keys that moved from `base` to `want`, entry by entry: an
+/// emptied key is removed, an entry left holding only its name goes, and an output without an
+/// entry gets one only for a key it sets. Err (and `doc` unchanged) when `outputs` is not a list
+/// of tables.
+pub fn write_wallpapers(
+    doc: &mut DocumentMut,
+    want: &[OutputWallpaper],
+    base: &[OutputWallpaper],
+) -> Result<(), String> {
+    let of = |list: &[OutputWallpaper], name: &str| {
+        (list.iter().find(|o| o.name == name))
+            .cloned()
+            .unwrap_or_else(|| OutputWallpaper {
+                name: name.to_string(),
+                ..Default::default()
+            })
+    };
+    let mut names: Vec<&str> = want.iter().map(|o| o.name.as_str()).collect();
+    names.extend(base.iter().map(|o| o.name.as_str()));
+    names.dedup();
+    let moved: Vec<(OutputWallpaper, OutputWallpaper)> = (names.iter())
+        .map(|n| (of(want, n), of(base, n)))
+        .filter(|(w, b)| w != b)
+        .collect();
+    if moved.is_empty() {
+        return Ok(());
+    }
+    check_outputs(doc)?;
+    for (w, b) in moved {
+        let keys = [
+            ("wallpaper", &w.wallpaper, &b.wallpaper),
+            ("wallpaper_position", &w.position, &b.position),
+        ];
+        let listed =
+            (entries(doc).iter()).any(|t| t.get("name").and_then(Item::as_str) == Some(&w.name));
+        if !listed && keys.iter().all(|(_, v, _)| v.is_empty()) {
+            continue;
+        }
+        let table = entry_mut(doc, &w.name);
+        for (k, v, was) in keys {
+            if v == was {
+                continue;
+            }
+            if v.is_empty() {
+                table.remove(k);
+            } else {
+                table[k] = value(v.as_str());
+            }
+        }
+        if table.iter().all(|(k, _)| k == "name") {
+            let outputs = outputs_mut(doc);
+            outputs.retain(|t| t.get("name").and_then(Item::as_str) != Some(&w.name));
+        }
+    }
+    Ok(())
+}
+
+/// `doc` with the entry called `name` updated (or added at the end) to carry `keys`. Err when `outputs` is not a list of tables or `keys` holds a value the compositor would refuse; `doc` is unchanged on Err.
+pub fn set_output_in(doc: &mut DocumentMut, name: &str, keys: &OutputKeys) -> Result<(), String> {
+    check_keys(keys)?;
+    check_outputs(doc)?;
+    let table = entry_mut(doc, name);
     if let Some(m) = keys.mode {
         table["mode"] = value(mode_text(m));
     }

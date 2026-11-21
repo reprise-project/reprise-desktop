@@ -24,6 +24,15 @@ pub use shortcuts::{
     chord_text, default_chord, forget, keys_for, program_text, row,
 };
 
+/// One output's own wallpaper keys in its `[[outputs]]` entry, spelled as `wallpaper` and
+/// `wallpaper_position` are; "" leaves a key out.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OutputWallpaper {
+    pub name: String,
+    pub wallpaper: String,
+    pub position: String,
+}
+
 /// Every key the sheet edits, with the compositor's default in place of a
 /// key the file leaves out. An empty `task_manager` means the key is
 /// absent (the taskbar menu then runs `top` in the terminal).
@@ -147,6 +156,8 @@ pub struct Settings {
     /// `[wallpaper] desktops`: entry n is desktop n's own picture, spelled as `wallpaper` is;
     /// empty for `wallpaper`.
     pub wallpaper_desktops: Vec<String>,
+    /// The `[[outputs]]` entries' own `wallpaper` and `wallpaper_position`, in file order.
+    pub output_wallpapers: Vec<OutputWallpaper>,
     /// `[wallpaper] slideshow`: the folder whose pictures take turns;
     /// empty shows `wallpaper` alone.
     pub slideshow: String,
@@ -586,6 +597,7 @@ impl Settings {
             wallpaper_water: c.wallpaper.water.name().into(),
             drive_insert: repriseconf::DRIVES_ON_INSERT.into(),
             wallpaper_desktops: Vec::new(),
+            output_wallpapers: Vec::new(),
             slideshow: String::new(),
             slideshow_interval: c.wallpaper.interval.into(),
             slideshow_shuffle: c.wallpaper.shuffle,

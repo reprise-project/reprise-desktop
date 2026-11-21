@@ -185,3 +185,168 @@ fn a_picture_added_to_the_slideshow_folder_becomes_the_monitors_first_slide() {
         "bay sorts first"
     );
 }
+
+/// Two monitors listed: Use for offers them by their Display page names, a picture and a
+/// position picked for the second are written to its `[[outputs]]` entry, the monitor shows its
+/// own picture, and a pick for all monitors takes the entry's wallpaper keys out again.
+#[test]
+fn a_picture_picked_for_one_monitor_is_written_to_its_outputs_entry() {
+    let dir = tmp("per-monitor");
+    let path = dir.join("config.toml");
+    std::fs::write(
+        &path,
+        "[wallpaper]\nimage = \"reprise:tarn/blue\"\n\n[[outputs]]\nname = \"HDMI-A-1\"\nscale = 2\n",
+    )
+    .unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let mut ctx = test_ctx();
+    let heads = vec![
+        displaypage::test_head("DP-1"),
+        displaypage::test_head("HDMI-A-1"),
+    ];
+    a.event(MAIN, Event::Heads(heads), &mut ctx);
+    let bg = Page::Background.index();
+    let rows = match a.sheet.pages[bg]
+        .item(backgroundpage::USE_FOR)
+        .map(|i| &i.control)
+    {
+        Some(form::Control::Combo(c)) => c.items.iter().map(|i| i.text.clone()).collect::<Vec<_>>(),
+        _ => panic!("Use for is a combo"),
+    };
+    assert_eq!(
+        rows[rows.len() - 2..],
+        [
+            "1. Dell Inc. DELL U2412M on DP-1",
+            "2. Dell Inc. DELL U2412M on HDMI-A-1"
+        ]
+    );
+    let use_for = |a: &mut SettingsApp, i: usize| {
+        a.sheet.pages[bg].set_combo(backgroundpage::USE_FOR, i);
+        a.sheet_event(propsheet::Event::Page(
+            bg,
+            form::Event::Changed(backgroundpage::USE_FOR),
+        ));
+    };
+    let row_of = |uri: &str| {
+        let b = backgroundpage::builtin(uri).unwrap();
+        backgroundpage::builtins()
+            .iter()
+            .position(|x| *x == b)
+            .unwrap()
+            + 1
+    };
+    use_for(&mut a, rows.len() - 1);
+    pick_row(&mut a, row_of("reprise:fold/sand"));
+    a.sheet.pages[bg].set_combo(backgroundpage::POSITION, 4);
+    a.sheet_event(propsheet::Event::Page(
+        bg,
+        form::Event::Changed(backgroundpage::POSITION),
+    ));
+    assert_eq!(
+        a.want.wallpaper, "reprise:tarn/blue",
+        "the picture for all stays"
+    );
+    assert_eq!(a.want.wallpaper_position, "fill");
+    assert_eq!(
+        a.bg().wallpaper,
+        "reprise:fold/sand",
+        "the monitor shows its own"
+    );
+    assert!(a.apply());
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        text.ends_with(
+            "name = \"HDMI-A-1\"\nscale = 2\nwallpaper = \"reprise:fold/sand\"\nwallpaper_position = \"center\"\n"
+        ),
+        "{text}"
+    );
+    let c = repriseconf::config::Config::parse(&text).unwrap();
+    assert_eq!(
+        c.wallpaper.output_image("HDMI-A-1"),
+        Some(std::path::Path::new("reprise:fold/sand"))
+    );
+    use_for(&mut a, 0);
+    pick_row(&mut a, row_of("reprise:ridges/dusk"));
+    assert!(a.apply());
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !text.contains("fold/sand"),
+        "all monitors take the pick: {text}"
+    );
+    assert!(text.contains("wallpaper_position = \"center\""), "{text}");
+    assert!(text.contains("image = \"reprise:ridges/dusk\""), "{text}");
+}
+
+/// With a slideshow running, a folder picked for all monitors takes the connected monitors' own
+/// pictures away, as a picture does; a monitor not connected keeps its own.
+#[test]
+fn a_slideshow_folder_picked_for_all_monitors_takes_their_own_pictures_away() {
+    let dir = tmp("per-monitor-slides");
+    let slides = dir.join("Slides");
+    std::fs::create_dir_all(&slides).unwrap();
+    let path = dir.join("config.toml");
+    let own = |name: &str| {
+        format!("[[outputs]]\nname = \"{name}\"\nwallpaper = \"reprise:fold/sand\"\n\n")
+    };
+    std::fs::write(&path, own("DP-1") + &own("HDMI-A-1") + &own("DP-9")).unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let mut ctx = test_ctx();
+    let heads = vec![
+        displaypage::test_head("DP-1"),
+        displaypage::test_head("HDMI-A-1"),
+    ];
+    a.event(MAIN, Event::Heads(heads), &mut ctx);
+    a.slide_folder(slides);
+    let kept: Vec<&str> = (a.want.output_wallpapers.iter())
+        .map(|o| o.name.as_str())
+        .collect();
+    assert_eq!(kept, ["DP-9"]);
+}
+
+/// Restore Defaults on Background lists the connected monitors' own wallpaper keys and takes
+/// them out of their `[[outputs]]` entries, dropping an entry left with its name alone; a monitor
+/// not connected keeps its own.
+#[test]
+fn restore_defaults_takes_the_connected_monitors_own_pictures_away() {
+    let dir = tmp("restore-monitors");
+    let path = dir.join("config.toml");
+    std::fs::write(
+        &path,
+        "[[outputs]]\nname = \"DP-1\"\nscale = 2\nwallpaper = \"reprise:fold/sand\"\n\
+         wallpaper_position = \"center\"\n\n\
+         [[outputs]]\nname = \"HDMI-A-1\"\nwallpaper = \"reprise:fold/sand\"\n\n\
+         [[outputs]]\nname = \"DP-9\"\nwallpaper = \"reprise:fold/sand\"\n",
+    )
+    .unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let mut ctx = test_ctx();
+    let heads = vec![
+        displaypage::test_head("DP-1"),
+        displaypage::test_head("HDMI-A-1"),
+    ];
+    a.event(MAIN, Event::Heads(heads), &mut ctx);
+    let bg = Page::Background;
+    let lit = |a: &SettingsApp| match a.sheet.pages[bg.index()].item(propsheet::RESTORE) {
+        Some(it) => matches!(it.control, form::Control::Button { enabled: true, .. }),
+        None => panic!("Background has Restore Defaults"),
+    };
+    assert!(lit(&a), "the monitors' own keys are off their defaults");
+    assert_eq!(
+        apply::restore_question(bg, &a.restorable(bg)),
+        "Restore the defaults on the Background page?\n\
+         These settings are taken out of config.toml:\n    outputs.wallpaper (DP-1)\n    \
+         outputs.wallpaper_position (DP-1)\n    outputs.wallpaper (HDMI-A-1)"
+    );
+    a.restore_defaults(bg);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "[[outputs]]\nname = \"DP-1\"\nscale = 2\n\n\
+         [[outputs]]\nname = \"DP-9\"\nwallpaper = \"reprise:fold/sand\"\n"
+    );
+    let kept: Vec<&str> = (a.want.output_wallpapers.iter())
+        .map(|o| o.name.as_str())
+        .collect();
+    assert_eq!(kept, ["DP-9"]);
+    assert_eq!(a.loaded, a.want, "nothing is left pending");
+    assert!(!lit(&a), "greyed once the connected monitors have none");
+}
