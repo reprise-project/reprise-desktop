@@ -383,6 +383,39 @@ pub fn render_menu_icons(pct: u32) -> Canvas {
     c
 }
 
+/// Twenty program folders in a Start submenu wrapped into columns to fit a 720x410 work area, in
+/// each look, a look a row, at `pct` text and at scale 1, the second column's fourth row lit.
+pub fn render_menu_columns(pct: u32) -> Canvas {
+    use reprisekit::controls::menu::{MenuStyle, draw_menu_at};
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let room = (720, 410);
+    let mut c = Canvas::new(
+        (room.0 + 20) as u32,
+        (looks.len() as i32 * (room.1 + 10) + 10) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (row, &look) in looks.iter().enumerate() {
+        let theme = interfaces::theme_for(look).with_text_size(pct);
+        let text = TextRenderer::load(&theme.fonts);
+        let style = MenuStyle::submenu(&theme);
+        let px = style.icon_px();
+        let mut folder = Canvas::new(px as u32, px as u32);
+        folder.fill_rect(Rect::new(1, 1, px - 2, px - 2), Color::rgb(230, 200, 90));
+        let items: Vec<MenuItem> = (0..20)
+            .map(|i| {
+                MenuItem::entry(format!("Program folder {i}"))
+                    .icon(Some(folder.clone()))
+                    .submenu(true)
+            })
+            .collect();
+        let l = style.layout_within(&text, &items, theme.fonts.size_px, room);
+        let lit = Some((l.rows_per_column + 3).min(items.len() - 1));
+        let at = (10, row as i32 * (room.1 + 10) + 10);
+        draw_menu_at(&mut c, at, &theme, &text, &l, &items, lit, "", false);
+    }
+    c
+}
+
 /// A list box with icons and one with check boxes and icons in each look, a look a row, at `pct`
 /// text and at scale 1 and 2: the icon column grows with the text.
 pub fn render_list_icons(pct: u32) -> Canvas {

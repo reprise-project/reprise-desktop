@@ -220,8 +220,7 @@ impl MenuStyle {
         }
     }
 
-    /// `items` fitted into `usable`: [`MenuStyle::fit`] to its width at the theme's text size,
-    /// then split into columns of the rows its height holds.
+    /// [`MenuStyle::layout_within`] `usable` at the theme's text size.
     pub fn layout_in(
         self,
         theme: &Theme,
@@ -229,12 +228,31 @@ impl MenuStyle {
         items: &[MenuItem],
         usable: Rect,
     ) -> MenuLayout {
-        let style = self.fit(text, items, theme.fonts.size_px, usable.width);
-        MenuLayout::compute_styled(
-            &style,
-            items,
-            submenu_max_rows(&theme.metrics, usable.height),
-        )
+        let room = (usable.width, usable.height);
+        self.layout_within(text, items, theme.fonts.size_px, room)
+    }
+
+    /// `items` in a menu at most `room` (width, height) big: too tall, it wraps into columns,
+    /// each fitted ([`MenuStyle::fit`]) to its share of the width.
+    pub fn layout_within(
+        self,
+        text: &TextRenderer,
+        items: &[MenuItem],
+        size_px: u32,
+        (width, height): (i32, i32),
+    ) -> MenuLayout {
+        let rows = self.rows_in(height);
+        let columns = items.len().div_ceil(rows).max(1) as i32;
+        let share = (width - self.band) / columns + self.band;
+        let style = self.fit(text, items, size_px, share);
+        MenuLayout::compute_styled(&style, items, rows)
+    }
+
+    /// The rows a column `height` tall holds, at least one: as many of the tallest kind of row
+    /// as fit inside the insets.
+    pub fn rows_in(&self, height: i32) -> usize {
+        let tallest = self.row_height.max(self.separator_h).max(1);
+        ((height - self.inset.top - self.inset.bottom) / tallest).max(1) as usize
     }
 }
 
@@ -276,6 +294,9 @@ pub struct MenuLayout {
     pub selectable: Vec<bool>,
     pub columns: usize,
     pub column_width: i32,
+    /// The most rows a column takes before the next starts; `usize::MAX` for one column
+    /// whatever its length.
+    pub rows_per_column: usize,
     pub band: i32,
     pub text_x: i32,
     pub icon_x: i32,
@@ -335,6 +356,7 @@ impl MenuLayout {
             selectable,
             columns,
             column_width,
+            rows_per_column: rows_per_col,
             band: style.band,
             text_x: style.text_x,
             icon_x: style.icon_x,
@@ -350,8 +372,8 @@ impl MenuLayout {
         }
     }
 
-    /// The column width `items` need, as [`MenuStyle::fit`] widens it, up to a menu `max_width`
-    /// wide; never narrower than the columns now. For [`relist`].
+    /// The column width `items` need, as [`MenuStyle::fit`] widens it, up to their columns'
+    /// share of a menu `max_width` wide; never narrower than the columns now. For [`relist`].
     pub fn fit_column(
         &self,
         text: &TextRenderer,
@@ -359,7 +381,31 @@ impl MenuLayout {
         size_px: u32,
         max_width: i32,
     ) -> i32 {
-        self.style().fit(text, items, size_px, max_width).width - self.band
+        let columns = items.len().div_ceil(self.rows_per_column).max(1) as i32;
+        let share = (max_width - self.band) / columns + self.band;
+        self.style().fit(text, items, size_px, share).width - self.band
+    }
+
+    /// The column row `row` stands in.
+    pub fn column_of(&self, row: usize) -> usize {
+        self.rows.get(row).map_or(0, |r| {
+            ((r.x - self.band) / self.column_width.max(1)) as usize
+        })
+    }
+
+    /// The row a `stop` can land on in column `column` nearest level with row `row`: where Left
+    /// and Right go across a menu in columns. `None` past the columns or with no stop there.
+    pub fn level_in(
+        &self,
+        row: usize,
+        column: usize,
+        stop: impl Fn(usize) -> bool,
+    ) -> Option<usize> {
+        let mid = |r: &Rect| r.y + r.height / 2;
+        let y = mid(self.rows.get(row)?);
+        (0..self.rows.len())
+            .filter(|&i| self.column_of(i) == column && stop(i))
+            .min_by_key(|&i| (mid(&self.rows[i]) - y).abs())
     }
 
     /// The style `compute_styled` laid this out from, at the current column width.
@@ -401,6 +447,7 @@ impl MenuLayout {
             selectable: self.selectable.clone(),
             columns: self.columns,
             column_width: self.column_width * n,
+            rows_per_column: self.rows_per_column,
             band: self.band * n,
             text_x: self.text_x * n,
             icon_x: self.icon_x * n,
@@ -418,8 +465,9 @@ impl MenuLayout {
 }
 
 /// Relists an open menu as `new_items` in columns `column_width` wide (normally
-/// [`MenuLayout::fit_column`]): a row whose key `old_keys` holds keeps its item (and icon); rows
-/// per column stay; the hover follows its entry (`selection::follow`).
+/// [`MenuLayout::fit_column`]): a row whose key `old_keys` holds keeps its item (and icon); the
+/// rows a column holds stay, so a longer list wraps into another column; the hover follows its
+/// entry (`selection::follow`).
 pub fn relist<K: PartialEq>(
     items: &mut Vec<MenuItem>,
     layout: &mut MenuLayout,
@@ -443,22 +491,8 @@ pub fn relist<K: PartialEq>(
         .collect();
     *hovered = hovered
         .and_then(|h| crate::selection::follow(old_keys, new_keys, h, |j| items[j].selectable()));
-    let rows_per_col = if layout.columns > 1 {
-        layout
-            .rows
-            .iter()
-            .take_while(|r| r.x == layout.rows[0].x)
-            .count()
-            .max(1)
-    } else {
-        usize::MAX
-    };
     layout.column_width = column_width;
-    *layout = MenuLayout::compute_styled(&layout.style(), items, rows_per_col);
-}
-
-pub fn submenu_max_rows(m: &Metrics, usable_height: i32) -> usize {
-    (((usable_height - 2 * BORDER) / m.menu_item_height.max(1)).max(1)) as usize
+    *layout = MenuLayout::compute_styled(&layout.style(), items, layout.rows_per_column);
 }
 
 pub fn place_popup(at: (i32, i32), size: (i32, i32), usable: Rect) -> (i32, i32) {

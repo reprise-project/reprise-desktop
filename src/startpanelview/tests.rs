@@ -1570,3 +1570,187 @@ fn on_short_screens_blues_all_programs_stands_right_of_its_row() {
         }
     }
 }
+
+use crate::startmenu::MenuItem;
+
+/// A Harness at 200% text in `interface` on a `w`x`h` logical screen at `scale`, listing a program
+/// per category folder plus thirty in Utility, with recent files on.
+fn short_screen(interface: &str, (w, h): (i32, i32), scale: i32) -> crate::harness::Harness {
+    use smithay::output::Scale;
+    let categories = [
+        "Utility",
+        "Graphics",
+        "Game",
+        "System",
+        "Network",
+        "AudioVideo",
+        "Office",
+        "Development",
+        "Education",
+        "Science",
+        "Settings",
+        "Accessibility",
+    ];
+    let config = crate::config::Config::parse(&format!(
+        "[appearance]\ninterface = \"{interface}\"\n[accessibility]\ntext_size = 200\n\
+         [privacy]\nrecent_files = true\n"
+    ))
+    .unwrap();
+    let mut hn = crate::harness::Harness::with_config(config);
+    let out = hn.output("TEST-1", w * scale, h * scale);
+    out.change_current_state(None, None, Some(Scale::Integer(scale)), None);
+    hn.state.update_layout();
+    hn.state.app_index = (categories.iter().enumerate())
+        .map(|(i, c)| app(&format!("App {i}"), c))
+        .chain((0..30).map(|i| app(&format!("Tool {i}"), "Utility")))
+        .collect();
+    hn
+}
+
+/// Menu `depth` lies inside the work area; returns how many columns it took.
+fn menu_in_work_area(h: &crate::harness::Harness, depth: usize, at: &str) -> usize {
+    let m = &h.state.menus[depth];
+    let r = Rect::new(m.x, m.y, m.layout.width, m.layout.height);
+    let usable = h.state.usable_area(None);
+    assert!(
+        r.x >= usable.x
+            && r.y >= usable.y
+            && r.right() <= usable.right()
+            && r.bottom() <= usable.bottom(),
+        "{at}: menu {depth} at {r:?} in {usable:?}"
+    );
+    m.layout.columns
+}
+
+/// The keys on menu `depth`, wrapped into columns: Down runs from the first column's last row
+/// into the next column, Left crosses back level with it, and Right on a plain row crosses
+/// forward again.
+fn keys_cross_columns(h: &mut crate::harness::Harness, depth: usize, at: &str) {
+    use crate::keys::{KEY_Down, KEY_Left, KEY_Right};
+    let per = h.state.menus[depth].layout.rows_per_column;
+    h.state.set_menu_hover(depth, Some(per - 1));
+    h.state.menu_key(KEY_Down);
+    assert_eq!(h.state.menus[depth].hovered, Some(per), "{at}: Down");
+    h.state.menu_key(KEY_Left);
+    assert_eq!(h.state.menus.len(), depth + 1, "{at}: Left keeps the menu");
+    assert_eq!(h.state.menus[depth].hovered, Some(0), "{at}: Left");
+    let plain = matches!(
+        h.state.menus[depth].items[0],
+        MenuItem::Entry { submenu: false, .. }
+    );
+    if plain {
+        h.state.menu_key(KEY_Right);
+        assert_eq!(h.state.menus[depth].hovered, Some(per), "{at}: Right");
+    }
+}
+
+/// At 200% text on short screens, scale 1 and 2, Blue's All Programs with a folder per category
+/// stays in the work area, wrapped into columns where it is too tall, and a folder of thirty
+/// programs opened from the keys wraps too; the keys cross both menus' columns.
+#[test]
+fn on_short_screens_blues_all_programs_and_its_folders_wrap_into_columns() {
+    use crate::keys::KEY_Right;
+    for (sw, sh) in [(720, 450), (960, 540)] {
+        for scale in [1, 2] {
+            let at = format!("{sw}x{sh} @{scale}");
+            let mut h = short_screen("blue", (sw, sh), scale);
+            let bar = h.state.bars[0].tree;
+            h.state.toggle_start(bar);
+            h.state.start_panel_click(Spot::AllPrograms);
+            assert_eq!(h.state.menus[0].items.len(), 12, "{at}");
+            if menu_in_work_area(&h, 0, &at) > 1 {
+                keys_cross_columns(&mut h, 0, &at);
+            }
+            let utility = (h.state.menus[0].items.iter())
+                .position(
+                    |it| matches!(it, MenuItem::Entry { label, .. } if label == "Accessories"),
+                )
+                .expect("Accessories");
+            h.state.set_menu_hover(0, Some(utility));
+            h.state.menu_key(KEY_Right);
+            assert_eq!(h.state.menus.len(), 2, "{at}: Right opens the folder");
+            assert!(
+                menu_in_work_area(&h, 1, &at) > 1,
+                "{at}: thirty programs wrap"
+            );
+            keys_cross_columns(&mut h, 1, &at);
+        }
+    }
+}
+
+/// At 200% text on short screens, scale 1 and 2, Classic's Programs and a folder of thirty
+/// programs stay in the work area in columns, and the keys cross them.
+#[test]
+fn on_short_screens_classics_programs_cascades_wrap_into_columns() {
+    use crate::keys::KEY_Right;
+    for (sw, sh) in [(720, 450), (960, 540)] {
+        for scale in [1, 2] {
+            let at = format!("{sw}x{sh} @{scale}");
+            let mut h = short_screen("classic", (sw, sh), scale);
+            let bar = h.state.bars[0].tree;
+            h.state.toggle_start(bar);
+            let programs = (h.state.menus[0].items.iter())
+                .position(|it| matches!(it, MenuItem::Entry { label, .. } if label == "Programs"))
+                .expect("Programs");
+            h.state.set_menu_hover(0, Some(programs));
+            h.state.menu_key(KEY_Right);
+            assert_eq!(h.state.menus[1].items.len(), 12, "{at}");
+            if menu_in_work_area(&h, 1, &at) > 1 {
+                keys_cross_columns(&mut h, 1, &at);
+            }
+            let utility = (h.state.menus[1].items.iter())
+                .position(
+                    |it| matches!(it, MenuItem::Entry { label, .. } if label == "Accessories"),
+                )
+                .expect("Accessories");
+            h.state.set_menu_hover(1, Some(utility));
+            h.state.menu_key(KEY_Right);
+            assert_eq!(h.state.menus.len(), 3, "{at}: Right opens the folder");
+            assert!(
+                menu_in_work_area(&h, 2, &at) > 1,
+                "{at}: thirty programs wrap"
+            );
+            keys_cross_columns(&mut h, 2, &at);
+        }
+    }
+}
+
+/// At 200% text on short screens, scale 1 and 2, Glass's Recent Items with fifteen files stays in
+/// the work area in columns, and the keys cross them.
+#[test]
+fn on_short_screens_glass_recent_items_wraps_into_columns() {
+    let dir = crate::harness::scratch().join("recent-items-columns");
+    std::fs::create_dir_all(&dir).unwrap();
+    let marks: String = (0..15)
+        .map(|i| {
+            let p = dir.join(format!("notes {i}.txt"));
+            std::fs::write(&p, "").unwrap();
+            format!(
+                "<bookmark href=\"file://{}\" modified=\"2026-01-01T00:00:{i:02}Z\"></bookmark>\n",
+                p.display()
+            )
+        })
+        .collect();
+    let xbel = dir.join("recently-used.xbel");
+    std::fs::write(&xbel, format!("<xbel>{marks}</xbel>")).unwrap();
+    for (sw, sh) in [(720, 450), (960, 540)] {
+        for scale in [1, 2] {
+            let at = format!("{sw}x{sh} @{scale}");
+            let mut h = short_screen("glass", (sw, sh), scale);
+            h.state.recent = crate::recentdocs::RecentDocs::reading(xbel.clone());
+            let bar = h.state.bars[0].tree;
+            h.state.toggle_start(bar);
+            let v = h.state.start_panel.as_ref().expect("the menu opened");
+            let i = (v.model.places.iter())
+                .position(|p| p.submenu)
+                .expect("a Recent Items row");
+            h.state.open_recent_items(i);
+            assert_eq!(h.state.menus[0].items.len(), 15, "{at}");
+            assert!(
+                menu_in_work_area(&h, 0, &at) > 1,
+                "{at}: fifteen files wrap"
+            );
+            keys_cross_columns(&mut h, 0, &at);
+        }
+    }
+}
