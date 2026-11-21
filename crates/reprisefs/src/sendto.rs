@@ -8,8 +8,7 @@ use std::sync::{Mutex, Once};
 use reprisebus::kdeconnect::{self, Device};
 use reprisebus::mutex::lock;
 
-use crate::compress::Compress;
-use crate::{names, places};
+use crate::places;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SendTo {
@@ -252,16 +251,6 @@ pub fn mail_argv(paths: &[PathBuf]) -> Vec<OsString> {
     argv
 }
 
-/// The zip row's job for `paths`, items of one folder whose other names are `existing`: one
-/// archive named after the first item and numbered past an existing name. None for an empty
-/// selection.
-pub fn zip_target(paths: &[PathBuf], existing: &[String]) -> Option<Compress> {
-    Some(Compress {
-        zip: names::zip_path(paths.first()?, existing),
-        paths: paths.to_vec(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,15 +303,6 @@ mod tests {
             "a device without the share plugin takes no files"
         );
         assert!(phone_rows().is_empty(), "nothing followed, no phones");
-    }
-
-    #[test]
-    fn zip_takes_the_whole_set_into_one_archive_named_after_the_first() {
-        let paths: Vec<PathBuf> = vec!["/d/b2.txt".into(), "/d/a1.txt".into(), "/d/c3".into()];
-        let c = zip_target(&paths, &["b2.zip".into()]).unwrap();
-        assert_eq!(c.zip, Path::new("/d/b2 (2).zip"));
-        assert_eq!(c.paths, paths);
-        assert!(zip_target(&[], &[]).is_none());
     }
 
     #[test]

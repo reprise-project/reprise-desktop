@@ -38,6 +38,33 @@ pub fn zip_name(paths: &[PathBuf], one_folder: bool) -> OsString {
     name
 }
 
+/// Compress to's and Send To's job for `paths`: the [`zip_name`] beside them, numbered past a
+/// name `taken` refuses. None for an empty selection, the root, or items of several folders,
+/// which one zip beside them cannot hold by their names.
+pub fn target(
+    paths: &[PathBuf],
+    one_folder: bool,
+    taken: impl Fn(&OsStr) -> bool,
+) -> Option<Compress> {
+    let dir = paths.first()?.parent()?;
+    if paths.iter().any(|p| p.parent() != Some(dir)) {
+        return None;
+    }
+    let name = crate::names::first_free(&zip_name(paths, one_folder), taken);
+    Some(Compress {
+        zip: dir.join(name),
+        paths: paths.to_vec(),
+    })
+}
+
+/// Whether `paths` is one folder as a listing reads it ([`Item::is_folder`]): a symlink to a
+/// folder is none, and the zip holds the link.
+///
+/// [`Item::is_folder`]: crate::listing::Item::is_folder
+pub fn one_folder(paths: &[PathBuf]) -> bool {
+    matches!(paths, [p] if std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir()))
+}
+
 /// bsdtar writing `paths`, items of one folder, as a zip into `to`, one `a name` line on stderr
 /// per entry. The format is named because `to` is a temp name without the `.zip` suffix.
 pub fn compress_argv(paths: &[PathBuf], to: &Path) -> Vec<OsString> {
@@ -333,6 +360,48 @@ mod tests {
             "Archive.zip",
             "the root has no name"
         );
+    }
+
+    #[test]
+    fn the_target_is_numbered_past_a_taken_name_beside_the_items() {
+        let taken = |names: &'static [&'static str]| move |c: &OsStr| names.iter().any(|n| c == *n);
+        let several: Vec<PathBuf> = vec!["/d/P/b2.txt".into(), "/d/P/a1.txt".into()];
+        let c = target(&several, false, taken(&["P.zip", "b2.zip"])).unwrap();
+        assert_eq!(c.zip, Path::new("/d/P/P (2).zip"));
+        assert_eq!(c.paths, several);
+        let one = target(&["/d/P/b2.txt".into()], false, taken(&["b2.zip"])).unwrap();
+        assert_eq!(one.zip, Path::new("/d/P/b2 (2).zip"));
+        assert!(target(&[], false, taken(&[])).is_none());
+        assert!(target(&["/".into()], true, taken(&[])).is_none());
+        let apart: Vec<PathBuf> = vec!["/a/x".into(), "/b/y".into()];
+        assert!(
+            target(&apart, false, taken(&[])).is_none(),
+            "items of two folders make no zip"
+        );
+    }
+
+    #[test]
+    fn a_link_to_a_folder_is_no_folder_as_the_listing_reads_it() {
+        let t = tempfile::tempdir().unwrap();
+        let (dir, link) = (t.path().join("my.app"), t.path().join("link.app"));
+        std::fs::create_dir(&dir).unwrap();
+        std::os::unix::fs::symlink(&dir, &link).unwrap();
+        let db = crate::apps::MimeDb::empty();
+        for p in [&dir, &link] {
+            let listed = crate::listing::item_at(p, &db).is_folder();
+            assert_eq!(one_folder(std::slice::from_ref(p)), listed, "{p:?}");
+        }
+        for (p, zip) in [(link, "link.zip"), (dir, "my.app.zip")] {
+            let one = std::slice::from_ref(&p);
+            assert_eq!(zip_name(one, one_folder(one)), zip);
+        }
+    }
+
+    #[test]
+    fn a_name_that_is_not_utf8_keeps_its_bytes() {
+        let p = PathBuf::from(OsStr::from_bytes(b"/d/a\xffb.txt"));
+        let c = target(&[p], false, |c| c == OsStr::from_bytes(b"a\xffb.zip")).unwrap();
+        assert_eq!(c.zip, Path::new(OsStr::from_bytes(b"/d/a\xffb (2).zip")));
     }
 
     #[test]
