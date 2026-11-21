@@ -10,12 +10,13 @@
 //! by contents, a program's results) under its own heading the same way, the detail dimmed
 //! after each name.
 //! Arrows step over headings.
-//! The panel grows with the text size; the icons and bevels keep their size.
+//! The panel grows with the text size; the bevels, the 32 px icon and a list box row's icon keep
+//! their size.
 //!
 //! Under a look with glass the panel is a piece of glass and the field and rows
 //! are the Start menu's search mode's ([`crate::startpanel::search`]): its search
 //! field with the italic cue and magnifier (the clear glyph once there is text),
-//! under it a light pane of 21 px rows, a 16 px icon and the name, the
+//! under it a light pane of 21 px rows, a 16 px icon grown with the text and the name, the
 //! highlighted one in the lit result's box. Settings and each found section hang under
 //! group headers with a count and a rule ("Settings (n)").
 //!
@@ -538,6 +539,16 @@ impl Launcher {
 pub const W: i32 = 420;
 pub const HEAD_H: i32 = 48;
 pub const ICON: i32 = 32;
+
+/// A row's icon edge (logical px): under glass the Start menu search's 16 px grown with the text
+/// ([`search::result`] centres it in the grown row), else the list box's 16 px.
+pub fn row_icon_px(theme: &Theme) -> i32 {
+    let design = crate::startpanel::SMALL_ICON;
+    match panel::glass(theme) {
+        Some(_) => theme.text.icon(design),
+        None => design,
+    }
+}
 const PAD: i32 = 8;
 /// Between the heading's label and its rule, and the rule and the list's
 /// right edge.
