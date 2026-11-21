@@ -2,7 +2,7 @@
 //! The panel stands 411x476 at 100% text and grows with the text size ([`StartPanel::text`]).
 //! With both pinned and frequent programs the rule between them adds 4 px and everything from All Programs down moves with it; program rows that do not fit above the All Programs rule are not shown.
 //! On a screen too short for the panel ([`StartPanel::room`]) program rows come off the list, 38 px each, and everything from All Programs down moves up with them; the places close up to fit above Shut down.
-//! On a screen too narrow for it the text size steps down ([`StartPanel::fit`]) and the jump pane narrows; at 100% the right column narrows by up to 40 px, then the left one by up to 51 px.
+//! On a screen too narrow for it, or too short to hold its places at their closest, the text size steps down ([`StartPanel::fit`]); on a narrow one the jump pane narrows too; at 100% the right column narrows by up to 40 px, then the left one by up to 51 px.
 
 use super::{Mode, Shape, Spot, StartPanel};
 use crate::raster::Rect;
@@ -155,6 +155,21 @@ fn rows_cut(p: &StartPanel) -> i32 {
     (0..most)
         .find(|n| p.text.len(tall - n * PROGRAM_H) <= room)
         .unwrap_or(most)
+}
+
+/// The panel's height at 100% text with the most program rows taken off that still leaves its
+/// places room at their closest pitch: what [`StartPanel::fit`] steps the text down to fit.
+pub fn least_height(p: &StartPanel) -> i32 {
+    let n = p.places.len() as i32;
+    let rules = p.places.iter().skip(1).filter(|pl| pl.rule_before).count() as i32;
+    let gap = PLACE_PITCH - PLACE_H;
+    let places = PLACE_TOP + rules * PLACE_RULE_H + n * PLACE_PITCH_LEAST - gap - SHUTDOWN.y;
+    let most = (ALL_RULE_Y - PROGRAM_TOP) / PROGRAM_H - 1;
+    let cut = (0..=most)
+        .rev()
+        .find(|k| pin_rule(p) - k * PROGRAM_H >= places)
+        .unwrap_or(0);
+    H + pin_rule(p) - cut * PROGRAM_H
 }
 
 /// The places' pitch: 35, closer on a panel too short to stack them all above Shut down, but
@@ -617,6 +632,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_short_room_steps_the_text_down_until_every_place_shows() {
+        let mut p = StartPanel::new();
+        p.frequent = (0..12).map(|k| prow(&format!("App {k}"), false)).collect();
+        p.places = ten_places();
+        let two = TextUnits::new(22, 11);
+        p.fit(two, (1920, 1000));
+        assert_eq!(p.text, two, "room enough");
+        for room in [600, 500, 400] {
+            p.fit(two, (1920, room));
+            let l = layout(&p);
+            assert!(p.text != two, "{room} px: the text steps down");
+            assert!(l.panel.height <= room, "{room} px: {:?}", l.panel);
+            assert!(
+                (0..10).all(|i| l.rect(Spot::Place(i)).is_some()),
+                "{room} px: every place shows at {:?}",
+                p.text
+            );
+            p.text = TextUnits::new(p.text.px(11) + 1, 11);
+            let l = layout(&p);
+            assert!(
+                (0..10).any(|i| l.rect(Spot::Place(i)).is_none()) || l.panel.height > room,
+                "{room} px: one px more and something gives"
+            );
+        }
+        p.fit(two, (1920, 300));
+        assert!(p.text.is_one(), "never under 100%");
+    }
+
     fn l_place(p: &StartPanel, i: usize) -> Option<Rect> {
         layout(p).rect(Spot::Place(i))
     }
@@ -632,7 +676,7 @@ mod tests {
         assert_eq!(p.text, two, "room enough");
         assert_eq!(layout(&p).panel.width, 2 * W);
 
-        p.fit(two, (800, 600));
+        p.fit(two, (800, 700));
         assert_eq!(p.text, TextUnits::new(21, 11));
         assert!(layout(&p).panel.width <= 800);
         p.set_mode(Mode::Jump(0));

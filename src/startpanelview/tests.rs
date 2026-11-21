@@ -1327,3 +1327,27 @@ fn the_blue_menus_icons_load_at_the_text_size_it_fits_at() {
         }
     }
 }
+
+/// At 200% text on a 540-line screen the Glass menu steps its text down until every place shows
+/// and the panel stands in its room.
+#[test]
+fn the_glass_menu_on_a_short_screen_shows_every_place() {
+    let config = crate::config::Config::parse(
+        "[appearance]\ninterface = \"glass\"\n[accessibility]\ntext_size = 200\n",
+    )
+    .unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 960, 540);
+    let bar = h.state.bars[0].tree;
+    h.state.toggle_start(bar);
+    let m = &h.state.start_panel.as_ref().expect("the menu opened").model;
+    assert!(m.places.len() >= 6, "{} places", m.places.len());
+    assert!(m.text != h.state.config.theme.text, "the text steps down");
+    let l = layout::layout(m);
+    let (_, room) = m.room.expect("fitted to its room");
+    assert!(l.panel.height <= room, "{:?} in {room}", l.panel);
+    let shown = (0..m.places.len())
+        .filter(|&i| l.rect(Spot::Place(i)).is_some())
+        .count();
+    assert_eq!(shown, m.places.len(), "every place shows at {:?}", m.text);
+}
