@@ -3,8 +3,9 @@
 //! Glass blurs the output's backdrop with chrome left out (`GlassCtx::update_backdrop`); glass over
 //! chrome or under other glass (`[glass] blur_frames`) blurs a backdrop of its own, with the glass
 //! beneath it drawn in.
-//! During a drag with `[glass] fast_drag`, a screen frame draws its glass from the pictures as they
-//! stand and they are brought up to date after it (`trails`).
+//! During a drag with `[glass] fast_drag`, a screen frame of an output the dragged window shows on
+//! draws its glass from the pictures as they stand and they are brought up to date after it
+//! (`trails_on`).
 
 #[cfg(test)]
 mod tests;
@@ -44,7 +45,7 @@ use smithay::{
     },
 };
 
-use crate::compositor::DeskScene;
+use crate::compositor::{DeskScene, State};
 use crate::config::Config;
 use crate::input::Interaction;
 use crate::raster::Rect;
@@ -250,6 +251,8 @@ struct OutputBackdrop {
     owed: bool,
     /// The clear colour it was last drawn on: the tracker sees a change only when it draws.
     clear: Option<Color32F>,
+    /// The dragged window showed on the output at its last screen frame ([`GlassCtx::trails_on`]).
+    dragged: bool,
 }
 
 /// Whether a frame keeps the last blur (`[glass] blur_rate`'s cap is not up).
@@ -866,10 +869,23 @@ impl GlassCtx {
         }
     }
 
-    /// Have the frame begun for `output` draw its glass from the pictures as they stand ([`trails`]);
-    /// false when they were made for another size, scale or `[glass]` settings, when its glass is
-    /// all hidden, or when glass now reads past what the last update drew (a window moved further
-    /// than the lead, glass that is new).
+    /// Whether the screen frame begun for `output` trails ([`trails`]): only while the dragged
+    /// window shows on it (`dragged`) or did at its last frame, so other outputs draw changes once.
+    /// Call once per screen frame: it records `dragged` for the next one.
+    pub fn trails_on(&self, output: &Output, dragged: bool) -> bool {
+        let pass = self.pass.get();
+        let mut backdrops = self.backdrops.borrow_mut();
+        let Some(b) = backdrops.get_mut(&output.name()) else {
+            return false;
+        };
+        let was = std::mem::replace(&mut b.dragged, dragged);
+        trails(pass.quality, pass.hold) && (dragged || was)
+    }
+
+    /// Have the frame begun for `output` draw its glass from the pictures as they stand
+    /// ([`GlassCtx::trails_on`]); false when they were made for another size, scale or `[glass]`
+    /// settings, when its glass is all hidden, or when glass now reads past what the last update
+    /// drew (a window moved further than the lead, glass that is new).
     pub fn show_last(&self, scene: &DeskScene, output: &Output) -> bool {
         let name = output.name();
         let pass = self.pass.get();
@@ -1209,6 +1225,7 @@ impl OutputBackdrop {
             skipped: false,
             owed: false,
             clear: None,
+            dragged: false,
         })
     }
 }
@@ -1340,10 +1357,16 @@ pub fn wanted(config: &Config) -> bool {
 /// past what the last update drew (`Pass::lead`).
 pub const LATE_LEAD: i32 = 64;
 
-/// Whether a screen frame shows the last pictures and updates them after it (`show_last`,
-/// `update_late`): during a `fast_drag` drag, unless `blur_rate` holds the blur.
-pub fn trails(quality: Quality, hold: Hold) -> bool {
+/// The drag and hold half of whether a screen frame trails, which [`GlassCtx::trails_on`] applies
+/// per output: during a `fast_drag` drag, unless `blur_rate` holds the blur.
+fn trails(quality: Quality, hold: Hold) -> bool {
     quality == Quality::Coarse && hold == Hold::No
+}
+
+/// Whether the window or dialog a drag moves or sizes (its scene tree, `dragged`) shows on
+/// `output` ([`GlassCtx::trails_on`]).
+pub fn drag_shows_on(scene: &DeskScene, dragged: Option<TreeId>, output: &Output) -> bool {
+    dragged.is_some_and(|t| scene.outputs_of(t).contains(output))
 }
 
 pub fn quality(interaction: &Interaction, settings: &Settings) -> Quality {
@@ -1352,6 +1375,17 @@ pub fn quality(interaction: &Interaction, settings: &Settings) -> Quality {
         Interaction::Move { .. } | Interaction::Resize { .. } | Interaction::DialogMove { .. }
     );
     reprisefx::blur::quality(dragging, settings.fast_drag)
+}
+
+/// The scene tree of the window or dialog a drag that [`quality`] counts moves or sizes.
+pub fn dragged_tree(state: &State) -> Option<TreeId> {
+    match state.interaction {
+        Interaction::Move { window, .. } | Interaction::Resize { window, .. } => {
+            state.win(window).map(|w| w.tree)
+        }
+        Interaction::DialogMove { index, .. } => state.dialogs.views.get(index).map(|v| v.tree()),
+        _ => None,
+    }
 }
 
 /// The outputs whose glass a change of blur quality redraws: those at a scale where the coarse
