@@ -6,7 +6,7 @@
 use crate::raster::{Canvas, Rect};
 use crate::style::{GlassSpec, Style};
 use crate::taskbar::TaskbarShape;
-use crate::text::{Align, TextRenderer};
+use crate::text::{Align, CaretBar, TextRenderer};
 use crate::textedit::{Caret, TextEdit, edit_first_visible};
 use crate::theme::{ColorScheme, Theme};
 use std::sync::Arc;
@@ -160,10 +160,9 @@ impl<'a> Paint<'a> {
 
 /// Draw `edit` left-aligned in `inner` from byte `first` (`edit_first_visible`): selection, caret
 /// and, focused, the canvas' preedit with its `TextSpot`, which a secret field never shows. An
-/// unfocused field hides its selection ([`TextEdit::unfocused`]). The caret sits on the pen's
-/// column, or at scale 2 past device columns a selection's highlight adds there, and inverts what
-/// is under it, a glyph's stem included. `inner` sits at least 1 px inside its field's frame: the
-/// first glyph's ink may draw there.
+/// unfocused field hides its selection ([`TextEdit::unfocused`]). The caret goes where it covers
+/// the least ink ([`CaretBar`]). `inner` sits at least 1 px inside its field's frame: the first
+/// glyph's ink, and a caret before it, may draw there.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_edit(
     c: &mut Canvas,
@@ -227,6 +226,9 @@ pub fn draw_edit(
     if let Some(hl) = &hl {
         hl.fill(c, room, cs.hilight);
     }
+    let cx = at(edit.caret()).min(inner.right() - s);
+    let bar = Rect::new(cx, line.y, s, line.height);
+    let shown_bar = (caret.shown() && bar_on).then(|| CaretBar::ground(c, bar, hl.as_ref(), room));
     if edit.text.is_empty() && !edit.cue().is_empty() {
         text.draw(c, inner, edit.cue(), false, cs.gray_text, Align::Left, px);
     } else {
@@ -245,13 +247,8 @@ pub fn draw_edit(
         let ul = Rect::new(x0, base + s, x1 - x0, s).intersect(&inner);
         c.fill_rect(ul, cs.button_text);
     }
-    let cx = at(edit.caret()).min(inner.right() - s);
-    let bar = Rect::new(cx, line.y, s, line.height);
-    if caret.shown() && bar_on {
-        match &hl {
-            Some(hl) => hl.invert_caret(c, bar, room),
-            None => c.invert_rect(bar),
-        }
+    if let Some(bar) = shown_bar {
+        bar.draw(c, cs.hilight_text);
     }
     if caret.focused() {
         c.report_spot(own.spot(inner, bar));
@@ -393,15 +390,15 @@ pub(crate) fn selection_faults(
     faults
 }
 
-/// Where a caret at the end of one selected char of a two-char text at scale 2 inverts other
-/// device columns than the two right of the highlight's `hilight` fill. `draw(text, sel, shown)`
-/// returns the scale 2 pixels of a `w` px wide canvas with the caret at `sel.end`; `geom` as in
-/// [`selection_faults`].
+/// Where a caret at the end of one selected char of a two-char text at scale 2 changes a pixel a
+/// glyph inks, or, with no ink in the two device columns right of the highlight's `hilight` fill,
+/// changes other columns than those. `draw(text, sel, shown)` returns the scale 2 pixels of a `w`
+/// px wide canvas with the caret at `sel.end`; `geom` as in [`selection_faults`].
 #[cfg(test)]
 pub(crate) fn caret_faults(
     text: &TextRenderer,
     px: u32,
-    w: i32,
+    (w, h): (i32, i32),
     pairs: impl IntoIterator<Item = String>,
     geom: impl Fn(&str) -> (i32, Rect, std::ops::Range<i32>),
     draw: impl Fn(&str, std::ops::Range<usize>, bool) -> Vec<u32>,
@@ -410,7 +407,8 @@ pub(crate) fn caret_faults(
     let w2 = 2 * w;
     let mut faults = Vec::new();
     for t in pairs {
-        let (pen, _, rows) = geom(&t);
+        let (pen, line, rows) = geom(&t);
+        let ink = ink_mask(text, px, (w, h), &t, pen, line, 2);
         for (k, (a, b, run)) in one_char_runs(text, px, &t, pen, &rows)
             .into_iter()
             .enumerate()
@@ -423,16 +421,18 @@ pub(crate) fn caret_faults(
             while end < w2 && filled(end) {
                 end += 1;
             }
-            let mut inverted: Vec<i32> = (0..on.len())
-                .filter(|&i| on[i] != off[i])
-                .map(|i| i as i32 % w2)
-                .collect();
-            inverted.sort_unstable();
-            inverted.dedup();
-            if inverted != [end, end + 1] {
+            let changed: Vec<usize> = (0..on.len()).filter(|&i| on[i] != off[i]).collect();
+            let flipped = changed.iter().filter(|&&i| ink[i]).count();
+            let mut cols: Vec<i32> = changed.iter().map(|&i| i as i32 % w2).collect();
+            cols.sort_unstable();
+            cols.dedup();
+            let free =
+                (0..ink.len()).all(|i| !ink[i] || !(end..end + 2).contains(&(i as i32 % w2)));
+            if flipped > 0 || (free && cols != [end, end + 1]) {
                 let which = ["first", "second"][k];
                 faults.push(format!(
-                    "\"{t}\" {which} selected: caret in columns {inverted:?}, fill ends at {end}"
+                    "\"{t}\" {which} selected: caret in columns {cols:?}, fill ends at {end}, \
+                     {flipped} ink px flipped"
                 ));
             }
         }
@@ -548,6 +548,63 @@ pub(crate) fn off_highlight(
         .count();
     (off, unlit, merged)
 }
+
+/// The device pixels any char of `t` inks alone at scale `s`, as [`glyph_mask`] draws each.
+#[cfg(test)]
+fn ink_mask(
+    text: &TextRenderer,
+    px: u32,
+    (w, h): (i32, i32),
+    t: &str,
+    pen: i32,
+    line: Rect,
+    s: i32,
+) -> Vec<bool> {
+    let mut ink = vec![false; (w * s * h * s) as usize];
+    for (i, _) in t.char_indices() {
+        let mask = glyph_mask(text, px, (w, h), t, i, pen, line, s);
+        ink.iter_mut().zip(mask).for_each(|(o, m)| *o |= m);
+    }
+    ink
+}
+
+/// What a caret drawn over `off` to give `on` does to the glyphs of `t` drawn from `pen` in
+/// `line` at scale `s`: the pixels it changes that a glyph inks alone, and its pixels beside a
+/// glyph's `lit` ink that are near `lit` too, where that ink's edge is lost. `off` and `on` are
+/// the pixels of a `w` px wide canvas.
+#[cfg(test)]
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn caret_marks(
+    text: &TextRenderer,
+    px: u32,
+    (w, h): (i32, i32),
+    t: &str,
+    (pen, line): (i32, Rect),
+    s: i32,
+    (off, on): (&[u32], &[u32]),
+    lit: crate::theme::Color,
+) -> (usize, usize) {
+    let ink = ink_mask(text, px, (w, h), t, pen, line, s);
+    let ws = (w * s) as usize;
+    let near = |a: u32, b: u32| {
+        let d = |k: u32| ((a >> k) & 0xFF).abs_diff((b >> k) & 0xFF);
+        d(16) + d(8) + d(0) < 0x180
+    };
+    let lit_ink = |j: usize| ink[j] && on[j] == lit.argb();
+    let changed: Vec<usize> = (0..on.len()).filter(|&i| on[i] != off[i]).collect();
+    let flipped = changed.iter().filter(|&&i| ink[i]).count();
+    let faint = changed
+        .iter()
+        .filter(|&&i| near(on[i], lit.argb()))
+        .filter(|&&i| (i % ws > 0 && lit_ink(i - 1)) || (i % ws + 1 < ws && lit_ink(i + 1)))
+        .count();
+    (flipped, faint)
+}
+
+/// Texts for [`caret_marks`]: digits inked from their first column, descenders, a `|` and a `j`
+/// whose tail runs under its neighbour.
+#[cfg(test)]
+pub(crate) const CARET_CASES: [&str; 4] = ["8605", "gjpqy", "o|g@", "1j9"];
 
 /// Texts with descenders, a `|`, a `j` whose tail runs under its neighbour and digits inked from
 /// their first column, each with every one-char selection and the whole text selected, for

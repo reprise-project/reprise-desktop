@@ -7,7 +7,7 @@ use crate::look::Paint;
 use crate::look::widgets::{draw_edit_frame, draw_hscrollbar, draw_scroll_corner, draw_scrollbar};
 use crate::pointer::Pointer;
 use crate::raster::{Canvas, Rect};
-use crate::text::TextRenderer;
+use crate::text::{CaretBar, TextRenderer};
 use crate::textedit::{
     Caret, Doc, Edit, EditKey, Op, Spot, Surrounding, TextSpot, Undo, index_at_weight, words,
 };
@@ -1522,8 +1522,8 @@ pub fn select_drag(
 }
 
 /// Draw the control: edge, box, lines from `view.top`, selection on `hilight`, the caret (a 1 px
-/// bar inverting what it covers) in the blink's shown half or, while a drag would `drop` text, the
-/// same bar at that point instead, and the scrollbars the layout calls for. On a blink-only frame
+/// [`CaretBar`]) in the blink's shown half or, while a drag would `drop` text, a bar inverting
+/// what it covers at that point instead, and the scrollbars the layout calls for. On a blink-only frame
 /// the caret bar is the damage (an empty rect when it is scrolled out of view).
 #[expect(clippy::too_many_arguments)]
 pub fn draw(
@@ -1614,16 +1614,35 @@ pub fn draw(
             let (bold, px) = (m.bold, m.font_px);
             let hl = text.highlight(run, &shown, sa..sb, x0, line_r, bold, px, c.scale());
             hl.fill(c, ink_clip, cs.hilight);
-            text.draw_in(
-                c,
-                r,
-                line_r,
-                ink_clip,
-                &shown,
-                m.bold,
-                cs.button_text,
-                m.font_px,
-            );
+            row_hl = Some((hl, run));
+        }
+        let col_x = |col: usize| {
+            let e = expanded_col(line, col, m.tab_cols);
+            x0 + text.measure(&shown[..e.min(shown.len())], m.bold, m.font_px)
+        };
+        let row_caret = (ri == caret_row).then(|| {
+            let (col, bar_on) = match (&composed, &preedit) {
+                (Some((_, _, at)), Some(p)) => (*at, p.cursor.is_some()),
+                _ => (edit.caret.col - row.start, true),
+            };
+            let cx = col_x(col);
+            let bar = Rect::new(cx, y, s, line_h);
+            let drawn = cx >= clip.x && cx < clip.right();
+            let hl = row_hl.as_ref().map(|(hl, _)| hl);
+            let placed = drawn.then(|| CaretBar::ground(c, bar, hl, ink_clip));
+            (bar, bar_on, placed)
+        });
+        text.draw_in(
+            c,
+            r,
+            line_r,
+            ink_clip,
+            &shown,
+            m.bold,
+            cs.button_text,
+            m.font_px,
+        );
+        if let Some((hl, run)) = &row_hl {
             text.draw_in(
                 c,
                 r,
@@ -1634,24 +1653,8 @@ pub fn draw(
                 cs.hilight_text,
                 m.font_px,
             );
-            text.draw_overhang(c, &hl, line_r.intersect(&ink_clip), cs.hilight_text);
-            row_hl = Some(hl);
-        } else {
-            text.draw_in(
-                c,
-                r,
-                line_r,
-                ink_clip,
-                &shown,
-                m.bold,
-                cs.button_text,
-                m.font_px,
-            );
+            text.draw_overhang(c, hl, line_r.intersect(&ink_clip), cs.hilight_text);
         }
-        let col_x = |col: usize| {
-            let e = expanded_col(line, col, m.tab_cols);
-            x0 + text.measure(&shown[..e.min(shown.len())], m.bold, m.font_px)
-        };
         if let Some((_, run, _)) = &composed {
             let base = text
                 .baseline(r, m.bold, m.font_px)
@@ -1660,29 +1663,20 @@ pub fn draw(
             let ul = Rect::new(xa, base + s, xb - xa, s);
             c.fill_rect(ul.intersect(&clip), cs.button_text);
         }
-        if ri == caret_row {
-            let (col, bar_on) = match (&composed, &preedit) {
-                (Some((_, _, at)), Some(p)) => (*at, p.cursor.is_some()),
-                _ => (edit.caret.col - row.start, true),
-            };
-            let cx = col_x(col);
-            let bar = Rect::new(cx, y, s, line_h);
-            let drawn = cx >= clip.x && cx < clip.right();
-            if caret.shown() && bar_on && drawn {
-                match &row_hl {
-                    Some(hl) => hl.invert_caret(c, bar, clip),
-                    None => c.invert_rect(bar),
-                }
+        if let Some((bar, bar_on, placed)) = row_caret {
+            let spot = Rect::new(bar.x.clamp(clip.x, clip.right() - s), y, s, line_h);
+            caret_bar = Some((spot, placed.as_ref().map_or(spot, |p| p.rect(c))));
+            if let Some(placed) = &placed
+                && caret.shown()
+                && bar_on
+            {
+                placed.draw(c, cs.hilight_text);
             }
-            caret_bar = Some(match &row_hl {
-                Some(hl) if drawn => hl.caret(bar, clip),
-                _ => Rect::new(cx.clamp(clip.x, clip.right() - s), y, s, line_h),
-            });
         }
     }
     if caret.focused() {
         // A caret scrolled out of the box reports the nearest row, so the candidates stay by it.
-        let bar = caret_bar.unwrap_or_else(|| {
+        let bar = caret_bar.map(|(spot, _)| spot).unwrap_or_else(|| {
             let y = if caret_row < view.top {
                 clip.y
             } else {
@@ -1693,7 +1687,7 @@ pub fn draw(
         });
         c.report_spot(edit.spot(lay.frame, bar));
         if c.blink_only() {
-            c.report_damage(caret_bar.unwrap_or_default());
+            c.report_damage(caret_bar.map(|(_, drawn)| drawn).unwrap_or_default());
         }
     }
     if let Some(at) = drop {

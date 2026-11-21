@@ -400,8 +400,10 @@ fn the_lock_field_inks_its_password_dark_in_both_modes() {
     }
 }
 
+/// The lock field's cue starts with a P on the pen's column; the caret stands in the columns
+/// before the P's ink, inverting the white there and leaving the P as it is.
 #[test]
-fn the_lock_fields_caret_inverts_the_column_the_cue_starts_on() {
+fn the_lock_fields_caret_stands_before_the_cue_it_starts_on() {
     let fields = lock_fields();
     let (on, off) = (&fields[0].1, &fields[1].1);
     for mode in [crate::glass::Mode::Light, crate::glass::Mode::Dark] {
@@ -410,21 +412,21 @@ fn the_lock_fields_caret_inverts_the_column_the_cue_starts_on() {
             let (b, _) = drawn_in(off, s, None, mode);
             let (f, x) = lock_field(&l, s);
             let rows = f.y + 2 * s..f.bottom() - 2 * s;
+            let first_ink = (x - s..f.right())
+                .find(|&cx| rows.clone().any(|y| b.get(cx, y) != 0xFFFF_FFFF))
+                .unwrap();
             if s == 1 {
-                let first_ink = (x - 1..f.right())
-                    .find(|&cx| rows.clone().any(|y| b.get(cx, y) != 0xFFFF_FFFF))
-                    .unwrap();
                 assert_eq!(first_ink, x, "{mode:?}: the cue's P stands on the pen");
             }
             let mut inverted = 0;
-            for y in f.y + 2 * s..f.bottom() - 2 * s {
+            for y in rows.clone() {
                 for cx in x - s..f.right() - FIELD_PAD * s {
                     let (got, under) = (a.get(cx, y), b.get(cx, y));
-                    if (x..x + s).contains(&cx) && got != under {
+                    if (first_ink - s..first_ink).contains(&cx) && got != under {
                         assert_eq!(
                             got,
                             0xFF00_0000 | !under & 0x00FF_FFFF,
-                            "{mode:?} @{s}: ({cx}, {y}) under the caret is inverted"
+                            "{mode:?} @{s}: ({cx}, {y}) under the caret inverted"
                         );
                         inverted += 1;
                     } else {

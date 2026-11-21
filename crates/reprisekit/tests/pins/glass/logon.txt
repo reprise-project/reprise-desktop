@@ -1,6 +1,6 @@
-tile @1 3e7500a0454fb019
+tile @1 dbf3f8d6a7d9e8c1
 tile @2 e9d48ebd79dd5ec6
-tile hot @1 b7102376c987bca1
+tile hot @1 c6cac1e35cb6d0e9
 tile hot @2 5f7a27d34652c4ce
 arrow hot @1 ec9addd2954ea646
 arrow hot @2 933738b555d6bc58
@@ -12,9 +12,9 @@ message @1 3bd04da937fc11e1
 message @2 3b7a325de759552a
 busy @1 973a83f576fc2b9f
 busy @2 651880d082fdb1ae
-power hot @1 74bf87949bb900ba
+power hot @1 4db973d5ae9c3d22
 power hot @2 1068329639ec0c5d
-admin shut down @1 14fd8b4b7053bb70
+admin shut down @1 6c2b238ee1017628
 admin shut down @2 9381a633c9e5018f
 admin restart filled @1 8415b1efb9e92935
 admin restart filled @2 dba8366e392c8bed
@@ -22,5 +22,5 @@ shutting down @1 80071316c97760c5
 shutting down @2 6f9bb891b2e17613
 remote note @1 f1004dd1bbb9fac4
 remote note @2 ed9d01bb391a4c68
-tile after ok @1 3e7500a0454fb019
+tile after ok @1 dbf3f8d6a7d9e8c1
 tile after ok @2 e9d48ebd79dd5ec6

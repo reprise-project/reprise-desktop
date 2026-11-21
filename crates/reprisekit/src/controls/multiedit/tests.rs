@@ -1070,8 +1070,16 @@ fn a_blink_only_frame_damages_just_the_caret_bar() {
     );
     let mut on = draw_with(Caret::Shown, true);
     let off = draw_with(Caret::Hidden, true);
-    let bar = on.take_spot().expect("focused").caret;
-    assert_eq!(on.take_damage(), Some(vec![bar]));
+    let spot = on.take_spot().expect("focused").caret;
+    let damage = on.take_damage().expect("a blink damages");
+    let [bar] = damage[..] else {
+        panic!("one damaged rect, got {damage:?}")
+    };
+    assert_eq!((bar.width, bar.height), (spot.width, spot.height));
+    assert!(
+        (spot.x - 1..=spot.x).contains(&bar.x) && bar.y == spot.y,
+        "the bar {bar:?} is the spot's {spot:?} or a pixel left of it"
+    );
     assert_eq!(on.pixels, full.pixels, "the same pixels either way");
     let changed: Vec<usize> = (0..on.pixels.len())
         .filter(|&i| on.pixels[i] != off.pixels[i])
@@ -1085,8 +1093,10 @@ fn a_blink_only_frame_damages_just_the_caret_bar() {
     );
 }
 
+/// The A's foot inks the pen's column: the caret stands in the free column left of it, and the
+/// drop point, on the pen, inverts the foot.
 #[test]
-fn the_caret_and_the_drop_point_invert_their_column_so_a_stem_under_them_shows_white() {
+fn the_caret_stands_off_a_stem_on_its_pen_and_the_drop_point_inverts_it() {
     crate::pins::fonts();
     let text = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
@@ -1116,7 +1126,13 @@ fn the_caret_and_the_drop_point_invert_their_column_so_a_stem_under_them_shows_w
     let on = draw_with(Caret::Shown, None);
     assert_eq!(
         crate::paint::inverted_bar(&off, &on, paper),
-        (pen, true),
+        (
+            Rect {
+                x: pen.x - 1,
+                ..pen
+            },
+            false
+        ),
         "caret"
     );
     let drop = draw_with(Caret::Hidden, Some(p(0, 0)));
@@ -1469,7 +1485,8 @@ fn a_selected_glyph_at_scale_2_lights_whole_and_leaves_its_neighbour() {
             let pairs = crate::paint::ascii_pairs;
             let (lit, hilight) = (cs.hilight_text, cs.hilight);
             let found = crate::paint::selection_faults(&text, px, (w, h), pairs(), geom, draw, lit);
-            let carets = crate::paint::caret_faults(&text, px, w, pairs(), geom, caret, hilight);
+            let carets =
+                crate::paint::caret_faults(&text, px, (w, h), pairs(), geom, caret, hilight);
             let found = found.into_iter().chain(carets);
             faults.extend(found.map(|f| format!("{family} {px} px: {f}")));
         }

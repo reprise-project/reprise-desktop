@@ -7,7 +7,7 @@ use std::ops::Range;
 use crate::icon;
 use crate::look::widgets::item;
 use crate::raster::{Canvas, Rect};
-use crate::text::{Align, TextRenderer};
+use crate::text::{Align, CaretBar, TextRenderer};
 use crate::textedit::{Caret, Preedit, TextEdit};
 use crate::theme::{Color, TextUnits, Theme};
 
@@ -519,10 +519,13 @@ pub fn draw_cell_at(
                 let all = c.bounds();
                 hl(b, lay.step).fill(c, all, cs.hilight);
             }
+            let line_hl = (a < b && a < end).then(|| hl(b.min(end), line_h));
+            let line_caret = (caret.is_none() && edit.caret() <= end).then(|| {
+                let bar = Rect::new(at(edit.caret()), ly, s, lay.step);
+                (bar, CaretBar::ground(c, bar, line_hl.as_ref(), r.inset(s)))
+            });
             text.draw_in(c, pen, line_r, line_r, &l.text, false, black, font);
-            let mut line_hl = None;
-            if a < b && a < end {
-                let hl = hl(b.min(end), line_h);
+            if let Some(hl) = &line_hl {
                 text.draw_in(
                     c,
                     pen,
@@ -533,8 +536,7 @@ pub fn draw_cell_at(
                     cs.hilight_text,
                     font,
                 );
-                text.draw_overhang(c, &hl, line_r, cs.hilight_text);
-                line_hl = Some(hl);
+                text.draw_overhang(c, hl, line_r, cs.hilight_text);
             }
             if let Some(run) = &run {
                 let (a, b) = (run.start.max(l.start), run.end.min(end));
@@ -545,15 +547,15 @@ pub fn draw_cell_at(
                     c.fill_rect(Rect::new(at(a), base + s, at(b) - at(a), s), black);
                 }
             }
-            if caret.is_none() && edit.caret() <= end {
-                caret = Some((at(edit.caret()), ly, line_hl));
+            if line_caret.is_some() {
+                caret = line_caret;
             }
         }
-        let (cx, cy, hl) = caret.unwrap_or((r.x + 5 * s, r.y + 2 * s, None));
-        let bar = Rect::new(cx, cy, s, lay.step);
+        let empty = Rect::new(r.x + 5 * s, r.y + 2 * s, s, lay.step);
+        let (bar, placed) = caret.map_or((empty, None), |(bar, placed)| (bar, Some(placed)));
         if caret_state.shown() && bar_on {
-            match &hl {
-                Some(hl) => hl.invert_caret(c, bar, r.inset(s)),
+            match placed {
+                Some(placed) => placed.draw(c, cs.hilight_text),
                 None => c.invert_rect(bar),
             }
         }
@@ -1444,16 +1446,15 @@ mod tests {
         let bx = (CELL + 2 - widest) / 2 - 2 - 3;
         let x2 = bx + 1 + (bw - 2 - widest) / 2;
         let docu = t.measure("Docu", false, font);
-        assert_eq!(c.get(x2 + docu - 1, by + 15), 0xFFFFFFFF);
+        assert_eq!(
+            c.get(x2 + docu - 1, by + 15),
+            black,
+            "the caret stands before the selection"
+        );
+        assert_eq!(c.get(x2 + docu - 1, by + 27), black);
+        assert_eq!(c.get(x2 + docu, by + 15), hl);
         assert_eq!(c.get(x2 + docu + 1, by + 15), hl);
         assert_eq!(c.get(x2 + widest - 1, by + 15), hl);
-        let caret = 0xFF00_0000 | (!hl & 0x00FF_FFFF);
-        assert_eq!(
-            c.get(x2 + docu, by + 15),
-            caret,
-            "the caret inverts the selection"
-        );
-        assert_eq!(c.get(x2 + docu, by + 27), caret);
         let mut edit = TextEdit::new(name, false);
         edit.key(EditKey::Home { select: false });
         let c = draw_cell(
@@ -1468,8 +1469,9 @@ mod tests {
         );
         let run1 = t.measure("New Text", false, font) + t.measure(" ", false, font);
         let x1 = bx + 1 + (bw - 2 - run1) / 2;
-        assert_eq!(c.get(x1, by + 2), black);
-        assert_eq!(c.get(x1, by + 14), black);
+        // The N inks its pen's column; the caret stands left of it.
+        assert_eq!(c.get(x1 - 1, by + 2), black);
+        assert_eq!(c.get(x1 - 1, by + 14), black);
         assert!((0..CELL).all(|x| c.get(x, by + 15) != hl));
     }
 
@@ -1541,8 +1543,9 @@ mod tests {
         assert!(moved.is_empty(), "{}", moved.join("\n"));
     }
 
+    /// The A's foot inks the pen's column: the caret stands in the free column left of it.
     #[test]
-    fn the_rename_caret_inverts_its_column_so_a_stem_under_it_shows_white() {
+    fn the_rename_caret_stands_off_a_stem_on_its_pen() {
         crate::pins::fonts();
         let theme = Theme::default();
         let t = text();
@@ -1557,8 +1560,8 @@ mod tests {
         let pen = &lay.lines[0];
         assert_eq!(
             crate::paint::inverted_bar(&off, &on, theme.colors.window.argb()),
-            (Rect::new(pen.x, pen.y, 1, lay.step), true),
-            "the bar is the pen's column, over the A's foot"
+            (Rect::new(pen.x - 1, pen.y, 1, lay.step), false),
+            "the bar is the column left of the pen, off the A's foot"
         );
     }
 

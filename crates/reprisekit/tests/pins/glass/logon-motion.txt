@@ -1,16 +1,16 @@
 pick Blue 0ms @1 a9c9fd3dea552d91
-pick Blue 160ms @1 a36b7d13be4ccef9
-pick Blue 320ms @1 3e7500a0454fb019
+pick Blue 160ms @1 3cca4023e7dec221
+pick Blue 320ms @1 dbf3f8d6a7d9e8c1
 pick Blue 0ms @2 b73252245c4a9ba9
 pick Blue 160ms @2 807db8865b326b06
 pick Blue 320ms @2 e9d48ebd79dd5ec6
 pick other Blue 0ms @1 a9c9fd3dea552d91
-pick other Blue 160ms @1 c335ca34825b0abf
-pick other Blue 320ms @1 29ed9d5fc11d4686
+pick other Blue 160ms @1 b0f1a9cba611954f
+pick other Blue 320ms @1 10510912d45cb44e
 pick other Blue 0ms @2 b73252245c4a9ba9
 pick other Blue 160ms @2 e9221047b948ed81
 pick other Blue 320ms @2 7d833e5b3744dd03
-back Blue 0ms @1 3e7500a0454fb019
+back Blue 0ms @1 dbf3f8d6a7d9e8c1
 back Blue 195ms @1 563f87c35673ee6d
 back Blue 390ms @1 a9c9fd3dea552d91
 back Blue 0ms @2 e9d48ebd79dd5ec6
@@ -23,8 +23,8 @@ enter tiles Blue 0ms @2 bcd1ff2ea9aa93e5
 enter tiles Blue 180ms @2 b853f788779e9ba9
 enter tiles Blue 360ms @2 b73252245c4a9ba9
 enter tile Blue 0ms @1 31193f594515f49e
-enter tile Blue 180ms @1 450f19bc88223b9a
-enter tile Blue 360ms @1 3e7500a0454fb019
+enter tile Blue 180ms @1 eb8d9b0cb9b9489a
+enter tile Blue 360ms @1 dbf3f8d6a7d9e8c1
 enter tile Blue 0ms @2 bcd1ff2ea9aa93e5
 enter tile Blue 180ms @2 3633b6783a1c24ba
 enter tile Blue 360ms @2 e9d48ebd79dd5ec6
@@ -46,9 +46,9 @@ fail Blue 240ms @1 3bd04da937fc11e1
 fail Blue 0ms @2 651880d082fdb1ae
 fail Blue 120ms @2 bcd1ff2ea9aa93e5
 fail Blue 240ms @2 3b7a325de759552a
-admin Blue 0ms @1 3e7500a0454fb019
-admin Blue 120ms @1 ca21287756bcb340
-admin Blue 240ms @1 14fd8b4b7053bb70
+admin Blue 0ms @1 dbf3f8d6a7d9e8c1
+admin Blue 120ms @1 a0a1839ff9c4e657
+admin Blue 240ms @1 6c2b238ee1017628
 admin Blue 0ms @2 e9d48ebd79dd5ec6
 admin Blue 120ms @2 178ec404a87a2f02
 admin Blue 240ms @2 9381a633c9e5018f

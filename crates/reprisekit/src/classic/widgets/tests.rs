@@ -1004,10 +1004,9 @@ fn a_preedit_draws_underlined_at_the_caret_and_the_spot_leaves_it_out() {
     let ink = cs.button_text.argb();
     let caret_x = inner.x + text.measure("niha", false, px);
     assert!(
-        (x0..x1).all(|x| c.get(x, ul) == ink || x == caret_x),
-        "underline under hao"
+        (x0..x1).all(|x| c.get(x, ul) == ink),
+        "underline under hao, the caret leaving it"
     );
-    assert_eq!(c.get(caret_x, ul), cs.window.argb(), "the caret inverts it");
     assert_ne!(c.get(x0 - 1, ul), ink, "not under ni");
     assert_ne!(c.get(x1, ul), ink, "not under ma");
     let spot = c.take_spot().expect("a focused field reports");
@@ -1071,7 +1070,10 @@ fn a_preedit_range_draws_only_underlined_with_the_caret_at_its_end() {
     let ink = cs.button_text.argb();
     assert!((x0..x1).all(|x| c.get(x, ul) == ink), "underline under hao");
     let row = text.line(inner, false, px).unwrap().0;
-    assert_eq!(c.get(x1, row), ink, "the caret bar after hao");
+    assert!(
+        (x1 - 1..=x1).any(|x| c.get(x, row) == ink),
+        "the caret bar after hao"
+    );
     let spot = c.take_spot().expect("a focused field reports");
     assert_eq!(spot.caret.x, x1, "the caret ends the range");
 }
@@ -1179,8 +1181,10 @@ fn a_scrolled_multibyte_value_stays_on_char_boundaries() {
     let _visible = &e.text[home..];
 }
 
+/// The A's foot inks the pen's column: the caret stands in the free column left of it, black on
+/// the white, and the A keeps its ink.
 #[test]
-fn the_caret_inverts_its_column_so_a_stem_under_it_shows_white() {
+fn the_caret_stands_off_a_stem_on_its_pen() {
     let (theme, text) = setup();
     crate::pins::fonts();
     let cs = &theme.colors;
@@ -1211,12 +1215,16 @@ fn the_caret_inverts_its_column_so_a_stem_under_it_shows_white() {
         .collect();
     assert!(!stem.is_empty(), "the A's foot sits in the pen's column");
     for y in top..top + h {
-        let want = if stem.contains(&y) { paper } else { ink };
-        assert_eq!(on.get(inner.x, y), want, "caret row {y}");
+        assert_eq!(
+            off.get(inner.x - 1, y),
+            paper,
+            "nothing inks left of the pen"
+        );
+        assert_eq!(on.get(inner.x - 1, y), ink, "caret row {y}");
     }
     for y in 0..35 {
         for x in 0..80 {
-            if x != inner.x || !(top..top + h).contains(&y) {
+            if x != inner.x - 1 || !(top..top + h).contains(&y) {
                 assert_eq!(on.get(x, y), off.get(x, y), "({x}, {y}) off the caret");
             }
         }
@@ -1399,7 +1407,8 @@ fn a_field_selection_at_scale_2_lights_its_glyph_whole_and_leaves_its_neighbour(
             let (lit, hilight) = (cs.hilight_text, cs.hilight);
             let found =
                 crate::paint::selection_faults(&text, px, (150, 40), pairs(), geom, draw, lit);
-            let carets = crate::paint::caret_faults(&text, px, 150, pairs(), geom, caret, hilight);
+            let carets =
+                crate::paint::caret_faults(&text, px, (150, 40), pairs(), geom, caret, hilight);
             let found = found.into_iter().chain(carets);
             faults.extend(found.map(|f| format!("{family} {px} px: {f}")));
         }
@@ -1487,4 +1496,70 @@ fn a_selected_descender_field_pins_at_scale_1_and_2() {
         }
     }
     crate::pins::check("controls/edit_selected_descenders", &got);
+}
+
+/// A field's caret before, between or after the glyphs of [`crate::paint::CARET_CASES`], with no
+/// selection or at either end of a one-char selection, flips none of their ink and stands off a
+/// selected glyph's lit ink, at scale 1 and 2.
+#[test]
+fn a_caret_beside_glyphs_leaves_their_ink_as_it_was() {
+    crate::pins::fonts();
+    let cs = &Theme::default().colors;
+    let inner = Rect::new(10, 10, 120, 17);
+    let room = Rect::new(inner.x - 1, inner.y, inner.width + 1, inner.height);
+    let mut faults = Vec::new();
+    for family in ["Tahoma", "DejaVu Sans"] {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            antialias: false,
+            ..FontConfig::default()
+        });
+        for px in [11, 13] {
+            for s in [1, 2] {
+                let draw = |t: &str, (anchor, at): (usize, usize), caret| {
+                    let mut e = TextEdit::new(t, false);
+                    e.set_selection(anchor, at);
+                    let mut c = Canvas::with_scale(150, 40, s);
+                    c.fill_rect(c.bounds(), cs.window);
+                    let paint = classic_paint(cs, 1);
+                    draw_edit(&mut c, &text, &e, inner, px, &paint, caret, 0);
+                    c.pixels
+                };
+                for t in crate::paint::CARET_CASES {
+                    let ends: Vec<usize> =
+                        (0..=t.len()).filter(|&i| t.is_char_boundary(i)).collect();
+                    let carets = ends
+                        .iter()
+                        .map(|&i| (i, i))
+                        .chain(ends.windows(2).flat_map(|w| [(w[0], w[1]), (w[1], w[0])]));
+                    for (anchor, at) in carets {
+                        let off = draw(t, (anchor, at), Caret::Hidden);
+                        let on = draw(t, (anchor, at), Caret::Shown);
+                        let (flipped, faint) = crate::paint::caret_marks(
+                            &text,
+                            px,
+                            (150, 40),
+                            t,
+                            (inner.x, room),
+                            s,
+                            (&off, &on),
+                            cs.hilight_text,
+                        );
+                        if flipped + faint > 0 {
+                            faults.push(format!(
+                                "{family} {px} px @{s} \"{t}\" {anchor}..{at}: {flipped} ink px \
+                                 flipped, {faint} caret px faint beside lit ink"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} faults\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
 }

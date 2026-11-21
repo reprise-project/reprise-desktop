@@ -3,4 +3,4 @@ view submenu 1 0dba139b8571eb69
 rename box 1 8b6e34d779632035
 item menu 2 9d7dc7347a26d048
 view submenu 2 5f4d496f7dc1d4a9
-rename box 2 2eca888556981d01
+rename box 2 672a6ee447877e21
