@@ -2,7 +2,7 @@ use crate::controls::form;
 use crate::controls::hosted::{Hosted, Spot};
 use crate::controls::{pagelist, searchfield, tabstrip};
 use crate::look::Paint;
-use crate::look::widgets::{draw_hscrollbar, draw_page, draw_scrollbar, group_label_ink};
+use crate::look::widgets::{draw_page, group_label_ink};
 use crate::raster::Canvas;
 use crate::text::{Align, TextRenderer};
 use crate::textedit::Caret;
@@ -47,34 +47,9 @@ pub fn draw(
         _ => tabstrip::draw(c, nav_text, p, &sheet.tabs, &l.tabs, l.page, cues, px),
     }
     form::draw(c, text, &p.on_page(page), sheet.open(), cues, px);
-    if let Some(bar) = l.bar {
-        let (visible, total) = sheet.page_span();
-        let top = sheet.scroll.top as usize;
-        let lit = sheet.scroll.lit();
-        draw_scrollbar(
-            c,
-            p,
-            bar.scaled(s),
-            top,
-            visible as usize,
-            total as usize,
-            lit,
-        );
-    }
-    if let Some(bar) = l.hbar {
-        let (visible, total) = sheet.page_hspan();
-        let left = sheet.hscroll.top as usize;
-        let lit = sheet.hscroll.lit();
-        draw_hscrollbar(
-            c,
-            p,
-            bar.scaled(s),
-            left,
-            visible as usize,
-            total as usize,
-            lit,
-        );
-    }
+    sheet
+        .scroll
+        .draw(c, p, &sheet.view_frame(), &sheet.page_view(l.page));
 }
 
 pub fn draw_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, sheet: &PropSheet, px: u32) {

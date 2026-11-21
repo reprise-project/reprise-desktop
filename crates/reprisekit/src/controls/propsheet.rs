@@ -44,7 +44,7 @@
 use crate::classic::widgets::{BUTTON_H, BUTTON_W, BarHit};
 use crate::controls::form::{self, Control, Form, Item};
 use crate::controls::pagelist::{self, PageList};
-use crate::controls::scrollbar::PageScroll;
+use crate::controls::scrollview::ScrollView;
 use crate::controls::searchfield::SearchField;
 use crate::controls::tabstrip::TabStrip;
 use crate::raster::Rect;
@@ -110,11 +110,9 @@ pub struct PropSheet {
     /// The dialog font the whole sheet is set in: its first page's.
     pub font: DialogFont,
     pub nav: Nav,
-    /// The page's scroll in a client shorter than the sheet ([`PropSheet::fit`]), at 100%:
-    /// `short` is how much shorter than `size` the client is.
-    scroll: PageScroll,
-    /// The page's sideways scroll in a client narrower than the sheet, as `scroll`.
-    hscroll: PageScroll,
+    /// The page's scroll in a client smaller than the sheet ([`PropSheet::fit`]), at 100%: each
+    /// way's `short` is how much smaller than `size` the client is.
+    scroll: ScrollView,
     /// The search field over the page list, in list mode.
     pub search: SearchField,
     /// The field has the keyboard: neither the list (`tabs.focused`) nor the page does.
@@ -221,8 +219,7 @@ impl PropSheet {
             page_dy: 0,
             font: pages.first().map(|p| p.font).unwrap_or_default(),
             nav: Nav::Tabs,
-            scroll: PageScroll::default(),
-            hscroll: PageScroll::across(),
+            scroll: ScrollView::default(),
             search: SearchField::default(),
             search_focused: false,
             paste_to: None,
@@ -259,8 +256,7 @@ impl PropSheet {
             page_dy: 0,
             font: pages.first().map(|p| p.font).unwrap_or_default(),
             nav: Nav::List(PageList::new(groups)),
-            scroll: PageScroll::default(),
-            hscroll: PageScroll::across(),
+            scroll: ScrollView::default(),
             search: SearchField::default(),
             search_focused: false,
             paste_to: None,
@@ -289,16 +285,16 @@ impl PropSheet {
     /// advance, the rows of tabs and the page's scroll. The origin is the pages' [`Form::origin`].
     pub fn page_offset(&self) -> (i32, i32) {
         (
-            self.page_dx() - self.hscroll.top,
-            self.page_dy - self.scroll.top,
+            self.page_dx() - self.scroll.across.top,
+            self.page_dy - self.scroll.down.top,
         )
     }
 
     /// The client size at 100%: [`PropSheet::size`] less what [`PropSheet::fit`] cut.
     pub fn shown(&self) -> (i32, i32) {
         (
-            self.size.0 - self.hscroll.short,
-            self.size.1 - self.scroll.short,
+            self.size.0 - self.scroll.across.short,
+            self.size.1 - self.scroll.down.short,
         )
     }
 

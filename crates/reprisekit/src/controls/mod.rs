@@ -76,6 +76,7 @@ pub mod remotepassword;
 pub mod replacebox;
 pub mod rowsdlg;
 pub mod scrollbar;
+pub mod scrollview;
 pub mod searchfield;
 mod shellgrid;
 pub mod shellview;

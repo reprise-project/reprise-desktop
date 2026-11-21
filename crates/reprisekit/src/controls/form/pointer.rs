@@ -172,18 +172,32 @@ impl Form {
     }
 
     pub fn hit(&self, x: i32, y: i32, text: &TextRenderer, px: u32) -> Option<Hit> {
-        let cm_all = self.rendered.controls.get();
+        if let Some(h) = self.popup_hit(x, y) {
+            return Some(h);
+        }
+        self.control_hit(x, y, text, px)
+    }
+
+    /// The open combo's list or colour popup at (`x`, `y`): it lies over the form and over
+    /// whatever a host draws around it, so a host asks it before its own parts. The combo's own
+    /// field takes a press only inside its view.
+    pub fn popup_hit(&self, x: i32, y: i32) -> Option<Hit> {
         if let Some(i) = self.open_combo() {
             let it = &self.items[i];
             match &it.control {
                 Control::Combo(c) => {
+                    let clipped = self.clip_of(it).is_some_and(|v| !v.contains(x, y));
                     let lay = combo::layout(c, self.at(it), &self.rendered.controls.get());
-                    if let Some(h) = combo::hit(c, &lay, x, y) {
-                        return Some(Hit {
-                            item: i,
-                            part: Part::Combo(h),
-                            x,
-                        });
+                    match combo::hit(c, &lay, x, y) {
+                        Some(combo::Hit::Field | combo::Hit::Drop) if clipped => {}
+                        Some(h) => {
+                            return Some(Hit {
+                                item: i,
+                                part: Part::Combo(h),
+                                x,
+                            });
+                        }
+                        None => {}
                     }
                 }
                 Control::Color(b) => match colorbutton::hit_popup(self.at(it), b, x, y) {
@@ -213,6 +227,11 @@ impl Form {
                 _ => {}
             }
         }
+        None
+    }
+
+    fn control_hit(&self, x: i32, y: i32, text: &TextRenderer, px: u32) -> Option<Hit> {
+        let cm_all = self.rendered.controls.get();
         let text = text.dialog(self.font);
         for (i, it) in self.items.iter().enumerate().rev() {
             if self.clip_of(it).is_some_and(|v| !v.contains(x, y)) {

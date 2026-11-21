@@ -13,9 +13,13 @@ use reprisekit::controls::{
     form,
     propsheet::{self, PropSheet},
 };
+use reprisekit::raster::Rect;
 use reprisekit::text::TextRenderer;
 
 pub(crate) type Msg = reprisekit::access::Msg<WinId>;
+
+/// How many scrolls one reader request may take to bring its node in.
+const REVEALS: usize = 4;
 
 pub(crate) struct SlotAccess {
     /// None until the accessibility bus answers (`reprisebus::a11y::when_bus_ready`).
@@ -87,8 +91,14 @@ impl AccessState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reader {
     /// Scroll row `row` of the list at `at` into view, picking nothing; the row is counted as
-    /// `reprisekit::access::Reveal` counts it.
-    Reveal { at: (i32, i32), row: usize },
+    /// `reprisekit::access::Reveal` counts it. `node` is the row's rect, which a window that
+    /// scrolls a view around the list scrolls to; with `view` the list is that view.
+    Reveal {
+        at: (i32, i32),
+        row: usize,
+        node: Rect,
+        view: bool,
+    },
     /// Give the keyboard to the control at the point, as Tab would, pressing nothing.
     Focus((i32, i32)),
 }
@@ -105,7 +115,13 @@ impl ReaderForm<'_> {
     /// when the form changed.
     pub fn act(self, act: Reader, text: &TextRenderer, base: u32) -> bool {
         match (self, act) {
-            (ReaderForm::Form(d), Reader::Reveal { at: (x, y), row }) => {
+            (ReaderForm::Form(_), Reader::Reveal { view: true, .. }) => false,
+            (
+                ReaderForm::Form(d),
+                Reader::Reveal {
+                    at: (x, y), row, ..
+                },
+            ) => {
                 let px = d.px.unwrap_or_else(|| d.form.units().px(base));
                 d.form.reveal(x, y, row, text, px) != form::Event::None
             }
@@ -113,9 +129,17 @@ impl ReaderForm<'_> {
                 let px = d.px.unwrap_or_else(|| d.form.units().px(base));
                 d.form.focus_at(x, y, text, px) != form::Event::None
             }
-            (ReaderForm::Sheet(s), Reader::Reveal { at: (x, y), row }) => {
+            (
+                ReaderForm::Sheet(s),
+                Reader::Reveal {
+                    at: (x, y),
+                    row,
+                    node,
+                    view,
+                },
+            ) => {
                 let px = s.open().units().px(base);
-                s.reveal(x, y, row, text, px) != propsheet::Event::None
+                (!view && s.reveal(x, y, row, text, px) != propsheet::Event::None) || s.show(node)
             }
             (ReaderForm::Sheet(s), Reader::Focus((x, y))) => {
                 let px = s.open().units().px(base);
@@ -232,20 +256,19 @@ impl Host {
         req: reprisekit::access::Request,
         live: bool,
     ) {
-        let target = match self.reader_route(win, req) {
-            Route::Reveal { reveal, then } => {
-                self.reader_reveal(win, reveal);
-                if !then {
-                    return;
-                }
-                self.publish(win);
-                match self.reader_route(win, req) {
-                    Route::Act(t) => t,
-                    _ => return,
-                }
-            }
-            Route::Act(t) => t,
-            Route::None => return,
+        let mut route = self.reader_route(win, req);
+        // A row in a list in a scrolled view can take a scroll of each, and a list out of the
+        // view the view's first. ScrollIntoView takes the same scrolls and never acts.
+        for _ in 0..REVEALS {
+            let Route::Reveal { reveal, .. } = route else {
+                break;
+            };
+            self.reader_reveal(win, reveal);
+            self.publish(win);
+            route = self.reader_route(win, req);
+        }
+        let Route::Act(target) = route else {
+            return;
         };
         let Some(g) = reprisekit::access::gesture(req.act, target) else {
             return;
@@ -274,7 +297,20 @@ impl Host {
     /// Scroll the list in window `win` so the row `r` names shows.
     fn reader_reveal(&mut self, win: WinId, r: Reveal) {
         let at = (r.at.0 as i32, r.at.1 as i32);
-        self.reader_act(win, Reader::Reveal { at, row: r.row });
+        let n = r.node;
+        let (x, y) = (n.x0.floor() as i32, n.y0.floor() as i32);
+        let node = Rect::new(x, y, n.x1.ceil() as i32 - x, n.y1.ceil() as i32 - y);
+        let row = r.row;
+        let view = r.view;
+        self.reader_act(
+            win,
+            Reader::Reveal {
+                at,
+                row,
+                node,
+                view,
+            },
+        );
     }
 
     /// Give the keyboard to the control at `at` in window `win`, pressing nothing.

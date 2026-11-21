@@ -375,3 +375,174 @@ fn the_page_scrollbar_covers_no_control() {
         "a whole sheet does not scroll to a rect built past its page"
     );
 }
+
+/// A reader's Click reaches every row of an open combo whose list hangs below the page, on a
+/// page whole in its client and on one scrolled to its end, at the row's own middle, and a press
+/// there picks the row: the list draws over the page and takes the press.
+#[test]
+fn a_readers_click_picks_each_row_of_a_combo_list_hanging_below_the_page() {
+    use crate::access::{Act, Published, ROOT, Request, Route, Tree, accesskit::Role};
+    use crate::controls::combo::Combo;
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let px = theme.fonts.size_px;
+    const ROWS: &[&str] = &["A", "B", "C", "D", "E", "F", "G", "H"];
+    for client in [(398, 424), (398, 300)] {
+        for row in 0..ROWS.len() {
+            let combo = Combo::new(ROWS, 0, ROWS.len());
+            let page = Form::new(vec![Item::new(
+                "combo",
+                Rect::new(20, 300, 150, 21),
+                Control::Combo(combo),
+            )]);
+            let mut s = PropSheet::new(&["P"], vec![page], (398, 424));
+            s.fit(client);
+            assert_eq!(s.scrolls(), client.1 < 424);
+            s.wheel_page(100);
+            if let Some(Control::Combo(c)) = s.open_mut().item_mut("combo").map(|i| &mut i.control)
+            {
+                c.open = Some(0);
+            }
+            let mut tree = Tree::window("T", client);
+            s.access(&mut tree, ROOT, &text, px);
+            let options: Vec<_> = (tree.nodes())
+                .filter(|(_, n)| n.role() == Role::ListBoxOption)
+                .map(|(id, n)| (id, n.bounds().expect("placed while open")))
+                .collect();
+            let (id, b) = options[row];
+            let mut p = Published::default();
+            p.update(tree);
+            let name = format!("{client:?} row {row}");
+            let pitch = options[0].1.height();
+            assert_eq!(b.height(), pitch, "{name}: not cut to the page");
+            let Route::Act(t) = p.route(Request {
+                node: id,
+                act: Act::Click,
+            }) else {
+                panic!("{name}: acted on");
+            };
+            assert_eq!(t.at, ((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0), "{name}");
+            let hit = s.hit(t.at.0 as i32, t.at.1 as i32, &text, px);
+            s.click(hit);
+            s.release();
+            let Some(Control::Combo(c)) = s.open().item("combo").map(|i| &i.control) else {
+                unreachable!()
+            };
+            assert_eq!((c.selected, c.open), (row, None), "{name}: picked");
+        }
+    }
+}
+
+/// A press on an open combo's list where it hangs over the page list picks the row: the list
+/// lies over the sheet's own parts, as it draws.
+#[test]
+fn an_open_combo_list_over_the_page_list_takes_the_press() {
+    use crate::controls::combo::Combo;
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let px = theme.fonts.size_px;
+    const ROWS: &[&str] = &["A", "B", "C", "D", "E", "F", "G", "H"];
+    let combo = Item::new(
+        "combo",
+        Rect::new(20, 50, 150, 21),
+        Control::Combo(Combo::new(ROWS, 0, ROWS.len())),
+    );
+    let pages = vec![
+        Form::new(vec![combo]),
+        check_page("Effects"),
+        check_page("Mouse"),
+    ];
+    let mut s = PropSheet::with_list(LIST_GROUPS, pages, (398, 424));
+    s.fit((300, 424));
+    s.wheel(Some(Hit::PageHBar(BarHit::Track)), 100);
+    if let Some(Control::Combo(c)) = s.open_mut().item_mut("combo").map(|i| &mut i.control) {
+        c.open = Some(0);
+    }
+    let list = s.layout(&text, px).list.unwrap().frame;
+    let mut tree = crate::access::Tree::window("T", (300, 424));
+    s.access(&mut tree, crate::access::ROOT, &text, px);
+    let row = (tree.nodes())
+        .filter(|(_, n)| n.role() == crate::access::accesskit::Role::ListBoxOption)
+        .map(|(_, n)| n.bounds().unwrap())
+        .nth(3)
+        .unwrap();
+    let (x, y) = (row.x0 as i32 + 1, ((row.y0 + row.y1) / 2.0) as i32);
+    assert!(
+        list.contains(x, y),
+        "({x}, {y}) lies on the page list {list:?} too"
+    );
+    let hit = s.hit(x, y, &text, px);
+    assert!(matches!(hit, Some(Hit::Control(_))), "{hit:?}");
+    s.click(hit);
+    s.release();
+    let Some(Control::Combo(c)) = s.open().item("combo").map(|i| &i.control) else {
+        unreachable!()
+    };
+    assert_eq!((c.selected, c.open), (3, None), "the row is picked");
+}
+
+/// An open combo's field scrolled out of the page's view leaves the press to the sheet's part
+/// there: the page list, the search field or a page bar.
+#[test]
+fn an_open_combos_field_outside_the_view_leaves_the_sheets_parts_their_presses() {
+    use crate::controls::combo::{self, Combo};
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let px = theme.fonts.size_px;
+    const ROWS: &[&str] = &["A", "B", "C", "D"];
+    let cases = [
+        (true, 300, (300, 424), (0, 100)),
+        (true, 12, (300, 424), (0, 100)),
+        (false, 300, (300, 300), (100, 100)),
+    ];
+    for (listed, y, client, (down, across)) in cases {
+        let combo = Item::new(
+            "combo",
+            Rect::new(20, y, 150, 21),
+            Control::Combo(Combo::new(ROWS, 0, ROWS.len())),
+        );
+        let mut s = match listed {
+            true => PropSheet::with_list(
+                LIST_GROUPS,
+                vec![
+                    Form::new(vec![combo]),
+                    check_page("Effects"),
+                    check_page("Mouse"),
+                ],
+                (398, 424),
+            ),
+            false => PropSheet::new(
+                &["P", "Q"],
+                vec![Form::new(vec![combo]), check_page("Q")],
+                (398, 424),
+            ),
+        };
+        s.fit(client);
+        s.wheel_page(down);
+        s.wheel(Some(Hit::PageHBar(BarHit::Track)), across);
+        let points = (0..client.1).flat_map(|y| (0..client.0).map(move |x| (x, y)));
+        let before: Vec<_> = points
+            .clone()
+            .map(|(x, y)| s.hit(x, y, &text, px))
+            .collect();
+        if let Some(Control::Combo(c)) = s.open_mut().item_mut("combo").map(|i| &mut i.control) {
+            c.open = Some(0);
+        }
+        let taken = (points.zip(before))
+            .filter(|(_, b)| !matches!(b, Some(Hit::Control(_)) | None))
+            .filter(|&((x, y), _)| {
+                matches!(
+                    s.hit(x, y, &text, px),
+                    Some(Hit::Control(form::Hit {
+                        part: form::Part::Combo(combo::Hit::Field | combo::Hit::Drop),
+                        ..
+                    }))
+                )
+            })
+            .count();
+        assert_eq!(
+            taken, 0,
+            "listed {listed}, combo at {y}, {client:?}: px taken"
+        );
+    }
+}

@@ -68,6 +68,39 @@ impl Tree {
         id
     }
 
+    /// How many nodes the tree holds, the root included: where [`Tree::clip`] starts for the
+    /// nodes pushed next.
+    pub fn pushed(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Cut the bounds of the nodes pushed from `from` on to `r` where they cross it, for nodes a
+    /// view shows in part. A node wholly outside keeps its bounds, by which a scroll view around
+    /// it reveals it. An open combo's drop list ([`drops`]) shows over the view and keeps its own.
+    pub fn clip(&mut self, from: usize, r: Rect) {
+        let r = bounds(r);
+        // A node's children are pushed after it.
+        let mut over = HashSet::new();
+        for (id, n) in self.nodes.iter().skip(from) {
+            let under = over.contains(id);
+            for c in n.children() {
+                if under || drops(n, &self.nodes[self.index[c]].1) {
+                    over.insert(*c);
+                }
+            }
+        }
+        for (id, n) in self.nodes.iter_mut().skip(from) {
+            if over.contains(id) {
+                continue;
+            }
+            let Some(b) = n.bounds() else { continue };
+            let v = b.intersect(r);
+            if v.width() > 0.0 && v.height() > 0.0 && v != b {
+                n.set_bounds(v);
+            }
+        }
+    }
+
     pub fn set_focus(&mut self, id: NodeId) {
         self.focus = id;
     }
@@ -168,10 +201,10 @@ impl Published {
     /// Node `id` as last published, aimed at the middle of its part inside its list ([`in_view`])
     /// and placed by the root's transform. Only a root carries a transform here; the nodes under
     /// it lay out in its space. None for a node not in the last tree, without bounds or scrolled
-    /// out of its list.
+    /// out of its list or of a list around that.
     pub fn target(&self, id: NodeId) -> Option<Target> {
         let n = self.nodes.get(&id)?;
-        if self.scrolled_out(id).is_some() {
+        if self.out_of_view(id) {
             return None;
         }
         let b = n.bounds()?;
@@ -186,22 +219,28 @@ impl Published {
     /// bounds ([`Published::scrolled_out`]), counted by its row index or else its position in
     /// set when it has one (a list publishing only the rows near its view; a tree's position
     /// counts among siblings, so it carries the row index), else among the list's rows; in a
-    /// scroll view, the row is its child holding the node. None for a row in view, or a node
-    /// that is not a row of a list.
+    /// scroll view, the row is its child holding the node. A list that is itself out of the list
+    /// around it comes in first. None for a row in view, or a node that is not a row of a list.
     pub fn reveal(&self, id: NodeId) -> Option<Reveal> {
+        if let Some(outer) = self.list_of(id).and_then(|list| self.reveal(list)) {
+            return Some(outer);
+        }
         let list = self.scrolled_out(id)?;
         let node = self.nodes.get(&id)?;
-        if let Some(row) = node.row_index() {
-            return Some(Reveal {
-                at: self.middle(list)?,
+        let at = self.middle(list)?;
+        let reveal = |row| {
+            Some(Reveal {
+                at,
                 row,
-            });
+                node: self.placed(node.bounds()?),
+                view: self.nodes.get(&list)?.role() == Role::ScrollView,
+            })
+        };
+        if let Some(row) = node.row_index() {
+            return reveal(row);
         }
         if let Some(pos) = node.position_in_set() {
-            return Some(Reveal {
-                at: self.middle(list)?,
-                row: pos.checked_sub(1)?,
-            });
+            return reveal(pos.checked_sub(1)?);
         }
         let children = self.nodes.get(&list)?.children();
         if self.nodes.get(&list)?.role() == Role::ScrollView {
@@ -209,20 +248,14 @@ impl Published {
             while self.parents.get(&child)? != &list {
                 child = *self.parents.get(&child)?;
             }
-            return Some(Reveal {
-                at: self.middle(list)?,
-                row: children.iter().position(|&c| c == child)?,
-            });
+            return reveal(children.iter().position(|&c| c == child)?);
         }
         let role = node.role();
         let mut row = 0;
         let mut stack: Vec<NodeId> = children.iter().rev().copied().collect();
         while let Some(at) = stack.pop() {
             if at == id {
-                return Some(Reveal {
-                    at: self.middle(list)?,
-                    row,
-                });
+                return reveal(row);
             }
             let Some(n) = self.nodes.get(&at) else {
                 continue;
@@ -236,9 +269,10 @@ impl Published {
     }
 
     /// How a host carries out `req`. ScrollIntoView on a row out of view scrolls its list; so
-    /// does any other action, and `then` asks the host to publish again and route `req` once
-    /// more, so one Focus or Click lands on the row scrolled in. A row in view is acted on at
-    /// its [`Target`], or at the first node it controls when it offers no such action itself.
+    /// does any other action, and `then` asks the host to publish again and route `req` again
+    /// while that scrolls, so one Focus or Click lands on the row scrolled in. A row in view is
+    /// acted on at its [`Target`], or at the first node it controls when it offers no such
+    /// action itself. The root and a scroll view are not acted on.
     pub fn route(&self, req: Request) -> Route {
         if let Some(reveal) = self.reveal(req.node) {
             return Route::Reveal {
@@ -247,6 +281,9 @@ impl Published {
             };
         }
         let node = match self.nodes.get(&req.node) {
+            // The window and a scroll view are no control: what lies at their middle is another
+            // node's.
+            Some(n) if req.node == ROOT || n.role() == Role::ScrollView => return Route::None,
             Some(n) if !Act::offered(req.act, n) => n.controls().first().copied(),
             _ => None,
         };
@@ -263,14 +300,25 @@ impl Published {
         out_of(b, self.nodes.get(&list)?.bounds()?).then_some(list)
     }
 
-    /// The nearest list above node `id`.
+    /// Whether node `id` or a list around it lies out of the list it is in.
+    fn out_of_view(&self, id: NodeId) -> bool {
+        self.scrolled_out(id).is_some() || self.list_of(id).is_some_and(|l| self.out_of_view(l))
+    }
+
+    /// The nearest list above node `id`. An open combo's drop list ([`drops`]) shows over the
+    /// lists around its combo, so it lies in none of them.
     fn list_of(&self, id: NodeId) -> Option<NodeId> {
-        let mut up = *self.parents.get(&id)?;
+        let mut at = id;
         loop {
-            if is_list(self.nodes.get(&up)?.role()) {
+            let up = *self.parents.get(&at)?;
+            let parent = self.nodes.get(&up)?;
+            if drops(parent, self.nodes.get(&at)?) {
+                return None;
+            }
+            if is_list(parent.role()) {
                 return Some(up);
             }
-            up = *self.parents.get(&up)?;
+            at = up;
         }
     }
 
@@ -285,6 +333,12 @@ impl Published {
         let root = self.nodes.get(&ROOT).and_then(|r| r.transform().copied());
         let p = root.map_or(centre, |t| t * centre);
         (p.x, p.y)
+    }
+
+    /// `b` placed by the root's transform.
+    fn placed(&self, b: accesskit::Rect) -> accesskit::Rect {
+        let root = self.nodes.get(&ROOT).and_then(|r| r.transform().copied());
+        root.map_or(b, |t| t.transform_rect_bbox(b))
     }
 
     pub fn reset(&mut self) {
@@ -350,6 +404,10 @@ pub struct Target {
 pub struct Reveal {
     pub at: (f64, f64),
     pub row: usize,
+    /// The node to bring in, placed as `at` is: what a host scrolls a view around the list to.
+    pub node: accesskit::Rect,
+    /// The list is a scroll view, which scrolls to `node` rather than to a row.
+    pub view: bool,
 }
 
 /// What [`Published::route`] makes of a reader's request.
@@ -451,6 +509,13 @@ fn is_list(role: Role) -> bool {
             | Role::TreeGrid
             | Role::ScrollView
     )
+}
+
+/// Whether `child` is the drop list of `parent`, an open combo.
+fn drops(parent: &Node, child: &Node) -> bool {
+    matches!(parent.role(), Role::ComboBox | Role::EditableComboBox)
+        && parent.is_expanded() == Some(true)
+        && child.role() == Role::ListBox
 }
 
 /// A row with bounds `b` lies out of its list's bounds `f`: partly above or below them, or
@@ -974,7 +1039,9 @@ mod tests {
             p.reveal(d),
             Some(Reveal {
                 at: (160.0, 80.0),
-                row: 3
+                row: 3,
+                node: accesskit::Rect::new(112.0, 102.0, 202.0, 112.0),
+                view: false,
             }),
             "the fourth row in tree order, other roles not counted"
         );
@@ -1006,6 +1073,8 @@ mod tests {
         let reveal = Reveal {
             at: (60.0, 30.0),
             row: 1,
+            node: accesskit::Rect::new(10.0, 50.0, 110.0, 60.0),
+            view: false,
         };
         for (act, then) in [
             (Act::Focus, true),
@@ -1079,12 +1148,77 @@ mod tests {
             p.reveal(beyond),
             Some(Reveal {
                 at: (50.0, 40.0),
-                row: 2
+                row: 2,
+                node: accesskit::Rect::new(110.0, 10.0, 130.0, 70.0),
+                view: true,
             }),
             "the third column, whatever the slider's role"
         );
         assert_eq!(p.reveal(c).map(|r| r.row), Some(2));
         assert_eq!(p.target(beyond), None);
+    }
+
+    #[test]
+    fn a_row_of_a_list_out_of_a_scroll_view_brings_the_list_in_first() {
+        let mut t = Tree::new(node(Role::Window, Rect::new(0, 0, 200, 200)));
+        let view = t.push(
+            ROOT,
+            "view",
+            node(Role::ScrollView, Rect::new(0, 0, 100, 80)),
+        );
+        let tree = t.push(view, "tree", node(Role::Tree, Rect::new(0, 100, 100, 40)));
+        let row = t.push(tree, 0, node(Role::TreeItem, Rect::new(2, 102, 96, 10)));
+        let mut p = Published::default();
+        p.update(t);
+        let reveal = p.reveal(row).expect("revealed");
+        assert!(reveal.view, "the view scrolls first");
+        assert_eq!(reveal.node, accesskit::Rect::new(0.0, 100.0, 100.0, 140.0));
+        assert_eq!(p.target(row), None, "never acted on where it lies hidden");
+        let click = Request {
+            node: row,
+            act: Act::Click,
+        };
+        assert!(matches!(p.route(click), Route::Reveal { then: true, .. }));
+    }
+
+    #[test]
+    fn the_window_and_a_scroll_view_take_no_action() {
+        let mut t = Tree::window("T", (100, 100));
+        let view = t.push(
+            ROOT,
+            "view",
+            node(Role::ScrollView, Rect::new(0, 0, 100, 80)),
+        );
+        t.push(
+            view,
+            "ok",
+            button(Rect::new(30, 30, 40, 20), "OK", true, false),
+        );
+        let mut p = Published::default();
+        p.update(t);
+        for node in [ROOT, view] {
+            for act in [Act::Click, Act::Focus] {
+                assert_eq!(p.route(Request { node, act }), Route::None, "{act:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_clip_cuts_the_nodes_it_shows_in_part_and_keeps_the_ones_it_hides() {
+        let mut t = Tree::window("T", (100, 100));
+        t.push(ROOT, "before", node(Role::Label, Rect::new(0, 70, 50, 20)));
+        let from = t.pushed();
+        let cut = t.push(ROOT, "cut", node(Role::Label, Rect::new(0, 70, 50, 20)));
+        let hidden = t.push(ROOT, "hidden", node(Role::Label, Rect::new(0, 90, 50, 20)));
+        t.clip(from, Rect::new(0, 0, 100, 80));
+        let b = |id| t.get(id).and_then(|n| n.bounds());
+        assert_eq!(b(cut), Some(bounds(Rect::new(0, 70, 50, 10))));
+        assert_eq!(b(hidden), Some(bounds(Rect::new(0, 90, 50, 20))));
+        assert_eq!(
+            t.nodes().nth(1).and_then(|(_, n)| n.bounds()),
+            Some(bounds(Rect::new(0, 70, 50, 20))),
+            "a node pushed before is left as it is"
+        );
     }
 
     #[test]
