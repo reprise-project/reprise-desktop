@@ -85,6 +85,12 @@ impl RecentDocs {
         }
     }
 
+    /// Reads `xbel` as its `recently-used.xbel`.
+    #[cfg(test)]
+    pub(crate) fn reading(xbel: PathBuf) -> RecentDocs {
+        RecentDocs::at(RecentFiles::at(Some(xbel)))
+    }
+
     fn found(&self, path: &Path) -> Option<Found> {
         self.found.lock().ok()?.get(path).copied()
     }
@@ -374,9 +380,9 @@ impl State {
             let usable = self.usable_area(Some(&self.menus[depth - 1].output));
             let (text, size_px) = (&self.text, self.config.theme.fonts.size_px);
             let m = &mut self.menus[depth - 1];
-            let fit = |l: &MenuLayout, items: &[MenuItem]| {
-                l.fit_column(text, items, size_px, usable.width)
-            };
+            let widest = m.kind.widest(usable);
+            let fit =
+                |l: &MenuLayout, items: &[MenuItem]| l.fit_column(text, items, size_px, widest);
             if !m.relist_to(items, kind, icons, fit) {
                 continue;
             }
@@ -702,6 +708,7 @@ mod tests {
             tips,
             dirs: true,
             icon_px: 16,
+            widest: None,
         };
         (items, kind)
     }

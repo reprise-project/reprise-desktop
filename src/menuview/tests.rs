@@ -469,6 +469,7 @@ fn documents_folders_have_their_infotips() {
         ],
         dirs: true,
         icon_px: 16,
+        widest: None,
     };
     assert_eq!(
         docs.tip(0).as_deref(),

@@ -1351,3 +1351,88 @@ fn the_glass_menu_on_a_short_screen_shows_every_place() {
         .count();
     assert_eq!(shown, m.places.len(), "every place shows at {:?}", m.text);
 }
+
+/// At 200% text on a short screen Recent Items is wider than the room beside its row: it narrows
+/// to that room, cutting a long name, and keeps clear of the panel, also once a longer name is
+/// listed while it is open. With less room than its least width it is left to `place_popup`.
+#[test]
+fn recent_items_narrows_to_the_room_beside_its_row() {
+    let dir = crate::harness::scratch().join("recent-items-room");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = |name: &str| {
+        let p = dir.join(name);
+        std::fs::write(&p, "").unwrap();
+        p
+    };
+    let xbel = dir.join("recently-used.xbel");
+    let write = |paths: &[&Path]| {
+        let marks: String = (paths.iter().enumerate())
+            .map(|(i, p)| {
+                format!(
+                    "<bookmark href=\"file://{}\" modified=\"2026-01-0{}T00:00:00Z\"></bookmark>\n",
+                    p.display(),
+                    9 - i
+                )
+            })
+            .collect();
+        std::fs::write(&xbel, format!("<xbel>{marks}</xbel>")).unwrap();
+    };
+    let long = file("Screenshot 2026-11-14 13-29-45 of the whole desktop.png");
+    let short = file("wheel.txt");
+    let longer = file("Quarterly report for the planning meeting, second draft, with notes.odt");
+    for (sw, sh, beside) in [(1100, 540, true), (960, 540, false)] {
+        write(&[&short, &long]);
+        let config = crate::config::Config::parse(
+            "[appearance]\ninterface = \"glass\"\n[accessibility]\ntext_size = 200\n\
+             [privacy]\nrecent_files = true\n",
+        )
+        .unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", sw, sh);
+        h.state.recent = crate::recentdocs::RecentDocs::reading(xbel.clone());
+        let bar = h.state.bars[0].tree;
+        h.state.toggle_start(bar);
+        let v = h.state.start_panel.as_ref().expect("the menu opened");
+        let i = (v.model.places.iter())
+            .position(|p| p.submenu)
+            .expect("a Recent Items row");
+        h.state.open_recent_items(i);
+        let row = h.state.start_spot_rect(Spot::Place(i)).unwrap();
+        let usable = h.state.usable_area(None);
+        let at = format!("{sw}x{sh}");
+        let least = h.state.config.theme.text.len(super::menus::RECENT_LEAST);
+        assert_eq!(
+            usable.right() - row.right() >= least,
+            beside,
+            "{at}: {row:?}"
+        );
+        let menu = |h: &crate::harness::Harness| {
+            let m = h.state.menus.first().expect("Recent Items is open");
+            let labels: Vec<String> = (m.items.iter())
+                .filter_map(|it| match it {
+                    crate::startmenu::MenuItem::Entry { label, .. } => Some(label.clone()),
+                    _ => None,
+                })
+                .collect();
+            (Rect::new(m.x, m.y, m.layout.width, m.layout.height), labels)
+        };
+        let (r, labels) = menu(&h);
+        assert_eq!(labels.len(), 2, "{at}: {labels:?}");
+        if beside {
+            assert_eq!(r.x, row.right(), "{at}: beside its row");
+            assert_eq!(r.right(), usable.right(), "{at}: narrowed to the room");
+            write(&[&longer, &short, &long]);
+            h.state.refresh_recent();
+            let (r2, labels) = menu(&h);
+            assert_eq!(labels.len(), 3, "{at}: relisted {labels:?}");
+            assert_eq!(r2.x, row.right(), "{at}: still beside its row");
+            assert_eq!(r2.width, r.width, "{at}: no wider than the room");
+        } else {
+            assert!(r.x < row.right(), "{at}: no room beside, {r:?}");
+            assert!(
+                r.x >= usable.x && r.right() <= usable.right(),
+                "{at}: on screen"
+            );
+        }
+    }
+}

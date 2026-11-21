@@ -67,7 +67,7 @@ impl State {
             &self.text,
             &items,
             self.config.theme.fonts.size_px,
-            usable.width,
+            kind.widest(usable),
         );
         let layout = MenuLayout::compute_styled(&style, &items, usize::MAX);
         let pos = place(at, (layout.width, layout.height), usable);
