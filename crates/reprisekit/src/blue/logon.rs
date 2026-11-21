@@ -231,18 +231,17 @@ pub fn layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> Lo
         Screen::Typed => typed_parts(m, &f, k, x, w, &mut parts),
         _ => tile_parts(m, &f, k, x, w, &mut parts),
     }
-    let label = text.measure(&strings::turn_off(), false, design_px(theme));
     let power = Rect::new(
         output.x + POWER_X,
         f.bottom.y + (f.bottom.height - POWER) / 2,
-        POWER + POWER_GAP + label,
+        POWER + POWER_GAP + words_w(text, theme, &strings::turn_off()),
         POWER,
     );
     if m.offers_power() {
         parts.push((Part::Power, power));
     }
     if m.unlocking() && m.offers_switch_user() {
-        let w = POWER + POWER_GAP + text.measure(&switch_label(), false, design_px(theme));
+        let w = POWER + POWER_GAP + words_w(text, theme, &switch_label());
         let x = output.right() - POWER_X - w;
         parts.push((
             Part::SwitchUser,
@@ -258,6 +257,16 @@ pub fn layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> Lo
         parts,
         dialog: None,
     }
+}
+
+/// `words`' width in design px as drawn at the theme's scale: hinting can draw them wider than
+/// the scale times their width at 1.
+fn words_w(text: &TextRenderer, theme: &Theme, words: &str) -> i32 {
+    let s = theme.scale.max(1);
+    let w = text
+        .for_output(s)
+        .measure(words, false, design_px(theme) * s as u32);
+    (w + s - 1) / s
 }
 
 /// Switch User without its access-key marker: the screen draws no underlines.

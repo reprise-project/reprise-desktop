@@ -397,6 +397,33 @@ fn blue_hit_finds_tiles_and_turn_off() {
 }
 
 #[test]
+fn turn_off_and_switch_user_show_their_whole_words_at_every_scale_and_text_size() {
+    let user = users().remove(0);
+    let m = Logon::locked(Interface::Blue, user, true, true);
+    for s in [1, 2, 3] {
+        for pct in [100, 125, 150, 200] {
+            let theme = blue_theme(Variant::Blue).with_text_size(pct).scaled(s);
+            let text = TextRenderer::load(&theme.fonts);
+            let l = layout(&m, &theme, &text, OUTPUT);
+            for (part, words) in [
+                (Part::Power, strings::turn_off()),
+                (Part::SwitchUser, switch_label()),
+            ] {
+                let r = l.rect(part).expect("the lock offers both");
+                let room = (r.width - POWER - POWER_GAP) * s;
+                let drawn = text
+                    .for_output(s)
+                    .measure(&words, false, design_px(&theme) * s as u32);
+                assert!(
+                    drawn <= room,
+                    "{part:?} at scale {s}, {pct}%: {drawn} px of words in {room} px"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn blue_insets_double_exactly_at_scale_2() {
     let white = Color::rgb(0xFF, 0xFF, 0xFF);
     let rim = Color::rgb(0x12, 0x34, 0x56);
