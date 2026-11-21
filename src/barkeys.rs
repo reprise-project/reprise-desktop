@@ -62,13 +62,14 @@ impl State {
         };
         let was = self.bar_shared.keys.map(|k| k.bar);
         crate::autohideview::keys(self, &output, true);
-        self.deactivate_dialogs();
-        self.drop_window_focus();
+        // Set before the focus drops, so its restack keeps `back`'s fullscreen window lifted.
         self.bar_shared.keys = Some(BarKeys {
             bar: tree,
             at,
             back,
         });
+        self.deactivate_dialogs();
+        self.drop_window_focus();
         if let Some(t) = was.filter(|&t| t != tree) {
             self.redraw_taskbar(t);
         }
