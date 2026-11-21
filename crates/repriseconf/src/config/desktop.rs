@@ -107,6 +107,8 @@ pub struct ScreenshotConfig {
     pub save: bool,
     /// Screen recordings carry what plays on the default output.
     pub record_sound: bool,
+    /// The sound `record_sound` records has the default source mixed in.
+    pub record_microphone: bool,
     pub format: ShotFormat,
     pub png_compression: PngCompression,
     /// 1..=100.
@@ -128,6 +130,7 @@ impl Default for ScreenshotConfig {
         ScreenshotConfig {
             save: true,
             record_sound: false,
+            record_microphone: false,
             format: ShotFormat::Png,
             png_compression: PngCompression::Default,
             jpg_quality: 90,

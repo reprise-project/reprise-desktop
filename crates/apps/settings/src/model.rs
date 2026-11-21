@@ -74,6 +74,7 @@ pub struct Settings {
     /// `[screenshot] delay`: seconds, 0 to [`repriseconf::config::SHOT_DELAY_MAX`].
     pub screenshot_delay: i64,
     pub screenshot_record_sound: bool,
+    pub screenshot_record_microphone: bool,
     /// `[screenshot] format`, `png_compression` (as [`SHOT_FORMATS`] and [`PNG_COMPRESSIONS`]
     /// name them), `jpg_quality`, `jxl_lossless`, `jxl_quality` and `jxl_effort`.
     pub screenshot_format: String,
@@ -531,6 +532,7 @@ impl Settings {
             screenshot_save: c.screenshot.save,
             screenshot_delay: shot.delay.into(),
             screenshot_record_sound: c.screenshot.record_sound,
+            screenshot_record_microphone: c.screenshot.record_microphone,
             screenshot_format: shot.format.extension().into(),
             screenshot_png_compression: shot.png_compression.name().into(),
             screenshot_jpg_quality: shot.jpg_quality.into(),

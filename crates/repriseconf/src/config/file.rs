@@ -214,6 +214,7 @@ pub struct FileDisplay {
 pub struct FileScreenshot {
     pub save: Option<bool>,
     pub record_sound: Option<bool>,
+    pub record_microphone: Option<bool>,
     pub format: Option<String>,
     pub png_compression: Option<String>,
     pub jpg_quality: Option<i64>,

@@ -35,6 +35,10 @@ pub(super) fn fields() -> Vec<Field> {
             k("screenshot", "record_sound"),
             lens!(screenshot_record_sound),
         ),
+        Field::Flag(
+            k("screenshot", "record_microphone"),
+            lens!(screenshot_record_microphone),
+        ),
         Field::Text(k("screenshot", "format"), lens!(screenshot_format)),
         Field::Text(
             k("screenshot", "png_compression"),

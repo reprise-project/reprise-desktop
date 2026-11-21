@@ -340,6 +340,9 @@ suspend_after = 0            # run [power] standby
 #                            # app's interactive screenshot dialog starts at it; an app's other shots
 #                            # never wait
 # record_sound = false       # screen recordings (Videos/Screencasts) also carry what plays
+# record_microphone = false  # with record_sound, the default microphone is mixed into that sound; the taskbar's
+#                            # microphone shows while a recording hears it. With no microphone the recording has
+#                            # what plays only, and one that goes away mid-recording leaves the recording running
 
 # [recording]                # how screen recordings are coded, read as each one starts (Settings > Screen Capture);
 #                            # an invalid key takes its default and the config notice names it. Recordings are MP4 files

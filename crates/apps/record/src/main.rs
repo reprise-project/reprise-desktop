@@ -1,5 +1,6 @@
-//! reprise-record: records a screen, or an area of it, and with `--sound` what plays, into an MP4
-//! file the compositor made and handed it open, until SIGINT or SIGTERM or until the screen goes.
+//! reprise-record: records a screen, or an area of it, and with `--sound` what plays (with
+//! `--microphone` the default source mixed in), into an MP4 file the compositor made and handed it
+//! open, until SIGINT or SIGTERM or until the screen goes.
 //! On failure, or exiting [`ENDED_EARLY`] or [`SOUND_STOPPED`], its last line on stderr is the
 //! reason. Its settings are `[recording]`.
 //!
@@ -33,12 +34,14 @@ use repriseconf::remote::EncoderChoice;
 use reprisevideo::encode::probe::{self, Backend};
 use reprisevideo::encode::rate::RateControl;
 use reprisevideo::encode::{Codec, choice};
+use reprisevideo::monitor::Tap;
 use reprisevideo::stream::{self, DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer};
-use sound::Sound;
+use sound::{Sound, Source};
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 /// What PipeWire's streams name the program.
@@ -124,13 +127,15 @@ fn probed(working: &[(Codec, Backend)], accepted: impl Fn(AudioCodec) -> bool) -
 
 enum Event {
     Frame(Frame, Instant),
-    Sound(Vec<u8>, Instant),
+    Sound(Source, Vec<u8>, Instant),
     /// SIGINT or SIGTERM.
     Stop,
     /// The screen's stream ended.
     Ended,
     /// The capture of what plays ended before the recording, and why.
     SoundStopped(String),
+    /// The microphone's capture ended before the recording, and why; the recording goes on.
+    MicrophoneStopped(String),
 }
 
 /// Why coding ended without an error.
@@ -168,9 +173,14 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<Outcome, String> {
     let sound = args
         .sound
         .then(|| open_sound(&settings, Sound::open))
-        .transpose()?;
+        .transpose()?
+        .map(|s| match args.microphone {
+            true => s.with_microphone(),
+            false => s,
+        });
     let (tx, events) = mpsc::channel();
-    signals(stop, tx.clone());
+    let stopping = Arc::new(AtomicBool::new(false));
+    signals(stop, tx.clone(), stopping.clone());
     let picked = std::thread::spawn({
         let (area, output) = (args.area, args.output.clone());
         move || {
@@ -209,10 +219,6 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<Outcome, String> {
             let _ = video_tx.send(Event::Ended);
         })
         .map_err(|e| e.to_string())?;
-    let hearing = match args.sound {
-        true => Some(capture_sound(tx)?),
-        false => None,
-    };
     let offer = stream.offer();
     let ask = move |a: &Ask| match a.again {
         false => offer.modifiers(&a.modifiers),
@@ -220,14 +226,27 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<Outcome, String> {
     };
     let mut file = File::new(&into, &device, order, args.area, screen.size, making);
     file.ask = Box::new(ask);
+    file.stopping = stopping;
     #[cfg(feature = "fallback-test")]
     {
         file.forced = forced;
     }
+    if args.sound {
+        let played = capture_sound(tx.clone(), Source::Played)?;
+        file.captures.push((Source::Played, played));
+    }
+    if args.microphone {
+        let tx = tx.clone();
+        file.listen = Some(Box::new(move || capture_sound(tx, Source::Microphone)));
+    }
     let ended = file.run(&events);
     // From here on the recorder only finishes the file: the compositor waits while it works.
-    drop((hearing, stream, cast));
+    drop((stream, cast));
     let closed = file.finish();
+    let heard = file.sound.as_ref().is_some_and(Sound::heard_microphone);
+    if args.microphone && !heard && !file.microphone_stopped {
+        log::info!("the microphone sent no sound; the recording has what plays only");
+    }
     let sound = file.sound_stopped.take();
     outcome(file.started(), file.started_writing(), ended, sound, closed)
 }
@@ -369,33 +388,76 @@ fn hardware_takes(area: Option<Area>) -> bool {
     area.is_none_or(|a| a.width >= side && a.height >= side)
 }
 
-/// The default sink's monitor on a thread of its own, into `tx`; it ends with the returned sender.
-fn capture_sound(tx: mpsc::Sender<Event>) -> Result<pipewire::channel::Sender<()>, String> {
-    let (stop, stopped) = pipewire::channel::channel();
-    std::thread::Builder::new()
-        .name("reprise-record-sound".into())
-        .spawn(move || {
-            pipewire::init();
-            let sound_tx = tx.clone();
-            let samples = Box::new(move |pcm: &[u8], at| {
-                let _ = sound_tx.send(Event::Sound(pcm.to_vec(), at));
-            });
-            let captured = reprisevideo::monitor::capture(
-                None,
-                APP,
-                "Screen recording",
-                sound::RATE,
-                samples,
-                stopped,
-            );
-            // Read only while the recording runs: a stop ends the capture after the last read.
-            let why = captured
-                .err()
-                .unwrap_or_else(|| "PipeWire ended the capture.".into());
-            let _ = tx.send(Event::SoundStopped(why));
-        })
-        .map_err(|e| e.to_string())?;
-    Ok(stop)
+/// How long dropping a [`Capture`] waits for its stream to close.
+const CAPTURE_CLOSE: Duration = Duration::from_secs(1);
+
+/// A capture of sound on a thread of its own. Dropping it stops the capture and waits up to
+/// [`CAPTURE_CLOSE`] for the thread to end, its stream closed.
+struct Capture {
+    stop: pipewire::channel::Sender<()>,
+    /// Disconnects as the thread ends.
+    ended: mpsc::Receiver<()>,
+}
+
+impl Capture {
+    /// Run `body` on a thread called `name`, handing it the receiver the stop comes on.
+    fn spawn(
+        name: &str,
+        body: impl FnOnce(pipewire::channel::Receiver<()>) + Send + 'static,
+    ) -> Result<Capture, String> {
+        let (stop, stopped) = pipewire::channel::channel();
+        let (ends, ended) = mpsc::channel::<()>();
+        std::thread::Builder::new()
+            .name(name.into())
+            .spawn(move || {
+                let _ends = ends;
+                body(stopped);
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(Capture { stop, ended })
+    }
+}
+
+impl Drop for Capture {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        let _ = self.ended.recv_timeout(CAPTURE_CLOSE);
+    }
+}
+
+/// The default sink's monitor, or for [`Source::Microphone`] the default source, captured into
+/// `tx` until the returned [`Capture`] is dropped. The microphone's stream, linked from a source,
+/// shows the taskbar's microphone for as long as it runs.
+fn capture_sound(tx: mpsc::Sender<Event>, source: Source) -> Result<Capture, String> {
+    let (thread, tap, name) = match source {
+        Source::Played => (
+            "reprise-record-sound",
+            Tap::Monitor(None),
+            "Screen recording",
+        ),
+        Source::Microphone => (
+            "reprise-record-mic",
+            Tap::Microphone,
+            "Screen recording microphone",
+        ),
+    };
+    Capture::spawn(thread, move |stopped| {
+        pipewire::init();
+        let sound_tx = tx.clone();
+        let samples = Box::new(move |pcm: &[u8], at| {
+            let _ = sound_tx.send(Event::Sound(source, pcm.to_vec(), at));
+        });
+        let captured =
+            reprisevideo::monitor::capture(tap, APP, name, sound::RATE, samples, stopped);
+        // After a stop from the recorder nothing reads this, or `File::run` passes it over.
+        let why = captured
+            .err()
+            .unwrap_or_else(|| "PipeWire ended the capture.".into());
+        let _ = tx.send(match source {
+            Source::Played => Event::SoundStopped(why),
+            Source::Microphone => Event::MicrophoneStopped(why),
+        });
+    })
 }
 
 /// The movie being written: its encoders open and its header written on the first frame.
@@ -415,8 +477,17 @@ struct File<'a> {
     /// The newest frame the pacer holds for its next slot.
     held: Option<Frame>,
     sound: Option<Sound>,
+    /// The captures running and what each hears; dropping one stops it.
+    captures: Vec<(Source, Capture)>,
+    /// Opens the microphone's capture once the file is started; None without the microphone or
+    /// once called.
+    listen: Option<Box<dyn FnOnce() -> Result<Capture, String>>>,
+    /// Set before a stop is sent, so a stop not yet read keeps the microphone shut.
+    stopping: Arc<AtomicBool>,
     /// Why the capture of what plays ended while the recording ran.
     sound_stopped: Option<String>,
+    /// Whether the microphone's capture ended while the recording ran.
+    microphone_stopped: bool,
     movie: Option<Movie>,
     output: Option<ffmpeg::format::context::Output>,
     /// When the first frame came: the movie's time 0.
@@ -462,7 +533,11 @@ impl<'a> File<'a> {
             pacer: making.pacer,
             held: None,
             sound: making.sound,
+            captures: Vec::new(),
+            listen: None,
+            stopping: Arc::default(),
             sound_stopped: None,
+            microphone_stopped: false,
             movie: None,
             output: None,
             start: None,
@@ -485,6 +560,9 @@ impl<'a> File<'a> {
     fn run(&mut self, events: &mpsc::Receiver<Event>) -> Result<End, String> {
         let mut held = None;
         loop {
+            if held.is_none() {
+                self.listen();
+            }
             let event = match (held.take(), self.wake()) {
                 (Some(e), _) => e,
                 (None, None) => events.recv().map_err(|_| "every source ended")?,
@@ -507,7 +585,7 @@ impl<'a> File<'a> {
                     while let Ok(next) = events.try_recv() {
                         match next {
                             Event::Frame(f, t) => (frame, at) = (f, t),
-                            Event::Sound(pcm, t) => self.sound(&pcm, t)?,
+                            Event::Sound(source, pcm, t) => self.sound(source, &pcm, t)?,
                             other => {
                                 held = Some(other);
                                 break;
@@ -516,7 +594,7 @@ impl<'a> File<'a> {
                     }
                     self.frame(frame, at)?;
                 }
-                Event::Sound(pcm, at) => self.sound(&pcm, at)?,
+                Event::Sound(source, pcm, at) => self.sound(source, &pcm, at)?,
                 Event::Stop => return Ok(End::Stopped),
                 Event::Ended => {
                     log::info!("the screen's stream ended");
@@ -525,9 +603,39 @@ impl<'a> File<'a> {
                 Event::SoundStopped(why) => {
                     log::warn!("recording what plays: {why}");
                     self.sound_stopped.get_or_insert(why);
+                    // The microphone is heard only in frames of what plays, so it stops too.
+                    self.listen = None;
+                    self.captures.clear();
                 }
+                Event::MicrophoneStopped(why) if self.hears(Source::Microphone) => {
+                    log::info!("recording the microphone: {why}; recording on without it");
+                    self.microphone_stopped = true;
+                }
+                Event::MicrophoneStopped(_) => {}
             }
         }
+    }
+
+    /// Open the microphone's capture once the file is started, so it hears only what is recorded,
+    /// and not once a stop is on its way.
+    fn listen(&mut self) {
+        if self.output.is_none() || self.stopping.load(Ordering::Relaxed) {
+            return;
+        }
+        let Some(open) = self.listen.take() else {
+            return;
+        };
+        match open() {
+            Ok(capture) => self.captures.push((Source::Microphone, capture)),
+            Err(e) => {
+                log::warn!("recording the microphone: {e}");
+                self.microphone_stopped = true;
+            }
+        }
+    }
+
+    fn hears(&self, source: Source) -> bool {
+        self.captures.iter().any(|(s, _)| *s == source)
     }
 
     /// The instant the pacer next wants [`File::tick`] called.
@@ -711,7 +819,7 @@ impl<'a> File<'a> {
         }
     }
 
-    fn sound(&mut self, pcm: &[u8], at: Instant) -> Result<(), String> {
+    fn sound(&mut self, source: Source, pcm: &[u8], at: Instant) -> Result<(), String> {
         let (Some(start), true) = (self.start, self.output.is_some()) else {
             return Ok(());
         };
@@ -721,7 +829,7 @@ impl<'a> File<'a> {
         let played = (pcm.len() / 4) as u64 * 1000 / u64::from(sound::RATE);
         let at_ms = at.duration_since(start).as_millis() as i64 - played as i64;
         let mut packets = Vec::new();
-        sound.code(pcm, at_ms, &mut packets)?;
+        sound.code(source, pcm, at_ms, &mut packets)?;
         self.write(packets, AUDIO)
     }
 
@@ -786,10 +894,12 @@ impl<'a> File<'a> {
         Ok(())
     }
 
-    /// Code what is due and a frame still held at its slot, hold the last picture to the
-    /// pacer's end, drain the encoders and close the file. The file is closed even when draining
-    /// fails, so what was written plays; the error is closing's.
+    /// Stop the captures, code what is due and a frame still held at its slot, hold the last
+    /// picture to the pacer's end, drain the encoders and close the file. The file is closed even
+    /// when draining fails, so what was written plays; the error is closing's.
     fn finish(&mut self) -> Result<(), String> {
+        self.listen = None;
+        self.captures.clear();
         let Some(start) = self.start else {
             return Ok(());
         };
@@ -932,8 +1042,8 @@ fn block_stop_signals() -> libc::sigset_t {
     }
 }
 
-/// Waits for the first of `set` on a thread of its own and sends a stop.
-fn signals(set: libc::sigset_t, tx: mpsc::Sender<Event>) {
+/// Waits for the first of `set` on a thread of its own, sets `stopping` and sends a stop.
+fn signals(set: libc::sigset_t, tx: mpsc::Sender<Event>, stopping: Arc<AtomicBool>) {
     let spawned = std::thread::Builder::new()
         .name("reprise-record-signals".into())
         .spawn(move || {
@@ -942,6 +1052,7 @@ fn signals(set: libc::sigset_t, tx: mpsc::Sender<Event>) {
             if unsafe { libc::sigwait(&set, &mut signal) } == 0 {
                 log::info!("stopping on signal {signal}");
             }
+            stopping.store(true, Ordering::Relaxed);
             let _ = tx.send(Event::Stop);
         });
     if let Err(e) = spawned {
@@ -1315,7 +1426,6 @@ mod tests {
     #[test]
     fn a_frame_the_encoder_cannot_read_is_dropped_until_they_last_two_seconds() {
         use reprisevideo::stream::{Plane, XRGB8888};
-        use std::sync::Arc;
         const Y_TILED: u64 = 0x0100_0000_0000_0002;
         ffmpeg::init().unwrap();
         ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
@@ -1393,8 +1503,12 @@ mod tests {
             let tone = (0..960)
                 .flat_map(|n| [(n * i) as u8; 4])
                 .collect::<Vec<_>>();
-            file.sound(&tone, t0 + Duration::from_millis(20 * i as u64))
-                .unwrap();
+            file.sound(
+                Source::Played,
+                &tone,
+                t0 + Duration::from_millis(20 * i as u64),
+            )
+            .unwrap();
         }
         file.finish().unwrap();
         let input = ffmpeg::format::input(&path).unwrap();
@@ -1431,9 +1545,9 @@ mod tests {
         let (tx, events) = mpsc::channel();
         for event in [
             Event::Frame(grey(0x20), at(100)),
-            Event::Sound(chunk(), at(120)),
+            Event::Sound(Source::Played, chunk(), at(120)),
             Event::Frame(grey(0x40), at(140)),
-            Event::Sound(chunk(), at(140)),
+            Event::Sound(Source::Played, chunk(), at(140)),
             Event::Frame(grey(0x60), at(160)),
             Event::Stop,
         ] {
@@ -1471,6 +1585,138 @@ mod tests {
     }
 
     #[test]
+    fn a_microphone_that_stops_leaves_the_recording_and_its_sound_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mp4");
+        let node = PathBuf::from(probe::RENDER_NODE);
+        let mut file = File::new(&path, &node, software(), None, (64, 64), h264());
+        let mic = capture_until_stopped(|| {});
+        file.captures.push((Source::Microphone, mic));
+        let (tx, events) = mpsc::channel();
+        for event in [
+            Event::MicrophoneStopped("The source went away.".into()),
+            Event::Stop,
+        ] {
+            assert!(tx.send(event).is_ok());
+        }
+        assert_eq!(file.run(&events), Ok(End::Stopped));
+        assert!(file.microphone_stopped);
+        assert_eq!(file.sound_stopped, None, "no sound stopped notice");
+    }
+
+    /// A capture whose thread runs a PipeWire loop until it is stopped, then calls `on_stop`.
+    fn capture_until_stopped(on_stop: impl FnOnce() + Send + 'static) -> Capture {
+        Capture::spawn("test-capture", move |stopped| {
+            pipewire::init();
+            let main_loop = pipewire::main_loop::MainLoopRc::new(None).unwrap();
+            let weak = main_loop.downgrade();
+            let _stop = stopped.attach(main_loop.loop_(), move |()| {
+                if let Some(l) = weak.upgrade() {
+                    l.quit();
+                }
+            });
+            main_loop.run();
+            on_stop();
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn every_capture_stops_before_the_file_is_finished() {
+        ffmpeg::init().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mp4");
+        let node = PathBuf::from(probe::RENDER_NODE);
+        let mut file = File::new(&path, &node, software(), None, (64, 64), h264());
+        file.frame(grey(0x10), Instant::now()).unwrap();
+        let (tx, stopped) = mpsc::channel();
+        for source in [Source::Played, Source::Microphone] {
+            let (tx, path) = (tx.clone(), path.clone());
+            let capture = capture_until_stopped(move || {
+                let _ = tx.send((source, boxes(&path).iter().any(|b| b == "moov")));
+            });
+            file.captures.push((source, capture));
+        }
+        file.finish().unwrap();
+        let got: Vec<_> = stopped.try_iter().collect();
+        assert_eq!(
+            got,
+            [(Source::Played, false), (Source::Microphone, false)],
+            "both stopped before the index was written"
+        );
+        assert!(boxes(&path).iter().any(|b| b == "moov"));
+    }
+
+    #[test]
+    fn what_plays_stopping_stops_the_microphone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mp4");
+        let node = PathBuf::from(probe::RENDER_NODE);
+        let mut file = File::new(&path, &node, software(), None, (64, 64), h264());
+        let (tx, stopped) = mpsc::channel();
+        file.captures.push((
+            Source::Microphone,
+            capture_until_stopped(move || {
+                let _ = tx.send(());
+            }),
+        ));
+        let (tx, events) = mpsc::channel();
+        for event in [
+            Event::SoundStopped("The sink went away.".into()),
+            Event::MicrophoneStopped("PipeWire ended the capture.".into()),
+            Event::Stop,
+        ] {
+            assert!(tx.send(event).is_ok());
+        }
+        assert_eq!(file.run(&events), Ok(End::Stopped));
+        assert_eq!(
+            stopped.try_recv(),
+            Ok(()),
+            "stopped before the file finishes"
+        );
+        assert!(file.captures.is_empty());
+        assert!(!file.microphone_stopped, "a stop the recorder made");
+    }
+
+    #[test]
+    fn the_microphone_opens_on_the_first_coded_frame_unless_the_recording_is_ending() {
+        ffmpeg::init().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mp4");
+        let node = PathBuf::from(probe::RENDER_NODE);
+        let frame = || Event::Frame(grey(0x10), Instant::now());
+        let gone = || Err("every source ended".to_string());
+        for (events, stopping, ends, opens) in [
+            (vec![Event::Stop], false, Ok(End::Stopped), false),
+            (vec![frame(), Event::Stop], false, Ok(End::Stopped), false),
+            (
+                vec![frame(), Event::Ended],
+                false,
+                Ok(End::StreamEnded),
+                false,
+            ),
+            (vec![frame()], true, gone(), false),
+            (vec![frame()], false, gone(), true),
+        ] {
+            let mut file = File::new(&path, &node, software(), None, (64, 64), h264());
+            file.stopping.store(stopping, Ordering::Relaxed);
+            let (opened, opens_seen) = mpsc::channel();
+            file.listen = Some(Box::new(move || {
+                let _ = opened.send(());
+                Ok(capture_until_stopped(|| {}))
+            }));
+            let (tx, rx) = mpsc::channel();
+            for event in events {
+                assert!(tx.send(event).is_ok());
+            }
+            drop(tx);
+            assert_eq!(file.run(&rx), ends);
+            assert_eq!(opens_seen.try_iter().count(), usize::from(opens));
+            assert_eq!(file.hears(Source::Microphone), opens);
+        }
+    }
+
+    #[test]
     fn a_large_file_keeps_its_index_at_the_end_and_plays() {
         ffmpeg::init().unwrap();
         ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);
@@ -1496,7 +1742,6 @@ mod tests {
         use reprisevideo::stream::{Plane, XRGB8888};
         use std::cell::RefCell;
         use std::rc::Rc;
-        use std::sync::Arc;
         const Y_TILED: u64 = 0x0100_0000_0000_0002;
         ffmpeg::init().unwrap();
         ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Quiet);

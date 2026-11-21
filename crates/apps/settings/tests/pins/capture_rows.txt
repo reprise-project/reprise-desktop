@@ -1,24 +1,24 @@
-defaults x1 Classic 4473101c387d844c
-defaults x1 Blue 308baf11a3d25ed3
-defaults x1 Glass f6594e4ead4cf7c8
-defaults x2 Classic 37c08155a95c6617
-defaults x2 Blue 6fad986bc385997f
-defaults x2 Glass 8071344a9d8078b1
-JPEG XL lossy after a probe x1 Classic 5ac30f9e229d5032
-JPEG XL lossy after a probe x1 Blue c30859d4d462b517
-JPEG XL lossy after a probe x1 Glass 881290a96e15999e
-JPEG XL lossy after a probe x2 Classic 09e90e0d6f3d51a8
-JPEG XL lossy after a probe x2 Blue b0780d3f02793ef7
-JPEG XL lossy after a probe x2 Glass f8209c06b1f1124d
-JPG after a failed probe x1 Classic c4774a8b23082d5c
-JPG after a failed probe x1 Blue cb45a27baeac237c
-JPG after a failed probe x1 Glass f1766026c8c9edc7
-JPG after a failed probe x2 Classic 477c9e84848382a3
-JPG after a failed probe x2 Blue f863b4fbf6b88d70
-JPG after a failed probe x2 Glass 1ca907c94c7c65c4
-JPEG XL lossless while checking x1 Classic d9c67ddeadf87e11
-JPEG XL lossless while checking x1 Blue 0f9951da03dce63f
-JPEG XL lossless while checking x1 Glass 0a8b725a3aa0d7f7
-JPEG XL lossless while checking x2 Classic d0030799b67256ff
-JPEG XL lossless while checking x2 Blue ce38cc22d0a4ea3e
-JPEG XL lossless while checking x2 Glass 959554d86d85424a
+defaults x1 Classic 2d2f8f5e8d89de15
+defaults x1 Blue 109f7293b0ee8b3e
+defaults x1 Glass 8e687a6fb8100c83
+defaults x2 Classic 9c704895adcb0ede
+defaults x2 Blue abbb0e6f4a680edc
+defaults x2 Glass 8c35ed218e90ff36
+JPEG XL lossy after a probe x1 Classic f227d2d073d9d079
+JPEG XL lossy after a probe x1 Blue 4299720ee21669ad
+JPEG XL lossy after a probe x1 Glass 85027ef98421fb01
+JPEG XL lossy after a probe x2 Classic 84b89a9ec0552ad4
+JPEG XL lossy after a probe x2 Blue a3eb584d75fa4586
+JPEG XL lossy after a probe x2 Glass 581610aa628000ff
+JPG after a failed probe x1 Classic f8732e641b960940
+JPG after a failed probe x1 Blue 33ae168f39b5b46e
+JPG after a failed probe x1 Glass 10bb3a55562de773
+JPG after a failed probe x2 Classic 125950d6be7e9413
+JPG after a failed probe x2 Blue aef7a89c7ffc3ab1
+JPG after a failed probe x2 Glass 0f2f0acd5867953d
+JPEG XL lossless while checking x1 Classic 2a6b860f36731b80
+JPEG XL lossless while checking x1 Blue 5e37bae18afb6992
+JPEG XL lossless while checking x1 Glass 1307b09651c02d68
+JPEG XL lossless while checking x2 Classic bf38ce6b1a38e8b6
+JPEG XL lossless while checking x2 Blue 8094cc5b9c1153fd
+JPEG XL lossless while checking x2 Glass ff7954f6770ede35

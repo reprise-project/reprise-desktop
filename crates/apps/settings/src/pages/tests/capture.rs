@@ -67,6 +67,7 @@ fn the_moved_check_boxes_live_on_screen_capture() {
             "screenshot.jxl_lossless",
             "screenshot.jxl_quality",
             "screenshot.png_compression",
+            "screenshot.record_microphone",
             "screenshot.record_sound",
             "screenshot.save",
         ],
@@ -128,11 +129,30 @@ fn the_sound_rows_grey_with_record_off_and_vbr_needs_opus() {
     let mut got = Settings::default();
     let p = Page::ScreenCapture;
     assert!(!got.screenshot_record_sound);
-    for id in [cap::AUDIO_CODEC, cap::AUDIO_BITRATE, cap::AUDIO_VBR] {
+    for id in [
+        cap::RECORD_MICROPHONE,
+        cap::AUDIO_CODEC,
+        cap::AUDIO_BITRATE,
+        cap::AUDIO_VBR,
+    ] {
         assert!(!enabled(capture(&sheet), id), "{id} greys with no sound");
     }
     tick(&mut sheet, &mut got, p, cap::RECORD_SOUND, true);
     assert!(enabled(capture(&sheet), cap::AUDIO_BITRATE));
+    assert!(enabled(capture(&sheet), cap::RECORD_MICROPHONE));
+    assert!(
+        !got.screenshot_record_microphone,
+        "the microphone stays off"
+    );
+    tick(&mut sheet, &mut got, p, cap::RECORD_MICROPHONE, true);
+    assert!(got.screenshot_record_microphone && got.screenshot_record_sound);
+    tick(&mut sheet, &mut got, p, cap::RECORD_SOUND, false);
+    assert!(
+        !enabled(capture(&sheet), cap::RECORD_MICROPHONE),
+        "greys again, still ticked"
+    );
+    assert_eq!(capture(&sheet).checked(cap::RECORD_MICROPHONE), Some(true));
+    tick(&mut sheet, &mut got, p, cap::RECORD_SOUND, true);
     assert!(!enabled(capture(&sheet), cap::AUDIO_VBR), "AAC has no VBR");
     pick(&mut sheet, &mut got, p, cap::AUDIO_CODEC, 1);
     assert!(enabled(capture(&sheet), cap::AUDIO_VBR), "Opus has");
@@ -268,6 +288,7 @@ fn the_screen_capture_page_pins_its_pixels_in_every_look() {
         recording_rate: "average".into(),
         recording_codec: "h265".into(),
         screenshot_record_sound: true,
+        screenshot_record_microphone: true,
         recording_audio_codec: "opus".into(),
         ..Settings::default()
     };

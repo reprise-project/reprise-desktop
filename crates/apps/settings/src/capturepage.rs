@@ -35,6 +35,7 @@ pub const BITRATE: &str = "recording_bitrate";
 pub const FRAME_RATE: &str = "recording_frame_rate";
 pub const KEYFRAME: &str = "recording_keyframe_interval";
 pub const RECORD_SOUND: &str = "screenshot_record_sound";
+pub const RECORD_MICROPHONE: &str = "screenshot_record_microphone";
 pub const AUDIO_CODEC: &str = "recording_audio_codec";
 pub const AUDIO_BITRATE: &str = "recording_audio_bitrate";
 pub const AUDIO_VBR: &str = "recording_audio_vbr";
@@ -51,7 +52,8 @@ const VIDEO_LEVEL: [&str; 3] = [
 ];
 
 /// What greys with Record what plays off; [`AUDIO_VBR`] also needs Opus.
-const AUDIO_CONTROLS: [&str; 7] = [
+const AUDIO_CONTROLS: [&str; 8] = [
+    RECORD_MICROPHONE,
     "audio_codec_label",
     AUDIO_CODEC,
     "audio_bitrate_label",
@@ -70,6 +72,8 @@ const RIGHT_X: i32 = X + 224;
 /// The Delay up-down's left, right of the Save check box, its unit ending at the group's inside
 /// at [`Area::MIN`].
 const DELAY_X: i32 = X + 242;
+/// The microphone check box's left, beside Record what plays.
+const MICROPHONE_X: i32 = X + 160;
 
 /// The screen rate row's text under Constant bitrate, which codes the screen at most this often.
 const CONSTANT_SCREEN_RATE: &str = "Screen rate (60 at most)";
@@ -250,11 +254,12 @@ pub fn page(s: &Settings, a: Area) -> Form {
 
     items.extend([
         group(a, "audio_group", 344, 92, "Audio"),
+        Item::check(RECORD_SOUND, GX, 366, "Record &what plays"),
         Item::check(
-            RECORD_SOUND,
-            GX,
+            RECORD_MICROPHONE,
+            MICROPHONE_X,
             366,
-            "Record &what plays in screen recordings",
+            "Record t&he microphone",
         ),
     ]);
     items.extend(naming(

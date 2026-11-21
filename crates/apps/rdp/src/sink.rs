@@ -136,8 +136,8 @@ impl Sink {
             }
             let mut samples = samples;
             let samples = Box::new(move |pcm: &[u8], _| samples(pcm));
-            let target = Some(NAME);
-            if let Err(e) = monitor::capture(target, APP, DESCRIPTION, rate, samples, stopped) {
+            let tap = monitor::Tap::Monitor(Some(NAME));
+            if let Err(e) = monitor::capture(tap, APP, DESCRIPTION, rate, samples, stopped) {
                 log::warn!("sound: {e}");
             }
         })?;

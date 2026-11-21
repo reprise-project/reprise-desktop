@@ -456,6 +456,7 @@ impl Page {
                 "jxl",
                 "jpg",
                 "png",
+                "record microphone",
             ],
             Page::Notifications => &[
                 "balloons",
