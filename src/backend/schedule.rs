@@ -8,7 +8,7 @@ use crate::compositor::State;
 use crate::glass::{Drawn, Under};
 
 use super::render::render;
-use super::{Head, Screen, screen_of, surface_mut};
+use super::{Head, Screen, Surface, screen_of, surface_mut};
 
 pub fn schedule(state: &mut State, output: &Output) {
     state.toplevels.dirty = true;
@@ -56,6 +56,45 @@ impl Asked {
     }
 }
 
+/// What asks change on a monitor's `Surface`: the asks for its next frame, and whether that frame
+/// shows captures the scene.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Pending {
+    pub(super) asked: Asked,
+    pub(super) captures_owed: bool,
+}
+
+impl Pending {
+    fn of(s: &Surface) -> Self {
+        Pending {
+            asked: Asked {
+                redraw: s.needs_redraw,
+                pointer_only: s.pointer_only,
+                catch_up: s.catch_up,
+                scene: s.scene_changed,
+                backdrop: s.backdrop_changed,
+            },
+            captures_owed: s.captures_owed,
+        }
+    }
+
+    fn store(self, s: &mut Surface) {
+        s.needs_redraw = self.asked.redraw;
+        s.pointer_only = self.asked.pointer_only;
+        s.catch_up = self.asked.catch_up;
+        s.scene_changed = self.asked.scene;
+        s.backdrop_changed = self.asked.backdrop;
+        s.captures_owed = self.captures_owed;
+    }
+
+    /// A capture waits: a pointer frame, unless something else asks, that shows captures the
+    /// scene and draws nothing new for the screen.
+    pub(super) fn capture(&mut self) {
+        self.captures_owed = true;
+        self.asked.add(Ask::Pointer);
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     static ASKED: std::cell::RefCell<Vec<(String, Ask)>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -96,6 +135,12 @@ pub fn take_scene_outputs() -> Vec<String> {
 }
 
 fn request(state: &mut State, output: &Output, ask: Ask) {
+    ask_frame(state, output, ask, |p| p.asked.add(ask));
+}
+
+/// Make `ask` of `output`: a virtual screen takes it as is, a monitor's pending frame changes as
+/// `change` says.
+fn ask_frame(state: &mut State, output: &Output, ask: Ask, change: impl FnOnce(&mut Pending)) {
     #[cfg(test)]
     ASKED.with_borrow_mut(|a| a.push((output.name(), ask)));
     let head = match screen_of(output) {
@@ -109,19 +154,9 @@ fn request(state: &mut State, output: &Output, ask: Ask) {
     if !s.needs_redraw {
         s.asked_at = Some(std::time::Instant::now());
     }
-    let mut asked = Asked {
-        redraw: s.needs_redraw,
-        pointer_only: s.pointer_only,
-        catch_up: s.catch_up,
-        scene: s.scene_changed,
-        backdrop: s.backdrop_changed,
-    };
-    asked.add(ask);
-    s.needs_redraw = asked.redraw;
-    s.pointer_only = asked.pointer_only;
-    s.catch_up = asked.catch_up;
-    s.scene_changed = asked.scene;
-    s.backdrop_changed = asked.backdrop;
+    let mut pending = Pending::of(s);
+    change(&mut pending);
+    pending.store(s);
     queue_render(state, head);
 }
 
@@ -155,16 +190,9 @@ pub(super) fn queue_render(state: &mut State, head: Head) {
     });
 }
 
-/// Ask for the frame a capture waiting on monitor `output` is filled at: a pointer frame, unless
-/// something else asks, that shows captures the scene (`captures_owed`) and draws nothing new
-/// for the screen.
+/// Ask for the frame a capture waiting on monitor `output` is filled at (`Pending::capture`).
 pub fn schedule_capture(state: &mut State, output: &Output) {
-    if let Some(Screen::Monitor(head)) = screen_of(output)
-        && let Some(s) = surface_mut(state, head)
-    {
-        s.captures_owed = true;
-    }
-    request(state, output, Ask::Pointer);
+    ask_frame(state, output, Ask::Pointer, Pending::capture);
 }
 
 /// Ask for a desktop water step's frame on `output` that starts at or after `at`
