@@ -420,3 +420,76 @@ fn the_quick_launch_rows_icons_load_at_the_text_size_and_again_when_it_changes()
         "16 px once the text is back at 100%"
     );
 }
+
+#[test]
+fn the_start_menu_tree_permission_rows_and_chooser_rows_load_their_icons_at_the_text_size() {
+    let mut a = app("tree-icons");
+    let root = tmp("tree-icons-theme");
+    let apps = root.join("hicolor/scalable/apps");
+    std::fs::create_dir_all(&apps).unwrap();
+    std::fs::write(
+        root.join("hicolor/index.theme"),
+        "[Icon Theme]\nName=Hicolor\nDirectories=scalable/apps\n\n[scalable/apps]\nSize=32\nMinSize=8\nMaxSize=256\nType=Scalable\n",
+    )
+    .unwrap();
+    for name in ["application-x-executable", "folder"] {
+        std::fs::write(
+            apps.join(format!("{name}.svg")),
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="red"/></svg>"#,
+        )
+        .unwrap();
+    }
+    let mut ctx = test_ctx();
+    ctx.icons = reprisekit::icontheme::IconCache::new(IconTheme::load("hicolor", &[root]));
+    pages::fill_permissions(&mut a.permissions, &[("Notes".into(), "Screenshot", true)]);
+    a.permission_icons = vec![None];
+    a.permission_icons_due = true;
+    let program = reprisekit::controls::openwith::Program {
+        id: "notes.desktop".into(),
+        name: "Notes".into(),
+        icon: Some("application-x-executable".into()),
+    };
+    a.chooser = Some(Chooser {
+        mime: "text/plain".into(),
+        ow: reprisekit::controls::openwith::OpenWith::new("notes.txt", vec![program], vec![]),
+        input: ChooserInput::opened(false),
+        icon: None,
+        row_icons: Vec::new(),
+        icons_due: true,
+    });
+    a.menu_icons_due = true;
+    let sides = |a: &SettingsApp| {
+        let side = |c: Option<&Canvas>| c.map(|c| c.width);
+        let tree = match &a.sheet.pages[Page::StartMenu.index()]
+            .item(menupage::TREE)
+            .unwrap()
+            .control
+        {
+            form::Control::Tree(tv) => side(tv.roots[0].icon.as_ref()),
+            _ => None,
+        };
+        let permission = side(a.permissions.rows[0].icon.as_deref());
+        let chooser = a
+            .chooser
+            .as_ref()
+            .unwrap()
+            .row_icons
+            .iter()
+            .map(|c| side(c.as_ref()));
+        (tree, permission, chooser.collect::<Vec<_>>())
+    };
+    ctx.text_size = 200;
+    a.prime_icons(&mut ctx);
+    assert_eq!(
+        sides(&a),
+        (Some(32), Some(32), vec![Some(32), Some(32)]),
+        "32 px at 200% text"
+    );
+    ctx.text_size = 100;
+    a.prime_icons(&mut ctx);
+    assert_eq!(
+        sides(&a),
+        (Some(16), Some(16), vec![Some(16), Some(16)]),
+        "16 px once the text is back at 100%"
+    );
+}

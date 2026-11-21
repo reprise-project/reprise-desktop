@@ -518,3 +518,133 @@ pub fn render_taskpane_icons(pct: u32) -> Canvas {
     }
     c
 }
+
+/// A Start menu tree, an Open With list and a list view of programs, each with icons, in each
+/// look, a look a row, at `pct` text and at scale 1 and 2: the icon columns grow with the text.
+pub fn render_tree_icons(pct: u32) -> Canvas {
+    use reprisekit::controls::grouplist::{self, GroupList, Row};
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let mut drawn: Vec<Vec<Canvas>> = Vec::new();
+    let icon = |px: i32, s: i32| {
+        let px = px * s;
+        let mut icon = Canvas::new(px as u32, px as u32);
+        icon.fill_rect(
+            Rect::new(s, s, px - 2 * s, px - 2 * s),
+            Color::rgb(40, 120, 220),
+        );
+        icon
+    };
+    for &look in &looks {
+        let base = interfaces::theme_for(look).with_text_size(pct);
+        let text = TextRenderer::load(&base.fonts);
+        let cm = base.controls();
+        let mut parts = Vec::new();
+        for s in [1, 2] {
+            let theme = base.scaled(s);
+            let font = theme.fonts.size_px;
+            let text = text.for_output(s);
+            let px = treeview::icon_px(cm.text);
+            let node = |label: &str, kids: Vec<Node>| Node {
+                icon: Some(icon(px, s)),
+                has_children: !kids.is_empty(),
+                expanded: !kids.is_empty(),
+                children: kids,
+                ..Node::new(label, false)
+            };
+            let programs = node(
+                "Programs",
+                vec![node("Notepad", vec![]), node("Paint", vec![])],
+            );
+            let mut tv = TreeView::new(
+                vec![node("Start Menu", vec![programs, node("Terminal", vec![])])],
+                treeview::Style::Classic,
+            );
+            tv.selected = Some(vec![0, 0, 1]);
+            let frame = Rect::new(0, 0, base.text.len(200), 5 * tv.row_h(&cm) + 4);
+            let lay = treeview::layout_without_text(&tv, frame, &cm);
+            let mut tree = Canvas::new((frame.width * s) as u32, (frame.height * s) as u32);
+            treeview::draw(&mut tree, text, &theme.paint(), &tv, &lay, None, font);
+            parts.push(tree);
+
+            let rows = vec![
+                Row::Group("Recommended Programs:".into()),
+                Row::Item {
+                    name: "Notepad".into(),
+                    data: (),
+                },
+                Row::Group("Other Programs:".into()),
+                Row::Item {
+                    name: "Paint".into(),
+                    data: (),
+                },
+            ];
+            let list = GroupList::new(rows);
+            let frame = Rect::new(
+                0,
+                0,
+                base.text.len(220),
+                4 * cm.text.len(grouplist::ROW_H) + 4,
+            );
+            let lay = grouplist::layout(&list, frame, &cm);
+            let art = icon(grouplist::icon_px(cm.text), s);
+            let icons = vec![Some(&art); 4];
+            let mut gl = Canvas::new((frame.width * s) as u32, (frame.height * s) as u32);
+            let shown = grouplist::Shown::Focused;
+            grouplist::draw(
+                &mut gl,
+                text,
+                &theme.paint(),
+                &list,
+                &lay,
+                &icons,
+                shown,
+                font,
+            );
+            parts.push(gl);
+
+            let art = std::rc::Rc::new(icon(listview::icon_px(cm.text), s));
+            let rows = ["Notepad", "Paint", "Terminal"].map(|n| listview::Row {
+                icon: Some(art.clone()),
+                cells: vec![n.into(), "Allowed".into()],
+            });
+            let lv = listview::ListView {
+                columns: vec![
+                    listview::Column::new("Program", 120),
+                    listview::Column::new("Answer", 80),
+                ],
+                rows: listview::IconRows(rows.to_vec()),
+                ..listview::ListView::default()
+            };
+            let frame = Rect::new(
+                0,
+                0,
+                base.text.len(210),
+                cm.list_header + 3 * cm.text.len(listview::ROW_H) + 4,
+            );
+            let lay = listview::layout(&lv, frame, &cm);
+            let mut l = Canvas::new((frame.width * s) as u32, (frame.height * s) as u32);
+            listview::draw(&mut l, text, &theme.paint(), &lv, &lay, None, font);
+            parts.push(l);
+        }
+        drawn.push(parts);
+    }
+    let w = (drawn.iter())
+        .map(|r| r.iter().map(|p| p.width as i32 + 10).sum::<i32>())
+        .max()
+        .unwrap_or(0);
+    let heights: Vec<i32> = (drawn.iter())
+        .map(|r| r.iter().map(|p| p.height as i32 + 10).max().unwrap_or(0))
+        .collect();
+    let mut c = Canvas::new((w + 10) as u32, (heights.iter().sum::<i32>() + 10) as u32);
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    let mut y = 10;
+    for (parts, h) in drawn.iter().zip(heights) {
+        let mut x = 10;
+        for p in parts {
+            c.blit_canvas(x, y, p);
+            x += p.width as i32 + 10;
+        }
+        y += h;
+    }
+    c
+}

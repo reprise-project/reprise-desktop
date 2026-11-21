@@ -4,8 +4,8 @@ use crate::registry::Page;
 use crate::{SettingsApp, additem, menupage, quickpage, renamedlg, startmenu};
 use repriseapp::keys::form_input;
 use repriseapp::{Ctx, Event, Reply};
-use reprisekit::controls::listbox;
 use reprisekit::controls::openwith;
+use reprisekit::controls::{grouplist, listbox, listview, treeview};
 
 impl SettingsApp {
     pub(crate) fn menu_button(&mut self, id: &str) -> Reply {
@@ -113,16 +113,22 @@ impl SettingsApp {
         }
     }
 
-    /// Look up icons a change left missing, and the list boxes' again when the text size changes
-    /// their icon size; runs after every event.
+    /// Look up icons a change left missing, and the lists' and the Start menu tree's again when
+    /// the text size changes their icon size; runs after every event.
     pub(crate) fn prime_icons(&mut self, ctx: &mut Ctx) {
+        let u = ctx.forms().controls().text;
         let px = list_icon_px(ctx);
         if self.list_icon_px.replace(px).is_some_and(|was| was != px) {
             self.quick_icons_due = true;
             self.clip_icons_due = true;
             self.providers.icons_due = true;
+            self.menu_icons_due = true;
+            self.permission_icons_due = true;
             if let Some(d) = self.add_item.as_mut() {
                 d.icons_due = true;
+            }
+            if let Some(c) = self.chooser.as_mut() {
+                c.icons_due = true;
             }
             if self.wallpaper_icons.is_some() {
                 self.load_wallpaper_icons(ctx);
@@ -144,7 +150,7 @@ impl SettingsApp {
             self.set_clip_icons(&mut get);
         }
         self.set_provider_icons(&mut get);
-        let mut get = |name: &str| ctx.icons.get(name, 16);
+        let mut get = |name: &str| ctx.icons.get(name, treeview::icon_px(u));
         if self.menu_icons_due {
             menupage::set_icons(
                 &mut self.sheet.pages[Page::StartMenu.index()],
@@ -153,6 +159,7 @@ impl SettingsApp {
             );
             self.menu_icons_due = false;
         }
+        let mut get = |name: &str| ctx.icons.get(name, listview::icon_px(u));
         if self.permission_icons_due {
             for (row, name) in self.permissions.rows.iter_mut().zip(&self.permission_icons) {
                 row.icon = name
@@ -163,6 +170,7 @@ impl SettingsApp {
             }
             self.permission_icons_due = false;
         }
+        let mut get = |name: &str| ctx.icons.get(name, grouplist::icon_px(u));
         if let Some(c) = self.chooser.as_mut().filter(|c| c.icons_due) {
             c.row_icons =
                 c.ow.list
@@ -254,7 +262,8 @@ impl SettingsApp {
     }
 }
 
-/// The icon size of the list boxes' rows at the forms' text size.
+/// The icon size of the list boxes' rows at the forms' text size; every list's and the tree's
+/// icons follow the same size.
 pub(crate) fn list_icon_px(ctx: &Ctx) -> i32 {
     listbox::icon_px(&ctx.forms().controls())
 }

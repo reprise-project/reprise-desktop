@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 impl Explorer {
     pub fn build_tree(&mut self, ctx: &mut Ctx) {
+        self.tree_places.px = treeview::icon_px(ctx.theme.text);
         foldertree::build(&mut self.tree, &mut self.tree_places, &mut ctx.icons);
         self.fill_node(vec![0], ctx);
     }
@@ -51,7 +52,13 @@ impl Explorer {
             let world = self.tree_world();
             let at = place.clone();
             let read = move || {
-                foldertree::read_kids(&at, &world.inputs(), &[], world.scale, &world.specials)
+                foldertree::read_kids(
+                    &at,
+                    &world.inputs(),
+                    &[],
+                    (world.px, world.scale),
+                    &world.specials,
+                )
             };
             self.fill_from(place, read, ctx);
         }
@@ -131,7 +138,7 @@ impl Explorer {
                 &place,
                 &world.inputs(),
                 &known,
-                world.scale,
+                (world.px, world.scale),
                 &world.specials,
             )
         }
@@ -149,7 +156,13 @@ impl Explorer {
             chain
                 .into_iter()
                 .map(|p| {
-                    let kids = foldertree::read_kids(&p, &inp, &[], world.scale, &world.specials);
+                    let kids = foldertree::read_kids(
+                        &p,
+                        &inp,
+                        &[],
+                        (world.px, world.scale),
+                        &world.specials,
+                    );
                     (p, kids)
                 })
                 .collect()
@@ -159,6 +172,7 @@ impl Explorer {
     fn tree_world(&self) -> foldertree::World {
         foldertree::World {
             scale: self.drawn_scale.max(1),
+            px: self.tree_places.px,
             show_hidden: self.settings.show_hidden,
             drives: self.drives.clone(),
             volumes: self.volumes.clone(),

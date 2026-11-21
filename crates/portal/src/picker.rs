@@ -8,7 +8,7 @@ use crate::dialog::{self, Prompt};
 use crate::wayland::Target;
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::metrics::ControlMetrics;
-use reprisekit::controls::treeview::{Node, TreeView};
+use reprisekit::controls::treeview::{self, Node, TreeView};
 use reprisekit::controls::updown::{self, UpDown};
 use reprisekit::raster::{Canvas, Rect};
 use std::sync::atomic::AtomicBool;
@@ -208,6 +208,7 @@ pub fn run_dialog() {
     } = input;
     let chosen: Arc<Mutex<Option<Choice>>> = Arc::new(Mutex::new(None));
     let mut icons = dialog::icons();
+    let px = treeview::icon_px(dialog::start_forms().controls().text);
     let form = build_form(
         purpose,
         &rows,
@@ -215,7 +216,7 @@ pub fn run_dialog() {
         offer_remember,
         delay,
         app.trim(),
-        |name| icons.get(name, 16),
+        |name| icons.get(name, px),
     );
     let icon = icons.get(HEADER_ICON, dialog::ICON_PX);
     repriseapp::run(Box::new(prompt(

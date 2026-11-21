@@ -764,7 +764,7 @@ fn the_band_runs_5_px_past_the_label_and_the_label_sits_5_px_down() {
         let b = lay.body;
         let row_h = lay.row_h;
         let (y0, y1) = (b.y + row_h, b.y + 2 * row_h);
-        let lx = b.x + tv.label_x(1);
+        let lx = b.x + tv.label_x(1, lay.icon);
         let w = text.measure("My Documents", false, px);
         let band: Vec<i32> = (b.x..b.right())
             .filter(|&x| c.get(x, y0) == cs.hilight.argb())
@@ -1264,4 +1264,122 @@ fn a_blue_trees_lit_bar_part_draws_hot() {
         ),
         "the hot down arrow"
     );
+}
+
+/// Draws a tree whose nodes carry icons in each style and look at 100-200% text, scale 1 and 2:
+/// the icon column grows with the text, each icon stands whole in its row where the layout puts
+/// it, a label starts its style's gap past the grown icon with no ink of its own before it, a
+/// child's expander sits under its parent's icon's middle, and no line's ink is cut. A tree
+/// without icons keeps the 100% column. Hashes each tree at 200%.
+#[test]
+fn icons_grow_with_the_text_and_labels_clear_them() {
+    use crate::interface::Interface;
+    crate::pins::fonts();
+    const INK: u32 = 0xFF12_3456;
+    let mut hashes = Vec::new();
+    let mut cut = Vec::new();
+    for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for pct in [100, 125, 150, 175, 200] {
+            let base = crate::interfaces::theme_for(interface).with_text_size(pct);
+            let cm = base.controls();
+            let icon = icon_px(cm.text);
+            assert_eq!(icon, cm.text.icon(16), "{interface:?} at {pct}%");
+            assert_eq!(
+                layout_without_text(&tree(), Rect::new(0, 0, 300, 300), &cm).icon,
+                ICON_PX,
+                "{interface:?} at {pct}%: a tree without icons keeps the 100% column"
+            );
+            for style in [Style::Classic, Style::Explorer, Style::Picker, Style::Plain] {
+                for s in [1, 2] {
+                    let at = format!("{interface:?} {style:?} at {pct}% scale {s}");
+                    let theme = base.scaled(s);
+                    let text = TextRenderer::load(&base.fonts);
+                    let text = text.for_output(s);
+                    let px = theme.fonts.size_px;
+                    let mut ic = Canvas::new((icon * s) as u32, (icon * s) as u32);
+                    ic.pixels.fill(INK);
+                    let mut tv = tree();
+                    tv.style = style;
+                    fn give(n: &mut Node, ic: &Canvas) {
+                        n.icon = Some(ic.clone());
+                        n.children.iter_mut().for_each(|k| give(k, ic));
+                    }
+                    tv.roots.iter_mut().for_each(|n| give(n, &ic));
+                    let frame = Rect::new(0, 0, base.text.len(260), 7 * tv.row_h(&cm) + 4);
+                    let lay = layout_without_text(&tv, frame, &cm);
+                    assert_eq!(lay.icon, icon, "{at}: the column");
+                    let drawn = |tv: &TreeView| {
+                        let mut c =
+                            Canvas::new((frame.width * s) as u32, (frame.height * s) as u32);
+                        draw(&mut c, text, &theme.paint(), tv, &lay, None, px);
+                        c
+                    };
+                    let (c, cuts) = crate::pins::clipped_ink(|| drawn(&tv));
+                    cut.extend(
+                        (cuts.into_iter())
+                            .filter(|c| c.rows > 0 || c.cols > 0)
+                            .map(|c| (at.clone(), c.text)),
+                    );
+                    let mut bare = tv.clone();
+                    fn blank(n: &mut Node) {
+                        n.label.clear();
+                        n.children.iter_mut().for_each(blank);
+                    }
+                    bare.roots.iter_mut().for_each(blank);
+                    let bare = drawn(&bare);
+                    let rows = tv.visible();
+                    assert_eq!(rows.len(), 6);
+                    let b = lay.body;
+                    for (k, row) in rows.iter().enumerate() {
+                        let top = (b.y + k as i32 * lay.row_h) * s;
+                        let band = Rect::new(b.x * s, top, b.width * s, lay.row_h * s);
+                        let inked: Vec<(i32, i32)> = (band.y..band.bottom())
+                            .flat_map(|y| (band.x..band.right()).map(move |x| (x, y)))
+                            .filter(|&(x, y)| c.get(x, y) == INK)
+                            .collect();
+                        assert_eq!(
+                            inked.len(),
+                            (icon * s * icon * s) as usize,
+                            "{at} row {k}: the icon is whole and in its row"
+                        );
+                        let ix = (b.x + tv.icon_x(row.depth, icon)) * s;
+                        let iy = top + (lay.row_h * s - icon * s) / 2;
+                        assert_eq!(inked[0], (ix, iy), "{at} row {k}: the icon's corner");
+                        let tx = (b.x + tv.label_x(row.depth, icon)) * s;
+                        let gap = match style {
+                            Style::Classic => LABEL_GAP,
+                            Style::Explorer | Style::Picker => EXPLORER_LABEL_GAP,
+                            Style::Plain => PLAIN_LABEL_GAP,
+                        };
+                        assert_eq!(tx - (ix + icon * s), gap * s, "{at} row {k}: the gap");
+                        let label_ink = (band.y..band.bottom())
+                            .flat_map(|y| (band.x..tx).map(move |x| (x, y)))
+                            .filter(|&(x, y)| c.get(x, y) != bare.get(x, y))
+                            .count();
+                        assert_eq!(
+                            label_ink, 0,
+                            "{at} row {k}: the label's ink clears the icon"
+                        );
+                        if row.depth > 0 && tv.has_box(row.depth) {
+                            let parent = tv.icon_x(row.depth - 1, icon) + icon / 2;
+                            let mid = b.y + k as i32 * lay.row_h + lay.row_h / 2;
+                            let node = tv.node(&row.path).unwrap();
+                            if node.has_children {
+                                assert_eq!(
+                                    tv.hit(&lay, b.x + parent, mid),
+                                    Hit::Expander(k),
+                                    "{at} row {k}: the expander under the parent's icon"
+                                );
+                            }
+                        }
+                    }
+                    if pct == 200 {
+                        hashes.push((at, crate::pins::fnv(&c)));
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cut, Vec::new(), "(tree, line)");
+    crate::pins::check("controls/treeview_icons_200", &hashes);
 }

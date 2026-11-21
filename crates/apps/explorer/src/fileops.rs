@@ -25,9 +25,6 @@ use reprisekit::raster::Canvas;
 use reprisekit::theme::Theme;
 use std::path::{Path, PathBuf};
 
-/// The icon size of the Open With chooser's rows.
-pub(crate) const ROW_PX: i32 = 16;
-
 /// The icon size of the Open With and Send To menus' rows: the menu's icon column at the text size.
 pub(crate) fn menu_icon_px(theme: &Theme) -> i32 {
     MenuStyle::context(theme, ContextBitmaps::Icons).icon_px()
@@ -1443,7 +1440,7 @@ impl Explorer {
             input: ChooserInput::opened(self.keyed),
             browse: None,
         };
-        cp.wear_icons(&mut ctx.icons);
+        cp.wear_icons(&mut ctx.icons, self.forms.controls().text);
         self.raise(Dialog::ChooseProgram(Box::new(cp)))
     }
 

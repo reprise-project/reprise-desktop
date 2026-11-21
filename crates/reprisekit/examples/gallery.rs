@@ -113,7 +113,7 @@ use taskbar::{
 };
 use text_size::{
     render_list_icons, render_menu_columns, render_menu_icons, render_taskpane_icons,
-    render_text_size,
+    render_text_size, render_tree_icons,
 };
 use views::{
     render_backgrounds, render_file_preview, render_grid_drag, render_image_view,
@@ -389,6 +389,10 @@ fn write_text_size(pct: u32) {
         write_preview(
             &render_taskpane_icons(pct),
             &format!("reprisekit-gallery-taskpane-icons-{pct}.png"),
+        );
+        write_preview(
+            &render_tree_icons(pct),
+            &format!("reprisekit-gallery-tree-icons-{pct}.png"),
         );
     }
 }

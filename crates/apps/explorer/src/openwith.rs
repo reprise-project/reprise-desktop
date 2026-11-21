@@ -1,6 +1,5 @@
 use crate::Explorer;
 use crate::dialogs::{Dialog, ProgramBrowse};
-use crate::fileops::ROW_PX;
 use repriseapp::filedlg::{Driven, Host};
 use repriseapp::iconjobs::IconWaits;
 use repriseapp::openwith::{PROGRAMS_DIR, browse_fields, program_pick, programs_keep as keep};
@@ -11,14 +10,15 @@ use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use std::path::Path;
 
-/// The chooser's rows' icons, stand-ins noted in `waits` while one decodes off the loop.
+/// The chooser's rows' icons at `px`, stand-ins noted in `waits` while one decodes off the loop.
 pub fn chooser_row_icons(
     ow: &OpenWith,
     icons: &mut IconCache,
+    px: i32,
     waits: &mut IconWaits,
 ) -> Vec<Option<Canvas>> {
     (ow.list.rows.iter())
-        .map(|r| openwith::icon_name(r).and_then(|n| waits.first(icons, &[n], ROW_PX)))
+        .map(|r| openwith::icon_name(r).and_then(|n| waits.first(icons, &[n], px)))
         .collect()
 }
 
@@ -99,7 +99,7 @@ impl Explorer {
                 Some(p) => {
                     cp.browse = None;
                     cp.ow.add_program(p);
-                    cp.wear_icons(&mut ctx.icons);
+                    cp.wear_icons(&mut ctx.icons, self.forms.controls().text);
                     Reply::redraw_all()
                 }
                 None => {
