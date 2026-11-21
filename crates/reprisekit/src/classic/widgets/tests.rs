@@ -1247,8 +1247,9 @@ fn the_drop_point_inverts_its_column_so_a_stem_under_it_shows_white() {
 
 /// At scale 2 a field's selection recolours its text without moving any of it: drawn in mono,
 /// the selected field with its highlight read as the window and its white as ink is the field
-/// drawn unselected, whatever char ends the selection. Past the highlight that holds in the
-/// device columns the selected glyphs ink, drawn alone, where only their own ink is white.
+/// drawn unselected, whatever char ends the selection. The highlight reaches up and down to the
+/// rows the selected glyphs ink, and past it that holds in the device columns they ink, drawn
+/// alone, where only their own ink is white.
 #[test]
 fn a_field_selection_at_scale_2_recolours_its_text_in_place() {
     crate::pins::fonts();
@@ -1285,6 +1286,13 @@ fn a_field_selection_at_scale_2_recolours_its_text_in_place() {
                         .map(|&p| p == cs.button_text.argb())
                         .collect::<Vec<_>>()
                 };
+                let inked: Vec<i32> = (0..80)
+                    .filter(|&y| (0..300).any(|x| own[(y * 300 + x) as usize]))
+                    .collect();
+                let (top, bottom) = (inked[0], inked[inked.len() - 1] + 1);
+                let y0 = hl.y.min(top.max(2 * inner.y));
+                let y1 = hl.bottom().max(bottom.min(2 * inner.bottom()));
+                let hl = Rect::new(hl.x, y0, hl.width, y1 - y0);
                 let rows = hl.y..hl.bottom();
                 let past: Vec<bool> = (0..300)
                     .map(|x| {
@@ -1397,4 +1405,80 @@ fn a_field_selection_at_scale_2_lights_its_glyph_whole_and_leaves_its_neighbour(
         faults.len(),
         faults.join("\n")
     );
+}
+
+/// A field's selection holds the selected glyphs' ink, descenders and `|` included, in its
+/// highlight and changes nothing off it, at scale 1 and 2.
+#[test]
+fn a_field_selection_holds_its_descenders_in_the_highlight() {
+    crate::pins::fonts();
+    let cs = &Theme::default().colors;
+    let inner = Rect::new(10, 10, 120, 17);
+    let room = Rect::new(inner.x - 1, inner.y, inner.width + 1, inner.height);
+    let mut faults = Vec::new();
+    for family in ["Tahoma", "DejaVu Sans"] {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            antialias: false,
+            ..FontConfig::default()
+        });
+        for px in [11, 13] {
+            for s in [1, 2] {
+                let draw = |t: &str, sel: std::ops::Range<usize>| {
+                    let mut e = TextEdit::new(t, false);
+                    e.set_selection(sel.start, sel.end);
+                    let mut c = Canvas::with_scale(150, 40, s);
+                    c.fill_rect(c.bounds(), cs.window);
+                    let paint = classic_paint(cs, 1);
+                    draw_edit(&mut c, &text, &e, inner, px, &paint, Caret::Unfocused, 0);
+                    c.pixels
+                };
+                for (t, sel) in crate::paint::descender_cases() {
+                    let (plain, selected) = (draw(t, 0..0), draw(t, sel.clone()));
+                    let (off, unlit) = crate::paint::off_highlight(
+                        &text,
+                        px,
+                        (150, 40),
+                        (t, sel.clone()),
+                        (inner.x, room),
+                        s,
+                        (&plain, &selected),
+                        (cs.hilight, cs.hilight_text),
+                    );
+                    if off + unlit > 0 {
+                        faults.push(format!(
+                            "{family} {px} px @{s} \"{t}\" {sel:?}: {off} px changed off the \
+                             highlight, {unlit} selected px not lit"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(faults.is_empty(), "{}", faults.join("\n"));
+}
+
+#[test]
+fn a_selected_descender_field_pins_at_scale_1_and_2() {
+    crate::pins::fonts();
+    let cs = &Theme::default().colors;
+    let inner = Rect::new(4, 4, 80, 17);
+    let mut got = Vec::new();
+    for family in ["Tahoma", "DejaVu Sans"] {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            antialias: false,
+            ..FontConfig::default()
+        });
+        for s in [1, 2] {
+            let mut e = TextEdit::new("jog gypsy|", false);
+            e.set_selection(1, 9);
+            let mut c = Canvas::with_scale(88, 25, s);
+            c.fill_rect(c.bounds(), cs.window);
+            let paint = classic_paint(cs, 1);
+            draw_edit(&mut c, &text, &e, inner, 11, &paint, Caret::Shown, 0);
+            got.push((format!("{family} @{s}"), crate::pins::fnv(&c)));
+        }
+    }
+    crate::pins::check("controls/edit_selected_descenders", &got);
 }

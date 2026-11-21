@@ -82,11 +82,21 @@ impl Glyph {
 
     /// The rows below the bitmap's top this glyph inks, as [`Glyph::ink_span`] does columns.
     fn ink_rows(&self) -> Option<(i32, i32)> {
+        self.rows(0x60)
+    }
+
+    /// The rows below the bitmap's top a blit of this glyph visibly sets, as
+    /// [`Glyph::drawn_span`] does columns.
+    fn drawn_rows(&self) -> Option<(i32, i32)> {
+        self.rows(if self.smooth { 0x20 } else { 0x60 })
+    }
+
+    fn rows(&self, min: u8) -> Option<(i32, i32)> {
         let inked = |y: &usize| {
             self.bitmap
                 .chunks(self.width.max(1))
                 .nth(*y)
-                .is_some_and(|row| row.iter().any(|&cov| cov >= 0x60))
+                .is_some_and(|row| row.iter().any(|&cov| cov >= min))
         };
         let t = (0..self.height).find(inked)?;
         let b = (t..self.height).rev().find(inked)?;
@@ -1074,8 +1084,10 @@ impl TextRenderer {
     }
 
     /// The highlight `hl` of bytes `sel` of `text`, drawn from pen x `pen` in `line`, at canvas
-    /// scale `s`. Its device pixels reach out to the selected glyphs' ink on a side where that
-    /// ink fits `hl` at scale 1, as a glyph can ink a device column past its advance at `s`.
+    /// scale `s`. Its device pixels reach out to the selected glyphs' ink: up and down within
+    /// `line`'s rows, as a descender can ink past the font's line, and at scale 2 sideways on a
+    /// side where that ink fits `hl` at scale 1, as a glyph can ink a device column past its
+    /// advance at `s`.
     #[expect(clippy::too_many_arguments)]
     pub fn highlight<'a>(
         &self,
@@ -1099,26 +1111,42 @@ impl TextRenderer {
             bold,
             size_px,
         };
-        if s == 1 {
-            return h;
-        }
         let join = |a: Option<(i32, i32)>, (l, r): (i32, i32)| {
             Some(a.map_or((l, r), |(al, ar)| (al.min(l), ar.max(r))))
         };
-        let (mut one, mut ink, mut at) = (None, None, h.pen);
+        let (mut one, mut ink, mut rows, mut at) = (None, None, None, h.pen);
         for ch in h.text.chars() {
-            if let Some((l, r)) = self
-                .with_glyph(ch, bold, size_px, 1, |g| g.ink_span())
-                .flatten()
+            if s > 1
+                && let Some((l, r)) = self
+                    .with_glyph(ch, bold, size_px, 1, |g| g.ink_span())
+                    .flatten()
             {
                 one = join(one, (at + l, at + r));
             }
-            let dx = s * at + self.nudge(ch, bold, size_px, s, at, line);
-            let span = self.with_glyph(ch, bold, size_px, s as u32, |g| g.drawn_span());
-            if let Some((l, r)) = span.flatten() {
-                ink = join(ink, (dx + l, dx + r));
+            let nudge = if s > 1 {
+                self.nudge(ch, bold, size_px, s, at, line)
+            } else {
+                0
+            };
+            let dx = s * at + nudge;
+            let drawn = self.with_glyph(ch, bold, size_px, s as u32, |g| {
+                let top = |(t, b): (i32, i32)| (t - g.top, b - g.top);
+                (g.drawn_span(), g.drawn_rows().map(top))
+            });
+            if let Some((span, drawn_rows)) = drawn {
+                if let Some((l, r)) = span {
+                    ink = join(ink, (dx + l, dx + r));
+                }
+                if let Some(r) = drawn_rows {
+                    rows = join(rows, r);
+                }
             }
             at += self.advance(ch, bold, size_px);
+        }
+        if let (Some(base), Some((t, b))) = (h.baseline, rows) {
+            let y0 = h.dev.y.min((s * base + t).max(s * line.y));
+            let y1 = h.dev.bottom().max((s * base + b).min(s * line.bottom()));
+            h.dev = Rect::new(h.dev.x, y0, h.dev.width, y1 - y0);
         }
         let (Some((l1, r1)), Some((l, r))) = (one, ink) else {
             return h;
@@ -1135,18 +1163,23 @@ impl TextRenderer {
     }
 
     /// Draw `h`'s selected glyphs in `color` where their ink passes `h.rect` into `h.dev`, within
-    /// `clip`. Only the selected glyphs draw there, so a neighbour's ink in those device columns
+    /// `clip`. Only the selected glyphs draw there, so a neighbour's ink in those device pixels
     /// keeps the text colour and a pixel both ink takes `color`.
     pub fn draw_overhang(&self, c: &mut Canvas, h: &Highlight, clip: Rect, color: Color) {
         let (s, r, d) = (h.s, h.rect, h.dev);
         let Some(baseline) = h.baseline.filter(|_| d != r.scaled(s)) else {
             return;
         };
-        let x0 = d.x.div_euclid(s);
+        let (x0, y0) = (d.x.div_euclid(s), d.y.div_euclid(s));
         let x1 = (d.right() + s - 1).div_euclid(s);
-        let left = Rect::new(x0, clip.y, r.x - x0, clip.height);
-        let right = Rect::new(r.right(), clip.y, x1 - r.right(), clip.height);
-        for strip in [left, right].map(|strip| strip.intersect(&clip)) {
+        let y1 = (d.bottom() + s - 1).div_euclid(s);
+        let ring = [
+            Rect::new(x0, y0, r.x - x0, y1 - y0),
+            Rect::new(r.right(), y0, x1 - r.right(), y1 - y0),
+            Rect::new(r.x, y0, r.width, r.y - y0),
+            Rect::new(r.x, r.bottom(), r.width, y1 - r.bottom()),
+        ];
+        for strip in ring.map(|strip| strip.intersect(&clip)) {
             if !strip.is_empty() {
                 let (bold, px) = (h.bold, h.size_px);
                 self.draw_line(c, h.pen, baseline, strip, h.line, h.text, bold, color, px);
