@@ -1,10 +1,12 @@
 //! The single-selection list box with an icon per row, an optional dimmed detail, per-row check boxes and the
-//! vertical scrollbar once the rows outgrow the box.
+//! vertical scrollbar once the rows outgrow the box. A list given icons grows its 16 px icon column
+//! with the text size ([`icon_px`]); its labels keep their 100% gap past the icon.
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{BarHit, ScrollHit, ScrollParts};
 use crate::controls::metrics::ControlMetrics;
 use crate::controls::scrollbar::RowScroll;
+use crate::icon::ICON_SIZE;
 use crate::look::Paint;
 use crate::look::widgets::item::{self, Mark};
 use crate::look::widgets::{draw_field_frame, draw_list_check, draw_scrollbar};
@@ -124,6 +126,8 @@ pub struct Layout {
     pub thumb_min: i32,
     pub check: i32,
     pub row_h: i32,
+    /// The rows' icon edge: [`icon_px`].
+    pub icon: i32,
 }
 
 impl Layout {
@@ -150,7 +154,14 @@ pub fn layout(lb: &ListBox, frame: Rect, cm: &ControlMetrics) -> Layout {
         thumb_min: cm.thumb_min,
         check: cm.check,
         row_h: cm.list_row,
+        icon: icon_px(cm),
     }
+}
+
+/// A row's icon edge (logical px): 16 px at 100% text, grown with the text and never smaller.
+/// Hosts load the rows' icons at it.
+pub fn icon_px(cm: &ControlMetrics) -> i32 {
+    cm.text.icon(ICON_SIZE)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -219,16 +230,19 @@ fn icon_x(lb: &ListBox) -> i32 {
     }
 }
 
-/// A row's label x: a checked list leaves room for icons only when it is given some.
-fn text_x(lb: &ListBox, icons: &[Option<Canvas>]) -> i32 {
+/// A row's label x: a checked list leaves room for icons only when it is given some, and only
+/// a list given icons widens its icon column with the text.
+pub fn text_x(lb: &ListBox, lay: &Layout, icons: &[Option<Canvas>]) -> i32 {
+    let grown = lay.icon - ICON_SIZE;
     match (lb.checks.is_empty(), icons.is_empty()) {
-        (true, _) => TEXT_X,
+        (true, true) => TEXT_X,
+        (true, false) => TEXT_X + grown,
         (false, true) => CHECK_TEXT_X,
-        (false, false) => CHECK_TEXT_X + TEXT_X - ICON_X,
+        (false, false) => CHECK_TEXT_X + TEXT_X - ICON_X + grown,
     }
 }
 
-/// Draw the box; `icons` is parallel to the items (16 px, or None for
+/// Draw the box; `icons` is parallel to the items ([`icon_px`] at the scale, or None for
 /// no icon), drawn after the check boxes in a checked list. A partly visible last row is clipped.
 #[expect(clippy::too_many_arguments)]
 pub fn draw(
@@ -252,6 +266,8 @@ pub fn draw(
     let rh = lay.row_h * s;
     // A taller row (grown text) centres its check box and icon down the row.
     let glyph_dy = (lay.row_h - ROW_H) / 2 * s;
+    let icon_dy = (lay.row_h - lay.icon - 1) / 2 * s;
+    let slot = lay.icon * s;
     let mut y = inner.y;
     for i in lb.top..lb.items.len() {
         if y >= inner.bottom() {
@@ -281,11 +297,13 @@ pub fn draw(
         }
         let icon_x = inner.x + icon_x(lb) * s;
         if let Some(Some(ic)) = icons.get(i) {
-            let iy = y + glyph_dy;
+            // An icon smaller than the column (not yet loaded at the text size) sits centred in it.
+            let icon_x = icon_x + ((slot - ic.width as i32) / 2).max(0);
+            let iy = y + icon_dy + ((slot - ic.height as i32) / 2).max(0);
             let clip = Rect::new(icon_x, iy, ic.width as i32, ic.height as i32).intersect(&inner);
             c.blit_over_clipped(icon_x, iy, ic, clip);
         }
-        let text_x = text_x(lb, icons);
+        let text_x = text_x(lb, lay, icons);
         let tx = inner.x + text_x * s;
         let tw = text.measure(&lb.items[i], false, px);
         let (fg, bg) = if lb.selected == Some(i) && !boxed {
@@ -650,5 +668,114 @@ mod tests {
             cs.window.argb(),
             "window between the highlight and the detail"
         );
+    }
+
+    /// Draws a list with icons, plain and with check boxes, in each look at 100-200% text, scale 1
+    /// and 2: the icon column grows with the text, each icon stands whole in its row where the
+    /// layout puts it, the labels' ink stays clear of the icon and its gap, and no line's ink is
+    /// cut. Hashes each list at 200%.
+    #[test]
+    fn icons_grow_with_the_text_and_labels_clear_them() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        const INK: u32 = 0xFF12_3456;
+        let names = ["Notepad", "Paint", "Terminal"];
+        let (mut sizes, mut cut, mut hashes) = (Vec::new(), Vec::new(), Vec::new());
+        for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 125, 150, 175, 200] {
+                let base = crate::interfaces::theme_for(interface).with_text_size(pct);
+                let text = TextRenderer::load(&base.fonts);
+                let cm = base.controls();
+                sizes.push(icon_px(&cm));
+                for checked in [false, true] {
+                    let kind = if checked { "checked" } else { "plain" };
+                    let mut lb = ListBox::new(names.map(String::from).to_vec(), Some(1));
+                    lb.detail = vec![String::new(), "~/Pictures".into(), String::new()];
+                    if checked {
+                        lb.checks = vec![true, false, true];
+                    }
+                    let frame = Rect::new(0, 0, base.text.len(220), 3 * cm.list_row + 4);
+                    let lay = layout(&lb, frame, &cm);
+                    assert_eq!(lay.visible, 3);
+                    let icon = lay.icon;
+                    for s in [1, 2] {
+                        let at = format!("{interface:?} {kind} at {pct}% scale {s}");
+                        let theme = base.scaled(s);
+                        let text = text.for_output(s);
+                        let px = theme.fonts.size_px;
+                        let mut ic = Canvas::new((icon * s) as u32, (icon * s) as u32);
+                        ic.pixels.fill(INK);
+                        let icons = vec![Some(ic); 3];
+                        let drawn = |lb: &ListBox| {
+                            let mut c =
+                                Canvas::new((frame.width * s) as u32, (frame.height * s) as u32);
+                            draw(&mut c, text, &theme.paint(), lb, &lay, &icons, None, px);
+                            c
+                        };
+                        let (c, cuts) = crate::pins::clipped_ink(|| drawn(&lb));
+                        cut.extend(
+                            (cuts.into_iter())
+                                .filter(|c| c.rows > 0 || c.cols > 0)
+                                .map(|c| (interface, kind, pct, s, c.text)),
+                        );
+                        let mut unlabelled = lb.clone();
+                        unlabelled.items = vec![String::new(); 3];
+                        unlabelled.detail.clear();
+                        let bare = drawn(&unlabelled);
+                        let tx = (lay.inner.x + text_x(&lb, &lay, &icons)) * s;
+                        let ix = (lay.inner.x + icon_x(&lb)) * s;
+                        assert_eq!(
+                            tx - (ix + icon * s),
+                            3 * s,
+                            "{at}: the label 3 px past the icon"
+                        );
+                        for k in 0..3 {
+                            let row = Rect::new(
+                                lay.inner.x * s,
+                                (lay.inner.y + k * lay.row_h) * s,
+                                lay.inner.width * s,
+                                lay.row_h * s,
+                            );
+                            let inked: Vec<(i32, i32)> = (row.y..row.bottom())
+                                .flat_map(|y| (row.x..row.right()).map(move |x| (x, y)))
+                                .filter(|&(x, y)| c.get(x, y) == INK)
+                                .collect();
+                            assert_eq!(
+                                inked.len(),
+                                (icon * s * icon * s) as usize,
+                                "{at} row {k}: the icon is whole and in its row"
+                            );
+                            let iy = row.y + (lay.row_h - icon - 1) / 2 * s;
+                            assert_eq!(inked[0], (ix, iy), "{at} row {k}: the icon's corner");
+                            let before = Rect::new(row.x, row.y, tx - 2 * s - row.x, row.height);
+                            let label_ink = (before.y..before.bottom())
+                                .flat_map(|y| (before.x..before.right()).map(move |x| (x, y)))
+                                .filter(|&(x, y)| c.get(x, y) != bare.get(x, y))
+                                .count();
+                            assert_eq!(
+                                label_ink, 0,
+                                "{at} row {k}: the label's ink clears the icon"
+                            );
+                        }
+                        if pct == 200 {
+                            hashes
+                                .push((format!("{interface:?} {kind} {s}"), crate::pins::fnv(&c)));
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(cut, Vec::new(), "(look, list, text size, scale, line)");
+        let at = |skip| {
+            sizes
+                .iter()
+                .skip(skip)
+                .step_by(5)
+                .copied()
+                .collect::<Vec<i32>>()
+        };
+        assert_eq!(at(0), vec![16; 3], "16 px at 100% in every look");
+        assert_eq!(at(4), vec![32; 3], "32 px at 200%");
+        crate::pins::check("controls/listbox_icons_200", &hashes);
     }
 }

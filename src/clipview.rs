@@ -44,10 +44,10 @@ fn panel_size(model: &ClipHistory, theme: &reprisekit::theme::Theme) -> (i32, i3
     )
 }
 
-/// A thumbnail centred on a transparent 16 px square at `scale`, so every
-/// row's label starts at the same x.
-fn row_icon(thumb: &Canvas, scale: i32) -> Canvas {
-    let side = (16 * scale) as u32;
+/// A thumbnail centred on a transparent square the list box's icon column wide at `scale`, so
+/// every row's label starts at the same x.
+fn row_icon(thumb: &Canvas, theme: &reprisekit::theme::Theme, scale: i32) -> Canvas {
+    let side = (reprisekit::controls::listbox::icon_px(&theme.controls()) * scale) as u32;
     let (w, h) = crate::cliphistory::fit(thumb.width, thumb.height, side);
     let small = thumb.resample_box(w, h);
     let mut c = Canvas::new(side, side);
@@ -104,7 +104,10 @@ impl State {
             .map(|e| Row {
                 id: e.id,
                 label: e.kind.label(),
-                icon: e.thumb.as_ref().map(|t| row_icon(t, scale)),
+                icon: e
+                    .thumb
+                    .as_ref()
+                    .map(|t| row_icon(t, &self.config.theme, scale)),
             })
             .collect();
         let model = ClipHistory::new(rows);
@@ -253,7 +256,7 @@ impl State {
 
     pub fn clip_thumb_ready(&mut self, id: u64, thumb: &Canvas) {
         if let Some(v) = self.panels.clipview.as_mut() {
-            let icon = row_icon(thumb, v.scale);
+            let icon = row_icon(thumb, &self.config.theme, v.scale);
             v.model.set_icon(id, icon);
             self.redraw_clipview();
         }
@@ -379,13 +382,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_rows_thumbnail_is_centred_in_a_sixteen_pixel_square() {
-        let mut wide = Canvas::new(32, 16);
+    fn a_rows_thumbnail_is_centred_in_a_square_the_icon_column_wide() {
+        let mut wide = Canvas::new(128, 64);
         wide.fill_rect(wide.bounds(), reprisekit::theme::Color::rgb(9, 9, 9));
-        let icon = row_icon(&wide, 2);
+        let theme = reprisekit::theme::Theme::default();
+        let icon = row_icon(&wide, &theme, 2);
         assert_eq!((icon.width, icon.height), (32, 32));
         assert_eq!(icon.pixels[0] >> 24, 0, "the band above is clear");
         assert_eq!(icon.pixels[(16 * 32) as usize] >> 24, 0xff);
+        let icon = row_icon(&wide, &theme.with_text_size(200), 2);
+        assert_eq!((icon.width, icon.height), (64, 64), "32 px at 200% text");
+        assert_eq!(icon.pixels[(32 * 64) as usize] >> 24, 0xff);
     }
 
     #[test]

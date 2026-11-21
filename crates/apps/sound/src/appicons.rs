@@ -54,6 +54,8 @@ pub struct Resolver {
     scan: Option<Scan>,
     apps_dirs: Vec<PathBuf>,
     icon_roots: Vec<PathBuf>,
+    /// The small icons' size, logical px.
+    small: i32,
 }
 
 /// The desktop entries and the icon theme as they were at `at`: a theme lists each directory
@@ -90,6 +92,7 @@ impl Resolver {
             scan: None,
             apps_dirs,
             icon_roots,
+            small: reprisekit::icon::ICON_SIZE,
         }
     }
 
@@ -138,10 +141,10 @@ impl Resolver {
     }
 
     /// The window icon found for `key`, turning a landed answer into canvases once.
-    fn window_icon(&mut self, key: &str, icons: &mut IconCache) -> Option<AppIcon> {
+    fn window_icon(&mut self, key: &str, icons: &mut IconCache, small: i32) -> Option<AppIcon> {
         let looked = self.windows.get_mut(key)?;
         if let Looked::Landed(icon) = looked {
-            let found = window_canvases(icon, icons);
+            let found = window_canvases(icon, icons, small);
             *looked = match found {
                 Some(f) => Looked::Found(f),
                 None => Looked::Missed(Instant::now()),
@@ -153,9 +156,19 @@ impl Resolver {
         }
     }
 
-    /// Icons for `list` in the theme and at the scale of `like`.
-    pub fn icons(&mut self, list: &[App], like: &IconCache) -> BTreeMap<String, AppIcon> {
+    /// Icons for `list` in the theme and at the scale of `like`, the small ones `small` px.
+    pub fn icons(
+        &mut self,
+        list: &[App],
+        like: &IconCache,
+        small: i32,
+    ) -> BTreeMap<String, AppIcon> {
         let (theme, scale) = (like.theme_name(), like.scale());
+        if std::mem::replace(&mut self.small, small) != small {
+            // A found window icon holds canvases at the old size.
+            self.windows
+                .retain(|_, l| matches!(l, Looked::Asking | Looked::Missed(_)));
+        }
         if self
             .scan
             .as_ref()
@@ -191,7 +204,7 @@ impl Resolver {
             let icon = self.icon(app, &mut scan);
             let generic = |s: &mut Scan, px| s.icons.get(PROGRAM_ICON, px);
             let icon = AppIcon {
-                small: icon.small.or_else(|| generic(&mut scan, 16)),
+                small: icon.small.or_else(|| generic(&mut scan, small)),
                 large: icon.large.or_else(|| generic(&mut scan, 32)),
             };
             out.insert(app.key.clone(), icon);
@@ -201,8 +214,9 @@ impl Resolver {
     }
 
     fn icon(&mut self, app: &App, scan: &mut Scan) -> AppIcon {
+        let small = self.small;
         let named = |s: &mut Scan, n: &str| AppIcon {
-            small: s.icons.get(n, 16),
+            small: s.icons.get(n, small),
             large: s.icons.get(n, 32),
         };
         let hinted = match self.names.get(&app.key) {
@@ -219,7 +233,7 @@ impl Resolver {
         }
         self.names.remove(&app.key);
         self.ask_window(app);
-        if let Some(icon) = self.window_icon(&app.key, &mut scan.icons) {
+        if let Some(icon) = self.window_icon(&app.key, &mut scan.icons, small) {
             return icon;
         }
         match guessed_icon(app, &scan.entries).map(str::to_string) {
@@ -229,11 +243,12 @@ impl Resolver {
     }
 }
 
-/// Canvases for a window icon at the cache's scale; None for a name the theme lacks.
-fn window_canvases(icon: &WindowIcon, icons: &mut IconCache) -> Option<AppIcon> {
+/// Canvases for a window icon at the cache's scale, the small one `small` px; None for a name the
+/// theme lacks.
+fn window_canvases(icon: &WindowIcon, icons: &mut IconCache, small: i32) -> Option<AppIcon> {
     let found = match icon {
         WindowIcon::Named(n) => AppIcon {
-            small: icons.get(n, 16),
+            small: icons.get(n, small),
             large: icons.get(n, 32),
         },
         WindowIcon::Pixels {
@@ -249,7 +264,7 @@ fn window_canvases(icon: &WindowIcon, icons: &mut IconCache) -> Option<AppIcon> 
             let scale = icons.scale();
             let at = |px: i32| Some(src.to_canvas(px * scale).at_scale(scale));
             AppIcon {
-                small: at(16),
+                small: at(small),
                 large: at(32),
             }
         }
@@ -606,7 +621,7 @@ mod tests {
         let mut hinted = app(&["late-app"], None);
         hinted.pids = vec![4312];
         let list = [hinted];
-        assert_eq!(centre(&r.icons(&list, &like)["k"].small), Some(RED));
+        assert_eq!(centre(&r.icons(&list, &like, 16)["k"].small), Some(RED));
         assert_eq!(
             calls.load(Ordering::SeqCst),
             0,
@@ -618,12 +633,12 @@ mod tests {
         guessed.pids = vec![4312];
         let list = [guessed];
         assert_eq!(
-            centre(&r.icons(&list, &like)["g"].small),
+            centre(&r.icons(&list, &like, 16)["g"].small),
             Some(RED),
             "the entry named Late stands in while the window is asked for"
         );
         land(&mut r);
-        let icon = &r.icons(&list, &like)["g"];
+        let icon = &r.icons(&list, &like, 16)["g"];
         assert_eq!(centre(&icon.small), Some(BLUE));
         assert_eq!(
             icon.large.as_ref().map(|c| (c.width, c.height)),
@@ -641,14 +656,14 @@ mod tests {
         let mut late = app(&["Late"], None);
         late.pids = vec![4312];
         let list = [late];
-        r.icons(&list, &like);
+        r.icons(&list, &like, 16);
         land(&mut r);
-        r.icons(&list, &like);
+        r.icons(&list, &like, 16);
         assert_eq!(calls.load(Ordering::SeqCst), 1, "a recent miss stands");
         if let Some(Looked::Missed(at)) = r.windows.get_mut("k") {
             *at -= WINDOW_RETRY;
         }
-        r.icons(&list, &like);
+        r.icons(&list, &like, 16);
         land(&mut r);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
@@ -661,20 +676,62 @@ mod tests {
         let mut late = app(&["late-app"], Some("late-app"));
         late.key = "late-app".into();
         let list = [late];
-        assert!(r.icons(&list, &like)["late-app"].small.is_none());
+        assert!(r.icons(&list, &like, 16)["late-app"].small.is_none());
         install(&d, "late-app");
         assert!(
-            r.icons(&list, &like)["late-app"].small.is_none(),
+            r.icons(&list, &like, 16)["late-app"].small.is_none(),
             "the scan stands for RESCAN_AFTER"
         );
         if let Some(s) = &mut r.scan {
             s.at -= RESCAN_AFTER;
         }
-        let icon = &r.icons(&list, &like)["late-app"];
+        let icon = &r.icons(&list, &like, 16)["late-app"];
         assert_eq!(
             icon.small.as_ref().map(|c| (c.width, c.height)),
             Some((16, 16))
         );
         assert!(icon.large.is_some());
+    }
+
+    #[test]
+    fn the_small_icon_follows_the_size_asked_for() {
+        let d = dirs("small");
+        install(&d, "late-app");
+        let like = IconCache::new(IconTheme::load("hicolor", &[]));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let blue = WindowIcon::Pixels {
+            width: 1,
+            height: 1,
+            pixels: vec![BLUE],
+        };
+        let mut r = resolver(&d, counting(&calls, Some(blue)));
+        let mut window = app(&["Late"], None);
+        window.key = "w".into();
+        window.pids = vec![4312];
+        let list = [app(&["late-app"], None), window];
+        let small = |r: &mut Resolver, px, key| {
+            let icons = r.icons(&list, &like, px);
+            (icons[key].small.as_ref()).map(|c| (c.width, c.height, centre(&icons[key].small)))
+        };
+        r.icons(&list, &like, 16);
+        land(&mut r);
+        assert_eq!(small(&mut r, 16, "k"), Some((16, 16, Some(RED))));
+        assert_eq!(small(&mut r, 16, "w"), Some((16, 16, Some(BLUE))));
+        assert_eq!(
+            small(&mut r, 32, "k"),
+            Some((32, 32, Some(RED))),
+            "a named icon at 200% text"
+        );
+        land(&mut r);
+        assert_eq!(
+            small(&mut r, 32, "w"),
+            Some((32, 32, Some(BLUE))),
+            "a window's icon at 200% text"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "the window asked for again"
+        );
     }
 }

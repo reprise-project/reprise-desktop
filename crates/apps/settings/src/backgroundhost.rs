@@ -1,6 +1,7 @@
 use crate::backgroundpage::{OwnKey, Target};
 use crate::registry::Page;
-use crate::{SettingsApp, backgroundpage, pages, wallpapers, winstate};
+use crate::{SettingsApp, appearancepage, backgroundpage, pages, wallpapers, winstate};
+use repriseapp::Ctx;
 use repriseapp::decode::{Decoded, Decoders};
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -92,6 +93,24 @@ impl SettingsApp {
     }
 
     /// Refill the Background list from `wallpapers` with the pending one picked and scrolled into view (once, when the scan lands).
+    /// The wallpaper list's icons and the built-ins' thumbnails at the list's icon size, then the
+    /// list refilled with them.
+    pub(crate) fn load_wallpaper_icons(&mut self, ctx: &mut Ctx) {
+        let px = crate::menuhost::list_icon_px(ctx);
+        let none =
+            (ctx.icons.get("process-stop", px)).or_else(|| ctx.icons.get("dialog-cancel", px));
+        self.wallpaper_icons = Some((none, ctx.icons.get("image-x-generic", px)));
+        self.folder_icon = ctx.icons.get("folder", px);
+        self.fill_wallpapers();
+        let (scale, glass) = (ctx.icons.scale(), appearancepage::glass(&self.want));
+        self.thumbing = Some(self.spawn(move || {
+            backgroundpage::builtins()
+                .into_iter()
+                .map(|b| Some(backgroundpage::thumb(b, &glass, px, scale)))
+                .collect()
+        }));
+    }
+
     pub(crate) fn fill_wallpapers(&mut self) {
         self.follow_use_for();
         let folders = self.slide_folders();

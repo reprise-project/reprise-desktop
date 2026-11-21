@@ -4,9 +4,9 @@ use crate::backuphost::Then;
 use crate::registry::Page;
 use crate::{
     ADD_ITEM_WIN, ADD_WIN, CHOOSER_WIN, COLOR_WIN, LAYOUT_WIN, RENAME_WIN, SAVER_WIN, SHORTCUT_WIN,
-    SettingsApp, additem, appearancepage, backgroundpage, defaultspage, displayhost, displaypage,
-    filepick::Pick, layoutdlg, magnifierpage, menupage, notifypage, pages, quickpage, regionpage,
-    renamedlg, saverdlg, saverpage,
+    SettingsApp, additem, backgroundpage, defaultspage, displayhost, displaypage, filepick::Pick,
+    layoutdlg, magnifierpage, menupage, notifypage, pages, quickpage, regionpage, renamedlg,
+    saverdlg, saverpage,
 };
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
@@ -376,20 +376,7 @@ impl SettingsApp {
             self.display.icon = ctx.icons.get("dialog-question", 32);
         }
         if self.wallpaper_icons.is_none() {
-            let none = ctx
-                .icons
-                .get("process-stop", 16)
-                .or_else(|| ctx.icons.get("dialog-cancel", 16));
-            self.wallpaper_icons = Some((none, ctx.icons.get("image-x-generic", 16)));
-            self.folder_icon = ctx.icons.get("folder", 16);
-            self.fill_wallpapers();
-            let (scale, glass) = (ctx.icons.scale(), appearancepage::glass(&self.want));
-            self.thumbing = Some(self.spawn(move || {
-                backgroundpage::builtins()
-                    .into_iter()
-                    .map(|b| Some(backgroundpage::thumb(b, &glass, scale)))
-                    .collect()
-            }));
+            self.load_wallpaper_icons(ctx);
         }
         self.add_host.icons.prime(&mut ctx.icons);
         if let Some(reason) = self.open_error.take() {
