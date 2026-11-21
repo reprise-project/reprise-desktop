@@ -700,6 +700,17 @@ impl TextEdit {
         self.caret != self.anchor
     }
 
+    /// This edit as a field without the focus draws it: the selection hidden until the focus
+    /// comes back, the caret where it was.
+    pub fn unfocused(&self) -> std::borrow::Cow<'_, TextEdit> {
+        if !self.has_selection() {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut e = self.clone();
+        e.anchor = e.caret;
+        std::borrow::Cow::Owned(e)
+    }
+
     pub fn can_undo(&self) -> bool {
         self.undo.can_undo()
     }

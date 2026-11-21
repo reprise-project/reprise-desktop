@@ -1019,3 +1019,104 @@ fn rename_desktop_opens_on_the_name_and_ok_gives_the_new_one() {
     );
     assert_eq!(d.press(1), Outcome::Close);
 }
+
+/// Whether `field`'s inside holds any of `theme`'s highlight.
+fn shows_selection(c: &Canvas, field: Rect, theme: &Theme) -> bool {
+    let inner = field.inset(3 * c.scale());
+    let hl = theme.colors.hilight.argb();
+    (inner.y..inner.bottom()).any(|y| (inner.x..inner.right()).any(|x| c.get(x, y) == hl))
+}
+
+#[test]
+fn run_s_field_hides_its_selection_while_a_button_has_the_focus() {
+    let theme = Theme::default();
+    let text = TextRenderer::load(&FontConfig::default());
+    let drawn = |d: &Dialog| {
+        let l = DialogLayout::compute(&theme, &text, d);
+        let c = draw(
+            &theme,
+            &text,
+            &l,
+            None,
+            None,
+            d,
+            false,
+            Lit::default(),
+            Cues::ALL,
+            true,
+            None,
+        );
+        shows_selection(&c, l.field.unwrap(), &theme)
+    };
+    for mut d in [
+        Dialog::run(&history()),
+        Dialog::rename_desktop(0, Some(&"Work".into())),
+    ] {
+        assert!(drawn(&d), "the field opens with its text selected");
+        d.key(Key::Tab { back: false });
+        assert_eq!(d.button_focus, Some(0));
+        assert!(!drawn(&d), "OK has the focus: the selection is hidden");
+        d.key(Key::Tab { back: true });
+        assert_eq!(d.button_focus, None);
+        assert!(
+            drawn(&d),
+            "the field has the focus back: so has the selection"
+        );
+        assert!(d.press_button(1));
+        assert_eq!(d.button_focus, Some(1));
+        assert!(!drawn(&d), "a press on Cancel hides it");
+        assert_eq!(d.release_button(None), Some(Outcome::Redraw));
+        assert!(!drawn(&d), "let go off Cancel, it stays hidden");
+        assert!(d.field.as_ref().unwrap().edit().unwrap().all_selected());
+    }
+}
+
+#[test]
+fn run_s_field_with_a_button_focused_is_pinned_in_every_interface_at_1_and_2() {
+    use reprisekit::interface::Interface;
+    let text = tahoma();
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let theme = reprisekit::interfaces::theme_for(i);
+        for focus in [None, Some(0)] {
+            let mut d = Dialog::run(&history());
+            if focus.is_some() {
+                d.key(Key::Tab { back: false });
+            }
+            assert_eq!(d.button_focus, focus);
+            for s in [1, 2] {
+                let l = DialogLayout::compute_at(&theme, &text, &d, s);
+                let scaled = theme.scaled(s);
+                let c = draw(
+                    &scaled,
+                    text.for_output(s),
+                    &l,
+                    None,
+                    None,
+                    &d,
+                    false,
+                    Lit::default(),
+                    Cues::NONE,
+                    true,
+                    None,
+                );
+                let at = format!(
+                    "{} {} @{s}",
+                    i.as_str(),
+                    ["field", "ok"][focus.map_or(0, |_| 1)]
+                );
+                assert_eq!(
+                    shows_selection(&c, l.field.unwrap().scaled(s), &scaled),
+                    focus.is_none(),
+                    "{at}: the selection shows only while the field has the focus"
+                );
+                let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
+                    (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
+                });
+                got.push((at, hash));
+            }
+        }
+    }
+    let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/run_field.txt");
+    reprisekit::pins::check_file(std::path::Path::new(pins), &got);
+}
