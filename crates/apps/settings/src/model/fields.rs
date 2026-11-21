@@ -303,6 +303,8 @@ pub(super) fn fields() -> Vec<Field> {
             k("touchpad", "disable_while_typing"),
             lens!(disable_while_typing),
         ),
+        Field::Flag(k("gestures", "enabled"), lens!(gestures_enabled)),
+        Field::Int(k("gestures", "fingers"), lens!(gesture_fingers)),
         Field::Flag(k("window_snapping", "enabled"), lens!(snap_enabled)),
         Field::Flag(k("window_snapping", "picker"), lens!(snap_picker)),
         Field::Flag(k("window_snapping", "bar"), lens!(snap_bar)),

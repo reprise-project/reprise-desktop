@@ -41,6 +41,9 @@ pub const CLICK_METHODS: &Choices = &[
     ("clickfinger", "Finger count"),
 ];
 
+/// `[gestures] fingers`' rows.
+pub const GESTURE_FINGERS: &[(i64, &str)] = &[(3, "3 fingers"), (4, "4 fingers")];
+
 /// A drop-down that edits part of `[keyboard] options`: each row an xkb option id ("" for none),
 /// and an id prefix whose other ids it shows as themselves and replaces when a row is picked.
 pub struct XkbPick {

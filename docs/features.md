@@ -329,8 +329,9 @@ the screen takes the interface of the last session used at this computer.
   fields. Start ibus with `ibus start --type wayland`.
 - **Drop text into fields.** Text dragged from any program lands in
   Reprise's text fields; dropped files give their paths.
-- **Touchpad gestures.** Three fingers switch desktops and open the overview;
-  other pinches and swipes go to the program (`[gestures]`).
+- **Touchpad gestures.** Three fingers (or four) switch desktops and open the
+  overview; other pinches and swipes go to the program (`[gestures]`, the
+  Touchpad page).
 - **Touchpad and mouse.** Click method, scroll speed, middle click and
   left-handed buttons (`[mouse]`, `[touchpad]`, the Mouse and Touchpad pages).
 - **Touchscreens.** A program that takes touch gets touch; anywhere else a
