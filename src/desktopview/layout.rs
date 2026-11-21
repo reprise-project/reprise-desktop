@@ -8,7 +8,7 @@ use crate::{
     desktop::{self, DesktopEntry, ICON_PX},
     output::upload_scaled,
     raster::Rect,
-    textedit::TextEdit,
+    textedit::{Caret, TextEdit},
 };
 
 /// The cell of `grid` an answer landing `name` at `wanted` takes: `wanted` unless another icon is
@@ -49,7 +49,7 @@ pub(super) struct CellKey<'a> {
     pub(super) selected: bool,
     pub(super) ring: bool,
     pub(super) cut: bool,
-    pub(super) editing: Option<(Cow<'a, str>, std::ops::Range<usize>, usize, bool)>,
+    pub(super) editing: Option<(Cow<'a, str>, std::ops::Range<usize>, usize, Caret)>,
     pub(super) preedit: Option<reprisekit::textedit::Preedit>,
 }
 
@@ -75,7 +75,7 @@ struct Redraw {
     shortcut: bool,
     cut: bool,
     selection: Option<desktop::Selection>,
-    editing: Option<(TextEdit, bool)>,
+    editing: Option<(TextEdit, Caret)>,
 }
 
 impl State {
@@ -89,7 +89,10 @@ impl State {
             Some(o) => (self.usable_area(Some(o)), self.draw_scale_at(Some(o))),
             None => (Rect::default(), 1),
         };
-        let caret_on = self.caret.on && self.editor() == Some(crate::caret::Editor::Rename);
+        // A window or another field of ours can take the keyboard while the rename waits.
+        let keyboard =
+            self.editor() == Some(crate::caret::Editor::Rename) && self.desktop_has_keyboard();
+        let caret = Caret::new(keyboard, self.caret.on);
         let preedit = self.ime_field_preedit(crate::caret::Editor::Rename);
         let grid = self.desktop_grid();
         let mut spot = None;
@@ -148,8 +151,8 @@ impl State {
                 .as_ref()
                 .filter(|(ri, _)| *ri == i)
                 .map(|(_, edit)| match &dropping {
-                    Some(d) => (d, true),
-                    None => (edit, caret_on),
+                    Some(d) => (d, Caret::Shown),
+                    None => (edit, caret),
                 });
             let selected = view.selection.is(i) || view.drop_hilite == Some(i);
             let ring = view.focus_ring && view.selection.focus == Some(i);
@@ -217,10 +220,7 @@ impl State {
                 {
                     std::sync::Arc::make_mut(ic).fade(1, 2);
                 }
-                let editing = r
-                    .editing
-                    .as_ref()
-                    .map(|(ed, on)| (ed, reprisekit::textedit::Caret::new(true, *on)));
+                let editing = r.editing.as_ref().map(|(ed, caret)| (ed, *caret));
                 let mut canvas = desktop::draw_cell(
                     theme,
                     self.text.for_output(theme.scale),

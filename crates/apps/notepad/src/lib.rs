@@ -97,6 +97,8 @@ struct Notepad {
     about: bool,
     /// The window holds the keyboard, so it draws the caret.
     focused: bool,
+    /// The Find or Replace window holds the keyboard, so the edit keeps showing a found match.
+    find_focused: Option<WinId>,
     app_icon: Option<Canvas>,
     warn_icon: Option<Canvas>,
     /// Any edit sets it; undoing back to the saved text does not clear it.
@@ -159,6 +161,7 @@ impl Notepad {
             info_icon: None,
             about: false,
             focused: false,
+            find_focused: None,
             app_icon: None,
             warn_icon: None,
             dirty: false,
@@ -199,6 +202,15 @@ impl Notepad {
         let px = reprisekit::theme::text_px(EDIT_PX, ctx.text_size);
         self.metrics.font_px = px;
         self.metrics.line_h = px as i32;
+    }
+
+    /// Whether the edit draws as focused: its window, or its open Find or Replace window, holds
+    /// the keyboard.
+    fn edit_focused(&self) -> bool {
+        self.focused
+            || self
+                .find_focused
+                .is_some_and(|w| self.find_form(w).is_some())
     }
 
     /// The Find or Replace form behind `win`.
@@ -330,6 +342,15 @@ impl App for Notepad {
                 .map(|d| form_clipboard(d.form.focused_edit(), &ev)),
             _ => None,
         };
+        // The edit shows its selection while Find or Replace has the keyboard, so their focus
+        // redraws it too.
+        let find_focus = match (win, &ev) {
+            (FIND | REPLACE_WIN, Event::Focus(on)) => Some(*on),
+            _ => None,
+        };
+        if let Some(on) = find_focus {
+            self.find_focused = on.then_some(win);
+        }
         let reply = match win {
             GOTO => self.goto_event(ev, ctx),
             FIND => self.find_event(ev, ctx),
@@ -343,6 +364,10 @@ impl App for Notepad {
         let reply = match clip {
             Some(clip) => reply.with_clipboard(clip),
             None => reply,
+        };
+        let reply = Reply {
+            redraw_all: reply.redraw_all || find_focus.is_some(),
+            ..reply
         };
         self.sync_menus();
         reply

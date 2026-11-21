@@ -281,17 +281,7 @@ fn a_selection_across_a_soft_break_lights_both_rows() {
     t.place(p(0, 7), true);
     let mut c = Canvas::new(r.width as u32, r.height as u32);
     let v = View::default();
-    draw(
-        &mut c,
-        &text,
-        &paint,
-        &m,
-        &t,
-        v,
-        &lay,
-        Caret::Unfocused,
-        None,
-    );
+    draw(&mut c, &text, &paint, &m, &t, v, &lay, Caret::Hidden, None);
     let lit = theme.colors.hilight.argb();
     let x = |s: &str| 1 + text.measure(s, false, m.font_px);
     let mid = |row: i32| 1 + row * m.line_h + m.line_h / 2;

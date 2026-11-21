@@ -963,6 +963,27 @@ fn the_rename_box_is_a_black_border_on_white_over_the_name() {
     assert_eq!(c.get(b.x - 1, mid), cs.window.argb());
 }
 
+/// While its window lacks the keyboard the rename box hides its selection.
+#[test]
+fn the_rename_box_hides_its_selection_while_its_window_lacks_the_keyboard() {
+    crate::pins::fonts();
+    let theme = Theme::default();
+    let mut lv = view(3);
+    lv.edit = Some((1, TextEdit::new("notes.txt", true)));
+    let r = Rect::new(0, 0, 300, 100);
+    let px = theme.fonts.size_px;
+    let text = TextRenderer::load(&FontConfig::default());
+    let b = lv.edit_rect(&layout(&lv, r, &ControlMetrics::CLASSIC), 1, &text, px);
+    let lit = |lv: &ListView| {
+        let (c, ..) = render(lv, r);
+        (b.x..b.right())
+            .any(|x| (b.y..b.bottom()).any(|y| c.get(x, y) == theme.colors.hilight.argb()))
+    };
+    assert!(lit(&lv), "with the keyboard");
+    lv.edit_away = true;
+    assert!(!lit(&lv), "without it");
+}
+
 #[test]
 fn check_rect_sits_8_px_in_and_3_px_down() {
     let mut lv = view(3);

@@ -393,7 +393,12 @@ fn cell_key_owned_copy_matches_its_borrowed_key_until_the_caret_blinks() {
         selected: true,
         ring: false,
         cut: false,
-        editing: Some((Cow::Borrowed(text.as_str()), 0..5, 5, on)),
+        editing: Some((
+            Cow::Borrowed(text.as_str()),
+            0..5,
+            5,
+            crate::textedit::Caret::new(true, on),
+        )),
         preedit: None,
     };
     let stored: CellKey<'static> = key(true).into_owned();
