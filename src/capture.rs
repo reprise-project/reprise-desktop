@@ -1864,7 +1864,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::{Fresh, Kept, SessionDamage, View};
-    use crate::harness::Harness;
+    use crate::harness::{Harness, Presented};
     use crate::render::{OutputElement, Parts, output_elements};
 
     impl Kept for u32 {
@@ -2803,6 +2803,107 @@ mod tests {
         h.until("the wallpaper shows", |s| s.wallpaper_ready(&o));
         h.run_for(1100);
         o
+    }
+
+    /// The refresh a frame of `t` filled with `argb` reports when `o` ticks now.
+    fn refresh_shown(
+        h: &mut Harness,
+        c: &mut crate::harness::TestClient,
+        (t, argb): (crate::harness::Toplevel, u32),
+        o: &smithay::output::Output,
+    ) -> Option<Presented> {
+        let surface = c.side.shells[t.shell].surface.clone();
+        let feedback = c.presentation_feedback(&surface);
+        h.draw_self(c, t, argb);
+        crate::virtualout::tick_now(&mut h.state, o);
+        h.roundtrip(c);
+        *feedback.lock().unwrap()
+    }
+
+    /// Two whole-output copies that land at once, as a recorder's do.
+    fn record_twice(h: &mut Harness, client: &mut crate::harness::CaptureClient) {
+        for _ in 0..2 {
+            let copy = client.wlr_copy_with_damage(h);
+            land(h);
+            client.roundtrip(h);
+            assert!(client.wlr_ready(&copy).is_some(), "the copy comes ready");
+        }
+        assert!(h.state.captures.waiting.is_empty(), "no copy waits");
+    }
+
+    const CAPTURED: Option<Presented> = Some(Presented::Shown {
+        refresh_ns: 33_333_333,
+    });
+    const UNCAPTURED: Option<Presented> = Some(Presented::Shown {
+        refresh_ns: 1_000_000_000,
+    });
+
+    /// Turns the loop past `captureborder::HOLD`, how long a wlr recording outlives its last frame.
+    fn run_past_hold(h: &mut Harness) {
+        h.run_for(crate::captureborder::HOLD.as_millis() as u64 + 50);
+    }
+
+    #[test]
+    fn a_frame_between_a_wlr_recorders_copies_reports_the_capture_rate_until_the_hold_runs_out() {
+        let Some(mut h) = drawing() else { return };
+        h.state.config.remote_desktop.frame_rate = 30;
+        let o = remote_screen(&mut h);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "timed", 20, 20);
+        let mut client = h.connect_capture((64, 48));
+        record_twice(&mut h, &mut client);
+        assert_eq!(
+            refresh_shown(&mut h, &mut c, (t, 0xff00_8000), &o),
+            CAPTURED,
+            "a frame before the recorder's next copy shows at 30 frames a second"
+        );
+        run_past_hold(&mut h);
+        assert_eq!(
+            refresh_shown(&mut h, &mut c, (t, 0xff80_0000), &o),
+            UNCAPTURED,
+            "a recorder that stopped copying but keeps its manager leaves the screen at one a second"
+        );
+    }
+
+    #[test]
+    fn a_single_wlr_copy_whose_client_keeps_its_manager_leaves_a_virtual_screen_at_one_a_second() {
+        let Some(mut h) = drawing() else { return };
+        h.state.config.remote_desktop.frame_rate = 30;
+        let o = remote_screen(&mut h);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "timed", 20, 20);
+        let mut client = h.connect_capture((64, 48));
+        client.wlr_shot(&mut h);
+        assert_eq!(
+            refresh_shown(&mut h, &mut c, (t, 0xff00_8000), &o),
+            UNCAPTURED,
+            "a screenshot is not a recording"
+        );
+        run_past_hold(&mut h);
+        assert_eq!(
+            refresh_shown(&mut h, &mut c, (t, 0xff80_0000), &o),
+            UNCAPTURED,
+            "nor is it past the hold"
+        );
+    }
+
+    #[test]
+    fn a_wlr_recorder_that_destroys_its_manager_leaves_a_virtual_screen_at_one_a_second_past_the_hold()
+     {
+        let Some(mut h) = drawing() else { return };
+        h.state.config.remote_desktop.frame_rate = 30;
+        let o = remote_screen(&mut h);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "timed", 20, 20);
+        let mut client = h.connect_capture((64, 48));
+        record_twice(&mut h, &mut client);
+        client.wlr_destroy_manager(&mut h);
+        run_past_hold(&mut h);
+        assert_eq!(
+            refresh_shown(&mut h, &mut c, (t, 0xff00_8000), &o),
+            UNCAPTURED,
+            "past the hold, its connection kept, the screen is at one a second"
+        );
     }
 
     #[test]
