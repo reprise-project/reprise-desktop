@@ -678,6 +678,8 @@ fn the_touchpad_page_geometry() {
     let p = Page::Touchpad;
     assert_eq!(rect(&s, p, "touchpad_group"), Rect::new(20, 44, 358, 144));
     assert_eq!(rect(&s, p, "touchpad_enabled"), Rect::new(32, 66, 13, 13));
+    assert_eq!(rect(&s, p, "gestures_enabled"), Rect::new(199, 66, 13, 13));
+    assert_eq!(rect(&s, p, "gesture_fingers"), Rect::new(287, 62, 78, 21));
     assert_eq!(rect(&s, p, "disable_with_mouse"), Rect::new(32, 88, 13, 13));
     assert_eq!(
         rect(&s, p, "touchpad_speed"),
@@ -710,6 +712,69 @@ fn the_touchpad_page_geometry() {
     );
     assert_eq!(rect(&s, p, "touchpad_natural"), Rect::new(32, 419, 13, 13));
     inside_page(&s, p);
+}
+
+/// The Touchpad group with gestures on, with them off, and with the touchpad off.
+#[test]
+fn the_touchpad_group_pins_its_pixels_in_every_look() {
+    let row = Rect::new(20, 44, 358, 144);
+    let pins = [
+        Settings::default(),
+        Settings {
+            gestures_enabled: false,
+            gesture_fingers: 4,
+            ..Settings::default()
+        },
+        Settings {
+            touchpad_enabled: false,
+            ..Settings::default()
+        },
+    ]
+    .map(|s| row_pins(&with(&s).pages[Page::Touchpad.index()], row));
+    check_rows(
+        "touchpad_group",
+        &["gestures on", "gestures off", "touchpad off"],
+        &pins,
+    );
+}
+
+#[test]
+fn the_finger_count_greys_with_its_check_box_and_the_touchpad() {
+    let lit = |s: &Settings, id| enabled_on(&with(s), Page::Touchpad, id);
+    assert!(lit(&Settings::default(), "gesture_fingers"));
+    let off = Settings {
+        gestures_enabled: false,
+        ..Settings::default()
+    };
+    assert!(
+        !lit(&off, "gesture_fingers"),
+        "unticked greys the finger count"
+    );
+    assert!(lit(&off, "gestures_enabled"), "the check box stays live");
+    let pad_off = Settings {
+        touchpad_enabled: false,
+        ..Settings::default()
+    };
+    assert!(
+        !lit(&pad_off, "gesture_fingers"),
+        "the touchpad off greys it too"
+    );
+}
+
+#[test]
+fn the_gesture_controls_read_back_their_values() {
+    let want = Settings {
+        gestures_enabled: false,
+        gesture_fingers: 4,
+        ..Settings::default()
+    };
+    let s = with(&want);
+    let page = &s.pages[Page::Touchpad.index()];
+    assert_eq!(page.checked("gestures_enabled"), Some(false));
+    assert_eq!(page.combo_selected("gesture_fingers"), Some(1));
+    let mut got = Settings::default();
+    read_all(&s, &mut got);
+    assert_eq!((got.gestures_enabled, got.gesture_fingers), (false, 4));
 }
 
 #[test]

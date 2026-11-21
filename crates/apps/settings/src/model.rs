@@ -374,6 +374,9 @@ pub struct Settings {
     pub two_finger_scroll: bool,
     pub two_finger_tap_right_click: bool,
     pub disable_while_typing: bool,
+    pub gestures_enabled: bool,
+    /// `[gestures] fingers`: [`GESTURE_FINGERS`]' values.
+    pub gesture_fingers: i64,
 
     pub snap_enabled: bool,
     /// `[window_snapping] picker`: the snap layouts on a resting maximize
@@ -737,6 +740,8 @@ impl Settings {
             two_finger_scroll: c.touchpad.two_finger_scroll,
             two_finger_tap_right_click: c.touchpad.two_finger_tap_right_click,
             disable_while_typing: c.touchpad.disable_while_typing,
+            gestures_enabled: c.gestures.enabled,
+            gesture_fingers: c.gestures.fingers.into(),
 
             snap_enabled: c.window_snapping.enabled,
             snap_picker: c.window_snapping.picker,

@@ -38,12 +38,12 @@ use reprisekit::theme::Color;
 
 use crate::model::{
     AUDIO_CODECS, CAPS_LOCK, CLICK_METHODS, COMPOSE_KEY, CURSOR_SIZES, Choices, DESKTOPS_DEFAULT,
-    ENCODERS, FONT_SMOOTHINGS, FRAME_RATES, HOT_CORNERS, INTERFACES, LOCK_GRACES, MENU_ANIMATIONS,
-    PAGER_MARKS, PNG_COMPRESSIONS, POSITIONS, QT_PLATFORM_THEMES, RATE_MODES, RECORD_FRAME_RATES,
-    REMOTE_ENCODERS, REMOTE_QUALITIES, SHOT_FORMATS, STARTMENU_STYLES, SWITCH_ANIMATIONS,
-    SWITCHER_SIZES, SWITCHER_STYLES, Settings, Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS,
-    TEXT_SIZES, TITLE_DOUBLE_CLICKS, VIDEO_CODECS, VISUAL_BELLS, WATER_STYLES, XkbPick, keys_for,
-    remote_quality_row,
+    ENCODERS, FONT_SMOOTHINGS, FRAME_RATES, GESTURE_FINGERS, HOT_CORNERS, INTERFACES, LOCK_GRACES,
+    MENU_ANIMATIONS, PAGER_MARKS, PNG_COMPRESSIONS, POSITIONS, QT_PLATFORM_THEMES, RATE_MODES,
+    RECORD_FRAME_RATES, REMOTE_ENCODERS, REMOTE_QUALITIES, SHOT_FORMATS, STARTMENU_STYLES,
+    SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES, Settings, Shortcut, TASKBAR_BUTTONS,
+    TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, VIDEO_CODECS, VISUAL_BELLS, WATER_STYLES,
+    XkbPick, keys_for, remote_quality_row,
 };
 
 pub(super) enum Bind {
@@ -388,6 +388,8 @@ pub(super) fn binds() -> Vec<Bind> {
             lens!(two_finger_tap_right_click),
         ),
         Bind::Flag("disable_while_typing", lens!(disable_while_typing)),
+        Bind::Flag("gestures_enabled", lens!(gestures_enabled)),
+        Bind::NamedNum("gesture_fingers", lens!(gesture_fingers), GESTURE_FINGERS),
         Bind::Flag("snap_enabled", lens!(snap_enabled)),
         Bind::Flag("snap_picker", lens!(snap_picker)),
         Bind::Flag("snap_bar", lens!(snap_bar)),
@@ -839,6 +841,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         "two_finger_tap_right_click",
         s.touchpad_enabled && s.tap_to_click,
     );
+    pad.set_enabled("gesture_fingers", s.touchpad_enabled && s.gestures_enabled);
     pad.set_text("touchpad_scroll_value", &percent(s.touchpad_scroll_speed));
     let ax = &mut sheet.pages[Page::TextKeys.index()];
     for id in STICKY_CONTROLS {

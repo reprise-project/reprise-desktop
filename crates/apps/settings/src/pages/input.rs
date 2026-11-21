@@ -6,7 +6,9 @@ use super::{
     SC_EDIT, SC_OVERLAY_MS, SC_REMOVE, SCROLL_SPEED, SPEED_STEPS, X, button, choice, combo, edit,
     ends_track, group, shortcuts, spin, updown,
 };
-use crate::model::{CAPS_LOCK, CLICK_METHODS, COMPOSE_KEY, CURSOR_SIZES, TEXT_SIZES, VISUAL_BELLS};
+use crate::model::{
+    CAPS_LOCK, CLICK_METHODS, COMPOSE_KEY, CURSOR_SIZES, GESTURE_FINGERS, TEXT_SIZES, VISUAL_BELLS,
+};
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listbox::ListBox;
@@ -252,7 +254,9 @@ pub fn mouse(a: Area) -> Form {
 }
 
 /// The Touchpad page's controls that grey while "Use the touchpad" is unticked.
-pub(super) const TOUCHPAD_CONTROLS: [&str; 19] = [
+pub(super) const TOUCHPAD_CONTROLS: [&str; 21] = [
+    "gestures_enabled",
+    "gesture_fingers",
     "disable_with_mouse",
     "touchpad_speed_label",
     "touchpad_slow",
@@ -275,9 +279,14 @@ pub(super) const TOUCHPAD_CONTROLS: [&str; 19] = [
 ];
 
 pub fn touchpad(a: Area) -> Form {
+    let x2 = GX + a.gw() / 2;
+    let fingers: Vec<&str> = GESTURE_FINGERS.iter().map(|f| f.1).collect();
     let mut items = vec![
         group(a, "touchpad_group", 44, 144, "Touchpad"),
         Item::check("touchpad_enabled", GX, 66, "&Use the touchpad"),
+        Item::check("gestures_enabled", x2, 66, "&Swipe with:"),
+        Item::combo("gesture_fingers", x2 + 88, 62, 78, &fingers, fingers.len())
+            .named("Swipe fingers"),
         Item::check(
             "disable_with_mouse",
             GX,
@@ -299,7 +308,7 @@ pub fn touchpad(a: Area) -> Form {
     ));
     items.push(Item::check(
         "disable_while_typing",
-        GX + a.gw() / 2,
+        x2,
         163,
         "&Disable while typing",
     ));

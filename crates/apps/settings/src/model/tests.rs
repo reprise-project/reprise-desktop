@@ -931,6 +931,8 @@ fn save_round_trips_every_field() {
         two_finger_scroll: false,
         two_finger_tap_right_click: false,
         disable_while_typing: false,
+        gestures_enabled: false,
+        gesture_fingers: 4,
         snap_enabled: false,
         snap_picker: false,
         snap_bar: false,
@@ -1513,6 +1515,33 @@ fn every_click_method_choice_parses() {
         CLICK_METHODS.len(),
         repriseconf::config::ClickMethod::ALL.len()
     );
+}
+
+#[test]
+fn gesture_keys_save_into_their_table_and_drop_at_the_defaults() {
+    let text = "# my pad\n[gestures]\ndistance = 600 # longer swipes\n";
+    let base = load(text);
+    assert_eq!((base.gestures_enabled, base.gesture_fingers), (true, 3));
+    let want = Settings {
+        gestures_enabled: false,
+        gesture_fingers: 4,
+        ..base.clone()
+    };
+    let out = save(text, &want, &base).unwrap();
+    assert_eq!(
+        out,
+        "# my pad\n[gestures]\ndistance = 600 # longer swipes\nenabled = false\nfingers = 4\n"
+    );
+    assert_eq!(load(&out), want);
+    assert_eq!(save(&out, &base, &want).unwrap(), text);
+}
+
+#[test]
+fn every_gesture_finger_count_parses() {
+    for (n, _) in GESTURE_FINGERS {
+        let c = Config::parse(&format!("[gestures]\nfingers = {n}\n")).unwrap();
+        assert_eq!(i64::from(c.gestures.fingers), *n);
+    }
 }
 
 #[test]

@@ -263,6 +263,8 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
         ],
         Page::Touchpad => &[
             ("touchpad_enabled", "Use the touchpad"),
+            ("gestures_enabled", "Swipe with:"),
+            ("gesture_fingers", "Swipe fingers"),
             (
                 "disable_with_mouse",
                 "Turn it off while a mouse is plugged in",
