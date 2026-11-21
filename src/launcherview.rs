@@ -322,6 +322,10 @@ impl State {
         }
     }
 
+    fn launcher_row_icon_px(&self) -> i32 {
+        launcher::row_icon_px(&self.config.theme) * self.launcher_scale()
+    }
+
     fn launcher_scale(&self) -> i32 {
         let Some(area) = self.launcher.as_ref().map(|v| v.area) else {
             return 1;
@@ -348,7 +352,7 @@ impl State {
     /// loaded at the scale of the panel's output; a scale change
     /// mid-typing is picked up by the next key.
     fn rerank_launcher(&mut self) {
-        let scale = self.launcher_scale();
+        let px = self.launcher_row_icon_px();
         let candidates = if self.config.launcher_windows {
             self.launcher_window_candidates()
         } else {
@@ -365,7 +369,6 @@ impl State {
             return;
         };
         let query = v.model.query().to_string();
-        let px = 16 * scale;
         let names: Vec<WindowName> = (candidates.iter())
             .filter_map(|&id| windows.iter().find(|w| w.id == id))
             .map(|w| {
@@ -426,7 +429,7 @@ impl State {
     /// Icons landed or names turned out to decode at no size: every row looks its icon up again
     /// (a file row picks its name again), and the panel draws again if one changed.
     pub(crate) fn launcher_icons_landed(&mut self) {
-        let px = 16 * self.launcher_scale();
+        let px = self.launcher_row_icon_px();
         let State {
             launcher,
             app_index,
@@ -493,7 +496,7 @@ impl State {
 
     /// Hands the model the search's sections as they stand.
     pub(crate) fn show_launcher_found(&mut self) {
-        let px = 16 * self.launcher_scale();
+        let px = self.launcher_row_icon_px();
         let home = std::env::var_os("HOME").map(PathBuf::from);
         let State {
             launcher,
@@ -815,6 +818,47 @@ mod tests {
         h.state.toggle_launcher();
         typed(&mut h, "notes");
         assert_eq!(heads(&h), ["Files", "Contents"]);
+    }
+
+    /// At 200% text a Glass row's icon is 32 px; a list box row's keeps 16.
+    #[test]
+    fn at_200_percent_text_a_glass_program_rows_icon_is_32_px() {
+        use reprisekit::icontheme::{IconCache, IconTheme};
+        let root = crate::icon::svg_theme(&["chess-test"], &[]);
+        for (interface, px) in [("glass", 32), ("classic", 16)] {
+            let toml = format!(
+                "[appearance]\ninterface = \"{interface}\"\n[accessibility]\ntext_size = 200\n"
+            );
+            let config = crate::config::Config::parse(&toml).unwrap();
+            let mut h = crate::harness::Harness::with_config(config);
+            crate::fsjobs::setup(&mut h.state);
+            h.output("TEST-1", 1024, 768);
+            h.state.icons = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+            h.state.app_index = vec![reprisefs::apps::AppEntry {
+                name: "Chess".into(),
+                exec_line: "chess".into(),
+                terminal: false,
+                id: "Chess.desktop".parse().unwrap(),
+                icon: Some("chess-test".into()),
+                startup_wm_class: None,
+                categories: vec!["Game".into()],
+                mime_types: Vec::new(),
+                shown: true,
+                path: None,
+            }];
+            h.state.toggle_launcher();
+            typed(&mut h, "chess");
+            crate::icon::land(&mut h);
+            let m = &h.state.launcher.as_ref().expect("the launcher").model;
+            let icons: Vec<_> = m.icons.iter().flatten().collect();
+            assert_eq!(icons.len(), 1, "{interface}: the Chess row's icon");
+            assert_eq!((icons[0].width, icons[0].height), (px, px), "{interface}");
+            assert!(
+                crate::icon::red(icons[0]),
+                "{interface}: the theme's icon landed"
+            );
+        }
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// The calculator row's icon.
