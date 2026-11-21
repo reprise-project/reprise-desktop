@@ -489,7 +489,8 @@ fn glyph_mask(
 /// Where a selection of `t`'s bytes `sel` draws off its highlight at scale `s`: pixels outside
 /// the box of `hilight` pixels that differ from the text drawn unselected, pixels the selected
 /// glyphs ink alone that are not `lit`, and `lit` ink beside a pixel no glyph inks that is `lit`
-/// too, in a column no other glyph inks in the highlight's rows, where the glyph's edge is lost.
+/// too, where the glyph's edge is lost: left or right of it in a column no other glyph inks in the
+/// highlight's rows, or above or below it in `line`'s rows.
 /// `plain` and `selected` are the pixels of a `w` px wide canvas; `pen` and `line` as in
 /// [`selection_faults`]'s `geom`.
 #[cfg(test)]
@@ -533,17 +534,19 @@ pub(crate) fn off_highlight(
         let (x, y) = at(i);
         neighbour[x as usize] |= (y0..y1).contains(&y);
     }
-    let lost = |i: usize| {
-        !own[i]
-            && selected[i] == lit.argb()
-            && plain[i] == lit.argb()
-            && !neighbour[at(i).0 as usize]
-    };
+    let paper = |i: usize| !own[i] && selected[i] == lit.argb() && plain[i] == lit.argb();
+    let lost = |i: usize| paper(i) && !neighbour[at(i).0 as usize];
+    let rows = s * line.y..s * line.bottom();
+    let lost_row = |i: usize| paper(i) && rows.contains(&at(i).1);
+    let wu = ws as usize;
     let merged = (0..own.len())
         .filter(|&i| own[i] && selected[i] == lit.argb())
         .filter(|&i| {
             let x = at(i).0;
-            (x > 0 && lost(i - 1)) || (x + 1 < ws && lost(i + 1))
+            (x > 0 && lost(i - 1))
+                || (x + 1 < ws && lost(i + 1))
+                || (i >= wu && lost_row(i - wu))
+                || (i + wu < own.len() && lost_row(i + wu))
         })
         .count();
     (off, unlit, merged)

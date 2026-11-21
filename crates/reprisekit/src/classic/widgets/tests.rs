@@ -1310,9 +1310,10 @@ fn a_field_selection_at_scale_2_recolours_its_text_in_place() {
                     .collect();
                 let lit_or_past = |x: i32| hl.x <= x && x < hl.right() || past[x as usize];
                 let beside = |x: i32| (x - 2..=x + 2).filter(|&x| x >= 0).any(lit_or_past);
+                let clear = hl.y - 2..hl.bottom() + 2;
                 let read = |i: usize, p: u32| {
                     let (x, y) = (i as i32 % 300, i as i32 / 300);
-                    if p == cs.hilight.argb() && rows.contains(&y) && beside(x) {
+                    if p == cs.hilight.argb() && clear.contains(&y) && beside(x) {
                         return cs.window.argb();
                     }
                     let inside = hl.contains(x, y);

@@ -130,7 +130,7 @@ fn run_drop_button_has_the_combo_bevel() {
 }
 
 #[test]
-fn run_highlights_its_command_13_rows_tall_from_5_px_in() {
+fn run_highlights_its_command_from_5_px_in_and_a_row_past_its_descender() {
     let theme = Theme::default();
     let text = tahoma();
     let d = Dialog::run(&history());
@@ -158,7 +158,8 @@ fn run_highlights_its_command_13_rows_tall_from_5_px_in() {
     let rows: Vec<i32> = (f.y..f.bottom())
         .filter(|&y| (f.x..f.right()).any(|x| c.get(x, y) == hl))
         .collect();
-    assert_eq!(rows, (f.y + 3..f.y + 16).collect::<Vec<_>>(), "13 rows");
+    // The line's 13 rows, and one under the p's descender, which inks the last of them.
+    assert_eq!(rows, (f.y + 3..f.y + 17).collect::<Vec<_>>(), "14 rows");
     assert_eq!(
         l.hit(&d, f.x + 10, f.y + 5, &text, theme.fonts.size_px),
         Some(DialogHit::Field(4))
