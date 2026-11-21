@@ -814,6 +814,12 @@ pub fn draw(
             )
         });
     } else if let Some(edit) = &combo.edit {
+        let shown = if focus {
+            std::borrow::Cow::Borrowed(edit)
+        } else {
+            edit.unfocused()
+        };
+        let edit = &*shown;
         // A drag resting on the field scrolls it (`drag_tick`), so the caret no longer pins the
         // view.
         let from = crate::controls::form::visible_from(edit, &combo.first);
