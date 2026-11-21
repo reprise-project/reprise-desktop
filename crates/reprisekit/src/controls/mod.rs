@@ -37,6 +37,7 @@ pub mod flip;
 pub mod fontsample;
 pub mod fontview;
 pub mod form;
+pub mod formscroll;
 pub mod grouplist;
 pub mod hosted;
 pub mod hotkey;

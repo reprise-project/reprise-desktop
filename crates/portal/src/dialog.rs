@@ -10,10 +10,11 @@
 //! and cancel buttons at the bottom right.
 
 use repriseapp::keys::form_input;
-use repriseapp::{App, Ctx, Event, Reply, Waker, WinId};
+use repriseapp::{App, BTN_LEFT, Ctx, Event, PointerInput, Reader, Reply, Waker, WinId};
 use reprisekit::access::Tree;
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
+use reprisekit::controls::formscroll::FormScroll;
 use reprisekit::icontheme::{IconCache, IconTheme};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
@@ -201,7 +202,10 @@ fn spawn_tied(mut cmd: Command) -> std::io::Result<Child> {
 
 pub const TEXT_X: i32 = 54;
 pub const ICON_PX: i32 = 32;
-const ICON_AT: (i32, i32) = (12, 12);
+pub const ICON_AT: (i32, i32) = (12, 12);
+/// The header's two lines' tops.
+pub const PROMPT_Y: i32 = 12;
+pub const NOTE_Y: i32 = 38;
 
 /// The theme a prompt's form draws with, for building it before `repriseapp::run`: what
 /// `Ctx::forms` gives once it runs.
@@ -233,7 +237,16 @@ pub fn header(w: i32, prompt: String, note: String) -> [Item; 2] {
             },
         )
     };
-    [line("prompt", 12, prompt), line("note", 38, note)]
+    [line("prompt", PROMPT_Y, prompt), line("note", NOTE_Y, note)]
+}
+
+/// [`header`] as notes that rewrap to their width and grow, for a form under a view that
+/// scrolls through what they push down ([`FormScroll`]): a word too long for a line breaks.
+pub fn wrapping_header(w: i32, prompt: String, note: String) -> [Item; 2] {
+    header(w, String::new(), String::new()).map(|it| {
+        let text = if it.id == "prompt" { &prompt } else { &note };
+        Item::new(it.id, it.rect, Control::Lines(vec![text.clone()]))
+    })
 }
 
 /// The two buttons on row `y`: `cancel` is the default (so Enter can't accept
@@ -306,9 +319,9 @@ pub struct Prompt {
     pub parent: Option<String>,
     pub modal: bool,
     pub job: Option<Job>,
-    /// Lays `form` out for a client this many px tall at 100% text, for a prompt that can give up
-    /// height when the work area holds less than `size`.
-    pub fit: Option<fn(&mut Form, i32)>,
+    /// For a prompt whose form can give up room when the work area holds less than `size`:
+    /// lays it out for the client it got and scrolls what still does not fit.
+    pub fit: Option<FormScroll>,
 }
 
 impl Prompt {
@@ -329,6 +342,56 @@ impl Prompt {
             form::Event::None => Reply::none(),
             _ => Reply::redraw(),
         }
+    }
+
+    /// What the scrolling form's bars take before the form: a press on one and the pointer
+    /// while one holds it.
+    fn scroll_input(&mut self, ev: &Event) -> Option<Reply> {
+        let form = &mut self.form;
+        let fit = self.fit.as_mut().filter(|f| f.scrolls(form))?;
+        let moved = match *ev {
+            Event::Pointer(PointerInput::Press {
+                x,
+                y,
+                button: BTN_LEFT,
+                ..
+            }) if fit.press(form, x, y) => true,
+            Event::Pointer(PointerInput::Motion { x, y }) if fit.holding() => {
+                fit.motion(form, x, y)
+            }
+            Event::Pointer(PointerInput::Release {
+                button: BTN_LEFT, ..
+            }) if fit.holding() => fit.release(),
+            _ => return None,
+        };
+        Some(Reply {
+            redraw: moved,
+            tick: fit.ticking(),
+            ..Default::default()
+        })
+    }
+
+    /// The scrolling form after the form took `ev`, its focus `before` at (`focus`,
+    /// [`Form::focus_part`]): a bar lights under the pointer, the wheel the form's controls left
+    /// scrolls it, a held arrow steps on the tick, and a key that moved the focus scrolls it into
+    /// view.
+    fn after_form(&mut self, ev: &Event, before: Focus, mut reply: Reply) -> Reply {
+        let form = &mut self.form;
+        let Some(fit) = self.fit.as_mut().filter(|f| f.scrolls(form)) else {
+            return reply;
+        };
+        reply.redraw |= match *ev {
+            Event::Pointer(PointerInput::Motion { x, y }) => fit.motion(form, x, y),
+            Event::Pointer(PointerInput::Leave) => fit.leave(),
+            Event::Pointer(PointerInput::Scroll { rows, .. }) if !reply.redraw => {
+                fit.wheel(form, rows)
+            }
+            Event::Tick if fit.ticking() => fit.tick(form, std::time::Instant::now()),
+            Event::Key(_) if focus(form) != before => fit.reveal_focus(form),
+            _ => false,
+        };
+        reply.tick |= fit.ticking();
+        reply
     }
 
     fn cancelled(&mut self, how: Refusal) -> Reply {
@@ -389,19 +452,30 @@ impl App for Prompt {
             // A text size change: a fixed window takes only the size it is asked for, held to the
             // work area.
             Event::Resized => {
-                let u = ctx.forms().text;
-                if let Some(fit) = self.fit {
-                    fit(&mut self.form, u.within(ctx.size.1));
+                let forms = ctx.forms();
+                if let Some(fit) = &mut self.fit {
+                    self.form.drawn_with(&Paint {
+                        s: 1,
+                        ..forms.paint()
+                    });
+                    fit.fit(&mut self.form, ctx.size, &ctx.text, forms.fonts.size_px);
                 }
                 Reply {
-                    size: Some(u.size(self.size)),
+                    size: Some(forms.text.size(self.size)),
                     redraw: true,
                     ..Default::default()
                 }
             }
-            ev => match form_input(&mut self.form, &ev, ctx) {
-                Some(e) => self.decide(e),
-                None => Reply::none(),
+            ev => match self.scroll_input(&ev) {
+                Some(r) => r,
+                None => {
+                    let before = focus(&self.form);
+                    let reply = match form_input(&mut self.form, &ev, ctx) {
+                        Some(e) => self.decide(e),
+                        None => Reply::none(),
+                    };
+                    self.after_form(&ev, before, reply)
+                }
             },
         }
     }
@@ -421,9 +495,25 @@ impl App for Prompt {
             true,
             px,
         );
+        let (left, top) = self.fit.as_ref().map_or((0, 0), FormScroll::offset);
         if let Some(ic) = self.icon.as_ref() {
             let u = forms.text;
-            c.blit_over(u.len(ICON_AT.0), u.len(ICON_AT.1), ic);
+            let clip = match &self.form.view {
+                Some(v) => u.rect(v.rect),
+                None => c.bounds(),
+            };
+            let (x, y) = (u.len(ICON_AT.0 - left), u.len(ICON_AT.1 - top));
+            c.blit_over_clipped(x, y, ic, clip);
+        }
+        if let Some(fit) = &self.fit {
+            fit.draw(
+                c,
+                &Paint {
+                    s: 1,
+                    ..forms.paint()
+                },
+                &self.form,
+            );
         }
     }
 }
@@ -448,8 +538,44 @@ impl repriseapp::Extended for Prompt {
 
     fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let px = self.form.units().px(ctx.base_px());
-        repriseapp::oneshot::access_form(&self.form, tree, &ctx.text, px);
+        let Some(fit) = &self.fit else {
+            repriseapp::oneshot::access_form(&self.form, tree, &ctx.text, px);
+            return;
+        };
+        if let Some(f) = fit.access(&self.form, tree, reprisekit::access::ROOT, &ctx.text, px) {
+            tree.set_focus(f);
+        }
     }
+
+    /// A reader's Focus moves the keyboard as Tab would and scrolls it into view; its
+    /// ScrollIntoView scrolls a list's row in, or the form to the control the view hides.
+    fn reader(&mut self, _win: WinId, act: Reader, ctx: &Ctx) -> bool {
+        let px = self.form.units().px(ctx.base_px());
+        let (form, text) = (&mut self.form, &ctx.text);
+        match act {
+            Reader::Reveal {
+                at: (x, y),
+                row,
+                node,
+                view,
+            } => {
+                (!view && form.reveal(x, y, row, text, px) != form::Event::None)
+                    || self.fit.as_mut().is_some_and(|f| f.show(form, node))
+            }
+            Reader::Focus((x, y)) => {
+                let moved = form.focus_at(x, y, text, px) != form::Event::None;
+                let shown = self.fit.as_mut().is_some_and(|f| f.reveal_focus(form));
+                moved || shown
+            }
+        }
+    }
+}
+
+/// Where a form's keyboard is: the focused control and the part of it the keyboard rests on.
+type Focus = (Option<usize>, Option<Rect>);
+
+fn focus(form: &Form) -> Focus {
+    (form.focus(), form.focus_part())
 }
 
 /// What of the form `build` makes for each interface's theme at each text size, in Tahoma and

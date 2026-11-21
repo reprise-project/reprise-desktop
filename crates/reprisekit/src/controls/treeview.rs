@@ -330,12 +330,22 @@ impl TreeView {
 
     /// Scroll visible row `i` into view without picking it. True when it moved.
     pub fn reveal(&mut self, i: usize, lay: &Layout) -> bool {
-        if i >= self.visible().len() {
-            return false;
-        }
+        i < self.visible().len() && self.show_row(i, lay)
+    }
+
+    /// Scroll row `i` into view, keeping a top past the end ([`lift`](Self::lift)) that still
+    /// shows it.
+    fn show_row(&mut self, i: usize, lay: &Layout) -> bool {
         let mut top = self.top;
         scroll_into_view(&mut top, i, lay.rows);
-        self.set_top(top.min(self.max_top(lay)))
+        self.set_top(top.min(self.max_top(lay).max(i)))
+    }
+
+    /// Scroll so visible row `i` is the first shown, picking nothing: past the last row's place
+    /// if need be, blank under the list until a key pulls it back. A click on a shown row leaves
+    /// it there and a scroll moves it only up. True when it moved.
+    pub fn lift(&mut self, i: usize) -> bool {
+        i < self.visible().len() && self.set_top(i)
     }
 
     /// Scroll to `top`. A hot row moves away from the pointer, so none is hot until it moves. True when it moved.
@@ -556,7 +566,7 @@ impl TreeView {
         };
         let changed = self.selected.as_ref() != Some(&row.path);
         self.selected = Some(row.path.clone());
-        self.follow(lay);
+        self.show_row(i, lay);
         changed
     }
 
@@ -645,7 +655,7 @@ impl TreeView {
     }
 
     pub fn scroll(&mut self, by: i64, lay: &Layout) -> bool {
-        let max = self.max_top(lay) as i64;
+        let max = self.max_top(lay).max(self.top) as i64;
         let top = (self.top as i64 + by).clamp(0, max) as usize;
         self.set_top(top)
     }
@@ -991,7 +1001,7 @@ pub fn access(
     access::focusable(&mut n, true);
     n.set_scroll_y(f64::from(rh) * tv.top as f64);
     n.set_scroll_y_min(0.0);
-    n.set_scroll_y_max(f64::from(rh) * tv.max_top(lay) as f64);
+    n.set_scroll_y_max(f64::from(rh) * tv.max_top(lay).max(tv.top) as f64);
     let id = tree.push(parent, key, n);
     let mut focus = id;
     let shown = tv.top.min(count)..(tv.top + lay.rows + 1).min(count);

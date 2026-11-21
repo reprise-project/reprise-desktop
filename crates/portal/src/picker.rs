@@ -6,7 +6,9 @@
 
 use crate::dialog::{self, Prompt};
 use crate::wayland::Target;
+use reprisekit::classic::widgets::LINE_H;
 use reprisekit::controls::form::{Control, Form, Item};
+use reprisekit::controls::formscroll::FormScroll;
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::treeview::{self, Node, TreeView};
 use reprisekit::controls::updown::{self, UpDown};
@@ -30,8 +32,17 @@ const REMEMBER: Rect = Rect::new(9, 366, 13, 13);
 const DELAY_LABEL: Rect = Rect::new(9, 370, 44, 13);
 const DELAY: Rect = Rect::new(57, 366, updown::WIDTH, updown::HEIGHT);
 const DELAY_UNITS: Rect = Rect::new(DELAY.x + updown::WIDTH + 6, 370, 60, 13);
-/// The Sources tree's least height on a short work area, five rows.
-const TREE_MIN_H: i32 = 90;
+/// The Sources tree's least size on a small work area: two rows tall inside its edges.
+const TREE_MIN: (i32, i32) = (240, 40);
+/// The Sources group's least room under the tree, as at its sides.
+const GROUP_FOOT: i32 = 15;
+/// A room shorter than this at 100% raises the Sources group to the consent line and puts the
+/// note under the group: over it, a two-line consent line and a three-line note leave no room
+/// for the tree's first row.
+const NOTE_UNDER: i32 = 167;
+/// The raised group's gap under the consent line, and its least gap under the header icon.
+const RAISED_GAP: i32 = 7;
+const ICON_GAP: i32 = 4;
 const HEADER_ICON: &str = "preferences-desktop-display";
 pub const SCREEN_ICON: &str = "computer";
 const FALLBACK_ICON: &str = "application-x-executable";
@@ -287,7 +298,7 @@ fn build_form(
     let lay = reprisekit::controls::treeview::layout_without_text(&tree, TREE, &cm);
     let start = preselect.and_then(|i| index.get(i).copied()).unwrap_or(1);
     tree.select(start, &lay);
-    let mut items = Vec::from(dialog::header(
+    let mut items = Vec::from(dialog::wrapping_header(
         w,
         purpose.prompt(&crate::permit::who(app)),
         purpose.note().into(),
@@ -333,28 +344,52 @@ fn build_form(
     f
 }
 
-/// Lays the dialog out for a client `h` px tall at 100% text: short of [`CLIENT`], the Sources
-/// tree gives up the difference down to [`TREE_MIN_H`] and the rows under it move up with it.
-fn fit(form: &mut Form, h: i32) {
-    let short = (CLIENT.1 - h).clamp(0, TREE.height - TREE_MIN_H);
-    let cut = |r: Rect| Rect::new(r.x, r.y, r.width, r.height - short);
-    let up = |r: Rect| Rect::new(r.x, r.y - short, r.width, r.height);
+/// Lays the dialog out for `room` at 100% text: the Sources group gives up its room under the
+/// tree, then the tree down to [`TREE_MIN`]; the rows and the buttons follow, and the header's
+/// lines narrow to the room even past the tree. A room under [`NOTE_UNDER`] tall raises the group
+/// to the consent line and puts the note under it. Returns its size.
+fn lay(form: &mut Form, room: (i32, i32)) -> (i32, i32) {
+    let under = room.1 < NOTE_UNDER;
+    // The header icon keeps its px, so at 100% text it reaches below a one-line prompt.
+    let icon = dialog::ICON_AT.1 + form.units().design(dialog::ICON_PX) + ICON_GAP;
+    let raised = (dialog::PROMPT_Y + LINE_H + RAISED_GAP).max(icon);
+    let lift = if under { GROUP.y - raised } else { 0 };
+    // The note takes a line and Remember's gap under the group; the rows under it rise by the rest.
+    let gap = REMEMBER.y - GROUP.bottom();
+    let rise = if under { lift - LINE_H - gap } else { 0 };
+    let foot = GROUP.bottom() - TREE.bottom() - GROUP_FOOT;
+    let narrow = (CLIENT.0 - room.0).clamp(0, TREE.width - TREE_MIN.0);
+    let short = (CLIENT.1 - rise - room.1).clamp(0, foot + TREE.height - TREE_MIN.1);
+    let tree_short = (short - foot).max(0);
+    let cut = |r: Rect, short| Rect::new(r.x, r.y - lift, r.width - narrow, r.height - short);
+    let up = |r: Rect| Rect::new(r.x, r.y - short - rise, r.width, r.height);
+    let buttons = dialog::buttons(
+        GROUP.right() - 11 - narrow,
+        BUTTON_Y - short - rise,
+        ("share", ""),
+        ("cancel", ""),
+    );
+    let right = (CLIENT.0 - narrow).min(room.0) - 11;
+    let line = |x, y| Rect::new(x, y, right - x, LINE_H);
+    let note = match under {
+        false => line(dialog::TEXT_X, dialog::NOTE_Y),
+        true => line(GROUP.x, GROUP.bottom() - lift - short + gap),
+    };
     let rects = [
-        ("group", cut(GROUP)),
-        ("tree", cut(TREE)),
+        ("prompt", line(dialog::TEXT_X, dialog::PROMPT_Y)),
+        ("note", note),
+        ("group", cut(GROUP, short)),
+        ("tree", cut(TREE, tree_short)),
         ("remember", up(REMEMBER)),
         ("delay_label", up(DELAY_LABEL)),
         ("delay", up(DELAY)),
         ("delay_units", up(DELAY_UNITS)),
-    ];
+    ]
+    .into_iter()
+    .chain(buttons.map(|b| (b.id, b.rect)));
     for (id, r) in rects {
         if let Some(it) = form.item_mut(id) {
             it.rect = r;
-        }
-    }
-    for id in ["share", "cancel"] {
-        if let Some(it) = form.item_mut(id) {
-            it.rect.y = BUTTON_Y - short;
         }
     }
     if let Some(it) = form.item_mut("tree")
@@ -367,6 +402,7 @@ fn fit(form: &mut Form, h: i32) {
         );
         tv.follow(&lay);
     }
+    (CLIENT.0 - narrow, CLIENT.1 - short - rise)
 }
 
 fn prompt(
@@ -403,7 +439,7 @@ fn prompt(
             None => false,
         }),
         job: None,
-        fit: Some(fit),
+        fit: Some(FormScroll::new(&["share", "cancel"], lay).head(&["prompt"])),
     }
 }
 
@@ -554,60 +590,112 @@ mod tests {
         }
     }
 
-    /// On a 720x450 work area (a 1440x900 screen at scale 2, or a 720x450 one) the screenshot and
-    /// share dialogs keep Take or Share and Cancel inside the window, at scale 1 and 2, under
-    /// every interface, the picked source still picked.
+    /// On a 720x450 work area (a 1440x900 screen at scale 2) the buttons stay in the client at
+    /// 100% and 200% text; at 200% the form scrolls down to the Remember or Delay row. At 150% and
+    /// 200% the dialog opens with the picked source in view.
     #[test]
     fn a_short_work_area_keeps_the_buttons_in_the_window() {
         use reprisekit::frame::{Chrome, FrameGeometry};
         use reprisekit::interface::Interface;
         use reprisekit::text::TextRenderer;
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
-            let theme = reprisekit::interfaces::theme_for(i);
-            let m = &theme.metrics;
-            let total = (720, 450 - m.taskbar_height);
-            let (_, h) =
-                FrameGeometry::client_size_for_total(m, total.0, total.1, false, Chrome::DIALOG);
-            assert!(h < CLIENT.1, "{i:?}: the dialog is taller than {h}");
-            for (purpose, remember, delay) in [
-                (Purpose::Share, true, None),
-                (Purpose::Screenshot, false, Some(3)),
-            ] {
-                let form = build_form(purpose, &rows(), Some(2), remember, delay, "", |_| None);
-                let mut p = prompt(purpose, rows(), form, None, None, Arc::default());
-                let mut ctx = crate::dialog::test_ctx(100);
-                ctx.theme = theme.clone();
-                ctx.size = (CLIENT.0, h);
-                repriseapp::App::event(
-                    &mut p,
-                    repriseapp::MAIN,
-                    repriseapp::Event::Resized,
-                    &mut ctx,
+            for pct in [100, 150, 200] {
+                let base = reprisekit::interfaces::theme_for(i);
+                let m = &base.with_text_size(pct).metrics;
+                let total = (720, 450 - m.taskbar_height);
+                let client = FrameGeometry::client_size_for_total(
+                    m,
+                    total.0,
+                    total.1,
+                    false,
+                    Chrome::DIALOG,
                 );
-                let at = |id| p.form.item(id).unwrap().rect;
-                let (take, cancel) = (at("share"), at("cancel"));
-                assert!(
-                    cancel.bottom() <= h,
-                    "{i:?} {purpose:?}: {cancel:?} ends by {h}"
-                );
-                let foot = at(if remember { "remember" } else { "delay" });
-                assert!(at("group").bottom() <= foot.y && foot.bottom() <= take.y);
-                assert_eq!(selection(&rows(), &p.form), Some(2), "the pick stays");
-                for scale in [1, 2] {
-                    let t = theme.scaled(scale);
-                    let text = TextRenderer::load(&t.fonts);
-                    let mut c = Canvas::new((CLIENT.0 * scale) as u32, (h * scale) as u32);
-                    c.fill_rect(c.bounds(), t.colors.button_face);
-                    form::draw(&mut c, &text, &t.paint(), &p.form, true, t.fonts.size_px);
-                    let face = t.colors.button_face.argb();
-                    for b in [take, cancel] {
-                        let foot = (b.bottom() - 3) * scale..b.bottom() * scale;
-                        let xs = b.x * scale..b.right() * scale;
-                        assert!(
-                            foot.flat_map(|y| xs.clone().map(move |x| (x, y)))
-                                .any(|(x, y)| c.get(x, y) != face),
-                            "{i:?} {purpose:?} x{scale}: {b:?}'s foot is drawn"
+                for (purpose, remember, delay) in [
+                    (Purpose::Share, true, None),
+                    (Purpose::Screenshot, false, Some(3)),
+                ] {
+                    let form = build_form(purpose, &rows(), Some(2), remember, delay, "", |_| None);
+                    if pct == 150 {
+                        let mut p = prompt(purpose, rows(), form, None, None, Arc::default());
+                        let mut ctx = crate::dialog::test_ctx(pct);
+                        ctx.theme = base.clone();
+                        ctx.size = client;
+                        repriseapp::App::event(
+                            &mut p,
+                            repriseapp::MAIN,
+                            repriseapp::Event::Resized,
+                            &mut ctx,
                         );
+                        let view = p.form.view.unwrap().rect;
+                        let row = p.form.focus_part().unwrap();
+                        assert!(
+                            view.intersect(&row) == row,
+                            "{i:?} 150% {purpose:?}: the picked source shows"
+                        );
+                        continue;
+                    }
+                    let mut p = prompt(purpose, rows(), form, None, None, Arc::default());
+                    let mut ctx = crate::dialog::test_ctx(pct);
+                    ctx.theme = base.clone();
+                    ctx.size = client;
+                    let u = ctx.forms().text;
+                    let at = |p: &Prompt, id| u.rect(p.form.item(id).unwrap().rect);
+                    let event = |p: &mut Prompt, ctx: &mut repriseapp::Ctx, ev| {
+                        repriseapp::App::event(p, repriseapp::MAIN, ev, ctx)
+                    };
+                    event(&mut p, &mut ctx, repriseapp::Event::Resized);
+                    let name = format!("{i:?} {pct}% {purpose:?}");
+                    let fit = p.fit.as_ref().unwrap();
+                    assert_eq!(fit.scrolls(&p.form), pct > 100, "{name}");
+                    let view = p.form.view.unwrap().rect;
+                    let row = p.form.focus_part().unwrap();
+                    assert!(
+                        row.height < p.form.item("tree").unwrap().rect.height,
+                        "{name}: the tree's selected row"
+                    );
+                    assert!(
+                        view.intersect(&row) == row,
+                        "{name}: the picked source {row:?} shows in {view:?}"
+                    );
+                    let (take, cancel) = (at(&p, "share"), at(&p, "cancel"));
+                    assert!(
+                        cancel.right() <= client.0 && cancel.bottom() <= client.1,
+                        "{name}: {cancel:?} ends inside {client:?}"
+                    );
+                    let foot = if remember { "remember" } else { "delay" };
+                    let wheel = repriseapp::Event::Pointer(repriseapp::PointerInput::Scroll {
+                        x: 4,
+                        y: 4,
+                        rows: 100,
+                    });
+                    event(&mut p, &mut ctx, wheel);
+                    let shown =
+                        (p.fit.as_ref().unwrap().bar(&p.form)).map_or(take.y, |b| b.bottom());
+                    let foot = at(&p, foot);
+                    assert!(
+                        at(&p, "group").bottom() <= foot.y && foot.bottom() <= shown,
+                        "{name}: {foot:?} shows by {shown}"
+                    );
+                    assert!(shown <= take.y, "{name}: the buttons stay clear");
+                    assert_eq!(selection(&rows(), &p.form), Some(2), "the pick stays");
+                    for scale in [1, 2] {
+                        let t = ctx.forms().scaled(scale);
+                        let text = TextRenderer::load(&t.fonts);
+                        let (w, h) = (client.0 * scale, client.1 * scale);
+                        let mut c = Canvas::new(w as u32, h as u32);
+                        c.fill_rect(c.bounds(), t.colors.button_face);
+                        form::draw(&mut c, &text, &t.paint(), &p.form, true, t.fonts.size_px);
+                        p.fit.as_ref().unwrap().draw(&mut c, &t.paint(), &p.form);
+                        let face = t.colors.button_face.argb();
+                        for b in [take, cancel] {
+                            let foot = (b.bottom() - 3) * scale..b.bottom() * scale;
+                            let xs = b.x * scale..b.right() * scale;
+                            assert!(
+                                foot.flat_map(|y| xs.clone().map(move |x| (x, y)))
+                                    .any(|(x, y)| c.get(x, y) != face),
+                                "{name} x{scale}: {b:?}'s foot is drawn"
+                            );
+                        }
                     }
                 }
             }
@@ -620,15 +708,25 @@ mod tests {
         use reprisekit::interface::Interface;
         use reprisekit::text::TextRenderer;
         reprisekit::pins::fonts();
+        let hash = |c: &Canvas| {
+            (c.pixels.iter()).fold(0xcbf29ce484222325, |h, p| {
+                (h ^ u64::from(*p)).wrapping_mul(0x100000001b3)
+            })
+        };
         let mut got = Vec::new();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
-            for scale in [1, 2] {
-                let theme = reprisekit::theme::Theme {
+            for pct in [100, 200] {
+                let mut ctx = crate::dialog::test_ctx(pct);
+                ctx.theme = reprisekit::theme::Theme {
                     access_keys: true,
-                    ..reprisekit::interfaces::theme_for(i).scaled(scale)
+                    ..reprisekit::interfaces::theme_for(i)
                 };
-                let text = TextRenderer::load(&theme.fonts);
-                let f = build_form(
+                ctx.text = TextRenderer::load(&ctx.theme.fonts).into();
+                ctx.size = match pct {
+                    100 => CLIENT,
+                    _ => (704, 346),
+                };
+                let built = build_form(
                     Purpose::Screenshot,
                     &rows(),
                     Some(1),
@@ -637,14 +735,44 @@ mod tests {
                     "Chromium",
                     |_| None,
                 );
-                let (w, h) = (CLIENT.0 * scale, CLIENT.1 * scale);
-                let mut c = Canvas::new(w as u32, h as u32);
-                c.fill_rect(c.bounds(), theme.colors.button_face);
-                form::draw(&mut c, &text, &theme.paint(), &f, true, theme.fonts.size_px);
-                let hash = c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
-                    (h ^ u64::from(*p)).wrapping_mul(0x100000001b3)
-                });
-                got.push((format!("{}-x{scale}", i.as_str()), hash));
+                let mut p = prompt(
+                    Purpose::Screenshot,
+                    rows(),
+                    built.clone(),
+                    None,
+                    None,
+                    Arc::default(),
+                );
+                repriseapp::App::event(
+                    &mut p,
+                    repriseapp::MAIN,
+                    repriseapp::Event::Resized,
+                    &mut ctx,
+                );
+                if pct == 100 {
+                    assert_eq!(
+                        p.form.items, built.items,
+                        "{i:?}: a client the size of the dialog keeps it as built"
+                    );
+                } else {
+                    repriseapp::App::event(&mut p, repriseapp::MAIN, wheel(3), &mut ctx);
+                    assert!(p.fit.as_ref().unwrap().offset().1 > 0, "{i:?}: scrolled");
+                }
+                let fit = p.fit.as_ref().unwrap();
+                for scale in [1, 2] {
+                    let t = ctx.forms().scaled(scale);
+                    let text = TextRenderer::load(&t.fonts);
+                    let (w, h) = (ctx.size.0 * scale, ctx.size.1 * scale);
+                    let mut c = Canvas::new(w as u32, h as u32);
+                    c.fill_rect(c.bounds(), t.colors.button_face);
+                    form::draw(&mut c, &text, &t.paint(), &p.form, true, t.fonts.size_px);
+                    fit.draw(&mut c, &t.paint(), &p.form);
+                    let key = match pct {
+                        100 => format!("{}-x{scale}", i.as_str()),
+                        _ => format!("{}-{pct}-scrolled-x{scale}", i.as_str()),
+                    };
+                    got.push((key, hash(&c)));
+                }
             }
         }
         let file = concat!(
@@ -831,9 +959,10 @@ mod tests {
             "Chromium",
             |_| None,
         );
-        let Some(Control::Label { text, .. }) = f.item("prompt").map(|i| &i.control) else {
-            panic!("prompt label");
+        let Some(Control::Lines(lines)) = f.item("prompt").map(|i| &i.control) else {
+            panic!("prompt lines");
         };
+        let text = lines.join(" ");
         assert!(
             text.starts_with("Chromium wants"),
             "prompt starts with the app name, got {text:?}"
@@ -879,5 +1008,567 @@ mod tests {
             tv.select(0, &lay);
         }
         assert_eq!(selection(&rows(), &form), None);
+    }
+
+    /// The clients a short work area leaves the dialog, from 560x240 to 760x420.
+    fn short_clients() -> impl Iterator<Item = (i32, i32)> {
+        (560..=760)
+            .step_by(50)
+            .flat_map(|w| (240..=420).step_by(45).map(move |h| (w, h)))
+    }
+
+    /// The pick dialog for `purpose` fitted to `client` in look `i` at `ctx`'s text size, asked
+    /// for by `app`, the source at index 2 picked and its consent gate open.
+    fn fitted(
+        ctx: &mut repriseapp::Ctx,
+        i: reprisekit::interface::Interface,
+        client: (i32, i32),
+        purpose: Purpose,
+        app: &str,
+        chosen: Arc<Mutex<Option<Choice>>>,
+    ) -> Prompt {
+        fitted_with(ctx, i, client, (purpose, app), (&rows(), 2), chosen)
+    }
+
+    /// [`fitted`] listing `rows`, source `pick` picked.
+    fn fitted_with(
+        ctx: &mut repriseapp::Ctx,
+        i: reprisekit::interface::Interface,
+        client: (i32, i32),
+        (purpose, app): (Purpose, &str),
+        (rows, pick): (&[Row], usize),
+        chosen: Arc<Mutex<Option<Choice>>>,
+    ) -> Prompt {
+        let (remember, delay) = match purpose {
+            Purpose::Share => (true, None),
+            Purpose::Screenshot => (false, Some(3)),
+        };
+        let form = build_form(purpose, rows, Some(pick), remember, delay, app, |_| None);
+        let mut p = prompt(purpose, rows.to_vec(), form, None, None, chosen);
+        ctx.theme = reprisekit::interfaces::theme_for(i);
+        ctx.size = client;
+        repriseapp::App::event(&mut p, repriseapp::MAIN, repriseapp::Event::Resized, ctx);
+        let armed = std::time::Instant::now().checked_sub(form::CONSENT_ARM);
+        p.form.consent_focused(armed.unwrap());
+        p
+    }
+
+    /// The dialog's tree as a reader gets it, and what was published.
+    fn published(
+        p: &mut Prompt,
+        ctx: &repriseapp::Ctx,
+    ) -> (reprisekit::access::Tree, reprisekit::access::Published) {
+        let mut tree = reprisekit::access::Tree::window("T", ctx.size);
+        repriseapp::Extended::access(p, repriseapp::MAIN, &mut tree, ctx);
+        let mut published = reprisekit::access::Published::default();
+        published.update(tree.clone());
+        (tree, published)
+    }
+
+    /// The item whose `access` part published node `id`: the nearest node up from it that is
+    /// keyed by an item.
+    fn owner(
+        tree: &reprisekit::access::Tree,
+        f: &Form,
+        id: reprisekit::access::accesskit::NodeId,
+    ) -> Option<usize> {
+        use reprisekit::access::Tree;
+        let parents: std::collections::HashMap<_, _> = (tree.nodes())
+            .flat_map(|(p, n)| n.children().iter().map(move |&c| (c, p)))
+            .collect();
+        let mut at = id;
+        loop {
+            let up = *parents.get(&at)?;
+            let keyed = |(k, it): (usize, &Item)| Tree::id_of(up, (it.id, k)) == at;
+            if let Some(k) = f.items.iter().enumerate().position(keyed) {
+                return Some(k);
+            }
+            at = up;
+        }
+    }
+
+    /// Every node a reader can click or focus in `p` is acted on where its own control is: on
+    /// the part of it in view, and on Share or Cancel only for that button.
+    /// Returns how many requests acted and how many scroll their node in first.
+    fn assert_acts_on_its_own_control(
+        p: &mut Prompt,
+        ctx: &repriseapp::Ctx,
+        name: &str,
+    ) -> (usize, usize) {
+        use reprisekit::access::{Act, Request, Route};
+        let (tree, published) = published(p, ctx);
+        let px = p.form.units().px(ctx.base_px());
+        let u = p.form.units();
+        let fit = p.fit.as_ref().unwrap();
+        let clip = fit.clip(&p.form);
+        let f = &p.form;
+        let button =
+            |k: Option<usize>| k.is_some_and(|k| ["share", "cancel"].contains(&f.items[k].id));
+        let (mut acted, mut revealed) = (0, 0);
+        for (id, n) in tree.nodes() {
+            for act in [Act::Click, Act::Focus] {
+                let t = match published.route(Request { node: id, act }) {
+                    Route::Act(t) => t,
+                    Route::Reveal { .. } => {
+                        revealed += 1;
+                        continue;
+                    }
+                    Route::None => continue,
+                };
+                acted += 1;
+                let (x, y) = (t.at.0 as i32, t.at.1 as i32);
+                let hit = f.hit(x, y, &ctx.text, px).map(|h| h.item);
+                let owner = owner(&tree, f, id);
+                let what = format!(
+                    "{name}: {act:?} on {:?} {:?} at {:?}",
+                    n.role(),
+                    n.label(),
+                    (x, y)
+                );
+                assert!(
+                    !button(hit) || hit == owner,
+                    "{what} presses {:?}",
+                    hit.map(|k| f.items[k].id)
+                );
+                let Some(o) = owner else {
+                    assert_eq!(
+                        n.role(),
+                        reprisekit::access::accesskit::Role::ScrollBar,
+                        "{what}"
+                    );
+                    assert_eq!(hit, None, "{what}: a bar is no control of the form's");
+                    continue;
+                };
+                let it = &f.items[o];
+                let held = u.rect(f.flowed(it));
+                let shown = if button(Some(o)) { held } else { clip };
+                assert!(shown.contains(x, y), "{what}: outside {shown:?}");
+                match hit {
+                    _ if f.can_focus(it.id) => {
+                        assert_eq!(hit, Some(o), "{what}: lands on {}", it.id);
+                    }
+                    Some(k) if k != o => {
+                        let r = u.rect(f.flowed(&f.items[k]));
+                        let into = held.intersect(&r) == r;
+                        assert!(into, "{what}: lands on {} out of {}", f.items[k].id, it.id);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        (acted, revealed)
+    }
+
+    #[test]
+    fn a_readers_click_lands_on_the_control_it_names_at_every_short_size() {
+        use reprisekit::interface::Interface;
+        let mut hidden = 0;
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 150, 200] {
+                let mut ctx = crate::dialog::test_ctx(pct);
+                for client in short_clients() {
+                    for purpose in [Purpose::Share, Purpose::Screenshot] {
+                        let mut p = fitted(&mut ctx, i, client, purpose, "", Arc::default());
+                        let name = format!("{i:?} {pct}% {client:?} {purpose:?}");
+                        let (acted, revealed) = assert_acts_on_its_own_control(&mut p, &ctx, &name);
+                        assert!(acted > 10, "{name}: {acted} acted");
+                        if p.fit.as_ref().unwrap().scrolls(&p.form) {
+                            hidden += revealed;
+                            repriseapp::App::event(&mut p, repriseapp::MAIN, wheel(100), &mut ctx);
+                            let name = format!("{name} scrolled");
+                            assert_acts_on_its_own_control(&mut p, &ctx, &name);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(hidden > 100, "{hidden} nodes scrolled out");
+    }
+
+    fn wheel(rows: i32) -> repriseapp::Event {
+        repriseapp::Event::Pointer(repriseapp::PointerInput::Scroll { x: 4, y: 4, rows })
+    }
+
+    /// A reader's Click or Focus on any node of a scrolled dialog, carried out as the host does:
+    /// a hidden node scrolls in first, then the click lands, or the keyboard moves to the
+    /// control and it shows. Only Share's click shares.
+    #[test]
+    fn a_readers_click_on_a_hidden_source_scrolls_it_in_and_shares_nothing() {
+        use reprisekit::access::{Act, Gesture, Request, Route, gesture};
+        use reprisekit::interface::Interface;
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [150, 200] {
+                let mut ctx = crate::dialog::test_ctx(pct);
+                for client in [(704, 346), (560, 240)] {
+                    let share = Purpose::Share;
+                    let mut probe = fitted(&mut ctx, i, client, share, "", Arc::default());
+                    let (tree, _) = published(&mut probe, &ctx);
+                    let nodes: Vec<_> = tree.nodes().map(|(id, n)| (id, n.clone())).collect();
+                    for (id, n) in nodes {
+                        for act in [Act::Click, Act::Focus] {
+                            let chosen = Arc::new(Mutex::new(None));
+                            let mut p = fitted(&mut ctx, i, client, share, "", chosen.clone());
+                            let name = format!(
+                                "{i:?} {pct}% {client:?} {act:?} on {:?} {:?}",
+                                n.role(),
+                                n.label()
+                            );
+                            let req = Request { node: id, act };
+                            let mut route = published(&mut p, &ctx).1.route(req);
+                            for _ in 0..4 {
+                                let Route::Reveal { reveal, .. } = route else {
+                                    break;
+                                };
+                                let b = reveal.node;
+                                let node = Rect::new(
+                                    b.x0 as i32,
+                                    b.y0 as i32,
+                                    (b.x1 - b.x0).ceil() as i32,
+                                    (b.y1 - b.y0).ceil() as i32,
+                                );
+                                let at = (reveal.at.0 as i32, reveal.at.1 as i32);
+                                let r = repriseapp::Reader::Reveal {
+                                    at,
+                                    row: reveal.row,
+                                    node,
+                                    view: reveal.view,
+                                };
+                                repriseapp::Extended::reader(&mut p, repriseapp::MAIN, r, &ctx);
+                                route = published(&mut p, &ctx).1.route(req);
+                            }
+                            let Route::Act(t) = route else {
+                                assert!(
+                                    !matches!(route, Route::Reveal { .. }),
+                                    "{name}: never comes in"
+                                );
+                                continue;
+                            };
+                            let owner = owner(&published(&mut p, &ctx).0, &p.form, id);
+                            let is_share = owner.is_some_and(|k| p.form.items[k].id == "share");
+                            let (x, y) = match gesture(act, t) {
+                                Some(Gesture::Click((x, y))) => (x as i32, y as i32),
+                                Some(Gesture::Focus((x, y))) => {
+                                    let at = (x as i32, y as i32);
+                                    let focus = repriseapp::Reader::Focus(at);
+                                    repriseapp::Extended::reader(
+                                        &mut p,
+                                        repriseapp::MAIN,
+                                        focus,
+                                        &ctx,
+                                    );
+                                    assert!(chosen.lock().unwrap().is_none(), "{name}");
+                                    let item = |o: usize| p.form.items[o].id;
+                                    let Some(o) = owner.filter(|&o| p.form.can_focus(item(o)))
+                                    else {
+                                        continue;
+                                    };
+                                    assert_eq!(p.form.focus(), Some(o), "{name}: focused");
+                                    let view = p.form.view.unwrap().rect;
+                                    let part = p.form.focus_part().unwrap();
+                                    let kept = ["share", "cancel"].contains(&item(o));
+                                    let shown = kept || view.intersect(&part) == part;
+                                    assert!(shown, "{name}: {part:?} shows in {view:?}");
+                                    continue;
+                                }
+                                _ => continue,
+                            };
+                            let mods = repriseapp::Mods::default();
+                            let button = repriseapp::BTN_LEFT;
+                            for input in [
+                                repriseapp::PointerInput::Press {
+                                    x,
+                                    y,
+                                    button,
+                                    time: 1,
+                                    mods,
+                                },
+                                repriseapp::PointerInput::Release { x, y, button, mods },
+                            ] {
+                                let ev = repriseapp::Event::Pointer(input);
+                                repriseapp::App::event(&mut p, repriseapp::MAIN, ev, &mut ctx);
+                            }
+                            let shared = chosen.lock().unwrap().is_some();
+                            assert_eq!(shared, is_share, "{name}: shares only on Share");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Bare letters, and Tab then Enter or Space, share nothing in a dialog scrolled at 200%.
+    #[test]
+    fn no_key_shares_in_a_scrolled_dialog() {
+        use reprisekit::interface::Interface;
+        const SPACE: u32 = 0x20;
+        let key = |sym: u32, utf8: Option<&str>| {
+            repriseapp::Event::Key(KeyInput {
+                sym,
+                utf8: utf8.map(Into::into),
+                mods: repriseapp::Mods::default(),
+                edit: reprisekit::textedit::key_for(sym, false, false, utf8),
+            })
+        };
+        let mut ctx = crate::dialog::test_ctx(200);
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for purpose in [Purpose::Share, Purpose::Screenshot] {
+                let scrolled = |ctx: &mut repriseapp::Ctx, chosen| {
+                    let mut p = fitted(ctx, i, (704, 346), purpose, "Chromium", chosen);
+                    repriseapp::App::event(&mut p, repriseapp::MAIN, wheel(3), ctx);
+                    let fit = p.fit.as_ref().unwrap();
+                    assert!(fit.offset().1 > 0 && fit.bar(&p.form).is_some(), "{i:?}");
+                    p
+                };
+                let chosen = Arc::new(Mutex::new(None));
+                let mut p = scrolled(&mut ctx, chosen.clone());
+                for c in ['s', 't', 'r', 'd'] {
+                    let sym = c as u32;
+                    let reply = repriseapp::App::event(
+                        &mut p,
+                        repriseapp::MAIN,
+                        key(sym, Some(&c.to_string())),
+                        &mut ctx,
+                    );
+                    assert!(!reply.quit, "{i:?} {purpose:?}: {c}");
+                }
+                assert_eq!(*chosen.lock().unwrap(), None);
+                for tabs in 1..=4 {
+                    for last in [keysym::RETURN, SPACE] {
+                        let chosen = Arc::new(Mutex::new(None));
+                        let mut p = scrolled(&mut ctx, chosen.clone());
+                        for _ in 0..tabs {
+                            repriseapp::App::event(
+                                &mut p,
+                                repriseapp::MAIN,
+                                key(keysym::TAB, None),
+                                &mut ctx,
+                            );
+                        }
+                        let utf8 = (last == SPACE).then_some(" ");
+                        repriseapp::App::event(&mut p, repriseapp::MAIN, key(last, utf8), &mut ctx);
+                        assert_eq!(
+                            *chosen.lock().unwrap(),
+                            None,
+                            "{i:?} {purpose:?} {tabs} tabs, {last:#x}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A long app id at 200% wraps the consent line inside the view, every word of it shown.
+    #[test]
+    fn a_long_app_name_wraps_the_prompt_inside_the_view() {
+        use reprisekit::interface::Interface;
+        let app = "org.chromium.Chromium";
+        let mut ctx = crate::dialog::test_ctx(200);
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for client in [(704, 346), (1000, 1000)] {
+                let p = fitted(&mut ctx, i, client, Purpose::Share, app, Arc::default());
+                let f = &p.form;
+                let u = f.units();
+                let px = u.px(ctx.base_px());
+                let prompt = f.flowed(f.item("prompt").unwrap());
+                let words = Purpose::Share.prompt(app);
+                let width = u.rect(prompt).width;
+                let lines = reprisekit::text::wrap(ctx.text.dialog(f.font), &words, width, px);
+                let name = format!("{i:?} {client:?}");
+                let short = client.1 < 1000;
+                assert!(lines.len() > 1 || !short, "{name}: {lines:?}");
+                assert_eq!(
+                    lines.concat().replace(' ', ""),
+                    words.replace(' ', ""),
+                    "{name}: every word shows"
+                );
+                assert_eq!(
+                    prompt.height,
+                    lines.len() as i32 * LINE_H,
+                    "{name}: the line grows to hold them"
+                );
+                let view = f.view.unwrap().rect;
+                assert!(
+                    prompt.right() <= view.right(),
+                    "{name}: {prompt:?} ends in {view:?}"
+                );
+                let note = f.flowed(f.item("note").unwrap());
+                assert!(note.y >= prompt.bottom(), "{name}: the note moves down");
+            }
+        }
+    }
+
+    /// The tree's picked path and its row in px while the row shows in the tree.
+    fn picked_row(p: &Prompt) -> Option<(Vec<usize>, Rect)> {
+        let f = &p.form;
+        let tree = f.item("tree")?;
+        let Control::Tree(tv) = &tree.control else {
+            return None;
+        };
+        let row = f.focus_part_px()?;
+        let shown = f.focus() == f.items.iter().position(|it| it.id == "tree");
+        let picked = tv.selected.clone()?;
+        (shown && row != f.units().rect(f.flowed(tree))).then_some((picked, row))
+    }
+
+    fn centre(r: Rect) -> (i32, i32) {
+        (r.x + r.width / 2, r.y + r.height / 2)
+    }
+
+    /// A left click at `r`'s centre.
+    fn click(p: &mut Prompt, ctx: &mut repriseapp::Ctx, r: Rect) {
+        let ((x, y), mods, button) = (centre(r), repriseapp::Mods::default(), repriseapp::BTN_LEFT);
+        for input in [
+            repriseapp::PointerInput::Press {
+                x,
+                y,
+                button,
+                time: 1,
+                mods,
+            },
+            repriseapp::PointerInput::Release { x, y, button, mods },
+        ] {
+            repriseapp::App::event(p, repriseapp::MAIN, repriseapp::Event::Pointer(input), ctx);
+        }
+    }
+
+    /// At open the consent line shows whole in every look and text size on short clients, and
+    /// the picked source under it, from the first row to the last of a long list. Only on a
+    /// client under 230 px tall may the row or the line go short, the line at the view's top and
+    /// the row the tree's first. A click on a picked row that shows (as a reader's Click lands),
+    /// then a reader's Focus on it, leave it picked where it is.
+    #[test]
+    fn the_dialog_opens_with_the_consent_line_and_then_the_picked_source_in_view() {
+        use reprisekit::interface::Interface;
+        let mut long = rows();
+        long.extend((0..12).map(|k| Row {
+            screen: false,
+            icon: String::new(),
+            label: format!("Window {k}"),
+        }));
+        let clients = [240, 280, 300, 330, 346, 420]
+            .into_iter()
+            .flat_map(|h| [560, 660, 704, 760].map(|w| (w, h)))
+            .chain(short_clients())
+            .chain([
+                (560, 230),
+                (480, 230),
+                (704, 220),
+                (560, 200),
+                (480, 180),
+                (400, 160),
+                (704, 200),
+                (1000, 200),
+            ])
+            .collect::<Vec<_>>();
+        let mut wrong = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 125, 150, 175, 200] {
+                let mut ctx = crate::dialog::test_ctx(pct);
+                for &client in &clients {
+                    for purpose in [Purpose::Share, Purpose::Screenshot] {
+                        for rs in [&rows()[..], &long[..]] {
+                            for pick in [0, 2, rs.len() - 1] {
+                                for app in ["Chromium", "org.chromium.Chromium"] {
+                                    let mut p = fitted_with(
+                                        &mut ctx,
+                                        i,
+                                        client,
+                                        (purpose, app),
+                                        (rs, pick),
+                                        Arc::default(),
+                                    );
+                                    let f = &p.form;
+                                    let u = f.units();
+                                    let view = p.fit.as_ref().unwrap().clip(f);
+                                    let line = u.rect(f.flowed(f.item("prompt").unwrap()));
+                                    let tree = f.item("tree").unwrap();
+                                    let Control::Tree(tv) = &tree.control else {
+                                        unreachable!()
+                                    };
+                                    let first = tv.selected_row(&tv.visible()) == Some(tv.top);
+                                    let shown = picked_row(&p);
+                                    let row = shown.as_ref().map(|s| s.1);
+                                    let seen = |r: Rect| view.intersect(&r) == r;
+                                    let name = format!(
+                                        "{i:?} {pct}% {client:?} {purpose:?} {} rows, pick \
+                                         {pick}, {app}: line {line:?} row {row:?} in {view:?}",
+                                        rs.len()
+                                    );
+                                    let top = client.1 < 230 && line.y == view.y;
+                                    let at_most = top && first && shown.is_some();
+                                    let tall = top && line.height > view.height;
+                                    let whole = row.is_some_and(seen);
+                                    if !(seen(line) || tall) || !(whole || at_most) {
+                                        wrong.push(name);
+                                        continue;
+                                    }
+                                    let Some((picked, row)) = shown.filter(|_| whole) else {
+                                        continue;
+                                    };
+                                    click(&mut p, &mut ctx, row);
+                                    if picked_row(&p) != Some((picked.clone(), row)) {
+                                        wrong.push(format!("{name}: clicked"));
+                                        continue;
+                                    }
+                                    let focus = repriseapp::Reader::Focus(centre(row));
+                                    repriseapp::Extended::reader(
+                                        &mut p,
+                                        repriseapp::MAIN,
+                                        focus,
+                                        &ctx,
+                                    );
+                                    if picked_row(&p) != Some((picked, row)) {
+                                        wrong.push(format!("{name}: focused"));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} opens:\n{}",
+            wrong.len(),
+            wrong.join("\n")
+        );
+    }
+
+    /// A reader's Focus on the consent line or the Sources group, which take no focus, leaves the
+    /// dialog where it is while the picked source shows whole, wherever it is scrolled to.
+    #[test]
+    fn a_readers_focus_that_moves_nothing_scrolls_nothing() {
+        use reprisekit::interface::Interface;
+        let mut checked = 0;
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [125, 150, 175, 200] {
+                let mut ctx = crate::dialog::test_ctx(pct);
+                for client in [(560, 240), (704, 300), (704, 346)] {
+                    for by in -40..=40 {
+                        for id in ["prompt", "group"] {
+                            let mut p =
+                                fitted(&mut ctx, i, client, Purpose::Share, "", Arc::default());
+                            let (f, fit) = (&mut p.form, p.fit.as_mut().unwrap());
+                            let row = f.focus_part_px().unwrap();
+                            fit.show(f, Rect::new(row.x, row.y + by, row.width, row.height));
+                            let row = f.focus_part_px().unwrap();
+                            if fit.clip(f).intersect(&row) != row {
+                                continue;
+                            }
+                            let r = f.units().rect(f.flowed(f.item(id).unwrap()));
+                            let at = (r.x + 2, r.y + r.height / 2);
+                            let before = fit.offset();
+                            let focus = repriseapp::Reader::Focus(at);
+                            repriseapp::Extended::reader(&mut p, repriseapp::MAIN, focus, &ctx);
+                            let name = format!("{i:?} {pct}% {client:?} by {by} on {id}");
+                            assert_eq!(p.fit.as_ref().unwrap().offset(), before, "{name}");
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 1000, "{checked} scrolls with the row whole");
     }
 }

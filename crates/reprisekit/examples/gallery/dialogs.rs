@@ -360,6 +360,78 @@ pub fn render_location_prompt(with_blue: bool) -> Canvas {
     c
 }
 
+/// A form too tall for its client in each look: its buttons kept in the corner, the rest
+/// scrolled to the top, then to the end.
+pub fn render_form_scroll(with_blue: bool) -> Canvas {
+    use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
+    use reprisekit::controls::form::{Control, Form, Item};
+    use reprisekit::controls::formscroll::FormScroll;
+    fn as_built(_: &mut Form, _: (i32, i32)) -> (i32, i32) {
+        (220, 260)
+    }
+    let built = || {
+        let button = |id, x, label: &str| {
+            let control = Control::Button {
+                label: label.into(),
+                enabled: true,
+                default: id == "cancel",
+            };
+            Item::new(id, Rect::new(x, 228, BUTTON_W, BUTTON_H), control)
+        };
+        let check = Control::Check {
+            label: "&Remember this choice".into(),
+            checked: false,
+            enabled: true,
+            mixed: None,
+        };
+        Form::new(vec![
+            Item::label("note", Rect::new(11, 11, 184, 13), "Choose one of these."),
+            Item::new(
+                "group",
+                Rect::new(9, 32, 186, 160),
+                Control::Group("Sources".into()),
+            ),
+            Item::new("check", Rect::new(9, 200, 180, 13), check),
+            button("ok", 56, "OK"),
+            button("cancel", 136, "Cancel"),
+        ])
+    };
+    let client = (220, 160);
+    let mut themes = vec![cued(interfaces::classic())];
+    if with_blue {
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
+    }
+    let mut c = Canvas::new(
+        (2 * (client.0 + 10) + 10) as u32,
+        (themes.len() as i32 * (client.1 + 10) + 10) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (row, theme) in themes.iter().enumerate() {
+        let text = TextRenderer::load(&theme.fonts);
+        let p = theme.paint();
+        let mut f = built();
+        f.drawn_with(&p);
+        let mut scroll = FormScroll::new(&["ok", "cancel"], as_built);
+        scroll.fit(&mut f, client, &text, theme.fonts.size_px);
+        for col in 0..2 {
+            if col == 1 {
+                scroll.wheel(&mut f, 100);
+            }
+            let mut box_c = Canvas::new(client.0 as u32, client.1 as u32);
+            box_c.fill_rect(box_c.bounds(), p.cs.button_face);
+            form::draw(&mut box_c, &text, &p, &f, true, theme.fonts.size_px);
+            scroll.draw(&mut box_c, &p, &f);
+            let at = (
+                10 + col * (client.0 + 10),
+                10 + row as i32 * (client.1 + 10),
+            );
+            c.blit_canvas(at.0, at.1, &box_c);
+        }
+    }
+    c
+}
+
 /// The copy progress dialog in each look at `scale`: Classic preparing, copying and finishing a
 /// move; Blue, Olive and Silver copying; Glass light and dark with the details, and with fewer.
 pub fn render_copy_progress(with_blue: bool, scale: i32) -> Canvas {
