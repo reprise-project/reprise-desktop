@@ -174,6 +174,8 @@ pub struct FileOutput {
     pub position: Option<[i64; 2]>,
     pub primary: Option<bool>,
     pub icc_profile: Option<String>,
+    pub wallpaper: Option<String>,
+    pub wallpaper_position: Option<String>,
     /// Retired: the renderer is OpenGL ES and drives no HDR or ICC
     /// profile. Read only to name it in [`Config::warn_retired`].
     pub color_profile: Option<serde::de::IgnoredAny>,

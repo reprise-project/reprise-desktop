@@ -83,6 +83,13 @@ impl SettingsApp {
                 if id == pages::TB_LIST {
                     return self.thunderbolt_picked();
                 }
+                if p == Page::Background.index() && id == backgroundpage::POSITION {
+                    self.pick_position();
+                    pages::follow(&mut self.sheet, &self.want);
+                    self.show_monitor();
+                    self.sync_apply();
+                    return Reply::redraw();
+                }
                 // Only the control just worked is read back: reading all would write clamped values for keys the control cannot show.
                 let from = self.want.interface.clone();
                 pages::read_one(&self.sheet, id, &mut self.want);

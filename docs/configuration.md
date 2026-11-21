@@ -107,6 +107,18 @@ the desktop on screen holds its picture: the next one is decoded or drawn when
 the switch happens, so a desktop shows the picture before for that long.
 `position` and `water` apply to every desktop.
 
+A monitor can have a picture of its own: `wallpaper` in its `[[outputs]]`
+entry, matched by connector name, shows on every desktop in place of `image`,
+the desktop's own picture and the slideshow, and `wallpaper_position` places it
+(else `position` does). A monitor unplugged and plugged in again shows its own
+picture again. Monitors placing the same file alike share one decode. In
+Settings > Background, Use for lists each connected monitor while two or more
+are connected: a picture or position picked with a monitor selected is that
+monitor's own, and one picked for all monitors (the first row, Everywhere when
+desktops are listed too) takes the connected monitors' own away; a monitor not
+connected keeps its own. The page's Restore Defaults takes the connected
+monitors' own away too.
+
 `ink`, `glow`, `sparks` and `neon` swap the ripples for a fluid that the
 pointer and fingers stir. Ink is soft coloured dye with a glow; it alternates
 between a light flavour (deep colours on a pale backdrop) and a dark one (vivid

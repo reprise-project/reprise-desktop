@@ -790,6 +790,18 @@ fn save_round_trips_every_field() {
         wallpaper_water: "rain".into(),
         drive_insert: "open".into(),
         wallpaper_desktops: vec!["".into(), "reprise:tarn/dusk".into()],
+        output_wallpapers: vec![
+            crate::model::OutputWallpaper {
+                name: "DP-1".into(),
+                wallpaper: "reprise:fold/sand".into(),
+                position: String::new(),
+            },
+            crate::model::OutputWallpaper {
+                name: "Virtual-2".into(),
+                wallpaper: "~/w/b.png".into(),
+                position: "center".into(),
+            },
+        ],
         slideshow: "~/Pictures/Slides".into(),
         slideshow_interval: 5,
         slideshow_shuffle: true,
@@ -1862,4 +1874,82 @@ fn the_capture_tables_list_each_value_in_the_configs_order() {
         Some("software"),
         "the last row is the one the codec's CPU encoder names"
     );
+}
+
+#[test]
+fn an_outputs_own_wallpaper_is_written_into_its_entry_and_its_comments_stay() {
+    let text = "\
+# mine
+[[outputs]]
+name = \"DP-1\"   # the desk monitor
+mode = \"2560x1440\"
+hdr_tweak = 3
+";
+    let base = load(text);
+    assert!(base.output_wallpapers.is_empty());
+    let mut want = base.clone();
+    want.output_wallpapers = vec![
+        crate::model::OutputWallpaper {
+            name: "DP-1".into(),
+            wallpaper: "/w/a.png".into(),
+            position: "tile".into(),
+        },
+        crate::model::OutputWallpaper {
+            name: "HDMI-A-1".into(),
+            wallpaper: "reprise:tarn/dusk".into(),
+            position: String::new(),
+        },
+    ];
+    let saved = save(text, &want, &base).unwrap();
+    assert!(
+        saved.starts_with("# mine\n[[outputs]]\nname = \"DP-1\"   # the desk monitor\n"),
+        "{saved}"
+    );
+    assert!(
+        saved.contains("hdr_tweak = 3"),
+        "an unknown key stays: {saved}"
+    );
+    assert!(
+        saved.contains("wallpaper = \"/w/a.png\"\nwallpaper_position = \"tile\""),
+        "{saved}"
+    );
+    assert_eq!(
+        load(&saved).output_wallpapers,
+        want.output_wallpapers,
+        "{saved}"
+    );
+    let c = repriseconf::config::Config::parse(&saved.replace("hdr_tweak = 3\n", "")).unwrap();
+    assert_eq!(
+        c.wallpaper.output_image("HDMI-A-1"),
+        Some(std::path::Path::new("reprise:tarn/dusk"))
+    );
+    assert_eq!(c.mode_for_output_name("DP-1").map(|m| m.width), Some(2560));
+
+    let applied = load(&saved);
+    let mut back = applied.clone();
+    back.output_wallpapers.clear();
+    let cleared = save(&saved, &back, &applied).unwrap();
+    assert!(!cleared.contains("wallpaper"), "{cleared}");
+    assert!(
+        !cleared.contains("HDMI-A-1"),
+        "an entry left with its name alone goes: {cleared}"
+    );
+    assert!(cleared.contains("mode = \"2560x1440\""), "{cleared}");
+}
+
+#[test]
+fn an_output_without_an_entry_gets_none_for_a_key_it_drops() {
+    let base = Settings {
+        output_wallpapers: vec![crate::model::OutputWallpaper {
+            name: "DP-2".into(),
+            wallpaper: "/w/a.png".into(),
+            position: String::new(),
+        }],
+        ..load("")
+    };
+    let want = Settings {
+        output_wallpapers: Vec::new(),
+        ..base.clone()
+    };
+    assert_eq!(save("", &want, &base).unwrap(), "");
 }

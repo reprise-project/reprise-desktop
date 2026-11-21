@@ -1,7 +1,12 @@
-//! The desktop wallpaper (`[wallpaper]`), decoded (a built-in is drawn at each
-//! output's own size) off the loop and composed per output into
-//! `layers.background`, and the slideshow: every `interval` minutes a thread
-//! picks the folder's next picture and the new buffers fade in over the old.
+//! The desktop wallpaper (`[wallpaper]`, and an output's own `[[outputs]] wallpaper`), decoded
+//! (a built-in is drawn at each output's own size) off the loop and composed per output into
+//! `layers.background`, and the slideshow: every `interval` minutes a thread picks the folder's
+//! next picture and the new buffers fade in over the old.
+//!
+//! An output with a picture of its own shows it on every desktop, in place of the desktop's own
+//! picture and the slideshow; the others show the current desktop's. Outputs placing the same file
+//! alike share one decode, and a change carries over the pictures and buffers of the outputs whose
+//! picture stays, so only the outputs that change fade.
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -23,6 +28,7 @@ use smithay::{
 
 use crate::{
     compositor::State,
+    config::WallpaperConfig,
     dmaupload::{Staged, Uploads},
     output::upload_scaled,
     raster::{Canvas, Rect},
@@ -31,29 +37,140 @@ use crate::{
     waterview::Pane,
 };
 
-/// The wallpaper and its scene buffers, one per output.
-pub struct Wallpaper {
-    pub path: PathBuf,
-    /// A file's picture; None until the first decode lands, and for a
-    /// built-in. Shared with the jobs composing it.
+/// Which picture each output shows: its own, else `shared`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Paths {
+    pub shared: Option<PathBuf>,
+    /// By connector name, as `[[outputs]]` names them.
+    pub own: Vec<(String, PathBuf)>,
+}
+
+impl Paths {
+    /// `path` on every output.
+    pub fn one(path: Option<&Path>) -> Paths {
+        Paths {
+            shared: path.map(Path::to_path_buf),
+            own: Vec::new(),
+        }
+    }
+
+    /// `shared` on every output without a picture of its own in `config`.
+    pub fn with_own(shared: Option<PathBuf>, config: &WallpaperConfig) -> Paths {
+        let own = (config.outputs.iter())
+            .filter_map(|o| Some((o.name.clone(), o.image.clone()?)))
+            .collect();
+        Paths { shared, own }
+    }
+
+    pub fn of(&self, output: &str) -> Option<&Path> {
+        (self.own.iter())
+            .find(|(n, _)| n == output)
+            .map(|(_, p)| p.as_path())
+            .or(self.shared.as_deref())
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.shared.is_none() && self.own.is_empty()
+    }
+
+    fn all(&self) -> impl Iterator<Item = &Path> {
+        (self.shared.iter().map(PathBuf::as_path)).chain(self.own.iter().map(|(_, p)| p.as_path()))
+    }
+}
+
+/// The position a file at `path` is reduced and placed for, None for a built-in: drawn at each
+/// output's size, it fills the screen whatever the position.
+fn placing(path: &Path, configured: Position) -> Option<Position> {
+    crate::wallpaper::builtin(path)
+        .is_none()
+        .then_some(configured)
+}
+
+/// How an output places `path`: Stretch for a built-in, as it is drawn at the output's size.
+fn placed(path: Option<&Path>, configured: Position) -> Position {
+    path.and_then(|p| placing(p, configured))
+        .unwrap_or(Position::Stretch)
+}
+
+/// One picture the outputs show: a file decoded once for every output placing it alike, or a
+/// built-in and its drawings, one per output device size.
+struct Picture {
+    path: PathBuf,
+    /// What a file is reduced for; None for a built-in.
+    position: Option<Position>,
+    /// A file's picture; None until the first decode lands, and for a built-in. Shared with the
+    /// jobs composing it.
     image: Option<Arc<Loaded>>,
-    /// The cut a decode in flight is making; a finished decode for any
-    /// other is stale and dropped.
+    /// The cut a decode in flight is making; a finished decode for any other is stale and dropped.
     loading: Option<Cut>,
-    /// A built-in and its pictures, one per output device size.
     builtin: Option<(Builtin, Drawn)>,
     /// Built-in pictures made ready for the scene on the drawing thread, one per size an output
     /// shows; every refit of that size shows it again.
     staged: Vec<Staged>,
+    /// The file did not decode: its outputs show the desktop colour.
+    failed: bool,
+}
+
+impl Picture {
+    fn new(path: &Path, position: Option<Position>) -> Picture {
+        Picture {
+            path: path.to_path_buf(),
+            position,
+            image: None,
+            loading: None,
+            builtin: crate::wallpaper::builtin(path).map(|b| (b, Drawn::default())),
+            staged: Vec::new(),
+            failed: false,
+        }
+    }
+
+    fn is(&self, path: &Path, position: Option<Position>) -> bool {
+        self.path == path && self.position == position
+    }
+
+    /// What it holds, for a wallpaper whose jobs start over: nothing in flight.
+    fn carried(mut self) -> Picture {
+        self.loading = None;
+        if let Some((_, d)) = &mut self.builtin {
+            d.forget_drawing();
+        }
+        self
+    }
+
+    fn shows_something(&self) -> bool {
+        self.image.is_some()
+            || self
+                .builtin
+                .as_ref()
+                .is_some_and(|(_, d)| d.any().is_some())
+    }
+
+    /// The picture an output of `size` device pixels is composed from: a built-in's own picture
+    /// of that size, else the file's.
+    fn source(&self, size: (u32, u32)) -> Option<&Canvas> {
+        match &self.builtin {
+            Some((_, d)) => d.get(size).map(|p| &**p),
+            None => self.image.as_ref().map(|l| &l.image),
+        }
+    }
+}
+
+/// The wallpaper and its scene buffers, one per output.
+pub struct Wallpaper {
+    pub paths: Paths,
+    /// One per picture the outputs show, kept from the wallpaper before where it shows there too.
+    pictures: Vec<Picture>,
     nodes: Vec<(Output, WallpaperNode)>,
-    /// The picture this one replaces, still on screen under it until this
-    /// one has faded in: its buffers, and the fade's start once it runs.
+    /// The pictures this one replaces, still on screen under it until this one has faded in:
+    /// their buffers, and the fade's start once it runs.
     fading: Vec<BufferId>,
     fade: Option<Instant>,
     /// How long this picture takes to fade in over the one before.
     fade_for: Duration,
     /// Its number in [`Jobs`]; a decode or drawing for a wallpaper since replaced is skipped.
     serial: u64,
+    /// An output waits for its picture at the last refit, which holds back the fade.
+    unready: bool,
     /// The Alt+Tab desktop entry's last picture and what it was composed for; a picture
     /// landing drops it.
     still: Option<(StillKey, Rc<Canvas>)>,
@@ -95,30 +212,43 @@ struct StillKey {
 }
 
 impl Wallpaper {
-    pub fn new(path: &Path) -> Wallpaper {
+    pub fn new(paths: Paths) -> Wallpaper {
         Wallpaper {
-            path: path.to_path_buf(),
-            image: None,
-            loading: None,
-            builtin: crate::wallpaper::builtin(path).map(|b| (b, Drawn::default())),
-            staged: Vec::new(),
+            paths,
+            pictures: Vec::new(),
             nodes: Vec::new(),
             fading: Vec::new(),
             fade: None,
             fade_for: FADE,
             serial: 0,
+            unready: false,
             still: None,
         }
     }
 
-    fn land_image(&mut self, loaded: Loaded) {
-        self.image = Some(Arc::new(loaded));
-        self.still = None;
+    /// The picture output `name` shows placed at `position`.
+    fn picture_at(&self, name: &str, position: Position) -> Option<&Picture> {
+        let path = self.paths.of(name)?;
+        let key = placing(path, position);
+        self.pictures.iter().find(|p| p.is(path, key))
     }
 
-    /// A built-in's picture lands; false (and dropped) when no output wants its size any more.
-    fn land_drawn(&mut self, picture: Canvas) -> bool {
-        let landed = self.builtin.as_mut().is_some_and(|(_, d)| d.land(picture));
+    fn picture_mut(&mut self, path: &Path, position: Option<Position>) -> Option<&mut Picture> {
+        self.pictures.iter_mut().find(|p| p.is(path, position))
+    }
+
+    fn land_image(&mut self, path: &Path, position: Option<Position>, loaded: Loaded) {
+        if let Some(p) = self.picture_mut(path, position) {
+            p.image = Some(Arc::new(loaded));
+            self.still = None;
+        }
+    }
+
+    /// Built-in `path`'s picture lands; false (and dropped) when no output wants its size any more.
+    fn land_drawn(&mut self, path: &Path, picture: Canvas) -> bool {
+        let landed = (self.picture_mut(path, None))
+            .and_then(|p| p.builtin.as_mut())
+            .is_some_and(|(_, d)| d.land(picture));
         if landed {
             self.still = None;
         }
@@ -137,28 +267,35 @@ impl Wallpaper {
         }
     }
 
-    pub(crate) fn shows_nothing(&self) -> bool {
-        self.image.is_none()
-            && self.builtin.as_ref().is_none_or(|(_, d)| d.any().is_none())
-            && self.fading.is_empty()
+    /// Whether output `name` shows the desktop colour alone: no picture of its own or shared, none
+    /// decoded or drawn yet, and none fading out.
+    pub(crate) fn shows_nothing_on(&self, name: &str, position: Position) -> bool {
+        self.fading.is_empty()
+            && self
+                .picture_at(name, position)
+                .is_none_or(|p| p.failed || !p.shows_something())
     }
 
-    /// The picture an output of `size` device pixels is composed from:
-    /// a built-in's own picture of that size, else the file's.
-    fn source(&self, size: (u32, u32)) -> Option<&Canvas> {
-        match &self.builtin {
-            Some((_, d)) => d.get(size).map(|p| &**p),
-            None => self.image.as_ref().map(|l| &l.image),
-        }
+    /// The picture output `name` of `size` device pixels is composed from.
+    fn source(&self, name: &str, position: Position, size: (u32, u32)) -> Option<&Canvas> {
+        self.picture_at(name, position)?.source(size)
     }
 
     /// The picture the still of `key` is composed from: a built-in's of the output's `size`
-    /// (any for the whole layout), else the file's.
+    /// (any for the whole layout, the shared picture's), else the file's.
     fn still_source(&self, key: &StillKey, size: (u32, u32)) -> Option<Shared> {
-        match &self.builtin {
+        let p = match &key.out {
+            Some(o) => self.picture_at(&o.name(), key.position)?,
+            None => {
+                let path = self.paths.all().next()?;
+                let at = placing(path, key.position);
+                self.pictures.iter().find(|p| p.is(path, at))?
+            }
+        };
+        match &p.builtin {
             Some((_, d)) if key.out.is_none() => d.any().cloned().map(Shared::Drawn),
             Some((_, d)) => d.get(size).cloned().map(Shared::Drawn),
-            None => self.image.clone().map(Shared::Image),
+            None => p.image.clone().map(Shared::Image),
         }
     }
 
@@ -169,24 +306,28 @@ impl Wallpaper {
         }
     }
 
-    /// Whether the fade from the picture before is due: none runs yet and no output's picture
-    /// is still composing.
+    /// Whether the fade from the picture before is due: none runs yet, no output waits for its
+    /// picture and none is still composing.
     fn fade_due(&self) -> bool {
         !self.fading.is_empty()
             && self.fade.is_none()
+            && !self.unready
             && self.nodes.iter().all(|(_, n)| n.composing.is_none())
     }
 
     /// Where the lock screen's backdrop on `out`, at the output's current `fit`, comes from.
     fn lock_source(&self, out: &Output, fit: Fit) -> LockSource {
         let node = self.nodes.iter().find(|(o, _)| o == out).map(|(_, n)| n);
+        let file = self
+            .picture_at(&out.name(), fit.position)
+            .is_some_and(|p| p.image.is_some());
         match node {
             Some(n) if n.fit == Some(fit) => match &n.texture {
                 Some(t) => LockSource::Shown(t.clone()),
                 None => LockSource::Buffer(n.buffer),
             },
             // A refit composes it on a job, whose landing repaints the lock screen.
-            _ if self.image.is_some() => LockSource::Composing,
+            _ if file => LockSource::Composing,
             _ => LockSource::Here,
         }
     }
@@ -275,6 +416,8 @@ struct WallpaperNode {
     composing: Option<Fit>,
     /// The staged dma-buf's texture the buffer shows, which the desktop water samples too.
     texture: Option<GlesTexture>,
+    /// Made over a picture fading out: it waits unseen for the fade, which raises it.
+    fades: bool,
 }
 
 impl WallpaperNode {
@@ -322,47 +465,116 @@ struct Fit {
     bg: Color,
 }
 
+/// A picture's path and what a file is reduced for ([`placing`]).
+type PictureKey = (PathBuf, Option<Position>);
+
+/// One output's part in a refit.
+struct Shown {
+    out: Output,
+    rect: Rect,
+    scale: i32,
+    size: (u32, u32),
+    /// Its picture in [`Wallpaper::pictures`]; None for the desktop colour alone.
+    picture: Option<usize>,
+    position: Position,
+}
+
 impl State {
     /// Put `path` (or nothing) under the desktop icons on every output.
     pub fn set_wallpaper(&mut self, path: Option<&Path>) {
-        let same = match (&self.wallpaper, path) {
-            (Some(w), Some(p)) => w.path == p,
-            (None, None) => true,
-            _ => false,
-        };
-        // A built-in fades in over the picture before it (a new glass
-        // colour retints Glass's), which stays until it is drawn.
-        if let Some(p) = path
-            && !same
-            && self.wallpaper.is_some()
-            && crate::wallpaper::builtin(p).is_some()
-        {
-            self.fade_wallpaper_to(p);
+        self.set_wallpapers(Paths::one(path));
+    }
+
+    /// Show `paths`. A change to built-ins alone fades in over the pictures before (a new glass
+    /// colour retints Glass's), which stay until drawn; any other cuts to the desktop colour on the
+    /// outputs that change until their pictures land.
+    fn set_wallpapers(&mut self, paths: Paths) {
+        match &self.wallpaper {
+            Some(w) if w.paths == paths => self.refit_wallpaper(),
+            Some(w) => {
+                let drawn = (paths.all())
+                    .filter(|p| !w.paths.all().any(|q| q == *p))
+                    .all(|p| crate::wallpaper::builtin(p).is_some());
+                self.change_wallpaper(paths, drawn.then_some(FADE));
+            }
+            None => self.change_wallpaper(paths, None),
+        }
+    }
+
+    fn new_wallpaper(&self, paths: Paths) -> Wallpaper {
+        Wallpaper {
+            serial: self.wallpaper_jobs.next(),
+            ..Wallpaper::new(paths)
+        }
+    }
+
+    /// Replace the wallpaper with `paths`: over `fade` the outputs whose picture changes fade
+    /// from the one before, which stays under until then; with none they show the desktop colour
+    /// until theirs lands. Outputs whose picture stays keep their buffers, and pictures still shown
+    /// are carried over undecoded again.
+    fn change_wallpaper(&mut self, paths: Paths, fade: Option<Duration>) {
+        if paths.is_empty() {
+            self.clear_wallpaper();
             return;
         }
-        if !same {
-            self.clear_wallpaper();
-            self.wallpaper = path.map(|p| self.new_wallpaper(p));
+        let mut next = self.new_wallpaper(paths);
+        if let Some(d) = fade {
+            next.fade_for = match self.config.effects.reduce_motion {
+                true => Duration::ZERO,
+                false => d,
+            };
+        }
+        let mut cut = false;
+        if let Some(old) = self.wallpaper.take() {
+            next.pictures = (old.pictures.into_iter())
+                .filter(|p| !p.failed)
+                .map(Picture::carried)
+                .collect();
+            // A fade cut short leaves its pictures whole; a picture waiting unseen over the one
+            // before for its fade to start is dropped, and the one before stays.
+            let running = old.fade.is_some() || fade.is_none();
+            for (o, mut n) in old.nodes {
+                if running && n.fades {
+                    self.scene.set_opacity(n.buffer, 1.0);
+                    n.fades = false;
+                }
+                let name = o.name();
+                if old.paths.of(&name) == next.paths.of(&name) {
+                    next.nodes.push((o, n));
+                } else if fade.is_some() && !n.fades {
+                    self.scene.set_opacity(n.buffer, 1.0);
+                    next.fading.push(n.buffer);
+                } else {
+                    self.scene.destroy(n.buffer);
+                    cut = true;
+                }
+            }
+            if running {
+                cut |= !old.fading.is_empty();
+                self.end_fade(old.fading);
+            } else {
+                next.fading.extend(old.fading);
+            }
+        }
+        self.wallpaper = Some(next);
+        if cut {
+            crate::lockview::refit(self);
+            self.redraw_all();
         }
         self.refit_wallpaper();
     }
 
-    fn new_wallpaper(&self, path: &Path) -> Wallpaper {
-        Wallpaper {
-            serial: self.wallpaper_jobs.next(),
-            ..Wallpaper::new(path)
-        }
-    }
-
-    /// Decode the wallpaper cut to `cut` on a thread; it lands in [`State::wallpaper_loaded`].
-    fn load_wallpaper(&mut self, path: PathBuf, cut: Cut) {
+    /// Decode wallpaper picture `path`, reduced for `position`, cut to `cut` on a thread; it lands
+    /// in [`State::wallpaper_loaded`].
+    fn load_wallpaper(&mut self, path: PathBuf, position: Option<Position>, cut: Cut) {
         let Some(serial) = self.wallpaper.as_ref().map(|w| w.serial) else {
             return;
         };
         let (tx, rx) = channel::channel::<Option<Loaded>>();
+        let at = path.clone();
         let inserted = self.handle.insert_source(rx, move |event, _, state| {
             if let channel::Event::Msg(loaded) = event {
-                state.wallpaper_loaded(serial, cut, loaded);
+                state.wallpaper_loaded(serial, &at, position, cut, loaded);
             }
         });
         if let Err(e) = inserted {
@@ -389,31 +601,56 @@ impl State {
         }
     }
 
-    /// Wallpaper `serial`'s decode cut to `cut` lands: it replaces the image and recomposes every
-    /// output, and a file that failed to decode leaves no wallpaper. A decode for another cut, or
-    /// for a wallpaper since replaced (even by the same file), is dropped: a stopped one lands as
-    /// None.
-    fn wallpaper_loaded(&mut self, serial: u64, cut: Cut, loaded: Option<Loaded>) {
+    /// Wallpaper `serial`'s decode of picture `path` cut to `cut` lands: it replaces the picture
+    /// and recomposes its outputs. A file that failed to decode leaves its outputs the desktop
+    /// colour, and no wallpaper once every picture failed. A decode for another cut, or for a
+    /// wallpaper since replaced (even by the same file), is dropped: a stopped one lands as None.
+    fn wallpaper_loaded(
+        &mut self,
+        serial: u64,
+        path: &Path,
+        position: Option<Position>,
+        cut: Cut,
+        loaded: Option<Loaded>,
+    ) {
         let Some(w) = self.wallpaper.as_mut() else {
             return;
         };
-        if w.serial != serial || w.loading != Some(cut) {
+        if w.serial != serial {
             return;
         }
-        w.loading = None;
+        let Some(p) = w.picture_mut(path, position) else {
+            return;
+        };
+        if p.loading != Some(cut) {
+            return;
+        }
+        p.loading = None;
         match loaded {
             Some(l) => {
-                w.land_image(l);
-                for (_, node) in &mut w.nodes {
-                    node.fit = None;
-                    node.composing = None;
+                w.land_image(path, position, l);
+                let mine: Vec<Output> = (w.nodes.iter())
+                    .filter(|(o, _)| w.paths.of(&o.name()) == Some(path))
+                    .map(|(o, _)| o.clone())
+                    .collect();
+                for (o, node) in &mut w.nodes {
+                    if mine.contains(o) {
+                        node.fit = None;
+                        node.composing = None;
+                    }
                 }
                 self.refit_wallpaper();
                 crate::lockview::refit(self);
                 self.warm_switcher_still_soon();
             }
             None => {
-                self.clear_wallpaper();
+                p.failed = true;
+                if w.pictures.iter().all(|p| p.failed) {
+                    self.clear_wallpaper();
+                } else {
+                    self.refit_wallpaper();
+                    crate::lockview::refit(self);
+                }
                 crate::greeterview::background_failed(self);
             }
         }
@@ -445,11 +682,10 @@ impl State {
             let Some(w) = state.wallpaper.as_mut() else {
                 return;
             };
-            if w.path != path {
-                return;
-            }
-            if w.land_drawn(picture) {
-                w.staged.push(staged);
+            if w.land_drawn(&path, picture) {
+                if let Some(p) = w.picture_mut(&path, None) {
+                    p.staged.push(staged);
+                }
                 state.refit_wallpaper();
                 crate::lockview::refit(state);
                 state.warm_switcher_still_soon();
@@ -498,38 +734,12 @@ impl State {
         }
     }
 
-    /// Fade from the wallpaper showing to `path`: the old buffers stay
-    /// until the new picture is decoded and has faded in over them. With
-    /// nothing showing, `path` simply shows.
-    pub fn fade_wallpaper_to(&mut self, path: &Path) {
-        self.fade_wallpaper_over(path, FADE);
-    }
-
-    fn fade_wallpaper_over(&mut self, path: &Path, fade_for: Duration) {
-        if self.wallpaper.as_ref().is_some_and(|w| w.path == path) {
-            return;
+    fn fade_wallpapers_over(&mut self, paths: Paths, fade_for: Duration) {
+        match &self.wallpaper {
+            Some(w) if w.paths == paths => {}
+            Some(_) => self.change_wallpaper(paths, Some(fade_for)),
+            None => self.set_wallpapers(paths),
         }
-        let mut next = self.new_wallpaper(path);
-        next.fade_for = match self.config.effects.reduce_motion {
-            true => Duration::ZERO,
-            false => fade_for,
-        };
-        if let Some(old) = self.wallpaper.take() {
-            let nodes: Vec<BufferId> = old.nodes.into_iter().map(|(_, n)| n.buffer).collect();
-            // A picture waits unseen over the one before until its fade starts, so the one
-            // before stays; a fade cut short leaves its picture whole.
-            let (keep, gone) = match old.fading.is_empty() || old.fade.is_some() {
-                true => (nodes, old.fading),
-                false => (old.fading, nodes),
-            };
-            for &b in &keep {
-                self.scene.set_opacity(b, 1.0);
-            }
-            self.end_fade(gone);
-            next.fading = keep;
-        }
-        self.wallpaper = Some(next);
-        self.refit_wallpaper();
     }
 
     fn start_fade(&mut self) {
@@ -549,10 +759,13 @@ impl State {
         };
         let since = now.saturating_duration_since(at);
         let t = (since.as_secs_f32() / w.fade_for.as_secs_f32().max(0.001)).min(1.0);
-        for (_, n) in &w.nodes {
-            self.scene.set_opacity(n.buffer, t);
-        }
         let done = t >= 1.0;
+        for (_, n) in &mut w.nodes {
+            if n.fades {
+                self.scene.set_opacity(n.buffer, t);
+                n.fades = !done;
+            }
+        }
         let fading = if done {
             w.fade = None;
             std::mem::take(&mut w.fading)
@@ -567,9 +780,9 @@ impl State {
         !done
     }
 
-    /// Follow `[wallpaper]`'s image and slideshow keys after a reload, and
-    /// at startup: with a slideshow its folder's pictures take turns (a
-    /// new folder picks at once), else `image` shows.
+    /// Follow `[wallpaper]`'s image and slideshow keys and the outputs' own pictures after a
+    /// reload, and at startup: with a slideshow its folder's pictures take turns (a new folder
+    /// picks at once), else `image` shows.
     pub fn apply_wallpaper_config(&mut self) {
         let Some(folder) = self.config.wallpaper.slideshow.clone() else {
             if let Some(t) = self.slideshow.take().and_then(|s| s.timer) {
@@ -578,7 +791,7 @@ impl State {
             let paper = (self.config.wallpaper)
                 .for_desktop(self.desktops.current)
                 .map(Path::to_path_buf);
-            self.set_wallpaper(paper.as_deref());
+            self.set_wallpapers(Paths::with_own(paper, &self.config.wallpaper));
             return;
         };
         if self.slideshow.as_ref().is_some_and(|s| s.folder == folder) {
@@ -600,28 +813,23 @@ impl State {
         self.next_slide();
     }
 
-    /// What the current desktop shows: its own picture, else the slideshow's pick, else
-    /// `[wallpaper] image`. None while a slideshow has picked nothing yet.
-    fn desktop_wallpaper(&self) -> Option<Option<PathBuf>> {
+    /// What the outputs show on the current desktop: their own pictures, and on the rest the
+    /// desktop's own, else the slideshow's pick, else `[wallpaper] image`. None while a slideshow
+    /// has picked nothing yet.
+    fn desktop_wallpaper(&self) -> Option<Paths> {
         let own = self.config.wallpaper.desktop(self.desktops.current);
-        match (own, &self.slideshow) {
-            (Some(p), _) => Some(Some(p.to_path_buf())),
-            (None, Some(show)) => show.shown.clone().map(Some),
-            (None, None) => Some(self.config.wallpaper.image.clone()),
-        }
+        let shared = match (own, &self.slideshow) {
+            (Some(p), _) => Some(p.to_path_buf()),
+            (None, Some(show)) => Some(show.shown.clone()?),
+            (None, None) => self.config.wallpaper.image.clone(),
+        };
+        Some(Paths::with_own(shared, &self.config.wallpaper))
     }
 
-    /// Fade to the current desktop's picture over `fade_for` when it is not the one showing.
+    /// Fade to the current desktop's pictures over `fade_for` where they are not the ones showing.
     fn follow_desktop_wallpaper(&mut self, fade_for: Duration) {
-        let Some(want) = self.desktop_wallpaper() else {
-            return;
-        };
-        if self.wallpaper.as_ref().map(|w| &w.path) == want.as_ref() {
-            return;
-        }
-        match want {
-            Some(p) if self.wallpaper.is_some() => self.fade_wallpaper_over(&p, fade_for),
-            p => self.set_wallpaper(p.as_deref()),
+        if let Some(want) = self.desktop_wallpaper() {
+            self.fade_wallpapers_over(want, fade_for);
         }
     }
 
@@ -641,9 +849,13 @@ impl State {
         if self.slideshow.as_ref().is_some_and(|s| s.picking) {
             return false;
         }
-        self.wallpaper
-            .as_ref()
-            .is_none_or(|w| w.nodes.iter().any(|(o, n)| o == out && n.fit.is_some()))
+        let name = out.name();
+        let position = self.config.wallpaper.position_for(&name);
+        self.wallpaper.as_ref().is_none_or(|w| {
+            w.nodes.iter().any(|(o, n)| o == out && n.fit.is_some())
+                || w.paths.of(&name).is_none()
+                || w.picture_at(&name, position).is_some_and(|p| p.failed)
+        })
     }
 
     /// Whether a slideshow runs (the desktop menu's "Next desktop background").
@@ -725,19 +937,23 @@ impl State {
                     show.timer = Some(t);
                 }
             }
-            Err(e) => log::warn!("slideshow timer: {}", e.error),
+            Err(e) => log::warn!("slideshow: {}", e.error),
         }
     }
 
-    /// Compose the wallpaper for every output's current size and position; an
-    /// output whose fit has not changed keeps its buffer. A built-in is drawn at
-    /// each output size not yet drawn, and pictures of sizes no output shows are
-    /// dropped.
+    /// How output `name` places its picture under `w`.
+    fn placement(&self, w: &Wallpaper, name: &str) -> Position {
+        placed(w.paths.of(name), self.config.wallpaper.position_for(name))
+    }
+
+    /// Compose the wallpaper for every output's current size and position; an output whose fit has
+    /// not changed keeps its buffer. Each picture an output shows is decoded (or a built-in drawn
+    /// at each of its outputs' sizes not yet drawn) once for all of them, and pictures and sizes no
+    /// output shows are dropped.
     pub fn refit_wallpaper(&mut self) {
         let outputs: Vec<Output> = self.own_outputs();
         let bg = self.config.theme.colors.background;
-        let position = self.config.wallpaper.position;
-        // Taken out for the loop so the image is borrowed, not cloned,
+        // Taken out for the loop so the pictures are borrowed, not cloned,
         // while the state is asked for boxes and scales; put back below.
         let Some(mut w) = self.wallpaper.take() else {
             self.water_configured();
@@ -750,63 +966,126 @@ impl State {
             }
             alive
         });
-        let shown: Vec<(Output, Rect, i32, (u32, u32))> = outputs
-            .into_iter()
-            .filter_map(|out| {
-                let b = self.layout_box(Some(&out));
-                let scale = self.draw_scale_at(Some(&out));
-                let size = ((b.width * scale) as u32, (b.height * scale) as u32);
-                (b.width > 0).then_some((out, b, scale, size))
+        let mut shown: Vec<(Shown, Option<PictureKey>)> = Vec::new();
+        for out in outputs {
+            let rect = self.layout_box(Some(&out));
+            let scale = self.draw_scale_at(Some(&out));
+            let size = ((rect.width * scale) as u32, (rect.height * scale) as u32);
+            if rect.width <= 0 {
+                continue;
+            }
+            let name = out.name();
+            let configured = self.config.wallpaper.position_for(&name);
+            let key = (w.paths.of(&name)).map(|p| (p.to_path_buf(), placing(p, configured)));
+            let position = placed(w.paths.of(&name), configured);
+            let s = Shown {
+                out,
+                rect,
+                scale,
+                size,
+                picture: None,
+                position,
+            };
+            shown.push((s, key));
+        }
+        w.pictures.retain(|p| {
+            (shown.iter()).any(|(_, k)| k.as_ref().is_some_and(|(path, at)| p.is(path, *at)))
+        });
+        let shown: Vec<Shown> = (shown.into_iter())
+            .map(|(mut s, key)| {
+                s.picture = key.map(|(path, at)| {
+                    (w.pictures.iter().position(|p| p.is(&path, at))).unwrap_or_else(|| {
+                        w.pictures.push(Picture::new(&path, at));
+                        w.pictures.len() - 1
+                    })
+                });
+                s
             })
             .collect();
-        let sizes: Vec<(u32, u32)> = shown.iter().map(|s| s.3).collect();
-        w.staged.retain(|p| sizes.contains(&staged_size(p)));
-        let mut load = None;
-        let mut draw = Vec::new();
-        let ready = match w.builtin.as_mut() {
-            // Each output shows its own size's picture once it is drawn;
-            // one faded to waits until every output's is.
-            Some((_, drawn)) => {
-                draw = drawn.want(&sizes);
-                w.fading.is_empty() || sizes.iter().all(|&s| drawn.get(s).is_some())
-            }
-            None => {
-                let mut want = Cut {
-                    position,
-                    w: 0,
-                    h: 0,
-                };
-                for (_, b, scale, _) in &shown {
-                    let scale = if position.scales_to_screen() {
-                        *scale
-                    } else {
-                        1
-                    };
-                    want.w = want.w.max((b.width * scale) as u32);
-                    want.h = want.h.max((b.height * scale) as u32);
+        let fading = !w.fading.is_empty();
+        let mut loads = Vec::new();
+        let mut draws = Vec::new();
+        let ready: Vec<bool> = (w.pictures.iter_mut().enumerate())
+            .map(|(i, p)| {
+                let mine: Vec<&Shown> = shown.iter().filter(|s| s.picture == Some(i)).collect();
+                let sizes: Vec<(u32, u32)> = mine.iter().map(|s| s.size).collect();
+                p.staged.retain(|s| sizes.contains(&staged_size(s)));
+                if p.failed {
+                    return false;
                 }
-                let covered = w.image.as_ref().is_some_and(|l| Cut::covers(l.cut, want));
-                if !covered && want.w > 0 && w.loading != Some(want) {
-                    w.loading = Some(want);
-                    load = Some(want);
+                match p.builtin.as_mut() {
+                    // Each output shows its own size's picture once it is drawn;
+                    // one faded to waits until every output's is.
+                    Some((b, drawn)) => {
+                        let new = drawn.want(&sizes);
+                        if !new.is_empty() {
+                            draws.push((p.path.clone(), *b, new));
+                        }
+                        !fading || sizes.iter().all(|&s| drawn.get(s).is_some())
+                    }
+                    None => {
+                        let position = p.position.unwrap_or_default();
+                        let mut want = Cut {
+                            position,
+                            w: 0,
+                            h: 0,
+                        };
+                        for s in &mine {
+                            let scale = if position.scales_to_screen() {
+                                s.scale
+                            } else {
+                                1
+                            };
+                            want.w = want.w.max((s.rect.width * scale) as u32);
+                            want.h = want.h.max((s.rect.height * scale) as u32);
+                        }
+                        let covered = p.image.as_ref().is_some_and(|l| Cut::covers(l.cut, want));
+                        if !covered && want.w > 0 && p.loading != Some(want) {
+                            p.loading = Some(want);
+                            loads.push((p.path.clone(), p.position, want));
+                        }
+                        covered
+                    }
                 }
-                covered
-            }
-        };
+            })
+            .collect();
         let mut changed = false;
-        let mut fade_in = false;
+        let mut unready = false;
         let mut compose = Vec::new();
-        for (out, b, scale, size) in shown {
-            let (source, opaque) = match &w.builtin {
-                _ if !ready => (None, None),
+        for s in shown {
+            let Shown {
+                out,
+                rect: b,
+                scale,
+                size,
+                picture,
+                position,
+            } = s;
+            let at = w.nodes.iter().position(|(o, _)| *o == out);
+            let Some(p) = picture
+                .map(|i| (i, &w.pictures[i]))
+                .filter(|(_, p)| !p.failed)
+            else {
+                // The desktop colour alone: no picture here, or one that did not decode.
+                if let Some(at) = at {
+                    let (_, node) = w.nodes.remove(at);
+                    self.scene.destroy(node.buffer);
+                    changed = true;
+                }
+                continue;
+            };
+            let (i, p) = p;
+            let (source, opaque) = match &p.builtin {
+                _ if !ready[i] => (None, None),
                 // Every built-in is opaque (`wallpapers` pins it): no scan.
                 Some((_, drawn)) => (drawn.get(size).map(|p| &**p), Some(true)),
-                None => (w.image.as_ref().map(|l| &l.image), None),
+                None => (p.image.as_ref().map(|l| &l.image), None),
             };
             let Some(source) = source else {
+                unready = true;
                 // Until its own picture is ready an output shows the one before, stretched.
-                if let Some((_, node)) = w.nodes.iter_mut().find(|(o, _)| *o == out) {
-                    changed |= node.place(&mut self.scene, b);
+                if let Some(at) = at {
+                    changed |= w.nodes[at].1.place(&mut self.scene, b);
                 }
                 continue;
             };
@@ -816,9 +1095,8 @@ impl State {
                 position,
                 bg,
             };
-            let mut fresh = false;
-            let i = match w.nodes.iter().position(|(o, _)| *o == out) {
-                Some(i) => i,
+            let i_node = match at {
+                Some(at) => at,
                 None => {
                     let n = self.scene.buffer_create(self.layers.background);
                     // Desktop water draws the picture in its place.
@@ -829,10 +1107,8 @@ impl State {
                     for &old in &w.fading {
                         self.scene.lower_to_bottom(old);
                     }
-                    if !w.fading.is_empty() {
+                    if fading {
                         self.scene.set_opacity(n, 0.0);
-                        fade_in = true;
-                        fresh = true;
                     }
                     w.nodes.push((
                         out,
@@ -842,25 +1118,26 @@ impl State {
                             placed: None,
                             composing: None,
                             texture: None,
+                            fades: fading,
                         },
                     ));
                     w.nodes.len() - 1
                 }
             };
-            let node = &mut w.nodes[i].1;
+            let node = &mut w.nodes[i_node].1;
             if node.fit == Some(fit) {
                 node.composing = None;
                 changed |= node.place(&mut self.scene, b);
                 continue;
             }
+            let fading_in = node.fit.is_none() && node.fades;
             // A file's picture is composed and staged on a job, so the desktop water samples
             // the texture it shows.
-            if let Some(image) = w.image.as_ref() {
+            if let Some(image) = p.image.as_ref() {
                 changed |= node.place(&mut self.scene, b);
                 if node.composing != Some(fit) {
                     node.composing = Some(fit);
-                    let fading_in = node.fit.is_none() && !w.fading.is_empty();
-                    compose.push((i, fit, size, Arc::clone(image), fading_in));
+                    compose.push((i_node, fit, size, Arc::clone(image), fading_in));
                 }
                 continue;
             }
@@ -874,11 +1151,11 @@ impl State {
                 scale as f32,
                 opaque,
             );
-            let texture = match staged_of(&w.staged, size) {
+            let texture = match staged_of(&p.staged, size) {
                 // Borrowed: the picture is shown as drawn, so what was staged is the canvas.
-                Some(p) if matches!(canvas, Cow::Borrowed(_)) => {
+                Some(st) if matches!(canvas, Cow::Borrowed(_)) => {
                     let renderer = self.backend.as_mut().map(|b| &mut b.renderer);
-                    p.show(&mut self.scene, renderer, node.buffer, &canvas, scale)
+                    st.show(&mut self.scene, renderer, node.buffer, &canvas, scale)
                 }
                 _ => {
                     upload_scaled(&mut self.scene, node.buffer, &canvas, scale);
@@ -887,23 +1164,22 @@ impl State {
             };
             node.shown(fit, texture.clone());
             changed = true;
-            let out = w.nodes[i].0.clone();
-            self.water_wallpaper(&out, Pane::Desktop, &canvas, texture, fresh);
+            let out = w.nodes[i_node].0.clone();
+            self.water_wallpaper(&out, Pane::Desktop, &canvas, texture, fading_in);
         }
+        w.unready = unready;
         let compose: Vec<_> = (compose.into_iter())
             .map(|(i, fit, size, image, fading_in)| {
                 (w.nodes[i].0.clone(), fit, size, image, fading_in)
             })
             .collect();
-        let starts_fade = fade_in && w.fade_due();
-        let path = w.path.clone();
-        let builtin = w.builtin.as_ref().map(|(b, _)| *b);
+        let starts_fade = w.fade_due();
         self.wallpaper = Some(w);
-        if let Some(cut) = load {
-            self.load_wallpaper(path.clone(), cut);
+        for (path, position, cut) in loads {
+            self.load_wallpaper(path, position, cut);
         }
-        if let Some(b) = builtin.filter(|_| !draw.is_empty()) {
-            self.draw_builtins(path, b, draw);
+        for (path, b, sizes) in draws {
+            self.draw_builtins(path, b, sizes);
         }
         for (out, fit, size, image, fading_in) in compose {
             self.compose_wallpaper(out, fit, size, image, fading_in);
@@ -938,7 +1214,10 @@ impl State {
                 let Some(w) = state.wallpaper.as_mut() else {
                     return;
                 };
-                if !w.image.as_ref().is_some_and(|l| Arc::ptr_eq(l, &image)) {
+                let current = (w.picture_at(&out.name(), fit.position))
+                    .and_then(|p| p.image.as_ref())
+                    .is_some_and(|l| Arc::ptr_eq(l, &image));
+                if !current {
                     return;
                 }
                 let Some((_, node)) = w.nodes.iter_mut().find(|(o, _)| *o == out) else {
@@ -975,6 +1254,14 @@ impl State {
         (node.composing.is_none() && node.fit.is_some()).then(|| node.texture.clone())?
     }
 
+    /// Whether `out` shows the desktop colour alone, with no picture to fade from.
+    pub(crate) fn wallpaper_shows_nothing(&self, out: &Output) -> bool {
+        self.wallpaper.as_ref().is_none_or(|w| {
+            let name = out.name();
+            w.shows_nothing_on(&name, self.placement(w, &name))
+        })
+    }
+
     /// The lock screen's backdrop on `out`: the desktop's texture once it is composed for the
     /// output's current box and scale, else composed here.
     pub fn lock_wallpaper(&self, out: &Output) -> LockWall {
@@ -985,7 +1272,7 @@ impl State {
         let fit = Fit {
             rect: self.layout_box(Some(out)),
             scale,
-            position: self.config.wallpaper.position,
+            position: self.placement(w, &out.name()),
             bg: self.config.theme.colors.background,
         };
         match w.lock_source(out, fit) {
@@ -1003,13 +1290,16 @@ impl State {
     pub fn wallpaper_canvas(&self, out: &Output, scale: i32) -> Option<Canvas> {
         let b = self.layout_box(Some(out));
         let size = ((b.width * scale) as u32, (b.height * scale) as u32);
-        let source = self.wallpaper.as_ref()?.source(size)?;
+        let w = self.wallpaper.as_ref()?;
+        let name = out.name();
+        let position = self.placement(w, &name);
+        let source = w.source(&name, position, size)?;
         (b.width > 0).then(|| {
             crate::wallpaper::compose(
                 source,
                 size.0,
                 size.1,
-                self.config.wallpaper.position,
+                position,
                 self.config.theme.colors.background,
                 scale as f32,
             )
@@ -1069,12 +1359,17 @@ impl State {
     fn still_key(&self, out: Option<&Output>, w: i32, h: i32) -> (StillKey, (u32, u32)) {
         let b = self.layout_box(out);
         let scale = self.draw_scale_at(out);
+        let position = match (&self.wallpaper, out) {
+            (Some(wp), Some(o)) => self.placement(wp, &o.name()),
+            (Some(wp), None) => placed(wp.paths.all().next(), self.config.wallpaper.position),
+            (None, _) => self.config.wallpaper.position,
+        };
         let key = StillKey {
             out: out.cloned(),
             size: (w.max(1) as u32, h.max(1) as u32),
             layout: b,
             scale,
-            position: self.config.wallpaper.position,
+            position,
             bg: self.config.theme.colors.background,
         };
         (key, ((b.width * scale) as u32, (b.height * scale) as u32))
@@ -1128,17 +1423,18 @@ mod tests {
         h.output("A-1", 320, 200);
         h.state.set_wallpaper(Some(&a));
         let w = h.state.wallpaper.as_ref().unwrap();
-        let (first, cut) = (w.serial, w.loading.expect("a decode for A"));
+        let p = &w.pictures[0];
+        let (first, at, cut) = (w.serial, p.position, p.loading.expect("a decode for A"));
         h.state.set_wallpaper(Some(&b));
         h.state.set_wallpaper(Some(&a));
-        h.state.wallpaper_loaded(first, cut, None);
+        h.state.wallpaper_loaded(first, &a, at, cut, None);
         assert_eq!(
             shown(&h),
             Some(a.as_path()),
             "the first A's decode was stopped"
         );
         h.until("A's own decode lands", |s| {
-            s.wallpaper.as_ref().is_some_and(|w| w.image.is_some())
+            (s.wallpaper.as_ref()).is_some_and(|w| w.pictures.iter().any(|p| p.image.is_some()))
         });
         assert_eq!(shown(&h), Some(a.as_path()));
         std::fs::remove_dir_all(&dir).unwrap();
@@ -1159,7 +1455,7 @@ mod tests {
     }
 
     fn shown(h: &crate::harness::Harness) -> Option<&Path> {
-        h.state.wallpaper.as_ref().map(|w| w.path.as_path())
+        h.state.wallpaper.as_ref()?.paths.shared.as_deref()
     }
 
     #[test]
@@ -1239,7 +1535,7 @@ mod tests {
         }
         assert_eq!(shown(&h), Some(Path::new("reprise:tarn/dusk")));
         for _ in 0..200 {
-            let drawn = |w: &Wallpaper| w.builtin.as_ref().is_some_and(|(_, d)| d.any().is_some());
+            let drawn = |w: &Wallpaper| w.pictures.iter().any(|p| p.shows_something());
             if h.state
                 .wallpaper
                 .as_ref()
@@ -1255,7 +1551,7 @@ mod tests {
             "the fade ends and drops the picture before"
         );
         assert!(
-            w.builtin.as_ref().is_some_and(|(_, d)| d.any().is_some()),
+            w.pictures.iter().any(|p| p.shows_something()),
             "the last desktop's picture is drawn though the ones before were skipped"
         );
     }
@@ -1313,7 +1609,9 @@ mod tests {
         let staged = |h: &crate::harness::Harness| {
             let w = h.state.wallpaper.as_ref().expect("a wallpaper");
             (
-                w.staged.iter().map(staged_size).collect::<Vec<_>>(),
+                (w.pictures.iter())
+                    .flat_map(|p| p.staged.iter().map(staged_size))
+                    .collect::<Vec<_>>(),
                 w.nodes.len(),
             )
         };
@@ -1359,6 +1657,7 @@ mod tests {
             placed: Some(fit(1920).rect),
             composing: Some(fit(1280)),
             texture: None,
+            fades: false,
         };
         assert!(node.takes(fit(1280)));
         node.shown(fit(960), None);
@@ -1371,7 +1670,7 @@ mod tests {
 
     #[test]
     fn the_desktop_still_is_composed_again_only_for_a_new_key_or_a_landed_picture() {
-        let mut w = Wallpaper::new(Path::new("/srv/w/a.jpg"));
+        let mut w = one("/srv/w/a.jpg");
         let composed = std::cell::Cell::new(0);
         let still = |w: &mut Wallpaper, width: i32| {
             let key = StillKey {
@@ -1395,10 +1694,7 @@ mod tests {
         assert_eq!(composed.get(), 1);
         still(&mut w, 2560);
         assert_eq!(composed.get(), 2, "a new layout composes again");
-        w.land_image(Loaded {
-            image: Canvas::new(4, 4),
-            cut: None,
-        });
+        land(&mut w, Canvas::new(4, 4));
         still(&mut w, 2560);
         assert_eq!(composed.get(), 3, "a landed picture composes again");
     }
@@ -1418,11 +1714,11 @@ mod tests {
             image: Canvas::new(n, n),
             cut: None,
         };
-        let mut w = Wallpaper::new(Path::new("/srv/w/a.jpg"));
+        let mut w = one("/srv/w/a.jpg");
         assert!(w.still_source(&key(), size).is_none(), "nothing to compose");
-        w.land_image(picture(4));
+        land(&mut w, picture(4).image);
         let src = w.still_source(&key(), size).expect("the file's picture");
-        w.land_image(picture(8));
+        land(&mut w, picture(8).image);
         w.land_still(key(), size, &src, Canvas::new(160, 90));
         assert!(w.still.is_none(), "composed from a picture since replaced");
         let src = w.still_source(&key(), size).expect("the file's picture");
@@ -1446,8 +1742,9 @@ mod tests {
             placed: None,
             composing: Some(fit),
             texture: None,
+            fades: false,
         };
-        let mut w = Wallpaper::new(Path::new("/srv/w/a.jpg"));
+        let mut w = one("/srv/w/a.jpg");
         w.nodes = vec![
             (output("A-1"), node(&mut scene)),
             (output("B-1"), node(&mut scene)),
@@ -1472,15 +1769,12 @@ mod tests {
             bg: Color::rgb(0, 0, 0),
         };
         let out = output("A-1");
-        let mut w = Wallpaper::new(Path::new("/srv/w/a.jpg"));
+        let mut w = one("/srv/w/a.jpg");
         assert!(
             matches!(w.lock_source(&out, fit(1920)), LockSource::Here),
             "before the decode lands the lock screen has nothing to wait for"
         );
-        w.land_image(Loaded {
-            image: Canvas::new(4, 4),
-            cut: None,
-        });
+        land(&mut w, Canvas::new(4, 4));
         assert!(
             matches!(w.lock_source(&out, fit(1920)), LockSource::Composing),
             "an output the refit has not reached waits for its job"
@@ -1493,6 +1787,7 @@ mod tests {
                 placed: Some(fit(1280).rect),
                 composing: Some(fit(1920)),
                 texture: None,
+                fades: false,
             },
         )];
         assert!(
@@ -1518,7 +1813,7 @@ mod tests {
             bg: Color::rgb(0, 0, 0),
         };
         let out = output("A-1");
-        let mut w = Wallpaper::new(Path::new("reprise:tarn/blue"));
+        let mut w = one("reprise:tarn/blue");
         assert!(matches!(w.lock_source(&out, fit(1920)), LockSource::Here));
         let desktop = scene.buffer_create(root);
         w.nodes = vec![(
@@ -1529,6 +1824,7 @@ mod tests {
                 placed: Some(fit(1280).rect),
                 composing: None,
                 texture: None,
+                fades: false,
             },
         )];
         assert!(
@@ -1540,6 +1836,163 @@ mod tests {
             matches!(w.lock_source(&out, fit(1920)), LockSource::Buffer(b) if b == desktop),
             "a built-in with no staged texture shares the desktop's buffer"
         );
+    }
+
+    /// A-1 and C-1 show the main built-in on every desktop, B-1 its own; desktop 2 has its own.
+    fn own_picture_on_b() -> crate::harness::Harness {
+        let mut config = crate::config::Config::parse(
+            "[workspaces]\ncount = 2\n[wallpaper]\nimage = \"reprise:tarn/blue\"\n\
+             desktops = [\"\", \"reprise:tarn/dusk\"]\n\
+             [[outputs]]\nname = \"B-1\"\nwallpaper = \"reprise:fold/sand\"\n",
+        )
+        .unwrap();
+        config.workspace_animation.ms = 0;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.state.apply_wallpaper_config();
+        h.output("A-1", 320, 200);
+        h.output("B-1", 320, 200);
+        h.output("C-1", 320, 200);
+        h
+    }
+
+    fn out(h: &crate::harness::Harness, name: &str) -> Output {
+        (h.state.scene.outputs().iter())
+            .find(|o| o.name() == name)
+            .cloned()
+            .unwrap()
+    }
+
+    fn canvas(h: &crate::harness::Harness, name: &str) -> Vec<u32> {
+        let o = out(h, name);
+        h.state.wallpaper_canvas(&o, 1).expect("a picture").pixels
+    }
+
+    fn node_of(h: &crate::harness::Harness, name: &str) -> Option<BufferId> {
+        let w = h.state.wallpaper.as_ref()?;
+        (w.nodes.iter())
+            .find(|(o, _)| o.name() == name)
+            .map(|(_, n)| n.buffer)
+    }
+
+    #[test]
+    fn an_output_with_its_own_picture_shows_it_and_the_rest_share_the_main_one() {
+        let h = own_picture_on_b();
+        let w = h.state.wallpaper.as_ref().unwrap();
+        assert_eq!(w.paths.of("B-1"), Some(Path::new("reprise:fold/sand")));
+        assert_eq!(w.paths.of("A-1"), Some(Path::new("reprise:tarn/blue")));
+        assert_eq!(
+            w.pictures.len(),
+            2,
+            "one picture for A-1 and C-1, one for B-1"
+        );
+        assert_eq!(canvas(&h, "A-1"), canvas(&h, "C-1"));
+        assert_ne!(canvas(&h, "A-1"), canvas(&h, "B-1"));
+    }
+
+    #[test]
+    fn outputs_placing_one_file_alike_share_its_decode() {
+        let dir = std::env::temp_dir().join(format!("reprise-own-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([40, 80, 120, 255]))
+            .save(&a)
+            .unwrap();
+        let text = format!(
+            "[wallpaper]\nimage = \"{0}\"\n[[outputs]]\nname = \"C-1\"\nwallpaper_position = \"center\"\n",
+            a.display()
+        );
+        let mut h =
+            crate::harness::Harness::with_config(crate::config::Config::parse(&text).unwrap());
+        h.state.apply_wallpaper_config();
+        h.output("A-1", 320, 200);
+        h.output("B-1", 640, 400);
+        h.output("C-1", 320, 200);
+        let w = h.state.wallpaper.as_ref().unwrap();
+        let mut held: Vec<_> = w
+            .pictures
+            .iter()
+            .map(|p| (p.position, p.image.is_some()))
+            .collect();
+        held.sort_by_key(|(p, _)| format!("{p:?}"));
+        assert_eq!(
+            held,
+            [(Some(Position::Center), true), (Some(Position::Fill), true)],
+            "A-1 and B-1 fill from one decode, C-1 centres from its own"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_desktop_switch_leaves_an_output_showing_its_own_picture_as_it_is() {
+        let mut h = own_picture_on_b();
+        let (a, b) = (node_of(&h, "A-1").unwrap(), node_of(&h, "B-1").unwrap());
+        h.state.switch_desktop(1);
+        let w = h.state.wallpaper.as_ref().unwrap();
+        assert_eq!(w.paths.of("A-1"), Some(Path::new("reprise:tarn/dusk")));
+        assert_eq!(node_of(&h, "B-1"), Some(b), "B-1 keeps its buffer");
+        assert_eq!(h.state.scene.opacity(b), Some(1.0));
+        assert!(w.fading.contains(&a), "A-1's picture fades out");
+        assert!(!w.fading.contains(&b));
+        for _ in 0..200 {
+            if h.state.wallpaper.as_ref().unwrap().fading.is_empty() {
+                break;
+            }
+            h.run_for(10);
+            crate::animclock::step(&mut h.state, Instant::now() + DESKTOP_FADE);
+        }
+        assert!(h.state.wallpaper.as_ref().unwrap().fading.is_empty());
+        assert_eq!(node_of(&h, "B-1"), Some(b));
+        assert_eq!(canvas(&h, "A-1"), canvas(&h, "C-1"));
+        assert_ne!(canvas(&h, "A-1"), canvas(&h, "B-1"));
+    }
+
+    #[test]
+    fn an_output_plugged_in_again_shows_its_own_picture() {
+        let mut h = own_picture_on_b();
+        let own = canvas(&h, "B-1");
+        let b = out(&h, "B-1");
+        h.state.scene.remove_output(&b);
+        h.state.output_removed(&b);
+        h.dispatch();
+        assert_eq!(node_of(&h, "B-1"), None);
+        h.output("B-1", 320, 200);
+        assert_eq!(canvas(&h, "B-1"), own);
+    }
+
+    #[test]
+    fn an_own_picture_that_does_not_decode_leaves_its_output_the_colour_alone() {
+        let dir = std::env::temp_dir().join(format!("reprise-own-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bad = dir.join("bad.png");
+        std::fs::write(&bad, b"not a picture").unwrap();
+        let text = format!(
+            "[wallpaper]\nimage = \"reprise:tarn/blue\"\n[[outputs]]\nname = \"B-1\"\nwallpaper = \"{}\"\n",
+            bad.display()
+        );
+        let mut h =
+            crate::harness::Harness::with_config(crate::config::Config::parse(&text).unwrap());
+        h.state.apply_wallpaper_config();
+        h.output("A-1", 320, 200);
+        h.output("B-1", 320, 200);
+        assert!(node_of(&h, "A-1").is_some(), "A-1 shows the main picture");
+        assert_eq!(node_of(&h, "B-1"), None);
+        assert!(h.state.wallpaper_shows_nothing(&out(&h, "B-1")));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `path` on every output, stretched, with its picture made.
+    fn one(path: &str) -> Wallpaper {
+        let path = Path::new(path);
+        let mut w = Wallpaper::new(Paths::one(Some(path)));
+        w.pictures
+            .push(Picture::new(path, placing(path, Position::Stretch)));
+        w
+    }
+
+    fn land(w: &mut Wallpaper, image: Canvas) {
+        let p = &w.pictures[0];
+        let (path, at) = (p.path.clone(), p.position);
+        w.land_image(&path, at, Loaded { image, cut: None });
     }
 
     fn output(name: &str) -> Output {

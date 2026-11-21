@@ -939,6 +939,50 @@ impl TextRenderer {
         format!("{trimmed}...").into()
     }
 
+    /// `text` cut to fit `width` with "..." before its last `keep` bytes, which stay whole; once no
+    /// character of the start fits, it is cut from the start instead ("...end").
+    pub fn ellipsize_keeping<'t>(
+        &self,
+        text: &'t str,
+        keep: usize,
+        width: i32,
+        bold: bool,
+        size_px: u32,
+    ) -> std::borrow::Cow<'t, str> {
+        let at = text.len().saturating_sub(keep);
+        let dots = self.measure("...", bold, size_px);
+        if keep == 0
+            || !text.is_char_boundary(at)
+            || dots > width
+            || self.measure(text, bold, size_px) <= width
+        {
+            return self.ellipsize(text, width, bold, size_px);
+        }
+        let (head, tail) = text.split_at(at);
+        let room = width - dots - self.measure(tail, bold, size_px);
+        let (mut used, mut end) = (0, 0);
+        for (i, ch) in head.char_indices() {
+            used += self.advance(ch, bold, size_px);
+            if used > room {
+                break;
+            }
+            end = i + ch.len_utf8();
+        }
+        let start = head[..end].trim_end_matches(['.', ' ']);
+        if !start.is_empty() {
+            return format!("{start}...{tail}").into();
+        }
+        let (mut used, mut from) = (dots, text.len());
+        for (i, ch) in text.char_indices().rev() {
+            used += self.advance(ch, bold, size_px);
+            if used > width {
+                break;
+            }
+            from = i;
+        }
+        format!("...{}", text[from..].trim_start()).into()
+    }
+
     #[expect(clippy::too_many_arguments)]
     pub fn draw(
         &self,

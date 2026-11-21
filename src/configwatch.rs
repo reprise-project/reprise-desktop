@@ -57,6 +57,13 @@ pub enum WallpaperChange {
 /// Compare two configs. Everything the compositor reads from
 /// `State::config` at use needs nothing but the swap, so it is absent
 /// here; `quicklaunch` is folder-backed and never re-read.
+/// The outputs' own pictures, by name: a new one is a new picture, a new position alone a refit.
+fn own_images(w: &crate::config::WallpaperConfig) -> Vec<(&str, &std::path::Path)> {
+    (w.outputs.iter())
+        .filter_map(|o| Some((o.name.as_str(), o.image.as_deref()?)))
+        .collect()
+}
+
 pub fn diff(old: &Config, new: &Config) -> Changes {
     Changes {
         // A new interface brings its own caption and Start fonts.
@@ -78,6 +85,7 @@ pub fn diff(old: &Config, new: &Config) -> Changes {
             || old.wallpaper.slideshow != new.wallpaper.slideshow
             || old.wallpaper.interval != new.wallpaper.interval
             || old.wallpaper.desktops != new.wallpaper.desktops
+            || own_images(&old.wallpaper) != own_images(&new.wallpaper)
         {
             WallpaperChange::Image
         } else if old.wallpaper != new.wallpaper {

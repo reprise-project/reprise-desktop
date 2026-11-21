@@ -1,6 +1,7 @@
 //! OK, Apply and Cancel: writing `config.toml`, the autostart files, the proxy and the machine
 //! settings, and rereading them.
 
+use crate::backgroundpage::{self, OwnKey};
 use crate::backuphost::Then;
 use crate::registry::{self, Page};
 use crate::{
@@ -15,17 +16,35 @@ use repriseapp::{Ctx, Event, Reply, WinId};
 
 pub(crate) const RUN_AS_QUESTION: &str = "Turn off Run As?\nFrom the next log on, programs that need an administrator password (Software Updates, Network Connections, drives) cannot ask for one.";
 
-/// The question Restore Defaults asks on page `p` before taking `keys` out of `config.toml`.
-pub(crate) fn restore_question(p: Page, keys: &[Key]) -> String {
+/// What Restore Defaults takes out of `config.toml` on a page: its keys off their defaults and,
+/// on Background, the connected monitors' own wallpaper keys as (connector, key).
+#[derive(Debug, Default)]
+pub(crate) struct Restorable {
+    pub keys: Vec<Key>,
+    pub outputs: Vec<(String, OwnKey)>,
+}
+
+impl Restorable {
+    fn is_empty(&self) -> bool {
+        self.keys.is_empty() && self.outputs.is_empty()
+    }
+}
+
+/// The question Restore Defaults asks on page `p` before taking `r` out of `config.toml`; a
+/// monitor's own key reads "outputs.wallpaper (DP-1)".
+pub(crate) fn restore_question(p: Page, r: &Restorable) -> String {
     let mut text = format!(
         "Restore the defaults on the {} page?\nThese settings are taken out of config.toml:\n",
         p.label()
     );
-    for k in keys {
+    for k in &r.keys {
         match k.table {
             "" => text.push_str(&format!("    {}\n", k.name)),
             t => text.push_str(&format!("    {t}.{}\n", k.name)),
         }
+    }
+    for (name, key) in &r.outputs {
+        text.push_str(&format!("    outputs.{} ({name})\n", key.key()));
     }
     text.pop();
     text
@@ -173,7 +192,8 @@ impl SettingsApp {
             let i = p.index();
             let keys = pages::keys_of(&self.sheet.pages[i]);
             self.sheet.set_restore(i, !keys.is_empty());
-            let on = !self.off_default(keys, &mut apart).is_empty();
+            let on = !self.off_default(keys, &mut apart).is_empty()
+                || !self.own_wallpapers(p).is_empty();
             self.sheet.pages[i].set_enabled(propsheet::RESTORE, on);
         }
     }
@@ -188,10 +208,37 @@ impl SettingsApp {
         model::defaults(interface)
     }
 
-    /// The keys page `p`'s controls write that the file or the sheet holds off their defaults.
-    pub(crate) fn restorable(&self, p: Page) -> Vec<Key> {
+    /// The keys page `p`'s controls write that the file or the sheet holds off their defaults,
+    /// and the monitors' own wallpaper keys it restores.
+    pub(crate) fn restorable(&self, p: Page) -> Restorable {
         let keys = pages::keys_of(&self.sheet.pages[p.index()]);
-        self.off_default(keys, &mut Apart::default())
+        Restorable {
+            keys: self.off_default(keys, &mut Apart::default()),
+            outputs: self.own_wallpapers(p),
+        }
+    }
+
+    /// On Background, each connected monitor's own `wallpaper` and `wallpaper_position` the
+    /// file or the sheet sets, as "All monitors" takes them away: a monitor not connected keeps
+    /// its own.
+    fn own_wallpapers(&self, p: Page) -> Vec<(String, OwnKey)> {
+        if p != Page::Background {
+            return Vec::new();
+        }
+        let set = |name: &str, key: OwnKey| {
+            [&self.loaded, &self.want].iter().any(|s| {
+                (s.output_wallpapers.iter()).any(|o| o.name == name && !key.of(o).is_empty())
+            })
+        };
+        let mut out = Vec::new();
+        for name in self.connected_names() {
+            for key in [OwnKey::Wallpaper, OwnKey::Position] {
+                if set(&name, key) {
+                    out.push((name.clone(), key));
+                }
+            }
+        }
+        out
     }
 
     /// Those of `keys` that the file or the sheet holds off [`Self::defaults_for`] them.
@@ -209,20 +256,26 @@ impl SettingsApp {
     /// Restore Defaults on the open page: ask with the keys it takes out of `config.toml`.
     pub(crate) fn ask_restore(&mut self) {
         let p = registry::open(&self.sheet);
-        let keys = self.restorable(p);
-        if keys.is_empty() {
+        let r = self.restorable(p);
+        if r.is_empty() {
             return;
         }
-        self.ask(restore_question(p, &keys), Then::RestoreDefaults(p));
+        self.ask(restore_question(p, &r), Then::RestoreDefaults(p));
     }
 
     /// Take page `p`'s keys out of `config.toml` the way Apply writes a default, and show the
     /// defaults on the page; the other pages' unapplied changes stay unapplied.
     pub(crate) fn restore_defaults(&mut self, p: Page) {
-        let keys = self.restorable(p);
+        let Restorable { keys, outputs } = self.restorable(p);
         let def = self.defaults_for(&keys);
         let mut next = self.loaded.clone();
         model::copy_keys(&keys, def, &mut next);
+        let own = |s: &mut model::Settings| {
+            for (name, key) in &outputs {
+                backgroundpage::set_for_monitor(s, name, *key, String::new());
+            }
+        };
+        own(&mut next);
         let saved = repriseconf::edit(&self.path, |text| model::save(text, &next, &self.loaded));
         match saved {
             Ok(Ok(_)) => {}
@@ -239,6 +292,7 @@ impl SettingsApp {
             }
         }
         model::copy_keys(&keys, def, &mut self.want);
+        own(&mut self.want);
         self.config_changed();
         pages::write(&mut self.sheet, &self.want, &self.xkb, &self.system_layout);
         self.fill_wallpapers();

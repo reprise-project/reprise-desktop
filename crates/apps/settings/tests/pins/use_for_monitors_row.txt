@@ -1,0 +1,24 @@
+all monitors x1 Classic 4d1101a9ad847e63
+all monitors x1 Blue 5b7fbf1d5ee5a86d
+all monitors x1 Glass 255d45d61f3f0179
+all monitors x2 Classic d469d79f37318e2c
+all monitors x2 Blue c212c099a8d61110
+all monitors x2 Glass 9f186564e83ad1a9
+monitor 2 x1 Classic f5703473edafa5e3
+monitor 2 x1 Blue 0cd08609dff5c7e9
+monitor 2 x1 Glass 729a7a203d523817
+monitor 2 x2 Classic 9ec1bb18de1202ca
+monitor 2 x2 Blue af488fbcab671869
+monitor 2 x2 Glass a7ee815973f34fd6
+everywhere x1 Classic 9662334d6ae5b2db
+everywhere x1 Blue 0735ef05bbe11f15
+everywhere x1 Glass 7734829fee8517b5
+everywhere x2 Classic f4c7eaf34e23b862
+everywhere x2 Blue eb8293a2a1937255
+everywhere x2 Glass 0410a30406cc6979
+long monitor 2 x1 Classic 67b558cb14769853
+long monitor 2 x1 Blue fa0762d1d29e3ac9
+long monitor 2 x1 Glass 965ed00d61760912
+long monitor 2 x2 Classic 9ec1bb18de1202ca
+long monitor 2 x2 Blue af488fbcab671869
+long monitor 2 x2 Glass a7ee815973f34fd6

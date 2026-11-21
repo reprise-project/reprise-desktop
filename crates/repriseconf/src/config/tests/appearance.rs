@@ -962,3 +962,67 @@ fn attention_flash_defaults_to_30_seconds_and_takes_its_key() {
         "the error names the range: {err}"
     );
 }
+
+#[test]
+fn an_output_shows_its_own_picture_and_position_else_the_wallpapers() {
+    let c = Config::parse(
+        "[wallpaper]\nimage = \"/w/a.jpg\"\nposition = \"tile\"\n\
+         [[outputs]]\nname = \"DP-1\"\nwallpaper = \"/w/b.png\"\nwallpaper_position = \"center\"\n\
+         [[outputs]]\nname = \"HDMI-A-1\"\nwallpaper = \"reprise:tarn/dusk\"\n\
+         [[outputs]]\nname = \"eDP-1\"\nwallpaper_position = \"fit\"\n\
+         [[outputs]]\nname = \"DP-2\"\nwallpaper = \"\"\nscale = 2\n",
+    )
+    .unwrap();
+    let w = &c.wallpaper;
+    assert_eq!(w.output_image("DP-1"), Some(Path::new("/w/b.png")));
+    assert_eq!(
+        w.position_for("DP-1"),
+        reprisekit::wallpaper::Position::Center
+    );
+    assert_eq!(
+        w.output_image("HDMI-A-1"),
+        Some(Path::new("reprise:tarn/dusk"))
+    );
+    assert_eq!(
+        w.position_for("HDMI-A-1"),
+        reprisekit::wallpaper::Position::Tile,
+        "the main position"
+    );
+    assert_eq!(w.output_image("eDP-1"), None, "a position alone");
+    assert_eq!(
+        w.position_for("eDP-1"),
+        reprisekit::wallpaper::Position::Fit
+    );
+    assert_eq!(w.output_image("DP-2"), None, "\"\" is the main picture");
+    assert_eq!(w.output_image("DP-3"), None, "an output without an entry");
+    assert_eq!(
+        w.position_for("DP-3"),
+        reprisekit::wallpaper::Position::Tile
+    );
+    assert_eq!(w.outputs.len(), 3, "DP-2 sets neither key");
+    assert_eq!(c.scale_for_output_name("DP-2"), 2.0);
+}
+
+#[test]
+fn a_bad_output_wallpaper_is_left_out_and_keeps_the_outputs_other_keys() {
+    let c = Config::parse(
+        "[[outputs]]\nname = \"DP-1\"\nscale = 2\nwallpaper = \"reprise:lake\"\n\
+         wallpaper_position = \"zoom\"\n",
+    )
+    .unwrap();
+    assert_eq!(c.wallpaper.output_image("DP-1"), None);
+    assert!(c.wallpaper.outputs.is_empty());
+    assert_eq!(c.scale_for_output_name("DP-1"), 2.0);
+}
+
+#[test]
+fn an_output_s_glass_built_in_resolves_like_the_main_one() {
+    let c = Config::parse(
+        "[glass]\nmode = \"dark\"\n[[outputs]]\nname = \"DP-1\"\nwallpaper = \"reprise:flow/glass\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        c.wallpaper.output_image("DP-1"),
+        Some(Path::new("reprise:flow/night"))
+    );
+}

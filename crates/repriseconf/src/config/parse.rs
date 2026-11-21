@@ -101,6 +101,50 @@ fn builtin_path(
     PathBuf::from(reprisekit::interfaces::resolve_wallpaper(b, glass).uri())
 }
 
+/// A wallpaper key's picture: a built-in's resolved `reprise:` path, else the file; None for "".
+fn picture(s: &str, glass: &reprisekit::glass::Settings) -> Result<Option<PathBuf>, String> {
+    match reprisekit::wallpapers::Builtin::from_uri(s) {
+        Some(b) => Ok(Some(builtin_path(
+            b.map_err(|e| format!("wallpaper.image {e}"))?,
+            glass,
+        ))),
+        None => wallpaper_image(s, std::env::var_os("HOME").as_deref()),
+    }
+}
+
+/// `o`'s own `wallpaper` and `wallpaper_position`; None when it sets neither ("" is unset). A bad
+/// value is left out with a warning, so it never costs the output its mode or scale.
+fn output_wallpaper(
+    o: &super::file::FileOutput,
+    glass: &reprisekit::glass::Settings,
+) -> Option<super::OutputWallpaper> {
+    let image = (o.wallpaper.as_deref()).and_then(|s| match picture(s, glass) {
+        Ok(p) => p,
+        Err(e) => {
+            let key = format!("outputs.{}.wallpaper", o.name);
+            log::warn!("config: {}", e.replace("wallpaper.image", &key));
+            None
+        }
+    });
+    let position = (o.wallpaper_position.as_deref())
+        .filter(|p| !p.is_empty())
+        .and_then(|p| {
+            let parsed = reprisekit::wallpaper::Position::parse(p);
+            if parsed.is_none() {
+                log::warn!(
+                    "config: outputs.{}.wallpaper_position {p:?} is not fill, fit, stretch, tile or center",
+                    o.name
+                );
+            }
+            parsed
+        });
+    (image.is_some() || position.is_some()).then(|| super::OutputWallpaper {
+        name: o.name.clone(),
+        image,
+        position,
+    })
+}
+
 /// `text` read by `build`, with every key that fails on its own left out: a table's
 /// failing keys alone (`taskbar.position`), an array's failing entries alone (`tablets[2]`),
 /// any other top-level key whole. Returns what
@@ -580,13 +624,7 @@ impl Config {
         let mut image_set = false;
         if let Some(w) = file.wallpaper {
             image_set = w.image.is_some();
-            let picture = |s: &str| match reprisekit::wallpapers::Builtin::from_uri(s) {
-                Some(b) => Ok(Some(builtin_path(
-                    b.map_err(|e| format!("wallpaper.image {e}"))?,
-                    &cfg.glass,
-                ))),
-                None => wallpaper_image(s, std::env::var_os("HOME").as_deref()),
-            };
+            let picture = |s: &str| picture(s, &cfg.glass);
             cfg.wallpaper.image = w.image.as_deref().map(picture).transpose()?.flatten();
             if let Some(list) = w.desktops {
                 if list.len() > WORKSPACES_MAX {
@@ -1258,6 +1296,9 @@ impl Config {
             }
         }
         if let Some(outs) = file.outputs {
+            cfg.wallpaper.outputs = (outs.iter())
+                .filter_map(|o| output_wallpaper(o, &cfg.glass))
+                .collect();
             cfg.outputs = outs
                 .into_iter()
                 .map(|o| {

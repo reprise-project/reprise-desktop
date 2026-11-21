@@ -166,7 +166,7 @@ shake, the dim, the hidden frame rate and window memory.
 - **Band select.** In an Open dialog that takes several files, drag from the
   background to select the entries a band touches.
 - **Wallpaper** filled, fitted, stretched, tiled or centred, or a slideshow
-  of a folder. Each virtual desktop can have its own picture.
+  of a folder. Each virtual desktop and each monitor can have its own picture.
 - **Desktop water.** The wallpaper ripples like a pond. Entirely
   unnecessary. Very relaxing. `ink`, `glow`, `sparks` and `neon` stir like fluid.
 - **Screen savers.** Blank, a starfield, bouncing lines, a bouncing logo and

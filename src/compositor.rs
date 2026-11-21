@@ -775,10 +775,15 @@ impl State {
             #[cfg(test)]
             ended_clients: Vec::new(),
             // A slideshow picks its first picture once the loop runs.
-            wallpaper: config
-                .wallpaper
-                .for_desktop(0)
-                .filter(|_| config.wallpaper.slideshow.is_none())
+            wallpaper: (config.wallpaper.slideshow.is_none())
+                .then(|| {
+                    let shared = config
+                        .wallpaper
+                        .for_desktop(0)
+                        .map(std::path::Path::to_path_buf);
+                    crate::wallpaperview::Paths::with_own(shared, &config.wallpaper)
+                })
+                .filter(|p| !p.is_empty())
                 .map(Wallpaper::new),
             slideshow: None,
             wallpaper_jobs: Default::default(),

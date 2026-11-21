@@ -1,3 +1,4 @@
+use crate::backgroundpage::{OwnKey, Target};
 use crate::registry::Page;
 use crate::{SettingsApp, backgroundpage, pages, wallpapers, winstate};
 use repriseapp::decode::{Decoded, Decoders};
@@ -6,22 +7,93 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 impl SettingsApp {
-    /// The pending settings as the Background page shows them, for the desktop Use for picks.
-    pub(crate) fn bg(&self) -> Cow<'_, crate::model::Settings> {
-        let page = &self.sheet.pages[Page::Background.index()];
-        backgroundpage::view(&self.want, backgroundpage::target(page))
+    /// The monitors the Use for list offers: every connected one, labelled as the Display page
+    /// labels it, while two or more are connected.
+    pub(crate) fn bg_monitors(&self) -> Vec<backgroundpage::Monitor> {
+        let heads = &self.display.connected;
+        if heads.len() < 2 {
+            return Vec::new();
+        }
+        (heads.iter().enumerate())
+            .map(|(i, h)| backgroundpage::Monitor {
+                name: h.name.clone(),
+                label: crate::displaypage::head_label(i + 1, h),
+            })
+            .collect()
     }
 
-    /// Make `picked` the pending wallpaper of the desktop Use for picks, or of all of them.
+    /// What the Background page's Use for picks.
+    fn bg_target(&self) -> backgroundpage::Target {
+        let page = &self.sheet.pages[Page::Background.index()];
+        backgroundpage::target(page, &self.want, &self.bg_monitors())
+    }
+
+    /// The pending settings as the Background page shows them, for the desktop or monitor Use for
+    /// picks.
+    pub(crate) fn bg(&self) -> Cow<'_, crate::model::Settings> {
+        backgroundpage::view(&self.want, &self.bg_target())
+    }
+
+    /// Refill the Use for list and follow what it picks.
+    pub(crate) fn follow_use_for(&mut self) {
+        let monitors = self.bg_monitors();
+        let page = &mut self.sheet.pages[Page::Background.index()];
+        backgroundpage::follow_use_for(page, &self.want, &monitors);
+    }
+
+    pub(crate) fn connected_names(&self) -> Vec<String> {
+        self.display
+            .connected
+            .iter()
+            .map(|h| h.name.clone())
+            .collect()
+    }
+
+    /// Make `picked` the pending wallpaper of the desktop or monitor Use for picks, or of all of
+    /// them: every connected monitor then shows it, giving up a picture of its own.
     fn set_wallpaper(&mut self, picked: String) {
-        match backgroundpage::target(&self.sheet.pages[Page::Background.index()]) {
-            Some(n) => backgroundpage::set_for_desktop(&mut self.want, n, picked),
-            None => self.want.wallpaper = picked,
+        match self.bg_target() {
+            Target::Desktop(n) => backgroundpage::set_for_desktop(&mut self.want, n, picked),
+            Target::Monitor(name) => {
+                backgroundpage::set_for_monitor(&mut self.want, &name, OwnKey::Wallpaper, picked)
+            }
+            Target::All => {
+                self.want.wallpaper = picked;
+                self.for_all_monitors(OwnKey::Wallpaper);
+            }
+        }
+    }
+
+    /// A pick for all monitors: every connected one takes it, giving up its own `key`.
+    fn for_all_monitors(&mut self, key: OwnKey) {
+        let names = self.connected_names();
+        backgroundpage::clear_for_monitors(&mut self.want, &names, key);
+    }
+
+    /// The Position combo moved: the monitor Use for picks takes it as its own, else it is the
+    /// position for all, which every connected monitor then takes.
+    pub(crate) fn pick_position(&mut self) {
+        let page = &self.sheet.pages[Page::Background.index()];
+        let Some(value) = (page.combo_selected(backgroundpage::POSITION))
+            .and_then(|i| crate::model::POSITIONS.get(i))
+            .map(|(v, _)| v.to_string())
+        else {
+            return;
+        };
+        match self.bg_target() {
+            Target::Monitor(name) => {
+                backgroundpage::set_for_monitor(&mut self.want, &name, OwnKey::Position, value)
+            }
+            _ => {
+                self.want.wallpaper_position = value;
+                self.for_all_monitors(OwnKey::Position);
+            }
         }
     }
 
     /// Refill the Background list from `wallpapers` with the pending one picked and scrolled into view (once, when the scan lands).
     pub(crate) fn fill_wallpapers(&mut self) {
+        self.follow_use_for();
         let folders = self.slide_folders();
         let (slides, slideshow, wallpaper) = {
             let v = self.bg();
@@ -50,6 +122,7 @@ impl SettingsApp {
     }
 
     pub(crate) fn show_monitor(&mut self) {
+        self.follow_use_for();
         let bg = self.bg().into_owned();
         let file = backgroundpage::monitor_file(&bg, self.listed());
         backgroundpage::show(
@@ -98,6 +171,7 @@ impl SettingsApp {
             return;
         }
         if slides {
+            self.for_all_monitors(OwnKey::Wallpaper);
             self.want.slideshow =
                 backgroundpage::slideshow_start(&self.last_slideshow, &self.want.wallpaper)
                     .unwrap_or_else(|| wallpapers::start_dir().to_string_lossy().into_owned());
@@ -115,10 +189,11 @@ impl SettingsApp {
         let row = backgroundpage::selected(&self.sheet.pages[Page::Background.index()]);
         if backgroundpage::slideshow(&self.bg()) {
             let folders = self.slide_folders();
-            if let Some(f) = row.and_then(|i| folders.get(i))
-                && wallpapers::expand(&self.want.slideshow).as_ref() != Some(f)
-            {
-                self.want.slideshow = f.to_string_lossy().into_owned();
+            if let Some(f) = row.and_then(|i| folders.get(i)) {
+                if wallpapers::expand(&self.want.slideshow).as_ref() != Some(f) {
+                    self.want.slideshow = f.to_string_lossy().into_owned();
+                }
+                self.for_all_monitors(OwnKey::Wallpaper);
             }
             return;
         }
@@ -131,6 +206,9 @@ impl SettingsApp {
             _ => None,
         };
         if picked.is_some() && picked == wallpapers::expand(&self.bg().wallpaper) {
+            if self.bg_target() == Target::All {
+                self.for_all_monitors(OwnKey::Wallpaper);
+            }
             return;
         }
         self.set_wallpaper(
@@ -147,6 +225,8 @@ impl SettingsApp {
         wallpapers::place(&mut self.wallpapers, &path);
         if wallpapers::expand(&self.bg().wallpaper).as_ref() != Some(&path) {
             self.set_wallpaper(path.to_string_lossy().into_owned());
+        } else if self.bg_target() == Target::All {
+            self.for_all_monitors(OwnKey::Wallpaper);
         }
         self.fill_wallpapers();
         self.want_preview();
@@ -159,6 +239,7 @@ impl SettingsApp {
         if wallpapers::expand(&self.want.slideshow).as_ref() != Some(&path) {
             self.want.slideshow = path.to_string_lossy().into_owned();
         }
+        self.for_all_monitors(OwnKey::Wallpaper);
         self.fill_wallpapers();
         self.want_preview();
         pages::follow(&mut self.sheet, &self.want);

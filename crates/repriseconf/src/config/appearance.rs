@@ -266,6 +266,17 @@ pub struct WallpaperConfig {
     pub water_rate: reprisekit::water::Rate,
     /// `desktops`: entry n is desktop n's own picture, None for the one above.
     pub desktops: Vec<Option<PathBuf>>,
+    /// `[[outputs]]` entries with a `wallpaper` or `wallpaper_position` of their own.
+    pub outputs: Vec<OutputWallpaper>,
+}
+
+/// One output's own wallpaper keys from its `[[outputs]]` entry, matched by connector name.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutputWallpaper {
+    pub name: String,
+    /// Shown on every desktop in place of `image`, a desktop's own picture and the slideshow.
+    pub image: Option<PathBuf>,
+    pub position: Option<reprisekit::wallpaper::Position>,
 }
 
 impl WallpaperConfig {
@@ -277,6 +288,22 @@ impl WallpaperConfig {
     /// What desktop `n` shows: its own picture, else `image`.
     pub fn for_desktop(&self, n: usize) -> Option<&std::path::Path> {
         self.desktop(n).or(self.image.as_deref())
+    }
+
+    /// Output `name`'s own picture, which it shows on every desktop.
+    pub fn output_image(&self, name: &str) -> Option<&std::path::Path> {
+        self.output(name)?.image.as_deref()
+    }
+
+    /// How output `name` places its picture: its own `wallpaper_position`, else `position`.
+    pub fn position_for(&self, name: &str) -> reprisekit::wallpaper::Position {
+        self.output(name)
+            .and_then(|o| o.position)
+            .unwrap_or(self.position)
+    }
+
+    fn output(&self, name: &str) -> Option<&OutputWallpaper> {
+        self.outputs.iter().find(|o| o.name == name)
     }
 }
 
@@ -291,6 +318,7 @@ impl Default for WallpaperConfig {
             water: Default::default(),
             water_rate: Default::default(),
             desktops: Vec::new(),
+            outputs: Vec::new(),
         }
     }
 }

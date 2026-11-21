@@ -855,7 +855,6 @@ impl State {
             self.scene.destroy(node);
             changed = true;
         }
-        let solid = self.wallpaper.as_ref().is_none_or(|w| w.shows_nothing());
         let bg = self.config.theme.colors.background;
         for out in outputs {
             let b = self.layout_box(Some(&out));
@@ -893,7 +892,7 @@ impl State {
                 self.scene.set_position(node, b.x, b.y);
                 changed = true;
             }
-            let canvas = if solid {
+            let canvas = if self.wallpaper_shows_nothing(&out) {
                 None
             } else if !unpictured {
                 continue;
