@@ -118,7 +118,7 @@ fn zip(c: &Compress, m: &Meter, path: Option<&OsStr>) -> Result<PathBuf, Failure
         done.set(t);
         m.settle(t);
     };
-    let mut last = Vec::new();
+    let mut first = None;
     let each = |line: &[u8]| {
         // An entry bsdtar fails to write ends its `a name` line with the error.
         let (line, said) = match line.windows(8).rposition(|w| w == b"bsdtar: ") {
@@ -126,7 +126,7 @@ fn zip(c: &Compress, m: &Meter, path: Option<&OsStr>) -> Result<PathBuf, Failure
             _ => (line, &b""[..]),
         };
         if !said.is_empty() {
-            last = said.to_vec();
+            first.get_or_insert_with(|| said.to_vec());
         }
         match line.strip_prefix(b"a ") {
             Some(entry) => {
@@ -138,7 +138,7 @@ fn zip(c: &Compress, m: &Meter, path: Option<&OsStr>) -> Result<PathBuf, Failure
                 });
             }
             None if !String::from_utf8_lossy(line).contains(extract::DELAYED) => {
-                last = line.to_vec()
+                first.get_or_insert_with(|| line.to_vec());
             }
             None => {}
         }
@@ -163,27 +163,44 @@ fn zip(c: &Compress, m: &Meter, path: Option<&OsStr>) -> Result<PathBuf, Failure
     let read = extract::lines_ticking(&mut child, err, m, each, tick);
     let ok = extract::finish(child, &read).map_err(undo)?;
     if !ok {
-        let why = extract::said(&last, "bsdtar stopped.");
-        return Err(undo(Failure::Tool(locate(why, &c.paths))));
+        let why = reason(&first.unwrap_or_default(), &c.paths, m);
+        return Err(undo(Failure::Tool(why)));
     }
     ops::rename_numbered(&tmp, &c.zip).map_err(|e| undo(io_err(e)))
 }
 
+/// The failure box's reason from bsdtar's first error line `said`: its entry [`locate`]d, then
+/// how many other entries under `paths` do not open. bsdtar gives up on an item at its first
+/// such entry, so the others are found by looking.
+fn reason(said: &[u8], paths: &[PathBuf], m: &Meter) -> String {
+    let mut shut = Vec::new();
+    for p in paths {
+        unreadable(p, m, &mut shut);
+    }
+    let why = locate(extract::said(said, "bsdtar stopped."), paths, &shut);
+    let dir = ops::members(paths).0;
+    let others = (shut.iter())
+        .map(|p| p.strip_prefix(dir).unwrap_or(p).display().to_string())
+        .filter(|s| !why.starts_with(&format!("{s}: ")) && !why.contains(&format!("'{s}'")))
+        .count();
+    extract::and_others(why, others, "read")
+}
+
 /// bsdtar's reason with the entry it quotes by its file name alone (`` Can't open `b.txt' ``)
-/// quoted by its path under the zipped items' folder instead: the first entry under `paths` of
-/// that name that does not open, else the first of that name. Unchanged when none has the name.
-fn locate(why: String, paths: &[PathBuf]) -> String {
+/// quoted by its path under the zipped items' folder instead: the first entry of that name in
+/// `shut`, the entries that do not open, else the first under `paths`. Unchanged when none has
+/// the name.
+fn locate(why: String, paths: &[PathBuf], shut: &[PathBuf]) -> String {
     let Some((head, rest)) = why.split_once('`') else {
         return why;
     };
     let Some((name, tail)) = rest.split_once('\'').filter(|(name, _)| !name.is_empty()) else {
         return why;
     };
-    let mut first = None;
-    let unreadable = paths
-        .iter()
-        .find_map(|p| named(p, Path::new(name), &mut first));
-    let Some(found) = unreadable.or(first) else {
+    let name = Path::new(name);
+    let found = (shut.iter().find(|p| p.ends_with(name)).cloned())
+        .or_else(|| paths.iter().find_map(|p| named(p, name)));
+    let Some(found) = found else {
         return why;
     };
     let dir = ops::members(paths).0;
@@ -191,24 +208,44 @@ fn locate(why: String, paths: &[PathBuf]) -> String {
     format!("{head}'{}'{tail}", shown.display())
 }
 
-/// The first entry at or under `path` whose path ends with `name` and does not open, noting the
-/// first of that name in `first`. Links are not followed.
-fn named(path: &Path, name: &Path, first: &mut Option<PathBuf>) -> Option<PathBuf> {
-    let meta = path.symlink_metadata().ok()?;
+/// The first entry at or under `path` whose path ends with `name`. Links are not followed.
+fn named(path: &Path, name: &Path) -> Option<PathBuf> {
     if path.ends_with(name) {
-        if !meta.is_symlink() && std::fs::File::open(path).is_err() {
-            return Some(path.to_path_buf());
-        }
-        first.get_or_insert_with(|| path.to_path_buf());
+        return Some(path.to_path_buf());
     }
-    if !meta.is_dir() {
+    if !path.symlink_metadata().ok()?.is_dir() {
         return None;
     }
     std::fs::read_dir(path)
         .into_iter()
         .flatten()
         .flatten()
-        .find_map(|e| named(&e.path(), name, first))
+        .find_map(|e| named(&e.path(), name))
+}
+
+/// Adds to `shut` the entries at or under `path` that do not open: files that do not open for
+/// reading and folders that do not list, whose contents stay unseen. Links are not followed and
+/// other kinds are not opened. Stops once `m` is cancelled.
+fn unreadable(path: &Path, m: &Meter, shut: &mut Vec<PathBuf>) {
+    let Ok(meta) = path.symlink_metadata() else {
+        return;
+    };
+    if meta.is_file() && std::fs::File::open(path).is_err() {
+        shut.push(path.to_path_buf());
+    }
+    if !meta.is_dir() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        shut.push(path.to_path_buf());
+        return;
+    };
+    for e in entries.flatten() {
+        if m.cancelled() {
+            return;
+        }
+        unreadable(&e.path(), m, shut);
+    }
 }
 
 /// The entries bsdtar writes for `path`, it and everything under it when a folder, and their
@@ -429,8 +466,7 @@ mod tests {
         };
         let got = events(&c, &Meter::default(), None);
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
-        // SAFETY: geteuid takes no arguments and cannot fail.
-        if unsafe { libc::geteuid() } == 0 {
+        if is_root() {
             return;
         }
         let want =
@@ -441,6 +477,82 @@ mod tests {
             "{got:?}"
         );
         assert_eq!(names_in(d), ["Docs"], "no zip or temp file is left");
+    }
+
+    fn is_root() -> bool {
+        // SAFETY: geteuid takes no arguments and cannot fail.
+        unsafe { libc::geteuid() == 0 }
+    }
+
+    #[test]
+    fn a_folder_with_two_that_do_not_open_names_one_and_counts_the_other() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        for sub in ["a", "b"] {
+            std::fs::create_dir_all(d.join("Docs").join(sub)).unwrap();
+            std::fs::write(d.join("Docs").join(sub).join("f.txt"), "shut").unwrap();
+        }
+        let shut = [d.join("Docs/a"), d.join("Docs/b")];
+        for p in &shut {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let c = Compress {
+            paths: vec![d.join("Docs")],
+            zip: d.join("Docs.zip"),
+        };
+        let got = events(&c, &Meter::default(), None);
+        for p in &shut {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        if is_root() {
+            return;
+        }
+        let want = |sub| {
+            format!(
+                "Cannot compress Docs.zip: Docs/{sub}: Couldn't visit directory: Permission denied, \
+                 and 1 other item could not be read"
+            )
+        };
+        assert!(
+            matches!(&got[..], [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished]
+                if *text == want("a") || *text == want("b")),
+            "{got:?}"
+        );
+        assert_eq!(names_in(d), ["Docs"]);
+    }
+
+    #[test]
+    fn three_items_that_do_not_open_name_the_first_and_count_the_others() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        for sub in ["x", "y", "z"] {
+            std::fs::create_dir(d.join(sub)).unwrap();
+            std::fs::write(d.join(sub).join("f.txt"), "f").unwrap();
+        }
+        std::fs::write(d.join("w.txt"), "shut").unwrap();
+        let shut = [d.join("x"), d.join("y"), d.join("w.txt")];
+        for p in &shut {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let c = Compress {
+            paths: ["x", "y", "z", "w.txt"].map(|n| d.join(n)).into(),
+            zip: d.join("x.zip"),
+        };
+        let got = events(&c, &Meter::default(), None);
+        for p in &shut {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        if is_root() {
+            return;
+        }
+        let want = "Cannot compress x.zip: x: Couldn't visit directory: Permission denied, \
+                    and 2 other items could not be read";
+        assert!(
+            matches!(&got[..], [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished]
+                if text == want),
+            "{got:?}"
+        );
+        assert_eq!(names_in(d), ["w.txt", "x", "y", "z"]);
     }
 
     #[test]
@@ -480,7 +592,7 @@ mod tests {
         let a = t.path().join("a.txt");
         std::fs::write(&a, "a").unwrap();
         let why = "Can't open `gone.txt': No such file or directory";
-        assert_eq!(locate(why.into(), &[a]), why);
+        assert_eq!(locate(why.into(), &[a], &[]), why);
     }
 
     #[test]

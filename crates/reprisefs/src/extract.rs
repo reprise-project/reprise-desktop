@@ -492,7 +492,8 @@ fn extract(
     let mut child = spawn(&argv, false, None).map_err(undo)?;
     let err = child.stderr.take().ok_or_else(no_pipe).map_err(undo)?;
     let mut n = 0;
-    let mut last = String::new();
+    let mut first = None;
+    let mut others = 0;
     let read = lines(&mut child, err, m, |line| {
         match line.strip_prefix(b"x ") {
             Some(entry) => {
@@ -502,14 +503,35 @@ fn extract(
                     bytes: 0,
                     items: before + n,
                 });
+                // bsdtar ends an entry's line once it is written, with `: why` when that failed.
+                // A name holding `: ` is told apart by having landed.
+                let landed = || {
+                    into.join(OsStr::from_bytes(entry))
+                        .symlink_metadata()
+                        .is_ok()
+                };
+                if entry.windows(2).any(|w| w == b": ") && !landed() {
+                    match first {
+                        None => first = Some(entry.to_vec()),
+                        Some(_) => others += 1,
+                    }
+                }
             }
-            None => last = String::from_utf8_lossy(line).into_owned(),
+            None if !String::from_utf8_lossy(line).contains(DELAYED) => {
+                first.get_or_insert_with(|| line.to_vec());
+            }
+            None => {}
         }
         true
     });
     let ok = finish(child, &read).map_err(undo)?;
     if !ok {
-        return Err(undo(Failure::Tool(said(last.as_bytes(), UNREAD))));
+        let why = and_others(
+            said(&first.unwrap_or_default(), UNREAD),
+            others,
+            "extracted",
+        );
+        return Err(undo(Failure::Tool(why)));
     }
     let io = |e: std::io::Error| Failure::Tool(e.to_string());
     let modes = open_up(&into).map_err(io).map_err(undo)?;
@@ -851,6 +873,15 @@ pub(crate) fn said(stderr: &[u8], fallback: &str) -> String {
     match line.is_empty() {
         true => fallback.into(),
         false => line.to_string(),
+    }
+}
+
+/// `why`, then how many `others` entries could not be `done` too.
+pub(crate) fn and_others(why: String, others: usize, done: &str) -> String {
+    match others {
+        0 => why,
+        1 => format!("{why}, and 1 other item could not be {done}"),
+        n => format!("{why}, and {n} other items could not be {done}"),
     }
 }
 
@@ -1364,6 +1395,44 @@ mod tests {
                 assert_eq!(names_in(&d), want, "{links:?} here={here}: nothing lands");
             }
         }
+    }
+
+    #[test]
+    fn entries_that_fail_to_land_name_the_first_and_count_the_others() {
+        let t = tempfile::tempdir().unwrap();
+        let (d, src) = (t.path().join("d"), t.path().join("src"));
+        for dir in [
+            d.clone(),
+            src.join("one/d"),
+            src.join("one/e"),
+            src.join("two"),
+        ] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        for f in ["one/d/f", "one/e/f", "one/a: b.txt", "two/d", "two/e"] {
+            std::fs::write(src.join(f), "f").unwrap();
+        }
+        let (one, two) = (src.join("one.tar"), src.join("two.tar"));
+        bsdtar(
+            &src.join("one"),
+            &["-cf", one.to_str().unwrap(), "d", "e", "a: b.txt"],
+        );
+        bsdtar(&src.join("two"), &["-cf", two.to_str().unwrap(), "d", "e"]);
+        let both = d.join("both.tar");
+        let cat = |p: &Path| format!("@{}", p.display());
+        bsdtar(
+            &src,
+            &["-cf", both.to_str().unwrap(), &cat(&one), &cat(&two)],
+        );
+        let got = only(&both, false);
+        let want = "Cannot extract both.tar: d: Can't replace existing directory with \
+                    non-directory: Directory not empty, and 1 other item could not be extracted";
+        assert!(
+            matches!(&got[..], [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished]
+                if text == want),
+            "{got:?}"
+        );
+        assert_eq!(names_in(&d), ["both.tar"]);
     }
 
     #[test]
