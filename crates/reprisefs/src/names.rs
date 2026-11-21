@@ -1,10 +1,10 @@
 //! Naming rules for files the shell creates, copies, shortcuts or renames:
 //! numbered duplicates ("Copy of x", "New Folder (2)"), the label that hides a
-//! known extension, the zip archive name, and which typed names a rename takes.
+//! known extension, and which typed names a rename takes.
 
 use crate::apps::{self, MimeDb};
 use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// `name`, then `name` with `mark(n)` before its extension for n = 2, 3...
 /// The extension runs from the last dot unless that dot starts the name or a
@@ -148,20 +148,6 @@ pub fn new_folder_name(existing: &[String]) -> String {
 
 pub fn new_text_document_name(existing: &[String]) -> String {
     unique_name("New Text Document.txt", existing)
-}
-
-/// `<stem>.zip` beside `path`, numbered past an existing one. The stem keeps
-/// its bytes; `existing` holds display names, compared in lossy form.
-pub fn zip_path(path: &Path, existing: &[String]) -> PathBuf {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    let mut first = path
-        .file_stem()
-        .unwrap_or(OsStr::new("Archive"))
-        .to_os_string();
-    first.push(".zip");
-    dir.join(first_free(&first, |c| {
-        existing.iter().any(|e| *e == c.to_string_lossy())
-    }))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -347,34 +333,6 @@ mod tests {
         assert_eq!(
             new_text_document_name(&["New Text Document.txt".to_string()]),
             "New Text Document (2).txt"
-        );
-    }
-
-    #[test]
-    fn zip_path_is_numbered_past_existing_archives() {
-        let p = Path::new("/home/u/Desktop/Reports");
-        assert_eq!(
-            zip_path(p, &[]),
-            PathBuf::from("/home/u/Desktop/Reports.zip")
-        );
-        assert_eq!(
-            zip_path(p, &["Reports.zip".into(), "Reports (2).zip".into()]),
-            PathBuf::from("/home/u/Desktop/Reports (3).zip")
-        );
-    }
-
-    #[test]
-    fn zip_path_keeps_a_stem_that_is_not_utf8() {
-        use std::os::unix::ffi::OsStrExt;
-        let p = Path::new(OsStr::from_bytes(b"/d/a\xffb.txt"));
-        assert_eq!(
-            zip_path(p, &[]),
-            Path::new(OsStr::from_bytes(b"/d/a\xffb.zip"))
-        );
-        assert_eq!(
-            zip_path(p, &["a\u{FFFD}b.zip".into()]),
-            Path::new(OsStr::from_bytes(b"/d/a\xffb (2).zip")),
-            "a listed name matches its lossy form"
         );
     }
 

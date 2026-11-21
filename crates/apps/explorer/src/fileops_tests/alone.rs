@@ -195,22 +195,44 @@ fn empty_bin_counts_every_bin_asks_and_empties_them() {
 }
 
 #[test]
-fn zip_lands_one_archive_named_past_the_folders_names_and_ends() {
+fn zip_of_several_lands_one_archive_named_after_their_folder_past_its_names() {
     let t = tempfile::tempdir().expect("a temp dir");
-    let dir = t.path();
+    let dir = t.path().join("P");
+    std::fs::create_dir(&dir).expect("mkdir");
     std::fs::write(dir.join("a.txt"), "a").expect("write");
-    std::fs::write(dir.join("a.zip"), "taken").expect("write");
+    std::fs::write(dir.join("P.zip"), "taken").expect("write");
     std::fs::create_dir(dir.join("b")).expect("mkdir");
     let (a, b) = (dir.join("a.txt"), dir.join("b"));
     let mut ctx = test_ctx();
     let mut app = started(&["--zip".as_ref(), a.as_os_str(), b.as_os_str()]);
     run_out(&mut app, &mut ctx);
-    assert_eq!(std::fs::read(dir.join("a.zip")).unwrap(), b"taken");
-    let zips: Vec<_> = (std::fs::read_dir(dir).unwrap().flatten())
+    assert_eq!(std::fs::read(dir.join("P.zip")).unwrap(), b"taken");
+    let zips: Vec<_> = (std::fs::read_dir(&dir).unwrap().flatten())
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".zip") && n != "a.zip")
+        .filter(|n| n.ends_with(".zip") && n != "P.zip")
         .collect();
-    assert_eq!(zips.len(), 1, "one new zip: {zips:?}");
+    assert_eq!(zips, ["P (2).zip"]);
+}
+
+#[test]
+fn zip_of_items_of_two_folders_makes_no_zip() {
+    let t = tempfile::tempdir().expect("a temp dir");
+    let (a, b) = (t.path().join("a"), t.path().join("b"));
+    for (dir, file) in [(&a, "x"), (&b, "y")] {
+        std::fs::create_dir(dir).expect("mkdir");
+        std::fs::write(dir.join(file), file).expect("write");
+    }
+    std::fs::write(a.join("y"), "a's own y").expect("write");
+    let (x, y) = (a.join("x"), b.join("y"));
+    let mut ctx = test_ctx();
+    let mut app = started(&["--zip".as_ref(), x.as_os_str(), y.as_os_str()]);
+    run_out(&mut app, &mut ctx);
+    let zips = [t.path(), &a, &b].map(|d| {
+        (std::fs::read_dir(d).unwrap().flatten())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".zip"))
+            .count()
+    });
+    assert_eq!(zips, [0, 0, 0], "no zip, not one of a's own y");
 }
 
 #[test]

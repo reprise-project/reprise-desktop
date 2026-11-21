@@ -88,18 +88,10 @@ impl Explorer {
             .filter_map(|&i| self.items.get(i))
             .collect();
         let dir = picked.first()?.path.parent()?;
-        if picked.iter().any(|it| it.path.parent() != Some(dir)) {
-            return None;
-        }
         let paths: Vec<PathBuf> = picked.iter().map(|it| it.path.clone()).collect();
         let one_folder = matches!(picked.as_slice(), [it] if it.is_folder());
-        let wanted = compress::zip_name(&paths, one_folder);
-        let name = reprisefs::names::first_free(&wanted, |c| {
+        compress::target(&paths, one_folder, |c| {
             (self.items.iter()).any(|it| it.path == dir.join(c))
-        });
-        Some(Compress {
-            zip: dir.join(name),
-            paths,
         })
     }
 
@@ -122,11 +114,17 @@ impl Explorer {
     /// named past what their folder holds, read off the loop.
     pub(crate) fn zip_paths(&mut self, paths: Vec<PathBuf>, ctx: &mut Ctx) -> Reply {
         let work = move |_: &reprisefs::deadline::Gate| {
-            let dir = paths.first()?.parent()?;
-            let existing: Vec<String> = (std::fs::read_dir(dir).ok()?.flatten())
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .collect();
-            reprisefs::sendto::zip_target(&paths, &existing)
+            let existing: Vec<std::ffi::OsString> =
+                (std::fs::read_dir(paths.first()?.parent()?).ok()?.flatten())
+                    .map(|e| e.file_name())
+                    .collect();
+            let c = compress::target(&paths, compress::one_folder(&paths), |c| {
+                existing.iter().any(|e| e == c)
+            });
+            if c.is_none() {
+                log::warn!("explorer: --zip makes no zip of {paths:?}");
+            }
+            c
         };
         let action = crate::acting::Action::reads(compress::FAILURE_TITLE);
         self.act(ctx, action, work, |ex, c, ctx| {
