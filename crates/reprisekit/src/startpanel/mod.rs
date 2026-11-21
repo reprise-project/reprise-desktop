@@ -23,6 +23,10 @@ pub const CLEAR: &str = "Clear";
 pub const USER_ACCOUNTS: &str = "User Accounts";
 pub const NO_RESULTS: &str = "No items match your search.";
 pub const MAX_RESULTS: usize = 8;
+/// A program row's icon and a tree, jump or result row's, design px at 100% text: they grow with
+/// [`StartPanel::text`] as their rows do ([`StartPanel::icon_px`]).
+pub const PROGRAM_ICON: i32 = 32;
+pub const SMALL_ICON: i32 = 16;
 
 /// A pinned or frequent program. `jump` marks a row with a jump list; `new_pin` a newly pinned
 /// one, drawn in its own box; `detail` the grey line under a Blue pinned row's name.
@@ -162,8 +166,8 @@ pub struct StartPanel {
     pub results: Vec<ResultGroup>,
     pub jump: Vec<ResultRow>,
     pub jump_title: String,
-    /// The text size the panel is laid out and drawn at: its layout grows by it, icons, glyphs and
-    /// the user picture keep their size.
+    /// The text size the panel is laid out and drawn at: its layout and the rows' icons grow by it,
+    /// glyphs and the user picture keep their size.
     pub text: TextUnits,
     /// The most width and height the panel may stand at its text size, the user picture's
     /// overhang left out; None: no limit. Set through [`StartPanel::fit`].
@@ -233,6 +237,11 @@ impl StartPanel {
                 .fitting(bluelayout::least_height(self), room.1),
         };
         self.room = Some(room);
+    }
+
+    /// The device px at scale `s` of a row icon `design` px at 100% text, as large as at 100% at least.
+    pub fn icon_px(&self, design: i32, s: i32) -> i32 {
+        self.text.len(design).max(design) * s
     }
 
     pub fn mode(&self) -> Mode {
@@ -980,6 +989,9 @@ impl StartPanel {
         }
     }
 }
+
+#[cfg(test)]
+mod grow_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {

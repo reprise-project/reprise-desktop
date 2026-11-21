@@ -55,6 +55,12 @@ impl Grow {
     pub fn kept(self, off: i32, size: i32) -> i32 {
         (self.u.len(off + size / 2) - size / 2) * self.s
     }
+
+    /// Where an icon `actual` device px long starts, for one `size` design px long placed `off` in
+    /// at 100% that grows with the text: centred where that one's centre moves to.
+    pub fn centred(self, off: i32, size: i32, actual: i32) -> i32 {
+        self.u.len(off + size / 2) * self.s - actual / 2
+    }
 }
 
 pub fn ink(rgb: u32) -> Color {
@@ -261,7 +267,7 @@ pub fn field(
     glyph(canvas, style, (x, r.y + g.kept(gy, h)), part, s);
 }
 
-/// A result row `r`: [`Part::StartLitResult`]'s 22 px box across it when `lit`, the 16 px `icon` and
+/// A result row `r`: [`Part::StartLitResult`]'s 22 px box across it when `lit`, the `icon` and
 /// `name` in `text`, cut short of `r`'s right by 2 px. Returns the pen x past the name.
 #[expect(clippy::too_many_arguments)]
 pub fn result(
@@ -281,8 +287,13 @@ pub fn result(
     }
     if let Some(icon) = icon {
         let (x, y) = at::RESULT_ICON;
-        let (w, h) = (icon.width as i32 / s, icon.height as i32 / s);
-        canvas.blit_over(r.x + g.kept(x, w), r.y + g.kept(y, h), icon);
+        let (w, h) = (icon.width as i32, icon.height as i32);
+        let size = crate::startpanel::SMALL_ICON;
+        canvas.blit_over(
+            r.x + g.centred(x, size, w),
+            r.y + g.centred(y, size, h),
+            icon,
+        );
     }
     let clip = Rect::new(r.x, r.y, r.width - 2 * s, r.height);
     let (x, y) = (r.x + g.len(at::RESULT_PEN), r.y + g.len(at::RESULT_BASE));

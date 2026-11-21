@@ -1,12 +1,11 @@
 use repriseconf::search::word_starts;
 use reprisefs::apps::AppEntry;
-use reprisekit::startpanel::{ResultGroup, ResultRow};
+use reprisekit::startpanel::{ResultGroup, ResultRow, SMALL_ICON};
 
 use crate::compositor::State;
 use crate::raster::Canvas;
 use crate::search::{Found, Picked, SearchOwner, calc_icon, calc_row, rank_settings};
 
-use super::RESULT_ICON;
 use super::lists::{app_icon, one_per_name, unread};
 
 const SEARCH_ROWS: usize = 8;
@@ -124,7 +123,6 @@ impl State {
         let Some(scale) = self.start_panel_scale() else {
             return;
         };
-        let px = RESULT_ICON * scale;
         let State {
             start_panel,
             app_index,
@@ -135,6 +133,7 @@ impl State {
         let Some(v) = start_panel.as_mut() else {
             return;
         };
+        let px = v.model.icon_px(SMALL_ICON, scale);
         let names: Vec<String> = v
             .result_apps
             .iter()

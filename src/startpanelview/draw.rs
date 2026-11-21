@@ -234,8 +234,11 @@ impl State {
         let room = (area.width, panel_room(dock, &p, area, overhang));
         let text = self.config.theme.text;
         let scale = self.draw_scale_at(Some(&v.output)).max(1);
+        let mut refit = false;
         if let Some(v) = self.start_panel.as_mut() {
+            let was = v.model.text;
             v.model.fit(text, room);
+            refit = v.model.text != was;
             if v.model.shape == Shape::Blue {
                 let g = startpanel::search::Grow {
                     s: scale,
@@ -244,6 +247,10 @@ impl State {
                 v.model.foot_labels =
                     reprisekit::blue::startpanel::foot_labels(self.text.for_output(scale), g);
             }
+        }
+        // The rows' icons were looked up at the text size before this fit.
+        if refit {
+            self.refill_start_icons(scale, true);
         }
         let Some(v) = self.start_panel.as_ref() else {
             return;
