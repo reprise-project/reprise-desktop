@@ -12,6 +12,10 @@ use crate::menuview::{MenuKind, Skin};
 use crate::raster::Rect;
 use crate::startmenu::{MenuItem, StartRow, place_popup};
 
+/// The narrowest Recent Items gets to stand beside its row, at 100% text: an icon and about 20
+/// characters.
+pub(super) const RECENT_LEAST: i32 = 160;
+
 pub(super) fn shutdown_options_at(
     edge: Edge,
     arrow: Rect,
@@ -102,6 +106,8 @@ impl State {
         self.push_start_popup(at, items, kind, place, Skin::Options);
     }
 
+    /// Recent Items beside its row. Too wide for the room there, it narrows to that room and cuts
+    /// long names with an ellipsis; a room under [`RECENT_LEAST`] leaves it to `place_popup`.
     pub(super) fn open_recent_items(&mut self, i: usize) {
         if !self.config.recent_files {
             return;
@@ -119,8 +125,13 @@ impl State {
         .icon_px()
             * self.draw_scale_at(Some(&output)).max(1);
         self.refresh_recent();
-        let (items, kind, icons) = self.documents_rows(px, false);
+        let (items, mut kind, icons) = self.documents_rows(px, false);
         let skin = self.start_flyout_skin();
+        let room = self.usable_area(Some(&output)).right() - row.right();
+        let least = self.config.theme.text.len(RECENT_LEAST);
+        if let MenuKind::Documents { widest, .. } = &mut kind {
+            *widest = (room >= least).then_some(room);
+        }
         self.push_start_popup((row.right(), row.y), items, kind, place_popup, skin);
         self.set_row_icons(0, icons);
         self.light_flyout_from_keys(Spot::Place(i));
