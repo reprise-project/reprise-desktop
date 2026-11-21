@@ -102,7 +102,7 @@ const APP_TRACK_Y: i32 = SOURCE_Y + 128;
 const APP_OUTPUT_Y: i32 = APP_TRACK_Y - 37;
 
 /// The theme's speaker and microphone, at 32 px for the group boxes and
-/// 16 px for the list rows. A missing one becomes the magenta placeholder
+/// `small_px` for the list rows. A missing one becomes the magenta placeholder
 /// in a group box and nothing in a row.
 #[derive(Default)]
 pub struct Icons {
@@ -110,6 +110,7 @@ pub struct Icons {
     pub mic: Option<Canvas>,
     pub speaker_small: Option<Canvas>,
     pub mic_small: Option<Canvas>,
+    pub small_px: i32,
 }
 
 /// What the user has picked, before Apply. Device indices are into the
@@ -185,6 +186,7 @@ pub struct Sheet {
     /// `node.name`: an Enable of the same card puts it back.
     displaced: [Option<String>; 2],
     small: [Option<Canvas>; 2],
+    small_px: i32,
     app_icons: BTreeMap<String, AppIcon>,
     shown_apps: Vec<String>,
 }
@@ -204,6 +206,7 @@ impl Sheet {
             shown: [Vec::new(), Vec::new()],
             displaced: [None, None],
             small: [icons.speaker_small, icons.mic_small],
+            small_px: icons.small_px,
             app_icons: BTreeMap::new(),
             shown_apps: Vec::new(),
         };
@@ -563,6 +566,17 @@ impl Sheet {
             Some(o) => o.as_deref(),
             None => app.output(),
         }
+    }
+
+    /// The size the device lists' icons were looked up at.
+    pub fn small_px(&self) -> i32 {
+        self.small_px
+    }
+
+    /// The device lists' speaker and microphone looked up again at `px`.
+    pub fn set_small_icons(&mut self, px: i32, small: [Option<Canvas>; 2]) {
+        (self.small_px, self.small) = (px, small);
+        self.write();
     }
 
     pub fn set_app_icons(&mut self, icons: BTreeMap<String, AppIcon>) {
@@ -1872,7 +1886,7 @@ mod tests {
             &std::env::var(reprisekit::icontheme::ENV).unwrap_or_else(|_| "hicolor".into()),
             &IconTheme::default_roots(),
         ));
-        let icons = crate::appicons::Resolver::default().icons(&snap.apps, &cache);
+        let icons = crate::appicons::Resolver::default().icons(&snap.apps, &cache, 16);
         s.set_app_icons(icons);
         s.open(APPS);
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);

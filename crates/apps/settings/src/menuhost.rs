@@ -4,6 +4,7 @@ use crate::registry::Page;
 use crate::{SettingsApp, additem, menupage, quickpage, renamedlg, startmenu};
 use repriseapp::keys::form_input;
 use repriseapp::{Ctx, Event, Reply};
+use reprisekit::controls::listbox;
 use reprisekit::controls::openwith;
 
 impl SettingsApp {
@@ -112,17 +113,22 @@ impl SettingsApp {
         }
     }
 
-    /// Look up icons a change left missing; runs after every event.
+    /// Look up icons a change left missing, and the list boxes' again when the text size changes
+    /// their icon size; runs after every event.
     pub(crate) fn prime_icons(&mut self, ctx: &mut Ctx) {
-        let mut get = |name: &str| ctx.icons.get(name, 16);
-        if self.menu_icons_due {
-            menupage::set_icons(
-                &mut self.sheet.pages[Page::StartMenu.index()],
-                &self.want.startmenu,
-                &mut get,
-            );
-            self.menu_icons_due = false;
+        let px = list_icon_px(ctx);
+        if self.list_icon_px.replace(px).is_some_and(|was| was != px) {
+            self.quick_icons_due = true;
+            self.clip_icons_due = true;
+            self.providers.icons_due = true;
+            if let Some(d) = self.add_item.as_mut() {
+                d.icons_due = true;
+            }
+            if self.wallpaper_icons.is_some() {
+                self.load_wallpaper_icons(ctx);
+            }
         }
+        let mut get = |name: &str| ctx.icons.get(name, px);
         if self.quick_icons_due {
             quickpage::set_icons(
                 &mut self.sheet.pages[Page::StartMenu.index()],
@@ -138,6 +144,15 @@ impl SettingsApp {
             self.set_clip_icons(&mut get);
         }
         self.set_provider_icons(&mut get);
+        let mut get = |name: &str| ctx.icons.get(name, 16);
+        if self.menu_icons_due {
+            menupage::set_icons(
+                &mut self.sheet.pages[Page::StartMenu.index()],
+                &self.want.startmenu,
+                &mut get,
+            );
+            self.menu_icons_due = false;
+        }
         if self.permission_icons_due {
             for (row, name) in self.permissions.rows.iter_mut().zip(&self.permission_icons) {
                 row.icon = name
@@ -237,4 +252,9 @@ impl SettingsApp {
         self.sync_apply();
         Reply::redraw()
     }
+}
+
+/// The icon size of the list boxes' rows at the forms' text size.
+pub(crate) fn list_icon_px(ctx: &Ctx) -> i32 {
+    listbox::icon_px(&ctx.forms().controls())
 }
