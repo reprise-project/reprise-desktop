@@ -30,7 +30,7 @@ use crate::classic::widgets::{BarHit, ROW_H as FIELD_H, edit_first_visible};
 use crate::completion::Inline;
 use crate::controls::listbox;
 use crate::controls::listbox::ListBox;
-use crate::controls::scrollbar::RowScroll;
+use crate::controls::scrollbar::{RowBar, RowScroll};
 use crate::look::panel;
 use crate::look::widgets::{Interaction, draw_edit_field, draw_edit_text, draw_scrollbar};
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -131,6 +131,8 @@ pub struct Launcher {
     room: Option<(i32, i32)>,
     /// The highlight moved since [`settle`] last scrolled it into view.
     reveal: bool,
+    /// The pointer's hold on the list's scrollbar ([`bar_press`], [`bar_drag`]).
+    bar: RowBar,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -195,6 +197,7 @@ impl Launcher {
             inline: Inline::default(),
             room: None,
             reveal: false,
+            bar: RowBar::default(),
         }
     }
 
@@ -728,18 +731,66 @@ fn glass_scroll(l: &Launcher, theme: &Theme) -> RowScroll {
     }
 }
 
-/// A press on the list's scrollbar: an arrow scrolls a line, the track a page. True when
-/// the list moved.
+/// A press on the list's scrollbar: an arrow scrolls a line and repeats while held
+/// ([`bar_tick`]), the track a page, and the thumb is grabbed ([`bar_drag`]). True when the list
+/// moved.
 pub fn bar_press(l: &mut Launcher, theme: &Theme, b: BarHit) -> bool {
-    let page = shown(l, theme, &headings(l), l.list.top) as i32;
-    let rows = match b {
-        BarHit::Back => -1,
-        BarHit::Forward => 1,
-        BarHit::PageBack => -page,
-        BarHit::PageForward => page,
-        BarHit::Thumb(_) | BarHit::Track => 0,
-    };
+    let page = shown(l, theme, &headings(l), l.list.top) as i64;
+    let rows = l.bar.press(b, page) as i32;
     rows != 0 && wheel(l, theme, rows)
+}
+
+/// The pointer at (`x`, `y`) with the scrollbar held: the list follows a held thumb wherever the
+/// pointer goes, and a held arrow repeats only while the pointer is on it. True when the list
+/// moved.
+pub fn bar_drag(l: &mut Launcher, theme: &Theme, x: i32, y: i32) -> bool {
+    let lay = layout(l, theme);
+    let cm = controls(theme);
+    let grab = l.bar.grab();
+    let (hit, top) = match (lay.bar, lay.list) {
+        (Some(sb), _) => {
+            let rows = glass_scroll(l, theme);
+            let hit = sb.contains(x, y).then(|| rows.hit(sb, cm.thumb_min, x, y));
+            (
+                hit.flatten(),
+                grab.map(|g| rows.top_at(sb, cm.thumb_min, y, g)),
+            )
+        }
+        (None, Some(frame)) => {
+            let ll = listbox::layout(&l.list, frame, &cm);
+            let hit = listbox::hit(&l.list, &ll, x, y).and_then(listbox::Hit::bar);
+            (hit, grab.map(|g| listbox::top_at(&l.list, &ll, y, g)))
+        }
+        (None, None) => (None, None),
+    };
+    l.bar.hover(hit);
+    let Some(top) = top else {
+        return false;
+    };
+    let top = top.min(last_top(l, theme, &headings(l)));
+    let moved = top != l.list.top;
+    l.list.top = top;
+    moved
+}
+
+/// A host tick at `now` with the scrollbar held: a held arrow steps once it repeats. True when
+/// the list moved.
+pub fn bar_tick(l: &mut Launcher, theme: &Theme, now: std::time::Instant) -> bool {
+    let rows = l.bar.tick(now) as i32;
+    rows != 0 && wheel(l, theme, rows)
+}
+
+impl Launcher {
+    /// Whether the scrollbar's thumb or an arrow is held: the host sends motion, ticks and the
+    /// release.
+    pub fn bar_held(&self) -> bool {
+        self.bar.holding()
+    }
+
+    /// The pointer let go. True when the scrollbar was held.
+    pub fn bar_release(&mut self) -> bool {
+        self.bar.release()
+    }
 }
 
 /// The 32 px icon on its grown centre.
@@ -2034,6 +2085,76 @@ mod tests {
             }
         }
         crate::pins::check("controls/launcher_short_room", &got);
+    }
+
+    #[test]
+    fn a_thumb_dragged_down_its_bar_scrolls_the_list_and_the_release_lets_go() {
+        use crate::interface::Interface;
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let big = crate::interfaces::theme_for(i).with_text_size(200);
+            for room in [(720, 420), (960, 510)] {
+                let at = format!("{i:?} {room:?}");
+                let mut l = with_every_section();
+                l.fit(room);
+                settle(&mut l, &big);
+                let lay = layout(&l, &big);
+                let sb = match lay.bar {
+                    Some(sb) => sb,
+                    None => {
+                        let ll = listbox::layout(&l.list, lay.list.unwrap(), &controls(&big));
+                        ll.scrollbar.expect("the list box's scrollbar")
+                    }
+                };
+                let (x, y) = (sb.x + sb.width / 2, sb.y + sb.width + 2);
+                let press = hit(&l, x, y, &big);
+                assert!(
+                    matches!(press, Hit::Bar(BarHit::Thumb(_))),
+                    "{at}: {press:?}"
+                );
+                let Hit::Bar(b) = press else { unreachable!() };
+                assert!(!bar_press(&mut l, &big, b), "{at}: the grab moves nothing");
+                assert!(l.bar_held(), "{at}");
+                assert!(
+                    bar_drag(&mut l, &big, x - 300, sb.bottom() + 40),
+                    "{at}: off the bar it still steers"
+                );
+                let last = last_top(&l, &big, &headings(&l));
+                assert_eq!(l.list.top, last, "{at}: the last line shows");
+                assert!(bar_drag(&mut l, &big, x, y), "{at}: back up");
+                assert_eq!(l.list.top, 0, "{at}");
+                assert!(l.bar_release(), "{at}");
+                assert!(!bar_drag(&mut l, &big, x, sb.bottom()), "{at}: released");
+                assert_eq!(l.list.top, 0, "{at}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_held_arrow_steps_on_the_hosts_ticks_while_the_pointer_is_on_it() {
+        use crate::controls::scrollbar::{REPEAT_AFTER, REPEAT_EVERY};
+        let big =
+            crate::interfaces::theme_for(crate::interface::Interface::Classic).with_text_size(200);
+        let mut l = with_every_section();
+        l.fit((720, 420));
+        settle(&mut l, &big);
+        let list = layout(&l, &big).list.unwrap();
+        let (x, y) = (list.right() - 4, list.bottom() - 6);
+        assert_eq!(hit(&l, x, y, &big), Hit::Bar(BarHit::Forward));
+        assert!(bar_press(&mut l, &big, BarHit::Forward));
+        assert_eq!(l.list.top, 1);
+        let t0 = std::time::Instant::now();
+        assert!(!bar_tick(&mut l, &big, t0));
+        bar_drag(&mut l, &big, 1, 1);
+        assert!(!bar_tick(&mut l, &big, t0 + REPEAT_AFTER), "off the arrow");
+        bar_drag(&mut l, &big, x, y);
+        assert!(bar_tick(&mut l, &big, t0 + REPEAT_AFTER + REPEAT_EVERY));
+        assert_eq!(l.list.top, 2);
+        assert!(l.bar_release());
+        assert!(!bar_tick(
+            &mut l,
+            &big,
+            t0 + REPEAT_AFTER + 3 * REPEAT_EVERY
+        ));
     }
 
     fn fnv(c: &Canvas) -> u64 {
