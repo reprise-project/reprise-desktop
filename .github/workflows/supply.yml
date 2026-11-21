@@ -17,12 +17,12 @@ jobs:
     timeout-minutes: 50
     container: archlinux@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
     # The archive date pins cargo-deny with deny.toml, as ci.yml pins its packages; the
-    # advisories still come live.
+    # advisories still come live. .github/cargo-deny.sh falls back when the archive is down.
     env:
       ARCH_ARCHIVE: 2026/10/25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install cargo-deny
-        run: bash .github/pacman.sh rust cargo-deny
+        run: bash .github/cargo-deny.sh
       # Every member is a root: without --workspace only the root package `reprise` is.
       - run: cargo deny --workspace --locked check
