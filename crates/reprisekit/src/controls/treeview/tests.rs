@@ -959,6 +959,31 @@ fn a_revealed_row_scrolls_in_as_the_last_row_and_stays_unpicked() {
     assert!(!tv.reveal(31, &lay), "past the last row");
 }
 
+/// A tree lifted past its end keeps its top for a click or a reveal on a row it shows and for a
+/// scroll down, and scrolls up from where it is.
+#[test]
+fn a_lifted_tree_stays_past_its_end_until_it_scrolls_up() {
+    let mut b = Node::new("B", true);
+    b.expanded = true;
+    b.children = (0..9).map(|k| Node::new(&format!("b{k}"), false)).collect();
+    let mut tv = TreeView::new(vec![b], Style::Plain);
+    let lay = layout_without_text(&tv, Rect::new(0, 0, 200, 112), &ControlMetrics::CLASSIC);
+    assert_eq!((tv.visible().len(), lay.rows), (10, 6));
+    tv.select(9, &lay);
+    assert_eq!(tv.top, 4);
+    assert!(tv.lift(9));
+    assert!(!tv.select(9, &lay), "the picked row");
+    assert!(!tv.reveal(9, &lay));
+    assert!(!tv.scroll(1, &lay), "a scroll down");
+    assert_eq!(tv.top, 9);
+    assert!(tv.scroll(-1, &lay));
+    assert_eq!(tv.top, 8);
+    tv.select(8, &lay);
+    assert_eq!(tv.top, 8, "another shown row");
+    tv.select(2, &lay);
+    assert_eq!(tv.top, 2, "a row above scrolls in as the first");
+}
+
 #[test]
 fn a_long_tree_publishes_the_rows_in_view_under_their_ancestors() {
     use crate::access::{Published, ROOT, Tree};

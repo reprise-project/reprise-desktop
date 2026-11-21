@@ -3,6 +3,7 @@ use crate::controls::combo;
 use crate::controls::fit;
 use crate::controls::iconlist;
 use crate::controls::metrics::ControlMetrics;
+use crate::controls::treeview;
 use crate::controls::updown;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
@@ -82,6 +83,48 @@ impl Form {
             }
         }
         r
+    }
+
+    /// The 100% rect, where the form has it now, of the part of the focused control the
+    /// keyboard rests on: a tree's selected row while it shows in the tree, else the control's
+    /// [`Form::flowed`] rect. None with no control focused.
+    pub fn focus_part(&self) -> Option<Rect> {
+        let it = self.items.get(self.focus?)?;
+        let row = self.shown_row(it).map(|r| self.units().covering(r));
+        Some(row.unwrap_or_else(|| self.flowed(it)))
+    }
+
+    /// [`Form::focus_part`] in px at the last draw's text size: a tree's row as it draws, else
+    /// the flowed rect grown.
+    pub fn focus_part_px(&self) -> Option<Rect> {
+        let it = self.items.get(self.focus?)?;
+        Some((self.shown_row(it)).unwrap_or_else(|| self.units().rect(self.flowed(it))))
+    }
+
+    /// Tree `it`'s selected row in px, the origin taken off, while it shows in the tree.
+    fn shown_row(&self, it: &Item) -> Option<Rect> {
+        let Control::Tree(tv) = &it.control else {
+            return None;
+        };
+        let lay = treeview::layout_without_text(tv, self.at(it), &self.controls());
+        let k = (tv.selected_row(&tv.visible()))
+            .and_then(|i| i.checked_sub(tv.top))
+            .filter(|&k| k < lay.rows)?;
+        let (b, (ox, oy)) = (lay.body, self.origin);
+        let y = b.y + k as i32 * lay.row_h - oy;
+        Some(Rect::new(b.x - ox, y, b.width, lay.row_h))
+    }
+
+    /// Scrolls the focused tree's rows so its selected row is the first shown
+    /// ([`TreeView::lift`](treeview::TreeView::lift)). True when they moved.
+    pub fn lift_focus_part(&mut self) -> bool {
+        let Some(i) = self.focus else {
+            return false;
+        };
+        let Control::Tree(tv) = &mut self.items[i].control else {
+            return false;
+        };
+        (tv.selected_row(&tv.visible())).is_some_and(|row| tv.lift(row))
     }
 
     /// Lay the notes out at the last draw's text size, scale `s` and font size `px`: in a form
