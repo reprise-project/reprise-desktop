@@ -1084,6 +1084,7 @@ impl Explorer {
         let to_fill = foldertree::to_fill(&self.tree, &self.tree_places, &place, &mounts);
         let scale = ctx.icons.scale();
         let list_px = shellview::list_icon_px(ctx.theme.text);
+        let tree_px = self.tree_places.px;
         let specials = self.specials.clone();
         move || {
             let devices = place::Devices {
@@ -1105,7 +1106,7 @@ impl Explorer {
             let tree = to_fill
                 .into_iter()
                 .map(|p| {
-                    let kids = foldertree::read_kids(&p, &inp, &[], scale, &specials);
+                    let kids = foldertree::read_kids(&p, &inp, &[], (tree_px, scale), &specials);
                     (p, kids)
                 })
                 .collect();

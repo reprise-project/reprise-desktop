@@ -1517,3 +1517,110 @@ fn a_bar_cell_fills_its_share_in_every_look_and_scale() {
         "Classic, Blue and Glass at scale 1 and 2"
     );
 }
+
+/// Draws icon rows ([`IconRows`]) in each look at 100-200% text, scale 1 and 2: the icon column
+/// grows with the text, each icon stands whole in its row, the name starts 2 px past it with no
+/// ink before it, and no line's ink is cut. A plain `Vec<Row>` and icon rows given no icons keep
+/// the 100% column. Hashes each list at 200%.
+#[test]
+fn icon_rows_grow_their_icons_with_the_text_and_names_clear_them() {
+    use crate::interface::Interface;
+    crate::pins::fonts();
+    const INK: u32 = 0xFF12_3456;
+    let (mut hashes, mut cut) = (Vec::new(), Vec::new());
+    let names = ["Notepad", "Paint", "Terminal"];
+    for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for pct in [100, 125, 150, 175, 200] {
+            let base = crate::interfaces::theme_for(interface).with_text_size(pct);
+            let cm = base.controls();
+            let icon = icon_px(cm.text);
+            assert_eq!(icon, cm.text.icon(16), "{interface:?} at {pct}%");
+            assert_eq!(IconRows::default().icon_slot(cm.text), ICON_PX);
+            for s in [1, 2] {
+                let at = format!("{interface:?} at {pct}% scale {s}");
+                let theme = base.scaled(s);
+                let text = TextRenderer::load(&base.fonts);
+                let text = text.for_output(s);
+                let px = theme.fonts.size_px;
+                let mut ic = Canvas::new((icon * s) as u32, (icon * s) as u32);
+                ic.pixels.fill(INK);
+                let ic = std::rc::Rc::new(ic);
+                let rows = |label: bool| -> Vec<Row> {
+                    (names.iter())
+                        .map(|n| Row {
+                            icon: Some(ic.clone()),
+                            cells: vec![if label { n.to_string() } else { String::new() }],
+                        })
+                        .collect()
+                };
+                assert_eq!(
+                    rows(true).icon_slot(cm.text),
+                    ICON_PX,
+                    "{at}: a plain Vec<Row>"
+                );
+                let lv = |label| ListView {
+                    columns: vec![Column::new("Program", 200)],
+                    rows: IconRows(rows(label)),
+                    ..ListView::default()
+                };
+                let shown = lv(true);
+                assert_eq!(shown.rows.icon_slot(cm.text), icon, "{at}: the column");
+                let frame = Rect::new(
+                    0,
+                    0,
+                    base.text.len(220),
+                    cm.list_header + 3 * cm.text.len(ROW_H) + 4,
+                );
+                let lay = layout(&shown, frame, &cm);
+                let drawn = |lv: &ListView<IconRows>| {
+                    let mut c = Canvas::new((frame.width * s) as u32, (frame.height * s) as u32);
+                    draw(&mut c, text, &theme.paint(), lv, &lay, None, px);
+                    c
+                };
+                let (c, cuts) = crate::pins::clipped_ink(|| drawn(&shown));
+                cut.extend(
+                    (cuts.into_iter())
+                        .filter(|c| c.rows > 0 || c.cols > 0)
+                        .map(|c| (at.clone(), c.text)),
+                );
+                let bare = drawn(&lv(false));
+                for k in 0..3 {
+                    let band = Rect::new(
+                        lay.body.x * s,
+                        (lay.body.y + k * lay.row_h()) * s,
+                        lay.body.width * s,
+                        lay.row_h() * s,
+                    );
+                    let inked: Vec<(i32, i32)> = (band.y..band.bottom())
+                        .flat_map(|y| (band.x..band.right()).map(move |x| (x, y)))
+                        .filter(|&(x, y)| c.get(x, y) == INK)
+                        .collect();
+                    assert_eq!(
+                        inked.len(),
+                        (icon * s * icon * s) as usize,
+                        "{at} row {k}: the icon is whole and in its row"
+                    );
+                    let ix = (lay.body.x + ICON_X) * s;
+                    let iy = band.y + (band.height - icon * s) / 2;
+                    assert_eq!(inked[0], (ix, iy), "{at} row {k}: the icon's corner");
+                    let tx = (lay.body.x + name_x(icon)) * s;
+                    assert_eq!(
+                        tx - (ix + icon * s),
+                        2 * s,
+                        "{at} row {k}: 2 px past the icon"
+                    );
+                    let name_ink = (band.y..band.bottom())
+                        .flat_map(|y| (band.x..tx).map(move |x| (x, y)))
+                        .filter(|&(x, y)| c.get(x, y) != bare.get(x, y))
+                        .count();
+                    assert_eq!(name_ink, 0, "{at} row {k}: the name's ink clears the icon");
+                }
+                if pct == 200 {
+                    hashes.push((at, crate::pins::fnv(&c)));
+                }
+            }
+        }
+    }
+    assert_eq!(cut, Vec::new(), "(list, line)");
+    crate::pins::check("controls/listview_icons_200", &hashes);
+}

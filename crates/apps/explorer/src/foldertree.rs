@@ -4,21 +4,30 @@
 //! the Explorer's tree to `reprisekit::controls::treeview`, and `place` decides what a place is.
 
 use crate::place::{self, Place, list};
-use reprisekit::controls::treeview::{Node, TreeView};
+use reprisekit::controls::treeview::{self, Node, TreeView};
 use reprisekit::icontheme::IconCache;
 use reprisekit::raster::Canvas;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// The place each tree node stands for, by `Node::id`, and the nodes wearing a blank stand-in
-/// until their icons land ([`land_icons`]).
-#[derive(Clone, Debug, Default, PartialEq)]
+/// The place each tree node stands for, by `Node::id`, the nodes wearing a blank stand-in
+/// until their icons land ([`land_icons`]), and the size the nodes wear their icons at.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Places {
     at: Vec<Place>,
     /// A waiting node's place: the theme names it tries before its place's own icon, and the
     /// name still decoding.
     waiting: HashMap<Place, (Vec<String>, String)>,
+    /// The nodes' icon size, logical px ([`treeview::icon_px`]); a host that changes it calls
+    /// [`refetch_icons`].
+    pub px: i32,
+}
+
+impl Default for Places {
+    fn default() -> Places {
+        Places::from(Vec::new())
+    }
 }
 
 impl std::ops::Deref for Places {
@@ -33,6 +42,7 @@ impl From<Vec<Place>> for Places {
         Places {
             at,
             waiting: HashMap::new(),
+            px: treeview::ICON_PX,
         }
     }
 }
@@ -42,9 +52,6 @@ impl std::ops::DerefMut for Places {
         &mut self.at
     }
 }
-
-/// The tree's icon size, logical px.
-const PX: i32 = 16;
 
 /// What building or filling a tree needs to know about the world, borrowed from whichever host owns
 /// the places (they differ per host only in tests; Explorer and the folder picker share one scan).
@@ -60,6 +67,8 @@ pub struct Inputs<'a> {
 pub struct World {
     /// The scale icon files are decoded at.
     pub scale: i32,
+    /// The size icon files are decoded at, logical px ([`Places::px`]).
+    pub px: i32,
     pub show_hidden: bool,
     pub drives: Vec<reprisefs::places::Drive>,
     pub volumes: reprisefs::udisks::Snapshot,
@@ -114,16 +123,17 @@ fn tree_node(
     }
 }
 
-/// A node's closed and open icons at `icons`' scale; Err names one still decoding off the loop.
-fn node_icons(place: &Place, icons: &mut IconCache) -> Result<Worn, String> {
+/// A node's closed and open icons at `px` and `icons`' scale; Err names one still decoding off the
+/// loop.
+fn node_icons(place: &Place, icons: &mut IconCache, px: i32) -> Result<Worn, String> {
     let name = place.icon_name();
-    let icon = unread(icons, name);
+    let icon = unread(icons, name, px);
     if name != "folder" {
         let icon = icon?;
         return Ok((icon.clone(), icon));
     }
     // Both asked for before either answers, so they decode in one batch.
-    let open_icon = unread(icons, "folder-open");
+    let open_icon = unread(icons, "folder-open", px);
     let icon = icon?;
     Ok((icon.clone(), open_icon?.or(icon)))
 }
@@ -131,10 +141,10 @@ fn node_icons(place: &Place, icons: &mut IconCache) -> Result<Worn, String> {
 /// A node's closed and open icons.
 type Worn = (Option<Canvas>, Option<Canvas>);
 
-/// Theme icon `name` from `icons` without decoding an SVG here ([`IconCache::get_unread`]); Err
-/// with the name while it decodes.
-fn unread(icons: &mut IconCache, name: &str) -> Result<Option<Canvas>, String> {
-    let icon = icons.get_unread(name, PX).ok_or_else(|| name.to_string())?;
+/// Theme icon `name` at `px` from `icons` without decoding an SVG here
+/// ([`IconCache::get_unread`]); Err with the name while it decodes.
+fn unread(icons: &mut IconCache, name: &str, px: i32) -> Result<Option<Canvas>, String> {
+    let icon = icons.get_unread(name, px).ok_or_else(|| name.to_string())?;
     Ok(icon.map(Arc::unwrap_or_clone))
 }
 
@@ -146,14 +156,14 @@ pub enum Own {
     None,
     /// Theme names, best first: the folder's own, then its special-folder icon.
     Named(Vec<String>),
-    /// An icon file, decoded at 16 px and the read's scale.
+    /// An icon file, decoded at the read's size and scale.
     File(Option<Canvas>),
 }
 
 impl Own {
-    /// `place`'s own icon, an icon file decoded at `scale`, else its icon among `specials`. A
-    /// drive's or other mount point's is not read: the mount may never answer.
-    fn read(place: &Place, inp: &Inputs, scale: i32, specials: &[(PathBuf, &str)]) -> Own {
+    /// `place`'s own icon, an icon file decoded at `art` (logical px, scale), else its icon among
+    /// `specials`. A drive's or other mount point's is not read: the mount may never answer.
+    fn read(place: &Place, inp: &Inputs, art: (i32, i32), specials: &[(PathBuf, &str)]) -> Own {
         let Place::Folder(dir) = place else {
             return Own::None;
         };
@@ -167,8 +177,8 @@ impl Own {
         match reprisefs::meta::folder_icon(dir) {
             Some(f) if f.starts_with('/') => Own::File(reprisekit::icontheme::decode_file(
                 std::path::Path::new(&f),
-                16,
-                scale,
+                art.0,
+                art.1,
             )),
             own => match own.into_iter().chain(special).collect::<Vec<_>>() {
                 names if names.is_empty() => Own::None,
@@ -185,17 +195,18 @@ fn worn_icons(
     names: &[String],
     file: Option<&Canvas>,
     icons: &mut IconCache,
+    px: i32,
 ) -> Result<Worn, String> {
     let mut icon = file.cloned();
     for n in names {
         if icon.is_some() {
             break;
         }
-        icon = unread(icons, n)?;
+        icon = unread(icons, n, px)?;
     }
     match icon {
         Some(icon) => Ok((Some(icon.clone()), Some(icon))),
-        None => node_icons(place, icons),
+        None => node_icons(place, icons, px),
     }
 }
 
@@ -206,7 +217,7 @@ fn wear(places: &mut Places, place: &Place, own: &Own, icons: &mut IconCache) ->
         Own::Named(names) => (&names[..], None),
         Own::File(art) => (&[][..], art.as_ref()),
     };
-    match worn_icons(place, names, file, icons) {
+    match worn_icons(place, names, file, icons, places.px) {
         Ok(worn) => {
             places.waiting.remove(place);
             worn
@@ -214,14 +225,16 @@ fn wear(places: &mut Places, place: &Place, own: &Own, icons: &mut IconCache) ->
         Err(on) => {
             places.waiting.insert(place.clone(), (names.to_vec(), on));
             let s = icons.scale();
-            let blank = Canvas::new((PX * s) as u32, (PX * s) as u32).at_scale(s);
+            let px = places.px;
+            let blank = Canvas::new((px * s) as u32, (px * s) as u32).at_scale(s);
             (Some(blank.clone()), Some(blank))
         }
     }
 }
 
-/// Every node fetches its icons again from `icons`, now at another scale. A folder's own or
-/// special-folder icon gives way to the plain folder until its parent is filled again.
+/// Every node fetches its icons again from `icons`, now at another scale or size
+/// ([`Places::px`]). A folder's own or special-folder icon gives way to the plain folder until
+/// its parent is filled again.
 pub fn refetch_icons(tree: &mut TreeView, places: &mut Places, icons: &mut IconCache) {
     places.waiting.clear();
     walk_icons(&mut tree.roots, places, icons, &mut |_| Some(Own::None));
@@ -232,7 +245,7 @@ pub fn refetch_icons(tree: &mut TreeView, places: &mut Places, icons: &mut IconC
 pub fn land_icons(tree: &mut TreeView, places: &mut Places, icons: &mut IconCache) -> bool {
     let on: HashSet<&String> = places.waiting.values().map(|(_, on)| on).collect();
     let ready: HashSet<String> = (on.into_iter())
-        .filter(|n| icons.get_unread(n, PX).is_some())
+        .filter(|n| icons.get_unread(n, places.px).is_some())
         .cloned()
         .collect();
     if ready.is_empty() {
@@ -275,7 +288,10 @@ fn walk_icons(
 /// Build a tree rooted at the Desktop, its own node expanded and the root selected. Its children
 /// are read off the host's loop: a symlink among them may point into a mount that never answers.
 pub fn build(tree: &mut TreeView, places: &mut Places, icons: &mut IconCache) {
-    *places = Places::default();
+    *places = Places {
+        px: places.px,
+        ..Places::default()
+    };
     let mut root = tree_node(places, "Desktop", Place::Desktop, true, &Own::None, icons);
     root.expanded = true;
     tree.roots = vec![root];
@@ -306,7 +322,7 @@ pub fn fill(
         &places[node.id as usize],
         inp,
         &known,
-        icons.scale(),
+        (places.px, icons.scale()),
         &specials,
     );
     fill_with(tree, places, path, kids, inp, icons)
@@ -321,13 +337,13 @@ pub type Chain = Vec<(Place, Kids)>;
 pub type Kids = Vec<(String, Place, Option<bool>, Own)>;
 
 /// The file system half of [`fill`]: `place`'s children with their own icons (icon files decoded
-/// at `scale`) or their icons among `specials`, and for those not in `known` whether they hold a
-/// folder. A host reads them off its loop for [`follow_with`].
+/// at `art`, logical px and scale) or their icons among `specials`, and for those not in `known`
+/// whether they hold a folder. A host reads them off its loop for [`follow_with`].
 pub fn read_kids(
     place: &Place,
     inp: &Inputs,
     known: &[&Place],
-    scale: i32,
+    art: (i32, i32),
     specials: &[(PathBuf, &str)],
 ) -> Kids {
     let mut kids: Vec<(String, Place)> = Vec::new();
@@ -358,7 +374,7 @@ pub fn read_kids(
     kids.into_iter()
         .map(|(label, p)| {
             let opens = (!known.contains(&&p)).then(|| opens(&p, inp));
-            let own = Own::read(&p, inp, scale, specials);
+            let own = Own::read(&p, inp, art, specials);
             (label, p, opens, own)
         })
         .collect()
@@ -852,7 +868,7 @@ mod tests {
         let read: Vec<(Place, Kids)> = to_fill(&tree, &places, &target, &mounts)
             .into_iter()
             .map(|p| {
-                let kids = read_kids(&p, &inp, &[], 1, &[]);
+                let kids = read_kids(&p, &inp, &[], (16, 1), &[]);
                 (p, kids)
             })
             .collect();

@@ -167,10 +167,16 @@ pub struct ChooseProgram {
 }
 
 impl ChooseProgram {
-    /// The chooser's icon and its rows' icons, stand-ins while they decode off the loop.
-    pub fn wear_icons(&mut self, icons: &mut reprisekit::icontheme::IconCache) {
+    /// The chooser's icon and its rows' icons at text size `u`, stand-ins while they decode off
+    /// the loop.
+    pub fn wear_icons(
+        &mut self,
+        icons: &mut reprisekit::icontheme::IconCache,
+        u: reprisekit::theme::TextUnits,
+    ) {
         self.waits = Default::default();
-        self.row_icons = crate::openwith::chooser_row_icons(&self.ow, icons, &mut self.waits);
+        let px = reprisekit::controls::grouplist::icon_px(u);
+        self.row_icons = crate::openwith::chooser_row_icons(&self.ow, icons, px, &mut self.waits);
         self.icon = self.waits.first(icons, &[openwith::ICON], 32);
     }
 }
@@ -338,17 +344,19 @@ impl Dialog {
     /// Theme icons decoded off the loop landed: the dialog wears those it waited on. True when
     /// it changed.
     pub(crate) fn land_icons(&mut self, ctx: &mut Ctx) -> bool {
+        if let Dialog::ChooseProgram(cp) = self {
+            let landed = cp.waits.landed(&mut ctx.icons);
+            if landed {
+                let u = ctx.forms().controls().text;
+                cp.wear_icons(&mut ctx.icons, u);
+            }
+            return landed;
+        }
         let icons = &mut ctx.icons;
         match self {
             Dialog::Confirm(c) => c.icon.land(icons),
             Dialog::Replace(r) => r.land_icons(icons),
-            Dialog::ChooseProgram(cp) => {
-                let landed = cp.waits.landed(icons);
-                if landed {
-                    cp.wear_icons(icons);
-                }
-                landed
-            }
+            Dialog::ChooseProgram(_) => false,
             Dialog::Advanced { form, icon, .. } | Dialog::About(form, icon) => {
                 land_picture(form, "icon", icon, icons)
             }

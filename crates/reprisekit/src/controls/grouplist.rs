@@ -1,6 +1,7 @@
 //! The grouped list of the Open With chooser: headers with indented entries, 18 px rows. It
 //! behaves as a listview: a header takes the selection like any row, and the highlight covers the
-//! label only.
+//! label only. A list given icons grows its 16 px icon column with the text ([`icon_px`]): a
+//! header's label keeps its gap past the icon, and an entry's icon stays under its header's label.
 
 use crate::classic::widgets::{BarHit, draw_focus_ring_screen};
 use crate::controls::metrics::ControlMetrics;
@@ -10,8 +11,10 @@ use crate::look::widgets::{draw_field_frame, draw_scrollbar};
 use crate::raster::{Canvas, Rect};
 use crate::selection::{step_index, type_ahead};
 use crate::text::{Align, TextRenderer};
+use crate::theme::TextUnits;
 
 pub const ROW_H: i32 = 18;
+pub const ICON_PX: i32 = 16;
 const GROUP_ICON_X: i32 = 5;
 const GROUP_TEXT_X: i32 = 26;
 const ITEM_ICON_X: i32 = 25;
@@ -156,7 +159,13 @@ pub struct Layout {
     pub thumb_min: i32,
     /// A row's height, grown with the text.
     pub row_h: i32,
-    pub text: crate::theme::TextUnits,
+    pub text: TextUnits,
+}
+
+/// A row's icon edge (logical px): 16 px at 100% text, grown with the text and never smaller.
+/// Hosts load the rows' icons at it.
+pub fn icon_px(u: TextUnits) -> i32 {
+    u.icon(ICON_PX)
 }
 
 pub fn layout<T>(list: &GroupList<T>, frame: Rect, cm: &ControlMetrics) -> Layout {
@@ -228,6 +237,23 @@ pub fn top_at<T>(list: &GroupList<T>, lay: &Layout, y: i32, grab: i32) -> usize 
     })
 }
 
+/// The icon column's width: [`icon_px`] in a list given an icon.
+fn icon_slot(lay: &Layout, icons: &[Option<&Canvas>]) -> i32 {
+    match icons.iter().any(Option::is_some) {
+        true => icon_px(lay.text),
+        false => ICON_PX,
+    }
+}
+
+/// A row's icon x and label x past an icon column `slot` wide, from the frame's left.
+fn columns<T>(row: &Row<T>, slot: i32) -> (i32, i32) {
+    let grown = slot - ICON_PX;
+    match row {
+        Row::Group(_) => (GROUP_ICON_X, GROUP_TEXT_X + grown),
+        Row::Item { .. } => (ITEM_ICON_X + grown, ITEM_TEXT_X + 2 * grown),
+    }
+}
+
 /// How the pick shows: whether the list has the focus, and the keyboard cues.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shown {
@@ -238,7 +264,7 @@ pub enum Shown {
     Cued,
 }
 
-/// Draw the list; `icons` is parallel to the rows (16 px, or None for none).
+/// Draw the list; `icons` is parallel to the rows ([`icon_px`] at the scale, or None for none).
 #[allow(clippy::too_many_arguments)]
 pub fn draw<T>(
     c: &mut Canvas,
@@ -268,14 +294,18 @@ pub fn draw<T>(
     let inner = lay.inner.scaled(s);
     let rh = lay.row_h * s;
     let last = list.rows.len().min(list.top + lay.visible);
+    let slot = icon_slot(lay, icons);
     for (k, i) in (list.top..last).enumerate() {
         let y = inner.y + k as i32 * rh;
-        let (icon_x, text_x) = match &list.rows[i] {
-            Row::Group(_) => (GROUP_ICON_X, GROUP_TEXT_X),
-            Row::Item { .. } => (ITEM_ICON_X, ITEM_TEXT_X),
-        };
+        let (icon_x, text_x) = columns(&list.rows[i], slot);
         if let Some(Some(ic)) = icons.get(i) {
-            c.blit_over(frame.x + icon_x * s, y + (rh - ic.height as i32) / 2, ic);
+            // An icon smaller than the column (not yet loaded at the text size) sits centred in it.
+            let dx = ((slot * s - ic.width as i32) / 2).max(0);
+            c.blit_over(
+                frame.x + icon_x * s + dx,
+                y + (rh - ic.height as i32) / 2,
+                ic,
+            );
         }
         let tx = frame.x + text_x * s;
         let trail = lay.text.len(list.trail.get(i).copied().unwrap_or(0)) * s;
@@ -528,5 +558,110 @@ mod tests {
         assert_eq!(c.get(right, 37), cs.button_face.argb());
         assert!(row(45, right, 20, 38, cs.button_text.argb()), "black label");
         assert!(!row(45, right, 20, 38, cs.hilight_text.argb()));
+    }
+
+    /// Draws a list with icons in each look at 100-200% text, scale 1 and 2: the icon column
+    /// grows with the text, each icon stands whole in its row where the columns put it, an
+    /// entry's icon stays under its header's label, the labels keep their 100% gaps past the
+    /// icon with no ink before them, and no line's ink is cut. A list given no icons keeps the
+    /// 100% columns. Hashes each list at 200%.
+    #[test]
+    fn icons_grow_with_the_text_and_labels_clear_them() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        const INK: u32 = 0xFF12_3456;
+        let (mut hashes, mut cut) = (Vec::new(), Vec::new());
+        let l = list(2);
+        for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 125, 150, 175, 200] {
+                let base = crate::interfaces::theme_for(interface).with_text_size(pct);
+                let cm = base.controls();
+                let icon = icon_px(cm.text);
+                assert_eq!(icon, cm.text.icon(16), "{interface:?} at {pct}%");
+                let frame = Rect::new(0, 0, base.text.len(300), 6 * cm.text.len(ROW_H) + 4);
+                let lay = layout(&l, frame, &cm);
+                assert_eq!(lay.visible, 6);
+                assert_eq!(
+                    icon_slot(&lay, &vec![None; l.rows.len()]),
+                    ICON_PX,
+                    "{interface:?} at {pct}%: a list given no icons keeps the 100% columns"
+                );
+                for s in [1, 2] {
+                    let at = format!("{interface:?} at {pct}% scale {s}");
+                    let theme = base.scaled(s);
+                    let text = TextRenderer::load(&base.fonts);
+                    let text = text.for_output(s);
+                    let px = theme.fonts.size_px;
+                    let mut ic = Canvas::new((icon * s) as u32, (icon * s) as u32);
+                    ic.pixels.fill(INK);
+                    let icons = vec![Some(&ic); l.rows.len()];
+                    let drawn = |l: &GroupList<usize>| {
+                        let mut c =
+                            Canvas::new((frame.width * s) as u32, (frame.height * s) as u32);
+                        let p = theme.paint();
+                        draw(&mut c, text, &p, l, &lay, &icons, Shown::Away, px);
+                        c
+                    };
+                    let mut unpicked = l.clone();
+                    unpicked.selected = None;
+                    let (c, cuts) = crate::pins::clipped_ink(|| drawn(&unpicked));
+                    cut.extend(
+                        (cuts.into_iter())
+                            .filter(|c| c.rows > 0 || c.cols > 0)
+                            .map(|c| (at.clone(), c.text)),
+                    );
+                    let mut bare = unpicked.clone();
+                    for r in &mut bare.rows {
+                        match r {
+                            Row::Group(label) | Row::Item { name: label, .. } => label.clear(),
+                        }
+                    }
+                    let bare = drawn(&bare);
+                    assert_eq!(icon_slot(&lay, &icons), icon, "{at}: the column");
+                    let header_label = columns(&l.rows[0], icon).1;
+                    for (k, row) in l.rows.iter().enumerate() {
+                        let (ix, tx) = columns(row, icon);
+                        let gap = match row {
+                            Row::Group(_) => GROUP_TEXT_X - GROUP_ICON_X - ICON_PX,
+                            Row::Item { .. } => {
+                                assert_eq!(ix, header_label - 1, "{at} row {k}: under the header");
+                                ITEM_TEXT_X - ITEM_ICON_X - ICON_PX
+                            }
+                        };
+                        assert_eq!(tx - ix - icon, gap, "{at} row {k}: the label's gap");
+                        let band = Rect::new(
+                            lay.inner.x * s,
+                            (lay.inner.y + k as i32 * lay.row_h) * s,
+                            lay.inner.width * s,
+                            lay.row_h * s,
+                        );
+                        let inked: Vec<(i32, i32)> = (band.y..band.bottom())
+                            .flat_map(|y| (band.x..band.right()).map(move |x| (x, y)))
+                            .filter(|&(x, y)| c.get(x, y) == INK)
+                            .collect();
+                        assert_eq!(
+                            inked.len(),
+                            (icon * s * icon * s) as usize,
+                            "{at} row {k}: the icon is whole and in its row"
+                        );
+                        let iy = band.y + (band.height - icon * s) / 2;
+                        assert_eq!(inked[0], (ix * s, iy), "{at} row {k}: the icon's corner");
+                        let label_ink = (band.y..band.bottom())
+                            .flat_map(|y| (band.x..tx * s).map(move |x| (x, y)))
+                            .filter(|&(x, y)| c.get(x, y) != bare.get(x, y))
+                            .count();
+                        assert_eq!(
+                            label_ink, 0,
+                            "{at} row {k}: the label's ink clears the icon"
+                        );
+                    }
+                    if pct == 200 {
+                        hashes.push((at, crate::pins::fnv(&c)));
+                    }
+                }
+            }
+        }
+        assert_eq!(cut, Vec::new(), "(list, line)");
+        crate::pins::check("controls/grouplist_icons_200", &hashes);
     }
 }

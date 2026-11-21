@@ -12,7 +12,7 @@ use reprisefs::mimetree::MimeTree;
 use reprisefs::props;
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W};
 use reprisekit::controls::form::{Control, Form, Item};
-use reprisekit::controls::listview::{Column, ListView, Row};
+use reprisekit::controls::listview::{Column, IconRows, ListView, Row};
 use reprisekit::raster::Rect;
 
 use crate::pages::{Area, X, button};
@@ -267,7 +267,7 @@ pub fn page(a: Area) -> Form {
     Form::new(items)
 }
 
-pub fn new_list() -> ListView {
+pub fn new_list() -> ListView<IconRows> {
     ListView {
         columns: COLUMNS
             .iter()
@@ -278,7 +278,7 @@ pub fn new_list() -> ListView {
 }
 
 pub fn fit_columns(
-    lv: &mut ListView,
+    lv: &mut ListView<IconRows>,
     cm: &reprisekit::controls::metrics::ControlMetrics,
     rect: Rect,
 ) {
@@ -689,7 +689,7 @@ pub fn sync_buttons(form: &mut Form, d: &Defaults, row: Option<usize>) {
 
 /// Refill `lv` from the types `d` shows, the type `keep` picked again
 /// where it is still shown.
-pub fn fill_list(lv: &mut ListView, d: &Defaults, keep: Option<&str>) {
+pub fn fill_list(lv: &mut ListView<IconRows>, d: &Defaults, keep: Option<&str>) {
     lv.rows = d
         .shown
         .iter()
@@ -710,7 +710,7 @@ pub fn fill_list(lv: &mut ListView, d: &Defaults, keep: Option<&str>) {
     lv.top = lv.top.min(lv.rows.len().saturating_sub(1));
 }
 
-pub fn picked<'a>(lv: &ListView, d: &'a Defaults) -> Option<&'a FileType> {
+pub fn picked<'a>(lv: &ListView<IconRows>, d: &'a Defaults) -> Option<&'a FileType> {
     lv.selection.focus.and_then(|r| d.type_at(r))
 }
 
