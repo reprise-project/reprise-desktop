@@ -116,7 +116,12 @@ pub struct ScreenshotConfig {
     pub jxl_quality: u8,
     /// 1 (fastest) ..= 9 (smallest file).
     pub jxl_effort: u8,
+    /// Seconds from a screenshot press to the picture, 0 ..= [`SHOT_DELAY_MAX`].
+    pub delay: u8,
 }
+
+/// The longest `[screenshot] delay`, in seconds; a longer one is cut to it.
+pub const SHOT_DELAY_MAX: u8 = 10;
 
 impl Default for ScreenshotConfig {
     fn default() -> Self {
@@ -129,6 +134,7 @@ impl Default for ScreenshotConfig {
             jxl_lossless: true,
             jxl_quality: 90,
             jxl_effort: 7,
+            delay: 0,
         }
     }
 }

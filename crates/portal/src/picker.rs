@@ -1,13 +1,15 @@
-//! The share dialog: a tree of screens and windows, a Remember check box, Share
-//! and Cancel (the default, so Enter never shares by accident). Runs as our own
-//! child (`reprise-portal --pick`): `pick` feeds it an `Input` on stdin, reads
-//! the chosen index on stdout, and kills it when the frontend cancels.
+//! The share dialog: a tree of screens and windows, a Remember check box or a
+//! screenshot's Delay box, Share and Cancel (the default, so Enter never shares by
+//! accident). Runs as our own child (`reprise-portal --pick`): `pick` feeds it an
+//! `Input` on stdin, reads the chosen index on stdout, and kills it when the frontend
+//! cancels.
 
 use crate::dialog::{self, Prompt};
 use crate::wayland::Target;
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::treeview::{Node, TreeView};
+use reprisekit::controls::updown::{self, UpDown};
 use reprisekit::raster::{Canvas, Rect};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -24,6 +26,10 @@ const GROUP: Rect = Rect::new(9, 66, 368, 288);
 const TREE: Rect = Rect::new(24, 81, 338, 210);
 const BUTTON_Y: i32 = 409;
 const REMEMBER: Rect = Rect::new(9, 366, 13, 13);
+/// The Delay box's row, in Remember's place: its label, the up-down and its unit.
+const DELAY_LABEL: Rect = Rect::new(9, 370, 44, 13);
+const DELAY: Rect = Rect::new(57, 366, updown::WIDTH, updown::HEIGHT);
+const DELAY_UNITS: Rect = Rect::new(DELAY.x + updown::WIDTH + 6, 370, 60, 13);
 const HEADER_ICON: &str = "preferences-desktop-display";
 pub const SCREEN_ICON: &str = "computer";
 const FALLBACK_ICON: &str = "application-x-executable";
@@ -66,23 +72,46 @@ impl Purpose {
     }
 }
 
-/// Show the dialog, modal on `parent`; returns the chosen target and whether
-/// Remember was ticked, or None on Cancel or a frontend `Close`. Blocks.
+/// What the row under the sources offers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Extra {
+    Nothing,
+    Remember,
+    /// The seconds a screenshot waits after Take, starting at this many, 0 to
+    /// [`repriseconf::config::SHOT_DELAY_MAX`].
+    Delay(u8),
+}
+
+/// What the dialog's Share or Take chose.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Picked {
+    pub target: Target,
+    pub remember: bool,
+    /// Seconds; 0 without a Delay box.
+    pub delay: u8,
+}
+
+/// Show the dialog, modal on `parent`; returns the chosen target, whether Remember was ticked and
+/// the delay set, or None on Cancel or a frontend `Close`. Blocks.
 pub fn pick(
     purpose: Purpose,
     app: &str,
     entries: Vec<Entry>,
     preselect: Option<usize>,
-    offer_remember: bool,
+    extra: Extra,
     parent: Option<String>,
     cancel: Arc<AtomicBool>,
-) -> Option<(Target, bool)> {
+) -> Option<Picked> {
     let input = Input {
         purpose,
         parent,
         app: app.replace('\n', " "),
         preselect,
-        offer_remember,
+        offer_remember: extra == Extra::Remember,
+        delay: match extra {
+            Extra::Delay(s) => Some(s),
+            _ => None,
+        },
         rows: entries
             .iter()
             .map(|e| Row {
@@ -93,15 +122,49 @@ pub fn pick(
             .collect(),
     };
     let out = dialog::run_toml(&["--pick"], &input, &cancel)?;
-    let (i, remember) = parse_choice(&out)?;
-    entries.into_iter().nth(i).map(|e| (e.target, remember))
+    let c = parse_choice(&out)?;
+    entries.into_iter().nth(c.index).map(|e| Picked {
+        target: e.target,
+        remember: c.remember,
+        delay: c.delay,
+    })
 }
 
-fn parse_choice(out: &str) -> Option<(usize, bool)> {
+/// The dialog's answer on stdout: the row's index, then `remember` when ticked or `delay N`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Choice {
+    index: usize,
+    remember: bool,
+    delay: u8,
+}
+
+impl Choice {
+    fn line(self) -> String {
+        match self {
+            Choice { remember: true, .. } => format!("{} remember", self.index),
+            Choice { delay: 0, .. } => self.index.to_string(),
+            Choice { index, delay, .. } => format!("{index} delay {delay}"),
+        }
+    }
+}
+
+fn parse_choice(out: &str) -> Option<Choice> {
     let mut words = out.split_whitespace();
-    let i = words.next()?.parse().ok()?;
-    let remember = words.next() == Some("remember");
-    Some((i, remember))
+    let index = words.next()?.parse().ok()?;
+    let mut c = Choice {
+        index,
+        remember: false,
+        delay: 0,
+    };
+    match words.next() {
+        Some("remember") => c.remember = true,
+        Some("delay") => {
+            let s: u8 = words.next()?.parse().ok()?;
+            c.delay = s.min(repriseconf::config::SHOT_DELAY_MAX);
+        }
+        _ => {}
+    }
+    Some(c)
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -119,6 +182,9 @@ struct Input {
     app: String,
     preselect: Option<usize>,
     offer_remember: bool,
+    /// The Delay box's first value, for a screenshot that offers one.
+    #[serde(default)]
+    delay: Option<u8>,
     rows: Vec<Row>,
 }
 
@@ -135,15 +201,17 @@ pub fn run_dialog() {
         app,
         preselect,
         offer_remember,
+        delay,
         rows,
     } = input;
-    let chosen: Arc<Mutex<Option<(usize, bool)>>> = Arc::new(Mutex::new(None));
+    let chosen: Arc<Mutex<Option<Choice>>> = Arc::new(Mutex::new(None));
     let mut icons = dialog::icons();
     let form = build_form(
         purpose,
         &rows,
         preselect,
         offer_remember,
+        delay,
         app.trim(),
         |name| icons.get(name, 16),
     );
@@ -157,11 +225,8 @@ pub fn run_dialog() {
         chosen.clone(),
     )))
     .unwrap_or_else(|e| e.exit());
-    let picked = *chosen.lock().unwrap();
-    match picked {
-        Some((i, false)) => println!("{i}"),
-        Some((i, true)) => println!("{i} remember"),
-        None => {}
+    if let Some(c) = *chosen.lock().unwrap() {
+        println!("{}", c.line());
     }
 }
 
@@ -208,6 +273,7 @@ fn build_form(
     rows: &[Row],
     preselect: Option<usize>,
     offer_remember: bool,
+    delay: Option<u8>,
     app: &str,
     icon_for: impl FnMut(&str) -> Option<Canvas>,
 ) -> Form {
@@ -239,6 +305,19 @@ fn build_form(
             },
         ));
     }
+    if let Some(s) = delay {
+        let max = repriseconf::config::SHOT_DELAY_MAX.into();
+        items.extend([
+            Item::label("delay_label", DELAY_LABEL, "&Delay:"),
+            Item::new(
+                "delay",
+                DELAY,
+                Control::UpDown(UpDown::new(s.into(), 0, max)),
+            )
+            .named("Delay"),
+            Item::label("delay_units", DELAY_UNITS, "seconds"),
+        ]);
+    }
     items.extend(dialog::buttons(
         GROUP.right() - 11,
         BUTTON_Y,
@@ -257,7 +336,7 @@ fn prompt(
     form: Form,
     icon: Option<Canvas>,
     parent: Option<String>,
-    chosen: Arc<Mutex<Option<(usize, bool)>>>,
+    chosen: Arc<Mutex<Option<Choice>>>,
 ) -> Prompt {
     Prompt {
         parent,
@@ -270,9 +349,16 @@ fn prompt(
         accept: "share",
         cancel: "cancel",
         on_accept: Box::new(move |form| match selection(&rows, form) {
-            Some(i) => {
-                let remember = form.checked("remember").unwrap_or(false);
-                *chosen.lock().unwrap() = Some((i, remember));
+            Some(index) => {
+                let delay = match form.item("delay").map(|i| &i.control) {
+                    Some(Control::UpDown(u)) => u8::try_from(u.value()).unwrap_or(0),
+                    _ => 0,
+                };
+                *chosen.lock().unwrap() = Some(Choice {
+                    index,
+                    remember: form.checked("remember").unwrap_or(false),
+                    delay,
+                });
                 true
             }
             None => false,
@@ -334,6 +420,7 @@ mod tests {
             app: "Chromium".into(),
             preselect: Some(1),
             offer_remember: false,
+            delay: Some(4),
             rows: vec![Row {
                 screen: false,
                 icon: "foot".into(),
@@ -408,12 +495,63 @@ mod tests {
 
     #[test]
     fn the_picker_fits_its_text() {
-        for purpose in [Purpose::Share, Purpose::Screenshot] {
+        for (purpose, remember, delay) in [
+            (Purpose::Share, true, None),
+            (Purpose::Screenshot, false, Some(3)),
+        ] {
             let over = crate::dialog::overflows(|_, _| {
-                build_form(purpose, &rows(), Some(1), true, "Chromium", |_| None)
+                build_form(
+                    purpose,
+                    &rows(),
+                    Some(1),
+                    remember,
+                    delay,
+                    "Chromium",
+                    |_| None,
+                )
             });
             assert!(over.is_empty(), "{purpose:?}: {}", over.join("\n"));
         }
+    }
+
+    /// The screenshot dialog with its Delay box, in each interface at scale 1 and 2.
+    #[test]
+    fn screenshot_picker_pixels() {
+        use reprisekit::interface::Interface;
+        use reprisekit::text::TextRenderer;
+        reprisekit::pins::fonts();
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for scale in [1, 2] {
+                let theme = reprisekit::theme::Theme {
+                    access_keys: true,
+                    ..reprisekit::interfaces::theme_for(i).scaled(scale)
+                };
+                let text = TextRenderer::load(&theme.fonts);
+                let f = build_form(
+                    Purpose::Screenshot,
+                    &rows(),
+                    Some(1),
+                    false,
+                    Some(3),
+                    "Chromium",
+                    |_| None,
+                );
+                let (w, h) = (CLIENT.0 * scale, CLIENT.1 * scale);
+                let mut c = Canvas::new(w as u32, h as u32);
+                c.fill_rect(c.bounds(), theme.colors.button_face);
+                form::draw(&mut c, &text, &theme.paint(), &f, true, theme.fonts.size_px);
+                let hash = c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
+                    (h ^ u64::from(*p)).wrapping_mul(0x100000001b3)
+                });
+                got.push((format!("{}-x{scale}", i.as_str()), hash));
+            }
+        }
+        let file = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/pins/screenshot_picker.txt"
+        );
+        reprisekit::pins::check_file(std::path::Path::new(file), &got);
     }
 
     #[test]
@@ -425,7 +563,15 @@ mod tests {
             ..Theme::default()
         };
         let text = reprisekit::text::TextRenderer::load(&FontConfig::default());
-        let form = build_form(Purpose::Share, &rows(), Some(1), true, "Chromium", |_| None);
+        let form = build_form(
+            Purpose::Share,
+            &rows(),
+            Some(1),
+            true,
+            None,
+            "Chromium",
+            |_| None,
+        );
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
         c.fill_rect(c.bounds(), theme.colors.button_face);
         form::draw(
@@ -439,50 +585,152 @@ mod tests {
         reprisekit::raster::write_preview(&c, "picker-preview.png");
     }
 
+    /// The share dialog with Remember and the screenshot dialog with its Delay box, each with
+    /// its accept button's access key.
+    fn both_forms() -> [(form::Form, char); 2] {
+        let share = build_form(
+            Purpose::Share,
+            &rows(),
+            Some(1),
+            true,
+            None,
+            "Chromium",
+            |_| None,
+        );
+        let shot = build_form(
+            Purpose::Screenshot,
+            &rows(),
+            Some(1),
+            false,
+            Some(3),
+            "Chromium",
+            |_| None,
+        );
+        [(share, 's'), (shot, 't')]
+    }
+
+    fn delay_of(f: &form::Form) -> Option<i32> {
+        match f.item("delay").map(|i| &i.control) {
+            Some(Control::UpDown(u)) => Some(u.value()),
+            _ => None,
+        }
+    }
+
     #[test]
     fn a_bare_letter_shares_nothing() {
         use reprisekit::controls::form::{Event, Key};
-        let mut f = build_form(Purpose::Share, &rows(), Some(1), true, "Chromium", |_| None);
-        assert_eq!(f.key(Key::Char('s')), Event::None);
-        assert_eq!(f.key(Key::Char('r')), Event::None);
-        assert_eq!(f.checked("remember"), Some(false));
-        assert_eq!(f.key(Key::Access('s')), Event::Pressed("share"));
+        for (mut f, accept) in both_forms() {
+            let delay = delay_of(&f);
+            for c in ['s', 't', 'r', 'd'] {
+                assert_eq!(f.key(Key::Char(c)), Event::None, "{c} with {accept}");
+            }
+            assert_eq!(f.checked("remember"), (accept == 's').then_some(false));
+            assert_eq!(delay_of(&f), delay, "the Delay box keeps its value");
+            assert_eq!(f.key(Key::Access(accept)), Event::Pressed("share"));
+        }
     }
 
     #[test]
     fn tab_then_enter_or_space_shares_nothing() {
         use reprisekit::controls::form::{Event, Key};
-        let mut f = build_form(Purpose::Share, &rows(), Some(1), true, "Chromium", |_| None);
-        for _ in 0..4 {
-            f.key(Key::Tab { back: false });
-            let mut g = f.clone();
-            assert_eq!(f.key(Key::Enter), Event::Pressed("cancel"));
-            assert_ne!(g.key(Key::Space), Event::Pressed("share"));
+        for (mut f, accept) in both_forms() {
+            for _ in 0..4 {
+                f.key(Key::Tab { back: false });
+                let mut g = f.clone();
+                assert_eq!(f.key(Key::Enter), Event::Pressed("cancel"), "{accept}");
+                assert_ne!(g.key(Key::Space), Event::Pressed("share"), "{accept}");
+            }
         }
     }
 
     #[test]
     fn remember_is_offered_only_when_asked_and_starts_off() {
         assert_eq!(
-            build_form(Purpose::Share, &rows(), None, false, "", |_| None).checked("remember"),
+            build_form(Purpose::Share, &rows(), None, false, None, "", |_| None)
+                .checked("remember"),
             None
         );
         assert_eq!(
-            build_form(Purpose::Share, &rows(), None, true, "", |_| None).checked("remember"),
+            build_form(Purpose::Share, &rows(), None, true, None, "", |_| None).checked("remember"),
             Some(false)
         );
     }
 
     #[test]
     fn only_a_ticked_remember_comes_back_as_remember() {
-        assert_eq!(parse_choice("2\n"), Some((2, false)));
-        assert_eq!(parse_choice("2 remember\n"), Some((2, true)));
+        let c = |index, remember, delay| Choice {
+            index,
+            remember,
+            delay,
+        };
+        assert_eq!(parse_choice("2\n"), Some(c(2, false, 0)));
+        assert_eq!(parse_choice("2 remember\n"), Some(c(2, true, 0)));
         assert_eq!(parse_choice(""), None);
     }
 
     #[test]
+    fn the_delay_set_comes_back_cut_to_10_seconds() {
+        let c = |index, delay| Choice {
+            index,
+            remember: false,
+            delay,
+        };
+        for choice in [c(1, 0), c(1, 3), c(0, 10)] {
+            assert_eq!(parse_choice(&choice.line()), Some(choice));
+        }
+        assert_eq!(parse_choice("1 delay 99\n"), Some(c(1, 10)));
+        assert_eq!(parse_choice("1 delay x\n"), None);
+    }
+
+    #[test]
+    fn a_screenshot_offers_the_delay_and_take_hands_it_back() {
+        let none = build_form(Purpose::Share, &rows(), Some(1), true, None, "", |_| None);
+        assert!(none.item("delay").is_none(), "sharing waits for nothing");
+        let chosen = Arc::new(Mutex::new(None));
+        let form = build_form(
+            Purpose::Screenshot,
+            &rows(),
+            Some(1),
+            false,
+            Some(3),
+            "",
+            |_| None,
+        );
+        let mut p = prompt(
+            Purpose::Screenshot,
+            rows(),
+            form,
+            None,
+            None,
+            chosen.clone(),
+        );
+        if let Some(Control::UpDown(u)) = p.form.item_mut("delay").map(|i| &mut i.control) {
+            assert_eq!(u.value(), 3, "starts at [screenshot] delay");
+            u.step(2);
+        }
+        let ev = p.form.key(form::Key::Access('t'));
+        p.decide(ev);
+        assert_eq!(
+            *chosen.lock().unwrap(),
+            Some(Choice {
+                index: 1,
+                remember: false,
+                delay: 5
+            })
+        );
+    }
+
+    #[test]
     fn the_prompt_names_the_app() {
-        let f = build_form(Purpose::Share, &rows(), None, false, "Chromium", |_| None);
+        let f = build_form(
+            Purpose::Share,
+            &rows(),
+            None,
+            false,
+            None,
+            "Chromium",
+            |_| None,
+        );
         let Some(Control::Label { text, .. }) = f.item("prompt").map(|i| &i.control) else {
             panic!("prompt label");
         };
@@ -495,9 +743,15 @@ mod tests {
     #[test]
     fn enter_on_the_preselected_tree_shares_nothing() {
         let chosen = Arc::new(Mutex::new(None));
-        let form = build_form(Purpose::Share, &rows(), Some(1), false, "Chromium", |_| {
-            None
-        });
+        let form = build_form(
+            Purpose::Share,
+            &rows(),
+            Some(1),
+            false,
+            None,
+            "Chromium",
+            |_| None,
+        );
         let mut p = prompt(Purpose::Share, rows(), form, None, None, chosen.clone());
         assert_eq!(
             selection(&rows(), &p.form),

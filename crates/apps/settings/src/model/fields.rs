@@ -30,6 +30,7 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Flag(k("switcher", "flip"), lens!(switcher_flip)),
         Field::Text(k("overview", "hot_corner"), lens!(hot_corner)),
         Field::Flag(k("screenshot", "save"), lens!(screenshot_save)),
+        Field::Int(k("screenshot", "delay"), lens!(screenshot_delay)),
         Field::Flag(
             k("screenshot", "record_sound"),
             lens!(screenshot_record_sound),

@@ -146,6 +146,7 @@ pub(super) fn binds() -> Vec<Bind> {
         ),
         Bind::Named("hot_corner", lens!(hot_corner), HOT_CORNERS),
         Bind::Flag(cap::SAVE, lens!(screenshot_save)),
+        Bind::Num(cap::DELAY, lens!(screenshot_delay)),
         Bind::Named(cap::FORMAT, lens!(screenshot_format), SHOT_FORMATS),
         Bind::Named(
             cap::PNG_COMPRESSION,

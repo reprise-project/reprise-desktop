@@ -220,6 +220,7 @@ pub struct FileScreenshot {
     pub jxl_lossless: Option<bool>,
     pub jxl_quality: Option<i64>,
     pub jxl_effort: Option<i64>,
+    pub delay: Option<i64>,
 }
 
 #[derive(Deserialize, Default)]

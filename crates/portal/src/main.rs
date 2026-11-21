@@ -1052,17 +1052,21 @@ fn choose(
     choose_from(pick, types, &outputs, &toplevels, restore, |entries| {
         let last = lastpick::load(app_id);
         let preselect = last.and_then(|t| entries.iter().position(|e| e.target == t));
-        let (t, remember) = picker::pick(
+        let extra = match offer_remember {
+            true => picker::Extra::Remember,
+            false => picker::Extra::Nothing,
+        };
+        let picked = picker::pick(
             picker::Purpose::Share,
             &crate::remotedesktop::display_name(app_id),
             entries,
             preselect,
-            offer_remember,
+            extra,
             parent,
             cancel,
         )?;
-        lastpick::save(app_id, &t);
-        Some((t, remember))
+        lastpick::save(app_id, &picked.target);
+        Some((picked.target, picked.remember))
     })
 }
 
@@ -1337,6 +1341,7 @@ async fn serve(
                 frontend: frontend(),
                 link: link.clone(),
                 ask: permit::ask,
+                lock: inhibits.clone(),
             },
         )
         .serve_at(

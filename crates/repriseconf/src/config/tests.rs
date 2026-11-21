@@ -437,6 +437,15 @@ fn the_screenshot_file_format_defaults_to_png_at_default_compression() {
 }
 
 #[test]
+fn the_screenshot_delay_defaults_to_none_and_is_cut_to_0_to_10_seconds() {
+    assert_eq!(Config::default().screenshot.delay, 0);
+    for (v, want) in [(3, 3), (10, 10), (11, 10), (600, 10), (-1, 0)] {
+        let c = Config::parse(&format!("[screenshot]\ndelay = {v}\n")).unwrap();
+        assert_eq!(c.screenshot.delay, want, "delay = {v}");
+    }
+}
+
+#[test]
 fn bounce_keys_visual_bell_and_locate_pointer_parse_and_default_off() {
     let d = Config::default().accessibility;
     assert!(!d.bounce_keys && !d.locate_pointer);

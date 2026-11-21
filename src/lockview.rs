@@ -583,6 +583,8 @@ pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     state.hide_key_sheet();
     // The region overlay would take the pointer from the lock screen.
     state.close_panels();
+    // A screenshot whose delay ends under the lock would show what the lock hides.
+    state.cancel_waiting_shot();
     // A client popup grab the drag holds would be set again at its end, under the lock.
     state.dnd.dismiss_held_popup();
     // Before the focus clearing below: the drag's end puts the pointer back on a client, which it takes away.

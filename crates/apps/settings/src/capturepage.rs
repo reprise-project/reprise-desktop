@@ -10,12 +10,14 @@ use crate::model::{
     AUDIO_CODECS, Choices, ENCODERS, PNG_COMPRESSIONS, RATE_MODES, RECORD_FRAME_RATES,
     SHOT_FORMATS, Settings, VIDEO_CODECS, software_row,
 };
-use crate::pages::{Area, GX, X, choice, grey_choices, group, spin};
+use crate::pages::{Area, GX, X, choice, grey_choices, group, spin, updown};
 use crate::registry::Page;
+use repriseconf::config::SHOT_DELAY_MAX;
 use repriseconf::recording::{AudioCodec, Codec, Probed};
 use repriseconf::remote::EncoderChoice;
 
 pub const SAVE: &str = "screenshot_save";
+pub const DELAY: &str = "screenshot_delay";
 pub const FORMAT: &str = "screenshot_format";
 pub const PNG_COMPRESSION: &str = "screenshot_png_compression";
 pub const JPG_QUALITY: &str = "screenshot_jpg_quality";
@@ -65,6 +67,9 @@ const CONTROL_X: i32 = GX + LABEL_W + 4;
 const VALUE_W: i32 = 30;
 /// Where a row's second control starts, right of a spin and its unit.
 const RIGHT_X: i32 = X + 224;
+/// The Delay up-down's left, right of the Save check box, its unit ending at the group's inside
+/// at [`Area::MIN`].
+const DELAY_X: i32 = X + 242;
 
 /// The screen rate row's text under Constant bitrate, which codes the screen at most this often.
 const CONSTANT_SCREEN_RATE: &str = "Screen rate (60 at most)";
@@ -127,11 +132,15 @@ fn units(id: &'static str, y: i32, text: &str) -> Item {
 pub fn page(s: &Settings, a: Area) -> Form {
     let mut items = vec![
         group(a, "screenshots_group", 44, 96, "Screenshots"),
-        Item::check(
-            SAVE,
-            GX,
+        Item::check(SAVE, GX, 66, "Save in &Pictures/Screenshots"),
+        Item::label_at("delay_label", DELAY_X - 40, 66, 36, "&Delay:"),
+        updown(DELAY, DELAY_X, 62, 0, SHOT_DELAY_MAX.into()).named("Screenshot delay"),
+        Item::label_at(
+            "delay_units",
+            DELAY_X + reprisekit::controls::updown::WIDTH + 4,
             66,
-            "Save each screenshot as a file in &Pictures/Screenshots",
+            50,
+            "seconds",
         ),
     ];
     let format = row(a, "format_label", FORMAT, 90, 110, "&Format:", SHOT_FORMATS);

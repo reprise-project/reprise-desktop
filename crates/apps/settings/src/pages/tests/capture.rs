@@ -60,6 +60,7 @@ fn the_moved_check_boxes_live_on_screen_capture() {
             "recording.keyframe_interval",
             "recording.quality",
             "recording.rate",
+            "screenshot.delay",
             "screenshot.format",
             "screenshot.jpg_quality",
             "screenshot.jxl_effort",

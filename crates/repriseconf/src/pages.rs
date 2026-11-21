@@ -436,6 +436,7 @@ impl Page {
             ],
             Page::ScreenCapture => &[
                 "screenshots",
+                "screenshot files",
                 "screenshot format",
                 "screen recording",
                 "screencast",

@@ -6,6 +6,11 @@
 //! window a click lands on), Ctrl+Alt+PrtSc the focused window's client
 //! content alone.
 //!
+//! With `[screenshot] delay` set, a key's shot ([`Take`]) is taken that many seconds after the
+//! press, of what shows then; Shift+PrtSc's waits after the pick. A screenshot key pressed while
+//! one waits cancels it and takes nothing, so two never stack. A lock cancels it too, and a delay
+//! that ends with the desktop locked takes nothing.
+//!
 //! The first three take a still of each output under the area as it shows
 //! now (`snapshot`) and put them together in layout order. The content
 //! is the window's client tree rendered alone, so a window partly covered
@@ -23,6 +28,7 @@ use std::time::{Duration, Instant};
 
 use repriseconf::config::ShotFormat;
 use reprisescene::View;
+use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::Rectangle;
 
@@ -39,10 +45,91 @@ pub struct Shot {
     pub still: Canvas,
 }
 
+/// What a screenshot takes once its delay is over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Take {
+    /// PrtSc: the whole layout.
+    Screen,
+    /// Alt+PrtSc: the focused window's frame.
+    Window,
+    /// Ctrl+Alt+PrtSc: the focused window's client content.
+    Content,
+    /// Shift+PrtSc's pick, in layout coordinates.
+    Area(Rect),
+}
+
+/// What a screenshot press does.
+#[derive(Debug, PartialEq, Eq)]
+enum Press {
+    Now,
+    After(Duration),
+    /// Cancel the screenshot that waits.
+    Cancel,
+}
+
+/// A press while a screenshot waits cancels it; else the shot waits `delay` seconds.
+fn press(delay: u8, waiting: bool) -> Press {
+    match (waiting, delay) {
+        (true, _) => Press::Cancel,
+        (false, 0) => Press::Now,
+        (false, s) => Press::After(Duration::from_secs(s.into())),
+    }
+}
+
 impl State {
+    /// A screenshot key's shot of `take`: now, after `[screenshot] delay`, or, while one waits,
+    /// none, that one cancelled.
+    pub fn shoot(&mut self, take: Take) {
+        let wait = match press(self.config.screenshot.delay, self.shots.waiting.is_some()) {
+            Press::Cancel => {
+                self.cancel_waiting_shot();
+                return;
+            }
+            Press::Now => return self.take(take),
+            Press::After(wait) => wait,
+        };
+        let armed = (self.handle).insert_source(Timer::from_duration(wait), move |_, _, state| {
+            state.shots.waiting = None;
+            if state.desktop_locked() {
+                log::info!("screenshot: the desktop locked during its delay; nothing taken");
+            } else {
+                state.take(take);
+            }
+            TimeoutAction::Drop
+        });
+        match armed {
+            Ok(token) => self.shots.waiting = Some(token),
+            Err(e) => {
+                log::warn!("screenshot: no timer for the delay: {}", e.error);
+                self.take(take);
+            }
+        }
+    }
+
+    /// Cancel the screenshot that waits for its delay; true if one did.
+    pub fn cancel_waiting_shot(&mut self) -> bool {
+        let Some(token) = self.shots.waiting.take() else {
+            return false;
+        };
+        self.handle.remove(token);
+        log::info!("screenshot: the one waiting for its delay was cancelled");
+        true
+    }
+
+    fn take(&mut self, take: Take) {
+        #[cfg(test)]
+        self.shots.taken.push(take);
+        match take {
+            Take::Screen => self.screenshot(false),
+            Take::Window => self.screenshot(true),
+            Take::Content => self.screenshot_content(),
+            Take::Area(r) => self.screenshot_area(r),
+        }
+    }
+
     /// A screenshot of the whole layout, or of the focused window's frame
     /// when `window`. No-op for `window` with nothing focused.
-    pub fn screenshot(&mut self, window: bool) {
+    fn screenshot(&mut self, window: bool) {
         let area = if window {
             let Some(r) = self
                 .shot_window()
@@ -84,7 +171,7 @@ impl State {
 
     /// A screenshot of `area`, in layout coordinates, as the screens show
     /// it: what no output covers is black.
-    pub fn screenshot_area(&mut self, area: Rect) {
+    fn screenshot_area(&mut self, area: Rect) {
         let area = area.intersect(&self.layout_box(None));
         if area.is_empty() {
             return;
@@ -122,7 +209,7 @@ impl State {
     /// Ctrl+Alt+PrtSc: the focused window's client content, rendered
     /// alone at the sharpest scale of the screens it stands on. No-op with
     /// nothing focused.
-    pub fn screenshot_content(&mut self) {
+    fn screenshot_content(&mut self) {
         let Some((content, client)) = self.shot_window().and_then(|w| self.win(w)).map(|w| {
             let (x, y) = w.client_origin();
             (
@@ -274,6 +361,10 @@ pub struct Shots {
     pub saves: InFlight,
     /// File encodes running or waiting for the one running.
     encodes: InFlight,
+    /// The timer of the screenshot that waits for its delay.
+    waiting: Option<RegistrationToken>,
+    #[cfg(test)]
+    taken: Vec<Take>,
 }
 
 const SAVING: &str = "Saving screenshots...";
@@ -638,6 +729,49 @@ mod tests {
         assert!(!ran.get(), "the file is under way");
         h.run_for(400);
         assert!(ran.get(), "past the deadline");
+    }
+
+    #[test]
+    fn a_press_waits_the_delay_and_one_while_a_shot_waits_cancels_it() {
+        assert_eq!(press(0, false), Press::Now);
+        assert_eq!(press(3, false), Press::After(Duration::from_secs(3)));
+        assert_eq!(press(3, true), Press::Cancel);
+        assert_eq!(press(0, true), Press::Cancel, "a delay set to 0 meanwhile");
+    }
+
+    #[test]
+    fn a_second_press_cancels_the_waiting_shot_and_a_third_waits_again() {
+        let mut h = crate::harness::Harness::new();
+        h.state.config.screenshot.delay = 1;
+        h.state.shoot(Take::Window);
+        assert!(h.state.shots.waiting.is_some(), "the first press waits");
+        h.state.shoot(Take::Screen);
+        assert!(h.state.shots.waiting.is_none(), "the second cancels it");
+        h.state.shoot(Take::Content);
+        assert!(h.state.shots.waiting.is_some(), "the third waits again");
+        assert_eq!(h.state.shots.taken, [], "nothing is taken before the delay");
+        h.until("the delay ends", |s| s.shots.waiting.is_none());
+        assert_eq!(
+            h.state.shots.taken,
+            [Take::Content],
+            "only the third is taken"
+        );
+    }
+
+    #[test]
+    fn a_lock_cancels_the_waiting_shot_and_a_delay_ending_under_it_takes_nothing() {
+        let mut h = crate::harness::Harness::new();
+        h.state.config.screenshot.delay = 1;
+        h.state.shoot(Take::Content);
+        crate::lockview::lock(&mut h.state);
+        assert!(h.state.shots.waiting.is_none(), "the lock cancels it");
+        h.state.shoot(Take::Screen);
+        assert!(
+            h.state.shots.waiting.is_some(),
+            "a shot armed under the lock waits"
+        );
+        h.until("the delay ends", |s| s.shots.waiting.is_none());
+        assert_eq!(h.state.shots.taken, [], "nothing is taken under the lock");
     }
 
     #[test]
