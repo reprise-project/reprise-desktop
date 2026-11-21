@@ -387,7 +387,8 @@ pub fn draw(
         lay.down.scaled(s),
         ud.enabled,
     );
-    let (tr, align) = text_rect(ud, lay.edit.scaled(s), s);
+    let room = lay.edit.scaled(s);
+    let (tr, align) = text_rect(ud, room, s);
     let shown = ud.shown();
     if ud.enabled {
         let edit = ud.edit.as_ref().filter(|_| caret);
@@ -402,10 +403,11 @@ pub fn draw(
             let lh = p.text.len(LINE_H) * s;
             let hl = Rect::new(a, tr.y + (tr.height - lh) / 2, b - a, lh);
             text.highlight(hl, &shown, sel, x0, tr, false, px, c.scale())
+                .clear_of_ink(room)
         });
         // Filled under the text too, so a neighbour's ink past the highlight keeps its colour.
         if let Some(hl) = &hl {
-            hl.fill(c, tr, cs.hilight);
+            hl.fill(c, room, cs.hilight);
         }
         text.draw_in(c, pen, tr, tr, &shown, false, cs.button_text, px);
         if caret {
@@ -417,7 +419,7 @@ pub fn draw(
             }
             let bar = Rect::new(cx, tr.y + 2 * s, s, tr.height - 4 * s);
             match &hl {
-                Some(hl) => hl.invert_caret(c, bar, tr),
+                Some(hl) => hl.invert_caret(c, bar, room),
                 None => c.invert_rect(bar),
             }
             if let Some(e) = &ud.edit {
@@ -470,6 +472,28 @@ mod tests {
     use super::*;
     use crate::look::classic_paint;
     use crate::theme::{FontConfig, Theme};
+
+    /// Invert again the caret `draw` shows at the start of selection `sel` of `t`, drawn from
+    /// `pen` in `tr` at 100% text, taking it off.
+    fn take_off_caret(
+        c: &mut Canvas,
+        text: &TextRenderer,
+        l: &Layout,
+        (t, sel): (&str, std::ops::Range<usize>),
+        (pen, tr): (i32, Rect),
+        px: u32,
+    ) {
+        let cx = pen + text.measure(&t[..sel.start], false, px);
+        let bar = Rect::new(cx, tr.y + 2, 1, tr.height - 4);
+        if sel.is_empty() {
+            c.invert_rect(bar);
+            return;
+        }
+        let w = text.measure(&t[sel.clone()], false, px);
+        let hl = Rect::new(cx, tr.y + (tr.height - LINE_H) / 2, w, LINE_H);
+        let hl = text.highlight(hl, t, sel, pen, tr, false, px, c.scale());
+        hl.clear_of_ink(l.edit).invert_caret(c, bar, l.edit);
+    }
 
     /// The Date and Time sheet's greyed 79x21 year spinner on its page.
     #[test]
@@ -1110,8 +1134,7 @@ mod tests {
                         px,
                     );
                     let (pen, tr, _) = geom(t);
-                    let cx = pen + text.measure(&t[..sel.start], false, px);
-                    c.invert_rect(Rect::new(cx, tr.y + 2, 1, tr.height - 4));
+                    take_off_caret(&mut c, &text, &l, (t, sel), (pen, tr), px);
                     c.pixels
                 };
                 let found = crate::paint::selection_faults(
@@ -1163,14 +1186,13 @@ mod tests {
                         draw(&mut c, &text, &paint, &ud, &l, true, None, px);
                         let (tr, align) = text_rect(&ud, l.edit, 1);
                         let pen = text_x(&text, t, tr, align, Some(sel.start), px);
-                        let cx = pen + text.measure(&t[..sel.start], false, px);
-                        c.invert_rect(Rect::new(cx, tr.y + 2, 1, tr.height - 4));
+                        take_off_caret(&mut c, &text, &l, (t, sel), (pen, tr), px);
                         (c.pixels, pen, tr)
                     };
                     for (t, sel) in crate::paint::descender_cases() {
                         let (plain, _, _) = draw(t, sel.start..sel.start);
                         let (selected, pen, tr) = draw(t, sel.clone());
-                        let (off, unlit) = crate::paint::off_highlight(
+                        let (off, unlit, merged) = crate::paint::off_highlight(
                             &text,
                             px,
                             (w, h),
@@ -1180,11 +1202,72 @@ mod tests {
                             (&plain, &selected),
                             (cs.hilight, cs.hilight_text),
                         );
-                        if off + unlit > 0 {
+                        if off + unlit + merged > 0 {
                             faults.push(format!(
                                 "{family} {px} px @{s} \"{t}\" {sel:?}: {off} px changed off the \
-                                 highlight, {unlit} selected px not lit"
+                                 highlight, {unlit} selected px not lit, {merged} lit px beside lit \
+                                 background"
                             ));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(faults.is_empty(), "{}", faults.join("\n"));
+    }
+
+    /// A caret at a selection's start sits beside the selected ink, so a selected 8 keeps its
+    /// left stroke lit, at scale 1 and 2.
+    #[test]
+    fn a_caret_at_a_selections_start_leaves_its_ink_lit() {
+        crate::pins::fonts();
+        let cs = &Theme::default().colors;
+        let l = layout(2, 2);
+        let (w, h) = (WIDTH + 4, HEIGHT + 4);
+        let mut faults = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.into()],
+                antialias: false,
+                ..FontConfig::default()
+            });
+            for px in [11, 13] {
+                for s in [1, 2] {
+                    let draw = |t: &str, sel: std::ops::Range<usize>| {
+                        let mut ud = UpDown::new(0, 0, 99999);
+                        let mut e = TextEdit::new(t, true);
+                        e.set_selection(sel.end, sel.start);
+                        ud.edit = Some(e);
+                        let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                        c.fill_rect(c.bounds(), cs.button_face);
+                        draw(
+                            &mut c,
+                            &text,
+                            &classic_paint(cs, 1),
+                            &ud,
+                            &l,
+                            true,
+                            None,
+                            px,
+                        );
+                        c.pixels
+                    };
+                    let (tr, align) = text_rect(&UpDown::new(0, 0, 99999), l.edit, 1);
+                    for t in ["8", "6", "86", "1047"] {
+                        let sel = 0..1;
+                        let pen = text_x(&text, t, tr, align, Some(0), px);
+                        let (_, unlit, _) = crate::paint::off_highlight(
+                            &text,
+                            px,
+                            (w, h),
+                            (t, sel.clone()),
+                            (pen, tr),
+                            s,
+                            (&draw(t, 0..0), &draw(t, sel)),
+                            (cs.hilight, cs.hilight_text),
+                        );
+                        if unlit > 0 {
+                            faults.push(format!("{family} {px} px @{s} \"{t}\": {unlit} px unlit"));
                         }
                     }
                 }

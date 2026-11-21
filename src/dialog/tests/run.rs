@@ -130,7 +130,7 @@ fn run_drop_button_has_the_combo_bevel() {
 }
 
 #[test]
-fn run_highlights_its_command_13_rows_tall_from_6_px_in() {
+fn run_highlights_its_command_13_rows_tall_from_5_px_in() {
     let theme = Theme::default();
     let text = tahoma();
     let d = Dialog::run(&history());
@@ -152,7 +152,9 @@ fn run_highlights_its_command_13_rows_tall_from_6_px_in() {
     let hl = theme.colors.hilight.argb();
     let row = f.y + 3;
     let first = (f.x..f.right()).find(|&x| c.get(x, row) == hl);
-    assert_eq!(first, Some(f.x + 6), "the highlight's first column");
+    // The text starts 6 px in; notepad's n inks its pen's column, so the highlight holds a pixel
+    // left of it.
+    assert_eq!(first, Some(f.x + 5), "the highlight's first column");
     let rows: Vec<i32> = (f.y..f.bottom())
         .filter(|&y| (f.x..f.right()).any(|x| c.get(x, y) == hl))
         .collect();
@@ -812,8 +814,8 @@ fn combo_draws_help_button_selection_and_list() {
     let f = l.field.unwrap();
     assert_eq!(c.get(f.x, f.y + 10), cs.button_shadow.argb());
     assert_eq!(c.get(f.x + 1, f.y + 10), cs.button_dk_shadow.argb());
-    assert_eq!(c.get(f.x + 5, f.y + 4), cs.window.argb());
-    assert_eq!(c.get(f.x + 6, f.y + 4), cs.hilight.argb());
+    assert_eq!(c.get(f.x + 4, f.y + 4), cs.window.argb());
+    assert_eq!(c.get(f.x + 5, f.y + 4), cs.hilight.argb());
     let dr = l.drop.unwrap();
     assert_eq!(c.get(dr.x + 8, dr.y + 7), cs.button_text.argb());
     assert_eq!(c.get(dr.x + 4, dr.y + 7), cs.button_face.argb());
