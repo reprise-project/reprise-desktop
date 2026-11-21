@@ -8,7 +8,7 @@ use crate::{
     desktopview::DesktopCommand,
     keys,
     raster::Rect,
-    startmenu::{ContextBitmaps, MenuItem, MenuLayout, MenuStyle, place_popup},
+    startmenu::{ContextBitmaps, MenuItem, MenuStyle, place_popup},
     window::WindowId,
     winmenu::{WindowMenuRow, WindowMenuState},
 };
@@ -63,13 +63,12 @@ impl State {
         };
         let usable = self.usable_area(Some(&output));
         let theme = self.menu_theme(skin, 1);
-        let style = MenuStyle::context_for(&theme, &items).fit(
+        let layout = MenuStyle::context_for(&theme, &items).layout_within(
             &self.text,
             &items,
             self.config.theme.fonts.size_px,
-            kind.widest(usable),
+            (kind.widest(usable), usable.height),
         );
-        let layout = MenuLayout::compute_styled(&style, &items, usize::MAX);
         let pos = place(at, (layout.width, layout.height), usable);
         self.push_menu(0, pos, layout, items, output, kind, from);
         if let Some(m) = self.menus.last_mut() {

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
-use reprisekit::controls::menu::{KeyAct, MenuKey, key_act};
+use reprisekit::controls::menu::{KeyAct, MenuKey, key_act_in};
 
 use crate::{
     compositor::State,
@@ -43,12 +43,8 @@ impl State {
             return;
         };
         let menu = &self.menus[depth];
-        let act = key_act(
-            &menu.items,
-            menu.hovered,
-            key,
-            KeyStops::of(&self.config.theme),
-        );
+        let stops = KeyStops::of(&self.config.theme);
+        let act = key_act_in(&menu.items, &menu.layout, menu.hovered, key, stops);
         self.apply_menu_key(depth, act);
     }
 

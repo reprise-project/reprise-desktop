@@ -671,10 +671,12 @@ fn compute_columns_counts_separators_as_rows() {
 }
 
 #[test]
-fn submenu_max_rows_from_usable_height() {
+fn a_column_holds_the_rows_inside_its_insets() {
     let m = wide_metrics();
-    assert_eq!(submenu_max_rows(&m, 2 * BORDER + 3 * m.menu_item_height), 3);
-    assert_eq!(submenu_max_rows(&m, 0), 1);
+    let style = MenuStyle::compact(&m);
+    assert_eq!(style.rows_in(2 * BORDER + 3 * m.menu_item_height), 3);
+    assert_eq!(style.rows_in(2 * BORDER + 3 * m.menu_item_height - 1), 2);
+    assert_eq!(style.rows_in(0), 1);
 }
 
 #[test]
@@ -753,7 +755,8 @@ fn open_submenu_wiring_aligns_first_entry_with_programs_row() {
     );
 
     let apps: Vec<MenuItem> = (0..5).map(|i| MenuItem::entry(format!("app{i}"))).collect();
-    let submenu_layout = MenuLayout::compute_columns(&m, &apps, submenu_max_rows(&m, 720));
+    let submenu_layout =
+        MenuLayout::compute_columns(&m, &apps, MenuStyle::compact(&m).rows_in(720));
     let usable = Rect::new(0, 0, 800, 720);
     let (_, y) = place_submenu(
         parent,
@@ -2155,4 +2158,212 @@ fn menu_icons_grow_with_the_text_and_labels_clear_them() {
     assert_eq!(at(100), vec![16; 6], "16 px at 100% in every look");
     assert_eq!(at(200), vec![32; 6], "32 px at 200%");
     crate::pins::check("controls/menu_icons_200", &hashes);
+}
+
+/// Twenty-four program folders, the second greyed, each with an icon `icon` px square.
+fn folders(icon: i32) -> Vec<MenuItem> {
+    const INK: u32 = 0xFF3A_6EA5;
+    let mut ic = Canvas::new(icon as u32, icon as u32);
+    ic.pixels.fill(INK);
+    (0..24)
+        .map(|i| {
+            MenuItem::entry(format!("Program folder {i}"))
+                .icon(Some(ic.clone()))
+                .submenu(i % 3 == 0)
+                .enabled(i != 1)
+        })
+        .collect()
+}
+
+/// The two short work areas (logical width, height) a 200% menu wraps in.
+const SHORT_ROOMS: [(i32, i32); 2] = [(720, 410), (960, 500)];
+
+/// A Start submenu's and a context menu's style in each look at 200% text.
+fn styles_at_200() -> Vec<(String, Theme, MenuStyle)> {
+    let mut out = Vec::new();
+    for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let theme = crate::interfaces::theme_for(interface).with_text_size(200);
+        let styles = [
+            ("submenu", MenuStyle::submenu(&theme)),
+            ("context", MenuStyle::context(&theme, ContextBitmaps::Icons)),
+        ];
+        for (kind, style) in styles {
+            out.push((format!("{interface:?} {kind}"), theme.clone(), style));
+        }
+    }
+    out
+}
+
+#[test]
+fn a_menu_taller_than_its_room_wraps_into_columns_that_fit_it() {
+    let text = TextRenderer::load(&FontConfig::default());
+    for (name, theme, style) in styles_at_200() {
+        let items = folders(style.icon_px());
+        let px = theme.fonts.size_px;
+        for room in SHORT_ROOMS {
+            let at = format!("{name} in {room:?}");
+            let l = style.layout_within(&text, &items, px, room);
+            assert!(l.columns >= 2, "{at}: {} columns", l.columns);
+            assert!(
+                l.width <= room.0 && l.height <= room.1,
+                "{at}: {}x{}",
+                l.width,
+                l.height
+            );
+            let first = (0..items.len()).filter(|&i| l.column_of(i) == 0).count();
+            assert_eq!(first, l.rows_per_column, "{at}: the first column is full");
+            assert_eq!(l.rows_per_column, style.rows_in(room.1), "{at}");
+            for (i, r) in l.rows.iter().enumerate() {
+                assert!(
+                    r.x >= 0 && r.right() <= l.width && r.y >= 0 && r.bottom() <= l.height,
+                    "{at}: row {i} at {r:?} in {}x{}",
+                    l.width,
+                    l.height
+                );
+            }
+        }
+        let tall = style.layout_within(&text, &items, px, (720, 2000));
+        let one =
+            MenuLayout::compute_styled(&style.fit(&text, &items, px, 720), &items, usize::MAX);
+        assert_eq!(tall.columns, 1, "{name}: fits in one column");
+        assert_eq!(
+            (tall.width, tall.height, &tall.rows),
+            (one.width, one.height, &one.rows),
+            "{name}: a menu that fits is laid out as before"
+        );
+    }
+}
+
+#[test]
+fn left_and_right_cross_the_columns_level_with_the_highlight() {
+    let text = TextRenderer::load(&FontConfig::default());
+    for (name, theme, style) in styles_at_200() {
+        let items = folders(style.icon_px());
+        let stops = KeyStops::of(&theme);
+        for room in SHORT_ROOMS {
+            let at = format!("{name} in {room:?}");
+            let l = style.layout_within(&text, &items, theme.fonts.size_px, room);
+            let per = l.rows_per_column;
+            let act = |row, key| key_act_in(&items, &l, Some(row), key, stops);
+            // Row 2 is plain, row 3 opens a submenu.
+            assert_eq!(
+                act(2, MenuKey::Right),
+                KeyAct::Select(Some(per + 2)),
+                "{at}"
+            );
+            assert_eq!(act(3, MenuKey::Right), KeyAct::OpenSubmenu(3), "{at}");
+            assert_eq!(act(per + 2, MenuKey::Left), KeyAct::Select(Some(2)), "{at}");
+            assert_eq!(act(2, MenuKey::Left), KeyAct::CloseSubmenu, "{at}");
+            let last = items.len() - 1;
+            if l.column_of(last) == l.columns - 1 && !row_has_submenu(&items, last) {
+                assert_eq!(act(last, MenuKey::Right), KeyAct::Nothing, "{at}");
+            }
+            let grey = act(per + 1, MenuKey::Left);
+            let want = match stops {
+                KeyStops::Entries => 1,
+                KeyStops::Enabled => 0,
+            };
+            assert_eq!(grey, KeyAct::Select(Some(want)), "{at}: past a greyed row");
+            assert_eq!(
+                act(per - 1, MenuKey::Down),
+                KeyAct::Select(Some(per)),
+                "{at}: Down runs on into the next column"
+            );
+            assert_eq!(act(per, MenuKey::Up), KeyAct::Select(Some(per - 1)), "{at}");
+        }
+    }
+}
+
+#[test]
+fn a_submenu_in_columns_keeps_left_for_its_columns_and_closes_from_the_first() {
+    let text = TextRenderer::load(&FontConfig::default());
+    let theme = crate::interfaces::theme_for(Interface::Classic).with_text_size(200);
+    let mut t = MenuTree::new();
+    t.push_sub(MenuItem::entry("Programs"), MenuTree::flat(folders(32)));
+    t.push(MenuItem::entry("Run..."));
+    let cx = MenuCtx {
+        text: &text,
+        theme: &theme,
+        px: theme.fonts.size_px,
+        within: Rect::new(0, 0, 720, 410),
+    };
+    let mut p = PopupMenu::open(&t, (0, 0), &cx, true);
+    p.key(&t, MenuKey::Right, &cx);
+    assert_eq!(p.depth(), 2);
+    let per = p.levels()[1].layout.rows_per_column;
+    assert!(p.levels()[1].layout.columns >= 2);
+    p.key(&t, MenuKey::Down, &cx);
+    p.key(&t, MenuKey::Down, &cx);
+    assert_eq!(p.hovered(), Some(3), "Down passes the greyed row");
+    p.key(&t, MenuKey::Down, &cx);
+    assert_eq!(p.key(&t, MenuKey::Right, &cx), MenuAction::Redraw);
+    assert_eq!(
+        p.hovered(),
+        Some(per + 4),
+        "Right crosses to the next column"
+    );
+    assert_eq!(p.key(&t, MenuKey::Left, &cx), MenuAction::Redraw);
+    assert_eq!((p.depth(), p.hovered()), (2, Some(4)), "Left crosses back");
+    p.key(&t, MenuKey::Left, &cx);
+    assert_eq!(p.depth(), 1, "Left in the first column closes the submenu");
+}
+
+#[test]
+fn a_menu_in_columns_gives_each_row_its_place_to_a_reader() {
+    let text = TextRenderer::load(&FontConfig::default());
+    for (name, theme, style) in styles_at_200() {
+        let items = folders(style.icon_px());
+        let l = style.layout_within(&text, &items, theme.fonts.size_px, SHORT_ROOMS[0]);
+        let rect = Rect::new(4, 0, l.width, l.height);
+        let mut t = Tree::window("", SHORT_ROOMS[0]);
+        let hot = l.rows_per_column + 2;
+        let (menu, rows, focus) =
+            access_menu(&mut t, access::ROOT, 0, &items, &l, rect, Some(hot), None);
+        assert_eq!(focus, Some(rows[hot]), "{name}");
+        let b = |id| t.get(id).unwrap().bounds().unwrap();
+        let whole = b(menu);
+        for (i, &id) in rows.iter().enumerate() {
+            let r = b(id);
+            assert!(
+                r.x0 >= whole.x0 && r.x1 <= whole.x1 && r.y0 >= whole.y0 && r.y1 <= whole.y1,
+                "{name}: row {i} {r:?} in {whole:?}"
+            );
+        }
+        let (a, c) = (b(rows[2]), b(rows[hot]));
+        assert!(c.x0 >= a.x1 && c.y0 == a.y0, "{name}: {c:?} beside {a:?}");
+        let label = format!("Program folder {hot}");
+        assert_eq!(t.get(rows[hot]).unwrap().label(), Some(label.as_str()));
+    }
+}
+
+/// A 200% menu of twenty-four folders wrapped into the 720x410 room, in each look at scale 1 and 2.
+#[test]
+fn a_menu_in_columns_draws_its_columns_whole() {
+    crate::pins::fonts();
+    let mut hashes = Vec::new();
+    let mut cut = Vec::new();
+    for (name, base, style) in styles_at_200() {
+        let text = TextRenderer::load(&base.fonts);
+        for s in [1, 2] {
+            let items = folders(style.icon_px() * s);
+            let l = style
+                .layout_within(&text, &items, base.fonts.size_px, SHORT_ROOMS[0])
+                .scaled(s);
+            let theme = base.scaled(s);
+            let text = text.for_output(s);
+            let mut c = Canvas::new(l.width as u32, l.height as u32);
+            let hot = Some(l.rows_per_column + 2);
+            let ((), cuts) = crate::pins::clipped_ink(|| {
+                draw_menu(&mut c, &theme, text, &l, &items, hot, "", false);
+            });
+            cut.extend(
+                (cuts.into_iter())
+                    .filter(|c| c.rows > 0)
+                    .map(|c| (name.clone(), s, c.text)),
+            );
+            hashes.push((format!("{name} {s}"), crate::pins::fnv(&c)));
+        }
+    }
+    assert_eq!(cut, Vec::new(), "(menu, scale, line) cut above or below");
+    crate::pins::check("controls/menu_columns_200", &hashes);
 }

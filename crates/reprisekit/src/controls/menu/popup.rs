@@ -1,7 +1,7 @@
 //! [`MenuTree`] and the open chain of [`PopupMenu`] levels: pointer, keys and placement.
 
 use super::draw::draw_menu_at;
-use super::keys::{KeyAct, MenuKey, key_act};
+use super::keys::{KeyAct, MenuKey, key_act_in};
 use super::layout::{BORDER, INSET, MenuLayout, MenuStyle, place_submenu};
 use super::shadow::menu_look;
 use super::{KeyStops, MenuItem, step_selection};
@@ -170,11 +170,8 @@ struct Pending {
 
 /// A level taller than `within` wraps into columns, so every row stays on screen.
 fn level_layout(items: &[MenuItem], cx: &MenuCtx) -> MenuLayout {
-    let style = MenuStyle::context_for(cx.theme, items).fit(cx.text, items, cx.px, cx.within.width);
-    let usable = cx.within.height - style.inset.top - style.inset.bottom;
-    let tallest = style.row_height.max(style.separator_h).max(1);
-    let max_rows = (usable / tallest).max(1) as usize;
-    MenuLayout::compute_styled(&style, items, max_rows)
+    let room = (cx.within.width, cx.within.height);
+    MenuStyle::context_for(cx.theme, items).layout_within(cx.text, items, cx.px, room)
 }
 
 impl PopupMenu {
@@ -387,7 +384,8 @@ impl PopupMenu {
         self.pending = None;
         let last = self.levels.len() - 1;
         let level = &self.levels[last];
-        match key_act(&level.items, level.hovered, key, KeyStops::of(cx.theme)) {
+        let stops = KeyStops::of(cx.theme);
+        match key_act_in(&level.items, &level.layout, level.hovered, key, stops) {
             // Enter is the menu's even with no row to run.
             KeyAct::Nothing if key == MenuKey::Enter => MenuAction::Redraw,
             act => self.apply_key(tree, last, act, cx),
