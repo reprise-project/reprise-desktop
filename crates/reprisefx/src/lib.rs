@@ -53,7 +53,10 @@
 //!
 //! `[glass] fast_drag`: pass [`blur::quality`]`(dragging, fast_drag)`. A
 //! quality change changes the element's commit, so the drag's end re-blurs
-//! at full quality in the next frame.
+//! at full quality in the next frame. A host with its own backdrop may also
+//! show the coarse picture as it stands and update it after the frame is
+//! submitted; [`Source::version`] and [`Source::changed_since`] say where
+//! that update changed it.
 //!
 //! `[glass] blur_rate`: while only client commits changed what lies under
 //! glass and its last blur is younger than `1 / blur_rate` seconds, pass

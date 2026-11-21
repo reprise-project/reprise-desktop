@@ -246,7 +246,7 @@ fn an_output_nothing_asked_of_draws_nothing() {
 fn a_catch_up_frame_stays_one_only_while_the_other_asks_leave_glass_as_it_was() {
     use crate::glass::{Drawn, Under};
     assert!(asked(&[Ask::CatchUp]).catch_up);
-    for other in [Ask::Pointer, Ask::Cursor, Ask::Timed] {
+    for other in [Ask::Pointer, Ask::Cursor, Ask::Timed, Ask::Glass] {
         assert!(asked(&[Ask::CatchUp, other]).catch_up, "{other:?} after");
         assert!(asked(&[other, Ask::CatchUp]).catch_up, "{other:?} before");
     }
@@ -316,6 +316,26 @@ fn only_scene_content_and_commit_asks_may_change_what_lies_under_glass() {
     );
     let cursor = asked(&[Ask::Cursor, Ask::Pointer]);
     assert!(cursor.redraw && !cursor.pointer_only && cursor.backdrop == Under::Nothing);
+}
+
+#[test]
+fn a_late_glass_change_asks_a_whole_frame_that_keeps_the_blur_caps_phase() {
+    use crate::reblur::{Reblur, when};
+    let a = asked(&[Ask::Glass]);
+    assert!(a.redraw && !a.pointer_only, "a whole frame");
+    assert_eq!(
+        a.backdrop,
+        crate::glass::Under::Nothing,
+        "nothing new under glass"
+    );
+    assert!(!a.scene, "no scene change");
+    let cap = Some(Duration::from_millis(33));
+    let content_only = !a.scene && !a.catch_up;
+    assert_eq!(
+        when(content_only, Some(Duration::from_millis(10)), cap),
+        Reblur::Wait(Duration::from_millis(23)),
+        "inside the cap the frame holds the blur it shows"
+    );
 }
 
 #[test]

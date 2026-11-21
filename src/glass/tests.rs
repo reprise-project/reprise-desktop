@@ -1582,3 +1582,421 @@ fn glass_in_a_tree_at_opacity_0_makes_no_element() {
     assert_eq!(made, 0, "no glass element");
     assert_eq!(red, 0, "the black shows unblurred");
 }
+
+#[test]
+fn only_a_coarse_frame_that_holds_nothing_trails() {
+    assert!(trails(Quality::Coarse, Hold::No));
+    assert!(
+        !trails(Quality::Full, Hold::No),
+        "no drag, or fast_drag off"
+    );
+    assert!(
+        !trails(Quality::Coarse, Hold::Keep(Under::Anywhere)),
+        "a held frame keeps its blur as before"
+    );
+}
+
+/// White under a 120x80 sheet of glass at (20, 20), with a black spot at (40, 40) left hidden.
+fn spot_under_glass(ctx: &Rc<GlassCtx>) -> (DeskScene, TreeId, TreeId, Backdrop) {
+    let mut scene = DeskScene::new();
+    let root = scene.root();
+    let desktop = scene.tree_create(root);
+    scene.rect_create(desktop, (320, 200), [1.0; 4]);
+    let spot = scene.tree_create(desktop);
+    scene.set_position(spot, 40, 40);
+    scene.rect_create(spot, (60, 40), [0.0, 0.0, 0.0, 1.0]);
+    scene.set_enabled(spot, false);
+    let windows = scene.tree_create(root);
+    let (window, glass) = glass_window(&mut scene, ctx, windows, (20, 20), (120, 80), None);
+    (scene, spot, window, glass)
+}
+
+/// What one screen frame did: the red channel of the points asked for, whether it showed the last
+/// pictures (`trails`) and whether the update after it changed them.
+struct Screen {
+    red: Vec<u32>,
+    late: bool,
+    changed: bool,
+}
+
+fn trail_settings() -> Settings {
+    Settings {
+        streaks: false,
+        ..Settings::default()
+    }
+}
+
+/// One screen frame of `scene` on `output` as the backend draws it at `quality`.
+fn screen_frame(
+    renderer: &mut GlesRenderer,
+    ctx: &GlassCtx,
+    scene: &DeskScene,
+    output: &Output,
+    quality: Quality,
+    points: &[(i32, i32)],
+) -> Screen {
+    let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
+    ctx.begin(output, trail_settings(), quality, Hold::No);
+    let late = trails(quality, Hold::No) && ctx.show_last(scene, output);
+    if !late {
+        ctx.update_screen_backdrop(renderer, scene, output, clear, true);
+    }
+    let size = ctx.pass.get().output;
+    let mut elements = scene.render_elements_for(renderer, output);
+    let scale = Scale::from(output.current_scale().fractional_scale());
+    if ctx.settle(output, &elements, scale) {
+        drop(elements);
+        ctx.update_backdrop(renderer, scene, output, clear, true);
+        elements = scene.render_elements_for(renderer, output);
+    }
+    let mut target = crate::offscreen::Target::new(renderer, size, 1.0).unwrap();
+    target.render(renderer, &elements).unwrap();
+    let canvas = target.read(renderer).unwrap();
+    drop(elements);
+    let changed = late && ctx.update_late(renderer, scene, output, clear);
+    let red = (points.iter())
+        .map(|&(x, y)| (canvas.pixels[(y * size.w + x) as usize] >> 16) & 0xFF)
+        .collect();
+    Screen { red, late, changed }
+}
+
+fn shown_picture(ctx: &GlassCtx) -> Option<u64> {
+    ctx.source.borrow().as_ref().map(|s| s.version().0)
+}
+
+#[test]
+fn a_trailing_frame_shows_the_last_picture_and_blurs_the_change_after_it() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let (mut scene, spot, _window, _glass) = spot_under_glass(&ctx);
+    let output = test_output_of(320, 200);
+    let at = [(70, 60)];
+    let first = screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &at);
+    assert!(
+        !first.late,
+        "a drag's frame with no picture yet draws its glass first"
+    );
+    let texture = ctx.backdrops.borrow()["test"].texture.tex_id();
+    let picture = shown_picture(&ctx);
+    scene.set_enabled(spot, true);
+    let late = screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &at);
+    assert!(late.late, "a drag's frame trails");
+    assert_eq!(late.red, first.red, "it shows the picture as it was");
+    assert!(late.changed, "the update after it blurred the spot");
+    assert!(
+        backdrop_red(&mut renderer, &ctx, (70, 60)) < 20,
+        "the spot is in the backdrop"
+    );
+    let next = screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &at);
+    assert!(
+        next.red[0] < first.red[0],
+        "the next frame shows it: {:?}",
+        next.red
+    );
+    assert!(!next.changed, "nothing changed since: no frame is asked");
+    assert_eq!(
+        ctx.backdrops.borrow()["test"].texture.tex_id(),
+        texture,
+        "the backdrop keeps its texture"
+    );
+    assert_eq!(shown_picture(&ctx), picture, "and glass its picture");
+}
+
+#[test]
+fn the_frame_after_a_drag_draws_fresh_glass() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let points: Vec<(i32, i32)> = (0..10).map(|i| (60 + i * 9, 50)).collect();
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let (mut scene, spot, window, _glass) = spot_under_glass(&ctx);
+    let output = test_output_of(320, 200);
+    screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Full, &[]);
+    scene.set_position(window, 30, 24);
+    let started = screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    assert!(
+        !started.late,
+        "the drag's first frame draws its glass first: the full blur read less"
+    );
+    scene.set_position(window, 40, 28);
+    scene.set_enabled(spot, true);
+    let last = screen_frame(
+        &mut renderer,
+        &ctx,
+        &scene,
+        &output,
+        Quality::Coarse,
+        &points,
+    );
+    assert!(last.late, "the drag's next frame trails");
+    let ended = screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Full, &points);
+    assert!(
+        !ended.late,
+        "the frame after the drag draws its glass first"
+    );
+    let fresh_ctx = GlassCtx::new();
+    fresh_ctx.set_renderer(&mut renderer);
+    let (mut fresh, spot, window, _glass) = spot_under_glass(&fresh_ctx);
+    fresh.set_position(window, 40, 28);
+    fresh.set_enabled(spot, true);
+    let fresh = screen_frame(
+        &mut renderer,
+        &fresh_ctx,
+        &fresh,
+        &output,
+        Quality::Full,
+        &points,
+    );
+    assert_ne!(last.red, fresh.red, "the drag's last frame trailed");
+    assert_eq!(ended.red, fresh.red, "as a first frame of the same scene");
+}
+
+#[test]
+fn a_new_size_scale_or_look_updates_the_picture_before_the_frame() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let (scene, _spot, _window, _glass) = spot_under_glass(&ctx);
+    let output = test_output_of(320, 200);
+    let settings = trail_settings();
+    let shows_last = |output: &Output, settings: Settings| {
+        ctx.begin(output, settings, Quality::Coarse, Hold::No);
+        ctx.show_last(&scene, output)
+    };
+    assert!(!shows_last(&output, settings), "no picture yet");
+    screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    assert!(
+        shows_last(&output, settings),
+        "the same output and settings show the last picture"
+    );
+    let scheme = Settings {
+        color: reprisekit::theme::Color::rgb(200, 40, 40),
+        ..settings
+    };
+    assert!(!shows_last(&output, scheme), "another colour");
+    let blur = Settings {
+        blur: settings.blur % 5 + 1,
+        ..settings
+    };
+    assert!(!shows_last(&output, blur), "another blur");
+    let wider = test_output_of(400, 200);
+    assert!(!shows_last(&wider, settings), "another size");
+    let doubled = test_output_of(320, 200);
+    doubled.change_current_state(None, None, Some(smithay::output::Scale::Integer(2)), None);
+    assert!(!shows_last(&doubled, settings), "another scale");
+}
+
+#[test]
+fn a_coarse_pass_draws_the_backdrop_a_lead_past_what_its_glass_reads() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let (scene, _spot, _window, _glass) = spot_under_glass(&ctx);
+    let output = test_output_of(320, 200);
+    let pass = Pass {
+        settings: trail_settings(),
+        output: (320, 200).into(),
+        quality: Quality::Coarse,
+        ..Pass::default()
+    };
+    let feed = Reads::of(
+        &sheet_pane((120, 80), &[]),
+        (20.0, 20.0).into(),
+        pass.output,
+        1.0,
+        &pass,
+    )
+    .feed
+    .unwrap();
+    let past = (feed.loc.x + feed.size.w + LATE_LEAD / 2, 60);
+    screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Full, &[]);
+    assert!(
+        backdrop_red(&mut renderer, &ctx, past) < 20,
+        "a full pass leaves {past:?} clear"
+    );
+    screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    assert!(
+        backdrop_red(&mut renderer, &ctx, past) > 230,
+        "a coarse pass draws it"
+    );
+}
+
+/// A capture's backdrop update of `output` during a drag, as `capture::render_scene_into` makes it.
+fn capture_update(renderer: &mut GlesRenderer, ctx: &GlassCtx, scene: &DeskScene, output: &Output) {
+    let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
+    let hold = ctx.capture_hold(output);
+    ctx.begin(output, trail_settings(), Quality::Coarse, hold);
+    ctx.update_screen_backdrop(renderer, scene, output, clear, true);
+}
+
+#[test]
+fn a_capture_between_trailing_frames_of_a_still_drag_changes_no_picture() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let (mut scene, _spot, window, lower) = spot_under_glass(&ctx);
+    let windows = scene.parent(window).unwrap();
+    let _upper = glass_window(&mut scene, &ctx, windows, (100, 60), (120, 80), None);
+    let output = test_output_of(320, 200);
+    let lower = ("test".to_string(), Rc::as_ptr(&lower.glass));
+    let private = |ctx: &GlassCtx| ctx.beneath.borrow()[&lower].backdrop.texture.tex_id();
+    screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    let first = screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    assert!(
+        first.late && !first.changed,
+        "a still drag trails and changes nothing"
+    );
+    let texture = private(&ctx);
+    capture_update(&mut renderer, &ctx, &scene, &output);
+    let next = screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    assert!(next.late, "the frame after the capture trails");
+    assert!(
+        !next.changed,
+        "the capture read what the screen reads: no frame is asked"
+    );
+    assert_eq!(
+        private(&ctx),
+        texture,
+        "the lower glass keeps its private backdrop"
+    );
+}
+
+#[test]
+fn hidden_glass_neither_trails_nor_draws_its_backdrop() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let (mut scene, spot, _window, _glass) = spot_under_glass(&ctx);
+    let output = test_output_of(320, 200);
+    screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    let cover = scene.tree_create(scene.root());
+    scene.rect_create(cover, (320, 200), [0.0, 0.0, 1.0, 1.0]);
+    let hiding = screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    assert!(hiding.late, "the frame that covers the glass trails");
+    scene.set_enabled(spot, true);
+    let hidden = screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    assert!(
+        !hidden.late && !hidden.changed,
+        "covered glass does not trail"
+    );
+    assert!(
+        backdrop_red(&mut renderer, &ctx, (70, 60)) > 230,
+        "the spot under covered glass is not drawn"
+    );
+    scene.set_enabled(cover, false);
+    let shown = screen_frame(
+        &mut renderer,
+        &ctx,
+        &scene,
+        &output,
+        Quality::Coarse,
+        &[(70, 60)],
+    );
+    assert!(!shown.late, "glass shown again draws first");
+    assert!(
+        backdrop_red(&mut renderer, &ctx, (70, 60)) < 20,
+        "the spot is drawn once glass shows"
+    );
+}
+
+#[test]
+fn glass_past_what_the_last_update_drew_draws_first() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let (mut scene, _spot, window, _glass) = spot_under_glass(&ctx);
+    let windows = scene.parent(window).unwrap();
+    let output = test_output_of(320, 200);
+    let frame = |scene: &DeskScene, renderer: &mut GlesRenderer| {
+        screen_frame(renderer, &ctx, scene, &output, Quality::Coarse, &[]).late
+    };
+    frame(&scene, &mut renderer);
+    scene.set_position(window, 20 + LATE_LEAD / 2, 20);
+    assert!(
+        frame(&scene, &mut renderer),
+        "a move inside the lead trails"
+    );
+    scene.set_position(window, 20 + LATE_LEAD / 2 + LATE_LEAD + 8, 20);
+    assert!(
+        !frame(&scene, &mut renderer),
+        "a move past the lead draws first"
+    );
+    assert!(
+        frame(&scene, &mut renderer),
+        "and the next frame trails again"
+    );
+    let _new = glass_window(&mut scene, &ctx, windows, (10, 140), (60, 40), None);
+    assert!(!frame(&scene, &mut renderer), "new glass draws first");
+}
+
+#[test]
+fn a_late_change_past_the_glass_but_inside_the_lead_asks_no_frame() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let (mut scene, _spot, _window, _glass) = spot_under_glass(&ctx);
+    let pass = Pass {
+        settings: trail_settings(),
+        output: (320, 200).into(),
+        quality: Quality::Coarse,
+        ..Pass::default()
+    };
+    let reads = Reads::of(
+        &sheet_pane((120, 80), &[]),
+        (20.0, 20.0).into(),
+        pass.output,
+        1.0,
+        &pass,
+    );
+    let reach = reads
+        .reach
+        .iter()
+        .map(|r| r.loc.x + r.size.w)
+        .max()
+        .unwrap();
+    // Moved inside the cut: one shown, hidden or moved into it damages all those behind it.
+    let beside = scene.tree_create(scene.root());
+    scene.set_position(beside, reach + 4, 20);
+    scene.rect_create(beside, (8, 20), [0.0, 0.0, 0.0, 1.0]);
+    let output = test_output_of(320, 200);
+    screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    let version = ctx.source.borrow().as_ref().map(Source::version);
+    scene.set_position(beside, reach + 4, 50);
+    let late = screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    assert!(late.late, "the frame trails");
+    assert!(
+        backdrop_red(&mut renderer, &ctx, (reach + 8, 64)) < 20,
+        "the late update draws the change past the glass's reach"
+    );
+    assert_ne!(
+        ctx.source.borrow().as_ref().map(Source::version),
+        version,
+        "and blurs it"
+    );
+    assert!(!late.changed, "no glass reads it: no frame is asked");
+}

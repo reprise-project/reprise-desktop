@@ -3,6 +3,8 @@
 //! Glass blurs the output's backdrop with chrome left out (`GlassCtx::update_backdrop`); glass over
 //! chrome or under other glass (`[glass] blur_frames`) blurs a backdrop of its own, with the glass
 //! beneath it drawn in.
+//! During a drag with `[glass] fast_drag`, a screen frame draws its glass from the pictures as they
+//! stand and they are brought up to date after it (`trails`).
 
 #[cfg(test)]
 mod tests;
@@ -64,7 +66,7 @@ pub struct GlassCtx {
     own: RefCell<Vec<(Rc<Glass>, Source)>>,
     /// Private backdrops by output and glass (a resize makes the glass a new node); the entry's
     /// `Weak` keeps the glass's address from being reused while it lives.
-    beneath: RefCell<HashMap<(String, *const Glass), Beneath>>,
+    beneath: RefCell<HashMap<BeneathKey, Beneath>>,
     /// The elements being made are a backdrop of its own for glass above, this many output pixels
     /// per texel: glass draws into it at that resolution.
     drawing_beneath: Cell<Option<i32>>,
@@ -78,6 +80,9 @@ struct Placed {
     glass: Weak<Glass>,
     pane: Rc<RefCell<Pane>>,
 }
+
+/// A private backdrop's output and glass.
+type BeneathKey = (String, *const Glass);
 
 struct Beneath {
     backdrop: OutputBackdrop,
@@ -236,6 +241,8 @@ struct OutputBackdrop {
     hidden: bool,
     /// The settings and quality of the last update that drew it.
     look: Option<(Settings, Quality)>,
+    /// What its glass read at that update, output pixels: its picture holds the blur there.
+    needed: Vec<Rectangle<i32, Physical>>,
     /// A held frame left it as it was: what changed since waits for the next blur.
     skipped: bool,
     /// A held frame left a window's own glass showing its program as it was: it blurs again
@@ -300,6 +307,10 @@ pub struct Pass {
     pub screen: u64,
     pub quality: Quality,
     pub hold: Hold,
+    /// How far past what glass reads its backdrop and picture are kept, physical pixels: a
+    /// [`LATE_LEAD`] in every coarse pass, so a trailing frame's glass finds them drawn and
+    /// captures read what the screen's updates read.
+    pub lead: i32,
 }
 
 impl GlassCtx {
@@ -356,12 +367,18 @@ impl GlassCtx {
             .unwrap_or_default();
         let mut screen = std::hash::DefaultHasher::new();
         output.name().hash(&mut screen);
+        let scale = output.current_scale().fractional_scale();
+        let lead = match quality {
+            Quality::Coarse => (f64::from(LATE_LEAD) * scale).ceil() as i32,
+            Quality::Full => 0,
+        };
         self.pass.set(Pass {
             settings,
             output: size,
             screen: screen.finish(),
             quality,
             hold,
+            lead,
         });
     }
 
@@ -434,8 +451,7 @@ impl GlassCtx {
                     _ => Private::Piece(NamespacedElement::new(e, i)),
                 }));
             }
-            *self.source.borrow_mut() =
-                self.redraw(renderer, b, &elements, clear, output, Some(&needed));
+            *self.source.borrow_mut() = self.redraw(renderer, b, &elements, clear, output, &needed);
             let pass = self.pass.get();
             b.look = Some((pass.settings, pass.quality));
             b.skipped = false;
@@ -459,22 +475,26 @@ impl GlassCtx {
         scale: f64,
         own: &[Stacked],
     ) -> Vec<Reads> {
-        self.reads_where(scene, area, seen, scale, |n| {
+        let pass = self.pass.get();
+        let keep = |n: &Placed| {
             !own.iter()
                 .any(|o| Weak::as_ptr(&n.glass) == Rc::as_ptr(&o.glass))
-        })
+        };
+        let reads = self.reads_where(scene, area, seen, scale, &pass, keep);
+        reads.into_iter().map(|(_, r)| r).collect()
     }
 
-    /// What the glass shown on the output at `area` that `keep` picks reads from its picture.
+    /// What the glass shown on the output at `area` that `keep` picks reads from its picture in
+    /// `pass`, by glass.
     fn reads_where(
         &self,
         scene: &DeskScene,
         area: Rectangle<i32, Logical>,
         seen: Size<i32, Physical>,
         scale: f64,
+        pass: &Pass,
         keep: impl Fn(&Placed) -> bool,
-    ) -> Vec<Reads> {
-        let pass = self.pass.get();
+    ) -> Vec<(*const Glass, Reads)> {
         self.nodes
             .borrow()
             .iter()
@@ -487,7 +507,10 @@ impl GlassCtx {
                 let pane = n.pane.borrow();
                 Rectangle::new(at, pane.extent()).overlaps(area).then(|| {
                     let at = (at - area.loc).to_f64().to_physical(scale);
-                    Reads::of(&pane, at, seen, scale, &pass)
+                    (
+                        Weak::as_ptr(&n.glass),
+                        Reads::of(&pane, at, seen, scale, pass),
+                    )
                 })
             })
             .collect()
@@ -507,8 +530,9 @@ impl GlassCtx {
         let scale = output.current_scale().fractional_scale();
         let r = Rectangle::new(r.loc - area.loc, r.size).to_physical_precise_up(scale);
         let others = |n: &Placed| d.window.is_none() || anchor(scene, n.node.into()) != d.window;
-        (self.reads_where(scene, area, seen, scale, others).iter())
-            .any(|reads| reads.reach.iter().any(|x| x.overlaps(r)))
+        let pass = self.pass.get();
+        let reads = self.reads_where(scene, area, seen, scale, &pass, others);
+        (reads.iter()).any(|(_, reads)| reads.reach.iter().any(|x| x.overlaps(r)))
     }
 
     /// The glass shown on the output at `area` that draws from a backdrop of its own, bottom
@@ -648,10 +672,14 @@ impl GlassCtx {
                 })
                 .collect();
             self.drawing_beneath.set(None);
-            let needed = Some(&reads.needed[..]);
-            if let Some(source) =
-                self.redraw(renderer, &mut b.backdrop, &elements, clear, output, needed)
-            {
+            if let Some(source) = self.redraw(
+                renderer,
+                &mut b.backdrop,
+                &elements,
+                clear,
+                output,
+                &reads.needed,
+            ) {
                 b.reuse.drawn(now);
                 self.own.borrow_mut().push((glass, source));
                 used.push(key);
@@ -691,7 +719,7 @@ impl GlassCtx {
         elements: &[E],
         clear: Color32F,
         output: &Output,
-        needed: Option<&[Rectangle<i32, Physical>]>,
+        needed: &[Rectangle<i32, Physical>],
     ) -> Option<Source> {
         let name = output.name();
         let mode = output.current_mode()?;
@@ -748,7 +776,7 @@ impl GlassCtx {
             output: output.current_transform().transform_size(mode.size),
             scale: output.current_scale().fractional_scale(),
             hold: pass.hold.keeps(),
-            needed,
+            needed: Some(needed),
         };
         let view = Scale::from(f64::from_bits(b.key.1));
         let mut draw = |frame: &mut GlesFrame<'_, '_>| {
@@ -761,6 +789,7 @@ impl GlassCtx {
             b.drawn = false;
             return None;
         }
+        b.needed = needed.to_vec();
         b.picture.source()
     }
 
@@ -796,20 +825,146 @@ impl GlassCtx {
                     _ => {}
                 }
             }
-            *self.source.borrow_mut() = b.picture.source();
-            let mut own = self.own.borrow_mut();
-            for ((o, _), b) in self.beneath.borrow().iter() {
-                if let (true, Some(g), Some(s)) = (
-                    *o == name && b.reuse.in_use(),
-                    b.glass.upgrade(),
-                    b.backdrop.picture.source(),
-                ) {
-                    own.push((g, s));
-                }
-            }
+            self.show_pictures(&name, b);
             return;
         }
         self.update_backdrop(renderer, scene, output, clear, wanted);
+    }
+
+    /// Have the frame begun for the output named `name` draw its glass from `b`'s picture and the
+    /// private ones its glass drew from, as they stand.
+    fn show_pictures(&self, name: &str, b: &OutputBackdrop) {
+        *self.source.borrow_mut() = b.picture.source();
+        let mut own = self.own.borrow_mut();
+        for ((o, _), b) in self.beneath.borrow().iter() {
+            if let (true, Some(g), Some(s)) = (
+                *o == name && b.reuse.in_use(),
+                b.glass.upgrade(),
+                b.backdrop.picture.source(),
+            ) {
+                own.push((g, s));
+            }
+        }
+    }
+
+    /// Have the frame begun for `output` draw its glass from the pictures as they stand ([`trails`]);
+    /// false when they were made for another size, scale or `[glass]` settings, when its glass is
+    /// all hidden, or when glass now reads past what the last update drew (a window moved further
+    /// than the lead, glass that is new).
+    pub fn show_last(&self, scene: &DeskScene, output: &Output) -> bool {
+        let name = output.name();
+        let pass = self.pass.get();
+        let scale = output.current_scale().fractional_scale();
+        let backdrops = self.backdrops.borrow();
+        let Some(b) = backdrops.get(&name) else {
+            return false;
+        };
+        let beneath = self.beneath.borrow();
+        let fits = !b.hidden
+            && b.drawn
+            && b.key == OutputBackdrop::key(pass.output, scale)
+            && b.look.is_some_and(|(s, _)| s == pass.settings)
+            && (self.reads_now(scene, output, &beneath).iter()).all(|(own, reads)| {
+                let held = own
+                    .as_ref()
+                    .map_or(&b.needed, |k| &beneath[k].backdrop.needed);
+                (reads.needed.iter()).all(|r| r.subtract_rects(held.iter().copied()).is_empty())
+            });
+        drop(beneath);
+        if fits {
+            self.show_pictures(&name, b);
+        }
+        fits
+    }
+
+    /// After a `show_last` frame: update the pictures for the next one. True when a change lies
+    /// where glass reads now, so a frame should show it.
+    pub fn update_late(
+        &self,
+        renderer: &mut GlesRenderer,
+        scene: &DeskScene,
+        output: &Output,
+        clear: Color32F,
+    ) -> bool {
+        if (self.backdrops.borrow().get(&output.name())).is_none_or(|b| b.hidden) {
+            return false;
+        }
+        let before = self.shown_versions();
+        self.own.borrow_mut().clear();
+        self.update_backdrop(renderer, scene, output, clear, true);
+        // Start the GPU on it while the frame waits for its flip, not with the next frame.
+        // SAFETY: the context is current inside `with_context`.
+        let _ = renderer.with_context(|gl| unsafe { gl.Flush() });
+        self.reads_changed(scene, output, &before)
+    }
+
+    /// The pictures the frame being built draws from and how far each had changed.
+    fn shown_versions(&self) -> HashMap<u64, CommitCounter> {
+        let source = self.source.borrow();
+        let own = self.own.borrow();
+        (source.iter().chain(own.iter().map(|(_, s)| s)))
+            .map(Source::version)
+            .collect()
+    }
+
+    /// Whether glass shown on `output` reads, where it is now, a change to its picture since
+    /// `before`; a picture `before` lacks counts as changed.
+    fn reads_changed(
+        &self,
+        scene: &DeskScene,
+        output: &Output,
+        before: &HashMap<u64, CommitCounter>,
+    ) -> bool {
+        let backdrops = self.backdrops.borrow();
+        let Some(b) = backdrops.get(&output.name()) else {
+            return false;
+        };
+        let beneath = self.beneath.borrow();
+        (self.reads_now(scene, output, &beneath).iter()).any(|(own, reads)| {
+            let source = match own {
+                Some(k) => beneath[k].backdrop.picture.source(),
+                None => b.picture.source(),
+            };
+            let Some(source) = source else {
+                return false;
+            };
+            let (id, _) = source.version();
+            match before.get(&id).and_then(|&c| source.changed_since(c)) {
+                Some(changed) => {
+                    (changed.iter()).any(|c| reads.needed.iter().any(|n| n.overlaps(*c)))
+                }
+                None => true,
+            }
+        })
+    }
+
+    /// What each glass shown on `output` reads where it is now, the lead aside, with the private
+    /// backdrop it draws from (`beneath`'s key); None draws from the output's.
+    fn reads_now(
+        &self,
+        scene: &DeskScene,
+        output: &Output,
+        beneath: &HashMap<BeneathKey, Beneath>,
+    ) -> Vec<(Option<BeneathKey>, Reads)> {
+        let (Some(area), Some(mode)) = (reprisescene::output_rect(output), output.current_mode())
+        else {
+            return Vec::new();
+        };
+        let seen = output.current_transform().transform_size(mode.size);
+        let scale = output.current_scale().fractional_scale();
+        let name = output.name();
+        let pass = Pass {
+            lead: 0,
+            ..self.pass.get()
+        };
+        let reads = self.reads_where(scene, area, seen, scale, &pass, |_| true);
+        (reads.into_iter())
+            .map(|(glass, reads)| {
+                let key = (name.clone(), glass);
+                let own = beneath.get(&key).is_some_and(|p| p.reuse.in_use());
+                (own.then_some(key), reads)
+            })
+            .collect()
     }
 
     /// Note whether the screen frame drawing `elements` shows any of the output's glass. True when
@@ -1031,6 +1186,7 @@ impl OutputBackdrop {
             picture: Picture::new(),
             hidden: false,
             look: None,
+            needed: Vec::new(),
             skipped: false,
             owed: false,
             clear: None,
@@ -1070,7 +1226,7 @@ impl Reads {
         };
         for shape in &pane.shapes {
             let r = to(shape.rect);
-            let bend = Lens::new(s.material, r, seen, scale).map_or(0, |l| l.reach());
+            let past = Lens::new(s.material, r, seen, scale).map_or(0, |l| l.reach()) + pass.lead;
             for part in r.subtract_rects(holes.iter().copied()) {
                 let grow = |g: i32| {
                     Rectangle::new(
@@ -1079,8 +1235,8 @@ impl Reads {
                     )
                     .intersection(output)
                 };
-                out.needed.extend(grow(bend + texel));
-                out.reach.extend(grow(bend + blur));
+                out.needed.extend(grow(past + texel));
+                out.reach.extend(grow(past + blur));
             }
         }
         out.feed = out
@@ -1159,6 +1315,16 @@ pub fn anchor(scene: &DeskScene, node: NodeId) -> Option<NodeId> {
 
 pub fn wanted(config: &Config) -> bool {
     config.theme.glass().is_some() && config.glass.transparency
+}
+
+/// Logical pixels a window may move between frames under trailing glass before the glass reads
+/// past what the last update drew (`Pass::lead`).
+pub const LATE_LEAD: i32 = 64;
+
+/// Whether a screen frame shows the last pictures and updates them after it (`show_last`,
+/// `update_late`): during a `fast_drag` drag, unless `blur_rate` holds the blur.
+pub fn trails(quality: Quality, hold: Hold) -> bool {
+    quality == Quality::Coarse && hold == Hold::No
 }
 
 pub fn quality(interaction: &Interaction, settings: &Settings) -> Quality {

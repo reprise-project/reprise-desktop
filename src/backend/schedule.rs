@@ -30,6 +30,9 @@ pub enum Ask {
     CatchUp,
     /// The frame a timed commit shows in: the commit asks for what it changes once it applies.
     Timed,
+    /// The frame that shows what a late glass update changed (`GlassCtx::update_late`): nothing
+    /// new lies under glass.
+    Glass,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -48,7 +51,7 @@ impl Asked {
         let under = match ask {
             Ask::Scene | Ask::Content => Under::Anywhere,
             Ask::Commit(d) => Under::Within(d),
-            Ask::Pointer | Ask::Cursor | Ask::CatchUp | Ask::Timed => Under::Nothing,
+            Ask::Pointer | Ask::Cursor | Ask::CatchUp | Ask::Timed | Ask::Glass => Under::Nothing,
         };
         let quiet = (!self.redraw || self.backdrop == Under::Nothing) && under == Under::Nothing;
         self.catch_up = quiet && (ask == Ask::CatchUp || (self.redraw && self.catch_up));
@@ -137,7 +140,7 @@ pub fn take_scene_outputs() -> Vec<String> {
     on
 }
 
-fn request(state: &mut State, output: &Output, ask: Ask) {
+pub(super) fn request(state: &mut State, output: &Output, ask: Ask) {
     ask_frame(state, output, ask, |p| p.asked.add(ask));
 }
 

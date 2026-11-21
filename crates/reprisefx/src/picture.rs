@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use reprisekit::glass::Settings;
 use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture};
-use smithay::backend::renderer::utils::{DamageBag, DamageSnapshot};
+use smithay::backend::renderer::utils::{CommitCounter, DamageBag, DamageSnapshot};
 use smithay::backend::renderer::{Bind, Renderer, Texture};
 use smithay::utils::{Buffer, Physical, Point, Rectangle, Size, Transform};
 
@@ -420,6 +420,16 @@ impl std::fmt::Debug for Source {
 }
 
 impl Source {
+    /// Which picture and how far it changed: differs once an update draws into it.
+    pub fn version(&self) -> (u64, CommitCounter) {
+        (self.id, self.damage.current_commit())
+    }
+
+    /// Where it changed since `commit`, output pixels; None when that is too old to tell.
+    pub fn changed_since(&self, commit: CommitCounter) -> Option<Vec<Rectangle<i32, Physical>>> {
+        (self.damage.damage_since(Some(commit))).map(|d| d.to_vec())
+    }
+
     pub(crate) fn extent(&self) -> Rectangle<i32, Physical> {
         let s = self.picture.size();
         Rectangle::new(self.origin, (s.w * self.factor, s.h * self.factor).into())
