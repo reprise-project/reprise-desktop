@@ -97,7 +97,7 @@ impl Explorer {
     /// The main window draws at `scale`, `ctx.icons`' scale: the chrome and the entries wear
     /// their icons at that scale (List and Details' at the text's size), icon files once a thread
     /// decodes them, and thumbnails made at another one are asked for again. A new icon theme
-    /// fetches the chrome again and re-lists.
+    /// fetches the chrome again and re-lists. A new text size rebuilds the task pane at its icon size.
     pub fn follow_scale(&mut self, scale: i32, ctx: &mut Ctx) {
         let list = shellview::list_icon_px(ctx.theme.text);
         self.list_icons
@@ -112,6 +112,12 @@ impl Explorer {
         if rethemed {
             // Which icon name an entry wears depends on what the theme has.
             let _ = self.refresh(ctx);
+        }
+        let pane_px = taskpane::icon_px(ctx.theme.text);
+        if let Some((.., px)) = &self.pane_key
+            && *px != pane_px
+        {
+            self.build_taskpane(ctx);
         }
     }
 
