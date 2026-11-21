@@ -529,6 +529,7 @@ impl State {
                 self.pointer_motion(None, pos, time);
                 self.clipview_drag(pos.x, pos.y);
                 self.emoji_drag(pos.x, pos.y);
+                self.launcher_drag(pos.x, pos.y);
                 return None;
             }
             Interaction::Idle => {}
