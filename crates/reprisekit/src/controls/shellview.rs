@@ -174,8 +174,6 @@ pub struct ShellView {
     /// drag and feeds the same rect to `Selection::marquee`.
     pub marquee: Option<Rect>,
     pub edit: Option<(usize, TextEdit)>,
-    /// The rename box's window lacks the keyboard: the box hides its selection.
-    pub edit_away: bool,
     /// The entry a drag is hovering: highlighted like a selected one, never focused.
     pub drop_target: Option<usize>,
     /// Details' columns, seeded from `details_columns`; a host persists its widths here across a resize.
@@ -201,7 +199,6 @@ impl Default for ShellView {
             focus_ring: false,
             marquee: None,
             edit: None,
-            edit_away: false,
             drop_target: None,
             columns: details_columns(),
             fields: details_fields(),

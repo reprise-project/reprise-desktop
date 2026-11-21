@@ -160,8 +160,6 @@ pub struct TreeView {
     /// label. The host opens it ([`TreeView::begin_edit`]), feeds it keys and
     /// takes it back to commit or drop.
     pub edit: Option<(Path, TextEdit)>,
-    /// The rename box's window lacks the keyboard: the box hides its selection.
-    pub edit_away: bool,
     /// The visible rows as last built; `visible` checks them against `roots`
     /// and `expanded` (one walk, no allocation) and rebuilds only on a difference.
     rows: RefCell<Option<Rc<Vec<VisibleRow>>>>,
@@ -914,7 +912,7 @@ pub fn draw(
     }
     if let (Some(b), Some((_, ed))) = (tv.edit_rect(lay, text, px), &tv.edit) {
         let b = Rect::new(b.x - lay.body.x, b.y - lay.body.y, b.width, b.height).scaled(s);
-        listview::draw_rename_box(&mut bc, text, p, ed, !tv.edit_away, b, px);
+        listview::draw_rename_box(&mut bc, text, p, ed, b, px);
     }
     c.blit_canvas(body.x, body.y, &bc);
     if let Some(sb) = lay.scrollbar {

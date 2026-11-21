@@ -658,4 +658,29 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&launcher).unwrap(), text);
     }
+
+    #[test]
+    fn a_waiting_rename_box_redraws_without_the_keyboard_under_the_launcher_or_a_dialog() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let desk = crate::harness::scratch().join("rename-keyboard");
+        std::fs::create_dir_all(&desk).unwrap();
+        std::fs::write(desk.join("a.txt"), "").unwrap();
+        crate::desktopview::create(&mut h.state, desk.clone(), Default::default(), None);
+        h.state.rescan_desktop();
+        h.until("the file listed", |s| {
+            s.desktop.as_ref().is_some_and(|d| !d.entries.is_empty())
+        });
+        h.state.begin_rename(0);
+        let keyed = |s: &State| s.desktop.as_ref().unwrap().rename_keyed;
+        h.until("drawn with the keyboard", keyed);
+        h.state.toggle_launcher();
+        h.until("drawn without it under the launcher", |s| !keyed(s));
+        h.state.toggle_launcher();
+        h.until("drawn with it once the launcher closes", keyed);
+        let leave = crate::console::leave_offered(&h.state);
+        h.state.open_dialog(crate::dialog::Dialog::log_off(leave));
+        h.until("drawn without it under a dialog", |s| !keyed(s));
+        assert!(h.state.is_renaming(), "the rename waits");
+    }
 }

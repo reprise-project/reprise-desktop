@@ -85,6 +85,7 @@ impl State {
             Ok(t) => self.caret.timer = Some(t),
             Err(e) => log::warn!("caret timer: {}", e.error),
         }
+        self.follow_rename_keyboard();
     }
 
     pub fn stop_caret(&mut self) {
@@ -92,6 +93,7 @@ impl State {
         if let Some(t) = self.caret.timer.take() {
             self.handle.remove(t);
         }
+        self.follow_rename_keyboard();
     }
 
     fn blink(&mut self) -> TimeoutAction {

@@ -1838,9 +1838,8 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
             ex.alt_arm.interrupt();
             let closed = ex.close_drop_menu();
             ex.flush_settings();
-            let field = matches!(ex.focus, Focus::Address | Focus::Search);
             Reply {
-                redraw: closed || field || ex.sv.edit.is_some() || ex.tree.edit.is_some(),
+                redraw: closed || matches!(ex.focus, Focus::Address | Focus::Search),
                 ..Reply::none()
             }
         }
@@ -1998,8 +1997,6 @@ impl App for Lazy {
         let boxed = item::boxed(&ctx.theme.paint());
         ex.tree.inactive = boxed && ex.focus != Focus::Tree;
         ex.sv.inactive = boxed && ex.focus != Focus::View;
-        ex.tree.edit_away = !ex.keyboard;
-        ex.sv.edit_away = !ex.keyboard;
         window::draw(ex, c, ctx);
     }
 }

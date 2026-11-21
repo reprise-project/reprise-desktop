@@ -80,6 +80,8 @@ pub struct DesktopView {
     pub rename: Option<(usize, TextEdit)>,
     /// Which rename `rename` is, unique for the run (`PasteTarget::Rename`).
     pub rename_serial: u64,
+    /// Whether the rename box was last drawn with the keyboard (`rename_has_keyboard`).
+    pub(crate) rename_keyed: bool,
     /// Left presses in the rename box, paired into the double click that selects a word.
     pub(crate) rename_clicks: DoubleClick<()>,
     /// Where a drag resting on the rename box would drop its text (`dialogdrop`): the box
@@ -262,6 +264,7 @@ pub(crate) fn create(
         last_click: DoubleClick::default(),
         rename: None,
         rename_serial: 0,
+        rename_keyed: false,
         rename_clicks: DoubleClick::default(),
         rename_drop: None,
         watch,

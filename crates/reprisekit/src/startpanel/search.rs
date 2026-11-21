@@ -152,9 +152,9 @@ pub fn glyph(canvas: &mut Canvas, style: &Style, (x, y): (i32, i32), part: Part,
 
 /// The search field in its box `r` holding `edit`, its lines in `text` and the cue in `cue`
 /// ([`italic`]): the box and halo, then the cue in italic grey while empty, else the text, scrolled by
-/// whole characters to keep the caret in the field, its selection on the style's selection colour while
-/// `focused`; the caret while `focused` and `caret` (the blink) is on, a [`CaretBar`] on the opaque
-/// face; the magnifier, or the clear glyph once there is text, at the box's right.
+/// whole characters to keep the caret in the field, its selection on the style's selection colour, a
+/// pixel clear of the selected ink, while `focused`; the caret while `focused` and `caret` (the blink)
+/// is on, a [`CaretBar`] on the opaque face or beside the selection; the magnifier, or the clear glyph once there is text, at the box's right.
 ///
 /// While `focused` it also shows the canvas' preedit at the caret, underlined under the baseline with
 /// the caret inside it, and reports its [`crate::textedit::TextSpot`] on the canvas, as `draw_edit` does.
@@ -215,44 +215,33 @@ pub fn field(
         let room = clip.right() - pen - s;
         let first = edit_first_visible(text, edit, room, size, 0);
         let x_of = |i: usize| pen + text.measure(&query[first..i.max(first)], false, size);
+        let shown = &query[first..];
         let sel = edit.selection();
-        let run = (focused && sel.end > first && !sel.is_empty()).then(|| {
-            let (x0, x1) = (x_of(sel.start.max(first)), x_of(sel.end).min(clip.right()));
-            Rect::new(x0, row.y, x1 - x0, row.height).intersect(&clip)
+        let sel = sel.start.max(first)..sel.end.max(first);
+        let hl = (focused && !sel.is_empty()).then(|| {
+            let (x0, x1) = (x_of(sel.start), x_of(sel.end).min(clip.right()));
+            let run = Rect::new(x0, row.y, x1 - x0, row.height).intersect(&clip);
+            let sel = sel.start - first..sel.end - first;
+            let scale = canvas.scale();
+            text.highlight_on(run, shown, sel, pen, Some(y), clip, false, size, scale)
+                .clear_of_ink(clip)
         });
         let cs = &style.colors;
         // Filled under the text too, so the caret's bar reads it as ground, not ink.
-        if let Some(run) = run {
-            canvas.fill_rect(run, cs.hilight);
+        if let Some(hl) = &hl {
+            hl.fill(canvas, clip, cs.hilight);
         }
         let x = x_of(edit.caret().min(query.len())) + g.len(cx) - g.len(at::TYPED_PEN);
         bar.x = x.min(clip.right() - s);
         let placed = (caret && focused && x < clip.right())
-            .then(|| CaretBar::ground(canvas, Rect { x, ..bar }, None, clip));
-        text.draw_run_over(
-            canvas,
-            pen,
-            y,
-            clip,
-            &query[first..],
-            false,
-            ink(INK_STRONG),
-            size,
-        );
-        if let Some(run) = run {
-            canvas.fill_rect(run, cs.hilight);
-            canvas.with_clip(run, |canvas| {
-                text.draw_run_over(
-                    canvas,
-                    pen,
-                    y,
-                    clip,
-                    &query[first..],
-                    false,
-                    cs.hilight_text,
-                    size,
-                );
+            .then(|| CaretBar::ground(canvas, Rect { x, ..bar }, hl.as_ref(), clip));
+        text.draw_run_over(canvas, pen, y, clip, shown, false, ink(INK_STRONG), size);
+        if let Some(hl) = &hl {
+            canvas.fill_rect(hl.rect, cs.hilight);
+            canvas.with_clip(hl.rect, |canvas| {
+                text.draw_run_over(canvas, pen, y, clip, shown, false, cs.hilight_text, size);
             });
+            text.draw_overhang(canvas, hl, clip, cs.hilight_text);
         }
         if let Some(composing) = composing {
             let (x0, x1) = (x_of(composing.start), x_of(composing.end).min(clip.right()));
@@ -461,5 +450,100 @@ mod tests {
         assert!(range.pixels.iter().all(|&p| p != hl), "nothing on hilight");
         assert_eq!(range.pixels, at_end.pixels);
         assert_eq!(range.take_spot(), at_end.take_spot());
+    }
+
+    /// The field at grow `s` holding `t`, `sel` selected with the caret at its end, focused.
+    fn drawn(
+        st: &Style,
+        text: &TextRenderer,
+        t: &str,
+        sel: (usize, usize),
+        s: i32,
+        caret: bool,
+    ) -> Canvas {
+        let r = Rect::new(4, 4, FIELD.0 * s, FIELD.1 * s);
+        let mut edit = TextEdit::new(t, false);
+        edit.set_selection(sel.0, sel.1);
+        let mut c = Canvas::new(240 * s as u32, 32 * s as u32);
+        field(&mut c, st, text, text, r, &edit, true, caret, Grow::at(s));
+        c
+    }
+
+    /// The ink of a selected glyph that inks within its advance, at grow 1 and 2, meets only its
+    /// own ink or the highlight: the highlight reaches a pixel past it on every side.
+    #[test]
+    fn a_selected_glyph_keeps_a_pixel_of_highlight_around_its_ink() {
+        crate::pins::fonts();
+        let st = crate::glass::style(&crate::glass::Settings::default());
+        let text = TextRenderer::load(&FontConfig::default());
+        let hl = st.colors.hilight.argb();
+        for s in [1, 2] {
+            for t in ["8", "g", "q", "y"] {
+                let c = drawn(&st, &text, t, (0, t.len()), s, false);
+                let ink = Canvas::new(c.width, c.height).ink_coverage(|m, white| {
+                    let (pen, y) = (4 + s * at::TYPED_PEN, 4 + s * at::CUE_BASE);
+                    let clip = Rect::new(0, 0, c.width as i32, c.height as i32);
+                    text.draw_run_over(m, pen, y, clip, t, false, white, TEXT_PX * s as u32);
+                });
+                let inked =
+                    |x: i32, y: i32| x >= 0 && y >= 0 && ink[(y * c.width as i32 + x) as usize] > 0;
+                let mut bare = Vec::new();
+                for y in 0..c.height as i32 {
+                    for x in 0..c.width as i32 {
+                        if !inked(x, y) {
+                            continue;
+                        }
+                        for (dx, dy) in [
+                            (-1, -1),
+                            (0, -1),
+                            (1, -1),
+                            (-1, 0),
+                            (1, 0),
+                            (-1, 1),
+                            (0, 1),
+                            (1, 1),
+                        ] {
+                            let (nx, ny) = (x + dx, y + dy);
+                            if !inked(nx, ny) && c.get(nx, ny) != hl {
+                                bare.push((nx, ny));
+                            }
+                        }
+                    }
+                }
+                assert!(
+                    bare.is_empty(),
+                    "\"{t}\" at grow {s}: off the highlight beside its ink at {bare:?}"
+                );
+            }
+        }
+    }
+
+    /// With a digit of "8 6" selected, the caret at either end of it, where a space or the
+    /// field's start leaves room, stands beside the highlight at grow 1 and 2.
+    #[test]
+    fn the_caret_at_a_selection_end_stands_beside_the_highlight() {
+        crate::pins::fonts();
+        let st = crate::glass::style(&crate::glass::Settings::default());
+        let text = TextRenderer::load(&FontConfig::default());
+        let hl = st.colors.hilight.argb();
+        for s in [1, 2] {
+            for sel in [(0, 1), (1, 0), (2, 3), (3, 2)] {
+                let off = drawn(&st, &text, "8 6", sel, s, false);
+                let on = drawn(&st, &text, "8 6", sel, s, true);
+                let changed: Vec<usize> = (0..on.pixels.len())
+                    .filter(|&i| on.pixels[i] != off.pixels[i])
+                    .collect();
+                assert!(!changed.is_empty(), "{sel:?} at grow {s}: the caret shows");
+                let lit: Vec<usize> = changed
+                    .into_iter()
+                    .filter(|&i| off.pixels[i] == hl)
+                    .collect();
+                assert!(
+                    lit.is_empty(),
+                    "{sel:?} at grow {s}: the caret is on {} highlight px",
+                    lit.len()
+                );
+            }
+        }
     }
 }

@@ -369,10 +369,7 @@ impl State {
             }
             keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
         }
-        // A rename box left waiting shows its selection only while the desktop has the keyboard.
-        if self.is_renaming() {
-            self.handle.insert_idle(|s| s.relayout_desktop());
-        }
+        self.follow_rename_keyboard();
     }
 }
 

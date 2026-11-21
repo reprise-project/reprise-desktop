@@ -47,7 +47,7 @@ pub(crate) fn draw_rename(
         return;
     };
     let box_r = line_box(label, ed, text, px, p.text, p.s);
-    listview::draw_rename_box(c, text, p, ed, !sv.edit_away, box_r, px);
+    listview::draw_rename_box(c, text, p, ed, box_r, px);
 }
 
 /// The single-line rename box over `label` (both at scale `s`), sized to `ed`'s text.

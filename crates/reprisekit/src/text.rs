@@ -1278,13 +1278,31 @@ impl TextRenderer {
         size_px: u32,
         s: i32,
     ) -> Highlight<'a> {
+        let baseline = self.baseline(line, bold, size_px);
+        self.highlight_on(hl, text, sel, pen, baseline, line, bold, size_px, s)
+    }
+
+    /// [`TextRenderer::highlight`] for text drawn on `baseline` rather than centred in `line`.
+    #[expect(clippy::too_many_arguments)]
+    pub fn highlight_on<'a>(
+        &self,
+        hl: Rect,
+        text: &'a str,
+        sel: std::ops::Range<usize>,
+        pen: i32,
+        baseline: Option<i32>,
+        line: Rect,
+        bold: bool,
+        size_px: u32,
+        s: i32,
+    ) -> Highlight<'a> {
         let (a, b) = (sel.start, sel.end);
         let mut h = Highlight {
             rect: hl,
             dev: hl.scaled(s),
             s,
             pen: pen + self.measure(&text[..sel.start], bold, size_px),
-            baseline: self.baseline(line, bold, size_px),
+            baseline,
             line,
             text: &text[sel],
             bold,

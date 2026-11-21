@@ -195,8 +195,6 @@ pub struct ListView<R: Rows = Vec<Row>, C = Vec<Column>, S = Selection> {
     /// Whether the dotted focus rectangle shows (once the keyboard has been used).
     pub focus_ring: bool,
     pub edit: Option<(usize, TextEdit)>,
-    /// The rename box's window lacks the keyboard: the box hides its selection.
-    pub edit_away: bool,
     /// The row a drag hovers: highlighted like a selected one, never focused.
     pub drop_row: Option<usize>,
     /// A check box per row; `None` for a plain list.
@@ -233,7 +231,6 @@ impl<R: Rows + Default> Default for ListView<R> {
             sort_tint: false,
             focus_ring: false,
             edit: None,
-            edit_away: false,
             drop_row: None,
             checks: None,
             held_check: Pointer::new(),
@@ -982,7 +979,7 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
     }
     if let Some((i, ed)) = &lv.edit {
         let b = lv.edit_rect(lay, *i, text, px).scaled(s);
-        draw_rename_box(c, text, p, ed, !lv.edit_away, b, px);
+        draw_rename_box(c, text, p, ed, b, px);
     }
 }
 
@@ -1038,14 +1035,13 @@ pub(crate) fn draw_group_header(
 }
 
 /// The in-place rename box in the already-scaled `b`: white with a 1 px `window_frame` border, text
-/// `EDIT_PAD_L` in and `EDIT_INSET` down, scrolled so the caret shows, its selection hidden while
-/// not `focused`. `shellview` uses it for every mode but Icons.
+/// `EDIT_PAD_L` in and `EDIT_INSET` down, scrolled so the caret shows, its caret and selection hidden
+/// while its window is not `p.active`. `shellview` uses it for every mode but Icons.
 pub(crate) fn draw_rename_box(
     c: &mut Canvas,
     text: &TextRenderer,
     p: &Paint,
     ed: &TextEdit,
-    focused: bool,
     b: Rect,
     px: u32,
 ) {
@@ -1059,7 +1055,7 @@ pub(crate) fn draw_rename_box(
         b.height - 2 * EDIT_INSET * s,
     );
     let first = edit_first_visible(text, ed, inner.width, px, 0);
-    draw_edit_text(c, text, ed, inner, px, p, Caret::new(focused, true), first);
+    draw_edit_text(c, text, ed, inner, px, p, Caret::new(p.active, true), first);
     // The field is the whole box: a press on its frame is a press in the field.
     if let Some(spot) = c.take_spot() {
         c.report_spot(TextSpot { field: b, ..spot });
