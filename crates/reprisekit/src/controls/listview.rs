@@ -164,6 +164,54 @@ impl Rows for Vec<Row> {
     }
 }
 
+/// A row's icon edge (logical px) in a list whose icons grow with the text ([`IconRows`]): 16 px
+/// at 100% text, grown with the text and never smaller. Hosts load the rows' icons at it.
+pub fn icon_px(u: TextUnits) -> i32 {
+    u.icon(ICON_PX)
+}
+
+/// `Row`s whose icon column grows with the text ([`icon_px`]) once they hold an icon; a plain
+/// `Vec<Row>` keeps [`ICON_PX`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IconRows(pub Vec<Row>);
+
+impl std::ops::Deref for IconRows {
+    type Target = Vec<Row>;
+    fn deref(&self) -> &Vec<Row> {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for IconRows {
+    fn deref_mut(&mut self) -> &mut Vec<Row> {
+        &mut self.0
+    }
+}
+
+impl FromIterator<Row> for IconRows {
+    fn from_iter<I: IntoIterator<Item = Row>>(rows: I) -> IconRows {
+        IconRows(rows.into_iter().collect())
+    }
+}
+
+impl Rows for IconRows {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    fn icon(&self, row: usize) -> Option<&Canvas> {
+        Rows::icon(&self.0, row)
+    }
+    fn cell(&self, row: usize, col: usize) -> Cow<'_, str> {
+        self.0.cell(row, col)
+    }
+    fn icon_slot(&self, u: TextUnits) -> i32 {
+        match self.0.iter().any(|r| r.icon.is_some()) {
+            true => icon_px(u),
+            false => ICON_PX,
+        }
+    }
+}
+
 /// A run of rows under a heading. The header takes a [`GROUP_H`] slot before `first`; a list's groups
 /// are sorted by `first`.
 #[derive(Clone, Debug, PartialEq, Eq)]

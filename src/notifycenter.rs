@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use reprisekit::controls::grouplist;
-use reprisekit::controls::listview;
 use reprisekit::controls::menu::{MenuItem, place_popup};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::notifyhistory::{self, Entry, Event, History, Hit, Key};
@@ -137,7 +136,7 @@ pub fn refresh(state: &mut State) {
     let Some(scale) = state.notify.center.as_ref().map(|v| v.scale) else {
         return;
     };
-    let px = listview::ICON_PX * scale;
+    let px = grouplist::icon_px(state.config.theme.controls().text) * scale;
     let waits = state.icons.waits();
     let log = &state.notify.log;
     let entries: Vec<Entry> = log

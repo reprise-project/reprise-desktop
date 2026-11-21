@@ -4,13 +4,18 @@ use crate::registry::Page;
 use crate::{SettingsApp, defaultspage, pages, registry};
 use repriseapp::{Ctx, Reply};
 use reprisekit::controls::form;
-use reprisekit::controls::listview::{self, ListView, Took};
+use reprisekit::controls::listview::{self, IconRows, ListView, Took};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::propsheet::PropSheet;
 use reprisekit::raster::Rect;
 
 /// Give a side list the keyboard or take it away; the dotted rectangle goes with it.
-pub(crate) fn hand_focus(sheet: &mut PropSheet, list: &mut ListView, held: &mut bool, on: bool) {
+pub(crate) fn hand_focus(
+    sheet: &mut PropSheet,
+    list: &mut ListView<IconRows>,
+    held: &mut bool,
+    on: bool,
+) {
     *held = on;
     list.focus_ring = on;
     if on {
@@ -45,7 +50,7 @@ impl SettingsApp {
         self.sheet.on_page(r)
     }
 
-    pub(crate) fn side_list(&mut self) -> Option<(&mut ListView, Rect, &mut bool)> {
+    pub(crate) fn side_list(&mut self) -> Option<(&mut ListView<IconRows>, Rect, &mut bool)> {
         let a = self.area();
         let (list, shortcuts) = (
             self.on_page(pages::list(a)),
@@ -308,7 +313,7 @@ impl SettingsApp {
     }
 
     /// Every page's side list, shown or not.
-    pub(crate) fn side_lists(&mut self) -> [&mut ListView; 4] {
+    pub(crate) fn side_lists(&mut self) -> [&mut ListView<IconRows>; 4] {
         [
             &mut self.list,
             &mut self.shortcuts,

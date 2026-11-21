@@ -4,7 +4,7 @@ use super::{COLUMNS, PERMISSION_COLUMNS, SHORTCUT_COLUMNS};
 use crate::model::Settings;
 use reprisefs::autostart::Entry;
 use reprisekit::controls::form;
-use reprisekit::controls::listview::{self, Column, ListView, Row};
+use reprisekit::controls::listview::{self, Column, IconRows, ListView, Row, Rows};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
@@ -17,14 +17,14 @@ fn columns(cols: &[(&str, i32)]) -> Vec<Column> {
 }
 
 /// Drop a selection the refilled rows no longer have and pull `top` back inside them.
-fn keep_in_rows(lv: &mut ListView) {
+fn keep_in_rows<R: Rows>(lv: &mut ListView<R>) {
     if lv.selection.focus.is_some_and(|i| i >= lv.rows.len()) {
         lv.selection.set_only(None);
     }
     lv.top = lv.top.min(lv.rows.len().saturating_sub(1));
 }
 
-pub fn new_list() -> ListView {
+pub fn new_list() -> ListView<IconRows> {
     ListView {
         columns: columns(&COLUMNS),
         checks: Some(Vec::new()),
@@ -33,14 +33,14 @@ pub fn new_list() -> ListView {
 }
 
 pub fn fit_list_columns(
-    lv: &mut ListView,
+    lv: &mut ListView<IconRows>,
     cm: &reprisekit::controls::metrics::ControlMetrics,
     rect: Rect,
 ) {
     lv.fill_beside_bar(1, rect, cm);
 }
 
-pub fn fill_list(lv: &mut ListView, entries: &[Entry], checks: &[bool]) {
+pub fn fill_list(lv: &mut ListView<IconRows>, entries: &[Entry], checks: &[bool]) {
     lv.rows = entries
         .iter()
         .map(|e| Row {
@@ -56,7 +56,7 @@ pub fn fill_list(lv: &mut ListView, entries: &[Entry], checks: &[bool]) {
     keep_in_rows(lv);
 }
 
-pub fn new_shortcut_list() -> ListView {
+pub fn new_shortcut_list() -> ListView<IconRows> {
     ListView {
         columns: columns(&SHORTCUT_COLUMNS),
         ..ListView::default()
@@ -65,7 +65,7 @@ pub fn new_shortcut_list() -> ListView {
 
 /// Give Action what is left beside the look's scrollbar, so the list that scrolls grows no horizontal bar.
 pub fn fit_shortcut_columns(
-    lv: &mut ListView,
+    lv: &mut ListView<IconRows>,
     cm: &reprisekit::controls::metrics::ControlMetrics,
     rect: Rect,
 ) {
@@ -76,7 +76,7 @@ pub fn fit_shortcut_columns(
 /// the desktop's binds by [`crate::model::action_text`], each program shortcut as
 /// "Program: description", then each program refused one. `name` gives a
 /// program's name for its app id.
-pub fn fill_shortcuts(lv: &mut ListView, s: &Settings, name: &dyn Fn(&str) -> String) {
+pub fn fill_shortcuts(lv: &mut ListView<IconRows>, s: &Settings, name: &dyn Fn(&str) -> String) {
     let row = |keys: String, what: String| Row {
         icon: None,
         cells: vec![keys, what],
@@ -102,7 +102,7 @@ pub fn fill_shortcuts(lv: &mut ListView, s: &Settings, name: &dyn Fn(&str) -> St
     keep_in_rows(lv);
 }
 
-pub fn new_permission_list() -> ListView {
+pub fn new_permission_list() -> ListView<IconRows> {
     ListView {
         columns: columns(&PERMISSION_COLUMNS),
         ..ListView::default()
@@ -110,7 +110,7 @@ pub fn new_permission_list() -> ListView {
 }
 
 pub fn fit_permission_columns(
-    lv: &mut ListView,
+    lv: &mut ListView<IconRows>,
     cm: &reprisekit::controls::metrics::ControlMetrics,
     rect: Rect,
 ) {
@@ -118,7 +118,7 @@ pub fn fit_permission_columns(
 }
 
 /// One row per answer: the program's name, the permission and whether it was allowed.
-pub fn fill_permissions(lv: &mut ListView, answers: &[(String, &str, bool)]) {
+pub fn fill_permissions(lv: &mut ListView<IconRows>, answers: &[(String, &str, bool)]) {
     lv.rows = answers
         .iter()
         .map(|(name, what, allow)| Row {
@@ -134,11 +134,11 @@ pub fn fill_permissions(lv: &mut ListView, answers: &[(String, &str, bool)]) {
 }
 
 /// The permission list while it is read: one row saying so, nothing picked.
-pub fn show_permissions_loading(lv: &mut ListView) {
-    lv.rows = vec![Row {
+pub fn show_permissions_loading(lv: &mut ListView<IconRows>) {
+    lv.rows = IconRows(vec![Row {
         icon: None,
         cells: vec!["Loading...".into(), String::new(), String::new()],
-    }];
+    }]);
     lv.selection.set_only(None);
     lv.top = 0;
 }
@@ -146,11 +146,11 @@ pub fn show_permissions_loading(lv: &mut ListView) {
 /// Draw a side list (Startup, Shortcuts, the file types or the Privacy page's App Permissions)
 /// over the page the sheet already drew; `rect` is its [`list`](super::list),
 /// [`shortcuts`](super::shortcuts) or [`permissions`](super::permissions) where the page sits now.
-pub fn draw_list(
+pub fn draw_list<R: Rows>(
     c: &mut Canvas,
     text: &TextRenderer,
     theme: &Theme,
-    lv: &ListView,
+    lv: &ListView<R>,
     rect: Rect,
     px: u32,
     s: i32,

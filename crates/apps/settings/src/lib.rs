@@ -83,7 +83,7 @@ use repriseconf::pages::Entry;
 use reprisekit::access::Tree;
 use reprisekit::controls::filedlg::{self, FileDlg};
 use reprisekit::controls::hosted::Hosted;
-use reprisekit::controls::listview::ListView;
+use reprisekit::controls::listview::{IconRows, ListView};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::openwith::{self, OpenWith};
 use reprisekit::controls::propsheet::PropSheet;
@@ -368,12 +368,12 @@ struct SettingsApp {
     /// What the compositor filters `OnlyShowIn` / `NotShowIn` against.
     desktops: Vec<String>,
     /// The list's own `checks` are the pending state.
-    list: ListView,
+    list: ListView<IconRows>,
     /// The list width, bar width and text units the Startup columns were last filled to.
     list_fit: Option<(i32, i32, TextUnits)>,
     list_focus: bool,
 
-    shortcuts: ListView,
+    shortcuts: ListView<IconRows>,
     shortcuts_focus: bool,
     shortcut: Option<shortcutdlg::ShortcutDialog>,
     /// The Color dialog an Other... opened, with the page and the colour button it sets.
@@ -388,11 +388,11 @@ struct SettingsApp {
     links: Vec<Option<reprisefs::apps::AppEntry>>,
 
     defaults: Option<defaultspage::Defaults>,
-    types: ListView,
+    types: ListView<IconRows>,
     types_focus: bool,
     chooser: Option<Chooser>,
 
-    permissions: ListView,
+    permissions: ListView<IconRows>,
     permissions_focus: bool,
     permission_answers: Vec<PermissionAnswer>,
     /// Each permission row's icon name, looked up once `permission_icons_due`.
@@ -521,7 +521,7 @@ struct SettingsApp {
     wallpapers: Vec<PathBuf>,
     picture: Option<backgroundpage::Picture>,
     wallpaper_icons: Option<(Option<Canvas>, Option<Canvas>)>,
-    /// The icon size the list boxes' icons were last looked up at
+    /// The icon size the lists' and the Start menu tree's icons were last looked up at
     /// ([`reprisekit::controls::listbox::icon_px`]); None before the first.
     list_icon_px: Option<i32>,
     folder_icon: Option<Canvas>,

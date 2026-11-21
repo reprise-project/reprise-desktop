@@ -13,7 +13,7 @@ use repriseapp::{Ctx, Event, KeyInput, PointerInput, Reply};
 use reprisefs::listing::Item;
 use reprisekit::controls::form::FocusedEdit;
 use reprisekit::controls::shellview::{self, Mode};
-use reprisekit::controls::taskpane;
+use reprisekit::controls::{taskpane, treeview};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -97,7 +97,8 @@ impl Explorer {
     /// The main window draws at `scale`, `ctx.icons`' scale: the chrome and the entries wear
     /// their icons at that scale (List and Details' at the text's size), icon files once a thread
     /// decodes them, and thumbnails made at another one are asked for again. A new icon theme
-    /// fetches the chrome again and re-lists. A new text size rebuilds the task pane at its icon size.
+    /// fetches the chrome again and re-lists. A new text size rebuilds the task pane and fetches
+    /// the Folders tree's icons at their size.
     pub fn follow_scale(&mut self, scale: i32, ctx: &mut Ctx) {
         let list = shellview::list_icon_px(ctx.theme.text);
         self.list_icons
@@ -112,6 +113,11 @@ impl Explorer {
         if rethemed {
             // Which icon name an entry wears depends on what the theme has.
             let _ = self.refresh(ctx);
+        }
+        let tree_px = treeview::icon_px(ctx.theme.text);
+        if std::mem::replace(&mut self.tree_places.px, tree_px) != tree_px {
+            foldertree::refetch_icons(&mut self.tree, &mut self.tree_places, &mut ctx.icons);
+            self.refill_tree_art(ctx);
         }
         let pane_px = taskpane::icon_px(ctx.theme.text);
         if let Some((.., px)) = &self.pane_key
@@ -1643,6 +1649,43 @@ pub(crate) mod tests {
             worn(ex).is_some_and(|(scale, ..)| scale == 2)
         });
         assert_eq!(worn(&ex), Some((2, 32, OWN)));
+    }
+
+    #[test]
+    fn a_text_size_change_fetches_the_trees_icons_at_the_grown_column() {
+        const OWN: u32 = 0xff20_80a0;
+        let dir = tempfile::Builder::new()
+            .prefix("tree")
+            .tempdir()
+            .expect("a temp dir shown in the tree");
+        let own = dir.path().join("own.png");
+        let mut c = Canvas::new(64, 64);
+        c.pixels.fill(OWN);
+        std::fs::write(&own, reprisekit::raster::to_png(&c)).expect("write");
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).expect("mkdir");
+        let directory = format!("[Desktop Entry]\nIcon={}\n", own.display());
+        std::fs::write(sub.join(".directory"), directory).expect("write");
+        let mut ctx = test_ctx();
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        let worn = |ex: &Explorer| {
+            let path = ex.tree_path_of(&Place::Folder(sub.clone()))?;
+            let icon = ex.tree.node(&path)?.icon.clone()?;
+            Some((icon.width, icon.get(8, 8)))
+        };
+        assert_eq!(worn(&ex), Some((16, OWN)));
+        ctx.theme = reprisekit::theme::Theme::default().with_text_size(200);
+        ex.follow_scale(1, &mut ctx);
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+            worn(ex).is_some_and(|(w, c)| w == 32 && c == OWN)
+        });
+        assert_eq!(worn(&ex), Some((32, OWN)), "32 px at 200% text");
+        ctx.theme = reprisekit::theme::Theme::default();
+        ex.follow_scale(1, &mut ctx);
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+            worn(ex).is_some_and(|(w, c)| w == 16 && c == OWN)
+        });
+        assert_eq!(worn(&ex), Some((16, OWN)), "16 px back at 100%");
     }
 
     #[test]

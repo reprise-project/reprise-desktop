@@ -16,6 +16,11 @@
 //! 2 px before the label to 5 px past its text, and the label's capitals start
 //! 5 px below the row's top.
 //!
+//! A tree given icons grows its icon column with the text ([`icon_px`]): each
+//! level indents half the growth further and its expander box moves along with
+//! it, so a box stays under its parent's icon, and labels keep their gap past
+//! the grown icon.
+//!
 //! A label renames in place in a box the row's height, its 1 px black border
 //! 5 px left of the label, the text where the label was and 15 px of white
 //! after it (`TreeView::edit`).
@@ -48,7 +53,7 @@ use crate::raster::{Canvas, Rect};
 use crate::selection::{scroll_into_view, step_index};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::TextEdit;
-use crate::theme::Color;
+use crate::theme::{Color, TextUnits};
 use accesskit::{NodeId, Role};
 use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
@@ -210,6 +215,24 @@ pub struct Layout {
     pub thumb_min: i32,
     /// The row pitch, grown with the text ([`TreeView::row_h`]).
     pub row_h: i32,
+    /// The icon column's width: [`icon_px`] in a tree given icons, else [`ICON_PX`].
+    pub icon: i32,
+}
+
+/// A node's icon edge (logical px): 16 px at 100% text, grown with the text and never smaller.
+/// Hosts load the nodes' icons at it.
+pub fn icon_px(u: TextUnits) -> i32 {
+    u.icon(ICON_PX)
+}
+
+/// How far each level indents past the one above in a tree whose icon column is `icon` wide.
+fn indent(icon: i32) -> i32 {
+    INDENT + (icon - ICON_PX) / 2
+}
+
+/// Where a level's expander box starts in its indent: under the parent's icon's middle.
+fn box_x(icon: i32) -> i32 {
+    BOX_X + (icon - ICON_PX) / 2
 }
 
 impl TreeView {
@@ -353,9 +376,9 @@ impl TreeView {
             return Hit::Nothing;
         };
         let row_y = lay.body.y + (i - self.top) as i32 * row_h;
-        let ix = lay.body.x - self.left_in(lay) + self.icon_x(row.depth);
+        let ix = lay.body.x - self.left_in(lay) + self.icon_x(row.depth, lay.icon);
         if self.has_box(row.depth) {
-            let expander = Rect::new(ix - INDENT + BOX_X, row_y, BOX, row_h);
+            let expander = Rect::new(ix - indent(lay.icon) + box_x(lay.icon), row_y, BOX, row_h);
             if expander.contains(x, y) {
                 let node = self.node(&row.path);
                 if node.is_some_and(|n| n.has_children) {
@@ -378,15 +401,16 @@ impl TreeView {
         })
     }
 
-    /// Where a row's icon starts inside the body: `Classic` keeps an expander
-    /// column left of the roots, `Explorer` does not (root icon at `body.x + 4`),
-    /// `Picker` puts the root's at `body.x + 3`, `Plain` puts it 3 px in.
-    fn icon_x(&self, depth: usize) -> i32 {
+    /// Where a row's icon starts inside the body, its column `icon` wide: `Classic`
+    /// keeps an expander column left of the roots, `Explorer` does not (root icon at
+    /// `body.x + 4`), `Picker` puts the root's at `body.x + 3`, `Plain` puts it 3 px in.
+    fn icon_x(&self, depth: usize, icon: i32) -> i32 {
+        let indent = indent(icon);
         match self.style {
-            Style::Classic => (depth as i32 + 1) * INDENT,
-            Style::Explorer => ROOT_ICON_X + depth as i32 * INDENT,
-            Style::Picker => PICKER_ROOT_ICON_X + depth as i32 * INDENT,
-            Style::Plain => PLAIN_ICON_X + depth as i32 * INDENT,
+            Style::Classic => (depth as i32 + 1) * indent,
+            Style::Explorer => ROOT_ICON_X + depth as i32 * indent,
+            Style::Picker => PICKER_ROOT_ICON_X + depth as i32 * indent,
+            Style::Plain => PLAIN_ICON_X + depth as i32 * indent,
         }
     }
 
@@ -399,13 +423,20 @@ impl TreeView {
         }
     }
 
-    fn label_x(&self, depth: usize) -> i32 {
+    fn label_x(&self, depth: usize, icon: i32) -> i32 {
         let gap = match self.style {
             Style::Classic => LABEL_GAP,
             Style::Explorer | Style::Picker => EXPLORER_LABEL_GAP,
             Style::Plain => PLAIN_LABEL_GAP,
         };
-        self.icon_x(depth) + ICON_PX + gap
+        self.icon_x(depth, icon) + icon + gap
+    }
+
+    /// The icon column's width at text size `u`: grown in a tree given icons.
+    fn icon_slot(&self, u: TextUnits) -> i32 {
+        let rows = self.visible();
+        let given = (rows.iter()).any(|r| self.node(&r.path).is_some_and(|n| n.icon.is_some()));
+        if given { icon_px(u) } else { ICON_PX }
     }
 
     /// Whether this depth gets an expander column: Explorer draws no box on a root, `Plain` never does.
@@ -429,7 +460,7 @@ impl TreeView {
                 let rows = self.visible();
                 let label = self.node(&rows[i].path).map_or("", |n| n.label.as_str());
                 let end = lay.body.x - self.left_in(lay)
-                    + self.label_x(rows[i].depth)
+                    + self.label_x(rows[i].depth, lay.icon)
                     + text.measure(label, false, px);
                 (x < end).then_some(i)
             }
@@ -547,7 +578,7 @@ impl TreeView {
             return None;
         }
         let row_h = lay.row_h;
-        let x = lay.body.x - self.left_in(lay) + self.label_x(rows[i].depth) - EDIT_BACK;
+        let x = lay.body.x - self.left_in(lay) + self.label_x(rows[i].depth, lay.icon) - EDIT_BACK;
         let w = listview::EDIT_PAD_L + text.measure(&ed.text, false, px) + listview::EDIT_PAD_R;
         Some(Rect::new(
             x,
@@ -678,15 +709,16 @@ impl TreeView {
     }
 }
 
-fn row_width(tv: &TreeView, row: &VisibleRow, text: &TextRenderer, px: u32) -> i32 {
+fn row_width(tv: &TreeView, row: &VisibleRow, icon: i32, text: &TextRenderer, px: u32) -> i32 {
     let label = tv.node(&row.path).map(|n| n.label.as_str()).unwrap_or("");
-    tv.label_x(row.depth) + text.measure(label, false, px) + ROW_PAD
+    tv.label_x(row.depth, icon) + text.measure(label, false, px) + ROW_PAD
 }
 
 pub fn layout(tv: &TreeView, text: &TextRenderer, px: u32, r: Rect, cm: &ControlMetrics) -> Layout {
     let visible = tv.visible();
+    let icon = tv.icon_slot(cm.text);
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    (std::ptr::from_ref(text) as usize, px, tv.style).hash(&mut h);
+    (std::ptr::from_ref(text) as usize, px, tv.style, icon).hash(&mut h);
     for row in visible.iter() {
         row.depth.hash(&mut h);
         tv.node(&row.path).map(|n| n.label.as_str()).hash(&mut h);
@@ -697,7 +729,7 @@ pub fn layout(tv: &TreeView, text: &TextRenderer, px: u32, r: Rect, cm: &Control
         _ => {
             let w = visible
                 .iter()
-                .map(|row| row_width(tv, row, text, px))
+                .map(|row| row_width(tv, row, icon, text, px))
                 .max()
                 .unwrap_or(0);
             tv.content_w.set(Some((key, w)));
@@ -741,6 +773,7 @@ fn layout_with(tv: &TreeView, r: Rect, content_w: i32, cm: &ControlMetrics) -> L
         content_w,
         thumb_min: cm.thumb_min,
         row_h,
+        icon: tv.icon_slot(cm.text),
     }
 }
 
@@ -804,13 +837,13 @@ pub fn draw(
         };
         let y = k as i32 * row_h;
         let mid = y + row_h / 2;
-        let ix = -left + tv.icon_x(row.depth) * s;
+        let ix = -left + tv.icon_x(row.depth, lay.icon) * s;
         let Some(node) = tv.node(&row.path) else {
             continue;
         };
         open_levels.resize(row.depth + 1, false);
         open_levels[row.depth] = !row.last;
-        let bx = ix - (INDENT - BOX_X) * s;
+        let bx = ix - (indent(lay.icon) - box_x(lay.icon)) * s;
         let cx = bx + (BOX / 2) * s;
         let selected = tv.selected.as_ref() == Some(&row.path);
         let drop = tv.drop_hilight == Some(i);
@@ -836,7 +869,9 @@ pub fn draw(
             // Lines: vertical through the ancestors that continue, this level's vertical to the box, the horizontal to the icon. Explorer's tree has none.
             for (d, cont) in open_levels.iter().enumerate().take(row.depth) {
                 if *cont {
-                    let lx = -left + (tv.icon_x(d) - INDENT + BOX_X + BOX / 2) * s;
+                    let lx = -left
+                        + (tv.icon_x(d, lay.icon) - indent(lay.icon) + box_x(lay.icon) + BOX / 2)
+                            * s;
                     dotted(&mut bc, Rect::new(lx, y, s, row_h), s, line);
                 }
             }
@@ -856,12 +891,14 @@ pub fn draw(
             }
         }
         if let Some(ic) = node.shown_icon() {
-            bc.blit_over(ix, y + (row_h - ic.height as i32) / 2, ic);
+            // An icon smaller than the column (not yet loaded at the text size) sits centred in it.
+            let dx = ((lay.icon * s - ic.width as i32) / 2).max(0);
+            bc.blit_over(ix + dx, y + (row_h - ic.height as i32) / 2, ic);
         }
         if tv.edit.as_ref().is_some_and(|(p, _)| p == &row.path) {
             continue;
         }
-        let tx = -left + tv.label_x(row.depth) * s;
+        let tx = -left + tv.label_x(row.depth, lay.icon) * s;
         let tw = (all.right() - tx - 2 * s).max(0);
         let shown = text.ellipsize(&node.label, tw, false, px);
         let tr = Rect::new(tx, y + tv.label_dy() * s, tw, row_h);
@@ -993,7 +1030,7 @@ pub fn access(
         item.set_size_of_set(siblings);
         item.set_row_index(i);
         let y = lay.body.y + (i as i32 - tv.top as i32) * rh;
-        let x = lay.body.x - tv.left_in(lay) + tv.label_x(row.depth);
+        let x = lay.body.x - tv.left_in(lay) + tv.label_x(row.depth, lay.icon);
         let r = Rect::new(x, y, (lay.body.right() - x).max(0), rh);
         item.set_bounds(access::row_bounds(lay.body, r));
         let up = row

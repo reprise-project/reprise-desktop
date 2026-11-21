@@ -12,7 +12,7 @@ use reprisefs::ops::DropOp;
 use reprisekit::controls::browsefolder::{self, BrowseFolder};
 use reprisekit::controls::form::{self, Form};
 use reprisekit::controls::msgbox;
-use reprisekit::controls::treeview::{Style, TreeView};
+use reprisekit::controls::treeview::{self, Style, TreeView};
 use reprisekit::look::Paint;
 use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::Canvas;
@@ -183,6 +183,7 @@ impl Explorer {
         };
         let mut tree = TreeView::new(Vec::new(), Style::Picker);
         let mut places = foldertree::Places::default();
+        places.px = treeview::icon_px(ctx.forms().controls().text);
         foldertree::build(&mut tree, &mut places, &mut ctx.icons);
         let here = items[0].parent().map(Place::from_path);
         let walk_to = here.clone().unwrap_or(Place::Desktop);
