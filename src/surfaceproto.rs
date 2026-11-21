@@ -839,6 +839,67 @@ mod tests {
         );
     }
 
+    /// Draw `t` in `argb` under a commit timer already gone by, so the standby's next tick
+    /// applies it.
+    fn draw_overdue(h: &mut Harness, c: &mut TestClient, t: Toplevel, argb: u32) {
+        let surface = c.side.shells[t.shell].surface.clone();
+        let manager: WpCommitTimingManagerV1 = c.bind("wp_commit_timing_manager_v1", 1);
+        let timer: WpCommitTimerV1 = manager.get_timer(&surface, &c.qh(), ());
+        let at = h.state.now() - Duration::from_millis(1);
+        let secs = at.as_secs();
+        timer.set_timestamp((secs >> 32) as u32, secs as u32, at.subsec_nanos());
+        h.draw_self(c, t, argb);
+    }
+
+    fn commit_asked(output: &Output) -> bool {
+        (crate::backend::take_asks().iter())
+            .any(|(o, a)| *o == output.name() && matches!(a, crate::backend::Ask::Commit(_)))
+    }
+
+    #[test]
+    fn a_timed_commit_a_virtual_tick_applies_leaves_no_frame_wanted() {
+        let (mut h, output, mut c, t, _) = on_standby();
+        draw_overdue(&mut h, &mut c, t, 0xff00_0080);
+        crate::backend::take_asks();
+        crate::virtualout::tick_now(&mut h.state, &output);
+        assert!(commit_asked(&output), "the tick applies the commit");
+        assert_eq!(
+            crate::virtualout::wanted(&h.state, &output),
+            None,
+            "the tick's frame showed the commit"
+        );
+    }
+
+    #[test]
+    fn an_animation_stepped_in_a_virtual_tick_that_applies_a_timed_commit_gets_its_next_tick() {
+        let (mut h, output, mut c, t, _) = on_standby();
+        h.state.config.accessibility.visual_bell = crate::config::VisualBell::Screen;
+        h.state.flash_bell(None, std::time::Instant::now());
+        draw_overdue(&mut h, &mut c, t, 0xff00_0080);
+        crate::backend::take_asks();
+        crate::virtualout::tick_now(&mut h.state, &output);
+        assert!(commit_asked(&output), "the tick applies the commit");
+        assert_eq!(
+            crate::virtualout::wanted(&h.state, &output),
+            Some(crate::virtualout::Wants::Frame),
+            "the flash's next step"
+        );
+    }
+
+    #[test]
+    fn a_commit_after_a_virtual_tick_that_applied_a_timed_one_gets_the_next_tick() {
+        let (mut h, output, mut c, t, _) = on_standby();
+        draw_overdue(&mut h, &mut c, t, 0xff00_0080);
+        crate::virtualout::tick_now(&mut h.state, &output);
+        assert_eq!(crate::virtualout::wanted(&h.state, &output), None);
+        h.draw_self(&mut c, t, 0xff80_0000);
+        assert_eq!(
+            crate::virtualout::wanted(&h.state, &output),
+            Some(crate::virtualout::Wants::Frame),
+            "the new commit's frame"
+        );
+    }
+
     #[test]
     fn a_virtual_screens_tick_for_another_ask_arms_its_clock_again_for_a_timed_commit() {
         let asks: [fn(&mut State, &Output); 2] = [

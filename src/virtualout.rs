@@ -377,16 +377,27 @@ fn tick(state: &mut State, output: &Output) {
         s.timed = None;
         s.wants = s.wants.max(Some(Wants::Frame));
     }
-    match s.wants.take() {
+    if matches!(s.wants, Some(Wants::Pointer | Wants::Frame)) {
+        // The moves and timed commits settled here are in this frame, so their asks are taken
+        // with it below and leave no tick behind.
+        state.settle_moves();
+        crate::surfaceproto::before_frame(state, output, shows_at);
+    }
+    let Some(s) = screen_mut(state, output) else {
+        return;
+    };
+    let (want, armed) = (s.wants.take(), s.timer.take());
+    if let Some((t, _)) = armed {
+        state.handle.remove(t);
+    }
+    match want {
         None => {}
         Some(Wants::Callbacks) => crate::backend::send_frame_callbacks(state, output),
         Some(Wants::Pointer) => frame(state, output, Drew::Pointer, shows_at),
         Some(Wants::Frame) => frame(state, output, Drew::Scene, shows_at),
     }
-    // A tick that drew no frame ran no before_frame to ask again for a timed commit not yet due.
-    if screen_mut(state, output).is_some_and(|s| s.timed.is_some()) {
-        arm(state, output);
-    }
+    // For what the frame asked, or a timed commit not yet due.
+    arm(state, output);
 }
 
 /// The deadline `output`'s clock is armed for, and what its tick does then besides a timed
@@ -395,6 +406,13 @@ fn tick(state: &mut State, output: &Output) {
 pub fn armed(state: &State, output: &Output) -> Option<(Instant, Option<Wants>)> {
     let s = (state.virtual_outputs.screens.iter()).find(|s| &s.output == output)?;
     s.timer.map(|(_, at)| (at, s.wants))
+}
+
+/// What `output`'s next tick does besides a timed commit's frame.
+#[cfg(test)]
+pub fn wanted(state: &State, output: &Output) -> Option<Wants> {
+    let s = (state.virtual_outputs.screens.iter()).find(|s| &s.output == output)?;
+    s.wants
 }
 
 /// When `output`'s clock last ticked.
@@ -418,11 +436,9 @@ pub fn tick_now(state: &mut State, output: &Output) {
 }
 
 /// A tick's frame showing at `shows_at`, doing what a monitor's flip does. Captures get `drew`, or
-/// the scene when it or the water moved or the tick's own work (a commit it let through) asked for
-/// a whole frame.
+/// the scene when it or the water moved or the frame's own work (an animation step, a fifo commit
+/// its frame callbacks let through) asked for a whole frame.
 fn frame(state: &mut State, output: &Output, mut drew: Drew, shows_at: Duration) {
-    state.settle_moves();
-    crate::surfaceproto::before_frame(state, output, shows_at);
     crate::backend::advance(state, output);
     let captured = state.captures.shows_output(output);
     if captured && let Some(b) = state.backend.as_mut() {
