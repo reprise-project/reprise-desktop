@@ -21,8 +21,8 @@ use crate::metrics::ControlMetrics;
 use crate::paint::Paint;
 use crate::pointer::Lit;
 use crate::raster::{Canvas, Rect};
-use crate::text::{Align, TextRenderer};
-use crate::textedit::{EditKey, TextEdit, TextSpot};
+use crate::text::{Align, CaretBar, TextRenderer};
+use crate::textedit::{Caret, EditKey, TextEdit, TextSpot};
 use crate::theme::TextUnits;
 use accesskit::{NodeId, Role};
 
@@ -365,7 +365,7 @@ fn text_x(
     x0.max(tr.x - before).min(tr.right() - before)
 }
 
-/// Draw it; `caret` is whether the field has the focus.
+/// Draw it; `caret` is whether the field has the focus. Its caret does not blink.
 #[expect(clippy::too_many_arguments)]
 pub fn draw(
     c: &mut Canvas,
@@ -374,6 +374,20 @@ pub fn draw(
     ud: &UpDown,
     lay: &Layout,
     caret: bool,
+    spin: Lit<Arrow>,
+    px: u32,
+) {
+    draw_with(c, text, p, ud, lay, Caret::new(caret, true), spin, px);
+}
+
+#[expect(clippy::too_many_arguments)]
+fn draw_with(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    ud: &UpDown,
+    lay: &Layout,
+    caret: Caret,
     spin: Lit<Arrow>,
     px: u32,
 ) {
@@ -391,7 +405,7 @@ pub fn draw(
     let (tr, align) = text_rect(ud, room, s);
     let shown = ud.shown();
     if ud.enabled {
-        let edit = ud.edit.as_ref().filter(|_| caret);
+        let edit = ud.edit.as_ref().filter(|_| caret.focused());
         let x0 = text_x(text, &shown, tr, align, edit.map(TextEdit::caret), px);
         let pen = Rect::new(x0, tr.y, tr.width, tr.height);
         let at = |i: usize| x0 + text.measure(&shown[..i], false, px);
@@ -409,18 +423,20 @@ pub fn draw(
         if let Some(hl) = &hl {
             hl.fill(c, room, cs.hilight);
         }
+        let cx = ud.edit.as_ref().map_or(at(shown.len()), |e| at(e.caret()));
+        let bar = Rect::new(cx, tr.y + 2 * s, s, tr.height - 4 * s);
+        let shown_bar = caret
+            .shown()
+            .then(|| CaretBar::ground(c, bar, hl.as_ref(), room));
         text.draw_in(c, pen, tr, tr, &shown, false, cs.button_text, px);
-        if caret {
-            let cx = ud.edit.as_ref().map_or(at(shown.len()), |e| at(e.caret()));
+        if caret.focused() {
             if let Some(hl) = &hl {
                 c.fill_rect(hl.rect, cs.hilight);
                 text.draw_in(c, pen, tr, hl.rect, &shown, false, cs.hilight_text, px);
                 text.draw_overhang(c, hl, tr, cs.hilight_text);
             }
-            let bar = Rect::new(cx, tr.y + 2 * s, s, tr.height - 4 * s);
-            match &hl {
-                Some(hl) => hl.invert_caret(c, bar, room),
-                None => c.invert_rect(bar),
+            if let Some(bar) = shown_bar {
+                bar.draw(c, cs.hilight_text);
             }
             if let Some(e) = &ud.edit {
                 c.report_spot(TextSpot {
@@ -472,28 +488,6 @@ mod tests {
     use super::*;
     use crate::look::classic_paint;
     use crate::theme::{FontConfig, Theme};
-
-    /// Invert again the caret `draw` shows at the start of selection `sel` of `t`, drawn from
-    /// `pen` in `tr` at 100% text, taking it off.
-    fn take_off_caret(
-        c: &mut Canvas,
-        text: &TextRenderer,
-        l: &Layout,
-        (t, sel): (&str, std::ops::Range<usize>),
-        (pen, tr): (i32, Rect),
-        px: u32,
-    ) {
-        let cx = pen + text.measure(&t[..sel.start], false, px);
-        let bar = Rect::new(cx, tr.y + 2, 1, tr.height - 4);
-        if sel.is_empty() {
-            c.invert_rect(bar);
-            return;
-        }
-        let w = text.measure(&t[sel.clone()], false, px);
-        let hl = Rect::new(cx, tr.y + (tr.height - LINE_H) / 2, w, LINE_H);
-        let hl = text.highlight(hl, t, sel, pen, tr, false, px, c.scale());
-        hl.clear_of_ink(l.edit).invert_caret(c, bar, l.edit);
-    }
 
     /// The Date and Time sheet's greyed 79x21 year spinner on its page.
     #[test]
@@ -763,56 +757,67 @@ mod tests {
         let c = render(&ud);
         assert_eq!(c.get(x0, 285), cs.window.argb());
         let cx = x0 + text.measure("1", false, 11);
-        let under = render_with(&ud, false).get(cx, 290);
-        let inverted = 0xFF00_0000 | (!under & 0x00FF_FFFF);
-        assert_eq!(c.get(cx, 290), inverted, "caret after the 1");
+        let (bar, _) = crate::paint::inverted_bar(&render_with(&ud, false), &c, cs.window.argb());
+        assert!(
+            (cx - 1..=cx).contains(&bar.x),
+            "caret after the 1 at {bar:?}"
+        );
         assert_eq!(c.get(92, 290), cs.window.argb(), "no caret at the end");
     }
 
+    /// The caret before, between or after the digits of "8605" and "1047" flips none of their
+    /// ink, at Tahoma's and DejaVu Sans' 11 and 13 px, scale 1 and 2.
     #[test]
-    fn the_caret_inverts_its_column_so_a_digit_under_it_shows_white() {
+    fn the_caret_beside_digits_leaves_their_ink_as_it_was() {
         crate::pins::fonts();
-        let theme = Theme::default();
-        let text = TextRenderer::load(&FontConfig::default());
-        let cs = &theme.colors;
-        let l = layout(61, 282);
-        let mut ud = UpDown::new(1470, 1, 9999);
-        ud.enter();
-        let shown = ud.shown();
-        let (tr, align) = text_rect(&ud, l.edit, 1);
-        let x0 = text_x(&text, &shown, tr, align, None, 11);
-        let mut inked = 0;
-        for at in 0..=shown.len() {
-            ud.place(at);
-            let render = |caret| {
-                let mut c = Canvas::new(130, 320);
-                c.fill_rect(c.bounds(), cs.button_face);
-                draw(
-                    &mut c,
-                    &text,
-                    &classic_paint(cs, 1),
-                    &ud,
-                    &l,
-                    caret,
-                    None,
-                    11,
-                );
-                c
-            };
-            let (bar, ink) =
-                crate::paint::inverted_bar(&render(false), &render(true), cs.window.argb());
-            let cx = x0 + text.measure(&shown[..at], false, 11);
-            assert_eq!(
-                bar,
-                Rect::new(cx, tr.y + 2, 1, tr.height - 4),
-                "caret at {at}"
-            );
-            inked += usize::from(ink);
+        let cs = &Theme::default().colors;
+        let l = layout(2, 2);
+        let (w, h) = (WIDTH + 4, HEIGHT + 4);
+        let mut faults = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.into()],
+                antialias: false,
+                ..FontConfig::default()
+            });
+            for px in [11, 13] {
+                for s in [1, 2] {
+                    for t in ["8605", "1047"] {
+                        for at in 0..=t.len() {
+                            let mut ud = UpDown::new(0, 0, 9999);
+                            let mut e = TextEdit::new(t, true);
+                            e.set_selection(at, at);
+                            ud.edit = Some(e);
+                            let draw = |caret| {
+                                let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                                c.fill_rect(c.bounds(), cs.button_face);
+                                let p = classic_paint(cs, 1);
+                                draw_with(&mut c, &text, &p, &ud, &l, caret, None, px);
+                                c.pixels
+                            };
+                            let (tr, align) = text_rect(&ud, l.edit, 1);
+                            let pen = text_x(&text, t, tr, align, Some(at), px);
+                            let (flipped, _) = crate::paint::caret_marks(
+                                &text,
+                                px,
+                                (w, h),
+                                t,
+                                (pen, tr),
+                                s,
+                                (&draw(Caret::Hidden), &draw(Caret::Shown)),
+                                cs.hilight_text,
+                            );
+                            if flipped > 0 {
+                                faults.push(format!(
+                                    "{family} {px} px @{s} \"{t}\" at {at}: {flipped} ink px flipped"
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
         }
-        assert!(
-            inked > 0,
-            "a digit's stem lies under the caret somewhere in {shown}"
-        );
+        assert!(faults.is_empty(), "{}", faults.join("\n"));
     }
 
     #[test]
@@ -1118,23 +1123,12 @@ mod tests {
                     let top = tr.y + (tr.height - LINE_H) / 2;
                     (text_x(&text, t, tr, align, None, px), tr, top..top + LINE_H)
                 };
-                // The caret, at the selection's start, is inverted again to take it off.
                 let draw = |s: i32, t: &str, sel: std::ops::Range<usize>| {
                     let mut c = Canvas::with_scale(w as u32, h as u32, s);
                     c.fill_rect(c.bounds(), cs.button_face);
                     let paint = classic_paint(cs, 1);
-                    draw(
-                        &mut c,
-                        &text,
-                        &paint,
-                        &field(t, sel.clone()),
-                        &l,
-                        true,
-                        None,
-                        px,
-                    );
-                    let (pen, tr, _) = geom(t);
-                    take_off_caret(&mut c, &text, &l, (t, sel), (pen, tr), px);
+                    let ud = field(t, sel);
+                    draw_with(&mut c, &text, &paint, &ud, &l, Caret::Hidden, None, px);
                     c.pixels
                 };
                 let found = crate::paint::selection_faults(
@@ -1183,10 +1177,9 @@ mod tests {
                         let mut c = Canvas::with_scale(w as u32, h as u32, s);
                         c.fill_rect(c.bounds(), cs.button_face);
                         let paint = classic_paint(cs, 1);
-                        draw(&mut c, &text, &paint, &ud, &l, true, None, px);
+                        draw_with(&mut c, &text, &paint, &ud, &l, Caret::Hidden, None, px);
                         let (tr, align) = text_rect(&ud, l.edit, 1);
                         let pen = text_x(&text, t, tr, align, Some(sel.start), px);
-                        take_off_caret(&mut c, &text, &l, (t, sel), (pen, tr), px);
                         (c.pixels, pen, tr)
                     };
                     for (t, sel) in crate::paint::descender_cases() {
@@ -1329,35 +1322,27 @@ mod tests {
                 "{family}: \"21047\" is {wide} px, the field {} px",
                 tr.width
             );
-            // Each end: the key, the digit that shows whole there, its pen and the caret's column.
+            // Each end: the key, the digit that shows whole there and its pen.
             let seven = tr.right() - text.measure("7", false, 11);
             let ends = [
-                (
-                    "End",
-                    EditKey::End { select: false },
-                    "7",
-                    seven,
-                    tr.right(),
-                ),
-                ("Home", EditKey::Home { select: false }, "2", tr.x, tr.x),
+                ("End", EditKey::End { select: false }, "7", seven),
+                ("Home", EditKey::Home { select: false }, "2", tr.x),
             ];
-            for (name, key, digit, pen, cx) in ends {
+            for (name, key, digit, pen) in ends {
                 ud.key(&key);
                 for s in [1, 2] {
-                    let mut c = Canvas::with_scale(w as u32, h as u32, s);
-                    c.fill_rect(c.bounds(), cs.button_face);
-                    draw(
-                        &mut c,
-                        &text,
-                        &classic_paint(cs, 1),
-                        &ud,
-                        &l,
-                        true,
-                        None,
-                        11,
-                    );
-                    got.push((format!("{family} {name} @{s}"), crate::pins::fnv(&c)));
-                    c.invert_rect(Rect::new(cx, tr.y + 2, 1, tr.height - 4));
+                    let render = |caret| {
+                        let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                        c.fill_rect(c.bounds(), cs.button_face);
+                        let p = classic_paint(cs, 1);
+                        draw_with(&mut c, &text, &p, &ud, &l, caret, None, 11);
+                        c
+                    };
+                    got.push((
+                        format!("{family} {name} @{s}"),
+                        crate::pins::fnv(&render(Caret::Shown)),
+                    ));
+                    let c = render(Caret::Hidden);
                     let mut alone = Canvas::with_scale(w as u32, h as u32, s);
                     let at = Rect::new(pen, tr.y, tr.width, tr.height);
                     text.draw_in(&mut alone, at, tr, tr, digit, false, cs.button_text, 11);

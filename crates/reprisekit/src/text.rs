@@ -294,34 +294,126 @@ impl Highlight<'_> {
         let r = self.dev.intersect(&clip.scaled(self.s));
         c.in_device_px(|c| c.fill_rect(r, color));
     }
+}
 
-    /// The device pixels a caret `bar` inverts: one that starts past `rect`'s right edge but
-    /// inside `dev` starts past `dev` instead, and one on `rect`'s left edge with `dev` reaching
-    /// past it ends before `dev`, within `clip`, so it reads beside the highlight and leaves the
-    /// selected ink whole.
-    fn caret_px(&self, bar: Rect, clip: Rect) -> Rect {
-        let (mut b, s) = (bar.scaled(self.s), self.s);
-        if b.x >= self.rect.right() * s && b.x < self.dev.right() {
-            b.x = self.dev.right().min(clip.right() * s - b.width);
-        } else if b.x == self.rect.x * s && self.dev.x < b.x {
-            b.x = (self.dev.x - b.width).max(clip.x * s);
+/// A caret's bar: [`CaretBar::ground`] reads the canvas before the text is drawn, so the text's ink
+/// is what changes by [`CaretBar::draw`]. The bar goes from its pen's column up to its width left,
+/// or beside a selection's end, where it covers the fewest ink pixels, then highlight pixels, and
+/// leaves that ink as it is.
+pub struct CaretBar {
+    bar: Rect,
+    s: i32,
+    want: i32,
+    /// The device pixels of every place it may take, as they were before the text.
+    area: Rect,
+    ground: Vec<u32>,
+    /// The selection's highlight in device pixels.
+    hl: Rect,
+}
+
+impl CaretBar {
+    /// The caret `bar` (logical, on its pen's column) within `clip`, at the end of `hl` it sits
+    /// on, reading `c` under the places it may take.
+    pub fn ground(c: &Canvas, bar: Rect, hl: Option<&Highlight>, clip: Rect) -> CaretBar {
+        let s = c.scale();
+        let b = bar.scaled(s);
+        let w = b.width;
+        let (want, lo, hi) = match hl {
+            Some(h) if bar.x == h.rect.x => (h.dev.x - w, h.dev.x - 2 * w, b.x),
+            Some(h) if bar.x >= h.rect.right() => {
+                let end = h.dev.right();
+                (end, b.x - w, end.max(b.x) + w)
+            }
+            _ => (b.x, b.x - w, b.x),
+        };
+        let (lo, hi) = (lo.max(s * clip.x), hi.min(s * clip.right() - w));
+        let (dw, dh) = c.device_size();
+        let area = Rect::new(lo, b.y, (hi + w - lo).max(0), b.height)
+            .intersect(&Rect::new(0, 0, dw as i32, dh as i32));
+        let ground = rows(area).map(|(x, y)| pixel(c, x, y)).collect();
+        let hl = hl.map_or_else(Rect::default, |h| h.dev);
+        CaretBar {
+            bar,
+            s,
+            want,
+            area,
+            ground,
+            hl,
         }
-        b
     }
 
-    /// Invert a caret `bar` where [`Highlight::caret`] puts it.
-    pub fn invert_caret(&self, c: &mut Canvas, bar: Rect, clip: Rect) {
-        let b = self.caret_px(bar, clip);
-        c.in_device_px(|c| c.invert_rect(b));
+    /// Whether the text drew device pixel (`x`, `y`) since [`CaretBar::ground`].
+    fn inked(&self, c: &Canvas, x: i32, y: i32) -> bool {
+        let a = self.area;
+        a.contains(x, y) && self.ground[((y - a.y) * a.width + x - a.x) as usize] != pixel(c, x, y)
     }
 
-    /// The logical pixels holding the caret `bar` as [`Highlight::invert_caret`] draws it within
-    /// `clip`: the damage a blink reports.
-    pub fn caret(&self, bar: Rect, clip: Rect) -> Rect {
-        let (b, s) = (self.caret_px(bar, clip), self.s);
+    /// Its device pixels in `c`.
+    fn place(&self, c: &Canvas) -> Rect {
+        let b = self.bar.scaled(self.s);
+        let cost = |x: i32| {
+            let (mut ink, mut lit) = (0, 0);
+            for (x, y) in rows(Rect { x, ..b }) {
+                if self.inked(c, x, y) {
+                    ink += 1;
+                } else if self.hl.contains(x, y) {
+                    lit += 1;
+                }
+            }
+            (ink, lit, (x - self.want).abs(), x > self.want)
+        };
+        let a = self.area;
+        let x = (a.x..=a.right() - b.width).min_by_key(|&x| cost(x));
+        let (dw, dh) = c.device_size();
+        Rect {
+            x: x.unwrap_or(b.x),
+            ..b
+        }
+        .intersect(&Rect::new(0, 0, dw as i32, dh as i32))
+    }
+
+    /// Draw it on `c`: inverting the paper, on the highlight in the inverse of `lit`, the
+    /// selected text's colour, so lit ink beside it keeps its contrast.
+    pub fn draw(&self, c: &mut Canvas, lit: Color) {
+        let inverse = |v: u32| Color::rgb((!v >> 16) as u8, (!v >> 8) as u8, !v as u8);
+        let on_hl = inverse(lit.argb());
+        let px: Vec<(i32, i32, Color)> = rows(self.place(c))
+            .filter(|&(x, y)| !self.inked(c, x, y))
+            .map(|(x, y)| {
+                let color = if self.hl.contains(x, y) {
+                    on_hl
+                } else {
+                    inverse(pixel(c, x, y))
+                };
+                (x, y, color)
+            })
+            .collect();
+        c.in_device_px(|c| {
+            for (x, y, color) in px {
+                c.fill_rect(Rect::new(x, y, 1, 1), color);
+            }
+        });
+    }
+
+    /// The logical pixels it takes in `c`: the damage a blink reports.
+    pub fn rect(&self, c: &Canvas) -> Rect {
+        let (b, s) = (self.place(c), self.s);
+        if b.is_empty() {
+            return self.bar;
+        }
         let (x0, x1) = (b.x.div_euclid(s), (b.right() + s - 1).div_euclid(s));
-        Rect::new(x0, bar.y, x1 - x0, bar.height)
+        Rect::new(x0, self.bar.y, x1 - x0, self.bar.height)
     }
+}
+
+/// The pixels of `r`, row by row.
+fn rows(r: Rect) -> impl Iterator<Item = (i32, i32)> {
+    (r.y..r.bottom()).flat_map(move |y| (r.x..r.right()).map(move |x| (x, y)))
+}
+
+/// Device pixel (`x`, `y`) of `c`, which lies on it.
+fn pixel(c: &Canvas, x: i32, y: i32) -> u32 {
+    c.pixels[y as usize * c.device_size().0 as usize + x as usize]
 }
 
 pub struct TextRenderer {
