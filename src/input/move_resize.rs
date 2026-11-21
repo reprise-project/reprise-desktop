@@ -261,6 +261,7 @@ impl State {
             Interaction::PanelBar => {
                 self.clipview_release();
                 self.emoji_release();
+                self.launcher_release();
             }
             was @ (Interaction::MiniMove { .. } | Interaction::MiniResize { .. }) => {
                 crate::miniview::released(self, was)
@@ -331,6 +332,7 @@ impl State {
             Interaction::PanelBar => {
                 self.clipview_release();
                 self.emoji_release();
+                self.launcher_release();
             }
             Interaction::FieldDrag { .. } => {}
             // A moved or sized mini view stays as it is, and no click lands.

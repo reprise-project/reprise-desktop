@@ -17,6 +17,7 @@ use smithay::utils::Rectangle;
 use crate::compositor::{SceneOwner, State};
 use crate::dialogview::DialogKey;
 use crate::glass::{Backdrop, Pane, PaneShape};
+use crate::input::Interaction;
 use crate::keys;
 use crate::menuview::{MenuFrom, MenuKind};
 use crate::output::upload_scaled;
@@ -193,8 +194,22 @@ impl State {
         match hit {
             Hit::Row(p) => self.apply_launcher(Event::Launch(p)),
             Hit::Bar(b) => {
-                if let Some(v) = self.launcher.as_mut() {
-                    launcher::bar_press(&mut v.model, &self.config.theme, b);
+                let Some(v) = self.launcher.as_mut() else {
+                    return;
+                };
+                launcher::bar_press(&mut v.model, &self.config.theme, b);
+                if v.model.bar_held() {
+                    self.interaction = Interaction::PanelBar;
+                    self.repeat_panel_bar(|state, now| {
+                        let theme = &state.config.theme;
+                        let Some(v) = state.launcher.as_mut() else {
+                            return false;
+                        };
+                        if launcher::bar_tick(&mut v.model, theme, now) {
+                            state.redraw_launcher();
+                        }
+                        state.launcher.as_ref().is_some_and(|v| v.model.bar_held())
+                    });
                 }
                 self.redraw_launcher();
             }
@@ -202,6 +217,23 @@ impl State {
                 self.restart_caret();
                 self.redraw_launcher();
             }
+        }
+    }
+
+    /// The pointer at layout (`lx`, `ly`) with the list's scrollbar held.
+    pub fn launcher_drag(&mut self, lx: f64, ly: f64) {
+        let Some(v) = self.launcher.as_mut() else {
+            return;
+        };
+        let (x, y) = (lx.floor() as i32 - v.at.0, ly.floor() as i32 - v.at.1);
+        if launcher::bar_drag(&mut v.model, &self.config.theme, x, y) {
+            self.redraw_launcher();
+        }
+    }
+
+    pub fn launcher_release(&mut self) {
+        if let Some(v) = self.launcher.as_mut() {
+            v.model.bar_release();
         }
     }
 
@@ -944,6 +976,92 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_pointer_drags_the_lists_thumb_and_lets_go_on_release() {
+        use crate::input::Interaction;
+        use smithay::output::Scale;
+        let apps: Vec<_> = (1..=8)
+            .map(|i| reprisefs::apps::AppEntry {
+                name: format!("Notes {i}"),
+                exec_line: "notes".into(),
+                terminal: false,
+                id: format!("Notes{i}.desktop").parse().unwrap(),
+                icon: None,
+                startup_wm_class: None,
+                categories: Vec::new(),
+                mime_types: Vec::new(),
+                shown: true,
+                path: None,
+            })
+            .collect();
+        for interface in ["classic", "blue", "glass"] {
+            for scale in [1, 2] {
+                let at = format!("{interface} @{scale}");
+                let toml = format!(
+                    "[appearance]\ninterface = \"{interface}\"\n[accessibility]\ntext_size = 200\n"
+                );
+                let config = crate::config::Config::parse(&toml).unwrap();
+                let mut h = crate::harness::Harness::with_config(config);
+                let out = h.output("TEST-1", 720 * scale, 450 * scale);
+                out.change_current_state(None, None, Some(Scale::Integer(scale)), None);
+                h.state.update_layout();
+                h.state.app_index = apps.clone();
+                h.state.toggle_launcher();
+                typed(&mut h, "notes");
+                let rows = (0..8)
+                    .map(|i| launcher::FoundRow {
+                        name: format!("notes {i}.txt"),
+                        detail: "~/Documents".into(),
+                        icon: None,
+                    })
+                    .collect();
+                let v = h.state.launcher.as_mut().unwrap();
+                v.model.set_found(vec![Section {
+                    heading: "Files".into(),
+                    rows,
+                }]);
+                h.state.redraw_launcher();
+                let theme = h.state.config.theme.clone();
+                let v = h.state.launcher.as_ref().unwrap();
+                let lay = launcher::layout(&v.model, &theme);
+                let sb = match lay.bar {
+                    Some(sb) => sb,
+                    None => {
+                        let cm = theme.look.controls_at_100().grown(theme.text);
+                        let ll = reprisekit::controls::listbox::layout(
+                            &v.model.list,
+                            lay.list.unwrap(),
+                            &cm,
+                        );
+                        ll.scrollbar.expect("the list box's scrollbar")
+                    }
+                };
+                let (x, y) = (v.at.0 + sb.x + sb.width / 2, v.at.1 + sb.y + sb.width + 2);
+                h.pointer_to(x as f64, y as f64);
+                h.button(crate::input::BTN_LEFT, true);
+                assert_eq!(h.state.interaction, Interaction::PanelBar, "{at}");
+                h.pointer_to((x - 200) as f64, (v_bottom(&h) + 30) as f64);
+                let top = h.state.launcher.as_ref().unwrap().model.list.top;
+                assert!(top > 0, "{at}: the list followed the thumb");
+                h.button(crate::input::BTN_LEFT, false);
+                assert_eq!(h.state.interaction, Interaction::Idle, "{at}");
+                assert!(!h.state.launcher.as_ref().unwrap().model.bar_held(), "{at}");
+                h.pointer_to(x as f64, y as f64);
+                assert_eq!(
+                    h.state.launcher.as_ref().unwrap().model.list.top,
+                    top,
+                    "{at}: let go, the list stays"
+                );
+            }
+        }
+    }
+
+    /// The launcher panel's bottom edge in layout coordinates.
+    fn v_bottom(h: &crate::harness::Harness) -> i32 {
+        let v = h.state.launcher.as_ref().unwrap();
+        v.at.1 + launcher::layout(&v.model, &h.state.config.theme).height
     }
 
     /// The calculator row's icon.
