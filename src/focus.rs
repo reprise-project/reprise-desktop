@@ -65,7 +65,8 @@ impl State {
     }
 
     /// The focused window goes inactive and leaves the seat's keyboard. An
-    /// exclusive layer surface keeps the seat.
+    /// exclusive layer surface keeps the seat. A fullscreen window goes back
+    /// under its taskbar unless the taskbar holds the keyboard for it.
     pub fn drop_window_focus(&mut self) {
         if !crate::layer::holds_keyboard(self) {
             self.enter_keyboard(None);
@@ -74,6 +75,7 @@ impl State {
         if self.focused.is_some() {
             self.redraw_changed(|s| {
                 s.unfocus();
+                s.restack();
                 s.redraw_taskbars();
                 crate::dim::frame(s);
             });
@@ -469,6 +471,56 @@ mod tests {
         c.activate(&token, explorer);
         h.roundtrip(&mut c);
         assert_eq!(h.state.focused, Some(explorer.id), "the token raises");
+    }
+
+    /// A focused fullscreen window on TEST-1 of two outputs, and its tree's layer.
+    fn fullscreen_on_two_outputs() -> (
+        crate::harness::Harness,
+        crate::harness::TestClient,
+        smithay::output::Output,
+        impl Fn(&crate::harness::Harness) -> Option<reprisescene::TreeId>,
+    ) {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let b = h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.a", 300, 200);
+        h.state.set_fullscreen(t.id, true);
+        h.roundtrip(&mut c);
+        let parent = move |h: &crate::harness::Harness| {
+            h.state.scene.parent(h.state.win(t.id).unwrap().tree)
+        };
+        assert_eq!(
+            parent(&h),
+            Some(h.state.layers.fullscreen),
+            "focused, it covers its bar"
+        );
+        (h, c, b, parent)
+    }
+
+    #[test]
+    fn a_desktop_click_on_another_output_puts_a_fullscreen_window_under_its_taskbar() {
+        let (mut h, _c, b, parent) = fullscreen_on_two_outputs();
+        let b_at = reprisescene::output_rect(&b).expect("TEST-2's place").loc;
+        h.click(f64::from(b_at.x + 600), f64::from(b_at.y + 400));
+        assert_eq!(h.state.focused, None, "the desktop took the keyboard");
+        assert_eq!(
+            parent(&h),
+            Some(h.state.layers.windows),
+            "unfocused, it sits under its bar"
+        );
+    }
+
+    #[test]
+    fn the_taskbar_taking_the_keyboard_keeps_a_fullscreen_window_over_it() {
+        let (mut h, _c, _b, parent) = fullscreen_on_two_outputs();
+        h.pointer_to(500.0, 400.0);
+        h.state.focus_taskbar(false);
+        assert!(
+            h.state.bar_shared.keys.is_some(),
+            "the bar holds the keyboard"
+        );
+        assert_eq!(parent(&h), Some(h.state.layers.fullscreen));
     }
 
     /// Pids no process has, so neither program descends from the other.
