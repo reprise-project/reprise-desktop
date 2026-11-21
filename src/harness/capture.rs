@@ -238,6 +238,12 @@ impl CaptureClient {
         frame
     }
 
+    /// Destroy the wlr-screencopy manager, the connection kept.
+    pub fn wlr_destroy_manager(&mut self, h: &mut Harness) {
+        self.wlr.destroy();
+        self.roundtrip(h);
+    }
+
     /// The damage `frame` reported once it came ready; None while it is not.
     pub fn wlr_ready(&self, frame: &ZwlrScreencopyFrameV1) -> Option<&[Damage]> {
         (self.side.wlr_ready.iter())

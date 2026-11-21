@@ -29,12 +29,12 @@ const WIDTH: i32 = 3;
 /// Two wlr-screencopy frames of one area from one client this close
 /// together make it a recording rather than a screenshot.
 const SUSTAIN: Duration = Duration::from_secs(1);
-/// How long a recording's border outlives its last frame.
+/// How long a wlr recording, its border and a virtual screen's capture rate outlive its last frame.
 #[cfg(not(test))]
-const HOLD: Duration = Duration::from_secs(1);
+pub const HOLD: Duration = Duration::from_secs(1);
 /// Shorter than the sharing dot's test hold, so tests see the dot outlast it.
 #[cfg(test)]
-const HOLD: Duration = Duration::from_millis(100);
+pub const HOLD: Duration = Duration::from_millis(300);
 const TICK: Duration = Duration::from_millis(250);
 
 /// A wlr-screencopy capture: the output, for an area its output-local
@@ -113,6 +113,14 @@ fn live_wlr<'a, K: PartialEq>(
             waiting.contains(&t.key) || (t.sustained && now.duration_since(t.last) <= HOLD)
         })
         .map(|t| &t.key)
+}
+
+/// The wlr captures recorded now ([`live_wlr`]). The border, the sharing dot and a virtual
+/// screen's frame rate all go by these.
+pub fn recorded_wlr(state: &State) -> Vec<WlrKey> {
+    let waiting = state.captures.wlr_waiting();
+    let live = live_wlr(&state.capture_border.tracks, &waiting, Instant::now());
+    live.cloned().collect()
 }
 
 /// The newest frame of a wlr recording still tracked.
@@ -208,14 +216,10 @@ fn shared(
     recorded: Option<&Output>,
 ) -> Vec<Captured<Output, WindowId>> {
     let mut targets = state.captures.targets(with_remote, recorded);
-    let waiting = state.captures.wlr_waiting();
-    let now = Instant::now();
-    targets.extend(live_wlr(&state.capture_border.tracks, &waiting, now).map(
-        |(o, r, _)| match r {
-            Some(r) => Captured::Region(o.clone(), *r),
-            None => Captured::Output(o.clone()),
-        },
-    ));
+    targets.extend(recorded_wlr(state).into_iter().map(|(o, r, _)| match r {
+        Some(r) => Captured::Region(o, r),
+        None => Captured::Output(o),
+    }));
     targets
 }
 
@@ -319,8 +323,7 @@ pub fn wlr_frame(state: &mut State, key: WlrKey) {
 /// Whether the wlr capture `key` is bordered and shared now: a recording, or a damage frame of it
 /// waits.
 pub fn wlr_live(state: &State, key: &WlrKey) -> bool {
-    let waiting = state.captures.wlr_waiting();
-    live_wlr(&state.capture_border.tracks, &waiting, Instant::now()).any(|k| k == key)
+    recorded_wlr(state).contains(key)
 }
 
 /// While wlr captures are tracked: forget the stale ones and drop a

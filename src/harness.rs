@@ -87,6 +87,7 @@ pub mod outputs;
 pub mod screenshot;
 mod touchpad;
 
+pub use capture::CaptureClient;
 pub use lockscreen::{Heard, LockScreen};
 
 /// `BTN_LEFT`.

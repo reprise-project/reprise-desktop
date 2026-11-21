@@ -271,9 +271,16 @@ pub fn pointer_shown(state: &State, output: &Output) -> bool {
     (state.virtual_outputs.screens.iter()).any(|s| &s.output == output && s.pointer_shown)
 }
 
+/// Whether a capture shows `output`: a session, a waiting frame or a wlr recording
+/// (`captureborder::recorded_wlr`), so a screenshot leaves it uncaptured.
+fn captured(state: &State, output: &Output) -> bool {
+    state.captures.shows_output(output)
+        || (crate::captureborder::recorded_wlr(state).iter()).any(|(o, _, _)| o == output)
+}
+
 /// `backend::schedule` and the like on a virtual screen.
 pub fn ask(state: &mut State, output: &Output, ask: Ask) {
-    let captured = state.captures.shows_output(output);
+    let captured = captured(state, output);
     let Some(want) = wants(ask, captured) else {
         return;
     };
@@ -323,7 +330,7 @@ fn want_tick(state: &mut State, output: &Output, want: Wants) {
 
 /// Arm the clock for the next tick (`due`), or earlier than armed when a capture began meanwhile.
 fn arm(state: &mut State, output: &Output) {
-    let captured = state.captures.shows_output(output);
+    let captured = captured(state, output);
     let interval = interval(captured, state.config.remote_desktop.frame_rate);
     // Instant and State::now read one monotonic clock. Reading `mono` first puts the deadline at
     // or after `timed`, so the tick finds it due.
@@ -433,7 +440,7 @@ pub fn tick_now(state: &mut State, output: &Output) {
 /// its frame callbacks let through) asked for a whole frame.
 fn frame(state: &mut State, output: &Output, mut drew: Drew, shows_at: Duration) {
     crate::backend::advance(state, output);
-    let captured = state.captures.shows_output(output);
+    let captured = captured(state, output);
     if captured && let Some(b) = state.backend.as_mut() {
         let stepped = state.water.step(&mut b.renderer, output);
         if stepped.moved || stepped.fell {
