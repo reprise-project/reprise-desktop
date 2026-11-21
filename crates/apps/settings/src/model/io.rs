@@ -172,6 +172,30 @@ pub fn keys_apart(a: &Settings, b: &Settings) -> Vec<Key> {
         .collect()
 }
 
+/// The keys the sheet edits that `text` sets, whatever their values.
+pub fn keys_in(text: &str) -> Vec<Key> {
+    let Ok(doc) = text.parse::<DocumentMut>() else {
+        return Vec::new();
+    };
+    (fields().iter())
+        .map(|f| *f.key())
+        .filter(|k| get(&doc, k).is_some())
+        .collect()
+}
+
+/// `text` with `keys` taken out, and the tables they leave empty.
+pub fn without_keys(text: &str, keys: &[Key]) -> Result<String, String> {
+    let mut doc = text.parse::<DocumentMut>().map_err(|e| e.to_string())?;
+    for k in keys {
+        if get(&doc, k).is_none() {
+            continue;
+        }
+        remove(&mut doc, k);
+        remove_table_if_empty(&mut doc, k.table);
+    }
+    Ok(doc.to_string())
+}
+
 #[cfg(test)]
 pub fn keys() -> Vec<Key> {
     fields().iter().map(|f| *f.key()).collect()
