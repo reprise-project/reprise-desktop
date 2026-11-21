@@ -301,14 +301,18 @@ fn a_selection_across_a_soft_break_lights_both_rows() {
             .collect()
     };
     let row0 = lit_in(0);
-    assert_eq!(row0.first(), Some(&x("xx x")), "from the anchor");
+    assert_eq!(
+        row0.first(),
+        Some(&(x("xx x") - 1)),
+        "from a pixel before the anchor's x, which inks its pen's column"
+    );
     assert_eq!(
         row0.last(),
         Some(&(x("xx xx ").min(r.width - 1) - 1)),
         "through the hanging space"
     );
     let row1 = lit_in(1);
-    assert_eq!(row1.first(), Some(&1));
+    assert_eq!(row1.first(), Some(&0), "from the inset left of the row");
     assert_eq!(row1.last(), Some(&(x("x") - 1)), "no line break is lit");
 }
 

@@ -1523,8 +1523,9 @@ pub fn select_drag(
 
 /// Draw the control: edge, box, lines from `view.top`, selection on `hilight`, the caret (a 1 px
 /// [`CaretBar`]) in the blink's shown half or, while a drag would `drop` text, a bar inverting
-/// what it covers at that point instead, and the scrollbars the layout calls for. On a blink-only frame
-/// the caret bar is the damage (an empty rect when it is scrolled out of view).
+/// what it covers at that point instead, and the scrollbars the layout calls for. A row selected
+/// from its start takes the inset column left of the text, so such rows share their left edge. On
+/// a blink-only frame the caret bar is the damage (an empty rect when it is scrolled out of view).
 #[expect(clippy::too_many_arguments)]
 pub fn draw(
     c: &mut Canvas,
@@ -1612,7 +1613,11 @@ pub fn draw(
             }
             let run = Rect::new(xa, y, (xb - xa).max(0), line_h);
             let (bold, px) = (m.bold, m.font_px);
+            // A pixel below the row clears a descender; the next row's text draws over it.
+            let room = Rect::new(ink_clip.x, y, ink_clip.width, line_h + 1).intersect(&ink_clip);
             let hl = text.highlight(run, &shown, sa..sb, x0, line_r, bold, px, c.scale());
+            let hl = hl.clear_of_ink(room);
+            let hl = if sa == 0 { hl.starting_by(x0 - 1) } else { hl };
             hl.fill(c, ink_clip, cs.hilight);
             row_hl = Some((hl, run));
         }

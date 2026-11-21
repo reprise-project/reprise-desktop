@@ -1561,3 +1561,140 @@ fn a_caret_past_a_widened_highlight_at_scale_2_blinks_in_its_damage_and_clip() {
         );
     }
 }
+
+/// Rows starting and ending with digits inked from their first column and with descenders, for
+/// selections that start and end at row edges.
+const EDGE_ROWS: &str = "8605\ngjpqy\n8605 gjpqy\ngjpqy 8605";
+const EDGE_SELECTIONS: [((usize, usize), (usize, usize)); 6] = [
+    ((0, 0), (3, 10)),
+    ((0, 0), (1, 5)),
+    ((1, 0), (3, 10)),
+    ((1, 0), (2, 10)),
+    ((2, 0), (2, 10)),
+    ((3, 0), (3, 10)),
+];
+
+/// A selection over rows keeps every selected glyph's edge on the highlight, left, right, above
+/// and below, with "8605" and "gjpqy" at the rows' starts and ends, Tahoma and DejaVu Sans at 11
+/// and 13 px, scale 1 and 2.
+#[test]
+fn a_selection_over_rows_keeps_its_glyphs_edges_on_the_highlight() {
+    crate::pins::fonts();
+    let cs = &Theme::default().colors;
+    let (w, h) = (150, 90);
+    let lines: Vec<&str> = EDGE_ROWS.split('\n').collect();
+    let mut faults = Vec::new();
+    for family in ["Tahoma", "DejaVu Sans"] {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            antialias: false,
+            ..FontConfig::default()
+        });
+        for px in [11, 13] {
+            let m = Metrics {
+                bars_always: false,
+                ..Metrics::for_font(&text, px)
+            };
+            let lay = layout(&text, &m, &e(EDGE_ROWS), Rect::new(0, 0, w, h), 1);
+            let inner = lay.inner;
+            let x0 = inner.x + 1;
+            let room = Rect::new(inner.x, inner.y + 1, inner.width - 1, inner.height - 2);
+            for s in [1, 2] {
+                let paint = |sel: Option<(Pos, Pos)>| {
+                    let mut t = e(EDGE_ROWS);
+                    if let Some((a, b)) = sel {
+                        t.place(a, false);
+                        t.place(b, true);
+                    }
+                    let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                    let paint = classic_paint(cs, 1);
+                    let v = View::default();
+                    draw(&mut c, &text, &paint, &m, &t, v, &lay, Caret::Hidden, None);
+                    c.pixels
+                };
+                let plain = paint(None);
+                for ((al, ac), (bl, bc)) in EDGE_SELECTIONS {
+                    let selected = paint(Some((p(al, ac), p(bl, bc))));
+                    let rows: Vec<crate::paint::SelectedRow> = (lines.iter().enumerate())
+                        .map(|(li, line)| {
+                            let a = if li == al { ac } else { 0 };
+                            let b = if li == bl {
+                                bc.min(line.len())
+                            } else {
+                                line.len()
+                            };
+                            let sel = if (al..=bl).contains(&li) { a..b } else { 0..0 };
+                            let y = inner.y + 1 + li as i32 * m.line_h;
+                            let width = text.measure(line, false, px).max(inner.right() - x0);
+                            (*line, sel, x0, Rect::new(x0 - 1, y, width + 1, m.line_h))
+                        })
+                        .collect();
+                    let lost = crate::paint::lost_selected_ink(
+                        &text,
+                        px,
+                        (w, h),
+                        &rows,
+                        room,
+                        s,
+                        (&plain, &selected),
+                        cs.hilight_text,
+                    );
+                    if !lost.is_empty() {
+                        faults.push(format!(
+                            "{family} {px} px @{s} {al}:{ac}..{bl}:{bc}: {} px, first {:?}",
+                            lost.len(),
+                            lost[0]
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} faults\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+}
+
+/// Rows selected from their start share the inset column left of the text as their left edge,
+/// whether or not their first glyph inks its pen's column.
+#[test]
+fn rows_selected_from_their_start_share_one_left_edge() {
+    crate::pins::fonts();
+    let text = TextRenderer::load(&FontConfig::default());
+    let cs = &Theme::default().colors;
+    let m = Metrics::default();
+    let mut t = e("8605\nTo\n gjpqy");
+    t.place(p(0, 0), false);
+    t.place(p(2, 6), true);
+    let lay = layout(&text, &m, &t, Rect::new(0, 0, 120, 60), 1);
+    let mut c = Canvas::new(120, 60);
+    let v = View::default();
+    draw(
+        &mut c,
+        &text,
+        &classic_paint(cs, 1),
+        &m,
+        &t,
+        v,
+        &lay,
+        Caret::Hidden,
+        None,
+    );
+    let x0 = lay.inner.x + 1;
+    for row in 0..3 {
+        let y = lay.inner.y + 1 + row * m.line_h + m.line_h / 2;
+        assert_eq!(
+            c.get(x0 - 1, y),
+            cs.hilight.argb(),
+            "row {row} starts in the inset"
+        );
+        assert_ne!(
+            c.get(x0 - 2, y),
+            cs.hilight.argb(),
+            "row {row}: the frame stays"
+        );
+    }
+}

@@ -500,7 +500,7 @@ pub fn draw_cell_at(
         let sel = edit.selection();
         let mut caret = None;
         let dev = c.scale();
-        for l in &lay.lines {
+        for (i, l) in lay.lines.iter().enumerate() {
             let end = l.start + l.text.len();
             let at = |b: usize| l.at(text, font, b);
             let ly = y0 + l.y;
@@ -511,9 +511,14 @@ pub fn draw_cell_at(
             let (a, b) = (sel.start.max(l.start), sel.end.min(end + 1));
             let ga = a.min(end);
             let glyphs = ga - l.start..b.min(end).max(ga) - l.start;
+            // The line above has drawn its ink already, so only the first line's highlight may
+            // reach up past its own rows.
+            let top = if i == 0 { r.y + s } else { ly };
+            let room = Rect::new(r.x + s, top, r.width - 2 * s, r.bottom() - s - top);
             let hl = |b: usize, h: i32| {
                 let hl = Rect::new(at(a), ly, at(b) - at(a), h);
                 text.highlight(hl, &l.text, glyphs.clone(), l.x, line_r, false, font, dev)
+                    .clear_of_ink(room)
             };
             if a < b {
                 let all = c.bounds();
@@ -1383,7 +1388,9 @@ mod tests {
         let run1 = t.measure("New Text", false, font) + t.measure(" ", false, font);
         let x1 = bx + 1 + (bw - 2 - run1) / 2;
         assert_eq!(c.get(x1, by + 1), 0xFFFFFFFF);
-        assert_eq!(c.get(x1 - 1, by + 2), 0xFFFFFFFF);
+        // The N inks its pen's column, so the highlight holds a pixel left of it.
+        assert_eq!(c.get(x1 - 2, by + 2), 0xFFFFFFFF);
+        assert_eq!(c.get(x1 - 1, by + 2), hl);
         assert_eq!(c.get(x1, by + 2), hl);
         assert_eq!(c.get(x1 + run1 - 1, by + 2), hl);
         assert_eq!(c.get(x1 + run1, by + 2), 0xFFFFFFFF);
@@ -2164,6 +2171,95 @@ mod tests {
                 theme.colors.hilight_text,
             );
             faults.extend(found.into_iter().map(|f| format!("{family}: {f}")));
+        }
+        assert!(
+            faults.is_empty(),
+            "{} faults\n{}",
+            faults.len(),
+            faults.join("\n")
+        );
+    }
+
+    /// A rename box's selection keeps every selected glyph's edge on the highlight, left, right,
+    /// above and below, with "8605" and "gjpqy" at its lines' starts and ends, Tahoma and DejaVu
+    /// Sans at 11 and 13 px, scale 1 and 2.
+    #[test]
+    fn a_rename_selection_keeps_its_glyphs_edges_on_the_highlight() {
+        crate::pins::fonts();
+        let mut faults = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.into()],
+                antialias: false,
+                ..FontConfig::default()
+            });
+            for px in [11, 13] {
+                let mut theme = Theme::default();
+                theme.fonts.size_px = px;
+                let cell = Cell::grown(theme.text);
+                let (w, h) = (cell.w, cell.h);
+                let line_h = px as i32 + theme.text.len(3);
+                for s in [1, 2] {
+                    let draw = |t: &str, sel: std::ops::Range<usize>| {
+                        let mut edit = TextEdit::new(t, false);
+                        edit.set_selection(sel.start, sel.end);
+                        let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                        let rename = Some((&edit, Caret::Hidden));
+                        let g = Ground::Wallpaper;
+                        draw_cell_at(
+                            &mut c,
+                            (0, 0),
+                            cell,
+                            &theme,
+                            &text,
+                            t,
+                            None,
+                            false,
+                            None,
+                            rename,
+                            g,
+                        );
+                        c.pixels
+                    };
+                    for t in ["8605", "gjpqy", "8605 gjpqy", "gjpqy 8605"] {
+                        let lay = edit_layout(&theme, &text, &TextEdit::new(t, false), w);
+                        let r = lay.rect;
+                        let room = Rect::new(r.x + 1, r.y + 1, r.width - 2, r.height - 2);
+                        let plain = draw(t, 0..0);
+                        let words = std::iter::once(0..t.len()).chain(
+                            (t.find(' ').into_iter()).flat_map(|sp| [0..sp, sp + 1..t.len()]),
+                        );
+                        for sel in words {
+                            let selected = draw(t, sel.clone());
+                            let rows: Vec<crate::paint::SelectedRow> = (lay.lines.iter())
+                                .map(|l| {
+                                    let a = sel.start.clamp(l.start, l.start + l.text.len());
+                                    let b = sel.end.clamp(a, l.start + l.text.len());
+                                    let line = Rect::new(r.x + 1, l.y, r.width - 2, line_h);
+                                    (l.text.as_str(), a - l.start..b - l.start, l.x, line)
+                                })
+                                .collect();
+                            let lost = crate::paint::lost_selected_ink(
+                                &text,
+                                px,
+                                (w, h),
+                                &rows,
+                                room,
+                                s,
+                                (&plain, &selected),
+                                theme.colors.hilight_text,
+                            );
+                            if !lost.is_empty() {
+                                faults.push(format!(
+                                    "{family} {px} px @{s} {t:?} {sel:?}: {} px, first {:?}",
+                                    lost.len(),
+                                    lost[0]
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
         }
         assert!(
             faults.is_empty(),
