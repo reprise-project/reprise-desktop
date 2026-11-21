@@ -83,10 +83,16 @@ pub enum Tap<'a> {
     Microphone,
 }
 
+/// How long the microphone's stream may stay unlinked after it streamed before its capture ends:
+/// WirePlumber moves it to a new default source well within that.
+const UNLINKED_FOR: Duration = Duration::from_secs(2);
+
 /// Capture `tap` into `samples`: S16LE stereo at `rate`, in the chunks PipeWire hands over, each
 /// with the time of the cycle that queued it, so chunks the thread takes late in a burst keep
-/// their own times. Runs until a stop from `stopped`, a core error or, for a named sink, the sink
-/// going; a stream error is the Err. The stream is called `name` for program `app`.
+/// their own times. Runs until a stop from `stopped`, a core error, for a named sink the sink
+/// going or, for the microphone, its source going with none to follow; a stream error is the Err,
+/// [`NO_MICROPHONE`] for the microphone's before it streamed.
+/// The stream is called `name` for program `app`.
 pub fn capture(
     tap: Tap,
     app: &str,
@@ -96,7 +102,6 @@ pub fn capture(
     stopped: pipewire::channel::Receiver<()>,
 ) -> Result<(), String> {
     pipewire::init();
-    // The stream's error, as WirePlumber's when no source is there, is the Err the caller logs.
     connect(stopped, log::Level::Debug, |main_loop, core, _| {
         let mut props = properties! {
             *pipewire::keys::MEDIA_TYPE => "Audio",
@@ -114,13 +119,18 @@ pub fn capture(
         let stream = StreamRc::new(core.clone(), name, props).map_err(|e| e.to_string())?;
         let weak = main_loop.downgrade();
         let failed = Rc::new(RefCell::new(None));
+        let unlinked = Rc::new(Cell::new(Unlinked::default()));
+        let microphone = tap == Tap::Microphone;
         let _listener = stream
             .add_local_listener_with_user_data(samples)
             .state_changed({
-                let failed = failed.clone();
-                move |_, _, _, new| {
+                let (failed, unlinked) = (failed.clone(), unlinked.clone());
+                move |_, _, old, new| {
+                    let mut u = unlinked.get();
+                    u.changed(&old, &new, Instant::now());
+                    unlinked.set(u);
                     if let StreamState::Error(e) = new {
-                        *failed.borrow_mut() = Some(e);
+                        *failed.borrow_mut() = Some(if microphone { u.why(e) } else { e });
                         if let Some(l) = weak.upgrade() {
                             l.quit();
                         }
@@ -159,11 +169,65 @@ pub fn capture(
                 &mut [pod],
             )
             .map_err(|e| e.to_string())?;
+        let _gone = microphone.then(|| {
+            let (failed, weak) = (failed.clone(), main_loop.downgrade());
+            let timer = main_loop.loop_().add_timer(move |_| {
+                if unlinked.get().gone(Instant::now()) {
+                    *failed.borrow_mut() = Some("The source went away.".to_string());
+                    if let Some(l) = weak.upgrade() {
+                        l.quit();
+                    }
+                }
+            });
+            let every = UNLINKED_FOR / 4;
+            if let Err(e) = timer.update_timer(Some(every), Some(every)).into_result() {
+                log::warn!("sound: a lost microphone goes unnoticed: {e}");
+            }
+            timer
+        });
         log::info!("sound: capturing \"{name}\"");
         main_loop.run();
         let _ = stream.disconnect();
         failed.take().map_or(Ok(()), Err)
     })
+}
+
+/// The microphone's capture error when its stream failed before it ever streamed, as WirePlumber
+/// fails it when no source is there.
+pub const NO_MICROPHONE: &str = "No microphone was found.";
+
+/// Whether a stream has streamed, and since when it has been unlinked from its source after.
+#[derive(Clone, Copy, Debug, Default)]
+struct Unlinked {
+    streamed: bool,
+    since: Option<Instant>,
+}
+
+impl Unlinked {
+    fn changed(&mut self, old: &StreamState, new: &StreamState, now: Instant) {
+        match (old, new) {
+            (StreamState::Streaming, StreamState::Paused) => self.since = Some(now),
+            (_, StreamState::Streaming) => {
+                self.streamed = true;
+                self.since = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// The microphone's capture Err for the stream error `e`.
+    fn why(&self, e: String) -> String {
+        if !self.streamed {
+            log::info!("sound: the microphone did not open: {e}");
+            return NO_MICROPHONE.to_string();
+        }
+        e
+    }
+
+    fn gone(&self, now: Instant) -> bool {
+        self.since
+            .is_some_and(|t| now.saturating_duration_since(t) >= UNLINKED_FOR)
+    }
 }
 
 /// The first data block of a dequeued `buffer`.
@@ -221,5 +285,31 @@ mod tests {
         let at = cycle_instant(5_000_000_000, 5_120_000_000, now);
         assert_eq!(now - at, Duration::from_millis(120));
         assert_eq!(cycle_instant(0, 5_120_000_000, now), now, "unset");
+    }
+
+    #[test]
+    fn a_stream_unlinked_after_streaming_is_gone_unless_relinked_in_time() {
+        use StreamState::{Connecting, Paused, Streaming};
+        let t = Instant::now();
+        let mut u = Unlinked::default();
+        u.changed(&Connecting, &Paused, t);
+        assert!(!u.gone(t + UNLINKED_FOR), "not yet streamed");
+        u.changed(&Paused, &Streaming, t);
+        u.changed(&Streaming, &Paused, t);
+        assert!(!u.gone(t + UNLINKED_FOR / 2));
+        assert!(u.gone(t + UNLINKED_FOR));
+        u.changed(&Paused, &Streaming, t + UNLINKED_FOR / 2);
+        assert!(!u.gone(t + UNLINKED_FOR * 2), "moved to another source");
+    }
+
+    #[test]
+    fn a_microphone_failing_before_it_streamed_was_not_found() {
+        use StreamState::{Connecting, Paused, Streaming};
+        let unplugged = || "no target node available".to_string();
+        let mut u = Unlinked::default();
+        u.changed(&Connecting, &Paused, Instant::now());
+        assert_eq!(u.why(unplugged()), NO_MICROPHONE);
+        u.changed(&Paused, &Streaming, Instant::now());
+        assert_eq!(u.why(unplugged()), unplugged());
     }
 }
