@@ -1020,3 +1020,41 @@ fn the_titles_keep_their_descenders_at_every_text_size() {
     }
     assert_eq!(cut, Vec::new(), "(text size, line, ink rows cut)");
 }
+
+/// A reader's Click reaches every row of an open output combo at the row's own middle in
+/// columns that scroll, and a press there picks the row.
+#[test]
+fn a_readers_click_picks_each_row_of_an_open_output_combo() {
+    use crate::access::{Act, Request, Route};
+    let text = TextRenderer::load(&Theme::default().fonts);
+    for row in 0..3 {
+        let mut m = Mixer::new(&routed_lines(), false);
+        let (w, h) = (250, 290);
+        let l = lay_in(&m, &Theme::default(), Rect::new(0, 0, w, h));
+        assert!(l.bar.is_some(), "the columns scroll");
+        let field = col(&l, 1).output.as_ref().unwrap().field;
+        m.press(&l, field.x + 4, field.y + 4);
+        m.release();
+        let mut tree = Tree::window("Volume Control", (w, h));
+        m.access(&l, &text, 11, &mut tree, access::ROOT);
+        let options: Vec<_> = (tree.nodes())
+            .filter(|(_, n)| n.role() == Role::ListBoxOption && n.bounds().is_some())
+            .map(|(id, n)| (id, n.bounds().unwrap()))
+            .collect();
+        assert_eq!(options.len(), 3, "the open list's rows");
+        let mut p = access::Published::default();
+        p.update(tree);
+        let (id, b) = options[row];
+        let Route::Act(t) = p.route(Request {
+            node: id,
+            act: Act::Click,
+        }) else {
+            panic!("row {row}: acted on");
+        };
+        assert_eq!(t.at, ((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0));
+        m.press(&l, t.at.0 as i32, t.at.1 as i32);
+        m.release();
+        let c = m.columns[1].output.as_ref().unwrap();
+        assert_eq!((c.selected, c.open), (row, None), "row {row} picked");
+    }
+}

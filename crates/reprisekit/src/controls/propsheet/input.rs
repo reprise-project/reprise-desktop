@@ -1,7 +1,7 @@
-use crate::classic::widgets::{LINE_H, bar_hit};
 use crate::controls::form;
 use crate::controls::hosted::Hosted;
 use crate::controls::pagelist::{self, PageList, Pick};
+use crate::controls::scrollview;
 use crate::controls::{searchfield, tabstrip};
 use crate::text::TextRenderer;
 use crate::textedit::EditKey;
@@ -390,6 +390,9 @@ impl PropSheet {
     }
 
     pub fn hit(&self, x: i32, y: i32, text: &TextRenderer, px: u32) -> Option<Hit> {
+        if let Some(h) = self.open().popup_hit(x, y) {
+            return Some(Hit::Control(h));
+        }
         let l = self.layout(text, px);
         if let Some(field) = l.search.filter(|&f| searchfield::hit(f, x, y)) {
             let font = text.dialog(self.font);
@@ -410,11 +413,12 @@ impl PropSheet {
         if let Some(i) = tabstrip::hit(&l.tabs, x, y) {
             return Some(Hit::Tab(i));
         }
-        if let Some(bar) = l.bar.filter(|b| b.contains(x, y)) {
-            return Some(Hit::PageBar(bar_hit(&self.bar_parts(bar), x, y, false)));
-        }
-        if let Some(bar) = l.hbar.filter(|b| b.contains(x, y)) {
-            return Some(Hit::PageHBar(bar_hit(&self.hbar_parts(bar), x, y, true)));
+        let thumb_min = self.open().controls().thumb_min;
+        let view = self.page_view(l.page);
+        match self.scroll.hit(&self.view_frame(), &view, thumb_min, x, y) {
+            Some(scrollview::Hit::Down(b)) => return Some(Hit::PageBar(b)),
+            Some(scrollview::Hit::Across(b)) => return Some(Hit::PageHBar(b)),
+            None => {}
         }
         self.open().hit(x, y, text, px).map(Hit::Control)
     }
@@ -518,14 +522,12 @@ impl PropSheet {
             Some(Hit::ListBar(b)) => Some(b),
             _ => None,
         };
-        let (page_bar, page_hbar) = match hit {
-            Some(Hit::PageBar(b)) => (Some(b), None),
-            Some(Hit::PageHBar(b)) => (None, Some(b)),
-            _ => (None, None),
+        let page_bar = match hit {
+            Some(Hit::PageBar(b)) => Some(scrollview::Hit::Down(b)),
+            Some(Hit::PageHBar(b)) => Some(scrollview::Hit::Across(b)),
+            _ => None,
         };
-        let lit = self.on_list(|list, _| list.bar_hover(bar))
-            | self.scroll.motion(page_bar)
-            | self.hscroll.motion(page_hbar);
+        let lit = self.on_list(|list, _| list.bar_hover(bar)) | self.scroll.motion(page_bar);
         if let Some(moved) = self.page_bar_drag(x, y) {
             return if moved || lit {
                 Event::Redraw
@@ -584,11 +586,8 @@ impl PropSheet {
     /// that scrolls only that way. A host that routes the wheel to the page itself calls it
     /// when the page took none.
     pub fn wheel_page(&mut self, rows: i32) -> Event {
-        if self.range() == 0 {
-            return self.wheel_across(rows);
-        }
-        let to = self.scroll.top + rows * LINE_H;
-        if self.scroll_to(to) {
+        let by = self.scroll.wheel(&self.view_frame(), rows);
+        if self.moved(by) {
             Event::Redraw
         } else {
             Event::None
@@ -596,8 +595,8 @@ impl PropSheet {
     }
 
     fn wheel_across(&mut self, rows: i32) -> Event {
-        let to = self.hscroll.top + rows * LINE_H;
-        if self.scroll_across(to) {
+        let by = self.scroll.wheel_across(&self.view_frame(), rows);
+        if self.moved(by) {
             Event::Redraw
         } else {
             Event::None
@@ -605,8 +604,7 @@ impl PropSheet {
     }
 
     pub fn leave(&mut self) -> Event {
-        let bar =
-            self.on_list(|list, _| list.bar_leave()) | self.scroll.leave() | self.hscroll.leave();
+        let bar = self.on_list(|list, _| list.bar_leave()) | self.scroll.leave();
         let i = self.tabs.open;
         let lit = (self.tabs.hover(None) && self.pages[i].styled()) || bar;
         let ev = self.pages[i].leave();
@@ -644,32 +642,24 @@ impl PropSheet {
     /// changed. [`PropSheet::release`] does it; a host that routes the page's release itself
     /// calls it first.
     pub fn release_bars(&mut self) -> bool {
-        self.scroll.release() | self.hscroll.release()
+        self.scroll.release()
     }
 
     /// Whether the pointer holds a thumb or an arrow of the page's scrollbars.
     pub fn holding_bar(&self) -> bool {
         self.scroll.holding()
-            || self.hscroll.holding()
-            || self.scroll.ticking()
-            || self.hscroll.ticking()
     }
 
     /// Whether the page list or the page has a scrollbar arrow held: the host sends
     /// [`PropSheet::tick`] until it lets go.
     pub fn ticking(&self) -> bool {
-        self.scroll.ticking()
-            || self.hscroll.ticking()
-            || matches!(&self.nav, Nav::List(list) if list.repeating())
+        self.scroll.ticking() || matches!(&self.nav, Nav::List(list) if list.repeating())
     }
 
     /// A host tick at `now`: a held arrow steps once it repeats, while the pointer is on it.
     pub fn tick(&mut self, now: std::time::Instant) -> Event {
-        let page = self.scroll.tick(now).is_some_and(|to| self.scroll_to(to))
-            | self
-                .hscroll
-                .tick(now)
-                .is_some_and(|to| self.scroll_across(to));
+        let by = self.scroll.tick(&self.view_frame(), now);
+        let page = self.moved(by);
         if self.on_list(|list, lay| list.bar_tick(now, lay)) || page {
             Event::Redraw
         } else {

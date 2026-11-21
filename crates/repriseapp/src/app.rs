@@ -255,7 +255,7 @@ pub fn reader_forms<A: Extended + ?Sized>(app: &mut A, win: WinId, act: Reader, 
     let (w, h) = dlg.client();
     let r = Rect::new(0, 0, w, h);
     let ev = match act {
-        Reader::Reveal { at, row } => dlg.reveal(&ctx.text, px, r, at, row),
+        Reader::Reveal { at, row, .. } => dlg.reveal(&ctx.text, px, r, at, row),
         Reader::Focus(at) => dlg.focus_at(&ctx.text, px, r, at),
     };
     !matches!(ev, reprisekit::controls::filedlg::Event::None)

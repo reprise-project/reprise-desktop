@@ -476,6 +476,17 @@ impl TextUnits {
         )
     }
 
+    /// The least 100% rect that [`TextUnits::rect`] grows to cover `r`, a rect at the text size.
+    pub fn covering(self, r: Rect) -> Rect {
+        let (x, y) = (self.within(r.x), self.within(r.y));
+        Rect::new(
+            x,
+            y,
+            self.design(r.right()) - x,
+            self.design(r.bottom()) - y,
+        )
+    }
+
     /// `r` moved to where its top-left maps, its size kept: a picture or a fixed control.
     pub fn at(self, r: Rect) -> Rect {
         Rect::new(self.len(r.x), self.len(r.y), r.width, r.height)

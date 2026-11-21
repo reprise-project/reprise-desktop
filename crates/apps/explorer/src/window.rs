@@ -462,7 +462,10 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
 /// A reader's ScrollIntoView, or Focus on a row out of view: the view's entry or the Folders
 /// tree's row at `act`'s list scrolls in. True when one moved.
 pub fn reader(ex: &mut Explorer, act: repriseapp::Reader, ctx: &Ctx) -> bool {
-    let repriseapp::Reader::Reveal { at: (x, y), row } = act else {
+    let repriseapp::Reader::Reveal {
+        at: (x, y), row, ..
+    } = act
+    else {
         return false;
     };
     let lay = ex.layout(ctx);

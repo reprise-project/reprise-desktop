@@ -33,21 +33,43 @@ impl Form {
         text: &TextRenderer,
         px: u32,
     ) -> Option<NodeId> {
+        self.access_in(tree, parent, None, text, px)
+    }
+
+    /// [`Form::access`] for a form scrolled under a [`View`](super::View): the controls it
+    /// scrolls go under `view`, the scroll view node a host made for it, when there is one, and
+    /// the ones it keeps under `parent`. A scrolled control's nodes are cut to the view.
+    pub fn access_in(
+        &self,
+        tree: &mut Tree,
+        parent: NodeId,
+        view: Option<NodeId>,
+        text: &TextRenderer,
+        px: u32,
+    ) -> Option<NodeId> {
         let mut groups: Vec<(Rect, NodeId)> = Vec::new();
+        let mut clip: Option<(usize, Rect)> = None;
         let mut label: Option<NodeId> = None;
         let mut focus = None;
         let cm = self.rendered.controls.get();
         let text = text.dialog(self.font);
         for (i, it) in self.items.iter().enumerate() {
+            if let Some((from, c)) = clip.take() {
+                tree.clip(from, c);
+            }
+            clip = self.clip_of(it).map(|c| (tree.pushed(), c));
             let r = self.at(it);
             let within = |g: &Rect| {
                 g.contains(r.x, r.y) && r.right() <= g.right() && r.bottom() <= g.bottom()
             };
-            let up = groups
-                .iter()
-                .rev()
-                .find(|(g, _)| within(g))
-                .map_or(parent, |(_, id)| *id);
+            // A kept control stays out of the groups the view scrolls under it.
+            let kept = self.view.is_some_and(|v| v.keep.contains(&it.id));
+            let up = (groups.iter().rev())
+                .find(|(g, _)| !kept && within(g))
+                .map_or(
+                    if kept { parent } else { view.unwrap_or(parent) },
+                    |(_, id)| *id,
+                );
             let key = (it.id, i);
             let (target, bare) = match &it.control {
                 Control::Label {
@@ -240,6 +262,9 @@ impl Form {
             if self.focus == Some(i) {
                 focus = Some(target);
             }
+        }
+        if let Some((from, c)) = clip {
+            tree.clip(from, c);
         }
         focus
     }
