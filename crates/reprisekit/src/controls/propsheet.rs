@@ -402,7 +402,16 @@ impl PropSheet {
 
     fn restore_rect(&self) -> Rect {
         let (ok, ..) = buttons(self.shown());
-        Rect::new(MARGIN + self.page_dx(), ok.y, RESTORE_W, BUTTON_H)
+        Rect::new(self.restore_x(ok.x), ok.y, RESTORE_W, BUTTON_H)
+    }
+
+    /// Restore Defaults' x with OK at `ok_x`: under the page's left edge, or as far left as
+    /// the margin when OK comes closer than a button gap.
+    fn restore_x(&self, ok_x: i32) -> i32 {
+        let gap = BUTTON_PITCH - BUTTON_W;
+        (MARGIN + self.page_dx())
+            .min(ok_x - gap - RESTORE_W)
+            .max(MARGIN)
     }
 
     /// Grey or ungrey Apply on every page (the sheet shares one button row). A page whose focus

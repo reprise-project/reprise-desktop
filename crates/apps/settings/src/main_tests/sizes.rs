@@ -236,6 +236,64 @@ fn at_200_percent_a_window_shorter_than_the_sheet_keeps_its_buttons_in_it() {
     }
 }
 
+/// At 200% on a 960x540 work area (a 1920x1080 screen at scale 2) the window is narrower than
+/// the sheet under every interface: Restore Defaults moves left to stay clear of OK, and the
+/// whole button row shows.
+#[test]
+fn at_200_percent_a_window_narrower_than_the_sheet_keeps_restore_defaults_clear_of_ok() {
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let m = reprisekit::interfaces::theme_for(i)
+            .with_text_size(200)
+            .metrics;
+        let (w, h) = FrameGeometry::client_size_for_total(
+            &m,
+            960,
+            540 - m.taskbar_height,
+            false,
+            Chrome::WINDOW,
+        );
+        let dir = tmp(&format!("narrow-200-{}", i.as_str()));
+        let path = dir.join("config.toml");
+        std::fs::write(
+            &path,
+            format!("[appearance]\ninterface = \"{}\"\n", i.as_str()),
+        )
+        .unwrap();
+        let mut app = SettingsApp::open(path, "us".into());
+        let mut ctx = test_ctx();
+        ctx.theme = reprisekit::interfaces::theme_for(i);
+        ctx.text_size = 200;
+        assert!(
+            ctx.forms().text.len(544) > w,
+            "{i:?}: the sheet is wider than {w}"
+        );
+        ctx.size = (w, h);
+        app.event(MAIN, Event::Resized, &mut ctx);
+        let mut c = Canvas::new(w as u32, h as u32);
+        let mut seen = 0;
+        for pg in Page::all() {
+            app.sheet.tabs.open = pg.index();
+            app.draw(MAIN, &mut c, &ctx);
+            let page = app.sheet.open();
+            let Some(restore) = page.rect(propsheet::RESTORE) else {
+                continue;
+            };
+            seen += 1;
+            let [ok, cancel, apply] = [propsheet::OK, propsheet::CANCEL, propsheet::APPLY]
+                .map(|id| page.rect(id).unwrap());
+            assert!(
+                restore.right() < ok.x,
+                "{i:?} {pg:?}: {restore:?} clear of OK at {ok:?}"
+            );
+            assert!(
+                restore.x >= 0 && apply.right() <= w && cancel.x > ok.right(),
+                "{i:?} {pg:?}: the row {restore:?} .. {apply:?} shows in {w}"
+            );
+        }
+        assert!(seen > 0, "{i:?}: pages with Restore Defaults");
+    }
+}
+
 /// `--focus` names a control before the window has a size: once the window comes up shorter
 /// than the sheet at 200%, the page scrolls to show the control.
 #[test]
