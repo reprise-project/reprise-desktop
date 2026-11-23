@@ -48,6 +48,7 @@ fn classic_dialog_has_a_close_button_and_a_focus_ring() {
         None,
         Cues::ALL,
         true,
+        true,
         None,
     );
     let cs = &theme.colors;
@@ -71,6 +72,7 @@ fn classic_dialog_has_a_close_button_and_a_focus_ring() {
         true,
         None,
         Cues::ALL,
+        true,
         true,
         None,
     );
@@ -142,6 +144,7 @@ fn a_blue_dialog_caption_shows_its_caption_icon_as_given() {
         false,
         Lit::default(),
         Cues::NONE,
+        true,
         true,
         None,
     );
@@ -225,6 +228,7 @@ fn an_inactive_dialog_has_a_grey_caption_and_no_default_ring() {
         None,
         Cues::ALL,
         false,
+        false,
         None,
     );
     assert_eq!(
@@ -270,6 +274,7 @@ fn an_inactive_glass_form_dialog_draws_its_default_button_plain() {
             false,
             None,
             Cues::NONE,
+            active,
             active,
             None,
         );
@@ -322,6 +327,7 @@ fn a_blue_dialog_is_framed_by_the_style() {
             false,
             None,
             Cues::NONE,
+            active,
             active,
             None,
         );
@@ -376,6 +382,7 @@ fn a_glass_dialog_wears_the_window_frame_with_a_lone_close_box() {
         None,
         Cues::NONE,
         true,
+        true,
         None,
     );
     for (x, y) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
@@ -412,6 +419,7 @@ fn a_blue_dialogs_close_box_draws_hot() {
         false,
         None,
         Cues::NONE,
+        true,
         true,
         None,
     );
@@ -469,6 +477,7 @@ fn a_held_close_box_draws_pushed_only_while_the_pointer_is_on_it() {
                 None,
                 Cues::NONE,
                 true,
+                true,
                 None,
             )
         };
@@ -513,6 +522,7 @@ fn a_held_close_box_draws_pushed_only_while_the_pointer_is_on_it() {
         true,
         None,
         Cues::NONE,
+        true,
         true,
         None,
     );

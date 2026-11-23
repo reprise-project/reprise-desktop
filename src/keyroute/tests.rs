@@ -272,7 +272,7 @@ fn typing_reaches_a_rename_unless_a_switcher_menu_or_key_taking_popup_is_up() {
         desktop_has_keyboard: true,
         ..Modes::default()
     };
-    assert!(reaches_rename(&base));
+    assert_eq!(letter_route(&base), KeyRoute::Rename);
     type Set = fn(&mut Modes);
     let over: [(&str, Set); 9] = [
         ("the switcher", |m| m.switcher_open = true),
@@ -288,7 +288,11 @@ fn typing_reaches_a_rename_unless_a_switcher_menu_or_key_taking_popup_is_up() {
     for (what, set) in over {
         let mut m = base.clone();
         set(&mut m);
-        assert!(!reaches_rename(&m), "{what} takes the letter");
+        assert_ne!(
+            letter_route(&m),
+            KeyRoute::Rename,
+            "{what} takes the letter"
+        );
     }
     let escape_only: [(&str, Set); 2] = [
         ("the clock's popup", |m| m.calendar_open = true),
@@ -297,7 +301,60 @@ fn typing_reaches_a_rename_unless_a_switcher_menu_or_key_taking_popup_is_up() {
     for (what, set) in escape_only {
         let mut m = base.clone();
         set(&mut m);
-        assert!(reaches_rename(&m), "under {what} the letter edits the name");
+        assert_eq!(
+            letter_route(&m),
+            KeyRoute::Rename,
+            "under {what} the letter edits the name"
+        );
+    }
+}
+
+#[test]
+fn typing_reaches_a_dialog_unless_a_switcher_menu_or_key_taking_popup_is_up() {
+    let base = Modes {
+        dialog_has_keyboard: true,
+        renaming: true,
+        desktop_has_keyboard: true,
+        ..Modes::default()
+    };
+    assert_eq!(letter_route(&base), KeyRoute::Dialog);
+    type Set = fn(&mut Modes);
+    let over: [(&str, Set); 13] = [
+        ("the switcher", |m| m.switcher_open = true),
+        ("a menu", |m| m.menus_open = true),
+        ("the overview", |m| m.overview_open = true),
+        ("the display switcher", |m| m.projector_open = true),
+        ("the launcher", |m| m.launcher_open = true),
+        ("the Start menu", |m| m.start_panel_open = true),
+        ("the clipboard history", |m| m.clipview_open = true),
+        ("the emoji picker", |m| m.emojiview_open = true),
+        ("a balloon's reply field", |m| m.notify_reply_focused = true),
+        ("the notification history", |m| m.notify_center_open = true),
+        ("the displays panel", |m| m.displays_open = true),
+        ("the taskbar's keys", |m| m.taskbar_keys = true),
+        ("a drag", |m| m.dragging = true),
+    ];
+    for (what, set) in over {
+        let mut m = base.clone();
+        set(&mut m);
+        assert_ne!(
+            letter_route(&m),
+            KeyRoute::Dialog,
+            "{what} takes the letter"
+        );
+    }
+    let escape_only: [(&str, Set); 2] = [
+        ("the clock's popup", |m| m.calendar_open = true),
+        ("the hidden icons flyout", |m| m.tray_flyout_open = true),
+    ];
+    for (what, set) in escape_only {
+        let mut m = base.clone();
+        set(&mut m);
+        assert_eq!(
+            letter_route(&m),
+            KeyRoute::Dialog,
+            "under {what} the letter goes to the dialog"
+        );
     }
 }
 

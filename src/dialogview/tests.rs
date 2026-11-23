@@ -718,3 +718,59 @@ fn a_press_on_runs_caption_or_its_boxes_while_its_folder_reads_keeps_the_late_li
         );
     }
 }
+
+#[test]
+fn the_switcher_unlights_the_run_field_until_it_closes_and_a_picked_window_keeps_it_unlit() {
+    use crate::compositor::State;
+    const ESC: u32 = 1;
+    const TAB: u32 = 15;
+    const A: u32 = 30;
+    const SHIFT: u32 = 42;
+    const ALT: u32 = 56;
+    const HOME: u32 = 102;
+    let mut h = Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    h.map_toplevel(&mut c, "test.a", 300, 200);
+    h.map_toplevel(&mut c, "test.b", 300, 200);
+    h.dispatch();
+    h.state.open_dialog(Dialog::run(&[]));
+    let keyed = |s: &State| s.dialogs.views.last().is_some_and(|v| v.keyed);
+    h.until("drawn with the keyboard", keyed);
+    for (code, pressed) in [(A, true), (A, false), (SHIFT, true), (HOME, true)] {
+        h.key(code, pressed);
+    }
+    h.key(HOME, false);
+    h.key(SHIFT, false);
+    let selected = |s: &State| {
+        let d = &s.dialogs.views.last().unwrap().dialog;
+        d.field
+            .as_ref()
+            .unwrap()
+            .edit()
+            .unwrap()
+            .selected_text()
+            .to_string()
+    };
+    assert_eq!(selected(&h.state), "a");
+
+    h.key(ALT, true);
+    h.key(TAB, true);
+    h.key(TAB, false);
+    assert!(h.state.switcher.is_open());
+    h.until("drawn unlit under the switcher", |s| !keyed(s));
+    assert!(h.state.dialog_has_keyboard(), "Run keeps the keyboard");
+    h.key(ESC, true);
+    h.key(ESC, false);
+    h.key(ALT, false);
+    assert!(!h.state.switcher.is_open());
+    h.until("lit again once the switcher closes unpicked", keyed);
+
+    h.key(ALT, true);
+    h.key(TAB, true);
+    h.key(TAB, false);
+    h.key(ALT, false);
+    assert!(h.state.focused.is_some(), "the release picks a window");
+    h.until("drawn unlit under the window", |s| !keyed(s));
+    assert_eq!(selected(&h.state), "a", "the selection waits");
+}

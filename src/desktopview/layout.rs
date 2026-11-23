@@ -80,31 +80,11 @@ struct Redraw {
 
 impl State {
     /// Whether the rename box holds the keyboard: it is the field the caret follows, no window
-    /// or layer surface has the keyboard, and typing would reach it. Its own edit menu and a
-    /// drag act on its selection, so they leave it lit.
+    /// or layer surface has the keyboard, and typing would reach it.
     pub(crate) fn rename_has_keyboard(&self) -> bool {
-        if self.editor() != Some(crate::caret::Editor::Rename) || !self.desktop_has_keyboard() {
-            return false;
-        }
-        let mut modes = self.key_modes();
-        modes.menus_open &= !self.edit_menu_open();
-        modes.dragging = false;
-        crate::keyroute::reaches_rename(&modes)
-    }
-
-    /// Redraws a waiting rename box once the keyboard has moved to or from it. Called where the
-    /// keyboard or what takes the keys may change: the seat's focus, the caret's restart and
-    /// stop, every key and button, and the switcher's close.
-    pub(crate) fn follow_rename_keyboard(&mut self) {
-        if !self.is_renaming() {
-            return;
-        }
-        self.handle.insert_idle(|s| {
-            let keyed = s.desktop.as_ref().map(|d| d.rename_keyed);
-            if keyed.is_some_and(|k| k != s.rename_has_keyboard()) {
-                s.relayout_desktop();
-            }
-        });
+        self.editor() == Some(crate::caret::Editor::Rename)
+            && self.desktop_has_keyboard()
+            && self.field_letter_route() == crate::keyroute::KeyRoute::Rename
     }
 
     /// Lay out the desktop widgets, then the icons round the cells they cover, and redraw what

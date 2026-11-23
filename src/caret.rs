@@ -73,6 +73,33 @@ impl State {
             .then_some(Editor::Rename)
     }
 
+    /// Where a plain letter would go, as an edit field reads it to light: its own edit menu and
+    /// a drag act on its selection, so they leave the letter where it was.
+    pub(crate) fn field_letter_route(&self) -> crate::keyroute::KeyRoute {
+        let mut modes = self.key_modes();
+        modes.menus_open &= !self.edit_menu_open();
+        modes.dragging = false;
+        crate::keyroute::letter_route(&modes)
+    }
+
+    /// Redraws a waiting rename box or the top dialog once typing has moved to or from it. Called
+    /// where the keyboard or what takes the keys may change: the seat's focus, the caret's restart
+    /// and stop, every key and button, and the switcher's close.
+    pub(crate) fn follow_field_keyboard(&mut self) {
+        if !self.is_renaming() && self.dialogs.views.is_empty() {
+            return;
+        }
+        self.handle.insert_idle(|s| {
+            let rename = s.desktop.as_ref().filter(|_| s.is_renaming());
+            if rename.is_some_and(|d| d.rename_keyed != s.rename_has_keyboard()) {
+                s.relayout_desktop();
+            }
+            if (s.dialogs.views.last()).is_some_and(|v| v.keyed != s.dialog_takes_typing()) {
+                s.redraw_top_dialog();
+            }
+        });
+    }
+
     pub fn restart_caret(&mut self) {
         self.caret.on = true;
         if let Some(t) = self.caret.timer.take() {
@@ -85,7 +112,7 @@ impl State {
             Ok(t) => self.caret.timer = Some(t),
             Err(e) => log::warn!("caret timer: {}", e.error),
         }
-        self.follow_rename_keyboard();
+        self.follow_field_keyboard();
     }
 
     pub fn stop_caret(&mut self) {
@@ -93,7 +120,7 @@ impl State {
         if let Some(t) = self.caret.timer.take() {
             self.handle.remove(t);
         }
-        self.follow_rename_keyboard();
+        self.follow_field_keyboard();
     }
 
     fn blink(&mut self) -> TimeoutAction {

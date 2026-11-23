@@ -799,16 +799,16 @@ fn lock_menu_key(k: &KeyPress) -> KeyRoute {
     }
 }
 
-/// Whether a plain letter would reach the desktop rename: nothing that takes presses ahead of
-/// it (the switchers, a menu, the overview, the taskbar's keys, a dialog) is up.
-pub fn reaches_rename(modes: &Modes) -> bool {
+/// Where a plain letter would go: an edit field shows the keyboard only while this is its route,
+/// so whatever takes presses ahead of it (the switchers, a menu, the overview, a popup) unlights it.
+pub fn letter_route(modes: &Modes) -> KeyRoute {
     let a = KeyPress {
         syms: vec![KEY_a],
         lower: vec![KEY_a],
         pressed: true,
         ..KeyPress::default()
     };
-    route(modes, &a, &[], &[]).route == KeyRoute::Rename
+    route(modes, &a, &[], &[]).route
 }
 
 /// The held modifiers `mods` a press routed to `route` during a drag

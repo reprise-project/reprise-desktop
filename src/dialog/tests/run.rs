@@ -45,6 +45,7 @@ fn a_long_run_command_scrolls_instead_of_overflowing_the_field() {
         None,
         Cues::ALL,
         true,
+        true,
         None,
     );
 
@@ -80,6 +81,7 @@ fn a_long_run_command_scrolls_instead_of_overflowing_the_field() {
         None,
         Cues::ALL,
         true,
+        true,
         None,
     );
     assert_eq!(
@@ -106,6 +108,7 @@ fn run_drop_button_has_the_combo_bevel() {
         false,
         None,
         Cues::NONE,
+        true,
         true,
         None,
     );
@@ -145,6 +148,7 @@ fn run_highlights_its_command_from_5_px_in_and_a_row_past_its_descender() {
         true,
         None,
         Cues::NONE,
+        true,
         true,
         None,
     );
@@ -382,6 +386,7 @@ fn run_s_focused_button_wears_the_ring_and_the_field_hides_its_caret() {
         None,
         Cues::ALL,
         true,
+        true,
         None,
     );
     let cs = &theme.colors;
@@ -472,6 +477,7 @@ fn default_button_has_a_black_ring_and_field_shows_a_caret() {
         None,
         Cues::ALL,
         true,
+        true,
         None,
     );
     let black = theme.colors.button_text.argb();
@@ -521,6 +527,7 @@ fn a_blink_over_the_kept_raster_matches_a_full_draw() {
             None,
             Cues::ALL,
             true,
+            true,
             None,
         )
     };
@@ -553,6 +560,7 @@ fn the_run_field_hides_its_selection_while_run_lacks_the_keyboard() {
             false,
             Lit::default(),
             Cues::ALL,
+            active,
             active,
             None,
         )
@@ -842,6 +850,7 @@ fn combo_draws_help_button_selection_and_list() {
         None,
         Cues::ALL,
         true,
+        true,
         None,
     );
     let help = l.help.unwrap();
@@ -869,6 +878,7 @@ fn combo_draws_help_button_selection_and_list() {
         true,
         None,
         Cues::ALL,
+        true,
         true,
         None,
     );
@@ -1083,6 +1093,7 @@ fn run_s_field_hides_its_selection_while_a_button_has_the_focus() {
             Lit::default(),
             Cues::ALL,
             true,
+            true,
             None,
         );
         shows_selection(&c, l.field.unwrap(), &theme)
@@ -1136,6 +1147,7 @@ fn run_s_field_with_a_button_focused_is_pinned_in_every_interface_at_1_and_2() {
                     false,
                     Lit::default(),
                     Cues::NONE,
+                    true,
                     true,
                     None,
                 );
