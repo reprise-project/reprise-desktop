@@ -869,6 +869,21 @@ impl State {
         self.end_process(pid);
     }
 
+    /// The windows End Task would close, by app id and client pid (0 when unknown): Task
+    /// Manager lists a program only while it shows one.
+    pub fn end_task_windows_by_app(&self) -> Vec<reprisebus::tray::Hung> {
+        let mut out: Vec<reprisebus::tray::Hung> = (self.windows.iter())
+            .filter(|w| w.mapped && !w.override_redirect)
+            .map(|w| {
+                let pid = self.client_pid(w.id).and_then(|p| u32::try_from(p).ok());
+                (w.app_id(), pid.unwrap_or(0))
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// Task Manager's End Task: the mapped windows whose client is one of `pids`, each asked to
     /// close as its X button does when `close`. Returns how many there are.
     pub fn end_task_windows(&mut self, pids: &[i32], close: bool) -> usize {
@@ -1417,6 +1432,15 @@ mod tests {
         h.map_toplevel(&mut c, "app", 100, 80);
         h.map_toplevel(&mut other, "app", 200, 100);
         assert_eq!(h.state.end_task_windows(&[PID, 1], false), 2);
+        let pid = |p: i32| u32::try_from(p).unwrap();
+        assert_eq!(
+            h.state.end_task_windows_by_app(),
+            [
+                ("app".to_string(), pid(OTHER)),
+                ("app".to_string(), pid(PID))
+            ],
+            "each program's windows are listed once by app id and pid"
+        );
         h.roundtrip(&mut c);
         assert!(c.side.closes.is_empty(), "a count closes nothing");
         assert_eq!(h.state.end_task_windows(&[PID, 1], true), 2);

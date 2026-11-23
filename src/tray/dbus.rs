@@ -241,6 +241,18 @@ impl Shell {
         self.windows_of(conn, &hdr, pids, false).await
     }
 
+    /// The windows End Task closes, by app id and client pid (0 when unknown).
+    async fn task_windows(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<Vec<reprisebus::tray::Hung>> {
+        self.host_only.check(conn, &hdr).await?;
+        let (reply, answer) = async_channel::bounded(1);
+        emit(&self.events, self.eventfd, TrayEvent::TaskWindows(reply));
+        Ok(answer.recv().await.unwrap_or_default())
+    }
+
     /// A trusted activation token for the window FileManager1 opens for bus peer `caller` while its
     /// process holds the keyboard, else empty. Only the installed reprise-explorer may ask.
     async fn activation_for(
