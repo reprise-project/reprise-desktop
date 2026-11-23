@@ -132,7 +132,7 @@ impl Notes {
             MultiKey::Edit(EditKey::Paste) => reply.paste = true,
             _ => {}
         }
-        if n.edit.key(key, &ctx.text, &m) {
+        if n.edit.key(key, &ctx.text, &m).edited() {
             self.edited(win, ctx);
         } else {
             self.scroll_to_caret(win, ctx);

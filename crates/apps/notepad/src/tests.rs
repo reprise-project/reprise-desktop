@@ -1035,6 +1035,81 @@ fn typing_marks_the_document_dirty() {
 }
 
 #[test]
+fn moving_the_caret_or_selection_leaves_a_saved_document_clean() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().join("recovery");
+    let mut ctx = test_ctx();
+    let mut np = Notepad::new(None);
+    np.rescue_dir = Some(dir.clone());
+    np.edit = MultiEdit::new("alpha beta\ngamma");
+    np.event(MAIN, Event::Focus(true), &mut ctx);
+    let key = |sym, ctrl, shift, edit| {
+        Event::Key(KeyInput {
+            sym,
+            utf8: None,
+            mods: repriseapp::Mods {
+                ctrl,
+                shift,
+                ..Default::default()
+            },
+            edit,
+        })
+    };
+    let right = EditKey::Right {
+        select: false,
+        word: false,
+    };
+    np.event(
+        MAIN,
+        key(keysym::RIGHT, false, false, Some(right)),
+        &mut ctx,
+    );
+    np.event(MAIN, key(keysym::DOWN, false, false, None), &mut ctx);
+    np.event(MAIN, key(keysym::HOME, true, false, None), &mut ctx);
+    let shift_end = EditKey::End { select: true };
+    np.event(
+        MAIN,
+        key(keysym::END, false, true, Some(shift_end)),
+        &mut ctx,
+    );
+    assert_eq!(np.edit.selected_text(), "alpha beta");
+    np.event(MAIN, key(0, false, false, Some(EditKey::Undo)), &mut ctx);
+    let (x, y) = at_col(&np, &ctx, 2);
+    let (to, _) = at_col(&np, &ctx, 6);
+    let mods = repriseapp::Mods::default();
+    for p in [
+        PointerInput::Press {
+            x,
+            y,
+            button: BTN_LEFT,
+            time: 0,
+            mods,
+        },
+        PointerInput::Motion { x: to, y },
+        PointerInput::Release {
+            x: to,
+            y,
+            button: BTN_LEFT,
+            mods,
+        },
+        PointerInput::Scroll { x, y, rows: 1 },
+    ] {
+        np.event(MAIN, Event::Pointer(p), &mut ctx);
+    }
+    assert_eq!(np.edit.selected_text(), "pha ", "the drag selected");
+    assert!(!np.dirty, "no key or click changed the text");
+    assert!(np.event(MAIN, Event::CloseRequest, &mut ctx).quit);
+    np.rescue();
+    assert!(recovered_in(&dir).is_empty(), "nothing to recover");
+
+    let ch = key(0x78, false, false, Some(EditKey::Insert("x".into())));
+    np.event(MAIN, ch, &mut ctx);
+    assert!(np.dirty, "typing is a change");
+    np.rescue();
+    assert_eq!(recovered_in(&dir).len(), 1);
+}
+
+#[test]
 fn new_on_a_dirty_document_prompts() {
     let mut np = Notepad::new(None);
     np.dirty = true;

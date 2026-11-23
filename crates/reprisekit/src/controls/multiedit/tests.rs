@@ -5,7 +5,7 @@ use crate::theme::{FontConfig, Theme};
 fn e(text: &str) -> MultiEdit {
     MultiEdit::new(text)
 }
-fn k(edit: &mut MultiEdit, key: MultiKey) -> bool {
+fn k(edit: &mut MultiEdit, key: MultiKey) -> Took {
     let text = TextRenderer::load(&FontConfig::default());
     edit.key(key, &text, &Metrics::default())
 }
@@ -15,14 +15,15 @@ fn changes_are_counted_and_the_widest_line_follows_them() {
     let text = TextRenderer::load(&FontConfig::default());
     let m = Metrics::default();
     let mut t = e("ab\nc");
-    assert!(
-        !k(
+    assert_eq!(
+        k(
             &mut t,
             MultiKey::Edit(EditKey::Left {
                 select: false,
                 word: false
             })
         ),
+        Took::Same,
         "at the start already"
     );
     let w0 = widest_px(&text, &m, &t);
@@ -31,13 +32,10 @@ fn changes_are_counted_and_the_widest_line_follows_them() {
         widest_px(&text, &m, &t),
         "the same document measures the same"
     );
-    assert!(k(
-        &mut t,
-        MultiKey::Edit(EditKey::Insert("wider line".into()))
-    ));
+    assert!(k(&mut t, MultiKey::Edit(EditKey::Insert("wider line".into()))).edited());
     let w1 = widest_px(&text, &m, &t);
     assert!(w1 > w0);
-    assert!(k(&mut t, MultiKey::Edit(EditKey::Undo)));
+    assert!(k(&mut t, MultiKey::Edit(EditKey::Undo)).edited());
     assert_eq!(widest_px(&text, &m, &t), w0);
     assert_eq!(
         t.replace_all(
@@ -52,6 +50,38 @@ fn changes_are_counted_and_the_widest_line_follows_them() {
     );
     assert!(widest_px(&text, &m, &t) > w0);
 }
+#[test]
+fn moves_and_selections_are_told_from_edits() {
+    let mut t = e("ab\ncd");
+    let right = |select| {
+        MultiKey::Edit(EditKey::Right {
+            select,
+            word: false,
+        })
+    };
+    assert_eq!(k(&mut t, right(false)), Took::Moved);
+    assert_eq!(k(&mut t, MultiKey::Down { select: false }), Took::Moved);
+    assert_eq!(k(&mut t, MultiKey::DocHome { select: false }), Took::Moved);
+    assert_eq!(k(&mut t, MultiKey::DocHome { select: false }), Took::Same);
+    assert_eq!(
+        k(&mut t, MultiKey::Edit(EditKey::End { select: true })),
+        Took::Moved
+    );
+    assert_eq!(k(&mut t, MultiKey::Edit(EditKey::Copy)), Took::Same);
+    assert_eq!(
+        k(&mut t, MultiKey::Edit(EditKey::Undo)),
+        Took::Same,
+        "nothing to undo"
+    );
+    assert_eq!(t.text(), "ab\ncd");
+    assert_eq!(t.edit_key(EditKey::Home { select: false }), Took::Moved);
+    assert_eq!(k(&mut t, MultiKey::Enter), Took::Edited);
+    assert_eq!(t.edit_key(EditKey::Insert("x".into())), Took::Edited);
+    assert_eq!(t.text(), "\nxab\ncd");
+    assert_eq!(k(&mut t, MultiKey::Edit(EditKey::Undo)), Took::Edited);
+    assert_eq!(t.text(), "\nab\ncd");
+}
+
 fn p(line: usize, col: usize) -> Pos {
     Pos { line, col }
 }
@@ -73,7 +103,7 @@ fn one_undo_takes_a_drop_back_and_restores_the_selection() {
     t.place(p(1, 0), false);
     t.place(p(1, 5), true);
     t.drop_text(p(0, 4), "big ");
-    assert!(k(&mut t, MultiKey::Edit(EditKey::Undo)));
+    assert!(k(&mut t, MultiKey::Edit(EditKey::Undo)).edited());
     assert_eq!(t.lines, ["one two", "three"]);
     assert_eq!(t.selected_text(), "three");
 }
@@ -90,23 +120,29 @@ fn delete_surrounding_crosses_lines_and_keeps_the_selection() {
     let mut t = e("ab\ncd\nef");
     t.place(p(1, 1), false);
     t.place(p(2, 1), true);
-    assert!(k(
-        &mut t,
-        MultiKey::Edit(EditKey::DeleteSurrounding {
-            before: 2,
-            after: 1
-        })
-    ));
+    assert!(
+        k(
+            &mut t,
+            MultiKey::Edit(EditKey::DeleteSurrounding {
+                before: 2,
+                after: 1
+            })
+        )
+        .edited()
+    );
     assert_eq!(t.lines, ["abd", "e"]);
     assert_eq!(t.selected_text(), "d\ne");
     assert_eq!(t.caret(), p(1, 1), "the caret stays at the selection's end");
-    assert!(!k(
-        &mut t,
-        MultiKey::Edit(EditKey::DeleteSurrounding {
-            before: 0,
-            after: 0
-        })
-    ));
+    assert_eq!(
+        k(
+            &mut t,
+            MultiKey::Edit(EditKey::DeleteSurrounding {
+                before: 0,
+                after: 0
+            })
+        ),
+        Took::Same
+    );
 }
 
 #[test]
@@ -818,20 +854,20 @@ fn ctrl_z_walks_back_a_step_at_a_time_and_ctrl_y_forward() {
     assert_eq!(t.undo.held().0, 3, "a typing run is one op");
     let undo = |t: &mut MultiEdit| k(t, MultiKey::Edit(EditKey::Undo));
     let redo = |t: &mut MultiEdit| k(t, MultiKey::Edit(EditKey::Redo));
-    assert!(undo(&mut t));
+    assert!(undo(&mut t).edited());
     assert_eq!((t.text().as_str(), t.caret), ("abc\n", p(1, 0)));
-    assert!(undo(&mut t));
+    assert!(undo(&mut t).edited());
     assert_eq!((t.text().as_str(), t.caret), ("abc", p(0, 3)));
-    assert!(undo(&mut t));
+    assert!(undo(&mut t).edited());
     assert_eq!((t.text().as_str(), t.caret), ("", p(0, 0)));
-    assert!(!undo(&mut t), "nothing older");
-    assert!(redo(&mut t));
+    assert_eq!(undo(&mut t), Took::Same, "nothing older");
+    assert!(redo(&mut t).edited());
     assert_eq!(t.text(), "abc");
-    assert!(redo(&mut t));
+    assert!(redo(&mut t).edited());
     assert_eq!((t.text().as_str(), t.caret), ("abc\n", p(1, 0)));
-    assert!(redo(&mut t));
+    assert!(redo(&mut t).edited());
     assert_eq!((t.text().as_str(), t.caret), ("abc\ndef", p(1, 3)));
-    assert!(!redo(&mut t));
+    assert_eq!(redo(&mut t), Took::Same);
 }
 
 #[test]
@@ -841,10 +877,10 @@ fn undo_takes_a_paste_back_to_the_exact_text_and_caret() {
     t.place(p(1, 2), true);
     assert!(t.paste("big\r\nred\nfat "));
     assert_eq!(t.text(), "one big\nred\nfat ree");
-    assert!(k(&mut t, MultiKey::Edit(EditKey::Undo)));
+    assert!(k(&mut t, MultiKey::Edit(EditKey::Undo)).edited());
     assert_eq!(t.text(), "one two\nthree");
     assert_eq!((t.anchor, t.caret), (p(0, 4), p(1, 2)));
-    assert!(k(&mut t, MultiKey::Edit(EditKey::Redo)));
+    assert!(k(&mut t, MultiKey::Edit(EditKey::Redo)).edited());
     assert_eq!(
         (t.text().as_str(), t.caret),
         ("one big\nred\nfat ree", p(2, 4))

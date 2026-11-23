@@ -32,6 +32,15 @@ fn a_memo_edits_lines_and_keeps_its_scrollbar() {
     f.key(edge(true));
     f.key(Key::Char('>'));
     assert_eq!(memo(&f), "<a X\nb\ncd>", "Ctrl+Home and Ctrl+End");
+    let select_left = Key::Edit(EditKey::Left {
+        select: true,
+        word: false,
+    });
+    assert_eq!(
+        f.key(select_left),
+        Event::Redraw,
+        "a selection is no change"
+    );
     assert_eq!(f.key(Key::Tab { back: false }), Event::Redraw);
     assert_eq!(f.focus(), Some(1));
     assert_eq!(

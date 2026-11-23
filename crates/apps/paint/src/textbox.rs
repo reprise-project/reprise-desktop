@@ -110,7 +110,7 @@ impl TextBox {
     }
 
     /// A key in a box `w` px wide.
-    pub fn key(&mut self, key: MultiKey, w: i32) -> bool {
+    pub fn key(&mut self, key: MultiKey, w: i32) -> multiedit::Took {
         let m = self.metrics();
         self.with_renderer(|_| ());
         let slot = self.renderer.borrow();

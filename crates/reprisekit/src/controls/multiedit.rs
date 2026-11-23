@@ -186,6 +186,23 @@ pub enum MultiKey {
     Tab,
 }
 
+/// What a key did to a [`MultiEdit`]: a host redraws on anything but `Same` and counts only
+/// `Edited` as a change to the document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Took {
+    /// The text changed (an undo step too).
+    Edited,
+    /// Only the caret, the selection or the vertical goal moved.
+    Moved,
+    Same,
+}
+
+impl Took {
+    pub fn edited(self) -> bool {
+        self == Took::Edited
+    }
+}
+
 /// The text with its caret and anchor; `caret == anchor` means nothing is selected.
 /// Invariant: `lines` holds at least one line, and both positions sit on a char boundary of one.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -754,14 +771,11 @@ impl MultiEdit {
 
     /// [`MultiEdit::key`] for an editing key alone, for hosts without a text renderer (a form's
     /// memo).
-    pub fn edit_key(&mut self, k: EditKey) -> bool {
-        let before = (self.edits, self.caret, self.anchor);
+    pub fn edit_key(&mut self, k: EditKey) -> Took {
+        let before = (self.edits, self.caret, self.anchor, self.goal_x);
         self.apply_edit(k);
         self.goal_x = None;
-        if self.edits == before.0 {
-            self.undo.last = Edit::None;
-        }
-        (self.edits, self.caret, self.anchor) != before
+        self.took(before)
     }
 
     pub fn step_lines(&mut self, down: bool, n: usize) -> bool {
@@ -786,7 +800,7 @@ impl MultiEdit {
     }
 
     /// Take `key`; Up, Down, Home and End go by the rows of the last layout when wrapping.
-    pub fn key(&mut self, key: MultiKey, text: &TextRenderer, m: &Metrics) -> bool {
+    pub fn key(&mut self, key: MultiKey, text: &TextRenderer, m: &Metrics) -> Took {
         let before = (self.edits, self.caret, self.anchor, self.goal_x);
         let mut keep_goal = false;
         let wrap = self.wrap_width(m);
@@ -841,10 +855,21 @@ impl MultiEdit {
         if !keep_goal {
             self.goal_x = None;
         }
-        if self.edits == before.0 {
-            self.undo.last = Edit::None;
+        self.took(before)
+    }
+
+    /// The end of a key taken from `before` (edits, caret, anchor, goal); a key that left the
+    /// text alone ends a typing run.
+    fn took(&mut self, before: (u64, Pos, Pos, Option<i32>)) -> Took {
+        if self.edits != before.0 {
+            return Took::Edited;
         }
-        (self.edits, self.caret, self.anchor, self.goal_x) != before
+        self.undo.last = Edit::None;
+        if (self.caret, self.anchor, self.goal_x) != (before.1, before.2, before.3) {
+            Took::Moved
+        } else {
+            Took::Same
+        }
     }
 }
 
