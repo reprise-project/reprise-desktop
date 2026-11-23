@@ -25,7 +25,7 @@ pub(crate) use fonts::system_fonts;
 pub(crate) use fonts::test_fonts;
 use fonts::{full_hinting, load_faces, load_shell_dlg};
 pub use mnemonic::{access_key, escape_mnemonic, split_mnemonic};
-pub use wrap::{wrap, wrap_bold, wrap_chars};
+pub use wrap::{wrap, wrap_bold, wrap_capped, wrap_chars};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Align {

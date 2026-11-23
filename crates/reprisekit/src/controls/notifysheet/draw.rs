@@ -171,7 +171,11 @@ pub(super) fn draw_parts(
         lay.app_px,
     );
     let tb = lay.parts.title;
-    text.draw(c, tb, &lay.title, true, inks.title, left, lay.title_px);
+    let title_h = tb.height / lay.title.len().max(1) as i32;
+    for (i, line) in lay.title.iter().enumerate() {
+        let r = Rect::new(tb.x, tb.y + i as i32 * title_h, tb.width, title_h);
+        text.draw(c, r, line, true, inks.title, left, lay.title_px);
+    }
     let body = lay.parts.body;
     for (i, line) in lay.lines.iter().enumerate() {
         let r = Rect::new(

@@ -1302,3 +1302,112 @@ fn every_tip_keeps_its_ink_at_every_text_size_and_scale() {
         "(look, text size, scale, line, ink rows cut)"
     );
 }
+
+const SAVED_BODY: &str = "Screencast 2026-11-21 23-22-06.mp4";
+const LONG_TITLE: &str = "Backup finished with warnings on two of your drives";
+
+#[test]
+fn the_notify_balloon_widens_with_the_text_size() {
+    use crate::interface::Interface;
+    for i in [Interface::Classic, Interface::Blue] {
+        for pct in [100, 125, 150, 175, 200] {
+            for s in [1, 2] {
+                let theme = crate::interfaces::theme_for(i)
+                    .with_text_size(pct)
+                    .scaled(s);
+                let t = TextRenderer::load(&theme.fonts);
+                let lay = notify_layout(&theme, &t, "Update", SAVED_BODY, &[], &[], None);
+                assert_eq!(
+                    lay.bubble_w,
+                    theme.text.len(NOTIFY_W) * s,
+                    "{i:?} {pct}% x{s}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_title_too_long_for_its_line_wraps_whole_and_moves_the_body_down() {
+    use crate::interface::Interface;
+    for i in [Interface::Classic, Interface::Blue] {
+        for pct in [100, 200] {
+            for s in [1, 2] {
+                let theme = crate::interfaces::theme_for(i)
+                    .with_text_size(pct)
+                    .scaled(s);
+                let t = TextRenderer::load(&theme.fonts);
+                let at = format!("{i:?} {pct}% x{s}");
+                let saved = notify_layout(
+                    &theme,
+                    &t,
+                    "Screen recording saved",
+                    SAVED_BODY,
+                    &["Open", "Show in Folder"],
+                    &[],
+                    None,
+                );
+                assert_eq!(saved.title, ["Screen recording saved"], "{at}");
+                let short = notify_layout(&theme, &t, "Done", SAVED_BODY, &[], &[], None);
+                let long = notify_layout(&theme, &t, LONG_TITLE, SAVED_BODY, &[], &[], None);
+                let n = long.title.len() as i32;
+                assert!(n >= 2, "{at}: {:?} wraps", long.title);
+                assert_eq!(long.title.join(" "), LONG_TITLE, "{at}: whole");
+                let tb = long.title_box;
+                for line in &long.title {
+                    let bold = balloon_look(&theme).is_none();
+                    assert!(
+                        t.measure(line, bold, long.title_px) <= tb.width,
+                        "{at}: {line:?} fits {}",
+                        tb.width
+                    );
+                }
+                let grown = (n - 1) * tb.height;
+                assert_eq!(long.body_y, short.body_y + grown, "{at}");
+                assert_eq!(long.bubble_h, short.bubble_h + grown, "{at}");
+                let p = long.parts();
+                assert_eq!(p.title.height, n * tb.height, "{at}");
+                assert!(
+                    p.title.bottom() <= p.body.y,
+                    "{at}: the title over the body"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_title_past_its_line_cap_ends_its_last_line_in_dots() {
+    let t = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let title = LONG_TITLE.repeat(4);
+    let lay = notify_layout(&theme, &t, &title, "Body", &[], &[], None);
+    assert_eq!(lay.title.len(), NOTIFY_TITLE_LINES);
+    assert!(lay.title[NOTIFY_TITLE_LINES - 1].ends_with("..."));
+    let empty = notify_layout(&theme, &t, "", "Body", &[], &[], None);
+    let done = notify_layout(&theme, &t, "Done", "Body", &[], &[], None);
+    assert_eq!(empty.body_y, done.body_y, "an empty title keeps its line");
+}
+
+/// "Screen recording saved" and a long title in Classic and Blue at 200% text, scale 1 and 2.
+#[test]
+fn long_title_pins() {
+    use crate::interface::Interface;
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue] {
+        for s in [1, 2] {
+            let theme = crate::interfaces::theme_for(i)
+                .with_text_size(200)
+                .scaled(s);
+            let t = TextRenderer::load(&theme.fonts);
+            for title in ["Screen recording saved", LONG_TITLE] {
+                let acts = ["Open", "Show in Folder"];
+                let lay = notify_layout(&theme, &t, title, SAVED_BODY, &acts, &[], None);
+                let c = draw_notify_balloon(&theme, &t, &lay, None, &[], None, None, None);
+                got.push((format!("{i:?} x{s} {title}"), fnv(&c)));
+            }
+        }
+    }
+    crate::pins::check("controls/balloon_long_titles", &got);
+}
