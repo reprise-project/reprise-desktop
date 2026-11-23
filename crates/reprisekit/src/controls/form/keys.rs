@@ -302,7 +302,7 @@ impl Form {
                     .expect("an editing key only reaches a focused control");
                 let id = self.items[i].id;
                 let changed = match &mut self.items[i].control {
-                    Control::Edit { edit, .. } => edit.key(k),
+                    Control::Edit { edit, .. } => edit.key(k).edited(),
                     Control::Memo(m) => m.edit.edit_key(k).edited(),
                     _ => unreachable!("an editing key only reaches a Control::Edit or Memo"),
                 };
@@ -561,7 +561,7 @@ impl Form {
                     // A space in a field is text; it only presses or
                     // toggles the controls that have nothing to type in.
                     (Control::Edit { edit, .. }, Key::Space) => {
-                        let changed = edit.key(EditKey::Insert(" ".into()));
+                        let changed = edit.key(EditKey::Insert(" ".into())).edited();
                         if changed {
                             Event::Changed(id)
                         } else {
@@ -590,7 +590,7 @@ impl Form {
                     };
                 }
                 Control::Edit { edit, .. } => {
-                    let changed = edit.key(EditKey::Insert(ch.to_string()));
+                    let changed = edit.key(EditKey::Insert(ch.to_string())).edited();
                     return if changed {
                         Event::Changed(id)
                     } else {

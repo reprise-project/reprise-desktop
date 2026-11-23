@@ -186,22 +186,7 @@ pub enum MultiKey {
     Tab,
 }
 
-/// What a key did to a [`MultiEdit`]: a host redraws on anything but `Same` and counts only
-/// `Edited` as a change to the document.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Took {
-    /// The text changed (an undo step too).
-    Edited,
-    /// Only the caret, the selection or the vertical goal moved.
-    Moved,
-    Same,
-}
-
-impl Took {
-    pub fn edited(self) -> bool {
-        self == Took::Edited
-    }
-}
+pub use crate::textedit::Took;
 
 /// The text with its caret and anchor; `caret == anchor` means nothing is selected.
 /// Invariant: `lines` holds at least one line, and both positions sit on a char boundary of one.
