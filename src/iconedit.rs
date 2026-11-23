@@ -514,16 +514,15 @@ impl State {
     }
 
     /// A desktop file was renamed on disk by an inline rename: its dragged cell follows the new
-    /// name, then the desktop rescans.
+    /// name, then the desktop rescans. Its icon takes the new path first, so the rescan keeps
+    /// it selected.
     pub fn renamed(&mut self, from: &Path, to: &Path) {
         if let Some(view) = self.desktop.as_mut() {
-            let old = view
-                .entries
-                .iter()
-                .find(|e| e.path == from)
-                .map(|e| e.name.clone());
-            if let Some(old) = old {
-                move_cell(view, &old, &file_name(to));
+            if let Some(i) = view.entries.iter().position(|e| e.path == from) {
+                let name = file_name(to);
+                let old = std::mem::replace(&mut view.entries[i].name, name.clone());
+                view.entries[i].path = to.to_path_buf();
+                move_cell(view, &old, &name);
             }
             view.undos.push(Undoable::Rename {
                 from: from.to_path_buf(),
@@ -783,6 +782,44 @@ mod tests {
         });
         h.state.begin_rename(0);
         h.until("drawn with the keyboard", keyed);
+    }
+
+    #[test]
+    fn a_renamed_icon_stays_selected_under_its_new_name_and_f2_renames_it_again() {
+        const F2: u32 = 60;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        crate::fsjobs::setup(&mut h.state);
+        h.state.focus_desktop();
+        let desk = crate::harness::scratch().join("rename-keeps-selection");
+        std::fs::create_dir_all(&desk).unwrap();
+        std::fs::write(desk.join("a.txt"), "").unwrap();
+        crate::desktopview::create(&mut h.state, desk, Default::default(), None);
+        h.state.rescan_desktop();
+        let listed = |s: &State, name: &str| {
+            let view = s.desktop.as_ref().unwrap();
+            (view.entries.iter()).position(|e| e.name == name && e.label.starts_with(&name[..1]))
+        };
+        h.until("a.txt listed", |s| listed(s, "a.txt").is_some());
+        h.state.begin_rename(listed(&h.state, "a.txt").unwrap());
+        h.state.rename_paste("b");
+        h.state.commit_rename();
+        h.until("b.txt listed", |s| listed(s, "b.txt").is_some());
+        let i = listed(&h.state, "b.txt").unwrap();
+        let view = h.state.desktop.as_ref().unwrap();
+        assert_eq!(view.selection.set, [i].into(), "b.txt is the selection");
+        assert_eq!(view.selection.focus, Some(i), "b.txt has the focus");
+        h.key(F2, true);
+        h.key(F2, false);
+        let renaming = h
+            .state
+            .desktop
+            .as_ref()
+            .unwrap()
+            .rename
+            .as_ref()
+            .map(|r| r.0);
+        assert_eq!(renaming, Some(i), "F2 renames b.txt again");
     }
 
     #[test]
