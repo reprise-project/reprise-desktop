@@ -9,7 +9,7 @@ use crate::look::widgets::{draw_edit_field, draw_edit_text};
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
-use crate::textedit::{Caret, EditKey, TextEdit, edit_first_visible, index_at};
+use crate::textedit::{Caret, EditKey, TextEdit, Took, edit_first_visible, index_at};
 use accesskit::NodeId;
 
 pub const CUE: &str = "Search";
@@ -39,8 +39,7 @@ impl SearchField {
         &self.edit.text
     }
 
-    /// An editing key; true when the field changed.
-    pub fn key(&mut self, k: EditKey) -> bool {
+    pub fn key(&mut self, k: EditKey) -> Took {
         self.edit.key(k)
     }
 

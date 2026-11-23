@@ -389,6 +389,28 @@ pub(crate) mod words {
     }
 }
 
+/// What a key did to a [`TextEdit`] or a multi-line edit: a host redraws on anything but `Same`
+/// and counts only `Edited` as a change to the text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Took {
+    /// The text changed (an undo step too).
+    Edited,
+    /// Only the caret, the selection or a multi-line edit's vertical goal moved.
+    Moved,
+    Same,
+}
+
+impl Took {
+    pub fn edited(self) -> bool {
+        self == Took::Edited
+    }
+
+    /// Anything to redraw: an edit or a move.
+    pub fn changed(self) -> bool {
+        self != Took::Same
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditKey {
     Insert(String),
@@ -738,12 +760,12 @@ impl TextEdit {
         self.caret = self.text.len();
     }
 
-    pub fn key(&mut self, key: EditKey) -> bool {
+    pub fn key(&mut self, key: EditKey) -> Took {
         if self.read_only && key.edits() {
             if let EditKey::Insert(mut s) = key {
                 s.zeroize();
             }
-            return false;
+            return Took::Same;
         }
         let (caret, anchor) = (self.caret, self.anchor);
         // Set by every arm that changes the text. Nothing here clones the edit, so a secret field's text is never copied.
@@ -873,10 +895,16 @@ impl TextEdit {
                 }
             }
         }
-        if !edited {
+        if edited {
+            Took::Edited
+        } else {
             self.undo.last = Edit::None;
+            if (self.caret, self.anchor) != (caret, anchor) {
+                Took::Moved
+            } else {
+                Took::Same
+            }
         }
-        edited || (self.caret, self.anchor) != (caret, anchor)
     }
 
     pub fn select_word_at(&mut self, index: usize) {
@@ -927,7 +955,7 @@ impl TextEdit {
         if line.is_empty() {
             return false;
         }
-        self.key(EditKey::Insert(line))
+        self.key(EditKey::Insert(line)).edited()
     }
 
     /// A drop, taken as [`TextEdit::paste`] takes it, put in at byte `at` and selected; the selection there was is let go.
@@ -1434,17 +1462,19 @@ mod tests {
                 after: 0,
             },
         ] {
-            assert!(!t.key(k.clone()), "{k:?} is refused");
+            assert!(!t.key(k.clone()).changed(), "{k:?} is refused");
         }
         assert!(!t.paste("pasted", &[]));
         assert!(!t.drop_text(0, &DropLine::Text("dropped".into())));
         assert_eq!(t.text, "ab cde");
-        assert!(t.key(EditKey::Left {
-            select: true,
-            word: true
-        }));
+        assert!(
+            t.key(EditKey::Left {
+                select: true,
+                word: true
+            }) == Took::Moved
+        );
         assert_eq!(t.selected_text(), "cde");
-        assert!(!t.key(EditKey::Cut), "a cut keeps the text");
+        assert!(!t.key(EditKey::Cut).changed(), "a cut keeps the text");
         assert_eq!(t.text, "ab cde");
         t.set_selected("new");
         assert!(
@@ -1456,17 +1486,20 @@ mod tests {
     #[test]
     fn typing_replaces_the_selection_and_backspace_clears_it() {
         let mut t = TextEdit::new("notepad", true);
-        assert!(t.key(EditKey::Insert("x".into())));
+        assert!(t.key(EditKey::Insert("x".into())).edited());
         assert_eq!((t.text.as_str(), t.caret, t.anchor), ("x", 1, 1));
         let mut t = TextEdit::new("notepad", true);
         t.key(EditKey::Backspace { word: false });
         assert_eq!(t.text, "");
-        assert!(!t.key(EditKey::Backspace { word: false }));
-        assert!(!t.key(EditKey::Delete { word: false }));
-        assert!(!t.key(EditKey::Left {
-            select: false,
-            word: false
-        }));
+        assert!(!t.key(EditKey::Backspace { word: false }).changed());
+        assert!(!t.key(EditKey::Delete { word: false }).changed());
+        assert!(
+            !t.key(EditKey::Left {
+                select: false,
+                word: false
+            })
+            .changed()
+        );
     }
 
     #[test]
@@ -1552,7 +1585,7 @@ mod tests {
         let mut t = TextEdit::secret();
         t.paste("hunter2", &[]);
         t.key(EditKey::SelectAll);
-        assert!(!t.key(EditKey::Cut));
+        assert!(!t.key(EditKey::Cut).changed());
         assert_eq!(t.text.as_str(), "hunter2", "the text stays");
     }
 
@@ -1564,9 +1597,9 @@ mod tests {
         assert!(t.place(0, true));
         assert_eq!(t.selection(), 0..5);
         assert_eq!(t.selected_text(), "hello");
-        assert!(t.key(EditKey::Cut));
+        assert!(t.key(EditKey::Cut).edited());
         assert_eq!(t.text, " world");
-        assert!(!t.key(EditKey::Copy));
+        assert!(!t.key(EditKey::Copy).changed());
         assert!(t.paste("a/b\tc\nsecond", &['/']));
         assert_eq!(t.text, "abc world");
         assert!(!t.paste("\n", &[]));
@@ -1593,16 +1626,16 @@ mod tests {
         let mut t = e("");
         assert!(t.paste(&"é".repeat(MAX_LEN), &[]));
         assert_eq!(t.text.len(), MAX_LEN - 1, "é is two bytes, MAX_LEN is odd");
-        assert!(t.key(EditKey::Insert("a".into())));
+        assert!(t.key(EditKey::Insert("a".into())).edited());
         assert_eq!(t.text.len(), MAX_LEN);
-        assert!(!t.key(EditKey::Insert("b".into())));
+        assert!(!t.key(EditKey::Insert("b".into())).changed());
         assert!(!t.paste("more", &[]));
         assert_eq!(t.text.len(), MAX_LEN);
         t.key(EditKey::Left {
             select: true,
             word: false,
         });
-        assert!(t.key(EditKey::Insert("c".into())));
+        assert!(t.key(EditKey::Insert("c".into())).edited());
         assert!(t.text.ends_with('c'));
     }
 
@@ -1638,14 +1671,17 @@ mod tests {
         t.key(EditKey::Insert("a".into()));
         t.key(EditKey::Insert("l".into()));
         assert_eq!(t.text, "cal");
-        assert!(t.key(EditKey::Undo));
+        assert!(t.key(EditKey::Undo).edited());
         assert_eq!(t.text, "notepad");
         assert!(t.all_selected());
-        assert!(!t.key(EditKey::Undo), "one step back is all there is");
+        assert!(
+            !t.key(EditKey::Undo).changed(),
+            "one step back is all there is"
+        );
         assert!(t.can_redo());
-        assert!(t.key(EditKey::Redo));
+        assert!(t.key(EditKey::Redo).edited());
         assert_eq!((t.text.as_str(), t.caret, t.anchor), ("cal", 3, 3));
-        assert!(!t.key(EditKey::Redo));
+        assert!(!t.key(EditKey::Redo).changed());
         t.key(EditKey::Home { select: false });
         t.key(EditKey::End { select: false });
         t.key(EditKey::Insert("c".into()));
@@ -1660,7 +1696,7 @@ mod tests {
         assert_eq!(t.text, "calxyz");
         t.key(EditKey::Undo);
         assert_eq!(t.text, "cal");
-        assert!(!e("").key(EditKey::Undo));
+        assert!(!e("").key(EditKey::Undo).changed());
     }
 
     #[test]
@@ -1672,7 +1708,7 @@ mod tests {
         assert_eq!(t.text, "");
         assert_eq!(t.caret, 0);
         assert_eq!(t.anchor, 0);
-        assert!(!t.key(EditKey::Undo));
+        assert!(!t.key(EditKey::Undo).changed());
         assert_eq!(t.text, "");
     }
 
@@ -1698,7 +1734,7 @@ mod tests {
         assert_eq!((t.text.as_str(), t.caret), ("abXY", 4));
         t.key(EditKey::Insert("z".into()));
         assert!(!t.can_redo(), "a new edit drops the undone steps");
-        assert!(!t.key(EditKey::Redo));
+        assert!(!t.key(EditKey::Redo).changed());
     }
 
     #[test]
@@ -1707,7 +1743,7 @@ mod tests {
         t.paste("hunter2", &[]);
         t.key(EditKey::Backspace { word: false });
         assert_eq!(t.undo.held(), (0, 0));
-        assert!(!t.key(EditKey::Undo));
+        assert!(!t.key(EditKey::Undo).changed());
     }
 
     #[test]
@@ -1865,27 +1901,39 @@ mod tests {
     fn delete_surrounding_takes_bytes_around_the_selection_and_keeps_it() {
         let mut t = e("ni hao ma");
         t.set_selection(3, 6);
-        assert!(t.key(EditKey::DeleteSurrounding {
-            before: 3,
-            after: 1
-        }));
+        assert!(
+            t.key(EditKey::DeleteSurrounding {
+                before: 3,
+                after: 1
+            })
+            .edited()
+        );
         assert_eq!(t.text, "haoma");
         assert_eq!(t.selected_text(), "hao");
         let mut t = e("ab");
-        assert!(t.key(EditKey::DeleteSurrounding {
-            before: 9,
-            after: 9
-        }));
+        assert!(
+            t.key(EditKey::DeleteSurrounding {
+                before: 9,
+                after: 9
+            })
+            .edited()
+        );
         assert_eq!((t.text.as_str(), t.caret()), ("", 0));
-        assert!(!t.key(EditKey::DeleteSurrounding {
-            before: 1,
-            after: 0
-        }));
+        assert!(
+            !t.key(EditKey::DeleteSurrounding {
+                before: 1,
+                after: 0
+            })
+            .changed()
+        );
         let mut t = e("a你");
-        assert!(t.key(EditKey::DeleteSurrounding {
-            before: 1,
-            after: 0
-        }));
+        assert!(
+            t.key(EditKey::DeleteSurrounding {
+                before: 1,
+                after: 0
+            })
+            .edited()
+        );
         assert_eq!(t.text, "a");
     }
 
@@ -2020,7 +2068,7 @@ mod tests {
         assert!(t.drop_text(5, &DropLine::Text(" big\nnext line".into())));
         assert_eq!(t.text, "hello big world", "the first line, as a paste");
         assert_eq!(t.selected_text(), " big");
-        assert!(t.key(EditKey::Undo));
+        assert!(t.key(EditKey::Undo).edited());
         assert_eq!(t.text, "hello world");
         let mut t = TextEdit::new("ab", false);
         assert!(!t.drop_text(1, &DropLine::Text("\u{7}".into())));

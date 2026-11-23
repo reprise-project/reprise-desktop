@@ -11,6 +11,24 @@ fn typing_reaches_a_focused_edit_instead_of_an_access_key() {
 }
 
 #[test]
+fn moving_the_caret_in_a_field_is_no_change() {
+    let mut f = edit_form();
+    f.key(Key::Char('o'));
+    let left = |select| {
+        Key::Edit(EditKey::Left {
+            select,
+            word: false,
+        })
+    };
+    assert_eq!(f.key(left(true)), Event::Redraw, "a selection");
+    assert_eq!(f.key(left(false)), Event::Redraw, "a caret move");
+    assert_eq!(
+        f.key(Key::Edit(EditKey::Delete { word: false })),
+        Event::Changed("find")
+    );
+}
+
+#[test]
 fn edit_text_reads_an_edit_and_is_empty_for_anything_else() {
     let mut f = edit_form();
     f.key(Key::Char('o'));
@@ -116,7 +134,8 @@ fn edit_keys_reach_the_field_and_dialog_keys_still_do_not() {
     assert!(matches!(&f.items[1].control, Control::Edit { edit, .. } if edit.text == "a"));
     assert_eq!(
         f.key(Key::Edit(EditKey::Home { select: true })),
-        Event::Changed("find")
+        Event::Redraw,
+        "a selection changes no text"
     );
     assert!(matches!(&f.items[1].control, Control::Edit { edit, .. } if edit.has_selection()));
     f.key(Key::Edit(EditKey::End { select: false }));
@@ -327,7 +346,7 @@ fn a_read_only_field_takes_the_focus_and_copies_but_no_typing_paste_or_drop() {
     assert_eq!(f.paste("pasted".into()), Event::Redraw);
     assert_eq!(
         f.key(Key::Edit(EditKey::Home { select: true })),
-        Event::Changed("find"),
+        Event::Redraw,
         "the selection moves"
     );
     assert_eq!(
