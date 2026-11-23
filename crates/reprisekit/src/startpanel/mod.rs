@@ -581,7 +581,7 @@ impl StartPanel {
 
     fn edit_key(&mut self, ek: EditKey) -> Event {
         let before = self.edit.text.clone();
-        let moved = self.edit.key(ek);
+        let moved = self.edit.key(ek).changed();
         self.edited(&before, moved)
     }
 

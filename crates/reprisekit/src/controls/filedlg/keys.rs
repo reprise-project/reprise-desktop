@@ -449,7 +449,11 @@ impl FileDlg {
             form::Key::End => EditKey::End { select: false },
             _ => return Event::None,
         };
-        let changed = self.shell.edit.as_mut().is_some_and(|(_, ed)| ed.key(ek));
+        let changed = self
+            .shell
+            .edit
+            .as_mut()
+            .is_some_and(|(_, ed)| ed.key(ek).changed());
         if changed { Event::Redraw } else { Event::None }
     }
 
