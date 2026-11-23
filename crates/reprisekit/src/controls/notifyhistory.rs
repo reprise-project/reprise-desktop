@@ -4,7 +4,8 @@
 //! entries, says which it can still act on, and decides what a pick does.
 //!
 //! - **Panel**: 380 px wide, 8 px padding, a `WindowRaised` edge; inside
-//!   a wider flyout border the panel grows by the difference each side.
+//!   a wider flyout border the panel grows by the difference each side. It
+//!   narrows to a smaller work area and shows fewer rows in a shorter one.
 //! - **Check box**: the look's box (13 px) centred in its 17 px row, its
 //!   label the look's offset in from the box's left edge (18 px in
 //!   Classic, 16 in Blue).
@@ -102,6 +103,10 @@ pub struct History {
     /// The check box, Clear All or a group's Clear the pointer holds down.
     pointer: Pointer<Held>,
     bar: RowBar,
+    /// The work area's width the panel narrows to; `None` keeps it whole.
+    max_width: Option<i32>,
+    /// The list rows in view: [`ROWS`], fewer in a short work area.
+    page: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +139,7 @@ pub struct Layout {
     pub label: Rect,
     pub list: Rect,
     pub clear: Rect,
+    pub width: i32,
     pub height: i32,
 }
 
@@ -143,17 +149,17 @@ pub fn width(cm: &ControlMetrics) -> i32 {
     cm.text.len(W) + 2 * (cm.flyout_border - flyout::EDGE)
 }
 
-/// The panel's parts at control sizes `cm`; inside a wider flyout border
-/// everything moves in by the difference.
-pub fn layout(cm: &ControlMetrics) -> Layout {
+/// `h`'s panel parts at control sizes `cm`, no wider than its work area ([`History::fit`]); inside a
+/// wider flyout border everything moves in by the difference.
+pub fn layout(h: &History, cm: &ControlMetrics) -> Layout {
     let pad = PAD + cm.flyout_border - flyout::EDGE;
-    let w = width(cm);
+    let w = h.max_width.map_or(width(cm), |mw| width(cm).min(mw));
     let u = cm.text;
     let check_row = u.len(CHECK_ROW);
     let check = Rect::new(pad, pad + (check_row - cm.check) / 2, cm.check, cm.check);
     let label_x = check.x + cm.check_label;
-    let label = Rect::new(label_x, pad, u.len(200), check_row);
-    let list_h = 2 + ROWS * u.len(ROW_H) + 2;
+    let label = Rect::new(label_x, pad, u.len(200).min(w - pad - label_x), check_row);
+    let list_h = 2 + h.page as i32 * u.len(ROW_H) + 2;
     let list = Rect::new(pad, pad + check_row + LIST_GAP, w - 2 * pad, list_h);
     let (bw, bh) = u.size((BUTTON_W, BUTTON_H));
     let clear = Rect::new(w - pad - bw, list.bottom() + PAD, bw, bh);
@@ -162,6 +168,7 @@ pub fn layout(cm: &ControlMetrics) -> Layout {
         label,
         list,
         clear,
+        width: w,
         height: clear.bottom() + pad,
     }
 }
@@ -255,6 +262,23 @@ impl History {
             folded: BTreeSet::new(),
             pointer: Pointer::new(),
             bar: RowBar::default(),
+            max_width: None,
+            page: ROWS as usize,
+        }
+    }
+
+    /// Fits the panel in the work area `room` (logical width, height) at control sizes `cm`: row
+    /// text ellipsizes in a narrower one, the list shows the rows that fit in a shorter one.
+    pub fn fit(&mut self, room: (i32, i32), cm: &ControlMetrics) {
+        self.max_width = Some(room.0);
+        self.page = ROWS as usize;
+        let over = (layout(self, cm).height - room.1).max(0);
+        let row_h = cm.text.len(ROW_H);
+        self.page = (ROWS - (over + row_h - 1) / row_h).max(1) as usize;
+        let n = self.list.rows.len();
+        self.list.top = self.list.top.min(n.saturating_sub(self.page));
+        if let Some(i) = self.list.selected {
+            self.list.select(i, self.page);
         }
     }
 
@@ -331,14 +355,14 @@ impl History {
             _ => false,
         };
         let kept = self.meta.iter().position(same);
-        self.list.top = top.min(n.saturating_sub(ROWS as usize));
+        self.list.top = top.min(n.saturating_sub(self.page));
         let gone = picked_app.filter(|a| !self.headers().any(|h| h == a));
         if kept.is_none()
             && let Some(app) = gone
         {
             self.list.selected = None;
             if let Some(h) = neighbour_group(&old_apps, &app, |a| self.header_row(a)) {
-                self.list.select(h, ROWS as usize);
+                self.list.select(h, self.page);
             }
         } else {
             self.list.selected = kept
@@ -407,7 +431,7 @@ impl History {
             self.rebuild();
         }
         if let Some(i) = self.list.selected {
-            self.list.select(i, ROWS as usize);
+            self.list.select(i, self.page);
         }
         Event::Redraw
     }
@@ -439,12 +463,12 @@ impl History {
             .take_while(|&i| self.group_at(i).is_none())
             .find(|&i| pick(self, i))
             .unwrap_or(h);
-        self.list.top = h.min(self.list.rows.len().saturating_sub(ROWS as usize));
-        self.list.select(row, ROWS as usize);
+        self.list.top = h.min(self.list.rows.len().saturating_sub(self.page));
+        self.list.select(row, self.page);
     }
 
     pub fn key(&mut self, key: Key) -> Event {
-        let page = ROWS as i64;
+        let page = self.page as i64;
         let step = match key {
             Key::Up => -1,
             Key::Down => 1,
@@ -460,7 +484,7 @@ impl History {
                 return self.act(i, key);
             }
         };
-        if self.list.step(step, ROWS as usize) {
+        if self.list.step(step, self.page) {
             Event::Redraw
         } else {
             Event::None
@@ -495,14 +519,14 @@ impl History {
             Hit::List(grouplist::Hit::Row(i)) => match self.meta.get(i).cloned() {
                 Some(Meta::Header { key, open }) => self.set_open(&key, !open),
                 Some(Meta::Note { .. }) => {
-                    self.list.select(i, ROWS as usize);
+                    self.list.select(i, self.page);
                     Event::Redraw
                 }
                 None => Event::None,
             },
             Hit::List(h) => {
-                let by = h.bar().map_or(0, |b| self.bar.press(b, ROWS.into()));
-                if self.list.scroll(by as i32, ROWS as usize) {
+                let by = h.bar().map_or(0, |b| self.bar.press(b, self.page as _));
+                if self.list.scroll(by as i32, self.page) {
                     Event::Redraw
                 } else {
                     Event::None
@@ -541,7 +565,7 @@ impl History {
     /// list moved.
     pub fn tick(&mut self, now: Instant) -> bool {
         let rows = self.bar.tick(now) as i32;
-        rows != 0 && self.list.scroll(rows, ROWS as usize)
+        rows != 0 && self.list.scroll(rows, self.page)
     }
 
     /// The pointer moved onto `hit` while holding a part, which draws
@@ -582,17 +606,17 @@ impl History {
     /// Select row `i`, scrolled into view, folding no header. True when the selection moved.
     pub fn select(&mut self, i: usize) -> bool {
         let was = self.list.selected;
-        self.list.select(i, ROWS as usize);
+        self.list.select(i, self.page);
         self.list.selected != was
     }
 
     pub fn scroll(&mut self, rows: i64) -> bool {
         let rows = rows.clamp(i32::MIN.into(), i32::MAX.into()) as i32;
-        self.list.scroll(rows, ROWS as usize)
+        self.list.scroll(rows, self.page)
     }
 
     fn list_layout(&self, cm: &ControlMetrics) -> grouplist::Layout {
-        grouplist::layout(&self.list, layout(cm).list, cm)
+        grouplist::layout(&self.list, layout(self, cm).list, cm)
     }
 
     /// Row `i`'s rect while it is scrolled into view.
@@ -621,7 +645,7 @@ fn dnd_label(h: &History) -> String {
 }
 
 pub fn hit(h: &History, x: i32, y: i32, cm: &ControlMetrics) -> Hit {
-    let lay = layout(cm);
+    let lay = layout(h, cm);
     let check_row = Rect::new(
         lay.check.x,
         lay.label.y,
@@ -659,8 +683,8 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
     let (cs, s) = (p.cs, p.s);
     let px = theme.fonts.size_px;
     let cm = theme.controls();
-    let lay = layout(&cm);
-    let mut c = Canvas::new((width(&cm) * s) as u32, (lay.height * s) as u32);
+    let lay = layout(h, &cm);
+    let mut c = Canvas::new((lay.width * s) as u32, (lay.height * s) as u32);
     let all = c.bounds();
     flyout::draw_panel(
         theme,
@@ -764,7 +788,7 @@ pub fn access(
     parent: crate::access::accesskit::NodeId,
 ) -> crate::access::accesskit::NodeId {
     use crate::access::{self, accesskit::Action, accesskit::Role, accesskit::Toggled};
-    let lay = layout(cm);
+    let lay = layout(h, cm);
     let check_row = Rect::new(
         lay.check.x,
         lay.label.y,
@@ -865,7 +889,7 @@ mod tests {
         use crate::interface::Interface;
         crate::pins::fonts();
         let big = Theme::default().with_text_size(200).controls();
-        let lay = layout(&big);
+        let lay = layout(&History::new(), &big);
         assert_eq!(width(&big), 2 * W);
         assert_eq!(lay.label.height, 2 * CHECK_ROW);
         assert_eq!(lay.list.height, 2 + ROWS * 2 * ROW_H + 2);
@@ -887,13 +911,56 @@ mod tests {
         crate::pins::check("notify_history_text_200", &got);
     }
 
+    #[test]
+    fn a_small_work_area_narrows_and_shortens_the_panel_in_every_look() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let room = (720, 300);
+        let mut got = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = crate::interfaces::theme_for(look).with_text_size(200);
+            let cm = theme.controls();
+            let mut roomy = sample();
+            roomy.fit((1920, 1080), &cm);
+            assert_eq!(layout(&roomy, &cm), layout(&sample(), &cm), "{look:?}");
+            let mut h = sample();
+            h.fit(room, &cm);
+            let lay = layout(&h, &cm);
+            assert_eq!(lay.width, room.0, "{look:?}");
+            assert!(lay.height <= room.1, "{look:?}: {} tall", lay.height);
+            assert!(h.page < h.list.rows.len(), "{look:?}: the list scrolls");
+            assert!(lay.clear.right() < lay.width, "{look:?}: Clear All");
+            assert!(
+                lay.label.right() < lay.width,
+                "{look:?}: the check box label"
+            );
+            let ll = h.list_layout(&cm);
+            assert!(ll.scrollbar.is_some(), "{look:?}");
+            for i in 0..h.page {
+                let row = h.row_rect(i, &cm).unwrap();
+                assert!(row.right() <= ll.inner.right(), "{look:?}: row {i}");
+                if h.group_at(i).is_some() {
+                    let (clear, arrow) = header_parts(row, cm.text);
+                    assert!(arrow.x > row.x && clear.right() <= row.right());
+                }
+            }
+            for scale in [1, 2] {
+                let theme = theme.scaled(scale);
+                let text = TextRenderer::load(&theme.fonts);
+                let c = draw(&theme, &text, &h);
+                got.push((format!("{look:?}@{scale}"), crate::pins::fnv(&c)));
+            }
+        }
+        crate::pins::check("notify_history_small_room", &got);
+    }
+
     fn labels(h: &History) -> Vec<&str> {
         h.list.rows.iter().map(Row::label).collect()
     }
 
     #[test]
     fn the_parts_stack_down_the_panel() {
-        let lay = layout(&ControlMetrics::CLASSIC);
+        let lay = layout(&History::new(), &ControlMetrics::CLASSIC);
         assert_eq!(lay.check, Rect::new(8, 10, 13, 13));
         assert_eq!(lay.label.x, 8 + 13 + 5);
         // Two px of frame each side of ten 18 px rows.
@@ -1248,7 +1315,7 @@ mod tests {
     fn a_blue_do_not_disturb_label_starts_16_px_in() {
         let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
         let cm = blue.look.controls_at_100();
-        let lay = layout(&cm);
+        let lay = layout(&History::new(), &cm);
         assert_eq!(lay.check, Rect::new(8, 10, 13, 13));
         assert_eq!(lay.label.x, 8 + 16);
     }
@@ -1263,7 +1330,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let h = sample();
         let c = draw(&theme, &text, &h);
-        let lay = layout(&ControlMetrics::CLASSIC);
+        let lay = layout(&History::new(), &ControlMetrics::CLASSIC);
         let cs = &theme.colors;
         assert_eq!((c.width as i32, c.height as i32), (W, lay.height));
         assert_eq!(c.get(5, 1), cs.button_hilight.argb(), "the raised edge");
@@ -1353,7 +1420,7 @@ mod tests {
             let theme = crate::interfaces::theme_for(iface);
             let c = draw(&theme, &text, &sample());
             let cm = theme.look.controls_at_100();
-            let lay = layout(&cm);
+            let lay = layout(&History::new(), &cm);
             let m = flyout::margin(&theme);
             assert_eq!(
                 (c.width as i32, c.height as i32),
@@ -1377,11 +1444,14 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let cm = theme.look.controls_at_100();
         let c = draw(&theme, &text, &sample());
-        let lay = layout(&cm);
-        let classic = layout(&ControlMetrics {
-            flyout_border: 2,
-            ..cm
-        });
+        let lay = layout(&History::new(), &cm);
+        let classic = layout(
+            &History::new(),
+            &ControlMetrics {
+                flyout_border: 2,
+                ..cm
+            },
+        );
         assert_eq!(width(&cm), 392);
         assert_eq!(lay.height, classic.height + 12);
         assert_eq!(lay.list.x, classic.list.x + 6);
@@ -1426,10 +1496,10 @@ mod tests {
         h.dnd_until = Some("12:59 PM".into());
         let cm = ControlMetrics::CLASSIC;
         assert!(
-            text.measure(&dnd_label(&h), false, px) <= layout(&cm).label.width,
+            text.measure(&dnd_label(&h), false, px) <= layout(&History::new(), &cm).label.width,
             "the label holds a 12-hour time"
         );
-        let mut tree = crate::access::Tree::window("", (W, layout(&cm).height));
+        let mut tree = crate::access::Tree::window("", (W, layout(&History::new(), &cm).height));
         access(&h, &cm, &mut tree, crate::access::ROOT);
         let root = tree.get(crate::access::ROOT).unwrap().children().to_vec();
         assert_eq!(
@@ -1443,7 +1513,7 @@ mod tests {
         use crate::access::accesskit::{Action, Role, Toggled};
         let h = sample();
         let cm = ControlMetrics::CLASSIC;
-        let mut tree = crate::access::Tree::window("", (W, layout(&cm).height));
+        let mut tree = crate::access::Tree::window("", (W, layout(&History::new(), &cm).height));
         let focus = access(&h, &cm, &mut tree, crate::access::ROOT);
         let root = tree.get(crate::access::ROOT).unwrap().children().to_vec();
         let dnd = tree.get(root[0]).unwrap();
@@ -1494,7 +1564,7 @@ mod tests {
     fn an_empty_panel_says_so_and_greys_clear_all() {
         let h = History::new();
         let cm = ControlMetrics::CLASSIC;
-        let mut tree = crate::access::Tree::window("", (W, layout(&cm).height));
+        let mut tree = crate::access::Tree::window("", (W, layout(&History::new(), &cm).height));
         let focus = access(&h, &cm, &mut tree, crate::access::ROOT);
         let list = tree.get(focus).unwrap();
         let empty = tree.get(list.children()[0]).unwrap();

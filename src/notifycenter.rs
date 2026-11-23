@@ -53,7 +53,9 @@ fn open(state: &mut State, output: &Output, cell: Rect) {
     }
     let usable = state.usable_area(Some(output));
     let cm = state.config.theme.controls();
-    let size = (notifyhistory::width(&cm), notifyhistory::layout(&cm).height);
+    let mut model = History::new();
+    model.fit((usable.width, usable.height), &cm);
+    let size = size(&model, &cm);
     let at = crate::barplace::bar_popup(&state.bar_placement(output), cell, size, usable);
     let scale = state.draw_scale_at(Some(output)).max(1);
     let scene = &mut state.scene;
@@ -66,7 +68,7 @@ fn open(state: &mut State, output: &Output, cell: Rect) {
     let buffer = scene.buffer_create(tree);
     scene.set_position(tree, at.0, at.1);
     state.notify.center = Some(CenterView {
-        model: History::new(),
+        model,
         at,
         scale,
         tree,
@@ -121,6 +123,11 @@ fn open_at_bell(state: &mut State) {
         Rect::new(shown.right() - w, shown.y, 1, shown.height)
     });
     open(state, &output, cell);
+}
+
+fn size(model: &History, cm: &ControlMetrics) -> (i32, i32) {
+    let lay = notifyhistory::layout(model, cm);
+    (lay.width, lay.height)
 }
 
 pub fn close(state: &mut State) {
@@ -183,8 +190,7 @@ fn redraw(state: &mut State) {
     let was = state.scene.outputs_of(tree);
     let theme = state.config.theme.scaled(v.scale);
     let canvas = notifyhistory::draw(&theme, state.text.for_output(theme.scale), &v.model);
-    let cm = state.config.theme.controls();
-    let size = (notifyhistory::width(&cm), notifyhistory::layout(&cm).height);
+    let size = size(&v.model, &state.config.theme.controls());
     let pane = glass::flyout_glass(&state.config, size);
     let Some(v) = state.notify.center.as_mut() else {
         return;
@@ -202,7 +208,7 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
     use reprisekit::access::{ROOT, accesskit::Role};
     let v = state.notify.center.as_ref()?;
     let cm = state.config.theme.controls();
-    let size = (notifyhistory::width(&cm), notifyhistory::layout(&cm).height);
+    let size = size(&v.model, &cm);
     let rect = Rect::new(v.at.0, v.at.1, size.0, size.1);
     let mut tree = crate::access::root(Role::Window, "Notifications", rect);
     let focus = notifyhistory::access(&v.model, &cm, &mut tree, ROOT);
