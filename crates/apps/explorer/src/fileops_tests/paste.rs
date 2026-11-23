@@ -72,6 +72,29 @@ fn a_paste_into_the_same_folder_lands_as_a_copy() {
     assert_eq!(ex.undo, Some("Copy"));
 }
 
+#[test]
+fn a_paste_selects_what_it_landed_in_place_of_the_source() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("a.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.sv.selection.set_only(Some(0));
+
+    ex.run(Command::Paste, &mut ctx);
+    let clip = FileClip {
+        cut: false,
+        paths: vec![dir.path().join("a.txt")],
+    };
+    ex.pasted(clip, &mut ctx);
+    ex.finish_puts(&mut ctx);
+
+    assert_eq!(
+        ex.selected_paths(),
+        [dir.path().join("Copy of a.txt")],
+        "the copy is selected, the source is not"
+    );
+}
+
 /// Cut puts the selection on the clipboard as a cut and fades its entries; Copy does neither.
 #[test]
 fn cut_marks_its_entries_and_copy_does_not() {
