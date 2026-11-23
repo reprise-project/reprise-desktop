@@ -87,6 +87,8 @@ const MAX_QUEUED: usize = 8;
 const BURST_AFTER: usize = 3;
 const BURST_WINDOW: Duration = Duration::from_secs(10);
 const BURST_LINES: usize = 3;
+/// The longest summary a burst balloon lists, so one long title leaves room for the others.
+const BURST_LINE_CHARS: usize = 63;
 
 struct Balloon {
     item: Item,

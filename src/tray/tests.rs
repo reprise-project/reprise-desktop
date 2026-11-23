@@ -243,6 +243,22 @@ fn clip_cuts_on_a_char_boundary() {
     );
 }
 
+#[test]
+fn shorten_ends_a_cut_summary_in_dots_on_a_char_boundary() {
+    assert_eq!(shorten("short".into(), 5), "short");
+    assert_eq!(shorten("abcdefgh".into(), 6), "abc...");
+    assert_eq!(shorten("héllo wörld".into(), 8), "héllo...");
+    assert_eq!(
+        shorten("ab cdefgh".into(), 6),
+        "ab...",
+        "no space before the dots"
+    );
+    assert_eq!(shorten("日本語のテキストです".into(), 7), "日本語の...");
+    let long = shorten("é".repeat(1000), SUMMARY_CHARS);
+    assert_eq!(long.chars().count(), SUMMARY_CHARS);
+    assert!(long.ends_with("..."));
+}
+
 fn request(id: &str, node: i32, depth: usize, row: usize) -> SubmenuRequest {
     SubmenuRequest {
         id: id.into(),

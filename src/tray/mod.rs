@@ -166,15 +166,28 @@ pub enum TrayEvent {
     },
 }
 
-/// The balloon's title and body limits: what a peer sends past them is
-/// cut before it reaches the loop, so the wrap and the canvas stay
-/// bounded.
-pub const SUMMARY_CHARS: usize = 63;
+/// The longest title a peer's notification keeps: past the three lines a balloon
+/// shows, so the drawing's own wrap and "..." decide what shows.
+pub const SUMMARY_CHARS: usize = 255;
+/// The longest body a peer's notification keeps, so the wrap stays bounded.
 pub const BODY_CHARS: usize = 255;
+/// The longest sender name a notification keeps.
+pub const APP_CHARS: usize = 63;
 
 pub fn clip(mut s: String, max: usize) -> String {
     if let Some((i, _)) = s.char_indices().nth(max) {
         s.truncate(i);
+    }
+    s
+}
+
+/// `s` cut to at most `max` chars, a cut one ending in "...".
+pub fn shorten(mut s: String, max: usize) -> String {
+    if let Some((i, _)) = s.char_indices().nth(max) {
+        let keep = s[..i].char_indices().nth_back(2).map_or(0, |(j, _)| j);
+        s.truncate(keep);
+        s.truncate(s.trim_end().len());
+        s.push_str("...");
     }
     s
 }

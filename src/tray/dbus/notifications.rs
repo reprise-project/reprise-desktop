@@ -2,8 +2,8 @@ use super::decoders::Decoders;
 use super::item::{DECODERS, icon_ref, owner_pid};
 use super::{Icons, emit, lock};
 use crate::tray::{
-    ACTION_ICON_SIZES, BODY_CHARS, NOTIFY_SIZES, Notification, REPLY_SEND, Reply, SUMMARY_CHARS,
-    TrayEvent, clip, decode_named_at, notify,
+    ACTION_ICON_SIZES, APP_CHARS, BODY_CHARS, NOTIFY_SIZES, Notification, REPLY_SEND, Reply,
+    SUMMARY_CHARS, TrayEvent, clip, decode_named_at, notify, shorten,
 };
 use repriseaudio::sounds::Sound;
 use reprisebus::peer::{AppIdentity, Identities};
@@ -174,7 +174,7 @@ impl Notifications {
             notify::program_key(hints.desktop_entry.as_deref(), &app_name),
             notify::KEY_CHARS,
         );
-        let app = shown_line(&entry.map_or(app_name, |e| e.name), SUMMARY_CHARS);
+        let app = shown_line(&entry.map_or(app_name, |e| e.name), APP_CHARS);
         lock(&self.programs).saw(&key, &app);
         let actions = notify::actions(&actions.0);
         let action_icons = if hints.action_icons {
@@ -202,8 +202,8 @@ impl Notifications {
                 id,
                 app,
                 key,
-                summary: shown_line(&summary, SUMMARY_CHARS),
-                body: clip(notify::plain_text(&body), BODY_CHARS),
+                summary: shown_line(&shorten(summary, SUMMARY_CHARS), SUMMARY_CHARS),
+                body: shorten(notify::plain_text(&body), BODY_CHARS),
                 app_icon,
                 image,
                 expire_timeout,

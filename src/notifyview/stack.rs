@@ -17,9 +17,9 @@ use super::layout::sheet_tint;
 use super::motion::{Motion, destroy, drop_leaving, leave, restack};
 use super::paint::paint;
 use super::{
-    BURST_AFTER, BURST_LINES, BURST_WINDOW, Balloon, DEFAULT_MS, MAX_QUEUED, NotifyView, OWN_ID,
-    REASON_EXPIRED, REASON_UNDEFINED, cap, close_transient, droplets, overlay_tree, sheets,
-    take_down, timeout_ms,
+    BURST_AFTER, BURST_LINE_CHARS, BURST_LINES, BURST_WINDOW, Balloon, DEFAULT_MS, MAX_QUEUED,
+    NotifyView, OWN_ID, REASON_EXPIRED, REASON_UNDEFINED, cap, close_transient, droplets,
+    overlay_tree, sheets, take_down, timeout_ms,
 };
 
 #[derive(Clone, Debug)]
@@ -63,7 +63,8 @@ impl Burst {
         } else {
             &n.summary
         };
-        self.lines.push_front(line.to_string());
+        self.lines
+            .push_front(crate::tray::shorten(line.to_string(), BURST_LINE_CHARS));
         self.lines.truncate(BURST_LINES);
     }
 
