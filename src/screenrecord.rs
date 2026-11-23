@@ -669,7 +669,8 @@ fn remove_later(state: &mut State, made: Made) {
     });
 }
 
-/// The notice for a recording kept at `path`, under `summary`, with a `note` below its name.
+/// The notice for a recording kept at `path`, under `summary`, with a `note` below its name; the
+/// file goes in the recent files.
 fn saved_notice(state: &mut State, summary: &str, path: &Path, note: Option<&str>) {
     log::info!("screen recording saved to {}", path.display());
     let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -689,6 +690,7 @@ fn saved_notice(state: &mut State, summary: &str, path: &Path, note: Option<&str
         ("folder".to_string(), "Show in Folder".to_string(), folder),
     ];
     crate::notifyview::notice_with_actions(state, summary, &body, actions);
+    state.record_recent(vec![path.to_path_buf()], None);
 }
 
 /// Make a new empty file named for `secs` in the Screencasts folder, made if missing, for the
@@ -725,6 +727,33 @@ fn file_name(tm: &libc::tm) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_saved_recording_goes_in_the_recent_files_unless_they_are_off() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let dir = crate::harness::scratch().join("recording-recent");
+        std::fs::create_dir_all(&dir).unwrap();
+        let xbel = dir.join("recently-used.xbel");
+        h.state.recent = crate::recentdocs::RecentDocs::reading(xbel.clone());
+        let listed = |name: &str| std::fs::read_to_string(&xbel).is_ok_and(|t| t.contains(name));
+
+        for name in ["Off.mp4", "Screencast On.mp4"] {
+            std::fs::write(dir.join(name), "").unwrap();
+        }
+
+        h.state.config.recent_files = false;
+        saved_notice(&mut h.state, SAVED, &dir.join("Off.mp4"), None);
+        h.state.config.recent_files = true;
+        saved_notice(&mut h.state, SAVED, &dir.join("Screencast On.mp4"), None);
+        h.until("the recording is in the recent files", |_| {
+            listed("Screencast%20On.mp4")
+        });
+        assert!(
+            !listed("Off.mp4"),
+            "nothing recorded while recent files are off"
+        );
+    }
 
     #[test]
     fn a_recorder_whose_library_did_not_load_says_so_in_place_of_the_loader_line() {
