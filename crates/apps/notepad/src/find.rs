@@ -48,7 +48,7 @@ impl Notepad {
             }
             None => {
                 let b = self.notfound_box(&query);
-                self.asks.ask(b, Ask::NotFound);
+                self.ask(b, Ask::NotFound);
                 false
             }
         }

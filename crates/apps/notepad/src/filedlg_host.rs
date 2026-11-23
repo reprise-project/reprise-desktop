@@ -153,7 +153,7 @@ impl Notepad {
         // Ask before writing over another file; the document's own path is what Save As opened on, so it is not "another".
         if taken(&path) && self.path.as_deref() != Some(&path) {
             let b = self.overwrite_box(&path);
-            self.asks.ask(b, Ask::Overwrite(path));
+            self.asks.ask_over(SAVEAS, b, Ask::Overwrite(path));
             return Reply::redraw_all();
         }
         self.saveas_write(path)

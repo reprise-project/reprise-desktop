@@ -219,13 +219,18 @@ impl Notepad {
         }
     }
 
+    /// Raises `b` over the window whose event raised it (`event_win`).
+    pub(crate) fn ask(&mut self, b: MsgBox, k: Ask) {
+        self.asks.ask_over(self.event_win, b, k);
+    }
+
     /// Shows `text` in an error box once the boxes before it are answered. An error equal to one
     /// up or waiting is shown once.
     pub(crate) fn fail(&mut self, text: &str) {
         let shown = |(b, ask): (&MsgBox, &Ask)| matches!(ask, Ask::Error) && b.fields.text == text;
         if !self.asks.iter().any(shown) {
             let b = ok_box(text.into(), self.warn_icon.clone());
-            self.asks.ask(b, Ask::Error);
+            self.ask(b, Ask::Error);
         }
     }
 

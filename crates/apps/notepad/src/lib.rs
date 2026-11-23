@@ -99,6 +99,9 @@ struct Notepad {
     focused: bool,
     /// The Find or Replace window holds the keyboard, so the edit keeps showing a found match.
     find_focused: Option<WinId>,
+    /// The Find, Replace or Go To window whose event is being handled, else `MAIN`: a box raised
+    /// during it covers that window, so the keyboard goes back there when the box closes.
+    event_win: WinId,
     app_icon: Option<Canvas>,
     warn_icon: Option<Canvas>,
     /// Any edit sets it; undoing back to the saved text does not clear it.
@@ -162,6 +165,7 @@ impl Notepad {
             about: false,
             focused: false,
             find_focused: None,
+            event_win: MAIN,
             app_icon: None,
             warn_icon: None,
             dirty: false,
@@ -351,6 +355,10 @@ impl App for Notepad {
         if let Some(on) = find_focus {
             self.find_focused = on.then_some(win);
         }
+        self.event_win = match win {
+            GOTO | FIND | REPLACE_WIN => win,
+            _ => MAIN,
+        };
         let reply = match win {
             GOTO => self.goto_event(ev, ctx),
             FIND => self.find_event(ev, ctx),
@@ -361,6 +369,7 @@ impl App for Notepad {
             SAVEAS => self.saveas_event(ev, ctx),
             _ => self.main_event(ev, ctx),
         };
+        self.event_win = MAIN;
         let reply = match clip {
             Some(clip) => reply.with_clipboard(clip),
             None => reply,
@@ -456,14 +465,15 @@ impl Extended for Notepad {
         Reply::redraw()
     }
 
-    /// The overwrite question covers Save As.
+    /// A box covers the window it was raised over while that window is open, else `MAIN`.
     fn parent(&self, win: WinId) -> Option<WinId> {
-        match self.asks.up() {
-            Some((_, Ask::Overwrite(_))) if self.asks.owns(win) && self.saveas.is_some() => {
-                Some(SAVEAS)
-            }
-            _ => Some(MAIN),
-        }
+        let open = |w: WinId| match w {
+            GOTO => self.goto.is_some(),
+            FIND | REPLACE_WIN => self.find_form(w).is_some(),
+            SAVEAS => self.saveas.is_some(),
+            _ => false,
+        };
+        Some(self.asks.parent(win).filter(|&w| open(w)).unwrap_or(MAIN))
     }
 
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
