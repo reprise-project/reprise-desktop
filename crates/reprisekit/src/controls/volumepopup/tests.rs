@@ -1336,7 +1336,7 @@ fn greyed_master_and_empty_input_draw_greyed() {
 }
 
 #[test]
-fn no_devices_draws_both_rows_greyed_and_empty() {
+fn no_devices_draws_both_rows_greyed_saying_so() {
     let theme = Theme::default();
     let face = theme.colors.button_face.argb();
     let mut m = mix(&[]);
@@ -1352,12 +1352,14 @@ fn no_devices_draws_both_rows_greyed_and_empty() {
         ("Input", l.input_label, &l.input),
     ] {
         assert_eq!(inked(&c, label, ink), 0, "{name}: its label greys");
-        assert_eq!(
-            inked(&c, f.text, face),
-            (f.text.width * f.text.height) as usize,
-            "{name}: the field is face coloured and empty"
+        assert_eq!(inked(&c, f.text, ink), 0, "{name}: no black text");
+        assert!(
+            inked(&c, f.text, face) < (f.text.width * f.text.height) as usize,
+            "{name}: the field writes something, greyed"
         );
     }
+    assert_eq!(vp.output.items[0].text, NO_DEVICE);
+    assert_eq!(vp.input.items[0].text, NO_DEVICE);
     let (tree, _) = accessed(&vp, &l);
     for name in ["Output", "Input"] {
         let id = tree.find(Role::ComboBox, name).expect("the combo");
@@ -1367,8 +1369,8 @@ fn no_devices_draws_both_rows_greyed_and_empty() {
         );
     }
     assert!(
-        tree.nodes().all(|(_, n)| n.role() != Role::ListBoxOption),
-        "no device rows"
+        tree.find(Role::ListBoxOption, NO_DEVICE).is_some(),
+        "a reader hears there is no device"
     );
 }
 
