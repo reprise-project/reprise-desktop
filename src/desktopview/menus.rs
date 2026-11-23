@@ -96,15 +96,24 @@ pub fn desktop_menu(
     split(rows)
 }
 
-pub fn new_menu() -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
+/// New's rows: Folder, then Text Document with the `templates` under it.
+pub fn new_menu(
+    templates: &[reprisefs::templates::Template],
+) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     use DesktopCommand::*;
-    split(vec![
+    let mut rows = vec![
         (entry("&Folder"), Some(NewFolder)),
         SEP,
         (entry("&Text Document"), Some(NewTextDocument)),
-    ])
+    ];
+    for t in templates {
+        let label = escape_mnemonic(&t.label);
+        rows.push((entry(&label), Some(NewFrom(t.path.clone()))));
+    }
+    split(rows)
 }
 
+/// The icons of [`new_menu`]'s rows above its templates.
 pub const NEW_MENU_ICONS: [Option<&str>; 3] = [Some("folder"), None, Some("text-x-generic")];
 
 pub fn arrange_menu(auto_arrange: bool) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {

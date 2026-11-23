@@ -150,6 +150,9 @@ shake, the dim, the hidden frame rate and window memory.
   `~/Desktop`, to drag, rename and right-click (`desktop_extensions`).
   New selects what it makes and starts its rename; Ctrl+Z undoes a New or a
   rename, back to the last other file action on the desktop.
+- **Templates.** New on the desktop and in Explorer lists the files in your
+  Templates folder (`XDG_TEMPLATES_DIR`, usually `~/Templates`); each row
+  makes a copy named after its file.
 - **Open in Terminal** on the desktop's and a folder's right-click menu
   starts your `terminal` there.
 - **Widgets.** A clock, a calendar and a system meter, ticked under the

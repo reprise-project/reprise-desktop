@@ -234,6 +234,7 @@ impl Explorer {
                     icons,
                     list,
                     tree: Vec::new(),
+                    templates: None,
                 },
             }
         };

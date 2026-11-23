@@ -387,7 +387,35 @@ impl State {
         });
     }
 
-    /// A New Folder or New Text Document the desktop's folder refused, in an error box.
+    /// A copy of `template` named after it ([`reprisefs::templates::make`]), in the cell under
+    /// `at` as New Folder places its folder. Does nothing while the desktop's files are off.
+    fn new_from_template(&mut self, template: PathBuf, at: Option<(i32, i32)>) {
+        if !self.config.desktop_icons {
+            return;
+        }
+        let Some(view) = self.desktop.as_ref() else {
+            return;
+        };
+        let dir = view.dir.clone();
+        let action = Action::changes("New", State::rescan_desktop);
+        self.spawn_fs_action(action, move |gate| {
+            if !gate.change(&dir) {
+                return Box::new(|_| {});
+            }
+            let made = reprisefs::templates::make(&template, &dir).map(|p| (file_id(&p), p));
+            let what = template.file_name().unwrap_or_default().to_string_lossy();
+            let what = what.into_owned();
+            Box::new(move |state: &mut State| match made {
+                Ok((id, path)) => {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    state.created(&name, id, at)
+                }
+                Err(e) => state.create_failed(&what, e),
+            })
+        });
+    }
+
+    /// A New the desktop's folder refused, in an error box.
     fn create_failed(&mut self, what: &str, e: std::io::Error) {
         log::warn!("desktop: could not create a {what}: {e}");
         let text = format!("Cannot create {what}: {e}");
@@ -456,6 +484,7 @@ impl State {
             Dc::NextBackground => self.next_slide(),
             Dc::NewFolder => self.new_folder(self.desktop_menu_at),
             Dc::NewTextDocument => self.new_text_document(self.desktop_menu_at),
+            Dc::NewFrom(template) => self.new_from_template(template, self.desktop_menu_at),
             Dc::Open => {
                 if let Some(i) = target {
                     self.open_selection(i);

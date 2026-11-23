@@ -71,6 +71,7 @@ pub mod sendto;
 pub mod software;
 pub mod subprocess;
 pub mod sysinfo;
+pub mod templates;
 pub mod thumbnailers;
 pub mod thumbnails;
 pub mod thumbpipe;

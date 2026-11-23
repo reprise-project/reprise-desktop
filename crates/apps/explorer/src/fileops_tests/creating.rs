@@ -19,6 +19,25 @@ fn new_folder_creates_the_folder_and_starts_a_rename() {
     assert_eq!(ex.undo, Some("New"));
 }
 
+#[test]
+fn new_from_a_template_copies_it_under_its_name_and_starts_a_rename() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let templates = tempfile::tempdir().expect("a temp dir");
+    let template = templates.path().join("Report.odt");
+    std::fs::write(&template, "body").expect("write");
+    std::fs::write(dir.path().join("Report.odt"), "mine").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+
+    ex.run(Command::NewFrom(template), &mut ctx);
+
+    let made = dir.path().join("Report (2).odt");
+    assert_eq!(std::fs::read_to_string(&made).expect("read"), "body");
+    let i = ex.index_of(&made).expect("the copy is listed");
+    assert_eq!(ex.sv.edit.as_ref().map(|(j, _)| *j), Some(i));
+    assert_eq!(ex.undo, Some("New"));
+}
+
 /// A New Text Document whose name appeared after the last listing leaves that file as it was and reports the clash.
 #[test]
 fn new_text_document_never_truncates_an_unlisted_file() {

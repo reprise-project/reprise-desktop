@@ -1154,38 +1154,60 @@ impl Explorer {
         } else {
             "New Text Document"
         };
-        let made = path.clone();
         // The listing can be stale, so neither kind may land on an existing name: both fail with
         // `AlreadyExists`.
         let work = move |gate: &Gate| {
             if !gate.change(&dir) {
                 return Err(std::io::ErrorKind::Interrupted.into());
             }
-            let done = if folder {
-                std::fs::create_dir(&made)
+            let made = if folder {
+                std::fs::create_dir(&path)
             } else {
                 std::fs::OpenOptions::new()
                     .write(true)
                     .create_new(true)
-                    .open(&made)
+                    .open(&path)
                     .map(drop)
             };
-            done.map(|()| reprisefs::undo::file_id(&made))
+            made.map(|()| (reprisefs::undo::file_id(&path), path))
         };
         self.act(ctx, Action::changes(title), work, move |ex, made, ctx| {
-            ex.item_made(path, &name, made, ctx)
+            ex.item_made(&name, made, ctx)
         })
     }
 
+    /// New > a template: a copy of `template` in the folder shown ([`reprisefs::templates::make`]),
+    /// then selected and renamed as a new folder is.
+    pub fn new_from_template(&mut self, template: PathBuf, ctx: &mut Ctx) -> Reply {
+        let Some(dir) = self.place.path() else {
+            return Reply::none();
+        };
+        if self.place.read_only() {
+            return Reply::none();
+        }
+        let name = file_label(&template);
+        let work = move |gate: &Gate| {
+            if !gate.change(&dir) {
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            reprisefs::templates::make(&template, &dir).map(|p| (reprisefs::undo::file_id(&p), p))
+        };
+        self.act(ctx, Action::changes("New"), work, move |ex, made, ctx| {
+            ex.item_made(&name, made, ctx)
+        })
+    }
+
+    /// A New's item landed at the path `made` holds, with its identity: one undo entry, then it
+    /// is selected and scrolled into view with its rename begun. A failure names `name` in an
+    /// error box.
     fn item_made(
         &mut self,
-        path: PathBuf,
         name: &str,
-        made: std::io::Result<Option<reprisefs::undo::FileId>>,
+        made: std::io::Result<(Option<reprisefs::undo::FileId>, PathBuf)>,
         ctx: &mut Ctx,
     ) -> Reply {
-        let id = match made {
-            Ok(id) => id,
+        let (id, path) = match made {
+            Ok(made) => made,
             Err(e) => {
                 return self.message_box(
                     "Error Creating File or Folder",
@@ -1197,8 +1219,8 @@ impl Explorer {
         self.undos.push(Undoable::New(path.clone(), id));
         self.sync_undo();
         let reply = self.refresh(ctx);
-        if let Some(i) = self.index_of(&path) {
-            self.sv.selection.set_only(Some(i));
+        if self.index_of(&path).is_some() {
+            self.select_shown(std::slice::from_ref(&path), ctx);
             self.focus = Focus::View;
             self.begin_rename(ctx);
         }
