@@ -154,6 +154,7 @@ fn jump_rows(
         .map(|p| ResultRow {
             name: file_name(p),
             icon: unread(icons, reprisefs::icons::icon_for_file(p), px),
+            detail: String::new(),
         })
         .collect()
 }

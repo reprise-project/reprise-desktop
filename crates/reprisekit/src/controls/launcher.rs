@@ -974,7 +974,6 @@ fn glass_body(
     };
     let pane = pane.scaled(s);
     draw_pane(c, style, pane, s);
-    let size = g.px(search::TEXT_PX);
     for (i, r) in lay.rows.iter().enumerate().filter(|(_, r)| r.width > 0) {
         let r = r.scaled(s);
         if let Some(group) = l.group_of(i) {
@@ -984,13 +983,8 @@ fn glass_body(
         }
         let (name, lit) = (&l.list.items[i], l.list.selected == Some(i));
         let icon = l.icons.get(i).and_then(Option::as_ref);
-        let end = search::result(c, style, &face, r, icon, name, lit, g);
-        if let Some(d) = l.list.detail.get(i).filter(|d| !d.is_empty()) {
-            let x = end + g.len(listbox::DETAIL_GAP);
-            let y = r.y + g.len(search::at::RESULT_BASE);
-            let clip = Rect::new(r.x, r.y, r.width - 2 * s, r.height);
-            search::line(c, &face, x, y, clip, d, style.pane_inks.greyed, size);
-        }
+        let detail = l.list.detail.get(i).map_or("", String::as_str);
+        search::result(c, style, &face, r, icon, name, detail, lit, g);
     }
 }
 

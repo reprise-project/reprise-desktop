@@ -398,7 +398,8 @@ fn draw_contents(
                 };
                 let lit = lit == Some(spot);
                 let icon = row.icon.as_ref();
-                search::result(d.canvas, style, text, at(r), icon, &row.name, lit, g);
+                let (name, detail) = (&row.name, &row.detail);
+                search::result(d.canvas, style, text, at(r), icon, name, detail, lit, g);
             }
             Spot::Jump(k) => {
                 let Some(row) = p.jump.get(k) else { continue };
@@ -617,7 +618,7 @@ mod tests {
     fn row(name: &str) -> ResultRow {
         ResultRow {
             name: name.into(),
-            icon: None,
+            ..ResultRow::default()
         }
     }
 
@@ -1721,6 +1722,27 @@ mod tests {
             let header = Rect::new(17, 26, 80, 11);
             assert!(inks(&d, header, INK_GROUP), "the header's stems");
             assert!(!inks(&d, Rect::new(49, 50, 60, 12), INK_GROUP));
+        }
+    }
+
+    #[test]
+    fn a_result_draws_its_detail_in_grey_after_its_name() {
+        let mut p = sample(Mode::Search, None);
+        let bare = render(&p, None);
+        p.results[1].rows[0].detail = "~/Documents".into();
+        let d = render(&p, None);
+        let r = d.l.rect(Spot::Result(1, 0)).unwrap();
+        let name_end = r.x + 80;
+        let before = Rect::new(r.x, r.y, name_end - r.x, r.height);
+        let after = Rect::new(name_end, r.y, r.right() - name_end, r.height);
+        assert!(
+            (before.y..before.bottom())
+                .all(|y| (before.x..before.right()).all(|x| d.at(x, y) == bare.at(x, y))),
+            "the name and icon stay as they were"
+        );
+        if face() {
+            assert!(inks_near(&d, after, INK_GREYED), "the folder in grey");
+            assert!(!inks_near(&bare, after, INK_GREYED), "nothing without one");
         }
     }
 

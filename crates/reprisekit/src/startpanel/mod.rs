@@ -67,10 +67,13 @@ pub enum TreeRow {
     },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// A search result or jump row. `detail` is drawn dimmed after the name (a file's folder, a
+/// search provider's description); empty for none.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ResultRow {
     pub name: String,
     pub icon: Option<Canvas>,
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1021,7 +1024,7 @@ pub(crate) mod tests {
     pub(crate) fn row(name: &str) -> ResultRow {
         ResultRow {
             name: name.into(),
-            icon: None,
+            ..ResultRow::default()
         }
     }
 
@@ -1281,7 +1284,7 @@ pub(crate) mod tests {
     fn a_relisted_jump_list_keeps_the_light_on_its_file_and_an_emptied_list_goes_home() {
         let row = |name: &str| ResultRow {
             name: name.into(),
-            icon: None,
+            ..ResultRow::default()
         };
         let mut p = StartPanel::new();
         p.frequent = vec![prow("Notepad", true)];

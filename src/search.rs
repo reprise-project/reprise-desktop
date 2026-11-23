@@ -303,6 +303,15 @@ impl Found {
             Found::Note(text) => text.clone(),
         }
     }
+
+    /// What its row says after the name: a file's folder (`~` for `home`), a result's description.
+    pub fn detail(&self, home: Option<&Path>) -> String {
+        match self {
+            Found::Path(p) => p.parent().map(|d| tilde(d, home)).unwrap_or_default(),
+            Found::Result(m) => m.description.clone(),
+            Found::Note(_) => String::new(),
+        }
+    }
 }
 
 fn paths(found: Vec<PathBuf>) -> Vec<Found> {
@@ -575,14 +584,9 @@ impl FileSearch {
         icons: &mut crate::icontheme::IconCache,
         px: i32,
     ) -> FoundRow {
-        let detail = match f {
-            Found::Path(p) => p.parent().map(|d| tilde(d, home)).unwrap_or_default(),
-            Found::Result(m) => m.description.clone(),
-            Found::Note(_) => String::new(),
-        };
         FoundRow {
             name: f.name(),
-            detail,
+            detail: f.detail(home),
             icon: self.icon(source, f, mime, icons, px),
         }
     }
