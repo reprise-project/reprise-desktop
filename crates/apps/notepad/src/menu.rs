@@ -137,11 +137,11 @@ impl Notepad {
             (title::EDIT, row::DELETE) => {
                 self.edit_key(MultiKey::Edit(EditKey::Delete { word: false }), ctx);
             }
-            (title::EDIT, row::FIND) => self.open_find(),
-            (title::EDIT, row::REPLACE) => self.open_replace(),
+            (title::EDIT, row::FIND) => reply.raise = self.open_find(),
+            (title::EDIT, row::REPLACE) => reply.raise = self.open_replace(),
             (title::EDIT, row::FIND_NEXT) => {
                 if self.last_query.is_none() {
-                    self.open_find();
+                    reply.raise = self.open_find();
                 } else if self.find_next() {
                     self.scroll_to_caret(ctx);
                 }

@@ -1866,6 +1866,51 @@ fn ctrl_f_is_refused_on_an_empty_buffer_but_opens_find_on_text() {
 }
 
 #[test]
+fn ctrl_f_and_ctrl_h_bring_their_open_window_forward_with_its_text() {
+    let mut np = Notepad::new(None);
+    let mut ctx = test_ctx();
+    np.edit = MultiEdit::new("text");
+    np.sync_menus();
+    let ctrl = |sym: u32| {
+        Event::Key(KeyInput {
+            sym,
+            utf8: None,
+            mods: repriseapp::Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+            edit: None,
+        })
+    };
+    let typing = |s: &str| {
+        Event::Key(KeyInput {
+            sym: 0,
+            utf8: Some(s.into()),
+            mods: repriseapp::Mods::default(),
+            edit: Some(EditKey::Insert(s.into())),
+        })
+    };
+    assert_eq!(np.event(MAIN, ctrl(0x66), &mut ctx).raise, None);
+    np.event(FIND, typing("typed"), &mut ctx);
+    let r = np.event(MAIN, ctrl(0x66), &mut ctx);
+    assert_eq!(r.raise, Some(FIND), "Ctrl+F raises the open Find");
+    assert_eq!(
+        Notepad::field(np.find.as_ref().unwrap(), finddlg::QUERY),
+        "typed"
+    );
+
+    assert_eq!(np.event(MAIN, ctrl(0x68), &mut ctx).raise, None);
+    assert!(np.find.is_none(), "Replace opens in Find's place");
+    np.event(REPLACE_WIN, typing("typed"), &mut ctx);
+    let r = np.event(MAIN, ctrl(0x68), &mut ctx);
+    assert_eq!(r.raise, Some(REPLACE_WIN), "Ctrl+H raises the open Replace");
+    assert_eq!(
+        Notepad::field(np.replace.as_ref().unwrap(), finddlg::QUERY),
+        "typed"
+    );
+}
+
+#[test]
 fn replace_that_matches_nothing_does_not_scroll() {
     let ctx = test_ctx();
     let mut np = Notepad::new(None);

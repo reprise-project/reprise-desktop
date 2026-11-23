@@ -82,7 +82,12 @@ impl Notepad {
         n
     }
 
-    pub(crate) fn open_replace(&mut self) {
+    /// Opens Replace in Find's place; an open Replace keeps what was typed in it and is
+    /// returned, for the host to bring forward.
+    pub(crate) fn open_replace(&mut self) -> Option<WinId> {
+        if self.replace.is_some() {
+            return Some(REPLACE_WIN);
+        }
         self.find = None;
         let query = self
             .last_query
@@ -95,9 +100,15 @@ impl Notepad {
             with: String::new(),
             match_case,
         }));
+        None
     }
 
-    pub(crate) fn open_find(&mut self) {
+    /// Opens Find in Replace's place; an open Find keeps what was typed in it and is returned,
+    /// for the host to bring forward.
+    pub(crate) fn open_find(&mut self) -> Option<WinId> {
+        if self.find.is_some() {
+            return Some(FIND);
+        }
         self.replace = None;
         let query = self
             .last_query
@@ -115,6 +126,7 @@ impl Notepad {
             match_case,
             down,
         }));
+        None
     }
 
     pub(crate) fn notfound_box(&self, query: &str) -> MsgBox {
