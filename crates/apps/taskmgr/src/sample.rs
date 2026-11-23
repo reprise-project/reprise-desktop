@@ -5,7 +5,10 @@
 use std::collections::{HashMap, HashSet};
 use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
+use std::time::{Duration, Instant};
+
+use reprisebus::tray::AppWindow;
 
 use crate::devices;
 use crate::procfs::{self, CpuTimes, MemInfo};
@@ -43,7 +46,7 @@ pub struct Snapshot {
     pub scopes: Vec<Scope>,
     /// The mapped windows ([`reprisebus::tray::windows_by_app`]); None when the
     /// compositor cannot say, which lists every scope.
-    pub windows: Option<Vec<reprisebus::tray::AppWindow>>,
+    pub windows: Option<Vec<AppWindow>>,
     /// The clients of `windows` in no scope that run in a Flatpak or snap sandbox ([`sandboxed`]):
     /// Applications matches their windows to a program by app id.
     pub sandboxed: HashSet<u32>,
@@ -88,7 +91,13 @@ pub struct Sampler {
     /// The user names seen so far, by uid; a uid missing here is looked up through `lookup`.
     users: HashMap<u32, String>,
     lookup: fn(u32) -> Option<String>,
-    windows: fn() -> Option<Vec<reprisebus::tray::AppWindow>>,
+    /// Asks the compositor for its windows ([`reprisebus::tray::windows_by_app`]); None asks
+    /// nothing.
+    ask_windows: Option<fn() -> WindowList>,
+    /// The answer to the ask still out.
+    asked: Option<Receiver<WindowList>>,
+    /// The compositor's last list; None when it can't give one.
+    windows: Option<Vec<AppWindow>>,
     sandboxed: fn(u32) -> bool,
     page_kb: u64,
     /// Read `/proc/<pid>/io` too, for the Disk column.
@@ -113,7 +122,9 @@ impl Sampler {
             cmdlines: HashMap::new(),
             users,
             lookup: |_| None,
-            windows: || None,
+            ask_windows: None,
+            asked: None,
+            windows: None,
             sandboxed: |_| false,
             page_kb: (page.max(4096) as u64) / 1024,
             disk: false,
@@ -132,7 +143,16 @@ impl Sampler {
         Sampler {
             devices: Some(devices::Sampler::new(Path::new("/"))),
             lookup: |uid| reprisefs::sysinfo::account(uid).map(|(login, _)| login),
-            windows: || reprisebus::tray::windows_by_app().ok(),
+            ask_windows: Some(|| {
+                reprisebus::tray::windows_by_app().map_err(|e| {
+                    if reprisebus::error::timed_out(&e) {
+                        NoList::Late
+                    } else {
+                        log::debug!("no window list: {e}");
+                        NoList::Failed
+                    }
+                })
+            }),
             sandboxed,
             ..Sampler::new(Path::new("/proc"), slice, HashMap::new())
         }
@@ -216,7 +236,7 @@ impl Sampler {
             p.gpu = devices.proc_gpu.get(&p.pid).copied();
         }
         let scopes = self.slice.as_deref().map(scopes::read).unwrap_or_default();
-        let windows = (self.windows)();
+        let windows = self.windows();
         let sandboxed = (windows.iter().flatten())
             .map(|&(_, pid)| pid)
             .filter(|&pid| {
@@ -238,6 +258,45 @@ impl Sampler {
     }
 }
 
+impl Sampler {
+    /// The compositor's windows, asked on a thread of its own: the last list stands while the
+    /// answer is late or timed out, and any other failure gives None, which lists every scope.
+    fn windows(&mut self) -> Option<Vec<AppWindow>> {
+        let ask = self.ask_windows?;
+        let asked = self.asked.get_or_insert_with(|| {
+            let (tx, rx) = channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(ask());
+            });
+            rx
+        });
+        match asked.recv_timeout(WINDOWS_WAIT) {
+            Err(RecvTimeoutError::Timeout) => return self.windows.clone(),
+            Err(RecvTimeoutError::Disconnected) => {}
+            Ok(Ok(w)) => self.windows = Some(w),
+            Ok(Err(NoList::Late)) => {}
+            Ok(Err(NoList::Failed)) => self.windows = None,
+        }
+        self.asked = None;
+        self.windows.clone()
+    }
+}
+
+/// The compositor's answer to a window list ask.
+type WindowList = Result<Vec<AppWindow>, NoList>;
+
+/// Why the compositor gave no window list.
+#[derive(Clone, Copy, Debug)]
+enum NoList {
+    /// The call timed out: the compositor may answer later.
+    Late,
+    /// It can't say: not Reprise, or too old to know the call.
+    Failed,
+}
+
+/// How long a sample waits for the compositor's windows before it takes the last list.
+const WINDOWS_WAIT: Duration = Duration::from_millis(200);
+
 /// Whether process `pid` runs in a Flatpak or snap sandbox, by the rules the compositor's sandbox
 /// filter reads ([`reprisebus::peer::placement`]); one gone or hiding in a pid namespace counts.
 fn sandboxed(pid: u32) -> bool {
@@ -253,6 +312,7 @@ fn sandboxed(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
 
     fn t(total: u64, idle: u64) -> CpuTimes {
         CpuTimes { total, idle }
@@ -429,14 +489,14 @@ mod tests {
         std::fs::create_dir_all(&unit).unwrap();
         std::fs::write(unit.join("cgroup.procs"), "41\n").unwrap();
         let mut s = Sampler {
-            windows: || {
-                Some(vec![
+            ask_windows: Some(|| {
+                Ok(vec![
                     ("org.kde.ark".into(), 41),
                     ("flatpak".into(), 50),
                     ("host".into(), 60),
                     ("unknown".into(), 0),
                 ])
-            },
+            }),
             sandboxed: |pid| {
                 assert!(pid == 50 || pid == 60, "pid {pid} is looked up");
                 pid == 50
@@ -444,5 +504,54 @@ mod tests {
             ..Sampler::new(root.path(), Some(slice), HashMap::new())
         };
         assert_eq!(s.sample().sandboxed, HashSet::from([50]));
+    }
+
+    /// What each window list ask answers in turn, after how many milliseconds.
+    static ANSWERS: std::sync::Mutex<VecDeque<(u64, WindowList)>> =
+        std::sync::Mutex::new(VecDeque::new());
+
+    #[test]
+    fn a_late_window_list_keeps_the_last_one_and_holds_no_sample_up() {
+        let root = tempfile::tempdir().unwrap();
+        let first = vec![("first".to_string(), 1)];
+        let next = vec![("next".to_string(), 2)];
+        ANSWERS.lock().unwrap().extend([
+            (0, Ok(first.clone())),
+            (2000, Ok(next.clone())),
+            (0, Err(NoList::Late)),
+            (0, Err(NoList::Failed)),
+        ]);
+        let mut s = Sampler {
+            ask_windows: Some(|| {
+                let (ms, got) = ANSWERS.lock().unwrap().pop_front().unwrap();
+                std::thread::sleep(Duration::from_millis(ms));
+                got
+            }),
+            ..Sampler::new(root.path(), None, HashMap::new())
+        };
+        assert_eq!(s.sample().windows, Some(first.clone()));
+        let asked = Instant::now();
+        assert_eq!(
+            s.sample().windows,
+            Some(first.clone()),
+            "a slow answer leaves the last list"
+        );
+        assert!(
+            asked.elapsed() < Duration::from_millis(1500),
+            "and does not hold the sample up"
+        );
+        while s.sample().windows != Some(next.clone()) {
+            assert!(
+                asked.elapsed() < Duration::from_secs(10),
+                "the slow answer is taken once it comes"
+            );
+        }
+        assert_eq!(
+            s.sample().windows,
+            Some(next),
+            "a timed-out call leaves the last list"
+        );
+        assert_eq!(s.sample().windows, None, "a failure lists every scope");
+        assert!(ANSWERS.lock().unwrap().is_empty(), "one ask at a time");
     }
 }
