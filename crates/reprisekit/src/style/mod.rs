@@ -71,6 +71,7 @@ pub struct Style {
     /// left of [`CaptionTitle::text_x`]. Unset, it starts at `text_x`.
     pub centred_title: bool,
     pub page: Option<PageInks>,
+    pub pane_inks: crate::startpanel::search::PaneInks,
     pub drop_list: Option<DropList>,
     pub balloon: Option<BalloonLook>,
     pub notify: Option<NotifyLook>,
@@ -198,6 +199,7 @@ impl Style {
             buttons_over_caption: false,
             centred_title: false,
             page: None,
+            pane_inks: crate::startpanel::search::PaneInks::LIGHT,
             drop_list: None,
             menu: None,
             options_menu: None,
@@ -474,6 +476,11 @@ impl Style {
 
     pub fn with_track_marks(mut self, m: TrackMarks) -> Style {
         self.track_marks = m;
+        self
+    }
+
+    pub fn with_pane_inks(mut self, inks: crate::startpanel::search::PaneInks) -> Style {
+        self.pane_inks = inks;
         self
     }
 

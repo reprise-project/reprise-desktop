@@ -48,8 +48,10 @@ const SELECTED_HOT: LightBox = opaque(0x7A9BCD, (0xEAF3FD, 0xDAE7FD), (0xDBE9FC,
 const SELECTED_DIM: LightBox = opaque(0xD8D7D8, (0xFAF9FB, 0xEFEEEF), (0xF7F8F8, 0xE3E4E4));
 const PRESSED: LightBox = opaque(0xA6A7A7, (0x8C8D8D, 0xCFCFCF), (0xCACBCB, 0xE6E6E6));
 const DARK_HOT: LightBox = opaque(0x4C6584, (0x40464E, 0x393E45), (0x3B4048, 0x353A41));
-const DARK_SELECTED: LightBox = opaque(0x3A78C4, (0x2D4D74, 0x264366), (0x28476C, 0x203B5C));
-const DARK_SELECTED_HOT: LightBox = opaque(0x5E9DE8, (0x3A6494, 0x325887), (0x345D8C, 0x2B507C));
+pub(super) const DARK_SELECTED: LightBox =
+    opaque(0x3A78C4, (0x2D4D74, 0x264366), (0x28476C, 0x203B5C));
+pub(super) const DARK_SELECTED_HOT: LightBox =
+    opaque(0x5E9DE8, (0x3A6494, 0x325887), (0x345D8C, 0x2B507C));
 /// A lit list row: lighter than [`DARK_HOT`], as the list under it is lighter than the places bar.
 const DARK_ROW_HOT: LightBox = opaque(0x56708F, (0x4A5058, 0x434951), (0x434850, 0x3D424A));
 const FOCUS: LightBox = LightBox {

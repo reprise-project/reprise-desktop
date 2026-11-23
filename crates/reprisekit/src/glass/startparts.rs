@@ -1,15 +1,19 @@
 //! Reprise Glass's Start panel pieces, drawn from parameters; [`parts`] makes them the style's `Part::Start*` parts.
 //! Pieces on the panel's glass are fixed layers the glass shows through; the picture frame is glass of its own ([`Glass::at`]);
-//! pieces on the white pane are the same in every colour. Each piece is painted at `d` pixels per design pixel.
+//! pieces on the white pane are the same in every colour, and dark Glass turns them dark through
+//! [`super::dark`], its lit rows taking dark Glass's selection boxes. Each piece is painted at `d`
+//! pixels per design pixel.
 
 use crate::mutex::lock;
 use std::sync::{Mutex, OnceLock};
 
-use super::Settings;
 use super::buttons::Hue;
+use super::dark::{remap_part, remap_px};
 use super::glyph;
+use super::items::{DARK_SELECTED, DARK_SELECTED_HOT};
 use super::panel::{self, Fade, Glass, LightBox, Shadow};
 use super::tint::{Recolour, Surface};
+use super::{Mode, Settings};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, Px, centre, mix, over, pack, ringed, rounded, smooth};
 use crate::style::{Layout, Part, PartImage, State};
@@ -204,14 +208,15 @@ const HOT_ALL: LightBox = row_box(0x6C92C8, [0xE7EFFD, 0xD6E5FD], [0xD0E3FC, 0xB
 const HOT_JUMP: LightBox = row_box(0x799ACD, [0xE8F2FC, 0xD8E6FC], [0xD8E6FC, 0xBDD6FC]);
 const LIT_RESULT: LightBox = row_box(0x81A5DC, [0xF1F7FF, 0xDEECFF], [0xEBF4FF, 0xCEE2FF]);
 const NEW_PIN: LightBox = row_box(0xF1BD8D, [0xFEFBE2, 0xFFE8D0], [0xFDF4BE, 0xFECC99]);
+/// A new program's amber box on the dark pane: the remap would turn its outline darker than its fill.
+const DARK_NEW_PIN: LightBox = row_box(0xB8863B, [0x5A4A2C, 0x524024], [0x4F4127, 0x46381E]);
 
 fn row_part(b: &LightBox, h: i32, d: i32) -> PartImage {
     one(panel::light_box(b, BOX_W, h, d), BOX_GRID, d)
 }
 
-fn hot_split(d: i32) -> Canvas {
+fn hot_split(b: &LightBox, d: i32) -> Canvas {
     let (w, h) = (3, 36);
-    let b = &HOT_LEFT;
     let outline = (
         255.0,
         [b.outline.0.r, b.outline.0.g, b.outline.0.b].map(f64::from),
@@ -399,6 +404,15 @@ const LIGHT_HOT: Face = Face {
     face: &[(2, (255.0, 0xEBF4FF)), (19, (255.0, 0xCEE2FF))],
 };
 
+/// The same in dark Glass, in the dark lit search result's colours ([`DARK_SELECTED`]).
+const DARK_LIGHT_HOT: Face = Face {
+    outline: [(255.0, 0x3A78C4), (255.0, 0x3A78C4)],
+    top: (255.0, 0x2D4D74),
+    side: &[(2, (255.0, 0x2D4D74)), (19, (255.0, 0x264366))],
+    bottom: (255.0, 0x264366),
+    face: &[(2, (255.0, 0x28476C)), (19, (255.0, 0x203B5C))],
+};
+
 const ARROW_AT: [(i32, i32); 2] = [(8, 7), (9, 7)];
 const ARROW_WHITE: [(i32, Ink); 4] = [
     (0, (255.0, 0xFFFFFF)),
@@ -409,7 +423,9 @@ const ARROW_WHITE: [(i32, Ink); 4] = [
 const ARROW_OUTLINE: f64 = 160.0;
 const ARROW_DARK: u32 = 0x3E3E3E;
 
-fn button(f: &Face, glass: bool, d: i32) -> Vec<Px> {
+/// Shut down's face `f` with its arrow: the glass button's white one, or in `plain` ink on the light button.
+fn button(f: &Face, plain: Option<u32>, d: i32) -> Vec<u32> {
+    let glass = plain.is_none();
     let (w, h) = (SHUT_W + ARROW_W, SHUT_H);
     let divider = SHUT_W - 1;
     let deep = |y: f64| {
@@ -445,24 +461,25 @@ fn button(f: &Face, glass: bool, d: i32) -> Vec<Px> {
                 let white = along(&ARROW_WHITE, centre(y, d));
                 pixels[i] = over(shape::scale(white, ink), pixels[i]);
             } else {
-                pixels[i] = over(shape::scale(opaque(ARROW_DARK), ink), pixels[i]);
+                let arrow = opaque(plain.unwrap_or(ARROW_DARK));
+                pixels[i] = over(shape::scale(arrow, ink), pixels[i]);
             }
         }
     }
-    pixels
+    pixels.into_iter().map(pack).collect()
 }
 
-fn shutdown(faces: &[&Face], glass: bool, states: &[State], d: i32) -> (PartImage, PartImage) {
+/// [`button`]'s `frames`, one per state, split into the button and its arrow.
+fn shutdown(frames: &[Vec<u32>], states: &[State], d: i32) -> (PartImage, PartImage) {
     let (w, sw, sh) = ((SHUT_W + ARROW_W) * d, SHUT_W * d, SHUT_H * d);
-    let n = faces.len() as i32;
+    let n = frames.len() as i32;
     let mut main = Canvas::new(sw as u32, (sh * n) as u32);
     let mut arrow = Canvas::new((ARROW_W * d) as u32, (sh * n) as u32);
-    for (k, f) in faces.iter().enumerate() {
-        let pixels = button(f, glass, d);
+    for (k, pixels) in frames.iter().enumerate() {
         let top = k as i32 * sh;
         for y in 0..sh {
             for x in 0..w {
-                let p = pack(pixels[(y * w + x) as usize]);
+                let p = pixels[(y * w + x) as usize];
                 if x < sw {
                     main.put_raw(x, top + y, p);
                 } else {
@@ -685,14 +702,15 @@ const CLEAR_INK: [(i32, Ink); 3] = [
 const BLACK: [(i32, Ink); 1] = [(0, (255.0, 0x000000))];
 
 pub(super) fn parts(s: &Settings, d: i32) -> Vec<(Part, PartImage)> {
-    type Fixed = Vec<(i32, Vec<(Part, PartImage)>)>;
+    type Fixed = Vec<((i32, Mode), Vec<(Part, PartImage)>)>;
     static FIXED: Mutex<Fixed> = Mutex::new(Vec::new());
     let mut fixed = lock(&FIXED);
-    let mut parts = match fixed.iter().find(|(k, _)| *k == d) {
+    let key = (d, s.mode);
+    let mut parts = match fixed.iter().find(|(k, _)| *k == key) {
         Some((_, p)) => p.clone(),
         None => {
-            let p = fixed_parts(d);
-            fixed.push((d, p.clone()));
+            let p = fixed_parts(d, s.mode);
+            fixed.push((key, p.clone()));
             p
         }
     };
@@ -703,98 +721,119 @@ pub(super) fn parts(s: &Settings, d: i32) -> Vec<(Part, PartImage)> {
     parts
 }
 
-fn fixed_parts(d: i32) -> Vec<(Part, PartImage)> {
+/// The pieces that do not follow the glass colour, in `mode`. Dark Glass remaps the pane's
+/// pieces and the light button at rest, and paints the glyphs' inks remapped: a translucent black
+/// edge is the remap's shadow, which it would keep black.
+fn fixed_parts(d: i32, mode: Mode) -> Vec<(Part, PartImage)> {
+    let dark = mode == Mode::Dark;
     let none = Insets::ZERO;
+    let pane_part = |img: PartImage| if dark { remap_part(img) } else { img };
+    let ink_of = |c: u32| {
+        if dark {
+            remap_px(0xFF00_0000 | c) & 0xFF_FFFF
+        } else {
+            c
+        }
+    };
+    let inks = |stops: &[(i32, Ink)]| -> Vec<(i32, Ink)> {
+        stops
+            .iter()
+            .map(|&(y, (a, c))| (y, (a, ink_of(c))))
+            .collect()
+    };
+    let glyph_part = |m: &glyph::Mark, stops: &[(i32, Ink)], level: &dyn Fn(f64) -> f64| {
+        one(glyph_canvas(m, &inks(stops), level, d), none, d)
+    };
+    let glass_faces = [&GLASS_NORMAL, &GLASS_HOT, &GLASS_PRESSED].map(|f| button(f, None, d));
     let (glass, glass_arrow) = shutdown(
-        &[&GLASS_NORMAL, &GLASS_HOT, &GLASS_PRESSED],
-        true,
+        &glass_faces,
         &[State::Normal, State::Hot, State::Pressed],
         d,
     );
-    let (light, light_arrow) = shutdown(
-        &[&LIGHT, &LIGHT_HOT],
-        false,
-        &[State::Normal, State::Hot],
-        d,
-    );
+    let light_faces = if dark {
+        let rest = button(&LIGHT, Some(ARROW_DARK), d);
+        let arrow = ink_of(ARROW_DARK);
+        [
+            rest.into_iter().map(remap_px).collect(),
+            button(&DARK_LIGHT_HOT, Some(arrow), d),
+        ]
+    } else {
+        [&LIGHT, &LIGHT_HOT].map(|f| button(f, Some(ARROW_DARK), d))
+    };
+    let (light, light_arrow) = shutdown(&light_faces, &[State::Normal, State::Hot], d);
     let hot_right = if d == 1 {
         hot_right().clone()
     } else {
         draw_hot_right(d)
     };
+    let [hot_left, hot_all, hot_jump, lit_result, new_pin] = if dark {
+        [
+            &DARK_SELECTED_HOT,
+            &DARK_SELECTED_HOT,
+            &DARK_SELECTED_HOT,
+            &DARK_SELECTED,
+            &DARK_NEW_PIN,
+        ]
+    } else {
+        [&HOT_LEFT, &HOT_ALL, &HOT_JUMP, &LIT_RESULT, &NEW_PIN]
+    };
     vec![
-        (Part::StartPane, one(pane(d), PANE_GRID, d)),
-        (Part::StartJumpPane, one(jump_pane(d), JUMP_GRID, d)),
-        (Part::StartHotLeft, row_part(&HOT_LEFT, 36, d)),
-        (Part::StartNewPin, row_part(&NEW_PIN, 36, d)),
-        (Part::StartHotAll, row_part(&HOT_ALL, 23, d)),
-        (Part::StartHotSplit, one(hot_split(d), none, d)),
-        (Part::StartHotJump, row_part(&HOT_JUMP, 20, d)),
-        (Part::StartLitResult, row_part(&LIT_RESULT, 22, d)),
+        (Part::StartPane, pane_part(one(pane(d), PANE_GRID, d))),
+        (
+            Part::StartJumpPane,
+            pane_part(one(jump_pane(d), JUMP_GRID, d)),
+        ),
+        (Part::StartHotLeft, row_part(hot_left, 36, d)),
+        (Part::StartNewPin, row_part(new_pin, 36, d)),
+        (Part::StartHotAll, row_part(hot_all, 23, d)),
+        (Part::StartHotSplit, one(hot_split(hot_left, d), none, d)),
+        (Part::StartHotJump, row_part(hot_jump, 20, d)),
+        (Part::StartLitResult, row_part(lit_result, 22, d)),
         (Part::StartHotRight, one(hot_right, HOT_RIGHT_GRID, d)),
         (
             Part::StartRuleLeft,
-            one(rule(&[(255.0, RULE_LEFT)]), none, 1),
+            pane_part(one(rule(&[(255.0, RULE_LEFT)]), none, 1)),
         ),
         (Part::StartRuleRight, one(rule(&RULE_RIGHT), none, 1)),
         (
             Part::StartJumpRule,
-            one(rule(&[(255.0, RULE_JUMP)]), none, 1),
+            pane_part(one(rule(&[(255.0, RULE_JUMP)]), none, 1)),
         ),
         (
             Part::StartSearchRule,
-            one(rule(&[(255.0, RULE_SEARCH)]), none, 1),
+            pane_part(one(rule(&[(255.0, RULE_SEARCH)]), none, 1)),
         ),
         (Part::StartShutdown, glass),
         (Part::StartShutdownArrow, glass_arrow),
         (Part::StartShutdownLight, light),
         (Part::StartShutdownArrowLight, light_arrow),
-        (Part::StartSearchField, one(field(d), FIELD_GRID, d)),
+        (
+            Part::StartSearchField,
+            pane_part(one(field(d), FIELD_GRID, d)),
+        ),
         (
             Part::StartMagnifier,
-            one(
-                glyph_canvas(&glyph::MAGNIFIER, &MAGNIFIER_INK, |_| MAGNIFIER_LEVEL, d),
-                none,
-                d,
-            ),
+            glyph_part(&glyph::MAGNIFIER, &MAGNIFIER_INK, &|_| MAGNIFIER_LEVEL),
         ),
         (
             Part::StartClear,
-            one(
-                glyph_canvas(&glyph::CLEAR, &CLEAR_INK, |_| CLEAR_LEVEL, d),
-                none,
-                d,
-            ),
+            glyph_part(&glyph::CLEAR, &CLEAR_INK, &|_| CLEAR_LEVEL),
         ),
         (
             Part::StartTriangleRight,
-            one(
-                glyph_canvas(
-                    &glyph::TRIANGLE_RIGHT,
-                    &BLACK,
-                    |x| triangle_level(x, TRIANGLE_RIGHT_DEEP_AT),
-                    d,
-                ),
-                none,
-                d,
-            ),
+            glyph_part(&glyph::TRIANGLE_RIGHT, &BLACK, &|x| {
+                triangle_level(x, TRIANGLE_RIGHT_DEEP_AT)
+            }),
         ),
         (
             Part::StartTriangleLeft,
-            one(
-                glyph_canvas(
-                    &glyph::TRIANGLE_LEFT,
-                    &BLACK,
-                    |x| triangle_level(x, TRIANGLE_LEFT_DEEP_AT),
-                    d,
-                ),
-                none,
-                d,
-            ),
+            glyph_part(&glyph::TRIANGLE_LEFT, &BLACK, &|x| {
+                triangle_level(x, TRIANGLE_LEFT_DEEP_AT)
+            }),
         ),
         (
             Part::StartRowArrow,
-            one(glyph_canvas(&glyph::ARROW, &BLACK, |_| 1.0, d), none, d),
+            glyph_part(&glyph::ARROW, &BLACK, &|_| 1.0),
         ),
     ]
 }
@@ -1064,10 +1103,15 @@ mod tests {
 
     #[test]
     fn every_piece_at_scale_2_is_its_scale_1_design_twice_over() {
-        let s = Settings::default();
-        let style = crate::glass::style(&s);
+        for s in [Settings::default(), dark()] {
+            twice_over(&s);
+        }
+    }
+
+    fn twice_over(s: &Settings) {
+        let style = crate::glass::style(s);
         let two = style.at_scale(2);
-        for (p, img) in crate::glass::startpanel::parts(&s, 1) {
+        for (p, img) in crate::glass::startpanel::parts(s, 1) {
             if matches!(
                 p,
                 Part::StartMagnifier
@@ -1092,7 +1136,7 @@ mod tests {
                     _ => None,
                 };
                 let near_glyph = glyph.map(|(gx, gy)| Rect::new(gx - 2, gy - 2, 8, 11).scaled(2));
-                let what = format!("{p:?} {st:?}");
+                let what = format!("{:?} {p:?} {st:?}", s.mode);
                 panel::assert_twice_over(&what, &one, &big, |x, y| {
                     corners.is_some_and(|(r, rad)| panel::in_corner(r, rad, x, y))
                         || near_glyph.is_some_and(|g| g.contains(x, y))
@@ -1179,6 +1223,210 @@ mod tests {
             .map(|(p, img)| (format!("{p:?}"), fnv(&img.atlas)))
             .collect();
         crate::pins::check("glass/start_parts_at_2", &got);
+    }
+
+    fn dark() -> Settings {
+        Settings {
+            mode: Mode::Dark,
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn dark_keeps_its_pieces_at_scale_1_and_2() {
+        let mut got = Vec::new();
+        for d in [1, 2] {
+            for (p, img) in parts(&dark(), d) {
+                got.push((format!("{p:?} {d}"), fnv(&img.atlas)));
+            }
+        }
+        crate::pins::check("glass/start_parts_dark", &got);
+    }
+
+    #[test]
+    fn dark_remaps_the_panes_pieces_and_keeps_the_glass_ones() {
+        for d in [1, 2] {
+            let (light, dim) = (parts(&Settings::default(), d), parts(&dark(), d));
+            for p in [
+                Part::StartPane,
+                Part::StartJumpPane,
+                Part::StartRuleLeft,
+                Part::StartJumpRule,
+                Part::StartSearchRule,
+                Part::StartSearchField,
+            ] {
+                let want = remap_part(find(&light, p).clone()).atlas.pixels;
+                assert_eq!(find(&dim, p).atlas.pixels, want, "{p:?} at {d} is remapped");
+            }
+            for p in [
+                Part::StartHotRight,
+                Part::StartRuleRight,
+                Part::StartShutdown,
+                Part::StartShutdownArrow,
+                Part::StartPictureFrame,
+            ] {
+                assert_eq!(
+                    find(&dim, p).atlas.pixels,
+                    find(&light, p).atlas.pixels,
+                    "{p:?} at {d} lies on the glass and keeps"
+                );
+            }
+        }
+        let window = crate::glass::style(&dark()).colors.window.argb();
+        let pane = find(&parts(&dark(), 1), Part::StartPane).atlas.get(7, 5);
+        assert_eq!(pane, window, "the pane is dark Glass's window");
+    }
+
+    fn unpremultiplied(px: u32) -> Color {
+        let a = (px >> 24).max(1);
+        let ch = |sh: u32| (((px >> sh) & 0xFF) * 255 / a).min(255) as u8;
+        Color::rgb(ch(16), ch(8), ch(0))
+    }
+
+    /// Every ink on the dark pane reads against what it is written on: names at 4.5:1 on the pane
+    /// and on every lit box, titles on the panes, greyed text at 4.5:1 on the pane and 3:1 on a
+    /// lit result (a launcher row's detail).
+    #[test]
+    fn dark_text_reads_on_the_pane_and_on_every_lit_box() {
+        let inks = crate::glass::startpanel::pane_inks(Mode::Dark);
+        let all = parts(&dark(), 1);
+        let face = |p: Part, x: i32, y: i32| unpremultiplied(find(&all, p).atlas.get(x, y));
+        let pane = face(Part::StartPane, 7, 5);
+        let jump = face(Part::StartJumpPane, 5, 185);
+        let field = face(Part::StartSearchField, 5, 12);
+        let lit = [
+            ("lit program", face(Part::StartHotLeft, 5, 18)),
+            ("lit All Programs", face(Part::StartHotAll, 5, 11)),
+            ("lit jump row", face(Part::StartHotJump, 5, 10)),
+            ("lit result", face(Part::StartLitResult, 5, 11)),
+            ("new program", face(Part::StartNewPin, 5, 18)),
+        ];
+        let reads = |what: &str, ink: Color, on: Color, floor: f64| {
+            let c = ink.contrast(on);
+            assert!(
+                c >= floor,
+                "{what}: {ink:?} on {on:?} is {c:.2}:1, under {floor}"
+            );
+        };
+        for (name, ink) in [
+            ("strong", inks.strong),
+            ("program", inks.program),
+            ("jump", inks.jump),
+        ] {
+            reads(name, ink, pane, 4.5);
+            reads(name, ink, jump, 4.5);
+            for (what, on) in lit {
+                reads(&format!("{name} on the {what}"), ink, on, 4.5);
+            }
+        }
+        reads("typed text", inks.strong, field, 4.5);
+        reads("the cue", inks.cue, field, 4.5);
+        reads("greyed", inks.greyed, pane, 4.5);
+        reads("greyed on the lit result", inks.greyed, lit[3].1, 3.0);
+        reads("a search group", inks.group, pane, 4.5);
+        reads("a jump list's title", inks.jump_title, jump, 4.5);
+    }
+
+    /// A lit row stands off the dark pane by its outline and its blue fill.
+    #[test]
+    fn a_dark_lit_row_stands_off_the_pane() {
+        let all = parts(&dark(), 1);
+        let pane = unpremultiplied(find(&all, Part::StartPane).atlas.get(7, 5));
+        for (p, h) in [
+            (Part::StartHotLeft, 36),
+            (Part::StartHotAll, 23),
+            (Part::StartHotJump, 20),
+            (Part::StartLitResult, 22),
+        ] {
+            let img = find(&all, p);
+            let outline = unpremultiplied(img.atlas.get(0, h / 2));
+            let fill = unpremultiplied(img.atlas.get(5, h / 2));
+            assert!(
+                outline.contrast(pane) >= 2.0,
+                "{p:?}: outline {outline:?} on {pane:?}"
+            );
+            assert!(
+                fill.b >= fill.r + 0x30 && fill != pane,
+                "{p:?}: a blue fill {fill:?}"
+            );
+        }
+    }
+
+    /// On the dark pane the light button goes dark and Shut down keyed turns blue, its text reading
+    /// on both and its arrow light.
+    #[test]
+    fn the_dark_light_button_reads_at_rest_and_keyed() {
+        let inks = crate::glass::startpanel::pane_inks(Mode::Dark);
+        let all = parts(&dark(), 1);
+        let button = find(&all, Part::StartShutdownLight);
+        let arrow = find(&all, Part::StartShutdownArrowLight);
+        let at = |img: &PartImage, st: State, x: i32, y: i32| {
+            let f = img.frame(st);
+            unpremultiplied(img.atlas.get(f.x + x, f.y + y))
+        };
+        let (rest, keyed) = (
+            at(button, State::Normal, SHUT_W / 2, 15),
+            at(button, State::Hot, SHUT_W / 2, 15),
+        );
+        assert!(
+            rest.contrast(Color::rgb(0, 0, 0)) < 2.0,
+            "at rest the button is dark, got {rest:?}"
+        );
+        assert!(keyed.b >= keyed.r + 0x30, "keyed it is blue, got {keyed:?}");
+        for on in [rest, keyed] {
+            let c = inks.strong.contrast(on);
+            assert!(c >= 4.5, "Shut down on {on:?}: {c:.2}:1");
+        }
+        let (gx, gy) = ARROW_AT[1];
+        for st in [State::Normal, State::Hot] {
+            let ink = at(arrow, st, gx + 1, gy + 3);
+            assert!(
+                ink.r > 0x90 && ink.g > 0x90,
+                "{st:?}: the arrow is light, got {ink:?}"
+            );
+        }
+    }
+
+    /// The glyphs on the dark pane are drawn in light ink to their soft edges, no dark fringe (the
+    /// faintest edge pixels, under 1/8 alpha, round too coarsely to say).
+    #[test]
+    fn dark_glyphs_are_light_to_their_edges() {
+        for d in [1, 2] {
+            let all = parts(&dark(), d);
+            for p in [
+                Part::StartTriangleRight,
+                Part::StartTriangleLeft,
+                Part::StartRowArrow,
+            ] {
+                let img = find(&all, p);
+                let dark_px = img
+                    .atlas
+                    .pixels
+                    .iter()
+                    .filter(|&&px| px >> 24 >= 0x20)
+                    .map(|&px| unpremultiplied(px))
+                    .filter(|c| c.r < 0xC0)
+                    .count();
+                assert_eq!(dark_px, 0, "{p:?} at {d}: every inked pixel is light");
+            }
+            for p in [Part::StartMagnifier, Part::StartClear] {
+                let light = parts(&Settings::default(), d);
+                let mean = |img: &PartImage| {
+                    let inked: Vec<Color> = img
+                        .atlas
+                        .pixels
+                        .iter()
+                        .filter(|&&px| px >> 24 > 0)
+                        .map(|&px| unpremultiplied(px))
+                        .collect();
+                    inked.iter().map(|c| u32::from(c.b)).sum::<u32>() / inked.len() as u32
+                };
+                assert!(
+                    mean(find(&all, p)) > mean(find(&light, p)) + 0x20,
+                    "{p:?} at {d}: a lighter blue on the dark field"
+                );
+            }
+        }
     }
 
     #[test]

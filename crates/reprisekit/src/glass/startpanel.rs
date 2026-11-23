@@ -7,9 +7,10 @@ use super::tint::{Recolour, Surface};
 use super::{Settings, caption_text};
 use crate::raster::{Canvas, Insets, Rect, over_round};
 use crate::startpanel::layout::{self, Layout};
-use crate::startpanel::search::{self, ink};
+use crate::startpanel::search::{self, PaneInks, ink};
 pub use crate::startpanel::search::{
-    HEADER_PX, INK_CUE, INK_GREYED, INK_GROUP, INK_STRONG, TEXT_PX,
+    HEADER_PX, INK_CUE, INK_GREYED, INK_GROUP, INK_HEADER, INK_JUMP, INK_PROGRAM, INK_STRONG,
+    TEXT_PX,
 };
 use crate::startpanel::{
     ALL_PROGRAMS, BACK, Mode, NO_RESULTS, PROGRAM_ICON, SHUT_DOWN, SMALL_ICON, Spot, StartPanel,
@@ -26,10 +27,26 @@ pub fn font() -> FontConfig {
     caption_text([Color::rgb(0, 0, 0); 2]).font()
 }
 
-pub const INK_PROGRAM: u32 = 0x272727;
 pub const INK_RIGHT: u32 = 0xFFFFFF;
-pub const INK_HEADER: u32 = 0x002A95;
-pub const INK_JUMP: u32 = 0x434343;
+
+/// Dark Glass's cue and greyed text on the dark pane: dimmer than its text, still 4.7:1.
+const DARK_GREYED: Color = Color::rgb(0xA0, 0xA0, 0xA0);
+
+/// The left pane's and the launcher list's inks in `mode`. Dark Glass writes its text, programs and
+/// jump rows in [`super::DARK_TEXT`], greys in [`DARK_GREYED`], and remaps the blue titles.
+pub fn pane_inks(mode: super::Mode) -> PaneInks {
+    match mode {
+        super::Mode::Light => PaneInks::LIGHT,
+        super::Mode::Dark => PaneInks {
+            strong: super::DARK_TEXT,
+            program: super::DARK_TEXT,
+            jump: super::DARK_TEXT,
+            cue: DARK_GREYED,
+            greyed: DARK_GREYED,
+            ..PaneInks::LIGHT.map(super::dark::remap_color)
+        },
+    }
+}
 
 pub const SHEEN_ROWS: i32 = 48;
 
@@ -283,6 +300,7 @@ fn draw_contents(
     let light = matches!(mode, Mode::Jump(_) | Mode::Search);
     let mut d = Draw { canvas, style, s };
     let size = g.px(TEXT_PX);
+    let inks = style.pane_inks;
     let right = style
         .text_color(Part::StartPanel, State::Normal)
         .unwrap_or(ink(INK_RIGHT));
@@ -335,7 +353,7 @@ fn draw_contents(
                 };
                 let clip = at(Rect::new(r.x, r.y, right, r.height));
                 let (x, y) = off(r, (at::PROGRAM_PEN, at::PROGRAM_BASE));
-                d.line(text, x, y, clip, &row.name, ink(INK_PROGRAM), size);
+                d.line(text, x, y, clip, &row.name, inks.program, size);
                 if row.jump {
                     let arrow = Part::StartRowArrow;
                     let (ax, ay) = at::ROW_ARROW;
@@ -354,7 +372,7 @@ fn draw_contents(
                 };
                 d.glyph(glyph_at(r, at::TRIANGLE, part), part);
                 let (x, y) = off(r, (pen, at::ALL_BASE));
-                d.line(text, x, y, row_clip(r), label, ink(INK_STRONG), size);
+                d.line(text, x, y, row_clip(r), label, inks.strong, size);
             }
             Spot::Tree(i) => {
                 let Some(row) = p.tree.get(i) else { continue };
@@ -372,7 +390,7 @@ fn draw_contents(
                     d.canvas.blit_over(x, y, icon);
                 }
                 let (x, y) = off(r, (at::TREE_PEN + indent, at::TREE_BASE));
-                d.line(text, x, y, row_clip(r), name, ink(INK_STRONG), size);
+                d.line(text, x, y, row_clip(r), name, inks.strong, size);
             }
             Spot::Result(gi, k) => {
                 let Some(row) = p.results.get(gi).and_then(|grp| grp.rows.get(k)) else {
@@ -394,7 +412,7 @@ fn draw_contents(
                     d.canvas.blit_over(x, y, icon);
                 }
                 let (x, y) = off(r, (at::JUMP_PEN, at::JUMP_BASE));
-                d.line(text, x, y, row_clip(r), &row.name, ink(INK_JUMP), size);
+                d.line(text, x, y, row_clip(r), &row.name, inks.jump, size);
             }
             Spot::Place(i) => {
                 let Some(place) = p.places.get(i) else {
@@ -468,7 +486,7 @@ fn draw_contents(
                 let w = text.measure(SHUT_DOWN, false, size);
                 let x = r.x - o.x + (g.len(at::SHUT_W) - w) / 2;
                 let y = r.y - o.y + g.len(at::SHUT_BASE);
-                let color = if light { ink(INK_STRONG) } else { right };
+                let color = if light { inks.strong } else { right };
                 d.line(text, x, y, at(r), SHUT_DOWN, color, size);
             }
             Spot::Picture => {
@@ -512,7 +530,7 @@ fn draw_contents(
         match mode {
             Mode::Jump(_) => {
                 let (x, y) = off(r, (0, at::JUMP_HEAD_BASE));
-                let w = d.line(text, x, y, pane_clip, &p.jump_title, ink(INK_HEADER), size);
+                let w = d.line(text, x, y, pane_clip, &p.jump_title, inks.jump_title, size);
                 let x0 = x + w + g.len(at::JUMP_RULE_GAP);
                 let x1 = r.right() + g.len(at::JUMP_RULE_PAST) + s - o.x;
                 let ry = r.y - o.y + g.len(at::JUMP_RULE_Y);
@@ -536,7 +554,7 @@ fn draw_contents(
         let pane = at(l.pane);
         let x = pane.x + (pane.width - w) / 2;
         let y = pane.y + g.len(at::NONE_BASE);
-        d.line(text, x, y, pane, NO_RESULTS, ink(INK_GREYED), size);
+        d.line(text, x, y, pane, NO_RESULTS, inks.greyed, size);
     }
 }
 
@@ -1455,8 +1473,13 @@ mod tests {
     }
 
     /// Shut down's two halves in `p` at scale `d`: the button, then the arrow.
-    fn shut_down_halves(p: &StartPanel, pressed: Option<Spot>, d: i32) -> [Canvas; 2] {
-        let style = super::super::style(&Settings::default()).at_scale(d);
+    fn shut_down_halves(
+        s: &Settings,
+        p: &StartPanel,
+        pressed: Option<Spot>,
+        d: i32,
+    ) -> [Canvas; 2] {
+        let style = super::super::style(s).at_scale(d);
         let text = TextRenderer::load(&font());
         let l = layout(p).scaled(d);
         let mut c = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
@@ -1484,6 +1507,11 @@ mod tests {
 
     #[test]
     fn a_key_lights_the_shut_down_half_it_stands_on_and_the_pointer_both() {
+        lights_shut_down(&Settings::default(), "glass/start_shut_down");
+        lights_shut_down(&dark(), "glass/start_shut_down_dark");
+    }
+
+    fn lights_shut_down(s: &Settings, pin: &str) {
         let states = [
             ("rest", sample(Mode::Home, None), None),
             (
@@ -1519,7 +1547,7 @@ mod tests {
         for d in [1, 2] {
             let drawn: Vec<[Canvas; 2]> = states
                 .iter()
-                .map(|(_, p, pressed)| shut_down_halves(p, *pressed, d))
+                .map(|(_, p, pressed)| shut_down_halves(s, p, *pressed, d))
                 .collect();
             let lit =
                 |k: usize, rest: usize| [0, 1].map(|half| drawn[k][half] != drawn[rest][half]);
@@ -1560,7 +1588,75 @@ mod tests {
                 got.push((format!("{name} arrow {d}"), fnv(arrow)));
             }
         }
-        crate::pins::check("glass/start_shut_down", &got);
+        crate::pins::check(pin, &got);
+    }
+
+    fn dark() -> Settings {
+        Settings {
+            mode: crate::glass::Mode::Dark,
+            ..Settings::default()
+        }
+    }
+
+    /// Dark Glass's panel at scale 1 and 2: Home with a program lit, the tree with a row lit,
+    /// Search "no" with its first result lit, a jump list with a row lit, Shut down keyed in
+    /// Search. The pane holds no white, and the lit row's name is in dark Glass's text.
+    #[test]
+    fn dark_panels_pin_at_scale_1_and_2() {
+        crate::pins::fonts();
+        let mut programs = sample(Mode::Home, None);
+        programs.tree = ["Calculator", "Notepad", "Paint"]
+            .map(|name| TreeRow::App {
+                name: name.into(),
+                icon: None,
+                depth: 0,
+            })
+            .into();
+        programs.set_mode(Mode::Programs);
+        programs.pointer(Some(Spot::Tree(1)));
+        let states = [
+            (
+                "home",
+                sample(Mode::Home, Some(Spot::Program(2))),
+                Spot::Program(2),
+            ),
+            ("programs", programs, Spot::Tree(1)),
+            ("search", sample(Mode::Search, None), Spot::Result(0, 0)),
+            (
+                "jump",
+                sample(Mode::Jump(1), Some(Spot::Jump(1))),
+                Spot::Jump(1),
+            ),
+            (
+                "search key shut down",
+                keyed(Mode::Search, Spot::Shutdown),
+                Spot::Shutdown,
+            ),
+        ];
+        let text = TextRenderer::load(&font());
+        let ink = super::super::DARK_TEXT.argb() & 0xFF_FFFF;
+        let mut got = Vec::new();
+        for d in [1, 2] {
+            let style = super::super::style(&dark()).at_scale(d);
+            for (name, p, lit) in &states {
+                let l = layout(p).scaled(d);
+                let mut c = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
+                draw(&mut c, &style, &text, p, &l, None, true);
+                let drawn = Drawn { c, l };
+                let pane = drawn.l.pane;
+                assert!(
+                    !inks(&drawn, pane, 0xFF_FFFF),
+                    "{name} at {d}: no white on the pane"
+                );
+                let row = drawn.l.rect(*lit).unwrap();
+                assert!(
+                    inks_near(&drawn, row, ink),
+                    "{name} at {d}: the lit row's name in dark Glass's text"
+                );
+                got.push((format!("{name} {d}"), fnv(&drawn.c)));
+            }
+        }
+        crate::pins::check("glass/start_panel_dark", &got);
     }
 
     #[test]

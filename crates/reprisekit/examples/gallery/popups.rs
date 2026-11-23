@@ -1083,6 +1083,37 @@ pub fn render_glass_launcher(pct: u32) -> Canvas {
     c
 }
 
+/// The Glass launcher in dark Glass at scale `n`, its second row lit.
+pub fn render_glass_launcher_dark(n: i32) -> Canvas {
+    let g = reprisekit::glass::Settings {
+        mode: reprisekit::glass::Mode::Dark,
+        ..reprisekit::glass::Settings::default()
+    };
+    let theme = cued(interfaces::theme_with(
+        Interface::Glass,
+        reprisekit::blue::Variant::default(),
+        &g,
+    ))
+    .scaled(n);
+    let text = TextRenderer::load(&FontConfig::default());
+    let m = reprisekit::look::panel::margin(&theme);
+    let mut l = launcher_sample();
+    l.key(launcher::Key::Down);
+    let mut icon = Canvas::new(32 * n as u32, 32 * n as u32);
+    icon.fill_rect(
+        Rect::new(4 * n, 6 * n, 24 * n, 20 * n),
+        Color::rgb(80, 193, 255),
+    );
+    let panel = launcher::draw(&theme, &text, &l, Some(&icon), true, None);
+    let (w, h) = (panel.width as i32, panel.height as i32);
+    let mut c = blurred_stripes(
+        w + (60 - m.left - m.right) * n,
+        h + (60 - m.top - m.bottom) * n,
+    );
+    c.blit_over((30 - m.left) * n, (30 - m.top) * n, &panel);
+    c
+}
+
 /// The Classic and Blue launchers side by side with every kind of row at `pct` text.
 pub fn render_launchers(pct: u32) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());

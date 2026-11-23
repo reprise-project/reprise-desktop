@@ -989,8 +989,7 @@ fn glass_body(
             let x = end + g.len(listbox::DETAIL_GAP);
             let y = r.y + g.len(search::at::RESULT_BASE);
             let clip = Rect::new(r.x, r.y, r.width - 2 * s, r.height);
-            let ink = search::ink(search::INK_GREYED);
-            search::line(c, &face, x, y, clip, d, ink, size);
+            search::line(c, &face, x, y, clip, d, style.pane_inks.greyed, size);
         }
     }
 }
@@ -1944,6 +1943,72 @@ mod tests {
             }
         }
         crate::pins::check("controls/launcher_sections", &got);
+    }
+
+    /// Dark Glass's launcher at scale 1 and 2: the pane is dark Glass's window with no white on
+    /// it, the lit row's box is blue, and its name is in dark Glass's text.
+    #[test]
+    fn under_dark_glass_the_pane_and_its_rows_go_dark() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let g = crate::glass::Settings {
+            mode: crate::glass::Mode::Dark,
+            ..crate::glass::Settings::default()
+        };
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut l = with_two_sections();
+        l.key(Key::Down);
+        let lit = l.list.selected.expect("a lit row");
+        let ink = crate::glass::DARK_TEXT;
+        let mut got = Vec::new();
+        for scale in [1, 2] {
+            let theme = Theme {
+                scale,
+                ..crate::interfaces::theme_with(Interface::Glass, Default::default(), &g)
+            };
+            let window = theme.look.style().unwrap().colors.window.argb();
+            let c = draw(&theme, &text, &l, None, false, None);
+            let lay = layout(&l, &theme);
+            let m = panel::margin(&theme);
+            let w = c.width as i32;
+            let dev = |r: Rect| {
+                let r = Rect::new(m.left + r.x, m.top + r.y, r.width, r.height).scaled(scale);
+                (r.y..r.bottom()).flat_map(move |y| (r.x..r.right()).map(move |x| (x, y)))
+            };
+            let px = |(x, y): (i32, i32)| c.pixels[(y * w + x) as usize];
+            let pane = lay.list.expect("rows");
+            let foot = Rect::new(pane.x + pane.width / 2, pane.bottom() - 4, 1, 1);
+            assert_eq!(
+                px(dev(foot).next().unwrap()),
+                window,
+                "the pane's foot at {scale}"
+            );
+            assert_eq!(
+                dev(pane).filter(|&p| px(p) == 0xFFFF_FFFF).count(),
+                0,
+                "no white on the pane at {scale}"
+            );
+            let row = lay.rows[lit];
+            let v = px(dev(Rect::new(row.right() - 4, row.y + 11, 1, 1))
+                .next()
+                .unwrap());
+            let fill = crate::theme::Color::rgb((v >> 16) as u8, (v >> 8) as u8, v as u8);
+            assert!(
+                fill.b >= fill.r + 0x30,
+                "the lit row is blue at {scale}, got {fill:?}"
+            );
+            let near = |v: u32| {
+                [16, 8, 0]
+                    .iter()
+                    .all(|&sh| ((v >> sh) as u8).abs_diff((ink.argb() >> sh) as u8) <= 2)
+            };
+            assert!(
+                dev(row).any(|p| near(px(p))),
+                "the lit row's name in dark Glass's text at {scale}"
+            );
+            got.push((format!("{scale}"), fnv(&c)));
+        }
+        crate::pins::check("controls/launcher_dark", &got);
     }
 
     /// A program's section: its results' descriptions dim after their names, as a file's folder.
