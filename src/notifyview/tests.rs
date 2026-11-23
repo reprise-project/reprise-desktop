@@ -525,6 +525,48 @@ fn super_tab_opens_the_3d_switcher_over_the_reply_field_and_its_pick_takes_the_k
 }
 
 #[test]
+fn a_window_mapping_with_the_focus_takes_the_keyboard_from_the_reply_field() {
+    const A: u32 = 30;
+    const B: u32 = 48;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    h.map_toplevel(&mut c, "test.a", 300, 200);
+    h.dispatch();
+    let mut n = note(1, "Chat");
+    n.actions = vec![(INLINE_REPLY.into(), "Reply".into())];
+    n.reply = Some(crate::tray::Reply {
+        placeholder: String::new(),
+        send: crate::tray::REPLY_SEND.into(),
+    });
+    show(&mut h.state, n);
+    invoke(&mut h.state, 1, INLINE_REPLY);
+    let keyed = |s: &State| s.notify.reply_keyed;
+    h.until("drawn with the keyboard", keyed);
+    h.key(A, true);
+    h.key(A, false);
+
+    let dialog = h.map_toplevel(&mut c, "test.a", 200, 100);
+    h.dispatch();
+    assert_eq!(
+        h.state.focused,
+        Some(dialog.id),
+        "the focused program's window takes the focus"
+    );
+    assert!(!reply_focused(&h.state), "and the keyboard");
+    h.until("drawn unlit under the window", |s| !keyed(s));
+    h.key(B, true);
+    h.key(B, false);
+    let v = &h.state.notify;
+    let text = (replying(v).and_then(|i| v.stack[i].reply.as_ref())).map(|r| r.edit.text.as_str());
+    assert_eq!(
+        text,
+        Some("a"),
+        "the reply row stays open, its text untouched"
+    );
+}
+
+#[test]
 fn buttons_skip_the_default_action_and_menu_rows_name_every_action() {
     let mut n = Notification::new(1, "Hi".into(), String::new());
     n.actions = vec![
