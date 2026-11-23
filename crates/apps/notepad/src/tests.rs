@@ -1968,6 +1968,54 @@ fn ctrl_f_and_ctrl_h_bring_their_open_window_forward_with_its_text() {
 }
 
 #[test]
+fn find_and_replace_reopen_with_the_last_query_selected_so_typing_replaces_it() {
+    use reprisekit::textedit::keysym;
+    let mut np = Notepad::new(None);
+    let mut ctx = test_ctx();
+    np.edit = MultiEdit::new("zebra fox");
+    np.sync_menus();
+    let key = |sym: u32, ctrl: bool, edit: Option<EditKey>| {
+        Event::Key(KeyInput {
+            sym,
+            utf8: None,
+            mods: repriseapp::Mods {
+                ctrl,
+                ..Default::default()
+            },
+            edit,
+        })
+    };
+    let typing = |s: &str| key(0, false, Some(EditKey::Insert(s.into())));
+    let query = |np: &Notepad, win: WinId| {
+        let open = if win == FIND { &np.find } else { &np.replace };
+        Notepad::field(open.as_ref().expect("the dialog is open"), finddlg::QUERY)
+    };
+
+    for (ctrl_sym, win) in [(0x66, FIND), (0x68, REPLACE_WIN)] {
+        np.event(MAIN, key(ctrl_sym, true, None), &mut ctx);
+        np.event(win, typing("zebra"), &mut ctx);
+        np.event(win, key(keysym::RETURN, false, None), &mut ctx);
+        np.event(win, key(keysym::ESCAPE, false, None), &mut ctx);
+        assert!(np.find.is_none() && np.replace.is_none(), "Esc closes it");
+
+        np.event(MAIN, key(ctrl_sym, true, None), &mut ctx);
+        assert_eq!(query(&np, win), "zebra", "it reopens with the last query");
+        np.event(win, typing("fox"), &mut ctx);
+        assert_eq!(query(&np, win), "fox", "typing replaces the selected query");
+
+        let r = np.event(MAIN, key(ctrl_sym, true, None), &mut ctx);
+        assert_eq!(r.raise, Some(win));
+        np.event(win, typing("owl"), &mut ctx);
+        assert_eq!(
+            query(&np, win),
+            "owl",
+            "bringing the open dialog forward selects its query too"
+        );
+        np.event(win, key(keysym::ESCAPE, false, None), &mut ctx);
+    }
+}
+
+#[test]
 fn replace_that_matches_nothing_does_not_scroll() {
     let ctx = test_ctx();
     let mut np = Notepad::new(None);

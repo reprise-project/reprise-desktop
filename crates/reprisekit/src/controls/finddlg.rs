@@ -67,9 +67,16 @@ fn match_case_row(xy: (i32, i32), checked: bool) -> Item {
     )
 }
 
+/// Focus Find what with its query selected, as either dialog opens, so typing replaces the
+/// query and End or an arrow keeps it. A host bringing an open dialog forward calls it too.
+pub fn focus_query(form: &mut Form) {
+    form.focus_id(QUERY);
+    form.select_edit_text(QUERY);
+}
+
 pub fn find_form(f: &FindFields) -> Form {
     let live = !f.query.is_empty();
-    Form::new(vec![
+    let mut form = Form::new(vec![
         Item::label(
             "querylabel",
             Rect::new(LABEL_X, ROW_Y[0], FIND_EDIT_X - LABEL_X, EDIT_H),
@@ -103,12 +110,14 @@ pub fn find_form(f: &FindFields) -> Form {
         Item::radio(DOWN, RADIO_XY[1].0, RADIO_XY[1].1, &tr!("find-down"), "dir").checked(f.down),
     ])
     .set_in(DialogFont::ShellDlg)
-    .labels_at_ink()
+    .labels_at_ink();
+    focus_query(&mut form);
+    form
 }
 
 pub fn replace_form(f: &ReplaceFields) -> Form {
     let live = !f.query.is_empty();
-    Form::new(vec![
+    let mut form = Form::new(vec![
         Item::label(
             "querylabel",
             Rect::new(LABEL_X, ROW_Y[0], REPLACE_EDIT_X - LABEL_X, EDIT_H),
@@ -166,7 +175,9 @@ pub fn replace_form(f: &ReplaceFields) -> Form {
         match_case_row(REPLACE_CHECK_XY, f.match_case),
     ])
     .set_in(DialogFont::ShellDlg)
-    .labels_at_ink()
+    .labels_at_ink();
+    focus_query(&mut form);
+    form
 }
 
 #[cfg(test)]
@@ -354,5 +365,30 @@ mod tests {
         let f = replace_form(&replace_sample());
         assert_eq!(value(&f, QUERY), "hello");
         assert_eq!(value(&f, WITH), "world");
+    }
+
+    #[test]
+    fn both_dialogs_open_on_find_what_with_the_query_selected() {
+        use crate::controls::form::Key;
+        use crate::textedit::EditKey;
+        let selected = |f: &Form| match &f.item(QUERY).expect("the item exists").control {
+            Control::Edit { edit, .. } => edit.all_selected(),
+            other => panic!("{other:?} is not an edit"),
+        };
+        for mut f in [find_form(&find_sample()), replace_form(&replace_sample())] {
+            assert_eq!(f.focus(), f.index_of(QUERY), "Find what takes the keyboard");
+            assert!(selected(&f), "the query opens selected");
+            f.key(Key::Edit(EditKey::Insert("x".into())));
+            assert_eq!(f.edit_text(QUERY), "x", "typing replaces the query");
+        }
+
+        let mut f = find_form(&find_sample());
+        f.key(Key::Edit(EditKey::End { select: false }));
+        assert_eq!(f.edit_text(QUERY), "hello", "End keeps the query");
+        assert!(!selected(&f));
+        f.focus_id(MATCH_CASE);
+        focus_query(&mut f);
+        assert_eq!(f.focus(), f.index_of(QUERY));
+        assert!(selected(&f), "focus_query selects the query again");
     }
 }

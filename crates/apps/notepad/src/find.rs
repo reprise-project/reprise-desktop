@@ -82,10 +82,11 @@ impl Notepad {
         n
     }
 
-    /// Opens Replace in Find's place; an open Replace keeps what was typed in it and is
-    /// returned, for the host to bring forward.
+    /// Opens Replace in Find's place; an open Replace keeps what was typed in it, takes the
+    /// keyboard in Find what with it selected, and is returned for the host to bring forward.
     pub(crate) fn open_replace(&mut self) -> Option<WinId> {
-        if self.replace.is_some() {
+        if let Some(f) = &mut self.replace {
+            finddlg::focus_query(f);
             return Some(REPLACE_WIN);
         }
         self.find = None;
@@ -103,10 +104,11 @@ impl Notepad {
         None
     }
 
-    /// Opens Find in Replace's place; an open Find keeps what was typed in it and is returned,
-    /// for the host to bring forward.
+    /// Opens Find in Replace's place; an open Find keeps what was typed in it, takes the
+    /// keyboard in Find what with it selected, and is returned for the host to bring forward.
     pub(crate) fn open_find(&mut self) -> Option<WinId> {
-        if self.find.is_some() {
+        if let Some(f) = &mut self.find {
+            finddlg::focus_query(f);
             return Some(FIND);
         }
         self.replace = None;
