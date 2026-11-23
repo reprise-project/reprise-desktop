@@ -47,6 +47,9 @@ impl SettingsApp {
         if self.slides_touched.load(Ordering::Acquire) {
             self.want_preview();
         }
+        if self.slide_moved.swap(false, Ordering::AcqRel) {
+            changed |= self.follow_slide();
+        }
         while let Some(req) = self.requests.as_ref().and_then(instance::Requests::next) {
             // A start while the sheet waits to end brings it back, and it stays.
             self.closing = false;

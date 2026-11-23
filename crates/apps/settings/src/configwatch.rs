@@ -1,6 +1,8 @@
-//! `config.toml` and the slideshow folder under inotify, so the sheet rereads what the compositor
-//! (a key aid's shortcut) or an editor wrote while it was open, and relists the folder.
+//! `config.toml`, the compositor's state file and the slideshow folder under inotify, so the sheet
+//! rereads what the compositor (a key aid's shortcut, the slideshow's next picture) or an editor
+//! wrote while it was open, and relists the folder.
 
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -8,31 +10,44 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask, Watches};
 
-/// Watch `path` on a thread: each write or rename onto it sets `changed` and calls `wake`.
-pub fn spawn(path: &Path, changed: Arc<AtomicBool>, wake: impl Fn() + Send + 'static) {
+/// Watch `path` on a thread named `name`: each write or rename onto it sets `changed` and calls
+/// `wake`. The watch is in place when this returns; a missing folder is made first.
+pub fn spawn(name: &str, path: &Path, changed: Arc<AtomicBool>, wake: impl Fn() + Send + 'static) {
+    let (inotify, file) = match watch(path) {
+        Ok(Some(w)) => w,
+        Ok(None) => return,
+        Err(e) => return log::warn!("{} is not watched: {e}", path.display()),
+    };
     let path = path.to_path_buf();
     let run = move || {
-        if let Err(e) = watch(&path, &changed, &wake) {
+        if let Err(e) = follow(inotify, &file, &changed, &wake) {
             log::warn!("{} is not watched: {e}", path.display());
         }
     };
-    if let Err(e) = std::thread::Builder::new()
-        .name("reprise-settings-config".into())
-        .spawn(run)
-    {
-        log::warn!("config watch thread: {e}");
+    if let Err(e) = std::thread::Builder::new().name(name.into()).spawn(run) {
+        log::warn!("{name} thread: {e}");
     }
 }
 
-fn watch(path: &Path, changed: &AtomicBool, wake: &dyn Fn()) -> io::Result<()> {
+fn watch(path: &Path) -> io::Result<Option<(Inotify, OsString)>> {
     let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
-        return Ok(());
+        return Ok(None);
     };
-    let mut inotify = Inotify::init()?;
+    std::fs::create_dir_all(dir)?;
+    let inotify = Inotify::init()?;
     // Writers replace the file by renaming a temporary over it, so the folder is watched.
     inotify
         .watches()
         .add(dir, WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO)?;
+    Ok(Some((inotify, name.to_owned())))
+}
+
+fn follow(
+    mut inotify: Inotify,
+    name: &OsStr,
+    changed: &AtomicBool,
+    wake: &dyn Fn(),
+) -> io::Result<()> {
     let mut buf = [0u8; 4096];
     loop {
         let events = match inotify.read_events_blocking(&mut buf) {
@@ -117,6 +132,19 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         false
+    }
+
+    #[test]
+    fn a_file_in_a_folder_not_made_yet_is_watched_from_its_first_write() {
+        let dir = std::env::temp_dir().join(format!("reprise-filewatch-{}", std::process::id()));
+        let path = dir.join("state").join("state.toml");
+        let changed = Arc::new(AtomicBool::new(false));
+        spawn("test-watch", &path, changed.clone(), || {});
+        std::fs::write(dir.join("state").join("other.toml"), b"x").unwrap();
+        assert!(!settles(&changed), "another file in the folder");
+        std::fs::write(&path, b"x").unwrap();
+        assert!(settles(&changed));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

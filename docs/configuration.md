@@ -118,8 +118,9 @@ monitor's own, and one picked for all monitors (the first row, Everywhere when
 desktops are listed too) takes the connected monitors' own away; a monitor not
 connected keeps its own. Under a slideshow, a desktop or monitor picked there
 without a picture of its own has no picture row picked and its preview shows
-the slideshow. The page's Restore Defaults takes the connected monitors' own
-away too.
+the slideshow: the picture the desktop shows now while the folder picked is the
+one applied, else the folder's first picture. The page's Restore Defaults takes
+the connected monitors' own away too.
 
 `ink`, `glow`, `sparks` and `neon` swap the ripples for a fluid that the
 pointer and fingers stir. Ink is soft coloured dye with a glow; it alternates

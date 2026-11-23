@@ -77,10 +77,12 @@ pub struct Persisted {
 }
 
 /// `$XDG_STATE_HOME/reprise/state.toml`; in tests a file of the test process's own, so no test
-/// rewrites the user's.
+/// rewrites the user's, or the test thread's `OWN_PATH`.
 pub fn path() -> PathBuf {
     #[cfg(test)]
-    return crate::harness::scratch().join("state.toml");
+    return OWN_PATH
+        .with_borrow(Clone::clone)
+        .unwrap_or_else(|| crate::harness::scratch().join("state.toml"));
     #[cfg(not(test))]
     repriseconf::state_path()
 }
@@ -206,6 +208,20 @@ pub fn save_session_restoring(on: bool) {
     let path = path();
     let keys = toml::Table::from_iter([("session_restoring".to_string(), on.into())]);
     run_in_order(move || patch(&path, keys));
+}
+
+/// Queue a write of [`repriseconf::SLIDESHOW_PICTURE`], or for None (or a name that is not UTF-8)
+/// taking it out, leaving every other key as it is.
+pub fn save_slideshow_picture(picture: Option<&Path>) {
+    let path = path();
+    let key = repriseconf::SLIDESHOW_PICTURE;
+    match picture.and_then(Path::to_str) {
+        Some(p) => {
+            let keys = toml::Table::from_iter([(key.to_string(), p.into())]);
+            run_in_order(move || patch(&path, keys));
+        }
+        None => run_in_order(move || unpatch(&path, key)),
+    }
 }
 
 /// Queue a write of `color_filter_last`, leaving every other key as it is.
@@ -385,6 +401,9 @@ pub fn run_in_order(work: impl FnOnce() + Send + 'static) {
 thread_local! {
     /// Writes this test thread queued.
     pub(crate) static QUEUED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// A state file of this test thread's own, for a test that reads back a key other tests write.
+    pub(crate) static OWN_PATH: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
     /// The last `screen_locked` this test thread queued.
     pub(crate) static SCREEN_LOCKED: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };

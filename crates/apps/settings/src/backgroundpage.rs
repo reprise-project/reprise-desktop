@@ -455,11 +455,11 @@ pub fn fill_folders(form: &mut Form, folders: &[PathBuf], picked: &str, icon: Op
 }
 
 /// The file the monitor shows for `s`: the pending wallpaper, or for a
-/// slideshow the first picture in `listed` (its folder's
-/// `reprisefs::pictures::in_folder`, the desktop's first slide); empty
-/// for none. A built-in is its `reprise:` spelling in `s`'s glass colour,
-/// so a new glass colour is a new picture.
-pub fn monitor_file(s: &Settings, listed: &[PathBuf]) -> String {
+/// slideshow `live` ([`live_slide`]) while it lies in its folder, else the
+/// first picture in `listed` (its folder's `reprisefs::pictures::in_folder`,
+/// the desktop's first slide); empty for none. A built-in is its `reprise:`
+/// spelling in `s`'s glass colour, so a new glass colour is a new picture.
+pub fn monitor_file(s: &Settings, listed: &[PathBuf], live: Option<&Path>) -> String {
     if !slideshow(s) {
         let glass = crate::appearancepage::glass(s);
         return match builtin(&s.wallpaper) {
@@ -470,11 +470,23 @@ pub fn monitor_file(s: &Settings, listed: &[PathBuf]) -> String {
     let Some(folder) = expand(&s.slideshow) else {
         return String::new();
     };
-    listed
-        .iter()
-        .find(|p| p.parent() == Some(folder.as_path()))
+    let first = || listed.iter().find(|p| p.parent() == Some(folder.as_path()));
+    live.filter(|p| p.parent() == Some(folder.as_path()))
+        .or_else(|| first().map(PathBuf::as_path))
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// The picture the running slideshow shows now (`now`, the compositor's
+/// [`repriseconf::SLIDESHOW_PICTURE`]) while the pending slideshow `want`
+/// is the `applied` one; None for another folder, not yet applied.
+pub fn live_slide<'a>(
+    applied: &Settings,
+    want: &Settings,
+    now: Option<&'a Path>,
+) -> Option<&'a Path> {
+    let running = expand(&applied.slideshow)?;
+    (expand(&want.slideshow) == Some(running)).then_some(now?)
 }
 
 /// The folder a slideshow starts on, as the config spells it: `last`,
@@ -1093,9 +1105,9 @@ mod tests {
             glass_mode: "dark".into(),
             ..Settings::default()
         };
-        assert_eq!(monitor_file(&s, &[]), "reprise:flow/night");
+        assert_eq!(monitor_file(&s, &[], None), "reprise:flow/night");
         s.wallpaper = "reprise:ridges/dusk".into();
-        assert_eq!(monitor_file(&s, &[]), "reprise:ridges/dusk");
+        assert_eq!(monitor_file(&s, &[], None), "reprise:ridges/dusk");
         let mut f = page(Area::MIN);
         follow(&mut f, &s);
         follow_use_for(&mut f, &s, &[]);
@@ -1136,12 +1148,12 @@ mod tests {
             PathBuf::from("/w/a/hills.jpg"),
             PathBuf::from("/w/a/lake.jpg"),
         ];
-        assert_eq!(monitor_file(&s, &listed), "/w/a/hills.jpg");
+        assert_eq!(monitor_file(&s, &listed, None), "/w/a/hills.jpg");
         let one = Settings {
             slideshow: String::new(),
             ..s
         };
-        assert_eq!(monitor_file(&one, &listed), "/w/b/dunes.jpg");
+        assert_eq!(monitor_file(&one, &listed, None), "/w/b/dunes.jpg");
     }
 
     #[test]
@@ -1150,14 +1162,84 @@ mod tests {
             slideshow: "/far/Trips".into(),
             ..Settings::default()
         };
-        assert_eq!(monitor_file(&s, &[]), "", "the desktop colour until listed");
+        assert_eq!(
+            monitor_file(&s, &[], None),
+            "",
+            "the desktop colour until listed"
+        );
         let other = [PathBuf::from("/w/a/hills.jpg")];
-        assert_eq!(monitor_file(&s, &other), "", "another folder's listing");
+        assert_eq!(
+            monitor_file(&s, &other, None),
+            "",
+            "another folder's listing"
+        );
         let listed = [
             PathBuf::from("/far/Trips/coast.jpg"),
             PathBuf::from("/far/Trips/hut.png"),
         ];
-        assert_eq!(monitor_file(&s, &listed), "/far/Trips/coast.jpg");
+        assert_eq!(monitor_file(&s, &listed, None), "/far/Trips/coast.jpg");
+    }
+
+    #[test]
+    fn the_applied_slideshow_shows_the_picture_the_desktop_shows_now() {
+        let applied = Settings {
+            slideshow: "/far/Trips".into(),
+            ..Settings::default()
+        };
+        let now = Path::new("/far/Trips/hut.png");
+        let listed = [
+            PathBuf::from("/far/Trips/coast.jpg"),
+            PathBuf::from("/far/Trips/hut.png"),
+        ];
+        let live = live_slide(&applied, &applied, Some(now));
+        assert_eq!(live, Some(now));
+        assert_eq!(monitor_file(&applied, &listed, live), "/far/Trips/hut.png");
+        assert_eq!(live_slide(&applied, &applied, None), None);
+        assert_eq!(
+            live_slide(&Settings::default(), &applied, Some(now)),
+            None,
+            "no slideshow applied"
+        );
+
+        let picked = Settings {
+            slideshow: "/far/Walks".into(),
+            ..Settings::default()
+        };
+        assert_eq!(
+            live_slide(&applied, &picked, Some(now)),
+            None,
+            "a folder not yet applied"
+        );
+        let walks = [PathBuf::from("/far/Walks/moor.jpg")];
+        assert_eq!(
+            monitor_file(&picked, &walks, Some(now)),
+            "/far/Walks/moor.jpg",
+            "a picture outside the folder is not its slide"
+        );
+
+        let own = Settings {
+            wallpaper_desktops: vec!["/w/b/dunes.jpg".into()],
+            ..applied.clone()
+        };
+        let desktop = preview(&own, &Target::Desktop(0));
+        assert_eq!(monitor_file(&desktop, &listed, live), "/w/b/dunes.jpg");
+
+        let own = Settings {
+            output_wallpapers: vec![crate::model::OutputWallpaper {
+                name: "HDMI-A-1".into(),
+                wallpaper: "/w/b/dunes.jpg".into(),
+                position: String::new(),
+            }],
+            ..applied.clone()
+        };
+        let hdmi = preview(&own, &Target::Monitor("HDMI-A-1".into()));
+        assert_eq!(monitor_file(&hdmi, &listed, live), "/w/b/dunes.jpg");
+        let dp = preview(&own, &Target::Monitor("DP-1".into()));
+        assert_eq!(
+            monitor_file(&dp, &listed, live),
+            "/far/Trips/hut.png",
+            "a monitor without a picture of its own"
+        );
     }
 
     #[test]
