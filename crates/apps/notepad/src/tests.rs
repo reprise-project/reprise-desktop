@@ -1435,17 +1435,31 @@ fn a_draw_failure_raises_the_box_with_the_systems_error() {
     );
 }
 
+/// Types `name` into the dialog `win`'s File name field and presses Enter.
+fn accept_typed(np: &mut Notepad, win: WinId, name: &str, ctx: &mut Ctx) {
+    for ch in name.chars() {
+        let utf8 = ch.to_string();
+        let k = KeyInput {
+            sym: ch as u32,
+            utf8: Some(utf8.clone()),
+            mods: repriseapp::Mods::default(),
+            edit: reprisekit::textedit::key_for(ch as u32, false, false, Some(&utf8)),
+        };
+        np.event(win, Event::Key(k), ctx);
+    }
+    np.event(win, key(keysym::RETURN), ctx);
+}
+
 /// A name the Open dialog cannot read raises the box over the dialog, which stays up with the
-/// document untouched.
+/// document untouched and has the keyboard back once the box closes.
 #[test]
 fn a_failed_open_from_the_dialog_raises_the_box_over_it() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let missing = tmp.path().join("missing.txt");
     let mut np = Notepad::new(None);
+    let mut ctx = test_ctx();
     np.open_dialog();
-    let dir = std::env::temp_dir();
-    np.host.folder = Some(np.host.folders.id(&dir));
-    let missing = dir.join("reprise-notepad-open-missing.txt");
-    std::fs::remove_file(&missing).ok();
-    np.open_accept("reprise-notepad-open-missing.txt", &mut test_icons());
+    accept_typed(&mut np, OPEN, &missing.display().to_string(), &mut ctx);
     assert!(np.open.is_some(), "the dialog stays up");
     assert_eq!(np.path, None);
     assert_eq!(
@@ -1455,6 +1469,49 @@ fn a_failed_open_from_the_dialog_raises_the_box_over_it() {
             missing.display()
         )
     );
+    let win = box_win(&np);
+    assert_eq!(np.parent(win), Some(OPEN), "the box covers Open");
+    np.event(win, key(keysym::RETURN), &mut ctx);
+    assert!(np.asks.is_empty());
+    assert!(np.open.is_some(), "OK goes back to Open");
+}
+
+/// A Save As write that fails raises its box over Save As, also when it follows Yes on the
+/// overwrite question.
+#[test]
+fn a_failed_save_from_save_as_raises_the_box_over_it() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut np = Notepad::new(None);
+    let mut ctx = test_ctx();
+    np.edit = MultiEdit::new("new");
+    np.saveas_dialog();
+    // Past NAME_MAX, so the write fails as root too.
+    let long = tmp.path().join(format!("{}.txt", "n".repeat(300)));
+    accept_typed(&mut np, SAVEAS, &long.display().to_string(), &mut ctx);
+    assert!(np.saveas.is_some(), "Save As stays up");
+    assert!(matches!(np.asks.up(), Some((_, Ask::Error))));
+    let win = box_win(&np);
+    assert_eq!(np.parent(win), Some(SAVEAS), "a write that failed");
+    np.event(win, key(keysym::RETURN), &mut ctx);
+    assert!(np.asks.is_empty());
+
+    let sub = tmp.path().join("sub");
+    std::fs::create_dir(&sub).expect("mkdir");
+    let taken = sub.join("taken.txt");
+    std::fs::write(&taken, "old").expect("write");
+    np.saveas_dialog();
+    accept_typed(&mut np, SAVEAS, &taken.display().to_string(), &mut ctx);
+    assert_eq!(overwriting(&np), Some(taken.as_path()));
+    std::fs::remove_dir_all(&sub).expect("the folder goes, so Yes cannot write");
+    let win = box_win(&np);
+    np.event(win, key(keysym::TAB), &mut ctx);
+    np.event(win, key(keysym::RETURN), &mut ctx);
+    assert!(
+        matches!(np.asks.up(), Some((_, Ask::Error))),
+        "Tab, Enter: Yes failed"
+    );
+    assert_eq!(np.parent(box_win(&np)), Some(SAVEAS), "Yes that failed");
+    assert!(np.saveas.is_some());
 }
 
 #[test]
