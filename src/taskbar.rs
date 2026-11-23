@@ -25,6 +25,10 @@ pub enum TaskbarCommand {
     Properties,
     /// Name the pager's desktop n.
     RenameDesktop(usize),
+    /// The Start button's menu: the user's applications folder, and Settings' Start Menu page.
+    OpenPrograms,
+    ExplorePrograms,
+    StartProperties,
 }
 
 /// The taskbar's right-click menu rows and, parallel to them, what each does (None at a separator).
@@ -75,6 +79,26 @@ pub fn taskbar_menu(
         .collect();
     let commands = rows.iter().map(|r| r.map(|(.., cmd)| cmd)).collect();
     (items, commands)
+}
+
+/// The Start button's right-click menu rows and, parallel to them, what each does.
+pub fn start_button_menu() -> (Vec<MenuItem>, Vec<Option<TaskbarCommand>>) {
+    use TaskbarCommand::*;
+    let row = |label: &str, bold: bool| menu_row(label, false, true, false).bold(bold);
+    (
+        vec![
+            row("&Open", true),
+            row("E&xplore", false),
+            MenuItem::Separator,
+            row("P&roperties", false),
+        ],
+        vec![
+            Some(OpenPrograms),
+            Some(ExplorePrograms),
+            None,
+            Some(StartProperties),
+        ],
+    )
 }
 
 /// The Toolbars submenu: Quick Launch, greyed while `pinned` puts its programs on the task row.

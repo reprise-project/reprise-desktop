@@ -45,6 +45,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   Glass have two columns; `startmenu_style` picks any of them under any look.
 - **Your menu.** The Start Menu page of Reprise Settings edits the menu and
   Quick Launch, a folder of `.desktop` files in `~/.config/reprise/quicklaunch/`.
+  A right-click on the Start button opens your programs folder
+  (`~/.local/share/applications`) or, under Properties, that page.
 - **Live program list.** A program shows up in the Start menu and the
   launcher the moment it's installed.
 - **Recent documents** from `recently-used.xbel`, shared with GTK programs.

@@ -182,6 +182,13 @@ impl State {
         self.push_context_menu(at, items, MenuKind::Taskbar { commands }, MenuFrom::Bar);
     }
 
+    /// The Start button's menu at `at`.
+    pub fn open_start_button_menu(&mut self, at: (i32, i32)) {
+        self.close_menu();
+        let (items, commands) = crate::taskbar::start_button_menu();
+        self.push_context_menu(at, items, MenuKind::Taskbar { commands }, MenuFrom::Bar);
+    }
+
     pub fn open_desktop_menu(&mut self, at: (i32, i32)) {
         self.close_menu();
         let (items, commands) = crate::desktopview::desktop_menu(

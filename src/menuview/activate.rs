@@ -124,6 +124,11 @@ impl State {
             Tc::Properties => {
                 self.spawn_argv_activated(&["reprise-settings", "--page", "taskbar"]);
             }
+            Tc::OpenPrograms | Tc::ExplorePrograms => self.open_programs_folder(),
+            Tc::StartProperties => {
+                let page = repriseconf::pages::Page::StartMenu.slug();
+                self.spawn_argv_activated(&["reprise-settings", "--page", &page]);
+            }
             Tc::QuickLaunch => self.toggle_quick_shown(),
             Tc::LockTaskbar => self.toggle_taskbar_lock(),
             Tc::RenameDesktop(n) => {
@@ -132,6 +137,18 @@ impl State {
                 self.open_dialog(d);
             }
         }
+    }
+
+    /// Explorer on the user's applications folder, made first when it is missing.
+    fn open_programs_folder(&mut self) {
+        let Some(dir) = reprisexdg::data_home().map(|d| d.join("applications")) else {
+            return;
+        };
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            log::warn!("{}: {e}", dir.display());
+            return;
+        }
+        self.spawn_argv_activated(&reprisefs::apps::open_folder_argv(&dir));
     }
 
     fn arrange_windows(&mut self, cmd: TaskbarCommand) {
