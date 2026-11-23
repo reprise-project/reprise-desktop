@@ -189,6 +189,8 @@ impl State {
             }
             return;
         }
+        // The window taking the focus takes the keyboard from a balloon's reply field, left open.
+        crate::notifyview::blur(self);
         let prev = self.focused;
         self.focused = Some(w);
         self.toplevels.dirty = true;

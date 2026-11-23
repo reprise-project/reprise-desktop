@@ -228,7 +228,8 @@ pub fn paste(state: &mut State, text: &str) {
     reply_touched(state);
 }
 
-/// A press anywhere off the balloons: the reply field lets go of the keyboard and stays open.
+/// A press off the balloons, a switcher pick or a window taking the focus: the reply field lets
+/// go of the keyboard and stays open.
 pub fn blur(state: &mut State) {
     if let Some(field) = reply_field(&mut state.notify)
         && std::mem::replace(&mut field.focused, false)
