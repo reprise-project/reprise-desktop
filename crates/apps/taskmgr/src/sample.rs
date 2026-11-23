@@ -2,7 +2,8 @@
 //! the CPU's and each core's load, memory, and the app scopes. [`Sampler`] keeps what the next
 //! reading is measured against.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -43,6 +44,9 @@ pub struct Snapshot {
     /// The mapped windows ([`reprisebus::tray::windows_by_app`]); None when the
     /// compositor cannot say, which lists every scope.
     pub windows: Option<Vec<reprisebus::tray::AppWindow>>,
+    /// The clients of `windows` in no scope that run in a Flatpak or snap sandbox ([`sandboxed`]):
+    /// Applications matches their windows to a program by app id.
+    pub sandboxed: HashSet<u32>,
     pub devices: devices::Readings,
 }
 
@@ -85,6 +89,7 @@ pub struct Sampler {
     users: HashMap<u32, String>,
     lookup: fn(u32) -> Option<String>,
     windows: fn() -> Option<Vec<reprisebus::tray::AppWindow>>,
+    sandboxed: fn(u32) -> bool,
     page_kb: u64,
     /// Read `/proc/<pid>/io` too, for the Disk column.
     pub disk: bool,
@@ -109,6 +114,7 @@ impl Sampler {
             users,
             lookup: |_| None,
             windows: || None,
+            sandboxed: |_| false,
             page_kb: (page.max(4096) as u64) / 1024,
             disk: false,
             io: HashMap::new(),
@@ -127,6 +133,7 @@ impl Sampler {
             devices: Some(devices::Sampler::new(Path::new("/"))),
             lookup: |uid| reprisefs::sysinfo::account(uid).map(|(login, _)| login),
             windows: || reprisebus::tray::windows_by_app().ok(),
+            sandboxed,
             ..Sampler::new(Path::new("/proc"), slice, HashMap::new())
         }
     }
@@ -208,16 +215,39 @@ impl Sampler {
         for p in &mut procs {
             p.gpu = devices.proc_gpu.get(&p.pid).copied();
         }
+        let scopes = self.slice.as_deref().map(scopes::read).unwrap_or_default();
+        let windows = (self.windows)();
+        let sandboxed = (windows.iter().flatten())
+            .map(|&(_, pid)| pid)
+            .filter(|&pid| {
+                i32::try_from(pid)
+                    .is_ok_and(|p| p != 0 && !scopes.iter().any(|s| s.pids.contains(&p)))
+            })
+            .filter(|&pid| (self.sandboxed)(pid))
+            .collect();
         Snapshot {
             procs,
             cpu: load,
             cores,
             mem: procfs::read_meminfo(&self.root),
-            scopes: self.slice.as_deref().map(scopes::read).unwrap_or_default(),
-            windows: (self.windows)(),
+            scopes,
+            windows,
+            sandboxed,
             devices,
         }
     }
+}
+
+/// Whether process `pid` runs in a Flatpak or snap sandbox, by the rules the compositor's sandbox
+/// filter reads ([`reprisebus::peer::placement`]); one gone or hiding in a pid namespace counts.
+fn sandboxed(pid: u32) -> bool {
+    let (Ok(fd), Ok(p)) = (reprisebus::pidfd::open(pid), i32::try_from(pid)) else {
+        return true;
+    };
+    !matches!(
+        reprisebus::peer::placement(fd.as_fd(), p, Path::new("/proc")),
+        reprisebus::peer::Placement::Host { .. }
+    )
 }
 
 #[cfg(test)]
@@ -389,5 +419,30 @@ mod tests {
         let next = s.sample_at(t0 + std::time::Duration::from_secs(3));
         assert_eq!(disk(&next, 10), Some(1 << 20), "2 MiB over 2 s");
         assert_eq!(disk(&next, 11), None, "no io file to read");
+    }
+
+    #[test]
+    fn only_window_clients_in_no_scope_are_looked_up_for_a_sandbox() {
+        let root = tempfile::tempdir().unwrap();
+        let slice = root.path().join("app.slice");
+        let unit = slice.join("app-reprise-org.kde.ark-1ax2x3.scope");
+        std::fs::create_dir_all(&unit).unwrap();
+        std::fs::write(unit.join("cgroup.procs"), "41\n").unwrap();
+        let mut s = Sampler {
+            windows: || {
+                Some(vec![
+                    ("org.kde.ark".into(), 41),
+                    ("flatpak".into(), 50),
+                    ("host".into(), 60),
+                    ("unknown".into(), 0),
+                ])
+            },
+            sandboxed: |pid| {
+                assert!(pid == 50 || pid == 60, "pid {pid} is looked up");
+                pid == 50
+            },
+            ..Sampler::new(root.path(), Some(slice), HashMap::new())
+        };
+        assert_eq!(s.sample().sandboxed, HashSet::from([50]));
     }
 }

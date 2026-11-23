@@ -97,6 +97,7 @@ pub(crate) fn snapshot() -> Snapshot {
             },
         ],
         windows: None,
+        sandboxed: HashSet::new(),
         devices: Default::default(),
     }
 }
@@ -710,36 +711,59 @@ fn applications_lists_only_programs_showing_a_window() {
     );
     let names: Vec<&str> = t.app_rows.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(names, ["Ark"], "a tray or background program is left out");
+    t.take(
+        Snapshot {
+            windows: Some(vec![("reprise.notepad".into(), 8888)]),
+            ..snapshot()
+        },
+        &mut ctx,
+    );
+    assert!(
+        t.app_rows.is_empty(),
+        "a host window outside every scope lists no scope of its app id"
+    );
 }
 
 #[test]
-fn a_hung_window_is_its_program_by_pid_and_else_by_app_id() {
+fn a_window_is_its_program_by_pid_and_a_sandboxed_one_by_app_id() {
     let s = snapshot();
     let entries = [
         entry("org.kde.ark", "Ark", None),
         entry("reprise-notepad", "Notepad", Some("reprise.notepad")),
     ];
-    let hung = |sc: usize, id: &str, pid: u32| {
-        has_window(&s.scopes[sc], &s.scopes, &entries, &[(id.into(), pid)])
+    let sandboxed = HashSet::from([9999]);
+    let shows = |sc: usize, id: &str, pid: u32| {
+        has_window(
+            &s.scopes[sc],
+            &s.scopes,
+            &entries,
+            &[(id.into(), pid)],
+            &sandboxed,
+        )
     };
-    assert!(hung(0, "anything", 41), "its client runs in the scope");
+    assert!(shows(0, "anything", 41), "its client runs in the scope");
     assert!(
-        !hung(0, "org.kde.ark", 40),
+        !shows(0, "org.kde.ark", 40),
         "a client in another scope is that program's"
     );
     assert!(
-        hung(1, "reprise.notepad", 9999),
-        "a client in no scope goes by its app id"
+        shows(1, "reprise.notepad", 9999),
+        "a sandboxed client in no scope goes by its app id"
     );
-    assert!(!hung(0, "reprise.notepad", 9999));
+    assert!(shows(1, "reprise.notepad", 0), "so does one with no pid");
+    assert!(!shows(0, "reprise.notepad", 9999));
+    assert!(
+        !shows(1, "reprise.notepad", 8888),
+        "a host client in no scope is another program's, whatever its app id"
+    );
 }
 
 thread_local! {
-    static ENDED: std::cell::RefCell<Vec<(String, Vec<i32>)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static ENDED: std::cell::RefCell<Vec<(String, Vec<i32>, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn record_end(unit: String, pids: Vec<i32>) {
-    ENDED.with_borrow_mut(|e| e.push((unit, pids)));
+fn record_end(unit: String, pids: Vec<i32>, spare: bool) {
+    ENDED.with_borrow_mut(|e| e.push((unit, pids, spare)));
 }
 
 #[test]
@@ -756,11 +780,36 @@ fn end_task_on_a_program_that_answers_closes_its_windows_and_waits_for_it() {
         .clone();
     assert_eq!(
         ENDED.take(),
-        [(unit.clone(), pids)],
+        [(unit.clone(), pids, false)],
         "the program's processes are asked to close their windows"
     );
     assert!(t.asks.is_empty(), "End Now waits");
     assert!(matches!(&t.ending[..], [e] if e.target == Target::Scope(unit.clone())));
+}
+
+#[test]
+fn end_task_on_a_program_listed_for_a_sandboxed_window_closes_it_and_spares_the_scope() {
+    let mut ctx = ctx();
+    let mut t = mgr();
+    t.end_task = record_end;
+    t.take(
+        Snapshot {
+            windows: Some(vec![("org.kde.ark".into(), 9999)]),
+            sandboxed: HashSet::from([9999]),
+            ..snapshot()
+        },
+        &mut ctx,
+    );
+    t.event(MAIN, Event::Resized, &mut ctx);
+    let names: Vec<&str> = t.app_rows.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["Ark"]);
+    click_row(&mut t, &mut ctx, 0);
+    t.event(MAIN, key(keysym::DELETE), &mut ctx);
+    assert_eq!(
+        ENDED.take(),
+        [(t.app_rows[0].unit.clone(), vec![41, 42, 9999], true)],
+        "the sandboxed window is asked to close, and the scope is never signalled"
+    );
 }
 
 #[test]
