@@ -229,6 +229,7 @@ fn click_at(ex: &mut Explorer, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
 
 /// Wakes `ex` until `done` holds, for a read let go of on a listing thread. The read can queue
 /// behind other tests' reads in the process-wide listing pool, so it gets a whole [`LIST_WAIT`].
+#[track_caller]
 pub(crate) fn wake_until(ex: &mut Explorer, ctx: &mut Ctx, done: impl Fn(&Explorer) -> bool) {
     let end = std::time::Instant::now() + LIST_WAIT;
     while !done(ex) {
