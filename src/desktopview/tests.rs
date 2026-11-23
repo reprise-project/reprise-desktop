@@ -1917,6 +1917,90 @@ fn a_drop_of_files_runs_in_explorer_and_an_icon_put_on_a_cell_lands_there() {
 }
 
 #[test]
+fn a_paste_beside_its_source_selects_the_copy_once_the_desktop_lists_it() {
+    use crate::dragview::{DropOp, DropTarget};
+    crate::spawn::record();
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let desk = crate::harness::scratch().join("desktop-paste-selects");
+    std::fs::create_dir_all(&desk).unwrap();
+    let a = desk.join("a.txt");
+    std::fs::write(&a, "").unwrap();
+    std::fs::write(desk.join("Copy of a.txt"), "").unwrap();
+    create(&mut h.state, desk.clone(), Default::default(), None);
+    h.state.rescan_desktop();
+    let index = |h: &crate::harness::Harness, name: &str| {
+        let view = h.state.desktop.as_ref().unwrap();
+        view.entries.iter().position(|e| e.name == name).unwrap()
+    };
+    let i = index(&h, "a.txt");
+    h.state
+        .desktop
+        .as_mut()
+        .unwrap()
+        .selection
+        .set_only(Some(i));
+
+    let view = h.state.desktop.as_ref().unwrap();
+    let sources = crate::iconedit::clip_sources(&view.entries, std::slice::from_ref(&a));
+    let here = HashSet::from([a.clone()]);
+    h.state
+        .put_all(&sources, &DropTarget::Desktop((0, 3)), DropOp::Copy, &here);
+    std::fs::write(desk.join("Copy of a (2).txt"), "").unwrap();
+    h.state.rescan_desktop();
+
+    let copy = index(&h, "Copy of a (2).txt");
+    assert_eq!(
+        h.state.desktop.as_ref().unwrap().selection.set,
+        BTreeSet::from([copy]),
+        "the copy, numbered past the taken name, is selected in place of its source"
+    );
+}
+
+#[test]
+fn two_pastes_landing_in_one_scan_select_both_and_a_changed_selection_stays() {
+    use crate::dragview::{DropOp, DropTarget};
+    crate::spawn::record();
+    let (mut h, desk) = desktop_in("desktop-paste-two", &["a.txt", "b.txt", "c.txt"]);
+    let paste = |h: &mut crate::harness::Harness, name: &str| {
+        let src = desk.join(name);
+        let view = h.state.desktop.as_ref().unwrap();
+        let sources = crate::iconedit::clip_sources(&view.entries, std::slice::from_ref(&src));
+        let here = HashSet::from([src]);
+        h.state
+            .put_all(&sources, &DropTarget::Desktop((0, 3)), DropOp::Copy, &here);
+    };
+    let selected = |h: &crate::harness::Harness| -> Vec<String> {
+        let view = h.state.desktop.as_ref().unwrap();
+        (view.selection.set.iter())
+            .map(|&i| view.entries[i].name.clone())
+            .collect()
+    };
+    paste(&mut h, "a.txt");
+    paste(&mut h, "b.txt");
+    std::fs::write(desk.join("Copy of a.txt"), "").unwrap();
+    std::fs::write(desk.join("Copy of b.txt"), "").unwrap();
+    h.state.rescan_desktop();
+    assert_eq!(selected(&h), ["Copy of a.txt", "Copy of b.txt"]);
+
+    paste(&mut h, "c.txt");
+    let c = icon(&h, "c.txt");
+    h.state
+        .desktop
+        .as_mut()
+        .unwrap()
+        .selection
+        .set_only(Some(c));
+    std::fs::write(desk.join("Copy of c.txt"), "").unwrap();
+    h.state.rescan_desktop();
+    assert_eq!(
+        selected(&h),
+        ["c.txt"],
+        "the user's pick since the paste stays"
+    );
+}
+
+#[test]
 fn a_cut_file_leaves_the_clipboard_once_its_move_has_ended_and_only_if_it_moved() {
     use crate::clipboard::{FileClip, file_offers};
     use crate::dragview::{DragSource, DropOp, DropTarget};

@@ -958,7 +958,15 @@ impl Explorer {
         ex
     }
 
-    /// Selects the command line's `--select` entries once their folder's listing has landed.
+    /// Selects `paths` in `place`, the first scrolled into view: now when its listing is shown,
+    /// else once the listing being read lands.
+    pub(crate) fn select_once_listed(&mut self, place: Place, paths: Vec<PathBuf>, ctx: &mut Ctx) {
+        self.selecting = Some((place, paths));
+        self.select_pending(ctx);
+    }
+
+    /// Selects what `selecting` holds (the command line's `--select` entries, a rename's or a
+    /// put's result) once its folder's listing has landed.
     fn select_pending(&mut self, ctx: &mut Ctx) {
         if self.reading.is_some() {
             return;

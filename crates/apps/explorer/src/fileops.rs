@@ -276,7 +276,7 @@ impl Explorer {
         }
         let cut = clip.cut;
         let plan = |src: &Path| plan_paste(cut, shortcut, src, &dir);
-        self.put_all(&clip.paths, &dir, &plan, false, ctx)
+        self.put_all(&clip.paths, &dir, &plan, true, ctx)
     }
 
     /// Copy, move or link `paths` into `dir` on a `PutJob`; `plan` picks each op (`None` skips).
@@ -665,8 +665,7 @@ impl Explorer {
             && self.place.path().as_deref() == Some(&*put.dir)
             && !put.landed.is_empty()
         {
-            self.select_paths(&put.landed);
-            self.refresh_chrome(ctx);
+            self.select_once_listed(self.place.clone(), put.landed, ctx);
         }
         if let Some((title, text)) = failed {
             reply = self.message_box(title, text, ctx);

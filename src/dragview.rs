@@ -973,8 +973,8 @@ impl State {
 
     /// Carry out `puts` into `dir`: files and folders go to Explorer, and launchers of what is no
     /// file ([`Self::write_launchers`]) are written here, all named past `existing`, the desktop's
-    /// names. A put with a cell lands its icon there once the desktop shows it; `here` holds the
-    /// sources that sit in the desktop folder.
+    /// names. A put onto the desktop selects its icons once the desktop shows them, and one with a
+    /// cell lands there; `here` holds the sources that sit in the desktop folder.
     fn put_into(
         &mut self,
         dir: PathBuf,
@@ -988,11 +988,15 @@ impl State {
             .partition(|(s, _, link)| link.is_some() || matches!(s, DragSource::App { .. }));
         if !files.is_empty() {
             let same_dir = |p: &Path| here.contains(p) || p.parent() == Some(dir.as_path());
+            let on_desktop = self.desktop.as_ref().is_some_and(|v| v.dir == dir);
+            let mut taken = existing.clone();
             let landings = (files.iter())
+                .filter(|_| on_desktop)
                 .filter_map(|(s, cell, _)| {
                     let name =
-                        crate::filejobs::landing_name(s.path(), op, same_dir(s.path()), &existing);
-                    Some((name?, (*cell)?))
+                        crate::filejobs::landing_name(s.path(), op, same_dir(s.path()), &taken)?;
+                    taken.push(name.clone());
+                    Some((name, *cell))
                 })
                 .collect();
             let sources: Vec<PathBuf> = files

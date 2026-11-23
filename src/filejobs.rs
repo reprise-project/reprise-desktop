@@ -2,10 +2,13 @@
 //! asks, shows the progress dialog and says why it stopped: a drop's or paste's put (`--put`), a
 //! delete (`--delete`), Empty Recycle Bin (`--empty-bin`) and Send To's zip (`--zip`).
 //!
-//! The desktop keeps the processes it started. A put onto a desktop cell names the icons it will
-//! land, and each takes its cell when the desktop's scan first finds it. A move's cut files leave
-//! the clipboard once its process has ended, those it moved only.
+//! The desktop keeps the processes it started. A put onto the desktop names the icons it will
+//! land; when the desktop's scan first finds one, it takes its cell (a put onto a cell) and is
+//! selected: a scan's first landing in place of what was, the rest beside it. A landing leaves the
+//! selection alone once the user changed it since the put started. A move's cut files leave the
+//! clipboard once its process has ended, those it moved only.
 
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -46,8 +49,13 @@ pub struct Job {
     pub what: What,
     /// The command line after the program's name.
     pub args: Vec<OsString>,
-    /// The desktop icons the job lands by name, each with its 100% cell (`desktop::to_saved`).
-    landings: Vec<(String, (i32, i32))>,
+    /// The desktop icons the job lands by name, each with its 100% cell (`desktop::to_saved`)
+    /// when it was put onto one.
+    landings: Vec<(String, Option<(i32, i32)>)>,
+    /// One of `landings` has landed, so the next joins the selection.
+    selected: bool,
+    /// The desktop's selection, by name, when the put started.
+    picked: BTreeSet<String>,
     /// A move's sources, handed to [`State::cut_moved`] once the process has ended.
     moving: Vec<PathBuf>,
     /// When the desktop first saw the process gone.
@@ -57,6 +65,8 @@ pub struct Job {
 #[derive(Default)]
 pub struct FileJobs {
     pub jobs: Vec<Job>,
+    /// The selection, by name, the last landing left.
+    landed: Option<BTreeSet<String>>,
 }
 
 impl FileJobs {
@@ -66,9 +76,8 @@ impl FileJobs {
     }
 }
 
-/// The name a put of `src` into the desktop folder lands under when nothing in `existing` (the
-/// desktop's file names) holds it, as Explorer's put names it; None when that name is taken, since
-/// the put then numbers past it.
+/// The name Explorer's put of `src` lands under in the desktop folder, numbered past `existing`;
+/// None for a copy or move from elsewhere onto a taken name, which asks to replace it.
 pub(crate) fn landing_name(
     src: &Path,
     op: DropOp,
@@ -76,16 +85,14 @@ pub(crate) fn landing_name(
     existing: &[String],
 ) -> Option<String> {
     let file = src.file_name()?.to_string_lossy().into_owned();
-    let name = match op {
-        DropOp::Shortcut => {
-            let id = reprisefs::apps::DesktopId::from_file_name(&file);
-            let base = id.as_ref().map_or(file.as_str(), |id| id.stem());
-            format!("Shortcut to {base}.desktop")
-        }
-        DropOp::Copy if same_dir => format!("Copy of {file}"),
-        DropOp::Copy | DropOp::Move => file,
-    };
-    (!existing.contains(&name)).then_some(name)
+    match op {
+        DropOp::Shortcut => Some(format!(
+            "{}.desktop",
+            reprisefs::names::shortcut_name(&file, existing)
+        )),
+        DropOp::Copy if same_dir => Some(reprisefs::names::copy_name(&file, existing)),
+        DropOp::Copy | DropOp::Move => (!existing.contains(&file)).then_some(file),
+    }
 }
 
 impl State {
@@ -96,7 +103,7 @@ impl State {
         dir: &Path,
         op: DropOp,
         sources: Vec<PathBuf>,
-        landings: Vec<(String, (i32, i32))>,
+        landings: Vec<(String, Option<(i32, i32)>)>,
     ) {
         if sources.is_empty() {
             return;
@@ -163,7 +170,7 @@ impl State {
         &mut self,
         what: What,
         args: Vec<OsString>,
-        landings: Vec<(String, (i32, i32))>,
+        landings: Vec<(String, Option<(i32, i32)>)>,
         moving: Vec<PathBuf>,
     ) {
         if what != What::Empty {
@@ -181,11 +188,17 @@ impl State {
             Some(&launch),
         ) {
             Ok(Some(pid)) => {
+                let picked = (self.desktop.as_ref())
+                    .filter(|_| !landings.is_empty())
+                    .map(selected_names)
+                    .unwrap_or_default();
                 let job = Job {
                     pid,
                     what,
                     args,
                     landings,
+                    selected: false,
+                    picked,
                     moving,
                     ended: None,
                 };
@@ -220,16 +233,26 @@ impl State {
     }
 
     /// A desktop scan found `fresh`, names it did not list before: the jobs' icons among them
-    /// take their cells. Jobs whose process ended a while ago are let go.
+    /// take their cells and are selected while the selection is the one their put started with,
+    /// or the one their last landing left. Jobs whose process ended a while ago are let go.
     pub(crate) fn land_job_icons(&mut self, fresh: &[String]) {
         self.file_jobs_ended();
+        let shown = self
+            .desktop
+            .as_ref()
+            .map(selected_names)
+            .unwrap_or_default();
+        let ours = self.filejobs.landed.as_ref() == Some(&shown);
         let mut landed = Vec::new();
         let now = Instant::now();
         for j in &mut self.filejobs.jobs {
+            let first = !j.selected;
+            let select = if first { j.picked == shown } else { ours };
             j.landings.retain(|(name, cell)| {
                 let found = fresh.contains(name);
                 if found {
-                    landed.push((name.clone(), *cell));
+                    landed.push((name.clone(), *cell, select.then_some(first)));
+                    j.selected = true;
                 }
                 !found
             });
@@ -241,10 +264,35 @@ impl State {
             j.ended
                 .is_none_or(|t| now.duration_since(t) < LAND_AFTER_END)
         });
-        for (name, cell) in landed {
-            self.land_icon(&name, cell);
+        let mut replaced = false;
+        for (name, cell, select) in landed {
+            if let Some(cell) = cell {
+                self.land_icon(&name, cell);
+            }
+            let Some(view) = self.desktop.as_mut() else {
+                continue;
+            };
+            let (Some(first), Some(i)) = (select, view.entries.iter().position(|e| e.name == name))
+            else {
+                continue;
+            };
+            if first && !replaced {
+                view.selection.set_only(Some(i));
+                replaced = true;
+            } else {
+                view.selection.set.insert(i);
+            }
+            self.filejobs.landed = Some(selected_names(view));
         }
     }
+}
+
+/// The names of the desktop's selected icons.
+fn selected_names(view: &crate::desktopview::DesktopView) -> BTreeSet<String> {
+    (view.selection.set.iter())
+        .filter_map(|&i| view.entries.get(i))
+        .map(|e| e.name.clone())
+        .collect()
 }
 
 #[cfg(test)]
@@ -252,7 +300,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_put_names_the_icon_it_lands_unless_the_desktop_holds_that_name() {
+    fn a_put_predicts_the_name_explorer_lands_the_icon_under() {
         let src = Path::new("/home/u/Documents/a.txt");
         let taken = ["Copy of a.txt".to_string()];
         assert_eq!(
@@ -264,7 +312,16 @@ mod tests {
             Some("Copy of a.txt"),
             "a copy beside its source"
         );
-        assert_eq!(landing_name(src, DropOp::Copy, true, &taken), None);
+        assert_eq!(
+            landing_name(src, DropOp::Copy, true, &taken).as_deref(),
+            Some("Copy of a (2).txt"),
+            "a copy beside its source numbered past a taken name"
+        );
+        assert_eq!(
+            landing_name(src, DropOp::Copy, false, &["a.txt".into()]),
+            None,
+            "a copy onto a taken name asks to replace it"
+        );
         let link = Path::new("/home/u/Desktop/notes.desktop");
         assert_eq!(
             landing_name(link, DropOp::Shortcut, true, &[]).as_deref(),
