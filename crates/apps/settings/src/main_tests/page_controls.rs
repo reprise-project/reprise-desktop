@@ -1,6 +1,8 @@
 use super::*;
 use reprisebus::airplane::Mode;
 use reprisebus::bolt::{Device, Found, Status};
+use reprisekit::controls::hosted::{Anchor, Hosted};
+use reprisekit::raster::Rect;
 
 #[test]
 fn the_script_open_combo_shows_and_writes_script_open() {
@@ -1296,4 +1298,187 @@ fn an_empty_photos_folder_is_listed_once_while_the_page_stays_open() {
     }
     a.saver_tick(&ctx);
     assert!(listed(&a), "an empty listing is kept, not listed again");
+}
+
+fn press(a: &mut SettingsApp, ctx: &mut Ctx, (x, y): (i32, i32)) {
+    let mods = Mods::default();
+    let button = BTN_LEFT;
+    let down = PointerInput::Press {
+        x,
+        y,
+        button,
+        time: 0,
+        mods,
+    };
+    a.event(MAIN, Event::Pointer(down), ctx);
+    let up = PointerInput::Release { x, y, button, mods };
+    a.event(MAIN, Event::Pointer(up), ctx);
+}
+
+/// What every check box on the open page holds.
+fn checks(a: &SettingsApp) -> Vec<(&'static str, bool)> {
+    let page = a.sheet.open();
+    page.items
+        .iter()
+        .filter_map(|i| Some((i.id, page.checked(i.id)?)))
+        .collect()
+}
+
+/// Drops `id`'s list on the open page by a press on its arrow, and shows it as the host does: on
+/// a popup placed where it asks. The list's rect and row height.
+fn drop_by_pointer(a: &mut SettingsApp, ctx: &mut Ctx, id: &str) -> (Rect, i32) {
+    let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+    a.draw(MAIN, &mut c, ctx);
+    let toggle = |a: &mut SettingsApp| match a.sheet.open_mut().item_mut(id).map(|i| &mut i.control)
+    {
+        Some(form::Control::Combo(c)) => c.toggle(),
+        _ => panic!("{id} is a combo box"),
+    };
+    toggle(a);
+    let field = match a.sheet.spots().first().map(|s| s.anchor) {
+        Some(Anchor::Below(field)) => field,
+        other => panic!("{id}'s list hangs under its field, not {other:?}"),
+    };
+    toggle(a);
+    press(a, ctx, (field.right() - 4, field.y + field.height / 2));
+    assert!(
+        a.sheet.open().popup_open(),
+        "a press on {id}'s arrow drops its list"
+    );
+    let mut hosted = a.popup(MAIN, ctx).expect("the list shows on a popup");
+    hosted.host();
+    let spot = hosted.spots()[0];
+    hosted.place(0, (spot.rect.x, spot.rect.y));
+    let list = hosted.spots()[0].rect;
+    drop(hosted);
+    a.draw(MAIN, &mut c, ctx);
+    let rows = match a.sheet.open().item(id).map(|i| &i.control) {
+        Some(form::Control::Combo(c)) => c.rows.min(c.items.len()) as i32,
+        _ => unreachable!(),
+    };
+    (list, (list.height - 2) / rows)
+}
+
+/// Picks a row of the open page's combo `id` by the pointer, `slot` rows down its dropped list or
+/// else the first live row in view that isn't picked: the row lights under the pointer, the click
+/// picks it and closes the list, and no check box under the list changes.
+fn pick_by_pointer(a: &mut SettingsApp, ctx: &mut Ctx, id: &str, slot: Option<usize>) {
+    let (list, row_h) = drop_by_pointer(a, ctx, id);
+    let Some(form::Control::Combo(c)) = a.sheet.open().item(id).map(|i| &i.control) else {
+        unreachable!()
+    };
+    let top = c.top;
+    let slot = slot.unwrap_or_else(|| {
+        (0..c.rows.min(c.items.len()))
+            .find(|&k| top + k != c.selected && !c.items[top + k].greyed)
+            .expect("a live row to pick")
+    });
+    let row = top + slot;
+    let combo = |a: &SettingsApp| match a.sheet.open().item(id).map(|i| &i.control) {
+        Some(form::Control::Combo(c)) => c.open,
+        _ => None,
+    };
+    let before = checks(a);
+    let at = (list.x + 8, list.y + 1 + slot as i32 * row_h + row_h / 2);
+    a.event(MAIN, Event::Pointer(PointerInput::Leave), ctx);
+    let over = PointerInput::Motion { x: at.0, y: at.1 };
+    a.event(MAIN, Event::Pointer(over), ctx);
+    assert_eq!(
+        combo(a),
+        Some(row),
+        "{id}'s row {row} lights under the pointer"
+    );
+    press(a, ctx, at);
+    assert!(!a.sheet.open().popup_open(), "the click closes {id}'s list");
+    assert_eq!(
+        a.sheet.open().combo_selected(id),
+        Some(row),
+        "{id} picks row {row}"
+    );
+    assert_eq!(checks(a), before, "no check box under {id}'s list changed");
+}
+
+fn maximized(i: Interface, text_size: u32) -> Ctx {
+    let mut ctx = test_ctx();
+    ctx.theme = reprisekit::interfaces::theme_for(i);
+    ctx.text_size = text_size;
+    ctx.size = (1920, 1027);
+    ctx.maximized = true;
+    ctx
+}
+
+#[test]
+fn the_text_size_list_lights_and_picks_the_row_under_the_pointer() {
+    for i in [Interface::Classic, Interface::Blue] {
+        for size in [100, 200] {
+            let mut a = app("text-size-pointer");
+            let mut ctx = maximized(i, size);
+            a.sheet.tabs.open = Page::TextKeys.index();
+            a.event(MAIN, Event::Resized, &mut ctx);
+            pick_by_pointer(&mut a, &mut ctx, "text_size", Some(2));
+        }
+    }
+}
+
+#[test]
+fn a_press_beside_the_text_size_list_only_closes_it() {
+    let mut a = app("text-size-beside");
+    let mut ctx = maximized(Interface::Blue, 100);
+    a.sheet.tabs.open = Page::TextKeys.index();
+    a.event(MAIN, Event::Resized, &mut ctx);
+    let (list, _) = drop_by_pointer(&mut a, &mut ctx, "text_size");
+    let px = a.sheet.open().units().px(ctx.theme.fonts.size_px);
+    let sticky = a
+        .sheet
+        .open()
+        .items
+        .iter()
+        .position(|i| i.id == "sticky_keys");
+    let beside = (0..list.x)
+        .rev()
+        .flat_map(|x| (list.y..list.bottom()).map(move |y| (x, y)))
+        .find(|&(x, y)| {
+            matches!(a.sheet.hit(x, y, &ctx.text, px),
+                Some(propsheet::Hit::Control(h)) if Some(h.item) == sticky)
+        })
+        .expect("Use StickyKeys lies beside the list");
+    press(&mut a, &mut ctx, beside);
+    assert!(!a.sheet.open().popup_open(), "the press closes the list");
+    assert_eq!(a.sheet.open().checked("sticky_keys"), Some(false));
+    press(&mut a, &mut ctx, beside);
+    assert_eq!(
+        a.sheet.open().checked("sticky_keys"),
+        Some(true),
+        "with the list closed the press ticks it"
+    );
+}
+
+#[test]
+fn every_page_combo_picks_the_row_under_the_pointer() {
+    let mut a = app("every-combo-pointer");
+    let mut ctx = maximized(Interface::Blue, 100);
+    a.event(
+        MAIN,
+        Event::Heads(vec![displaypage::test_head("DP-1")]),
+        &mut ctx,
+    );
+    let mut picked = 0;
+    for page in Page::all() {
+        a.sheet.tabs.open = page.index();
+        a.event(MAIN, Event::Resized, &mut ctx);
+        let ids: Vec<&'static str> = a.sheet.open().items.iter().map(|i| i.id).collect();
+        for id in ids {
+            // A pick can build the page again (Interface), so each combo is looked up afresh.
+            let live = match a.sheet.open().item(id).map(|i| &i.control) {
+                Some(form::Control::Combo(c)) => c.enabled && c.items.len() > 1,
+                _ => false,
+            };
+            if !live {
+                continue;
+            }
+            pick_by_pointer(&mut a, &mut ctx, id, None);
+            picked += 1;
+        }
+    }
+    assert!(picked > 10, "only {picked} combos tried");
 }
