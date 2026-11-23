@@ -10,6 +10,15 @@ use reprisekit::theme::{Color, FontConfig};
 /// The Start panel over a flat blue desktop at `pct` text: Home, the program tree, Search, a jump
 /// list, and Home under Classic.
 pub fn render_start_panel(pct: u32) -> Canvas {
+    start_panels(pct, reprisekit::glass::Mode::Light, 1)
+}
+
+/// [`render_start_panel`]'s Glass panels in dark Glass at scale `n`, Shut down keyed in the last.
+pub fn render_start_panel_dark(n: i32) -> Canvas {
+    start_panels(100, reprisekit::glass::Mode::Dark, n)
+}
+
+fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
     use reprisekit::startpanel::{
         self as sp, Mode, PlaceRow, ProgramRow, ResultGroup, ResultRow, Spot, StartPanel, TreeRow,
     };
@@ -154,27 +163,45 @@ pub fn render_start_panel(pct: u32) -> Canvas {
         p.pointer(Some(Spot::Jump(1)));
         p
     };
-    let glass = reprisekit::glass::Settings::default();
-    let glass_theme = cued(interfaces::theme_for(Interface::Glass));
+    let glass = reprisekit::glass::Settings {
+        mode,
+        ..reprisekit::glass::Settings::default()
+    };
+    let glass_theme = cued(interfaces::theme_with(
+        Interface::Glass,
+        reprisekit::blue::Variant::default(),
+        &glass,
+    ))
+    .scaled(n);
     let classic = cued(interfaces::theme_for(Interface::Classic));
     let text = interfaces::start_panel_text(&glass_theme);
-    let (cell_w, cell_h) = (u.len(520), u.len(540));
+    let (cell_w, cell_h) = (u.len(520) * n, u.len(540) * n);
     let mut c = Canvas::new(3 * cell_w as u32, 2 * cell_h as u32);
     c.fill_rect(c.bounds(), Color::rgb(67, 149, 209));
+    let search_keyed = {
+        let mut p = search.clone();
+        p.focus_on(Spot::Shutdown);
+        p
+    };
+    let last = if mode == reprisekit::glass::Mode::Dark {
+        (&search_keyed, &glass_theme)
+    } else {
+        (&home_lit, &classic)
+    };
     let panels = [
         (&home_lit, &glass_theme),
         (&place_lit, &glass_theme),
         (&programs, &glass_theme),
         (&search, &glass_theme),
         (&jump, &glass_theme),
-        (&home_lit, &classic),
+        last,
     ];
     for (k, (p, theme)) in panels.into_iter().enumerate() {
-        let l = sp::layout::layout(p);
+        let l = sp::layout::layout(p).scaled(n);
         let mut panel = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
         interfaces::draw_start_panel(&mut panel, theme, &glass, &text, p, &l, None, true);
         let (x, y) = ((k % 3) as i32 * cell_w + 10, (k / 3) as i32 * cell_h + 10);
-        c.blit_over(x, y + sp::layout::OVERHANG + l.canvas.y, &panel);
+        c.blit_over(x, y + sp::layout::OVERHANG * n + l.canvas.y, &panel);
     }
     c
 }

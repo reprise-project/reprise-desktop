@@ -99,14 +99,16 @@ use glass_shell::{render_glass_preview, render_glass_switcher};
 use page::render;
 use popups::{
     render_calendar_events, render_desktop_labels, render_glass_clock_popup, render_glass_launcher,
-    render_glass_notify_sheets, render_glass_popups, render_launchers, render_now_playing,
-    render_popups_text_size, write_volume_popups,
+    render_glass_launcher_dark, render_glass_notify_sheets, render_glass_popups, render_launchers,
+    render_now_playing, render_popups_text_size, write_volume_popups,
 };
 use sheets::{
     render_list_sheet_links, render_list_sheet_search, render_list_sheets, render_long_list_sheets,
     render_tray_customize,
 };
-use start::{render_blue_start_menus, render_blue_start_panel, render_start_panel};
+use start::{
+    render_blue_start_menus, render_blue_start_panel, render_start_panel, render_start_panel_dark,
+};
 use taskbar::{
     render_orb_glow, render_quick_more, render_task_attention, render_task_progress,
     render_taskbar_cells, render_taskbar_drag, render_taskbar_edges, render_taskbar_hidden,
@@ -290,6 +292,14 @@ fn main() {
         write_preview(
             &render_list_sheet_search(n.max(1)),
             &format!("reprisekit-gallery-list-sheet-search@{}.png", n.max(1)),
+        );
+        write_preview(
+            &render_start_panel_dark(n.max(1)),
+            &format!("reprisekit-gallery-start-panel-dark@{}.png", n.max(1)),
+        );
+        write_preview(
+            &render_glass_launcher_dark(n.max(1)),
+            &format!("reprisekit-gallery-glass-launcher-dark@{}.png", n.max(1)),
         );
         for mode in [
             reprisekit::glass::Mode::Light,
@@ -613,6 +623,14 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
         write_preview(
             &render_start_panel(100),
             "reprisekit-gallery-start-panel.png",
+        );
+        write_preview(
+            &render_start_panel_dark(1),
+            "reprisekit-gallery-start-panel-dark.png",
+        );
+        write_preview(
+            &render_glass_launcher_dark(1),
+            "reprisekit-gallery-glass-launcher-dark.png",
         );
         write_preview(
             &render_blue_start_panel(1, 100),

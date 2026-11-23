@@ -547,6 +547,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     };
     let style = style
         .with_painted_group(&startpanel::PARTS, move || startpanel::parts(&owned, scale))
+        .with_pane_inks(startpanel::pane_inks(s.mode))
         .with_picked_text_color(Part::StartPanel, State::Normal, move || {
             startpanel::right_ink(&owned)
         });

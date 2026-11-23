@@ -19,11 +19,53 @@ pub const HEADER_PX: u32 = 15;
 
 pub const FIELD: (i32, i32) = (222, 22);
 
-/// All Programs, Back, the programs tree, search results, and Shut down on the light button, 0xRRGGBB.
+/// 0xRRGGBB, over the light pane ([`PaneInks::LIGHT`]).
 pub const INK_STRONG: u32 = 0x000000;
 pub const INK_CUE: u32 = 0x6D6D6D;
 pub const INK_GREYED: u32 = 0x6D6D6D;
 pub const INK_GROUP: u32 = 0x1E3287;
+pub const INK_PROGRAM: u32 = 0x272727;
+pub const INK_JUMP: u32 = 0x434343;
+/// A jump list's title.
+pub const INK_HEADER: u32 = 0x002A95;
+
+/// The text inks over the Start panel's left pane and the launcher's list, which a style's
+/// `Part::StartPane` paints.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PaneInks {
+    /// All Programs, Back, the programs tree, typed text, results, and Shut down on the light button.
+    pub strong: Color,
+    pub program: Color,
+    pub jump: Color,
+    pub jump_title: Color,
+    pub group: Color,
+    pub cue: Color,
+    pub greyed: Color,
+}
+
+impl PaneInks {
+    pub const LIGHT: PaneInks = PaneInks {
+        strong: ink(INK_STRONG),
+        program: ink(INK_PROGRAM),
+        jump: ink(INK_JUMP),
+        jump_title: ink(INK_HEADER),
+        group: ink(INK_GROUP),
+        cue: ink(INK_CUE),
+        greyed: ink(INK_GREYED),
+    };
+
+    pub fn map(self, f: impl Fn(Color) -> Color) -> PaneInks {
+        PaneInks {
+            strong: f(self.strong),
+            program: f(self.program),
+            jump: f(self.jump),
+            jump_title: f(self.jump_title),
+            group: f(self.group),
+            cue: f(self.cue),
+            greyed: f(self.greyed),
+        }
+    }
+}
 
 /// How design pixels land on the canvas: grown by the text size `u`, then times the scale `s`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,7 +105,7 @@ impl Grow {
     }
 }
 
-pub fn ink(rgb: u32) -> Color {
+pub const fn ink(rgb: u32) -> Color {
     Color::rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 
@@ -206,7 +248,16 @@ pub fn field(
     if query.is_empty() {
         let placed = (caret && focused).then(|| CaretBar::ground(canvas, bar, None, clip));
         let (x, y) = (r.x + g.len(at::CUE_PEN), r.y + g.len(at::CUE_BASE));
-        line(canvas, cue, x, y, clip, SEARCH_CUE, ink(INK_CUE), size);
+        line(
+            canvas,
+            cue,
+            x,
+            y,
+            clip,
+            SEARCH_CUE,
+            style.pane_inks.cue,
+            size,
+        );
         if let Some(placed) = placed {
             placed.draw(canvas, lit);
         }
@@ -235,7 +286,8 @@ pub fn field(
         bar.x = x.min(clip.right() - s);
         let placed = (caret && focused && x < clip.right())
             .then(|| CaretBar::ground(canvas, Rect { x, ..bar }, hl.as_ref(), clip));
-        text.draw_run_over(canvas, pen, y, clip, shown, false, ink(INK_STRONG), size);
+        let strong = style.pane_inks.strong;
+        text.draw_run_over(canvas, pen, y, clip, shown, false, strong, size);
         if let Some(hl) = &hl {
             canvas.fill_rect(hl.rect, cs.hilight);
             canvas.with_clip(hl.rect, |canvas| {
@@ -246,7 +298,7 @@ pub fn field(
         if let Some(composing) = composing {
             let (x0, x1) = (x_of(composing.start), x_of(composing.end).min(clip.right()));
             let ul = Rect::new(x0, y + s, x1 - x0, s).intersect(&clip);
-            canvas.fill_rect(ul, ink(INK_STRONG));
+            canvas.fill_rect(ul, strong);
         }
         if let Some(placed) = placed {
             placed.draw(canvas, lit);
@@ -296,10 +348,10 @@ pub fn result(
     let clip = Rect::new(r.x, r.y, r.width - 2 * s, r.height);
     let (x, y) = (r.x + g.len(at::RESULT_PEN), r.y + g.len(at::RESULT_BASE));
     let size = g.px(TEXT_PX);
-    x + line(canvas, text, x, y, clip, name, ink(INK_STRONG), size)
+    x + line(canvas, text, x, y, clip, name, style.pane_inks.strong, size)
 }
 
-/// A group's header `r` (its top on the capitals' top): `title` in [`INK_GROUP`] a size up, cut to
+/// A group's header `r` (its top on the capitals' top): `title` in the pane's group ink a size up, cut to
 /// `clip`, then [`Part::StartSearchRule`] from past it to a pixel beyond `r`'s right.
 pub fn header(
     canvas: &mut Canvas,
@@ -313,7 +365,7 @@ pub fn header(
     let s = g.s;
     let (x, y) = (r.x, r.y + g.len(at::HEAD_BASE));
     let px = g.px(HEADER_PX);
-    let w = line(canvas, text, x, y, clip, title, ink(INK_GROUP), px);
+    let w = line(canvas, text, x, y, clip, title, style.pane_inks.group, px);
     let x0 = x + w + g.len(at::HEAD_RULE_GAP);
     let x1 = r.right() + s;
     let ry = r.y + g.len(at::HEAD_RULE_Y);
@@ -418,7 +470,7 @@ mod tests {
             };
             let (off, on) = (draw(false), draw(true));
             assert_eq!(
-                crate::paint::inverted_bar(&off, &on, 0xFFFF_FFFF),
+                crate::paint::inverted_bar(&off, &on, st.colors.window.argb()),
                 (Rect::new(pen - 1, top, 1, at::CARET.2), false),
                 "{mode:?}: the caret is the column left of the pen, off the A's foot"
             );
