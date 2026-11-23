@@ -35,6 +35,11 @@ impl SettingsApp {
         backgroundpage::view(&self.want, &self.bg_target())
     }
 
+    /// The pending settings as the Background page's monitor shows them.
+    fn bg_preview(&self) -> Cow<'_, crate::model::Settings> {
+        backgroundpage::preview(&self.want, &self.bg_target())
+    }
+
     /// Refill the Use for list and follow what it picks.
     pub(crate) fn follow_use_for(&mut self) {
         let monitors = self.bg_monitors();
@@ -142,7 +147,7 @@ impl SettingsApp {
 
     pub(crate) fn show_monitor(&mut self) {
         self.follow_use_for();
-        let bg = self.bg().into_owned();
+        let bg = self.bg_preview().into_owned();
         let file = backgroundpage::monitor_file(&bg, self.listed());
         backgroundpage::show(
             &mut self.sheet.pages[Page::Background.index()],
@@ -268,7 +273,7 @@ impl SettingsApp {
     /// Decode the pending wallpaper for the monitor unless shown or a decode is under way; that one's end calls this again. A slideshow folder is listed first.
     pub(crate) fn want_preview(&mut self) {
         self.list_slide_folder();
-        let want = backgroundpage::monitor_file(&self.bg(), self.listed());
+        let want = backgroundpage::monitor_file(&self.bg_preview(), self.listed());
         let Some(file) = backgroundpage::next_decode(
             &want,
             self.picture.as_ref().map(|p| p.path.as_str()),
