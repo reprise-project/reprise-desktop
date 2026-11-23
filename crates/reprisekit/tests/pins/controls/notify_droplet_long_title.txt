@@ -1,0 +1,16 @@
+82 chars 100% x1 expanded false b37b422db2bbd967
+82 chars 100% x1 expanded true 80f2aab85648c614
+82 chars 100% x2 expanded false f78ea7448483e0a4
+82 chars 100% x2 expanded true e45ec87e4f9eed2c
+82 chars 200% x1 expanded false 1a7dca3a457060a3
+82 chars 200% x1 expanded true f156a052263f28e1
+82 chars 200% x2 expanded false 9eecd2aeaef54317
+82 chars 200% x2 expanded true 947aeb4d47cfdbfa
+255 chars 100% x1 expanded false 642baade2608245f
+255 chars 100% x1 expanded true 16eee4460f2a74c0
+255 chars 100% x2 expanded false 6b5bc191cdb23a54
+255 chars 100% x2 expanded true 0f6fc5929564b498
+255 chars 200% x1 expanded false 17c93ce593e32905
+255 chars 200% x1 expanded true ff61fd29c291520b
+255 chars 200% x2 expanded false d35ea033f6a1ab53
+255 chars 200% x2 expanded true 7c15481290fa8dd2

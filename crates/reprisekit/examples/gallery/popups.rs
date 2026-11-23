@@ -16,7 +16,8 @@ use reprisekit::textedit::{Caret, EditKey, Preedit, TextEdit};
 use reprisekit::theme::{Color, FontConfig, Theme};
 
 /// Glass notification sheets over the stripes: Lozenge, Halo and Droplet, each in its states and in
-/// a stack with its chip; the Droplet also half open and in three arrival frames.
+/// a stack with its chip; the Droplet also half open, in three arrival frames and with a title
+/// too long for its head row, shut and open.
 pub fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
     use reprisekit::art::{logo, userpic};
     use reprisekit::controls::notifysheet::{
@@ -27,7 +28,7 @@ pub fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
     use reprisekit::taskbar::Edge;
     let s = theme.scale.max(1);
     let text = TextRenderer::load(&theme.fonts);
-    let mut c = blurred_stripes(950 * s, 1900 * s);
+    let mut c = blurred_stripes(950 * s, 2160 * s);
     let slot = 46 * s;
     let mut app = Canvas::new(slot as u32, slot as u32);
     let mask = logo::coverage_any(slot as usize);
@@ -341,6 +342,18 @@ pub fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
             fade(alpha * share),
             255,
         );
+    }
+    let headline = SheetContent {
+        app: "Backup",
+        title: "The nightly backup of the shared project drive finished with warnings on two files",
+        body: "Two files were skipped because another program had them open.",
+        actions: &["Open log"],
+        ..content("", "")
+    };
+    for (x, expanded) in [(0, false), (470, true)] {
+        let l = drop_lay(&headline, expanded);
+        let hot = expanded.then_some(NotifyHit::Body);
+        c.blit_over(x * s, 1910 * s - l.footprint.y, &draw_drop(&l, false, hot));
     }
     c
 }

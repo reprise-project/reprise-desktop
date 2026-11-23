@@ -5,7 +5,9 @@ use super::stack::{BEAD_FADE, BEAD_UNTIL};
 use super::*;
 use crate::access::ROOT;
 use crate::access::accesskit::{Live, Role};
-use crate::controls::tooltip::{NOTIFY_BODY_LINES, NOTIFY_BUTTONS, notify_layout};
+use crate::controls::tooltip::{
+    NOTIFY_BODY_LINES, NOTIFY_BUTTONS, NOTIFY_TITLE_LINES, notify_layout,
+};
 use crate::interface::Interface;
 use crate::interfaces::{theme_for, theme_with};
 use crate::raster::Canvas;

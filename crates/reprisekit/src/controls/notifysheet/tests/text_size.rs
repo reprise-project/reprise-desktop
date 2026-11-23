@@ -161,20 +161,7 @@ fn at_the_largest_text_size_a_crowded_sheet_holds_every_part_whole() {
                     p.body.width,
                     lay.lines.len() as i32 * lay.line_h,
                 );
-                let mut parts = vec![("title", p.title), ("body", body)];
-                if shape == SheetShape::Droplet {
-                    let title_end = p.title.x + t.measure(&lay.title[0], true, lay.title_px);
-                    assert!(
-                        title_end <= lay.app_box.x,
-                        "{at}: the app line follows the title"
-                    );
-                    assert!(
-                        lay.app_box.right() <= p.title.right(),
-                        "{at}: on the head row"
-                    );
-                } else {
-                    parts.push(("app", lay.app_box));
-                }
+                let mut parts = vec![("title", p.title), ("body", body), ("app", lay.app_box)];
                 parts.extend(pill_rects.iter().map(|&b| ("pill", b)));
                 parts.extend(p.field.map(|f| ("field", f)));
                 for (i, (what, r)) in parts.iter().enumerate() {
@@ -259,4 +246,125 @@ fn a_long_title_wraps_whole_on_a_lozenge_and_a_halo_and_moves_the_body_down() {
             }
         }
     }
+}
+
+/// A title of 255 characters, past what three lines hold on any sheet.
+fn capped_title() -> String {
+    "Nightly backup of the shared project drive ".repeat(6)[..255].to_string()
+}
+
+#[test]
+fn a_long_title_wraps_under_a_droplets_app_line_collapsed_and_expanded() {
+    let t = text();
+    let capped = capped_title();
+    for pct in [100, 200] {
+        for s in [1, 2] {
+            let theme = glass_text(pct, s);
+            let lay = |title: &str, expanded| {
+                let c = content("Backup", title, "Done.");
+                sheet_layout(&theme, &t, SheetShape::Droplet, &c, expanded).unwrap()
+            };
+            let short = lay("Backup", false);
+            assert_eq!(short.title, ["Backup"]);
+            assert!(
+                short.app_box.x > short.parts.title.x,
+                "a short title keeps the app line beside it"
+            );
+            for expanded in [false, true] {
+                let at = format!("{pct}% x{s} expanded {expanded}");
+                let long = lay(CROWDED_TITLE, expanded);
+                let (p, n) = (&long.parts, long.title.len() as i32);
+                assert!(n >= 2, "{at}: {:?} wraps", long.title);
+                assert_eq!(long.title.join(" "), CROWDED_TITLE, "{at}: whole");
+                assert_eq!(
+                    long.title,
+                    lay(CROWDED_TITLE, !expanded).title,
+                    "{at}: same lines in both states"
+                );
+                assert_eq!(
+                    long.app_box.x, p.title.x,
+                    "{at}: the app line heads the column"
+                );
+                assert!(
+                    long.app_box.bottom() <= p.title.y,
+                    "{at}: the title under the app line"
+                );
+                assert_eq!(p.title.height, n * short.parts.title.height, "{at}");
+                assert_eq!(
+                    p.title.right(),
+                    short.parts.title.right(),
+                    "{at}: the head row's end"
+                );
+                assert_eq!(p.body.y, p.title.bottom(), "{at}: the body under the title");
+                for line in &long.title {
+                    assert!(
+                        t.measure(line, true, long.title_px) <= p.title.width,
+                        "{at}: {line:?}"
+                    );
+                }
+                assert!(!p.title.intersects(p.close), "{at}: clear of the close");
+                assert_eq!(
+                    long.sheet.union(&p.body),
+                    long.sheet,
+                    "{at}: the body inside"
+                );
+
+                let cut = lay(&capped, expanded);
+                assert_eq!(cut.title.len(), NOTIFY_TITLE_LINES, "{at}");
+                assert!(
+                    cut.title[NOTIFY_TITLE_LINES - 1].ends_with("..."),
+                    "{at}: {:?}",
+                    cut.title
+                );
+            }
+        }
+    }
+}
+
+/// Droplets with an 82-character title, wrapped whole, and a 255-character one cut at three
+/// lines, collapsed and expanded under the pointer, at 100% and 200% text, scale 1 and 2.
+#[test]
+fn droplet_long_title_pins() {
+    crate::pins::fonts();
+    let t = text();
+    let capped = capped_title();
+    let titles = [
+        (
+            "82",
+            "The nightly backup of the shared project drive finished with warnings on two files",
+        ),
+        ("255", capped.as_str()),
+    ];
+    let mut got = Vec::new();
+    for (name, title) in titles {
+        for pct in [100, 200] {
+            for s in [1, 2] {
+                let theme = glass_text(pct, s);
+                let c = content(
+                    "Backup",
+                    title,
+                    "Two files were skipped because another program had them open.",
+                );
+                for expanded in [false, true] {
+                    let lay = sheet_layout(&theme, &t, SheetShape::Droplet, &c, expanded).unwrap();
+                    let hot = expanded.then_some(NotifyHit::Body);
+                    let drawn = draw_sheet(
+                        &theme,
+                        &t,
+                        &lay,
+                        SheetIcons::default(),
+                        None,
+                        None,
+                        hot,
+                        None,
+                    );
+                    got.push((
+                        format!("{name} chars {pct}% x{s} expanded {expanded}"),
+                        fnv(&drawn),
+                    ));
+                }
+            }
+        }
+    }
+    crate::pins::check("controls/notify_droplet_long_title", &got);
 }
