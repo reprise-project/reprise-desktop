@@ -31,6 +31,8 @@ type Stat = fn(&Path) -> io::Result<std::fs::Metadata>;
 type Asked = HashSet<PathBuf>;
 
 pub struct RecentDocs {
+    /// The `recently-used.xbel` `files` reads and [`State::record_recent`] writes.
+    xbel: Option<PathBuf>,
     /// None while a read job has it.
     files: Option<RecentFiles>,
     /// The bookmarks the last read found, newest first.
@@ -63,14 +65,15 @@ pub struct RecentDocs {
 
 impl Default for RecentDocs {
     fn default() -> RecentDocs {
-        RecentDocs::at(RecentFiles::new())
+        RecentDocs::at(reprisefs::recent::xbel_path())
     }
 }
 
 impl RecentDocs {
-    fn at(files: RecentFiles) -> RecentDocs {
+    fn at(xbel: Option<PathBuf>) -> RecentDocs {
         RecentDocs {
-            files: Some(files),
+            files: Some(RecentFiles::at(xbel.clone())),
+            xbel,
             marks: Vec::new(),
             reread: false,
             check_after_read: false,
@@ -88,7 +91,7 @@ impl RecentDocs {
     /// Reads `xbel` as its `recently-used.xbel`.
     #[cfg(test)]
     pub(crate) fn reading(xbel: PathBuf) -> RecentDocs {
-        RecentDocs::at(RecentFiles::at(Some(xbel)))
+        RecentDocs::at(Some(xbel))
     }
 
     fn found(&self, path: &Path) -> Option<Found> {
@@ -225,6 +228,9 @@ impl State {
     /// Records `paths`, opened by `app` (else each one's type's default program), in
     /// `recently-used.xbel` on one file job, unless `[privacy] recent_files` is off.
     pub fn record_recent(&mut self, paths: Vec<PathBuf>, app: Option<AppEntry>) {
+        let Some(xbel) = self.recent.xbel.clone() else {
+            return;
+        };
         if !self.config.recent_files || paths.is_empty() {
             return;
         }
@@ -244,7 +250,7 @@ impl State {
             let borrowed: Vec<reprisefs::recent::Opening> = (opened.iter())
                 .map(|(p, a, m)| (p.as_path(), a.as_ref(), m.as_deref()))
                 .collect();
-            if let Err(e) = reprisefs::recent::record(&borrowed) {
+            if let Err(e) = reprisefs::recent::record_at(&xbel, &borrowed) {
                 log::warn!(
                     "recent files: could not record {} files: {e}",
                     borrowed.len()
@@ -490,7 +496,7 @@ mod tests {
         let xbel_path = dir.join("recently-used.xbel");
         let order = [&*kept, &*gone, &*folder, &*hang, &*later];
         std::fs::write(&xbel_path, xbel(&order)).unwrap();
-        let mut docs = RecentDocs::at(RecentFiles::at(Some(xbel_path)));
+        let mut docs = RecentDocs::at(Some(xbel_path));
         read(&mut docs);
         assert_eq!(docs.current(10).len(), 5, "nothing checked: all listed");
 
@@ -551,7 +557,7 @@ mod tests {
         assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
         let xbel_path = dir.join("recently-used.xbel");
         std::fs::write(&xbel_path, xbel(&[&*hang, &*remote, &*local])).unwrap();
-        let mut docs = RecentDocs::at(RecentFiles::at(Some(xbel_path)));
+        let mut docs = RecentDocs::at(Some(xbel_path));
         read(&mut docs);
         let mounts = vec![PathBuf::from("/"), mount.clone()];
 
@@ -609,7 +615,7 @@ mod tests {
         let (documents, music) = (home.join("Documents"), home.join("Music"));
         std::fs::create_dir_all(&documents).unwrap();
         std::fs::create_dir_all(&music).unwrap();
-        let docs = RecentDocs::at(RecentFiles::at(None));
+        let docs = RecentDocs::at(None);
         let dirs = || {
             vec![
                 (documents.clone(), "folder-documents"),
@@ -650,7 +656,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join("Documents")).unwrap();
         std::fs::create_dir_all(home.join("Papers")).unwrap();
-        let mut docs = RecentDocs::at(RecentFiles::at(None));
+        let mut docs = RecentDocs::at(None);
         assert_eq!(docs.document_dirs(), [], "nothing read yet");
 
         let first = || {
@@ -734,7 +740,7 @@ mod tests {
         }
         let xbel_path = dir.join("recently-used.xbel");
         std::fs::write(&xbel_path, xbel(&[&a, &b])).unwrap();
-        let mut docs = RecentDocs::at(RecentFiles::at(Some(xbel_path.clone())));
+        let mut docs = RecentDocs::at(Some(xbel_path.clone()));
         read(&mut docs);
 
         let mut scene = crate::compositor::DeskScene::new();
