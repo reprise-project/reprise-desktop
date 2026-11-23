@@ -429,28 +429,40 @@ fn draw_contents(
                 );
             }
             Spot::Shutdown => {
-                let state = if light {
-                    None
-                } else if matches!(pressed, Some(Spot::Shutdown | Spot::ShutdownArrow)) {
-                    Some(State::Pressed)
-                } else if matches!(lit, Some(Spot::Shutdown | Spot::ShutdownArrow)) {
-                    Some(State::Hot)
-                } else {
-                    Some(State::Normal)
+                // The pointer lights both halves; a key lights the half it stands on.
+                let (button_lit, arrow_lit) = match lit {
+                    Some(Spot::Shutdown | Spot::ShutdownArrow) if p.hot() == lit => (true, true),
+                    Some(Spot::Shutdown) => (true, false),
+                    Some(Spot::ShutdownArrow) => (false, true),
+                    _ => (false, false),
                 };
-                let arrow = l.rect(Spot::ShutdownArrow).map(at);
-                match state {
-                    Some(st) => {
-                        d.part(at(r), Part::StartShutdown, st);
-                        if let Some(a) = arrow {
-                            d.part(a, Part::StartShutdownArrow, st);
-                        }
-                    }
-                    None => {
-                        d.part(at(r), Part::StartShutdownLight, State::Normal);
-                        if let Some(a) = arrow {
-                            d.part(a, Part::StartShutdownArrowLight, State::Normal);
-                        }
+                let held = matches!(pressed, Some(Spot::Shutdown | Spot::ShutdownArrow));
+                let state = |lit: bool| match (held, lit) {
+                    (true, _) => State::Pressed,
+                    (false, true) => State::Hot,
+                    (false, false) => State::Normal,
+                };
+                let halves = [
+                    (
+                        Some(at(r)),
+                        button_lit,
+                        Part::StartShutdown,
+                        Part::StartShutdownLight,
+                    ),
+                    (
+                        l.rect(Spot::ShutdownArrow).map(at),
+                        arrow_lit,
+                        Part::StartShutdownArrow,
+                        Part::StartShutdownArrowLight,
+                    ),
+                ];
+                for (half, lit, glass, plain) in halves {
+                    let Some(half) = half else { continue };
+                    // The light button has no pointer look, only the keys'.
+                    match (light, lit && p.hot().is_none()) {
+                        (false, _) => d.part(half, glass, state(lit)),
+                        (true, true) => d.part(half, plain, State::Hot),
+                        (true, false) => d.part(half, plain, State::Normal),
                     }
                 }
                 let w = text.measure(SHUT_DOWN, false, size);
@@ -1442,21 +1454,113 @@ mod tests {
         assert_eq!(d.at(x + 16, y + 8), WHITE, "16 px wide");
     }
 
-    #[test]
-    fn shut_down_lights_and_holds_both_halves() {
-        let rest = render(&sample(Mode::Home, None), None);
-        let hot = render(&sample(Mode::Home, Some(Spot::ShutdownArrow)), None);
-        let held = render(
-            &sample(Mode::Home, Some(Spot::Shutdown)),
-            Some(Spot::Shutdown),
+    /// Shut down's two halves in `p` at scale `d`: the button, then the arrow.
+    fn shut_down_halves(p: &StartPanel, pressed: Option<Spot>, d: i32) -> [Canvas; 2] {
+        let style = super::super::style(&Settings::default()).at_scale(d);
+        let text = TextRenderer::load(&font());
+        let l = layout(p).scaled(d);
+        let mut c = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
+        draw(&mut c, &style, &text, p, &l, pressed, true);
+        [Spot::Shutdown, Spot::ShutdownArrow].map(|s| {
+            let r = l.rect(s).unwrap();
+            c.copy_rect(Rect::new(
+                r.x - l.canvas.x,
+                r.y - l.canvas.y,
+                r.width,
+                r.height,
+            ))
+        })
+    }
+
+    fn keyed(mode: Mode, to: Spot) -> StartPanel {
+        let mut p = sample(mode, None);
+        assert_eq!(
+            p.focus_on(to),
+            crate::startpanel::Event::Redraw,
+            "{to:?} takes the keys"
         );
-        for (x, y) in [(268, 450), (350, 444)] {
-            let [a, b, c] = [&rest, &hot, &held].map(|d| d.at(x, y));
-            assert!(
-                a != b && b != c && a != c,
-                "({x}, {y}): {a:08x} {b:08x} {c:08x}"
+        p
+    }
+
+    #[test]
+    fn a_key_lights_the_shut_down_half_it_stands_on_and_the_pointer_both() {
+        let states = [
+            ("rest", sample(Mode::Home, None), None),
+            (
+                "pointer",
+                sample(Mode::Home, Some(Spot::ShutdownArrow)),
+                None,
+            ),
+            (
+                "held",
+                sample(Mode::Home, Some(Spot::Shutdown)),
+                Some(Spot::Shutdown),
+            ),
+            ("key button", keyed(Mode::Home, Spot::Shutdown), None),
+            ("key arrow", keyed(Mode::Home, Spot::ShutdownArrow), None),
+            ("search", sample(Mode::Search, None), None),
+            (
+                "search pointer",
+                sample(Mode::Search, Some(Spot::Shutdown)),
+                None,
+            ),
+            (
+                "search key button",
+                keyed(Mode::Search, Spot::Shutdown),
+                None,
+            ),
+            (
+                "search key arrow",
+                keyed(Mode::Search, Spot::ShutdownArrow),
+                None,
+            ),
+        ];
+        let mut got = Vec::new();
+        for d in [1, 2] {
+            let drawn: Vec<[Canvas; 2]> = states
+                .iter()
+                .map(|(_, p, pressed)| shut_down_halves(p, *pressed, d))
+                .collect();
+            let lit =
+                |k: usize, rest: usize| [0, 1].map(|half| drawn[k][half] != drawn[rest][half]);
+            assert_eq!(
+                lit(1, 0),
+                [true, true],
+                "the pointer lights both halves at {d}"
             );
+            assert_eq!(lit(2, 0), [true, true], "a press holds both halves at {d}");
+            assert_eq!(lit(2, 1), [true, true], "held is not hot at {d}");
+            assert_eq!(
+                lit(3, 0),
+                [true, false],
+                "a key on the button lights it alone at {d}"
+            );
+            assert_eq!(
+                lit(4, 0),
+                [false, true],
+                "a key on the arrow lights it alone at {d}"
+            );
+            assert_eq!(
+                lit(6, 5),
+                [false, false],
+                "the light button stays at rest under the pointer at {d}"
+            );
+            assert_eq!(
+                lit(7, 5),
+                [true, false],
+                "a key on the light button lights it alone at {d}"
+            );
+            assert_eq!(
+                lit(8, 5),
+                [false, true],
+                "a key on the light arrow lights it alone at {d}"
+            );
+            for ((name, ..), [button, arrow]) in states.iter().zip(&drawn) {
+                got.push((format!("{name} button {d}"), fnv(button)));
+                got.push((format!("{name} arrow {d}"), fnv(arrow)));
+            }
         }
+        crate::pins::check("glass/start_shut_down", &got);
     }
 
     #[test]

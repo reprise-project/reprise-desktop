@@ -390,6 +390,15 @@ const LIGHT: Face = Face {
     ],
 };
 
+/// The light button under the keys, in the lit search result's colours.
+const LIGHT_HOT: Face = Face {
+    outline: [(255.0, 0x81A5DC), (255.0, 0x81A5DC)],
+    top: (255.0, 0xF1F7FF),
+    side: &[(2, (255.0, 0xF1F7FF)), (19, (255.0, 0xDEECFF))],
+    bottom: (255.0, 0xDEECFF),
+    face: &[(2, (255.0, 0xEBF4FF)), (19, (255.0, 0xCEE2FF))],
+};
+
 const ARROW_AT: [(i32, i32); 2] = [(8, 7), (9, 7)];
 const ARROW_WHITE: [(i32, Ink); 4] = [
     (0, (255.0, 0xFFFFFF)),
@@ -702,7 +711,12 @@ fn fixed_parts(d: i32) -> Vec<(Part, PartImage)> {
         &[State::Normal, State::Hot, State::Pressed],
         d,
     );
-    let (light, light_arrow) = shutdown(&[&LIGHT], false, &[State::Normal], d);
+    let (light, light_arrow) = shutdown(
+        &[&LIGHT, &LIGHT_HOT],
+        false,
+        &[State::Normal, State::Hot],
+        d,
+    );
     let hot_right = if d == 1 {
         hot_right().clone()
     } else {

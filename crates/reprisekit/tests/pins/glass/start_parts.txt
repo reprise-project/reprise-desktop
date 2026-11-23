@@ -13,8 +13,8 @@ StartJumpRule 3efd371cbd34eb26
 StartSearchRule 8995d65a7c608e97
 StartShutdown 4143e6ce7819454e
 StartShutdownArrow 06c7a85e70b87a32
-StartShutdownLight bd0e28b65c05e584
-StartShutdownArrowLight df3eaa40eb2c25b4
+StartShutdownLight 14ca9f3e989824d4
+StartShutdownArrowLight 9a042bd5006db5fe
 StartSearchField eaf423d1c5ede2eb
 StartMagnifier ba3472476b3d9692
 StartClear cb3e3a5441d037e5

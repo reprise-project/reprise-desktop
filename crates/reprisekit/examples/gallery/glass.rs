@@ -229,7 +229,7 @@ fn glass_popups_at_2(c: &mut Canvas, y0: i32, text: &TextRenderer) {
         jump: false,
         new_pin: false,
     };
-    let start = |lit: Spot| {
+    let start = |lit: Spot, keyed: bool| {
         let mut p = StartPanel::new();
         p.pinned = vec![prog("Files"), prog("Terminal")];
         p.frequent = ["Notepad", "Calculator", "Paint"].map(prog).to_vec();
@@ -242,14 +242,37 @@ fn glass_popups_at_2(c: &mut Canvas, y0: i32, text: &TextRenderer) {
                 submenu: false,
             })
             .collect();
-        p.pointer(Some(lit));
+        if keyed {
+            p.focus_on(lit);
+        } else {
+            p.pointer(Some(lit));
+        }
         p
     };
-    for (k, lit) in [Spot::Program(1), Spot::Shutdown].into_iter().enumerate() {
-        let p = start(lit);
-        let l = sp::layout::layout(&p).scaled(2);
+    let search = |keys: &[sp::Key]| {
+        let mut p = start(Spot::Program(0), false);
+        p.pointer(None);
+        p.key(sp::Key::Char(reprisekit::textedit::EditKey::Insert(
+            "zz".into(),
+        )));
+        for k in keys {
+            p.key(k.clone());
+        }
+        p
+    };
+    // At rest, then Shut down under the pointer, keyed and its arrow keyed, then both keyed in Search.
+    let panels = [
+        start(Spot::Program(1), false),
+        start(Spot::Shutdown, false),
+        start(Spot::Shutdown, true),
+        start(Spot::ShutdownArrow, true),
+        search(&[sp::Key::Tab]),
+        search(&[sp::Key::Tab, sp::Key::Right]),
+    ];
+    for (k, p) in panels.iter().enumerate() {
+        let l = sp::layout::layout(p).scaled(2);
         let mut panel = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
-        interfaces::draw_start_panel(&mut panel, &two, &glass, &face, &p, &l, None, true);
+        interfaces::draw_start_panel(&mut panel, &two, &glass, &face, p, &l, None, true);
         if k == 0 {
             c.blit_over(20, y0 + 20, &panel);
         } else {
@@ -262,7 +285,7 @@ fn glass_popups_at_2(c: &mut Canvas, y0: i32, text: &TextRenderer) {
                 a.right() - b.x + 40,
                 b.height + 40,
             );
-            c.blit_over(900, y0 + 20, &panel.copy_rect(both));
+            c.blit_over(900, y0 + 20 + (k as i32 - 1) * 150, &panel.copy_rect(both));
         }
     }
     let grid = interfaces::switcher_grid(&theme);

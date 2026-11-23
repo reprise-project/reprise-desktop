@@ -10,8 +10,8 @@ StartLitResult 26cd6856171441f9
 StartHotRight 25c03e5a8666e764
 StartShutdown 5075ca8dcb1e8672
 StartShutdownArrow b2118744a9d8028f
-StartShutdownLight a0905f93840a71ba
-StartShutdownArrowLight c9944bfdc683030e
+StartShutdownLight 83019fc447916570
+StartShutdownArrowLight d24e17a6cb17633a
 StartSearchField b73b34bf1531aa5b
 StartMagnifier ad6ffdfcfeabba3b
 StartClear 703de9de6f81f83d
