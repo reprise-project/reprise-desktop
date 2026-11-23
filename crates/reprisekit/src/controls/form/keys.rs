@@ -303,7 +303,7 @@ impl Form {
                 let id = self.items[i].id;
                 let changed = match &mut self.items[i].control {
                     Control::Edit { edit, .. } => edit.key(k),
-                    Control::Memo(m) => m.edit.edit_key(k),
+                    Control::Memo(m) => m.edit.edit_key(k).edited(),
                     _ => unreachable!("an editing key only reaches a Control::Edit or Memo"),
                 };
                 if changed {
@@ -327,7 +327,7 @@ impl Form {
                         Event::Changed(id)
                     }
                     (Control::Memo(m), Key::Space) => {
-                        if m.edit.edit_key(EditKey::Insert(" ".into())) {
+                        if m.edit.edit_key(EditKey::Insert(" ".into())).edited() {
                             Event::Changed(id)
                         } else {
                             Event::Redraw
@@ -582,7 +582,7 @@ impl Form {
             let rect = self.at(&self.items[i]);
             match &mut self.items[i].control {
                 Control::Memo(m) => {
-                    let changed = m.edit.edit_key(EditKey::Insert(ch.to_string()));
+                    let changed = m.edit.edit_key(EditKey::Insert(ch.to_string())).edited();
                     return if changed {
                         Event::Changed(id)
                     } else {

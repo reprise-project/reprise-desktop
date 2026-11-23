@@ -175,6 +175,29 @@ fn typing_is_written_after_a_pause() {
 }
 
 #[test]
+fn moving_the_caret_waits_on_no_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_ctx();
+    let mut n = started(dir.path());
+    let win = n.notes[0].win;
+    n.event(win, typed("Buy milk"), &mut ctx);
+    assert!(!n.save_due(later()));
+    n.event(win, sym_key(keysym::UP), &mut ctx);
+    let left = Event::Key(KeyInput {
+        sym: keysym::LEFT,
+        utf8: None,
+        mods: Mods::default(),
+        edit: Some(EditKey::Left {
+            select: true,
+            word: false,
+        }),
+    });
+    let reply = n.event(win, left, &mut ctx);
+    assert!(reply.redraw, "the caret moved");
+    assert!(!n.notes[0].save.pending(), "a move is no change to keep");
+}
+
+#[test]
 fn a_close_writes_what_waits_and_ends_the_program() {
     let dir = tempfile::tempdir().unwrap();
     let mut ctx = test_ctx();

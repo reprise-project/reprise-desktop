@@ -88,13 +88,11 @@ impl Notepad {
             .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
     }
 
-    pub(crate) fn edit_key(&mut self, key: MultiKey, ctx: &Ctx) -> bool {
-        let changed = self.edit.key(key, &self.mono, &self.metrics);
-        self.scroll_to_caret(ctx);
-        if changed {
+    pub(crate) fn edit_key(&mut self, key: MultiKey, ctx: &Ctx) {
+        if self.edit.key(key, &self.mono, &self.metrics).edited() {
             self.dirty = true;
         }
-        changed
+        self.scroll_to_caret(ctx);
     }
 
     pub(crate) fn insert_time_date(&mut self, ctx: &Ctx) {
