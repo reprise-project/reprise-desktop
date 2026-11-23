@@ -56,6 +56,8 @@ impl Notepad {
             }),
             keysym::RETURN | keysym::KP_ENTER => Some(MultiKey::Enter),
             keysym::TAB => Some(MultiKey::Tab),
+            // An Alt+letter no menu title owns types nothing.
+            _ if k.mods.alt && matches!(k.edit, Some(EditKey::Insert(_))) => None,
             _ => k.edit.clone().map(MultiKey::Edit),
         };
         let Some(key) = key else {
