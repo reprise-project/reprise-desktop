@@ -37,7 +37,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   evolution-data-server, today's events (`[taskbar] calendar_events`).
   Double-click it for Date and Time Properties.
 - **From the keyboard.** Super+T lands on Start, Super+B on the tray. Super+1
-  to Super+9 act on that task button; Super+D shows the desktop.
+  to Super+9 act on that task button; Super+D shows the desktop. A task button
+  the arrows land on shows its live previews. Enter on a group opens them where
+  a click would cycle its windows (`[taskbar] pinned`): the arrows pick one,
+  Enter brings it up, Delete closes it, Escape goes back to the button.
 
 ## Start menu and launcher
 

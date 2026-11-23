@@ -1,8 +1,9 @@
-//! The task button's preview panel as a model: cell layout on a look's [`Grid`], pointer hit tests and picture fit.
+//! The task button's preview panel as a model: cell layout on a look's [`Grid`], pointer hit tests, keys and picture fit.
 //! `controls::taskpreview` draws Classic's panel and `glass::preview` Glass's.
 
 use crate::raster::{Canvas, Insets, Rect};
 use crate::taskbar::Edge;
+use crate::textedit::keysym;
 
 pub const CELL_W: i32 = 176;
 pub(crate) const TITLE_H: i32 = 18;
@@ -179,6 +180,47 @@ impl TaskPreviewLayout {
     }
 }
 
+/// What a key does on the panel while it has the keyboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PanelKey {
+    /// Make cell `n` hot.
+    To(usize),
+    Activate,
+    Close,
+    /// Back to the task button, the panel down.
+    Back,
+}
+
+/// Key `sym` on the panel with cell `at` hot: Left and Right step through the cells and wrap,
+/// Up and Down move a row, Home and End go to the ends, Enter and Space bring the hot cell's
+/// window up, Delete closes it, Escape goes back to the button.
+pub fn key(layout: &TaskPreviewLayout, at: usize, sym: u32) -> Option<PanelKey> {
+    use keysym::*;
+    let n = layout.cells.len();
+    if n == 0 {
+        return (sym == ESCAPE).then_some(PanelKey::Back);
+    }
+    let at = at.min(n - 1);
+    let cols = (layout.cells.iter())
+        .take_while(|c| c.y == layout.cells[0].y)
+        .count()
+        .max(1);
+    Some(match sym {
+        LEFT | KP_LEFT => PanelKey::To((at + n - 1) % n),
+        RIGHT | KP_RIGHT => PanelKey::To((at + 1) % n),
+        UP | KP_UP => PanelKey::To(at.checked_sub(cols).unwrap_or(at)),
+        DOWN | KP_DOWN if at + cols < n => PanelKey::To(at + cols),
+        DOWN | KP_DOWN if at / cols < (n - 1) / cols => PanelKey::To(n - 1),
+        DOWN | KP_DOWN => PanelKey::To(at),
+        HOME | KP_HOME => PanelKey::To(0),
+        END | KP_END => PanelKey::To(n - 1),
+        RETURN | KP_ENTER | SPACE => PanelKey::Activate,
+        DELETE | KP_DELETE => PanelKey::Close,
+        ESCAPE => PanelKey::Back,
+        _ => return None,
+    })
+}
+
 pub fn hit(layout: &TaskPreviewLayout, x: i32, y: i32) -> Option<usize> {
     layout.cells.iter().position(|c| c.contains(x, y))
 }
@@ -222,6 +264,62 @@ pub struct Cell<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SCREEN: Rect = Rect::new(0, 0, 1920, 1052);
+
+    fn grid_of(n: usize, width: i32) -> TaskPreviewLayout {
+        let grid = crate::controls::taskpreview::CLASSIC;
+        let bounds = Rect::new(0, 0, width, SCREEN.height);
+        TaskPreviewLayout::compute(grid, n, Rect::new(300, 1054, 160, 22), bounds, Edge::Bottom)
+    }
+
+    #[test]
+    fn left_and_right_wrap_through_the_cells() {
+        use keysym::*;
+        let l = grid_of(3, SCREEN.width);
+        assert_eq!(key(&l, 0, RIGHT), Some(PanelKey::To(1)));
+        assert_eq!(
+            key(&l, 2, RIGHT),
+            Some(PanelKey::To(0)),
+            "wraps to the first"
+        );
+        assert_eq!(key(&l, 0, LEFT), Some(PanelKey::To(2)), "wraps to the last");
+        assert_eq!(key(&l, 1, UP), Some(PanelKey::To(1)), "one row: Up stays");
+        assert_eq!(
+            key(&l, 1, DOWN),
+            Some(PanelKey::To(1)),
+            "one row: Down stays"
+        );
+        assert_eq!(key(&l, 1, HOME), Some(PanelKey::To(0)));
+        assert_eq!(key(&l, 0, END), Some(PanelKey::To(2)));
+    }
+
+    #[test]
+    fn up_and_down_move_a_row_and_land_on_a_short_last_row() {
+        use keysym::*;
+        let l = grid_of(5, 12 + 2 * 176 + 6);
+        assert_eq!(l.cells[2].y, l.cells[3].y, "two to a row");
+        assert_eq!(key(&l, 1, DOWN), Some(PanelKey::To(3)));
+        assert_eq!(
+            key(&l, 3, DOWN),
+            Some(PanelKey::To(4)),
+            "the short row's only cell"
+        );
+        assert_eq!(key(&l, 4, DOWN), Some(PanelKey::To(4)), "no row below");
+        assert_eq!(key(&l, 3, UP), Some(PanelKey::To(1)));
+        assert_eq!(key(&l, 1, UP), Some(PanelKey::To(1)), "no row above");
+    }
+
+    #[test]
+    fn enter_activates_delete_closes_and_escape_goes_back() {
+        use keysym::*;
+        let l = grid_of(2, SCREEN.width);
+        assert_eq!(key(&l, 1, RETURN), Some(PanelKey::Activate));
+        assert_eq!(key(&l, 1, SPACE), Some(PanelKey::Activate));
+        assert_eq!(key(&l, 1, DELETE), Some(PanelKey::Close));
+        assert_eq!(key(&l, 1, ESCAPE), Some(PanelKey::Back));
+        assert_eq!(key(&l, 1, TAB), None);
+    }
 
     #[test]
     fn fit_keeps_the_aspect_and_never_enlarges() {

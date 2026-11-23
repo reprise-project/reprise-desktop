@@ -9,11 +9,14 @@
 //! glass its canvas reaches over a shadow round the panel and the panel shows the blurred backdrop
 //! (`glass::Backdrop`). Resting on a cell peeks at its window (`peek`); the peek holds across the gaps
 //! between cells and ends when the pointer leaves the panel. The lock hides it, and none opens while locked.
+//! The taskbar's keyboard focus (`barkeys`) on a task button shows its panel after the same delay, and that panel stays
+//! until the focus moves on, whatever the pointer does. Enter on a group opens the panel at once with the arrows
+//! (`open_keys`): they move the hot cell, Enter brings its window up, Delete closes it, Escape goes back to the button.
 
 use std::{sync::Arc, time::Duration};
 
 use reprisekit::{
-    controls::taskpreview::{self, Cell, TaskPreviewLayout},
+    controls::taskpreview::{self, Cell, PanelKey, TaskPreviewLayout},
     interfaces,
     taskbar::Edge,
 };
@@ -60,6 +63,9 @@ pub struct TaskPreviewView {
     /// The task button last pressed with the pointer, by its bar and key so it is followed through any
     /// change to the row: its panel waits until the pointer leaves it.
     pressed: Option<(TreeId, TaskKey<WindowId>)>,
+    /// The pending or shown panel follows the taskbar's keyboard focus (`focus`): the pointer leaving
+    /// takes it down no more.
+    keyed: bool,
 }
 
 struct Panel {
@@ -74,10 +80,33 @@ struct Panel {
     buffer: BufferId,
     thumbs: Vec<Option<ThumbId>>,
     hot: Option<usize>,
+    /// The panel has the arrows (`open_keys`), `hot` the keyboard's cell.
+    keys: bool,
 }
 
 /// The pointer is over `hit` on bar `bar`. A task button starts the delay, or takes over a panel at once, except the one just pressed (`pressed`); anything else on the bar takes it down.
 pub fn hover(state: &mut State, bar: TreeId, hit: TaskbarHit) {
+    arm(state, bar, hit, false);
+}
+
+/// The taskbar's keyboard focus moved to `at` on bar `bar`: a task button arms its panel as a resting
+/// pointer does; anything else takes the panel down.
+pub fn focus(state: &mut State, bar: TreeId, at: TaskbarHit) {
+    state.task_preview.pressed = None;
+    match at {
+        TaskbarHit::Task(_) if state.config.previews.taskbar => arm(state, bar, at, true),
+        _ => hide(state),
+    }
+}
+
+/// The taskbar lost the keyboard: a panel its focus armed goes.
+pub fn keys_gone(state: &mut State) {
+    if state.task_preview.keyed {
+        hide(state);
+    }
+}
+
+fn arm(state: &mut State, bar: TreeId, hit: TaskbarHit, keys: bool) {
     stop_peek(state);
     let target = match hit {
         TaskbarHit::Task(i) if state.config.previews.taskbar => (bar, i),
@@ -98,8 +127,10 @@ pub fn hover(state: &mut State, bar: TreeId, hit: TaskbarHit) {
     let v = &state.task_preview;
     let shown = v.shown.as_ref().map(|p| (p.bar, p.button));
     if shown == Some(target) || v.pending == Some(target) {
+        state.task_preview.keyed |= keys;
         return;
     }
+    state.task_preview.keyed = keys;
     if shown.is_some() {
         show(state, target.0, target.1);
         return;
@@ -185,14 +216,62 @@ pub fn clicked(state: &mut State, cell: Option<usize>) {
     let at = state.pointer_location();
     let (cx, cy) = (at.x.floor() as i32, at.y.floor() as i32);
     let on_close = taskpreview::close_hit(&p.layout, p.hot, cx - r.x, cy - r.y) == Some(i);
+    pick(state, w, on_close);
+}
+
+/// Take the panel down, then close `w` or bring it up.
+fn pick(state: &mut State, w: WindowId, close: bool) {
     hold(state);
     hide(state);
-    if on_close {
+    if close {
         state.close(w);
     } else if state.task_windows().contains(&w) {
         state.bring_up(w);
     }
     release(state);
+}
+
+/// Enter on group button `i` of bar `bar`: its panel shows at once and takes the arrows, `start`'s
+/// cell hot. False when no panel shows.
+pub fn open_keys(state: &mut State, bar: TreeId, i: usize, start: Option<WindowId>) -> bool {
+    let shown = state.task_preview.shown.as_ref().map(|p| (p.bar, p.button));
+    if shown != Some((bar, i)) {
+        let awake = std::mem::take(&mut state.task_preview.awake);
+        show(state, bar, i);
+        resuspend(state, awake);
+    }
+    let v = &mut state.task_preview;
+    let Some(p) = v.shown.as_mut() else {
+        return false;
+    };
+    v.keyed = true;
+    p.keys = true;
+    let at = (p.windows.iter()).position(|&w| Some(w) == start);
+    hover_panel(state, Some(at.unwrap_or(0)));
+    crate::access::touch(state);
+    true
+}
+
+/// Whether the panel has the arrows (`open_keys`).
+pub fn has_keys(state: &State) -> bool {
+    (state.task_preview.shown.as_ref()).is_some_and(|p| p.keys)
+}
+
+/// Key `sym` for the panel with the arrows; false when it has none, and the taskbar takes the key.
+pub fn key(state: &mut State, sym: u32) -> bool {
+    let Some(p) = state.task_preview.shown.as_ref().filter(|p| p.keys) else {
+        return false;
+    };
+    let at = p.hot.unwrap_or(0);
+    let w = p.windows.get(at).copied();
+    match taskpreview::key(&p.layout, at, sym) {
+        None => {}
+        Some(PanelKey::To(n)) => hover_panel(state, Some(n)),
+        Some(PanelKey::Activate) => w.into_iter().for_each(|w| pick(state, w, false)),
+        Some(PanelKey::Close) => w.into_iter().for_each(|w| pick(state, w, true)),
+        Some(PanelKey::Back) => hide(state),
+    }
+    true
 }
 
 /// Take the panel's pictures, and the windows a pending panel keeps awake, out of it before
@@ -234,10 +313,15 @@ pub fn pressed(state: &mut State, bar: TreeId, i: usize) {
 }
 
 /// The pointer is off the task buttons and the panel: as `hide`, and the pressed button shows its
-/// panel again on the next rest.
+/// panel again on the next rest. A panel the taskbar's keyboard focus armed stays.
 pub fn leave(state: &mut State) {
     state.task_preview.pressed = None;
-    hide(state);
+    if !state.task_preview.keyed {
+        hide(state);
+    } else if !has_keys(state) {
+        hover_panel(state, None);
+        stop_peek(state);
+    }
 }
 
 /// Take the panel down and forget a button waiting for one. `leave` calls it on every pointer motion
@@ -374,6 +458,7 @@ fn show(state: &mut State, bar: TreeId, i: usize) {
         buffer,
         thumbs,
         hot: None,
+        keys: false,
     });
     redraw(state);
 }
@@ -478,7 +563,7 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
         .map(|&w| state.win(w).map(|x| x.title()).unwrap_or_default())
         .collect();
     let titles: Vec<&str> = titles.iter().map(String::as_str).collect();
-    taskpreview::access(&p.layout, &titles, p.hot, &mut tree, ROOT);
+    taskpreview::access(&p.layout, &titles, p.hot, p.keys, &mut tree, ROOT);
     Some(tree)
 }
 
@@ -844,5 +929,159 @@ mod tests {
             );
         }
         assert!(crate::glass::drawn_shapes(&p, Material::Frosted, 1.0).len() > 1);
+    }
+
+    const KEY_ESC: u32 = 1;
+    const KEY_ENTER: u32 = 28;
+    const KEY_LEFT: u32 = 105;
+    const KEY_RIGHT: u32 = 106;
+    const KEY_DELETE: u32 = 111;
+
+    fn tap(h: &mut crate::harness::Harness, code: u32) {
+        h.key(code, true);
+        h.key(code, false);
+        h.dispatch();
+    }
+
+    /// Two "test.app" windows on one button and a "test.other" window on the next, under
+    /// `[taskbar] pinned` and combined buttons, the taskbar's keyboard on the group.
+    fn group_with_keys(
+        previews: bool,
+    ) -> (
+        crate::harness::Harness,
+        crate::harness::TestClient,
+        [crate::harness::Toplevel; 3],
+        usize,
+    ) {
+        let mut config = crate::config::Config::default();
+        config.taskbar.pinned = true;
+        config.taskbar.buttons = crate::config::TaskbarButtons::Combine;
+        config.previews.taskbar = previews;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_titled(&mut c, "test.app", "Alpha", (300, 200));
+        let b = h.map_titled(&mut c, "test.app", "Beta", (300, 200));
+        let o = h.map_titled(&mut c, "test.other", "Other", (300, 200));
+        h.dispatch();
+        let bar = &h.state.bars[0];
+        let tree = bar.tree;
+        let i = (bar.slots.iter())
+            .position(|s| s.windows.len() == 2)
+            .expect("one button holds both windows");
+        h.pointer_to(512.0, 300.0);
+        h.state.focus_bar_item(tree, TaskbarHit::Task(i));
+        (h, c, [a, b, o], i)
+    }
+
+    fn hot_window(s: &State) -> Option<WindowId> {
+        let p = s.task_preview.shown.as_ref()?;
+        p.windows.get(p.hot?).copied()
+    }
+
+    #[test]
+    fn the_taskbars_focus_on_a_task_button_shows_its_panel_after_the_hover_delay() {
+        let (mut h, _c, _, i) = group_with_keys(true);
+        assert!(!h.state.task_preview.is_shown(), "not before the delay");
+        h.until("the focused button's panel", |s| on(s, i));
+        h.pointer_to(600.0, 200.0);
+        assert!(on(&h.state, i), "the pointer moving elsewhere leaves it up");
+        tap(&mut h, KEY_RIGHT);
+        assert!(on(&h.state, i + 1), "the next button's panel at once");
+        tap(&mut h, KEY_LEFT);
+        tap(&mut h, KEY_LEFT);
+        assert!(
+            !h.state.task_preview.is_shown(),
+            "off the task buttons it goes"
+        );
+        tap(&mut h, KEY_RIGHT);
+        h.until("the panel once back on the button", |s| on(s, i));
+        tap(&mut h, KEY_ESC);
+        assert!(h.state.bar_shared.keys.is_none());
+        assert!(
+            !h.state.task_preview.is_shown(),
+            "the taskbar giving the keyboard back takes it down"
+        );
+    }
+
+    #[test]
+    fn enter_on_a_group_opens_its_panel_and_the_arrows_pick_the_window_enter_brings_up() {
+        let (mut h, _c, [a, b, _], i) = group_with_keys(true);
+        tap(&mut h, KEY_ENTER);
+        assert!(on(&h.state, i), "the panel opens at once");
+        assert!(has_keys(&h.state));
+        assert_eq!(h.state.focused, None, "no window is brought up yet");
+        let first = hot_window(&h.state).expect("a hot cell");
+        assert_eq!(first, b.id, "the window a click would bring up");
+        tap(&mut h, KEY_RIGHT);
+        assert_eq!(hot_window(&h.state), Some(a.id));
+        h.pointer_to(600.0, 200.0);
+        assert_eq!(
+            hot_window(&h.state),
+            Some(a.id),
+            "the pointer takes nothing"
+        );
+        tap(&mut h, KEY_ENTER);
+        assert_eq!(h.state.focused, Some(a.id));
+        assert!(!h.state.task_preview.is_shown());
+        assert!(
+            h.state.bar_shared.keys.is_none(),
+            "the window has the keyboard"
+        );
+    }
+
+    #[test]
+    fn delete_closes_the_hot_window_and_escape_goes_back_to_the_button() {
+        let (mut h, mut c, [_, b, _], i) = group_with_keys(true);
+        tap(&mut h, KEY_ENTER);
+        assert_eq!(hot_window(&h.state), Some(b.id));
+        tap(&mut h, KEY_DELETE);
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.closes, [b.shell], "asked to close");
+        assert!(!h.state.task_preview.is_shown());
+        let at = h.state.bar_shared.keys.map(|k| k.at);
+        assert_eq!(
+            at,
+            Some(TaskbarHit::Task(i)),
+            "the button keeps the keyboard"
+        );
+        tap(&mut h, KEY_ENTER);
+        assert!(has_keys(&h.state));
+        tap(&mut h, KEY_ESC);
+        assert!(!h.state.task_preview.is_shown());
+        let at = h.state.bar_shared.keys.map(|k| k.at);
+        assert_eq!(
+            at,
+            Some(TaskbarHit::Task(i)),
+            "Escape goes back to the button"
+        );
+        assert_eq!(h.state.focused, None);
+    }
+
+    #[test]
+    fn a_reader_follows_the_hot_cell_of_the_panel_with_the_arrows() {
+        let (mut h, _c, [a, _, _], _) = group_with_keys(true);
+        tap(&mut h, KEY_ENTER);
+        tap(&mut h, KEY_RIGHT);
+        assert_eq!(hot_window(&h.state), Some(a.id));
+        let tree = access(&h.state).expect("the panel's tree");
+        let alpha = tree.find(reprisekit::access::accesskit::Role::Button, "Alpha");
+        assert_eq!(alpha, Some(tree.focus()));
+        let p = h.state.task_preview.shown.as_ref().unwrap();
+        let (c, r) = (p.layout.cells[p.hot.unwrap()], p.layout.rect);
+        let cell = Rect::new(r.x + c.x, r.y + c.y, c.width, c.height);
+        assert_eq!(crate::access::focus_rect(&h.state), Some(cell));
+    }
+
+    #[test]
+    fn with_previews_off_enter_on_a_group_lists_its_windows() {
+        let (mut h, _c, _, i) = group_with_keys(false);
+        tap(&mut h, KEY_ENTER);
+        assert!(!h.state.task_preview.is_shown());
+        assert_eq!(
+            h.state.menu_root(),
+            Some(crate::menuview::MenuRoot::WindowList(i))
+        );
+        assert_eq!(h.state.focused, None);
     }
 }
