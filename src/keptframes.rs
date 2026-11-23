@@ -10,6 +10,9 @@ use crate::windowrules::Remembered;
 pub const APPS_MAX: usize = 200;
 /// The most sets of screens kept; the one stored to least recently goes first.
 pub const SETS_MAX: usize = 16;
+/// The smallest size kept: under it is a placeholder a program maps for a moment before its main
+/// window (a 75x32 one), not a size anyone chose.
+pub const MIN_SIZE: (i32, i32) = (100, 50);
 
 /// A kept frame and when it was stored, counted up across the file.
 type Stamped = (Remembered, u64);
@@ -41,7 +44,8 @@ impl KeptFrames {
         KeptFrames::parse(path, &text)
     }
 
-    /// What `text` keeps; an entry that does not read is dropped, the rest stay.
+    /// What `text` keeps; an entry that does not read or is under [`MIN_SIZE`] is dropped, the
+    /// rest stay.
     pub fn parse(path: PathBuf, text: &str) -> KeptFrames {
         let mut k = KeptFrames::empty(path);
         let table: toml::Table = match toml::from_str(text) {
@@ -63,7 +67,7 @@ impl KeptFrames {
                         return None;
                     };
                     let used = t.remove("used").and_then(|u| u.as_integer()).unwrap_or(0);
-                    let frame: Remembered = t.try_into().ok()?;
+                    let frame: Remembered = t.try_into().ok().filter(worth_keeping)?;
                     Some((app, (frame, u64::try_from(used).unwrap_or(0))))
                 })
                 .collect();
@@ -81,7 +85,11 @@ impl KeptFrames {
     }
 
     /// Keeps `frame` for `app` under `set`, as the most recent; whether the file needs writing.
+    /// A frame under [`MIN_SIZE`] leaves the kept one as it is.
     pub fn store(&mut self, set: &str, app: &str, frame: Remembered) -> bool {
+        if !worth_keeping(&frame) {
+            return false;
+        }
         let newest = self.newest_in(set);
         if let Some((f, u)) = self.sets.get(set).and_then(|a| a.get(app))
             && *f == frame
@@ -148,6 +156,10 @@ impl KeptFrames {
             }
         });
     }
+}
+
+fn worth_keeping(frame: &Remembered) -> bool {
+    frame.width >= MIN_SIZE.0 && frame.height >= MIN_SIZE.1
 }
 
 fn oldest<'a>(stamps: impl Iterator<Item = (&'a String, u64)>) -> Option<String> {
