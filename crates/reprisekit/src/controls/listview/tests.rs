@@ -441,6 +441,32 @@ fn columns_lay_out_grown_by_the_text_size() {
     assert_eq!(lv.columns[0].width, 120, "laying out keeps the 100% width");
 }
 
+/// A title or cell wider than its column widens it to show whole when drawn, a cell only up
+/// to the cap; columns that fit keep their width.
+#[test]
+fn columns_widen_to_their_titles_and_cells() {
+    crate::pins::fonts();
+    let text = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let mut lv = view(2);
+    lv.columns[1] = Column::new("Size on the disk", 30);
+    lv.rows[1].cells[0] = "a rather long file name.txt".into();
+    lv.fit_titles(&text, &theme.paint(), 11, TextUnits::ONE);
+    assert_eq!(lv.columns[0].width, 120, "Name fits");
+    let title = lv.columns[1].width;
+    assert!(title > 30, "the title widened its column to {title}");
+    lv.fit_cells(0, &text, 11, TextUnits::ONE, 400);
+    let name = lv.columns[0].width;
+    assert!(name > 120, "the long name widened Name to {name}");
+    let ((), short) = crate::pins::shortened_text(|| {
+        render(&lv, Rect::new(0, 0, 600, 120));
+    });
+    assert!(short.is_empty(), "nothing ellipsized: {short:?}");
+    lv.columns[0].width = 120;
+    lv.fit_cells(0, &text, 11, TextUnits::ONE, 130);
+    assert_eq!(lv.columns[0].width, 130, "held to the cap");
+}
+
 #[test]
 fn a_filled_column_takes_what_the_grown_columns_leave() {
     let mut lv = view(3);

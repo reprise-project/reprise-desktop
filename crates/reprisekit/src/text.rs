@@ -21,6 +21,7 @@ mod tests;
 mod wrap;
 
 pub use fonts::families;
+pub(crate) use fonts::hide_tahoma;
 pub(crate) use fonts::system_fonts;
 pub(crate) use fonts::test_fonts;
 use fonts::{full_hinting, load_faces, load_shell_dlg};
@@ -1054,6 +1055,7 @@ impl TextRenderer {
         if self.measure(text, bold, size_px) <= width {
             return std::borrow::Cow::Borrowed(text);
         }
+        crate::pins::shortened(text, width, size_px);
         let dots = self.measure("...", bold, size_px);
         if dots > width {
             let dot = self.advance('.', bold, size_px).max(1);
@@ -1092,6 +1094,7 @@ impl TextRenderer {
         {
             return self.ellipsize(text, width, bold, size_px);
         }
+        crate::pins::shortened(text, width, size_px);
         let (head, tail) = text.split_at(at);
         let room = width - dots - self.measure(tail, bold, size_px);
         let (mut used, mut end) = (0, 0);

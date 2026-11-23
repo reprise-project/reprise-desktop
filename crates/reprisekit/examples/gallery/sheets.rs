@@ -82,7 +82,8 @@ pub fn render_glass_sheet(theme: &Theme) -> Canvas {
     draw_page(&mut c, &p, page);
     tabstrip::draw(&mut c, &text, &p, &strip, &tabs, page, true, px);
     let pg = Rect::new(page.x + 10, page.y + 20, 180, 55);
-    let lr = Rect::new(pg.x + 10, pg.y - 5, 60, 13);
+    let lw = text.measure("On the page", false, px);
+    let lr = Rect::new(pg.x + 10, pg.y - 5, lw, 13);
     draw_group_box(&mut c, &text, &p.on_page(page), pg, lr, "On the page", px);
     c
 }

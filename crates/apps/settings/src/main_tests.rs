@@ -32,6 +32,8 @@ mod proxy_page;
 mod search;
 #[path = "main_tests/sizes.rs"]
 mod sizes;
+#[path = "main_tests/text_fit.rs"]
+mod text_fit;
 
 fn tmp(tag: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!(

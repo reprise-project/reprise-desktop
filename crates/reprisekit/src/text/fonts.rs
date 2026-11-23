@@ -4,6 +4,7 @@ use crate::mutex::lock;
 use crate::theme::FontConfig;
 use fontdb::{Database, Family, Query, Weight};
 use freetype::{Face, Library};
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -105,6 +106,9 @@ pub(super) fn full_hinting(lib: &Library) {
 /// The system font database, shared by every renderer and cached on disk ([`crate::fontcache`]);
 /// read again when it lacks the preferred family and a font directory changed since.
 pub(crate) fn system_fonts(families: &[String]) -> Arc<Database> {
+    if WITHOUT_TAHOMA.get() {
+        return without_tahoma(families);
+    }
     static FONTS: Mutex<Option<(Arc<Database>, Stamp)>> = Mutex::new(None);
     let mut fonts = lock(&FONTS);
     if let Some((db, stamp)) = fonts.as_ref()
@@ -117,6 +121,41 @@ pub(crate) fn system_fonts(families: &[String]) -> Arc<Database> {
         load_test_fonts(&mut db, &dir);
     }
     fonts.insert((Arc::new(db), stamp)).0.clone()
+}
+
+thread_local! {
+    static WITHOUT_TAHOMA: Cell<bool> = const { Cell::new(false) };
+    static FILTERED: RefCell<Option<Arc<Database>>> = const { RefCell::new(None) };
+}
+
+/// Loads this thread's fonts from here on as on a machine with no Tahoma and only DejaVu's
+/// regular widths (Debian's and Ubuntu's fonts-dejavu-core): the default family's text falls
+/// back to DejaVu Sans Book, its widest face. For [`crate::pins::without_tahoma`].
+pub(crate) fn hide_tahoma() {
+    WITHOUT_TAHOMA.set(true);
+}
+
+fn without_tahoma(families: &[String]) -> Arc<Database> {
+    if let Some(db) = FILTERED.with_borrow(Clone::clone) {
+        return db;
+    }
+    WITHOUT_TAHOMA.set(false);
+    let mut db = (*system_fonts(families)).clone();
+    WITHOUT_TAHOMA.set(true);
+    let hidden: Vec<fontdb::ID> = db
+        .faces()
+        .filter(|f| {
+            f.families.iter().any(|(name, _)| name == "Tahoma")
+                || f.stretch != fontdb::Stretch::Normal
+        })
+        .map(|f| f.id)
+        .collect();
+    for id in hidden {
+        db.remove_face(id);
+    }
+    let db = Arc::new(db);
+    FILTERED.set(Some(db.clone()));
+    db
 }
 
 /// The family names of the fonts installed, sorted, each once; a family whose name starts with a

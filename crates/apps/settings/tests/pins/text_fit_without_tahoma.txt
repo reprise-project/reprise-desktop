@@ -1,0 +1,42 @@
+blue@1 1600x1000 cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
+blue@1 544x528 cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
+blue@1 544x528 cut "Region & Language" x4  # page list: the ink runs past its row into the list's margin, inside the frame
+blue@1 544x528 cut "Screen Saver & Lock" x22  # page list: the ink runs past its row into the list's margin, inside the frame
+blue@1 544x528 cut "Software Updates..." x2  # page list: the ink runs past its row into the list's margin, inside the frame
+blue@1 544x528 cut "Taskbar & Windows" x25  # page list: the ink runs past its row into the list's margin, inside the frame
+blue@1 544x528 ellipsized "Reprise" x4  # a wallpaper's dimmed detail, after its name, in a list at its smallest
+blue@2 1600x1000 cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
+blue@2 544x528 cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
+blue@2 544x528 cut "Region & Language" x4  # page list: the ink runs past its row into the list's margin, inside the frame
+blue@2 544x528 cut "Screen Saver & Lock" x22  # page list: the ink runs past its row into the list's margin, inside the frame
+blue@2 544x528 cut "Software Updates..." x2  # page list: the ink runs past its row into the list's margin, inside the frame
+blue@2 544x528 cut "Taskbar & Windows" x25  # page list: the ink runs past its row into the list's margin, inside the frame
+blue@2 544x528 ellipsized "Reprise" x4  # a wallpaper's dimmed detail, after its name, in a list at its smallest
+classic@1 1600x1000 cut "Join it" x2  # 1 px of the t's ink runs past the label's room before Replace it
+classic@1 544x528 cut "Join it" x2  # 1 px of the t's ink runs past the label's room before Replace it
+classic@1 544x528 cut "Region & Language" x4  # page list: the ink runs past its row into the list's margin, inside the frame
+classic@1 544x528 cut "Screen Saver & Lock" x22  # page list: the ink runs past its row into the list's margin, inside the frame
+classic@1 544x528 cut "Software Updates..." x2  # page list: the ink runs past its row into the list's margin, inside the frame
+classic@1 544x528 cut "Taskbar & Windows" x25  # page list: the ink runs past its row into the list's margin, inside the frame
+classic@1 544x528 ellipsized "Reprise" x4  # a wallpaper's dimmed detail, after its name, in a list at its smallest
+classic@2 1600x1000 cut "Join it" x2  # 1 px of the t's ink runs past the label's room before Replace it
+classic@2 544x528 cut "Join it" x2  # 1 px of the t's ink runs past the label's room before Replace it
+classic@2 544x528 cut "Region & Language" x4  # page list: the ink runs past its row into the list's margin, inside the frame
+classic@2 544x528 cut "Screen Saver & Lock" x22  # page list: the ink runs past its row into the list's margin, inside the frame
+classic@2 544x528 cut "Software Updates..." x2  # page list: the ink runs past its row into the list's margin, inside the frame
+classic@2 544x528 cut "Taskbar & Windows" x25  # page list: the ink runs past its row into the list's margin, inside the frame
+classic@2 544x528 ellipsized "Reprise" x4  # a wallpaper's dimmed detail, after its name, in a list at its smallest
+glass@1 1600x1000 cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
+glass@1 544x528 cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
+glass@1 544x528 cut "Region & Language" x4  # page list: the ink runs past its row into the list's margin, inside the frame
+glass@1 544x528 cut "Screen Saver & Lock" x22  # page list: the ink runs past its row into the list's margin, inside the frame
+glass@1 544x528 cut "Software Updates..." x2  # page list: the ink runs past its row into the list's margin, inside the frame
+glass@1 544x528 cut "Taskbar & Windows" x25  # page list: the ink runs past its row into the list's margin, inside the frame
+glass@1 544x528 ellipsized "Reprise" x4  # a wallpaper's dimmed detail, after its name, in a list at its smallest
+glass@2 1600x1000 cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
+glass@2 544x528 cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
+glass@2 544x528 cut "Region & Language" x4  # page list: the ink runs past its row into the list's margin, inside the frame
+glass@2 544x528 cut "Screen Saver & Lock" x22  # page list: the ink runs past its row into the list's margin, inside the frame
+glass@2 544x528 cut "Software Updates..." x2  # page list: the ink runs past its row into the list's margin, inside the frame
+glass@2 544x528 cut "Taskbar & Windows" x25  # page list: the ink runs past its row into the list's margin, inside the frame
+glass@2 544x528 ellipsized "Reprise" x4  # a wallpaper's dimmed detail, after its name, in a list at its smallest

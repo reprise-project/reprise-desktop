@@ -29,7 +29,7 @@ use crate::look::widgets::{
     draw_checkbox, draw_checkbox_disabled, draw_edit_text, draw_field_frame, draw_hscrollbar,
     draw_progress, draw_scrollbar,
 };
-use crate::pointer::{Click, DoubleClick, Lit, Pointer};
+use crate::pointer::{Click, DoubleClick, Interaction, Lit, Pointer};
 use crate::raster::{Canvas, Rect};
 use crate::selection::{Mods, Selection, step_index};
 use crate::text::{Align, TextRenderer};
@@ -786,6 +786,38 @@ impl<R: Rows> ListView<R> {
             .map(|(_, c)| u.len(c.width))
             .sum();
         self.resize_column(i, u.within(width - others));
+    }
+
+    /// Widens each column to the width its unsorted title takes in `text` at `px` in `p`'s
+    /// header items, so a wider face keeps whole titles. Columns grown by `u`; a host calls it
+    /// before [`Self::fill_column`].
+    pub fn fit_titles(&mut self, text: &TextRenderer, p: &Paint, px: u32, u: TextUnits) {
+        let probe = Rect::new(0, 0, 1000, HEADER_H);
+        let p1 = Paint { s: 1, ..*p };
+        let item = header_widgets::item_title_rect(&p1, probe, Interaction::Idle, false);
+        let inset = probe.width - item.width + 2 * HEADER_TEXT_X;
+        for col in &mut self.columns {
+            let need = text.measure(&col.title, false, px) + inset;
+            col.width = col.width.max(u.design(need));
+        }
+    }
+
+    /// Widens column `i` of a list without check boxes to its widest cell in `text` at `px`, up
+    /// to `max` 100% px, so its rows show whole where the list has the room. Columns grown by
+    /// `u`; a host calls it before [`Self::fill_column`] fills another column.
+    pub fn fit_cells(&mut self, i: usize, text: &TextRenderer, px: u32, u: TextUnits, max: i32) {
+        let inset = if i == 0 {
+            name_x(self.rows.icon_slot(u)) + 2
+        } else {
+            2 * CELL_X
+        };
+        let widest = (0..self.rows.len())
+            .map(|row| text.measure(&self.rows.cell(row, i), false, px))
+            .max()
+            .unwrap_or(0);
+        if let Some(col) = self.columns.get_mut(i) {
+            col.width = col.width.max(u.design(widest + inset).min(max));
+        }
     }
 
     /// [`Self::fill_column`] to what a list laid out in `rect` keeps beside its vertical bar,

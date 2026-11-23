@@ -375,7 +375,7 @@ impl SettingsApp {
         if matches!(ev, Event::Wake) {
             return self.wake();
         }
-        self.fit_columns(&ctx.forms().controls());
+        self.fit_columns(&ctx.forms(), &ctx.text);
         if self.display.icon.is_none() {
             self.display.icon = ctx.icons.get("dialog-question", 32);
         }
