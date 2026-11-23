@@ -987,6 +987,7 @@ fn taskbar_shape() -> TaskbarShape {
         orb: true,
         orb_rise: Some(ORB_RISE),
         two_line_clock: Some([17, 34]),
+        line_growth: 0,
         start_menu: StartMenuDock::OnTop,
         labelled: LABELLED,
     }
@@ -1653,7 +1654,11 @@ mod tests {
         );
         assert_eq!(l.clock, Rect::new(1920 - 2 - 67, 0, 67, 40), "the clock");
         assert_eq!(l.notification.right(), 1920, "the tray runs to the edge");
-        assert_eq!(s.taskbar.clock_baselines(40), Some([17, 34]), "two lines");
+        assert_eq!(
+            s.taskbar.clock_baselines(40).map(|c| c.baselines),
+            Some([17, 34]),
+            "two lines"
+        );
         assert_eq!(s.taskbar.clock_baselines(30), None, "one on a 30 px bar");
         assert!(s.taskbar.orb, "Start is an orb");
     }

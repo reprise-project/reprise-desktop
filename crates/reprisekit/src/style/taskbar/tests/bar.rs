@@ -140,6 +140,66 @@ fn a_two_line_clock_sets_the_time_over_the_date() {
     assert!((centre(&date) - mid).abs() <= 3, "the date is centred");
 }
 
+/// The rows the clock inks on a Glass bar `height` tall at `pct` text, the time over the date
+/// when the layout gives two lines, and the layout.
+fn grown_clock_rows(pct: u32, height: i32) -> (Vec<i32>, TaskbarLayout) {
+    let theme = theme_for(Interface::Glass).with_text_size(pct);
+    let s = theme.look.style().unwrap();
+    let metrics = crate::theme::Metrics {
+        taskbar_height: height,
+        ..theme.metrics.clone()
+    };
+    let counts = TaskbarCounts::default();
+    let l = TaskbarLayout::compute(&metrics, &theme.taskbar_shape(), 1920, true, counts, 120);
+    let text = TextRenderer::load(&theme.fonts);
+    let start = TextRenderer::load(&s.start_text.font());
+    let draw = |clock: &str| {
+        let st = TaskbarState {
+            clock: clock.into(),
+            ..state_with_tasks(&[])
+        };
+        let mut c = Canvas::new(1920, height as u32);
+        draw_taskbar(&mut c, s, &theme, &text, &start, &l, &st);
+        c
+    };
+    let clock = if l.clock_lines.is_some() {
+        "12:34\n27.09.2026"
+    } else {
+        "12:34"
+    };
+    let (bare, c) = (draw(""), draw(clock));
+    (clock_rows(&c, &bare, l.clock), l)
+}
+
+#[test]
+fn a_clock_whose_two_lines_outgrow_the_bar_keeps_to_one() {
+    let g = theme_for(Interface::Glass)
+        .with_text_size(200)
+        .line_growth();
+    assert!(g > 0, "200% text grows a line");
+    let short = 28 + g;
+    let (rows, l) = grown_clock_rows(200, short);
+    assert_eq!(
+        l.clock_lines, None,
+        "two 200% lines need more than {short} px"
+    );
+    let (top, bottom) = (rows[0], *rows.last().unwrap());
+    assert!(
+        top >= 2 && bottom < short - 2,
+        "the time stays inside the bar: rows {top}..={bottom} of {short}"
+    );
+
+    let tall = 40 + 2 * g;
+    let (rows, l) = grown_clock_rows(200, tall);
+    let lines = l.clock_lines.expect("two lines on a bar that holds both");
+    assert_eq!(lines.height, tall);
+    assert!(rows[0] >= 2 && *rows.last().unwrap() < tall - 2, "{rows:?}");
+    assert!(
+        rows.windows(2).any(|w| w[1] > w[0] + 1),
+        "a blank row parts the time from the date: {rows:?}"
+    );
+}
+
 #[test]
 fn an_unlocked_glass_bars_grips_stand_out_from_the_bar_beside_them() {
     use crate::taskbar::{Bands, BarSpan, ClockText};

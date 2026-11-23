@@ -1670,7 +1670,10 @@ fn a_wide_side_classic_bar_sets_the_date_under_the_time() {
 fn a_wide_side_classic_bar_sets_each_clock_line_on_its_own_baseline() {
     let face = Theme::default().colors.button_face.argb();
     let (c, l) = classic_side(Edge::Right, 140, None, "8\n8");
-    assert_eq!((l.clock.height, l.clock_lines), (40, Some([17, 34])));
+    assert_eq!(
+        (l.clock.height, l.clock_lines.map(|c| c.baselines)),
+        (40, Some([17, 34]))
+    );
     let k = l.clock.inset(2);
     let inked: Vec<i32> = (k.y..k.bottom())
         .filter(|&y| (k.x..k.right()).any(|x| c.get(x, y) != face))

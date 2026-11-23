@@ -334,10 +334,16 @@ pub(crate) fn inverted_bar(off: &Canvas, on: &Canvas, paper: u32) -> (Rect, bool
 }
 
 impl Theme {
+    /// The look's bar shape at this theme's text size.
     pub fn taskbar_shape(&self) -> TaskbarShape {
-        self.look
+        let shape = self
+            .look
             .style()
-            .map_or(TaskbarShape::CLASSIC, |s| s.taskbar)
+            .map_or(TaskbarShape::CLASSIC, |s| s.taskbar);
+        TaskbarShape {
+            line_growth: self.line_growth(),
+            ..shape
+        }
     }
 
     /// This theme's colours and look, at its own scale, never below 1,
