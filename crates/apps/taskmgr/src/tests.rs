@@ -96,6 +96,7 @@ pub(crate) fn snapshot() -> Snapshot {
                 pids: vec![50],
             },
         ],
+        windows: None,
         devices: Default::default(),
     }
 }
@@ -697,6 +698,21 @@ fn a_program_whose_window_stopped_answering_reads_not_responding() {
 }
 
 #[test]
+fn applications_lists_only_programs_showing_a_window() {
+    let mut ctx = ctx();
+    let mut t = mgr();
+    t.take(
+        Snapshot {
+            windows: Some(vec![("org.kde.ark".into(), 41)]),
+            ..snapshot()
+        },
+        &mut ctx,
+    );
+    let names: Vec<&str> = t.app_rows.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["Ark"], "a tray or background program is left out");
+}
+
+#[test]
 fn a_hung_window_is_its_program_by_pid_and_else_by_app_id() {
     let s = snapshot();
     let entries = [
@@ -704,7 +720,7 @@ fn a_hung_window_is_its_program_by_pid_and_else_by_app_id() {
         entry("reprise-notepad", "Notepad", Some("reprise.notepad")),
     ];
     let hung = |sc: usize, id: &str, pid: u32| {
-        not_responding(&s.scopes[sc], &s.scopes, &entries, &[(id.into(), pid)])
+        has_window(&s.scopes[sc], &s.scopes, &entries, &[(id.into(), pid)])
     };
     assert!(hung(0, "anything", 41), "its client runs in the scope");
     assert!(

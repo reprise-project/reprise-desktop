@@ -161,6 +161,15 @@ pub fn count_windows(pids: &[i32]) -> zbus::Result<u32> {
     windows_call("CountWindows", pids)
 }
 
+/// Every window End Task would close, by app id and client pid (0 when unknown). Blocks for at
+/// most [`crate::METHOD_TIMEOUT`].
+pub fn task_windows() -> zbus::Result<Vec<Hung>> {
+    let conn = crate::session()?;
+    let reply =
+        crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "TaskWindows", &()))?;
+    reply.body().deserialize()
+}
+
 fn windows_call(method: &str, pids: &[i32]) -> zbus::Result<u32> {
     let conn = crate::session()?;
     let reply = crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), method, &(pids,)))?;
