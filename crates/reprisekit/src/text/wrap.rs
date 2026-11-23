@@ -15,6 +15,28 @@ pub fn wrap_bold(
     wrap_by(body, max_w, space, |w| text.measure(w, bold, size))
 }
 
+/// `body` wrapped as [`wrap_bold`] does, at most `max` lines, the last kept ending in "...".
+pub fn wrap_capped(
+    text: &TextRenderer,
+    body: &str,
+    max_w: i32,
+    size: u32,
+    bold: bool,
+    max: usize,
+) -> Vec<String> {
+    let mut lines = wrap_bold(text, body, max_w, size, bold);
+    if lines.len() > max {
+        lines.truncate(max);
+        if let Some(last) = lines.last_mut() {
+            while !last.is_empty() && text.measure(&format!("{last}..."), bold, size) > max_w {
+                last.pop();
+            }
+            *last = format!("{}...", last.trim_end());
+        }
+    }
+    lines
+}
+
 pub fn wrap_chars(body: &str, cols: usize) -> Vec<String> {
     wrap_by(body, cols as i32, 1, |w| w.chars().count() as i32)
 }

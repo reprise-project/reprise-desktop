@@ -2,11 +2,12 @@
 
 use crate::controls::tooltip::{
     NOTIFY_BODY_LINES, NOTIFY_BUTTONS, NotifyParts, NotifyReply, flow_buttons, flow_rows,
+    title_lines,
 };
 use crate::look::widgets::BUTTON_ICON;
 use crate::raster::Rect;
 use crate::style::{NotifyLook, SheetShape, Well};
-use crate::text::{TextRenderer, wrap};
+use crate::text::{TextRenderer, wrap_capped};
 use crate::theme::{TextUnits, Theme};
 
 use super::{SheetContent, SheetLayout, notify_look};
@@ -165,21 +166,6 @@ fn app_line(c: &SheetContent) -> String {
     }
 }
 
-/// `body` wrapped to `width`; past `NOTIFY_BODY_LINES` the last line kept ends in "...".
-fn body_lines(text: &TextRenderer, body: &str, width: i32, px: u32) -> Vec<String> {
-    let mut lines = wrap(text, body, width, px);
-    if lines.len() > NOTIFY_BODY_LINES {
-        lines.truncate(NOTIFY_BODY_LINES);
-        if let Some(last) = lines.last_mut() {
-            while !last.is_empty() && text.measure(&format!("{last}..."), false, px) > width {
-                last.pop();
-            }
-            *last = format!("{}...", last.trim_end());
-        }
-    }
-    lines
-}
-
 /// The pills right-aligned between `left` and `right` from `y`, design px, or with `reply` the
 /// reply field from `field_left` and its send pill. Pills that overrun the row wrap onto rows
 /// under it; the reply row stands on the first, the rows keeping the height the pills give them.
@@ -295,15 +281,13 @@ fn column_layout(
     } else {
         text_w
     };
-    let (title_y, body_y) = (text_y, text_y + g.title_h);
-
     let app_shown = text
         .ellipsize(&app_line(c), head_w * s, false, app_px)
         .into_owned();
-    let title = text
-        .ellipsize(c.title, title_w * s, true, title_px)
-        .into_owned();
-    let lines = body_lines(text, c.body, text_w * s, body_px);
+    let title = title_lines(text, c.title, title_w * s, true, title_px);
+    let title_h = title.len() as i32 * g.title_h;
+    let (title_y, body_y) = (text_y, text_y + title_h);
+    let lines = wrap_capped(text, c.body, text_w * s, body_px, false, NOTIFY_BODY_LINES);
     let text_bottom =
         (body_y + lines.len() as i32 * g.line_h).max(picture.map_or(0, |p| p.bottom()));
 
@@ -341,7 +325,7 @@ fn column_layout(
     });
     let parts = NotifyParts {
         bubble: at(sheet),
-        title: at(Rect::new(text_x, title_y, title_w, g.title_h)),
+        title: at(Rect::new(text_x, title_y, title_w, title_h)),
         body: at(Rect::new(
             text_x,
             body_y,
@@ -448,7 +432,7 @@ fn droplet_layout(
     let text_w = text_right - text_x;
     let lines = match (has_body, expanded) {
         (false, _) => Vec::new(),
-        (true, true) => body_lines(text, c.body, text_w * s, body_px),
+        (true, true) => wrap_capped(text, c.body, text_w * s, body_px, false, NOTIFY_BODY_LINES),
         (true, false) => {
             let one = c.body.split_whitespace().collect::<Vec<_>>().join(" ");
             vec![
@@ -534,7 +518,7 @@ fn droplet_layout(
         body_px,
         app_line: app_shown,
         app_box,
-        title,
+        title: vec![title],
         labels: row.labels,
         line_h: g.line_h * s,
         pill_px: g.pills.px,

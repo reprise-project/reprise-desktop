@@ -163,7 +163,7 @@ fn at_the_largest_text_size_a_crowded_sheet_holds_every_part_whole() {
                 );
                 let mut parts = vec![("title", p.title), ("body", body)];
                 if shape == SheetShape::Droplet {
-                    let title_end = p.title.x + t.measure(&lay.title, true, lay.title_px);
+                    let title_end = p.title.x + t.measure(&lay.title[0], true, lay.title_px);
                     assert!(
                         title_end <= lay.app_box.x,
                         "{at}: the app line follows the title"
@@ -227,4 +227,36 @@ fn grown_text_pins() {
         }
     }
     crate::pins::check("controls/notify_grown_text", &got);
+}
+
+#[test]
+fn a_long_title_wraps_whole_on_a_lozenge_and_a_halo_and_moves_the_body_down() {
+    let t = text();
+    for shape in [SheetShape::Lozenge, SheetShape::Halo] {
+        for pct in [100, 200] {
+            for s in [1, 2] {
+                let theme = glass_text(pct, s);
+                let at = format!("{shape:?} {pct}% x{s}");
+                let lay = |title| {
+                    sheet_layout(&theme, &t, shape, &content("Backup", title, "Done."), false)
+                        .unwrap()
+                };
+                let (short, long) = (lay("Backup"), lay(CROWDED_TITLE));
+                let n = long.title.len() as i32;
+                assert!(n >= 2, "{at}: {:?} wraps", long.title);
+                assert_eq!(long.title.join(" "), CROWDED_TITLE, "{at}: whole");
+                let line_h = short.parts.title.height;
+                for line in &long.title {
+                    assert!(t.measure(line, true, long.title_px) <= long.parts.title.width);
+                }
+                assert_eq!(long.parts.title.height, n * line_h, "{at}");
+                assert_eq!(
+                    long.parts.body.y,
+                    short.parts.body.y + (n - 1) * line_h,
+                    "{at}"
+                );
+                assert!(!long.parts.title.intersects(long.parts.close), "{at}");
+            }
+        }
+    }
 }

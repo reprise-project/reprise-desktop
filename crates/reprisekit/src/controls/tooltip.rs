@@ -12,7 +12,7 @@ use crate::pointer::Interaction;
 use crate::raster::{Canvas, Insets, Rect, rounded_border, rounded_fill};
 use crate::style::{BalloonLook, DropShadow};
 use crate::taskbar::Edge;
-use crate::text::{Align, TextRenderer, wrap};
+use crate::text::{Align, TextRenderer, wrap, wrap_capped};
 use crate::textedit::{Caret, EditKey, Preedit, TextEdit, index_at};
 use crate::theme::Theme;
 
@@ -383,7 +383,7 @@ pub fn place_balloon(cursor: (i32, i32), size: (i32, i32), screen: Rect) -> (i32
     keep_in(screen, (cursor.0 + dx - STEM_X, cursor.1 + dy), size)
 }
 
-/// The notification balloon's metrics (logical px): 300 px wide, 10 px
+/// The notification balloon's metrics (logical px): 300 px wide at 100% text, 10 px
 /// padding, an 18x12 tail under the body's right end and 6 px corners.
 const NOTIFY_W: i32 = 300;
 const NOTIFY_PAD: i32 = 10;
@@ -393,6 +393,8 @@ const NOTIFY_RADIUS: i32 = 6;
 /// Body lines the notification balloon shows at most, so a body of bare newlines
 /// cannot size the canvas.
 pub const NOTIFY_BODY_LINES: usize = 10;
+/// Title lines a notification shows at most, the last kept ending in "...".
+pub const NOTIFY_TITLE_LINES: usize = 3;
 /// Action buttons the balloon shows at most; past them a "..." button holds the
 /// rest.
 pub const NOTIFY_BUTTONS: usize = 3;
@@ -443,8 +445,8 @@ pub struct NotifyLayout {
     placeholder: String,
     send_label: String,
     lines: Vec<String>,
-    title: String,
-    /// The icon's top-left, the title's text box and size, the body's
+    title: Vec<String>,
+    /// The icon's top-left, the title's first line box and size, the body's
     /// first line box's top, all from the bubble's top-left.
     icon_at: (i32, i32),
     title_box: Rect,
@@ -480,6 +482,21 @@ fn balloon_look(theme: &Theme) -> Option<BalloonLook> {
     })
 }
 
+/// A notification's title wrapped to `width`; an empty title keeps its one line.
+pub(crate) fn title_lines(
+    text: &TextRenderer,
+    title: &str,
+    width: i32,
+    bold: bool,
+    px: u32,
+) -> Vec<String> {
+    let mut lines = wrap_capped(text, title, width, px, bold, NOTIFY_TITLE_LINES);
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
 /// Lay out the balloon for `title`, `body` and the action labels `actions`
 /// (every one but the body's own action). The first [`NOTIFY_BUTTONS`] get a
 /// button each, right-aligned under the body; more put a "..." button at the
@@ -488,7 +505,8 @@ fn balloon_look(theme: &Theme) -> Option<BalloonLook> {
 /// ([`flow_buttons`]). With `reply` the first row holds the reply field and
 /// send button instead, the balloon keeping the rows' height so expanding the
 /// reply leaves the size alone. A look with its own balloon ([`BalloonLook`])
-/// places the icon, text and close box and sizes the tail.
+/// places the icon, text and close box and sizes the tail. The balloon widens with the text
+/// size, and a title too long for its line wraps like the body.
 pub fn notify_layout(
     theme: &Theme,
     text: &TextRenderer,
@@ -500,7 +518,7 @@ pub fn notify_layout(
 ) -> NotifyLayout {
     let s = theme.scale.max(1);
     let size = theme.fonts.size_px;
-    let w = NOTIFY_W * s;
+    let w = theme.text.len(NOTIFY_W) * s;
     let pad = NOTIFY_PAD * s;
     let look = balloon_look(theme);
     // The icon, the text's left edge and width, the title's box and
@@ -539,24 +557,23 @@ pub fn notify_layout(
     lines.truncate(NOTIFY_BODY_LINES);
     let n = lines.len().max(1) as i32;
     // Classic's title leaves 12 px for the 7x7 close cross at the far
-    // top-right; a look's ends 4 px short of its close box.
-    let (title_box, body_y, text_bottom, end_pad) = match &look {
+    // top-right; a look's ends 4 px short of its close box. Each title line
+    // past the first moves the body down a title line.
+    let title_box = match &look {
         Some(b) => {
             let tw = close.x - 4 * s - text_x;
-            let tb = Rect::new(text_x, b.title_y * s, tw, (b.title_px as i32 + 4) * s);
-            let body_y = b.body_y * s;
-            (tb, body_y, body_y + n * line_h, b.bottom * s)
+            Rect::new(text_x, b.title_y * s, tw, (b.title_px as i32 + 4) * s)
         }
-        None => {
-            // Padding, the title line and a 4 px gap, the body lines.
-            let body_y = pad + line_h + 4 * s;
-            let tb = Rect::new(text_x, pad, text_w - 12 * s, line_h);
-            (tb, body_y, body_y + n * line_h, pad)
-        }
+        None => Rect::new(text_x, pad, text_w - 12 * s, line_h),
     };
-    let title = text
-        .ellipsize(title, title_box.width, look.is_none(), title_px)
-        .into_owned();
+    let title = title_lines(text, title, title_box.width, look.is_none(), title_px);
+    let more_title = (title.len() as i32 - 1) * title_box.height;
+    let (body_y, end_pad) = match &look {
+        Some(b) => (b.body_y * s + more_title, b.bottom * s),
+        // Padding, the title lines and a 4 px gap, the body lines.
+        None => (pad + line_h + more_title + 4 * s, pad),
+    };
+    let text_bottom = body_y + n * line_h;
 
     let shown = actions.len().min(NOTIFY_BUTTONS);
     let more = actions.len() > NOTIFY_BUTTONS;
@@ -727,9 +744,10 @@ impl NotifyLayout {
         let top = self.bubble_y;
         let tb = self.title_box;
         let lines = self.lines.len().max(1) as i32;
+        let title_h = self.title.len() as i32 * tb.height;
         NotifyParts {
             bubble: Rect::new(0, top, self.bubble_w, self.bubble_h),
-            title: Rect::new(tb.x, top + tb.y, tb.width, tb.height),
+            title: Rect::new(tb.x, top + tb.y, tb.width, title_h),
             body: Rect::new(
                 self.text_x,
                 top + self.body_y,
@@ -876,17 +894,19 @@ pub fn draw_notify_balloon(
         c.blit_canvas(lay.icon_at.0, top + lay.icon_at.1, ic);
     }
     let tb = lay.title_box;
-    let tb = Rect::new(tb.x, top + tb.y, tb.width, tb.height);
-    let tb = text.ink_box(tb, &lay.title, look.is_none(), lay.title_px, c.scale());
-    text.draw(
-        &mut c,
-        tb,
-        &lay.title,
-        look.is_none(),
-        title_ink,
-        Align::Left,
-        lay.title_px,
-    );
+    for (i, line) in lay.title.iter().enumerate() {
+        let r = Rect::new(tb.x, top + tb.y + i as i32 * tb.height, tb.width, tb.height);
+        let r = text.ink_box(r, line, look.is_none(), lay.title_px, c.scale());
+        text.draw(
+            &mut c,
+            r,
+            line,
+            look.is_none(),
+            title_ink,
+            Align::Left,
+            lay.title_px,
+        );
+    }
     let mut y = top + lay.body_y;
     for line in &lay.lines {
         let r = Rect::new(lay.text_x, y, lay.text_w, lay.line_h);
