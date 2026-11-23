@@ -304,32 +304,42 @@ pub fn use_for_rows(s: &Settings, monitors: &[Monitor]) -> Vec<String> {
         .collect()
 }
 
-/// `s` as the page shows it for `target`: that desktop's picture (its own, else the one for all),
-/// or that monitor's picture and position (its own, else the ones for all); never a slideshow.
+/// `s` as the page shows it for `target`: its picture and position (its own, else the ones for
+/// all), never a slideshow; under a slideshow, no picture unless its own ([`preview`]).
 pub fn view<'a>(s: &'a Settings, target: &Target) -> Cow<'a, Settings> {
-    match target {
-        Target::All => Cow::Borrowed(s),
-        Target::Desktop(n) => {
-            let own = s.wallpaper_desktops.get(*n).filter(|p| !p.is_empty());
-            Cow::Owned(Settings {
-                wallpaper: own.unwrap_or(&s.wallpaper).clone(),
-                slideshow: String::new(),
-                ..s.clone()
-            })
-        }
-        Target::Monitor(name) => {
-            let own = s.output_wallpapers.iter().find(|o| o.name == *name);
-            let or = |v: Option<&String>, all: &String| {
-                v.filter(|v| !v.is_empty()).unwrap_or(all).clone()
-            };
-            Cow::Owned(Settings {
-                wallpaper: or(own.map(|o| &o.wallpaper), &s.wallpaper),
-                wallpaper_position: or(own.map(|o| &o.position), &s.wallpaper_position),
-                slideshow: String::new(),
-                ..s.clone()
-            })
-        }
+    let own = match target {
+        Target::All => return Cow::Borrowed(s),
+        Target::Desktop(n) => s.wallpaper_desktops.get(*n),
+        Target::Monitor(name) => (s.output_wallpapers.iter())
+            .find(|o| o.name == *name)
+            .map(|o| &o.wallpaper),
+    };
+    let shared = if slideshow(s) { "" } else { &s.wallpaper };
+    let position = match target {
+        Target::Monitor(name) => (s.output_wallpapers.iter())
+            .find(|o| o.name == *name && !o.position.is_empty())
+            .map(|o| &o.position),
+        _ => None,
+    };
+    Cow::Owned(Settings {
+        wallpaper: own
+            .filter(|p| !p.is_empty())
+            .map_or(shared, String::as_str)
+            .to_string(),
+        wallpaper_position: position.unwrap_or(&s.wallpaper_position).clone(),
+        slideshow: String::new(),
+        ..s.clone()
+    })
+}
+
+/// `s` as the monitor shows it for `target`: [`view`], with the slideshow for a desktop or
+/// monitor without a picture of its own.
+pub fn preview<'a>(s: &'a Settings, target: &Target) -> Cow<'a, Settings> {
+    let mut v = view(s, target);
+    if v.wallpaper.is_empty() && !slideshow(&v) && slideshow(s) {
+        v.to_mut().slideshow = s.slideshow.clone();
     }
+    v
 }
 
 /// Whether `picked` is the picture for all: none, or `s`'s own picture while no slideshow runs.
@@ -671,10 +681,11 @@ pub fn follow_use_for(form: &mut Form, s: &Settings, monitors: &[Monitor]) {
 /// while there is no picture file, and the slideshow's controls, greyed without one.
 fn follow_target(form: &mut Form, s: &Settings, t: &Target) {
     form.set_enabled(MODE, *t == Target::All);
+    let shown = preview(s, t);
     let s = &*view(s, t);
     let show = slideshow(s);
     form.set_combo(MODE, show as usize);
-    let has = (!s.wallpaper.is_empty() && builtin(&s.wallpaper).is_none()) || show;
+    let has = (!s.wallpaper.is_empty() && builtin(&s.wallpaper).is_none()) || slideshow(&shown);
     form.set_enabled("position_label", has);
     form.set_enabled(POSITION, has);
     if let Some(i) = POSITIONS
@@ -765,14 +776,26 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(view(&s, &Target::All).slideshow, "~/Slides");
-        assert_eq!(view(&s, &Target::Desktop(0)).wallpaper, "~/w/a.jpg");
+        assert_eq!(
+            view(&s, &Target::Desktop(0)).wallpaper,
+            "",
+            "under a slideshow a desktop has no picture of its own"
+        );
         assert_eq!(
             view(&s, &Target::Desktop(0)).slideshow,
             "",
-            "a desktop shows one picture"
+            "a desktop picks one picture"
+        );
+        assert_eq!(
+            preview(&s, &Target::Desktop(0)).slideshow,
+            "~/Slides",
+            "the monitor shows the slideshow"
         );
         assert_eq!(view(&s, &Target::Desktop(1)).wallpaper, "reprise:tarn/dusk");
+        assert_eq!(preview(&s, &Target::Desktop(1)).slideshow, "");
+        s.slideshow.clear();
         assert_eq!(view(&s, &Target::Desktop(2)).wallpaper, "~/w/a.jpg");
+        s.slideshow = "~/Slides".into();
         assert_eq!(
             use_for_rows(&s, &[]),
             [ALL_DESKTOPS, "Work", "Desktop 2", "Desktop 3"]
@@ -831,8 +854,9 @@ mod tests {
         assert_eq!(target(&f, &s, &monitors), hdmi);
         f.set_combo(USE_FOR, 2);
         assert_eq!(target(&f, &s, &monitors), Target::Desktop(1));
-        assert_eq!(view(&s, &hdmi).wallpaper, "~/w/a.jpg");
-        assert_eq!(view(&s, &hdmi).slideshow, "", "a monitor shows one picture");
+        assert_eq!(view(&s, &hdmi).wallpaper, "");
+        assert_eq!(view(&s, &hdmi).slideshow, "", "a monitor picks one picture");
+        assert_eq!(preview(&s, &hdmi).slideshow, "~/Slides");
         set_for_monitor(
             &mut s,
             "HDMI-A-1",

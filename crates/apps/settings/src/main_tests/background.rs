@@ -277,6 +277,59 @@ fn a_picture_picked_for_one_monitor_is_written_to_its_outputs_entry() {
     assert!(text.contains("image = \"reprise:ridges/dusk\""), "{text}");
 }
 
+/// Under a slideshow, a desktop without a picture of its own shows the slideshow: the monitor
+/// shows its first picture, no picture row is picked, and the picture for all picked for the
+/// desktop becomes its own.
+#[test]
+fn a_desktop_without_its_own_picture_shows_the_slideshow() {
+    let dir = tmp("desktop-slides");
+    let (walls, trips) = (dir.join("Walls"), dir.join("Trips"));
+    std::fs::create_dir_all(&walls).unwrap();
+    std::fs::create_dir_all(&trips).unwrap();
+    std::fs::write(walls.join("dunes.jpg"), b"x").unwrap();
+    std::fs::write(trips.join("coast.jpg"), b"x").unwrap();
+    let path = dir.join("config.toml");
+    let wall = walls.join("dunes.jpg");
+    std::fs::write(
+        &path,
+        format!("[workspaces]\ncount = 2\n[wallpaper]\nimage = {wall:?}\nslideshow = {trips:?}\n"),
+    )
+    .unwrap();
+    let mut a = SettingsApp::open(path, "us".into());
+    a.wallpapers = vec![wall.clone()];
+    let bg = Page::Background.index();
+    let settle = |a: &mut SettingsApp| {
+        for _ in 0..500 {
+            a.wake();
+            if a.listing.is_none() && a.decoding.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        a.picture.as_ref().map(|p| p.path.clone())
+    };
+    let name = |p: &Path| Some(p.to_string_lossy().into_owned());
+    a.want_preview();
+    assert_eq!(settle(&mut a), name(&trips.join("coast.jpg")));
+
+    a.sheet.pages[bg].set_combo(backgroundpage::USE_FOR, 2);
+    a.sheet_event(propsheet::Event::Page(
+        bg,
+        form::Event::Changed(backgroundpage::USE_FOR),
+    ));
+    assert_eq!(
+        settle(&mut a),
+        name(&trips.join("coast.jpg")),
+        "desktop 2 shows the slideshow"
+    );
+    let rows = backgroundpage::builtins().len() + 2;
+    assert_eq!(backgroundpage::selected(&a.sheet.pages[bg]), Some(0));
+    pick_row(&mut a, rows - 1);
+    assert_eq!(a.want.wallpaper_desktops, ["", &*name(&wall).unwrap()]);
+    a.want_preview();
+    assert_eq!(settle(&mut a), name(&wall));
+}
+
 /// With a slideshow running, a folder picked for all monitors takes the connected monitors' own
 /// pictures away, as a picture does; a monitor not connected keeps its own.
 #[test]
