@@ -269,3 +269,36 @@ fn clicks_ask_only_their_output(interface: &str) {
     h.button(LEFT, true);
     asked_first("a press on a sheet's button", true);
 }
+
+#[test]
+fn a_right_click_on_start_offers_the_programs_folder_and_start_menu_settings_in_every_look() {
+    use reprisekit::controls::menu::MenuItem;
+    for look in ["classic", "blue", "glass"] {
+        let (mut h, _c, _) = on_first_of_two(look);
+        crate::spawn::record();
+        click(
+            &mut h,
+            "Start's menu",
+            BTN_RIGHT,
+            true,
+            bar(|t| *t == TaskbarHit::Start),
+        );
+        assert!(h.state.start_panel.is_none(), "{look}: no Start menu");
+        let labels: Vec<&str> = (h.state.menus.first().expect("a menu").items.iter())
+            .filter_map(|i| match i {
+                MenuItem::Entry { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(labels, ["Open", "Explore", "Properties"], "{look}");
+        click(
+            &mut h,
+            "Properties",
+            LEFT,
+            true,
+            row(|l, _| l == "Properties"),
+        );
+        assert!(h.state.menus.is_empty(), "{look}: the menu closes");
+        assert_eq!(crate::spawn::recorded(), ["reprise-settings"], "{look}");
+    }
+}

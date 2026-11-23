@@ -202,10 +202,10 @@ impl State {
             );
             crate::access::click(self, mid, button);
         }
-        if menus_were == 0
-            && !self.menus.is_empty()
-            && (at != TaskbarHit::Start || self.config.startmenu_style == StartMenuStyle::Classic)
-        {
+        let start_panel = button == BTN_LEFT
+            && at == TaskbarHit::Start
+            && self.config.startmenu_style != StartMenuStyle::Classic;
+        if menus_were == 0 && !self.menus.is_empty() && !start_panel {
             self.enter_menu_keys();
         }
     }

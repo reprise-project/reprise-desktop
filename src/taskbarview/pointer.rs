@@ -164,6 +164,7 @@ impl State {
                 }
             }
             TaskbarHit::Start if button == BTN_LEFT => self.toggle_start(tree),
+            TaskbarHit::Start if button == BTN_RIGHT => self.open_start_button_menu(at),
             TaskbarHit::Quick(index) if button == BTN_LEFT => {
                 let icon_px = self.config.theme.icon_size();
                 let grab = self.bar(tree).map_or((0, 0), |b| {
