@@ -68,7 +68,7 @@ fn the_set_stored_to_least_recently_goes_past_the_cap() {
 
 #[test]
 fn an_entry_that_does_not_read_is_dropped_alone() {
-    let text = "[s.good]\noutput = \"DP-1\"\nx = 1\ny = 2\nwidth = 3\nheight = 4\nused = 7\n\
+    let text = "[s.good]\noutput = \"DP-1\"\nx = 1\ny = 2\nwidth = 300\nheight = 400\nused = 7\n\
                 [s.bad]\nx = \"left\"\n";
     let k = KeptFrames::parse(PathBuf::from("/nowhere"), text);
     assert!(k.get("s", "good").is_some());
@@ -79,6 +79,26 @@ fn an_entry_that_does_not_read_is_dropped_alone() {
             .sets
             .is_empty()
     );
+}
+
+#[test]
+fn a_frame_under_the_smallest_kept_size_is_neither_stored_nor_read_back() {
+    let tiny = Remembered {
+        width: 75,
+        height: 32,
+        ..frame(1)
+    };
+    let mut k = kept();
+    assert!(k.store("s", "a", frame(1)));
+    assert!(!k.store("s", "a", tiny), "75x32 is not stored");
+    assert_eq!(k.get("s", "a"), Some(&frame(1)), "the kept frame stays");
+    let text = "[s.a]\noutput = \"DP-1\"\nx = 1\ny = 2\nwidth = 75\nheight = 32\nused = 1\n\
+                [s.b]\noutput = \"DP-1\"\nx = 1\ny = 2\nwidth = 640\nheight = 32\nused = 2\n\
+                [s.c]\noutput = \"DP-1\"\nx = 1\ny = 2\nwidth = 100\nheight = 50\nused = 3\n";
+    let k = KeptFrames::parse(PathBuf::from("/nowhere"), text);
+    assert_eq!(k.get("s", "a"), None, "75x32 is dropped");
+    assert_eq!(k.get("s", "b"), None, "32 high is dropped");
+    assert!(k.get("s", "c").is_some(), "{MIN_SIZE:?} is kept");
 }
 
 use crate::harness::{Harness, TestClient, Toplevel};
@@ -142,6 +162,28 @@ fn a_program_reopens_where_and_at_the_size_its_last_window_closed() {
     assert!(
         r2.x > r.x && r2.y > r.y,
         "a second window cascades from the first: {r2:?} after {r:?}"
+    );
+}
+
+#[test]
+fn a_programs_tiny_first_window_leaves_its_kept_size_alone() {
+    let mut h = one_screen();
+    let mut c = h.connect();
+    let set = h.state.output_set();
+    let t = h.map_toplevel(&mut c, APP, 75, 32);
+    close(&mut h, &mut c, t);
+    assert_eq!(h.state.wm.kept.get(&set, APP), None, "nothing kept fresh");
+    leave_at(&mut h, &mut c, (400, 300), (500, 400));
+    let kept = h.state.wm.kept.get(&set, APP).cloned();
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    h.resize_self(&mut c, t, 75, 32);
+    close(&mut h, &mut c, t);
+    assert_eq!(h.state.wm.kept.get(&set, APP).cloned(), kept);
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    assert_eq!(
+        asked_client(&h, t),
+        (500, 400),
+        "opens at the size kept before"
     );
 }
 
