@@ -49,6 +49,7 @@ impl State {
         if shown.len() == icons.len() {
             return;
         }
+        self.forget_desktop_undos();
         self.config.system_icons = shown.clone();
         self.rescan_desktop();
         crate::configwrite::save_system_icons(&self.config_path, shown);

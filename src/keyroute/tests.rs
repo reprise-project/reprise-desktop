@@ -2077,6 +2077,50 @@ fn the_desktop_takes_its_menu_clipboard_and_refresh_keys() {
 }
 
 #[test]
+fn ctrl_z_undoes_on_the_bare_desktop_and_goes_to_what_holds_the_keyboard() {
+    let ctrl_z = press(KEY_z, MOD_CTRL);
+    let bare = Modes {
+        desktop_has_keyboard: true,
+        has_icons: true,
+        ..Modes::default()
+    };
+    assert_eq!(r(&bare, &ctrl_z), KeyRoute::IconUndo);
+    let held: [(Modes, KeyRoute); 4] = [
+        (
+            Modes {
+                renaming: true,
+                ..bare.clone()
+            },
+            KeyRoute::Rename,
+        ),
+        (
+            Modes {
+                dialog_has_keyboard: true,
+                ..bare.clone()
+            },
+            KeyRoute::Dialog,
+        ),
+        (
+            Modes {
+                launcher_open: true,
+                ..bare.clone()
+            },
+            KeyRoute::Launcher,
+        ),
+        (
+            Modes {
+                desktop_has_keyboard: false,
+                ..bare.clone()
+            },
+            KeyRoute::Client,
+        ),
+    ];
+    for (m, to) in held {
+        assert_eq!(r(&m, &ctrl_z), to);
+    }
+}
+
+#[test]
 fn a_bound_arrow_runs_its_bind_over_the_desktop_icons() {
     let m = Modes {
         desktop_has_keyboard: true,

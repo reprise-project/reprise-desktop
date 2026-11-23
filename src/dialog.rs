@@ -82,6 +82,8 @@ pub enum DialogAction {
     },
     /// The Mount Disk Image question's Mount for the disk image at this path.
     MountImage(std::path::PathBuf),
+    /// The desktop Undo question's Yes: undo this entry again, deleting its item for good.
+    UndoErase(reprisefs::undo::EntryId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -390,6 +392,8 @@ pub enum Outcome {
     },
     /// [`DialogAction::MountImage`].
     MountImage(std::path::PathBuf),
+    /// [`DialogAction::UndoErase`].
+    UndoErase(reprisefs::undo::EntryId),
     /// Run what the user typed in the field: spawned like `Spawn`, and
     /// remembered in the Run history.
     Run(String),

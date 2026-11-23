@@ -114,6 +114,13 @@ pub struct DesktopView {
     pub(crate) send_dirs: sendto::Dirs,
     pub(crate) drives: sendto::Drives,
     pub(crate) bins: DriveBins,
+    /// Ctrl+Z on the desktop reverses the top entry: a New or an inline rename. Any other file
+    /// action from the desktop clears it ([`State::forget_desktop_undos`]).
+    pub(crate) undos: reprisefs::undo::UndoStack,
+    /// An Undo is running; Ctrl+Z waits for it.
+    pub(crate) undoing: bool,
+    /// The item New just made: once a scan lists it, it is selected and its rename begins.
+    made: Option<String>,
 }
 
 /// A rubber-band selection in progress: the press point, the selection as it
@@ -172,6 +179,7 @@ pub enum DesktopCommand {
     Copy,
     Paste,
     PasteShortcut,
+    Undo,
     PasteInto,
     /// Paste on a launcher: the clipboard's files open in its program.
     PasteOpen,
@@ -283,6 +291,9 @@ pub(crate) fn create(
         send_dirs: sendto::Dirs::default(),
         drives: sendto::Drives::new(places::MountedDrives::new()),
         bins: DriveBins::default(),
+        undos: Default::default(),
+        undoing: false,
+        made: None,
     });
 }
 

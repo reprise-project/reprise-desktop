@@ -84,6 +84,12 @@ impl FsJobs {
         self.deadline.unwrap_or(ACTION_DEADLINE)
     }
 
+    /// Takes every action thread, as actions hung on a dead mount do: later actions wait.
+    #[cfg(test)]
+    pub fn hold_action_threads(&self) {
+        self.actions.running.store(MAX_THREADS, Ordering::Release);
+    }
+
     /// The channel's sending end, for a worker of its own that hands results to the loop.
     pub fn sender(&self) -> Option<Sender<OnLoop>> {
         self.tx.clone()
@@ -272,12 +278,18 @@ pub struct Action {
     /// Some for an action that changes files: what refreshes the view when a change it had
     /// already started lands past the deadline.
     pub late: Option<fn(&mut State)>,
+    /// What runs on the loop when the action gives up at its deadline.
+    pub gave_up: Option<fn(&mut State)>,
 }
 
 impl Action {
     /// An action whose work only reads; a late answer is dropped.
     pub fn reads(title: &'static str) -> Action {
-        Action { title, late: None }
+        Action {
+            title,
+            late: None,
+            gave_up: None,
+        }
     }
 
     /// An action whose work changes files after [`Gate::change`].
@@ -285,6 +297,14 @@ impl Action {
         Action {
             title,
             late: Some(late),
+            gave_up: None,
+        }
+    }
+
+    pub fn on_give_up(self, gave_up: fn(&mut State)) -> Action {
+        Action {
+            gave_up: Some(gave_up),
+            ..self
         }
     }
 
@@ -348,6 +368,10 @@ impl State {
             work(&Gate::default())(self);
             return true;
         };
+        #[cfg(test)]
+        if self.fsjobs.refuse_threads {
+            return false;
+        }
         let gate = Gate::default();
         let deadline = self.fsjobs.deadline();
         let timer = Timer::from_duration(deadline);
@@ -357,6 +381,9 @@ impl State {
                 log::warn!("fsjobs: {} gave up after {deadline:?}", action.title);
                 let text = action.not_responding(changing);
                 state.open_dialog(crate::dialog::Dialog::error(action.title, text));
+                if let Some(gave_up) = action.gave_up {
+                    gave_up(state);
+                }
             }
             TimeoutAction::Drop
         });

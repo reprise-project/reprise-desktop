@@ -148,6 +148,8 @@ shake, the dim, the hidden frame rate and window memory.
 
 - **Icons** for Documents, Computer, Home, Recycle Bin and the files in
   `~/Desktop`, to drag, rename and right-click (`desktop_extensions`).
+  New selects what it makes and starts its rename; Ctrl+Z undoes a New or a
+  rename, back to the last other file action on the desktop.
 - **Open in Terminal** on the desktop's and a folder's right-click menu
   starts your `terminal` there.
 - **Widgets.** A clock, a calendar and a system meter, ticked under the

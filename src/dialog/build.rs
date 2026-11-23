@@ -363,6 +363,29 @@ impl Dialog {
         Dialog::run_question(&path, asked, buttons)
     }
 
+    /// The question when desktop Undo would bin an item and its Recycle Bin refuses (`text`,
+    /// [`reprisefs::undo::NoBin::question`]): Yes undoes `entry` again and deletes the item for
+    /// good, No leaves the entry for a later Undo.
+    pub fn ask_undo_erase(text: String, entry: reprisefs::undo::EntryId) -> Dialog {
+        Dialog {
+            icon: Some("text-x-generic".into()),
+            text,
+            buttons: vec![
+                button("&Yes", DialogAction::UndoErase(entry), true),
+                button("&No", DialogAction::Cancel, false),
+            ],
+            ..Dialog::new(
+                "Confirm File Delete",
+                Style::Classic {
+                    template: Template::ShellNotice,
+                    text_h: None,
+                    delete_badge: true,
+                },
+                Placement::Center,
+            )
+        }
+    }
+
     /// The question before the disk image at `path` is mounted: Mount mounts it read-only,
     /// Cancel, the default, leaves it.
     pub fn ask_mount(path: std::path::PathBuf) -> Dialog {

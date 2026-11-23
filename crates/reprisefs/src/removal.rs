@@ -96,7 +96,7 @@ impl Removal {
                         (to, from.parent())
                     }
                     Undoable::Trash(t) => (&t.files, t.original.parent()),
-                    Undoable::Copied(p) | Undoable::New(p) => (p, None),
+                    Undoable::Copied(p) | Undoable::New(p, _) => (p, None),
                     Undoable::Batch(_) => return Some(Totals::default()),
                 };
                 if back.is_some_and(|dir| crate::ops::same_device(path, dir)) {
@@ -124,7 +124,7 @@ impl Removal {
             Removal::Undo { step, .. } => match step {
                 Undoable::Move { to, .. } | Undoable::Rename { to, .. } => to,
                 Undoable::Trash(t) => &t.original,
-                Undoable::Copied(p) | Undoable::New(p) => p,
+                Undoable::Copied(p) | Undoable::New(p, _) => p,
                 Undoable::Batch(_) => return std::ffi::OsStr::new(""),
             },
         };

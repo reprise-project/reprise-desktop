@@ -404,9 +404,19 @@ impl State {
         if migrate_launcher_keys(&view.entries, &mut view.positions) {
             crate::state::save_desktop(view.auto_arrange, &view.positions);
         }
+        // A scan that began before New made its item leaves it to the next one.
+        let made = (view.made.as_ref()).map(|n| view.entries.iter().position(|e| e.name == *n));
+        if made.is_some_and(|i| i.is_some() || !view.rescan_again) {
+            view.made = None;
+        }
+        // A rename the user is typing keeps the keyboard.
+        let rename = made.flatten().filter(|_| view.rename.is_none());
         let again = std::mem::take(&mut view.rescan_again);
         self.land_job_icons(&fresh);
         self.relayout_desktop();
+        if let Some(i) = rename {
+            self.begin_rename(i);
+        }
         if again {
             self.rescan_desktop();
         }

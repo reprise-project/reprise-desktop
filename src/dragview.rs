@@ -1010,6 +1010,7 @@ impl State {
     /// and allowed to launch, a shortcut to one, or a shortcut to a system icon, which is never
     /// copied. One with a cell lands there; the first failure stops the rest and says why.
     fn write_launchers(&mut self, dir: PathBuf, op: DropOp, puts: Vec<Put>, existing: Vec<String>) {
+        self.forget_desktop_undos();
         let action = Action::changes(op.failure_title(), State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
             if !gate.change(&dir) {
@@ -1077,6 +1078,7 @@ impl State {
             }
             DropTarget::Quick(_) | DropTarget::Pin { .. } | DropTarget::Trash => return,
         };
+        self.forget_desktop_undos();
         let action = Action::changes(DropOp::Shortcut.failure_title(), State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
             if !gate.change(&dir) {

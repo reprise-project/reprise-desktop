@@ -166,6 +166,9 @@ impl State {
         landings: Vec<(String, (i32, i32))>,
         moving: Vec<PathBuf>,
     ) {
+        if what != What::Empty {
+            self.forget_desktop_undos();
+        }
         let argv: Vec<&std::ffi::OsStr> = std::iter::once(EXPLORER.as_ref())
             .chain(args.iter().map(|a| a.as_os_str()))
             .collect();
