@@ -2819,3 +2819,55 @@ fn trash_shaped(masks: usize, clips: usize) -> String {
     }
     format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128">{body}</svg>"#)
 }
+
+#[test]
+fn a_name_the_theme_lacks_wears_its_stand_in_and_an_own_icon_wins() {
+    let root = fixture(
+        "test",
+        INDEX,
+        &[
+            "32x32/apps/dialog-password.png",
+            "32x32/apps/battery.png",
+            "32x32/apps/gnome-power-manager.png",
+        ],
+    );
+    let t = IconTheme::load("test", std::slice::from_ref(&root));
+    let at = |f: &str| Some(root.join("test/32x32/apps").join(f));
+    assert_eq!(
+        t.lookup("polkit-gnome-authorization", 32, 1),
+        at("dialog-password.png")
+    );
+    assert_eq!(
+        t.lookup("preferences-system-power-management", 32, 1),
+        at("gnome-power-manager.png"),
+        "the first stand-in the theme has"
+    );
+    assert!(t.lookup("preferences-system-time", 32, 1).is_none());
+    let breeze = root.join("breeze/32x32/apps");
+    fs::create_dir_all(&breeze).unwrap();
+    fs::write(root.join("breeze/index.theme"), INDEX).unwrap();
+    fs::write(breeze.join("preferences-system-power-management.png"), b"").unwrap();
+    fs::write(breeze.join("preferences-system-time.png"), b"").unwrap();
+    let t = IconTheme::load("test", std::slice::from_ref(&root));
+    assert_eq!(
+        t.lookup("preferences-system-power-management", 32, 1),
+        at("gnome-power-manager.png"),
+        "the theme's own stand-in beats the name in a fallback theme"
+    );
+    assert_eq!(
+        t.lookup("preferences-system-time", 32, 1),
+        Some(breeze.join("preferences-system-time.png")),
+        "with no stand-in in the theme, the fallback's name"
+    );
+    fs::write(
+        root.join("test/32x32/apps/polkit-gnome-authorization.png"),
+        b"",
+    )
+    .unwrap();
+    let t = t.reload();
+    assert_eq!(
+        t.lookup("polkit-gnome-authorization", 32, 1),
+        at("polkit-gnome-authorization.png")
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
