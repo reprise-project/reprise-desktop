@@ -592,6 +592,21 @@ fn a_press_moves_the_focus_and_default_to_the_pressed_button() {
     assert_eq!(d.key(Key::Enter), Outcome::MountImage(path));
 }
 
+#[test]
+fn the_undo_erase_questions_yes_undoes_again_deleting_the_item() {
+    let mut undos = reprisefs::undo::UndoStack::default();
+    undos.push(reprisefs::undo::Undoable::New("/d/New".into(), None));
+    let taken = undos.take().unwrap();
+    let entry = undos.put_back(taken, 0, None).unwrap();
+    let mut d = Dialog::ask_undo_erase("Delete it?".into(), entry);
+    assert_eq!(
+        d.buttons[1].action,
+        DialogAction::Cancel,
+        "No keeps the entry"
+    );
+    assert_eq!(d.key(Key::Enter), Outcome::UndoErase(entry));
+}
+
 /// In Run a press on a button takes the focus from the field and closes its open list, as Tab
 /// would; let go off it, Enter presses that button.
 #[test]

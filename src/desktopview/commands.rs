@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use reprisefs::apps::AppEntry;
 use reprisefs::program::{Confirm, Program, ScriptOpen};
+use reprisefs::undo::{FileId, Undoable, file_id};
 use reprisefs::{apps, ops, udisks};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
@@ -100,6 +101,7 @@ impl State {
     /// Marks `paths` executable and trusted in a file job; the first that fails says why once it
     /// answers.
     pub(crate) fn allow_launching(&mut self, paths: &[PathBuf]) {
+        self.forget_desktop_undos();
         let paths = paths.to_vec();
         let action = Action::changes("Allow Launching", State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
@@ -311,9 +313,14 @@ impl State {
         }
     }
 
-    /// A new item `name` exists on disk: land it in the cell under `at` (unless Auto Arrange
-    /// flows it), then rescan once.
-    fn created(&mut self, name: &str, at: Option<(i32, i32)>) {
+    /// A new item `name` with identity `id` exists on disk: land it in the cell under `at`
+    /// (unless Auto Arrange flows it), push its Undo New, then rescan once; the scan that lists
+    /// it selects it and begins its rename.
+    fn created(&mut self, name: &str, id: Option<FileId>, at: Option<(i32, i32)>) {
+        if let Some(view) = self.desktop.as_mut() {
+            view.undos.push(Undoable::New(view.dir.join(name), id));
+            view.made = Some(name.to_string());
+        }
         let area = self.desktop_area();
         let auto = self.desktop.as_ref().is_none_or(|v| v.auto_arrange);
         if let Some((x, y)) = at.filter(|_| !auto && area.width > 0) {
@@ -343,9 +350,10 @@ impl State {
             if !gate.change(&dir) {
                 return Box::new(|_| {});
             }
-            let made = reprisefs::dialogops::new_folder(&dir, "New Folder", &existing);
+            let made = reprisefs::dialogops::new_folder(&dir, "New Folder", &existing)
+                .map(|name| (file_id(&dir.join(&name)), name));
             Box::new(move |state: &mut State| match made {
-                Ok(name) => state.created(&name, at),
+                Ok((id, name)) => state.created(&name, id, at),
                 Err(e) => state.create_failed("New Folder", e),
             })
         });
@@ -368,10 +376,11 @@ impl State {
                 return Box::new(|_| {});
             }
             let made = ops::create_new_numbered(&dir, "New Text Document.txt");
+            let made = made.map(|(_, path)| (file_id(&path), path));
             Box::new(move |state: &mut State| match made {
-                Ok((_, path)) => {
+                Ok((id, path)) => {
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
-                    state.created(&name, at)
+                    state.created(&name, id, at)
                 }
                 Err(e) => state.create_failed("New Text Document", e),
             })
@@ -443,6 +452,7 @@ impl State {
         };
         match cmd {
             Dc::Refresh => self.rescan_desktop(),
+            Dc::Undo => self.undo_icons(),
             Dc::NextBackground => self.next_slide(),
             Dc::NewFolder => self.new_folder(self.desktop_menu_at),
             Dc::NewTextDocument => self.new_text_document(self.desktop_menu_at),

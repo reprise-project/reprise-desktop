@@ -66,7 +66,7 @@ fn render_desktop_menu() {
         c
     };
     write_preview(
-        &draw(&desktop_menu(false, true, false).0, false),
+        &draw(&desktop_menu(false, true, None, false).0, false),
         "desktopmenu-preview.png",
     );
     let places = [
@@ -730,7 +730,7 @@ fn recycle_bin_menu_greys_empty_and_entry_cannot_be_trashed() {
 
 #[test]
 fn a_slideshow_adds_next_desktop_background_after_refresh() {
-    let (items, commands) = desktop_menu(false, true, true);
+    let (items, commands) = desktop_menu(false, true, None, true);
     assert_eq!(items.len(), 13);
     assert_eq!(commands[2], Some(DesktopCommand::Refresh));
     assert_eq!(commands[3], Some(DesktopCommand::NextBackground));
@@ -741,12 +741,12 @@ fn a_slideshow_adds_next_desktop_background_after_refresh() {
             if label == "Next desktop background"
     ));
     assert!(matches!(items[5], MenuItem::Separator));
-    assert_eq!(desktop_menu(false, true, false).0.len(), 12);
+    assert_eq!(desktop_menu(false, true, None, false).0.len(), 12);
 }
 
 #[test]
 fn with_the_files_off_the_desktop_menu_greys_new_and_paste() {
-    let (items, commands) = desktop_menu(true, false, false);
+    let (items, commands) = desktop_menu(true, false, None, false);
     for i in [5, 6, 8] {
         assert!(
             matches!(items[i], MenuItem::Entry { enabled: false, .. }),
@@ -767,7 +767,7 @@ fn with_the_files_off_the_desktop_menu_greys_new_and_paste() {
 
 #[test]
 fn desktop_menu_lists_its_commands_with_separators() {
-    let (items, commands) = desktop_menu(false, true, false);
+    let (items, commands) = desktop_menu(false, true, None, false);
     assert_eq!(items.len(), 12);
     assert_eq!(commands[0], Some(DesktopCommand::ArrangeIcons));
     assert!(matches!(items[0], MenuItem::Entry { submenu: true, .. }));
@@ -822,11 +822,11 @@ fn desktop_menu_lists_its_commands_with_separators() {
         MenuItem::Entry { checked: false, .. }
     ));
     // With something on the clipboard the Paste pair comes alive.
-    let (items, commands) = desktop_menu(true, true, false);
+    let (items, commands) = desktop_menu(true, true, None, false);
     assert!(matches!(items[5], MenuItem::Entry { enabled: true, .. }));
     assert_eq!(commands[5], Some(DesktopCommand::Paste));
     assert_eq!(commands[6], Some(DesktopCommand::PasteShortcut));
-    let (items, _) = desktop_menu(false, true, false);
+    let (items, _) = desktop_menu(false, true, None, false);
     for i in [0, 1, 2, 3, 5, 6, 8, 10, 11] {
         assert!(matches!(
             items[i],
@@ -1560,6 +1560,295 @@ fn a_new_folder_takes_the_next_name_when_a_stale_listing_missed_one() {
     h.state.desktop_command(DesktopCommand::NewFolder, None);
     assert!(desk.join("New Folder (2)").is_dir());
     assert!(h.state.dialogs.views.is_empty());
+}
+
+#[test]
+fn a_new_folder_is_selected_in_rename_and_ctrl_z_undoes_the_rename_then_the_folder() {
+    const CTRL: u32 = 29;
+    const Z: u32 = 44;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let desk = crate::harness::scratch().join("desktop-new-rename");
+    std::fs::create_dir_all(&desk).unwrap();
+    create(&mut h.state, desk.clone(), Default::default(), None);
+    h.state.desktop_command(DesktopCommand::NewFolder, None);
+
+    let view = h.state.desktop.as_mut().unwrap();
+    let (i, edit) = view
+        .rename
+        .as_mut()
+        .expect("the new folder's rename begins");
+    let i = *i;
+    assert_eq!(view.entries[i].name, "New Folder");
+    assert_eq!(
+        view.selection.set,
+        BTreeSet::from([i]),
+        "the new folder alone selected"
+    );
+    edit.text = "Plans".into();
+    h.state.commit_rename();
+    assert!(desk.join("Plans").is_dir());
+    let label = h.state.desktop.as_ref().unwrap().undos.label();
+    let menu = desktop_menu(false, true, label.map(|l| (l, true)), false);
+    assert_eq!(menu.1[7], Some(DesktopCommand::Undo));
+    assert!(matches!(
+        &menu.0[7],
+        MenuItem::Entry { label, shortcut: Some(keys), .. } if label == "Undo Rename" && keys == "Ctrl+Z"
+    ));
+
+    let undo = |h: &mut crate::harness::Harness| {
+        h.key(CTRL, true);
+        h.key(Z, true);
+        h.key(Z, false);
+        h.key(CTRL, false);
+    };
+    undo(&mut h);
+    assert!(desk.join("New Folder").is_dir(), "the rename undone first");
+    assert!(!desk.join("Plans").exists());
+    undo(&mut h);
+    assert!(!desk.join("New Folder").exists(), "then the new folder");
+    assert_eq!(h.state.desktop.as_ref().unwrap().undos.label(), None);
+    assert!(h.state.dialogs.views.is_empty());
+}
+
+fn ctrl_z(h: &mut crate::harness::Harness) {
+    const CTRL: u32 = 29;
+    const Z: u32 = 44;
+    h.key(CTRL, true);
+    h.key(Z, true);
+    h.key(Z, false);
+    h.key(CTRL, false);
+}
+
+/// A desktop in a fresh scratch folder `name` holding `files`.
+fn desktop_in(name: &str, files: &[&str]) -> (crate::harness::Harness, std::path::PathBuf) {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let desk = crate::harness::scratch().join(name);
+    let _ = std::fs::remove_dir_all(&desk);
+    std::fs::create_dir_all(&desk).unwrap();
+    for f in files {
+        std::fs::write(desk.join(f), "").unwrap();
+    }
+    create(&mut h.state, desk.clone(), Default::default(), None);
+    h.state.rescan_desktop();
+    (h, desk)
+}
+
+fn icon(h: &crate::harness::Harness, name: &str) -> usize {
+    let view = h.state.desktop.as_ref().unwrap();
+    view.entries.iter().position(|e| e.name == name).unwrap()
+}
+
+#[test]
+fn ctrl_z_does_not_reach_past_a_delete_or_a_launcher_rename() {
+    crate::spawn::record();
+    let (mut h, desk) = desktop_in("desktop-undo-barrier", &["report.pdf"]);
+    let new = desk.join("New Text Document.txt");
+    h.state
+        .desktop_command(DesktopCommand::NewTextDocument, None);
+    h.state.cancel_rename();
+    h.state.trash_selection(icon(&h, "report.pdf"));
+    assert_eq!(h.state.desktop.as_ref().unwrap().undos.label(), None);
+    ctrl_z(&mut h);
+    assert!(
+        new.exists(),
+        "Ctrl+Z after Delete leaves the earlier New alone"
+    );
+
+    let link = desk.join("site.desktop");
+    std::fs::write(
+        &link,
+        "[Desktop Entry]\nType=Link\nName=Site\nURL=https://example.com/\n",
+    )
+    .unwrap();
+    h.state.rescan_desktop();
+    h.state.desktop_command(DesktopCommand::NewFolder, None);
+    h.state.cancel_rename();
+    h.state.begin_rename(icon(&h, "site.desktop"));
+    let view = h.state.desktop.as_mut().unwrap();
+    view.rename.as_mut().unwrap().1.text = "Tool".into();
+    h.state.commit_rename();
+    ctrl_z(&mut h);
+    assert!(
+        desk.join("New Folder").is_dir(),
+        "nor past a launcher's rename"
+    );
+}
+
+#[test]
+fn ctrl_z_refuses_a_different_file_that_took_the_new_ones_name() {
+    let (mut h, desk) = desktop_in("desktop-undo-identity", &[]);
+    let new = desk.join("New Text Document.txt");
+    h.state
+        .desktop_command(DesktopCommand::NewTextDocument, None);
+    h.state.cancel_rename();
+    std::fs::rename(&new, desk.join("notes.txt")).unwrap();
+    std::fs::write(&new, "saved by another program").unwrap();
+    ctrl_z(&mut h);
+    assert_eq!(
+        std::fs::read_to_string(&new).unwrap(),
+        "saved by another program"
+    );
+    assert_eq!(h.state.dialogs.views.len(), 1, "an error box says why");
+    assert_eq!(h.state.desktop.as_ref().unwrap().undos.label(), None);
+}
+
+#[test]
+fn a_second_ctrl_z_waits_for_the_first_and_undo_rename_keeps_the_cell() {
+    let (mut h, desk) = desktop_in("desktop-undo-serial", &[]);
+    crate::fsjobs::setup(&mut h.state);
+    let view = h.state.desktop.as_mut().unwrap();
+    view.auto_arrange = false;
+    h.state.desktop_command(DesktopCommand::NewFolder, None);
+    h.until("the new folder's rename", |s| {
+        s.desktop.as_ref().is_some_and(|v| v.rename.is_some())
+    });
+    let view = h.state.desktop.as_mut().unwrap();
+    view.positions.insert("New Folder".into(), (300, 200));
+    view.rename.as_mut().unwrap().1.text = "Plans".into();
+    h.state.commit_rename();
+    h.until("the rename", |s| {
+        s.desktop.as_ref().unwrap().undos.label() == Some("Undo Rename")
+    });
+    let undone = |s: &crate::compositor::State| !s.desktop.as_ref().unwrap().undoing;
+
+    // Two presses with no loop turn between them: the second finds the first still running.
+    h.state.undo_icons();
+    assert!(!undone(&h.state));
+    h.state.undo_icons();
+    h.until("the undo", undone);
+    assert!(desk.join("New Folder").is_dir(), "only the rename undone");
+    let view = h.state.desktop.as_ref().unwrap();
+    assert_eq!(view.undos.label(), Some("Undo New"));
+    assert_eq!(view.positions.get("New Folder"), Some(&(300, 200)));
+    ctrl_z(&mut h);
+    h.until("the second undo", undone);
+    assert!(!desk.join("New Folder").exists());
+}
+
+#[test]
+fn undo_is_greyed_and_ctrl_z_inert_while_the_files_are_off_or_an_undo_runs() {
+    for (show_files, live) in [(false, true), (true, false)] {
+        let (items, commands) = desktop_menu(false, show_files, Some(("Undo New", live)), false);
+        assert!(matches!(items[7], MenuItem::Entry { enabled: false, .. }));
+        assert_eq!(commands[7], None);
+    }
+    let (mut h, desk) = desktop_in("desktop-undo-hidden", &[]);
+    h.state.desktop_command(DesktopCommand::NewFolder, None);
+    h.state.cancel_rename();
+    h.state.config.desktop_icons = false;
+    ctrl_z(&mut h);
+    assert!(desk.join("New Folder").is_dir());
+    assert_eq!(
+        h.state.desktop.as_ref().unwrap().undos.label(),
+        Some("Undo New")
+    );
+}
+
+/// A New Text Document grown past the whole drive's size, so its Recycle Bin refuses it.
+fn new_document_too_big_for_its_bin(h: &mut crate::harness::Harness, desk: &Path) -> PathBuf {
+    h.state
+        .desktop_command(DesktopCommand::NewTextDocument, None);
+    h.state.cancel_rename();
+    let doc = desk.join("New Text Document.txt");
+    let size = reprisefs::bincap::drive_size(desk);
+    let file = std::fs::OpenOptions::new().write(true).open(&doc).unwrap();
+    file.set_len(size + 1).unwrap();
+    doc
+}
+
+/// The entry the open erase question's Yes undoes.
+fn erase_question(h: &crate::harness::Harness) -> reprisefs::undo::EntryId {
+    let d = &h.state.dialogs.views.last().expect("the question").dialog;
+    assert_eq!(d.title, "Confirm File Delete");
+    match d.buttons[0].action {
+        crate::dialog::DialogAction::UndoErase(entry) => entry,
+        ref other => panic!("Yes is {other:?}"),
+    }
+}
+
+#[test]
+fn ctrl_z_asks_before_erasing_what_the_bin_refuses_and_yes_erases_only_that_item() {
+    let (mut h, desk) = desktop_in("desktop-undo-refused", &[]);
+    h.state.desktop_command(DesktopCommand::NewFolder, None);
+    h.state.cancel_rename();
+    let doc = new_document_too_big_for_its_bin(&mut h, &desk);
+    ctrl_z(&mut h);
+    assert!(doc.exists(), "nothing erased unasked");
+    let entry = erase_question(&h);
+    h.state
+        .apply_dialog(crate::dialog::Outcome::UndoErase(entry));
+    assert!(!doc.exists());
+    assert!(desk.join("New Folder").is_dir());
+    assert_eq!(
+        h.state.desktop.as_ref().unwrap().undos.label(),
+        Some("Undo New")
+    );
+}
+
+#[test]
+fn the_erase_answer_leaves_a_new_item_made_at_the_same_name_while_it_was_open() {
+    let (mut h, desk) = desktop_in("desktop-undo-erase", &[]);
+    let doc = new_document_too_big_for_its_bin(&mut h, &desk);
+    ctrl_z(&mut h);
+    let entry = erase_question(&h);
+    std::fs::remove_file(&doc).unwrap();
+    h.state
+        .desktop_command(DesktopCommand::NewTextDocument, None);
+    h.state.cancel_rename();
+    std::fs::write(&doc, "typed since").unwrap();
+    h.state
+        .apply_dialog(crate::dialog::Outcome::UndoErase(entry));
+    assert_eq!(std::fs::read_to_string(&doc).unwrap(), "typed since");
+    assert_eq!(
+        h.state.desktop.as_ref().unwrap().undos.label(),
+        Some("Undo New")
+    );
+}
+
+#[test]
+fn ctrl_z_works_again_after_an_undo_fails_to_start_or_gives_up() {
+    let (mut h, _desk) = desktop_in("desktop-undo-ended", &[]);
+    crate::fsjobs::setup(&mut h.state);
+    h.state.fsjobs.deadline = Some(std::time::Duration::from_millis(50));
+    for cmd in [DesktopCommand::NewFolder, DesktopCommand::NewTextDocument] {
+        h.state.desktop_command(cmd, None);
+        h.until("the new item's rename", |s| {
+            s.desktop.as_ref().is_some_and(|v| v.rename.is_some())
+        });
+        h.state.cancel_rename();
+    }
+    let undoing = |s: &crate::compositor::State| s.desktop.as_ref().unwrap().undoing;
+
+    h.state.fsjobs.refuse_threads = true;
+    h.state.undo_icons();
+    assert!(!undoing(&h.state), "no thread started");
+    h.state.fsjobs.refuse_threads = false;
+
+    h.state.fsjobs.hold_action_threads();
+    h.state.undo_icons();
+    assert!(undoing(&h.state));
+    h.until("the give-up", |s| !undoing(s));
+    let d = &h.state.dialogs.views.last().expect("an error box").dialog;
+    assert_eq!(d.title, "Undo");
+}
+
+#[test]
+fn the_new_items_scan_leaves_a_rename_the_user_is_typing() {
+    let (mut h, _desk) = desktop_in("desktop-new-typing", &["a.txt", "b.txt"]);
+    let a = icon(&h, "a.txt");
+    h.state.begin_rename(a);
+    let view = h.state.desktop.as_mut().unwrap();
+    view.rename.as_mut().unwrap().1.text = "typed".into();
+    view.made = Some("b.txt".into());
+    h.state.rescan_desktop();
+    let view = h.state.desktop.as_ref().unwrap();
+    let (i, edit) = view.rename.as_ref().unwrap();
+    assert_eq!(
+        (view.entries[*i].name.as_str(), edit.text.as_str()),
+        ("a.txt", "typed")
+    );
 }
 
 #[test]

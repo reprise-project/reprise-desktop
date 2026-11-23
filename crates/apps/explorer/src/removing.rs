@@ -142,7 +142,7 @@ impl PendingRemoval {
                 let path = match step {
                     Undoable::Move { to, .. } | Undoable::Rename { to, .. } => to.clone(),
                     Undoable::Trash(t) => t.files.clone(),
-                    Undoable::Copied(p) | Undoable::New(p) => p.clone(),
+                    Undoable::Copied(p) | Undoable::New(p, _) => p.clone(),
                     Undoable::Batch(_) => PathBuf::new(),
                 };
                 let step = step.clone();
@@ -159,7 +159,7 @@ impl PendingRemoval {
                 Some(Place::RecycleBin.title()),
                 title(&t.original),
             ),
-            Some(Undoable::Copied(p) | Undoable::New(p)) => (
+            Some(Undoable::Copied(p) | Undoable::New(p, _)) => (
                 if erase { Kind::Erase } else { Kind::Delete },
                 title(p),
                 None,
@@ -297,10 +297,8 @@ impl Explorer {
             }
         }
         let error = undo.and_then(|u| {
-            if let Some(left) = u.undo.left(r.done, u.error.as_ref()) {
-                self.undos.push(left);
-            }
-            u.error
+            let left = self.undos.put_back(u.undo, r.done, u.error.as_ref());
+            u.error.map(|e| (e, left))
         });
         self.undos.forget_gone(&r.gone);
         self.sync_undo();
@@ -308,8 +306,8 @@ impl Explorer {
         if let Some((title, text)) = r.failed {
             reply = self.message_box(title, text, ctx);
         }
-        if let Some(e) = error {
-            reply = reply.and(self.undo_failed(&e, ctx));
+        if let Some((e, left)) = error {
+            reply = reply.and(self.undo_failed(&e, left, ctx));
         }
         if let Some(next) = self.remove_queue.pop_front() {
             self.remove(next, ctx);

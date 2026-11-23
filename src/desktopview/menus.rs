@@ -47,11 +47,13 @@ fn split(rows: Rows) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
 /// Settings and About Reprise. Paste
 /// and Paste Shortcut are greyed unless `can_paste`. With `show_files` false, New
 /// and the Paste pair are greyed (what they make would land in ~/Desktop, which
-/// is not shown). While a `slideshow` runs, "Next desktop background" follows
-/// Refresh, ahead of Open in Terminal.
+/// is not shown). `undo` ("Undo New", and whether it can run now) adds its row under the Paste
+/// pair, greyed while it cannot or the files are off. While a
+/// `slideshow` runs, "Next desktop background" follows Refresh, ahead of Open in Terminal.
 pub fn desktop_menu(
     can_paste: bool,
     show_files: bool,
+    undo: Option<(&str, bool)>,
     slideshow: bool,
 ) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     use DesktopCommand::*;
@@ -81,6 +83,13 @@ pub fn desktop_menu(
         (entry("&Reprise Settings"), Some(Settings)),
         (entry("&About Reprise"), Some(AboutReprise)),
     ];
+    if let Some((label, live)) = undo {
+        let live = live && show_files;
+        let row = entry(&format!("&{label}"))
+            .shortcut(Some("Ctrl+Z".into()))
+            .enabled(live);
+        rows.insert(7, (row, live.then_some(Undo)));
+    }
     if slideshow {
         rows.insert(3, (entry("Next desktop &background"), Some(NextBackground)));
     }

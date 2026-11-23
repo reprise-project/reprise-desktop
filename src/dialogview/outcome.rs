@@ -88,6 +88,10 @@ impl State {
                 self.close_dialog();
                 self.mount_image(&path);
             }
+            Outcome::UndoErase(entry) => {
+                self.close_dialog();
+                self.undo_icons_erasing(entry);
+            }
             Outcome::TurnOn(aid) => {
                 self.close_dialog();
                 self.set_aid(aid, true);

@@ -295,7 +295,7 @@ impl Explorer {
             bin: None,
             focus: None,
             too_big: None,
-            undo_erase: false,
+            undo_erase: None,
             script: None,
             mount: true,
             job: None,

@@ -480,7 +480,7 @@ impl Explorer {
 
     fn new_folder_made(&mut self, under: &Place, made: PathBuf, ctx: &mut Ctx) {
         self.refill_tree_node(under, ctx);
-        self.undos.push(reprisefs::undo::Undoable::New(made));
+        self.undos.push(reprisefs::undo::Undoable::New(made, None));
         self.sync_undo();
     }
 

@@ -347,6 +347,49 @@ fn undo_of_a_copy_on_a_remove_immediately_drive_asks_then_erases() {
     assert_eq!(ex.undo, None);
 }
 
+/// The erase question's Yes acts on the entry it asked about: a copy that landed while that undo
+/// ran stays, and so does one that landed while the question was up.
+#[test]
+fn undos_erase_answer_erases_only_the_copy_it_asked_about() {
+    use reprisefs::undo::Undoable;
+    use reprisekit::controls::form;
+    let _guard = lock(&TRASH_ENV);
+    let home = tempfile::tempdir().expect("a temp dir");
+    let data_home = DataHome::set(home.path());
+    data_home.recycle_bin("remove_immediately = true\n");
+    let dir = home.path().join("folder");
+    std::fs::create_dir(&dir).expect("mkdir");
+    let [asked, during, later] = ["asked.txt", "during.txt", "later.txt"].map(|n| dir.join(n));
+    for copy in [&asked, &during, &later] {
+        std::fs::write(copy, "1").expect("write");
+    }
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
+    ex.undos.push(Undoable::Copied(asked.clone()));
+
+    ex.run(Command::Undo, &mut ctx);
+    ex.undos.push(Undoable::Copied(during.clone()));
+    ex.finish_puts(&mut ctx);
+    let Some(Dialog::Confirm(c)) = ex.dialog() else {
+        panic!("the question is up")
+    };
+    assert!(c.text.starts_with("'asked.txt'"), "{}", c.text);
+    ex.dialog_outcome(form::Event::Default, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(!asked.exists(), "Yes erases the copy it asked about");
+    assert!(during.exists(), "and not the one that landed meanwhile");
+
+    ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    ex.undos.push(Undoable::Copied(later.clone()));
+    ex.dialog_outcome(form::Event::Default, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(
+        during.exists() && later.exists(),
+        "a newer top entry is not erased"
+    );
+}
+
 /// Delete on a drive that cannot hold a trash asks to delete for good, and says why.
 #[test]
 fn delete_on_a_drive_with_no_recycle_bin_says_so() {

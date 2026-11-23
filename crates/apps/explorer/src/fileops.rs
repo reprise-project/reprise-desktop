@@ -1160,9 +1160,9 @@ impl Explorer {
         // `AlreadyExists`.
         let work = move |gate: &Gate| {
             if !gate.change(&dir) {
-                return Ok(());
+                return Err(std::io::ErrorKind::Interrupted.into());
             }
-            if folder {
+            let done = if folder {
                 std::fs::create_dir(&made)
             } else {
                 std::fs::OpenOptions::new()
@@ -1170,7 +1170,8 @@ impl Explorer {
                     .create_new(true)
                     .open(&made)
                     .map(drop)
-            }
+            };
+            done.map(|()| reprisefs::undo::file_id(&made))
         };
         self.act(ctx, Action::changes(title), work, move |ex, made, ctx| {
             ex.item_made(path, &name, made, ctx)
@@ -1181,17 +1182,20 @@ impl Explorer {
         &mut self,
         path: PathBuf,
         name: &str,
-        made: std::io::Result<()>,
+        made: std::io::Result<Option<reprisefs::undo::FileId>>,
         ctx: &mut Ctx,
     ) -> Reply {
-        if let Err(e) = made {
-            return self.message_box(
-                "Error Creating File or Folder",
-                format!("Cannot create {name}: {e}"),
-                ctx,
-            );
-        }
-        self.undos.push(Undoable::New(path.clone()));
+        let id = match made {
+            Ok(id) => id,
+            Err(e) => {
+                return self.message_box(
+                    "Error Creating File or Folder",
+                    format!("Cannot create {name}: {e}"),
+                    ctx,
+                );
+            }
+        };
+        self.undos.push(Undoable::New(path.clone(), id));
         self.sync_undo();
         let reply = self.refresh(ctx);
         if let Some(i) = self.index_of(&path) {
@@ -1505,18 +1509,28 @@ impl Explorer {
     }
 
     pub fn undo_last(&mut self, ctx: &mut Ctx) -> Reply {
-        self.undo_with(false, ctx)
+        self.undo_with(None, ctx)
     }
 
-    /// Undo, with `erase` removing for good what the Recycle Bin refuses. Without it such an item
-    /// stops the undo and asks first. The top entry leaves the stack and its steps run on a removal
-    /// job with the progress dialog ([`crate::removing::PendingRemoval::undo`]); the Recycle Bins
-    /// are found on a job first, as for a delete.
-    pub(crate) fn undo_with(&mut self, erase: bool, ctx: &mut Ctx) -> Reply {
+    /// Undo, with `erasing` the entry whose items the Recycle Bin refused, which are removed for
+    /// good; nothing happens unless that entry is on top. Without it such an item stops the undo
+    /// and asks first. The top entry leaves the stack and its steps run on a removal job with the
+    /// progress dialog ([`crate::removing::PendingRemoval::undo`]); the Recycle Bins are found on
+    /// a job first, as for a delete.
+    pub(crate) fn undo_with(
+        &mut self,
+        erasing: Option<reprisefs::undo::EntryId>,
+        ctx: &mut Ctx,
+    ) -> Reply {
         let dirs = self.undos.undo_dirs();
-        let Some(undo) = self.undos.take() else {
+        let taken = match erasing {
+            Some(entry) => self.undos.take_entry(entry),
+            None => self.undos.take(),
+        };
+        let Some(undo) = taken else {
             return Reply::none();
         };
+        let erase = erasing.is_some();
         self.sync_undo();
         self.spawn_job(ctx, move || {
             let bins = reprisefs::trash::Bins::system();
@@ -1536,9 +1550,14 @@ impl Explorer {
     }
 
     /// The box after an undo that `e` stopped: the question whether to erase what a Recycle Bin
-    /// refused, else the error.
-    pub(crate) fn undo_failed(&mut self, e: &std::io::Error, ctx: &mut Ctx) -> Reply {
-        let Some(no_bin) = reprisefs::undo::NoBin::of(e) else {
+    /// refused, about the entry `left` that went back on the stack, else the error.
+    pub(crate) fn undo_failed(
+        &mut self,
+        e: &std::io::Error,
+        left: Option<reprisefs::undo::EntryId>,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let (Some(no_bin), Some(entry)) = (reprisefs::undo::NoBin::of(e), left) else {
             return self.message_box("Error", format!("Cannot undo: {e}"), ctx);
         };
         let many = self.undos.many();
@@ -1549,7 +1568,7 @@ impl Explorer {
         let mut c =
             self.delete_question(kind, "", Vec::new(), true, BinLack::None, icon, None, None);
         c.text = text;
-        c.undo_erase = true;
+        c.undo_erase = Some(entry);
         self.raise(Dialog::Confirm(c))
     }
 

@@ -824,6 +824,7 @@ impl Dialog {
                 recent: *recent,
             },
             DialogAction::MountImage(path) => Outcome::MountImage(path.clone()),
+            DialogAction::UndoErase(entry) => Outcome::UndoErase(*entry),
             DialogAction::RenameDesktop(n) => Outcome::RenameDesktop(
                 *n,
                 (self.field.as_ref()).map_or(String::new(), |f| f.combo.text().trim().to_string()),

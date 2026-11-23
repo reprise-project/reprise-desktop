@@ -237,6 +237,8 @@ pub enum KeyRoute {
     IconCopy(usize),
     /// Ctrl+V: the clipboard's files onto the desktop.
     IconPaste,
+    /// Ctrl+Z: the desktop's last New or rename undone.
+    IconUndo,
     /// F5: the icons and the Recycle Bin listed again.
     IconRefresh,
     /// The keybinds the press matched, in keysym order.
@@ -623,8 +625,8 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     // The desktop icons when nothing else has the keyboard: arrows move
     // the selection, Enter opens, Alt+Enter shows Properties, Delete
     // trashes (Shift+Delete for good), F2 renames, F5 refreshes, the Menu
-    // key opens the menu, and Ctrl+A, Ctrl+X, Ctrl+C and Ctrl+V select all,
-    // cut, copy and paste. A bound key goes to its bind or global shortcut, so
+    // key opens the menu, and Ctrl+A, Ctrl+X, Ctrl+C, Ctrl+V and Ctrl+Z select
+    // all, cut, copy, paste and undo. A bound key goes to its bind or global shortcut, so
     // Super+Ctrl+arrows switch desktops from an empty one.
     if k.pressed
         && modes.desktop_has_keyboard
@@ -643,6 +645,7 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
                 }
                 (KEY_a, MOD_CTRL) if modes.has_icons => return with(KeyRoute::IconSelectAll),
                 (KEY_v, MOD_CTRL) => return with(KeyRoute::IconPaste),
+                (KEY_z, MOD_CTRL) => return with(KeyRoute::IconUndo),
                 (KEY_F5, 0) => return with(KeyRoute::IconRefresh),
                 _ => {}
             }

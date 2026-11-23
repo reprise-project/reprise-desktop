@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use reprisefs::undo::{EntryId, NoBin, Undoable};
 use reprisekit::textedit::EditKey;
 use smithay::input::keyboard::Keycode;
 
@@ -12,6 +13,7 @@ use crate::{
     compositor::State,
     desktop::{self, DesktopEntry, IconMove},
     desktopview::{DesktopCommand, aimed_in},
+    dialog::Dialog,
     dragview::{DragSource, DropOp, DropTarget},
     fsjobs::Action,
     keys,
@@ -461,6 +463,7 @@ impl State {
         };
         if let desktop::Kind::Place(place) = entry.kind {
             if desktop::rename_place(&mut view.system_names, place, &typed) {
+                view.undos.clear();
                 crate::state::save_system_names(&view.system_names);
                 self.rescan_desktop();
             } else {
@@ -468,9 +471,12 @@ impl State {
             }
             return;
         }
-        if entry.label_is_name_key() && (typed.is_empty() || typed == entry.label) {
-            self.relayout_desktop();
-            return;
+        if entry.label_is_name_key() {
+            if typed.is_empty() || typed == entry.label {
+                self.relayout_desktop();
+                return;
+            }
+            view.undos.clear();
         }
         // The file may sit on a mount that never answers: the label shows the old name until the
         // rename lands.
@@ -516,17 +522,118 @@ impl State {
                 .iter()
                 .find(|e| e.path == from)
                 .map(|e| e.name.clone());
-            let new = to
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            if let Some(cell) = old.and_then(|o| view.positions.remove(&o)) {
-                view.positions.insert(new, cell);
-                crate::state::save_desktop(view.auto_arrange, &view.positions);
+            if let Some(old) = old {
+                move_cell(view, &old, &file_name(to));
             }
+            view.undos.push(Undoable::Rename {
+                from: from.to_path_buf(),
+                to: to.to_path_buf(),
+            });
         }
         self.rescan_desktop();
     }
+
+    /// A desktop file action Undo cannot reverse was asked for: Ctrl+Z no longer reaches past it.
+    pub(crate) fn forget_desktop_undos(&mut self) {
+        if let Some(view) = self.desktop.as_mut() {
+            view.undos.clear();
+        }
+    }
+
+    /// Ctrl+Z on the desktop: the top undo entry is reversed on a file job, one at a time and
+    /// only while the desktop shows its files. What a failure leaves undone goes back on the
+    /// stack and an error box says why; an item its Recycle Bin refuses asks to be deleted for
+    /// good instead ([`Dialog::ask_undo_erase`]).
+    pub fn undo_icons(&mut self) {
+        self.undo_desktop(None);
+    }
+
+    /// The erase question's Yes: `entry` is undone again, erasing what the bin refused, provided
+    /// it is still the top entry.
+    pub fn undo_icons_erasing(&mut self, entry: EntryId) {
+        self.undo_desktop(Some(entry));
+    }
+
+    fn undo_desktop(&mut self, erasing: Option<EntryId>) {
+        if self.desktop_locked() || !self.config.desktop_icons {
+            return;
+        }
+        let Some(view) = self.desktop.as_mut() else {
+            return;
+        };
+        if view.undoing {
+            return;
+        }
+        let taken = match erasing {
+            Some(entry) => view.undos.take_entry(entry),
+            None => view.undos.take(),
+        };
+        let Some(undo) = taken else {
+            return;
+        };
+        view.undoing = true;
+        let dir = view.dir.clone();
+        let action = Action::changes("Undo", State::rescan_desktop).on_give_up(State::undo_ended);
+        let spawned = self.spawn_fs_action(action, move |gate| {
+            if !gate.change(&dir) {
+                return Box::new(|_| {});
+            }
+            let bins = reprisefs::trash::Bins::system();
+            let (done, error, purged) = undo.reverse(bins.as_ref(), erasing.is_some());
+            Box::new(move |state: &mut State| {
+                state.undo_ended();
+                let question = error
+                    .as_ref()
+                    .and_then(NoBin::of)
+                    .map(|n| n.question(false));
+                let mut left = None;
+                if let Some(view) = state.desktop.as_mut() {
+                    for step in &undo.steps()[..done] {
+                        if let Undoable::Rename { from, to } = step {
+                            move_cell(view, &file_name(to), &file_name(from));
+                        }
+                    }
+                    left = view.undos.put_back(undo, done, error.as_ref());
+                    view.undos.forget_gone(&purged);
+                }
+                match (question.zip(left), error) {
+                    (Some((text, entry)), _) => {
+                        state.open_dialog(Dialog::ask_undo_erase(text, entry))
+                    }
+                    (None, Some(e)) => {
+                        let text = format!("Cannot undo: {e}");
+                        state.open_dialog(Dialog::error("Error", text));
+                    }
+                    (None, None) => {}
+                }
+                state.rescan_desktop();
+            })
+        });
+        if !spawned {
+            self.undo_ended();
+        }
+    }
+
+    /// The desktop's Undo landed or gave up: Ctrl+Z works again.
+    fn undo_ended(&mut self) {
+        if let Some(view) = self.desktop.as_mut() {
+            view.undoing = false;
+        }
+    }
+}
+
+/// The saved cell of the icon named `from` moves to the name `to`.
+fn move_cell(view: &mut crate::desktopview::DesktopView, from: &str, to: &str) {
+    if let Some(cell) = view.positions.remove(from) {
+        view.positions.insert(to.to_string(), cell);
+        crate::state::save_desktop(view.auto_arrange, &view.positions);
+    }
+}
+
+fn file_name(path: &Path) -> String {
+    (path.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

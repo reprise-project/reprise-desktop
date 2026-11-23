@@ -57,9 +57,9 @@ pub struct Confirm {
     /// erases it and No leaves it, and a batch of more than one item
     /// adds Yes to All and Cancel. The answers go to this batch.
     pub too_big: Option<reprisefs::bincap::TooBig>,
-    /// Undo stopped at an item its Recycle Bin refuses: Yes undoes again, erasing it
-    /// ([`reprisefs::undo::UndoStack::undo_erasing`]).
-    pub undo_erase: bool,
+    /// Undo stopped at an item its Recycle Bin refuses: Yes undoes this entry again, erasing it,
+    /// while it is still the one Undo reverses next ([`crate::Explorer::undo_with`]).
+    pub undo_erase: Option<reprisefs::undo::EntryId>,
     /// The question before running `paths[0]` (`confirm_scripts`): Run runs a script as the
     /// `ScriptOpen` says, Open in Notepad opens it there.
     pub script: Option<(reprisefs::program::ScriptOpen, reprisefs::program::Asked)>,
@@ -691,7 +691,7 @@ impl Explorer {
             bin,
             focus: None,
             too_big: None,
-            undo_erase: false,
+            undo_erase: None,
             script: None,
             mount: false,
             job: None,
@@ -728,7 +728,7 @@ impl Explorer {
             bin: None,
             focus: None,
             too_big: None,
-            undo_erase: false,
+            undo_erase: None,
             script: None,
             mount: false,
             job: Some(asked),
@@ -781,7 +781,7 @@ impl Explorer {
             bin: None,
             focus: None,
             too_big: None,
-            undo_erase: false,
+            undo_erase: None,
             script: Some((open, asked)),
             mount: false,
             job: None,
@@ -1364,7 +1364,10 @@ impl Explorer {
                     Some(path) => self.mount_image_at(path.clone(), ctx),
                     None => Reply::redraw_all(),
                 },
-                Some(Dialog::Confirm(c)) if c.undo_erase => self.undo_with(true, ctx),
+                Some(Dialog::Confirm(Confirm {
+                    undo_erase: Some(entry),
+                    ..
+                })) => self.undo_with(Some(entry), ctx),
                 Some(Dialog::Confirm(Confirm {
                     bin: Some(items), ..
                 })) => self.erase_from_bin(items, ctx),

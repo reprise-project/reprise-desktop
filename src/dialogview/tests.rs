@@ -406,6 +406,10 @@ fn every_dialog(h: &Harness) -> Vec<(&'static str, Dialog)> {
         t.look.controls_at_100(),
     );
     let tool = std::path::PathBuf::from("/srv/tool");
+    let mut undos = reprisefs::undo::UndoStack::default();
+    undos.push(reprisefs::undo::Undoable::New(tool.clone(), None));
+    let taken = undos.take().unwrap();
+    let entry = undos.put_back(taken, 0, None).unwrap();
     vec![
         ("end_session", Dialog::end_session(&ending, text, px, u)),
         (
@@ -434,6 +438,10 @@ fn every_dialog(h: &Harness) -> Vec<(&'static str, Dialog)> {
         ),
         ("ask_open", Dialog::ask_open(tool.clone(), None, false)),
         ("ask_mount", Dialog::ask_mount(tool.clone())),
+        (
+            "ask_undo_erase",
+            Dialog::ask_undo_erase("Delete it?".into(), entry),
+        ),
         ("error", Dialog::error("Run", "Not found.".into())),
         ("run_not_found", Dialog::run_not_found("nothing")),
         ("not_utf8_program", Dialog::not_utf8_program("Run", &tool)),
