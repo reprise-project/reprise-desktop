@@ -86,9 +86,9 @@ fn signal_scope(unit: &str, sig: i32) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// End Task on a program that answers: [`end_gently`] scope `unit` whose processes are `pids`,
-/// off the event loop.
-pub fn end_task(unit: String, pids: Vec<i32>) {
+/// End Task off the event loop: [`end_gently`] with the windows of `pids`. `spare` keeps scope
+/// `unit` from any signal: the program was listed for a window outside it.
+pub fn end_task(unit: String, pids: Vec<i32>, spare: bool) {
     std::thread::spawn(move || {
         let close = || {
             reprisebus::tray::close_windows(&pids).unwrap_or_else(|e| {
@@ -97,7 +97,9 @@ pub fn end_task(unit: String, pids: Vec<i32>) {
             })
         };
         let term = || {
-            if let Err(e) = signal_scope(&unit, libc::SIGTERM) {
+            if spare {
+                log::info!("End Task {unit}: its window is outside the scope; not signalled");
+            } else if let Err(e) = signal_scope(&unit, libc::SIGTERM) {
                 log::debug!("End Task {unit}: {e}");
             }
         };

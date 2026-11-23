@@ -16,7 +16,7 @@ mod state;
 mod switchto;
 mod worker;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -233,8 +233,9 @@ pub struct TaskMgr {
     /// Select Columns, while open.
     pick: Option<Form>,
     ending: Vec<Ending>,
-    /// End Task on a program that answers ([`worker::end_task`]), given its scope and pids.
-    end_task: fn(String, Vec<i32>),
+    /// End Task on a program that answers ([`worker::end_task`]): its scope, the pids whose
+    /// windows to close, and whether to spare the scope.
+    end_task: fn(String, Vec<i32>, bool),
     /// A pidfd for a process End Process asks about ([`worker::open_process`]).
     open_process: fn(i32, u64) -> std::io::Result<OwnedFd>,
     entries: Arc<Vec<AppEntry>>,
@@ -619,12 +620,12 @@ impl TaskMgr {
             .and_then(|i| self.app_rows.get(i))
             .map(|r| r.unit.clone());
         let entries = self.entries.clone();
-        let scopes = &self.snap.scopes;
+        let (scopes, sandboxed) = (&self.snap.scopes, &self.snap.sandboxed);
         let windows = self.snap.windows.as_deref();
         self.app_rows = (scopes.iter())
-            .filter(|sc| windows.is_none_or(|w| has_window(sc, scopes, &entries, w)))
+            .filter(|sc| windows.is_none_or(|w| has_window(sc, scopes, &entries, w, sandboxed)))
             .map(|sc| AppRow {
-                hung: has_window(sc, scopes, &entries, &self.hung),
+                hung: has_window(sc, scopes, &entries, &self.hung, sandboxed),
                 ..app_row(sc, &entries)
             })
             .collect();
@@ -704,11 +705,30 @@ impl TaskMgr {
             }
             return Reply::redraw_all();
         }
-        let pids = (self.snap.scopes.iter())
-            .find(|s| s.unit == row.unit)
-            .map(|s| s.pids.clone())
-            .unwrap_or_default();
-        (self.end_task)(row.unit.clone(), pids);
+        let Some(sc) = self.snap.scopes.iter().find(|s| s.unit == row.unit) else {
+            return Reply::none();
+        };
+        let outside: Vec<u32> = (self.snap.windows.iter().flatten())
+            .filter(|w| {
+                is_program_window(
+                    sc,
+                    &self.snap.scopes,
+                    &self.entries,
+                    w,
+                    &self.snap.sandboxed,
+                )
+            })
+            .map(|&(_, pid)| pid)
+            .filter(|&pid| !i32::try_from(pid).is_ok_and(|p| sc.pids.contains(&p)))
+            .collect();
+        let mut pids = sc.pids.clone();
+        pids.extend(
+            outside
+                .iter()
+                .filter_map(|&p| i32::try_from(p).ok())
+                .filter(|&p| p != 0),
+        );
+        (self.end_task)(row.unit.clone(), pids, !outside.is_empty());
         self.wait_for(Target::Scope(row.unit), row.name);
         Reply::redraw()
     }
@@ -1144,20 +1164,31 @@ fn app_row(sc: &scopes::Scope, entries: &[AppEntry]) -> AppRow {
     }
 }
 
-/// Whether a window of scope `sc`'s program is among `windows`: one whose client runs in the
-/// scope, or one whose client is in no scope (a sandboxed program's) and whose app id is the
-/// program's, as Switch To matches it.
+/// Whether a window of scope `sc`'s program is among `windows` ([`is_program_window`]).
 pub fn has_window(
     sc: &scopes::Scope,
     scopes: &[scopes::Scope],
     entries: &[AppEntry],
     windows: &[AppWindow],
+    sandboxed: &HashSet<u32>,
 ) -> bool {
-    windows.iter().any(|(id, pid)| {
-        let pid = i32::try_from(*pid).unwrap_or(0);
-        sc.pids.contains(&pid)
-            || (!scopes.iter().any(|s| s.pids.contains(&pid)) && window_of(&sc.app, entries, id))
-    })
+    (windows.iter()).any(|w| is_program_window(sc, scopes, entries, w, sandboxed))
+}
+
+/// Whether window `w` is scope `sc`'s program's: its client runs in the scope, or in no scope and
+/// sandboxed (no pid, or in `sandboxed`; a sandbox leaves its scope) under the program's app id.
+pub fn is_program_window(
+    sc: &scopes::Scope,
+    scopes: &[scopes::Scope],
+    entries: &[AppEntry],
+    (id, pid): &AppWindow,
+    sandboxed: &HashSet<u32>,
+) -> bool {
+    let p = i32::try_from(*pid).unwrap_or(0);
+    sc.pids.contains(&p)
+        || ((p == 0 || sandboxed.contains(pid))
+            && !scopes.iter().any(|s| s.pids.contains(&p))
+            && window_of(&sc.app, entries, id))
 }
 
 /// Whether a window reporting app id `window` belongs to the program started as `app`: the same
