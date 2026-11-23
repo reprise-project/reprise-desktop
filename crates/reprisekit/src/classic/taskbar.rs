@@ -296,12 +296,12 @@ pub fn draw_taskbar(
     }
 
     match (layout.clock_lines, state.clock.split_once('\n')) {
-        (Some(baselines), Some((time, date))) => crate::taskbar::draw_clock_lines(
+        (Some(lines), Some((time, date))) => crate::taskbar::draw_clock_lines(
             canvas,
             text,
             layout.clock,
             [time, date],
-            baselines,
+            lines,
             cs.button_text,
             size,
             s,

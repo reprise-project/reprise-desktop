@@ -403,7 +403,7 @@ fn a_column_sets_the_date_under_the_time_once_it_fits_across() {
     );
     assert_eq!(narrow.clock, Rect::new(4, 576, 54, 22));
     let wide = lay(82);
-    assert_eq!(wide.clock_lines, Some([17, 34]));
+    assert_eq!(wide.clock_lines.map(|c| c.baselines), Some([17, 34]));
     assert_eq!(
         wide.clock,
         Rect::new(4, 558, 76, 40),
@@ -485,7 +485,11 @@ fn a_blue_or_glass_column_sets_the_date_under_the_time_once_it_fits_across() {
         )
     };
     let blue = lay(Interface::Blue, 100);
-    assert_eq!(blue.clock_lines, Some([17, 34]), "Blue: 62 px in 95");
+    assert_eq!(
+        blue.clock_lines.map(|c| c.baselines),
+        Some([17, 34]),
+        "Blue: 62 px in 95"
+    );
     assert_eq!(
         blue.clock,
         Rect::new(2, 548, 95, 40),
@@ -497,7 +501,11 @@ fn a_blue_or_glass_column_sets_the_date_under_the_time_once_it_fits_across() {
         "62 px in 55: one line"
     );
     let glass = lay(Interface::Glass, 120);
-    assert_eq!(glass.clock_lines, Some([17, 34]), "Glass: 76 px in 120");
+    assert_eq!(
+        glass.clock_lines.map(|c| c.baselines),
+        Some([17, 34]),
+        "Glass: 76 px in 120"
+    );
     assert_eq!(glass.clock, Rect::new(0, 558, 120, 40));
     assert_eq!(lay(Interface::Glass, 60).clock_lines, None, "76 px in 60");
 }

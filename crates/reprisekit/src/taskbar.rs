@@ -463,10 +463,22 @@ pub struct TaskbarShape {
     pub orb: bool,
     /// Orb standing above a Bottom bar's top edge (below a Top bar's foot); None keeps Start inside the bar.
     pub orb_rise: Option<OrbRise>,
-    /// Two-line clock baselines (time, date) in px from the top of a [`TWO_LINE_CLOCK_MIN`] bar; None: one line.
+    /// Two-line clock baselines (time, date) in px from the top of a [`TWO_LINE_CLOCK_MIN`] bar at
+    /// 100% text; None: one line.
     pub two_line_clock: Option<[i32; 2]>,
+    /// How far a line of the bar's text outgrows its 100% line ([`crate::theme::Theme::line_growth`]):
+    /// a two-line clock's box and lines grow by it per line.
+    pub line_growth: i32,
     pub start_menu: StartMenuDock,
     pub labelled: LabelledButton,
+}
+
+/// A two-line clock: the time's and the date's baselines from the top of a box `height` px tall
+/// centred in the clock, design px.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClockLines {
+    pub baselines: [i32; 2],
+    pub height: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -546,14 +558,27 @@ impl TaskbarShape {
         orb: false,
         orb_rise: None,
         two_line_clock: None,
+        line_growth: 0,
         start_menu: StartMenuDock::Into(4),
         labelled: LabelledButton::CLASSIC,
     };
 
-    /// Two-line baselines for a bar `bar_height` tall, or None for one line.
-    pub fn clock_baselines(&self, bar_height: i32) -> Option<[i32; 2]> {
+    /// The two clock lines on a bar `bar_height` tall, or None for one line: the bar holds the
+    /// box only while both lines of its text fit.
+    pub fn clock_baselines(&self, bar_height: i32) -> Option<ClockLines> {
         self.two_line_clock
-            .filter(|_| bar_height >= TWO_LINE_CLOCK_MIN)
+            .map(|b| self.grown_lines(b))
+            .filter(|l| bar_height >= l.height)
+    }
+
+    /// `baselines` at 100% text in a [`TWO_LINE_CLOCK_MIN`] box, each line [`Self::line_growth`]
+    /// taller.
+    pub fn grown_lines(&self, [time, date]: [i32; 2]) -> ClockLines {
+        let g = self.line_growth;
+        ClockLines {
+            baselines: [time + g, date + 2 * g],
+            height: TWO_LINE_CLOCK_MIN + 2 * g,
+        }
     }
 
     /// Narrowest side bar: one icon-only slot.
@@ -652,7 +677,7 @@ pub enum TaskRow {
 /// Px a side bar's default width leaves either side of its clock.
 const SIDE_CLOCK_AIR: i32 = 2;
 
-/// The shortest bar, at scale 1, that sets its clock on two lines.
+/// The shortest bar, at scale 1 and 100% text, that sets its clock on two lines.
 pub const TWO_LINE_CLOCK_MIN: i32 = 40;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -707,7 +732,7 @@ pub struct TaskbarLayout {
     pub more: Option<Rect>,
     /// Strip down an unlocked side bar's inner edge that drags its width; takes the pointer over what lies under it.
     pub resize: Option<Rect>,
-    pub clock_lines: Option<[i32; 2]>,
+    pub clock_lines: Option<ClockLines>,
     /// Rows past the bar's screen-side edge covered by the orb's art, and the disc's box when it reaches past the bar.
     pub start_above: Option<Rect>,
     pub start_disc: Option<Rect>,

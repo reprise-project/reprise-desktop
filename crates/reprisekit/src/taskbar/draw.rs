@@ -1,4 +1,4 @@
-use super::TWO_LINE_CLOCK_MIN;
+use super::ClockLines;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::theme::Color;
@@ -60,20 +60,21 @@ pub fn draw_more(canvas: &mut Canvas, r: Rect, ink: Color, s: i32) {
     }
 }
 
-/// The clock on two lines: time over date, each centred across `clock` on its baseline, counted from the top of a [`TWO_LINE_CLOCK_MIN`] box centred in `clock`.
+/// The clock on two lines: time over date, each centred across `clock` on its baseline, counted
+/// from the top of the [`ClockLines`] box centred in `clock`.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_clock_lines(
     canvas: &mut Canvas,
     text: &TextRenderer,
     clock: Rect,
     lines: [&str; 2],
-    baselines: [i32; 2],
+    at: ClockLines,
     ink: Color,
     size: u32,
     s: i32,
 ) {
-    let top = clock.y + (clock.height - TWO_LINE_CLOCK_MIN * s) / 2;
-    for (line, baseline) in lines.into_iter().zip(baselines) {
+    let top = clock.y + (clock.height - at.height * s) / 2;
+    for (line, baseline) in lines.into_iter().zip(at.baselines) {
         let pen = Align::Center.pen(clock, text.measure(line, false, size));
         text.draw_run(
             canvas,

@@ -431,13 +431,10 @@ impl TaskbarLayout {
         let end = strip.map_or(len, |r| r.y);
         let cb = shape.clock;
         let date = clock.date > 0 && clock.date + cb.pad <= room;
-        let clock_h = if date {
-            btn.max(TWO_LINE_CLOCK_MIN)
-        } else {
-            btn
-        };
+        let clock_lines =
+            date.then(|| shape.grown_lines(shape.two_line_clock.unwrap_or(SIDE_CLOCK_LINES)));
+        let clock_h = clock_lines.map_or(btn, |l| btn.max(l.height));
         let clock_r = Rect::new(left, (end - cb.right - clock_h).max(band_y), room, clock_h);
-        let clock_lines = date.then(|| shape.two_line_clock.unwrap_or(SIDE_CLOCK_LINES));
         // Start x of a grid: widest row centred with an orb, else on the row's left.
         let grid_x = |n: i32, per: i32, pitch: i32, gap: i32| {
             if shape.orb {
