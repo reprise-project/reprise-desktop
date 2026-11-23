@@ -869,10 +869,10 @@ impl State {
         self.end_process(pid);
     }
 
-    /// The windows End Task would close, by app id and client pid (0 when unknown): Task
-    /// Manager lists a program only while it shows one.
-    pub fn end_task_windows_by_app(&self) -> Vec<reprisebus::tray::Hung> {
-        let mut out: Vec<reprisebus::tray::Hung> = (self.windows.iter())
+    /// The mapped windows, by app id and client pid (0 when unknown): Task Manager lists a
+    /// program only while it shows one.
+    pub fn windows_by_app(&self) -> Vec<reprisebus::tray::AppWindow> {
+        let mut out: Vec<reprisebus::tray::AppWindow> = (self.windows.iter())
             .filter(|w| w.mapped && !w.override_redirect)
             .map(|w| {
                 let pid = self.client_pid(w.id).and_then(|p| u32::try_from(p).ok());
@@ -1434,7 +1434,7 @@ mod tests {
         assert_eq!(h.state.end_task_windows(&[PID, 1], false), 2);
         let pid = |p: i32| u32::try_from(p).unwrap();
         assert_eq!(
-            h.state.end_task_windows_by_app(),
+            h.state.windows_by_app(),
             [
                 ("app".to_string(), pid(OTHER)),
                 ("app".to_string(), pid(PID))

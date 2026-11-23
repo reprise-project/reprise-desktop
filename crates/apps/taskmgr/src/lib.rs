@@ -31,7 +31,7 @@ use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::tip::Rest;
 use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
-use reprisebus::tray::Hung;
+use reprisebus::tray::{AppWindow, Hung};
 use reprisefs::apps::{AppEntry, AppId};
 use reprisekit::access::Tree;
 use reprisekit::controls::form::{self, Form};
@@ -1151,7 +1151,7 @@ pub fn has_window(
     sc: &scopes::Scope,
     scopes: &[scopes::Scope],
     entries: &[AppEntry],
-    windows: &[Hung],
+    windows: &[AppWindow],
 ) -> bool {
     windows.iter().any(|(id, pid)| {
         let pid = i32::try_from(*pid).unwrap_or(0);

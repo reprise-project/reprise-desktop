@@ -40,9 +40,9 @@ pub struct Snapshot {
     pub cores: Vec<f64>,
     pub mem: MemInfo,
     pub scopes: Vec<Scope>,
-    /// The windows End Task would close ([`reprisebus::tray::task_windows`]); None when the
+    /// The mapped windows ([`reprisebus::tray::windows_by_app`]); None when the
     /// compositor cannot say, which lists every scope.
-    pub windows: Option<Vec<reprisebus::tray::Hung>>,
+    pub windows: Option<Vec<reprisebus::tray::AppWindow>>,
     pub devices: devices::Readings,
 }
 
@@ -84,7 +84,7 @@ pub struct Sampler {
     /// The user names seen so far, by uid; a uid missing here is looked up through `lookup`.
     users: HashMap<u32, String>,
     lookup: fn(u32) -> Option<String>,
-    windows: fn() -> Option<Vec<reprisebus::tray::Hung>>,
+    windows: fn() -> Option<Vec<reprisebus::tray::AppWindow>>,
     page_kb: u64,
     /// Read `/proc/<pid>/io` too, for the Disk column.
     pub disk: bool,
@@ -126,7 +126,7 @@ impl Sampler {
         Sampler {
             devices: Some(devices::Sampler::new(Path::new("/"))),
             lookup: |uid| reprisefs::sysinfo::account(uid).map(|(login, _)| login),
-            windows: || reprisebus::tray::task_windows().ok(),
+            windows: || reprisebus::tray::windows_by_app().ok(),
             ..Sampler::new(Path::new("/proc"), slice, HashMap::new())
         }
     }
