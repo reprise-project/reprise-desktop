@@ -161,9 +161,9 @@ pub fn count_windows(pids: &[i32]) -> zbus::Result<u32> {
     windows_call("CountWindows", pids)
 }
 
-/// Every window End Task would close, by app id and client pid (0 when unknown). Blocks for at
-/// most [`crate::METHOD_TIMEOUT`].
-pub fn task_windows() -> zbus::Result<Vec<Hung>> {
+/// Every mapped window, by app id and client pid (0 when unknown): Task Manager lists a program
+/// while it shows one. Blocks for at most [`crate::METHOD_TIMEOUT`].
+pub fn windows_by_app() -> zbus::Result<Vec<AppWindow>> {
     let conn = crate::session()?;
     let reply =
         crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "TaskWindows", &()))?;
@@ -250,6 +250,9 @@ pub fn preview_screen_saver(name: &str) -> zbus::Result<()> {
 /// A window not answering pings, as `WatchResponding` and `NotRespondingChanged` name it: its
 /// app id and its client's pid, 0 when unknown.
 pub type Hung = (String, u32);
+
+/// A mapped window, as `TaskWindows` names it: its app id and its client's pid, 0 when unknown.
+pub type AppWindow = (String, u32);
 
 /// Call `changed` from a thread of its own with the windows not answering pings: once when the
 /// watch starts, then on each change. While the watch runs, the compositor pings every window

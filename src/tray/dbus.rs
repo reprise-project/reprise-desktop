@@ -241,15 +241,16 @@ impl Shell {
         self.windows_of(conn, &hdr, pids, false).await
     }
 
-    /// The windows End Task closes, by app id and client pid (0 when unknown).
-    async fn task_windows(
+    /// Every mapped window, by app id and client pid (0 when unknown).
+    #[zbus(name = "TaskWindows")]
+    async fn windows_by_app(
         &self,
         #[zbus(connection)] conn: &Connection,
         #[zbus(header)] hdr: Header<'_>,
-    ) -> zbus::fdo::Result<Vec<reprisebus::tray::Hung>> {
+    ) -> zbus::fdo::Result<Vec<reprisebus::tray::AppWindow>> {
         self.host_only.check(conn, &hdr).await?;
         let (reply, answer) = async_channel::bounded(1);
-        emit(&self.events, self.eventfd, TrayEvent::TaskWindows(reply));
+        emit(&self.events, self.eventfd, TrayEvent::WindowsByApp(reply));
         Ok(answer.recv().await.unwrap_or_default())
     }
 
