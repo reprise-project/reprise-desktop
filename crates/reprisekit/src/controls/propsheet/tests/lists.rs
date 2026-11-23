@@ -589,3 +589,27 @@ fn a_blank_on_a_blue_page_shows_the_page() {
         .argb();
     assert_eq!(c.get(200, 70), line, "the group line past the blank");
 }
+
+#[test]
+fn a_press_on_the_page_list_only_closes_an_open_combo_list() {
+    use crate::controls::combo::Combo;
+    let combo = Item::new(
+        "combo",
+        Rect::new(20, 50, 150, 21),
+        Control::Combo(Combo::new(&["A", "B"], 0, 2)),
+    );
+    let pages = vec![
+        Form::new(vec![combo]),
+        check_page("Effects"),
+        check_page("Mouse"),
+    ];
+    let mut s = PropSheet::with_list(LIST_GROUPS, pages, (398, 424));
+    if let Some(Control::Combo(c)) = s.open_mut().item_mut("combo").map(|i| &mut i.control) {
+        c.open = Some(0);
+    }
+    assert_eq!(s.click(Some(Hit::Tab(2))), Event::Redraw);
+    assert!(!s.open().popup_open(), "the press closes the list");
+    assert_eq!(s.tabs.open, 0, "and opens no page");
+    s.click(Some(Hit::Tab(2)));
+    assert_eq!(s.tabs.open, 2, "with the list closed it opens the page");
+}

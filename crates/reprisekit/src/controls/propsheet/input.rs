@@ -466,7 +466,14 @@ impl PropSheet {
         self.event(i, ev)
     }
 
+    /// A left press on `hit`. A press off the open page's dropped list or colour popup only
+    /// closes it ([`Form::click`](form::Form::click)), on the page or on the sheet's own parts.
     pub fn click(&mut self, hit: Option<Hit>) -> Event {
+        let hit = match hit {
+            Some(Hit::Control(_)) => hit,
+            _ if self.open().popup_open() => None,
+            _ => hit,
+        };
         match hit {
             Some(Hit::Tab(i)) => {
                 let dropped = self.drop_cursor();

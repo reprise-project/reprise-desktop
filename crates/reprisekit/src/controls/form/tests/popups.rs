@@ -268,3 +268,28 @@ fn alt_o_in_an_open_colour_popup_presses_other() {
     assert_eq!(f.key(Key::Access('x')), Event::None);
     assert!(f.popup_open(), "another letter leaves it open");
 }
+
+#[test]
+fn a_press_off_an_open_list_only_closes_it() {
+    let mut f = Form::new(vec![
+        Item::combo("c", 60, 10, 80, &["a", "b", "c", "d"], 4),
+        Item::check("check", 10, 40, "Check"),
+    ]);
+    let checked = |f: &Form| f.checked("check");
+    for (x, y) in [(15, 45), (190, 190)] {
+        f.click(at(&f, 70, 15));
+        assert!(f.popup_open());
+        assert_eq!(
+            f.click(at(&f, x, y)),
+            Event::Redraw,
+            "({x}, {y}) closes the list"
+        );
+        assert!(!f.popup_open());
+        assert_eq!(f.release(), Event::None, "({x}, {y}) presses nothing");
+        assert_eq!(checked(&f), Some(false));
+        assert_eq!(f.combo_selected("c"), Some(0));
+    }
+    f.click(at(&f, 15, 45));
+    assert_eq!(f.release(), Event::Changed("check"), "with the list closed");
+    assert_eq!(checked(&f), Some(true));
+}

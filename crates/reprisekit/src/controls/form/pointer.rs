@@ -449,21 +449,22 @@ impl Form {
         Event::Redraw
     }
 
+    /// A left press on `hit`. With a combo's list or a colour popup open, a press off that
+    /// control only closes it: the control under the press is left alone.
     pub fn click(&mut self, hit: Option<Hit>) -> Event {
+        if let Some(open) = self.open_combo()
+            && hit.is_none_or(|h| h.item != open)
+        {
+            self.pointer.press(None, false);
+            self.close_popups();
+            return Event::Redraw;
+        }
         let lit = self.light(hit);
         self.pointer
             .press(lit, lit.is_some_and(|(_, l)| l.sticky()));
-        let open = self.open_combo();
         let Some(h) = hit else {
-            return if self.close_popups() {
-                Event::Redraw
-            } else {
-                Event::None
-            };
+            return Event::None;
         };
-        if open.is_some_and(|o| o != h.item) {
-            self.close_popups();
-        }
         let i = h.item;
         let id = self.items[i].id;
         let rect = self.at(&self.items[i]);
