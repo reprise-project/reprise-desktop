@@ -235,7 +235,7 @@ shake, the dim, the hidden frame rate and window memory.
   program's Reply opens a text field in the balloon.
 - **History.** A bell in the tray keeps the session's notifications, grouped
   per program, each with its body in grey; a click on one runs its default
-  action. Super+Shift+N opens it from the keyboard, on the monitor with the
+  action and closes the history. Super+Shift+N opens it from the keyboard, on the monitor with the
   pointer.
 - **Bursts fold together.** A program that sends more than three balloons in
   ten seconds gets one "5 new from Mail" balloon instead.
