@@ -1763,6 +1763,35 @@ fn a_trailing_frame_shows_the_last_picture_and_blurs_the_change_after_it() {
 }
 
 #[test]
+fn a_late_update_that_fails_to_draw_asks_one_fresh_frame() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        reprisekit::pins::skipped("no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let (scene, _spot, _window, _glass) = spot_under_glass(&ctx);
+    let output = test_output_of(320, 200);
+    screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    let before = ctx.shown_versions();
+    assert!(
+        !ctx.reads_changed(&scene, &output, &before),
+        "a drawn picture with nothing new asks no frame"
+    );
+    // What redraw leaves behind on a GL error.
+    ctx.backdrops.borrow_mut().get_mut("test").unwrap().drawn = false;
+    assert!(
+        ctx.reads_changed(&scene, &output, &before),
+        "an undrawn backdrop asks a retry frame"
+    );
+    let retry = screen_frame(&mut renderer, &ctx, &scene, &output, Quality::Coarse, &[]);
+    assert!(
+        !retry.late && !retry.changed,
+        "the retry draws its glass fresh, so no late update asks again"
+    );
+}
+
+#[test]
 fn the_frame_after_a_drag_draws_fresh_glass() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
         reprisekit::pins::skipped("no renderer");
