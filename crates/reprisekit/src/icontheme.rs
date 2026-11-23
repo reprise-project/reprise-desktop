@@ -45,6 +45,9 @@ pub struct IconTheme {
     /// Range into `dirs` per theme in `chain`, so the exact-then-closest pass runs one theme at
     /// a time.
     groups: Vec<std::ops::Range<usize>>,
+    /// How many of `dirs` belong to the configured theme, its inherits and `hicolor`: a stand-in
+    /// there beats the name in breeze or Adwaita.
+    own: usize,
     roots: Vec<PathBuf>,
     /// Each theme's directory under each root that has it, and the one each entry of `dirs` is in.
     homes: Vec<Home>,
@@ -176,6 +179,31 @@ impl Home {
     }
 }
 
+/// Names Reprise's programs wear that common themes lack, each with the names those themes carry
+/// for it instead, tried in order.
+pub const STAND_INS: &[(&str, &[&str])] = &[
+    (
+        "preferences-system-power-management",
+        &[
+            "gnome-power-manager",
+            "xfce4-power-manager-settings",
+            "battery",
+        ],
+    ),
+    (
+        "preferences-system-time",
+        &[
+            "time-admin",
+            "preferences-system-date-and-time",
+            "x-office-calendar",
+        ],
+    ),
+    (
+        "polkit-gnome-authorization",
+        &["dialog-password", "system-lock-screen"],
+    ),
+];
+
 impl IconTheme {
     /// `$XDG_DATA_HOME/icons`, `~/.icons`, each `$XDG_DATA_DIRS/icons`, then `/usr/share/pixmaps`.
     pub fn default_roots() -> Vec<PathBuf> {
@@ -200,6 +228,7 @@ impl IconTheme {
             chain: Vec::new(),
             dirs: Vec::new(),
             groups: Vec::new(),
+            own: 0,
             roots: roots.to_vec(),
             homes: Vec::new(),
             dir_home: Vec::new(),
@@ -215,6 +244,9 @@ impl IconTheme {
                 .any(|r| r.join(fallback).join("index.theme").is_file());
             if fallback == "hicolor" || installed {
                 theme.walk(fallback);
+            }
+            if fallback == "hicolor" {
+                theme.own = theme.dirs.len();
             }
         }
         theme.listings = (0..theme.dirs.len() + roots.len())
@@ -361,6 +393,8 @@ impl IconTheme {
 
     /// The first of `name`'s files, best first, that `take` turns into a value: the one
     /// [`IconTheme::lookup_with_extra`] picks, then the next-best sizes and the later themes.
+    /// A name the configured theme's chain lacks tries its [`STAND_INS`] there before breeze
+    /// and Adwaita.
     pub fn find_with_extra<T>(
         &self,
         name: &str,
@@ -368,6 +402,24 @@ impl IconTheme {
         scale: i32,
         extra: &[PathBuf],
         mut take: impl FnMut(PathBuf) -> Option<T>,
+    ) -> Option<T> {
+        let stand_ins = (STAND_INS.iter().find(|(n, _)| *n == name)).map_or(&[][..], |(_, s)| s);
+        let names = || std::iter::once(name).chain(stand_ins.iter().copied());
+        names()
+            .find_map(|n| self.find_named(n, size, scale, extra, true, &mut take))
+            .or_else(|| {
+                names().find_map(|n| self.find_named(n, size, scale, &[], false, &mut take))
+            })
+    }
+
+    fn find_named<T>(
+        &self,
+        name: &str,
+        size: i32,
+        scale: i32,
+        extra: &[PathBuf],
+        own: bool,
+        take: &mut impl FnMut(PathBuf) -> Option<T>,
     ) -> Option<T> {
         for dir in extra {
             let mut tree = ExtraTree::new(dir, list_at_most);
@@ -379,11 +431,17 @@ impl IconTheme {
         }
         let files = EXTENSIONS.map(|ext| OsString::from(format!("{name}.{ext}")));
         for &i in self.order(size, scale).iter() {
+            if (i < self.own) != own {
+                continue;
+            }
             for p in self.files_listed(i, &self.dirs[i].path, name, &files) {
                 if let Some(t) = take(p) {
                     return Some(t);
                 }
             }
+        }
+        if own {
+            return None;
         }
         // Fallback: a bare file directly in a root.
         for (i, root) in self.roots.iter().enumerate() {
