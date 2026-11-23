@@ -252,7 +252,7 @@ fn hit(v: &CenterView, x: f64, y: f64, cm: &ControlMetrics) -> Hit {
 }
 
 /// A press at layout point (`x`, `y`); a left press on a notification with a default action runs
-/// it. True while the press holds a part that repeats.
+/// it and closes the history. True while the press holds a part that repeats.
 pub fn press(state: &mut State, x: f64, y: f64, button: u32) -> bool {
     let cm = state.config.theme.controls();
     let Some(v) = state.notify.center.as_mut() else {
@@ -394,7 +394,10 @@ fn apply(state: &mut State, event: Event) {
         Event::Clear => crate::notifyview::clear_history(state),
         Event::ClearGroup(key) => crate::notifyview::clear_app(state, &key),
         Event::Dismiss(id) => crate::notifyview::forget(state, id),
-        Event::Invoke(id) => crate::notifyview::invoke(state, id, DEFAULT_ACTION),
+        Event::Invoke(id) => {
+            crate::notifyview::invoke(state, id, DEFAULT_ACTION);
+            close(state);
+        }
         Event::Menu(id) => {
             let cm = state.config.theme.controls();
             let Some(v) = state.notify.center.as_ref() else {
@@ -674,7 +677,8 @@ mod tests {
     }
 
     #[test]
-    fn a_click_on_a_row_runs_its_default_action_and_one_without_only_selects() {
+    fn a_click_on_a_row_runs_its_default_action_and_closes_the_history_and_one_without_only_selects()
+     {
         let mut h = crate::harness::Harness::new();
         let out = h.output("TEST-1", 1024, 768);
         let mut invite = mail(1);
@@ -709,6 +713,10 @@ mod tests {
         press(&mut h.state, x, y, BTN_LEFT);
         let gone = (h.state.notify.log.get(1)).is_none_or(|e| !e.can_invoke(DEFAULT_ACTION));
         assert!(gone, "one click ran View and closed the invite");
+        assert!(
+            h.state.notify.center.is_none(),
+            "the history closed after it"
+        );
     }
 
     #[test]
