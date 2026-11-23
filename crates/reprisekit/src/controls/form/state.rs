@@ -195,6 +195,13 @@ impl Form {
         }
     }
 
+    /// Select all of edit `id`'s text, so typing replaces it and End or an arrow keeps it.
+    pub fn select_edit_text(&mut self, id: &str) {
+        if let Some(Control::Edit { edit, .. }) = self.item_mut(id).map(|i| &mut i.control) {
+            edit.select_all();
+        }
+    }
+
     /// Show `s` in edit `id` from its start with nothing selected, as a read-only field does.
     pub fn show_edit_text(&mut self, id: &str, s: &str) {
         if let Some(Control::Edit { edit, first, .. }) = self.item_mut(id).map(|i| &mut i.control)
