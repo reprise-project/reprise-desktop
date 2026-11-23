@@ -925,6 +925,11 @@ fn a_press_in_the_rename_box_finds_the_byte_under_it_in_every_mode() {
                 let b = label_rect(&sv, &lay, 1, &text, px);
                 (b.x + listview::EDIT_PAD_L, b.y + b.height / 2)
             }
+            Mode::Thumbnails | Mode::Tiles => {
+                let ed = &sv.edit.as_ref().unwrap().1;
+                let el = super::rename::grid_box(&sv, &lay, 1, ed, &text, px).unwrap();
+                (el.lines[0].x, el.lines[0].y + 2)
+            }
             _ => {
                 let l = label_rect(&sv, &lay, 1, &text, px);
                 (
@@ -1001,6 +1006,65 @@ fn the_rename_field_is_the_whole_box_in_every_mode() {
             "{mode:?}: the box's left border"
         );
     }
+}
+
+#[test]
+fn a_thumbnail_or_tile_rename_box_wraps_a_long_name_inside_its_cell() {
+    let (text, px) = rend();
+    let name = "New Text Document with a name too long for one line.txt";
+    for mode in [Mode::Thumbnails, Mode::Tiles] {
+        let mut sv = view(3);
+        sv.mode = mode;
+        sv.edit = Some((1, TextEdit::new(name, true)));
+        let lay = layout(&sv, Rect::new(0, 0, 600, 300), &ControlMetrics::CLASSIC);
+        let ed = &sv.edit.as_ref().unwrap().1;
+        let el = super::rename::grid_box(&sv, &lay, 1, ed, &text, px).unwrap();
+        assert!(el.lines.len() > 1, "{mode:?}: the name wraps");
+        let (b, cell) = (el.rect, lay.cells[1]);
+        assert!(
+            b.x >= cell.x && b.right() <= cell.right(),
+            "{mode:?}: box {b:?} stays in cell {cell:?}"
+        );
+        let label = label_rect(&sv, &lay, 1, &text, px);
+        assert_eq!(
+            el.lines[0].y, label.y,
+            "{mode:?}: on the label's first line"
+        );
+    }
+}
+
+#[test]
+fn a_thumbnail_or_tile_rename_box_draws_its_pixels() {
+    crate::pins::fonts();
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let px = theme.fonts.size_px;
+    let mut got = Vec::new();
+    for mode in [Mode::Thumbnails, Mode::Tiles] {
+        let mut sv = view(3);
+        sv.mode = mode;
+        sv.entries[1].name = "New Text Document with a long name.txt".into();
+        sv.selection.set_only(Some(1));
+        let name = sv.entries[1].name.clone();
+        sv.edit = Some((1, TextEdit::new(&name, true)));
+        let r = Rect::new(0, 0, 500, 200);
+        let lay = layout(&sv, r, &ControlMetrics::CLASSIC);
+        for s in [1, 2] {
+            let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
+            let p = classic_paint(&theme.colors, s);
+            draw(&mut c, &text, &p, &sv, &lay, None, px * s as u32);
+            got.push(canvas_fnv(&c));
+        }
+    }
+    assert_eq!(
+        got,
+        [
+            1479223255320838175,
+            16852328580782507990,
+            11788696348499992686,
+            10503351735333426934
+        ]
+    );
 }
 
 /// Renaming in Details is the transient `ListView`'s own box, placed by `listview::ListView::edit_rect`.

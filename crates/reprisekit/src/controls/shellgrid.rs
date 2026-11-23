@@ -3,7 +3,7 @@
 use crate::classic::widgets::draw_focus_ring;
 use crate::controls::iconview;
 use crate::controls::listview::{GROUP_RULE_Y, GroupRule, draw_group_header};
-use crate::controls::shellview::{Entry, Group, Layout, Mode, ShellView, draw_rename};
+use crate::controls::shellview::{Entry, Group, Layout, Mode, ShellView, draw_wrapped_rename};
 use crate::look::Paint;
 use crate::look::widgets::item;
 use crate::raster::{Canvas, Rect};
@@ -180,6 +180,15 @@ pub(crate) fn thumb_frame(cell: Rect) -> Rect {
     )
 }
 
+/// The logical px a `mode` cell `cell_w` wide wraps its label in: a thumbnail's under its frame, a
+/// tile's right of its icon.
+pub(crate) fn label_room(mode: Mode, cell_w: i32, u: TextUnits) -> i32 {
+    match mode {
+        Mode::Tiles => (cell_w - TILE_TEXT_X).max(0),
+        _ => u.len(THUMB_FRAME),
+    }
+}
+
 pub(crate) fn thumb_lines(text: &TextRenderer, name: &str, px: u32, u: TextUnits) -> Vec<String> {
     iconview::wrap_label(text, name, u.len(THUMB_FRAME), px)
 }
@@ -206,7 +215,7 @@ pub(crate) fn faded<'a>(e: &Entry, icon: Option<&'a Canvas>) -> Option<Cow<'a, C
     Some(Cow::Owned(icon))
 }
 
-/// One tile: the 48 px `icon`, centred down a grown cell, then the name and `detail` lines in one block, filled with the highlight when selected. `cell` and `label` are already scaled and offset into the canvas.
+/// One tile: the 48 px `icon`, centred down a grown cell, then the name and `detail` lines in one block, filled with the highlight when selected, unless renaming takes their place (`label` None). `cell` and `label` are already scaled and offset into the canvas.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_tile(
     c: &mut Canvas,
@@ -215,7 +224,7 @@ pub(crate) fn draw_tile(
     e: &Entry,
     icon: Option<&Canvas>,
     cell: Rect,
-    label: Rect,
+    label: Option<Rect>,
     sel: (bool, bool),
     px: u32,
     s: i32,
@@ -230,6 +239,9 @@ pub(crate) fn draw_tile(
             iconview::draw_shortcut_arrow(c, ix, iy + TILE_ICON * s, s);
         }
     }
+    let Some(label) = label else {
+        return;
+    };
     if selected {
         c.fill_rect(label, cs.hilight);
     }
@@ -260,7 +272,7 @@ pub(crate) fn draw_tile(
     }
 }
 
-/// One thumbnail: the framed image `img` (or the 32 px icon centred in it), a `THUMB_RING` highlight ring when selected, and the wrapped label under it.
+/// One thumbnail: the framed image `img` (or the 32 px icon centred in it), a `THUMB_RING` highlight ring when selected, and the wrapped label under it unless renaming takes its place (`label` None).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_thumb(
     c: &mut Canvas,
@@ -269,7 +281,7 @@ pub(crate) fn draw_thumb(
     e: &Entry,
     img: Option<&Canvas>,
     cell: Rect,
-    label: Rect,
+    label: Option<Rect>,
     sel: (bool, bool),
     px: u32,
     s: i32,
@@ -296,6 +308,9 @@ pub(crate) fn draw_thumb(
             iconview::draw_shortcut_arrow(c, ix, iy + img.height as i32, s);
         }
     }
+    let Some(label) = label else {
+        return;
+    };
     if selected {
         c.fill_rect(label, cs.hilight);
     }
@@ -414,14 +429,15 @@ pub(crate) fn draw_grid(
                     e,
                     entry_icon(e, Mode::Tiles).as_deref(),
                     cell,
-                    label,
+                    (!editing).then_some(label),
                     (selected, ring),
                     px,
                     s,
                     u,
                 );
                 if editing {
-                    draw_rename(&mut bc, text, p, sv, i, label, px);
+                    let room = label_room(Mode::Tiles, at.width, u);
+                    draw_wrapped_rename(&mut bc, text, &theme, sv, i, label, room);
                 }
             }
             _ => {
@@ -432,14 +448,15 @@ pub(crate) fn draw_grid(
                     e,
                     entry_icon(e, Mode::Thumbnails).as_deref(),
                     cell,
-                    label,
+                    (!editing).then_some(label),
                     (selected, ring),
                     px,
                     s,
                     u,
                 );
                 if editing {
-                    draw_rename(&mut bc, text, p, sv, i, label, px);
+                    let room = label_room(Mode::Thumbnails, at.width, u);
+                    draw_wrapped_rename(&mut bc, text, &theme, sv, i, label, room);
                 }
             }
         }
