@@ -102,7 +102,14 @@ fn spot_node(p: &StartPanel, s: Spot, r: Rect) -> Option<Node> {
             }
             TreeRow::App { name, .. } => item(r, name),
         },
-        Spot::Result(g, i) => item(r, &p.results.get(g)?.rows.get(i)?.name),
+        Spot::Result(g, i) => {
+            let row = p.results.get(g)?.rows.get(i)?;
+            let mut n = item(r, &row.name);
+            if !row.detail.is_empty() {
+                n.set_description(row.detail.as_str());
+            }
+            n
+        }
         Spot::Jump(k) => item(r, &p.jump.get(k)?.name),
         Spot::Place(i) => {
             let place = p.places.get(i)?;

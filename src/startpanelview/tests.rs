@@ -185,7 +185,11 @@ fn only_programs_tree_apps_and_program_results_get_a_program_menu() {
 
 #[test]
 fn search_groups_the_answer_programs_settings_then_each_found_section_with_counts() {
-    let notes = [Found::Path("/home/u/notes.txt".into())];
+    let notes = [
+        Found::Path("/home/u/notes.txt".into()),
+        Found::Path("/home/u/Documents/notes.txt".into()),
+        Found::Path("/srv/notes.txt".into()),
+    ];
     let minutes = [Found::Path("/home/u/minutes.pdf".into())];
     let sum = [Found::Result(reprisebus::searchprovider::Meta {
         id: "1".into(),
@@ -205,6 +209,7 @@ fn search_groups_the_answer_programs_settings_then_each_found_section_with_count
             ("Calculator", &sum[..]),
         ]
         .into_iter(),
+        Some(std::path::Path::new("/home/u")),
     );
     let titles: Vec<&str> = groups.iter().map(|g| g.title.as_str()).collect();
     assert_eq!(
@@ -213,7 +218,7 @@ fn search_groups_the_answer_programs_settings_then_each_found_section_with_count
             "Calculator",
             "Programs (1)",
             "Settings (2)",
-            "Files (1)",
+            "Files (3)",
             "Contents (1)",
             "Calculator (1)"
         ]
@@ -234,18 +239,34 @@ fn search_groups_the_answer_programs_settings_then_each_found_section_with_count
         groups[5].rows[0].name, "14",
         "a program's result by its name"
     );
-    assert_eq!(groups[3].rows[0].name, "notes.txt");
+    assert_eq!(
+        groups[5].rows[0].detail, "2 + 3 * 4",
+        "with its description"
+    );
+    let files: Vec<(&str, &str)> = (groups[3].rows.iter())
+        .map(|r| (r.name.as_str(), r.detail.as_str()))
+        .collect();
+    assert_eq!(
+        files,
+        [
+            ("notes.txt", "~"),
+            ("notes.txt", "~/Documents"),
+            ("notes.txt", "/srv")
+        ],
+        "same-named files say their folders"
+    );
     assert_eq!(groups[4].rows[0].name, "minutes.pdf");
-    let (groups, kinds) = result_groups(None, &[], &[], found.into_iter());
+    assert_eq!(groups[2].rows[0].detail, "", "a setting has no detail");
+    let (groups, kinds) = result_groups(None, &[], &[], found.into_iter(), None);
     assert_eq!(
         (groups.len(), kinds),
         (1, vec![ResultKind::Found(1)]),
         "an empty section shows no group and keeps the next one's number"
     );
-    let (groups, kinds) = result_groups(None, &[], &["Mouse".into()], std::iter::empty());
+    let (groups, kinds) = result_groups(None, &[], &["Mouse".into()], std::iter::empty(), None);
     assert_eq!((groups.len(), kinds), (1, vec![ResultKind::Settings]));
     assert!(
-        result_groups(None, &[], &[], std::iter::empty())
+        result_groups(None, &[], &[], std::iter::empty(), None)
             .0
             .is_empty()
     );
@@ -254,7 +275,7 @@ fn search_groups_the_answer_programs_settings_then_each_found_section_with_count
 #[test]
 fn a_group_shows_at_most_eight_rows_and_counts_them() {
     let names: Vec<String> = (0..12).map(|i| format!("App {i}")).collect();
-    let (groups, _) = result_groups(None, &names, &[], std::iter::empty());
+    let (groups, _) = result_groups(None, &names, &[], std::iter::empty(), None);
     assert_eq!(groups[0].title, "Programs (8)");
     assert_eq!(groups[0].rows.len(), 8);
 }

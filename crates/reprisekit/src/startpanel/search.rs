@@ -67,6 +67,9 @@ impl PaneInks {
     }
 }
 
+/// Design px between a result's name and its dimmed detail.
+pub const DETAIL_GAP: i32 = 8;
+
 /// How design pixels land on the canvas: grown by the text size `u`, then times the scale `s`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Grow {
@@ -318,7 +321,8 @@ pub fn field(
 }
 
 /// A result row `r`: [`Part::StartLitResult`]'s 22 px box across it when `lit`, the `icon` and
-/// `name` in `text`, cut short of `r`'s right by 2 px. Returns the pen x past the name.
+/// `name` in `text`, then `detail` in the pane's greyed ink after it, both cut short of `r`'s right by
+/// 2 px.
 #[expect(clippy::too_many_arguments)]
 pub fn result(
     canvas: &mut Canvas,
@@ -327,9 +331,10 @@ pub fn result(
     r: Rect,
     icon: Option<&Canvas>,
     name: &str,
+    detail: &str,
     lit: bool,
     g: Grow,
-) -> i32 {
+) {
     let s = g.s;
     if lit {
         let b = Rect::new(r.x, r.y, r.width, g.len(at::RESULT_BOX_H));
@@ -348,7 +353,20 @@ pub fn result(
     let clip = Rect::new(r.x, r.y, r.width - 2 * s, r.height);
     let (x, y) = (r.x + g.len(at::RESULT_PEN), r.y + g.len(at::RESULT_BASE));
     let size = g.px(TEXT_PX);
-    x + line(canvas, text, x, y, clip, name, style.pane_inks.strong, size)
+    let end = x + line(canvas, text, x, y, clip, name, style.pane_inks.strong, size);
+    if !detail.is_empty() {
+        let x = end + g.len(DETAIL_GAP);
+        line(
+            canvas,
+            text,
+            x,
+            y,
+            clip,
+            detail,
+            style.pane_inks.greyed,
+            size,
+        );
+    }
 }
 
 /// A group's header `r` (its top on the capitals' top): `title` in the pane's group ink a size up, cut to

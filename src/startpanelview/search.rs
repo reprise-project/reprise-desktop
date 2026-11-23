@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use repriseconf::search::word_starts;
 use reprisefs::apps::AppEntry;
 use reprisekit::startpanel::{ResultGroup, ResultRow, SMALL_ICON};
@@ -44,49 +46,57 @@ pub(super) enum ResultKind {
 }
 
 /// The search's groups and what each holds: the answer, programs, settings, then each found
-/// section under its heading, every group but the answer counted.
+/// section under its heading, every group but the answer counted. A found row's detail is its
+/// folder (`~` for `home`) or its search provider's description.
 pub(super) fn result_groups<'a>(
     calc: Option<&str>,
     apps: &[String],
     settings: &[String],
     found: impl Iterator<Item = (&'a str, &'a [Found])>,
+    home: Option<&Path>,
 ) -> (Vec<ResultGroup>, Vec<ResultKind>) {
     let mut groups = Vec::new();
     let mut kinds = Vec::new();
-    let mut group = |kind, title: String, rows: Vec<String>| {
+    let mut group = |kind, title: String, rows: Vec<ResultRow>| {
         if !rows.is_empty() {
-            groups.push(ResultGroup {
-                title,
-                rows: rows
-                    .into_iter()
-                    .map(|name| ResultRow { name, icon: None })
-                    .collect(),
-            });
+            groups.push(ResultGroup { title, rows });
             kinds.push(kind);
         }
     };
-    group(
-        ResultKind::Calc,
-        "Calculator".into(),
-        calc.map(str::to_string).into_iter().collect(),
-    );
+    let named = |names: &[String]| -> Vec<ResultRow> {
+        (names.iter())
+            .map(|name| ResultRow {
+                name: name.clone(),
+                ..ResultRow::default()
+            })
+            .collect()
+    };
+    let calc: Vec<String> = calc.map(str::to_string).into_iter().collect();
+    group(ResultKind::Calc, "Calculator".into(), named(&calc));
     let apps = &apps[..apps.len().min(SEARCH_ROWS)];
     group(
         ResultKind::Programs,
         format!("Programs ({})", apps.len()),
-        apps.to_vec(),
+        named(apps),
     );
     group(
         ResultKind::Settings,
         format!("Settings ({})", settings.len()),
-        settings.to_vec(),
+        named(settings),
     );
     for (s, (heading, rows)) in found.enumerate() {
         let rows = &rows[..rows.len().min(SEARCH_ROWS)];
+        let rows: Vec<ResultRow> = (rows.iter())
+            .map(|f| ResultRow {
+                name: f.name(),
+                icon: None,
+                detail: f.detail(home),
+            })
+            .collect();
         group(
             ResultKind::Found(s),
             format!("{heading} ({})", rows.len()),
-            rows.iter().map(Found::name).collect(),
+            rows,
         );
     }
     (groups, kinds)
@@ -146,7 +156,9 @@ impl State {
             .collect();
         let calc = v.answer.as_ref().map(|(row, _)| row.clone());
         let found = (v.search.sections()).map(|(source, rows)| (source.heading(), rows));
-        let (mut groups, kinds) = result_groups(calc.as_deref(), &names, &settings, found);
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let (mut groups, kinds) =
+            result_groups(calc.as_deref(), &names, &settings, found, home.as_deref());
         v.result_kinds = kinds;
         let mut icon_rows: Vec<Option<Canvas>> = Vec::new();
         if calc.is_some() {

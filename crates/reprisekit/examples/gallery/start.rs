@@ -41,6 +41,7 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
     let row = |name: &str| ResultRow {
         name: name.into(),
         icon: Some(square(grown(16), blue)),
+        detail: String::new(),
     };
     let app = |name: &str, depth: u8| TreeRow::App {
         name: name.into(),
@@ -151,8 +152,18 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
                 rows: vec![row("Notepad"), row("Sticky Notes"), row("Web Browser")],
             },
             ResultGroup {
-                title: "Files (2)".into(),
-                rows: vec![row("notes.txt"), row("north.png")],
+                title: "Files (3)".into(),
+                rows: vec![
+                    ResultRow {
+                        detail: "~/Documents".into(),
+                        ..row("notes.txt")
+                    },
+                    ResultRow {
+                        detail: "~/Projects/Reprise".into(),
+                        ..row("notes.txt")
+                    },
+                    row("north.png"),
+                ],
             },
         ]);
         p
