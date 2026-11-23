@@ -288,9 +288,10 @@ impl History {
     }
 
     /// New entries, newest first. The selection stays on its header or notification
-    /// while it is still there, the scroll inside the new rows, folded groups folded.
-    /// When its whole group is gone, the selection moves to the next group's header
-    /// (the previous one's after the last group), scrolled into view.
+    /// while it is still there, scrolled into view, folded groups folded. A list scrolled
+    /// down keeps its top row in place as rows come and go above it; at its top it shows
+    /// the newest. When its whole group is gone, the selection moves to the next group's
+    /// header (the previous one's after the last group), scrolled into view.
     pub fn set_entries(&mut self, entries: Vec<Entry>) {
         self.entries = entries;
         self.rebuild();
@@ -304,6 +305,10 @@ impl History {
             .and_then(|i| self.key_of(i))
             .map(str::to_string);
         let old_apps: Vec<String> = self.headers().map(str::to_string).collect();
+        let below_top: Vec<Meta> = match self.list.top {
+            0 => Vec::new(),
+            top => self.meta.get(top..).unwrap_or_default().to_vec(),
+        };
         let mut keys: Vec<&str> = Vec::new();
         for e in &self.entries {
             if !keys.contains(&e.key.as_str()) {
@@ -349,12 +354,9 @@ impl History {
         self.list.trail = trail;
         self.meta = meta;
         self.icons = icons;
-        let same = |m: &Meta| match (&picked, m) {
-            (Some(Meta::Header { key: a, .. }), Meta::Header { key: b, .. }) => a == b,
-            (Some(Meta::Note { id: a, .. }), Meta::Note { id: b, .. }) => a == b,
-            _ => false,
-        };
-        let kept = self.meta.iter().position(same);
+        let row_of = |m: &Meta| self.meta.iter().position(|r| same_row(m, r));
+        let kept = picked.as_ref().and_then(row_of);
+        let top = below_top.iter().find_map(row_of).unwrap_or(top);
         self.list.top = top.min(n.saturating_sub(self.page));
         let gone = picked_app.filter(|a| !self.headers().any(|h| h == a));
         if kept.is_none()
@@ -368,6 +370,9 @@ impl History {
             self.list.selected = kept
                 .or_else(|| old.map(|i| i.min(n.saturating_sub(1))))
                 .filter(|_| n > 0);
+            if let Some(i) = self.list.selected {
+                self.list.reveal(i, self.page);
+            }
         }
         // A rebuilt list may have moved a held group's Clear.
         if matches!(self.pointer.held(), Some(Held::GroupClear(_))) {
@@ -622,6 +627,15 @@ impl History {
     /// Row `i`'s rect while it is scrolled into view.
     pub fn row_rect(&self, i: usize, cm: &ControlMetrics) -> Option<Rect> {
         grouplist::row_rect(&self.list, &self.list_layout(cm), i)
+    }
+}
+
+/// Whether `a` and `b` are the same program's header or the same notification.
+fn same_row(a: &Meta, b: &Meta) -> bool {
+    match (a, b) {
+        (Meta::Header { key: a, .. }, Meta::Header { key: b, .. }) => a == b,
+        (Meta::Note { id: a, .. }, Meta::Note { id: b, .. }) => a == b,
+        _ => false,
     }
 }
 
@@ -1218,6 +1232,74 @@ mod tests {
         assert_eq!(h.note_at(h.list.selected.unwrap()), Some(2));
         h.set_entries(Vec::new());
         assert_eq!(h.list.selected, None);
+    }
+
+    fn note(id: u32, app: &str) -> Entry {
+        Entry {
+            id,
+            key: app.into(),
+            app: app.into(),
+            icon: None,
+            message: format!("{app} {id}"),
+            time: "1:00 PM".into(),
+            live: true,
+            replied: false,
+        }
+    }
+
+    fn in_view(h: &History) -> Vec<&str> {
+        labels(h)[h.list.top..]
+            .iter()
+            .take(h.page)
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn a_program_arriving_above_a_scrolled_list_keeps_the_rows_in_view() {
+        let mut h = History::new();
+        h.set_entries((0..30).rev().map(|i| note(i, "Mail")).collect());
+        assert_eq!(h.key(Key::End), Event::Redraw);
+        let (shown, picked) = (
+            in_view(&h).join("|"),
+            h.list.selected.and_then(|i| h.note_at(i)),
+        );
+        let mut entries = h.entries.clone();
+        entries.insert(0, note(100, "Chat"));
+        h.set_entries(entries);
+        assert_eq!(labels(&h)[0], "Chat (1)");
+        assert_eq!(in_view(&h).join("|"), shown);
+        assert_eq!(h.list.selected.and_then(|i| h.note_at(i)), picked);
+    }
+
+    #[test]
+    fn a_list_at_its_top_shows_a_program_arriving_above() {
+        let mut h = History::new();
+        h.set_entries((0..30).rev().map(|i| note(i, "Mail")).collect());
+        let mut entries = h.entries.clone();
+        entries.insert(0, note(100, "Chat"));
+        h.set_entries(entries);
+        assert_eq!(h.list.top, 0);
+        assert_eq!(in_view(&h)[..2], ["Chat (1)", "Chat 100"]);
+    }
+
+    #[test]
+    fn a_notification_pushing_the_selected_row_down_scrolls_it_back_into_view() {
+        let mut h = History::new();
+        h.set_entries((0..30).rev().map(|i| note(i, "Mail")).collect());
+        let last = h.page - 1;
+        h.list.select(last, h.page);
+        let picked = h.note_at(last);
+        let mut entries = h.entries.clone();
+        entries.insert(0, note(100, "Chat"));
+        h.set_entries(entries);
+        let i = h.list.selected.unwrap();
+        assert_eq!(h.note_at(i), picked);
+        assert!(
+            (h.list.top..h.list.top + h.page).contains(&i),
+            "row {i} shows from {}",
+            h.list.top
+        );
     }
 
     /// Clearing the selected program's group moves the selection to the next
