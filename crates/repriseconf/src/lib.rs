@@ -56,6 +56,17 @@ pub fn state_path() -> PathBuf {
         .join("state.toml")
 }
 
+/// The compositor state file's key naming the picture the running slideshow shows on every desktop
+/// and output without a picture of its own; absent while no slideshow runs.
+pub const SLIDESHOW_PICTURE: &str = "slideshow_picture";
+
+/// [`SLIDESHOW_PICTURE`] as the state file at `path` holds it.
+pub fn slideshow_picture(path: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let table: toml::Table = toml::from_str(&text).ok()?;
+    Some(PathBuf::from(table.get(SLIDESHOW_PICTURE)?.as_str()?))
+}
+
 /// The config file read as the compositor reads it ([`config::lenient_over`]): a key that fails
 /// keeps its value from this thread's last read, or its default on the first, and a file that
 /// can't be read or isn't TOML keeps the last read whole; an absent file reads as all defaults.

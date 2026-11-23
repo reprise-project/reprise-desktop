@@ -540,6 +540,12 @@ struct SettingsApp {
     /// Follows the folder last listed; sets `slides_touched` when a file in it changes.
     folder_watch: Option<configwatch::FolderWatch>,
     slides_touched: Arc<AtomicBool>,
+    /// The compositor's state file, followed for the picture its slideshow shows; None in tests.
+    compositor_state: Option<PathBuf>,
+    /// That file's [`repriseconf::SLIDESHOW_PICTURE`] as last read.
+    slide_now: Option<PathBuf>,
+    /// Set by a `configwatch` thread when the compositor's state file changed on disk.
+    slide_moved: Arc<AtomicBool>,
     /// The slideshow folder picked before Picture was chosen; kept in the state file.
     last_slideshow: String,
     decoding: Option<(String, Receiver<Option<Decoded>>)>,
@@ -575,6 +581,9 @@ impl SettingsApp {
         app.last_slideshow = winstate::slideshow(&state);
         app.custom_colors = winstate::custom_colors(&state);
         app.state_path = Some(state);
+        let compositor = repriseconf::state_path();
+        app.slide_now = repriseconf::slideshow_picture(&compositor);
+        app.compositor_state = Some(compositor);
         app
     }
 
@@ -866,6 +875,9 @@ impl SettingsApp {
             listing: None,
             folder_watch: None,
             slides_touched: Arc::default(),
+            compositor_state: None,
+            slide_now: None,
+            slide_moved: Arc::default(),
             last_slideshow: String::new(),
             decoding: None,
             state_path: None,
@@ -1150,7 +1162,18 @@ impl App for SettingsApp {
             waker.wake();
         }
         let w = waker.clone();
-        configwatch::spawn(&self.path, self.config_touched.clone(), move || w.wake());
+        let touched = self.config_touched.clone();
+        configwatch::spawn("reprise-settings-config", &self.path, touched, move || {
+            w.wake()
+        });
+        if let Some(path) = &self.compositor_state {
+            let w = waker.clone();
+            let moved = self.slide_moved.clone();
+            configwatch::spawn("reprise-settings-state", path, moved, move || w.wake());
+            // A pick written since `open` read the file; the `want_preview` below shows it once
+            // the waker and folder watch are in place.
+            self.slide_now = repriseconf::slideshow_picture(path);
+        }
         let w = waker.clone();
         match configwatch::FolderWatch::spawn(self.slides_touched.clone(), move || w.wake()) {
             Ok(watch) => self.folder_watch = Some(watch),

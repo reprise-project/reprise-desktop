@@ -186,6 +186,62 @@ fn a_picture_added_to_the_slideshow_folder_becomes_the_monitors_first_slide() {
     );
 }
 
+/// While the applied slideshow runs, the monitor shows the picture the desktop shows now and
+/// follows it; a folder picked shows its first picture until the compositor picks from it.
+#[test]
+fn the_monitor_follows_the_running_slideshows_picture() {
+    let dir = tmp("slide-live");
+    let (trips, walks) = (dir.join("Trips"), dir.join("Walks"));
+    for (folder, files) in [
+        (&trips, ["coast.jpg", "lake.jpg"]),
+        (&walks, ["fell.jpg", "moor.jpg"]),
+    ] {
+        std::fs::create_dir_all(folder).unwrap();
+        for f in files {
+            std::fs::write(folder.join(f), b"x").unwrap();
+        }
+    }
+    let path = dir.join("config.toml");
+    std::fs::write(&path, format!("[wallpaper]\nslideshow = {trips:?}\n")).unwrap();
+    let mut a = SettingsApp::open(path, "us".into());
+    let state = dir.join("state.toml");
+    a.compositor_state = Some(state.clone());
+    let slide = |a: &mut SettingsApp, p: &Path| {
+        std::fs::write(&state, format!("slideshow_picture = {p:?}\n")).unwrap();
+        a.slide_moved.store(true, Ordering::Release);
+    };
+    let settle = |a: &mut SettingsApp| {
+        for _ in 0..500 {
+            a.wake();
+            if a.listing.is_none() && a.decoding.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        a.picture.as_ref().map(|p| p.path.clone())
+    };
+    let name = |p: &Path| Some(p.to_string_lossy().into_owned());
+    a.want_preview();
+    assert_eq!(settle(&mut a), name(&trips.join("coast.jpg")));
+    slide(&mut a, &trips.join("lake.jpg"));
+    assert_eq!(
+        settle(&mut a),
+        name(&trips.join("lake.jpg")),
+        "the next picture"
+    );
+
+    a.slide_folder(walks.clone());
+    assert_eq!(
+        settle(&mut a),
+        name(&walks.join("fell.jpg")),
+        "a folder not yet applied"
+    );
+    assert!(a.apply());
+    assert_eq!(settle(&mut a), name(&walks.join("fell.jpg")));
+    slide(&mut a, &walks.join("moor.jpg"));
+    assert_eq!(settle(&mut a), name(&walks.join("moor.jpg")));
+}
+
 /// Two monitors listed: Use for offers them by their Display page names, a picture and a
 /// position picked for the second are written to its `[[outputs]]` entry, the monitor shows its
 /// own picture, and a pick for all monitors takes the entry's wallpaper keys out again.

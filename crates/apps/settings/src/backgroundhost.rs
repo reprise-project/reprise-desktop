@@ -4,7 +4,7 @@ use crate::{SettingsApp, appearancepage, backgroundpage, pages, wallpapers, wins
 use repriseapp::Ctx;
 use repriseapp::decode::{Decoded, Decoders};
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 impl SettingsApp {
@@ -148,7 +148,7 @@ impl SettingsApp {
     pub(crate) fn show_monitor(&mut self) {
         self.follow_use_for();
         let bg = self.bg_preview().into_owned();
-        let file = backgroundpage::monitor_file(&bg, self.listed());
+        let file = backgroundpage::monitor_file(&bg, self.listed(), self.live_slide());
         backgroundpage::show(
             &mut self.sheet.pages[Page::Background.index()],
             &bg,
@@ -160,6 +160,23 @@ impl SettingsApp {
 
     fn listed(&self) -> &[PathBuf] {
         self.listed.as_ref().map_or(&[], |(_, p)| p.as_slice())
+    }
+
+    fn live_slide(&self) -> Option<&Path> {
+        backgroundpage::live_slide(&self.loaded, &self.want, self.slide_now.as_deref())
+    }
+
+    /// The compositor's state file changed: reread the picture its slideshow shows and, when it
+    /// moved, put it on the monitor.
+    pub(crate) fn follow_slide(&mut self) -> bool {
+        let now = (self.compositor_state.as_deref()).and_then(repriseconf::slideshow_picture);
+        if now == self.slide_now {
+            return false;
+        }
+        self.slide_now = now;
+        self.want_preview();
+        self.show_monitor();
+        true
     }
 
     /// List the pending slideshow folder on a thread unless it is listed, unchanged since, or being listed already.
@@ -273,7 +290,8 @@ impl SettingsApp {
     /// Decode the pending wallpaper for the monitor unless shown or a decode is under way; that one's end calls this again. A slideshow folder is listed first.
     pub(crate) fn want_preview(&mut self) {
         self.list_slide_folder();
-        let want = backgroundpage::monitor_file(&self.bg_preview(), self.listed());
+        let want =
+            backgroundpage::monitor_file(&self.bg_preview(), self.listed(), self.live_slide());
         let Some(file) = backgroundpage::next_decode(
             &want,
             self.picture.as_ref().map(|p| p.path.as_str()),

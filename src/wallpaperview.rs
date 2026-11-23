@@ -403,7 +403,8 @@ pub struct Slideshow {
     folder: PathBuf,
     timer: Option<RegistrationToken>,
     picking: bool,
-    /// The picture last picked, which every desktop without its own shows.
+    /// The picture last picked, which every desktop without its own shows; the state file keeps
+    /// it for Settings' preview ([`repriseconf::SLIDESHOW_PICTURE`]).
     shown: Option<PathBuf>,
 }
 
@@ -788,6 +789,10 @@ impl State {
             if let Some(t) = self.slideshow.take().and_then(|s| s.timer) {
                 self.handle.remove(t);
             }
+            // Also takes out a picture a crashed session left. The login screen keeps no state.
+            if self.host != crate::compositor::Host::Greeter {
+                crate::state::save_slideshow_picture(None);
+            }
             let paper = (self.config.wallpaper)
                 .for_desktop(self.desktops.current)
                 .map(Path::to_path_buf);
@@ -803,6 +808,7 @@ impl State {
         if let Some(t) = self.slideshow.take().and_then(|s| s.timer) {
             self.handle.remove(t);
         }
+        crate::state::save_slideshow_picture(None);
         self.slideshow = Some(Slideshow {
             folder,
             timer: None,
@@ -877,23 +883,12 @@ impl State {
         }
         show.picking = true;
         let folder = show.folder.clone();
+        let picked_in = folder.clone();
         let (tx, rx) = channel::channel::<Option<PathBuf>>();
         let inserted = self.handle.insert_source(rx, move |event, _, state| {
-            let channel::Event::Msg(pick) = event else {
-                return;
-            };
-            let Some(show) = state.slideshow.as_mut() else {
-                return;
-            };
-            show.picking = false;
-            match pick {
-                Some(p) => {
-                    show.shown = Some(p);
-                    state.follow_desktop_wallpaper(FADE);
-                }
-                None => log::info!("slideshow: no pictures in {}", show.folder.display()),
+            if let channel::Event::Msg(pick) = event {
+                state.slide_picked(&picked_in, pick);
             }
-            state.arm_slideshow();
         });
         if let Err(e) = inserted {
             log::warn!("slideshow: {}", e.error);
@@ -914,6 +909,24 @@ impl State {
         if let Err(e) = spawned {
             log::warn!("slideshow: no thread: {e}");
         }
+    }
+
+    /// The pick thread's answer for `folder`, shown and written to the state file (none for an
+    /// empty folder); a pick for a folder the slideshow has left is dropped.
+    fn slide_picked(&mut self, folder: &Path, pick: Option<PathBuf>) {
+        let Some(show) = self.slideshow.as_mut().filter(|s| s.folder == folder) else {
+            return;
+        };
+        show.picking = false;
+        crate::state::save_slideshow_picture(pick.as_deref());
+        match pick {
+            Some(p) => {
+                show.shown = Some(p);
+                self.follow_desktop_wallpaper(FADE);
+            }
+            None => log::info!("slideshow: no pictures in {}", folder.display()),
+        }
+        self.arm_slideshow();
     }
 
     fn arm_slideshow(&mut self) {
@@ -1977,6 +1990,103 @@ mod tests {
         assert!(node_of(&h, "A-1").is_some(), "A-1 shows the main picture");
         assert_eq!(node_of(&h, "B-1"), None);
         assert!(h.state.wallpaper_shows_nothing(&out(&h, "B-1")));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder `dir/name` of pictures `names`, with `dir` holding this test thread's state file.
+    fn slides(dir: &Path, name: &str, names: &[&str]) -> (PathBuf, Vec<PathBuf>) {
+        let folder = dir.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        crate::state::OWN_PATH.set(Some(dir.join("state.toml")));
+        let pictures = names.iter().map(|n| folder.join(n)).collect::<Vec<_>>();
+        for p in &pictures {
+            image::RgbaImage::from_pixel(4, 4, image::Rgba([9, 9, 9, 255]))
+                .save(p)
+                .unwrap();
+        }
+        (folder, pictures)
+    }
+
+    fn slideshow_of(folder: &Path) -> crate::harness::Harness {
+        let text = format!("[wallpaper]\nslideshow = {folder:?}\n");
+        let mut h =
+            crate::harness::Harness::with_config(crate::config::Config::parse(&text).unwrap());
+        h.output("A-1", 320, 200);
+        h.state.apply_wallpaper_config();
+        h
+    }
+
+    fn kept() -> Option<PathBuf> {
+        crate::state::flush();
+        repriseconf::slideshow_picture(&crate::state::path())
+    }
+
+    fn slide_shown(s: &State) -> Option<&PathBuf> {
+        s.slideshow.as_ref().and_then(|s| s.shown.as_ref())
+    }
+
+    #[test]
+    fn the_state_file_names_the_slideshows_picture_while_it_runs() {
+        let dir = std::env::temp_dir().join(format!("reprise-slides-{}", std::process::id()));
+        let (folder, p) = slides(&dir, "show", &["a.png", "b.png"]);
+        let mut h = slideshow_of(&folder);
+        h.until("the first picture is picked", |s| {
+            slide_shown(s) == Some(&p[0])
+        });
+        assert_eq!(kept().as_ref(), Some(&p[0]));
+        h.state.next_slide();
+        h.until("the next picture is picked", |s| {
+            slide_shown(s) == Some(&p[1])
+        });
+        assert_eq!(kept().as_ref(), Some(&p[1]));
+        h.state.config.wallpaper.slideshow = None;
+        h.state.apply_wallpaper_config();
+        assert_eq!(kept(), None, "no slideshow runs");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_pick_for_the_folder_left_changes_neither_the_desktop_nor_the_state_file() {
+        let dir = std::env::temp_dir().join(format!("reprise-slides-left-{}", std::process::id()));
+        let (old, o) = slides(&dir, "old", &["a.png", "b.png"]);
+        let (new, n) = slides(&dir, "new", &["n.png"]);
+        let mut h = slideshow_of(&old);
+        h.until("the old folder's picture is picked", |s| {
+            slide_shown(s) == Some(&o[0])
+        });
+
+        h.state.config.wallpaper.slideshow = Some(new.clone());
+        h.state.apply_wallpaper_config();
+        h.state.slide_picked(&old, Some(o[1].clone()));
+        assert_eq!(slide_shown(&h.state), None);
+        assert!(
+            h.state.slideshow.as_ref().is_some_and(|s| s.picking),
+            "the new folder's pick is awaited"
+        );
+        assert_eq!(kept(), None, "a new folder starts with no picture kept");
+        h.until("the new folder's picture is picked", |s| {
+            slide_shown(s) == Some(&n[0])
+        });
+        assert_eq!(kept().as_ref(), Some(&n[0]));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_picture_left_in_the_state_file_goes_when_no_slideshow_runs() {
+        let dir = std::env::temp_dir().join(format!("reprise-slides-crash-{}", std::process::id()));
+        let (_, p) = slides(&dir, "show", &["a.png"]);
+        let file = crate::state::path();
+        let text = format!("screen_locked = false\nslideshow_picture = {:?}\n", p[0]);
+        std::fs::write(&file, text).unwrap();
+        let mut h = crate::harness::Harness::new();
+        h.state.apply_wallpaper_config();
+        assert_eq!(kept(), None);
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(
+            text.trim(),
+            "screen_locked = false",
+            "every other key stays"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
