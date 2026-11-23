@@ -1695,6 +1695,27 @@ fn ctrl_z_refuses_a_different_file_that_took_the_new_ones_name() {
 }
 
 #[test]
+fn ctrl_z_leaves_a_different_file_that_took_the_renamed_ones_name() {
+    let (mut h, desk) = desktop_in("desktop-undo-rename-identity", &["a.txt"]);
+    h.state.begin_rename(icon(&h, "a.txt"));
+    let view = h.state.desktop.as_mut().unwrap();
+    view.rename.as_mut().unwrap().1.text = "b".into();
+    h.state.commit_rename();
+    let b = desk.join("b.txt");
+    assert!(b.exists(), "renamed");
+    std::fs::rename(&b, desk.join("c.txt")).unwrap();
+    std::fs::write(&b, "saved by another program").unwrap();
+    ctrl_z(&mut h);
+    assert!(!desk.join("a.txt").exists(), "nothing took the old name");
+    assert_eq!(
+        std::fs::read_to_string(&b).unwrap(),
+        "saved by another program"
+    );
+    assert_eq!(h.state.dialogs.views.len(), 1, "an error box says why");
+    assert_eq!(h.state.desktop.as_ref().unwrap().undos.label(), None);
+}
+
+#[test]
 fn a_second_ctrl_z_waits_for_the_first_and_undo_rename_keeps_the_cell() {
     let (mut h, desk) = desktop_in("desktop-undo-serial", &[]);
     crate::fsjobs::setup(&mut h.state);

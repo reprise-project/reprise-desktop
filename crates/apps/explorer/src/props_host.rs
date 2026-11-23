@@ -999,8 +999,8 @@ impl Explorer {
                 let Some(w) = w else {
                     return Reply::none();
                 };
-                for (from, to) in &w.renames {
-                    ex.after_rename(from, to, to.is_dir(), ctx);
+                for (from, to, id) in &w.renames {
+                    ex.after_rename(from, to, *id, to.is_dir(), ctx);
                 }
                 let failed = w.failed.first().map(|(p, e)| change_failed_text(p, e));
                 // Raised before Apply reads the sheet again, which keeps its boxes; after OK
@@ -1093,9 +1093,10 @@ impl Explorer {
             {
                 return Some(Err(reprisefs::names::failed_text(&old, &e)));
             }
+            let id = to.as_deref().and_then(reprisefs::undo::file_id);
             let path = to.clone().unwrap_or(from);
             let write = reprisefs::props::write_item(&path, &attrs, hidden, tree);
-            Some(Ok((to, path, write)))
+            Some(Ok((to.map(|to| (to, id)), path, write)))
         };
         self.act(
             ctx,
@@ -1107,8 +1108,8 @@ impl Explorer {
                     Some(Err(text)) => return ex.message_over(Some(sheet), "Rename", text, ctx),
                     Some(Ok(done)) => done,
                 };
-                if let Some(to) = &renamed {
-                    ex.after_rename(&info.path, to, info.is_dir, ctx);
+                if let Some((to, id)) = &renamed {
+                    ex.after_rename(&info.path, to, *id, info.is_dir, ctx);
                     if here && *to != info.path {
                         let place = crate::place::Place::from_path(to);
                         ex.history.replace(place.clone());

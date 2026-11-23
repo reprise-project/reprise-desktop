@@ -19,9 +19,12 @@ pub enum Undoable {
         to: PathBuf,
         listed: bool,
     },
+    /// A rename, with the [`file_id`] of the item at `to` after it: undoing it refuses a different
+    /// item that took the name since.
     Rename {
         from: PathBuf,
         to: PathBuf,
+        id: Option<FileId>,
     },
     Trash(Trashed),
     /// A copy or a shortcut that landed at the path. Undoing it trashes
@@ -50,7 +53,7 @@ impl Undoable {
     /// one from, each once.
     fn dirs(&self, out: &mut Vec<PathBuf>) {
         let paths: Vec<&Path> = match self {
-            Undoable::Move { from, to, .. } | Undoable::Rename { from, to } => vec![from, to],
+            Undoable::Move { from, to, .. } | Undoable::Rename { from, to, .. } => vec![from, to],
             Undoable::Trash(t) => vec![&t.original],
             Undoable::Copied(p) | Undoable::New(p, _) => vec![p],
             Undoable::Batch(items) => {
@@ -119,19 +122,16 @@ impl Undoable {
                 }
                 Ok(())
             }
-            Undoable::Rename { from, to } => crate::hidden::rename(to, from),
+            Undoable::Rename { from, to, id } => {
+                same_item(to, *id)?;
+                crate::hidden::rename(to, from)
+            }
             Undoable::Trash(t) => trash::restore(t),
             Undoable::Copied(path) => trash_in(path, crate::ops::erase),
             // A folder goes only while empty and a file goes to the trash,
             // so nothing the user put there since is lost.
             Undoable::New(path, id) => {
-                let meta = std::fs::symlink_metadata(path)?;
-                if id.is_some_and(|id| id != (meta.dev(), meta.ino())) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        "a different item has its name now",
-                    ));
-                }
+                let meta = same_item(path, *id)?;
                 if meta.is_dir() {
                     if std::fs::read_dir(path)?.next().is_some() {
                         return Err(io::Error::new(
@@ -263,6 +263,18 @@ impl std::error::Error for NoBin {}
 
 /// An item's (device, inode), told apart from a different item that later takes its path.
 pub type FileId = (u64, u64);
+
+/// `path`'s own metadata, unless `id` names another item than the one there now.
+fn same_item(path: &Path, id: Option<FileId>) -> io::Result<std::fs::Metadata> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if id.is_some_and(|id| id != (meta.dev(), meta.ino())) {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "a different item has its name now",
+        ));
+    }
+    Ok(meta)
+}
 
 /// `path`'s own [`FileId`], a link's rather than its target's.
 pub fn file_id(path: &Path) -> Option<FileId> {
@@ -441,6 +453,7 @@ mod tests {
         u.push(Undoable::Rename {
             from: from.clone(),
             to: to.clone(),
+            id: file_id(&to),
         });
         assert_eq!(u.label(), Some("Undo Rename"));
 
@@ -489,6 +502,7 @@ mod tests {
             Undoable::Rename {
                 from: path("old.txt"),
                 to: path("new.txt"),
+                id: None,
             },
         ]));
         u.push(Undoable::Batch(vec![trashed("c.txt"), trashed("d.txt")]));
@@ -590,6 +604,7 @@ mod tests {
         u.push(Undoable::Rename {
             from: from.clone(),
             to: to.clone(),
+            id: file_id(&to),
         });
 
         let err = u.undo().unwrap().unwrap_err();
@@ -597,6 +612,30 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&from).unwrap(), "new file landed here");
         assert_eq!(fs::read_to_string(&to).unwrap(), "hi");
+    }
+
+    #[test]
+    fn undo_of_rename_refuses_a_different_file_that_took_the_new_name() {
+        let t = tempfile::tempdir().unwrap();
+        let from = t.path().join("a.txt");
+        let to = t.path().join("b.txt");
+        fs::write(&from, "renamed").unwrap();
+        fs::rename(&from, &to).unwrap();
+        let mut u = UndoStack::default();
+        u.push(Undoable::Rename {
+            from: from.clone(),
+            to: to.clone(),
+            id: file_id(&to),
+        });
+        fs::rename(&to, t.path().join("c.txt")).unwrap();
+        fs::write(&to, "saved by another program").unwrap();
+
+        let err = u.undo().unwrap().unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(!from.exists(), "nothing took the old name");
+        assert_eq!(fs::read_to_string(&to).unwrap(), "saved by another program");
+        assert_eq!(u.label(), None, "the entry is dropped");
     }
 
     #[test]
@@ -783,6 +822,7 @@ mod tests {
             Undoable::Rename {
                 from: from.clone(),
                 to: to.clone(),
+                id: file_id(&to),
             },
         ]);
 

@@ -64,8 +64,9 @@ pub enum Making {
 pub enum Renamed {
     Kept,
     Refused(String),
-    /// The new path, and the children of the folder holding it.
-    Done(PathBuf, Kids),
+    /// The new path, the id of the folder there ([`reprisefs::undo::file_id`]), and the children of
+    /// the folder holding it.
+    Done(PathBuf, Option<reprisefs::undo::FileId>, Kids),
 }
 
 /// A picker write that failed, shown in the error box over the picker.
@@ -383,7 +384,10 @@ impl Explorer {
                         None => Renamed::Kept,
                         Some(Err(why)) => Renamed::Refused(why),
                         Some(Ok(to)) => match reprisefs::hidden::rename(&at, &to) {
-                            Ok(()) => Renamed::Done(to, kids()),
+                            Ok(()) => {
+                                let id = reprisefs::undo::file_id(&to);
+                                Renamed::Done(to, id, kids())
+                            }
                             Err(e) => Renamed::Refused(reprisefs::names::failed_text(&old, &e)),
                         },
                     }
@@ -500,7 +504,7 @@ impl Explorer {
                     }
                 },
                 Making::Rename { from, path, job } => match job.take() {
-                    Some(Renamed::Done(to, _)) => self.after_rename(&from, &to, true, ctx),
+                    Some(Renamed::Done(to, id, _)) => self.after_rename(&from, &to, id, true, ctx),
                     Some(Renamed::Refused(text)) => {
                         log::warn!("explorer: naming {} failed: {text}", from.display())
                     }
@@ -530,7 +534,7 @@ impl Explorer {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let (to, kids) = match done {
+        let (to, id, kids) = match done {
             Renamed::Kept => return true,
             Renamed::Refused(text) => {
                 log::warn!("explorer: naming {} failed: {text}", from.display());
@@ -542,7 +546,7 @@ impl Explorer {
                 });
                 return false;
             }
-            Renamed::Done(to, kids) => (to, kids),
+            Renamed::Done(to, id, kids) => (to, id, kids),
         };
         let inp = Inputs {
             show_hidden: self.settings.show_hidden,
@@ -581,7 +585,7 @@ impl Explorer {
                 b.bf.tree.follow(&lay.tree);
             }
         }
-        self.after_rename(from, &to, true, ctx);
+        self.after_rename(from, &to, id, true, ctx);
         self.sync_browse_buttons(b, ctx);
         true
     }
