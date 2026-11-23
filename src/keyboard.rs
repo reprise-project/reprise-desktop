@@ -192,8 +192,8 @@ impl State {
         }
         crate::access::echo_key(self, code, &k, time.millis());
         // A rename left behind when a window took the keyboard ends with
-        // the name typed so far.
-        if k.pressed && self.is_renaming() && !self.desktop_has_keyboard() {
+        // the name typed so far; under a layer surface it waits, as under Run.
+        if k.pressed && self.is_renaming() && self.focused.is_some() {
             self.commit_rename();
         }
         let modes = self.key_modes();

@@ -25,6 +25,9 @@ pub struct LayerShell {
     pub state: WlrLayerShellState,
     pub surfaces: Vec<LayerSurface>,
     pub focused: Option<WlSurface>,
+    /// No window had the keyboard when `focused` took it from the desktop, so the desktop
+    /// gets it back when the last one leaves.
+    over_desktop: bool,
     usable: Vec<(Output, Rect, Rect)>,
 }
 
@@ -37,6 +40,7 @@ impl LayerShell {
             ),
             surfaces: Vec::new(),
             focused: None,
+            over_desktop: false,
             usable: Vec::new(),
         }
     }
@@ -343,6 +347,9 @@ impl State {
             .map(|l| l.wl().clone());
         match next {
             Some(s) => focus_layer(self, &s),
+            None if self.focused.is_none() && self.layers_shell.over_desktop => {
+                self.enter_keyboard(None);
+            }
             None => self.focus_top(),
         }
     }
@@ -581,6 +588,9 @@ pub fn holds_keyboard(state: &State) -> bool {
 }
 
 pub fn focus_layer(state: &mut State, wl: &WlSurface) {
+    if state.layers_shell.focused.is_none() {
+        state.layers_shell.over_desktop = state.focused.is_none();
+    }
     state.layers_shell.focused = Some(wl.clone());
     if state.desktop_locked() {
         return;
@@ -752,6 +762,32 @@ mod tests {
         let want = h.state.win(t.id).map(|w| w.wl_surface().clone());
         let got = h.state.seat.get_keyboard().and_then(|k| k.current_focus());
         assert_eq!(got, want, "the window holds the keyboard");
+    }
+
+    #[test]
+    fn a_closing_flyout_gives_the_keyboard_back_to_what_held_it_before() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let window = h.state.win(t.id).map(|w| w.wl_surface().clone());
+        let held = |h: &crate::harness::Harness| {
+            h.state.seat.get_keyboard().and_then(|k| k.current_focus())
+        };
+        for desktop in [false, true] {
+            if desktop {
+                h.state.focus_desktop();
+            } else {
+                h.state.focus_window(t.id);
+            }
+            let mut applet = h.connect();
+            h.map_flyout(&mut applet);
+            assert_ne!(held(&h), window, "the flyout takes the keyboard");
+            applet.hang_up();
+            h.dispatch();
+            let want = if desktop { None } else { window.clone() };
+            assert_eq!(held(&h), want, "desktop {desktop}: the keyboard goes back");
+        }
     }
 
     /// Two outputs with the pointer on TEST-1, where a panel that names no output lands.
