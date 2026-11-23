@@ -72,13 +72,15 @@ impl DialogTag {
 }
 
 /// Owned or fixed-dialog windows get the close box beside the icon; prompt and help dialogs get a
-/// dialog caption without icon (help adds the ? box). The border resizes only if size hints allow.
+/// dialog caption without icon (help adds the ? box). A fixed-size window has no maximize box. The
+/// border resizes only if size hints allow.
 pub fn chrome_for(owned: bool, resizable: bool, decorated: bool, tag: DialogTag) -> Chrome {
     let base = match tag {
         DialogTag::Help => Chrome::HELP_DIALOG,
         DialogTag::Prompt => Chrome::PROMPT,
         DialogTag::Fixed => Chrome::DIALOG,
         DialogTag::None if owned => Chrome::DIALOG,
+        DialogTag::None if !resizable => Chrome::WINDOWED_DIALOG,
         DialogTag::None => Chrome::WINDOW,
     };
     Chrome {
