@@ -18,7 +18,8 @@ use crate::look::Paint;
 use crate::look::widgets::{
     draw_button, draw_checkbox_state, draw_checkbox_state_disabled, draw_disabled_field,
     draw_disabled_label, draw_edit_field, draw_edit_text, draw_edit_text_dropping, draw_group_box,
-    draw_progress, draw_radio, draw_radio_disabled, draw_trackbar, draw_well, group_label_ink,
+    draw_link, draw_progress, draw_radio, draw_radio_disabled, draw_trackbar, draw_well,
+    group_label_ink,
 };
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -389,6 +390,21 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     cue,
                     px,
                 );
+            }
+            Control::Link { label, enabled } => {
+                let r = at_ink(r);
+                let shown = text.ellipsize(label, r.width, false, px);
+                let r = text.ink_box(r, &shown, false, px, c.scale());
+                if *enabled {
+                    draw_link(c, text, p, r, &shown, true, px);
+                } else {
+                    text.draw(c, r, &shown, false, cs.gray_text, Align::Left, px);
+                }
+                if cue {
+                    let w = text.measure(&shown, false, px);
+                    let ring = Rect::new(r.x - s, r.y, w + 2 * s, r.height);
+                    draw_focus_ring(c, ring, s, cs.button_text);
+                }
             }
             Control::Picture { canvas, frame } => {
                 let at = (r.x + frame * s, r.y + frame * s);

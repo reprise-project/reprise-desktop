@@ -274,8 +274,8 @@ are.
 - **Session restore.** The programs you left open start again at the next
   login, on their desktops, with their tab and snap groups (`[session] restore`).
   Each starts as its Start menu entry starts it, without the files or
-  arguments it was opened with: Settings opens on its first page, Notepad on
-  an empty document.
+  arguments it was opened with: Settings opens on the page it was last left
+  on, Notepad on an empty document.
 - **XDG autostart,** with a Startup page in Reprise Settings to turn entries
   on and off.
 - **Language and formats per account.** Settings > Region & Language sets

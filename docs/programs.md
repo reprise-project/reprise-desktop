@@ -203,7 +203,7 @@ program exits. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 One window, 34 pages under seven headings, with link rows ending in "..." that
 start the separate settings programs. Login Manager shows only where
-`reprise-login` is installed.
+`reprise-login` is installed. It opens on the page it was last left on.
 
 - **Personalize:** Appearance, Background, Screen Saver & Lock, Fonts & Icons,
   Effects.

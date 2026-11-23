@@ -977,12 +977,12 @@ pub fn page(d: &Display, a: Area) -> Form {
         Control::Combo(profiles),
     ));
     let note_y = row_y + 34;
-    items.push(Item::label_at(
+    items.push(Item::link_at(
         TEXT_SIZE_NOTE,
         X,
         note_y,
         a.w,
-        &reprisekit::text::escape_mnemonic(&crate::pages::text_size_note()),
+        &crate::pages::text_size_note(),
     ));
     if built_in && d.sensor == Some(false) {
         items.push(Item::label_at(
@@ -1698,20 +1698,18 @@ mod tests {
     }
 
     #[test]
-    fn display_names_text_size_under_its_last_row() {
+    fn display_links_text_size_under_its_last_row() {
         let d = Display::with_heads(vec![test_head("DP-1")]);
         let f = page(&d, Area::MIN);
         let note = f.item(TEXT_SIZE_NOTE).unwrap();
         assert_eq!(note.rect, Rect::new(20, 430, 358, 13));
-        let Control::Label { text, .. } = &note.control else {
-            panic!("a label: {:?}", note.control);
+        let Control::Link { label, enabled } = &note.control else {
+            panic!("a link: {:?}", note.control);
         };
+        assert!(enabled);
         assert_eq!(
-            reprisekit::text::split_mnemonic(text),
-            (
-                "Text size on the Text & Keys page enlarges all text.".into(),
-                None
-            )
+            label,
+            "Text size on the Text & Keys page enlarges all text."
         );
     }
 

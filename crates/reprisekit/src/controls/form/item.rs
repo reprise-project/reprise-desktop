@@ -149,6 +149,15 @@ impl Item {
         Item::label(id, Rect::new(x, y, w, LINE_H), text)
     }
 
+    /// A one-line link at `(x, y)`, `w` wide; its label shows as written.
+    pub fn link_at(id: &'static str, x: i32, y: i32, w: i32, label: &str) -> Item {
+        let link = Control::Link {
+            label: label.into(),
+            enabled: true,
+        };
+        Item::new(id, Rect::new(x, y, w, LINE_H), link)
+    }
+
     pub fn value_at(id: &'static str, x: i32, y: i32, w: i32, text: &str) -> Item {
         Item::aligned(id, Rect::new(x, y, w, LINE_H), text, Align::Right)
     }
@@ -295,7 +304,8 @@ impl Item {
             | Control::Check { enabled, .. }
             | Control::Radio { enabled, .. }
             | Control::Edit { enabled, .. }
-            | Control::Button { enabled, .. } => *enabled = on,
+            | Control::Button { enabled, .. }
+            | Control::Link { enabled, .. } => *enabled = on,
             Control::HotKey(h) => h.enabled = on,
             Control::Memo(m) => m.enabled = on,
             Control::Arrange(a) => a.enabled = on,
@@ -317,6 +327,7 @@ impl Item {
             Control::Check { enabled, .. }
             | Control::Radio { enabled, .. }
             | Control::Button { enabled, .. }
+            | Control::Link { enabled, .. }
             | Control::Edit { enabled, .. } => *enabled,
             Control::Combo(c) => c.enabled,
             Control::UpDown(u) => u.enabled,

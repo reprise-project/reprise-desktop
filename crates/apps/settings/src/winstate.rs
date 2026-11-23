@@ -1,6 +1,6 @@
 //! What the settings window keeps between runs in `$XDG_STATE_HOME/reprise/settings.toml`: its
-//! client size with the text size it was left at, the slideshow folder last picked and the Color
-//! dialog's custom colours.
+//! client size with the text size it was left at, the page it was left on, the slideshow folder
+//! last picked and the Color dialog's custom colours.
 
 use std::path::{Path, PathBuf};
 
@@ -76,6 +76,16 @@ pub fn save(path: &Path, size: (i32, i32), text_size: u32) {
     a.push(i64::from(size.1));
     set(path, "window", value(a));
     set(path, "text_size", value(i64::from(text_size)));
+}
+
+/// The page the file at `path` keeps, by its slug; None for none or one no longer known.
+pub fn page(path: &Path) -> Option<repriseconf::pages::Page> {
+    let doc = read(path)?;
+    repriseconf::pages::Page::named(doc.get("page")?.as_str()?)
+}
+
+pub fn save_page(path: &Path, page: repriseconf::pages::Page) {
+    set(path, "page", value(page.slug()));
 }
 
 /// The slideshow folder kept at `path`, as the config spells it; empty for none.
@@ -157,6 +167,28 @@ mod tests {
         save_slideshow(&path, "~/Pictures/Trips");
         assert_eq!(slideshow(&path), "~/Pictures/Trips");
         assert_eq!(load(&path, (544, 528), 100), (900, 700), "the size stays");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_page_round_trips_by_its_slug_beside_the_window_size() {
+        use repriseconf::pages::Page;
+        let dir =
+            std::env::temp_dir().join(format!("reprise-winstate-page-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("settings.toml");
+        assert_eq!(page(&path), None, "no file yet");
+        save(&path, (900, 700), 100);
+        save_page(&path, Page::TextKeys);
+        assert_eq!(page(&path), Some(Page::TextKeys));
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("page = \"text-and-keys\"")
+        );
+        assert_eq!(load(&path, (544, 528), 100), (900, 700), "the size stays");
+        std::fs::write(&path, "page = \"gone\"\n").unwrap();
+        assert_eq!(page(&path), None, "a page no longer known");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -234,6 +234,7 @@ impl Form {
             | Some(Control::Check { enabled, .. })
             | Some(Control::Radio { enabled, .. })
             | Some(Control::Button { enabled, .. })
+            | Some(Control::Link { enabled, .. })
             | Some(Control::Edit { enabled, .. }) => *enabled = on,
             Some(Control::Combo(c)) => c.enabled = on,
             Some(Control::UpDown(u)) => u.enabled = on,

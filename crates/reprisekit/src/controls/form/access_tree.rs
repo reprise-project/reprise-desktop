@@ -144,6 +144,11 @@ impl Form {
                     let n = access::button(r, l, *enabled, *default);
                     (tree.push(up, key, n), None)
                 }
+                Control::Link { label: l, enabled } => {
+                    let mut n = access::titled(Role::Link, r, l);
+                    access::focusable(&mut n, *enabled);
+                    (tree.push(up, key, n), None)
+                }
                 Control::IconList(l) => {
                     let lay = icon_list_layout(it.grows, r, &cm);
                     let id = iconlist::access(l, &lay, tree, up, key);

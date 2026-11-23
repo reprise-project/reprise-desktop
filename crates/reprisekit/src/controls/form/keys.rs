@@ -287,7 +287,12 @@ impl Form {
                     Some(d) => Event::Pressed(self.items[d].id),
                     None => Event::Default,
                 },
-                Some(i) if matches!(self.items[i].control, Control::Button { .. }) => {
+                Some(i)
+                    if matches!(
+                        self.items[i].control,
+                        Control::Button { .. } | Control::Link { .. }
+                    ) =>
+                {
                     Event::Pressed(self.items[i].id)
                 }
                 _ => Event::Default,
@@ -389,6 +394,7 @@ impl Form {
                         }
                     }
                     (Control::Button { .. }, Key::Space) if plain || refusing => Event::Pressed(id),
+                    (Control::Link { .. }, Key::Space) if plain => Event::Pressed(id),
                     (Control::Button { .. }, Key::Left | Key::Up) if plain => {
                         self.next_button(i, true)
                     }

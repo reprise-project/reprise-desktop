@@ -1,6 +1,6 @@
 //! Reprise Settings: a property sheet over `config.toml` and the XDG autostart directories.
 //!
-//! Pages are listed in `registry::GROUPS`. `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files, save the Login Manager page through `pkexec` (`loginhost`) and the Region & Language page to locale.conf (`regionhost`); a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes, the Privacy page's Forget, the Advanced page's Clear and the Backup page's Export... and Import... (`backup`, also `--export`/`--import FILE`) act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
+//! Pages are listed in `registry::GROUPS`. `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), else it opens on the page it was last left on (`winstate`), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files, save the Login Manager page through `pkexec` (`loginhost`) and the Region & Language page to locale.conf (`regionhost`); a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes, the Privacy page's Forget, the Advanced page's Clear and the Backup page's Export... and Import... (`backup`, also `--export`/`--import FILE`) act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
 
 #[cfg(test)]
 reprisebus::test_session!();
@@ -552,6 +552,8 @@ struct SettingsApp {
     state_path: Option<PathBuf>,
     /// The size the state file kept at start, which the window opens at for each text size.
     kept: winstate::Kept,
+    /// The page the state file holds: the one the sheet opens on without `--page`.
+    saved_page: Option<Page>,
     window: (i32, i32),
     window_dirty: bool,
     units: TextUnits,
@@ -569,13 +571,16 @@ impl SettingsApp {
     ) -> SettingsApp {
         let system = pages::system_layout(std::env::var("XKB_DEFAULT_LAYOUT").ok().as_deref());
         let mut app = SettingsApp::open(repriseconf::config_path(), system);
-        if let Some((p, focus)) = page {
-            app.open_page(p, focus.as_deref());
+        let state = winstate::path();
+        app.saved_page = winstate::page(&state);
+        match (page, app.saved_page) {
+            (Some((p, focus)), _) => _ = app.open_page(p, focus.as_deref()),
+            (None, Some(p)) => _ = app.open_page(p, None),
+            (None, None) => {}
         }
         app.requests = requests;
         app.text_size = repriseconf::current().accessibility.text_size;
         app.units = Theme::default().with_form_text(app.text_size).text;
-        let state = winstate::path();
         app.kept = winstate::kept(&state);
         app.window = app.initial_size();
         app.last_slideshow = winstate::slideshow(&state);
@@ -697,7 +702,15 @@ impl SettingsApp {
             .chain(open.into_iter().filter(|&(up, _)| up).map(|(_, w)| w))
     }
 
+    /// Keep the window's size and the page it shows for the next run.
     fn save_window(&mut self) {
+        let page = Page::all().nth(self.sheet.tabs.open);
+        if page != self.saved_page
+            && let (Some(page), Some(path)) = (page, &self.state_path)
+        {
+            winstate::save_page(path, page);
+            self.saved_page = Some(page);
+        }
         if !self.window_dirty {
             return;
         }
@@ -885,6 +898,7 @@ impl SettingsApp {
                 size: Area::MIN.sheet_size(),
                 text_size: None,
             },
+            saved_page: None,
             window: Area::MIN.sheet_size(),
             window_dirty: false,
             units: TextUnits::ONE,
