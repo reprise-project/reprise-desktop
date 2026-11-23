@@ -189,6 +189,8 @@ pub(crate) struct Read {
     /// List and Details' icon size the icon files were decoded at.
     list: i32,
     tree: Vec<(Place, foldertree::Kids)>,
+    /// The Templates folder's files, read with a folder's listing; None for search results.
+    templates: Option<Vec<reprisefs::templates::Template>>,
 }
 
 pub struct Explorer {
@@ -273,6 +275,8 @@ pub struct Explorer {
     pub focus: Focus,
     pub undo: Option<&'static str>,
     pub undos: reprisefs::undo::UndoStack,
+    /// New's template rows, as the last folder listing read them.
+    templates: Vec<reprisefs::templates::Template>,
     /// Where an asked-for paste goes, captured then: the answer arrives an
     /// event later, when the window may have moved somewhere that takes no writes.
     pub paste: Option<fileops::PasteTo>,
@@ -589,6 +593,7 @@ impl Explorer {
             focus: Focus::View,
             undo: None,
             undos: reprisefs::undo::UndoStack::default(),
+            templates: Vec::new(),
             paste: None,
             menu_paste: None,
             paste_field: None,
@@ -807,6 +812,7 @@ impl Explorer {
             pinned: None,
             share: false,
             can_connect: self.shares.gio,
+            templates: self.templates.clone(),
         }
     }
 
@@ -1133,12 +1139,14 @@ impl Explorer {
                     (p, kids)
                 })
                 .collect();
+            let templates = reprisefs::templates::dir().map(|d| reprisefs::templates::list(&d));
             Read {
                 place,
                 listed,
                 icons,
                 list: list_px,
                 tree,
+                templates: Some(templates.unwrap_or_default()),
             }
         }
     }
@@ -1167,7 +1175,11 @@ impl Explorer {
             icons: read_icons,
             list,
             tree,
+            templates,
         } = read;
+        if let Some(templates) = templates {
+            self.templates = templates;
+        }
         self.set_columns(&place);
         let is_12h = reprisefs::locale::is_12h();
         let searched = self.search.shown().is_some();

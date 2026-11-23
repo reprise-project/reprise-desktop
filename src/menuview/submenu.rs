@@ -308,11 +308,20 @@ impl State {
                 crate::deskwidgets::widgets_menu(&self.config.desktop_widgets)
             }
             DesktopCommand::New => {
-                let (mut items, commands) = crate::desktopview::new_menu();
-                let named = items.iter_mut().zip(crate::desktopview::NEW_MENU_ICONS);
-                for (row, (item, name)) in named.enumerate() {
+                let view = self.desktop.as_ref()?;
+                let (mut items, commands) = crate::desktopview::new_menu(&view.templates);
+                let mut names: Vec<Option<String>> = (crate::desktopview::NEW_MENU_ICONS.iter())
+                    .map(|n| n.map(String::from))
+                    .collect();
+                names.extend(view.templates.iter().map(|t| {
+                    let name = t.path.file_name().unwrap_or_default().to_string_lossy();
+                    let mime = view.mime.mime_of_name(&name);
+                    let has = |n: &str| self.icons.has_unread(n);
+                    Some(reprisefs::icons::pick_icon(mime.as_deref(), &t.path, &has))
+                }));
+                for (row, (item, name)) in items.iter_mut().zip(names).enumerate() {
                     if let (MenuItem::Entry { icon, .. }, Some(name)) = (item, name) {
-                        *icon = self.menu_icon(row, name, px, &mut waits);
+                        *icon = self.menu_icon(row, &name, px, &mut waits);
                     }
                 }
                 (items, commands)

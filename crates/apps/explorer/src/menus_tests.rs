@@ -242,6 +242,18 @@ fn the_bars_submenu_rows_dispatch() {
     let s = MenuState::default();
     assert_eq!(command_for(0, &[0, 0], &s), Command::NewFolder);
     assert_eq!(command_for(0, &[0, 3], &s), Command::NewTextDocument);
+    let s = MenuState {
+        templates: vec![reprisefs::templates::Template {
+            path: "/home/u/Templates/Report.odt".into(),
+            label: "Report".into(),
+        }],
+        ..MenuState::default()
+    };
+    assert_eq!(
+        command_for(0, &[0, 4], &s),
+        Command::NewFrom("/home/u/Templates/Report.odt".into()),
+        "a template's row under Text Document"
+    );
     assert_eq!(command_for(2, &[0, 0], &s), Command::ToggleToolbar(0));
     assert_eq!(command_for(2, &[0, 1], &s), Command::ToggleToolbar(1));
     assert_eq!(command_for(2, &[2, 2], &s), Command::ToggleFolders);

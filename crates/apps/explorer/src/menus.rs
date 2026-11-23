@@ -52,6 +52,8 @@ pub struct MenuState {
     pub share: bool,
     /// gio is there to connect with: File's Connect to Server... is live.
     pub can_connect: bool,
+    /// The Templates folder's files, New's rows under Text Document.
+    pub templates: Vec<reprisefs::templates::Template>,
 }
 
 impl Default for MenuState {
@@ -77,6 +79,7 @@ impl Default for MenuState {
             pinned: None,
             share: false,
             can_connect: true,
+            templates: Vec::new(),
         }
     }
 }
@@ -169,12 +172,16 @@ const BIN_SORT_COLUMNS: [&str; 6] = [
     "&Modified",
 ];
 
-fn new_menu(writable: bool) -> Menu {
+fn new_menu(writable: bool, templates: &[reprisefs::templates::Template]) -> Menu {
     let mut m = Menu::default();
     m.row(row("&Folder", writable), Command::NewFolder);
     m.row(row("&Shortcut", false), Command::Nothing);
     m.sep();
     m.row(row("&Text Document", writable), Command::NewTextDocument);
+    for t in templates {
+        let label = escape_mnemonic(&t.label);
+        m.row(row(&label, writable), Command::NewFrom(t.path.clone()));
+    }
     m
 }
 
@@ -302,7 +309,10 @@ fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
     match state.bin {
         Some(_) if sel => file.row(row("R&estore", true), Command::Restore),
         Some(n) => file.row(row("&Empty Recycle Bin", n > 0), Command::EmptyRecycleBin),
-        None => file.sub(row("Ne&w", !state.read_only), new_menu(!state.read_only)),
+        None => file.sub(
+            row("Ne&w", !state.read_only),
+            new_menu(!state.read_only, &state.templates),
+        ),
     }
     file.sep();
     file.row(row("Create &Shortcut", writable), Command::CreateShortcut);
@@ -569,7 +579,7 @@ pub fn background_menu(state: &MenuState) -> Menu {
     m.row(row("Paste &Shortcut", pasteable), Command::PasteShortcut);
     m.row(undo_row(state), Command::Undo);
     m.sep();
-    m.sub(row("Ne&w", writable), new_menu(writable));
+    m.sub(row("Ne&w", writable), new_menu(writable, &state.templates));
     m.sep();
     // The background's Properties is the place's own sheet; the places with
     // no folder behind them have none, but for the Recycle Bin's.

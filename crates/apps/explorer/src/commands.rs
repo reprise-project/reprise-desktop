@@ -44,6 +44,8 @@ pub enum Command {
     EmptyRecycleBin,
     Restore,
     NewTextDocument,
+    /// New > a template: a copy of this file from the Templates folder.
+    NewFrom(std::path::PathBuf),
     CreateShortcut,
     SendTo(usize),
     /// Extract Here (`here`) or Extract to on the selected archives.
@@ -314,11 +316,11 @@ impl Explorer {
             Command::ContextMenu => self.context_menu_key(ctx),
 
             Command::Back => match self.history.back().cloned() {
-                Some(p) => self.show(p, ctx),
+                Some(p) => self.return_to(p, ctx, Self::show),
                 None => Reply::none(),
             },
             Command::Forward => match self.history.forward().cloned() {
-                Some(p) => self.return_to(p, ctx, Self::show),
+                Some(p) => self.show(p, ctx),
                 None => Reply::none(),
             },
             Command::Go(n) => match self.history.go(n).cloned() {
@@ -529,6 +531,7 @@ impl Explorer {
             Command::EmptyRecycleBin => self.confirm_empty_bin(ctx),
             Command::Restore => self.restore(ctx),
             Command::NewTextDocument => self.new_item(false, ctx),
+            Command::NewFrom(template) => self.new_from_template(template, ctx),
             Command::CreateShortcut => self.create_shortcut(ctx),
             Command::SendTo(i) => self.send_to(i, ctx),
             Command::Extract { here } => self.extract(here, ctx),

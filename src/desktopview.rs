@@ -121,6 +121,8 @@ pub struct DesktopView {
     pub(crate) undoing: bool,
     /// The item New just made: once a scan lists it, it is selected and its rename begins.
     made: Option<String>,
+    /// New's template rows: the Templates folder's files as the last scan read them.
+    pub(crate) templates: Vec<reprisefs::templates::Template>,
 }
 
 /// A rubber-band selection in progress: the press point, the selection as it
@@ -149,6 +151,8 @@ pub enum DesktopCommand {
     NextBackground,
     NewFolder,
     NewTextDocument,
+    /// New > a template: a copy of this file from the Templates folder.
+    NewFrom(PathBuf),
     Settings,
     Open,
     /// Run or Run in terminal on a script, standing in for Open.
@@ -294,6 +298,7 @@ pub(crate) fn create(
         undos: Default::default(),
         undoing: false,
         made: None,
+        templates: Vec::new(),
     });
 }
 

@@ -802,7 +802,7 @@ fn desktop_menu_lists_its_commands_with_separators() {
         &items[11],
         MenuItem::Entry { label, mnemonic: Some(0), .. } if label == "About Reprise"
     ));
-    let (items, commands) = new_menu();
+    let (items, commands) = new_menu(&[]);
     assert_eq!(items.len(), NEW_MENU_ICONS.len());
     assert_eq!(commands[0], Some(DesktopCommand::NewFolder));
     assert!(matches!(items[1], MenuItem::Separator));
@@ -1849,6 +1849,45 @@ fn the_new_items_scan_leaves_a_rename_the_user_is_typing() {
         (view.entries[*i].name.as_str(), edit.text.as_str()),
         ("a.txt", "typed")
     );
+}
+
+#[test]
+fn new_lists_the_templates_under_text_document_and_one_makes_a_copy_in_rename() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let root = crate::harness::scratch().join("desktop-templates");
+    let (desk, folder) = (root.join("Desktop"), root.join("Templates"));
+    std::fs::create_dir_all(&desk).unwrap();
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("Report.odt"), "body").unwrap();
+    std::fs::write(folder.join("Notes & Plans.txt"), "").unwrap();
+    create(&mut h.state, desk.clone(), Default::default(), None);
+
+    let templates = reprisefs::templates::list(&folder);
+    let (items, commands) = new_menu(&templates);
+    let labels: Vec<&str> = (items.iter())
+        .filter_map(|i| match i {
+            MenuItem::Entry { label, .. } => Some(label.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        labels,
+        ["Folder", "Text Document", "Notes & Plans", "Report"]
+    );
+    let report = folder.join("Report.odt");
+    assert_eq!(commands[4], Some(DesktopCommand::NewFrom(report.clone())));
+
+    h.state
+        .desktop_command(DesktopCommand::NewFrom(report), None);
+    assert_eq!(
+        std::fs::read_to_string(desk.join("Report.odt")).unwrap(),
+        "body"
+    );
+    let view = h.state.desktop.as_ref().unwrap();
+    let (i, _) = view.rename.as_ref().expect("the copy's rename begins");
+    assert_eq!(view.entries[*i].name, "Report.odt");
+    assert_eq!(view.undos.label(), Some("Undo New"));
 }
 
 #[test]

@@ -151,6 +151,24 @@ pub(super) fn watch_wants(dir: &Path, files: bool, system_icons: &[String]) -> V
     want
 }
 
+/// The Templates folder's watches, so New's rows follow its files: the folder, and its parent for
+/// the folder being made.
+pub(super) fn templates_wants(dir: &Path) -> Vec<Want> {
+    let mut want = vec![Want {
+        dir: dir.to_path_buf(),
+        mask: WatchMask::CREATE | WatchMask::DELETE | WatchMask::MOVED_FROM | WatchMask::MOVED_TO,
+        only: Vec::new(),
+    }];
+    if let (Some(parent), Some(name)) = (dir.parent(), dir.file_name()) {
+        want.push(Want {
+            dir: parent.to_path_buf(),
+            mask: WatchMask::CREATE | WatchMask::MOVED_TO,
+            only: vec![name.to_os_string()],
+        });
+    }
+    want
+}
+
 /// Whether a drive bin folder's watch landing reads the bins again: a file trashed after the
 /// read that found the folder and before its watch started reports no event.
 pub(super) fn rereads_bins(landed: dirwatch::Landed) -> bool {
@@ -269,8 +287,15 @@ impl State {
             w.adder()
         });
         self.spawn_fs_job(move || {
+            let templates_dir = show_files.then(reprisefs::templates::dir).flatten();
             // Watch before reading, so a change between the two is not missed.
-            let want = watch_wants(&dir, show_files, &system_icons);
+            let mut want = watch_wants(&dir, show_files, &system_icons);
+            want.extend(
+                templates_dir
+                    .as_deref()
+                    .into_iter()
+                    .flat_map(templates_wants),
+            );
             let added = adder.map(|a| a.run(&want));
             let entries = read_icons(
                 &dir,
@@ -283,9 +308,13 @@ impl State {
             );
             let art = icon_files(&entries, px);
             let send_dirs = sendto::Dirs::read(&dir);
+            let templates = (templates_dir.as_deref())
+                .map(reprisefs::templates::list)
+                .unwrap_or_default();
             Box::new(move |state| {
                 if let Some(view) = state.desktop.as_mut() {
                     view.send_dirs = send_dirs;
+                    view.templates = templates;
                 }
                 state.desktop_watched(want, added);
                 state.desktop_scanned(entries, art, px)
