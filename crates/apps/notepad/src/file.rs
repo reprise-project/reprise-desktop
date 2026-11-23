@@ -61,6 +61,7 @@ impl Notepad {
         };
         match self.write_to(&p, self.format) {
             Ok(()) => {
+                self.recent.record(&p);
                 self.stamp = Stamp::of(&p);
                 self.dirty = false;
                 self.forget_rescued();

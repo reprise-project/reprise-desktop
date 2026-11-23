@@ -949,3 +949,34 @@ fn the_magnifiers_zoom_labels_keep_the_100_percent_font_at_every_text_size() {
     }
     check_pins("zoom", &got);
 }
+
+#[test]
+fn opened_and_saved_pictures_go_to_the_recent_files_as_paint_s() {
+    let dir = tempfile::tempdir().unwrap();
+    let xbel = dir.path().join("recently-used.xbel");
+    let (opened, saved_as) = (dir.path().join("opened.png"), dir.path().join("saved.png"));
+    file::save(&Bitmap::new(3, 3, WHITE), &opened, file::Kind::Png, 100).unwrap();
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.recent = Recent::at(DESKTOP, Some(xbel.clone()));
+    p.open_driven(Driven::Picked(opened.clone()));
+    p.recent.settle();
+    let mut recent = reprisefs::recent::RecentFiles::at(Some(xbel.clone()));
+    assert_eq!(recent.current(10), std::slice::from_ref(&opened));
+
+    std::fs::remove_file(&xbel).unwrap();
+    drag(&mut p, &mut ctx, (1, 1), (2, 1), BTN_LEFT);
+    p.save();
+    p.saveas_driven(Driven::Picked(saved_as.clone()));
+    p.recent.settle();
+    let marks = recent.bookmarks().to_vec();
+    let mut paths: Vec<_> = marks.iter().map(|b| b.path.clone()).collect();
+    paths.sort();
+    assert_eq!(paths, [opened, saved_as], "Save and Save As record");
+    for b in &marks {
+        assert!(
+            (b.apps.iter()).any(|(_, exec)| exec.starts_with("'reprise-paint ")),
+            "recorded as Paint's: {b:?}"
+        );
+    }
+}

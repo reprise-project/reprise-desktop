@@ -27,6 +27,7 @@ use repriseapp::filedlg::{Driven, Host, taken};
 use repriseapp::keys::AltArm;
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::recent::Recent;
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, Extended, FileDrop, KeyInput, MAIN,
     PointerInput, Reply, WinId,
@@ -114,6 +115,8 @@ struct Notepad {
     rescue_dir: Option<PathBuf>,
     /// The recovery file the open document came from, deleted once it is saved or discarded.
     rescued: Option<PathBuf>,
+    /// Takes each file opened or saved.
+    recent: Recent,
     /// Kept here because `children(&self)` has no `Ctx`.
     dialog_text: Rc<TextRenderer>,
     /// The dialog font's px at 100%; file dialogs stay at it.
@@ -174,6 +177,7 @@ impl Notepad {
             asks: Asks::new(ASK),
             rescue_dir: recovery_dir(),
             rescued: None,
+            recent: Recent::at(DESKTOP, None),
             dialog_text: repriseapp::start_text(),
             dialog_px: Theme::default().fonts.size_px,
             forms: Theme::default(),
@@ -548,12 +552,18 @@ impl Extended for Notepad {
     }
 }
 
+const DESKTOP: &str = "reprise-notepad.desktop";
+
 /// Runs the program; `args` are the command line after the program's name.
 pub fn main(args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
     let path = args.into_iter().next().map(std::path::PathBuf::from);
     let mut notepad = Notepad::new(path);
     notepad.forms = repriseapp::start_forms();
+    notepad.recent = Recent::new(DESKTOP);
+    if let Some(p) = notepad.path.clone() {
+        notepad.recent.record(&p);
+    }
     notepad.offer_recovered();
     repriseapp::run(Box::new(notepad)).unwrap_or_else(|e| e.exit());
 }

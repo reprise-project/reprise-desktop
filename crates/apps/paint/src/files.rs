@@ -218,6 +218,7 @@ impl Paint {
         self.doc.finish();
         match file::save(&self.doc.img, path, kind, self.quality) {
             Ok(()) => {
+                self.recent.record(path);
                 self.doc.dirty = false;
                 self.forget_rescued();
                 true
@@ -373,6 +374,7 @@ impl Paint {
     fn open_picked(&mut self, path: PathBuf) -> Reply {
         match file::load(&path) {
             Ok(img) => {
+                self.recent.record(&path);
                 self.doc = Doc::new(img);
                 self.path = Some(path);
                 self.open = None;

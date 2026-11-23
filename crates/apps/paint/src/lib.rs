@@ -26,6 +26,7 @@ use repriseapp::decode::Decoders;
 use repriseapp::filedlg::Host;
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::recent::Recent;
 use repriseapp::{App, Child, Ctx, DropForm, Event, Extended, FileDrop, MAIN, Reply, WinId};
 use reprisekit::access::Tree;
 use reprisekit::controls::aboutbox;
@@ -109,6 +110,8 @@ struct Paint {
     rescue_dir: Option<PathBuf>,
     /// The recovery file the picture came from, deleted once it is saved or let go.
     rescued: Option<PathBuf>,
+    /// Takes each file opened or saved.
+    recent: Recent,
     edit_colors: Option<(ColorDialog, colors::Target)>,
     alt_arm: AltArm,
     /// Shift is held, as the last key events had it.
@@ -171,6 +174,7 @@ impl Paint {
                 reprisekit::controls::colordlg::CUSTOM],
             state_path: None,
             rescue_dir: None,
+            recent: Recent::at(DESKTOP, None),
             rescued: None,
             edit_colors: None,
             alt_arm: AltArm::default(),
@@ -475,6 +479,8 @@ impl Extended for Paint {
     }
 }
 
+const DESKTOP: &str = "reprise-paint.desktop";
+
 /// Runs the program; `args` are the command line after the program's name.
 pub fn main(args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
@@ -485,6 +491,10 @@ pub fn main(args: Vec<std::ffi::OsString>) {
     paint.custom = state::custom_colors(&state);
     paint.state_path = Some(state);
     paint.rescue_dir = reprisefs::recovery::dir("paint");
+    paint.recent = Recent::new(DESKTOP);
+    if let Some(p) = paint.path.clone() {
+        paint.recent.record(&p);
+    }
     paint.offer_recovered();
     repriseapp::run(Box::new(paint)).unwrap_or_else(|e| e.exit());
 }

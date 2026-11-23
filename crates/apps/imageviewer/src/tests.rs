@@ -433,3 +433,28 @@ fn the_desktop_defaults_open_every_type_the_viewer_declares() {
         assert!(defaults.lines().any(|l| l == line), "{line} in the list");
     }
 }
+
+#[test]
+fn an_opened_picture_goes_to_the_recent_files_and_its_neighbours_and_an_unreadable_one_do_not() {
+    let dir = folder(&[("a.bmp", 4, 4), ("b.bmp", 4, 4)]);
+    let xbel = dir.path().join("recently-used.xbel");
+    let a = dir.path().join("a.bmp");
+    let mut v = Viewer::new(None);
+    let bad = dir.path().join("bad.bmp");
+    std::fs::write(&bad, "not a picture").unwrap();
+    v.recent = Recent::at(DESKTOP, Some(xbel.clone()));
+    v.show(bad);
+    v.show(a.clone());
+    v.go(Step::Next);
+    assert_eq!(v.folder.current(), Some(dir.path().join("b.bmp").as_path()));
+    v.recent.settle();
+    let marks = reprisefs::recent::RecentFiles::at(Some(xbel))
+        .bookmarks()
+        .to_vec();
+    assert_eq!(marks.len(), 1, "{marks:?}");
+    assert_eq!(marks[0].path, a);
+    assert!(
+        (marks[0].apps.iter()).any(|(_, exec)| exec.starts_with("'reprise-imageviewer ")),
+        "recorded as Image Viewer's: {marks:?}"
+    );
+}

@@ -120,6 +120,9 @@ impl Notepad {
 
     /// Replace the buffer with `text`, saved as `path` (`None` is Untitled), and close the Open dialog if it is up.
     pub(crate) fn show_document(&mut self, text: &str, format: Format, path: Option<PathBuf>) {
+        if let Some(p) = &path {
+            self.recent.record(p);
+        }
         self.edit = MultiEdit::new(&format.line_end.to_edit(text));
         self.format = format;
         self.view = View::default();
@@ -174,6 +177,7 @@ impl Notepad {
         let format = picked.map_or(self.format, |row| self.format.with_encoding_row(row));
         match self.write_to(&path, format) {
             Ok(()) => {
+                self.recent.record(&path);
                 self.format = format;
                 self.stamp = Stamp::of(&path);
                 self.path = Some(path);
