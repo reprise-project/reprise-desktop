@@ -222,6 +222,50 @@ fn precedence_runs_vt_lock_interaction_switcher_menu_dialog_rename_icons_binds_c
 }
 
 #[test]
+fn a_desktop_rename_takes_text_and_editing_keys_but_not_binds() {
+    let m = Modes {
+        renaming: true,
+        desktop_has_keyboard: true,
+        has_icons: true,
+        selected_icon: Some(0),
+        ..Modes::default()
+    };
+    for (sym, mods) in [
+        (KEY_r, 0),
+        (KEY_space, 0),
+        (KEY_a, MOD_CTRL),
+        (KEY_v, MOD_CTRL),
+        (KEY_Left, MOD_SHIFT),
+        (KEY_Return, 0),
+        (KEY_Escape, 0),
+    ] {
+        assert_eq!(
+            r(&m, &press(sym, mods)),
+            KeyRoute::Rename,
+            "{sym:#x} with {mods:#x} edits the name"
+        );
+    }
+    for (sym, mods, action) in [
+        (KEY_r, MOD_LOGO, Action::Run),
+        (KEY_space, MOD_LOGO, Action::Launcher),
+        (KEY_Tab, MOD_ALT, Action::Cycle),
+    ] {
+        assert_eq!(
+            r(&m, &press(sym, mods)),
+            KeyRoute::Binds(vec![action]),
+            "{sym:#x} with {mods:#x} runs its bind"
+        );
+    }
+    let rd = |k: &KeyPress| route(&m, k, &menu_binds(), &talk()).route;
+    assert_eq!(rd(&press(KEY_Pause, 0)), hit());
+    assert_eq!(
+        rd(&press(KEY_F4, MOD_ALT)),
+        KeyRoute::Binds(vec![Action::TurnOff]),
+        "the close bind acts as on the desktop"
+    );
+}
+
+#[test]
 fn the_switcher_bind_passes_a_dialog_but_not_a_welcome_panel() {
     let mut m = Modes {
         dialog_has_keyboard: true,

@@ -614,9 +614,20 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         }
         return with(switch().unwrap_or(KeyRoute::Dialog));
     }
-    // An inline desktop rename likewise owns every press.
+    // An inline desktop rename takes every press that is not a bind or a
+    // global shortcut; those act as on the desktop, and the rename waits
+    // while what they open has the keyboard.
     if modes.renaming && k.pressed {
-        return with(KeyRoute::Rename);
+        let actions = desktop_close(bound(k, binds), modes);
+        if !actions.is_empty() {
+            return with(KeyRoute::Binds(actions));
+        }
+        let hits = bound_global(k, globals);
+        return with(if hits.is_empty() {
+            KeyRoute::Rename
+        } else {
+            KeyRoute::Global(hits)
+        });
     }
     // The desktop icons when nothing else has the keyboard: arrows move
     // the selection, Enter opens, Alt+Enter shows Properties, Delete
