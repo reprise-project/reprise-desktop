@@ -158,6 +158,15 @@ impl KeptFrames {
     }
 }
 
+/// Whether a window of app `app` titled `title`, of client size `size` where known before it is
+/// placed (an X11 window's own), is a startup placeholder: under [`MIN_SIZE`] with no title of its
+/// own, none or only the program name a toolkit sets before the program names its window. It opens
+/// without a kept frame, so a 75x32 startup window is not maximized for its moment on screen.
+pub fn is_placeholder(app: &str, title: &str, size: Option<(i32, i32)>) -> bool {
+    let untitled = title.is_empty() || title.eq_ignore_ascii_case(app);
+    untitled && size.is_some_and(|(w, h)| w < MIN_SIZE.0 || h < MIN_SIZE.1)
+}
+
 fn worth_keeping(frame: &Remembered) -> bool {
     frame.width >= MIN_SIZE.0 && frame.height >= MIN_SIZE.1
 }

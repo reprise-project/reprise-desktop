@@ -64,6 +64,8 @@ pub(crate) struct Subject {
     pub fixed: bool,
     /// Its chrome out of full screen: what its frame adds to a kept client size.
     pub chrome: Chrome,
+    /// Its client size where known before it is placed: an X11 window's own.
+    pub size: Option<(i32, i32)>,
 }
 
 /// What a frame of `chrome` adds to its client's width and height when not maximized.
@@ -158,6 +160,9 @@ impl State {
             placeable: win.placeable(),
             fixed: !win.is_resizable(),
             chrome: win.normal_chrome(),
+            size: win
+                .x11()
+                .map(|x| (x.geometry().size.w, x.geometry().size.h)),
         };
         self.plan_for(&subject, Some(w))
     }
@@ -174,6 +179,7 @@ impl State {
         let mut base = Want::default();
         if self.config.remember_windows
             && !fixed
+            && !crate::keptframes::is_placeholder(app_id, title, s.size)
             && let Some(m) = self.wm.kept.get(&self.output_set(), &s.key)
         {
             let m = &m.with_frame(frame_added(&self.config.theme.metrics, s.chrome));

@@ -731,6 +731,7 @@ struct Premap {
     title: String,
     limits: SizeLimits,
     decorated: bool,
+    size: (i32, i32),
 }
 
 impl Premap {
@@ -751,6 +752,7 @@ impl Premap {
             title: x.title(),
             limits: client_limits((min.w, min.h, max.w, max.h)),
             decorated: decorated(&x.motif_hints()),
+            size: (x.geometry().size.w, x.geometry().size.h),
         }
     }
 
@@ -766,6 +768,7 @@ impl Premap {
                 && !self.app.is_empty(),
             fixed: !self.limits.resizable(),
             chrome: self.chrome(),
+            size: Some(self.size),
         }
     }
 
@@ -1210,6 +1213,7 @@ mod tests {
                 max: (None, None),
             },
             decorated: true,
+            size: (484, 316),
         }
     }
 

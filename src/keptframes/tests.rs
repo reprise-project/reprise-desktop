@@ -188,6 +188,61 @@ fn a_programs_tiny_first_window_leaves_its_kept_size_alone() {
 }
 
 #[test]
+fn a_small_window_with_no_title_of_its_own_opens_without_the_kept_frame() {
+    use crate::placement::Subject;
+    use crate::windowrules::WindowState;
+    let mut h = one_screen();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    h.state.set_maximized(t.id, true);
+    h.roundtrip(&mut c);
+    close(&mut h, &mut c, t);
+    let plan = |title: &str, size| {
+        let s = Subject {
+            app: APP.into(),
+            key: APP.into(),
+            title: title.into(),
+            placeable: true,
+            fixed: false,
+            chrome: reprisekit::frame::Chrome::WINDOW,
+            size,
+        };
+        h.state.plan_for(&s, None).and_then(|w| w.state)
+    };
+    assert_eq!(
+        plan("", Some((75, 32))),
+        None,
+        "a placeholder opens as it is"
+    );
+    assert_eq!(
+        plan("", Some((300, 32))),
+        None,
+        "32 high is under the floor"
+    );
+    assert_eq!(
+        plan("org.example.notes", Some((75, 32))),
+        None,
+        "its program's name is no title of its own"
+    );
+    let max = Some(WindowState::Maximized);
+    assert_eq!(
+        plan("Notes", Some((75, 32))),
+        max,
+        "a titled one is maximized"
+    );
+    assert_eq!(
+        plan("", Some((MIN_SIZE.0, MIN_SIZE.1))),
+        max,
+        "the floor itself is kept"
+    );
+    assert_eq!(
+        plan("", None),
+        max,
+        "a size not known yet is no placeholder"
+    );
+}
+
+#[test]
 fn a_maximized_program_reopens_maximized_on_the_screen_it_was_on() {
     let mut h = one_screen();
     let two = h.output("TEST-2", 1280, 1024);
