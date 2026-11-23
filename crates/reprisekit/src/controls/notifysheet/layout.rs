@@ -370,8 +370,9 @@ fn column_layout(
 }
 
 /// The Droplet at 100% text, design px: a capsule row of round slot, title and app line, one
-/// body line and the picture; expanded, the body wraps and the pills follow. Text taller than
-/// the slot makes the row taller, the slot, picture and close centred on it.
+/// body line and the picture; expanded, the body wraps and the pills follow. A title too long
+/// for the head row wraps under the app line. Text taller than the slot makes the row taller,
+/// the slot, picture and close centred on it.
 const DROPLET_W: i32 = 360;
 const DROPLET_H: i32 = 68;
 const DROPLET_SLOT: i32 = 48;
@@ -403,27 +404,44 @@ fn droplet_layout(
     let text_x = DROPLET_TEXT_X;
     let w = DROPLET_W + g.widen(DROPLET_W - DROPLET_END - text_x);
 
-    let has_body = c.body.split_whitespace().next().is_some();
-    let block = g.title_h + if has_body { g.line_h } else { 0 };
-    let row_h = DROPLET_SLOT.max(block);
-    let shut_h = DROPLET_H.max(row_h + 2 * DROPLET_IN);
-    let slot_y = DROPLET_IN + (row_h - DROPLET_SLOT) / 2;
-    let title_y = DROPLET_IN + (row_h - block) / 2;
-    let body_y = title_y + g.title_h;
-
     let picture_x = w - DROPLET_PICTURE_END - DROPLET_SLOT;
     let close_x = if c.has_picture {
         picture_x - CLOSE_GAP - CLOSE
     } else {
         w - DROPLET_END - CLOSE
     };
+    let head_right = close_x - CLOSE_GAP;
+    let head_w = head_right - text_x;
+    let app = app_line(c);
+    let gap = APP_GAP * s;
+    let room =
+        (head_w * s - gap - text.measure(&app, false, app_px)).max(head_w * s * TITLE_SHARE / 5);
+    let beside = text.measure(c.title, true, title_px) <= room;
+    let title = if beside {
+        vec![c.title.to_string()]
+    } else {
+        title_lines(text, c.title, head_w * s, true, title_px)
+    };
+    let head_h = if beside {
+        g.title_h
+    } else {
+        g.app_h + title.len() as i32 * g.title_h
+    };
+
+    let has_body = c.body.split_whitespace().next().is_some();
+    let block = head_h + if has_body { g.line_h } else { 0 };
+    let row_h = DROPLET_SLOT.max(block);
+    let shut_h = DROPLET_H.max(row_h + 2 * DROPLET_IN);
+    let slot_y = DROPLET_IN + (row_h - DROPLET_SLOT) / 2;
+    let head_y = DROPLET_IN + (row_h - block) / 2;
+    let body_y = head_y + head_h;
+
     let shut_close = (close_x, (shut_h - CLOSE) / 2);
     let open_close = if c.has_picture {
         (close_x, DROPLET_OPEN_CLOSE_Y)
     } else {
         (w - DROPLET_PAD - CLOSE, DROPLET_OPEN_CLOSE_Y)
     };
-    let head_right = shut_close.0 - CLOSE_GAP;
     let text_right = match (expanded, c.has_picture) {
         (false, _) => head_right,
         (true, true) => picture_x - DROPLET_IN,
@@ -442,25 +460,29 @@ fn droplet_layout(
         }
     };
 
-    let head = at(text_x, title_y, head_right - text_x, g.title_h);
-    let app = app_line(c);
-    let app_w = text.measure(&app, false, app_px);
-    let gap = APP_GAP * s;
-    let room = (head.width - gap - app_w).max(head.width * TITLE_SHARE / 5);
-    let title = text.ellipsize(c.title, room, true, title_px).into_owned();
-    let used = match text.measure(&title, true, title_px) {
-        0 => 0,
-        w => w + gap,
+    let (title_box, app_box) = if beside {
+        let head = at(text_x, head_y, head_w, g.title_h);
+        let used = match text.measure(c.title, true, title_px) {
+            0 => 0,
+            w => w + gap,
+        };
+        let app_box = Rect::new(head.x + used, head.y, head.width - used, head.height);
+        let lift = text
+            .baseline(head, true, title_px)
+            .zip(text.baseline(app_box, false, app_px))
+            .map_or(0, |(t, a)| t - a);
+        let app_box = Rect::new(app_box.x, app_box.y + lift, app_box.width, app_box.height);
+        (head, app_box)
+    } else {
+        let lines_h = title.len() as i32 * g.title_h;
+        (
+            at(text_x, head_y + g.app_h, head_w, lines_h),
+            at(text_x, head_y, head_w, g.app_h),
+        )
     };
     let app_shown = text
-        .ellipsize(&app, head.width - used, false, app_px)
+        .ellipsize(&app, app_box.width, false, app_px)
         .into_owned();
-    let app_box = Rect::new(head.x + used, head.y, head.width - used, head.height);
-    let lift = text
-        .baseline(head, true, title_px)
-        .zip(text.baseline(app_box, false, app_px))
-        .map_or(0, |(t, a)| t - a);
-    let app_box = Rect::new(app_box.x, app_box.y + lift, app_box.width, app_box.height);
 
     let reply = c.reply.filter(|_| expanded);
     let actions = if expanded { c.actions } else { &[][..] };
@@ -488,7 +510,7 @@ fn droplet_layout(
     let (close_x, close_y) = if expanded { open_close } else { shut_close };
     let parts = NotifyParts {
         bubble: sheet,
-        title: head,
+        title: title_box,
         body: at(text_x, body_y, text_w, lines.len().max(1) as i32 * g.line_h),
         close: at(close_x, close_y, CLOSE, CLOSE),
         buttons: row.buttons,
@@ -518,7 +540,7 @@ fn droplet_layout(
         body_px,
         app_line: app_shown,
         app_box,
-        title: vec![title],
+        title,
         labels: row.labels,
         line_h: g.line_h * s,
         pill_px: g.pills.px,

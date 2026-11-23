@@ -77,7 +77,7 @@ pub struct SheetLayout {
     pub body_px: u32,
     app_line: String,
     app_box: Rect,
-    /// The title's lines; a Droplet's head row holds one.
+    /// The title's lines; a Droplet's head row holds one unless it wraps under the app line.
     title: Vec<String>,
     /// Each pill's label; None shows its action's icon.
     pub labels: Vec<Option<String>>,
