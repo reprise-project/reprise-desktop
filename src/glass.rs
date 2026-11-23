@@ -943,7 +943,9 @@ impl GlassCtx {
     }
 
     /// Whether glass shown on `output` reads, where it is now, a change to its picture since
-    /// `before`; a picture `before` lacks counts as changed.
+    /// `before`; a picture `before` lacks, or a backdrop that failed to draw, counts as changed.
+    /// The retry frame then draws fresh: `show_last` needs a drawn backdrop, so a lasting GL
+    /// error asks no frame after it.
     fn reads_changed(
         &self,
         scene: &DeskScene,
@@ -956,12 +958,12 @@ impl GlassCtx {
         };
         let beneath = self.beneath.borrow();
         (self.reads_now(scene, output, &beneath).iter()).any(|(own, reads)| {
-            let source = match own {
-                Some(k) => beneath[k].backdrop.picture.source(),
-                None => b.picture.source(),
+            let backdrop = match own {
+                Some(k) => &beneath[k].backdrop,
+                None => b,
             };
-            let Some(source) = source else {
-                return false;
+            let Some(source) = backdrop.picture.source().filter(|_| backdrop.drawn) else {
+                return true;
             };
             let (id, _) = source.version();
             match before.get(&id).and_then(|&c| source.changed_since(c)) {
