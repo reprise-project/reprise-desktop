@@ -35,6 +35,7 @@ impl State {
             return;
         };
         let mut canvas = still.clone();
+        let active = self.dialog_has_keyboard();
         if self.caret.on {
             let theme = self.config.theme.scaled(*at);
             dialog::draw_field(
@@ -44,6 +45,7 @@ impl State {
                 &v.layout,
                 &v.dialog,
                 true,
+                active,
             );
         }
         let (buffer, tree) = (v.buffer, v.tree);
@@ -177,6 +179,7 @@ impl State {
                     &v.layout,
                     &v.dialog,
                     true,
+                    active,
                 );
             }
         }

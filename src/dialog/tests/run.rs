@@ -528,10 +528,46 @@ fn a_blink_over_the_kept_raster_matches_a_full_draw() {
     let on = full(true);
     assert_ne!(off, on, "the caret shows");
     let mut c = off.clone();
-    draw_field(&mut c, &theme, &text, &l, &d, true);
+    draw_field(&mut c, &theme, &text, &l, &d, true, true);
     assert_eq!(c, on);
-    draw_field(&mut c, &theme, &text, &l, &d, false);
+    draw_field(&mut c, &theme, &text, &l, &d, false, true);
     assert_eq!(c, off);
+}
+
+#[test]
+fn the_run_field_hides_its_selection_while_run_lacks_the_keyboard() {
+    let theme = Theme::default();
+    let text = tahoma();
+    let mut d = Dialog::run(&[]);
+    d.key(Key::Edit(EditKey::Insert("abc".into())));
+    d.key(Key::Edit(EditKey::Home { select: true }));
+    let l = DialogLayout::compute(&theme, &text, &d);
+    let full = |active: bool| {
+        draw(
+            &theme,
+            &text,
+            &l,
+            None,
+            None,
+            &d,
+            false,
+            Lit::default(),
+            Cues::ALL,
+            active,
+            None,
+        )
+    };
+    let field = l.field.unwrap();
+    let hl = theme.colors.hilight.argb();
+    let lit = |c: &Canvas| {
+        (field.y..field.bottom()).any(|y| (field.x..field.right()).any(|x| c.get(x, y) == hl))
+    };
+    assert!(lit(&full(true)), "with the keyboard the selection shows");
+    let mut away = full(false);
+    assert!(!lit(&away), "without it the selection hides");
+    let kept = away.clone();
+    draw_field(&mut away, &theme, &text, &l, &d, true, false);
+    assert_eq!(away, kept, "a blink without the keyboard draws no caret");
 }
 
 /// The open drop list's bottom frame pixel sits under the third row:
