@@ -81,8 +81,6 @@ pub const TIMED_OUT: &str =
 /// What a program says for [`Refusal::Denied`].
 pub const NOT_ALLOWED: &str = "You are not allowed to make this change.";
 
-const NO_REPLY: &str = "org.freedesktop.DBus.Error.NoReply";
-
 /// The refusal `e` is, when its error name passes `refused` or is `NoReply`, or
 /// it is the connection's method timeout; None for any other error. `dismissed`, normally [`dismissed`], is asked only for a
 /// refusal, since asking forgets the dismissal.
@@ -91,15 +89,10 @@ pub fn refusal(
     refused: impl FnOnce(&str) -> bool,
     dismissed: impl FnOnce() -> bool,
 ) -> Option<Refusal> {
-    if let zbus::Error::InputOutput(io) = e
-        && io.kind() == std::io::ErrorKind::TimedOut
-    {
+    if crate::error::timed_out(e) {
         return Some(Refusal::TimedOut);
     }
     let name = crate::error::name(e)?;
-    if name == NO_REPLY {
-        return Some(Refusal::TimedOut);
-    }
     refused(&name).then(|| {
         if dismissed() {
             Refusal::Dismissed

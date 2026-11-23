@@ -4,6 +4,13 @@
 use zbus::DBusError;
 use zbus::names::ErrorName;
 
+/// Whether `e` is the connection's method timeout ([`crate::METHOD_TIMEOUT`]) or the bus's
+/// `NoReply`: the peer may still answer later.
+pub fn timed_out(e: &zbus::Error) -> bool {
+    matches!(e, zbus::Error::InputOutput(io) if io.kind() == std::io::ErrorKind::TimedOut)
+        || name(e).is_some_and(|n| n == "org.freedesktop.DBus.Error.NoReply")
+}
+
 /// The error name of `e` when it is an error reply; None for any other error.
 pub fn name(e: &zbus::Error) -> Option<ErrorName<'_>> {
     match e {
