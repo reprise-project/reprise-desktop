@@ -257,6 +257,7 @@ fn paint_one(
 ) {
     let mut opening = std::mem::take(&mut state.notify.stack[i].opening);
     let mut kept = std::mem::take(&mut state.notify.stack[i].glass);
+    let keyed = super::reply::reply_takes_typing(state);
     let b = &state.notify.stack[i];
     let preedit = b
         .reply
@@ -278,7 +279,7 @@ fn paint_one(
     let reply = b.reply.as_ref().map(|r| {
         (
             &r.edit,
-            Caret::new(r.focused, state.caret.on),
+            Caret::new(r.focused && keyed, state.caret.on),
             preedit.as_ref(),
         )
     });
@@ -372,6 +373,9 @@ fn paint_one(
         ..
     } = state;
     let output = notify.output.clone();
+    if replying {
+        notify.reply_keyed = keyed;
+    }
     let b = &mut notify.stack[i];
     b.opening = opening;
     b.glass = kept;

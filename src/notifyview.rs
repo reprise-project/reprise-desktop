@@ -16,7 +16,9 @@ mod tests;
 
 pub use access::access;
 pub use pointer::{cancel_press, drag, hover, press, release};
-pub use reply::{blink, blur, key, paste, reply_edit, reply_focused, reply_serial};
+pub use reply::{
+    blink, blur, follow_keyboard, key, paste, reply_edit, reply_focused, reply_serial,
+};
 pub use stack::{output_removed, reposition};
 
 use reprisekit::controls::notifysheet::{SheetGlass, SheetOpening, WarmJob, has_sheets};
@@ -202,6 +204,8 @@ pub struct NotifyView {
     held: u32,
     owed_paint: bool,
     owed_center: bool,
+    /// Whether the last paint lit the reply field for typing ([`reply::reply_takes_typing`]).
+    reply_keyed: bool,
     /// Stack paints run, for tests that count them.
     #[cfg(test)]
     paints: usize,

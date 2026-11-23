@@ -469,6 +469,10 @@ impl State {
     }
 
     fn switch_to(&mut self, entry: Option<Entry>) {
+        // The pick takes the keyboard from a balloon's reply field, as a press off the balloon does.
+        if entry.is_some() {
+            crate::notifyview::blur(self);
+        }
         match entry {
             Some(Entry::Window(w)) if self.win(w).is_some_and(|x| x.minimized) => {
                 self.set_minimized(w, false)

@@ -359,6 +359,53 @@ fn typing_reaches_a_dialog_unless_a_switcher_menu_or_key_taking_popup_is_up() {
 }
 
 #[test]
+fn typing_reaches_a_reply_field_unless_a_switcher_menu_or_key_taking_popup_is_up() {
+    let base = Modes {
+        notify_reply_focused: true,
+        dialog_has_keyboard: true,
+        renaming: true,
+        desktop_has_keyboard: true,
+        ..Modes::default()
+    };
+    assert_eq!(letter_route(&base), KeyRoute::NotifyReply);
+    type Set = fn(&mut Modes);
+    let over: [(&str, Set); 10] = [
+        ("the switcher", |m| m.switcher_open = true),
+        ("a menu", |m| m.menus_open = true),
+        ("the overview", |m| m.overview_open = true),
+        ("the display switcher", |m| m.projector_open = true),
+        ("the launcher", |m| m.launcher_open = true),
+        ("the Start menu", |m| m.start_panel_open = true),
+        ("the clipboard history", |m| m.clipview_open = true),
+        ("the emoji picker", |m| m.emojiview_open = true),
+        ("the displays panel", |m| m.displays_open = true),
+        ("a drag", |m| m.dragging = true),
+    ];
+    for (what, set) in over {
+        let mut m = base.clone();
+        set(&mut m);
+        assert_ne!(
+            letter_route(&m),
+            KeyRoute::NotifyReply,
+            "{what} takes the letter"
+        );
+    }
+    let escape_only: [(&str, Set); 2] = [
+        ("the clock's popup", |m| m.calendar_open = true),
+        ("the hidden icons flyout", |m| m.tray_flyout_open = true),
+    ];
+    for (what, set) in escape_only {
+        let mut m = base.clone();
+        set(&mut m);
+        assert_eq!(
+            letter_route(&m),
+            KeyRoute::NotifyReply,
+            "under {what} the letter goes to the reply"
+        );
+    }
+}
+
+#[test]
 fn the_switcher_bind_passes_a_dialog_but_not_a_welcome_panel() {
     let mut m = Modes {
         dialog_has_keyboard: true,

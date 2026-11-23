@@ -82,11 +82,14 @@ impl State {
         crate::keyroute::letter_route(&modes)
     }
 
-    /// Redraws a waiting rename box or the top dialog once typing has moved to or from it. Called
-    /// where the keyboard or what takes the keys may change: the seat's focus, the caret's restart
-    /// and stop, every key and button, and the switcher's close.
+    /// Redraws a waiting rename box, the top dialog or a balloon's reply field once typing has
+    /// moved to or from it. Called where the keyboard or what takes the keys may change: the seat's
+    /// focus, the caret's restart and stop, every key and button, and the switcher's close.
     pub(crate) fn follow_field_keyboard(&mut self) {
-        if !self.is_renaming() && self.dialogs.views.is_empty() {
+        if !self.is_renaming()
+            && self.dialogs.views.is_empty()
+            && !crate::notifyview::reply_focused(self)
+        {
             return;
         }
         self.handle.insert_idle(|s| {
@@ -97,6 +100,7 @@ impl State {
             if (s.dialogs.views.last()).is_some_and(|v| v.keyed != s.dialog_takes_typing()) {
                 s.redraw_top_dialog();
             }
+            crate::notifyview::follow_keyboard(s);
         });
     }
 

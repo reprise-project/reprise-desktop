@@ -152,6 +152,19 @@ pub fn reply_focused(state: &State) -> bool {
     reply_edit(state).is_some()
 }
 
+/// Whether typing reaches the reply field, which lights its caret and selection: it has the
+/// keyboard and nothing that takes presses ahead of it (the switcher, a popup with keys) is up.
+pub fn reply_takes_typing(state: &State) -> bool {
+    reply_focused(state) && state.field_letter_route() == crate::keyroute::KeyRoute::NotifyReply
+}
+
+/// Redraws the reply field once typing has moved to or from it (`State::follow_field_keyboard`).
+pub fn follow_keyboard(state: &mut State) {
+    if replying(&state.notify).is_some() && state.notify.reply_keyed != reply_takes_typing(state) {
+        paint(state);
+    }
+}
+
 /// The serial of the balloon whose reply field has the keyboard.
 pub fn reply_serial(state: &State) -> Option<u64> {
     let v = &state.notify;
