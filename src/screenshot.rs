@@ -27,12 +27,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use repriseconf::config::ShotFormat;
+use reprisekit::icon::IconSource;
 use reprisescene::View;
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::Rectangle;
 
 use crate::compositor::State;
+use crate::notifyview::OwnAction;
 use crate::raster::{Canvas, Rect};
 use crate::shotfile::{Failed, Plan};
 use crate::window::WindowId;
@@ -281,19 +283,19 @@ impl State {
                 let ext = shot.format.extension();
                 let wants_png = shot.format == ShotFormat::Png;
                 match crate::shotfile::plan(&shot, state.shots.encodes.count()) {
-                    Plan::Clipboard => return save(state, png, now, ext, None, saving),
+                    Plan::Clipboard => return save(state, png, now, ext, None, saving, still),
                     Plan::Busy => {
                         let note = (!wants_png).then_some(BUSY);
-                        return save(state, png, now, "png", note, saving);
+                        return save(state, png, now, "png", note, saving, still);
                     }
                     Plan::Encode => {}
                 }
                 let encoding = state.shots.encodes.hold();
                 state.spawn_job(move || -> crate::fsjobs::OnLoop {
                     let file = crate::shotfile::encode(&still, &shot);
-                    drop((still, encoding));
+                    drop(encoding);
                     Box::new(move |state| match file {
-                        Ok(bytes) => save(state, bytes.into(), now, ext, None, saving),
+                        Ok(bytes) => save(state, bytes.into(), now, ext, None, saving, still),
                         Err(e) => {
                             let as_png = "so it was saved as PNG.";
                             let note = match e {
@@ -318,7 +320,7 @@ impl State {
                                 Failed::Codec(e) => format!("Cannot encode it: {e}, {as_png}"),
                             };
                             let note = (!wants_png).then_some(note.as_str());
-                            save(state, png, now, "png", note, saving)
+                            save(state, png, now, "png", note, saving, still)
                         }
                     })
                 });
@@ -326,6 +328,8 @@ impl State {
         });
     }
 }
+
+const SAVED: &str = "Screenshot saved";
 
 /// Why a screenshot past `shotfile::MAX_ENCODES` is a PNG.
 const BUSY: &str = "Earlier screenshots were still being encoded, so this one was saved as PNG.";
@@ -411,7 +415,8 @@ pub fn when_saved(state: &mut State, wait: Duration, then: Box<dyn FnOnce(&mut S
     }
 }
 
-/// Write the encoded file on a file job and tell how it went, with `note` saying why it is a PNG.
+/// Write the encoded file on a file job and tell how it went, with `note` saying why it is a PNG
+/// and `still` fitted into the notice's picture once the file lands.
 fn save(
     state: &mut State,
     bytes: Arc<[u8]>,
@@ -419,31 +424,55 @@ fn save(
     ext: &'static str,
     note: Option<&str>,
     saving: Held,
+    still: Canvas,
 ) {
     let note = note.map(str::to_owned);
     state.spawn_fs_job(move || {
         let saved = write_file(&bytes, secs, ext);
+        let shown = match saved {
+            Ok(_) => crate::tray::notify::canvas_sources(&still),
+            Err(_) => Vec::new(),
+        };
+        drop(still);
         Box::new(move |state| {
-            saved_notice(state, saved, note.as_deref());
+            saved_notice(state, saved, note.as_deref(), shown);
             drop(saving);
         })
     });
 }
 
-/// Tells how the screenshot's save went.
-fn saved_notice(state: &mut State, saved: Result<PathBuf, String>, note: Option<&str>) {
+/// Tells how the screenshot's save went; a saved file goes in the recent files, and its notice
+/// shows `shown`, opens the file on a click, and offers Edit in Paint and Show in Folder.
+fn saved_notice(
+    state: &mut State,
+    saved: Result<PathBuf, String>,
+    note: Option<&str>,
+    shown: Vec<IconSource>,
+) {
     match saved {
         Ok(path) => {
             log::info!("screenshot saved to {}", path.display());
             let name = path.file_name().unwrap_or_default().to_string_lossy();
-            let dir = path.parent().unwrap_or(std::path::Path::new("/"));
-            let note = note.map_or(String::new(), |n| format!("{n}\n"));
-            crate::notifyview::notice_opening(
-                state,
-                "Screenshot saved",
-                &format!("{name}\n{note}Click here to open the Screenshots folder."),
-                vec!["reprise-explorer".into(), dir.as_os_str().to_owned()],
-            );
+            let body = match note {
+                Some(note) => format!("{name}\n{note}"),
+                None => name.into_owned(),
+            };
+            let edit = vec!["reprise-paint".into(), path.clone().into_os_string()];
+            let actions = vec![
+                (
+                    crate::tray::notify::DEFAULT_ACTION.to_string(),
+                    String::new(),
+                    OwnAction::Open(path.clone()),
+                ),
+                ("edit".to_string(), "Edit".to_string(), OwnAction::Run(edit)),
+                (
+                    "folder".to_string(),
+                    "Show in Folder".to_string(),
+                    OwnAction::Run(reprisefs::apps::open_location_argv(&path)),
+                ),
+            ];
+            crate::notifyview::notice_with_picture(state, SAVED, &body, actions, shown);
+            state.record_recent(vec![path], None);
         }
         Err(e) => {
             log::warn!("screenshot not saved: {e}");
@@ -676,6 +705,45 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn a_saved_shot_s_notice_shows_it_offers_edit_and_its_folder_and_records_it() {
+        use crate::notifyview::{OWN_ID, invoke};
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let dir = crate::harness::scratch().join("shot-notice");
+        std::fs::create_dir_all(&dir).unwrap();
+        let xbel = dir.join("recently-used.xbel");
+        h.state.config.recent_files = true;
+        h.state.recent = crate::recentdocs::RecentDocs::reading(xbel.clone());
+        let path = dir.join("Screenshot 2026-09-05 07-03-09.png");
+        let mut wide = Canvas::new(40, 20);
+        wide.fill_rect(Rect::new(0, 0, 40, 20), crate::theme::Color::rgb(0, 0, 255));
+        std::fs::write(&path, crate::raster::to_png(&wide)).unwrap();
+        let shown = crate::tray::notify::canvas_sources(&wide);
+        saved_notice(&mut h.state, Ok(path.clone()), None, shown);
+
+        let n = &h.state.notify.log.get(OWN_ID).unwrap().n;
+        assert_eq!(n.summary, "Screenshot saved");
+        assert_eq!(n.body, "Screenshot 2026-09-05 07-03-09.png");
+        let buttons: Vec<&str> = (n.actions.iter())
+            .filter(|(_, label)| !label.is_empty())
+            .map(|(_, label)| label.as_str())
+            .collect();
+        assert_eq!(buttons, ["Edit", "Show in Folder"]);
+        let picture = n.image.iter().max_by_key(|s| s.width).expect("the picture");
+        let at = |x: u32, y: u32| picture.pixels[(y * picture.width + x) as usize];
+        assert_eq!(picture.width, 96);
+        assert_eq!(at(48, 48), 0xFF00_00FF, "the shot fills the middle");
+        assert_eq!(at(48, 4), 0, "and keeps its shape, clear above");
+
+        crate::spawn::record();
+        invoke(&mut h.state, OWN_ID, "edit");
+        assert_eq!(crate::spawn::recorded(), ["reprise-paint"]);
+        h.until("the shot is in the recent files", |_| {
+            std::fs::read_to_string(&xbel).is_ok_and(|t| t.contains("Screenshot%202026-09-05"))
+        });
     }
 
     #[test]

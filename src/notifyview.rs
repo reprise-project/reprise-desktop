@@ -23,6 +23,7 @@ pub use stack::{output_removed, reposition};
 
 use reprisekit::controls::notifysheet::{SheetGlass, SheetOpening, WarmJob, has_sheets};
 use reprisekit::controls::tooltip::{NotifyHit, ReplyField};
+use reprisekit::icon::IconSource;
 use reprisekit::style::SheetShape;
 use reprisekit::taskbar::Edge;
 use reprisescene::{BufferId, TreeId};
@@ -489,7 +490,7 @@ pub fn notice(state: &mut State, summary: &str, body: &str) {
 /// `notice` with `image` beside its text.
 pub fn notice_with_image(state: &mut State, summary: &str, body: &str, image: Canvas) {
     state.notify.own_actions.clear();
-    show_own(state, summary, body, Vec::new(), Some(image));
+    show_own(state, summary, body, Vec::new(), vec![image.into()]);
 }
 
 /// `notice`, and a click on the balloon runs `argv`.
@@ -510,12 +511,23 @@ pub fn notice_with_actions(
     body: &str,
     actions: Vec<(String, String, OwnAction)>,
 ) {
+    notice_with_picture(state, summary, body, actions, Vec::new());
+}
+
+/// `notice_with_actions` with `picture` (as `tray::notify::canvas_sources` gives) beside its text.
+pub fn notice_with_picture(
+    state: &mut State,
+    summary: &str,
+    body: &str,
+    actions: Vec<(String, String, OwnAction)>,
+    picture: Vec<IconSource>,
+) {
     let (buttons, own) = actions
         .into_iter()
         .map(|(key, label, act)| ((key.clone(), label), (key, act)))
         .unzip();
     state.notify.own_actions = own;
-    show_own(state, summary, body, buttons, None);
+    show_own(state, summary, body, buttons, picture);
 }
 
 fn show_own(
@@ -523,14 +535,14 @@ fn show_own(
     summary: &str,
     body: &str,
     actions: Vec<(String, String)>,
-    image: Option<Canvas>,
+    image: Vec<IconSource>,
 ) {
     let mut n = Notification::new(OWN_ID, summary.to_string(), body.to_string());
     n.app = OWN_APP.to_string();
     n.key = OWN_APP.to_string();
     n.expire_timeout = 0;
     n.actions = actions;
-    n.image = image.into_iter().map(Into::into).collect();
+    n.image = image;
     show(state, n);
 }
 

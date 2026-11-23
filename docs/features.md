@@ -198,7 +198,9 @@ shake, the dim, the hidden frame rate and window memory.
   interactive screenshot dialog has its own Delay box, which starts at the
   same value; an app's other screenshots never wait.
 - **Screenshot files.** Each shot goes to the clipboard and, if you like, to
-  Pictures/Screenshots as PNG, JPG or JPEG XL (`[screenshot] format`).
+  Pictures/Screenshots as PNG, JPG or JPEG XL (`[screenshot] format`). The
+  saved notice shows the picture and opens it on a click; its Edit opens it in
+  Paint and Show in Folder selects it. The file joins the recent documents.
 - **Screen recordings.** Ctrl+Shift+Alt+R records the screen under the
   pointer and stops it. V in the Shift+PrtSc picker records an area instead.
 - **Recording files** are MP4s in Videos/Screencasts, in H.264, H.265 or AV1

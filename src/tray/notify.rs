@@ -315,13 +315,27 @@ fn fitted(img: &ImageData) -> Vec<IconSource> {
         let a = if ch == 4 { p[3] } else { 0xFF };
         reprisekit::icon::premultiply(u32::from_be_bytes([a, p[0], p[1], p[2]]))
     };
+    fitted_from(w as u32, h as u32, pixel)
+}
+
+/// A picture already drawn, `canvas`, as [`image_sources`] gives one.
+pub fn canvas_sources(canvas: &Canvas) -> Vec<IconSource> {
+    let (w, h) = (canvas.width, canvas.height);
+    if w == 0 || h == 0 {
+        return Vec::new();
+    }
+    fitted_from(w, h, |x, y| canvas.pixels[(y * w + x) as usize])
+}
+
+/// The `w` x `h` premultiplied picture `pixel` reads, at each of [`super::NOTIFY_SIZES`].
+fn fitted_from(w: u32, h: u32, pixel: impl Fn(u32, u32) -> u32) -> Vec<IconSource> {
     super::NOTIFY_SIZES
         .iter()
         .map(|&px| {
             let side = px as u32;
-            let fit = |n: usize| ((n as u64 * side as u64 / w.max(h) as u64) as u32).max(1);
+            let fit = |n: u32| ((n as u64 * side as u64 / w.max(h) as u64) as u32).max(1);
             let (fw, fh) = (fit(w), fit(h));
-            let img: Canvas = Canvas::resample_box_from(w as u32, h as u32, fw, fh, pixel);
+            let img: Canvas = Canvas::resample_box_from(w, h, fw, fh, &pixel);
             let mut out = Canvas::new(side, side);
             let (ox, oy) = ((side - fw) / 2, (side - fh) / 2);
             for y in 0..fh {

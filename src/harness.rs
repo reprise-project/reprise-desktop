@@ -176,6 +176,7 @@ impl Harness {
         state.wm.kept.path = own.join("windows.toml");
         state.wm.file_dialog.path = own.join("filedialog.toml");
         state.saved_layouts.path = own.join("displays.toml");
+        state.recent = crate::recentdocs::RecentDocs::reading(own.join("recently-used.xbel"));
         Harness { event_loop, state }
     }
 
