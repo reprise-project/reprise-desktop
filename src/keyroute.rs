@@ -607,8 +607,8 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     }
     // An inline desktop rename takes every press that is not a bind or a
     // global shortcut; those act as on the desktop, and the rename waits
-    // while what they open has the keyboard.
-    if modes.renaming && k.pressed {
+    // while what they open, or a layer surface, has the keyboard.
+    if modes.renaming && modes.desktop_has_keyboard && k.pressed {
         let actions = desktop_close(bound(k, binds), modes);
         if !actions.is_empty() {
             return with(KeyRoute::Binds(actions));

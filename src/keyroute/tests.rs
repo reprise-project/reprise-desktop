@@ -274,7 +274,8 @@ fn typing_reaches_a_rename_unless_a_switcher_menu_or_key_taking_popup_is_up() {
     };
     assert_eq!(letter_route(&base), KeyRoute::Rename);
     type Set = fn(&mut Modes);
-    let over: [(&str, Set); 9] = [
+    let over: [(&str, Set); 10] = [
+        ("a layer surface", |m| m.desktop_has_keyboard = false),
         ("the switcher", |m| m.switcher_open = true),
         ("a menu", |m| m.menus_open = true),
         ("the overview", |m| m.overview_open = true),

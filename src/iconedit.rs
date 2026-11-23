@@ -733,4 +733,51 @@ mod tests {
         h.until("drawn without the keyboard under the window", |s| !keyed(s));
         assert!(h.state.is_renaming(), "the rename waits for the next press");
     }
+
+    #[test]
+    fn a_flyout_over_a_rename_takes_its_escape_and_gives_the_keyboard_back_to_the_rename() {
+        const ESC: u32 = 1;
+        const A: u32 = 30;
+        const B: u32 = 48;
+        let tap = |h: &mut crate::harness::Harness, code| {
+            h.key(code, true);
+            h.key(code, false);
+        };
+        let typed = |s: &State| {
+            let (_, edit) = s.desktop.as_ref().unwrap().rename.as_ref().unwrap();
+            edit.text.clone()
+        };
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.a", 300, 200);
+        h.dispatch();
+        h.state.focus_desktop();
+        rename_on_desktop(&mut h, "rename-flyout");
+        tap(&mut h, A);
+        tap(&mut h, B);
+        assert_eq!(typed(&h.state), "ab");
+
+        let mut applet = h.connect();
+        h.map_flyout(&mut applet);
+        h.until("drawn without the keyboard under the flyout", |s| !keyed(s));
+        tap(&mut h, ESC);
+        assert!(
+            h.state.is_renaming(),
+            "the flyout's Esc leaves the rename open"
+        );
+        applet.hang_up();
+        h.dispatch();
+        assert!(
+            h.state.layers_shell.surfaces.is_empty(),
+            "the flyout is gone"
+        );
+        assert!(h.state.focused.is_none(), "no window takes the keyboard");
+        let held = h.state.seat.get_keyboard().and_then(|k| k.current_focus());
+        assert!(held.is_none(), "the desktop holds the keyboard");
+        h.until("drawn with it once the flyout goes", keyed);
+        assert_eq!(typed(&h.state), "ab");
+        tap(&mut h, A);
+        assert_eq!(typed(&h.state), "aba");
+    }
 }
