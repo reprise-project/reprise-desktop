@@ -958,6 +958,21 @@ impl Explorer {
         ex
     }
 
+    /// Up and Back: `place` shown by `show`, with the folder the window leaves selected there.
+    pub(crate) fn return_to(
+        &mut self,
+        place: Place,
+        ctx: &mut Ctx,
+        show: impl FnOnce(&mut Self, Place, &mut Ctx) -> Reply,
+    ) -> Reply {
+        let left = self.place.path();
+        let reply = show(self, place.clone(), ctx);
+        if let Some(left) = left {
+            self.select_once_listed(place, vec![left], ctx);
+        }
+        reply
+    }
+
     /// Selects `paths` in `place`, the first scrolled into view: now when its listing is shown,
     /// else once the listing being read lands.
     pub(crate) fn select_once_listed(&mut self, place: Place, paths: Vec<PathBuf>, ctx: &mut Ctx) {

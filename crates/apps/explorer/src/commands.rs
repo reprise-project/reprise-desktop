@@ -318,7 +318,7 @@ impl Explorer {
                 None => Reply::none(),
             },
             Command::Forward => match self.history.forward().cloned() {
-                Some(p) => self.show(p, ctx),
+                Some(p) => self.return_to(p, ctx, Self::show),
                 None => Reply::none(),
             },
             Command::Go(n) => match self.history.go(n).cloned() {
@@ -330,7 +330,7 @@ impl Explorer {
                 None => Reply::none(),
             },
             Command::Up => match self.place.parent_in(&self.drive_mounts) {
-                Some(p) => self.go(p, ctx),
+                Some(p) => self.return_to(p, ctx, Self::go),
                 None => Reply::none(),
             },
             Command::GoTo(p) => self.go(p, ctx),

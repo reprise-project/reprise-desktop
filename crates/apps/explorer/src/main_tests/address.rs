@@ -64,6 +64,31 @@ fn a_typed_folder_answering_late_opens_on_a_later_wake() {
 }
 
 #[test]
+fn up_and_back_select_the_folder_the_window_came_from() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    for name in ["a", "b", "c"] {
+        std::fs::create_dir(dir.path().join(name)).expect("mkdir");
+    }
+    let mut ctx = test_ctx();
+    let top = Place::Folder(dir.path().to_path_buf());
+    let mut ex = test_explorer(top.clone(), &mut ctx);
+
+    ex.run(Command::GoTo(Place::Folder(dir.path().join("b"))), &mut ctx);
+    ex.run(Command::Up, &mut ctx);
+    assert_eq!(ex.place, top);
+    assert_eq!(ex.selected_paths(), [dir.path().join("b")], "Up selects b");
+
+    ex.run(Command::GoTo(Place::Folder(dir.path().join("c"))), &mut ctx);
+    ex.run(Command::Back, &mut ctx);
+    assert_eq!(ex.place, top);
+    assert_eq!(
+        ex.selected_paths(),
+        [dir.path().join("c")],
+        "Back selects c"
+    );
+}
+
+#[test]
 fn a_blink_redraws_only_while_the_address_field_has_the_caret() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut ctx = test_ctx();
