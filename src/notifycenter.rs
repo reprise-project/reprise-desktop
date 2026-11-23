@@ -26,8 +26,6 @@ pub struct CenterView {
     glass_tree: TreeId,
     glass: Backdrop,
     buffer: BufferId,
-    /// The last left press on a row and its time (ms), for a double-click.
-    last_row_press: Option<(usize, u32)>,
     output: Output,
 }
 
@@ -75,7 +73,6 @@ fn open(state: &mut State, output: &Output, cell: Rect) {
         glass_tree,
         glass: Backdrop::new(&state.glass),
         buffer,
-        last_row_press: None,
         output: output.clone(),
     });
     state.notify.log.unseen = 0;
@@ -149,24 +146,24 @@ pub fn refresh(state: &mut State) {
     let entries: Vec<Entry> = log
         .entries
         .iter()
-        .map(|e| Entry {
-            id: e.n.id,
-            key: e.n.key.clone(),
-            app: e.n.app.clone(),
-            icon: crate::tray::closest(e.n.balloon_icon(), px)
-                .or_else(|| {
-                    let info = crate::icon::unread_first(&mut state.icons, INFO_ICONS, px);
-                    info.map(std::sync::Arc::unwrap_or_clone)
-                })
-                .map(Rc::new),
-            message: if e.n.summary.is_empty() {
-                e.n.body.lines().next().unwrap_or_default().to_string()
-            } else {
-                e.n.summary.clone()
-            },
-            time: crate::taskbar::time_text(e.time),
-            live: e.can_invoke(DEFAULT_ACTION),
-            replied: e.replied,
+        .map(|e| {
+            let (message, body) = row_text(&e.n.summary, &e.n.body);
+            Entry {
+                id: e.n.id,
+                key: e.n.key.clone(),
+                app: e.n.app.clone(),
+                icon: crate::tray::closest(e.n.balloon_icon(), px)
+                    .or_else(|| {
+                        let info = crate::icon::unread_first(&mut state.icons, INFO_ICONS, px);
+                        info.map(std::sync::Arc::unwrap_or_clone)
+                    })
+                    .map(Rc::new),
+                message,
+                time: crate::taskbar::time_text(e.time),
+                live: e.can_invoke(DEFAULT_ACTION),
+                replied: e.replied,
+                body,
+            }
         })
         .collect();
     state.note_icon_waits(waits, crate::icon::IconWaiter::NotifyCenter);
@@ -180,6 +177,23 @@ pub fn refresh(state: &mut State) {
     v.model.dnd = dnd;
     v.model.dnd_until = until;
     redraw(state);
+}
+
+/// How many characters of a body a row keeps; the row shows far fewer.
+const BODY_CHARS: usize = 256;
+
+/// A history row's message and the grey text after it: the summary and the body on one line, or
+/// with no summary the body's first line and the rest of it.
+fn row_text(summary: &str, body: &str) -> (String, String) {
+    let (message, rest) = match summary {
+        "" => body.split_once('\n').unwrap_or((body, "")),
+        s => (s, body),
+    };
+    let rest: String = rest.chars().take(BODY_CHARS).collect();
+    (
+        message.to_string(),
+        rest.split_whitespace().collect::<Vec<_>>().join(" "),
+    )
 }
 
 fn redraw(state: &mut State) {
@@ -237,8 +251,9 @@ fn hit(v: &CenterView, x: f64, y: f64, cm: &ControlMetrics) -> Hit {
     notifyhistory::hit(&v.model, lx, ly, cm)
 }
 
-pub fn press(state: &mut State, x: f64, y: f64, button: u32, time: u32) -> bool {
-    let threshold = state.config.theme.metrics.double_click_ms.max(0) as u32;
+/// A press at layout point (`x`, `y`); a left press on a notification with a default action runs
+/// it. True while the press holds a part that repeats.
+pub fn press(state: &mut State, x: f64, y: f64, button: u32) -> bool {
     let cm = state.config.theme.controls();
     let Some(v) = state.notify.center.as_mut() else {
         return false;
@@ -268,13 +283,8 @@ pub fn press(state: &mut State, x: f64, y: f64, button: u32, time: u32) -> bool 
     if button != BTN_LEFT {
         return false;
     }
-    let double = match (row, v.last_row_press) {
-        (Some(i), Some((j, t))) => i == j && time.wrapping_sub(t) <= threshold,
-        _ => false,
-    };
-    v.last_row_press = if double { None } else { row.map(|i| (i, time)) };
     let invoke = row
-        .filter(|&i| double && v.model.is_live(i))
+        .filter(|&i| v.model.is_live(i))
         .and_then(|i| v.model.note_at(i));
     let event = v.model.press(h);
     let holding = v.model.holding();
@@ -645,6 +655,60 @@ mod tests {
         h.pointer_to(500.0, 400.0);
         toggle_answering(&mut h.state);
         assert_eq!(open_on(&h.state), Some(first));
+    }
+
+    #[test]
+    fn a_row_says_the_body_after_the_summary_or_after_its_own_first_line() {
+        let row = |s: &str, b: &str| row_text(s, b);
+        assert_eq!(row("Hello", ""), ("Hello".into(), String::new()));
+        assert_eq!(
+            row("Hello", "first\n  line"),
+            ("Hello".into(), "first line".into())
+        );
+        assert_eq!(
+            row("", "Subject\nmore\ntext"),
+            ("Subject".into(), "more text".into())
+        );
+        let long = "x".repeat(10_000);
+        assert_eq!(row("Hi", &long).1.len(), BODY_CHARS);
+    }
+
+    #[test]
+    fn a_click_on_a_row_runs_its_default_action_and_one_without_only_selects() {
+        let mut h = crate::harness::Harness::new();
+        let out = h.output("TEST-1", 1024, 768);
+        let mut invite = mail(1);
+        invite.body = "Friday at noon".into();
+        invite.actions = vec![(DEFAULT_ACTION.into(), "View".into())];
+        crate::notifyview::show(&mut h.state, invite);
+        crate::notifyview::show(&mut h.state, mail(2));
+        toggle(&mut h.state, &out, Rect::new(1000, 740, 16, 28));
+        let cm = h.state.config.theme.controls();
+        let row_of = |h: &crate::harness::Harness, id: u32| {
+            let v = h.state.notify.center.as_ref().expect("the history");
+            let i = (0..v.model.list.rows.len()).find(|&i| v.model.note_at(i) == Some(id))?;
+            let r = v.model.row_rect(i, &cm)?;
+            Some((
+                f64::from(v.at.0 + r.x + 4),
+                f64::from(v.at.1 + r.y + r.height / 2),
+            ))
+        };
+        let v = h.state.notify.center.as_ref().unwrap();
+        assert_eq!(v.model.list.detail, ["", "", "Friday at noon"], "the body");
+
+        let (x, y) = row_of(&h, 2).expect("the plain note's row");
+        press(&mut h.state, x, y, BTN_LEFT);
+        let v = h.state.notify.center.as_ref().unwrap();
+        assert_eq!(
+            v.model.list.selected.and_then(|i| v.model.note_at(i)),
+            Some(2)
+        );
+        assert!(h.state.notify.log.get(2).is_some(), "only selected");
+
+        let (x, y) = row_of(&h, 1).expect("the invite's row");
+        press(&mut h.state, x, y, BTN_LEFT);
+        let gone = (h.state.notify.log.get(1)).is_none_or(|e| !e.can_invoke(DEFAULT_ACTION));
+        assert!(gone, "one click ran View and closed the invite");
     }
 
     #[test]

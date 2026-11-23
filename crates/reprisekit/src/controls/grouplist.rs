@@ -21,6 +21,8 @@ const ITEM_ICON_X: i32 = 25;
 const ITEM_TEXT_X: i32 = 45;
 /// The highlight starts this far before the pen and runs this far past the label's advance.
 const SEL_PAD: (i32, i32) = (2, 7);
+/// Between a row's label and its detail, px at 100% text.
+const DETAIL_GAP: i32 = 8;
 
 /// A row: a group header, or an entry under the header above it carrying the host's `data`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,6 +51,8 @@ pub struct GroupList<T> {
     /// host draws there (the history's times and its groups' Clear buttons); empty for none. It
     /// grows with the text as the rows do.
     pub trail: Vec<i32>,
+    /// Per row, grey text after its label, cut short of the trail; empty for none.
+    pub detail: Vec<String>,
 }
 
 impl<T> GroupList<T> {
@@ -60,6 +64,7 @@ impl<T> GroupList<T> {
             selected,
             top: 0,
             trail: Vec::new(),
+            detail: Vec::new(),
         }
     }
 
@@ -311,8 +316,8 @@ pub fn draw<T>(
         let trail = lay.text.len(list.trail.get(i).copied().unwrap_or(0)) * s;
         let tr = Rect::new(tx, y, (inner.right() - trail - tx).max(0), rh);
         let label = text.ellipsize(list.rows[i].label(), tr.width, false, px);
+        let tw = text.measure(&label, false, px);
         let fg = if list.selected == Some(i) {
-            let tw = text.measure(&label, false, px);
             let hi = Rect::new(tx - SEL_PAD.0 * s, y, tw + SEL_PAD.1 * s, rh);
             if shown == Shown::Away {
                 c.fill_rect(hi, cs.button_face);
@@ -332,6 +337,12 @@ pub fn draw<T>(
             cs.button_text
         };
         text.draw(c, tr, &label, false, fg, Align::Left, px);
+        if let Some(d) = list.detail.get(i).filter(|d| !d.is_empty()) {
+            let dx = tx + tw + lay.text.len(DETAIL_GAP) * s;
+            let dr = Rect::new(dx, y, (tr.right() - dx).max(0), rh);
+            let shown = text.ellipsize(d, dr.width, false, px);
+            text.draw(c, dr, &shown, false, cs.gray_text, Align::Left, px);
+        }
     }
 }
 
@@ -360,6 +371,9 @@ pub fn access<T>(
     for (i, row) in list.rows.iter().enumerate() {
         let mut o = Node::new(Role::ListBoxOption);
         o.set_label(row.label());
+        if let Some(d) = list.detail.get(i).filter(|d| !d.is_empty()) {
+            o.set_description(d.as_str());
+        }
         let y = lay.inner.y + (i as i32 - list.top as i32) * lay.row_h;
         let r = Rect::new(lay.inner.x, y, lay.inner.width, lay.row_h);
         o.set_bounds(access::row_bounds(shown, r));
@@ -503,6 +517,52 @@ mod tests {
         assert_eq!((rows[0], *rows.last().unwrap()), (20, 37));
         assert_eq!(c.get(42, 28), cs.window.argb());
         assert_eq!(c.get(0, 50), cs.button_shadow.argb(), "the sunken edge");
+    }
+
+    #[test]
+    fn a_detail_follows_its_label_in_grey_short_of_the_trail_and_outside_the_highlight() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &theme.colors;
+        let px = theme.fonts.size_px;
+        let mut g = list(2);
+        g.detail = vec![String::new(), "terminal editor".into(), "x".repeat(200)];
+        g.trail = vec![0, 0, 60];
+        let l = layout(&g, Rect::new(0, 0, 300, 120), &ControlMetrics::CLASSIC);
+        let mut c = Canvas::new(300, 120);
+        draw(
+            &mut c,
+            &text,
+            &classic_paint(cs, 1),
+            &g,
+            &l,
+            &[],
+            Shown::Focused,
+            px,
+        );
+        let grey = cs.gray_text.argb();
+        let grey_cols = |row: i32| -> Vec<i32> {
+            let r = row_rect(&g, &l, row as usize).unwrap();
+            (r.x..r.right())
+                .filter(|&x| (r.y..r.bottom()).any(|y| c.get(x, y) == grey))
+                .collect()
+        };
+        let micro = grey_cols(1);
+        let w = text.measure("Micro", false, px);
+        assert!(micro[0] > 43 + w + 7, "past the highlight: {micro:?}");
+        let vim = grey_cols(2);
+        let trail_x = l.inner.right() - 60;
+        assert!(
+            *vim.last().unwrap() < trail_x,
+            "short of the trail: {vim:?}"
+        );
+        assert!(grey_cols(0).is_empty(), "no detail on a header");
+        let mut t = crate::access::Tree::window("", (300, 120));
+        access(&g, &l, &mut t, crate::access::ROOT, "list");
+        let described = t
+            .nodes()
+            .any(|(_, n)| n.description() == Some("terminal editor"));
+        assert!(described, "a reader hears the detail");
     }
 
     fn shot(shown: Shown) -> (Canvas, Theme, i32) {

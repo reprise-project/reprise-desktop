@@ -13,9 +13,10 @@
 //!   tall. Each program heads its group: its icon, its name and how many
 //!   it sent, an arrow that points down while the group is open and
 //!   right while it is folded, and a 44x16 Clear button at the row's
-//!   right end. The group's notifications follow, newest first, the time
-//!   each came right-aligned in grey, after "Replied," once answered from
-//!   its balloon. The group with the newest notification comes first.
+//!   right end. The group's notifications follow, newest first: the
+//!   message, its body's first line in grey after it, and the time each
+//!   came right-aligned in grey, after "Replied," once answered from its
+//!   balloon. The group with the newest notification comes first.
 //! - **Clear All**: a 75x23 push button 8 px under the list, greyed with
 //!   nothing to clear.
 
@@ -74,6 +75,8 @@ pub struct Entry {
     pub time: String,
     pub live: bool,
     pub replied: bool,
+    /// The body's first line, grey after the message.
+    pub body: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -315,8 +318,8 @@ impl History {
                 keys.push(&e.key);
             }
         }
-        let (mut rows, mut meta, mut icons, mut trail) =
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut rows, mut meta, mut icons, mut trail, mut detail) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for key in keys {
             let notes: Vec<&Entry> = self.entries.iter().filter(|e| e.key == key).collect();
             let open = !self.folded.contains(key);
@@ -329,6 +332,7 @@ impl History {
             });
             icons.push(notes.first().and_then(|e| e.icon.clone()));
             trail.push(GROUP_TRAIL);
+            detail.push(String::new());
             if !open {
                 continue;
             }
@@ -345,6 +349,7 @@ impl History {
                 });
                 icons.push(None);
                 trail.push(time_w(e.replied));
+                detail.push(e.body.clone());
             }
         }
         let n = rows.len();
@@ -352,6 +357,7 @@ impl History {
         let old = self.list.selected;
         self.list = GroupList::new(rows);
         self.list.trail = trail;
+        self.list.detail = detail;
         self.meta = meta;
         self.icons = icons;
         let row_of = |m: &Meta| self.meta.iter().position(|r| same_row(m, r));
@@ -864,8 +870,9 @@ pub fn access(
     focus
 }
 
-/// Four notifications from three programs, the older Mail one replied, Calendar's folded,
-/// the newest Mail one selected and Do not disturb on: what the gallery and preview test draw.
+/// Four notifications from three programs, the older Mail one replied, Updates' with a body,
+/// Calendar's folded, the newest Mail one selected and Do not disturb on: what the gallery and
+/// preview test draw.
 pub fn sample() -> History {
     let entry = |id, app: &str, message: &str, time: &str, live| Entry {
         id,
@@ -876,12 +883,16 @@ pub fn sample() -> History {
         time: time.into(),
         live,
         replied: false,
+        body: String::new(),
     };
     let mut h = History::new();
     h.folded.insert("Calendar".into());
     h.set_entries(vec![
         entry(4, "Mail", "3 new messages", "4:12 PM", true),
-        entry(3, "Updates", "Updates are ready", "3:58 PM", true),
+        Entry {
+            body: "Restart to finish installing 3 updates.".into(),
+            ..entry(3, "Updates", "Updates are ready", "3:58 PM", true)
+        },
         Entry {
             replied: true,
             ..entry(2, "Mail", "Lunch on Friday?", "1:05 PM", false)
@@ -1022,6 +1033,7 @@ mod tests {
                     time: "1:00 PM".into(),
                     live: true,
                     replied: false,
+                    body: String::new(),
                 })
                 .collect(),
         );
@@ -1092,6 +1104,7 @@ mod tests {
             time: "1:00 PM".into(),
             live: true,
             replied: false,
+            body: String::new(),
         }]);
         assert_eq!(labels(&h), ["Other (1)", "Hi"]);
     }
@@ -1174,6 +1187,7 @@ mod tests {
             time: String::new(),
             live: true,
             replied: false,
+            body: String::new(),
         };
         let mut h = History::new();
         h.set_entries(vec![
@@ -1226,6 +1240,7 @@ mod tests {
                 time: "4:20 PM".into(),
                 live: true,
                 replied: false,
+                body: String::new(),
             },
         );
         h.set_entries(entries);
@@ -1244,6 +1259,7 @@ mod tests {
             time: "1:00 PM".into(),
             live: true,
             replied: false,
+            body: String::new(),
         }
     }
 
@@ -1336,6 +1352,7 @@ mod tests {
                 time: String::new(),
                 live: true,
                 replied: false,
+                body: String::new(),
             })
             .collect();
         h.set_entries(entries);

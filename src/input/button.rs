@@ -354,7 +354,7 @@ impl State {
                 }
             }
             Hit::NotifyCenter => {
-                if crate::notifycenter::press(self, pos.x, pos.y, button, time.millis()) {
+                if crate::notifycenter::press(self, pos.x, pos.y, button) {
                     self.interaction = Interaction::NotifyPress;
                 }
             }
