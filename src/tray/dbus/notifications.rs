@@ -339,8 +339,9 @@ pub(super) async fn picture_file(
 }
 
 /// `(app_icon, image)`: the app icon, else the desktop entry's icon; the `image-data` hint, else
-/// `image-path`. Each is the first that resolves. A theme name is looked up here; a file is read
-/// on `decoders` as `sender`'s, all of them within [`PICTURE_WITHIN`].
+/// `image-path`. Each is the first that resolves. An `image-path` naming a theme icon is an icon,
+/// so with no app icon it is the app icon and there is no picture. A theme name is looked up
+/// here; a file is read on `decoders` as `sender`'s, all of them within [`PICTURE_WITHIN`].
 pub(super) async fn notification_icons(
     icons: &Icons,
     decoders: &Decoders,
@@ -363,13 +364,14 @@ pub(super) async fn notification_icons(
     let image = async {
         let data = (hints.image.as_ref()).map(notify::image_sources);
         if let Some(data) = data.filter(|d| !d.is_empty()) {
-            return data;
+            return (data, false);
         }
         let path = (hints.image_path.as_deref()).map(|p| match p.strip_prefix("file://") {
             Some(rest) => String::from_utf8_lossy(&reprisefs::trash::percent_decode(rest)).into(),
             None => p.to_string(),
         });
-        source(path).await
+        let named = path.as_deref().is_some_and(|p| !p.starts_with('/'));
+        (source(path).await, named)
     };
     let app = async {
         for name in [Some(app_icon), entry.and_then(|e| e.icon.clone())] {
@@ -380,5 +382,8 @@ pub(super) async fn notification_icons(
         }
         Vec::new()
     };
-    futures_lite::future::zip(app, image).await
+    match futures_lite::future::zip(app, image).await {
+        (app, (named, true)) if app.is_empty() => (named, Vec::new()),
+        (app, (image, _)) => (app, image),
+    }
 }

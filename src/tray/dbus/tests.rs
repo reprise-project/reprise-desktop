@@ -241,6 +241,44 @@ fn a_picture_does_not_replace_the_app_icon() {
 }
 
 #[test]
+fn an_image_path_naming_a_theme_icon_is_the_app_icon_when_there_is_none() {
+    let root = crate::icon::svg_theme(&["mail-unread"], &[]);
+    let icons: Icons = Arc::new(Mutex::new(IconCache::new(IconTheme::load(
+        "test",
+        std::slice::from_ref(&root),
+    ))));
+    let hints = notify::Hints {
+        image_path: Some("mail-unread".into()),
+        ..Default::default()
+    };
+    let shown = |app_icon: String| {
+        zbus::block_on(notification_icons(
+            &icons,
+            &decoders(2, 8, 4, CEILING),
+            "",
+            &hints,
+            app_icon,
+            None,
+        ))
+    };
+    let (app, image) = shown(String::new());
+    assert_eq!(
+        app.len(),
+        NOTIFY_SIZES.len(),
+        "the named icon is the app icon"
+    );
+    assert!(image.is_empty(), "and no picture");
+    let (app, image) = shown(blue_svg("named"));
+    assert_eq!(app.len(), NOTIFY_SIZES.len());
+    assert_eq!(
+        image.len(),
+        NOTIFY_SIZES.len(),
+        "beside an app icon it is the picture"
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn image_path_is_the_picture_and_an_unresolved_app_icon_stays_empty() {
     let hints = notify::Hints {
         image_path: Some(format!("file://{}", blue_svg("path"))),
