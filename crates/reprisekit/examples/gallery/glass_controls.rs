@@ -586,12 +586,11 @@ pub fn render_glass_fields(theme: &Theme) -> Canvas {
             px,
         );
     }
-    let greyed = form::Form::new(vec![Item::edit(
-        "greyed",
-        Rect::new(250, 10, 75, 21),
-        "Greyed",
-        false,
-    )]);
+    let greyed = form::Form::new(vec![
+        Item::edit("greyed", Rect::new(250, 10, 75, 21), "Greyed", false),
+        Item::link_at("link", 10, 78, 150, "Text & Keys settings"),
+        Item::link_at("greyed_link", 170, 78, 150, "Greyed link").enabled(false),
+    ]);
     form::draw(&mut c, &text, &p, &greyed, false, px);
     let idle = combo::ComboLit::IDLE;
     let lit = |frame, drop| combo::ComboLit { frame, drop };

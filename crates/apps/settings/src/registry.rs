@@ -608,6 +608,11 @@ mod tests {
                 C::Check { label: l, .. }
                 | C::Radio { label: l, .. }
                 | C::Button { label: l, .. } => Some(shown(l)),
+                // A link leads to another page's setting, which that page's terms find.
+                C::Link { .. } => {
+                    label = None;
+                    continue;
+                }
                 C::Edit { .. }
                 | C::Combo(_)
                 | C::ListBox { .. }

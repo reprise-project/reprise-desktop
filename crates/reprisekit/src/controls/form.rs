@@ -118,6 +118,12 @@ pub enum Control {
         enabled: bool,
         default: bool,
     },
+    /// A link: its label in the look's link ink, underlined. Enter, Space and a click report
+    /// `Pressed`.
+    Link {
+        label: String,
+        enabled: bool,
+    },
     /// A bitmap blitted at the rect's top-left inside a sunken frame
     /// `frame` px thick (0 for none).
     Picture {
@@ -413,6 +419,7 @@ impl Light {
             (control, self),
             (
                 Control::Button { .. }
+                    | Control::Link { .. }
                     | Control::Check { .. }
                     | Control::Radio { .. }
                     | Control::Edit { .. }

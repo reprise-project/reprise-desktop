@@ -170,6 +170,9 @@ impl Form {
                     } => fit::Kind::Text {
                         need: measure(text),
                     },
+                    Control::Link { label, .. } => fit::Kind::Text {
+                        need: text.ink_width(label, false, px),
+                    },
                     Control::Combo(c) if c.elide => fit::Kind::Stretch { need: 0 },
                     Control::Combo(c) => {
                         let inset = r.width - combo::layout(c, r, &cm).text.width;
@@ -248,6 +251,7 @@ impl Form {
             let r = rects[i];
             let by = match (&it.control, kinds[i]) {
                 (Control::Label { text, .. }, _) => measure(text) - r.width,
+                (Control::Link { label, .. }, _) => text.ink_width(label, false, px) - r.width,
                 (Control::Combo(_), fit::Kind::Stretch { need }) => need - r.width,
                 (Control::Check { label, .. }, _) => {
                     let lr = check_label_rect(r, it.indent, &cm, measure(label));

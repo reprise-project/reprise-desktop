@@ -780,3 +780,50 @@ fn a_live_status_line_is_a_polite_live_region_and_a_plain_label_is_not() {
     assert_eq!(live("The password is wrong."), Some(Live::Polite));
     assert_eq!(live("Caps Lock is on. Try again."), Some(Live::Polite));
 }
+
+#[test]
+fn a_link_is_a_tab_stop_that_a_click_enter_or_space_presses() {
+    let link = |on: bool| {
+        Form::new(vec![
+            Item::button_at("ok", 10, 10, 75, "OK", true),
+            Item::link_at("more", 10, 50, 180, "Text & Keys").enabled(on),
+        ])
+    };
+    let mut f = link(true);
+    f.focus_id("ok");
+    f.key(Key::Tab { back: false });
+    assert_eq!(f.focus(), Some(1), "Tab reaches the link");
+    assert_eq!(f.key(Key::Enter), Event::Pressed("more"));
+    assert_eq!(f.key(Key::Space), Event::Pressed("more"));
+    let h = at(&f, 20, 55).expect("the link");
+    assert_eq!(f.click(Some(h)), Event::Redraw);
+    assert_eq!(f.release(), Event::Pressed("more"));
+
+    let theme = Theme::default();
+    let c = drawn(&f, &theme);
+    let ink = theme.colors.hot_light.argb();
+    let rows: Vec<i32> = (50..50 + LINE_H)
+        .filter(|&y| (10..120).any(|x| c.get(x, y) == ink))
+        .collect();
+    assert!(rows.len() > 2, "the label in the link ink: {rows:?}");
+    let underline = *rows.last().unwrap();
+    let run = (10..120).filter(|&x| c.get(x, underline) == ink).count();
+    assert!(run > 40, "underlined across the label: {run}");
+
+    let mut tree = crate::access::Tree::window("", (200, 100));
+    f.access(&mut tree, crate::access::ROOT, &tr(), PX);
+    assert!(tree.find(Role::Link, "Text & Keys").is_some());
+
+    let mut off = link(false);
+    off.focus_id("ok");
+    off.key(Key::Tab { back: false });
+    assert_ne!(off.focus(), Some(1), "a greyed link is no tab stop");
+    let h = at(&off, 20, 55).expect("the greyed link");
+    off.click(Some(h));
+    assert_ne!(off.release(), Event::Pressed("more"));
+    let c = drawn(&off, &theme);
+    assert!(
+        !(50..50 + LINE_H).any(|y| (10..120).any(|x| c.get(x, y) == ink)),
+        "greyed, not in the link ink"
+    );
+}

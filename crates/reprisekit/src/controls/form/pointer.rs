@@ -61,6 +61,7 @@ impl Form {
         let l = match (&self.items.get(h.item)?.control, h.part) {
             (
                 Control::Button { enabled: true, .. }
+                | Control::Link { enabled: true, .. }
                 | Control::Check { enabled: true, .. }
                 | Control::Radio { enabled: true, .. },
                 Part::Body,
@@ -475,6 +476,7 @@ impl Form {
         match (&mut self.items[i].control, h.part) {
             (
                 Control::Button { enabled, .. }
+                | Control::Link { enabled, .. }
                 | Control::Check { enabled, .. }
                 | Control::Radio { enabled, .. },
                 Part::Body,
@@ -955,7 +957,12 @@ impl Form {
         let acts = |f: &Form, i: usize| {
             matches!(
                 f.items.get(i).map(|it| &it.control),
-                Some(Control::Button { .. } | Control::Check { .. } | Control::Radio { .. })
+                Some(
+                    Control::Button { .. }
+                        | Control::Link { .. }
+                        | Control::Check { .. }
+                        | Control::Radio { .. }
+                )
             )
         };
         let held = self.pointer.held().is_some_and(|(i, _)| acts(self, i));
@@ -970,7 +977,9 @@ impl Form {
     fn act(&mut self, i: usize) -> Event {
         let id = self.items[i].id;
         match &mut self.items[i].control {
-            Control::Button { enabled: true, .. } => Event::Pressed(id),
+            Control::Button { enabled: true, .. } | Control::Link { enabled: true, .. } => {
+                Event::Pressed(id)
+            }
             Control::Check {
                 checked,
                 enabled: true,

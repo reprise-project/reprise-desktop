@@ -169,6 +169,10 @@ impl SettingsApp {
                     self.login_reset_displays();
                     Reply::redraw()
                 }
+                displaypage::TEXT_SIZE_NOTE => {
+                    self.open_page(Page::TextKeys, Some("text_size"));
+                    Reply::redraw_all()
+                }
                 displaypage::IDENTIFY => self.identify(),
                 displaypage::FORGET => self.forget_layouts(),
                 pages::TRAY_CUSTOMIZE => {

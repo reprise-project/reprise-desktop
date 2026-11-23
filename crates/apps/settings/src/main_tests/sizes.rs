@@ -493,3 +493,29 @@ fn the_start_menu_tree_permission_rows_and_chooser_rows_load_their_icons_at_the_
         "16 px once the text is back at 100%"
     );
 }
+
+#[test]
+fn the_page_left_open_is_kept_for_the_next_run() {
+    let mut app = app("page-kept");
+    let state = tmp("page-kept-state").join("settings.toml");
+    app.state_path = Some(state.clone());
+    let mut ctx = test_ctx();
+    app.open_page(Page::TextKeys, None);
+    app.event(MAIN, Event::Focus(false), &mut ctx);
+    assert_eq!(winstate::page(&state), Some(Page::TextKeys));
+    app.open_page(Page::Mouse, None);
+    app.event(MAIN, Event::Focus(false), &mut ctx);
+    assert_eq!(winstate::page(&state), Some(Page::Mouse));
+}
+
+#[test]
+fn the_display_pages_text_size_link_opens_text_and_keys_on_the_text_size() {
+    let mut a = app("text-size-link");
+    a.open_page(Page::Display, None);
+    a.sheet_event(propsheet::Event::Page(
+        Page::Display.index(),
+        form::Event::Pressed(displaypage::TEXT_SIZE_NOTE),
+    ));
+    assert_eq!(a.sheet.tabs.open, Page::TextKeys.index());
+    assert_eq!(focused_id(&a), Some("text_size"));
+}
