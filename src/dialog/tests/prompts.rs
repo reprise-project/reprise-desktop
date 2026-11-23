@@ -224,6 +224,7 @@ fn confirm_delete_is_pinned_in_every_interface_at_1_and_2() {
                     Lit::default(),
                     Cues::NONE,
                     true,
+                    true,
                     None,
                 );
                 let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
@@ -280,6 +281,7 @@ fn confirm_hide_fits_its_text() {
         true,
         None,
         Cues::ALL,
+        true,
         true,
         None,
     );
@@ -449,6 +451,7 @@ fn end_program_sets_its_text_and_buttons_in_the_second_dialog_font() {
         false,
         None,
         Cues::NONE,
+        true,
         true,
         None,
     );

@@ -24,6 +24,7 @@ fn render_key_aid_preview() {
                 None,
                 Cues::ALL,
                 true,
+                true,
                 None,
             )
         })
@@ -87,6 +88,7 @@ fn dialogs_preview(theme: &Theme, file: &str) {
                 true,
                 None,
                 Cues::ALL,
+                true,
                 true,
                 None,
             )

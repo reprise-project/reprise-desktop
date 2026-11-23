@@ -83,6 +83,8 @@ pub struct DialogView {
     decodes: crate::fsjobs::Reads<IconFiles>,
     /// Last full raster without its caret, and its scale: a blink repaints the field over a clone.
     still_canvas: Option<(Canvas, i32)>,
+    /// Whether the last draw lit its field for typing ([`State::dialog_takes_typing`]).
+    pub(crate) keyed: bool,
     /// Keyboard cues: a pointer-opened dialog starts without them ([`Cues::key`]), a key-opened one has them.
     pub cues: Cues,
     /// A Welcome panel's still fading in, and when the fade began.

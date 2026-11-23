@@ -96,6 +96,7 @@ fn under_glass_the_panels_are_framed_unless_they_are_always_blue() {
             None,
             Cues::NONE,
             true,
+            true,
             None,
         );
         for (i, r) in row.iter().enumerate() {
@@ -139,6 +140,7 @@ fn assert_draws_as_the_power_panel(theme: &Theme, d: &Dialog, cancel: Option<&Th
             true,
             lit,
             Cues::ALL,
+            true,
             true,
             None,
         );

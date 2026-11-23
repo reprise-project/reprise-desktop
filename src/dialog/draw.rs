@@ -12,7 +12,7 @@ use reprisekit::pointer::{Interaction, Lit, lit_of};
 /// The Run box's sunken field, drop button and value. Its caret is the
 /// only one a dialog blinks, so a blink repaints just this over the kept
 /// canvas; the field fills its own background, so nothing blends twice.
-/// The focused field shows its caret and selection only while `active`.
+/// The focused field shows its caret and selection only while `keyed`.
 pub fn draw_field(
     c: &mut Canvas,
     theme: &Theme,
@@ -20,7 +20,7 @@ pub fn draw_field(
     layout: &DialogLayout,
     d: &Dialog,
     caret: bool,
-    active: bool,
+    keyed: bool,
 ) {
     let px = theme.fonts.size_px;
     if let (Some(fr), Some(field)) = (layout.field, &d.field) {
@@ -42,7 +42,7 @@ pub fn draw_field(
             &lay,
             focused,
             false,
-            reprisekit::textedit::Caret::new(focused && active, caret),
+            reprisekit::textedit::Caret::new(focused && keyed, caret),
             lit,
             px,
         );
@@ -66,6 +66,8 @@ pub fn draw(
     // Whether the dialog has the keyboard. An inactive one draws a grey
     // caption, no default ring and no focus rectangle.
     active: bool,
+    // Whether typing reaches it, which lights its field (`draw_field`).
+    keyed: bool,
     preedit: Option<&reprisekit::textedit::Preedit>,
 ) -> Canvas {
     // Under a look with glass the panel has a frame and draws as a dialog.
@@ -166,7 +168,7 @@ pub fn draw(
             s,
         );
     }
-    draw_field(&mut c, theme, text, layout, d, caret, active);
+    draw_field(&mut c, theme, text, layout, d, caret, keyed);
     for (i, (r, b)) in layout.buttons.iter().zip(&d.buttons).enumerate() {
         // With no field to hold the focus, the default button has it and
         // wears the dotted focus rectangle. With one, a button Tab moved

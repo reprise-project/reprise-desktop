@@ -112,6 +112,7 @@ fn render(theme: &Theme, text: &TextRenderer, l: &DialogLayout, d: &Dialog) -> C
         Lit::default(),
         Cues::NONE,
         true,
+        true,
         None,
     )
 }

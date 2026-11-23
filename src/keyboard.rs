@@ -166,7 +166,7 @@ impl State {
         // The typing aids and mouse keys are the computer's, which in lock mode types elsewhere.
         let aided = from_seat && !crate::console::remote_side(self);
         self.settle_pointer();
-        self.follow_rename_keyboard();
+        self.follow_field_keyboard();
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
         };

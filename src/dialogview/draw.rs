@@ -35,7 +35,7 @@ impl State {
             return;
         };
         let mut canvas = still.clone();
-        let active = self.dialog_has_keyboard();
+        let keyed = self.dialog_takes_typing();
         if self.caret.on {
             let theme = self.config.theme.scaled(*at);
             dialog::draw_field(
@@ -45,7 +45,7 @@ impl State {
                 &v.layout,
                 &v.dialog,
                 true,
-                active,
+                keyed,
             );
         }
         let (buffer, tree) = (v.buffer, v.tree);
@@ -85,10 +85,12 @@ impl State {
         }
     }
 
-    /// Draw dialog `index` again: raster, caret on the blink's shown half while it has the keyboard, glass.
+    /// Draw dialog `index` again: raster, caret on the blink's shown half while typing reaches it, glass.
     pub fn redraw_dialog(&mut self, index: usize) {
-        let active = index + 1 == self.dialogs.views.len() && self.dialog_has_keyboard();
-        let caret_on = self.caret.on && active;
+        let top = index + 1 == self.dialogs.views.len();
+        let active = top && self.dialog_has_keyboard();
+        let keyed = top && self.dialog_takes_typing();
+        let caret_on = self.caret.on && keyed;
         let waits = self.icons.waits();
         let Some(v) = self.dialogs.views.get(index) else {
             return;
@@ -144,8 +146,10 @@ impl State {
             v.dialog.lit(),
             v.cues,
             active,
+            keyed,
             preedit.as_ref(),
         );
+        v.keyed = keyed;
         // An ellipsized label's tip, over everything the dialog drew.
         reprisekit::controls::form::draw_tip(&mut canvas, text.for_output(scale), &theme);
         // What the backdrop sees: the client area.
@@ -179,7 +183,7 @@ impl State {
                     &v.layout,
                     &v.dialog,
                     true,
-                    active,
+                    keyed,
                 );
             }
         }

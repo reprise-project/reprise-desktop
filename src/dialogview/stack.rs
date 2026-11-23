@@ -152,6 +152,7 @@ impl State {
             icons: None,
             decodes: Default::default(),
             still_canvas: None,
+            keyed: false,
             cues: Cues::opened(self.key_input.last_key_input),
             fade: None,
         };
@@ -271,6 +272,13 @@ impl State {
     pub fn dialog_has_keyboard(&self) -> bool {
         (self.dialogs.views.last())
             .is_some_and(|v| self.dialogs.active || matches!(v.dialog.style, Style::Welcome(_)))
+    }
+
+    /// Whether typing reaches the top dialog, which lights its field's caret and selection: it
+    /// has the keyboard and nothing that takes presses ahead of it (the switchers, a menu, a
+    /// popup with keys) is up.
+    pub fn dialog_takes_typing(&self) -> bool {
+        self.dialog_has_keyboard() && self.field_letter_route() == crate::keyroute::KeyRoute::Dialog
     }
 
     /// The active dialog: the top one while it has the keyboard. Its task button draws pushed in.
