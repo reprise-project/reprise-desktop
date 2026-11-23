@@ -96,46 +96,21 @@ pub fn end_task(unit: String, pids: Vec<i32>) {
                 0
             })
         };
-        let count = || reprisebus::tray::count_windows(&pids).unwrap_or(0);
         let term = || {
-            // A program that closed its last window has often left its scope already.
             if let Err(e) = signal_scope(&unit, libc::SIGTERM) {
                 log::debug!("End Task {unit}: {e}");
             }
         };
-        end_gently(
-            close,
-            count,
-            term,
-            crate::END_WAIT,
-            Duration::from_millis(250),
-        );
+        end_gently(close, term);
     });
 }
 
-/// Asks a program's windows to close (`close` returns how many it asked), then runs `term` at
-/// once when there were none, or once `count` finds none left within `wait`. A program still
-/// showing a window after `wait` is left to End Now.
-pub fn end_gently(
-    close: impl FnOnce() -> u32,
-    count: impl Fn() -> u32,
-    term: impl FnOnce(),
-    wait: Duration,
-    step: Duration,
-) {
-    if close() > 0 {
-        let deadline = std::time::Instant::now() + wait;
-        loop {
-            std::thread::sleep(step);
-            if count() == 0 {
-                break;
-            }
-            if std::time::Instant::now() >= deadline {
-                return;
-            }
-        }
+/// Asks a program's windows to close (`close` returns how many it asked) and runs `term` only
+/// when it showed none, so a tray program whose prompt closed keeps running.
+pub fn end_gently(close: impl FnOnce() -> u32, term: impl FnOnce()) {
+    if close() == 0 {
+        term();
     }
-    term();
 }
 
 /// Asks `tx`'s sampler for a snapshot once `delay` is up, whatever its interval.
@@ -191,19 +166,11 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    /// Runs [`end_gently`] with `closed` windows asked and `left` the counts that follow, and
-    /// returns how many counts it took and whether it signalled.
-    fn gently(closed: u32, left: &[u32]) -> (usize, bool) {
-        let counts = std::cell::Cell::new(0);
+    /// Runs [`end_gently`] with `closed` windows asked; whether it signalled.
+    fn gently(closed: u32) -> bool {
         let termed = std::cell::Cell::new(false);
-        let count = || {
-            let i = counts.get();
-            counts.set(i + 1);
-            left.get(i).copied().unwrap_or(1)
-        };
-        let step = Duration::from_millis(1);
-        end_gently(|| closed, count, || termed.set(true), step * 20, step);
-        (counts.get(), termed.get())
+        end_gently(|| closed, || termed.set(true));
+        termed.get()
     }
 
     #[test]
@@ -243,19 +210,12 @@ mod tests {
     }
 
     #[test]
-    fn end_task_signals_a_program_only_once_it_shows_no_window() {
-        assert_eq!(gently(0, &[]), (0, true), "no window: signalled at once");
-        assert_eq!(
-            gently(2, &[2, 1, 0]),
-            (3, true),
-            "signalled once the last window closed"
-        );
-        let (counts, termed) = gently(1, &[]);
+    fn end_task_signals_a_program_only_when_it_shows_no_window() {
+        assert!(gently(0), "no window: signalled at once");
         assert!(
-            !termed,
-            "a window still up after the wait is left to End Now"
+            !gently(2),
+            "windows asked to close: the program is left running, as a tray program stays"
         );
-        assert!(counts > 1, "counted until the wait ran out");
     }
 
     #[test]
