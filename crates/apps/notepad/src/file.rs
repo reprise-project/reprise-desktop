@@ -16,7 +16,7 @@ impl Notepad {
         };
         if Stamp::of(&p) != self.stamp {
             let b = self.changed_box(&p);
-            self.asks.ask(b, Ask::Changed);
+            self.ask(b, Ask::Changed);
             return false;
         }
         self.save_anyway()
@@ -104,7 +104,7 @@ impl Notepad {
                     max_w: repriseapp::dialog_max_w(),
                 },
             );
-            self.asks.ask(prompt, Ask::Lossy(text));
+            self.ask(prompt, Ask::Lossy(text));
             return;
         }
         self.fail(&open_failed_text(path, e));
@@ -156,7 +156,7 @@ impl Notepad {
             .unwrap_or_default();
         for file in files {
             let prompt = self.recovered_box();
-            self.asks.ask(prompt, Ask::Recovered(file));
+            self.ask(prompt, Ask::Recovered(file));
         }
     }
 
@@ -248,7 +248,7 @@ impl Notepad {
             self.open = None;
             if !(self.asks.iter()).any(|(_, ask)| matches!(ask, Ask::SaveChanges)) {
                 let b = self.savechanges_box();
-                self.asks.ask(b, Ask::SaveChanges);
+                self.ask(b, Ask::SaveChanges);
             }
             return Reply::redraw_all();
         };

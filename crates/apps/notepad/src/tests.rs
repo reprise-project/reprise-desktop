@@ -839,6 +839,37 @@ fn the_not_found_box_is_its_own_child() {
 }
 
 #[test]
+fn a_miss_covers_the_window_that_searched() {
+    let mut np = Notepad::new(None);
+    let mut ctx = test_ctx();
+    np.edit = MultiEdit::new("text");
+    np.sync_menus();
+    let opts = multiedit::FindOpts {
+        match_case: false,
+        down: true,
+    };
+    np.last_query = Some(("zzz".into(), opts));
+    np.open_find();
+    np.event(FIND, key(keysym::RETURN), &mut ctx);
+    assert_eq!(np.parent(box_win(&np)), Some(FIND), "a miss from Find");
+    np.answer_box(None);
+
+    np.event(MAIN, key(keysym::F3), &mut ctx);
+    assert_eq!(np.parent(box_win(&np)), Some(MAIN), "F3 in the document");
+    np.answer_box(None);
+
+    np.open_replace();
+    np.event(REPLACE_WIN, key(keysym::RETURN), &mut ctx);
+    assert_eq!(
+        np.parent(box_win(&np)),
+        Some(REPLACE_WIN),
+        "a miss from Replace"
+    );
+    np.answer_box(None);
+    assert_eq!(np.edit.text(), "text");
+}
+
+#[test]
 fn replace_swaps_the_match_then_advances() {
     let mut np = Notepad::new(None);
     np.edit = MultiEdit::new("a a a");
