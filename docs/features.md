@@ -48,6 +48,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Live program list.** A program shows up in the Start menu and the
   launcher the moment it's installed.
 - **Recent documents** from `recently-used.xbel`, shared with GTK programs.
+  Reprise's programs add the files they open and save.
   `[privacy] recent_files = false` hides them and records none.
 - **Launcher.** Super+Space finds programs, settings ("repeat delay" opens
   its page on that control), files in your home folder and open windows.

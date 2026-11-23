@@ -2568,3 +2568,46 @@ fn a_name_typed_ahead_of_save_as_during_a_paste_saves_under_it() {
     assert!(np.saveas.is_none(), "Enter saved and closed Save As");
     assert_eq!(std::fs::read_to_string(&path).expect("saved"), "pasted");
 }
+
+#[test]
+fn opened_and_saved_files_go_to_the_recent_files_as_notepad_s() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    let xbel = dir.join("recently-used.xbel");
+    let (opened, saved_as) = (dir.join("opened.txt"), dir.join("saved.txt"));
+    std::fs::write(&opened, "loaded").expect("write");
+    let mut np = Notepad::new(None);
+    np.recent = Recent::at(DESKTOP, Some(xbel.clone()));
+    np.open = Some(sample_filedlg());
+    let id = np.host.folders.id(dir);
+    np.host.folder = Some(id);
+    np.open_outcome(
+        FileEvent::Accept(vec!["opened.txt".into()]),
+        &mut test_icons(),
+    );
+    np.recent.settle();
+    let mut recent = reprisefs::recent::RecentFiles::at(Some(xbel.clone()));
+    assert_eq!(recent.current(10), std::slice::from_ref(&opened));
+
+    std::fs::remove_file(&xbel).expect("remove");
+    np.edit = MultiEdit::new("edited");
+    np.dirty = true;
+    assert!(np.save());
+    np.saveas = Some(sample_filedlg());
+    np.host.folder = Some(id);
+    np.saveas_outcome(
+        FileEvent::Accept(vec!["saved.txt".into()]),
+        &mut test_icons(),
+    );
+    np.recent.settle();
+    let marks = recent.bookmarks().to_vec();
+    let mut paths: Vec<_> = marks.iter().map(|b| b.path.clone()).collect();
+    paths.sort();
+    assert_eq!(paths, [opened, saved_as], "Save and Save As record");
+    for b in &marks {
+        assert!(
+            (b.apps.iter()).any(|(_, exec)| exec.starts_with("'reprise-notepad ")),
+            "recorded as Notepad's: {b:?}"
+        );
+    }
+}

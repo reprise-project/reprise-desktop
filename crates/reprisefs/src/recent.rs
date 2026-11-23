@@ -229,50 +229,85 @@ const XBEL_HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 xmlns:bookmark=\"http://www.freedesktop.org/standards/desktop-bookmarks\"\n      \
 xmlns:mime=\"http://www.freedesktop.org/standards/shared-mime-info\"\n>";
 
-/// One writer at a time within the process; other programs replace the file whole, as this does.
-static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// A file that was opened, the desktop entry that opened it, and its mime type.
 pub type Opening<'a> = (&'a Path, Option<&'a AppEntry>, Option<&'a str>);
 
 /// Record each opened file that is a regular file in the session's `recently-used.xbel`, in one
 /// rewrite of it.
 pub fn record(opened: &[Opening]) -> std::io::Result<()> {
-    let opened: Vec<_> = opened.iter().filter(|o| o.0.is_file()).copied().collect();
-    if opened.is_empty() {
-        return Ok(());
-    }
     let xbel = xbel_path().ok_or_else(|| std::io::Error::other("no data directory"))?;
-    record_in(&xbel, &opened, std::time::SystemTime::now())
+    record_at(&xbel, opened)
 }
 
-/// [`record`] into the xbel file at `xbel`, stamped `now`. The file is read, edited and replaced
-/// in one rename, so a reader sees the old file or the new one. GLib's writers take no lock
-/// either, so a bookmark another program writes between the read and the rename is lost.
+/// [`record`] into the xbel file at `xbel`, each path made [`absolute`].
+pub fn record_at(xbel: &Path, opened: &[Opening]) -> std::io::Result<()> {
+    let absolute: Vec<_> = opened
+        .iter()
+        .filter_map(|o| absolute(o.0).map(|p| (p, o.1, o.2)))
+        .filter(|o| o.0.is_file())
+        .collect();
+    if absolute.is_empty() {
+        return Ok(());
+    }
+    let opened: Vec<Opening> = absolute
+        .iter()
+        .map(|(p, a, m)| (p.as_path(), *a, *m))
+        .collect();
+    record_in(xbel, &opened, std::time::SystemTime::now)
+}
+
+/// `path` joined to the current directory with `.` and `..` dropped by name, as GLib's writers
+/// record it; when dropping a `..` past a symlink would name another file, the folder is resolved.
+fn absolute(path: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let joined = std::path::absolute(path).ok()?;
+    let mut clean = PathBuf::new();
+    for c in joined.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                clean.pop();
+            }
+            c => clean.push(c),
+        }
+    }
+    let inode = |p: &Path| std::fs::metadata(p).map(|m| (m.dev(), m.ino())).ok();
+    let same = clean == joined || inode(&clean).is_some_and(|i| inode(&joined) == Some(i));
+    if same {
+        return Some(clean);
+    }
+    let folder = joined.parent()?.canonicalize().ok()?;
+    Some(folder.join(joined.file_name()?))
+}
+
+/// [`record`] into the xbel file at `xbel`, stamped `now()` once the lock is held.
 pub fn record_in(
     xbel: &Path,
     opened: &[Opening],
-    now: std::time::SystemTime,
+    now: impl FnOnce() -> std::time::SystemTime,
+) -> std::io::Result<()> {
+    record_locked(xbel, opened, now, LOCK_PATIENCE, || {})
+}
+
+/// How long a writer tries for the lock before it gives up on its record.
+const LOCK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Read, edit and replace `xbel` in one rename under its lock, so a reader sees the old file or
+/// the new one. GLib's writers take no lock, so a bookmark one writes meanwhile is lost.
+fn record_locked(
+    xbel: &Path,
+    opened: &[Opening],
+    now: impl FnOnce() -> std::time::SystemTime,
+    patience: std::time::Duration,
+    busy: impl FnMut(),
 ) -> std::io::Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-    let _held = WRITING.lock().unwrap_or_else(|e| e.into_inner());
-    let (old, mode) = match std::fs::File::open(xbel) {
-        Ok(f) => {
-            let bytes = crate::ops::read_opened(&f, MAX_XBEL_BYTES)?;
-            let text = String::from_utf8(bytes)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            (text, f.metadata()?.permissions())
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            if let Some(dir) = xbel.parent() {
-                std::fs::create_dir_all(dir)?;
-            }
-            (String::new(), std::fs::Permissions::from_mode(0o600))
-        }
-        Err(e) => return Err(e),
-    };
-    let stamp = iso8601(now);
+    let held = locked(xbel, patience, busy)?;
+    sweep_temps(xbel);
+    let bytes = crate::ops::read_opened(&held, MAX_XBEL_BYTES)?;
+    let old = String::from_utf8(bytes)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let mode = held.metadata()?.permissions();
+    let stamp = iso8601(now());
     let mut new = old;
     for &(path, app, mime) in opened {
         let app = app.map(|e| (e.name.as_str(), format!("'{}'", e.exec_line)));
@@ -294,6 +329,96 @@ pub fn record_in(
         let _ = std::fs::remove_file(&tmp);
     }
     written
+}
+
+/// `xbel` under an exclusive `flock`, made empty and 0600 when missing, or `TimedOut` past
+/// `patience`; `busy` runs after each try another holder refused.
+fn locked(
+    xbel: &Path,
+    patience: std::time::Duration,
+    mut busy: impl FnMut(),
+) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    // Opened for writing even when it exists: NFS takes an exclusive flock only on a writable fd.
+    let open = |create: bool| {
+        let with = |write: bool| {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(write)
+                .create(create)
+                .mode(0o600)
+                .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+                .open(xbel)
+        };
+        with(true).or_else(|e| match e.kind() {
+            std::io::ErrorKind::PermissionDenied if !create => with(false),
+            _ => Err(e),
+        })
+    };
+    let deadline = std::time::Instant::now() + patience;
+    loop {
+        let f = match open(false) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(dir) = xbel.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                open(true)?
+            }
+            f => f?,
+        };
+        loop {
+            match f.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock) => busy(),
+                Err(std::fs::TryLockError::Error(e)) => return Err(e),
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "another writer holds recently-used.xbel",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // The lock is on the inode, which the last holder may have replaced.
+        let held = f.metadata()?;
+        match std::fs::metadata(xbel) {
+            Ok(now) if (now.dev(), now.ino()) == (held.dev(), held.ino()) => return Ok(f),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Removes the temp files ([`crate::ops::create_temp_beside`]'s) a writer killed mid-record left
+/// beside `xbel`. Under the lock no Reprise writer is under way; the minute spares another host's.
+fn sweep_temps(xbel: &Path) {
+    let (Some(dir), Some(name)) = (xbel.parent(), xbel.file_name()) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let prefix = format!(".{}.", name.to_string_lossy());
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+    for e in entries.flatten() {
+        let file = e.file_name();
+        let file = file.to_string_lossy();
+        let ours = file
+            .strip_prefix(&prefix)
+            .and_then(|f| f.strip_suffix(".tmp"))
+            .is_some_and(|tag| tag.len() == 16 && tag.bytes().all(|b| b.is_ascii_hexdigit()));
+        if !ours {
+            continue;
+        }
+        let stale = e
+            .metadata()
+            .is_ok_and(|m| m.is_file() && m.modified().is_ok_and(|t| t < old));
+        if stale {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 /// `t` in UTC as the xbel stamps write it: `2026-10-26T09:05:00.000000Z`.
@@ -594,6 +719,7 @@ pub fn recorded(
 mod tests {
     use super::*;
     use std::path::Path;
+    use std::time::SystemTime;
 
     #[test]
     fn recent_files_follow_the_xbel_file() {
@@ -729,11 +855,9 @@ mod tests {
         let xbel = dir.join("share/recently-used.xbel");
         let at = |s: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s);
         let notes = editor();
-        record_in(
-            &xbel,
-            &[(&doc, Some(&notes), Some("text/plain"))],
-            at(1_800_000_000),
-        )
+        record_in(&xbel, &[(&doc, Some(&notes), Some("text/plain"))], || {
+            at(1_800_000_000)
+        })
         .unwrap();
         let text = std::fs::read_to_string(&xbel).unwrap();
         assert!(
@@ -755,8 +879,8 @@ mod tests {
 
         let other = dir.join("other.txt");
         std::fs::write(&other, "").unwrap();
-        record_in(&xbel, &[(&other, None, None)], at(1_800_000_100)).unwrap();
-        record_in(&xbel, &[(&doc, Some(&notes), None)], at(1_800_000_200)).unwrap();
+        record_in(&xbel, &[(&other, None, None)], || at(1_800_000_100)).unwrap();
+        record_in(&xbel, &[(&doc, Some(&notes), None)], || at(1_800_000_200)).unwrap();
         let text = std::fs::read_to_string(&xbel).unwrap();
         assert_eq!(
             text.matches("<bookmark ").count(),
@@ -789,7 +913,7 @@ mod tests {
         record_in(
             &xbel,
             &[(&a, Some(&notes), None), (&b, Some(&notes), None)],
-            now,
+            || now,
         )
         .unwrap();
         let mut recent = RecentFiles::at(Some(xbel));
@@ -853,6 +977,158 @@ mod tests {
         );
         assert!(marks.iter().any(|b| b.path == Path::new("/f/6")));
         assert!(recorded("<xbel><bookmark href=\"x\">", a, None, None, "t").is_none());
+    }
+
+    #[test]
+    fn a_writer_waiting_on_the_lock_records_into_the_file_the_holder_put_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = |n: &str| {
+            let p = dir.path().join(n);
+            std::fs::write(&p, "").unwrap();
+            p
+        };
+        let (theirs, held_doc, waiting_doc) =
+            (file("theirs.txt"), file("held.txt"), file("waiting.txt"));
+        let xbel = dir.path().join("recently-used.xbel");
+        let gtk = format!(
+            "{XBEL_HEAD}\n  <bookmark href=\"{}\" added=\"2026-01-01T00:00:00Z\" \
+             modified=\"2026-01-01T00:00:00Z\" visited=\"2026-01-01T00:00:00Z\">\n    <info>\n      \
+             <metadata owner=\"http://freedesktop.org\">\n        <mime:mime-type type=\"text/plain\"/>\n        \
+             <bookmark:applications>\n          <bookmark:application name=\"gedit\" \
+             exec=\"&apos;gedit %u&apos;\" modified=\"2026-01-01T00:00:00Z\" count=\"3\"/>\n        \
+             </bookmark:applications>\n      </metadata>\n    </info>\n  </bookmark>\n</xbel>\n",
+            crate::thumbnails::file_uri(&theirs)
+        );
+        std::fs::write(&xbel, gtk).unwrap();
+        let notes = editor();
+
+        let patience = std::time::Duration::from_secs(30);
+        let held = locked(&xbel, patience, || {}).unwrap();
+        let (refused, waiting) = std::sync::mpsc::channel();
+        let waiter = {
+            let (xbel, doc, notes) = (xbel.clone(), waiting_doc.clone(), notes.clone());
+            std::thread::spawn(move || {
+                let opened = [(doc.as_path(), Some(&notes), None)];
+                record_locked(&xbel, &opened, SystemTime::now, patience, || {
+                    let _ = refused.send(());
+                })
+            })
+        };
+        waiting.recv().unwrap();
+        let old = std::fs::read_to_string(&xbel).unwrap();
+        let stamp = "2026-02-01T00:00:00.000000Z";
+        let new = recorded(&old, &held_doc, None, None, stamp).unwrap();
+        let tmp = dir.path().join("replacement");
+        std::fs::write(&tmp, new).unwrap();
+        let shared = std::os::unix::fs::PermissionsExt::from_mode(0o640);
+        std::fs::set_permissions(&tmp, shared).unwrap();
+        std::fs::rename(&tmp, &xbel).unwrap();
+        drop(held);
+        waiter.join().unwrap().unwrap();
+
+        let text = std::fs::read_to_string(&xbel).unwrap();
+        let mut paths: Vec<_> = parse_xbel(&text).into_iter().map(|b| b.path).collect();
+        paths.sort();
+        assert_eq!(paths, [held_doc, theirs, waiting_doc], "{text}");
+        assert!(
+            text.contains("exec=\"&apos;gedit %u&apos;\"") && text.contains("count=\"3\""),
+            "the other program's entry stays as it was: {text}"
+        );
+        let mode = std::os::unix::fs::PermissionsExt::mode(
+            &std::fs::metadata(&xbel).unwrap().permissions(),
+        );
+        assert_eq!(
+            mode & 0o777,
+            0o640,
+            "the replaced file's mode stays: {mode:o}"
+        );
+    }
+
+    #[test]
+    fn a_writer_gives_up_on_a_lock_held_past_its_patience() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc = dir.path().join("a.txt");
+        std::fs::write(&doc, "").unwrap();
+        let xbel = dir.path().join("recently-used.xbel");
+        std::fs::write(&xbel, "").unwrap();
+        let patience = std::time::Duration::from_millis(30);
+        let _held = locked(&xbel, patience, || {}).unwrap();
+        let opened = [(doc.as_path(), Some(&editor()), None)];
+        let e = record_locked(&xbel, &opened, SystemTime::now, patience, || {}).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(std::fs::read_to_string(&xbel).unwrap(), "");
+    }
+
+    #[test]
+    fn relative_and_dotdot_past_a_symlink_paths_record_the_file_reached() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = std::fs::canonicalize(dir.path()).unwrap();
+        let doc = dir.join("a.txt");
+        std::fs::write(&doc, "").unwrap();
+        let up: PathBuf = std::env::current_dir()
+            .unwrap()
+            .components()
+            .skip(1)
+            .map(|_| "..")
+            .collect();
+        let relative = up.join(doc.strip_prefix("/").unwrap());
+        std::fs::create_dir_all(dir.join("deep/inner")).unwrap();
+        std::fs::write(dir.join("deep/b.txt"), "").unwrap();
+        std::fs::write(dir.join("b.txt"), "").unwrap();
+        std::os::unix::fs::symlink(dir.join("deep/inner"), dir.join("link")).unwrap();
+        let past_link = dir.join("link/../b.txt");
+        let xbel = dir.join("recently-used.xbel");
+        let notes = editor();
+        record_at(
+            &xbel,
+            &[
+                (&relative, Some(&notes), None),
+                (&past_link, Some(&notes), None),
+            ],
+        )
+        .unwrap();
+        let mut paths: Vec<_> = parse_xbel(&std::fs::read_to_string(&xbel).unwrap())
+            .into_iter()
+            .map(|b| b.path)
+            .collect();
+        paths.sort();
+        assert_eq!(paths, [doc, dir.join("deep/b.txt")]);
+    }
+
+    #[test]
+    fn a_writer_removes_the_temp_files_a_killed_writer_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc = dir.path().join("a.txt");
+        std::fs::write(&doc, "").unwrap();
+        let xbel = dir.path().join("recently-used.xbel");
+        let file = |n: &str, age: u64| {
+            let p = dir.path().join(n);
+            let f = std::fs::File::create(&p).unwrap();
+            f.set_modified(SystemTime::now() - std::time::Duration::from_secs(age))
+                .unwrap();
+            p
+        };
+        let stale = file(".recently-used.xbel.0123456789abcdef.tmp", 120);
+        let fresh = file(".recently-used.xbel.fedcba9876543210.tmp", 0);
+        let other = file(".other.xbel.0123456789abcdef.tmp", 120);
+        record_at(&xbel, &[(&doc, Some(&editor()), None)]).unwrap();
+        assert!(!stale.exists(), "a temp older than a minute goes");
+        assert!(fresh.exists(), "one under way on another host stays");
+        assert!(other.exists(), "another file's stays");
+    }
+
+    #[test]
+    fn a_missing_xbel_is_made_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc = dir.path().join("a.txt");
+        std::fs::write(&doc, "").unwrap();
+        let xbel = dir.path().join("share/recently-used.xbel");
+        record_at(&xbel, &[(&doc, Some(&editor()), None)]).unwrap();
+        let mode = std::os::unix::fs::PermissionsExt::mode(
+            &std::fs::metadata(&xbel).unwrap().permissions(),
+        );
+        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+        assert_eq!(RecentFiles::at(Some(xbel)).current(10), [doc]);
     }
 
     #[test]

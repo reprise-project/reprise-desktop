@@ -20,6 +20,7 @@ use repriseapp::asks::Asks;
 use repriseapp::filedlg::Host;
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{ErrorBox, MsgBox};
+use repriseapp::recent::Recent;
 use repriseapp::{App, Child, Ctx, Event, Extended, FileDrop, MAIN, Poster, Reply, WinId};
 use reprisekit::access::Tree;
 use reprisekit::controls::filedlg::{CLIENT, FileDlg};
@@ -93,6 +94,10 @@ struct Viewer {
     config: PathBuf,
     trash_icon: Option<Canvas>,
     warn_icon: Option<Canvas>,
+    /// Takes each picture opened once it loads, not the ones stepped to beside it.
+    recent: Recent,
+    /// The picture opened, until its decode lands.
+    opening: Option<PathBuf>,
 }
 
 impl Viewer {
@@ -129,6 +134,8 @@ impl Viewer {
             config: repriseconf::config_path(),
             trash_icon: None,
             warn_icon: None,
+            recent: Recent::at(DESKTOP, None),
+            opening: None,
         };
         v.sync_menus();
         v
@@ -180,6 +187,7 @@ impl Viewer {
 
     /// Show `path` and the pictures beside it.
     fn show(&mut self, path: PathBuf) {
+        self.opening = Some(path.clone());
         self.folder = Folder::of(path);
         self.load_current();
         self.list_folder();
@@ -194,8 +202,14 @@ impl Viewer {
                 if generation != self.generation {
                     return false;
                 }
+                let opened = self.opening.take();
                 match picture {
                     Ok(p) => {
+                        if let Some(path) = opened
+                            && self.folder.current() == Some(path.as_path())
+                        {
+                            self.recent.record(&path);
+                        }
                         self.view.reset(p.size());
                         self.frame = 0;
                         self.frame_due =
@@ -488,12 +502,16 @@ impl Extended for Viewer {
     }
 }
 
+const DESKTOP: &str = "reprise-imageviewer.desktop";
+
 /// Runs the program; `args` are the command line after the program's name: the picture to show.
 pub fn main(args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
     let path = args.into_iter().next().map(PathBuf::from);
     let mut viewer = Viewer::new(path);
     viewer.forms = repriseapp::start_forms();
+    viewer.recent = Recent::new(DESKTOP);
+    viewer.opening = viewer.folder.current().map(PathBuf::from);
     repriseapp::run(Box::new(viewer)).unwrap_or_else(|e| e.exit());
 }
 
