@@ -155,7 +155,7 @@ fn grid_drag_image(
             e,
             row.icon,
             at(cell),
-            label,
+            Some(label),
             unselected,
             px,
             s,

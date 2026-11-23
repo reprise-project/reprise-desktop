@@ -317,6 +317,11 @@ impl EditLine {
     }
 }
 
+/// How much narrower than its cell a rename box wraps its text.
+pub(crate) const EDIT_WRAP_INSET: i32 = 8;
+/// How much wider than its widest line a rename box is.
+pub(crate) const EDIT_BOX_PAD: i32 = 12;
+
 /// The rename box for `edit` in a `w` px wide cell at `theme.scale`: text wrapped and
 /// centred in a white box with a 1 px border, never narrower than 30 px.
 pub fn edit_layout(theme: &Theme, text: &TextRenderer, edit: &TextEdit, w: i32) -> EditLayout {
@@ -333,7 +338,7 @@ pub fn edit_layout_at(
 ) -> EditLayout {
     let size = w * s;
     let step = font as i32 + 2 * s;
-    let ranges = wrap_edit(text, &edit.text, size - 8 * s, font);
+    let ranges = wrap_edit(text, &edit.text, size - EDIT_WRAP_INSET * s, font);
     let widths: Vec<i32> = ranges
         .iter()
         .map(|r| text.measure(&edit.text[r.clone()], false, font))
@@ -343,7 +348,7 @@ pub fn edit_layout_at(
     let rect = Rect::new(
         rect_x - 3 * s,
         (ICON_TOP + ICON_PX + 3) * s,
-        (widest + 12 * s).max(30 * s),
+        (widest + EDIT_BOX_PAD * s).max(30 * s),
         ranges.len() as i32 * step + 4 * s,
     );
     let space = text.measure(" ", false, font);
@@ -365,9 +370,15 @@ pub fn edit_layout_at(
 
 impl EditLayout {
     pub fn shift(&mut self, dx: i32) {
+        self.moved(dx, 0);
+    }
+
+    pub fn moved(&mut self, dx: i32, dy: i32) {
         self.rect.x += dx;
+        self.rect.y += dy;
         for l in &mut self.lines {
             l.x += dx;
+            l.y += dy;
         }
     }
 
@@ -381,6 +392,115 @@ impl EditLayout {
             return 0;
         };
         line.start + crate::textedit::index_at(text, &line.text, x - line.x, font)
+    }
+}
+
+/// The rename box `place` lays out (in `c`'s device px) for `own`, with `c`'s preedit wrapped in
+/// at the caret; without the focus it hides its selection ([`TextEdit::unfocused`]).
+pub(crate) fn draw_edit(
+    c: &mut Canvas,
+    theme: &Theme,
+    text: &TextRenderer,
+    own: &TextEdit,
+    caret_state: Caret,
+    place: impl Fn(&TextEdit) -> EditLayout,
+) {
+    let s = theme.scale.max(1);
+    let cs = &theme.colors;
+    let font = theme.fonts.size_px;
+    let line_h = font as i32 + theme.text.len(3) * s;
+    let unfocused;
+    let own = if caret_state.focused() {
+        own
+    } else {
+        unfocused = own.unfocused();
+        &*unfocused
+    };
+    let preedit = c.preedit().filter(|_| caret_state.focused()).cloned();
+    let composed;
+    let (edit, run, bar_on) = match &preedit {
+        Some(p) => {
+            let (e, run, bar_on) = p.compose(own);
+            composed = e;
+            (&composed, Some(run), bar_on)
+        }
+        None => (own, None, true),
+    };
+    let white = cs.window;
+    let black = cs.window_text;
+    let lay = place(edit);
+    let r = lay.rect;
+    c.fill_rect(r, white);
+    c.ring_t(r, black, black, s);
+    let sel = edit.selection();
+    let mut caret = None;
+    let dev = c.scale();
+    for (i, l) in lay.lines.iter().enumerate() {
+        let end = l.start + l.text.len();
+        let at = |b: usize| l.at(text, font, b);
+        let ly = l.y;
+        let pen = Rect::new(l.x, ly, l.width, line_h);
+        // The line runs across the box inside its border, so its end glyphs keep their pens
+        // at scale 2.
+        let line_r = Rect::new(r.x + s, ly, r.width - 2 * s, line_h);
+        let (a, b) = (sel.start.max(l.start), sel.end.min(end + 1));
+        let ga = a.min(end);
+        let glyphs = ga - l.start..b.min(end).max(ga) - l.start;
+        // The line above has drawn its ink already, so only the first line's highlight may
+        // reach up past its own rows.
+        let top = if i == 0 { r.y + s } else { ly };
+        let room = Rect::new(r.x + s, top, r.width - 2 * s, r.bottom() - s - top);
+        let hl = |b: usize, h: i32| {
+            let hl = Rect::new(at(a), ly, at(b) - at(a), h);
+            text.highlight(hl, &l.text, glyphs.clone(), l.x, line_r, false, font, dev)
+                .clear_of_ink(room)
+        };
+        if a < b {
+            let all = c.bounds();
+            hl(b, lay.step).fill(c, all, cs.hilight);
+        }
+        let line_hl = (a < b && a < end).then(|| hl(b.min(end), line_h));
+        let line_caret = (caret.is_none() && edit.caret() <= end).then(|| {
+            let bar = Rect::new(at(edit.caret()), ly, s, lay.step);
+            (bar, CaretBar::ground(c, bar, line_hl.as_ref(), r.inset(s)))
+        });
+        text.draw_in(c, pen, line_r, line_r, &l.text, false, black, font);
+        if let Some(hl) = &line_hl {
+            text.draw_in(
+                c,
+                pen,
+                line_r,
+                hl.rect,
+                &l.text,
+                false,
+                cs.hilight_text,
+                font,
+            );
+            text.draw_overhang(c, hl, line_r, cs.hilight_text);
+        }
+        if let Some(run) = &run {
+            let (a, b) = (run.start.max(l.start), run.end.min(end));
+            if a < b {
+                let base = text
+                    .baseline(pen, false, font)
+                    .unwrap_or(ly + line_h - 3 * s);
+                c.fill_rect(Rect::new(at(a), base + s, at(b) - at(a), s), black);
+            }
+        }
+        if line_caret.is_some() {
+            caret = line_caret;
+        }
+    }
+    let empty = Rect::new(r.x + 5 * s, r.y + 2 * s, s, lay.step);
+    let (bar, placed) = caret.map_or((empty, None), |(bar, placed)| (bar, Some(placed)));
+    if caret_state.shown() && bar_on {
+        match placed {
+            Some(placed) => placed.draw(c, cs.hilight_text),
+            None => c.invert_rect(bar),
+        }
+    }
+    if caret_state.focused() {
+        c.report_spot(own.spot(r, bar));
     }
 }
 
@@ -481,100 +601,11 @@ pub fn draw_cell_at(
     let line_h = font as i32 + theme.text.len(3) * s;
 
     if let Some((own, caret_state)) = rename {
-        let unfocused;
-        let own = if caret_state.focused() {
-            own
-        } else {
-            unfocused = own.unfocused();
-            &*unfocused
-        };
-        let preedit = c.preedit().filter(|_| caret_state.focused()).cloned();
-        let composed;
-        let (edit, run, bar_on) = match &preedit {
-            Some(p) => {
-                let (e, run, bar_on) = p.compose(own);
-                composed = e;
-                (&composed, Some(run), bar_on)
-            }
-            None => (own, None, true),
-        };
-        let white = cs.window;
-        let black = cs.window_text;
-        let mut lay = edit_layout(theme, text, edit, cell.w);
-        lay.shift(x0);
-        let r = Rect::new(lay.rect.x, y0 + lay.rect.y, lay.rect.width, lay.rect.height);
-        c.fill_rect(r, white);
-        c.ring_t(r, black, black, s);
-        let sel = edit.selection();
-        let mut caret = None;
-        let dev = c.scale();
-        for (i, l) in lay.lines.iter().enumerate() {
-            let end = l.start + l.text.len();
-            let at = |b: usize| l.at(text, font, b);
-            let ly = y0 + l.y;
-            let pen = Rect::new(l.x, ly, l.width, line_h);
-            // The line runs across the box inside its border, so its end glyphs keep their pens
-            // at scale 2.
-            let line_r = Rect::new(r.x + s, ly, r.width - 2 * s, line_h);
-            let (a, b) = (sel.start.max(l.start), sel.end.min(end + 1));
-            let ga = a.min(end);
-            let glyphs = ga - l.start..b.min(end).max(ga) - l.start;
-            // The line above has drawn its ink already, so only the first line's highlight may
-            // reach up past its own rows.
-            let top = if i == 0 { r.y + s } else { ly };
-            let room = Rect::new(r.x + s, top, r.width - 2 * s, r.bottom() - s - top);
-            let hl = |b: usize, h: i32| {
-                let hl = Rect::new(at(a), ly, at(b) - at(a), h);
-                text.highlight(hl, &l.text, glyphs.clone(), l.x, line_r, false, font, dev)
-                    .clear_of_ink(room)
-            };
-            if a < b {
-                let all = c.bounds();
-                hl(b, lay.step).fill(c, all, cs.hilight);
-            }
-            let line_hl = (a < b && a < end).then(|| hl(b.min(end), line_h));
-            let line_caret = (caret.is_none() && edit.caret() <= end).then(|| {
-                let bar = Rect::new(at(edit.caret()), ly, s, lay.step);
-                (bar, CaretBar::ground(c, bar, line_hl.as_ref(), r.inset(s)))
-            });
-            text.draw_in(c, pen, line_r, line_r, &l.text, false, black, font);
-            if let Some(hl) = &line_hl {
-                text.draw_in(
-                    c,
-                    pen,
-                    line_r,
-                    hl.rect,
-                    &l.text,
-                    false,
-                    cs.hilight_text,
-                    font,
-                );
-                text.draw_overhang(c, hl, line_r, cs.hilight_text);
-            }
-            if let Some(run) = &run {
-                let (a, b) = (run.start.max(l.start), run.end.min(end));
-                if a < b {
-                    let base = text
-                        .baseline(pen, false, font)
-                        .unwrap_or(ly + line_h - 3 * s);
-                    c.fill_rect(Rect::new(at(a), base + s, at(b) - at(a), s), black);
-                }
-            }
-            if line_caret.is_some() {
-                caret = line_caret;
-            }
-        }
-        let empty = Rect::new(r.x + 5 * s, r.y + 2 * s, s, lay.step);
-        let (bar, placed) = caret.map_or((empty, None), |(bar, placed)| (bar, Some(placed)));
-        if caret_state.shown() && bar_on {
-            match placed {
-                Some(placed) => placed.draw(c, cs.hilight_text),
-                None => c.invert_rect(bar),
-            }
-        }
-        if caret_state.focused() {
-            c.report_spot(own.spot(r, bar));
-        }
+        draw_edit(c, theme, text, own, caret_state, |edit| {
+            let mut lay = edit_layout(theme, text, edit, cell.w);
+            lay.moved(x0, y0);
+            lay
+        });
         return;
     }
 
