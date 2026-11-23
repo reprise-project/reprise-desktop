@@ -799,6 +799,18 @@ fn lock_menu_key(k: &KeyPress) -> KeyRoute {
     }
 }
 
+/// Whether a plain letter would reach the desktop rename: nothing that takes presses ahead of
+/// it (the switchers, a menu, the overview, the taskbar's keys, a dialog) is up.
+pub fn reaches_rename(modes: &Modes) -> bool {
+    let a = KeyPress {
+        syms: vec![KEY_a],
+        lower: vec![KEY_a],
+        pressed: true,
+        ..KeyPress::default()
+    };
+    route(modes, &a, &[], &[]).route == KeyRoute::Rename
+}
+
 /// The held modifiers `mods` a press routed to `route` during a drag
 /// spends, so they pick no drop action until released: a bind's own (the
 /// Alt of Alt+Tab) and the switcher's. A menu's keys use none, so Ctrl

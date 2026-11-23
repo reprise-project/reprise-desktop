@@ -36,6 +36,7 @@ impl State {
             return;
         }
         self.redraw_changed(|s| s.apply_button(button, state, time));
+        self.follow_rename_keyboard();
     }
 
     fn apply_button(&mut self, button: u32, state: ButtonState, time: InputTime) {

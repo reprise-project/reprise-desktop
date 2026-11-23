@@ -659,21 +659,30 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&launcher).unwrap(), text);
     }
 
-    #[test]
-    fn a_waiting_rename_box_redraws_without_the_keyboard_under_the_launcher_or_a_dialog() {
-        let mut h = crate::harness::Harness::new();
-        h.output("TEST-1", 1024, 768);
-        let desk = crate::harness::scratch().join("rename-keyboard");
+    fn keyed(s: &State) -> bool {
+        s.desktop.as_ref().unwrap().rename_keyed
+    }
+
+    /// A desktop in `folder` of the scratch dir holding one file, renamed in place and drawn
+    /// with the keyboard.
+    fn rename_on_desktop(h: &mut crate::harness::Harness, folder: &str) {
+        let desk = crate::harness::scratch().join(folder);
         std::fs::create_dir_all(&desk).unwrap();
         std::fs::write(desk.join("a.txt"), "").unwrap();
-        crate::desktopview::create(&mut h.state, desk.clone(), Default::default(), None);
+        crate::desktopview::create(&mut h.state, desk, Default::default(), None);
         h.state.rescan_desktop();
         h.until("the file listed", |s| {
             s.desktop.as_ref().is_some_and(|d| !d.entries.is_empty())
         });
         h.state.begin_rename(0);
-        let keyed = |s: &State| s.desktop.as_ref().unwrap().rename_keyed;
         h.until("drawn with the keyboard", keyed);
+    }
+
+    #[test]
+    fn a_waiting_rename_box_redraws_without_the_keyboard_under_the_launcher_or_a_dialog() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        rename_on_desktop(&mut h, "rename-keyboard");
         h.state.toggle_launcher();
         h.until("drawn without it under the launcher", |s| !keyed(s));
         h.state.toggle_launcher();
@@ -682,5 +691,46 @@ mod tests {
         h.state.open_dialog(crate::dialog::Dialog::log_off(leave));
         h.until("drawn without it under a dialog", |s| !keyed(s));
         assert!(h.state.is_renaming(), "the rename waits");
+    }
+
+    #[test]
+    fn the_switcher_unlights_a_rename_until_it_closes_and_the_rename_edit_menu_keeps_it_lit() {
+        const ESC: u32 = 1;
+        const TAB: u32 = 15;
+        const ALT: u32 = 56;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.a", 300, 200);
+        h.map_toplevel(&mut c, "test.b", 300, 200);
+        h.dispatch();
+        h.state.focus_desktop();
+        rename_on_desktop(&mut h, "rename-switcher");
+
+        h.key(ALT, true);
+        h.key(TAB, true);
+        h.key(TAB, false);
+        assert!(h.state.switcher.is_open());
+        h.until("drawn without the keyboard under the switcher", |s| {
+            !keyed(s)
+        });
+        h.key(ESC, true);
+        h.key(ESC, false);
+        h.key(ALT, false);
+        assert!(!h.state.switcher.is_open());
+        h.until("drawn with it once the switcher closes unpicked", keyed);
+
+        assert!(h.state.open_edit_menu(Some((10, 10))));
+        h.dispatch();
+        assert!(keyed(&h.state), "its own edit menu leaves the rename lit");
+        h.state.close_menu();
+
+        h.key(ALT, true);
+        h.key(TAB, true);
+        h.key(TAB, false);
+        h.key(ALT, false);
+        assert!(h.state.focused.is_some(), "the release picks a window");
+        h.until("drawn without the keyboard under the window", |s| !keyed(s));
+        assert!(h.state.is_renaming(), "the rename waits for the next press");
     }
 }

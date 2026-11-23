@@ -465,6 +465,7 @@ impl State {
         // it when the switcher opened.
         let p = self.pointer_location();
         self.repoint(p, InputTime::now());
+        self.follow_rename_keyboard();
     }
 
     fn switch_to(&mut self, entry: Option<Entry>) {
@@ -495,6 +496,7 @@ impl State {
         if let Some(st) = self.switcher.leaving.take() {
             self.destroy_flip(st);
         }
+        self.follow_rename_keyboard();
     }
 
     pub fn switcher_escape(&mut self) {

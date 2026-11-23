@@ -266,6 +266,42 @@ fn a_desktop_rename_takes_text_and_editing_keys_but_not_binds() {
 }
 
 #[test]
+fn typing_reaches_a_rename_unless_a_switcher_menu_or_key_taking_popup_is_up() {
+    let base = Modes {
+        renaming: true,
+        desktop_has_keyboard: true,
+        ..Modes::default()
+    };
+    assert!(reaches_rename(&base));
+    type Set = fn(&mut Modes);
+    let over: [(&str, Set); 9] = [
+        ("the switcher", |m| m.switcher_open = true),
+        ("a menu", |m| m.menus_open = true),
+        ("the overview", |m| m.overview_open = true),
+        ("the display switcher", |m| m.projector_open = true),
+        ("the notification history", |m| m.notify_center_open = true),
+        ("the displays panel", |m| m.displays_open = true),
+        ("the taskbar's keys", |m| m.taskbar_keys = true),
+        ("a dialog", |m| m.dialog_has_keyboard = true),
+        ("a drag", |m| m.dragging = true),
+    ];
+    for (what, set) in over {
+        let mut m = base.clone();
+        set(&mut m);
+        assert!(!reaches_rename(&m), "{what} takes the letter");
+    }
+    let escape_only: [(&str, Set); 2] = [
+        ("the clock's popup", |m| m.calendar_open = true),
+        ("the hidden icons flyout", |m| m.tray_flyout_open = true),
+    ];
+    for (what, set) in escape_only {
+        let mut m = base.clone();
+        set(&mut m);
+        assert!(reaches_rename(&m), "under {what} the letter edits the name");
+    }
+}
+
+#[test]
 fn the_switcher_bind_passes_a_dialog_but_not_a_welcome_panel() {
     let mut m = Modes {
         dialog_has_keyboard: true,
