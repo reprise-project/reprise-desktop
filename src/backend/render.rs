@@ -283,6 +283,7 @@ pub(super) fn render(state: &mut State, head: Head) {
         drew,
     };
     let flipping = drawn && send_flip(s, modeset, flight);
+    // The late glass update runs after the flip is sent, so its blur stays off this frame's path.
     let late_changed = late && glass.update_late(&mut b.renderer, scene, &output, clear);
     if !flipping {
         let ended = match empty {
