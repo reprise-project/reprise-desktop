@@ -173,6 +173,13 @@ impl Form {
                     Control::Link { label, .. } => fit::Kind::Text {
                         need: text.ink_width(label, false, px),
                     },
+                    Control::Label {
+                        text,
+                        align: Align::Right,
+                        ..
+                    } => fit::Kind::TextRight {
+                        need: measure(text),
+                    },
                     Control::Combo(c) if c.elide => fit::Kind::Stretch { need: 0 },
                     Control::Combo(c) => {
                         let inset = r.width - combo::layout(c, r, &cm).text.width;
@@ -193,7 +200,9 @@ impl Form {
                     | Control::Tree(_)
                     | Control::TrackBar(_)
                     | Control::Memo(_) => fit::Kind::Stretch { need: 0 },
-                    Control::Button { .. } => fit::Kind::Anchored,
+                    Control::Button { label, .. } => fit::Kind::Button {
+                        need: measure(label) + 2 * fit::BUTTON_PAD,
+                    },
                     Control::Group(_) => fit::Kind::Group,
                     Control::GroupTitle(_)
                     | Control::Blank
@@ -214,7 +223,10 @@ impl Form {
         let text = text.dialog(self.font);
         let (rects, kinds) = self.fit_input(text, px);
         let fits = rects.iter().zip(&kinds).all(|(r, k)| match *k {
-            fit::Kind::Text { need } | fit::Kind::Stretch { need } => need <= r.width,
+            fit::Kind::Text { need }
+            | fit::Kind::TextRight { need }
+            | fit::Kind::Stretch { need }
+            | fit::Kind::Button { need } => need <= r.width,
             _ => true,
         });
         let mut deltas = self.rendered.fit.borrow_mut();

@@ -8,17 +8,30 @@ use repriseapp::{Ctx, WinId};
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::controls::form;
 use reprisekit::controls::listview;
-use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::propsheet;
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
+use reprisekit::text::TextRenderer;
+use reprisekit::theme::Theme;
 
 impl SettingsApp {
-    pub(crate) fn fit_columns(&mut self, cm: &ControlMetrics) {
+    pub(crate) fn fit_columns(&mut self, forms: &Theme, text: &TextRenderer) {
+        let cm = &forms.controls();
+        let (p, px) = (forms.paint(), forms.fonts.size_px);
+        for lv in [
+            &mut self.shortcuts,
+            &mut self.types,
+            &mut self.permissions,
+            &mut self.list,
+        ] {
+            lv.fit_titles(text, &p, px, cm.text);
+        }
         let a = self.area();
         let shortcuts = self.on_page(pages::shortcuts(a));
         let types = self.on_page(defaultspage::list(a));
         let permissions = self.on_page(pages::permissions(a));
+        let half = cm.text.within(shortcuts.width / 2);
+        (self.shortcuts).fit_cells(0, text, px, cm.text, half);
         pages::fit_shortcut_columns(&mut self.shortcuts, cm, shortcuts);
         defaultspage::fit_columns(&mut self.types, cm, types);
         pages::fit_permission_columns(&mut self.permissions, cm, permissions);
@@ -33,10 +46,10 @@ impl SettingsApp {
     }
 
     pub(crate) fn paint(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        self.fit_columns(&ctx.forms().controls());
-        let cs = &ctx.theme.colors;
         let forms = ctx.forms();
         let form_px = forms.fonts.size_px;
+        self.fit_columns(&forms, &ctx.text);
+        let cs = &ctx.theme.colors;
         if self.error.owns(win) {
             self.error
                 .draw(c, &self.dialog_theme(&ctx.theme), &self.dialog_text);
@@ -183,7 +196,8 @@ impl SettingsApp {
     }
 
     pub(crate) fn describe(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        self.fit_columns(&ctx.forms().controls());
+        let forms = ctx.forms();
+        self.fit_columns(&forms, &ctx.text);
 
         let px = ctx.theme.fonts.size_px;
         let drawn = |f: &form::Form| f.units().px(px);

@@ -500,3 +500,36 @@ fn a_bar_hanging_past_the_descent_keeps_its_ink() {
         "(text size, scale, by the canvas, line, ink rows cut)"
     );
 }
+
+/// A canvas at 1x drawn at scale 2 with twice the px lays a label wider than its rect, and a
+/// button wider than its label room, out as scale 1 does.
+#[test]
+fn a_form_fits_its_text_alike_at_scale_1_and_2() {
+    crate::pins::fonts();
+    let t = tr();
+    let f = Form::new(vec![
+        Item::label_at("l", 10, 14, 30, "A long label:"),
+        Item::edit("e", Rect::new(44, 10, 120, 21), "", true),
+        Item::button(
+            "b",
+            Rect::new(10, 40, 40, 23),
+            "Restore Defaults",
+            false,
+            false,
+        ),
+    ]);
+    let laid = |s: i32| {
+        let theme = Theme::default().scaled(s);
+        let mut c = Canvas::new(200 * s as u32, 80 * s as u32);
+        draw(&mut c, &t, &theme.paint(), &f, false, theme.fonts.size_px);
+        ["l", "e", "b"].map(|id| f.rect(id))
+    };
+    let one = laid(1);
+    assert_ne!(
+        one[1],
+        Some(Rect::new(44, 10, 120, 21)),
+        "the label moves the field"
+    );
+    assert_ne!(one[2], Some(Rect::new(10, 40, 40, 23)), "the button widens");
+    assert_eq!(laid(2), one);
+}

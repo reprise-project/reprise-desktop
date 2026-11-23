@@ -81,6 +81,16 @@ theme installed, and the zombie test when another test's reaper wins.
   `crates/reprisekit/tests/pins/text_clip_200.txt`. A line that newly clips
   fails it: lay its row out from `theme.controls()` or `theme.text` instead
   of a 100% size. Bless the list as above once a fix takes a line off it.
+- **Text without Tahoma.** Debian and Ubuntu have no Tahoma, so the UI text
+  falls back to DejaVu Sans Book, which is wider. The gallery's `fit_test`
+  and the Settings, Network Status and Explorer `text_fit` tests draw their
+  surfaces with Tahoma and again under `pins::without_tahoma`, and list each
+  line DejaVu cuts or ellipsizes more often than Tahoma in the crate's
+  `tests/pins/text_fit_without_tahoma.txt` (a line may end in `  # why`). A
+  new line fails: size the control from its measured text (a form item
+  gets room from `Form`'s fit, a list column from `ListView::fit_titles`).
+  A program's property sheets get the same test through
+  `interfaces::sheets_unfit_without_tahoma`.
 - **UI strings.** A string a user reads goes through `tr!("id")` with its
   English text in the crate's `locale/en.ftl`; `cargo test -p reprisekit`
   runs `scripts/i18n-check`, which fails on an id missing from English or

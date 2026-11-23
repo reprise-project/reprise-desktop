@@ -1,7 +1,9 @@
 //! Room for measured text in a form laid out in fixed px: a label or a combo's value wider
 //! than its rect takes the space to its right, and when that is not enough the column of
-//! controls right of it moves over. Widths only change where the text does not fit, and a
-//! label that cannot get all the room it needs leaves the layout as it was.
+//! controls right of it moves over. A push button whose label does not fit widens into the
+//! room beside it on its row, then into what the next push button has to spare. Widths only
+//! change where the text does not fit, and a label or button that cannot get all the room it
+//! needs leaves the layout as it was.
 
 use crate::raster::Rect;
 
@@ -9,14 +11,18 @@ use crate::raster::Rect;
 pub(crate) enum Kind {
     /// Left-aligned text `need` px wide.
     Text { need: i32 },
+    /// Right-aligned text `need` px wide: it widens left, into the room after the control
+    /// before it on its row.
+    TextRight { need: i32 },
     /// A control that can give up width at its left edge (an edit, a combo, a list, a
     /// trackbar, a spinner with its field), whose value wants `need` px of width (0 for no
     /// value of its own).
     Stretch { need: i32 },
     /// A control of fixed width: it moves with its column.
     Fixed,
-    /// A push button: it holds its place, and a column it is in does not move.
-    Anchored,
+    /// A push button whose label takes `need` px: it holds its place, and a column it is in
+    /// does not move.
+    Button { need: i32 },
     /// A group box. The items inside it reach at most its right edge less the pad.
     Group,
     /// Drawn on or under other items (a group title, a break in a line, a rule): in no row.
@@ -27,6 +33,8 @@ pub(crate) enum Kind {
 pub(crate) const GAP: i32 = 4;
 /// The px kept inside a group box's right edge, at 100% text.
 pub(crate) const PAD: i32 = 6;
+/// The px a push button keeps each side of its label's ink: a styled button's content margin.
+pub(crate) const BUTTON_PAD: i32 = 4;
 
 /// Where text on item `i`'s row starting at `from` may run to in `rects`: the next control on
 /// the row starting right of `from`, or item `i`'s group box's right edge less `pad`. A control
@@ -89,6 +97,22 @@ pub(crate) fn fit(rects: &[Rect], kinds: &[Kind], gap: i32, pad: i32) -> Vec<Rec
             f.stretch(i, need);
         }
     }
+    for (i, &kind) in kinds.iter().enumerate() {
+        if let Kind::TextRight { need } = kind
+            && need > f.out[i].width
+            && f.out[i].right() - f.left_limit(i) >= need
+        {
+            f.out[i].x = f.out[i].right() - need;
+            f.out[i].width = need;
+        }
+    }
+    for (i, &kind) in kinds.iter().enumerate() {
+        if let Kind::Button { need } = kind
+            && need > f.out[i].width
+        {
+            f.button(i, need);
+        }
+    }
     f.out
 }
 
@@ -117,6 +141,58 @@ impl Fit<'_> {
         }
     }
 
+    /// Widens push button `i` to the `need` px its label takes: into the room right of it, then
+    /// left of it, then into what the push button after it on its row has beyond its own need,
+    /// which moves that button's left edge over. Leaves the layout as it was when that is short.
+    fn button(&mut self, i: usize, need: i32) {
+        let before = self.out.clone();
+        let mut short = need - self.out[i].width;
+        let right = (self.limit(i) - self.out[i].right()).clamp(0, short);
+        self.out[i].width += right;
+        short -= right;
+        let left = (self.out[i].x - self.left_limit(i)).clamp(0, short);
+        self.out[i].x -= left;
+        self.out[i].width += left;
+        short -= left;
+        if short > 0
+            && let Some(j) = self.next(i)
+            && let Kind::Button { need: own } = self.kinds[j]
+        {
+            let spare = (self.out[j].width - own).clamp(0, short);
+            self.out[j].x += spare;
+            self.out[j].width -= spare;
+            self.out[i].width += spare;
+            short -= spare;
+        }
+        if short > 0 {
+            self.out = before;
+        }
+    }
+
+    /// Where item `i`'s left edge may run to: past the previous control on its row (a label's
+    /// text, not its rect) and the gap, or its group box's left edge plus the pad, or outside
+    /// any group the leftmost edge in the form.
+    fn left_limit(&self, i: usize) -> i32 {
+        let prev = (0..self.out.len())
+            .filter(|&j| self.row(i, j) && self.out[j].x < self.out[i].x)
+            .map(|j| {
+                let used = match self.kinds[j] {
+                    Kind::Text { need } => need.min(self.out[j].width),
+                    _ => self.out[j].width,
+                };
+                self.out[j].x + used + self.gap
+            })
+            .max();
+        prev.unwrap_or_else(|| match self.group(i) {
+            Some(g) => self.out[g].x + self.pad,
+            None => (0..self.out.len())
+                .filter(|&k| self.kinds[k] != Kind::Apart)
+                .map(|k| self.out[k].x)
+                .min()
+                .unwrap_or(0),
+        })
+    }
+
     /// Widens stretching item `i` towards the `need` px its value takes: into the gap before
     /// the next control on its row, moving that control's column over when the gap is short.
     fn stretch(&mut self, i: usize, need: i32) {
@@ -140,7 +216,7 @@ impl Fit<'_> {
         let blocked = (0..self.out.len()).any(|k| {
             self.out[k] != before[k]
                 && match self.kinds[k] {
-                    Kind::Anchored => true,
+                    Kind::Button { .. } => true,
                     Kind::Stretch { need } => self.out[k].width < need.min(before[k].width),
                     _ => self.out[k].right() > bounds[k],
                 }
@@ -375,10 +451,58 @@ mod tests {
     #[test]
     fn a_push_button_holds_its_place() {
         let rects = [r(0, 0, 300, 80), r(10, 20, 100, 13), r(114, 16, 75, 23)];
-        let kinds = [Kind::Group, Kind::Text { need: 130 }, Kind::Anchored];
+        let kinds = [
+            Kind::Group,
+            Kind::Text { need: 130 },
+            Kind::Button { need: 60 },
+        ];
         let out = fit(&rects, &kinds, GAP, PAD);
         assert_eq!(out[2], rects[2]);
         assert_eq!(out[1].width, 100);
+    }
+
+    #[test]
+    fn a_right_aligned_value_widens_left_up_to_the_text_before_it() {
+        let rects = [r(37, 0, 60, 13), r(103, 0, 80, 13)];
+        let kinds = |need| [Kind::Text { need: 35 }, Kind::TextRight { need }];
+        let out = fit(&rects, &kinds(85), GAP, PAD);
+        assert_eq!(out[1], r(98, 0, 85, 13), "the right edge holds");
+        assert_eq!(out[0], rects[0]);
+        let out = fit(&rects, &kinds(110), GAP, PAD);
+        assert_eq!(
+            out,
+            rects.to_vec(),
+            "past the label's text it keeps its rect"
+        );
+    }
+
+    #[test]
+    fn a_push_button_widens_right_then_left_then_into_the_next_ones_spare() {
+        let rects = [r(10, 0, 75, 23), r(89, 0, 83, 23), r(176, 0, 120, 23)];
+        let kinds = |a, b| {
+            [
+                Kind::Button { need: a },
+                Kind::Button { need: b },
+                Kind::Button { need: 120 },
+            ]
+        };
+        let out = fit(&rects, &kinds(83, 53), GAP, PAD);
+        assert_eq!(
+            out[0],
+            r(10, 0, 83, 23),
+            "8 px from the next button's spare"
+        );
+        assert_eq!(out[1], r(97, 0, 75, 23), "the next keeps its right edge");
+        assert_eq!(out[2], rects[2]);
+        let out = fit(&rects, &kinds(83, 80), GAP, PAD);
+        assert_eq!(out, rects.to_vec(), "3 px to spare is short of 8");
+        let lone = [r(0, 30, 200, 23), r(125, 0, 75, 23)];
+        let out = fit(&lone, &[Kind::Fixed, Kind::Button { need: 90 }], GAP, PAD);
+        assert_eq!(
+            out[1],
+            r(110, 0, 90, 23),
+            "at the form's right edge it widens left"
+        );
     }
 
     #[test]

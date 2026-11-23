@@ -136,6 +136,36 @@ pub fn overflows(
     over
 }
 
+/// Each line of the property sheets `build` makes for each interface that DejaVu Sans cuts or
+/// ellipsizes more often than Tahoma ([`crate::pins::unfit_without_tahoma`]), every page drawn as
+/// a program draws it at scale 1 and 2, as `"<interface>@<scale> <sheet>, <tab>"`. For a program's text fit test.
+pub fn sheets_unfit_without_tahoma(
+    build: impl Fn(Interface) -> Vec<(String, controls::propsheet::PropSheet)> + Sync,
+) -> Vec<(String, String)> {
+    crate::pins::unfit_without_tahoma(|| {
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for s in [1, 2] {
+                let mut theme = theme_for(i);
+                theme.look = theme.look.at_scale(s);
+                let text = TextRenderer::load(&theme.fonts);
+                let px = theme.fonts.size_px;
+                for (name, mut sheet) in build(i) {
+                    for k in 0..sheet.pages.len() {
+                        sheet.tabs.open = k;
+                        let (w, h) = sheet.size;
+                        let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                        c.fill_rect(c.bounds(), theme.colors.button_face);
+                        let p = theme.paint();
+                        controls::propsheet::draw(&mut c, &text, &p, &sheet, true, px);
+                        let tab = sheet.tabs.labels.get(k).cloned().unwrap_or_default();
+                        crate::pins::surface_drawn(&format!("{}@{s} {name}, {tab}", i.as_str()));
+                    }
+                }
+            }
+        }
+    })
+}
+
 pub fn small_bar(theme: &mut Theme, glass: &glass::Settings) {
     theme.metrics.taskbar_height = glass::SMALL_TASKBAR_HEIGHT;
     theme.look = Look::Styled(glass::small_bar_style(glass));

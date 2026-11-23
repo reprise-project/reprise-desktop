@@ -403,6 +403,32 @@ mod tests {
         page.item(id).unwrap_or_else(|| panic!("no {id}")).rect
     }
 
+    /// The Status window, its counters at 1.8 GB, without Tahoma fits the text it fits with
+    /// Tahoma: `tests/pins/text_fit_without_tahoma.txt` lists what it does not.
+    #[test]
+    fn the_status_window_without_tahoma_fits_the_text_it_fits_with_tahoma() {
+        let found = reprisekit::interfaces::sheets_unfit_without_tahoma(|_| {
+            [
+                ("wired", wired()),
+                ("wireless", wireless()),
+                ("hotspot", hotspot()),
+            ]
+            .into_iter()
+            .map(|(kind, d)| {
+                let mut s = Status::new(&d);
+                let t = Instant::now();
+                let c = |n| Counters { rx: n, tx: n / 3 };
+                s.counters(t, c(1_888_391_552));
+                s.counters(t + std::time::Duration::from_secs(1), c(1_999_391_552));
+                (kind.to_string(), s.sheet)
+            })
+            .collect()
+        });
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/pins/text_fit_without_tahoma.txt");
+        reprisekit::pins::check_list(&path, &found, "lines DejaVu Sans cuts and Tahoma does not");
+    }
+
     /// The wired and wireless pages fit their text under every interface and text size.
     #[test]
     fn the_status_pages_fit_their_text() {

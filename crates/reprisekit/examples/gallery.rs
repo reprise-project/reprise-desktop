@@ -60,6 +60,9 @@ use reprisekit::theme::{Color, Theme};
 mod clip_test;
 #[path = "gallery/dialogs.rs"]
 mod dialogs;
+#[cfg(test)]
+#[path = "gallery/fit_test.rs"]
+mod fit_test;
 #[path = "gallery/glass.rs"]
 mod glass;
 #[path = "gallery/glass_controls.rs"]
@@ -135,196 +138,7 @@ fn cued(t: Theme) -> Theme {
 fn main() {
     if let Ok(n) = std::env::var("REPRISE_GALLERY_SCALE") {
         let n: i32 = n.parse().expect("REPRISE_GALLERY_SCALE is a whole number");
-        gallery_parts::write_all(n.max(1));
-        write_preview(
-            &render_tray_arrow_schemes(n.max(1)),
-            "reprisekit-gallery-tray-arrow-blue-schemes.png",
-        );
-        write_preview(
-            &render_orb_glow(n.max(1)),
-            "reprisekit-gallery-orb-glow-glass.png",
-        );
-        write_volume_popups(true, n.max(1));
-        write_preview(
-            &render_calendar_events(n.max(1)),
-            &format!("reprisekit-gallery-calendar-events@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_keys::launcher_windows(n.max(1)),
-            &format!("reprisekit-gallery-launcher-windows@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_keys::key_sheet(n.max(1)),
-            &format!("reprisekit-gallery-key-sheet@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_power::render(n.max(1)),
-            &format!("reprisekit-gallery-power@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_logon::render(n.max(1)),
-            &format!("reprisekit-gallery-logon@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_logon::motion::render(n.max(1)),
-            &format!("reprisekit-gallery-logon-motion@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_paint::render(n.max(1)),
-            &format!("reprisekit-gallery-paint@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_doctabs::render(n.max(1)),
-            &format!("reprisekit-gallery-doc-tabs@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_rename::render(n.max(1)),
-            &format!("reprisekit-gallery-rename@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_netconnect::render(n.max(1)),
-            &format!("reprisekit-gallery-netconnect@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_welcome::render(n.max(1)),
-            &format!("reprisekit-gallery-welcome@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_remote_password::render(n.max(1)),
-            &format!("reprisekit-gallery-remote-password@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_fingerprints::render(n.max(1)),
-            &format!("reprisekit-gallery-fingerprints@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_checksums::render(n.max(1)),
-            &format!("reprisekit-gallery-checksums@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_miniview::render(n.max(1)),
-            &format!("reprisekit-gallery-mini-view@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_widgets::render(n.max(1)),
-            &format!("reprisekit-gallery-desk-widgets@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_notes::render(n.max(1)),
-            &format!("reprisekit-gallery-notes@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_fonts::render(n.max(1)),
-            &format!("reprisekit-gallery-fonts@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_programs::calculator(n.max(1)),
-            &format!("reprisekit-gallery-calculator@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_programs::charmap(n.max(1)),
-            &format!("reprisekit-gallery-charmap@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_programs::colordlg(n.max(1)),
-            &format!("reprisekit-gallery-colordlg@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_perf::render(n.max(1)),
-            &format!("reprisekit-gallery-perf@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_copy_progress(true, n.max(1)),
-            &format!("reprisekit-gallery-copy-progress@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_task_progress(n.max(1)),
-            &format!("reprisekit-gallery-task-progress@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_task_attention(n.max(1)),
-            &format!("reprisekit-gallery-task-attention@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_termgrid(n.max(1)),
-            &format!("reprisekit-gallery-termgrid@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_file_preview(n.max(1)),
-            &format!("reprisekit-gallery-filepreview@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_image_view(n.max(1)),
-            &format!("reprisekit-gallery-imageview@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_grid_drag(n.max(1)),
-            &format!("reprisekit-gallery-grid-drag@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_locate_rings(n.max(1)),
-            &format!("reprisekit-gallery-locate-pointer@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_windowed_dialog(n.max(1)),
-            &format!("reprisekit-gallery-windowed-dialog@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_label_ellipsis(n.max(1)),
-            &format!("reprisekit-gallery-label-ellipsis@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_desktop_labels(n.max(1)),
-            &format!("reprisekit-gallery-desktop-labels@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_blue_start_panel(n.max(1), 100),
-            &format!("reprisekit-gallery-blue-start-menu@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_blue_start_menus(n.max(1)),
-            &format!("reprisekit-gallery-blue-start-menus@{}.png", n.max(1)),
-        );
-        write_preview(
-            &gallery_pathcomplete::render(n.max(1)),
-            &format!("reprisekit-gallery-path-complete@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_list_sheet_search(n.max(1)),
-            &format!("reprisekit-gallery-list-sheet-search@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_start_panel_dark(n.max(1)),
-            &format!("reprisekit-gallery-start-panel-dark@{}.png", n.max(1)),
-        );
-        write_preview(
-            &render_glass_launcher_dark(n.max(1)),
-            &format!("reprisekit-gallery-glass-launcher-dark@{}.png", n.max(1)),
-        );
-        for mode in [
-            reprisekit::glass::Mode::Light,
-            reprisekit::glass::Mode::Dark,
-        ] {
-            let g = reprisekit::glass::Settings {
-                mode,
-                ..reprisekit::glass::Settings::default()
-            };
-            let theme = cued(interfaces::theme_with(
-                Interface::Glass,
-                reprisekit::blue::Variant::default(),
-                &g,
-            ))
-            .scaled(n.max(1));
-            let name = if mode == reprisekit::glass::Mode::Dark {
-                "dark"
-            } else {
-                "light"
-            };
-            write_preview(
-                &render_glass_notify_sheets(&theme),
-                &format!("reprisekit-gallery-glass-notify-{name}@{}.png", n.max(1)),
-            );
-        }
+        write_scale(n);
         return;
     }
     if let Ok(pct) = std::env::var("REPRISE_GALLERY_TEXT_SIZE") {
@@ -344,6 +158,200 @@ fn main() {
         Some(name) => vec![Some(name)],
     };
     write_pages(with_blue, &names);
+}
+
+/// The pages `REPRISE_GALLERY_SCALE=<n>` writes, drawn at scale `n` (at least 1).
+fn write_scale(n: i32) {
+    gallery_parts::write_all(n.max(1));
+    write_preview(
+        &render_tray_arrow_schemes(n.max(1)),
+        "reprisekit-gallery-tray-arrow-blue-schemes.png",
+    );
+    write_preview(
+        &render_orb_glow(n.max(1)),
+        "reprisekit-gallery-orb-glow-glass.png",
+    );
+    write_volume_popups(true, n.max(1));
+    write_preview(
+        &render_calendar_events(n.max(1)),
+        &format!("reprisekit-gallery-calendar-events@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_keys::launcher_windows(n.max(1)),
+        &format!("reprisekit-gallery-launcher-windows@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_keys::key_sheet(n.max(1)),
+        &format!("reprisekit-gallery-key-sheet@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_power::render(n.max(1)),
+        &format!("reprisekit-gallery-power@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_logon::render(n.max(1)),
+        &format!("reprisekit-gallery-logon@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_logon::motion::render(n.max(1)),
+        &format!("reprisekit-gallery-logon-motion@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_paint::render(n.max(1)),
+        &format!("reprisekit-gallery-paint@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_doctabs::render(n.max(1)),
+        &format!("reprisekit-gallery-doc-tabs@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_rename::render(n.max(1)),
+        &format!("reprisekit-gallery-rename@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_netconnect::render(n.max(1)),
+        &format!("reprisekit-gallery-netconnect@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_welcome::render(n.max(1)),
+        &format!("reprisekit-gallery-welcome@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_remote_password::render(n.max(1)),
+        &format!("reprisekit-gallery-remote-password@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_fingerprints::render(n.max(1)),
+        &format!("reprisekit-gallery-fingerprints@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_checksums::render(n.max(1)),
+        &format!("reprisekit-gallery-checksums@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_miniview::render(n.max(1)),
+        &format!("reprisekit-gallery-mini-view@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_widgets::render(n.max(1)),
+        &format!("reprisekit-gallery-desk-widgets@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_notes::render(n.max(1)),
+        &format!("reprisekit-gallery-notes@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_fonts::render(n.max(1)),
+        &format!("reprisekit-gallery-fonts@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_programs::calculator(n.max(1)),
+        &format!("reprisekit-gallery-calculator@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_programs::charmap(n.max(1)),
+        &format!("reprisekit-gallery-charmap@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_programs::colordlg(n.max(1)),
+        &format!("reprisekit-gallery-colordlg@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_perf::render(n.max(1)),
+        &format!("reprisekit-gallery-perf@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_copy_progress(true, n.max(1)),
+        &format!("reprisekit-gallery-copy-progress@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_task_progress(n.max(1)),
+        &format!("reprisekit-gallery-task-progress@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_task_attention(n.max(1)),
+        &format!("reprisekit-gallery-task-attention@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_termgrid(n.max(1)),
+        &format!("reprisekit-gallery-termgrid@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_file_preview(n.max(1)),
+        &format!("reprisekit-gallery-filepreview@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_image_view(n.max(1)),
+        &format!("reprisekit-gallery-imageview@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_grid_drag(n.max(1)),
+        &format!("reprisekit-gallery-grid-drag@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_locate_rings(n.max(1)),
+        &format!("reprisekit-gallery-locate-pointer@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_windowed_dialog(n.max(1)),
+        &format!("reprisekit-gallery-windowed-dialog@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_label_ellipsis(n.max(1)),
+        &format!("reprisekit-gallery-label-ellipsis@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_desktop_labels(n.max(1)),
+        &format!("reprisekit-gallery-desktop-labels@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_blue_start_panel(n.max(1), 100),
+        &format!("reprisekit-gallery-blue-start-menu@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_blue_start_menus(n.max(1)),
+        &format!("reprisekit-gallery-blue-start-menus@{}.png", n.max(1)),
+    );
+    write_preview(
+        &gallery_pathcomplete::render(n.max(1)),
+        &format!("reprisekit-gallery-path-complete@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_list_sheet_search(n.max(1)),
+        &format!("reprisekit-gallery-list-sheet-search@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_start_panel_dark(n.max(1)),
+        &format!("reprisekit-gallery-start-panel-dark@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_glass_launcher_dark(n.max(1)),
+        &format!("reprisekit-gallery-glass-launcher-dark@{}.png", n.max(1)),
+    );
+    for mode in [
+        reprisekit::glass::Mode::Light,
+        reprisekit::glass::Mode::Dark,
+    ] {
+        let g = reprisekit::glass::Settings {
+            mode,
+            ..reprisekit::glass::Settings::default()
+        };
+        let theme = cued(interfaces::theme_with(
+            Interface::Glass,
+            reprisekit::blue::Variant::default(),
+            &g,
+        ))
+        .scaled(n.max(1));
+        let name = if mode == reprisekit::glass::Mode::Dark {
+            "dark"
+        } else {
+            "light"
+        };
+        write_preview(
+            &render_glass_notify_sheets(&theme),
+            &format!("reprisekit-gallery-glass-notify-{name}@{}.png", n.max(1)),
+        );
+    }
 }
 
 /// The pages `REPRISE_GALLERY_TEXT_SIZE=<pct>` writes.
