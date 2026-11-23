@@ -1256,9 +1256,9 @@ fn the_open_emoji_picker_takes_every_press_except_its_own_bind() {
 }
 
 /// A balloon's reply field, once clicked, takes every press, binds
-/// and Escape included, except Alt+Tab; unclicked, it takes none.
+/// and Escape included, except the switchers' binds; unclicked, it takes none.
 #[test]
-fn a_clicked_reply_field_takes_every_press_but_the_switcher() {
+fn a_clicked_reply_field_takes_every_press_but_the_switchers() {
     let m = Modes {
         notify_reply_focused: true,
         desktop_has_keyboard: true,
@@ -1276,6 +1276,22 @@ fn a_clicked_reply_field_takes_every_press_but_the_switcher() {
         r(&m, &press(KEY_Tab, MOD_ALT)),
         KeyRoute::Binds(vec![Action::Cycle])
     );
+    assert_eq!(
+        r(&m, &press(KEY_Tab, MOD_LOGO)),
+        KeyRoute::Binds(vec![Action::Flip])
+    );
+    let app = [Keybind {
+        mods: MOD_ALT,
+        keysym: KEY_grave,
+        action: Action::CycleApp,
+    }];
+    for mods in [MOD_ALT, MOD_ALT | MOD_SHIFT] {
+        assert_eq!(
+            route(&m, &press(KEY_grave, mods), &app, &[]).route,
+            KeyRoute::Binds(vec![Action::CycleApp]),
+            "{mods:#x}"
+        );
+    }
     let unclicked = Modes {
         desktop_has_keyboard: true,
         ..Modes::default()

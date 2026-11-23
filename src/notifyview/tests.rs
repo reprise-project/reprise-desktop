@@ -451,6 +451,80 @@ fn the_switcher_unlights_the_reply_field_until_it_closes_and_a_picked_window_tak
 }
 
 #[test]
+fn super_tab_opens_the_3d_switcher_over_the_reply_field_and_its_pick_takes_the_keyboard() {
+    const ESC: u32 = 1;
+    const TAB: u32 = 15;
+    const A: u32 = 30;
+    const B: u32 = 48;
+    const SUPER: u32 = 125;
+    let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    h.map_toplevel(&mut c, "test.a", 300, 200);
+    h.map_toplevel(&mut c, "test.b", 300, 200);
+    h.dispatch();
+    let mut n = note(1, "Chat");
+    n.actions = vec![(INLINE_REPLY.into(), "Reply".into())];
+    n.reply = Some(crate::tray::Reply {
+        placeholder: String::new(),
+        send: crate::tray::REPLY_SEND.into(),
+    });
+    show(&mut h.state, n);
+    invoke(&mut h.state, 1, INLINE_REPLY);
+    let keyed = |s: &State| s.notify.reply_keyed;
+    h.until("drawn with the keyboard", keyed);
+    h.key(A, true);
+    h.key(A, false);
+    let typed = |s: &State| reply_edit(s).map(|e| e.text.clone());
+
+    h.key(SUPER, true);
+    h.key(TAB, true);
+    h.key(TAB, false);
+    assert!(
+        h.state.switcher.stack.is_some(),
+        "Super+Tab opens the stack"
+    );
+    assert_eq!(
+        typed(&h.state).as_deref(),
+        Some("a"),
+        "the Tab is not typed"
+    );
+    h.until("drawn unlit under the stack", |s| !keyed(s));
+    h.key(ESC, true);
+    h.key(ESC, false);
+    h.key(SUPER, false);
+    assert!(h.state.switcher.stack.is_none());
+    assert!(
+        reply_focused(&h.state),
+        "Escape leaves the row open and focused"
+    );
+    h.until("lit again once the stack closes unpicked", keyed);
+
+    h.key(SUPER, true);
+    h.key(TAB, true);
+    h.key(TAB, false);
+    let shown = |s: &State| s.switcher.stack.as_ref().is_some_and(|st| st.revealed());
+    h.until("the stack shows", shown);
+    h.key(SUPER, false);
+    assert!(h.state.focused.is_some(), "the release picks a window");
+    assert!(
+        !reply_focused(&h.state),
+        "the picked window takes the keyboard"
+    );
+    h.until("drawn unlit under the window", |s| !keyed(s));
+    h.key(B, true);
+    h.key(B, false);
+    let v = &h.state.notify;
+    let text = (replying(v).and_then(|i| v.stack[i].reply.as_ref())).map(|r| r.edit.text.as_str());
+    assert_eq!(
+        text,
+        Some("a"),
+        "the reply row stays open, its text untouched"
+    );
+}
+
+#[test]
 fn buttons_skip_the_default_action_and_menu_rows_name_every_action() {
     let mut n = Notification::new(1, "Hi".into(), String::new());
     n.actions = vec![

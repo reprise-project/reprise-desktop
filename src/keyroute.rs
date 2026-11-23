@@ -557,18 +557,9 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         });
     }
     // A balloon's reply field, once clicked, takes every press but the
-    // switcher's bind, as a dialog's field does.
+    // switchers' binds, as a dialog's field does.
     if modes.notify_reply_focused && k.pressed {
-        let cycle = k.keys().any(|key| {
-            binds
-                .iter()
-                .any(|b| b.mods == k.mods && b.keysym == key && b.action == Action::Cycle)
-        });
-        return with(if cycle {
-            KeyRoute::Binds(vec![Action::Cycle])
-        } else {
-            KeyRoute::NotifyReply
-        });
+        return with(switch().unwrap_or(KeyRoute::NotifyReply));
     }
     // The notification history takes every press that is not a bind or a
     // global shortcut: it has no field, so those keep working over it.
