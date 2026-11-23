@@ -620,9 +620,11 @@ impl TaskMgr {
             .map(|r| r.unit.clone());
         let entries = self.entries.clone();
         let scopes = &self.snap.scopes;
+        let windows = self.snap.windows.as_deref();
         self.app_rows = (scopes.iter())
+            .filter(|sc| windows.is_none_or(|w| has_window(sc, scopes, &entries, w)))
             .map(|sc| AppRow {
-                hung: not_responding(sc, scopes, &entries, &self.hung),
+                hung: has_window(sc, scopes, &entries, &self.hung),
                 ..app_row(sc, &entries)
             })
             .collect();
@@ -1142,16 +1144,16 @@ fn app_row(sc: &scopes::Scope, entries: &[AppEntry]) -> AppRow {
     }
 }
 
-/// Whether a window of scope `sc`'s program is among `hung`: one whose client runs in the scope,
-/// or one whose client is in no scope (a sandboxed program's) and whose app id is the program's,
-/// as Switch To matches it.
-pub fn not_responding(
+/// Whether a window of scope `sc`'s program is among `windows`: one whose client runs in the
+/// scope, or one whose client is in no scope (a sandboxed program's) and whose app id is the
+/// program's, as Switch To matches it.
+pub fn has_window(
     sc: &scopes::Scope,
     scopes: &[scopes::Scope],
     entries: &[AppEntry],
-    hung: &[Hung],
+    windows: &[Hung],
 ) -> bool {
-    hung.iter().any(|(id, pid)| {
+    windows.iter().any(|(id, pid)| {
         let pid = i32::try_from(*pid).unwrap_or(0);
         sc.pids.contains(&pid)
             || (!scopes.iter().any(|s| s.pids.contains(&pid)) && window_of(&sc.app, entries, id))
