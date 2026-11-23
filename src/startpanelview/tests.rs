@@ -1715,11 +1715,9 @@ fn on_short_screens_classics_programs_cascades_wrap_into_columns() {
     }
 }
 
-/// At 200% text on short screens, scale 1 and 2, Glass's Recent Items with fifteen files stays in
-/// the work area in columns, and the keys cross them.
-#[test]
-fn on_short_screens_glass_recent_items_wraps_into_columns() {
-    let dir = crate::harness::scratch().join("recent-items-columns");
+/// A recently-used list of fifteen files in a scratch folder `name`.
+fn fifteen_recent(name: &str) -> std::path::PathBuf {
+    let dir = crate::harness::scratch().join(name);
     std::fs::create_dir_all(&dir).unwrap();
     let marks: String = (0..15)
         .map(|i| {
@@ -1733,6 +1731,14 @@ fn on_short_screens_glass_recent_items_wraps_into_columns() {
         .collect();
     let xbel = dir.join("recently-used.xbel");
     std::fs::write(&xbel, format!("<xbel>{marks}</xbel>")).unwrap();
+    xbel
+}
+
+/// At 200% text on short screens, scale 1 and 2, Glass's Recent Items with fifteen files stays in
+/// the work area in columns, and the keys cross them.
+#[test]
+fn on_short_screens_glass_recent_items_wraps_into_columns() {
+    let xbel = fifteen_recent("recent-items-columns");
     for (sw, sh) in [(720, 450), (960, 540)] {
         for scale in [1, 2] {
             let at = format!("{sw}x{sh} @{scale}");
@@ -1751,6 +1757,85 @@ fn on_short_screens_glass_recent_items_wraps_into_columns() {
                 "{at}: fifteen files wrap"
             );
             keys_cross_columns(&mut h, 0, &at);
+        }
+    }
+}
+
+/// In Glass and Blue, Right on Recent Items opens it on its first row; with fifteen files in two
+/// columns, Right crosses to the second column, Left back to the first, and Left there closes it
+/// with the keyboard back on its row. The pointer on another place closes a clicked Recent Items
+/// in Blue, which opens it on hover, and leaves it open in Glass. Glass's Shut down options
+/// close on Left the same way.
+#[test]
+fn left_in_a_flyouts_first_column_closes_it_back_to_its_row() {
+    use crate::keys::{KEY_Left, KEY_Right};
+    let xbel = fifteen_recent("recent-items-left-key");
+    for interface in ["glass", "blue"] {
+        let mut h = short_screen(interface, (720, 450), 1);
+        h.state.recent = crate::recentdocs::RecentDocs::reading(xbel.clone());
+        let bar = h.state.bars[0].tree;
+        h.state.toggle_start(bar);
+        let v = h.state.start_panel.as_ref().expect("the menu opened");
+        let i = (v.model.places.iter())
+            .position(|p| p.submenu)
+            .expect("a Recent Items row");
+        let lit = |h: &crate::harness::Harness| h.state.start_panel.as_ref().unwrap().model.lit();
+        h.state.start_panel_focus(Spot::Place(i));
+        h.state.start_panel_key(&press(KEY_Right, 0));
+        assert_eq!(h.state.start_flyout(), Some(Spot::Place(i)), "{interface}");
+        let m = &h.state.menus[0];
+        assert_eq!(m.layout.columns, 2, "{interface}: fifteen files in two");
+        assert_eq!(m.hovered, Some(0), "{interface}: on its first row");
+        let per = m.layout.rows_per_column;
+        h.state.menu_key(KEY_Right);
+        assert_eq!(h.state.menus[0].hovered, Some(per), "{interface}: Right");
+        h.state.menu_key(KEY_Left);
+        assert_eq!(
+            h.state.menus.len(),
+            1,
+            "{interface}: Left in column 2 keeps it"
+        );
+        assert_eq!(h.state.menus[0].hovered, Some(0), "{interface}: Left");
+        h.state.menu_key(KEY_Left);
+        assert!(
+            h.state.menus.is_empty(),
+            "{interface}: Left in column 1 closes it"
+        );
+        assert!(
+            h.state.start_panel.is_some(),
+            "{interface}: the panel stays"
+        );
+        assert_eq!(
+            lit(&h),
+            Some(Spot::Place(i)),
+            "{interface}: back on its row"
+        );
+        h.state.start_panel_click(Spot::Place(i));
+        assert_eq!(
+            h.state.start_flyout(),
+            Some(Spot::Place(i)),
+            "{interface}: clicked"
+        );
+        h.state
+            .start_panel_pointer(Some(Spot::Place(usize::from(i == 0))));
+        assert_eq!(
+            h.state.menus.is_empty(),
+            interface == "blue",
+            "{interface}: the pointer on another place closes only a menu its row opens on hover"
+        );
+        h.state.close_menu();
+        if interface == "glass" {
+            h.state.start_panel_focus(Spot::ShutdownArrow);
+            h.state.start_panel_key(&press(KEY_Right, 0));
+            assert_eq!(h.state.start_flyout(), Some(Spot::ShutdownArrow));
+            assert_eq!(
+                h.state.menus[0].hovered,
+                Some(0),
+                "options on their first row"
+            );
+            h.state.menu_key(KEY_Left);
+            assert!(h.state.menus.is_empty(), "Left closes the options");
+            assert_eq!(lit(&h), Some(Spot::ShutdownArrow), "back on the arrow");
         }
     }
 }

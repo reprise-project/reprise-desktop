@@ -390,7 +390,7 @@ impl StartPanel {
     }
 
     /// Whether place `i` opens its menu after the hover delay: the Blue menu's Recent Items.
-    fn opens_on_hover(&self, i: usize) -> bool {
+    pub fn opens_on_hover(&self, i: usize) -> bool {
         self.shape == Shape::Blue && self.places.get(i).is_some_and(|p| p.submenu)
     }
 
