@@ -251,7 +251,8 @@ impl Shell {
         self.host_only.check(conn, &hdr).await?;
         let (reply, answer) = async_channel::bounded(1);
         emit(&self.events, self.eventfd, TrayEvent::WindowsByApp(reply));
-        Ok(answer.recv().await.unwrap_or_default())
+        // An empty list would hide every program; a failure lists them all.
+        (answer.recv().await).map_err(|_| zbus::fdo::Error::Failed("no window list".into()))
     }
 
     /// A trusted activation token for the window FileManager1 opens for bus peer `caller` while its

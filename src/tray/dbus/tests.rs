@@ -2673,13 +2673,9 @@ fn an_item_registered_once_comes_back_after_the_tray_connects_again() {
     assert_eq!(added, 2, "shown, then shown again on the new connection");
 }
 
-/// The error names `CriticalTurnOff` and `Restart` from another peer on `bus` answer (None for a
-/// reply), and how many tray events they sent, with the tray reading processes under `proc`.
-fn shell_calls(
-    bus: &reprisebus::testbus::Bus,
-    proc: &std::path::Path,
-) -> (Vec<Option<String>>, usize) {
-    let (events, received) = std::sync::mpsc::channel();
+/// A tray shell sending its events to `events`, reading processes under `proc`, and the eventfd
+/// it wakes.
+fn test_shell(events: Sender<TrayEvent>, proc: &std::path::Path) -> (Shell, OwnedFd) {
     // SAFETY: eventfd takes no pointers; the result is checked below.
     let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
     assert!(fd >= 0, "eventfd failed");
@@ -2693,7 +2689,17 @@ fn shell_calls(
         responding: Arc::default(),
         host_only: HostOnly::under(proc),
     };
-    let replies = zbus::block_on(async {
+    (shell, fd)
+}
+
+/// What `members` called on `shell` from another peer on `bus` answer: the reply, or the error
+/// name.
+fn call_shell(
+    bus: &reprisebus::testbus::Bus,
+    shell: Shell,
+    members: &[&str],
+) -> Vec<Result<zbus::Message, String>> {
+    zbus::block_on(async {
         let connect = || zbus::connection::Builder::address(bus.1.as_str());
         // Served from the builder: `ObjectServer::at` on a live connection starts taking calls
         // only once a task has run, and drops a call that comes in before that unanswered.
@@ -2703,7 +2709,7 @@ fn shell_calls(
         let caller = connect().method_timeout(CEILING).build().await.unwrap();
         let tray = tray.unique_name().unwrap().to_string();
         let mut replies = Vec::new();
-        for member in ["CriticalTurnOff", "Restart"] {
+        for &member in members {
             let reply = caller
                 .call_method(
                     Some(tray.as_str()),
@@ -2713,16 +2719,25 @@ fn shell_calls(
                     &(),
                 )
                 .await;
-            replies.push(match &reply {
-                Ok(_) => None,
-                Err(e) => match reprisebus::error::name(e) {
-                    Some(name) => Some(name.to_string()),
-                    None => panic!("{member} is answered within {CEILING:?}: {e}"),
-                },
-            });
+            replies.push(reply.map_err(|e| match reprisebus::error::name(&e) {
+                Some(name) => name.to_string(),
+                None => panic!("{member} is answered within {CEILING:?}: {e}"),
+            }));
         }
         replies
-    });
+    })
+}
+
+/// The error names `CriticalTurnOff` and `Restart` from another peer on `bus` answer (None for a
+/// reply), and how many tray events they sent, with the tray reading processes under `proc`.
+fn shell_calls(
+    bus: &reprisebus::testbus::Bus,
+    proc: &std::path::Path,
+) -> (Vec<Option<String>>, usize) {
+    let (events, received) = std::sync::mpsc::channel();
+    let (shell, _fd) = test_shell(events, proc);
+    let replies = call_shell(bus, shell, &["CriticalTurnOff", "Restart"]);
+    let replies = replies.into_iter().map(Result::err).collect();
     (replies, received.try_iter().count())
 }
 
@@ -2749,6 +2764,63 @@ fn a_sandboxed_peer_cannot_turn_the_computer_off_or_restart_it() {
         shell_calls(&bus, std::path::Path::new("/proc")),
         (vec![None, None], 2),
         "a host program is answered"
+    );
+    let _ = std::fs::remove_dir_all(&proc);
+}
+
+/// What `TaskWindows` from a host peer on `bus` answers while the compositor answers `windows`,
+/// or (None) has stopped taking events.
+fn task_windows_call(
+    bus: &reprisebus::testbus::Bus,
+    proc: &std::path::Path,
+    windows: Option<Vec<reprisebus::tray::AppWindow>>,
+) -> Result<Vec<reprisebus::tray::AppWindow>, String> {
+    let (events, received) = std::sync::mpsc::channel();
+    let (shell, _fd) = test_shell(events, proc);
+    match windows {
+        Some(windows) => {
+            std::thread::spawn(move || {
+                while let Ok(ev) = received.recv() {
+                    if let TrayEvent::WindowsByApp(reply) = ev {
+                        let _ = reply.try_send(windows.clone());
+                    }
+                }
+            });
+        }
+        None => drop(received),
+    }
+    let reply = call_shell(bus, shell, &["TaskWindows"]).remove(0);
+    reply.map(|m| m.body().deserialize().unwrap())
+}
+
+#[test]
+fn task_windows_answers_a_host_peer_and_fails_when_the_compositor_does_not() {
+    let Some(bus) = reprisebus::testbus::bus() else {
+        return;
+    };
+    let host = std::path::Path::new("/proc");
+    let windows = vec![("org.kde.ark".to_string(), 41), ("foot".to_string(), 0)];
+    assert_eq!(
+        task_windows_call(&bus, host, Some(windows.clone())),
+        Ok(windows.clone())
+    );
+    assert_eq!(
+        task_windows_call(&bus, host, None),
+        Err("org.freedesktop.DBus.Error.Failed".to_string()),
+        "no answer is a failure, never an empty list"
+    );
+    let proc = std::env::temp_dir().join(format!("reprise-tray-windows-{}", std::process::id()));
+    let root = proc.join(std::process::id().to_string()).join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join(".flatpak-info"),
+        "[Application]\nname=org.reprise.Tray\n",
+    )
+    .unwrap();
+    assert_eq!(
+        task_windows_call(&bus, &proc, Some(windows)),
+        Err("org.freedesktop.DBus.Error.AccessDenied".to_string()),
+        "a sandboxed peer is refused"
     );
     let _ = std::fs::remove_dir_all(&proc);
 }
