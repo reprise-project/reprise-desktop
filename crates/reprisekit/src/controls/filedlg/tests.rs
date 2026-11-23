@@ -18,6 +18,7 @@ mod folder_mode;
 mod keyboard;
 mod marquee;
 mod navigation;
+mod open_lists;
 mod places;
 mod shortcuts;
 mod sizing;
