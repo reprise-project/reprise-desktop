@@ -1610,7 +1610,7 @@ fn save_as_onto_an_existing_file_asks_before_replacing() {
     assert!(np.saveas.is_some(), "Save As stays open behind the prompt");
     box_win(&np);
     let f = &np.asks.up().unwrap().0.fields;
-    assert_eq!(f.buttons, ["Yes", "No"]);
+    assert_eq!(f.buttons, ["&Yes", "&No"]);
     assert_eq!(f.default, 1, "defaults to No");
 
     np.answer_box(Some(1));
@@ -1673,6 +1673,48 @@ fn an_arrow_moves_the_replace_prompt_s_focus_and_enter_presses_it() {
         "Enter on Yes wrote over the file"
     );
     let _ = std::fs::remove_file(&taken);
+}
+
+#[test]
+fn y_and_n_answer_the_replace_prompt_bare_or_with_alt() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let taken = tmp.path().join("taken.txt");
+    let mut ctx = test_ctx();
+    let letter = |ch: char, alt| {
+        let utf8 = ch.to_string();
+        Event::Key(KeyInput {
+            sym: ch as u32,
+            utf8: Some(utf8.clone()),
+            mods: repriseapp::Mods {
+                alt,
+                ..Default::default()
+            },
+            edit: reprisekit::textedit::key_for(ch as u32, false, false, Some(&utf8)),
+        })
+    };
+    for (ch, alt, replaced) in [
+        ('n', false, false),
+        ('y', false, true),
+        ('y', true, true),
+        ('n', true, false),
+    ] {
+        std::fs::write(&taken, "old").expect("write");
+        let mut np = Notepad::new(None);
+        np.edit = MultiEdit::new("new");
+        np.saveas = Some(sample_filedlg());
+        np.host.folder = Some(np.host.folders.id(tmp.path()));
+        np.saveas_accept("taken.txt", &mut test_icons());
+        assert_eq!(overwriting(&np), Some(taken.as_path()));
+        assert_eq!(focus(&np), 1, "No has the focus");
+        np.event(box_win(&np), letter(ch, alt), &mut ctx);
+        assert!(np.asks.is_empty(), "{ch} (Alt {alt}) answers the prompt");
+        assert_eq!(
+            std::fs::read_to_string(&taken).unwrap(),
+            if replaced { "new" } else { "old" },
+            "{ch} (Alt {alt})"
+        );
+        assert_eq!(np.saveas.is_some(), !replaced, "{ch} (Alt {alt}): Save As");
+    }
 }
 
 #[test]
