@@ -244,7 +244,7 @@ fn clip_cuts_on_a_char_boundary() {
 }
 
 #[test]
-fn shorten_ends_a_cut_summary_in_dots_on_a_char_boundary() {
+fn shorten_ends_a_cut_summary_in_dots_before_the_word_it_would_split() {
     assert_eq!(shorten("short".into(), 5), "short");
     assert_eq!(shorten("abcdefgh".into(), 6), "abc...");
     assert_eq!(shorten("héllo wörld".into(), 8), "héllo...");
@@ -254,6 +254,18 @@ fn shorten_ends_a_cut_summary_in_dots_on_a_char_boundary() {
         "no space before the dots"
     );
     assert_eq!(shorten("日本語のテキストです".into(), 7), "日本語の...");
+    assert_eq!(
+        shorten("a long wörds here".into(), 12),
+        "a long...",
+        "cuts before the word it would split"
+    );
+    assert_eq!(shorten("aaa bbb ccc".into(), 10), "aaa bbb...");
+    assert_eq!(
+        shorten("x https://example.org/a".into(), 12),
+        "x https:/..."
+    );
+    assert_eq!(shorten("  abcdefgh".into(), 8), "  abc...");
+    assert_eq!(shorten("日本語 のテキストです".into(), 8), "日本語 の...");
     let long = shorten("é".repeat(1000), SUMMARY_CHARS);
     assert_eq!(long.chars().count(), SUMMARY_CHARS);
     assert!(long.ends_with("..."));

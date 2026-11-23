@@ -181,15 +181,35 @@ pub fn clip(mut s: String, max: usize) -> String {
     s
 }
 
-/// `s` cut to at most `max` chars, a cut one ending in "...".
+/// `s` cut to at most `max` chars, a cut one ending in "...". The cut falls before the word it
+/// would split, or mid-word when that word alone is longer than the room left.
 pub fn shorten(mut s: String, max: usize) -> String {
     if let Some((i, _)) = s.char_indices().nth(max) {
+        let room = max.saturating_sub(3);
         let keep = s[..i].char_indices().nth_back(2).map_or(0, |(j, _)| j);
+        let keep = word_cut(&s, keep, room).unwrap_or(keep);
         s.truncate(keep);
         s.truncate(s.trim_end().len());
         s.push_str("...");
     }
     s
+}
+
+/// The byte offset where the word `cut` would split starts, when that leaves text before it and
+/// the word fits in `room` chars.
+fn word_cut(s: &str, cut: usize, room: usize) -> Option<usize> {
+    if s[cut..].starts_with(char::is_whitespace) {
+        return Some(cut);
+    }
+    let start = s[..cut]
+        .char_indices()
+        .rfind(|(_, c)| c.is_whitespace())
+        .map(|(j, c)| j + c.len_utf8())?;
+    let word = s[start..]
+        .split(char::is_whitespace)
+        .next()
+        .unwrap_or_default();
+    (!s[..start].trim_end().is_empty() && word.chars().count() <= room).then_some(start)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
