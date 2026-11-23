@@ -467,3 +467,32 @@ fn hidden_items_keeps_the_open_folders_open_and_adds_or_drops_hidden_ones() {
     assert!(node(&ex, &a).is_some_and(|n| n.expanded), "a stays open");
     assert!(node(&ex, &c).is_some_and(|n| !n.has_children));
 }
+
+#[test]
+fn a_folder_made_in_the_shown_folder_gives_its_tree_node_a_plus() {
+    let top = tempfile::Builder::new()
+        .prefix("tree")
+        .tempdir()
+        .expect("a temp dir");
+    let sub = top.path().join("sub");
+    std::fs::create_dir(&sub).expect("mkdir");
+    let mut ctx = test_ctx();
+    let here = Place::Folder(sub.clone());
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+    ex.build_tree(&mut ctx);
+    ex.show(here.clone(), &mut ctx);
+    let plus = |ex: &Explorer| {
+        let path = ex.tree_path_of(&here)?;
+        ex.tree.node(&path).map(|n| n.has_children)
+    };
+    wake_until(&mut ex, &mut ctx, |ex| plus(ex).is_some() && watched(ex));
+    assert_eq!(plus(&ex), Some(false), "sub holds no folder yet");
+
+    std::fs::create_dir(sub.join("made")).expect("mkdir");
+    // The change's refresh watches the folder again on a listing thread.
+    wake_until(&mut ex, &mut ctx, |ex| {
+        plus(ex) == Some(true) && watched(ex)
+    });
+    std::fs::remove_dir(sub.join("made")).expect("rmdir");
+    wake_until(&mut ex, &mut ctx, |ex| plus(ex) == Some(false));
+}
