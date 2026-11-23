@@ -2568,3 +2568,26 @@ fn a_name_typed_ahead_of_save_as_during_a_paste_saves_under_it() {
     assert!(np.saveas.is_none(), "Enter saved and closed Save As");
     assert_eq!(std::fs::read_to_string(&path).expect("saved"), "pasted");
 }
+
+#[test]
+fn an_alt_letter_no_menu_title_owns_types_nothing() {
+    let mut ctx = test_ctx();
+    let mut np = Notepad::new(None);
+    let letter = |ch: char, alt| {
+        let utf8 = ch.to_string();
+        Event::Key(KeyInput {
+            sym: ch as u32,
+            utf8: Some(utf8.clone()),
+            mods: repriseapp::Mods {
+                alt,
+                ..Default::default()
+            },
+            edit: reprisekit::textedit::key_for(ch as u32, false, false, Some(&utf8)),
+        })
+    };
+    np.event(MAIN, letter('q', true), &mut ctx);
+    assert_eq!(np.edit.text(), "", "Alt+Q types nothing");
+    assert!(!np.dirty);
+    np.event(MAIN, letter('q', false), &mut ctx);
+    assert_eq!(np.edit.text(), "q");
+}
