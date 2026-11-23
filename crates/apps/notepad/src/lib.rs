@@ -99,8 +99,9 @@ struct Notepad {
     focused: bool,
     /// The Find or Replace window holds the keyboard, so the edit keeps showing a found match.
     find_focused: Option<WinId>,
-    /// The Find, Replace or Go To window whose event is being handled, else `MAIN`: a box raised
-    /// during it covers that window, so the keyboard goes back there when the box closes.
+    /// The dialog whose event is being handled, else `MAIN`: a box raised during it covers that
+    /// dialog, so the keyboard goes back there when the box closes. A box raised by another box's
+    /// answer covers what that box covered.
     event_win: WinId,
     app_icon: Option<Canvas>,
     warn_icon: Option<Canvas>,
@@ -356,7 +357,8 @@ impl App for Notepad {
             self.find_focused = on.then_some(win);
         }
         self.event_win = match win {
-            GOTO | FIND | REPLACE_WIN => win,
+            GOTO | FIND | REPLACE_WIN | OPEN | SAVEAS => win,
+            w if self.asks.owns(w) => self.parent(w).unwrap_or(MAIN),
             _ => MAIN,
         };
         let reply = match win {
@@ -470,6 +472,7 @@ impl Extended for Notepad {
         let open = |w: WinId| match w {
             GOTO => self.goto.is_some(),
             FIND | REPLACE_WIN => self.find_form(w).is_some(),
+            OPEN => self.open.is_some(),
             SAVEAS => self.saveas.is_some(),
             _ => false,
         };
