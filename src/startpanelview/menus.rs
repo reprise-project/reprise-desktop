@@ -123,6 +123,7 @@ impl State {
         let at = (arrow.right(), arrow.y);
         let place = |_, size, usable| shutdown_options_at(edge, arrow, size, usable);
         self.push_start_popup(at, items, kind, place, Skin::Options);
+        self.light_flyout_from_keys(Spot::ShutdownArrow);
     }
 
     /// Recent Items beside its row, else left of the panel (a panel by the screen's right edge).
@@ -198,27 +199,28 @@ impl State {
         }
     }
 
-    /// A Blue flyout the keyboard opened (its row is lit but not under the pointer) starts on its
-    /// first row.
+    /// A flyout the keyboard opened (its row is lit but not under the pointer) starts on its first
+    /// row.
     fn light_flyout_from_keys(&mut self, row: Spot) {
         let keys = self
             .start_panel
             .as_ref()
-            .is_some_and(|v| v.model.shape == Shape::Blue && v.model.hot() != Some(row));
+            .is_some_and(|v| v.model.hot() != Some(row));
         if keys && !self.menus.is_empty() {
             self.set_menu_hover(0, Some(0));
         }
     }
 
-    /// The Blue menu's row whose menu stands open beside the panel: All Programs or Recent Items.
+    /// The panel's row whose menu stands open beside it: All Programs, Recent Items or the Shut
+    /// down arrow. Left in the menu's first column closes it.
     pub(crate) fn start_flyout(&self) -> Option<Spot> {
         let v = self.start_panel.as_ref()?;
-        if v.model.shape != Shape::Blue {
-            return None;
-        }
         let m = self.menus.first()?;
         if m.from != crate::menuview::MenuFrom::StartPanel {
             return None;
+        }
+        if m.skin == Skin::Options {
+            return Some(Spot::ShutdownArrow);
         }
         match m.kind {
             MenuKind::Groups { .. } => Some(Spot::AllPrograms),
@@ -246,9 +248,18 @@ impl State {
         left && matches!(spot, Some(Spot::Program(_)))
     }
 
-    /// Closes the menu [`State::start_flyout`] names, as the pointer moved to another row.
+    /// Closes the menu [`State::start_flyout`] names, as the pointer moved to another row, when
+    /// its row opens it on hover: a menu opened by a click stays.
     pub(super) fn close_start_flyout(&mut self) {
-        if self.start_flyout().is_some() {
+        let Some(v) = self.start_panel.as_ref() else {
+            return;
+        };
+        let hover = match self.start_flyout() {
+            Some(Spot::AllPrograms) => true,
+            Some(Spot::Place(i)) => v.model.opens_on_hover(i),
+            _ => false,
+        };
+        if hover {
             self.close_menu();
         }
     }
