@@ -323,7 +323,11 @@ fn chrome_follows_ownership_and_size_hints() {
     assert_eq!(c.buttons, ButtonSet::Close);
     assert!(c.resizable);
     let c = chrome_for(false, false, true, none);
-    assert_eq!(c.buttons, ButtonSet::MinMaxClose);
+    assert_eq!(
+        c.buttons,
+        ButtonSet::MinClose,
+        "a fixed-size window has no maximize box"
+    );
     assert!(!c.resizable);
     assert!(!chrome_for(false, true, false, none).decorated);
 }
