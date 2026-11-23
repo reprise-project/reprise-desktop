@@ -1,4 +1,4 @@
-//! The speaker's volume popup: a raised flyout ([`crate::flyout`]) over the tray with Output and Input device combos on top and, under a separator, master's column, an etched line and a column per program playing sound.
+//! The speaker's volume popup: a raised flyout ([`crate::flyout`]) over the tray with Output and Input device combos on top (greyed, reading [`NO_DEVICE`], with no device) and, under a separator, master's column, an etched line and a column per program playing sound.
 //!
 //! Columns are 96 px wide: the 32 px icon, the name ("Volume" on master), the level in percent, a vertical trackbar (one position per 5 %, loudest on top, on to 150 % shaded past 100 with [`Mix::boost`]) and a 30x26 speaker button that mutes; a muted column greys its trackbar and level. With two outputs or more a program's column ends in a combo picking its output ("Default", then each output), whose list opens above it. Six programs fit side by side; past six a scrollbar under them scrolls them a column at a time while master stays. The device combos are 360 px wide. Lengths are at 100% text and grow with it; icons, glyphs, the thumb and the scrollbar keep their size.
 //!
@@ -83,6 +83,8 @@ pub const INPUT: &str = "Input:";
 pub const NOW_PLAYING: &str = "Now Playing";
 /// A program's output combo's first row: the program follows the default output.
 pub const DEFAULT: &str = "Default";
+/// What a device combo shows, greyed, with no device to pick.
+pub const NO_DEVICE: &str = "No audio device";
 
 /// The track a media player has on, and what it can do.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -311,6 +313,27 @@ pub struct VolumePopup {
     hover: Hover,
 }
 
+/// A default device's combo over `names`, or the greyed [`NO_DEVICE`] with none.
+fn device_combo(names: &[String], picked: Option<usize>) -> Combo {
+    let mut c = Combo::names(&shown_devices(names), picked, LIST_ROWS);
+    c.enabled = !names.is_empty();
+    c
+}
+
+fn shown_devices(names: &[String]) -> Vec<String> {
+    match names {
+        [] => vec![NO_DEVICE.to_string()],
+        _ => names.to_vec(),
+    }
+}
+
+/// [`Combo::sync_names`] for a [`device_combo`].
+fn sync_device(c: &mut Combo, names: &[String], picked: Option<usize>) -> bool {
+    let changed = c.sync_names(&shown_devices(names), picked, LIST_ROWS);
+    c.enabled = !names.is_empty();
+    changed
+}
+
 fn combo_focus(p: Pick) -> Focus {
     match p {
         Pick::Device(Dir::Output) => Focus::Output,
@@ -323,8 +346,8 @@ impl VolumePopup {
     pub fn new(mix: &Mix) -> VolumePopup {
         VolumePopup {
             columns: columns(mix),
-            output: Combo::names(&mix.outputs, mix.output, LIST_ROWS),
-            input: Combo::names(&mix.inputs, mix.input, LIST_ROWS),
+            output: device_combo(&mix.outputs, mix.output),
+            input: device_combo(&mix.inputs, mix.input),
             first: 0,
             focus: Focus::Thumb(0),
             cues: false,
@@ -366,8 +389,8 @@ impl VolumePopup {
             Focus::Media(t) if !can(t) => Focus::Thumb(0),
             f => f,
         };
-        let output = self.output.sync_names(&mix.outputs, mix.output, LIST_ROWS);
-        let input = self.input.sync_names(&mix.inputs, mix.input, LIST_ROWS);
+        let output = sync_device(&mut self.output, &mix.outputs, mix.output);
+        let input = sync_device(&mut self.input, &mix.inputs, mix.input);
         let bar = columns.len() - 1 > MAX_SHOWN;
         self.ptr = std::mem::take(&mut self.ptr).carry(|p| match p {
             Part::Thumb(i) => remap.get(i).map(Part::Thumb),
