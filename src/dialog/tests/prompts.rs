@@ -607,19 +607,13 @@ fn the_undo_erase_questions_yes_undoes_again_deleting_the_item() {
     assert_eq!(d.key(Key::Enter), Outcome::UndoErase(entry));
 }
 
-/// In Run a press on a button takes the focus from the field and closes its open list, as Tab
-/// would; let go off it, Enter presses that button.
+/// In Run a press on a button takes the focus from the field, as Tab would; let go off it, Enter
+/// presses that button.
 #[test]
 fn a_press_on_runs_button_takes_the_focus_from_the_field() {
     let mut d = Dialog::run(&history());
-    d.key(Key::Drop);
-    assert!(d.field.as_ref().unwrap().combo.open.is_some());
     assert!(d.press_button(1));
     assert_eq!(d.button_focus, Some(1));
-    assert!(
-        d.field.as_ref().unwrap().combo.open.is_none(),
-        "the list shut"
-    );
     assert_eq!(d.release_button(None), Some(Outcome::Redraw));
     assert_eq!(d.button_focus, Some(1));
     assert_eq!(d.key(Key::Enter), Outcome::Close);

@@ -1171,3 +1171,20 @@ fn run_s_field_with_a_button_focused_is_pinned_in_every_interface_at_1_and_2() {
     let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/run_field.txt");
     reprisekit::pins::check_file(std::path::Path::new(pins), &got);
 }
+
+#[test]
+fn a_press_on_a_button_beside_the_open_list_only_closes_it() {
+    let mut d = Dialog::run(&history());
+    let ok = d.buttons.iter().position(|b| b.default).expect("OK");
+    d.click(Some(DialogHit::Drop));
+    assert!(d.field.as_ref().unwrap().combo.open.is_some());
+    assert!(d.press_button(ok), "the press closes the list");
+    assert_eq!(d.field.as_ref().unwrap().combo.open, None);
+    assert_eq!(d.button_focus, None, "the field keeps the focus");
+    assert_eq!(d.release_button(Some(ok)), None, "OK is not pressed");
+    assert!(d.press_button(ok));
+    assert!(
+        matches!(d.release_button(Some(ok)), Some(Outcome::Run(_))),
+        "with the list closed OK runs"
+    );
+}

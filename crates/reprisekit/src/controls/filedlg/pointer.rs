@@ -5,6 +5,7 @@ use super::{
 use crate::classic::widgets::{BarHit, bar_hit};
 use crate::controls::combo::{self, Combo};
 use crate::controls::form;
+use crate::controls::hosted::Hosted;
 use crate::controls::metrics::ControlMetrics;
 use crate::controls::pathcomplete;
 use crate::controls::placesbar;
@@ -228,6 +229,14 @@ impl FileDlg {
                 _ => Event::Redraw,
             };
         }
+        if self.off_list(hit) {
+            self.lookin.open = None;
+            self.filetype.open = None;
+            if let Some((f, _)) = &mut self.extra {
+                f.dismiss();
+            }
+            return Event::Redraw;
+        }
         match hit {
             Some(Hit::Completion(i)) => {
                 self.complete.take(&mut self.filename, i);
@@ -296,6 +305,20 @@ impl FileDlg {
                 }
             }
             None => Event::None,
+        }
+    }
+
+    /// Whether Look in's or Files of type's list, or an extra row's list or colour popup, is
+    /// open and `hit` is off its control. A press there only closes it; an extra row's form
+    /// judges a press on its own rows ([`form::Form::click`]).
+    fn off_list(&self, hit: Option<Hit>) -> bool {
+        let extra = self.extra.as_ref().is_some_and(|(f, _)| f.popup_open());
+        let open = self.lookin.open.is_some() || self.filetype.open.is_some() || extra;
+        open && match hit {
+            Some(Hit::LookIn(_)) => self.lookin.open.is_none(),
+            Some(Hit::FileType(_)) => self.filetype.open.is_none(),
+            Some(Hit::Extra(_)) => !extra,
+            _ => true,
         }
     }
 
