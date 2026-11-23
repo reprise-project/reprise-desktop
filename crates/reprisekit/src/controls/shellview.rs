@@ -53,7 +53,7 @@ pub use keys::{step, type_ahead};
 pub(crate) use layout::LAYOUTS;
 pub use layout::{LayoutCache, label_rect, layout};
 pub use marquee::{MARQUEE_SLOP, MarqueeDrag};
-pub(crate) use rename::draw_rename;
+pub(crate) use rename::draw_wrapped_rename;
 pub use rename::{edit_index_at, rename_rect};
 pub use scroll::{
     drag_hthumb, drag_thumb, ensure_visible, follow, hpage, hscroll, hstep, page, reveal, scroll,
