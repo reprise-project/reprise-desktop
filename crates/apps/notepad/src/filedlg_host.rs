@@ -192,19 +192,16 @@ impl Notepad {
         }
     }
 
-    /// The "already exists" prompt: warning triangle, full path, Yes / No with No the default and
-    /// neither carrying an access key. Yes writes over the file; No, Escape and the close box go
-    /// back to Save As with the file untouched.
+    /// The "already exists" prompt: warning triangle, full path, Yes / No with No the default.
+    /// Yes (Y) writes over the file; No (N), Escape and the close box go back to Save As with the
+    /// file untouched.
     pub(crate) fn overwrite_box(&self, path: &Path) -> MsgBox {
         MsgBox::new(
             tr!("title-save-as"),
             msgbox::Fields {
                 text: tr!("overwrite", path = path.display().to_string()),
                 icon: self.warn_icon.clone(),
-                buttons: vec![
-                    reprisekit::kit_tr!("yes-bare"),
-                    reprisekit::kit_tr!("no-bare"),
-                ],
+                buttons: vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
                 default: 1,
                 min_text_h: None,
                 min_w: 0,

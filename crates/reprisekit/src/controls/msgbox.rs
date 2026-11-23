@@ -453,6 +453,32 @@ mod tests {
         assert_eq!(f.key(Key::Enter), Event::Pressed(button_id(1)));
     }
 
+    #[test]
+    fn y_and_n_press_yes_and_no_bare_or_with_alt_and_no_keeps_the_focus() {
+        use crate::controls::form::{Event, Key};
+        let (text, px) = rend();
+        let replace = Fields {
+            text: "a.txt already exists.".into(),
+            icon: None,
+            buttons: vec![crate::tr!("yes"), crate::tr!("no")],
+            default: 1,
+            min_text_h: None,
+            min_w: 0,
+            max_w: 0,
+        };
+        let presses = [
+            (Key::Char('y'), button_id(0)),
+            (Key::Char('N'), button_id(1)),
+            (Key::Access('Y'), button_id(0)),
+            (Key::Access('n'), button_id(1)),
+        ];
+        for (key, pressed) in presses {
+            let mut f = form(&replace, &text, px, TextUnits::ONE);
+            assert_eq!(f.focus().map(|i| f.items[i].id), Some(button_id(1)));
+            assert_eq!(f.key(key.clone()), Event::Pressed(pressed), "{key:?}");
+        }
+    }
+
     /// The save-changes prompt embeds a second line with `\n`; the box
     /// grows one `LINE_H` taller to fit it, draws it as two rows through
     /// `Control::Lines` rather than one squashed `Control::Label` row,

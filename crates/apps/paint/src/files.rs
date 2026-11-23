@@ -298,10 +298,7 @@ impl Paint {
         for file in files {
             self.ask(
                 tr!("recovered"),
-                vec![
-                    reprisekit::kit_tr!("yes-bare"),
-                    reprisekit::kit_tr!("no-bare"),
-                ],
+                vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
                 0,
                 Prompt::Recovered(file),
             );
@@ -422,10 +419,7 @@ impl Paint {
         if taken(&path) && self.path.as_deref() != Some(&path) {
             self.ask(
                 tr!("overwrite", path = path.display().to_string()),
-                vec![
-                    reprisekit::kit_tr!("yes-bare"),
-                    reprisekit::kit_tr!("no-bare"),
-                ],
+                vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
                 1,
                 Prompt::Overwrite(path, kind),
             );

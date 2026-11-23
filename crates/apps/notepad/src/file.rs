@@ -94,10 +94,7 @@ impl Notepad {
                         encoding = encoding_name(bad.encoding)
                     ),
                     icon: self.warn_icon.clone(),
-                    buttons: vec![
-                        reprisekit::kit_tr!("yes-bare"),
-                        reprisekit::kit_tr!("no-bare"),
-                    ],
+                    buttons: vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
                     default: 0,
                     min_text_h: None,
                     min_w: 0,
@@ -166,10 +163,7 @@ impl Notepad {
             msgbox::Fields {
                 text: tr!("recovered"),
                 icon: self.warn_icon.clone(),
-                buttons: vec![
-                    reprisekit::kit_tr!("yes-bare"),
-                    reprisekit::kit_tr!("no-bare"),
-                ],
+                buttons: vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
