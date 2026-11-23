@@ -155,12 +155,6 @@ pub fn close_windows(pids: &[i32]) -> zbus::Result<u32> {
     windows_call("CloseWindows", pids)
 }
 
-/// How many windows the processes `pids` (host pids) still show. Blocks for at most
-/// [`crate::METHOD_TIMEOUT`].
-pub fn count_windows(pids: &[i32]) -> zbus::Result<u32> {
-    windows_call("CountWindows", pids)
-}
-
 /// Every mapped window, by app id and client pid (0 when unknown): Task Manager lists a program
 /// while it shows one. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn windows_by_app() -> zbus::Result<Vec<AppWindow>> {
