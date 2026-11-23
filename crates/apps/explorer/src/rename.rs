@@ -6,6 +6,7 @@ use reprisefs::batchrename;
 use reprisefs::deadline::Gate;
 use reprisefs::listing::Item;
 use reprisefs::names::{Verdict, failed_text, verdict};
+use reprisefs::undo::{FileId, Undoable, file_id};
 use reprisekit::controls::batchrename as renamebox;
 use reprisekit::controls::form::{self, Form};
 use reprisekit::textedit::{TextEdit, keysym};
@@ -22,16 +23,19 @@ pub(crate) enum PasteField {
 }
 
 impl Explorer {
+    /// `from` was renamed to `to`, the item there now having `id` ([`reprisefs::undo::file_id`]).
     pub(crate) fn after_rename(
         &mut self,
         from: &std::path::Path,
         to: &std::path::Path,
+        id: Option<FileId>,
         was_dir: bool,
         ctx: &mut Ctx,
     ) {
-        self.undos.push(reprisefs::undo::Undoable::Rename {
+        self.undos.push(Undoable::Rename {
             from: from.to_path_buf(),
             to: to.to_path_buf(),
+            id,
         });
         self.sync_undo();
         if !was_dir {
@@ -173,9 +177,9 @@ impl Explorer {
                 let (from, dest) = (it.path.clone(), to.clone());
                 let work = move |gate: &Gate| {
                     if !gate.change(&from) {
-                        return Ok(());
+                        return Ok(None);
                     }
-                    reprisefs::hidden::rename(&from, &to)
+                    reprisefs::hidden::rename(&from, &to).map(|()| file_id(&to))
                 };
                 self.act(
                     ctx,
@@ -192,14 +196,17 @@ impl Explorer {
         &mut self,
         it: &Item,
         to: PathBuf,
-        done: std::io::Result<()>,
+        done: std::io::Result<Option<FileId>>,
         ctx: &mut Ctx,
     ) -> Reply {
-        if let Err(e) = done {
-            log::warn!("explorer: rename {} failed: {e}", it.path.display());
-            return self.message_box("Rename", failed_text(&it.name, &e), ctx);
-        }
-        self.after_rename(&it.path, &to, it.is_dir, ctx);
+        let id = match done {
+            Ok(id) => id,
+            Err(e) => {
+                log::warn!("explorer: rename {} failed: {e}", it.path.display());
+                return self.message_box("Rename", failed_text(&it.name, &e), ctx);
+            }
+        };
+        self.after_rename(&it.path, &to, id, it.is_dir, ctx);
         // `refresh` keeps the selection by path, and the old path is gone.
         let reply = self.refresh(ctx);
         if self.reading.is_some() {
@@ -376,9 +383,12 @@ impl Explorer {
                     if let Some(at) = &at
                         && !gate.change(at)
                     {
-                        return Ok(Vec::new());
+                        return (Vec::new(), None);
                     }
-                    batchrename::apply(&steps).map(|()| steps)
+                    match batchrename::apply(&steps) {
+                        Ok(()) => (undoables(steps), None),
+                        Err(mut f) => (undoables(std::mem::take(&mut f.left)), Some(f)),
+                    }
                 };
                 let reply = self.act(
                     ctx,
@@ -398,21 +408,12 @@ impl Explorer {
 
     fn batch_renamed(
         &mut self,
-        done: Result<Vec<(PathBuf, PathBuf)>, batchrename::Failed>,
+        (undone, failed): (Vec<Undoable>, Option<batchrename::Failed>),
         landed: Vec<PathBuf>,
         dirs: bool,
         ctx: &mut Ctx,
     ) -> Reply {
-        let (undone, failed) = match done {
-            Ok(steps) => (steps, None),
-            Err(mut f) => (std::mem::take(&mut f.left), Some(f)),
-        };
-        self.undos.push_all(
-            undone
-                .into_iter()
-                .map(|(from, to)| reprisefs::undo::Undoable::Rename { from, to })
-                .collect(),
-        );
+        self.undos.push_all(undone);
         self.sync_undo();
         if dirs && let Some(at) = self.place.path() {
             let place = crate::place::Place::from_path(&at);
@@ -430,6 +431,16 @@ impl Explorer {
         }
         reply
     }
+}
+
+/// Renames `steps` did, each with the id of the item at its new name. Blocks on the file system.
+fn undoables(steps: Vec<(PathBuf, PathBuf)>) -> Vec<Undoable> {
+    (steps.into_iter())
+        .map(|(from, to)| {
+            let id = file_id(&to);
+            Undoable::Rename { from, to, id }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -496,6 +507,32 @@ mod tests {
         assert!(ex.sv.edit.is_none());
         assert!(matches!(ex.dialog(), Some(Dialog::BatchRename(_))));
         assert_eq!(ex.children()[0].title, "Rename");
+    }
+
+    #[test]
+    fn undo_rename_leaves_a_different_file_that_took_the_new_name() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        std::fs::write(dir.path().join("a.txt"), "renamed").expect("write");
+        let mut ctx = test_ctx();
+        let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        ex.sv.selection.set_only(Some(0));
+        ex.run(Command::Rename, &mut ctx);
+        let (_, edit) = ex.sv.edit.as_mut().expect("the rename box");
+        *edit = TextEdit::new(edit.text.replacen('a', "b", 1), false);
+        ex.commit_rename(&mut ctx);
+        assert_eq!(names(dir.path()), ["b.txt"]);
+        let b = dir.path().join("b.txt");
+        std::fs::rename(&b, dir.path().join("c.txt")).expect("rename");
+        std::fs::write(&b, "saved by another program").expect("write");
+
+        ex.run(Command::Undo, &mut ctx);
+        ex.finish_puts(&mut ctx);
+        assert_eq!(names(dir.path()), ["b.txt", "c.txt"], "nothing renamed");
+        assert_eq!(
+            std::fs::read_to_string(&b).expect("read"),
+            "saved by another program"
+        );
+        assert_eq!(ex.undo, None, "the entry is dropped");
     }
 
     #[test]

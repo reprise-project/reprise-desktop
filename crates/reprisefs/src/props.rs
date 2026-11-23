@@ -792,11 +792,12 @@ pub fn attr_verb(read_only: bool) -> String {
     }
 }
 
-/// What [`write_set`] did: where each item is now, the renames Hidden made (old path first), and the first failure.
+/// What [`write_set`] did: where each item is now, the renames Hidden made (old path first, then the
+/// new one and the [`crate::undo::file_id`] of the item there), and the first failure.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SetWrite {
     pub now: Vec<PathBuf>,
-    pub renames: Vec<(PathBuf, PathBuf)>,
+    pub renames: Vec<(PathBuf, PathBuf, Option<crate::undo::FileId>)>,
     pub failed: Vec<(PathBuf, String)>,
 }
 
@@ -823,7 +824,8 @@ pub fn write_set(
                 let to = path.with_file_name(w);
                 match crate::hidden::rename(&path, &to) {
                     Ok(()) => {
-                        out.renames.push((path, to.clone()));
+                        let id = crate::undo::file_id(&to);
+                        out.renames.push((path, to.clone(), id));
                         out.now.push(to);
                     }
                     Err(e) => {

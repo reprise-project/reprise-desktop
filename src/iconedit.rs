@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use reprisefs::undo::{EntryId, NoBin, Undoable};
+use reprisefs::undo::{EntryId, FileId, NoBin, Undoable, file_id};
 use reprisekit::textedit::EditKey;
 use smithay::input::keyboard::Keycode;
 
@@ -494,8 +494,9 @@ impl State {
             } else {
                 desktop::rename_file(&entry, &typed)
             };
+            let done = done.map(|to| to.map(|to| (file_id(&to), to)));
             Box::new(move |state: &mut State| match done {
-                Ok(Some(to)) => state.renamed(&entry.path, &to),
+                Ok(Some((id, to))) => state.renamed(&entry.path, &to, id),
                 Ok(None) => state.rescan_desktop(),
                 Err(text) => {
                     log::warn!("desktop: rename {}: {text}", entry.path.display());
@@ -516,7 +517,7 @@ impl State {
     /// A desktop file was renamed on disk by an inline rename: its dragged cell follows the new
     /// name, then the desktop rescans. Its icon takes the new path first, so the rescan keeps
     /// it selected.
-    pub fn renamed(&mut self, from: &Path, to: &Path) {
+    pub fn renamed(&mut self, from: &Path, to: &Path, id: Option<FileId>) {
         if let Some(view) = self.desktop.as_mut() {
             if let Some(i) = view.entries.iter().position(|e| e.path == from) {
                 let name = file_name(to);
@@ -527,6 +528,7 @@ impl State {
             view.undos.push(Undoable::Rename {
                 from: from.to_path_buf(),
                 to: to.to_path_buf(),
+                id,
             });
         }
         self.rescan_desktop();
@@ -588,7 +590,7 @@ impl State {
                 let mut left = None;
                 if let Some(view) = state.desktop.as_mut() {
                     for step in &undo.steps()[..done] {
-                        if let Undoable::Rename { from, to } = step {
+                        if let Undoable::Rename { from, to, .. } = step {
                             move_cell(view, &file_name(to), &file_name(from));
                         }
                     }

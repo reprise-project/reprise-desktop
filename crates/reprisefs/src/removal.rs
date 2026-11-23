@@ -92,7 +92,7 @@ impl Removal {
             Removal::Empty(root) => root.join("files"),
             Removal::Undo { step, .. } => {
                 let (path, back) = match step {
-                    Undoable::Move { from, to, .. } | Undoable::Rename { from, to } => {
+                    Undoable::Move { from, to, .. } | Undoable::Rename { from, to, .. } => {
                         (to, from.parent())
                     }
                     Undoable::Trash(t) => (&t.files, t.original.parent()),

@@ -151,7 +151,7 @@ impl PendingRemoval {
             .unzip();
         let title = |p: &std::path::Path| p.parent().map(|d| Place::from_path(d).title_in(shares));
         let (kind, from, to) = match undo.steps().first() {
-            Some(Undoable::Move { from, to, .. } | Undoable::Rename { from, to }) => {
+            Some(Undoable::Move { from, to, .. } | Undoable::Rename { from, to, .. }) => {
                 (Kind::Move, title(to), title(from))
             }
             Some(Undoable::Trash(t)) => (
