@@ -913,3 +913,86 @@ fn the_recycle_bin_with_nothing_selected_offers_properties() {
     };
     assert!(!live(&background_menu(&computer)), "Computer has none");
 }
+
+fn enabled_by_label(items: &[MenuItem], want: &str) -> bool {
+    let i = (0..items.len()).find(|&i| label(items, i) == want);
+    enabled(items, i.unwrap_or_else(|| panic!("a {want} row")))
+}
+
+#[test]
+fn a_shell_rows_menu_opens_it_and_has_properties_where_its_place_has_a_sheet() {
+    for (place, sheet) in [
+        (Place::Documents, true),
+        (Place::Home, true),
+        (Place::Computer, false),
+        (Place::network(), false),
+        (Place::RecycleBin, true),
+    ] {
+        let m = shell_row_menu(&place);
+        let rows = m.items();
+        let labels: Vec<&str> = (0..rows.len()).map(|i| label(rows, i)).collect();
+        assert_eq!(
+            labels,
+            ["Open", "Open in New Tab", "Explore", "", "Properties"],
+            "{place:?}"
+        );
+        assert!(matches!(rows[0], MenuItem::Entry { bold: true, .. }));
+        assert_eq!(enabled(rows, 4), sheet, "{place:?}'s Properties");
+        assert_eq!(m.command(&[0]), Command::Open);
+        assert_eq!(m.command(&[4]), Command::Properties);
+    }
+}
+
+#[test]
+fn the_file_rows_grey_while_only_desktop_rows_are_selected() {
+    let only_rows = MenuState {
+        selection: 2,
+        shell_rows: 2,
+        ..Default::default()
+    };
+    let with_a_file = MenuState {
+        selection: 3,
+        ..only_rows.clone()
+    };
+    for (title, want) in [
+        (0, "Create Shortcut"),
+        (0, "Delete"),
+        (0, "Rename"),
+        (1, "Cut"),
+        (1, "Copy"),
+    ] {
+        assert!(
+            !enabled_by_label(&bar_rows(&only_rows, title), want),
+            "{want} greys"
+        );
+        assert!(
+            enabled_by_label(&bar_rows(&with_a_file, title), want),
+            "{want} takes the file"
+        );
+    }
+    assert!(enabled_by_label(&bar_rows(&only_rows, 0), "Properties"));
+}
+
+#[test]
+fn properties_greys_while_the_selected_rows_have_no_sheet() {
+    let sheetless = MenuState {
+        selection: 1,
+        shell_rows: 1,
+        sheetless: true,
+        ..Default::default()
+    };
+    assert!(!enabled_by_label(&bar_rows(&sheetless, 0), "Properties"));
+    assert!(!enabled_by_label(
+        background_menu(&sheetless).items(),
+        "Properties"
+    ));
+    let with_sheet = MenuState {
+        sheetless: false,
+        ..sheetless.clone()
+    };
+    assert!(enabled_by_label(&bar_rows(&with_sheet, 0), "Properties"));
+    assert!(enabled_by_label(
+        background_menu(&with_sheet).items(),
+        "Properties"
+    ));
+}

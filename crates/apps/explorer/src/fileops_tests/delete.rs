@@ -504,3 +504,39 @@ fn a_failed_folder_delete_names_the_entry_by_its_path_under_the_folder() {
         "what went stays gone"
     );
 }
+
+/// Select All on the Desktop takes in its rows for the shell places; Copy and Delete act on the
+/// files alone.
+#[test]
+fn a_selection_holding_desktop_rows_copies_and_deletes_its_files_alone() {
+    let _guard = lock(&TRASH_ENV);
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let file = dir.path().join("a.txt");
+    std::fs::write(&file, "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::rows_over(dir.path(), &mut ctx);
+    ex.run(Command::SelectAll, &mut ctx);
+    assert_eq!(ex.sv.selection.len(), 6, "the five rows and the file");
+    assert_eq!(ex.selected_paths(), std::slice::from_ref(&file));
+
+    let reply = ex.run(Command::Copy, &mut ctx);
+    assert_eq!(reply.copy_files.map(|c| c.paths), Some(vec![file.clone()]));
+    let reply = ex.run(Command::CopyAsPath, &mut ctx);
+    assert_eq!(
+        reply.copy,
+        Some(reprisefs::ops::path_lines([file.as_path()]))
+    );
+
+    ex.run(Command::Delete { erase: false }, &mut ctx);
+    match ex.dialog() {
+        Some(Dialog::Confirm(c)) => {
+            assert_eq!(c.paths, std::slice::from_ref(&file));
+            assert!(
+                c.text.contains("'a.txt'"),
+                "the box names the file: {}",
+                c.text
+            );
+        }
+        other => panic!("no confirm box: {:?}", other.is_some()),
+    }
+}

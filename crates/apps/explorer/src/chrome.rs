@@ -102,7 +102,7 @@ impl Explorer {
             0,
             Place::Desktop.icon_name(),
         )];
-        for p in crate::foldertree::desktop_places() {
+        for p in crate::place::desktop_places() {
             let computer = p == Place::Computer;
             let icon = p.icon_name();
             shell.push((p.title(), p, 1, icon));

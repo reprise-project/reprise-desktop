@@ -318,18 +318,12 @@ impl Explorer {
         self.settings.pane_open.get(title).copied().unwrap_or(true)
     }
 
+    /// What the file tasks act on: the selection without the Desktop's rows.
     fn pane_selection(&self) -> Sel {
-        match self.sv.selection.len() {
-            0 => Sel::None,
-            1 => {
-                let dir = self
-                    .sv
-                    .selection
-                    .single()
-                    .and_then(|i| self.items.get(i))
-                    .is_some_and(|it| it.is_folder());
-                if dir { Sel::Folder } else { Sel::File }
-            }
+        match self.picked().collect::<Vec<_>>()[..] {
+            [] => Sel::None,
+            [(_, it)] if it.is_folder() => Sel::Folder,
+            [_] => Sel::File,
             _ => Sel::Many,
         }
     }

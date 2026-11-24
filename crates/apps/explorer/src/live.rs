@@ -429,7 +429,12 @@ impl Explorer {
                 let Some(it) = self.items.get(i) else {
                     return;
                 };
-                let lines = if tip_reads_folder(it) {
+                let lines = if let Some(place) = Place::of_row(&it.path) {
+                    match place.shell() {
+                        Some(s) => vec![s.tip().to_string()],
+                        None => return,
+                    }
+                } else if tip_reads_folder(it) {
                     match &self.folder_tip {
                         Some((path, lines)) if *path == it.path => lines.clone(),
                         _ => return,
@@ -615,9 +620,10 @@ impl Explorer {
     }
 }
 
-/// A folder whose tip lists its contents: not a drive, not a symlink to a folder.
+/// A folder whose tip lists its contents: not a drive, not a symlink to a folder, not a Desktop
+/// row.
 fn tip_reads_folder(it: &Item) -> bool {
-    it.is_folder() && it.drive.is_none()
+    it.is_folder() && it.drive.is_none() && Place::of_row(&it.path).is_none()
 }
 
 /// The first [`reprisefs::imagesize::HEAD_BYTES`] of `path`, where an image states its size.
