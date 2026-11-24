@@ -405,6 +405,8 @@ pub mod pointer;
 #[cfg(test)]
 mod inputtests;
 #[cfg(test)]
+mod layertests;
+#[cfg(test)]
 mod locktests;
 #[cfg(test)]
 pub(crate) mod tests;

@@ -782,6 +782,23 @@ impl Harness {
             .expect("the surface on the compositor's side")
     }
 
+    /// The `wl_output` `c` bound as it connected for the output named `name`.
+    pub fn bound_output(&self, c: &TestClient, name: &str) -> WlOutput {
+        use smithay::reexports::wayland_server::protocol::wl_output::WlOutput as ServerOutput;
+        use wc::Proxy;
+        (c.side.outputs.iter())
+            .find(|o| {
+                let id = o.id().protocol_id();
+                c.server
+                    .object_from_protocol_id::<ServerOutput>(&self.state.dh, id)
+                    .ok()
+                    .and_then(|r| Output::from_resource(&r))
+                    .is_some_and(|out| out.name() == name)
+            })
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} bound"))
+    }
+
     /// A flyout as `repriseapp` opens one: an overlay layer surface over the whole output that
     /// holds the keyboard outright, configured and mapped with its first buffer.
     pub fn map_flyout(&mut self, c: &mut TestClient) -> WlSurface {
@@ -795,6 +812,16 @@ impl Harness {
         c: &mut TestClient,
         layer: zwlr_layer_shell_v1::Layer,
     ) -> WlSurface {
+        self.map_exclusive_layer_on(c, None, layer).0
+    }
+
+    /// [`Harness::map_exclusive_layer`] on `output`, or where the compositor puts it for None.
+    pub fn map_exclusive_layer_on(
+        &mut self,
+        c: &mut TestClient,
+        output: Option<&WlOutput>,
+        layer: zwlr_layer_shell_v1::Layer,
+    ) -> (WlSurface, ZwlrLayerSurfaceV1) {
         let qh = c.qh();
         let surface = (c.side.compositor.as_ref())
             .expect("wl_compositor")
@@ -803,7 +830,7 @@ impl Harness {
             .expect("zwlr_layer_shell_v1")
             .get_layer_surface(
                 &surface,
-                None,
+                output,
                 layer,
                 "test.flyout".into(),
                 &qh,
@@ -816,7 +843,7 @@ impl Harness {
         surface.commit();
         self.roundtrip(c);
         self.roundtrip(c);
-        surface
+        (surface, layer)
     }
 
     /// A full-width panel on the bottom layer (under the windows) of the output under the

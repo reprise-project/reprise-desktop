@@ -262,11 +262,24 @@ impl WlrLayerShellHandler for State {
         layer: Layer,
         namespace: String,
     ) {
-        // The client may leave the output to us: the one under the pointer.
-        let output = output.as_ref().and_then(Output::from_resource).or_else(|| {
-            let p = self.pointer_location();
-            self.output_at(p.x, p.y)
-        });
+        // The client may leave the output to us: the one under the pointer. In lock mode a
+        // Console output shows only its lock: a surface naming one goes where it would with none.
+        let named = output.as_ref().and_then(Output::from_resource);
+        let output = (named.clone().filter(|o| crate::console::on_desk(self, o)))
+            .or_else(|| {
+                let p = self.pointer_location();
+                (self.output_at(p.x, p.y)).filter(|o| crate::console::on_desk(self, o))
+            })
+            .or_else(|| self.first_output());
+        if let (Some(asked), Some(got)) = (&named, &output)
+            && asked != got
+        {
+            log::info!(
+                "layer surface {namespace:?}: lock mode puts it on {} for {}",
+                got.name(),
+                asked.name()
+            );
+        }
         let Some(output) = output else {
             log::warn!("layer surface without an output; closing");
             surface.send_close();
