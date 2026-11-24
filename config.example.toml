@@ -1105,76 +1105,108 @@ action = "terminal"
 # `[[startmenu.items]]`; an entry with none of these (or `items = []`) is an
 # empty folder. `icon` is an icon theme name or absolute path.
 # `&` before a letter in a label makes it the access key (underlined when
-# navigating by keyboard); `&&` is a literal ampersand. Leaving the whole
-# block out gives exactly this menu. reprise-settings' Start Menu tab
-# edits this block and writes it back whole, without comments inside it.
-[[startmenu]]
-label = "&Programs"
-icon = "applications-other"
-submenu = "programs"
-
-[[startmenu]]
-label = "&Documents"
-icon = "folder-documents"
-submenu = "documents"
-
-[[startmenu]]
-label = "&Settings"
-icon = "preferences-system"
-[[startmenu.items]]
-label = "&Control Panel"
-icon = "preferences-other"
-submenu = "settings"
-tip = "Provides options for you to customize the appearance and functionality of your computer, add or remove programs, and set up network connections and user accounts."
-[[startmenu.items]]
-separator = true
-[[startmenu.items]]
-label = "&Network Connections"
-icon = "network-workgroup"
-command = "reprise-network"
-tip = "Displays existing network connections on this computer and helps you create new ones"
-[[startmenu.items]]
-label = "&Printers"
-icon = "printer"
-command = "reprise-printers"
-tip = "Add, remove, and configure local and network printers, and see what is printing."
-[[startmenu.items]]
-label = "&Taskbar and Start Menu"
-icon = "preferences-desktop"
-command = "reprise-settings --page taskbar" # Reprise Settings on its Taskbar page; its Advanced page's Edit File... button opens this file
-tip = "Customize the Start Menu and the taskbar, such as the types of items to be displayed and how they should appear."
-
-[[startmenu]]
-label = "Sear&ch"
-icon = "system-search"
-[[startmenu.items]]
-label = "&For Files or Folders..."
-icon = "system-search"
-command = 'reprise-explorer --search "$HOME"'
-[[startmenu.items]]
-label = "On the &Internet..."
-icon = "web-browser"
-command = "xdg-open https://duckduckgo.com/"
-
-[[startmenu]]
-label = "&Help and Support"
-icon = "help-browser"
-command = "xdg-open https://github.com/reprise-project/reprise-desktop"
-
-[[startmenu]]
-label = "&Run..."
-icon = "system-run"
-action = "run"               # the Run dialog; also on Super+r
-
-[[startmenu]]
-separator = true
-
-[[startmenu]]
-label = "&Log Off {user}..."   # {user} is the login name
-icon = "gnome-session-logout"
-action = "logoff"            # asks first, then exits the compositor
-
-[[startmenu]]
-label = "T&urn Off Computer..."
-icon = "system-shutdown"
-action = "turnoff"           # Stand By / Turn Off / Restart, running the [power] commands
+# navigating by keyboard); `&&` is a literal ampersand.
+#
+# Reprise Settings' Start Menu page writes what sets your menu apart from
+# the default one, the menu below, as [[startmenu_changes]], so a row you
+# leave alone follows the defaults of each new Reprise. A change names a
+# default row by the id beside its header:
+# - `default = "<id>"` changes that row: `hidden = true` leaves it out (a
+#   folder with its rows), `label`, `icon` and `tip` replace its own, and
+#   `after` moves it within its folder.
+# - Without `default`, the change is a row of your own, written like a
+#   [[startmenu]] entry; `folder = "<id>"` puts it in that default folder,
+#   the menu itself when left out.
+# - `after = "<id>"` puts the row after the place that default row has in
+#   its folder (even when it is hidden or moved), `after = ""` at the
+#   folder's top. Left out, or naming no row of the folder, a row of your
+#   own goes at the folder's end and a default row stays where it is. Rows
+#   after the same row keep the order they have here.
+# A change to an id the defaults no longer have is ignored, and a row whose
+# `folder` is no longer a default folder goes at the menu's end. The rows in
+# a hidden folder are hidden with it.
+#[[startmenu_changes]]
+#default = "help"
+#hidden = true
+#
+#[[startmenu_changes]]
+#label = "Terminal"
+#icon = "utilities-terminal"
+#action = "terminal"
+#after = "run"
+#
+# A [[startmenu]] block lists the whole menu instead and wins over
+# [[startmenu_changes]]: the default rows of a later Reprise never reach it,
+# and the Start Menu page keeps it whole. Restore Defaults on that page takes
+# either out, so the page saves changes from then on, and the whole list's
+# edits are lost. Leaving both out gives this menu:
+#[[startmenu]]                 # programs
+#label = "&Programs"
+#icon = "applications-other"
+#submenu = "programs"
+#
+#[[startmenu]]                 # documents
+#label = "&Documents"
+#icon = "folder-documents"
+#submenu = "documents"
+#
+#[[startmenu]]                 # settings
+#label = "&Settings"
+#icon = "preferences-system"
+#[[startmenu.items]]           # control-panel
+#label = "&Control Panel"
+#icon = "preferences-other"
+#submenu = "settings"
+#tip = "Provides options for you to customize the appearance and functionality of your computer, add or remove programs, and set up network connections and user accounts."
+#[[startmenu.items]]           # settings-separator
+#separator = true
+#[[startmenu.items]]           # network-connections
+#label = "&Network Connections"
+#icon = "network-workgroup"
+#command = "reprise-network"
+#tip = "Displays existing network connections on this computer and helps you create new ones"
+#[[startmenu.items]]           # printers
+#label = "&Printers"
+#icon = "printer"
+#command = "reprise-printers"
+#tip = "Add, remove, and configure local and network printers, and see what is printing."
+#[[startmenu.items]]           # taskbar
+#label = "&Taskbar and Start Menu"
+#icon = "preferences-desktop"
+#command = "reprise-settings --page taskbar" # Reprise Settings on its Taskbar page; its Advanced page's Edit File... button opens this file
+#tip = "Customize the Start Menu and the taskbar, such as the types of items to be displayed and how they should appear."
+#
+#[[startmenu]]                 # search
+#label = "Sear&ch"
+#icon = "system-search"
+#[[startmenu.items]]           # search-files
+#label = "&For Files or Folders..."
+#icon = "system-search"
+#command = 'reprise-explorer --search "$HOME"'
+#[[startmenu.items]]           # search-internet
+#label = "On the &Internet..."
+#icon = "web-browser"
+#command = "xdg-open https://duckduckgo.com/"
+#
+#[[startmenu]]                 # help
+#label = "&Help and Support"
+#icon = "help-browser"
+#command = "xdg-open https://github.com/reprise-project/reprise-desktop"
+#
+#[[startmenu]]                 # run
+#label = "&Run..."
+#icon = "system-run"
+#action = "run"               # the Run dialog; also on Super+r
+#
+#[[startmenu]]                 # separator
+#separator = true
+#
+#[[startmenu]]                 # logoff
+#label = "&Log Off {user}..."   # {user} is the login name
+#icon = "gnome-session-logout"
+#action = "logoff"            # asks first, then exits the compositor
+#
+#[[startmenu]]                 # turnoff
+#label = "T&urn Off Computer..."
+#icon = "system-shutdown"
+#action = "turnoff"           # Stand By / Turn Off / Restart, running the [power] commands

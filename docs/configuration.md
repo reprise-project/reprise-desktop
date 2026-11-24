@@ -71,7 +71,7 @@ while an editor saves it doesn't.
 | `[osd]` | `caps_lock`, `num_lock`: whether the key's on or off shows on screen when it changes, both on by default (Settings > Keyboard) |
 | `[[keybinds]]` | shortcuts, layered over the defaults; `action = "spawn"` with `command` runs a program, `action = "none"` unbinds a chord. config.example.toml lists every action |
 | `[[global_shortcuts]]`, `[portal] shortcuts_denied` | apps' shortcuts through the GlobalShortcuts portal and the apps refused them, written by the portal and Settings > Keyboard |
-| `[[startmenu]]`, `startmenu_style` | the Classic Start menu's rows, and which Start menu you get |
+| `[[startmenu_changes]]`, `[[startmenu]]`, `startmenu_style` | the Classic Start menu's rows, as changes to the default menu (what Settings > Start Menu writes, so later default rows still reach you) or as the whole menu, which wins and stays whole until Restore Defaults on that page takes it out, and which Start menu you get |
 | `[[outputs]]` | per-monitor mode, scale, rotation, position, adaptive sync and ICC profile; a layout saved for the connected set of monitors wins over all but the profile ([features.md](features.md#displays)) |
 | `[display]` | `gpu`: which GPU draws and drives the monitors; `all_gpus`: also open the other GPUs. Both read when Reprise starts. `auto_rotate`: the built-in screen turns with the machine |
 | `desktop_widgets` | widgets on the desktop: `clock`, `calendar`, `meter`; none by default ([features.md](features.md#desktop)) |

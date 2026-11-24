@@ -172,8 +172,8 @@ pub type Dropped = Vec<DroppedKey>;
 
 /// [`lenient`] with each dropped key taking its value in `base` (the table the running config
 /// was built from), when it has one, instead of its default. A dropped array entry takes back
-/// the running entry with its `name`, or at its index when it has none. Also returns the table
-/// built, the `base` of the next read.
+/// the running entry [`running_entry`] picks. Also returns the table built, the `base` of the
+/// next read.
 pub fn lenient_over<T>(
     text: &str,
     base: &toml::Table,
@@ -320,13 +320,17 @@ fn array_entry(key: &str) -> Option<(&str, usize)> {
 }
 
 /// The entry of `base`'s array `a` that entry `i` of `read`'s stands for: the one with the
-/// same `name`, or the one at `i` when the entry has no name.
+/// same `name`, or the one at `i` when the entry has no name. None for `startmenu_changes`,
+/// whose entries act by their place among the others, so the one at `i` is another change.
 fn running_entry<'a>(
     read: &toml::Table,
     base: &'a toml::Table,
     a: &str,
     i: usize,
 ) -> Option<&'a toml::Value> {
+    if a == "startmenu_changes" {
+        return None;
+    }
     let running = base.get(a)?.as_array()?;
     match read.get(a)?.as_array()?.get(i)?.get("name") {
         Some(name) => running.iter().find(|e| e.get("name") == Some(name)),
@@ -358,8 +362,8 @@ impl Config {
     }
 
     /// `file` validated. The keys whose types are the compositor's (`keybinds`,
-    /// `global_shortcuts`, `startmenu`, `quicklaunch`, `window_rules`, `tablet_pads`) are
-    /// left to it.
+    /// `global_shortcuts`, `startmenu`, `startmenu_changes`, `quicklaunch`, `window_rules`,
+    /// `tablet_pads`) are left to it.
     pub fn from_file(file: FileConfig) -> Result<Config, String> {
         let mut cfg = Config::default();
         if let Some(t) = file.terminal {

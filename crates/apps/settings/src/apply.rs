@@ -6,7 +6,7 @@ use crate::backuphost::Then;
 use crate::registry::{self, Page};
 use crate::{
     SettingsApp, autostart, defaultspage, displaypage, menupage, model, pages, quickpage,
-    read_config, take,
+    read_config, startmenu, take,
 };
 use repriseconf::Key;
 use reprisekit::controls::propsheet;
@@ -17,7 +17,8 @@ use repriseapp::{Ctx, Event, Reply, WinId};
 pub(crate) const RUN_AS_QUESTION: &str = "Turn off Run As?\nFrom the next log on, programs that need an administrator password (Software Updates, Network Connections, drives) cannot ask for one.";
 
 /// What Restore Defaults takes out of `config.toml` on a page: its keys off their defaults or set
-/// in the file and, on Background, the connected monitors' own wallpaper keys as (connector, key).
+/// in the file (on Start Menu, the menu's too) and, on Background, the connected monitors' own
+/// wallpaper keys as (connector, key).
 #[derive(Debug, Default)]
 pub(crate) struct Restorable {
     pub keys: Vec<Key>,
@@ -194,7 +195,8 @@ impl SettingsApp {
             self.sheet.set_restore(i, !keys.is_empty());
             let on = keys.iter().any(|k| self.in_file.contains(k))
                 || !self.off_default(keys, &mut apart).is_empty()
-                || !self.own_wallpapers(p).is_empty();
+                || !self.own_wallpapers(p).is_empty()
+                || !self.menu_keys(p).is_empty();
             self.sheet.pages[i].set_enabled(propsheet::RESTORE, on);
         }
     }
@@ -217,8 +219,25 @@ impl SettingsApp {
         Restorable {
             keys: (keys.into_iter())
                 .filter(|k| off.contains(k) || self.in_file.contains(k))
+                .chain(self.menu_keys(p))
                 .collect(),
             outputs: self.own_wallpapers(p),
+        }
+    }
+
+    /// On Start Menu, the menu keys the file sets, or the one Apply writes when only the sheet
+    /// holds a menu off the default.
+    fn menu_keys(&self, p: Page) -> Vec<Key> {
+        if p != Page::StartMenu {
+            return Vec::new();
+        }
+        let set: Vec<Key> = [startmenu::STARTMENU, startmenu::CHANGES]
+            .into_iter()
+            .filter(|k| self.in_file.contains(k))
+            .collect();
+        match set.is_empty() && self.want.startmenu != startmenu::default_menu() {
+            true => vec![startmenu::CHANGES],
+            false => set,
         }
     }
 
@@ -299,6 +318,12 @@ impl SettingsApp {
         }
         model::copy_keys(&keys, def, &mut self.want);
         own(&mut self.want);
+        if keys
+            .iter()
+            .any(|k| [startmenu::STARTMENU, startmenu::CHANGES].contains(k))
+        {
+            self.want.startmenu = startmenu::default_menu();
+        }
         self.config_changed();
         pages::write(&mut self.sheet, &self.want, &self.xkb, &self.system_layout);
         self.fill_wallpapers();

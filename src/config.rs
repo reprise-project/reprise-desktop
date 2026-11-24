@@ -6,6 +6,7 @@ mod menu;
 mod parse;
 pub(crate) use parse::{
     KEEPS_SETTINGS, Notice, broken_notice, dropped_notice, parse_error, unreadable_notice,
+    warn_stray_rows,
 };
 
 #[cfg(test)]

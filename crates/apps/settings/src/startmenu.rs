@@ -1,20 +1,33 @@
-//! `[[startmenu]]` as the Start Menu page edits it: a tree of entries
-//! read out of the file and written back whole, as `[[keybinds]]` is.
+//! The Start menu as the Start Menu page edits it: a tree of entries read out of the file and
+//! written back as `[[startmenu_changes]]`, what sets it apart from the default menu. A file
+//! listing the whole menu as `[[startmenu]]` keeps it whole: its rows name no default row, so
+//! they cannot be told apart from an older default's.
 //!
 //! The default menu is `repriseconf`'s, which the compositor reads too; a test holds it to
 //! `config.example.toml`'s block.
+//!
+//! The changes for a folder are the default rows it leaves out, then its rows in order. The
+//! longest run of default rows still in their default order stays put; every other default row
+//! and each row of the user's own goes after the staying row above it (`after = ""` for the
+//! folder's top). A change the menu does not show (one that does not read or that Start cannot
+//! build, or one naming a row this build lacks or put inside a folder the written changes hide)
+//! is written back as the file had it, after the rest.
 
 use repriseconf::config::file::FileMenuEntry;
 use repriseconf::{Key, key as k, remove};
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, TableLike};
 
 pub const STARTMENU: Key = k("", "startmenu");
+pub const CHANGES: Key = k("", "startmenu_changes");
 
 /// One row of the Start menu or of a folder in it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Entry {
-    Separator,
+    /// A line; `id` as an item's.
+    Separator { id: Option<String> },
     Item {
+        /// The default row the entry stands for; None for a row of the user's own.
+        id: Option<String>,
         /// The label as the file has it: `&` marks the access key and
         /// `{user}` stands for the login name.
         label: String,
@@ -43,6 +56,7 @@ pub enum Target {
 impl Entry {
     pub fn item(label: &str, icon: &str, target: Target) -> Entry {
         Entry::Item {
+            id: None,
             label: label.into(),
             icon: (!icon.is_empty()).then(|| icon.into()),
             tip: None,
@@ -97,14 +111,43 @@ impl Entry {
     pub fn label(&self) -> Option<&str> {
         match self {
             Entry::Item { label, .. } => Some(label),
-            Entry::Separator => None,
+            Entry::Separator { .. } => None,
         }
     }
 
     pub fn icon(&self) -> Option<&str> {
         match self {
             Entry::Item { icon, .. } => icon.as_deref(),
-            Entry::Separator => None,
+            Entry::Separator { .. } => None,
+        }
+    }
+
+    fn id(&self) -> Option<&str> {
+        match self {
+            Entry::Item { id, .. } | Entry::Separator { id } => id.as_deref(),
+        }
+    }
+
+    /// The entry as a `[[startmenu]]` file lists it, with no default row's id.
+    fn plain(&self) -> Entry {
+        match self {
+            Entry::Separator { .. } => Entry::Separator { id: None },
+            Entry::Item {
+                label,
+                icon,
+                tip,
+                target,
+                ..
+            } => Entry::Item {
+                id: None,
+                label: label.clone(),
+                icon: icon.clone(),
+                tip: tip.clone(),
+                target: match target {
+                    Target::Folder(v) => Target::Folder(v.iter().map(Entry::plain).collect()),
+                    t => t.clone(),
+                },
+            },
         }
     }
 }
@@ -217,7 +260,7 @@ pub fn default_menu() -> Vec<Entry> {
 /// `f` as [`read_entry`] reads its table.
 fn from_file(f: &FileMenuEntry) -> Entry {
     if f.separator == Some(true) {
-        return Entry::Separator;
+        return Entry::Separator { id: f.id.clone() };
     }
     let target = match (&f.action, &f.command, &f.submenu, &f.items) {
         (Some(a), c, _, _) => Target::Action(a.clone(), c.clone()),
@@ -228,6 +271,7 @@ fn from_file(f: &FileMenuEntry) -> Entry {
         }
     };
     Entry::Item {
+        id: f.id.clone(),
         label: f.label.clone().unwrap_or_default(),
         icon: f.icon.clone(),
         tip: f.tip.clone(),
@@ -235,11 +279,22 @@ fn from_file(f: &FileMenuEntry) -> Entry {
     }
 }
 
-/// The file's `[[startmenu]]` (or an inline `startmenu = [{...}]`); None
-/// when it has none. A row the compositor would refuse (no label, or
-/// nothing to do) is left out.
+/// The file's `[[startmenu]]` (or an inline `startmenu = [{...}]`), else the default menu with
+/// its `[[startmenu_changes]]` made; None when it has neither.
 pub fn read(doc: &DocumentMut) -> Option<Vec<Entry>> {
-    repriseconf::get(doc, &STARTMENU).and_then(read_list)
+    if let Some(item) = repriseconf::get(doc, &STARTMENU) {
+        return read_list(item);
+    }
+    repriseconf::get(doc, &CHANGES)?;
+    let changes: Vec<_> = (repriseconf::config::startmenu_changes_in(&doc.to_string())?)
+        .into_iter()
+        .flatten()
+        .collect();
+    Some(
+        (repriseconf::config::startmenu_with(&changes).iter())
+            .map(from_file)
+            .collect(),
+    )
 }
 
 fn tables(item: &Item) -> Option<Vec<&dyn TableLike>> {
@@ -266,7 +321,7 @@ fn read_entry(t: &dyn TableLike) -> Option<Entry> {
             .filter(|s| !s.is_empty())
     };
     if t.get("separator").and_then(Item::as_bool) == Some(true) {
-        return Some(Entry::Separator);
+        return Some(Entry::Separator { id: None });
     }
     let target = if let Some(a) = text("action") {
         Target::Action(a, text("command"))
@@ -280,6 +335,7 @@ fn read_entry(t: &dyn TableLike) -> Option<Entry> {
         Target::Folder(t.get("items").map_or(Some(Vec::new()), read_list)?)
     };
     Some(Entry::Item {
+        id: None,
         label: t.get("label").and_then(Item::as_str)?.to_string(),
         icon: text("icon"),
         tip: text("tip"),
@@ -294,6 +350,7 @@ fn table(e: &Entry) -> Table {
         icon,
         tip,
         target,
+        ..
     } = e
     else {
         t["separator"] = toml_edit::value(true);
@@ -331,30 +388,221 @@ fn table(e: &Entry) -> Table {
     t
 }
 
-/// Write `want` into `doc` as `[[startmenu]]` when the sheet moved it:
-/// not when it equals `base` (what the sheet loaded) or `have` (what the
-/// file says now), and as no key at all when it is the default menu. The
-/// comment above the block's first table stays where it was.
+/// Write `want` into `doc` when the sheet moved it: not when it equals `base` (what the sheet
+/// loaded) or `have` (what the file says now). A whole `[[startmenu]]` list stays whole.
 pub fn write(doc: &mut DocumentMut, want: &[Entry], base: &[Entry], have: &[Entry]) {
     if want == base || want == have {
         return;
     }
-    let old = repriseconf::get(doc, &STARTMENU)
+    let whole = repriseconf::get(doc, &STARTMENU).is_some();
+    if whole && plain(want) != plain(&default_menu()) {
+        set_tables(doc, &STARTMENU, want.iter().map(table).collect());
+        return;
+    }
+    let old = repriseconf::get(doc, &CHANGES);
+    let listed = old.is_none_or(|i| i.is_array() || i.is_array_of_tables());
+    // A lone `[startmenu_changes]` table goes first, as the one entry it was likely meant to be;
+    // a value that is no table or list stays as the file has it, and so does the menu.
+    let lone = match old.filter(|_| !listed).map(lone_table) {
+        Some(None) => {
+            log::warn!("startmenu_changes is no list of tables; the Start menu is not saved");
+            return;
+        }
+        lone => lone.flatten(),
+    };
+    // Back to the default menu, a whole list takes the changes it kept from applying with it.
+    let made = if whole { Vec::new() } else { changes(want) };
+    let hidden: Vec<String> = (made.iter())
+        .filter(|t| t.get("hidden").and_then(Item::as_bool) == Some(true))
+        .filter_map(|t| t.get("default")?.as_str().map(str::to_string))
+        .collect();
+    let mut tables: Vec<Table> = lone.into_iter().chain(made).collect();
+    if listed {
+        tables.extend(idle_tables(doc, &hidden));
+    }
+    remove(doc, &STARTMENU);
+    set_tables(doc, &CHANGES, tables);
+}
+
+/// `item`, a `[startmenu_changes]` table, as an entry of `[[startmenu_changes]]`.
+fn lone_table(item: &Item) -> Option<Table> {
+    let mut t = match item {
+        Item::Table(t) => t.clone(),
+        Item::Value(toml_edit::Value::InlineTable(t)) => t.clone().into_table(),
+        _ => return None,
+    };
+    t.set_implicit(false);
+    t.set_dotted(false);
+    t.set_position(None);
+    Some(t)
+}
+
+/// The file's `[[startmenu_changes]]` the menu does not show next to changes hiding the default
+/// rows `hidden`, as the file has them.
+fn idle_tables(doc: &DocumentMut, hidden: &[String]) -> Vec<Table> {
+    let Some(item) = repriseconf::get(doc, &CHANGES) else {
+        return Vec::new();
+    };
+    let read = repriseconf::config::startmenu_changes_in(&doc.to_string()).unwrap_or_default();
+    let good: Vec<_> = read.iter().flatten().cloned().collect();
+    let mut idle = repriseconf::config::idle_changes(&good, hidden).into_iter();
+    let keep: Vec<bool> = (read.iter())
+        .map(|c| c.is_none() || idle.next() == Some(true))
+        .collect();
+    let mut raw: Vec<Option<Table>> = match (item.as_array_of_tables(), item.as_array()) {
+        (Some(a), _) => a.iter().cloned().map(Some).collect(),
+        (None, Some(a)) => (a.iter())
+            .map(|v| {
+                v.as_inline_table()
+                    .cloned()
+                    .map(toml_edit::InlineTable::into_table)
+            })
+            .collect(),
+        (None, None) => Vec::new(),
+    };
+    if let Some(Some(first)) = raw.first_mut() {
+        // Its comment heads the block, which `set_tables` keeps on the new first table.
+        *first.decor_mut() = Default::default();
+    }
+    (raw.into_iter().zip(keep))
+        .filter_map(|(t, keep)| t.filter(|_| keep))
+        .collect()
+}
+
+/// `tables` as the array `key`, taken out when empty. The comment above the old first table
+/// moves to the new first.
+fn set_tables(doc: &mut DocumentMut, key: &Key, mut tables: Vec<Table>) {
+    let old = repriseconf::get(doc, key)
         .and_then(Item::as_array_of_tables)
         .and_then(|a| a.get(0))
         .map(|t| t.decor().clone());
-    if want == default_menu() {
-        remove(doc, &STARTMENU);
+    if tables.is_empty() {
+        remove(doc, key);
         return;
     }
+    if let Some(decor) = old {
+        *tables[0].decor_mut() = decor;
+    }
     let mut a = ArrayOfTables::new();
-    for e in want {
-        a.push(table(e));
+    for t in tables {
+        a.push(t);
     }
-    if let (Some(decor), Some(first)) = (old, a.get_mut(0)) {
-        *first.decor_mut() = decor;
+    doc[key.name] = Item::ArrayOfTables(a);
+}
+
+fn plain(entries: &[Entry]) -> Vec<Entry> {
+    entries.iter().map(Entry::plain).collect()
+}
+
+/// `want` as `[[startmenu_changes]]` tables against the default menu.
+fn changes(want: &[Entry]) -> Vec<Table> {
+    let mut out = Vec::new();
+    diff("", &default_menu(), want, &mut out);
+    out
+}
+
+/// The changes turning the default folder `folder` holding `defaults` into `want`, as the module
+/// header says.
+fn diff(folder: &str, defaults: &[Entry], want: &[Entry], out: &mut Vec<Table>) {
+    let mut seen = Vec::new();
+    let found: Vec<Option<usize>> = (want.iter())
+        .map(|w| {
+            let i = (defaults.iter()).position(|d| d.id().is_some() && d.id() == w.id())?;
+            let fits = match (&defaults[i], w) {
+                (Entry::Item { target: d, .. }, Entry::Item { target: t, .. }) => {
+                    matches!((d, t), (Target::Folder(_), Target::Folder(_))) || d == t
+                }
+                (d, t) => d.label().is_none() && t.label().is_none(),
+            };
+            (fits && !seen.contains(&i)).then(|| {
+                seen.push(i);
+                i
+            })
+        })
+        .collect();
+    let staying = increasing(&found);
+    for (i, d) in defaults.iter().enumerate() {
+        if let Some(id) = d.id().filter(|_| !seen.contains(&i)) {
+            let mut t = Table::new();
+            t["default"] = toml_edit::value(id);
+            t["hidden"] = toml_edit::value(true);
+            out.push(t);
+        }
     }
-    doc[STARTMENU.name] = Item::ArrayOfTables(a);
+    let mut anchor = "";
+    for ((w, at), stays) in want.iter().zip(&found).zip(staying) {
+        let Some(d) = at.map(|i| &defaults[i]) else {
+            let mut t = Table::new();
+            if !folder.is_empty() {
+                t["folder"] = toml_edit::value(folder);
+            }
+            t["after"] = toml_edit::value(anchor);
+            for (k, v) in table(w).iter() {
+                t.insert(k, v.clone());
+            }
+            out.push(t);
+            continue;
+        };
+        let id = d.id().unwrap_or_default();
+        let mut t = Table::new();
+        t["default"] = toml_edit::value(id);
+        if let (
+            Entry::Item {
+                label, icon, tip, ..
+            },
+            Entry::Item {
+                label: l,
+                icon: i,
+                tip: p,
+                ..
+            },
+        ) = (d, w)
+        {
+            if l != label {
+                t["label"] = toml_edit::value(l);
+            }
+            for (key, mine, theirs) in [("icon", i, icon), ("tip", p, tip)] {
+                if let Some(v) = mine.as_ref().filter(|v| Some(*v) != theirs.as_ref()) {
+                    t[key] = toml_edit::value(v);
+                }
+            }
+        }
+        if stays {
+            anchor = id;
+        } else {
+            t["after"] = toml_edit::value(anchor);
+        }
+        if t.len() > 1 {
+            out.push(t);
+        }
+        if let (Some(dk), Some(wk)) = (d.items(), w.items()) {
+            diff(id, dk, wk, out);
+        }
+    }
+}
+
+/// Which of `found`'s default rows stay put: the longest run of them in increasing order.
+fn increasing(found: &[Option<usize>]) -> Vec<bool> {
+    let n = found.len();
+    let mut len = vec![0usize; n];
+    let mut prev = vec![None; n];
+    for j in 0..n {
+        let Some(v) = found[j] else { continue };
+        len[j] = 1;
+        for i in 0..j {
+            if found[i].is_some_and(|u| u < v) && len[i] + 1 > len[j] {
+                len[j] = len[i] + 1;
+                prev[j] = Some(i);
+            }
+        }
+    }
+    let mut out = vec![false; n];
+    let mut at = (0..n).filter(|&j| len[j] > 0).max_by_key(|&j| len[j]);
+    while let Some(j) = at {
+        out[j] = true;
+        at = prev[j];
+    }
+    out
 }
 
 #[cfg(test)]
@@ -365,10 +613,17 @@ mod tests {
         read(&text.parse().unwrap()).unwrap_or_else(default_menu)
     }
 
+    /// `menu` written into a file that lists the whole menu.
+    fn whole(menu: &[Entry]) -> String {
+        let mut doc: DocumentMut = "[[startmenu]]\nlabel = \"x\"\n".parse().unwrap();
+        write(&mut doc, menu, &[], &[]);
+        doc.to_string()
+    }
+
     fn saved(text: &str, want: &[Entry]) -> String {
         let mut doc: DocumentMut = text.parse().unwrap();
         let have = load(text);
-        write(&mut doc, want, &have, &[]);
+        write(&mut doc, want, &have, &have);
         doc.to_string()
     }
 
@@ -382,11 +637,30 @@ mod tests {
         ));
     }
 
+    fn ids(entries: &[Entry], out: &mut Vec<String>) {
+        for e in entries {
+            out.extend(e.id().map(str::to_string));
+            ids(e.items().map_or(&[][..], Vec::as_slice), out);
+        }
+    }
+
     #[test]
     fn the_default_menu_is_the_example_files() {
         let example = include_str!("../../../../config.example.toml");
-        let doc: DocumentMut = example.parse().unwrap();
-        assert_eq!(read(&doc), Some(default_menu()));
+        let block: String = (example.lines())
+            .skip_while(|l| !l.starts_with("#[[startmenu]]"))
+            .take_while(|l| l.starts_with('#'))
+            .map(|l| format!("{}\n", &l[1..]))
+            .collect();
+        let doc: DocumentMut = block.parse().unwrap();
+        assert_eq!(read(&doc), Some(plain(&default_menu())));
+        let named: Vec<&str> = (block.lines())
+            .filter(|l| l.starts_with("[["))
+            .filter_map(|l| l.split("# ").nth(1))
+            .collect();
+        let mut want = Vec::new();
+        ids(&default_menu(), &mut want);
+        assert_eq!(named, want, "each header names its row's id");
     }
 
     #[test]
@@ -422,12 +696,13 @@ command = \"foot\"
             menu,
             vec![
                 Entry::item("&Go", "", Target::Action("run".into(), None)),
-                Entry::Separator,
+                Entry::Separator { id: None },
                 Entry::item(
                     "Box",
                     "folder",
                     Target::Folder(vec![
                         Entry::Item {
+                            id: None,
                             label: "Edit".into(),
                             icon: None,
                             tip: Some("Edits text".into()),
@@ -443,9 +718,7 @@ command = \"foot\"
                 ),
             ]
         );
-        let mut doc = DocumentMut::new();
-        write(&mut doc, &menu, &[], &[]);
-        assert_eq!(doc.to_string(), text);
+        assert_eq!(whole(&menu), text);
     }
 
     #[test]
@@ -465,9 +738,7 @@ command = \"foot\"
                 Target::Folder(vec![Entry::item("Inner", "", Target::Folder(Vec::new()))]),
             ),
         ];
-        let mut doc = DocumentMut::new();
-        write(&mut doc, &menu, &[], &[]);
-        let text = doc.to_string();
+        let text = whole(&menu);
         assert_eq!(
             text,
             "\
@@ -550,7 +821,10 @@ size_px = 12
         assert_eq!(shift(&mut m, &[0], -1), None);
         assert_eq!(shift(&mut m, &[8], 1), None);
         assert_eq!(shift(&mut m, &[2, 0], 1), Some(vec![2, 1]));
-        assert_eq!(get(&m, &[2, 0]), Some(&Entry::Separator));
+        assert_eq!(
+            get(&m, &[2, 0]).and_then(Entry::id),
+            Some("settings-separator")
+        );
         assert_eq!(
             get(&m, &[2, 1]).and_then(Entry::label),
             Some("&Control Panel")
@@ -589,9 +863,262 @@ size_px = 12
         assert_eq!(get(&m, &[4, 0]).and_then(Entry::label), Some("&Files"));
         assert!(!rename(&mut m, &[7], "x"), "a separator has no label");
         assert_eq!(
-            put(&mut m, &[1, 0], Entry::Separator),
+            put(&mut m, &[1, 0], Entry::Separator { id: None }),
             None,
             "Programs holds no rows"
+        );
+    }
+
+    #[test]
+    fn an_edit_saves_only_its_changes_and_reads_back() {
+        let mut m = default_menu();
+        take(&mut m, &[4]).unwrap();
+        shift(&mut m, &[4], -4).unwrap();
+        assert!(rename(&mut m, &[4, 0], "&Files..."));
+        put(
+            &mut m,
+            &[3, 4],
+            Entry::program("Scan", "scanner", "simple-scan".into()),
+        )
+        .unwrap();
+        let end = m.len();
+        put(
+            &mut m,
+            &[end],
+            Entry::item("New Folder", "", Target::Folder(Vec::new())),
+        )
+        .unwrap();
+        let text = saved("", &m);
+        assert_eq!(
+            text,
+            r#"[[startmenu_changes]]
+default = "help"
+hidden = true
+
+[[startmenu_changes]]
+default = "run"
+after = ""
+
+[[startmenu_changes]]
+folder = "settings"
+after = "printers"
+label = "Scan"
+icon = "scanner"
+command = "simple-scan"
+
+[[startmenu_changes]]
+default = "search-files"
+label = "&Files..."
+
+[[startmenu_changes]]
+after = "turnoff"
+label = "New Folder"
+items = []
+"#
+        );
+        assert_eq!(load(&text), m);
+        assert_eq!(
+            saved(&text, &m),
+            text,
+            "an unchanged menu leaves the file alone"
+        );
+        assert_eq!(
+            saved(&text, &default_menu()),
+            "",
+            "the default menu takes the key out"
+        );
+    }
+
+    /// The paths of every folder of entries in `entries`, default or the user's own.
+    fn folders(entries: &[Entry], at: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+        for (i, e) in entries.iter().enumerate() {
+            if let Some(items) = e.items() {
+                at.push(i);
+                out.push(at.clone());
+                folders(items, at, out);
+                at.pop();
+            }
+        }
+    }
+
+    fn default_label(id: Option<&str>) -> Option<String> {
+        let mut found = None;
+        fn find(entries: &[Entry], id: &str, found: &mut Option<String>) {
+            for e in entries {
+                if e.id() == Some(id) {
+                    *found = e.label().map(str::to_string);
+                }
+                find(e.items().map_or(&[][..], Vec::as_slice), id, found);
+            }
+        }
+        find(&default_menu(), id?, &mut found);
+        found
+    }
+
+    fn edit(m: &mut Vec<Entry>, roll: &mut impl FnMut(usize) -> usize) {
+        let mut all = vec![vec![]];
+        folders(m, &mut Vec::new(), &mut all);
+        let folder = all[roll(all.len())].clone();
+        let Some(len) = level(m, &folder).map(|v| v.len()) else {
+            return;
+        };
+        let mut at = folder.clone();
+        at.push(roll(len + 1));
+        match roll(8) {
+            0 => drop(take(m, &at)),
+            1 => drop(shift(m, &at, if roll(2) == 0 { -1 } else { 2 })),
+            2 => {
+                let back = get(m, &at).and_then(|e| default_label(e.id()));
+                let to = back.filter(|_| roll(2) == 0);
+                rename(m, &at, to.as_deref().unwrap_or("Re&named"));
+            }
+            3 | 4 => drop(put(m, &at, Entry::program("Mine", "", "mine".into()))),
+            5 => drop(put(
+                m,
+                &at,
+                Entry::item("New Folder", "", Target::Folder(Vec::new())),
+            )),
+            6 if roll(4) == 0 => level(m, &folder).unwrap().clear(),
+            _ => drop(put(m, &at, Entry::program("Other", "x", "other".into()))),
+        }
+    }
+
+    #[test]
+    fn any_run_of_edits_reads_back_as_it_was_saved() {
+        let mut seed = 7u32;
+        let mut roll = |n: usize| {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (seed >> 16) as usize % n.max(1)
+        };
+        for run in 0..300 {
+            let mut m = default_menu();
+            if run % 10 == 0 {
+                shift(&mut m, &[4], 1).unwrap();
+                shift(&mut m, &[5], -1).unwrap();
+                rename(&mut m, &[2, 0], "&Control Panel");
+                assert_eq!(changes(&m).len(), 0, "a run undoing itself writes nothing");
+            }
+            for _ in 0..12 {
+                edit(&mut m, &mut roll);
+            }
+            let text = saved("", &m);
+            assert_eq!(load(&text), m, "{text}");
+            let mut again = load(&text);
+            for _ in 0..6 {
+                edit(&mut again, &mut roll);
+            }
+            let text2 = saved(&text, &again);
+            assert_eq!(load(&text2), again, "saved twice:\n{text}\nthen\n{text2}");
+            assert_eq!(saved(&text2, &default_menu()), "", "{text2}");
+        }
+    }
+
+    #[test]
+    fn a_whole_list_back_at_the_default_menu_takes_the_changes_it_held_back_too() {
+        let mut doc = DocumentMut::new();
+        let mut a = ArrayOfTables::new();
+        for e in default_menu() {
+            a.push(table(&e));
+        }
+        doc["startmenu"] = Item::ArrayOfTables(a);
+        let list = format!("{doc}\n[[startmenu]]\nlabel = \"Mine\"\ncommand = \"mine\"\n");
+        let bad = "[[startmenu_changes]]\ndefault = \"run\"\ncommand = \"x\"\n";
+        let text = format!(
+            "[[startmenu_changes]]\ndefault = \"help\"\nhidden = true\n\n\
+             [[startmenu_changes]]\ndefault = \"search\"\nhidden = true\n\n\
+             [[startmenu_changes]]\ndefault = \"search-files\"\nlabel = \"Files\"\n\n{bad}\n{list}"
+        );
+        let mut m = load(&text);
+        m.pop();
+        assert_eq!(
+            saved(&text, &m),
+            bad,
+            "the hidden Help and Search, and the label inside Search, would make Start differ from \
+             the page; the change that does not read stays"
+        );
+    }
+
+    fn without(menu: &[Entry], id: &str) -> Vec<Entry> {
+        let mut m = menu.to_vec();
+        m.retain(|e| e.id() != Some(id));
+        m
+    }
+
+    fn count(text: &str, line: &str) -> usize {
+        text.lines().filter(|l| *l == line).count()
+    }
+
+    #[test]
+    fn a_change_inside_a_folder_the_page_hides_survives_an_outside_edit() {
+        let base = without(&default_menu(), "search");
+        let want = without(&base, "help");
+        let text = "[[startmenu_changes]]\ndefault = \"search-files\"\nlabel = \"Files\"\n";
+        let mut doc: DocumentMut = text.parse().unwrap();
+        write(&mut doc, &want, &base, &load(text));
+        let out = doc.to_string();
+        assert_eq!(count(&out, "default = \"search\""), 1, "{out}");
+        assert_eq!(count(&out, "label = \"Files\""), 1, "{out}");
+        assert_eq!(load(&out), want, "{out}");
+    }
+
+    #[test]
+    fn a_change_the_page_shows_after_an_outside_edit_is_written_once() {
+        let text = "[[startmenu_changes]]\ndefault = \"search\"\nhidden = true\n\n\
+                    [[startmenu_changes]]\ndefault = \"search-files\"\nlabel = \"Files\"\n";
+        let mut want = without(&default_menu(), "help");
+        rename(&mut want, &[3, 0], "Files");
+        let mut doc: DocumentMut = text.parse().unwrap();
+        write(&mut doc, &want, &default_menu(), &load(text));
+        let out = doc.to_string();
+        assert_eq!(count(&out, "default = \"search-files\""), 1, "{out}");
+        assert_eq!(count(&out, "default = \"search\""), 0, "{out}");
+        assert_eq!(load(&out), want, "{out}");
+    }
+
+    #[test]
+    fn a_row_start_cannot_build_is_kept_as_the_file_has_it() {
+        let refused = [
+            "[[startmenu_changes]]\nlabel = \"P\"\nsubmenu = \"programs\"\n\n[[startmenu_changes.items]]\nlabel = \"A\"\ncommand = \"a\"\n",
+            "[[startmenu_changes]]\nlabel = \"C\"\ncommand = \"c\"\n\n[[startmenu_changes.items]]\nlabel = \"A\"\ncommand = \"a\"\n",
+            "[[startmenu_changes]]\ncommand = \"c\"\n",
+            "[[startmenu_changes]]\nlabel = \"B\"\naction = \"bogus\"\n",
+        ];
+        for bad in refused {
+            assert_eq!(load(bad), default_menu(), "{bad}");
+            let out = saved(bad, &without(&default_menu(), "help"));
+            assert_eq!(
+                out,
+                format!("[[startmenu_changes]]\ndefault = \"help\"\nhidden = true\n\n{bad}"),
+            );
+        }
+    }
+
+    #[test]
+    fn a_lone_changes_table_becomes_the_first_entry() {
+        let text = "# mine\n[startmenu_changes]\ndefault = \"run\"\nlabel = \"&Go...\" # typed\n";
+        let want = without(&default_menu(), "help");
+        let out = saved(text, &want);
+        assert_eq!(
+            out,
+            "# mine\n[[startmenu_changes]]\ndefault = \"run\"\nlabel = \"&Go...\" # typed\n\n\
+             [[startmenu_changes]]\ndefault = \"help\"\nhidden = true\n"
+        );
+        let scalar = "startmenu_changes = 3\n";
+        assert_eq!(
+            saved(scalar, &want),
+            scalar,
+            "a value no table stays, and so does the menu"
+        );
+    }
+
+    #[test]
+    fn a_whole_list_from_an_older_file_stays_whole() {
+        let text = "[[startmenu]]\nlabel = \"A\"\ncommand = \"a\"\n";
+        let mut m = load(text);
+        m.push(Entry::program("B", "", "b".into()));
+        assert_eq!(
+            saved(text, &m),
+            "[[startmenu]]\nlabel = \"A\"\ncommand = \"a\"\n\n[[startmenu]]\nlabel = \"B\"\ncommand = \"b\"\n"
         );
     }
 }
