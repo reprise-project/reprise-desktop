@@ -701,6 +701,8 @@ pub fn grip_cursor(edge: reprisekit::taskbar::Edge) -> &'static str {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JumpRow {
     Recent(std::path::PathBuf),
+    /// Run the app's desktop action `k`, indexing [`jump_tasks`].
+    Task(usize),
     /// Bring up window `k`, indexing the `titles` `jump_list` was given.
     Window(usize),
     Launch,
@@ -713,6 +715,12 @@ pub enum JumpRow {
 }
 
 pub const JUMP_RECENT: usize = 10;
+pub const JUMP_TASKS: usize = 8;
+
+/// The desktop actions a jump list for `entry` lists as its tasks: the first [`JUMP_TASKS`].
+pub fn jump_tasks(entry: &reprisefs::apps::AppEntry) -> &[reprisefs::apps::DesktopAction] {
+    &entry.actions[..entry.actions.len().min(JUMP_TASKS)]
+}
 
 /// A jump list's head: a row per recent file, then a separator unless there are none.
 pub fn jump_recent_rows(recent: &[std::path::PathBuf]) -> (Vec<MenuItem>, Vec<Option<JumpRow>>) {
@@ -733,19 +741,29 @@ pub fn jump_recent_rows(recent: &[std::path::PathBuf]) -> (Vec<MenuItem>, Vec<Op
 }
 
 /// A task button's jump list: the app's `recent` files (at most `JUMP_RECENT`, newest first) and a
-/// separator, a group's window `titles` and a separator (a single window gets no row), the app's `name`
+/// separator, its `tasks` (desktop action names, [`jump_tasks`]) and a separator, a group's window
+/// `titles` and a separator (a single window gets no row), the app's `name`
 /// (new instance), Pin/Unpin this program (greyed when `can_pin` is false: no `.desktop` file), and for
 /// a running app Move to desktop (a submenu with more than one of `desktops`) and Close window or Close
 /// all windows. Returns the rows and, parallel to them, what each does (None at a separator).
 pub fn jump_list(
     name: &str,
     recent: &[std::path::PathBuf],
+    tasks: &[&str],
     pinned: bool,
     can_pin: bool,
     titles: &[String],
     desktops: usize,
 ) -> (Vec<MenuItem>, Vec<Option<JumpRow>>) {
     let (mut items, mut rows) = jump_recent_rows(recent);
+    if !tasks.is_empty() {
+        for (k, t) in tasks.iter().enumerate() {
+            items.push(MenuItem::entry(*t));
+            rows.push(Some(JumpRow::Task(k)));
+        }
+        items.push(MenuItem::Separator);
+        rows.push(None);
+    }
     if titles.len() > 1 {
         for (k, t) in titles.iter().enumerate() {
             items.push(MenuItem::entry(t.clone()));

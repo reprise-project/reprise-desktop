@@ -683,6 +683,7 @@ fn group_files_apps_by_first_matching_category() {
         mime_types: Vec::new(),
         shown: true,
         path: None,
+        actions: Vec::new(),
     };
     let apps = [
         app("Zed", &["Development", "Utility"]),
@@ -870,6 +871,7 @@ fn open_with_lists_the_handlers_by_name_and_text_editors_for_text() {
         mime_types: mimes.iter().map(|m| m.to_string()).collect(),
         shown: true,
         path: None,
+        actions: Vec::new(),
     };
     let apps = vec![
         app("Vim", &["text/plain", "text/x-c"]),
@@ -1027,6 +1029,7 @@ fn chooser_groups_put_the_type_s_programs_and_default_first_and_the_rest_by_name
         mime_types: mimes.iter().map(|m| m.to_string()).collect(),
         shown: true,
         path: None,
+        actions: Vec::new(),
     };
     let apps = vec![
         e("Zed", "zed.desktop", &[]),
@@ -1188,7 +1191,7 @@ fn an_entry_shows_by_every_desktop_name_and_only_with_its_try_exec_program() {
     let on = |extra: &str, desktops: &[&str], installed: bool| {
         let text = format!("[Desktop Entry]\nType=Application\nName=x\nExec=x\n{extra}\n");
         let desktops: Vec<String> = desktops.iter().map(|d| d.to_string()).collect();
-        parse_desktop_on(&text, &"a.desktop".parse().unwrap(), &desktops, |_| {
+        parse_desktop_on(&text, &"a.desktop".parse().unwrap(), &desktops, "", |_| {
             installed
         })
         .is_some()
@@ -1214,4 +1217,151 @@ fn an_entry_shows_by_every_desktop_name_and_only_with_its_try_exec_program() {
         &"a.desktop".parse().unwrap(),
     );
     assert!(found.is_none(), "TryExec is looked up on disk");
+}
+
+const MAIL: &str = "\
+[Desktop Entry]
+Type=Application
+Name=Mail
+Exec=mail %u
+Icon=mail
+Actions=compose;contacts;missing;no-exec;no-name;compose;blank;
+
+[Desktop Action no-exec]
+Name=Nothing to run
+
+[Desktop Action contacts]
+Name=Address Book
+Name[de]=Adressbuch
+Name[de_AT@euro]=Adressen
+Exec=mail -addressbook
+Icon=contacts
+
+[Desktop Action compose]
+Name=Write Message
+Name[de_DE]=Verfassen
+Exec=mail -compose %u --icon-name %i --title %c
+
+[Desktop Action no-name]
+Exec=mail -x
+
+[Desktop Action blank]
+Name=Blank
+Exec=   
+
+[Desktop Action unlisted]
+Name=Unlisted
+Exec=mail -u
+";
+
+fn mail_on(locale: &str) -> AppEntry {
+    parse_desktop_on(MAIL, &"mail.desktop".parse().unwrap(), &[], locale, |_| {
+        true
+    })
+    .unwrap()
+}
+
+#[test]
+fn actions_follow_the_actions_key_and_need_a_name_and_a_command() {
+    let e = mail_on("");
+    let ids: Vec<&str> = e.actions.iter().map(|a| a.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["compose", "contacts"],
+        "in Actions= order, once each; no group, no Name, no Exec or an unlisted group drop"
+    );
+    assert_eq!(
+        e.actions[1],
+        DesktopAction {
+            id: "contacts".into(),
+            name: "Address Book".into(),
+            icon: Some("contacts".into()),
+            exec_line: "mail -addressbook".into(),
+        }
+    );
+    assert_eq!(e.actions[0].icon, None);
+    assert!(
+        mail_on_text("[Desktop Entry]\nType=Application\nName=M\nExec=m\n")
+            .actions
+            .is_empty()
+    );
+}
+
+fn mail_on_text(text: &str) -> AppEntry {
+    parse_desktop_on(text, &"m.desktop".parse().unwrap(), &[], "", |_| true).unwrap()
+}
+
+#[test]
+fn an_actions_name_is_the_most_specific_one_the_locale_has() {
+    let names = |locale: &str| -> Vec<String> {
+        mail_on(locale)
+            .actions
+            .into_iter()
+            .map(|a| a.name)
+            .collect()
+    };
+    assert_eq!(names("de_DE.UTF-8"), ["Verfassen", "Adressbuch"]);
+    assert_eq!(names("de_AT.UTF-8@euro"), ["Write Message", "Adressen"]);
+    assert_eq!(names("de"), ["Write Message", "Adressbuch"]);
+    assert_eq!(names("C.UTF-8"), ["Write Message", "Address Book"]);
+    assert_eq!(
+        locale_keys("Name", "sr_RS@latin"),
+        [
+            "Name[sr_RS@latin]",
+            "Name[sr_RS]",
+            "Name[sr@latin]",
+            "Name[sr]",
+            "Name"
+        ]
+    );
+    let env = |set: &[(&str, &str)]| {
+        let set: Vec<(String, String)> = set
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        messages_locale(|k| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()))
+    };
+    assert_eq!(
+        env(&[("LANG", "fr_FR.UTF-8"), ("LC_MESSAGES", "de_DE")]),
+        "de_DE"
+    );
+    assert_eq!(
+        env(&[("LANG", "fr_FR.UTF-8"), ("LC_ALL", "")]),
+        "fr_FR.UTF-8"
+    );
+    assert_eq!(env(&[]), "");
+}
+
+#[test]
+fn an_action_runs_its_own_command_with_the_entrys_field_codes_and_terminal() {
+    let e = mail_on("");
+    assert_eq!(
+        action_argv(&e, &e.actions[0], "foot").unwrap(),
+        [
+            "mail",
+            "-compose",
+            "--icon-name",
+            "--icon",
+            "mail",
+            "--title",
+            "Mail"
+        ],
+        "%u takes no file; %i and %c name the entry"
+    );
+    let mut term = e.clone();
+    term.terminal = true;
+    assert_eq!(
+        action_argv(&term, &e.actions[1], "foot").unwrap(),
+        ["foot", "-e", "mail", "-addressbook"]
+    );
+    let quoted = DesktopAction {
+        exec_line: r#"mail "%u""#.into(),
+        ..e.actions[0].clone()
+    };
+    assert_eq!(
+        action_argv(&e, &quoted, "foot"),
+        Err(ExecRefused {
+            name: "Write Message".into()
+        })
+    );
 }

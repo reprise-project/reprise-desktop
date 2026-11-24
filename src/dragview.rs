@@ -1220,6 +1220,7 @@ mod tests {
             mime_types: Vec::new(),
             shown: true,
             path: None,
+            actions: Vec::new(),
         };
         let spot = reprisekit::startpanel::Spot::Program(0);
         h.state
@@ -1269,6 +1270,7 @@ mod tests {
             mime_types: Vec::new(),
             shown: true,
             path: None,
+            actions: Vec::new(),
         };
         let spot = reprisekit::startpanel::Spot::Program(0);
         h.state

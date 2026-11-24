@@ -22,14 +22,15 @@ pub fn access(p: &StartPanel, l: &Layout, tree: &mut Tree, parent: NodeId) -> No
         .headers
         .iter()
         .map(|&(g, r)| {
-            let title = match p.mode() {
-                Mode::Jump(_) => p.jump_title.as_str(),
-                _ => p.results.get(g).map_or("", |grp| grp.title.as_str()),
+            let groups = match p.mode() {
+                Mode::Jump(_) => &p.jump,
+                _ => &p.results,
             };
+            let title = groups.get(g).map_or("", |grp| grp.title.as_str());
             let bounds = l
                 .spots
                 .iter()
-                .filter(|(s, _)| in_group(*s, g))
+                .filter(|(s, _)| in_group(p, *s, g))
                 .fold(r, |b, (_, sr)| b.union(sr));
             let node = access::named(Role::Group, bounds, title);
             (g, tree.push(menu, ("group", g), node))
@@ -43,7 +44,7 @@ pub fn access(p: &StartPanel, l: &Layout, tree: &mut Tree, parent: NodeId) -> No
         };
         let under = groups
             .iter()
-            .find(|&&(g, _)| in_group(s, g))
+            .find(|&&(g, _)| in_group(p, s, g))
             .map_or(menu, |&(_, id)| id);
         let id = tree.push(under, s, n);
         if s == focus {
@@ -53,11 +54,16 @@ pub fn access(p: &StartPanel, l: &Layout, tree: &mut Tree, parent: NodeId) -> No
     focused
 }
 
-/// Whether `s` is a row of the group headed by header `g`: a result of group `g`, or a jump row (the jump list's one header).
-fn in_group(s: Spot, g: usize) -> bool {
+/// Whether `s` is a row of the group headed by header `g`: a result of group `g`, or a jump row
+/// of section `g`.
+fn in_group(p: &StartPanel, s: Spot, g: usize) -> bool {
     match s {
         Spot::Result(sg, _) => sg == g,
-        Spot::Jump(_) => true,
+        Spot::Jump(k) => {
+            let before: usize = p.jump.iter().take(g).map(|grp| grp.rows.len()).sum();
+            let rows = p.jump.get(g).map_or(0, |grp| grp.rows.len());
+            (before..before + rows).contains(&k)
+        }
         _ => false,
     }
 }
@@ -110,7 +116,7 @@ fn spot_node(p: &StartPanel, s: Spot, r: Rect) -> Option<Node> {
             }
             n
         }
-        Spot::Jump(k) => item(r, &p.jump.get(k)?.name),
+        Spot::Jump(k) => item(r, &p.jump_row(k)?.name),
         Spot::Place(i) => {
             let place = p.places.get(i)?;
             let mut n = item(r, &place.label);
@@ -145,7 +151,7 @@ mod tests {
     use super::*;
     use crate::access::accesskit::Action;
     use crate::startpanel::layout::layout;
-    use crate::startpanel::tests::{place, prow, row};
+    use crate::startpanel::tests::{place, prow, row, section};
     use crate::startpanel::{Key, ResultGroup};
     use crate::textedit::EditKey;
 
@@ -214,6 +220,28 @@ mod tests {
             .1;
         assert_eq!(field.value(), Some("no"));
         assert!(t.find(Role::Button, CLEAR).is_some());
+    }
+
+    #[test]
+    fn a_jump_lists_recent_files_and_tasks_hang_in_their_own_groups() {
+        let mut p = StartPanel::new();
+        p.frequent = vec![prow("Mail", true)];
+        p.jump = vec![
+            section("Recent", &["a.eml"]),
+            section("Tasks", &["Write Message", "Address Book"]),
+        ];
+        p.key(Key::Down);
+        p.key(Key::Right);
+        p.key(Key::Down);
+        let (t, focus) = build(&p);
+        let recent = t.find(Role::Group, "Recent").expect("Recent");
+        let tasks = t.find(Role::Group, "Tasks").expect("Tasks");
+        let file = t.find(Role::MenuItem, "a.eml").unwrap();
+        let write = t.find(Role::MenuItem, "Write Message").unwrap();
+        let book = t.find(Role::MenuItem, "Address Book").unwrap();
+        assert_eq!(t.get(recent).unwrap().children(), [file]);
+        assert_eq!(t.get(tasks).unwrap().children(), [write, book]);
+        assert_eq!(focus, write, "the lit task has the focus");
     }
 
     #[test]

@@ -57,6 +57,8 @@ const JUMP_X: i32 = 274;
 const JUMP_ROW_W: i32 = 204;
 const JUMP_HEADER_Y: i32 = 12;
 const JUMP_ROW_H: i32 = 22;
+/// Between one jump section's last row and the next section's title.
+const JUMP_SECTION_GAP: i32 = 6;
 
 const PLACE_X: i32 = 266;
 const PLACE_W: i32 = 138;
@@ -271,9 +273,39 @@ fn jump_pane(p: &StartPanel) -> Rect {
     )
 }
 
-pub fn jumps_shown(p: &StartPanel) -> usize {
-    let room = jump_pane(p).bottom() - (JUMP_HEADER_Y + JUMP_ROW_H);
-    p.jump.len().min((room / JUMP_ROW_H).max(0) as usize)
+/// The jump sections shown: each section's index and the [`Spot::Jump`] indices of its rows that
+/// show, a section with none left out. Short of room, rows come off the end of the first section
+/// first, so the Tasks under Recent keep theirs, then off the end of the last.
+pub fn jump_sections(p: &StartPanel) -> Vec<(usize, std::ops::Range<usize>)> {
+    let room = jump_pane(p).bottom() - JUMP_HEADER_Y;
+    let mut counts: Vec<usize> = p.jump.iter().map(|g| g.rows.len()).collect();
+    let need = |counts: &[usize]| {
+        let shown = counts.iter().filter(|&&n| n > 0);
+        let sections = shown.clone().count() as i32;
+        let rows: usize = shown.map(|n| n + 1).sum();
+        rows as i32 * JUMP_ROW_H + (sections - 1).max(0) * JUMP_SECTION_GAP
+    };
+    while need(&counts) > room {
+        let Some(last) = counts.iter().rposition(|&n| n > 0) else {
+            break;
+        };
+        let first = counts.iter().position(|&n| n > 0).unwrap_or(last);
+        counts[first.min(last)] -= 1;
+    }
+    let mut start = 0;
+    let mut sections = Vec::new();
+    for (g, (group, &n)) in p.jump.iter().zip(&counts).enumerate() {
+        if n > 0 {
+            sections.push((g, start..start + n));
+        }
+        start += group.rows.len();
+    }
+    sections
+}
+
+/// The [`Spot::Jump`] indices shown, top to bottom.
+pub fn jumps_shown(p: &StartPanel) -> impl Iterator<Item = usize> {
+    jump_sections(p).into_iter().flat_map(|(_, rows)| rows)
 }
 
 /// Where the parts go at the panel's text size: the 100% layout with every rect grown
@@ -465,18 +497,17 @@ fn layout_100(p: &StartPanel) -> Layout {
             let jp = jump_pane(p);
             jump = Some(jp);
             let row_w = JUMP_ROW_W - squeeze + shift;
-            headers.push((
-                0,
-                Rect::new(JUMP_X - shift, JUMP_HEADER_Y, row_w, JUMP_ROW_H),
-            ));
-            let top = JUMP_HEADER_Y + JUMP_ROW_H;
-            spots.extend((0..jumps_shown(p)).map(|k| {
-                let y = top + k as i32 * JUMP_ROW_H;
-                (
-                    Spot::Jump(k),
-                    Rect::new(JUMP_X - shift, y, row_w, JUMP_ROW_H),
-                )
-            }));
+            let row = |y| Rect::new(JUMP_X - shift, y, row_w, JUMP_ROW_H);
+            let mut y = JUMP_HEADER_Y;
+            for (g, rows) in jump_sections(p) {
+                headers.push((g, row(y)));
+                y += JUMP_ROW_H;
+                for k in rows {
+                    spots.push((Spot::Jump(k), row(y)));
+                    y += JUMP_ROW_H;
+                }
+                y += JUMP_SECTION_GAP;
+            }
         }
         Mode::Search => {}
     }
@@ -501,7 +532,7 @@ fn layout_100(p: &StartPanel) -> Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::startpanel::tests::{place, prow, row};
+    use crate::startpanel::tests::{place, prow, row, section};
     use crate::startpanel::{Key, ResultGroup, TreeRow};
     use crate::textedit::EditKey;
     use crate::theme::TextUnits;
@@ -670,7 +701,7 @@ mod tests {
         let mut p = StartPanel::new();
         p.frequent = vec![prow("Notepad", true)];
         p.places = ten_places();
-        p.jump = vec![row("a.txt")];
+        p.jump = vec![section("Recent", &["a.txt"])];
         let two = TextUnits::new(22, 11);
         p.fit(two, (1920, 1080));
         assert_eq!(p.text, two, "room enough");
@@ -712,7 +743,7 @@ mod tests {
         let mut p = StartPanel::new();
         p.frequent = vec![prow("Notepad", false)];
         p.places = ten_places();
-        p.jump = vec![row("a.txt")];
+        p.jump = vec![section("Recent", &["a.txt"])];
 
         p.fit(TextUnits::ONE, (371, 600));
         let l = layout(&p);
@@ -804,7 +835,7 @@ mod tests {
         let mut p = StartPanel::new();
         p.frequent = vec![prow("Notepad", false)];
         p.places = ten_places();
-        p.jump = vec![row("a.txt")];
+        p.jump = vec![section("Recent", &["a.txt"])];
         p.fit(TextUnits::new(22, 11), (400, 300));
         assert!(p.text.is_one(), "the text steps down first");
         let l = layout(&p);
@@ -905,7 +936,7 @@ mod tests {
         let mut p = StartPanel::new();
         p.frequent = vec![prow("Notepad", true)];
         p.places = vec![place("Documents")];
-        p.jump = vec![row("a.txt"), row("b.txt")];
+        p.jump = vec![section("Recent", &["a.txt", "b.txt"])];
         p.set_mode(Mode::Jump(0));
         let l = layout(&p);
         assert_eq!(l.panel.width, JUMP_W);
@@ -917,6 +948,73 @@ mod tests {
         assert_eq!(l.picture, None);
         assert!(l.rect(Spot::Program(0)).is_some(), "the programs stay");
         assert!(l.rect(Spot::Shutdown).is_some());
+    }
+
+    #[test]
+    fn tasks_stand_under_their_own_title_below_the_recent_files() {
+        let mut p = StartPanel::new();
+        p.frequent = vec![prow("Mail", true)];
+        p.jump = vec![
+            section("Recent", &["a.eml", "b.eml"]),
+            section("Tasks", &["Write Message"]),
+        ];
+        p.set_mode(Mode::Jump(0));
+        let l = layout(&p);
+        assert_eq!(
+            l.headers,
+            [
+                (0, Rect::new(274, 12, 204, 22)),
+                (1, Rect::new(274, 12 + 3 * 22 + JUMP_SECTION_GAP, 204, 22))
+            ]
+        );
+        let task = l.rect(Spot::Jump(2)).expect("the task shows");
+        assert_eq!(task.y, l.headers[1].1.bottom());
+        p.jump[0].rows.clear();
+        let l = layout(&p);
+        assert_eq!(
+            l.headers,
+            [(1, Rect::new(274, 12, 204, 22))],
+            "an empty section takes no title"
+        );
+        assert_eq!(l.rect(Spot::Jump(0)), Some(Rect::new(274, 34, 204, 22)));
+    }
+
+    #[test]
+    fn a_short_jump_pane_cuts_recent_files_before_tasks() {
+        let names: Vec<String> = (0..30).map(|k| format!("{k}.txt")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut p = StartPanel::new();
+        p.frequent = vec![prow("Mail", true)];
+        p.jump = vec![
+            section("Recent", &names[..10]),
+            section("Tasks", &["One", "Two", "Three"]),
+        ];
+        p.set_mode(Mode::Jump(0));
+        let fits = |p: &StartPanel| {
+            let l = layout(p);
+            let pane = l.jump_pane.unwrap();
+            let last = l.spots.iter().rfind(|(s, _)| matches!(s, Spot::Jump(_)));
+            last.is_none_or(|(_, r)| r.bottom() <= pane.bottom())
+        };
+        assert_eq!(
+            jump_sections(&p),
+            [(0, 0..10), (1, 10..13)],
+            "everything fits at 100%"
+        );
+        p.jump[0] = section("Recent", &names);
+        let cut = jump_sections(&p);
+        assert_eq!(cut[1], (1, 30..33), "every task stays");
+        assert!(cut[0].1.len() < 30 && cut[0].1.start == 0, "{cut:?}");
+        assert!(fits(&p));
+        assert_eq!(
+            jumps_shown(&p).collect::<Vec<_>>(),
+            (cut[0].1.clone()).chain(30..33).collect::<Vec<_>>()
+        );
+        p.jump[1] = section("Tasks", &names);
+        let cut = jump_sections(&p);
+        assert_eq!(cut.len(), 1, "no recent file left: {cut:?}");
+        assert_eq!(cut[0].0, 1);
+        assert!(fits(&p));
     }
 
     #[test]

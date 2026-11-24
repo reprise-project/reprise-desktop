@@ -16,7 +16,8 @@ use crate::search::Found;
 use super::draw::{Drawn, RasterKey, Rasters, panel_origin, panel_pane, panel_room, takes_pointer};
 use super::input::{key_of, spot_app};
 use super::lists::{
-    app_icon, frequent_rows, jump_file, one_per_name, refill_tree, replace_tree, tree_rows,
+    app_icon, frequent_rows, jump_file, jump_task, one_per_name, refill_tree, replace_tree,
+    tree_rows,
 };
 use super::menus::shutdown_options_at;
 use super::picture::{UserPictures, decode_picture, picture_paths, read_pictures};
@@ -58,6 +59,7 @@ fn app(name: &str, category: &str) -> AppEntry {
         mime_types: Vec::new(),
         shown: true,
         path: None,
+        actions: Vec::new(),
     }
 }
 
@@ -559,7 +561,7 @@ fn the_panel_stays_inside_the_usable_area() {
 }
 
 #[test]
-fn a_jump_rows_tip_is_its_files_path_with_the_home_folder_as_a_tilde() {
+fn a_jump_rows_tip_is_its_files_path_and_the_rows_past_the_files_are_tasks() {
     let jumps = vec![
         Vec::new(),
         vec![
@@ -577,6 +579,14 @@ fn a_jump_rows_tip_is_its_files_path_with_the_home_folder_as_a_tilde() {
     assert_eq!(tip(Mode::Jump(1), 2), None, "past the rows");
     assert_eq!(tip(Mode::Jump(0), 0), None);
     assert_eq!(tip(Mode::Programs, 0), None, "no jump list shown");
+    assert_eq!(
+        jump_task(&jumps, Mode::Jump(1), 2),
+        Some(0),
+        "the rows past the files"
+    );
+    assert_eq!(jump_task(&jumps, Mode::Jump(1), 1), None);
+    assert_eq!(jump_task(&jumps, Mode::Jump(0), 0), Some(0));
+    assert_eq!(jump_task(&jumps, Mode::Search, 3), None);
 }
 
 #[test]
@@ -1859,4 +1869,52 @@ fn left_in_a_flyouts_first_column_closes_it_back_to_its_row() {
             assert_eq!(lit(&h), Some(Spot::ShutdownArrow), "back on the arrow");
         }
     }
+}
+
+const MAIL: &str = "[Desktop Entry]\nType=Application\nName=Mail\nExec=mail %u\nIcon=mail\n\
+                    Actions=compose;book;\n\
+                    [Desktop Action compose]\nName=Write Message\nExec=mail-compose\n\
+                    [Desktop Action book]\nName=Address Book\nExec=mail-book --open\n";
+
+/// A pinned program with desktop actions and no recent files gets a jump list of its Tasks;
+/// Right opens it on the first task, Down walks to the next and Enter runs that action.
+#[test]
+fn a_programs_tasks_list_in_its_start_jump_list_and_enter_runs_one() {
+    let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1920, 1080);
+    let mail = reprisefs::apps::parse_desktop(MAIL, &"mail.desktop".parse().unwrap()).unwrap();
+    h.state.app_index = vec![mail];
+    h.state.launches.pin(&h.state.app_index[0].id);
+    let bar = h.state.bars[0].tree;
+    h.state.toggle_start(bar);
+    let m = &h.state.start_panel.as_ref().expect("the menu opened").model;
+    assert!(m.pinned[0].jump, "tasks alone give the row a jump list");
+    for sym in [keys::KEY_Down, keys::KEY_Right] {
+        h.state.start_panel_key(&press(sym, 0));
+    }
+    let m = &h.state.start_panel.as_ref().unwrap().model;
+    assert_eq!(m.mode(), Mode::Jump(0));
+    assert_eq!(m.lit(), Some(Spot::Jump(0)));
+    let tasks: Vec<(&str, Vec<&str>)> = (m.jump.iter())
+        .map(|g| {
+            (
+                g.title.as_str(),
+                g.rows.iter().map(|r| r.name.as_str()).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        tasks,
+        [
+            ("Recent", vec![]),
+            ("Tasks", vec!["Write Message", "Address Book"])
+        ]
+    );
+    crate::spawn::record();
+    for sym in [keys::KEY_Down, keys::KEY_Return] {
+        h.state.start_panel_key(&press(sym, 0));
+    }
+    assert_eq!(crate::spawn::recorded(), ["mail-book"]);
+    assert!(h.state.start_panel.is_none(), "the menu closed");
 }

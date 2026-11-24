@@ -92,9 +92,15 @@ impl State {
             .filter_map(|&w| self.win(w))
             .map(|w| w.title())
             .collect();
+        let tasks = target
+            .entry
+            .as_ref()
+            .map_or(&[][..], crate::taskbar::jump_tasks);
+        let task_names: Vec<&str> = tasks.iter().map(|a| a.name.as_str()).collect();
         let (items, rows) = crate::taskbar::jump_list(
             &target.name,
             &recent,
+            &task_names,
             target.pin_file.is_some(),
             target.source.is_some(),
             &titles,
@@ -110,6 +116,12 @@ impl State {
                 Some(JumpRow::Window(k)) => {
                     let icon = (target.windows.get(*k))
                         .and_then(|&w| self.menu_window_icon(n, w, px, &mut waits));
+                    item.icon(icon)
+                }
+                Some(JumpRow::Task(k)) => {
+                    let icon = (tasks.get(*k).and_then(|a| a.icon.as_deref()))
+                        .or(target.entry.as_ref().and_then(|e| e.icon.as_deref()))
+                        .and_then(|name| self.menu_icon(n, name, px, &mut waits));
                     item.icon(icon)
                 }
                 _ => item,
@@ -135,6 +147,13 @@ impl State {
             .collect();
         match row {
             JumpRow::Recent(path) => self.open_recent_with(target.entry.as_ref(), &path),
+            JumpRow::Task(k) => {
+                if let Some(e) = &target.entry
+                    && let Some(a) = crate::taskbar::jump_tasks(e).get(k)
+                {
+                    self.launch_action(e, a);
+                }
+            }
             JumpRow::Window(k) => {
                 if let Some(&w) = target.windows.get(k)
                     && live.contains(&w)
@@ -172,5 +191,40 @@ impl State {
     pub(crate) fn open_recent_with(&mut self, entry: Option<&AppEntry>, path: &std::path::Path) {
         let how = reprisefs::program::Confirm::on_open(self.config.confirm_scripts);
         self.open_document(path, entry.cloned(), how, false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use reprisekit::controls::menu::MenuItem;
+
+    /// A running program's task button lists its desktop actions under its recent files, and
+    /// picking one runs that action.
+    #[test]
+    fn a_task_buttons_jump_list_lists_the_programs_tasks_and_runs_one() {
+        let text = "[Desktop Entry]\nType=Application\nName=Mail\nExec=mail\nActions=book;\n\
+                    [Desktop Action book]\nName=Address Book\nExec=mail-book\n";
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 1024, 768);
+        h.state.app_index =
+            vec![reprisefs::apps::parse_desktop(text, &"mail.desktop".parse().unwrap()).unwrap()];
+        let mut c = h.connect();
+        let w = h.map_toplevel(&mut c, "mail", 400, 300);
+        let bar = &h.state.bars[0];
+        let i = (bar.slots.iter())
+            .position(|s| s.windows == [w.id])
+            .expect("the mail window's task button");
+        let tree = bar.tree;
+        h.state.open_jump_list(tree, i, (100, 700));
+        let labels: Vec<&str> = (h.state.menus[0].items.iter())
+            .map(|i| match i {
+                MenuItem::Entry { label, .. } => label.as_str(),
+                MenuItem::Separator => "-",
+            })
+            .collect();
+        assert_eq!(labels[..3], ["Address Book", "-", "Mail"]);
+        crate::spawn::record();
+        h.state.menu_activate(0, 0);
+        assert_eq!(crate::spawn::recorded(), ["mail-book"]);
     }
 }

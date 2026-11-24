@@ -557,6 +557,7 @@ pub(crate) mod tests {
             mime_types: Vec::new(),
             shown: true,
             path: None,
+            actions: Vec::new(),
         }];
         let mut icons = IconCache::new(IconTheme::load("none", &[]));
         let app = "org.example.Viewer";
@@ -596,6 +597,7 @@ pub(crate) mod tests {
             mime_types: Vec::new(),
             shown: true,
             path: None,
+            actions: Vec::new(),
         }];
         let mut icons = IconCache::new(IconTheme::load("none", &[]));
         let app = "org.example.Viewer";

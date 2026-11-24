@@ -13,7 +13,7 @@ use crate::keys;
 use crate::lockview::Origin;
 use crate::raster::Rect;
 
-use super::lists::jump_file;
+use super::lists::{jump_file, jump_task};
 use super::search::ResultKind;
 
 const ACCOUNTS: &str = "reprise-accounts";
@@ -292,9 +292,16 @@ impl State {
                     .and_then(|&a| self.app_index.get(a))
                     .cloned();
                 let path = jump_file(&v.jumps, v.model.mode(), k).map(Path::to_path_buf);
-                if let (Some(e), Some(p)) = (entry, path) {
+                let task = jump_task(&v.jumps, v.model.mode(), k);
+                let Some(e) = entry else {
+                    return;
+                };
+                if let Some(p) = path {
                     self.close_start_panel();
                     self.open_recent_with(Some(&e), &p);
+                } else if let Some(a) = task.and_then(|t| crate::taskbar::jump_tasks(&e).get(t)) {
+                    self.close_start_panel();
+                    self.launch_action(&e, a);
                 }
             }
             Spot::AllPrograms => self.open_all_programs(),

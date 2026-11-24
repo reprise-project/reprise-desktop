@@ -308,7 +308,7 @@ impl State {
                     MenuKind::File {
                         commands,
                         path,
-                        facts,
+                        facts: Box::new(facts),
                     },
                 )
             }
@@ -898,6 +898,7 @@ mod tests {
                 mime_types: Vec::new(),
                 shown: true,
                 path: None,
+                actions: Vec::new(),
             }];
             h.state.toggle_launcher();
             typed(&mut h, "chess");
@@ -931,6 +932,7 @@ mod tests {
                 mime_types: Vec::new(),
                 shown: true,
                 path: None,
+                actions: Vec::new(),
             })
             .collect();
         for interface in ["glass", "classic", "blue"] {
@@ -994,6 +996,7 @@ mod tests {
                 mime_types: Vec::new(),
                 shown: true,
                 path: None,
+                actions: Vec::new(),
             })
             .collect();
         for interface in ["classic", "blue", "glass"] {

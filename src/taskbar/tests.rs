@@ -1172,12 +1172,16 @@ fn jump_lists_follow_what_the_button_stands_for() {
     };
     let recent = [PathBuf::from("/h/b.txt"), PathBuf::from("/h/a.txt")];
     let titles = |n: usize| (1..=n).map(|k| format!("w{k}")).collect::<Vec<_>>();
-    let (items, rows) = jump_list("Terminal", &recent, true, true, &titles(3), 1);
+    let tasks = ["New Window", "New Tab"];
+    let (items, rows) = jump_list("Terminal", &recent, &tasks, true, true, &titles(3), 1);
     assert_eq!(
         labels(&items),
         [
             "b.txt",
             "a.txt",
+            "-",
+            "New Window",
+            "New Tab",
             "-",
             "w1",
             "w2",
@@ -1193,6 +1197,9 @@ fn jump_lists_follow_what_the_button_stands_for() {
     assert_eq!(
         rows[3..],
         [
+            Some(JumpRow::Task(0)),
+            Some(JumpRow::Task(1)),
+            None,
             Some(JumpRow::Window(0)),
             Some(JumpRow::Window(1)),
             Some(JumpRow::Window(2)),
@@ -1202,22 +1209,22 @@ fn jump_lists_follow_what_the_button_stands_for() {
             Some(JumpRow::Close)
         ]
     );
-    let (items, rows) = jump_list("Terminal", &[], true, true, &[], 4);
+    let (items, rows) = jump_list("Terminal", &[], &[], true, true, &[], 4);
     assert_eq!(
         labels(&items),
         ["Terminal", "Unpin this program from taskbar"]
     );
     assert_eq!(rows, [Some(JumpRow::Launch), Some(JumpRow::Unpin)]);
-    let (items, rows) = jump_list("Editor", &[], false, true, &titles(1), 1);
+    let (items, rows) = jump_list("Editor", &[], &[], false, true, &titles(1), 1);
     assert_eq!(
         labels(&items),
         ["Editor", "Pin this program to taskbar", "Close window"]
     );
     assert_eq!(rows[1], Some(JumpRow::Pin));
     assert!(matches!(items[1], MenuItem::Entry { enabled: true, .. }));
-    let (items, _) = jump_list("Editor", &[], false, false, &titles(1), 1);
+    let (items, _) = jump_list("Editor", &[], &[], false, false, &titles(1), 1);
     assert!(matches!(items[1], MenuItem::Entry { enabled: false, .. }));
-    let (items, rows) = jump_list("Editor", &[], false, true, &titles(2), 4);
+    let (items, rows) = jump_list("Editor", &[], &[], false, true, &titles(2), 4);
     assert_eq!(
         labels(&items)[4..],
         [

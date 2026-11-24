@@ -123,8 +123,16 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
                 icon: Some(square(16, Color::rgb(230, 200, 90))),
             },
         ];
-        p.jump = vec![row("Personalize"), row("notes.txt"), row("todo.txt")];
-        p.jump_title = "Recent".into();
+        p.jump = vec![
+            ResultGroup {
+                title: "Recent".into(),
+                rows: vec![row("notes.txt"), row("todo.txt")],
+            },
+            ResultGroup {
+                title: "Tasks".into(),
+                rows: vec![row("Personalize"), row("New Window")],
+            },
+        ];
         p
     };
     let home_lit = {
@@ -171,7 +179,7 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
     let jump = {
         let mut p = base();
         p.set_mode(Mode::Jump(2));
-        p.pointer(Some(Spot::Jump(1)));
+        p.pointer(Some(Spot::Jump(2)));
         p
     };
     let glass = reprisekit::glass::Settings {

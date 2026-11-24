@@ -26,6 +26,19 @@ pub struct AppEntry {
     pub shown: bool,
     /// `Path=`: the folder its program starts in.
     pub path: Option<PathBuf>,
+    /// The `[Desktop Action]`s `Actions=` lists, in its order: a jump list's tasks.
+    pub actions: Vec<DesktopAction>,
+}
+
+/// A `[Desktop Action <id>]` group: one without a `Name` or `Exec` is left out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DesktopAction {
+    pub id: String,
+    /// `Name`, in the session's language where the file has it.
+    pub name: String,
+    pub icon: Option<String>,
+    /// `Exec=` as written: [`action_argv`] splits it as [`launch_argv`] splits the entry's.
+    pub exec_line: String,
 }
 
 /// `dir` when it is a folder, else None with a warning, so a launch whose `Path=` is gone starts
@@ -262,10 +275,15 @@ impl std::fmt::Display for ExecRefused {
 }
 
 fn refuse_quoted_codes(entry: &AppEntry) -> Result<(), ExecRefused> {
-    if quotes_a_field_code(&entry.exec_line) {
-        log::warn!("{}: Exec has a field code inside quotes; not run", entry.id);
+    refuse_quoted(&entry.exec_line, &entry.id, &entry.name)
+}
+
+/// `exec` refused as [`refuse_quoted_codes`] refuses an entry's, the box naming `name`.
+fn refuse_quoted(exec: &str, id: &DesktopId, name: &str) -> Result<(), ExecRefused> {
+    if quotes_a_field_code(exec) {
+        log::warn!("{id}: Exec has a field code inside quotes; not run");
         return Err(ExecRefused {
-            name: entry.name.clone(),
+            name: name.to_string(),
         });
     }
     Ok(())
@@ -301,17 +319,96 @@ pub fn parse_desktop(text: &str, id: &DesktopId) -> Option<AppEntry> {
 pub fn parse_desktop_any(text: &str, id: &DesktopId) -> Option<AppEntry> {
     let desktops =
         crate::autostart::desktop_names(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref());
-    parse_desktop_on(text, id, &desktops, |p| {
+    let locale = messages_locale(|k| std::env::var(k).ok());
+    parse_desktop_on(text, id, &desktops, &locale, |p| {
         crate::autostart::find_program(p).is_some()
     })
 }
 
-/// [`parse_desktop_any`] on a desktop announcing `desktops`, `installed` saying whether a
-/// `TryExec` program is there.
+/// The locale the session's messages are in: the first of `LC_ALL`, `LC_MESSAGES` and `LANG`
+/// that `var` has set, else empty.
+fn messages_locale(var: impl Fn(&str) -> Option<String>) -> String {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .filter_map(var)
+        .find(|v| !v.is_empty())
+        .unwrap_or_default()
+}
+
+/// The keys a localestring `key` is looked up under in `locale` (`lang_COUNTRY.ENCODING@MODIFIER`,
+/// each part but `lang` optional), most specific first: `key[lang_COUNTRY@MODIFIER]`,
+/// `key[lang_COUNTRY]`, `key[lang@MODIFIER]`, `key[lang]`, then `key`, as the Desktop Entry spec
+/// orders them.
+fn locale_keys(key: &str, locale: &str) -> Vec<String> {
+    let (rest, modifier) = match locale.split_once('@') {
+        Some((r, m)) => (r, Some(m)),
+        None => (locale, None),
+    };
+    let rest = rest.split_once('.').map_or(rest, |(r, _)| r);
+    let (lang, country) = match rest.split_once('_') {
+        Some((l, c)) => (l, Some(c)),
+        None => (rest, None),
+    };
+    let mut keys = Vec::new();
+    if !lang.is_empty() {
+        let mut tag = |t: String| keys.push(format!("{key}[{t}]"));
+        if let (Some(c), Some(m)) = (country, modifier) {
+            tag(format!("{lang}_{c}@{m}"));
+        }
+        if let Some(c) = country {
+            tag(format!("{lang}_{c}"));
+        }
+        if let Some(m) = modifier {
+            tag(format!("{lang}@{m}"));
+        }
+        tag(lang.to_string());
+    }
+    keys.push(key.to_string());
+    keys
+}
+
+/// `kv`'s localestring `key` in `locale`: the most specific of [`locale_keys`] that is set and
+/// not blank.
+fn localized<'a>(kv: &'a HashMap<&str, Cow<'_, str>>, key: &str, locale: &str) -> Option<&'a str> {
+    locale_keys(key, locale)
+        .iter()
+        .filter_map(|k| kv.get(k.as_str()))
+        .map(|v| v.trim())
+        .find(|v| !v.is_empty())
+}
+
+/// The actions `Actions=` (`list`) names, in its order, each from its `[Desktop Action <id>]`
+/// group of `text`; an id listed twice counts once.
+fn desktop_actions(text: &str, list: Option<&str>, locale: &str) -> Vec<DesktopAction> {
+    let mut ids = split_list(list);
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|id| seen.insert(id.clone()));
+    ids.into_iter()
+        .filter_map(|id| {
+            let kv = group_kv(text, &format!("[Desktop Action {id}]"));
+            let name = localized(&kv, "Name", locale)?.to_string();
+            let exec_line = kv.get("Exec")?.trim().to_string();
+            if exec_argv(&exec_line).is_empty() {
+                return None;
+            }
+            let icon = kv.get("Icon").map(|v| v.trim()).filter(|v| !v.is_empty());
+            Some(DesktopAction {
+                id,
+                name,
+                icon: icon.map(str::to_string),
+                exec_line,
+            })
+        })
+        .collect()
+}
+
+/// [`parse_desktop_any`] on a desktop announcing `desktops`, messages in `locale`, `installed`
+/// saying whether a `TryExec` program is there.
 fn parse_desktop_on(
     text: &str,
     id: &DesktopId,
     desktops: &[String],
+    locale: &str,
     installed: impl Fn(&str) -> bool,
 ) -> Option<AppEntry> {
     let kv = desktop_entry_kv(text);
@@ -350,6 +447,7 @@ fn parse_desktop_on(
         mime_types: split_list(get("MimeType")),
         shown: get("NoDisplay") != Some("true"),
         path: get("Path").filter(|s| !s.is_empty()).map(PathBuf::from),
+        actions: desktop_actions(text, get("Actions"), locale),
     })
 }
 
@@ -1194,6 +1292,19 @@ pub fn open_args_argv(
 pub fn launch_argv(entry: &AppEntry, terminal: &str) -> Result<Vec<OsString>, ExecRefused> {
     refuse_quoted_codes(entry)?;
     let argv = split_exec(&entry.exec_line, |code| entry_field(entry, code));
+    Ok(wrap(entry, terminal, argv))
+}
+
+/// The argument vector that runs `entry`'s `action` with no file: its `Exec` split as
+/// [`launch_argv`] splits the entry's, `%i` and `%c` naming the entry, under the entry's
+/// `Terminal=`; refused as [`open_argv`] refuses.
+pub fn action_argv(
+    entry: &AppEntry,
+    action: &DesktopAction,
+    terminal: &str,
+) -> Result<Vec<OsString>, ExecRefused> {
+    refuse_quoted(&action.exec_line, &entry.id, &action.name)?;
+    let argv = split_exec(&action.exec_line, |code| entry_field(entry, code));
     Ok(wrap(entry, terminal, argv))
 }
 

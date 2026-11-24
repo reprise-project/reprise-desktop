@@ -291,6 +291,7 @@ fn a_start_menu_entrys_file_is_named_and_drawn_as_its_entry() {
         mime_types: Vec::new(),
         shown: true,
         path: None,
+        actions: Vec::new(),
     };
     let apps = [
         entry("calc.desktop", "Other"),

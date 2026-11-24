@@ -78,6 +78,7 @@ fn app(name: &str, id: &str, mimes: &[&str]) -> AppEntry {
         mime_types: mimes.iter().map(|m| (*m).to_string()).collect(),
         shown: true,
         path: None,
+        actions: Vec::new(),
     }
 }
 

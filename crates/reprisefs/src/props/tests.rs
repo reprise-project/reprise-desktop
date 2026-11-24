@@ -289,6 +289,7 @@ fn app(id: &str, mimes: &[&str]) -> AppEntry {
         mime_types: mimes.iter().map(|m| m.to_string()).collect(),
         shown: true,
         path: None,
+        actions: Vec::new(),
     }
 }
 
@@ -573,6 +574,7 @@ fn glance_in_types_the_file_from_the_given_tables() {
         mime_types: vec!["application/x-reprise-test".into()],
         shown: true,
         path: None,
+        actions: Vec::new(),
     };
     let f = glance_in(&file, "song", &[player], &db).unwrap();
     assert_eq!(f.opens_with.as_deref(), Some("Player"));
@@ -597,6 +599,7 @@ fn a_symlink_to_a_document_shows_what_opens_its_target() {
         mime_types: vec!["application/x-reprise-test".into()],
         shown: true,
         path: None,
+        actions: Vec::new(),
     };
     let f = glance_in(&link, "Song", &[player], &db).unwrap();
     assert_eq!(f.type_name, "Shortcut");
@@ -631,6 +634,7 @@ fn an_executable_script_opens_with_nothing_and_is_described_by_its_name() {
         mime_types: vec!["application/x-shellscript".into()],
         shown: true,
         path: None,
+        actions: Vec::new(),
     };
     let apps = [editor];
     std::fs::set_permissions(&f, PermissionsExt::from_mode(0o644)).unwrap();
