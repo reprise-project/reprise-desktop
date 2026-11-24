@@ -31,9 +31,9 @@ pub enum Undoable {
         id: Option<FileId>,
     },
     Trash(Trashed),
-    /// A copy or a shortcut that landed at the path, with its [`file_id`]. Undoing it trashes
-    /// it, a copied folder with everything in it.
-    Copied(PathBuf, Option<FileId>),
+    /// A copy or a shortcut that landed at the path, as it landed ([`landed`]). Undoing it trashes
+    /// it, a copied folder with everything in it, and refuses one changed since.
+    Copied(PathBuf, Option<Landed>),
     /// A New Folder or New Text Document, with its [`file_id`] when it was made. Undoing it
     /// trashes a file and removes a folder only while it is empty, and refuses a different item
     /// that took the path since.
@@ -155,8 +155,16 @@ impl Undoable {
                 }
                 trash::restore(&now)
             }
-            Undoable::Copied(path, id) => {
-                same_item(path, *id)?;
+            Undoable::Copied(path, landed) => {
+                same_item(path, landed.map(|l| l.id))?;
+                if let Some(l) = landed
+                    && newest_change(path)? > l.newest
+                {
+                    return Err(io::Error::other(format!(
+                        "'{}' has changed since it was copied",
+                        crate::bincap::label(path)
+                    )));
+                }
                 trash_in(path, crate::ops::erase)
             }
             // A folder goes only while empty and a file goes to the trash,
@@ -355,6 +363,42 @@ fn replaced(path: &Path) -> io::Error {
             crate::bincap::label(path)
         ),
     )
+}
+
+/// A copy as it landed: its [`FileId`], and the newest change or modification time in it then
+/// ([`newest_change`]), which anything added, edited or removed in it since passes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Landed {
+    pub id: FileId,
+    pub newest: (i64, i64),
+}
+
+/// `path`'s [`Landed`], for a folder read through everything in it.
+pub fn landed(path: &Path) -> Option<Landed> {
+    Some(Landed {
+        id: file_id(path)?,
+        newest: newest_change(path).ok()?,
+    })
+}
+
+/// The newest change or modification time, as seconds and nanoseconds, of `path` and of
+/// everything in it. A copy sets the times it copies before it lands, and on some drives the
+/// change time is the creation time, so both count.
+fn newest_change(path: &Path) -> io::Result<(i64, i64)> {
+    let mut newest = (i64::MIN, 0);
+    let mut todo = vec![path.to_path_buf()];
+    while let Some(p) = todo.pop() {
+        let m = std::fs::symlink_metadata(&p)?;
+        newest = newest
+            .max((m.ctime(), m.ctime_nsec()))
+            .max((m.mtime(), m.mtime_nsec()));
+        if m.is_dir() {
+            for e in std::fs::read_dir(&p)? {
+                todo.push(e?.path());
+            }
+        }
+    }
+    Ok(newest)
 }
 
 /// `path`'s own [`FileId`], a link's rather than its target's.
@@ -743,7 +787,7 @@ mod tests {
         let copy = t.path().join("copy.txt");
         fs::write(&copy, "copied").unwrap();
         let mut u = UndoStack::default();
-        u.push(Undoable::Copied(copy.clone(), file_id(&copy)));
+        u.push(Undoable::Copied(copy.clone(), landed(&copy)));
         fs::remove_file(&copy).unwrap();
         fs::write(&copy, "saved by another program").unwrap();
 
@@ -862,6 +906,31 @@ mod tests {
     }
 
     #[test]
+    fn undo_of_a_copied_folder_refuses_once_anything_in_it_changed_since() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("Trash");
+        let dir = t.path().join("Photos");
+        fs::create_dir_all(dir.join("2024")).unwrap();
+        fs::write(dir.join("2024/a.jpg"), "a").unwrap();
+        let mut u = UndoStack::default();
+        u.push(Undoable::Copied(dir.clone(), landed(&dir)));
+        // Past the file system's time granularity.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        fs::write(dir.join("2024/mine.txt"), "added since").unwrap();
+
+        let mut bins = trash::Bins::new(root.clone(), Vec::new());
+        bins.policy.global.remove_immediately = true;
+        let err = u.undo_in(Some(&bins), true).unwrap().unwrap_err();
+
+        assert_eq!(err.to_string(), "'Photos' has changed since it was copied");
+        assert_eq!(
+            fs::read_to_string(dir.join("2024/mine.txt")).unwrap(),
+            "added since"
+        );
+        assert!(!root.join("files").exists());
+    }
+
+    #[test]
     fn undo_of_a_copied_folder_trashes_it_with_its_contents() {
         let t = tempfile::tempdir().unwrap();
         let root = t.path().join("Trash");
@@ -870,7 +939,7 @@ mod tests {
         fs::write(dir.join("a.jpg"), "a").unwrap();
 
         let mut u = UndoStack::default();
-        u.push(Undoable::Copied(dir.clone(), None));
+        u.push(Undoable::Copied(dir.clone(), landed(&dir)));
         assert_eq!(u.label(), Some("Undo Copy"));
 
         u.undo_in(Some(&trash::Bins::new(root.clone(), Vec::new())), false)
