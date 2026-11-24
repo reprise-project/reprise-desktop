@@ -450,12 +450,17 @@ impl Form {
         Event::Redraw
     }
 
+    /// Whether a combo's list or a colour popup is open and `hit` is off that control. A press
+    /// there only closes it, and the pointer there lights nothing.
+    fn off_popup(&self, hit: Option<Hit>) -> bool {
+        self.open_combo()
+            .is_some_and(|open| hit.is_none_or(|h| h.item != open))
+    }
+
     /// A left press on `hit`. With a combo's list or a colour popup open, a press off that
     /// control only closes it: the control under the press is left alone.
     pub fn click(&mut self, hit: Option<Hit>) -> Event {
-        if let Some(open) = self.open_combo()
-            && hit.is_none_or(|h| h.item != open)
-        {
+        if self.off_popup(hit) {
             self.pointer.press(None, false);
             self.close_popups();
             return Event::Redraw;
@@ -706,7 +711,12 @@ impl Form {
     fn move_pointer(&mut self, x: i32, y: i32, over: Option<Hit>) -> Event {
         self.point = Some((x, y));
         let before = self.shown();
-        self.pointer.motion(self.light(over));
+        let lit = if self.off_popup(over) {
+            None
+        } else {
+            self.light(over)
+        };
+        self.pointer.motion(lit);
         let lit = self.redraw_if(before);
         if let Some(Hit {
             item,

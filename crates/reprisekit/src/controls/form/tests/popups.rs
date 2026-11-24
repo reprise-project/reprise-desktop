@@ -293,3 +293,48 @@ fn a_press_off_an_open_list_only_closes_it() {
     assert_eq!(f.release(), Event::Changed("check"), "with the list closed");
     assert_eq!(checked(&f), Some(true));
 }
+
+#[test]
+fn an_open_list_alone_lights_under_the_pointer() {
+    const LONG: &str = "HP LaserJet 4250 PostScript Printer Driver";
+    let mut f = Form::new(vec![
+        Item::combo("c", 60, 10, 80, &["a", "b", "c", "d"], 4),
+        Item::check("check", 10, 40, "Check"),
+        Item::label_at("long", 10, 150, 60, LONG),
+    ]);
+    drawn(&f, &blue());
+    let check = f.index_of("check").unwrap();
+    f.click(at(&f, 70, 15));
+    f.release();
+    assert!(f.popup_open());
+    f.motion(15, 45, at(&f, 15, 45));
+    assert_eq!(
+        f.lit(check, Light::Body),
+        Interaction::Idle,
+        "the check box stays cold"
+    );
+    f.motion(20, 155, at(&f, 20, 155));
+    f.tip_tick();
+    assert_eq!(f.label_tip(), None, "the cut label tips nothing");
+    let row = match at(&f, 70, 50).map(|h| h.part) {
+        Some(Part::Combo(combo::Hit::Row(r))) => r,
+        other => panic!("(70, 50) is on the list, not {other:?}"),
+    };
+    f.motion(70, 50, at(&f, 70, 50));
+    let open = match &f.items[0].control {
+        Control::Combo(c) => c.open,
+        _ => None,
+    };
+    assert_eq!(open, Some(row), "the list's row under the pointer lights");
+
+    f.click(at(&f, 190, 190));
+    f.motion(15, 45, at(&f, 15, 45));
+    assert_eq!(
+        f.lit(check, Light::Body),
+        Interaction::Hot,
+        "with the list closed"
+    );
+    f.motion(20, 155, at(&f, 20, 155));
+    f.tip_tick();
+    assert_eq!(f.label_tip().as_deref(), Some(LONG), "with the list closed");
+}
