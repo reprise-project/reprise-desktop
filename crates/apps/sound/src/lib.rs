@@ -11,6 +11,7 @@ fn list_icon_px(ctx: &Ctx) -> i32 {
 reprisebus::test_session!();
 
 mod appicons;
+mod connect;
 mod mpris;
 mod sheet;
 mod tray;
@@ -23,6 +24,7 @@ use repriseapp::keys::{dialog_key, sheet_input};
 use repriseapp::oneshot::{self, ErrorBox};
 use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, PointerInput, Reply, WinId};
 use repriseaudio as pipewire;
+use repriseconf::config::OnConnect;
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::controls::form;
 use reprisekit::controls::propsheet;
@@ -81,6 +83,9 @@ struct Sound {
     playing: mpris::Pick,
     /// `[sounds] allow_boost`, reread when the config file changes.
     boost: bool,
+    /// `[sounds] on_connect`, reread with `boost`.
+    on_connect: OnConnect,
+    arrivals: connect::Arrivals,
     config: Option<repriseconf::ConfigWatch>,
 }
 
@@ -215,7 +220,7 @@ impl Sound {
         }
         self.iconless = icons.is_none();
         let tab = self.sheet.as_ref().map(|s| s.sheet.tabs.open);
-        let mut s = sheet::Sheet::new(&self.snapshot, icons.unwrap_or_default());
+        let mut s = sheet::Sheet::new(&self.snapshot, icons.unwrap_or_default(), self.on_connect);
         // A rebuild keeps the tab the tray menu picked.
         if let Some(tab) = tab {
             s.open(tab);
@@ -353,21 +358,55 @@ impl Sound {
         }
     }
 
-    /// Write `changes` through PipeWire's tools. When one cannot run, the sheet
-    /// gets the last snapshot back as its baseline and a box says so.
+    /// Write `changes` through PipeWire's tools and the config file. When a tool cannot run,
+    /// the sheet gets the last snapshot back as its baseline and a box says so.
     fn apply(&mut self, changes: &[sheet::Change]) -> bool {
-        let Err(program) = write(&self.snapshot, changes) else {
-            return true;
-        };
-        if let Some(s) = &mut self.sheet {
-            s.unapplied(&self.snapshot);
+        for change in changes {
+            if let sheet::Change::Profile(id, index) = *change
+                && (self.snapshot.cards.iter())
+                    .any(|c| c.id == id && c.off && c.off_index != Some(index))
+            {
+                self.arrivals.asked(id);
+            }
         }
-        self.error.show(
-            "Sounds and Audio Devices",
-            format!("{program} could not be run, so nothing was changed."),
-            None,
-        );
-        false
+        if let Err(program) = write(&self.snapshot, changes) {
+            if let Some(s) = &mut self.sheet {
+                s.unapplied(&self.snapshot);
+            }
+            self.error.show(
+                "Sounds and Audio Devices",
+                format!("{program} could not be run, so nothing was changed."),
+                None,
+            );
+            return false;
+        }
+        for change in changes {
+            let sheet::Change::OnConnect(choice) = *change else {
+                continue;
+            };
+            if let Err(e) = repriseconf::save_sounds_on_connect(choice) {
+                self.error.show(
+                    "Sounds and Audio Devices",
+                    format!("The setting could not be saved: {e}"),
+                    None,
+                );
+                return false;
+            }
+            self.on_connect = choice;
+            if let Some(s) = &mut self.sheet {
+                s.saved_connect(choice);
+            }
+        }
+        true
+    }
+
+    /// Set the defaults a device that has just connected takes.
+    fn connected(&mut self, now: Instant) {
+        let run = self.snapshots.as_ref().map_or(0, pipewire::Watch::run);
+        for d in (self.arrivals).update(&self.snapshot, run, self.on_connect, now) {
+            log::info!("an audio device connected: {} is the default now", d.name);
+            pipewire::set_default(d.id);
+        }
     }
 
     fn flyout_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
@@ -469,8 +508,14 @@ impl Sound {
     }
 
     fn wake(&mut self, ctx: &mut Ctx) -> Reply {
-        let boost_moved =
-            self.config.as_mut().is_some_and(|w| w.take_changed()) && self.reread_boost();
+        let edited = self.config.as_mut().is_some_and(|w| w.take_changed());
+        let boost_moved = edited && self.reread_boost();
+        if edited {
+            self.on_connect = repriseconf::current().sounds.on_connect;
+            if let Some(s) = &mut self.sheet {
+                s.saved_connect(self.on_connect);
+            }
+        }
         let mut fresh = None;
         if let Some(rx) = &self.snapshots {
             while let Ok(snapshot) = rx.try_recv() {
@@ -493,6 +538,7 @@ impl Sound {
         }
         if let Some(snapshot) = fresh {
             self.snapshot = snapshot;
+            self.connected(Instant::now());
             if let Some(s) = &mut self.sheet {
                 s.refresh(&self.snapshot);
             }
@@ -624,6 +670,7 @@ fn write(snap: &pipewire::Snapshot, changes: &[sheet::Change]) -> Result<(), &'s
             sheet::Change::Volume(id, v) => pipewire::set_volume(snap, id, v),
             sheet::Change::Mute(id, on) => pipewire::set_mute(id, on),
             sheet::Change::Target(id, sink) => pipewire::set_target(id, sink),
+            sheet::Change::OnConnect(_) => continue,
         };
         if !queued {
             return Err(program(change));
@@ -678,6 +725,7 @@ impl App for Sound {
         }
         self.players = Some(mpris::watch(waker.clone()));
         self.boost = repriseconf::current().sounds.allow_boost;
+        self.on_connect = repriseconf::current().sounds.on_connect;
         let w = waker.clone();
         self.config = repriseconf::watch(move || w.wake());
         self.snapshots = Some(pipewire::watch(move || waker.wake()));
@@ -880,6 +928,7 @@ mod tests {
             default_sink: Some("speakers".into()),
             default_source: Some("mic".into()),
             configured_sink: None,
+            configured_source: None,
             cards: vec![],
             apps: vec![app("firefox", &[90, 91], 0.8), app("mpv", &[92], 0.5)],
         }

@@ -4,10 +4,10 @@ use super::file::{AutoFlag, FileAppearance, FileConfig};
 use super::{
     CURSOR_SIZE_MAX, ClickMethod, Config, DIM_INACTIVE_MAX, EFFECTS_MS_MAX, EffectsConfig,
     FontSmoothing, HIDDEN_FRAME_RATE_MAX, HotCorner, IdleOverrides, MAX_POSITION, MenuAnimation,
-    OutputConfig, OutputMode, PREVIEW_FPS_MAX, PointerConfig, PowerAction, REPEAT_RATE_MAX,
-    SNAP_DISTANCE_MAX, SWITCH_MS_MAX, ShortcutOverlay, StartMenuStyle, SwitchStyle, SwitcherConfig,
-    TabletConfig, TaskbarButtons, TaskbarConfig, TitleDoubleClick, Transform, VrrPolicy,
-    WORKSPACES_MAX, quarter_scale, switcher_size,
+    OnConnect, OutputConfig, OutputMode, PREVIEW_FPS_MAX, PointerConfig, PowerAction,
+    REPEAT_RATE_MAX, SNAP_DISTANCE_MAX, SWITCH_MS_MAX, ShortcutOverlay, StartMenuStyle,
+    SwitchStyle, SwitcherConfig, TabletConfig, TaskbarButtons, TaskbarConfig, TitleDoubleClick,
+    Transform, VrrPolicy, WORKSPACES_MAX, quarter_scale, switcher_size,
 };
 use reprisekit::interface::Interface;
 use reprisekit::theme::{Color, FontConfig};
@@ -1017,6 +1017,13 @@ impl Config {
             }
             if let Some(v) = s.allow_boost {
                 cfg.sounds.allow_boost = v;
+            }
+            if let Some(v) = s.on_connect {
+                cfg.sounds.on_connect = OnConnect::parse(&v).ok_or_else(|| {
+                    format!(
+                        "sounds.on_connect {v:?} is not \"playback\", \"playback_and_recording\" or \"keep\""
+                    )
+                })?;
             }
         }
         if let Some(p) = file.privacy {
