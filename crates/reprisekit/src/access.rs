@@ -9,6 +9,7 @@ use accesskit::{Action, Node, NodeId, Role, TextPosition, TextSelection, TreeId,
 
 use crate::raster::Rect;
 use crate::text::TextRenderer;
+use unicode_segmentation::UnicodeSegmentation;
 
 pub const ROOT: NodeId = NodeId(1);
 
@@ -694,12 +695,12 @@ pub fn text_runs(
         let mut words = Vec::new();
         let mut x = 0i32;
         let mut prev_space = true;
-        for (i, ch) in line.text.chars().enumerate() {
-            let w = text.advance(ch, false, px);
-            lengths.push(ch.len_utf8() as u8);
+        for (i, ch) in characters(line.text).enumerate() {
+            let w = text.measure(ch, false, px);
+            lengths.push(ch.len() as u8);
             positions.push(x as f32);
             widths.push(w as f32);
-            let space = ch.is_whitespace();
+            let space = ch.chars().all(char::is_whitespace);
             if prev_space && !space {
                 words.push(i as u8);
             }
@@ -752,12 +753,13 @@ const RUN_CHARS: usize = u8::MAX as usize;
 /// space when it has one. The pieces join by soft wraps; only the last keeps the line's break.
 fn split_run<'a>(line: Line<'a>, text: &TextRenderer, px: u32, out: &mut Vec<Line<'a>>) {
     let mut rest = line;
-    while let Some((cut, _)) = rest.text.char_indices().nth(RUN_CHARS) {
+    while let Some(cut) = character_starts(rest.text).nth(RUN_CHARS) {
         let head = &rest.text[..cut];
-        let at = head
-            .char_indices()
-            .rfind(|(_, c)| c.is_whitespace())
-            .map_or(cut, |(i, c)| i + c.len_utf8());
+        let at = character_starts(head)
+            .zip(characters(head))
+            .filter(|(_, c)| c.chars().all(char::is_whitespace))
+            .last()
+            .map_or(cut, |(i, c)| i + c.len());
         let piece = &rest.text[..at];
         let w = text.measure(piece, false, px);
         out.push(Line {
@@ -816,14 +818,28 @@ fn position(lines: &[Line], ids: &[NodeId], b: usize) -> TextPosition {
             let within = floor_boundary(line.text, b - line.start);
             return TextPosition {
                 node: ids[k],
-                character_index: line.text[..within].chars().count(),
+                character_index: characters(&line.text[..within]).count(),
             };
         }
     }
     TextPosition {
         node: *ids.last().expect("at least one run"),
-        character_index: lines.last().map_or(0, |l| l.text.chars().count()),
+        character_index: lines.last().map_or(0, |l| characters(l.text).count()),
     }
+}
+
+/// `s` in the characters a run reports: its grapheme clusters, as the caret steps and an emoji
+/// sequence draws, except that one too long for a `u8` length goes char by char.
+fn characters(s: &str) -> impl Iterator<Item = &str> {
+    s.graphemes(true).flat_map(|g| {
+        let split = g.len() > usize::from(u8::MAX);
+        g.split_inclusive(move |_: char| split)
+    })
+}
+
+/// The byte offset in `s` of each of its [`characters`].
+fn character_starts(s: &str) -> impl Iterator<Item = usize> + '_ {
+    characters(s).map(move |c| c.as_ptr() as usize - s.as_ptr() as usize)
 }
 
 fn floor_boundary(s: &str, mut i: usize) -> usize {
@@ -1474,6 +1490,46 @@ mod tests {
         assert_eq!(sel.anchor.node, runs[0]);
         assert_eq!(sel.focus.node, runs[1]);
         assert_eq!(sel.focus.character_index, 0);
+    }
+
+    /// An emoji sequence draws one glyph on one advance: the run reports it as one character
+    /// spanning its bytes, and the caret after it lands on the next.
+    #[test]
+    fn an_emoji_sequence_is_one_character_of_its_run() {
+        crate::pins::fonts();
+        let text = TextRenderer::load(&crate::theme::FontConfig::default());
+        let mut t = Tree::window("T", (100, 100));
+        let edit = t.push(
+            ROOT,
+            "e",
+            node(Role::MultilineTextInput, Rect::new(0, 0, 100, 100)),
+        );
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        let value = format!("a{family}b");
+        let lines = [Line {
+            text: &value,
+            start: 0,
+            rect: Rect::new(2, 2, 90, 13),
+            hard_break: false,
+        }];
+        let after = 1 + family.len();
+        text_runs(&mut t, edit, &lines, &text, 11, after, after);
+        let e = t.get(edit).unwrap();
+        let run = t.get(e.children()[0]).unwrap();
+        assert_eq!(run.character_lengths(), &[1, family.len() as u8, 1]);
+        let (a, fam) = (
+            text.measure("a", false, 11),
+            text.measure(family, false, 11),
+        );
+        assert_eq!(
+            run.character_positions(),
+            Some(&[0.0, a as f32, (a + fam) as f32][..])
+        );
+        assert_eq!(
+            run.character_widths(),
+            Some(&[a as f32, fam as f32, text.measure("b", false, 11) as f32][..])
+        );
+        assert_eq!(e.text_selection().unwrap().focus.character_index, 2);
     }
 
     #[test]
