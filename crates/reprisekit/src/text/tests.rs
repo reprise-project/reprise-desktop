@@ -1072,6 +1072,28 @@ fn ink_cut_by_a_line_too_short_for_it_is_listed_and_a_scrolled_view_cut_is_not()
     );
 }
 
+#[test]
+fn a_left_aligned_line_keeps_a_first_glyph_that_hooks_left_of_its_pen() {
+    crate::pins::fonts();
+    let r = TextRenderer::load(&FontConfig {
+        family: vec!["DejaVu Sans".into()],
+        ..FontConfig::default()
+    });
+    assert!(r.ink_before("JPEG Image", false, 11) > 0);
+    let black = Color::rgb(0, 0, 0);
+    let mut cut = Vec::new();
+    for s in [1, 2] {
+        let mut c = Canvas::with_scale(120, 40, s);
+        let roomy = Rect::new(10, 2, 100, 16);
+        let ((), cuts) = crate::pins::clipped_ink(|| {
+            r.draw(&mut c, roomy, "JPEG Image", false, black, Align::Left, 11);
+            r.draw_over(&mut c, roomy, "Jobs", false, black, Align::Left, 11);
+        });
+        cut.extend(cuts.into_iter().map(|c| (s, c.text, c.cols)));
+    }
+    assert_eq!(cut, Vec::new(), "(scale, line, ink columns cut)");
+}
+
 /// Every printable ASCII char at either end of a run, Tahoma and DejaVu Sans, mono and
 /// antialiased, 11 to 17 px, regular and bold.
 fn each_end_glyph(mut f: impl FnMut(&TextRenderer, String, bool, u32, &str)) {

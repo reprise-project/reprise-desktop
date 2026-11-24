@@ -18,7 +18,6 @@ glass-scale2 ellipsized "Pictures (3)" x4  # a task button's title
 import-sheet ellipsized "Touchpad natural scrolling" x6  # an imported setting's name in the sheet's list
 label-ellipsis ellipsized "HP LaserJet 4250 PostScript Printer Driver" x3  # the page shows an ellipsized label
 reprisekit-gallery cut "Checked Pressed" x2  # the gallery's own caption
-reprisekit-gallery cut "JPEG Image" x2  # the J's hook inks 1 px left of its rect
 reprisekit-gallery cut "Thumb Pressed" x1  # the gallery's own caption
 reprisekit-gallery ellipsized "Documents" x1  # a name in a list or drop-down of its own width
 reprisekit-gallery ellipsized "HDMI-A-1 (1920x1080)" x1  # a name in a list or drop-down of its own width
