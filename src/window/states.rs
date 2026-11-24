@@ -1,6 +1,8 @@
 use reprisekit::classic::frame::FrameGeometry;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 
+use smithay::output::Output;
+
 use crate::compositor::State;
 use crate::raster::Rect;
 
@@ -230,6 +232,12 @@ impl State {
     }
 
     pub fn set_fullscreen(&mut self, w: WindowId, on: bool) {
+        self.set_fullscreen_on(w, on, None);
+    }
+
+    /// [`State::set_fullscreen`] filling `output` when it is one [`State::fullscreen_target`]
+    /// takes, else the window's own output.
+    pub fn set_fullscreen_on(&mut self, w: WindowId, on: bool, output: Option<Output>) {
         if self.win(w).is_none_or(|x| x.fullscreen == on) {
             return;
         }
@@ -238,11 +246,29 @@ impl State {
         }
         self.cancel_interaction_for(w);
         self.toplevels.dirty = true;
+        let target = output
+            .filter(|o| self.fullscreen_target(o))
+            .map(|o| self.layout_box(Some(&o)));
+        let from = self.fit_output(w);
         let Some(win) = self.win_mut(w) else {
             return;
         };
         let saved = win.enter(Change::Fullscreen(on));
-        if on || win.maximized {
+        if on {
+            if let Some(b) = target {
+                win.fullscreen_from = from.filter(|_| win.maximized);
+                (win.x, win.y) = (b.x, b.y);
+            }
+            self.fit_maximized(w);
+        } else if win.maximized {
+            let back = win.fullscreen_from.take();
+            let back = back.filter(|o| self.fullscreen_target(o));
+            if let Some(o) = back {
+                let area = self.usable_area(Some(&o));
+                if let Some(win) = self.win_mut(w) {
+                    (win.x, win.y) = (area.x, area.y);
+                }
+            }
             self.fit_maximized(w);
         } else {
             let restore = saved.map(|r| self.restore_to(w, r));
@@ -465,6 +491,7 @@ impl Window {
                 self.maximized = false;
                 self.saved = None;
                 self.saved_fullscreen = None;
+                self.fullscreen_from = None;
                 self.snapped = None;
                 None
             }

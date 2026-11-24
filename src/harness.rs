@@ -1118,6 +1118,11 @@ impl TestClient {
         )
     }
 
+    /// The `wl_output`s bound when the client connected, in the registry's order.
+    pub fn outputs(&self) -> &[WlOutput] {
+        &self.side.outputs
+    }
+
     /// Bind `reprise_on_top_v1`; its `changed` events land in [`ClientSide::on_top`].
     /// Whether the registry offered a global of `interface`.
     pub fn offered(&self, interface: &str) -> bool {
