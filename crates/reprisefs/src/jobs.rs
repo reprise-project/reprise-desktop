@@ -26,11 +26,13 @@ pub struct PutItem {
 
 #[derive(Debug)]
 pub enum PutEvent {
-    /// `id` is the landed item's [`crate::undo::file_id`].
+    /// `id` is the landed item's [`crate::undo::file_id`], and `copied` a copy's
+    /// [`crate::undo::landed`].
     Landed {
         index: usize,
         landed: OsString,
         id: Option<crate::undo::FileId>,
+        copied: Option<crate::undo::Landed>,
         replaced: bool,
         unlisted: bool,
     },
@@ -189,9 +191,13 @@ impl PutJob {
                             m.settle(done);
                             existing.push(landed.to_string_lossy().into_owned());
                             ours.insert(Some(landed.clone()));
+                            let at = dir.join(&landed);
                             PutEvent::Landed {
                                 index,
-                                id: crate::undo::file_id(&dir.join(&landed)),
+                                id: crate::undo::file_id(&at),
+                                copied: (it.op != DropOp::Move)
+                                    .then(|| crate::undo::landed(&at))
+                                    .flatten(),
                                 landed,
                                 replaced,
                                 unlisted,

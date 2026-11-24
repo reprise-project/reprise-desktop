@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use super::{EntryId, FileId, Undo, UndoStack, Undoable};
+use super::{EntryId, FileId, Landed, Undo, UndoStack, Undoable};
 use crate::trash::Trashed;
 
 /// How long an edit waits for another process's, which only rewrites a small file.
@@ -432,6 +432,13 @@ impl Out {
         self.opt(id.map(|(dev, ino)| format!("{dev}:{ino}")))
     }
 
+    fn landed(&mut self, l: Option<Landed>) {
+        self.opt(l.map(|l| {
+            let ((dev, ino), (s, ns)) = (l.id, l.newest);
+            format!("{dev}:{ino}:{s}:{ns}")
+        }))
+    }
+
     fn item(&mut self, u: &Undoable) {
         match u {
             Undoable::Move {
@@ -459,10 +466,10 @@ impl Out {
                 self.path(&t.files);
                 self.opt(t.deleted);
             }
-            Undoable::Copied(p, id) => {
+            Undoable::Copied(p, landed) => {
                 self.field(b"copied");
                 self.path(p);
-                self.id(*id);
+                self.landed(*landed);
             }
             Undoable::New(p, id) => {
                 self.field(b"new");
@@ -516,6 +523,21 @@ impl<'b> In<'_, 'b> {
         }
     }
 
+    fn landed(&mut self) -> Option<Option<Landed>> {
+        match self.opt::<String>()? {
+            None => Some(None),
+            Some(s) => {
+                let [dev, ino, sec, ns] = s.split(':').collect::<Vec<_>>()[..] else {
+                    return None;
+                };
+                Some(Some(Landed {
+                    id: (dev.parse().ok()?, ino.parse().ok()?),
+                    newest: (sec.parse().ok()?, ns.parse().ok()?),
+                }))
+            }
+        }
+    }
+
     /// One entry, `depth` batches down.
     fn item(&mut self, depth: usize) -> Option<Undoable> {
         Some(match self.field()? {
@@ -543,7 +565,7 @@ impl<'b> In<'_, 'b> {
                     deleted: self.opt()?,
                 })
             }
-            b"copied" => Undoable::Copied(self.path()?, self.id()?),
+            b"copied" => Undoable::Copied(self.path()?, self.landed()?),
             b"new" => Undoable::New(self.path()?, self.id()?),
             b"batch" if depth < MAX_NESTING => Undoable::Batch(
                 (0..self.num::<usize>()?)
@@ -659,7 +681,13 @@ mod tests {
                 deleted: Some(-5),
             }),
             Undoable::Batch(vec![
-                Undoable::Copied("/a/c".into(), Some((1, 2))),
+                Undoable::Copied(
+                    "/a/c".into(),
+                    Some(Landed {
+                        id: (1, 2),
+                        newest: (-3, 4),
+                    }),
+                ),
                 Undoable::New("/a/n".into(), None),
             ]),
         ];
