@@ -252,6 +252,26 @@ fn a_console_layer_surface_gets_the_keyboard_back_over_the_window_the_remote_sid
 }
 
 #[test]
+fn a_console_layer_surface_that_gave_up_the_keyboard_in_lock_mode_gets_none_back_when_it_ends() {
+    let mut h = computer();
+    let mut console = h.connect();
+    let t = h.map_toplevel(&mut console, "test.app", 400, 300);
+    let window = h.state.win(t.id).unwrap().wl_surface().clone();
+    let (wl, layer) = h.map_exclusive_layer_on(&mut console, None, Layer::Overlay);
+    let held = last_layer_wl(&h);
+    assert_eq!(keyboard(&h), Some(held.clone()), "it holds the keyboard");
+    let (_portal, _lock) = begin(&mut h);
+    layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+    wl.commit();
+    h.roundtrip(&mut console);
+    tap(&mut h, &HUNTER2);
+    tap(&mut h, &[ENTER]);
+    settle(&mut h);
+    assert!(!remote_side(&h.state), "the console unlock ends lock mode");
+    assert_eq!(keyboard(&h), Some(window), "the window gets it");
+}
+
+#[test]
 fn a_console_layer_surface_gets_no_remote_pointer() {
     let mut h = computer();
     h.pointer_to(100.0, 100.0);
