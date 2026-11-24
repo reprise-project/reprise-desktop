@@ -130,8 +130,9 @@ programs, All Programs and a search box that finds programs, settings pages
 and files, and does sums and unit conversions. The right side has your home
 folder, Documents, Pictures, Music, Recent Items, Computer, Control Panel,
 Printers and Run.
-Hover a program for its jump list: its recent files, then its tasks. The Shut
-down button turns the computer off, and the arrow next to it offers Log off,
+Hover a program, or click the arrow at its right, for its jump list: its
+recent files, then its tasks. The Shut down button turns the computer off,
+and the arrow next to it offers Log off,
 Lock, Restart, Sleep and Hibernate, with Switch user first under
 reprise-login. Where the session offers Disconnect, it comes first instead,
 and Sleep and Hibernate are left out

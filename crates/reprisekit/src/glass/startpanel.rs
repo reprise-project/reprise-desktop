@@ -168,7 +168,6 @@ mod at {
     pub const PROGRAM_PEN: i32 = 40;
     pub const PROGRAM_BASE: i32 = 23;
     pub const ROW_ARROW: (i32, i32) = (231, 15);
-    pub const SPLIT_X: i32 = 218;
     pub const TRIANGLE: (i32, i32) = (8, 5);
     pub const ALL_PEN: i32 = 38;
     pub const BACK_PEN: i32 = 39;
@@ -332,7 +331,7 @@ fn draw_contents(
                 if is_lit {
                     d.part(b, Part::StartHotLeft, State::Normal);
                     if row.jump {
-                        let x = b.x + g.len(at::SPLIT_X - layout::shift(p));
+                        let x = b.x + g.len(layout::SPLIT_X - layout::shift(p));
                         d.part(
                             Rect::new(x, b.y, 3 * s, b.height),
                             Part::StartHotSplit,
@@ -347,7 +346,7 @@ fn draw_contents(
                     d.canvas.blit_over(x, y, icon);
                 }
                 let right = if row.jump {
-                    g.len(at::SPLIT_X - layout::shift(p))
+                    g.len(layout::SPLIT_X - layout::shift(p))
                 } else {
                     r.width - 4 * s
                 };
