@@ -876,6 +876,12 @@ impl Harness {
     /// A `w`x`h` xdg popup on a fresh top-layer panel in the output's top-left corner, both
     /// mapped with their first buffers, as a panel's menu opens.
     pub fn map_layer_popup(&mut self, c: &mut TestClient, w: i32, h: i32) -> Popup {
+        let panel = self.map_panel(c);
+        self.panel_popup(c, &panel, w, h, false)
+    }
+
+    /// A 200x30 top-layer panel in the top-left corner of the output the compositor picks.
+    pub fn map_panel(&mut self, c: &mut TestClient) -> ZwlrLayerSurfaceV1 {
         use zwlr_layer_surface_v1::Anchor;
         let qh = c.qh();
         let compositor = c.side.compositor.clone().expect("wl_compositor");
@@ -895,15 +901,34 @@ impl Harness {
         panel.commit();
         self.roundtrip(c);
         self.roundtrip(c);
+        layer
+    }
+
+    /// A `w`x`h` xdg popup on `panel` below its top edge, mapped with its first buffer; with
+    /// `grab`, it asks for the seat's grab under the last keyboard enter's serial, as a menu does.
+    pub fn panel_popup(
+        &mut self,
+        c: &mut TestClient,
+        panel: &ZwlrLayerSurfaceV1,
+        w: i32,
+        h: i32,
+        grab: bool,
+    ) -> Popup {
+        let qh = c.qh();
         let wm = c.side.wm_base.clone().expect("xdg_wm_base");
-        let surface = compositor.create_surface(&qh, ());
+        let surface = (c.side.compositor.as_ref())
+            .expect("wl_compositor")
+            .create_surface(&qh, ());
         let xdg = wm.get_xdg_surface(&surface, &qh, ());
         let positioner = wm.create_positioner(&qh, ());
         positioner.set_size(w, h);
         positioner.set_anchor_rect(0, 0, 1, 30);
         let popup = xdg.get_popup(None, &positioner, &qh, ());
-        layer.get_popup(&popup);
+        panel.get_popup(&popup);
         positioner.destroy();
+        if grab {
+            popup.grab(c.side.seat.as_ref().expect("wl_seat"), c.side.enter_serial);
+        }
         surface.commit();
         self.roundtrip(c);
         attach(c.side.shm.as_ref().expect("wl_shm"), &qh, &surface, w, h);

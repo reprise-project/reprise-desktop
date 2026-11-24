@@ -170,6 +170,44 @@ fn a_console_layer_surface_from_before_lock_mode_never_takes_the_remote_keyboard
 }
 
 #[test]
+fn a_console_panels_menu_never_takes_the_remote_keyboard_with_its_grab() {
+    let mut h = computer();
+    let mut console = h.connect();
+    let panel = h.map_panel(&mut console);
+    assert_eq!(last_layer(&h).0, "eDP-1");
+    let (_portal, _lock) = begin(&mut h);
+    let mut c = h.connect();
+    let (_, window) = remote_window(&mut h, &mut c);
+    let menu = h.panel_popup(&mut console, &panel, 120, 90, true);
+    assert_eq!(
+        keyboard(&h),
+        Some(window.clone()),
+        "the menu's grab takes nothing"
+    );
+
+    console.side.key_log.clear();
+    c.side.key_log.clear();
+    h.remote_key(A, true);
+    h.remote_key(A, false);
+    h.roundtrip(&mut c);
+    h.roundtrip(&mut console);
+    assert!(
+        console.side.key_log.is_empty(),
+        "{:?}",
+        console.side.key_log
+    );
+    assert_eq!(keys_heard(&c), [(A, true), (A, false)]);
+
+    console.hide_popup(&menu);
+    h.roundtrip(&mut console);
+    assert_eq!(
+        keyboard(&h),
+        Some(window),
+        "the menu closing hands its panel nothing"
+    );
+}
+
+#[test]
 fn a_console_layer_surface_mapped_under_the_console_lock_leaves_the_remote_side_the_keyboard() {
     let mut h = computer();
     crate::lockview::lock(&mut h.state);

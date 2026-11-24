@@ -343,6 +343,9 @@ impl XdgShellHandler for State {
         let Ok(root) = find_popup_root_surface(&kind) else {
             return;
         };
+        if crate::layer::under_console_lock(self, &root) {
+            return;
+        }
         let seat = self.seat.clone();
         let grab = match self.popups.grab_popup(root, kind, &seat, serial) {
             Ok(g) => g,
@@ -376,9 +379,11 @@ impl XdgShellHandler for State {
 
 impl State {
     /// Give a popup's `grab` (asked for with `serial`) the keyboard and the pointer, unless another
-    /// grab holds them or the desktop is locked.
+    /// grab holds them, the desktop is locked or the popup is under the console's lock.
     pub fn set_popup_grab(&mut self, mut grab: PopupGrab<State>, serial: Serial) {
-        if self.desktop_locked() {
+        let console =
+            (grab.current_grab()).is_some_and(|s| crate::layer::under_console_lock(self, &s));
+        if self.desktop_locked() || console {
             grab.ungrab(PopupUngrabStrategy::All);
             return;
         }
