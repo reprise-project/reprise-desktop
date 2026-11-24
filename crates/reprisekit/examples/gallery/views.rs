@@ -311,9 +311,9 @@ pub fn render_image_view(scale: i32) -> Canvas {
     out
 }
 
-/// A terminal screen: a prompt, the 16 colours, attributes, box frames, blocks and wide chars,
-/// beside its scrollback bar in each interface: scrolled back with the thumb at rest, hot and
-/// held, then with no scrollback.
+/// A terminal screen: a prompt, the 16 colours, attributes, box frames, blocks, wide chars and
+/// emoji sequences, beside its scrollback bar in each interface: scrolled back with the thumb at
+/// rest, hot and held, then with no scrollback.
 pub fn render_termgrid(scale: i32) -> Canvas {
     use reprisekit::classic::widgets::ScrollHit;
     use reprisekit::controls::termgrid::{self, CursorShape, Flags, Scrollback, Snapshot};
@@ -418,6 +418,31 @@ pub fn render_termgrid(scale: i32) -> Canvas {
     put(9, 0, "日本語", fg, Flags::WIDE);
     put(9, 7, "wide chars", fg, Flags::default());
     put(10, 0, "$ ", fg, Flags::default());
+    let mut col = 0;
+    for (part, wide) in [
+        ("\u{1F1EF}", false),
+        ("\u{1F1F5}", false),
+        ("\u{1F44B}", true),
+        ("\u{1F3FD}", true),
+        ("\u{1F468}\u{200D}", true),
+        ("\u{1F469}\u{200D}", true),
+        ("\u{1F467}", true),
+        ("1\u{FE0F}\u{20E3}", false),
+    ] {
+        let mut chars = part.chars();
+        let cell = &mut snap.cells[11 * cols + col];
+        cell.ch = chars.next().unwrap();
+        let extra: String = chars.collect();
+        cell.extra = (!extra.is_empty()).then(|| extra.into());
+        if wide {
+            cell.flags = Flags::WIDE;
+            snap.cells[11 * cols + col + 1].flags = Flags::WIDE_SPACER;
+        }
+        col += 1 + usize::from(wide);
+    }
+    for (i, ch) in " sequences".chars().enumerate() {
+        snap.cells[11 * cols + col + i].ch = ch;
+    }
     snap.cursor = (10, 2, CursorShape::Block);
     let w = (cols as i32 * m.cell_w + scale - 1) / scale;
     let h = (rows as i32 * m.cell_h + scale - 1) / scale;

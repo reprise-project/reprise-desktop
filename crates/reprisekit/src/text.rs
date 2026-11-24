@@ -1114,6 +1114,20 @@ impl TextRenderer {
             })
     }
 
+    /// Whether `text` draws as a single colour glyph.
+    pub(crate) fn one_colour_glyph(&self, text: &str, bold: bool, size_px: u32) -> bool {
+        if !text.chars().any(crate::emoji::may_draw_in_colour) {
+            return false;
+        }
+        let mut pieces = self.pieces(text);
+        match (pieces.next(), pieces.next()) {
+            (Some((_, _, p)), None) => {
+                self.with_piece(p, bold, size_px, 1, |g| g.colour.is_some()) == Some(true)
+            }
+            _ => false,
+        }
+    }
+
     fn piece_advance(&self, piece: Piece, bold: bool, size_px: u32) -> i32 {
         self.with_piece(piece, bold, size_px, 1, |g| g.advance)
             .unwrap_or(0)
