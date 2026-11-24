@@ -162,10 +162,25 @@ impl State {
         } else {
             self.relayout(w);
             match restore {
-                Some((cw, ch)) => self.request_size(w, cw, ch),
+                Some(size) => self.restore_size(w, size),
                 None => self.send_configure(w),
             }
         }
+    }
+
+    /// Ask `w` for its normal client size `(cw, ch)`, or for one of its own choosing when it
+    /// never had one (`Window::own_size`).
+    fn restore_size(&mut self, w: WindowId, (cw, ch): (i32, i32)) {
+        if !self
+            .win_mut(w)
+            .is_some_and(|x| std::mem::take(&mut x.own_size))
+        {
+            return self.request_size(w, cw, ch);
+        }
+        if let Some(t) = self.win(w).and_then(Window::xdg) {
+            t.with_pending_state(|s| s.size = None);
+        }
+        self.send_configure(w);
     }
 
     pub fn send_configure(&self, w: WindowId) {
@@ -274,7 +289,7 @@ impl State {
             let restore = saved.map(|r| self.restore_to(w, r));
             self.relayout(w);
             match restore {
-                Some((cw, ch)) => self.request_size(w, cw, ch),
+                Some(size) => self.restore_size(w, size),
                 None => self.send_configure(w),
             }
         }

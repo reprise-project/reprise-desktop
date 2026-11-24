@@ -99,6 +99,7 @@ impl State {
             saved: None,
             saved_fullscreen: None,
             fullscreen_from: None,
+            own_size: false,
             snapped: None,
             home: None,
             last_frame: None,
@@ -538,6 +539,16 @@ impl State {
             {
                 win.saved_fullscreen = Some(Rect::new(x, y, s.0, s.1));
             }
+        }
+        // The first configure sized the state the client asked for (`placement::with_asked`), so
+        // the frame it would restore to is that state's.
+        if size.is_none()
+            && state.is_none()
+            && (asked_maximized || asked_fullscreen)
+            && let Some(win) = self.win_mut(w)
+            && win.xdg().is_some()
+        {
+            win.own_size = true;
         }
         if state == Some(WindowState::Minimized) {
             self.set_minimized(w, true);
