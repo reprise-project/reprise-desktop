@@ -145,3 +145,53 @@ fn blue_ignores_the_pager_mark() {
         );
     }
 }
+
+/// A dimmed label's colour glyphs dim with its ink: each pixel is the full-strength drawing laid
+/// over the bar at the label's alpha.
+#[test]
+fn a_dimmed_label_dims_its_colour_glyphs_too() {
+    crate::pins::fonts();
+    let text = crate::text::TextRenderer::load(&FontConfig::default());
+    let bar = Color::rgb(0x20, 0x40, 0x80);
+    let ink = Color::rgb(0xFF, 0xFF, 0xFF);
+    for s in [1, 2] {
+        let r = Rect::new(0, 0, 40, 24);
+        let blank = || {
+            let mut c = Canvas::with_scale(40, 24, s);
+            c.fill_rect(r, bar);
+            c
+        };
+        let mut full = blank();
+        text.for_output(s)
+            .draw(&mut full, r, "2😀", false, ink, Align::Center, 11);
+        let mut dimmed = blank();
+        super::super::buttons::draw_dimmed_number(
+            &mut dimmed,
+            text.for_output(s),
+            r,
+            "2😀",
+            ink,
+            super::super::buttons::PAGER_DIM,
+            11,
+        );
+        let a = super::super::buttons::PAGER_DIM;
+        let mix = |b: u32, f: u32, sh: u32| {
+            let (b, f) = ((b >> sh) & 0xFF, (f >> sh) & 0xFF);
+            (f * a + b * (255 - a)) / 255
+        };
+        let off: Vec<_> = (full.pixels.iter().zip(&dimmed.pixels).enumerate())
+            .filter(|&(_, (&f, &d))| {
+                [16, 8, 0]
+                    .iter()
+                    .any(|&sh| mix(bar.argb(), f, sh).abs_diff((d >> sh) & 0xFF) > 3)
+            })
+            .map(|(i, (&f, &d))| (i, format!("{f:08x}"), format!("{d:08x}")))
+            .take(4)
+            .collect();
+        assert_eq!(
+            off,
+            Vec::new(),
+            "scale {s}: (pixel, full, dimmed) off the 70% mix"
+        );
+    }
+}
