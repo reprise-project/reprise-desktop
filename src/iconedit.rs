@@ -582,7 +582,6 @@ impl State {
             let bins = reprisefs::trash::Bins::system();
             let (done, error, purged) = undo.reverse(bins.as_ref(), erasing.is_some());
             Box::new(move |state: &mut State| {
-                state.undo_ended();
                 let question = error
                     .as_ref()
                     .and_then(NoBin::of)
@@ -594,7 +593,9 @@ impl State {
                             move_cell(view, &file_name(to), &file_name(from));
                         }
                     }
-                    left = view.undos.put_back(undo, done, error.as_ref());
+                    if let Some(running) = view.undoing.take() {
+                        left = view.undos.put_back(undo, running, done, error.as_ref());
+                    }
                     view.undos.forget_gone(&purged);
                 }
                 match (question.zip(left), error) {

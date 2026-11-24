@@ -222,6 +222,21 @@ impl Undo {
     }
 
     /// What goes back on the stack once the first `done` steps were reversed and the next one
+    /// failed with `error`, or a cancel stopped there (`None`), with where it goes ([`Undo::left`]).
+    fn leftover(mut self, done: usize, error: Option<&io::Error>) -> Option<Leftover> {
+        let (id, epoch, below) = (self.id, self.epoch, std::mem::take(&mut self.below));
+        let asked = error.and_then(NoBin::of).is_some();
+        let item = self.left(done, error)?;
+        Some(Leftover {
+            id,
+            item,
+            below,
+            epoch,
+            asked,
+        })
+    }
+
+    /// What goes back on the stack once the first `done` steps were reversed and the next one
     /// failed with `error`, or a cancel stopped there (`None`). A step its Recycle Bin refused
     /// ([`NoBin`]) keeps the rest for an Undo that erases, a cancel keeps it to try again, and
     /// another failure keeps a batch's rest and drops a single step.
@@ -240,6 +255,17 @@ impl Undo {
             false => rest.pop(),
         }
     }
+}
+
+/// What an undo left, on its way back to the stack ([`UndoStack::restore`]).
+#[derive(Clone)]
+struct Leftover {
+    id: EntryId,
+    item: Undoable,
+    below: Vec<EntryId>,
+    epoch: u64,
+    /// Its Recycle Bin refused it ([`NoBin`]): it goes on top, where the question about it is.
+    asked: bool,
 }
 
 /// Why Undo stopped at a copied or new item: its Recycle Bin refuses it (its drive removes files
@@ -434,32 +460,33 @@ impl UndoStack {
         }
     }
 
-    /// What `undo` left once its first `done` steps were reversed ([`Undo::left`]), back where
-    /// it was taken from: above the highest entry that was below it then, under the entries
-    /// pushed since. Nothing after a [`UndoStack::clear`] or once the history started over, or
-    /// when the cap drops it.
-    /// What its Recycle Bin refused ([`NoBin`]) goes on top instead, since the question about it
-    /// is up now. Returns the entry put back.
+    /// What `undo` left once its first `done` steps were reversed ([`Undo::leftover`]), back
+    /// where it was taken from ([`UndoStack::restore`]). Returns the entry put back.
     pub fn put_back(
         &mut self,
-        mut undo: Undo,
+        undo: Undo,
         done: usize,
         error: Option<&io::Error>,
     ) -> Option<EntryId> {
-        let (id, epoch) = (undo.id, undo.epoch);
-        if (id.history, epoch) != (self.nonce, self.epoch) {
+        self.restore(undo.leftover(done, error)?)
+    }
+
+    /// `left` back where it was taken from: above the highest entry that was below it then, under
+    /// the entries pushed since. Nothing after a [`UndoStack::clear`] or once the history started
+    /// over, or when the cap drops it. What its Recycle Bin refused ([`NoBin`]) goes on top
+    /// instead, since the question about it is up now.
+    fn restore(&mut self, left: Leftover) -> Option<EntryId> {
+        let id = left.id;
+        if (id.history, left.epoch) != (self.nonce, self.epoch) {
             return None;
         }
-        let asked = error.and_then(NoBin::of).is_some();
-        let below = std::mem::take(&mut undo.below);
-        let left = undo.left(done, error)?;
-        let at = match asked {
+        let at = match left.asked {
             true => self.entries.len(),
             false => (self.entries.iter())
-                .rposition(|(e, _)| below.contains(e))
+                .rposition(|(e, _)| left.below.contains(e))
                 .map_or(0, |i| i + 1),
         };
-        self.entries.insert(at, (id, left));
+        self.entries.insert(at, (id, left.item));
         self.trim();
         self.entries.iter().any(|(e, _)| *e == id).then_some(id)
     }
