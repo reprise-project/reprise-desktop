@@ -25,6 +25,13 @@ const PATIENCE: Duration = Duration::from_millis(200);
 
 const MAGIC: &[u8] = b"reprise-undo 3";
 
+/// A batch holds single steps; one level more is room to spare, and anything deeper is not a
+/// history Reprise wrote.
+const MAX_NESTING: usize = 2;
+
+/// Far past what [`super::CAP`] entries of real batches take; a bigger file is unreadable.
+const MAX_SIZE: u64 = 64 << 20;
+
 /// The history and the file it lives in, read again whenever another process rewrote it.
 #[derive(Default)]
 pub struct SharedUndo {
@@ -199,7 +206,7 @@ impl Seen {
             return;
         }
         let mut data = Vec::new();
-        if let Err(e) = f.read_to_end(&mut data) {
+        if let Err(e) = f.take(MAX_SIZE + 1).read_to_end(&mut data) {
             log::warn!("reprisefs: undo history {}: {e}", file.display());
             return;
         }
@@ -275,6 +282,9 @@ fn encode(stack: &UndoStack) -> Vec<u8> {
 }
 
 fn decode(data: &[u8]) -> Option<UndoStack> {
+    if data.len() as u64 > MAX_SIZE {
+        return None;
+    }
     let mut fields = data.strip_suffix(b"\0")?.split(|&b| b == 0);
     let mut i = In(&mut fields);
     if i.field()? != MAGIC {
@@ -282,7 +292,7 @@ fn decode(data: &[u8]) -> Option<UndoStack> {
     }
     let (epoch, pushed, dropped) = (i.num()?, i.num()?, i.num()?);
     let entries = (0..i.num::<usize>()?)
-        .map(|_| Some((EntryId(i.num()?), i.item()?)))
+        .map(|_| Some((EntryId(i.num()?), i.item(0)?)))
         .collect::<Option<_>>()?;
     fields.next().is_none().then_some(UndoStack {
         entries,
@@ -403,7 +413,8 @@ impl<'b> In<'_, 'b> {
         }
     }
 
-    fn item(&mut self) -> Option<Undoable> {
+    /// One entry, `depth` batches down.
+    fn item(&mut self, depth: usize) -> Option<Undoable> {
         Some(match self.field()? {
             b"move" => Undoable::Move {
                 from: self.path()?,
@@ -431,9 +442,9 @@ impl<'b> In<'_, 'b> {
             }
             b"copied" => Undoable::Copied(self.path()?, self.id()?),
             b"new" => Undoable::New(self.path()?, self.id()?),
-            b"batch" => Undoable::Batch(
+            b"batch" if depth < MAX_NESTING => Undoable::Batch(
                 (0..self.num::<usize>()?)
-                    .map(|_| self.item())
+                    .map(|_| self.item(depth + 1))
                     .collect::<Option<_>>()?,
             ),
             _ => return None,
@@ -590,6 +601,29 @@ mod tests {
         std::fs::write(&file, entry("/T/files/x")).unwrap();
         assert_eq!(a.label(), Some("Undo Delete"));
         std::fs::write(&file, entry("/home/u/.profile")).unwrap();
+        assert_eq!(a.label(), None);
+    }
+
+    #[test]
+    fn a_history_nested_or_grown_past_what_reprise_writes_is_unreadable() {
+        let (t, a, _) = two_windows();
+        let nested = |depth: usize| {
+            let mut fields = ["reprise-undo 3", "0", "1", "0", "1", "1"]
+                .map(String::from)
+                .to_vec();
+            fields.extend((0..depth).flat_map(|_| ["batch".into(), "1".into()]));
+            fields.extend(["new", "/a/x", "-"].map(String::from));
+            fields.iter().map(|f| format!("{f}\0")).collect::<String>()
+        };
+        let file = t.path().join("reprise-undo");
+        std::fs::write(&file, nested(MAX_NESTING)).unwrap();
+        assert_eq!(a.label(), Some("Undo New"));
+        std::fs::write(&file, nested(100_000)).unwrap();
+        assert_eq!(a.label(), None, "refused without recursing that deep");
+
+        let mut big = nested(0).into_bytes();
+        big.resize(MAX_SIZE as usize + 1, b'\0');
+        std::fs::write(&file, big).unwrap();
         assert_eq!(a.label(), None);
     }
 
