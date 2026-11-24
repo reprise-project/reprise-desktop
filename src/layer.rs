@@ -648,6 +648,13 @@ pub fn close_flyout(state: &mut State, surface: &WlSurface) -> bool {
     true
 }
 
+/// Whether `surface` is a mapped layer surface asking for the keyboard outright.
+pub fn wants_keyboard_outright(state: &State, surface: &WlSurface) -> bool {
+    state
+        .layer_of(surface)
+        .is_some_and(|l| l.mapped && l.exclusive())
+}
+
 pub fn is_mapped_layer(state: &State, surface: &WlSurface) -> bool {
     state.layer_of(surface).is_some_and(|l| l.mapped)
 }
