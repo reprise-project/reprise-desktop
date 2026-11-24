@@ -138,6 +138,31 @@ fn asked(h: &Harness, t: Toplevel) -> (i32, i32) {
     reprisekit::classic::frame::FrameGeometry::layout(m, cw, ch, false, win.chrome()).total
 }
 
+/// `APP` asking to open maximized, mapped at the size its first configure asked for.
+fn open_maximized(h: &mut Harness, c: &mut TestClient) -> Toplevel {
+    let t = h.open_toplevel(c, APP, |t| t.set_maximized());
+    let size = c.side.shells[t.shell].asked();
+    h.resize_self(c, t, size.0, size.1);
+    assert!(h.state.win(t.id).unwrap().maximized);
+    t
+}
+
+#[test]
+fn a_window_that_opened_maximized_at_its_own_request_is_not_kept_at_the_maximized_size() {
+    let mut h = one_screen();
+    let mut c = h.connect();
+    let t = open_maximized(&mut h, &mut c);
+    close(&mut h, &mut c, t);
+    let t = open_maximized(&mut h, &mut c);
+    c.side.shells[t.shell].toplevel.unset_maximized();
+    h.roundtrip(&mut c);
+    assert_eq!(
+        asked_client(&h, t),
+        (0, 0),
+        "restored, it picks its own size"
+    );
+}
+
 #[test]
 fn a_program_reopens_where_and_at_the_size_its_last_window_closed() {
     let mut h = one_screen();
