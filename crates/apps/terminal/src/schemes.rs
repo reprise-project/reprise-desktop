@@ -16,13 +16,14 @@ const fn rgb(v: u32) -> Rgb {
     Color::rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
 }
 
+/// Blue, red, magenta and the dark grey are light enough to read on black: 4.5:1, the grey 4:1.
 const GREY_ON_BLACK: [u32; 16] = [
-    0x000000, 0xAA0000, 0x00AA00, 0xAA5500, 0x0000AA, 0xAA00AA, 0x00AAAA, 0xAAAAAA, 0x555555,
-    0xFF5555, 0x55FF55, 0xFFFF55, 0x5555FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF,
+    0x000000, 0xDC3C3C, 0x00AA00, 0xAA5500, 0x4070FF, 0xC040C0, 0x00AAAA, 0xAAAAAA, 0x707070,
+    0xFF5555, 0x55FF55, 0xFFFF55, 0x7890FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF,
 ];
 
 const TINTED: [u32; 16] = [
-    0x1C2128, 0xE06C6C, 0x7FC48A, 0xD8B65E, 0x6A9FE0, 0xB88BD8, 0x5FC0C8, 0xC8CED6, 0x5A6470,
+    0x1C2128, 0xE06C6C, 0x7FC48A, 0xD8B65E, 0x6A9FE0, 0xB88BD8, 0x5FC0C8, 0xC8CED6, 0x66707C,
     0xF28B8B, 0x9CDCA6, 0xEDD08A, 0x8DB8F0, 0xD0A8EC, 0x86D8DE, 0xF2F5F8,
 ];
 
@@ -88,6 +89,45 @@ mod tests {
             "Glass is tinted blue, not black"
         );
         assert_eq!(scheme("no such scheme", Interface::Classic), classic);
+    }
+
+    /// WCAG contrast of `a` on `b`.
+    fn contrast(a: Rgb, b: Rgb) -> f64 {
+        let lum = |c: Rgb| {
+            let lin = |v: u8| {
+                let v = f64::from(v) / 255.0;
+                match v <= 0.04045 {
+                    true => v / 12.92,
+                    false => ((v + 0.055) / 1.055).powf(2.4),
+                }
+            };
+            0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b) + 0.05
+        };
+        let (la, lb) = (lum(a), lum(b));
+        la.max(lb) / la.min(lb)
+    }
+
+    #[test]
+    fn every_colour_of_the_default_schemes_reads_on_their_background() {
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let s = scheme("reprise", i);
+            for (n, &c) in s.ansi.iter().enumerate().skip(1) {
+                let k = contrast(c, s.bg);
+                assert!(k >= 3.0, "{i:?} colour {n} reads {k:.2}:1, at least 3:1");
+            }
+        }
+        let classic = scheme("reprise", Interface::Classic);
+        for (n, name) in [(1, "red"), (4, "blue"), (5, "magenta")] {
+            let k = contrast(classic.ansi[n], classic.bg);
+            assert!(k >= 4.5, "{name} on black reads {k:.2}:1, at least 4.5:1");
+        }
+        for n in 1..8 {
+            assert!(
+                contrast(classic.ansi[n + 8], classic.bg) > contrast(classic.ansi[n], classic.bg),
+                "bright colour {} is brighter than {n}",
+                n + 8
+            );
+        }
     }
 
     #[test]
