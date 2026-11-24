@@ -138,6 +138,8 @@ struct Shared {
     sandboxed: Option<BTreeSet<String>>,
     /// The recorders the compositor started for the user (`recorder_granted`).
     grants: crate::trusted::Grants,
+    /// Each lock-screen object's screens at its last `done`, until it ends or goes.
+    lock_screens: HashMap<u32, Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -382,6 +384,7 @@ impl Link {
             zone_set: 1,
             sandboxed: None,
             grants: Default::default(),
+            lock_screens: HashMap::new(),
         }));
         let sandboxed = (input.version() >= 5).then(|| input.watch_sandboxed(&qh, ()));
         if sandboxed.is_none() {
@@ -471,6 +474,13 @@ impl Link {
     /// Wakes after each list `sandboxed` takes; several lists may share one wake.
     pub fn sandboxed_changes(&self) -> async_channel::Receiver<()> {
         self.sandboxed_changes.clone()
+    }
+
+    /// The screens the compositor made for the remote client while this portal holds lock mode;
+    /// None outside it.
+    pub fn lock_mode_screens(&self) -> Option<Vec<String>> {
+        let s = self.shared.lock().unwrap();
+        s.lock_screens.values().find(|v| !v.is_empty()).cloned()
     }
 
     pub fn zones(&self) -> (Vec<Zone>, u32) {
@@ -834,6 +844,7 @@ impl State {
                 }
             }
             Cmd::DestroyLockScreen(id) => {
+                self.shared.lock().unwrap().lock_screens.remove(&id);
                 if let Some(l) = self.locks.remove(&id) {
                     l.object.destroy();
                 }
@@ -1178,9 +1189,12 @@ impl Dispatch<RepriseLockScreenV1, u32> for State {
             reprise_lock_screen_v1::Event::Screen { name } => lock.screens.push(name),
             reprise_lock_screen_v1::Event::Done => {
                 let screens = std::mem::take(&mut lock.screens);
+                let mut shared = state.shared.lock().unwrap();
+                shared.lock_screens.insert(*id, screens.clone());
                 let _ = lock.events.try_send(LockEvent::Screens(screens));
             }
             reprise_lock_screen_v1::Event::Ended { reason } => {
+                state.shared.lock().unwrap().lock_screens.remove(id);
                 lock.ended.store(true, Ordering::Release);
                 let _ = lock.events.try_send(LockEvent::Ended(reason));
                 if let Some(l) = state.locks.remove(id) {

@@ -713,7 +713,17 @@ impl ScreenCast {
             }
             _ => Pick::Ask,
         };
-        let started = pick_and_cast(&self.sessions, &request, conn, &key, &app_id, parent, pick);
+        let desk = inputlink::live(&self.link).and_then(inputlink::Link::lock_mode_screens);
+        let started = pick_and_cast(
+            &self.sessions,
+            &request,
+            conn,
+            &key,
+            &app_id,
+            parent,
+            pick,
+            desk,
+        );
         let started = started.await;
         request.end().await;
         match started {
@@ -769,6 +779,7 @@ pub(crate) async fn pick_and_cast(
     app_id: &str,
     parent: Option<String>,
     pick: Pick,
+    desk: Option<Vec<String>>,
 ) -> Result<Started, u32> {
     let (types, cursor_mode, persist_mode, restore) = {
         let sessions = sessions.lock().unwrap();
@@ -785,7 +796,16 @@ pub(crate) async fn pick_and_cast(
     };
     let session = Some((sessions, key));
     let chosen = request.ask(session, move |cancel| {
-        choose(types, restore, &app, persist_mode > 0, parent, cancel, pick)
+        choose(
+            types,
+            restore,
+            &app,
+            persist_mode > 0,
+            parent,
+            cancel,
+            pick,
+            desk,
+        )
     });
     let chosen = match chosen.await {
         Some(Ok(Some(c))) => c,
@@ -1034,8 +1054,10 @@ struct Chosen {
     virtual_screens: bool,
 }
 
-/// Pick what to capture ([`choose_from`]); the share dialog is modal on `parent` and offers
-/// Remember when `offer_remember`. Blocking; runs off the bus thread.
+/// Pick what to capture ([`choose_from`]) from the outputs [`on_desk`] for `desk`; the share
+/// dialog is modal on `parent` and offers Remember when `offer_remember`. Blocking; runs off the
+/// bus thread.
+#[allow(clippy::too_many_arguments)]
 fn choose(
     types: u32,
     restore: Option<Target>,
@@ -1044,9 +1066,10 @@ fn choose(
     parent: Option<String>,
     cancel: Arc<AtomicBool>,
     pick: Pick,
+    desk: Option<Vec<String>>,
 ) -> Result<Option<Chosen>, String> {
     let wl = Wayland::connect()?;
-    let outputs = wl.outputs();
+    let outputs = on_desk(wl.outputs(), desk.as_deref());
     let toplevels = wl.toplevels();
     drop(wl);
     choose_from(pick, types, &outputs, &toplevels, restore, |entries| {
@@ -1130,6 +1153,21 @@ fn choose_from(
         remembered: remember.then_some(t),
         virtual_screens: false,
     }))
+}
+
+/// The outputs a picker offers: every one, or in lock mode only `lock_screens`, those the
+/// compositor made for the remote client ([`inputlink::Link::lock_mode_screens`]). This
+/// computer's own screens show only its lock then.
+pub(crate) fn on_desk(
+    outputs: Vec<wayland::OutputInfo>,
+    lock_screens: Option<&[String]>,
+) -> Vec<wayland::OutputInfo> {
+    match lock_screens {
+        Some(names) => (outputs.into_iter())
+            .filter(|o| names.contains(&o.name))
+            .collect(),
+        None => outputs,
+    }
 }
 
 /// The outputs called `names`, in that order; Err when one is not there.
@@ -1610,6 +1648,25 @@ mod tests {
 
     fn no_dialog(_: Vec<picker::Entry>) -> Option<(Target, bool)> {
         panic!("a trusted start shows no dialog")
+    }
+
+    #[test]
+    fn in_lock_mode_a_picker_offers_only_the_remote_screens() {
+        let outputs = vec![
+            at("eDP-1", 0, 0),
+            at("REMOTE-1", 1920, 0),
+            at("REMOTE-2", 3840, 0),
+        ];
+        let names = |o: Vec<wayland::OutputInfo>| o.into_iter().map(|o| o.name).collect::<Vec<_>>();
+        assert_eq!(
+            names(on_desk(outputs.clone(), None)),
+            ["eDP-1", "REMOTE-1", "REMOTE-2"]
+        );
+        let lock = ["REMOTE-2".to_string(), "REMOTE-1".to_string()];
+        assert_eq!(
+            names(on_desk(outputs, Some(&lock))),
+            ["REMOTE-1", "REMOTE-2"]
+        );
     }
 
     fn shared(outputs: &[wayland::OutputInfo]) -> Vec<String> {
