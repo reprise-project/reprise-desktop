@@ -19,10 +19,18 @@ pub struct Occurrence {
 
 /// The local day `date` in `local`: its first second and the next day's.
 pub fn day_bounds(date: Date, local: &TimeZone) -> Option<(i64, i64)> {
-    let start = date.to_zoned(local.clone()).ok()?.timestamp().as_second();
-    let end = (date.tomorrow().ok()?.to_zoned(local.clone()).ok()?)
+    let start = date
+        .to_zoned_datetime(local.clone())
+        .ok()?
         .timestamp()
         .as_second();
+    let end = (date
+        .tomorrow()
+        .ok()?
+        .to_zoned_datetime(local.clone())
+        .ok()?)
+    .timestamp()
+    .as_second();
     Some((start, end))
 }
 
@@ -98,14 +106,18 @@ fn recurrence_on(
     let zone = zones.of(start);
     let here = Timestamp::from_second(day.0)
         .ok()?
-        .to_zoned(zone.clone())
+        .to_zoned_datetime(zone.clone())
         .date();
     let dates = [Some(here), here.yesterday().ok(), here.tomorrow().ok()];
     let starts: Vec<i64> = (dates.into_iter().flatten())
         .filter_map(|d| {
             let s = match start.value {
-                Value::Date(_) => d.to_zoned(zone.clone()).ok()?.timestamp().as_second(),
-                Value::DateTime(dt) => (zone.to_ambiguous_zoned(d.to_datetime(dt.time())))
+                Value::Date(_) => d
+                    .to_zoned_datetime(zone.clone())
+                    .ok()?
+                    .timestamp()
+                    .as_second(),
+                Value::DateTime(dt) => (zone.to_ambiguous_zoned_datetime(d.to_datetime(dt.time())))
                     .compatible()
                     .ok()?
                     .timestamp()
@@ -176,8 +188,8 @@ impl Zones {
     fn instant(&mut self, t: &Time) -> Option<i64> {
         let zone = self.of(t);
         let z = match t.value {
-            Value::Date(d) => d.to_zoned(zone).ok()?,
-            Value::DateTime(dt) => zone.to_ambiguous_zoned(dt).compatible().ok()?,
+            Value::Date(d) => d.to_zoned_datetime(zone).ok()?,
+            Value::DateTime(dt) => zone.to_ambiguous_zoned_datetime(dt).compatible().ok()?,
         };
         Some(z.timestamp().as_second())
     }
@@ -189,7 +201,7 @@ impl Zones {
         };
         let zone = self.of(t);
         let d = d.checked_add(jiff::Span::new().days(n)).ok()?;
-        Some(d.to_zoned(zone).ok()?.timestamp().as_second())
+        Some(d.to_zoned_datetime(zone).ok()?.timestamp().as_second())
     }
 }
 
