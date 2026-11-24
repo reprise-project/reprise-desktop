@@ -1,11 +1,18 @@
 //! A terminal's cell grid: a plain snapshot of cells the host fills from its emulator, drawn in
-//! device-pixel cells so the grid stays crisp at every scale.
+//! device-pixel cells so the grid stays crisp at every scale, with the scrollback's bar down its
+//! right edge. The bar is always there, greyed while there is no scrollback, so the grid keeps
+//! its columns when the first row scrolls off.
 
 use std::hash::Hash;
 use std::ops::{BitOr, BitOrAssign};
 
-use crate::access::accesskit::{NodeId, Role};
+use crate::access::accesskit::{NodeId, Orientation, Role};
 use crate::access::{self, Tree};
+use crate::classic::widgets::{BarHit, ScrollHit};
+use crate::controls::scrollbar::RowScroll;
+use crate::look::Paint;
+use crate::look::widgets::draw_scrollbar;
+use crate::pointer::Lit;
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
 use crate::theme::Color;
@@ -100,6 +107,31 @@ impl Default for Accents {
     }
 }
 
+/// Where the view stands in the scrollback: `history` rows kept above the screen's `rows`, the
+/// view `offset` rows back from the newest.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Scrollback {
+    pub history: usize,
+    pub offset: usize,
+    pub rows: usize,
+}
+
+impl Scrollback {
+    /// The bar's position: the view's first row among all the scrollback's, oldest first.
+    pub fn at(self) -> RowScroll {
+        RowScroll {
+            top: self.history.saturating_sub(self.offset),
+            visible: self.rows,
+            total: self.history + self.rows,
+        }
+    }
+
+    /// The offset that shows row `top` of [`Scrollback::at`] first.
+    pub fn offset_at(self, top: usize) -> usize {
+        self.history.saturating_sub(top)
+    }
+}
+
 /// What the grid shows: `rows` x `cols` cells row by row, and which rows changed since the last
 /// draw.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,6 +146,7 @@ pub struct Snapshot {
     pub bg: Rgb,
     pub alpha: u8,
     pub accents: Accents,
+    pub scrollback: Scrollback,
 }
 
 impl Snapshot {
@@ -128,6 +161,10 @@ impl Snapshot {
             bg,
             alpha: 255,
             accents: Accents::default(),
+            scrollback: Scrollback {
+                rows,
+                ..Scrollback::default()
+            },
         }
     }
 
@@ -197,6 +234,33 @@ pub fn grid_size(m: &Metrics, area: Rect, scale: i32) -> (usize, usize) {
     let s = scale.max(1);
     let n = |len: i32, cell: i32| (len.max(0) * s / cell.max(1)) as usize;
     (n(area.width, m.cell_w), n(area.height, m.cell_h))
+}
+
+/// `area` split into the cells and the scrollback bar `bar_w` wide down its right edge.
+pub fn split(area: Rect, bar_w: i32) -> (Rect, Rect) {
+    let bar_w = bar_w.clamp(0, area.width.max(0));
+    let cells = Rect::new(area.x, area.y, area.width - bar_w, area.height);
+    (cells, Rect::new(cells.right(), area.y, bar_w, area.height))
+}
+
+/// The scrollback bar in `bar` (logical px), the part `lit` names in its state.
+pub fn draw_bar(c: &mut Canvas, p: &Paint, bar: Rect, sb: Scrollback, lit: Lit<ScrollHit>) {
+    let at = sb.at();
+    draw_scrollbar(c, p, bar.scaled(p.s), at.top, at.visible, at.total, lit);
+}
+
+/// The part of the scrollback bar `bar` under (`x`, `y`), with the look's shortest thumb
+/// `thumb_min`; `None` off the bar.
+pub fn bar_hit(sb: Scrollback, bar: Rect, thumb_min: i32, x: i32, y: i32) -> Option<BarHit> {
+    match bar.contains(x, y) {
+        true => sb.at().hit(bar, thumb_min, x, y),
+        false => None,
+    }
+}
+
+/// The scroll offset a thumb grabbed `grab` px below its top asks for with the pointer at `y`.
+pub fn bar_drag(sb: Scrollback, bar: Rect, thumb_min: i32, y: i32, grab: i32) -> usize {
+    sb.offset_at(sb.at().top_at(bar, thumb_min, y, grab))
 }
 
 /// Draw the rows marked dirty into `area` (logical px) and return each drawn row's rect (logical
@@ -520,8 +584,16 @@ pub fn hit(m: &Metrics, area: Rect, scale: i32, x: i32, y: i32) -> Option<Hit> {
     Some(Hit { col, row, side })
 }
 
-/// A terminal node over `area` holding one text node per row.
-pub fn access(snap: &Snapshot, area: Rect, tree: &mut Tree, parent: NodeId, key: impl Hash) {
+/// A terminal node over `area` holding one text node per row, and the scrollback bar's node over
+/// `bar`: the view's first row, 0 at the oldest.
+pub fn access(
+    snap: &Snapshot,
+    area: Rect,
+    bar: Rect,
+    tree: &mut Tree,
+    parent: NodeId,
+    key: impl Hash + Copy,
+) {
     let grid = tree.push(parent, key, access::node(Role::Terminal, area));
     let rows = snap.rows.max(1) as i32;
     for r in 0..snap.rows {
@@ -531,12 +603,19 @@ pub fn access(snap: &Snapshot, area: Rect, tree: &mut Tree, parent: NodeId, key:
         n.set_value(snap.row_text(r));
         tree.push(grid, r, n);
     }
+    let mut n = access::node(Role::ScrollBar, bar);
+    n.set_orientation(Orientation::Vertical);
+    n.set_numeric_value(snap.scrollback.at().top as f64);
+    n.set_min_numeric_value(0.0);
+    n.set_max_numeric_value(snap.scrollback.history as f64);
+    tree.push(parent, (key, "bar"), n);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::access::accesskit::Node;
+    use crate::interface::Interface;
     use crate::theme::FontConfig;
 
     const FG: Rgb = Color::rgb(0xC0, 0xC0, 0xC0);
@@ -858,12 +937,27 @@ mod tests {
         snap.cells[2].flags = Flags::WIDE_SPACER;
         snap.cells[3].ch = '!';
         let mut tree = Tree::new(Node::new(Role::Window));
+        snap.scrollback = Scrollback {
+            history: 30,
+            offset: 10,
+            rows: 2,
+        };
         access(
             &snap,
             Rect::new(0, 0, 32, 32),
+            Rect::new(32, 0, 16, 32),
             &mut tree,
             access::ROOT,
             "grid",
+        );
+        let bar = tree
+            .get(Tree::id_of(access::ROOT, ("grid", "bar")))
+            .unwrap();
+        assert_eq!(bar.role(), Role::ScrollBar);
+        assert_eq!(
+            (bar.numeric_value(), bar.max_numeric_value()),
+            (Some(20.0), Some(30.0)),
+            "the view's first row of the 30 kept above the screen"
         );
         let grid = tree.get(Tree::id_of(access::ROOT, "grid")).unwrap();
         assert_eq!(grid.role(), Role::Terminal);
@@ -879,6 +973,155 @@ mod tests {
             })
             .collect();
         assert_eq!(rows, vec!["e\u{301}日!".to_string(), String::new()]);
+    }
+
+    #[test]
+    fn the_bar_stands_at_the_views_first_row_oldest_first() {
+        let newest = Scrollback {
+            history: 14,
+            offset: 0,
+            rows: 6,
+        };
+        assert_eq!(
+            newest.at(),
+            RowScroll {
+                top: 14,
+                visible: 6,
+                total: 20
+            }
+        );
+        let oldest = Scrollback {
+            offset: 14,
+            ..newest
+        };
+        assert_eq!(oldest.at().top, 0);
+        assert_eq!(newest.offset_at(0), 14);
+        assert_eq!(newest.offset_at(14), 0);
+        assert_eq!(newest.offset_at(99), 0, "past the newest row");
+    }
+
+    #[test]
+    fn the_bar_takes_the_right_edge_of_the_area() {
+        assert_eq!(
+            split(Rect::new(0, 30, 400, 200), 17),
+            (Rect::new(0, 30, 383, 200), Rect::new(383, 30, 17, 200))
+        );
+        assert_eq!(
+            split(Rect::new(0, 0, 10, 50), 17),
+            (Rect::new(0, 0, 0, 50), Rect::new(0, 0, 10, 50)),
+            "narrower than the bar"
+        );
+    }
+
+    #[test]
+    fn the_bars_thumb_drags_from_the_oldest_row_to_the_newest() {
+        let bar = Rect::new(100, 0, 16, 109);
+        let sb = Scrollback {
+            history: 14,
+            offset: 0,
+            rows: 6,
+        };
+        let thumb = sb.at().parts(bar, 8).thumb.unwrap();
+        assert_eq!(thumb.bottom(), bar.bottom() - 16, "at the newest rows");
+        assert_eq!(
+            bar_hit(sb, bar, 8, 108, thumb.y + 5),
+            Some(BarHit::Thumb(5))
+        );
+        assert_eq!(bar_drag(sb, bar, 8, -500, 5), 14, "the top: the oldest");
+        assert_eq!(bar_drag(sb, bar, 8, 500, 5), 0, "the bottom: the newest");
+        assert_eq!(bar_hit(sb, bar, 8, 108, 3), Some(BarHit::Back));
+        assert_eq!(
+            bar_hit(sb, bar, 8, 108, thumb.y - 2),
+            Some(BarHit::PageBack)
+        );
+        assert_eq!(bar_hit(sb, bar, 8, 99, 50), None, "left of the bar");
+    }
+
+    /// A 10x6 grid of text over `sb` beside its bar, in `look` at scale `s` as a program draws it.
+    fn grid_with_bar(look: Interface, s: i32, sb: Scrollback, lit: Lit<ScrollHit>) -> Canvas {
+        let t = tahoma();
+        let m = metrics(&t, 11, s);
+        let mut theme = crate::interfaces::theme_for(look);
+        theme.look = theme.look.at_scale(s);
+        let p = Paint {
+            s: 1,
+            ..theme.paint()
+        };
+        let bar_w = theme.controls().scroll;
+        let mut snap = Snapshot::new(10, 6, FG, BG);
+        snap.scrollback = sb;
+        for row in 0..6 {
+            write(&mut snap, row, 0, "drwxr-x", Flags::default());
+        }
+        snap.cursor.2 = CursorShape::Hidden;
+        let (w, h) = ((10 * m.cell_w + s - 1) / s, (6 * m.cell_h + s - 1) / s);
+        let mut c = Canvas::with_scale((w + bar_w) as u32, h as u32, s);
+        let (cells, bar) = split(Rect::new(0, 0, w + bar_w, h), bar_w);
+        draw(&mut c, &t, &m, cells, &snap, 11);
+        draw_bar(&mut c, &p, bar, sb, lit);
+        c
+    }
+
+    const LOOKS: [Interface; 3] = [Interface::Classic, Interface::Blue, Interface::Glass];
+
+    #[test]
+    fn the_bar_greys_without_scrollback() {
+        crate::pins::fonts();
+        let empty = Scrollback {
+            rows: 6,
+            ..Scrollback::default()
+        };
+        let kept = Scrollback {
+            history: 40,
+            ..empty
+        };
+        assert_eq!(empty.at().parts(Rect::new(0, 0, 16, 90), 8).thumb, None);
+        let ink = crate::interfaces::theme_for(Interface::Classic)
+            .colors
+            .button_text
+            .argb();
+        let arrows = |sb| {
+            let c = grid_with_bar(Interface::Classic, 1, sb, None);
+            let x0 = c.width as i32 - 16;
+            (x0..c.width as i32)
+                .flat_map(|x| (0..16).map(move |y| (x, y)))
+                .any(|(x, y)| px(&c, x, y) == ink)
+        };
+        assert!(arrows(kept), "a live arrow draws in the button text");
+        assert!(!arrows(empty), "a greyed arrow draws etched");
+        for look in LOOKS {
+            assert_ne!(
+                fnv(&grid_with_bar(look, 1, empty, None)),
+                fnv(&grid_with_bar(look, 1, kept, None)),
+                "{look:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn termgrid_bar_pins_per_look_at_scale_1_and_2() {
+        crate::pins::fonts();
+        let at = |history, offset| Scrollback {
+            history,
+            offset,
+            rows: 6,
+        };
+        let held = Some((ScrollHit::Thumb, crate::pointer::Interaction::Pressed));
+        let states = [
+            ("empty", at(0, 0), None),
+            ("newest", at(40, 0), None),
+            ("back", at(40, 20), held),
+        ];
+        let mut got = Vec::new();
+        for look in LOOKS {
+            for s in [1, 2] {
+                for (name, sb, lit) in states {
+                    let c = grid_with_bar(look, s, sb, lit);
+                    got.push((format!("{look:?} {name} {s}"), fnv(&c)));
+                }
+            }
+        }
+        crate::pins::check("termgrid_bar", &got);
     }
 
     #[test]

@@ -1,4 +1,5 @@
-//! The pointer over the grid: selection, mouse reports, the wheel, primary paste, URL clicks.
+//! The pointer over the grid: selection, mouse reports, the wheel, primary paste, URL clicks;
+//! and over the scrollback bar.
 //! Report encoding ported from alacritty (Apache-2.0, Copyright The Alacritty Project).
 
 use alacritty_terminal::grid::Scroll;
@@ -6,8 +7,9 @@ use alacritty_terminal::index::{Column, Line, Point, Side as TermSide};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::{Term, TermMode};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Mods, PointerInput, Reply};
-use reprisekit::controls::termgrid::{self, Hit, Side};
+use reprisekit::controls::termgrid::{self, Hit, Scrollback, Side};
 use reprisekit::pointer::{Click, DOUBLE_CLICK_SLOP};
+use reprisekit::raster::Rect;
 
 use crate::Terminal;
 use crate::chrome::{self, BTN_MIDDLE};
@@ -193,7 +195,13 @@ impl Terminal {
             self.w.mouse.end();
         }
         let grid = chrome::grid_rect(ctx, self.w.caption);
+        let bar = chrome::bar_rect(ctx, self.w.caption);
         match p {
+            PointerInput::Press { x, y, button, .. }
+                if self.w.chrome.press.is_none() && !self.w.mouse.held() && bar.contains(x, y) =>
+            {
+                self.bar_press(x, y, button, ctx)
+            }
             PointerInput::Press {
                 x,
                 y,
@@ -203,21 +211,118 @@ impl Terminal {
             } if self.w.chrome.press.is_none() && grid.contains(x, y) => {
                 self.grid_press(x, y, button, time, mods, ctx)
             }
+            PointerInput::Motion { x, y } if self.w.bar.holding() => self.bar_drag(x, y, ctx),
             PointerInput::Motion { x, y } if self.w.mouse.held() => self.grid_drag(x, y, ctx),
             PointerInput::Motion { x, y } => {
-                let reply = self.chrome_pointer(p, ctx);
+                let reply = self.chrome_pointer(p, ctx).and(self.bar_hover(x, y, ctx));
                 match grid.contains(x, y) {
                     true => reply.and(self.grid_hover(x, y, ctx)),
                     false => reply,
                 }
             }
+            PointerInput::Release { button, .. } if self.w.bar.holding() => {
+                match button == BTN_LEFT && self.w.bar.release() {
+                    true => Reply::redraw(),
+                    false => Reply::none(),
+                }
+            }
             PointerInput::Release { x, y, button, .. } if self.w.mouse.held() => {
                 self.grid_release(x, y, button, ctx)
+            }
+            PointerInput::Scroll { x, y, rows } if bar.contains(x, y) => {
+                if let Some(tab) = self.w.tabs.current() {
+                    tab.scroll(Scroll::Delta(-rows));
+                }
+                Reply::redraw()
             }
             PointerInput::Scroll { x, y, rows } if grid.contains(x, y) => {
                 self.grid_wheel(x, y, rows, ctx)
             }
+            PointerInput::Leave if !self.w.bar.holding() => {
+                let lit = self.w.bar.leave() && ctx.styled();
+                let reply = self.chrome_pointer(p, ctx);
+                match lit {
+                    true => reply.and(Reply::redraw()),
+                    false => reply,
+                }
+            }
             _ => self.chrome_pointer(p, ctx),
+        }
+    }
+
+    /// The open tab's scrollback, its bar and the look's shortest thumb.
+    fn bar_at(&self, ctx: &Ctx) -> Option<(Scrollback, Rect, i32)> {
+        let sb = self.w.tabs.current()?.scrollback();
+        let bar = chrome::bar_rect(ctx, self.w.caption);
+        Some((sb, bar, ctx.theme.controls().thumb_min))
+    }
+
+    /// A left press on the scrollback bar: an arrow steps a row and repeats while held, the
+    /// track pages a screen, the thumb is grabbed.
+    fn bar_press(&mut self, x: i32, y: i32, button: u32, ctx: &Ctx) -> Reply {
+        let Some((sb, bar, thumb_min)) = self.bar_at(ctx).filter(|_| button == BTN_LEFT) else {
+            return Reply::none();
+        };
+        let Some(hit) = termgrid::bar_hit(sb, bar, thumb_min, x, y) else {
+            return Reply::none();
+        };
+        let rows = self.w.bar.press(hit, sb.rows as i64);
+        if let Some(tab) = self.w.tabs.current() {
+            tab.scroll(Scroll::Delta(-rows as i32));
+        }
+        Reply {
+            tick: self.w.bar.ticking(),
+            ..Reply::redraw()
+        }
+    }
+
+    /// The pointer at (`x`, `y`) with the bar held: a grabbed thumb follows it wherever it goes.
+    fn bar_drag(&mut self, x: i32, y: i32, ctx: &Ctx) -> Reply {
+        let Some((sb, bar, thumb_min)) = self.bar_at(ctx) else {
+            return Reply::none();
+        };
+        let lit = self
+            .w
+            .bar
+            .hover(termgrid::bar_hit(sb, bar, thumb_min, x, y));
+        let to = self
+            .w
+            .bar
+            .grab()
+            .map(|grab| termgrid::bar_drag(sb, bar, thumb_min, y, grab))
+            .filter(|&to| to != sb.offset);
+        if let (Some(to), Some(tab)) = (to, self.w.tabs.current()) {
+            tab.scroll_to(to);
+        }
+        match to.is_some() || (lit && ctx.styled()) {
+            true => Reply::redraw(),
+            false => Reply::none(),
+        }
+    }
+
+    /// The pointer moved with no button held: the bar part under it lights.
+    fn bar_hover(&mut self, x: i32, y: i32, ctx: &Ctx) -> Reply {
+        let on = chrome::bar_rect(ctx, self.w.caption).contains(x, y);
+        let hit = self
+            .bar_at(ctx)
+            .filter(|_| on)
+            .and_then(|(sb, bar, thumb_min)| termgrid::bar_hit(sb, bar, thumb_min, x, y));
+        match self.w.bar.hover(hit) && ctx.styled() {
+            true => Reply::redraw(),
+            false => Reply::none(),
+        }
+    }
+
+    /// A host tick: a held arrow steps once it repeats, while the pointer is on it.
+    pub(crate) fn bar_tick(&mut self) -> Reply {
+        let rows = self.w.bar.tick(std::time::Instant::now());
+        if let Some(tab) = self.w.tabs.current().filter(|_| rows != 0) {
+            tab.scroll(Scroll::Delta(-rows as i32));
+        }
+        Reply {
+            redraw: rows != 0,
+            tick: self.w.bar.ticking(),
+            ..Reply::none()
         }
     }
 
@@ -360,6 +465,7 @@ impl Terminal {
             }
         }
         self.w.mouse.end();
+        self.w.bar.release();
         if self.chrome_let_go().is_some() {
             self.w.chrome.dirty = true;
         }

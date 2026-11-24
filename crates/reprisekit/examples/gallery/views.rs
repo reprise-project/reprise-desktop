@@ -205,7 +205,6 @@ pub fn render_show_desktop() -> Canvas {
     c
 }
 
-/// A terminal screen: a prompt, the 16 colours, attributes, box frames, blocks and wide chars.
 /// The file preview's picture, text and card, a row per interface.
 pub fn render_file_preview(scale: i32) -> Canvas {
     use reprisekit::controls::filepreview::{self, Body, Facts, FilePreview};
@@ -312,8 +311,13 @@ pub fn render_image_view(scale: i32) -> Canvas {
     out
 }
 
+/// A terminal screen: a prompt, the 16 colours, attributes, box frames, blocks and wide chars,
+/// beside its scrollback bar in each interface: scrolled back with the thumb at rest, hot and
+/// held, then with no scrollback.
 pub fn render_termgrid(scale: i32) -> Canvas {
-    use reprisekit::controls::termgrid::{self, CursorShape, Flags, Snapshot};
+    use reprisekit::classic::widgets::ScrollHit;
+    use reprisekit::controls::termgrid::{self, CursorShape, Flags, Scrollback, Snapshot};
+    use reprisekit::pointer::Interaction;
     let text = TextRenderer::load(&FontConfig {
         family: vec![
             "Lucida Console".into(),
@@ -417,9 +421,50 @@ pub fn render_termgrid(scale: i32) -> Canvas {
     snap.cursor = (10, 2, CursorShape::Block);
     let w = (cols as i32 * m.cell_w + scale - 1) / scale;
     let h = (rows as i32 * m.cell_h + scale - 1) / scale;
-    let mut c = Canvas::with_scale(w as u32, h as u32, scale);
-    termgrid::draw(&mut c, &text, &m, Rect::new(0, 0, w, h), &snap, 13);
-    c
+    let back = Scrollback {
+        history: 60,
+        offset: 20,
+        rows,
+    };
+    let bars = [
+        (Interface::Classic, back, None),
+        (
+            Interface::Blue,
+            back,
+            Some((ScrollHit::Thumb, Interaction::Hot)),
+        ),
+        (
+            Interface::Glass,
+            back,
+            Some((ScrollHit::Thumb, Interaction::Pressed)),
+        ),
+        (
+            Interface::Classic,
+            Scrollback {
+                history: 0,
+                offset: 0,
+                rows,
+            },
+            None,
+        ),
+    ];
+    let mut out = Canvas::with_scale((w + 40) as u32, (bars.len() as i32 * (h + 8)) as u32, scale);
+    out.fill_rect(out.bounds(), Color::rgb(0x40, 0x40, 0x40));
+    for (i, (look, sb, lit)) in bars.into_iter().enumerate() {
+        let mut theme = interfaces::theme_for(look);
+        theme.look = theme.look.at_scale(scale);
+        let p = look::Paint {
+            s: 1,
+            ..theme.paint()
+        };
+        let bar_w = theme.controls().scroll;
+        let mut c = Canvas::with_scale((w + bar_w) as u32, h as u32, scale);
+        let (cells, bar) = termgrid::split(Rect::new(0, 0, w + bar_w, h), bar_w);
+        termgrid::draw(&mut c, &text, &m, cells, &snap, 13);
+        termgrid::draw_bar(&mut c, &p, bar, sb, lit);
+        out.blit_canvas(0, i as i32 * (h + 8), &c);
+    }
+    out
 }
 
 /// A 640 px bar along the top in Classic, Blue, Glass and Glass's small bar over the stripes; the orb's buffer goes over each Glass bar.

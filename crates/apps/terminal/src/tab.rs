@@ -18,7 +18,7 @@ use alacritty_terminal::tty::{self, ChildEvent, EventedPty, EventedReadWrite, Pt
 use alacritty_terminal::vte::ansi::{CursorShape as TermCursor, CursorStyle, NamedColor, Rgb};
 use polling::{PollMode, Poller};
 use repriseapp::Waker;
-use reprisekit::controls::termgrid::Snapshot;
+use reprisekit::controls::termgrid::{Scrollback, Snapshot};
 
 use crate::cwd;
 use crate::find::{Marks, Search};
@@ -314,6 +314,17 @@ impl Tab {
 
     pub fn scroll(&self, by: Scroll) {
         self.term.lock().scroll_display(by);
+    }
+
+    pub fn scrollback(&self) -> Scrollback {
+        crate::snapshot::scrollback(&self.term.lock())
+    }
+
+    /// Scroll the view to `offset` rows back from the newest.
+    pub fn scroll_to(&self, offset: usize) {
+        let mut term = self.term.lock();
+        let by = offset as i32 - term.grid().display_offset() as i32;
+        term.scroll_display(Scroll::Delta(by));
     }
 
     /// Carry out what the PTY thread queued: title changes, the program's queries (answered in

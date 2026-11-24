@@ -33,12 +33,15 @@ use repriseapp::keys::{form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{App, Child, Ctx, Event, KeyInput, MAIN, Reply, WinId};
 use reprisekit::access::{ROOT, Tree};
+use reprisekit::classic::widgets::ScrollHit;
 use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::msgbox::Fields;
-use reprisekit::controls::termgrid::{self, CursorShape, Metrics, Snapshot};
+use reprisekit::controls::scrollbar::RowBar;
+use reprisekit::controls::termgrid::{self, CursorShape, Metrics, Scrollback, Snapshot};
 use reprisekit::controls::{finddlg, form, propsheet, tabstrip, toolbar};
 use reprisekit::interface::Interface;
 use reprisekit::look::Paint;
+use reprisekit::pointer::Lit;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::TextSpot;
@@ -104,6 +107,9 @@ struct Pane {
     focused: bool,
     chrome: Chrome,
     mouse: pointer::Mouse,
+    bar: RowBar,
+    /// The scrollback bar as last drawn.
+    bar_drawn: Option<(Scrollback, Lit<ScrollHit>)>,
     /// The next frame draws everything and damages the whole canvas.
     full: bool,
     /// Its tabs are windows of one caption tab group, one tab each, rather than a strip under
@@ -131,6 +137,8 @@ impl Pane {
             focused: false,
             chrome: Chrome::new(),
             mouse: pointer::Mouse::default(),
+            bar: RowBar::default(),
+            bar_drawn: None,
             full: true,
             caption,
             leader,
@@ -940,6 +948,16 @@ impl Terminal {
             rects.push(termgrid::draw_background(c, lay.gap, &self.w.snap));
         }
         self.w.snap.dirty.fill(false);
+        let bar = (self.w.snap.scrollback, self.w.bar.lit());
+        if full || self.w.bar_drawn != Some(bar) {
+            self.w.bar_drawn = Some(bar);
+            let paint = Paint {
+                s: 1,
+                ..theme.paint()
+            };
+            termgrid::draw_bar(c, &paint, lay.bar, bar.0, bar.1);
+            rects.push(lay.bar);
+        }
         self.draw_menu(c, ctx);
         // No report damages the whole canvas, so an unchanged frame reports an empty rect.
         if !full {
@@ -986,8 +1004,10 @@ impl App for Terminal {
     fn initial_size(&self) -> (i32, i32) {
         self.window.unwrap_or_else(|| {
             let m = self.metrics.1;
-            let top = chrome::grid_top(&repriseapp::start_theme(), self.w.caption);
-            (OPEN_CELLS.0 * m.cell_w, OPEN_CELLS.1 * m.cell_h + top)
+            let theme = repriseapp::start_theme();
+            let top = chrome::grid_top(&theme, self.w.caption);
+            let bar = theme.controls().scroll;
+            (OPEN_CELLS.0 * m.cell_w + bar, OPEN_CELLS.1 * m.cell_h + top)
         })
     }
 
@@ -1164,7 +1184,7 @@ impl repriseapp::Extended for Terminal {
         if !self.w.caption {
             tabstrip::doc_access(&self.w.tabs.strip, &lay.strip, tree, ROOT, "tabs");
         }
-        termgrid::access(&self.w.snap, lay.grid, tree, ROOT, "grid");
+        termgrid::access(&self.w.snap, lay.grid, lay.bar, tree, ROOT, "grid");
         if let Some(m) = &self.w.chrome.menu {
             let focus = m.access(tree, ROOT);
             tree.set_focus(focus);
@@ -1214,6 +1234,7 @@ impl Terminal {
                 self.chrome_changed()
             }
             Event::Blink if self.w.focused && self.settings.blink => Reply::redraw(),
+            Event::Tick => self.bar_tick(),
             Event::CloseRequest => self.close_window(ctx),
             Event::Resized => {
                 if !ctx.maximized && !ctx.at_pick {
