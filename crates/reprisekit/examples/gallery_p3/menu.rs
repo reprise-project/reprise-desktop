@@ -84,7 +84,9 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
         MenuItem::Separator,
         MenuItem::entry("Shut Down..."),
     ];
-    let style = MenuStyle::root(theme).fit(text, &start, px, 180);
+    let style = MenuStyle::root(theme)
+        .fit(text, &start, px, 180)
+        .hold_banner(theme, text, "Reprise Desktop");
     let l = MenuLayout::compute_styled(&style, &start, usize::MAX);
     draw_menu_at(
         c,

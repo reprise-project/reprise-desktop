@@ -66,6 +66,22 @@ fn band_color(stops: &[(f32, crate::theme::Color)], t: f32) -> crate::theme::Col
     prev.1
 }
 
+/// The banner's font size at `theme`'s scale.
+pub(super) fn banner_px(theme: &Theme) -> u32 {
+    theme.fonts.size_px + (theme.text.len(BANNER_OVER) * theme.scale.max(1)) as u32
+}
+
+/// `banner` as the band draws it: up to its last word bold, the rest regular.
+pub(super) fn banner_parts(banner: &str) -> impl Iterator<Item = (String, bool)> {
+    let (bold, regular) = match banner.rsplit_once(' ') {
+        Some((head, tail)) => (head.to_string(), format!(" {tail}")),
+        None => (banner.to_string(), String::new()),
+    };
+    [(bold, true), (regular, false)]
+        .into_iter()
+        .filter(|(part, _)| !part.is_empty())
+}
+
 fn draw_band(canvas: &mut Canvas, theme: &Theme, text: &TextRenderer, band: Rect, banner: &str) {
     let cs = &theme.colors;
     let s = theme.scale.max(1);
@@ -77,16 +93,9 @@ fn draw_band(canvas: &mut Canvas, theme: &Theme, text: &TextRenderer, band: Rect
     for x in 0..band.height {
         strip.vline(x, 0, band.width, band_color(&stops, x as f32 / denom));
     }
-    let size = theme.fonts.size_px + (theme.text.len(BANNER_OVER) * s) as u32;
-    let (bold, regular) = match banner.rsplit_once(' ') {
-        Some((head, tail)) => (head.to_string(), format!(" {tail}")),
-        None => (banner.to_string(), String::new()),
-    };
+    let size = banner_px(theme);
     let mut pen = theme.text.len(BANNER_PAD) * s;
-    for (part, is_bold) in [(bold, true), (regular, false)] {
-        if part.is_empty() {
-            continue;
-        }
+    for (part, is_bold) in banner_parts(banner) {
         text.draw(
             &mut strip,
             Rect::new(pen, 0, (band.height - pen).max(0), band.width),

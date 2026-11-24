@@ -339,15 +339,22 @@ impl State {
         }
         let entries = self.config.startmenu.clone();
         let style = MenuStyle::root(&self.config.theme);
-        let px = style.icon_px() * self.draw_scale_at(Some(&output)).max(1);
+        let scale = self.draw_scale_at(Some(&output)).max(1);
+        let px = style.icon_px() * scale;
         let (items, waits) = self.entry_items(&entries, px);
         let area = self.usable_area(Some(&output));
-        let style = style.fit(
-            &self.text,
-            &items,
-            self.config.theme.fonts.size_px,
-            area.width,
-        );
+        let style = style
+            .fit(
+                &self.text,
+                &items,
+                self.config.theme.fonts.size_px,
+                area.width,
+            )
+            .hold_banner(
+                &self.config.theme.scaled(scale),
+                self.text.for_output(scale),
+                &self.config.startmenu_banner,
+            );
         let layout = MenuLayout::compute_styled(&style, &items, usize::MAX);
         let dock = self.config.theme.taskbar_shape().start_menu;
         let p = self.bar_placement(&output);

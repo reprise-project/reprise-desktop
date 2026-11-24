@@ -59,6 +59,8 @@ pub struct MenuStyle {
     pub lit_arrow_menu_text: bool,
     pub shortcut_pad: i32,
     pub gutter: i32,
+    /// The least height the menu takes whatever its rows (logical px): see [`MenuStyle::hold_banner`].
+    pub min_height: i32,
 }
 
 impl MenuStyle {
@@ -89,6 +91,7 @@ impl MenuStyle {
             lit_arrow_menu_text: false,
             shortcut_pad: RIGHT_PAD,
             gutter: 0,
+            min_height: 0,
         }
     }
 
@@ -122,6 +125,7 @@ impl MenuStyle {
                 lit_arrow_menu_text: false,
                 shortcut_pad: ml.shortcut_end,
                 gutter: ml.gutter,
+                min_height: 0,
             };
         }
         let (row_height, icon_x, text_x, right_pad) = match bitmaps {
@@ -143,6 +147,7 @@ impl MenuStyle {
             lit_arrow_menu_text: false,
             shortcut_pad: right_pad,
             gutter: 0,
+            min_height: 0,
         }
     }
 
@@ -177,6 +182,7 @@ impl MenuStyle {
             lit_arrow_menu_text: sm.lit_arrow_menu_text,
             shortcut_pad: ROOT_RIGHT_PAD,
             gutter: 0,
+            min_height: 0,
         }
     }
 
@@ -193,6 +199,22 @@ impl MenuStyle {
             } else {
                 0
             },
+            ..self
+        }
+    }
+
+    /// This style no shorter than its band's `banner` with a [`BANNER_PAD`] at both ends: a Start
+    /// menu with few rows or none still shows its whole banner. `theme` and `text` are the
+    /// output's scale ones the band draws with, whose glyphs may run longer than twice scale 1's.
+    pub fn hold_banner(self, theme: &Theme, text: &TextRenderer, banner: &str) -> MenuStyle {
+        let s = theme.scale.max(1);
+        let pad = theme.text.len(BANNER_PAD);
+        let device: i32 = super::draw::banner_parts(banner)
+            .map(|(part, bold)| text.measure(&part, bold, super::draw::banner_px(theme)))
+            .sum();
+        let long = (device + s - 1) / s;
+        MenuStyle {
+            min_height: self.inset.top + pad + long + pad + self.inset.bottom,
             ..self
         }
     }
@@ -311,6 +333,7 @@ pub struct MenuLayout {
     /// The style's paddings past a label, for [`MenuLayout::fit_column`].
     pub right_pad: i32,
     pub shortcut_pad: i32,
+    pub min_height: i32,
 }
 
 impl MenuLayout {
@@ -351,7 +374,7 @@ impl MenuLayout {
         let columns = columns.max(1);
         MenuLayout {
             width: style.band + columns as i32 * column_width,
-            height,
+            height: height.max(style.min_height),
             rows,
             selectable,
             columns,
@@ -369,6 +392,7 @@ impl MenuLayout {
             separator_h: style.separator_h,
             right_pad: style.right_pad,
             shortcut_pad: style.shortcut_pad,
+            min_height: style.min_height,
         }
     }
 
@@ -424,6 +448,7 @@ impl MenuLayout {
             lit_arrow_menu_text: self.lit_arrow_menu_text,
             shortcut_pad: self.shortcut_pad,
             gutter: self.gutter,
+            min_height: self.min_height,
         }
     }
 
@@ -460,6 +485,7 @@ impl MenuLayout {
             separator_h: self.separator_h * n,
             right_pad: self.right_pad * n,
             shortcut_pad: self.shortcut_pad * n,
+            min_height: self.min_height * n,
         }
     }
 }
