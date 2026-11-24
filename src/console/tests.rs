@@ -154,6 +154,26 @@ fn the_first_objects_new_layout_resizes_adds_and_removes_screens() {
 }
 
 #[test]
+fn a_toplevel_asking_to_open_maximized_in_lock_mode_fills_the_remote_screens_work_area() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut portal = h.connect_portal();
+    let lock = portal.lock_screen();
+    lock.set_layout(&[(0, 0, 1600, 900, 100)]);
+    h.roundtrip(&mut portal);
+    let mut c = h.connect();
+    let t = h.open_toplevel(&mut c, "asker", |t| t.set_maximized());
+    let asked = c.side.shells[t.shell].asked();
+    assert!(asked.0 > 0 && asked.1 > 0, "the first configure sizes it");
+    h.resize_self(&mut c, t, asked.0, asked.1);
+    let remote = crate::virtualout::remote_outputs(&h.state)[0].clone();
+    assert_eq!(
+        h.state.win(t.id).expect("the window").frame_rect(),
+        h.state.usable_area(Some(&remote))
+    );
+}
+
+#[test]
 fn a_monitor_hotplug_during_lock_mode_keeps_the_remote_screens_and_adds_no_standby() {
     let mut h = Harness::new();
     let edp = h.output("eDP-1", 1920, 1080);

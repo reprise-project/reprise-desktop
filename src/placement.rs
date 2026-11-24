@@ -314,6 +314,17 @@ impl State {
             });
         }
         let want = self.plan_window(w);
+        let asked = (self.win(w).and_then(Window::xdg)).and_then(|t| {
+            t.with_pending_state(|s| {
+                if s.states.contains(xdg_toplevel::State::Fullscreen) {
+                    Some(WindowState::Fullscreen)
+                } else if s.states.contains(xdg_toplevel::State::Maximized) {
+                    Some(WindowState::Maximized)
+                } else {
+                    None
+                }
+            })
+        });
         let out = self.opening_output(w, want.as_ref());
         let area = self.usable_area(out.as_ref());
         let metrics = &self.config.theme.metrics;
@@ -327,7 +338,7 @@ impl State {
         {
             t.with_pending_state(|s| s.bounds = Some(most.into()));
         }
-        let Some(want) = want else {
+        let Some(want) = with_asked(want, asked) else {
             if let Some((cw, ch)) = self.file_dialog_size(w)
                 && let Some(t) = self.win(w).and_then(Window::xdg)
             {
@@ -562,6 +573,22 @@ impl State {
         let text = repriseconf::filedialog::load_from(&path);
         self.wm.file_dialog = crate::filedlggeom::Kept::parse(path, &text);
         log::info!("remembered places reread");
+    }
+}
+
+/// `want` with the state the client asked for before mapping where the plan sets none. Never the
+/// kept placement: a replan unsets the placement's state, which would drop the client's request.
+fn with_asked(want: Option<Want>, asked: Option<WindowState>) -> Option<Want> {
+    match (want, asked) {
+        (Some(want), Some(state)) if want.state.is_none() => Some(Want {
+            state: Some(state),
+            ..want
+        }),
+        (None, Some(state)) => Some(Want {
+            state: Some(state),
+            ..Want::default()
+        }),
+        (want, _) => want,
     }
 }
 
