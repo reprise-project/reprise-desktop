@@ -121,12 +121,13 @@ pub struct DesktopView {
     pub(crate) send_dirs: sendto::Dirs,
     pub(crate) drives: sendto::Drives,
     pub(crate) bins: DriveBins,
-    /// Ctrl+Z on the desktop reverses the top entry of the session's history, which Explorer's
-    /// windows and file jobs share: a desktop New or inline rename pushes to it. A file action
-    /// from the desktop that records no entry clears it ([`State::forget_desktop_undos`]).
+    /// The session's undo history, which Explorer's windows and file jobs share: a desktop New or
+    /// inline rename pushes to it, and a file action from the desktop that records no entry
+    /// clears it ([`State::desktop_history`]). The loop only reads it; every edit runs on a file
+    /// action's thread through a clone, since an edit may wait on another process's lock.
     pub(crate) undos: reprisefs::undo::SharedUndo,
-    /// An Undo is running; Ctrl+Z waits for it.
-    pub(crate) undoing: Option<reprisefs::undo::Running>,
+    /// A desktop Undo runs on a file action; Ctrl+Z waits for it.
+    pub(crate) undoing: bool,
     /// The item New just made: once a scan lists it, it is selected and its rename begins.
     made: Option<String>,
     /// New's template rows: the Templates folder's files as the last scan read them.
@@ -310,7 +311,7 @@ pub(crate) fn create(
             true => Default::default(),
             false => reprisefs::undo::SharedUndo::session(),
         },
-        undoing: None,
+        undoing: false,
         made: None,
         templates: Vec::new(),
     });

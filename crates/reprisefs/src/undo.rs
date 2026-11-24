@@ -53,6 +53,18 @@ impl Undoable {
         })
     }
 
+    /// Whether it renamed an item of `dir` within `dir` or made one there, so reversing it renames,
+    /// removes or trashes that item alone.
+    pub fn only_in(&self, dir: &Path) -> bool {
+        match self {
+            Undoable::Rename { from, to, .. } => {
+                from.parent() == Some(dir) && to.parent() == Some(dir)
+            }
+            Undoable::New(p, _) => p.parent() == Some(dir),
+            _ => false,
+        }
+    }
+
     /// Add to `out` the folders reversing this adds an entry to or takes
     /// one from, each once.
     fn dirs(&self, out: &mut Vec<PathBuf>) {

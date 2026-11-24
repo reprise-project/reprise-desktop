@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use reprisefs::undo::{EntryId, FileId, NoBin, Undoable, file_id};
+use reprisefs::undo::{EntryId, NoBin, SharedUndo, Undoable, file_id};
 use reprisekit::textedit::EditKey;
 use smithay::input::keyboard::Keycode;
 
@@ -463,7 +463,6 @@ impl State {
         };
         if let desktop::Kind::Place(place) = entry.kind {
             if desktop::rename_place(&mut view.system_names, place, &typed) {
-                view.undos.clear();
                 crate::state::save_system_names(&view.system_names);
                 self.rescan_desktop();
             } else {
@@ -471,22 +470,21 @@ impl State {
             }
             return;
         }
-        if entry.label_is_name_key() {
-            if typed.is_empty() || typed == entry.label {
-                self.relayout_desktop();
-                return;
-            }
-            view.undos.clear();
+        if entry.label_is_name_key() && (typed.is_empty() || typed == entry.label) {
+            self.relayout_desktop();
+            return;
         }
         // The file may sit on a mount that never answers: the label shows the old name until the
         // rename lands.
         self.relayout_desktop();
+        let history = self.desktop_history();
         let action = Action::changes("Rename", State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
             if !gate.change(&entry.path) {
                 return Box::new(|_| {});
             }
             let done = if entry.label_is_name_key() {
+                history.iter().for_each(SharedUndo::clear);
                 // A launcher's or a link's label is its `Name=`; the file keeps its name.
                 (reprisefs::apps::set_launcher_name(&entry.path, &typed))
                     .map(|()| None)
@@ -494,9 +492,15 @@ impl State {
             } else {
                 desktop::rename_file(&entry, &typed)
             };
-            let done = done.map(|to| to.map(|to| (file_id(&to), to)));
+            if let (Ok(Some(to)), Some(h)) = (&done, &history) {
+                h.push(Undoable::Rename {
+                    from: entry.path.clone(),
+                    to: to.clone(),
+                    id: file_id(to),
+                });
+            }
             Box::new(move |state: &mut State| match done {
-                Ok(Some((id, to))) => state.renamed(&entry.path, &to, id),
+                Ok(Some(to)) => state.renamed(&entry.path, &to),
                 Ok(None) => state.rescan_desktop(),
                 Err(text) => {
                     log::warn!("desktop: rename {}: {text}", entry.path.display());
@@ -517,34 +521,36 @@ impl State {
     /// A desktop file was renamed on disk by an inline rename: its dragged cell follows the new
     /// name, then the desktop rescans. Its icon takes the new path first, so the rescan keeps
     /// it selected.
-    pub fn renamed(&mut self, from: &Path, to: &Path, id: Option<FileId>) {
-        if let Some(view) = self.desktop.as_mut() {
-            if let Some(i) = view.entries.iter().position(|e| e.path == from) {
-                let name = file_name(to);
-                let old = std::mem::replace(&mut view.entries[i].name, name.clone());
-                view.entries[i].path = to.to_path_buf();
-                move_cell(view, &old, &name);
-            }
-            view.undos.push(Undoable::Rename {
-                from: from.to_path_buf(),
-                to: to.to_path_buf(),
-                id,
-            });
+    pub fn renamed(&mut self, from: &Path, to: &Path) {
+        if let Some(view) = self.desktop.as_mut()
+            && let Some(i) = view.entries.iter().position(|e| e.path == from)
+        {
+            let name = file_name(to);
+            let old = std::mem::replace(&mut view.entries[i].name, name.clone());
+            view.entries[i].path = to.to_path_buf();
+            move_cell(view, &old, &name);
         }
         self.rescan_desktop();
     }
 
-    /// A desktop file action Undo cannot reverse was asked for: Ctrl+Z no longer reaches past it.
-    pub(crate) fn forget_desktop_undos(&mut self) {
-        if let Some(view) = self.desktop.as_mut() {
-            view.undos.clear();
-        }
+    /// The session's undo history for a desktop file action's thread, which pushes the action's
+    /// entry or, for one Undo cannot reverse, clears it once the change starts.
+    pub(crate) fn desktop_history(&self) -> Option<SharedUndo> {
+        self.desktop.as_ref().map(|v| v.undos.clone())
     }
 
-    /// Ctrl+Z on the desktop: the top entry of the session's undo history is reversed on a file
-    /// job, one at a time in the whole session and only while the desktop shows its files. What a failure leaves undone goes back on the
-    /// stack and an error box says why; an item its Recycle Bin refuses asks to be deleted for
-    /// good instead ([`Dialog::ask_undo_erase`]).
+    /// Whether a desktop Undo runs, on a file action or in Explorer.
+    pub(crate) fn desktop_undoing(&self) -> bool {
+        self.desktop.as_ref().is_some_and(|v| v.undoing) || self.undo_job_running()
+    }
+
+    /// Ctrl+Z on the desktop: the top entry of the session's undo history is reversed, one at a
+    /// time in the whole session and only while the desktop shows its files. A rename or New of
+    /// the desktop's own items is instant and runs on a file action, where the entry is taken,
+    /// reversed and put back, so a give-up loses nothing; what a failure leaves undone goes back on
+    /// the stack and an error box says why, and an item its Recycle Bin refuses asks to be deleted
+    /// for good ([`Dialog::ask_undo_erase`]). Anything else runs in Explorer
+    /// ([`State::undo_in_explorer`]), with its progress and Cancel.
     pub fn undo_icons(&mut self) {
         self.undo_desktop(None);
     }
@@ -556,47 +562,50 @@ impl State {
     }
 
     fn undo_desktop(&mut self, erasing: Option<EntryId>) {
-        if self.desktop_locked() || !self.config.desktop_icons {
+        if self.desktop_locked() || !self.config.desktop_icons || self.desktop_undoing() {
             return;
         }
         let Some(view) = self.desktop.as_mut() else {
             return;
         };
-        if view.undoing.is_some() {
-            return;
-        }
-        let taken = match erasing {
-            Some(entry) => view.undos.take_entry(entry),
-            None => view.undos.take(),
-        };
-        let Some((undo, running)) = taken else {
-            return;
-        };
-        view.undoing = Some(running);
         let dir = view.dir.clone();
+        let entry = match erasing {
+            Some(entry) => entry,
+            None => match view.undos.top(|id, u| (id, u.only_in(&dir))) {
+                None => return,
+                Some((id, true)) => id,
+                Some((_, false)) => return self.undo_in_explorer(),
+            },
+        };
+        view.undoing = true;
+        let history = view.undos.clone();
         let action = Action::changes("Undo", State::rescan_desktop).on_give_up(State::undo_ended);
         let spawned = self.spawn_fs_action(action, move |gate| {
             if !gate.change(&dir) {
                 return Box::new(|_| {});
             }
+            let Some((undo, running)) = history.take_entry(entry) else {
+                return Box::new(State::undo_ended);
+            };
             let bins = reprisefs::trash::Bins::system();
             let (done, error, purged) = undo.reverse(bins.as_ref(), erasing.is_some());
+            let renamed: Vec<(String, String)> = (undo.steps()[..done].iter())
+                .filter_map(|step| match step {
+                    Undoable::Rename { from, to, .. } => Some((file_name(to), file_name(from))),
+                    _ => None,
+                })
+                .collect();
+            let question = (error.as_ref())
+                .and_then(NoBin::of)
+                .map(|n| n.question(false));
+            let left = history.put_back(undo, running, done, error.as_ref());
+            history.forget_gone(&purged);
             Box::new(move |state: &mut State| {
-                let question = error
-                    .as_ref()
-                    .and_then(NoBin::of)
-                    .map(|n| n.question(false));
-                let mut left = None;
+                state.undo_ended();
                 if let Some(view) = state.desktop.as_mut() {
-                    for step in &undo.steps()[..done] {
-                        if let Undoable::Rename { from, to, .. } = step {
-                            move_cell(view, &file_name(to), &file_name(from));
-                        }
+                    for (from, to) in &renamed {
+                        move_cell(view, from, to);
                     }
-                    if let Some(running) = view.undoing.take() {
-                        left = view.undos.put_back(undo, running, done, error.as_ref());
-                    }
-                    view.undos.forget_gone(&purged);
                 }
                 match (question.zip(left), error) {
                     (Some((text, entry)), _) => {
@@ -619,7 +628,7 @@ impl State {
     /// The desktop's Undo landed or gave up: Ctrl+Z works again.
     fn undo_ended(&mut self) {
         if let Some(view) = self.desktop.as_mut() {
-            view.undoing = None;
+            view.undoing = false;
         }
     }
 }
