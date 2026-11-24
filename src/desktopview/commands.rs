@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use reprisefs::apps::AppEntry;
 use reprisefs::program::{Confirm, Program, ScriptOpen};
-use reprisefs::undo::{FileId, Undoable, file_id};
+use reprisefs::undo::{SharedUndo, Undoable, file_id};
 use reprisefs::{apps, ops, udisks};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
@@ -101,13 +101,14 @@ impl State {
     /// Marks `paths` executable and trusted in a file job; the first that fails says why once it
     /// answers.
     pub(crate) fn allow_launching(&mut self, paths: &[PathBuf]) {
-        self.forget_desktop_undos();
+        let history = self.desktop_history();
         let paths = paths.to_vec();
         let action = Action::changes("Allow Launching", State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
             if !paths.first().is_some_and(|p| gate.change(p)) {
                 return Box::new(|_| {});
             }
+            history.iter().for_each(SharedUndo::clear);
             let failed = paths
                 .iter()
                 .find_map(|p| apps::allow_launching(p).err().map(|e| (p.clone(), e)));
@@ -313,12 +314,11 @@ impl State {
         }
     }
 
-    /// A new item `name` with identity `id` exists on disk: land it in the cell under `at`
-    /// (unless Auto Arrange flows it), push its Undo New, then rescan once; the scan that lists
-    /// it selects it and begins its rename.
-    fn created(&mut self, name: &str, id: Option<FileId>, at: Option<(i32, i32)>) {
+    /// A new item `name` exists on disk, its Undo New pushed ([`record_new`]): land it in the cell
+    /// under `at` (unless Auto Arrange flows it), then rescan once; the scan that lists it selects
+    /// it and begins its rename.
+    fn created(&mut self, name: &str, at: Option<(i32, i32)>) {
         if let Some(view) = self.desktop.as_mut() {
-            view.undos.push(Undoable::New(view.dir.join(name), id));
             view.made = Some(name.to_string());
         }
         let area = self.desktop_area();
@@ -345,15 +345,18 @@ impl State {
         };
         let existing: Vec<String> = view.entries.iter().map(|e| e.name.clone()).collect();
         let dir = view.dir.clone();
+        let history = self.desktop_history();
         let action = Action::changes("New Folder", State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
             if !gate.change(&dir) {
                 return Box::new(|_| {});
             }
-            let made = reprisefs::dialogops::new_folder(&dir, "New Folder", &existing)
-                .map(|name| (file_id(&dir.join(&name)), name));
+            let made = reprisefs::dialogops::new_folder(&dir, "New Folder", &existing);
+            if let Ok(name) = &made {
+                record_new(&history, &dir.join(name));
+            }
             Box::new(move |state: &mut State| match made {
-                Ok((id, name)) => state.created(&name, id, at),
+                Ok(name) => state.created(&name, at),
                 Err(e) => state.create_failed("New Folder", e),
             })
         });
@@ -370,17 +373,20 @@ impl State {
             return;
         };
         let dir = view.dir.clone();
+        let history = self.desktop_history();
         let action = Action::changes("New Text Document", State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
             if !gate.change(&dir) {
                 return Box::new(|_| {});
             }
-            let made = ops::create_new_numbered(&dir, "New Text Document.txt");
-            let made = made.map(|(_, path)| (file_id(&path), path));
+            let made = ops::create_new_numbered(&dir, "New Text Document.txt").map(|(_, p)| p);
+            if let Ok(path) = &made {
+                record_new(&history, path);
+            }
             Box::new(move |state: &mut State| match made {
-                Ok((id, path)) => {
+                Ok(path) => {
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
-                    state.created(&name, id, at)
+                    state.created(&name, at)
                 }
                 Err(e) => state.create_failed("New Text Document", e),
             })
@@ -397,18 +403,22 @@ impl State {
             return;
         };
         let dir = view.dir.clone();
+        let history = self.desktop_history();
         let action = Action::changes("New", State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
             if !gate.change(&dir) {
                 return Box::new(|_| {});
             }
-            let made = reprisefs::templates::make(&template, &dir).map(|p| (file_id(&p), p));
+            let made = reprisefs::templates::make(&template, &dir);
+            if let Ok(path) = &made {
+                record_new(&history, path);
+            }
             let what = template.file_name().unwrap_or_default().to_string_lossy();
             let what = what.into_owned();
             Box::new(move |state: &mut State| match made {
-                Ok((id, path)) => {
+                Ok(path) => {
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
-                    state.created(&name, id, at)
+                    state.created(&name, at)
                 }
                 Err(e) => state.create_failed(&what, e),
             })
@@ -646,5 +656,12 @@ impl State {
             Dc::BinProperties => self.open_bin_properties(),
             Dc::EmptyBin => self.empty_bin(),
         }
+    }
+}
+
+/// Pushes New's undo for the item it made at `path`, from the action's thread.
+fn record_new(history: &Option<SharedUndo>, path: &Path) {
+    if let Some(h) = history {
+        h.push(Undoable::New(path.to_path_buf(), file_id(path)));
     }
 }

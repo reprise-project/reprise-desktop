@@ -1733,7 +1733,7 @@ fn a_second_ctrl_z_waits_for_the_first_and_undo_rename_keeps_the_cell() {
     h.until("the rename", |s| {
         s.desktop.as_ref().unwrap().undos.label() == Some("Undo Rename")
     });
-    let undone = |s: &crate::compositor::State| s.desktop.as_ref().unwrap().undoing.is_none();
+    let undone = |s: &crate::compositor::State| !s.desktop.as_ref().unwrap().undoing;
 
     // Two presses with no loop turn between them: the second finds the first still running.
     h.state.undo_icons();
@@ -1841,7 +1841,7 @@ fn ctrl_z_works_again_after_an_undo_fails_to_start_or_gives_up() {
         });
         h.state.cancel_rename();
     }
-    let undoing = |s: &crate::compositor::State| s.desktop.as_ref().unwrap().undoing.is_some();
+    let undoing = |s: &crate::compositor::State| s.desktop.as_ref().unwrap().undoing;
 
     h.state.fsjobs.refuse_threads = true;
     h.state.undo_icons();
@@ -1854,6 +1854,55 @@ fn ctrl_z_works_again_after_an_undo_fails_to_start_or_gives_up() {
     h.until("the give-up", |s| !undoing(s));
     let d = &h.state.dialogs.views.last().expect("an error box").dialog;
     assert_eq!(d.title, "Undo");
+    assert_eq!(
+        h.state.desktop.as_ref().unwrap().undos.label(),
+        Some("Undo New"),
+        "an undo that gave up before it began took nothing"
+    );
+}
+
+#[test]
+fn ctrl_z_hands_an_entry_that_is_more_than_a_desktop_new_or_rename_to_explorer() {
+    let (mut h, desk) = desktop_in("desktop-undo-explorer", &["x.txt"]);
+    let from = desk.parent().unwrap().join("elsewhere-x.txt");
+    let view = h.state.desktop.as_mut().unwrap();
+    view.undos.push(reprisefs::undo::Undoable::Move {
+        from,
+        to: desk.join("x.txt"),
+        listed: false,
+        id: None,
+    });
+    crate::spawn::record();
+    ctrl_z(&mut h);
+    let job = h.state.filejobs.jobs.last().expect("an Explorer job");
+    assert_eq!(job.args, ["--undo"]);
+    assert!(desk.join("x.txt").exists(), "the desktop moved nothing");
+    assert_eq!(
+        h.state.desktop.as_ref().unwrap().undos.label(),
+        Some("Undo Move"),
+        "Explorer takes the entry"
+    );
+}
+
+#[test]
+fn hiding_a_system_icon_or_renaming_a_place_leaves_the_undo_history() {
+    let (mut h, _desk) = desktop_in("desktop-undo-config", &[]);
+    h.state.desktop_command(DesktopCommand::NewFolder, None);
+    h.state.cancel_rename();
+    let view = h.state.desktop.as_ref().unwrap();
+    let place = (view.entries.iter())
+        .position(|e| matches!(e.kind, desktop::Kind::Place(_)))
+        .expect("a place on the desktop");
+    h.state.begin_rename(place);
+    let view = h.state.desktop.as_mut().unwrap();
+    view.rename.as_mut().unwrap().1.text = "Mine".into();
+    h.state.commit_rename();
+    let shown = h.state.config.system_icons.clone();
+    h.state.hide_system_icons(&shown[..1]);
+    assert_eq!(
+        h.state.desktop.as_ref().unwrap().undos.label(),
+        Some("Undo New")
+    );
 }
 
 #[test]

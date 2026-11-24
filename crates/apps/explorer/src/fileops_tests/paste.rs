@@ -425,7 +425,12 @@ fn a_file_pasted_onto_a_folders_name_lands_numbered() {
 /// window's later rename, which its Edit menu names, then its own copy.
 #[test]
 fn undo_in_one_window_reverses_the_newest_operation_of_any_window_first() {
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
+    let _data_home = DataHome::set(home.path());
+    let config = home.path().join("config/reprise/config.toml");
+    std::fs::create_dir_all(config.parent().expect("a folder")).expect("mkdir");
+    std::fs::write(&config, "desktop_extensions = \"show\"\n").expect("write");
     let (from, dir) = (home.path().join("from"), home.path().join("to"));
     std::fs::create_dir_all(&from).expect("mkdir");
     std::fs::create_dir_all(&dir).expect("mkdir");

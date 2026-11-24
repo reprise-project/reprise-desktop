@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use reprisefs::apps::AppEntry;
+use reprisefs::undo::SharedUndo;
 use reprisekit::taskbar::{TaskbarHit, TaskbarLayout};
 use reprisescene::{BufferId, Input, TreeId};
 use smithay::output::Output;
@@ -1014,12 +1015,13 @@ impl State {
     /// and allowed to launch, a shortcut to one, or a shortcut to a system icon, which is never
     /// copied. One with a cell lands there; the first failure stops the rest and says why.
     fn write_launchers(&mut self, dir: PathBuf, op: DropOp, puts: Vec<Put>, existing: Vec<String>) {
-        self.forget_desktop_undos();
+        let history = self.desktop_history();
         let action = Action::changes(op.failure_title(), State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
             if !gate.change(&dir) {
                 return Box::new(|_| {});
             }
+            history.iter().for_each(SharedUndo::clear);
             let mut taken = existing;
             let mut landed = Vec::new();
             let mut failed = None;
@@ -1082,12 +1084,13 @@ impl State {
             }
             DropTarget::Quick(_) | DropTarget::Pin { .. } | DropTarget::Trash => return,
         };
-        self.forget_desktop_undos();
+        let history = self.desktop_history();
         let action = Action::changes(DropOp::Shortcut.failure_title(), State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
             if !gate.change(&dir) {
                 return Box::new(|_| {});
             }
+            history.iter().for_each(SharedUndo::clear);
             let mut landed = Vec::new();
             let mut failed = None;
             for ((url, title), cell) in links.iter().zip(cells) {
