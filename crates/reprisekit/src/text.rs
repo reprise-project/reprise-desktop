@@ -132,17 +132,17 @@ impl Glyph {
         Some((self.left + l as i32, self.left + r as i32 + 1))
     }
 
-    /// Whether this glyph's bitmap, drawn at scale `s` from logical pen x `pen`, lies within
+    /// Whether this glyph's bitmap, drawn at scale `s` from device pen x `dx`, lies within
     /// `line`'s columns.
-    fn boxed_in(&self, pen: i32, s: i32, line: Rect) -> bool {
-        self.left >= s * (line.x - pen) && self.left + self.width as i32 <= s * (line.right() - pen)
+    fn boxed_in(&self, dx: i32, s: i32, line: Rect) -> bool {
+        self.left >= s * line.x - dx && self.left + self.width as i32 <= s * line.right() - dx
     }
 
-    /// How far to move this glyph, drawn at scale `s` from logical pen x `pen`, so its ink stays
-    /// within `line`'s columns, when `one`, its ink at scale 1, does: as far as it can without
-    /// leaving the other side.
-    fn nudge_into(&self, one: Option<(i32, i32)>, pen: i32, s: i32, line: Rect) -> i32 {
-        let (lo, hi) = (s * (line.x - pen), s * (line.right() - pen));
+    /// How far to move this glyph, drawn at scale `s` from device pen x `dx`, so its ink stays
+    /// within `line`'s columns, when `one`, its ink at scale 1 from logical pen x `pen`, does: as
+    /// far as it can without leaving the other side.
+    fn nudge_into(&self, one: Option<(i32, i32)>, pen: i32, dx: i32, s: i32, line: Rect) -> i32 {
+        let (lo, hi) = (s * line.x - dx, s * line.right() - dx);
         let (Some((l, r)), Some((l1, r1))) = (self.ink_span(), one) else {
             return 0;
         };
@@ -303,6 +303,17 @@ enum Pass {
 /// is settled by the logical size alone.
 type GlyphKey = (Option<Piece>, bool, u32, u32);
 
+/// A glyph of a run as [`TextRenderer::pens`] places it.
+struct Placed {
+    /// Its byte offset in the run.
+    at: usize,
+    piece: Piece,
+    /// Its logical pen x.
+    pen: i32,
+    /// Its device pen x at the run's scale.
+    dx: i32,
+}
+
 type LineMetrics = (i32, i32, i32);
 
 /// A selection's highlight at a canvas scale, from [`TextRenderer::highlight`].
@@ -312,10 +323,12 @@ pub struct Highlight<'a> {
     /// Its device pixels, out to the selected glyphs' ink.
     pub dev: Rect,
     s: i32,
+    /// The logical pen of the whole line `text`, of which `sel` is selected.
     pen: i32,
     baseline: Option<i32>,
     line: Rect,
     text: &'a str,
+    sel: std::ops::Range<usize>,
     bold: bool,
     size_px: u32,
     /// The selected glyphs' ink columns: logical ones at scale 1, then device ones at `s`.
@@ -373,6 +386,8 @@ impl Highlight<'_> {
 /// leaves that ink as it is.
 pub struct CaretBar {
     bar: Rect,
+    /// The device x of the bar's pen's column.
+    x: i32,
     s: i32,
     want: i32,
     /// The device pixels of every place it may take, as they were before the text.
@@ -386,8 +401,20 @@ impl CaretBar {
     /// The caret `bar` (logical, on its pen's column) within `clip`, at the end of `hl` it sits
     /// on, reading `c` under the places it may take.
     pub fn ground(c: &Canvas, bar: Rect, hl: Option<&Highlight>, clip: Rect) -> CaretBar {
+        CaretBar::ground_at(c, bar, bar.x * c.scale(), hl, clip)
+    }
+
+    /// [`CaretBar::ground`] for a bar whose pen's column is device x `x`, from
+    /// [`TextRenderer::caret_x`].
+    pub fn ground_at(
+        c: &Canvas,
+        bar: Rect,
+        x: i32,
+        hl: Option<&Highlight>,
+        clip: Rect,
+    ) -> CaretBar {
         let s = c.scale();
-        let b = bar.scaled(s);
+        let b = Rect { x, ..bar.scaled(s) };
         let w = b.width;
         let (want, lo, hi) = match hl {
             Some(h) if bar.x == h.rect.x => (h.dev.x - w, h.dev.x - 2 * w, b.x),
@@ -405,6 +432,7 @@ impl CaretBar {
         let hl = hl.map_or_else(Rect::default, |h| h.dev);
         CaretBar {
             bar,
+            x,
             s,
             want,
             area,
@@ -421,7 +449,10 @@ impl CaretBar {
 
     /// Its device pixels in `c`.
     fn place(&self, c: &Canvas) -> Rect {
-        let b = self.bar.scaled(self.s);
+        let b = Rect {
+            x: self.x,
+            ..self.bar.scaled(self.s)
+        };
         let cost = |x: i32| {
             let (mut ink, mut lit) = (0, 0);
             for (x, y) in rows(Rect { x, ..b }) {
@@ -1472,31 +1503,110 @@ impl TextRenderer {
         let Some(baseline) = self.baseline(r, bold, px) else {
             return;
         };
-        let (dx, w, _) = self.span_and_measure(&plain, m, bold, px);
+        let (_, w, total) = self.span_and_measure(&plain, m, bold, px);
         let start = self.pen(r, &plain, bold, align, px);
         self.draw_run(c, start, baseline, r, &plain, bold, color, px);
         let cs = c.scale();
-        let nudge = plain.chars().nth(m).filter(|_| cs > 1).map_or(0, |ch| {
-            self.nudge(Piece::Char(ch), bold, px, cs, start + dx, r)
-        });
-        let ul = Rect::new(start + dx, baseline + s, w, s).scaled(cs);
-        let ul = Rect::new(ul.x + nudge, ul.y, ul.width, ul.height);
+        let byte = plain.char_indices().nth(m).map(|(b, _)| b);
+        let placed = self.pens(&plain, bold, px, cs, start);
+        let marked = byte.and_then(|b| placed.iter().rev().find(|g| g.at <= b));
+        let x = match marked {
+            Some(g) if cs > 1 => g.dx + self.nudge(g.piece, bold, px, cs, g.pen, g.dx, r),
+            Some(g) => g.dx,
+            None => cs * (start + total),
+        };
+        let ul = Rect::new(x, cs * (baseline + s), cs * w, cs * s);
         c.in_device_px(|c| c.fill_rect(ul.intersect(&r.scaled(cs)), color));
     }
 
-    /// How far [`TextRenderer::draw_run`] moves `ch` drawn at scale `s` from pen x `pen` in `line`.
-    fn nudge(&self, p: Piece, bold: bool, size_px: u32, s: i32, pen: i32, line: Rect) -> i32 {
+    /// How far [`TextRenderer::draw_run`] moves `p` drawn at scale `s` from logical pen x `pen`,
+    /// device pen x `dx`, in `line`.
+    #[expect(clippy::too_many_arguments)]
+    fn nudge(
+        &self,
+        p: Piece,
+        bold: bool,
+        size_px: u32,
+        s: i32,
+        pen: i32,
+        dx: i32,
+        line: Rect,
+    ) -> i32 {
         let scaled = s as u32;
-        if self.with_piece(p, bold, size_px, scaled, |g| g.boxed_in(pen, s, line)) != Some(false) {
+        if self.with_piece(p, bold, size_px, scaled, |g| g.boxed_in(dx, s, line)) != Some(false) {
             return 0;
         }
         let one = self
             .with_piece(p, bold, size_px, 1, |g| g.ink_span())
             .flatten();
         self.with_piece(p, bold, size_px, scaled, |g| {
-            g.nudge_into(one, pen, s, line)
+            g.nudge_into(one, pen, dx, s, line)
         })
         .unwrap_or(0)
+    }
+
+    /// Each piece of `text` with its logical and device pen at scale `s`, from logical x `pen`. A
+    /// word spans `s` times its logical width, its glyphs spaced by their advances at `s`, which
+    /// hinting need not make `s` times the logical ones.
+    fn pens(&self, text: &str, bold: bool, size_px: u32, s: i32, pen: i32) -> Vec<Placed> {
+        let mut x = pen;
+        let mut placed: Vec<Placed> = self
+            .pieces(text)
+            .map(|(at, _, piece)| {
+                let g = Placed {
+                    at,
+                    piece,
+                    pen: x,
+                    dx: s * x,
+                };
+                x += self.piece_advance(piece, bold, size_px);
+                g
+            })
+            .collect();
+        if s <= 1 {
+            return placed;
+        }
+        let device = |p: Piece| {
+            let adv = self.with_piece(p, bold, size_px, s as u32, |g| g.advance);
+            i64::from(adv.unwrap_or(0))
+        };
+        let blank = |p: &Placed| matches!(p.piece, Piece::Char(c) if c.is_whitespace());
+        let mut a = 0;
+        while a < placed.len() {
+            let b = placed[a..]
+                .iter()
+                .position(blank)
+                .map_or(placed.len(), |n| a + n);
+            let (start, end) = (placed[a].pen, placed.get(b).map_or(x, |p| p.pen));
+            let span = i64::from(s * (end - start));
+            let room: i64 = placed[a..b].iter().map(|p| device(p.piece)).sum();
+            let mut d = 0;
+            for j in (a + 1..b).filter(|_| room > 0) {
+                d += device(placed[j - 1].piece);
+                placed[j].dx = s * start + ((2 * d * span + room) / (2 * room)) as i32;
+            }
+            a = b + 1;
+        }
+        placed
+    }
+
+    /// The device x on a canvas at scale `s` of the pen before byte `at` of `text` drawn from
+    /// logical pen x `pen`: where [`TextRenderer::draw_run`] draws that glyph, or the run's end.
+    pub fn caret_x(
+        &self,
+        text: &str,
+        at: usize,
+        pen: i32,
+        bold: bool,
+        size_px: u32,
+        s: i32,
+    ) -> i32 {
+        let placed = self.pens(text, bold, size_px, s, pen);
+        let end = || s * (pen + self.measure(text, bold, size_px));
+        placed
+            .iter()
+            .find(|g| g.at >= at)
+            .map_or_else(end, |g| g.dx)
     }
 
     /// The highlight `hl` of bytes `sel` of `text`, drawn from pen x `pen` in `line`, at canvas
@@ -1539,10 +1649,11 @@ impl TextRenderer {
             rect: hl,
             dev: hl.scaled(s),
             s,
-            pen: pen + self.measure(&text[..sel.start], bold, size_px),
+            pen,
             baseline,
             line,
-            text: &text[sel],
+            text,
+            sel: sel.clone(),
             bold,
             size_px,
             ink: None,
@@ -1552,20 +1663,24 @@ impl TextRenderer {
         let join = |a: Option<(i32, i32)>, (l, r): (i32, i32)| {
             Some(a.map_or((l, r), |(al, ar)| (al.min(l), ar.max(r))))
         };
-        let (mut one, mut ink, mut rows, mut at) = (None, None, None, h.pen);
-        for (_, _, p) in self.pieces(h.text) {
+        let placed = self.pens(text, bold, size_px, s, pen);
+        let shift = |g: &Placed| {
+            if s > 1 {
+                self.nudge(g.piece, bold, size_px, s, g.pen, g.dx, line)
+            } else {
+                0
+            }
+        };
+        let (mut one, mut ink, mut rows) = (None, None, None);
+        for g in placed.iter().filter(|g| (a..b).contains(&g.at)) {
+            let (p, at) = (g.piece, g.pen);
             if let Some((l, r)) = self
                 .with_piece(p, bold, size_px, 1, |g| g.ink_span())
                 .flatten()
             {
                 one = join(one, (at + l, at + r));
             }
-            let nudge = if s > 1 {
-                self.nudge(p, bold, size_px, s, at, line)
-            } else {
-                0
-            };
-            let dx = s * at + nudge;
+            let dx = g.dx + shift(g);
             let drawn = self.with_piece(p, bold, size_px, s as u32, |g| {
                 let top = |(t, b): (i32, i32)| (t - g.top, b - g.top);
                 (g.drawn_span(), g.drawn_rows().map(top))
@@ -1578,26 +1693,24 @@ impl TextRenderer {
                     rows = join(rows, r);
                 }
             }
-            at += self.piece_advance(p, bold, size_px);
         }
-        let drawn = |p: Piece, at: i32| {
-            let nudge = if s > 1 {
-                self.nudge(p, bold, size_px, s, at, line)
-            } else {
-                0
-            };
-            self.with_piece(p, bold, size_px, s as u32, |g| g.drawn_span())
+        let drawn = |g: &Placed| {
+            let dx = g.dx + shift(g);
+            self.with_piece(g.piece, bold, size_px, s as u32, |g| g.drawn_span())
                 .flatten()
-                .map(|(l, r)| (s * at + nudge + l, s * at + nudge + r))
+                .map(|(l, r)| (dx + l, dx + r))
         };
-        let before = self.pieces(&text[..a]).last().map(|(_, _, p)| p);
         h.beside = (
-            before
-                .and_then(|p| drawn(p, h.pen - self.piece_advance(p, bold, size_px)))
+            placed
+                .iter()
+                .rev()
+                .find(|g| g.at < a)
+                .and_then(drawn)
                 .map(|(_, r)| r),
-            self.pieces(&text[b..])
-                .next()
-                .and_then(|(_, _, p)| drawn(p, at))
+            placed
+                .iter()
+                .find(|g| g.at >= b)
+                .and_then(drawn)
                 .map(|(l, _)| l),
         );
         if let (Some(base), Some((t, b))) = (h.baseline, rows) {
@@ -1655,16 +1768,17 @@ impl TextRenderer {
         for strip in ring.map(|strip| strip.intersect(&clip)) {
             if !strip.is_empty() {
                 let (bold, px) = (h.bold, h.size_px);
-                let (line, text) = (h.line, h.text);
-                self.draw_line(c, h.pen, baseline, strip, line, text, bold, color, px);
+                let (line, text, sel) = (h.line, h.text, h.sel.clone());
+                self.draw_part(c, h.pen, baseline, strip, line, text, sel, bold, color, px);
             }
         }
     }
 
     /// Draw `text` from pen x `pen` on `baseline`, clipped to `clip`. At canvas scale `s` glyphs
-    /// rasterize at `s * size_px` but the pen moves by the `size_px` advances, keeping the logical
-    /// width carets are measured against. A glyph there can ink wider than `s` times itself at
-    /// `size_px`, so one whose ink fits `clip` at scale 1 but would leave it moves back inside.
+    /// rasterize at `s * size_px` and each word keeps the logical width carets are measured
+    /// against, its glyphs placed by [`TextRenderer::pens`]. A glyph there can ink wider than `s`
+    /// times itself at `size_px`, so one whose ink fits `clip` at scale 1 but would leave it moves
+    /// back inside.
     #[expect(clippy::too_many_arguments)]
     pub fn draw_run(
         &self,
@@ -1689,11 +1803,33 @@ impl TextRenderer {
     fn draw_line(
         &self,
         canvas: &mut Canvas,
-        mut pen: i32,
+        pen: i32,
         baseline: i32,
         clip: Rect,
         line: Rect,
         text: &str,
+        bold: bool,
+        color: Color,
+        size_px: u32,
+    ) -> bool {
+        let all = 0..text.len();
+        self.draw_part(
+            canvas, pen, baseline, clip, line, text, all, bold, color, size_px,
+        )
+    }
+
+    /// [`TextRenderer::draw_line`] drawing only the glyphs of `text` starting at bytes `part`,
+    /// each where the whole line places it.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn draw_part(
+        &self,
+        canvas: &mut Canvas,
+        pen: i32,
+        baseline: i32,
+        clip: Rect,
+        line: Rect,
+        text: &str,
+        part: std::ops::Range<usize>,
         bold: bool,
         color: Color,
         size_px: u32,
@@ -1707,15 +1843,18 @@ impl TextRenderer {
             .then(|| line.scaled(s))
             .filter(|_| pass != Pass::Colour);
         let (mut cut, mut left_out) = ((0, 0), false);
-        for (_, _, p) in self.pieces(text) {
-            let logical = (s > 1).then(|| self.piece_advance(p, bold, size_px));
+        for at in self.pens(text, bold, size_px, s, pen) {
+            if !part.contains(&at.at) {
+                continue;
+            }
+            let p = at.piece;
             let nudge = if s > 1 {
-                self.nudge(p, bold, size_px, s, pen, line)
+                self.nudge(p, bold, size_px, s, at.pen, at.dx, line)
             } else {
                 0
             };
-            let drawn = self.with_piece(p, bold, size_px, s as u32, |g| {
-                let gx = pen * s + g.left + nudge;
+            self.with_piece(p, bold, size_px, s as u32, |g| {
+                let gx = at.dx + g.left + nudge;
                 let gy = baseline * s - g.top;
                 if let Some(keep) = watch {
                     let (rows, cols) = g.ink_cut(gx, gy, keep);
@@ -1732,9 +1871,7 @@ impl TextRenderer {
                     }
                     (None, Pass::Colour) => {}
                 }
-                g.advance
             });
-            pen += logical.or(drawn).unwrap_or(0);
         }
         if cut != (0, 0) {
             crate::pins::clipped(crate::pins::Cut {

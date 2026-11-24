@@ -259,12 +259,17 @@ fn edit_field(
         hl.fill(c, room, cs.hilight);
     }
     let bar_at = |i: usize| Rect::new(at(i).min(inner.right() - s), line.y, s, line.height);
+    let scale = c.scale();
+    let x_at = |i: usize| {
+        let x = text.caret_x(shown, i.max(first) - first, inner.x, false, px, scale);
+        x.min(scale * (inner.right() - s))
+    };
     let bar = bar_at(edit.caret());
     let drawn = match drop {
-        Some(i) => Some(bar_at(edit.text.floor_char_boundary(i))),
-        None => (caret.shown() && bar_on).then_some(bar),
+        Some(i) => Some(edit.text.floor_char_boundary(i)),
+        None => (caret.shown() && bar_on).then_some(edit.caret()),
     };
-    let shown_bar = drawn.map(|b| CaretBar::ground(c, b, hl.as_ref(), room));
+    let shown_bar = drawn.map(|i| CaretBar::ground_at(c, bar_at(i), x_at(i), hl.as_ref(), room));
     if edit.text.is_empty() && !edit.cue().is_empty() {
         text.draw(c, inner, edit.cue(), false, cs.gray_text, Align::Left, px);
     } else {
@@ -519,13 +524,12 @@ fn glyph_mask(
 ) -> Vec<bool> {
     let ink = crate::theme::Color::rgb(0x12, 0x34, 0x56);
     let base = text.baseline(line, false, px).unwrap();
-    let g = &t[at..t[at..]
+    let end = t[at..]
         .chars()
         .next()
-        .map_or(t.len(), |c| at + c.len_utf8())];
+        .map_or(t.len(), |c| at + c.len_utf8());
     let mut c = Canvas::with_scale(w as u32, h as u32, s);
-    let x = pen + text.measure(&t[..at], false, px);
-    text.draw_run(&mut c, x, base, line, g, false, ink, px);
+    text.draw_part(&mut c, pen, base, line, line, t, at..end, false, ink, px);
     c.pixels.iter().map(|&p| p == ink.argb()).collect()
 }
 

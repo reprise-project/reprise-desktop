@@ -1636,6 +1636,10 @@ pub fn draw(
             let e = expanded_col(line, col, m.tab_cols);
             x0 + text.measure(&shown[..e.min(shown.len())], m.bold, m.font_px)
         };
+        let dev_x = |col: usize| {
+            let e = expanded_col(line, col, m.tab_cols).min(shown.len());
+            text.caret_x(&shown, e, x0, m.bold, m.font_px, c.scale())
+        };
         let row_caret = (ri == caret_row).then(|| {
             let (col, bar_on) = match (&composed, &preedit) {
                 (Some((_, _, at)), Some(p)) => (*at, p.cursor.is_some()),
@@ -1645,14 +1649,20 @@ pub fn draw(
             let bar = Rect::new(cx, y, s, line_h);
             let drawn = cx >= clip.x && cx < clip.right();
             let hl = row_hl.as_ref().map(|(hl, _)| hl);
-            let placed = drawn.then(|| CaretBar::ground(c, bar, hl, ink_clip));
+            let placed = drawn.then(|| CaretBar::ground_at(c, bar, dev_x(col), hl, ink_clip));
             (bar, bar_on, placed)
         });
         let drop_bar = drop
             .filter(|&at| edit.row_of(text, m, lay.wrap, at) == ri)
-            .map(|at| Rect::new(x0 + x_of(text, m, edit, lay, at), y, s, line_h))
-            .filter(|bar| bar.x >= clip.x && bar.x < clip.right())
-            .map(|bar| CaretBar::ground(c, bar, row_hl.as_ref().map(|(hl, _)| hl), ink_clip));
+            .map(|at| {
+                let bar = Rect::new(x0 + x_of(text, m, edit, lay, at), y, s, line_h);
+                (bar, dev_x(edit.clamp(at).col.max(row.start) - row.start))
+            })
+            .filter(|(bar, _)| bar.x >= clip.x && bar.x < clip.right())
+            .map(|(bar, x)| {
+                let hl = row_hl.as_ref().map(|(hl, _)| hl);
+                CaretBar::ground_at(c, bar, x, hl, ink_clip)
+            });
         text.draw_in(
             c,
             r,

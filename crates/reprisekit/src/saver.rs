@@ -983,7 +983,7 @@ mod tests {
         assert_eq!((w2.width, w2.height), (w1.width * 2, w1.height * 2));
         crate::pins::fonts();
         assert_eq!(digest(&w1), 5770883215788226389, "word at scale 1");
-        assert_eq!(digest(&w2), 15604862939813622337, "word at scale 2");
+        assert_eq!(digest(&w2), 483713818963111111, "word at scale 2");
         assert!(
             !doubled(&w2, &last_letter(&w2)),
             "monochrome, still redrawn"
