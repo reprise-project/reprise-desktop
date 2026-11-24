@@ -787,6 +787,7 @@ impl State {
         for depth in 0..self.menus.len() {
             self.redraw_menu(depth);
         }
+        self.redraw_start_panel();
         self.refit_wallpaper();
         crate::greeterview::refit(self);
         crate::outputmgmt::publish(self);

@@ -1359,6 +1359,37 @@ fn the_blue_menus_icons_load_at_the_text_size_it_fits_at() {
     }
 }
 
+#[test]
+fn an_output_scale_change_under_the_open_panel_asks_its_icons_at_the_new_scale() {
+    use reprisekit::startpanel::PROGRAM_ICON;
+    use smithay::output::Scale;
+    let file = "/srv/icons/chess.png";
+    let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    let out = h.output("TEST-1", 3840, 2160);
+    let mut chess = app("Chess", "Game");
+    chess.icon = Some(file.into());
+    h.state.app_index = vec![chess];
+    h.state.launches.pin(&h.state.app_index[0].id);
+    let bar = h.state.bars[0].tree;
+    h.state.toggle_start(bar);
+    h.state.icons.take_wanted();
+    out.change_current_state(None, None, Some(Scale::Integer(2)), None);
+    h.state.update_layout();
+    let m = &h
+        .state
+        .start_panel
+        .as_ref()
+        .expect("the panel stays open")
+        .model;
+    let px = m.icon_px(PROGRAM_ICON, 2);
+    let asked: Vec<i32> = (h.state.icons.take_wanted().into_iter())
+        .filter(|(name, _)| name == file)
+        .map(|(_, px)| px)
+        .collect();
+    assert!(asked.contains(&px), "asked {asked:?} for {px} px");
+}
+
 /// At 200% text on a 540-line screen the Glass menu steps its text down until every place shows
 /// and the panel stands in its room.
 #[test]

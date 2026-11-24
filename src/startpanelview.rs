@@ -70,6 +70,8 @@ pub struct StartPanelView {
     drawn: Option<Drawn>,
     rasters: Rasters,
     crossfades: Vec<Crossfade>,
+    /// The draw scale its icons and pictures were looked up at.
+    scale: i32,
 }
 
 impl StartPanelView {
@@ -190,6 +192,7 @@ impl State {
             drawn: None,
             rasters: Rasters::default(),
             crossfades: Vec::new(),
+            scale,
         });
         self.read_user_pictures(vec![px]);
         self.list_start_programs();

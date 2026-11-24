@@ -235,10 +235,12 @@ impl State {
         let text = self.config.theme.text;
         let scale = self.draw_scale_at(Some(&v.output)).max(1);
         let mut refit = false;
+        let mut rescaled = false;
         if let Some(v) = self.start_panel.as_mut() {
             let was = v.model.text;
             v.model.fit(text, room);
             refit = v.model.text != was;
+            rescaled = std::mem::replace(&mut v.scale, scale) != scale;
             if v.model.shape == Shape::Blue {
                 let g = startpanel::search::Grow {
                     s: scale,
@@ -248,8 +250,11 @@ impl State {
                     reprisekit::blue::startpanel::foot_labels(self.text.for_output(scale), g);
             }
         }
-        // The rows' icons were looked up at the text size before this fit.
-        if refit {
+        // The rows' icons were looked up at the text size before this fit, or at another scale.
+        if rescaled {
+            self.read_user_pictures(vec![super::PICTURE * scale]);
+        }
+        if refit || rescaled {
             self.refill_start_icons(scale, true);
         }
         let Some(v) = self.start_panel.as_ref() else {
