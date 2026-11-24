@@ -23,7 +23,7 @@ use crate::trash::Trashed;
 /// How long a write waits for another process's, which only rewrites a small file.
 const PATIENCE: Duration = Duration::from_millis(200);
 
-const MAGIC: &[u8] = b"reprise-undo 2";
+const MAGIC: &[u8] = b"reprise-undo 3";
 
 /// The history and the file it lives in, read again whenever another process rewrote it.
 #[derive(Default)]
@@ -258,7 +258,8 @@ fn save(file: &Path, stack: &UndoStack) -> io::Result<Stamp> {
 }
 
 /// The history as NUL-terminated fields: [`MAGIC`], the clear count, the push count, the count
-/// the cap dropped, the entry count, then each entry's id and item.
+/// the cap dropped, the entry count, then each entry's id and item. A trashed item's record is
+/// not stored: it is always the one beside its `files/` entry.
 fn encode(stack: &UndoStack) -> Vec<u8> {
     let mut out = Out(Vec::new());
     out.field(MAGIC);
@@ -343,7 +344,6 @@ impl Out {
                 self.path(&t.original);
                 self.field(t.name.as_bytes());
                 self.path(&t.files);
-                self.path(&t.info);
                 self.opt(t.deleted);
             }
             Undoable::Copied(p, id) => {
@@ -416,13 +416,19 @@ impl<'b> In<'_, 'b> {
                 to: self.path()?,
                 id: self.id()?,
             },
-            b"trash" => Undoable::Trash(Trashed {
-                original: self.path()?,
-                name: self.text()?.to_string(),
-                files: self.path()?,
-                info: self.path()?,
-                deleted: self.opt()?,
-            }),
+            b"trash" => {
+                let (original, name, files) = (self.path()?, self.text()?, self.path()?);
+                if files.parent()?.file_name()? != "files" {
+                    return None;
+                }
+                Undoable::Trash(Trashed {
+                    original,
+                    name: name.to_string(),
+                    info: crate::trash::info_path(&files).ok()?,
+                    files,
+                    deleted: self.opt()?,
+                })
+            }
             b"copied" => Undoable::Copied(self.path()?, self.id()?),
             b"new" => Undoable::New(self.path()?, self.id()?),
             b"batch" => Undoable::Batch(
@@ -562,9 +568,35 @@ mod tests {
     }
 
     #[test]
+    fn a_trash_entry_outside_a_bins_files_folder_is_unreadable() {
+        let (t, a, _) = two_windows();
+        let entry = |files: &str| {
+            let fields = [
+                "reprise-undo 3",
+                "0",
+                "1",
+                "0",
+                "1",
+                "1",
+                "trash",
+                "/a/x",
+                "x",
+                files,
+                "-",
+            ];
+            fields.map(|f| format!("{f}\0")).concat()
+        };
+        let file = t.path().join("reprise-undo");
+        std::fs::write(&file, entry("/T/files/x")).unwrap();
+        assert_eq!(a.label(), Some("Undo Delete"));
+        std::fs::write(&file, entry("/home/u/.profile")).unwrap();
+        assert_eq!(a.label(), None);
+    }
+
+    #[test]
     fn an_unreadable_history_starts_over() {
         let (t, mut a, _) = two_windows();
-        std::fs::write(t.path().join("reprise-undo"), b"reprise-undo 2\0x\0").unwrap();
+        std::fs::write(t.path().join("reprise-undo"), b"reprise-undo 3\0x\0").unwrap();
         assert_eq!(a.label(), None);
         a.push(Undoable::Copied("/x".into(), None));
         assert_eq!(a.label(), Some("Undo Copy"));
