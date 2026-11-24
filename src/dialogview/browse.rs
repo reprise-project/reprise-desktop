@@ -419,6 +419,24 @@ mod tests {
     }
 
     #[test]
+    fn the_child_closing_under_the_taskbars_keys_hands_escape_back_to_run() {
+        const ESCAPE: u32 = 1;
+        let mut h = Harness::new();
+        let (run, mut c, t) = run_under_child(&mut h, CHILD + 5);
+        h.pointer_to(512.0, 300.0);
+        h.state.focus_taskbar(false);
+        c.destroy(t);
+        h.roundtrip(&mut c);
+        assert!(h.state.bar_shared.keys.is_some(), "the bar keeps the keys");
+        assert!(!h.state.dialogs.active);
+        h.key(ESCAPE, true);
+        h.key(ESCAPE, false);
+        assert!(h.state.bar_shared.keys.is_none());
+        assert_eq!(h.state.active_dialog_id(), Some(run));
+        assert!(h.state.dialogs.active, "Run has the keyboard");
+    }
+
+    #[test]
     fn a_welcome_panel_clearing_run_lets_its_child_go() {
         let mut h = Harness::new();
         let (_run, _c, t) = run_under_child(&mut h, CHILD + 3);

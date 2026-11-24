@@ -1059,6 +1059,39 @@ mod tests {
     }
 
     #[test]
+    fn the_button_keeps_the_keyboard_once_the_window_delete_closed_goes() {
+        let (mut h, mut c, [_, b, o], i) = group_with_keys(true);
+        tap(&mut h, KEY_ENTER);
+        tap(&mut h, KEY_DELETE);
+        h.roundtrip(&mut c);
+        c.destroy(b);
+        h.roundtrip(&mut c);
+        assert!(h.state.win(b.id).is_none(), "the window is gone");
+        assert_eq!(h.state.focused, None);
+        let at = h.state.bar_shared.keys.map(|k| k.at);
+        assert_eq!(at, Some(TaskbarHit::Task(i)), "the button keeps it");
+        tap(&mut h, KEY_RIGHT);
+        let at = h.state.bar_shared.keys.map(|k| k.at);
+        assert_eq!(at, Some(TaskbarHit::Task(i + 1)), "Right moves along");
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.keyboard_focus, None);
+        assert!(c.side.keys.is_empty(), "no window hears the arrows");
+        tap(&mut h, KEY_ESC);
+        assert_eq!(h.state.focused, Some(o.id), "Escape gives it back");
+    }
+
+    #[test]
+    fn the_window_the_bar_took_the_keyboard_from_closing_leaves_it_on_the_bar() {
+        let (mut h, mut c, [_, b, o], i) = group_with_keys(true);
+        c.destroy(o);
+        h.roundtrip(&mut c);
+        let at = h.state.bar_shared.keys.map(|k| k.at);
+        assert_eq!(at, Some(TaskbarHit::Task(i)));
+        tap(&mut h, KEY_ESC);
+        assert_eq!(h.state.focused, Some(b.id), "the top window takes it");
+    }
+
+    #[test]
     fn a_reader_follows_the_hot_cell_of_the_panel_with_the_arrows() {
         let (mut h, _c, [a, _, _], _) = group_with_keys(true);
         tap(&mut h, KEY_ENTER);

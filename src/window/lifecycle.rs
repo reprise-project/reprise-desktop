@@ -643,6 +643,7 @@ impl State {
         // Before anything hides it: its still is taken as it shows.
         self.window_closing(w);
         let was_focused = self.focused == Some(w);
+        let was_back = self.bar_returns_to(w);
         if let Some(win) = self.win_mut(w) {
             win.last_frame = Some(LastFrame {
                 normal: win.normal_frame(),
@@ -655,7 +656,7 @@ impl State {
         self.remember_window(w, true);
         self.remember_file_dialog(w, false);
         let over = self.win(w).and_then(|x| x.over_dialog);
-        if was_focused {
+        if was_focused || was_back {
             self.owner_next(w);
         }
         self.forget_window(w);
@@ -671,6 +672,8 @@ impl State {
         self.refresh_owned();
         if was_focused {
             self.focus_after(over);
+        } else if was_back {
+            self.bar_back_left(over);
         }
         self.redraw_taskbars();
     }
@@ -698,17 +701,18 @@ impl State {
     }
 
     fn destroy(&mut self, w: WindowId) {
-        // A closing X11 menu or tooltip leaves the focus where it is.
-        let refocus = self.focused == Some(w) || !self.win(w).is_some_and(|x| x.override_redirect);
+        // A window closing without the keyboard leaves it where it is: under the taskbar's keys,
+        // Start, a menu or the desktop.
+        let focused = self.focused == Some(w);
+        let back = self.bar_returns_to(w);
         if self.win(w).is_some_and(|x| x.mapped) {
             self.remember_window(w, true);
             self.remember_file_dialog(w, false);
             self.window_closing(w);
         }
         self.finish_window_anim(w);
-        let focused = self.focused == Some(w);
-        let over = (self.win(w).filter(|_| focused)).and_then(|x| x.over_dialog);
-        if focused {
+        let over = (self.win(w).filter(|_| focused || back)).and_then(|x| x.over_dialog);
+        if focused || back {
             self.owner_next(w);
         }
         self.forget_window(w);
@@ -718,8 +722,10 @@ impl State {
         }
         self.refresh_owned();
         self.close_ended_programs();
-        if refocus {
+        if focused {
             self.focus_after(over);
+        } else if back {
+            self.bar_back_left(over);
         }
         self.redraw_taskbars();
     }
