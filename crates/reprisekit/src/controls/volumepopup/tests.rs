@@ -2023,11 +2023,11 @@ fn the_popup_is_pinned_in_each_look_at_scale_1_and_2() {
         got,
         [
             (Interface::Classic, 1, 5723125988886638769),
-            (Interface::Classic, 2, 11051606548576703245),
+            (Interface::Classic, 2, 3120070902084021285),
             (Interface::Blue, 1, 1867733804450208193),
-            (Interface::Blue, 2, 12887909334021644371),
+            (Interface::Blue, 2, 16358683145694851947),
             (Interface::Glass, 1, 8167948971888887894),
-            (Interface::Glass, 2, 9061755294240695991),
+            (Interface::Glass, 2, 9690565813380547193),
         ]
     );
 }

@@ -285,10 +285,14 @@ pub fn field(
         if let Some(hl) = &hl {
             hl.fill(canvas, clip, cs.hilight);
         }
-        let x = x_of(edit.caret().min(query.len())) + g.len(cx) - g.len(at::TYPED_PEN);
+        let ci = edit.caret().min(query.len()).max(first);
+        let shift = g.len(cx) - g.len(at::TYPED_PEN);
+        let x = x_of(ci) + shift;
         bar.x = x.min(clip.right() - s);
+        let scale = canvas.scale();
+        let dx = text.caret_x(shown, ci - first, pen, false, size, scale) + scale * shift;
         let placed = (caret && focused && x < clip.right())
-            .then(|| CaretBar::ground(canvas, Rect { x, ..bar }, hl.as_ref(), clip));
+            .then(|| CaretBar::ground_at(canvas, Rect { x, ..bar }, dx, hl.as_ref(), clip));
         let strong = style.pane_inks.strong;
         text.draw_run_over(canvas, pen, y, clip, shown, false, strong, size);
         if let Some(hl) = &hl {

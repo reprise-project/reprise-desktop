@@ -1289,8 +1289,10 @@ fn a_field_selection_at_scale_2_recolours_its_text_in_place() {
                 let own = {
                     let mut c = Canvas::with_scale(150, 40, 2);
                     let base = text.baseline(inner, false, px).unwrap();
-                    let (o, room) = (format!("o{ch}"), Rect::new(9, 10, 121, 17));
-                    text.draw_run(&mut c, inner.x, base, room, &o, false, cs.button_text, px);
+                    let (t, room) = (format!("o{ch}o"), Rect::new(9, 10, 121, 17));
+                    let o = 0..t.len() - 1;
+                    let ink = cs.button_text;
+                    text.draw_part(&mut c, inner.x, base, room, room, &t, o, false, ink, px);
                     c.pixels
                         .iter()
                         .map(|&p| p == cs.button_text.argb())

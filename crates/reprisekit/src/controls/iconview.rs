@@ -315,6 +315,17 @@ impl EditLine {
             self.x + text.measure(&self.text[..i], false, font)
         }
     }
+
+    /// [`EditLine::at`] in device px on a canvas at scale `s`, where the glyph after it draws.
+    pub fn device_at(&self, text: &TextRenderer, font: u32, b: usize, s: i32) -> i32 {
+        let end = self.start + self.text.len();
+        if b > end {
+            s * (self.x + self.run)
+        } else {
+            let i = self.text.floor_char_boundary(b - self.start);
+            text.caret_x(&self.text, i, self.x, false, font, s)
+        }
+    }
 }
 
 /// How much narrower than its cell a rename box wraps its text.
@@ -462,7 +473,11 @@ pub(crate) fn draw_edit(
         let line_hl = (a < b && a < end).then(|| hl(b.min(end), line_h));
         let line_caret = (caret.is_none() && edit.caret() <= end).then(|| {
             let bar = Rect::new(at(edit.caret()), ly, s, lay.step);
-            (bar, CaretBar::ground(c, bar, line_hl.as_ref(), r.inset(s)))
+            let x = l.device_at(text, font, edit.caret(), dev);
+            (
+                bar,
+                CaretBar::ground_at(c, bar, x, line_hl.as_ref(), r.inset(s)),
+            )
         });
         text.draw_in(c, pen, line_r, line_r, &l.text, false, black, font);
         if let Some(hl) = &line_hl {
