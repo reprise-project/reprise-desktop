@@ -396,7 +396,10 @@ pub fn write(doc: &mut DocumentMut, want: &[Entry], base: &[Entry], have: &[Entr
     }
     let whole = repriseconf::get(doc, &STARTMENU).is_some();
     if whole && plain(want) != plain(&default_menu()) {
-        set_tables(doc, &STARTMENU, want.iter().map(table).collect());
+        let old: Vec<Table> = (repriseconf::get(doc, &STARTMENU))
+            .and_then(Item::as_array_of_tables)
+            .map_or_else(Vec::new, |a| a.iter().cloned().collect());
+        set_tables(doc, &STARTMENU, rewritten(&old, want), false);
         return;
     }
     let old = repriseconf::get(doc, &CHANGES);
@@ -421,7 +424,97 @@ pub fn write(doc: &mut DocumentMut, want: &[Entry], base: &[Entry], have: &[Entr
         tables.extend(idle_tables(doc, &hidden));
     }
     remove(doc, &STARTMENU);
-    set_tables(doc, &CHANGES, tables);
+    set_tables(doc, &CHANGES, tables, true);
+}
+
+/// `want` as `[[startmenu]]` tables, each written over the file's table for its row in `old` so
+/// the comments on its lines stay. A row's table is the one that reads as the row, else one of
+/// its label, else one of its command, action or submenu. The comment above the first table heads
+/// the block and stays on top.
+fn rewritten(old: &[Table], want: &[Entry]) -> Vec<Table> {
+    let read: Vec<Option<Entry>> = old.iter().map(|t| read_entry(t)).collect();
+    let mut from: Vec<Option<usize>> = vec![None; want.len()];
+    let mut used = vec![false; old.len()];
+    let target = |e: &Entry| match e {
+        Entry::Item { target, .. } if !matches!(target, Target::Folder(_)) => Some(target.clone()),
+        _ => None,
+    };
+    let same = |pass: usize, r: &Entry, w: &Entry| match pass {
+        0 => r == w,
+        1 => r.label().is_some() && r.label() == w.label(),
+        _ => target(r).is_some() && target(r) == target(w),
+    };
+    for pass in 0..3 {
+        for (w, f) in want.iter().zip(&mut from).filter(|(_, f)| f.is_none()) {
+            *f = (0..old.len())
+                .find(|&j| !used[j] && read[j].as_ref().is_some_and(|r| same(pass, r, w)));
+            if let Some(j) = *f {
+                used[j] = true;
+            }
+        }
+    }
+    let mut out: Vec<Table> = (want.iter().zip(&from))
+        .map(|(w, f)| {
+            let Some(o) = f.map(|j| &old[j]) else {
+                return table(w);
+            };
+            let mut t = merged(o, table(w));
+            let kids = (o.get("items")).and_then(Item::as_array_of_tables);
+            if let (Some(items), Some(kids)) = (w.items().filter(|i| !i.is_empty()), kids) {
+                let kids: Vec<Table> = kids.iter().cloned().collect();
+                t["items"] = Item::ArrayOfTables(rewritten(&kids, items).into_iter().collect());
+            }
+            t
+        })
+        .collect();
+    let first = from.iter().position(|&f| f == Some(0));
+    if let (Some(o), false) = (old.first(), out.is_empty() || first == Some(0)) {
+        let prefix = |t: &Table| {
+            let p = t.decor().prefix().and_then(|p| p.as_str());
+            p.unwrap_or_default().to_string()
+        };
+        let own = prefix(&out[0]);
+        if let Some(k) = first {
+            let blank: String = (own.split_inclusive('\n'))
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .collect();
+            out[k].decor_mut().set_prefix(blank);
+        }
+        let head = match own.contains('#') {
+            true => prefix(o) + &own,
+            false => prefix(o),
+        };
+        out[0].decor_mut().set_prefix(head);
+    }
+    out
+}
+
+/// `new` written over `old`, the table it replaces: keys `new` lacks go, a value `new` changes
+/// keeps the comment beside it, keys `new` adds follow the rest.
+fn merged(old: &Table, new: Table) -> Table {
+    let mut t = old.clone();
+    t.set_position(None);
+    t.retain(|k, _| new.contains_key(k));
+    for (k, v) in new {
+        match (t.get_mut(&k), v) {
+            (Some(Item::Value(o)), Item::Value(mut n)) => {
+                let bare = |v: &toml_edit::Value| {
+                    let mut v = v.clone();
+                    v.decor_mut().clear();
+                    v.to_string()
+                };
+                if bare(o) != bare(&n) {
+                    *n.decor_mut() = o.decor().clone();
+                    *o = n;
+                }
+            }
+            (Some(slot), v) => *slot = v,
+            (None, v) => {
+                t.insert(&k, v);
+            }
+        }
+    }
+    t
 }
 
 /// `item`, a `[startmenu_changes]` table, as an entry of `[[startmenu_changes]]`.
@@ -469,10 +562,10 @@ fn idle_tables(doc: &DocumentMut, hidden: &[String]) -> Vec<Table> {
         .collect()
 }
 
-/// `tables` as the array `key`, taken out when empty. The comment above the old first table
-/// moves to the new first.
-fn set_tables(doc: &mut DocumentMut, key: &Key, mut tables: Vec<Table>) {
-    let old = repriseconf::get(doc, key)
+/// `tables` as the array `key`, taken out when empty. With `head`, the comment above the old first
+/// table moves to the new first.
+fn set_tables(doc: &mut DocumentMut, key: &Key, mut tables: Vec<Table>, head: bool) {
+    let old = (repriseconf::get(doc, key).filter(|_| head))
         .and_then(Item::as_array_of_tables)
         .and_then(|a| a.get(0))
         .map(|t| t.decor().clone());
@@ -796,10 +889,59 @@ command = \"b\"
 
 [[startmenu]]
 label = \"A\"
-command = \"a\"
+command = \"a\"   # runs a
 
 [fonts]
 size_px = 12
+"
+        );
+    }
+
+    #[test]
+    fn a_rewritten_list_keeps_each_rows_comments_and_its_spacing() {
+        let text = "\
+# Mine
+[[startmenu]]
+label = \"A\" # first
+command = \"a\"
+
+# The games
+[[startmenu]]
+label = \"Games\"
+[[startmenu.items]]
+label = \"Mines\"
+command = \"mines\" # the classic
+[[startmenu.items]]
+separator = true # a line
+[[startmenu.items]]
+label = \"Cards\"
+command = \"cards\"
+";
+        let mut menu = load(text);
+        shift(&mut menu, &[1], -1).unwrap();
+        rename(&mut menu, &[0, 2], "Solitaire");
+        shift(&mut menu, &[0, 2], -2).unwrap();
+        rename(&mut menu, &[1], "B");
+        assert_eq!(
+            saved(text, &menu),
+            "\
+# Mine
+
+# The games
+[[startmenu]]
+label = \"Games\"
+[[startmenu.items]]
+label = \"Solitaire\"
+command = \"cards\"
+[[startmenu.items]]
+label = \"Mines\"
+command = \"mines\" # the classic
+[[startmenu.items]]
+separator = true # a line
+
+[[startmenu]]
+label = \"B\" # first
+command = \"a\"
 "
         );
     }
@@ -1010,6 +1152,30 @@ items = []
             let text2 = saved(&text, &again);
             assert_eq!(load(&text2), again, "saved twice:\n{text}\nthen\n{text2}");
             assert_eq!(saved(&text2, &default_menu()), "", "{text2}");
+        }
+    }
+
+    #[test]
+    fn any_run_of_edits_on_a_whole_list_reads_back_as_it_was_saved() {
+        let mut seed = 11u32;
+        let mut roll = |n: usize| {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (seed >> 16) as usize % n.max(1)
+        };
+        for _ in 0..100 {
+            let mut text = whole(&plain(&default_menu())[1..]);
+            for _ in 0..4 {
+                let mut again = load(&text);
+                for _ in 0..4 {
+                    edit(&mut again, &mut roll);
+                }
+                if again.is_empty() || plain(&again) == plain(&default_menu()) {
+                    break;
+                }
+                let next = saved(&text, &again);
+                assert_eq!(load(&next), again, "saved over:\n{text}\nas\n{next}");
+                text = next;
+            }
         }
     }
 
