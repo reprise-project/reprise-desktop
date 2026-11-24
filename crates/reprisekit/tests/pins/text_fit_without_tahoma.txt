@@ -1,4 +1,3 @@
-about-system cut "Jo Doe (jo)" x3  # the J's hook inks 1 px left of its rect
 calendar-events ellipsized "Team offsite planning" x2  # an event title in the calendar's column
 calendar-events@2 ellipsized "Team offsite planning" x2  # an event title in the calendar's column
 caption-tabs ellipsized "user@host: ~" x1  # a window title on a caption tab
