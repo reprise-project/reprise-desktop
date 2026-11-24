@@ -411,6 +411,10 @@ const NOTIFY_FIELD_H: i32 = 21;
 /// The grey hint's inset from the field's text box, where the caret
 /// stands before any text.
 const NOTIFY_HINT_X: i32 = 1;
+/// A notice's picture: 8 px under the body, at most the text column wide and 96 px tall (grown
+/// with the text), framed 1 px outside.
+const NOTIFY_PICTURE_H: i32 = 96;
+const NOTIFY_PICTURE_GAP: i32 = 8;
 
 /// The reply row an expanded balloon shows in place of its buttons: a
 /// one-line field with a grey `placeholder` while it is empty, and a
@@ -442,6 +446,8 @@ pub struct NotifyLayout {
     /// ([`NotifyReply`]); then there are no other buttons.
     pub field: Option<Rect>,
     pub send: Option<Rect>,
+    /// Where the notice's picture goes ([`NotifyLayout::with_picture`]), framed just outside.
+    pub picture: Option<Rect>,
     placeholder: String,
     send_label: String,
     lines: Vec<String>,
@@ -642,6 +648,7 @@ pub fn notify_layout(
         more: more_box,
         field,
         send,
+        picture: None,
         placeholder: reply.map_or_else(String::new, |r| r.placeholder.to_string()),
         send_label: reply.map_or_else(String::new, |r| r.send.to_string()),
         lines,
@@ -789,6 +796,37 @@ impl NotifyLayout {
             more: self.more.map(moved),
             field: self.field.map(moved),
             send: self.send.map(moved),
+            picture: self.picture.map(moved),
+            ..self
+        }
+    }
+
+    /// This balloon with a picture `size` px at scale 1 under its body, its shape kept and never
+    /// enlarged past that size; the buttons or reply row move down under it.
+    pub fn with_picture(self, theme: &Theme, size: (u32, u32)) -> NotifyLayout {
+        let s = theme.scale.max(1) as i64;
+        let (w, h) = (i64::from(size.0.max(1)), i64::from(size.1.max(1)));
+        let room_w = i64::from(self.text_w).min(w * s);
+        let room_h = (i64::from(theme.text.len(NOTIFY_PICTURE_H)) * s).min(h * s);
+        let (pw, ph) = if room_w * h <= room_h * w {
+            (room_w, (h * room_w + w / 2) / w)
+        } else {
+            ((w * room_h + h / 2) / h, room_h)
+        };
+        let (pw, ph) = (pw.max(1) as i32, ph.max(1) as i32);
+        let gap = NOTIFY_PICTURE_GAP * s as i32;
+        let lines = self.lines.len().max(1) as i32;
+        let y = self.bubble_y + self.body_y + lines * self.line_h + gap;
+        let dy = gap + ph;
+        let moved = |r: Rect| Rect::new(r.x, r.y + dy, r.width, r.height);
+        NotifyLayout {
+            height: self.height + dy,
+            bubble_h: self.bubble_h + dy,
+            buttons: self.buttons.iter().copied().map(moved).collect(),
+            more: self.more.map(moved),
+            field: self.field.map(moved),
+            send: self.send.map(moved),
+            picture: Some(Rect::new(self.text_x, y, pw, ph)),
             ..self
         }
     }
@@ -980,6 +1018,28 @@ pub fn draw_notify_balloon(
         );
     }
     c
+}
+
+/// Draws `picture` into the area [`NotifyLayout::with_picture`] kept on `c`, a balloon
+/// [`draw_notify_balloon`] drew for `lay`, resampled to it when its size differs.
+pub fn draw_notify_picture(theme: &Theme, lay: &NotifyLayout, c: &mut Canvas, picture: &Canvas) {
+    let Some(r) = lay.picture else {
+        return;
+    };
+    let s = theme.scale.max(1);
+    let frame = theme.paint().cs.button_shadow;
+    let (x0, x1, y0, y1) = (r.x - s, r.right(), r.y - s, r.bottom());
+    let wide = r.width + 2 * s;
+    c.fill_rect(Rect::new(x0, y0, wide, s), frame);
+    c.fill_rect(Rect::new(x0, y1, wide, s), frame);
+    c.fill_rect(Rect::new(x0, r.y, s, r.height), frame);
+    c.fill_rect(Rect::new(x1, r.y, s, r.height), frame);
+    let (w, h) = (r.width as u32, r.height as u32);
+    if (picture.width, picture.height) == (w, h) {
+        c.blit_canvas(r.x, r.y, picture);
+    } else {
+        c.blit_canvas(r.x, r.y, &picture.resample_box(w, h));
+    }
 }
 
 /// An expanded reply row's state: what is typed and whether the field has the

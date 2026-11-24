@@ -2321,3 +2321,46 @@ fn an_arriving_sheet_steps_on_its_outputs_frames_until_it_rests() {
         Instant::now() + Duration::from_secs(5),
     );
 }
+
+#[test]
+fn a_classic_balloon_shows_the_picture_under_its_text_and_the_app_icon_above_it() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut wide = Canvas::new(3360, 1080);
+    wide.fill_rect(Rect::new(0, 0, 3360, 1080), Color::rgb(0, 0, 255));
+    let picture = crate::tray::notify::canvas_sources(&wide);
+    let mut n = note(1, "Shot");
+    n.app_icon = red_icon();
+    n.image = picture.sources;
+    n.picture = picture.whole.map(std::sync::Arc::new);
+    show(&mut h.state, n);
+    let b = &h.state.notify.stack[0];
+    let Some(Drawn::Balloon(lay)) = b.drawn.clone() else {
+        panic!("Classic draws a balloon");
+    };
+    let r = lay.picture.expect("a picture area");
+    assert_eq!(r.height, r.width * 1080 / 3360, "its shape kept: {r:?}");
+    assert!(
+        r.right() <= lay.bubble_w && r.bottom() <= lay.bubble_h,
+        "inside: {r:?}"
+    );
+    let header = balloon_icon(&mut h.state.icons, b, 16).expect("an icon");
+    let red = crate::tray::closest(&red_icon(), 16).unwrap();
+    assert_eq!(header.pixels, red.pixels, "the app icon heads it");
+    assert!(
+        h.state.notify.log.get(1).unwrap().n.picture.is_none(),
+        "the history keeps no picture"
+    );
+
+    let mut plain = note(2, "Mail");
+    plain.image = red_icon();
+    show(&mut h.state, plain);
+    close(&mut h.state, 1, REASON_CLOSED);
+    let b = &h.state.notify.stack[0];
+    let Some(Drawn::Balloon(lay)) = b.drawn.clone() else {
+        panic!("Classic draws a balloon");
+    };
+    assert_eq!(lay.picture, None, "an icon is no picture");
+    let header = balloon_icon(&mut h.state.icons, b, 16).expect("an icon");
+    assert_eq!(header.pixels, red.pixels, "it heads the balloon");
+}

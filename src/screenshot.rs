@@ -27,7 +27,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use repriseconf::config::ShotFormat;
-use reprisekit::icon::IconSource;
 use reprisescene::View;
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -431,7 +430,7 @@ fn save(
         let saved = write_file(&bytes, secs, ext);
         let shown = match saved {
             Ok(_) => crate::tray::notify::canvas_sources(&still),
-            Err(_) => Vec::new(),
+            Err(_) => Default::default(),
         };
         drop(still);
         Box::new(move |state| {
@@ -447,7 +446,7 @@ fn saved_notice(
     state: &mut State,
     saved: Result<PathBuf, String>,
     note: Option<&str>,
-    shown: Vec<IconSource>,
+    shown: crate::tray::notify::Picture,
 ) {
     match saved {
         Ok(path) => {

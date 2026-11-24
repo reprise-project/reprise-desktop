@@ -237,7 +237,7 @@ fn a_picture_does_not_replace_the_app_icon() {
         None,
     ));
     assert_eq!(app.len(), NOTIFY_SIZES.len());
-    assert_eq!(image.len(), NOTIFY_SIZES.len());
+    assert_eq!(image.sources.len(), NOTIFY_SIZES.len());
 }
 
 #[test]
@@ -267,13 +267,17 @@ fn an_image_path_naming_a_theme_icon_is_the_app_icon_when_there_is_none() {
         NOTIFY_SIZES.len(),
         "the named icon is the app icon"
     );
-    assert!(image.is_empty(), "and no picture");
+    assert!(image.sources.is_empty(), "and no picture");
     let (app, image) = shown(blue_svg("named"));
     assert_eq!(app.len(), NOTIFY_SIZES.len());
     assert_eq!(
-        image.len(),
+        image.sources.len(),
         NOTIFY_SIZES.len(),
         "beside an app icon it is the picture"
+    );
+    assert!(
+        image.whole.is_none(),
+        "an icon by name is no balloon picture"
     );
     std::fs::remove_dir_all(&root).unwrap();
 }
@@ -293,7 +297,8 @@ fn image_path_is_the_picture_and_an_unresolved_app_icon_stays_empty() {
         None,
     ));
     assert!(app.is_empty());
-    assert_eq!(image.len(), NOTIFY_SIZES.len());
+    assert_eq!(image.sources.len(), NOTIFY_SIZES.len());
+    assert!(image.whole.is_none(), "an SVG file is an icon");
 }
 
 #[test]
@@ -301,7 +306,7 @@ fn a_jpeg_image_path_is_the_picture() {
     let dir = std::env::temp_dir().join(format!("reprise-notify-jpeg-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("cover.jpg");
-    image::RgbImage::from_pixel(60, 40, image::Rgb([0xE0, 0x6A, 0x2E]))
+    image::RgbImage::from_pixel(200, 120, image::Rgb([0xE0, 0x6A, 0x2E]))
         .save_with_format(&file, image::ImageFormat::Jpeg)
         .unwrap();
     let hints = notify::Hints {
@@ -316,14 +321,41 @@ fn a_jpeg_image_path_is_the_picture() {
         String::new(),
         None,
     ));
-    assert_eq!(image.len(), NOTIFY_SIZES.len());
-    let big = image.iter().max_by_key(|s| s.width).unwrap();
+    assert_eq!(image.sources.len(), NOTIFY_SIZES.len());
+    let big = image.sources.iter().max_by_key(|s| s.width).unwrap();
     let mid = big.pixels[(big.height / 2 * big.width + big.width / 2) as usize];
     let (r, g, b) = ((mid >> 16) & 0xFF, (mid >> 8) & 0xFF, mid & 0xFF);
     assert!(
         mid >> 24 == 0xFF && r.abs_diff(0xE0) < 8 && g.abs_diff(0x6A) < 8 && b.abs_diff(0x2E) < 8,
         "the cover's orange, opaque: {mid:#010x}"
     );
+    let whole = image.whole.expect("a raster file is a balloon picture");
+    assert_eq!((whole.width, whole.height), (200, 120));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_small_png_image_path_stays_an_icon() {
+    let dir = std::env::temp_dir().join(format!("reprise-notify-png48-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("app.png");
+    image::RgbaImage::from_pixel(48, 48, image::Rgba([0x20, 0x80, 0x40, 0xFF]))
+        .save(&file)
+        .unwrap();
+    let hints = notify::Hints {
+        image_path: Some(file.display().to_string()),
+        ..Default::default()
+    };
+    let (_, image) = zbus::block_on(notification_icons(
+        &hicolor(),
+        &decoders(2, 8, 4, CEILING),
+        "",
+        &hints,
+        String::new(),
+        None,
+    ));
+    assert_eq!(image.sources.len(), NOTIFY_SIZES.len());
+    assert!(image.whole.is_none(), "a 48 px PNG is an icon");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -351,7 +383,7 @@ fn the_desktop_entry_icon_stands_in_for_a_missing_app_icon() {
         Some(&entry),
     ));
     assert_eq!(app.len(), NOTIFY_SIZES.len());
-    assert!(image.is_empty());
+    assert!(image.sources.is_empty());
 }
 
 #[test]
@@ -2018,8 +2050,8 @@ fn a_burst_of_notification_pictures_waits_for_the_decoders_and_each_arrives() {
     });
     assert_eq!(early, 0, "no picture decodes while the one thread is held");
     for image in &images {
-        assert_eq!(image.len(), NOTIFY_SIZES.len());
-        let big = image.iter().max_by_key(|s| s.width).unwrap();
+        assert_eq!(image.sources.len(), NOTIFY_SIZES.len());
+        let big = image.sources.iter().max_by_key(|s| s.width).unwrap();
         let mid = big.pixels[(big.height / 2 * big.width + big.width / 2) as usize];
         assert_eq!(mid, 0xFF20_4080, "the picture's blue, opaque");
     }
@@ -2059,7 +2091,10 @@ fn a_notifications_files_are_read_on_the_decoders_and_left_out_when_none_is_free
     };
     let (_, ((app, image), took)) = zbus::block_on(async { futures_util::join!(held, asked) });
     assert!(app.is_empty(), "the app icon file waits for a thread");
-    assert!(image.is_empty(), "the picture file waits for a thread");
+    assert!(
+        image.sources.is_empty(),
+        "the picture file waits for a thread"
+    );
     assert!(took < Duration::from_secs(1), "the handler waited {took:?}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -2086,7 +2121,7 @@ fn an_svg_app_icon_and_a_png_picture_by_path_decode_at_every_size() {
     ));
     let sides = |s: &[IconSource]| s.iter().map(|s| s.width as i32).collect::<Vec<_>>();
     assert_eq!(sides(&app), NOTIFY_SIZES);
-    assert_eq!(sides(&image), NOTIFY_SIZES);
+    assert_eq!(sides(&image.sources), NOTIFY_SIZES);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

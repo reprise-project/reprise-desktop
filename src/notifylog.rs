@@ -101,13 +101,17 @@ impl Log {
     /// replaced (and stays open). `looking` is whether the history is on
     /// screen, where nothing is unseen. Returns the ids that fell off the
     /// end, or past their program's [`MAX_PER_PROGRAM`], while still open,
-    /// which expire; an open critical one goes only when nothing else can.
+    /// which expire; an open critical one goes only when nothing else can. The history keeps
+    /// no [`Notification::picture`]: only a balloon shows it.
     pub fn record(&mut self, n: &Notification, time: i64, looking: bool) -> Vec<u32> {
         self.entries.retain(|e| e.n.id != n.id);
         self.entries.insert(
             0,
             Entry {
-                n: n.clone(),
+                n: Notification {
+                    picture: None,
+                    ..n.clone()
+                },
                 time,
                 open: true,
                 sender_gone: false,

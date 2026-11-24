@@ -23,7 +23,6 @@ pub use stack::{output_removed, reposition};
 
 use reprisekit::controls::notifysheet::{SheetGlass, SheetOpening, WarmJob, has_sheets};
 use reprisekit::controls::tooltip::{NotifyHit, ReplyField};
-use reprisekit::icon::IconSource;
 use reprisekit::style::SheetShape;
 use reprisekit::taskbar::Edge;
 use reprisescene::{BufferId, TreeId};
@@ -39,7 +38,7 @@ use crate::notifylog::{Log, Suppress, shows_balloon};
 use crate::raster::{Canvas, Rect};
 use crate::startmenu::MenuItem;
 use crate::theme::Color;
-use crate::tray::notify::{DEFAULT_ACTION, INLINE_REPLY, Urgency};
+use crate::tray::notify::{DEFAULT_ACTION, INLINE_REPLY, Picture, Urgency};
 use crate::tray::{Notification, TrayCommand};
 
 use clock::{Clock, reply_idle_ms, restart};
@@ -487,10 +486,10 @@ pub fn notice(state: &mut State, summary: &str, body: &str) {
     notice_with_actions(state, summary, body, Vec::new());
 }
 
-/// `notice` with `image` beside its text.
+/// `notice` with `image` as its icon.
 pub fn notice_with_image(state: &mut State, summary: &str, body: &str, image: Canvas) {
     state.notify.own_actions.clear();
-    show_own(state, summary, body, Vec::new(), vec![image.into()]);
+    show_own(state, summary, body, Vec::new(), vec![image.into()].into());
 }
 
 /// `notice`, and a click on the balloon runs `argv`.
@@ -511,16 +510,16 @@ pub fn notice_with_actions(
     body: &str,
     actions: Vec<(String, String, OwnAction)>,
 ) {
-    notice_with_picture(state, summary, body, actions, Vec::new());
+    notice_with_picture(state, summary, body, actions, Picture::default());
 }
 
-/// `notice_with_actions` with `picture` (as `tray::notify::canvas_sources` gives) beside its text.
+/// `notice_with_actions` with `picture` (as `tray::notify::canvas_sources` gives).
 pub fn notice_with_picture(
     state: &mut State,
     summary: &str,
     body: &str,
     actions: Vec<(String, String, OwnAction)>,
-    picture: Vec<IconSource>,
+    picture: Picture,
 ) {
     let (buttons, own) = actions
         .into_iter()
@@ -535,14 +534,15 @@ fn show_own(
     summary: &str,
     body: &str,
     actions: Vec<(String, String)>,
-    image: Vec<IconSource>,
+    picture: Picture,
 ) {
     let mut n = Notification::new(OWN_ID, summary.to_string(), body.to_string());
     n.app = OWN_APP.to_string();
     n.key = OWN_APP.to_string();
     n.expire_timeout = 0;
     n.actions = actions;
-    n.image = image;
+    n.image = picture.sources;
+    n.picture = picture.whole.map(std::sync::Arc::new);
     show(state, n);
 }
 

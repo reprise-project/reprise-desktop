@@ -234,6 +234,9 @@ pub struct Notification {
     /// The `image-data` hint, else `image-path`, decoded by the D-Bus
     /// thread; empty when neither resolves.
     pub image: Vec<IconSource>,
+    /// That picture with its own shape, for a balloon's picture area: an `image-data` hint, an
+    /// `image-path` raster file or the compositor's own picture, never an icon name.
+    pub picture: Option<std::sync::Arc<IconSource>>,
     /// Milliseconds to stay up; -1 asks for the server default, 0 never
     /// expires on its own.
     pub expire_timeout: i32,
@@ -273,6 +276,7 @@ impl Notification {
             body,
             app_icon: Vec::new(),
             image: Vec::new(),
+            picture: None,
             expire_timeout: -1,
             actions: Vec::new(),
             action_icons: Default::default(),
