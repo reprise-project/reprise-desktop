@@ -141,7 +141,7 @@ impl Undoable {
                 if (&now.original, now.deleted) != (&t.original, t.deleted) {
                     return Err(replaced(&t.files));
                 }
-                trash::restore(t)
+                trash::restore(&now)
             }
             Undoable::Copied(path, id) => {
                 same_item(path, *id)?;
@@ -692,6 +692,27 @@ mod tests {
             fs::read_to_string(&copy).unwrap(),
             "saved by another program"
         );
+    }
+
+    #[test]
+    fn undo_of_a_trash_removes_only_the_record_its_bin_holds() {
+        let t = tempfile::tempdir().unwrap();
+        let src = t.path().join("x.txt");
+        fs::write(&src, "hi").unwrap();
+        let trashed = trash::trash_in(&t.path().join("Trash"), &src).unwrap();
+        let other = t.path().join("other.txt");
+        fs::write(&other, "keep").unwrap();
+        let mut u = UndoStack::default();
+        u.push(Undoable::Trash(Trashed {
+            info: other.clone(),
+            ..trashed.clone()
+        }));
+
+        u.undo().unwrap().unwrap();
+
+        assert_eq!(fs::read_to_string(&src).unwrap(), "hi");
+        assert_eq!(fs::read_to_string(&other).unwrap(), "keep");
+        assert!(!trashed.info.exists());
     }
 
     #[test]

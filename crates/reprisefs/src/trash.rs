@@ -670,7 +670,8 @@ pub fn check_listed(files: &Path, expected: Option<&Trashed>) -> io::Result<()> 
     }
 }
 
-fn info_path(files: &Path) -> io::Result<PathBuf> {
+/// The `info/NAME.trashinfo` record of `files`, an entry of a trash's `files/`.
+pub(crate) fn info_path(files: &Path) -> io::Result<PathBuf> {
     let (name, root) = (item_name(files)?, bin_root(files)?);
     Ok(root.join("info").join(info_name(name)))
 }
