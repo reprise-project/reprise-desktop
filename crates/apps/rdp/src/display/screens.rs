@@ -49,6 +49,7 @@ impl Lives {
             if running.is_empty() {
                 if let Some(ending) = self.held.as_ref().filter(|e| e.is_gone()) {
                     ending.released().await;
+                    ending.display_ended();
                 }
                 return None;
             }
@@ -411,6 +412,7 @@ mod tests {
         assert!(early.is_err(), "held while the run decides how it ends");
         ending.release();
         assert!(next_of(&mut lives).await.is_none());
+        assert!(ending.has_display_ended());
     }
 
     #[tokio::test]

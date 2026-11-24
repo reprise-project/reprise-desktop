@@ -1291,7 +1291,7 @@ async fn a_kick_tells_the_client_it_was_disconnected_by_the_user_before_closing(
         closed.set(true);
     });
     let started = tokio::time::Instant::now();
-    tell_and_end(connection, told_for(Kick::Asked), |why| {
+    tell_and_end(connection, &Flag::default(), told_for(Kick::Asked), |why| {
         told.set(Some(why));
         sent.send(()).unwrap();
     })
@@ -1351,14 +1351,15 @@ async fn a_console_unlock_ending_lock_mode_tells_the_client_another_connection_t
     let (sent, closes) = oneshot::channel();
     let told = Cell::new(None);
     let connection = std::pin::pin!(async { closes.await.unwrap() });
-    let ended = lock_mode_gone(connection, &ending, &console, |why| {
+    let closing = Flag::default();
+    let ended = lock_mode_gone(connection, &closing, &ending, &console, |why| {
         told.set(Some(why));
         sent.send(()).unwrap();
     });
     let ended = tokio::time::timeout(TOLD * 2, ended).await;
     let ended = ended.expect("the connection ends once told");
     assert_eq!(told.get(), Some(TOOK_OVER));
-    assert!(ended.is_none());
+    assert!(matches!(ended, LockModeEnd::TookOver));
     assert_eq!(
         console.cut_when_asked.get(),
         Some(true),
@@ -1372,10 +1373,44 @@ async fn a_monitor_count_change_ending_lock_mode_tells_the_client_nothing() {
     let told = Cell::new(None);
     let display = ending.clone();
     let connection = std::pin::pin!(async move { display.released().await });
-    let ended = lock_mode_gone(connection, &ending, &console, |why| told.set(Some(why))).await;
+    let tell = |why| told.set(Some(why));
+    let ended = lock_mode_gone(connection, &Flag::default(), &ending, &console, tell).await;
     assert_eq!(told.get(), None, "the client reconnects to the new screens");
-    assert!(ended.is_some(), "the display ends the connection");
+    assert!(
+        matches!(ended, LockModeEnd::Ended(())),
+        "the display ends the connection"
+    );
     assert_eq!(console.cut_when_asked.get(), Some(true));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lock_mode_client_closing_within_the_servers_close_wait_ends_with_its_display() {
+    let (ending, console) = lock_mode_screens_gone(false).await;
+    let closing = Flag::default();
+    let display = ending.clone();
+    let connection = std::pin::pin!(async {
+        display.released().await;
+        display.display_ended();
+        tokio::time::sleep(TOLD / 2).await;
+        closing.set();
+        tokio::time::sleep(CLOSE_WAIT - Duration::from_secs(1)).await;
+    });
+    let ended = lock_mode_gone(connection, &closing, &ending, &console, drop).await;
+    assert!(matches!(ended, LockModeEnd::Ended(())));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lock_mode_client_that_does_not_close_after_its_display_ended_is_not_the_displays_fault()
+{
+    let (ending, console) = lock_mode_screens_gone(false).await;
+    let display = ending.clone();
+    let connection = std::pin::pin!(async move {
+        display.released().await;
+        display.display_ended();
+        std::future::pending::<()>().await;
+    });
+    let ended = lock_mode_gone(connection, &Flag::default(), &ending, &console, drop).await;
+    assert!(matches!(ended, LockModeEnd::NotClosed));
 }
 
 #[tokio::test(start_paused = true)]
@@ -1383,17 +1418,49 @@ async fn a_lock_mode_connection_its_display_does_not_end_is_dropped_after_2_s() 
     let (ending, console) = lock_mode_screens_gone(false).await;
     let started = tokio::time::Instant::now();
     let connection = std::pin::pin!(std::future::pending::<()>());
-    let ended = lock_mode_gone(connection, &ending, &console, drop);
+    let closing = Flag::default();
+    let ended = lock_mode_gone(connection, &closing, &ending, &console, drop);
     let ended = tokio::time::timeout(TOLD * 2, ended).await;
-    assert!(ended.expect("dropped, not held").is_none());
+    assert!(matches!(
+        ended.expect("dropped, not held"),
+        LockModeEnd::NotEnded
+    ));
     assert_eq!(started.elapsed(), TOLD);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_kicked_client_closing_within_the_servers_close_wait_is_not_cut_off() {
+    let closing = Flag::default();
+    let closed = Cell::new(false);
+    let connection = std::pin::pin!(async {
+        tokio::time::sleep(TOLD / 2).await;
+        closing.set();
+        tokio::time::sleep(CLOSE_WAIT - Duration::from_secs(1)).await;
+        closed.set(true);
+    });
+    tell_and_end(connection, &closing, told_for(Kick::Asked), drop).await;
+    assert!(closed.get());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_kicked_connection_its_server_is_closing_is_dropped_after_the_close_wait() {
+    let closing = Flag::default();
+    let started = tokio::time::Instant::now();
+    let connection = std::pin::pin!(async {
+        tokio::time::sleep(TOLD / 2).await;
+        closing.set();
+        std::future::pending::<()>().await;
+    });
+    tell_and_end(connection, &closing, told_for(Kick::Asked), drop).await;
+    assert_eq!(started.elapsed(), TOLD / 2 + CLOSE_WAIT);
 }
 
 #[tokio::test(start_paused = true)]
 async fn a_kicked_connection_that_does_not_close_is_dropped_after_2_s() {
     let started = tokio::time::Instant::now();
     let why = told_for(Kick::Asked);
-    tell_and_end(std::pin::pin!(std::future::pending::<()>()), why, drop).await;
+    let connection = std::pin::pin!(std::future::pending::<()>());
+    tell_and_end(connection, &Flag::default(), why, drop).await;
     assert_eq!(started.elapsed(), Duration::from_secs(2));
 }
 
