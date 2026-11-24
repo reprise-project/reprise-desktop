@@ -2,9 +2,9 @@
 //! push to it and undo from it, so Undo anywhere reverses the most recent file operation done
 //! anywhere.
 //!
-//! It is the file `$XDG_RUNTIME_DIR/reprise-undo`, rewritten whole through a rename under an
-//! exclusive lock on `reprise-undo.lock`; readers take no lock and reparse only when the file
-//! changed. An undo holds `reprise-undo.run` until it ends ([`Running`]), so another window's
+//! It is the file `$XDG_RUNTIME_DIR/reprise-undo`, holding the newest [`super::CAP`] entries and
+//! rewritten whole through a rename under an exclusive lock on `reprise-undo.lock`; readers take
+//! no lock and reparse only when the file changed. An undo holds `reprise-undo.run` until it ends ([`Running`]), so another window's
 //! Undo does nothing meanwhile instead of reversing the entry below a half-reversed one. Without
 //! a runtime directory the history is the process's own.
 
@@ -23,7 +23,7 @@ use crate::trash::Trashed;
 /// How long a write waits for another process's, which only rewrites a small file.
 const PATIENCE: Duration = Duration::from_millis(200);
 
-const MAGIC: &[u8] = b"reprise-undo 1";
+const MAGIC: &[u8] = b"reprise-undo 2";
 
 /// The history and the file it lives in, read again whenever another process rewrote it.
 #[derive(Default)]
@@ -257,13 +257,14 @@ fn save(file: &Path, stack: &UndoStack) -> io::Result<Stamp> {
     Ok(stamp(&f.metadata()?))
 }
 
-/// The history as NUL-terminated fields: [`MAGIC`], the clear count, the push count, the
-/// entry count, then each entry's id and item.
+/// The history as NUL-terminated fields: [`MAGIC`], the clear count, the push count, the count
+/// the cap dropped, the entry count, then each entry's id and item.
 fn encode(stack: &UndoStack) -> Vec<u8> {
     let mut out = Out(Vec::new());
     out.field(MAGIC);
     out.num(stack.epoch);
     out.num(stack.pushed);
+    out.num(stack.dropped);
     out.num(stack.entries.len());
     for (id, u) in &stack.entries {
         out.num(id.0);
@@ -278,7 +279,7 @@ fn decode(data: &[u8]) -> Option<UndoStack> {
     if i.field()? != MAGIC {
         return None;
     }
-    let (epoch, pushed) = (i.num()?, i.num()?);
+    let (epoch, pushed, dropped) = (i.num()?, i.num()?, i.num()?);
     let entries = (0..i.num::<usize>()?)
         .map(|_| Some((EntryId(i.num()?), i.item()?)))
         .collect::<Option<_>>()?;
@@ -286,6 +287,7 @@ fn decode(data: &[u8]) -> Option<UndoStack> {
         entries,
         epoch,
         pushed,
+        dropped,
     })
 }
 
@@ -556,13 +558,13 @@ mod tests {
             format!("{:?}", read.entries),
             format!("{:?}", written.entries)
         );
-        assert_eq!((read.epoch, read.pushed), (1, 8));
+        assert_eq!((read.epoch, read.pushed, read.dropped), (1, 8, 0));
     }
 
     #[test]
     fn an_unreadable_history_starts_over() {
         let (t, mut a, _) = two_windows();
-        std::fs::write(t.path().join("reprise-undo"), b"reprise-undo 1\0x\0").unwrap();
+        std::fs::write(t.path().join("reprise-undo"), b"reprise-undo 2\0x\0").unwrap();
         assert_eq!(a.label(), None);
         a.push(Undoable::Copied("/x".into(), None));
         assert_eq!(a.label(), Some("Undo Copy"));
