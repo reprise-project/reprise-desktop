@@ -1076,6 +1076,36 @@ fn a_toplevel_that_takes_back_its_maximize_before_mapping_is_left_its_own_size()
     assert_eq!(c.side.shells[t.shell].asked(), (0, 0));
 }
 
+/// A toplevel that asked for a state before its initial commit, mapped at the size its first
+/// configure asked for, then taking the state back with `undo`; the size it is asked for after.
+fn restored_after_asking(
+    ask: impl FnOnce(&wayland_protocols::xdg::shell::client::xdg_toplevel::XdgToplevel),
+    undo: impl FnOnce(&wayland_protocols::xdg::shell::client::xdg_toplevel::XdgToplevel),
+) -> (i32, i32) {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let t = h.open_toplevel(&mut c, "asker", ask);
+    let asked = c.side.shells[t.shell].asked();
+    h.resize_self(&mut c, t, asked.0, asked.1);
+    undo(&c.side.shells[t.shell].toplevel);
+    h.roundtrip(&mut c);
+    let win = h.state.win(t.id).expect("the window");
+    assert!(!win.maximized && !win.fullscreen);
+    c.side.shells[t.shell].asked()
+}
+
+#[test]
+fn a_window_that_opened_maximized_at_its_own_request_picks_its_size_when_restored() {
+    let size = restored_after_asking(|t| t.set_maximized(), |t| t.unset_maximized());
+    assert_eq!(size, (0, 0));
+}
+
+#[test]
+fn a_window_that_opened_fullscreen_at_its_own_request_picks_its_size_when_restored() {
+    let size = restored_after_asking(|t| t.set_fullscreen(None), |t| t.unset_fullscreen());
+    assert_eq!(size, (0, 0));
+}
+
 /// [`forgetful`] with an 800x600 TEST-2 right of TEST-1, and a client that bound both.
 fn screens_bound() -> (crate::harness::Harness, crate::harness::TestClient) {
     let mut h = forgetful();
