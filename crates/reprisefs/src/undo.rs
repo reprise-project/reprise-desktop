@@ -185,11 +185,9 @@ pub struct Undo {
     id: EntryId,
     steps: Vec<Undoable>,
     batch: bool,
-    /// Where the entry sat on the stack, the stack's [`UndoStack::clear`] count then, and how
-    /// many entries the cap had dropped by then.
-    at: usize,
+    /// The entries below it when it was taken, and the stack's [`UndoStack::clear`] count then.
+    below: Vec<EntryId>,
     epoch: u64,
-    dropped: u64,
 }
 
 impl Undo {
@@ -328,33 +326,53 @@ pub fn file_id(path: &Path) -> Option<FileId> {
 }
 
 /// One entry of an [`UndoStack`], the same while what an undo left of it is put back: a question
-/// about it names it, so its answer never reaches a newer entry.
+/// about it names it, so its answer never reaches a newer entry. `history` is the stack's
+/// [`UndoStack::nonce`], so no id outlives the history it was made in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EntryId(u64);
+pub struct EntryId {
+    history: u64,
+    n: u64,
+}
 
 /// How many entries the history keeps; a push past it drops the oldest.
 pub const CAP: usize = 100;
 
-#[derive(Default)]
+#[derive(Clone)]
 pub struct UndoStack {
     entries: Vec<(EntryId, Undoable)>,
+    /// Random, picked when the history starts: one that starts over never takes an answer, an
+    /// id or a clear count meant for the one before.
+    nonce: u64,
     epoch: u64,
     pushed: u64,
-    /// The entries the cap dropped off the bottom so far.
-    dropped: u64,
+}
+
+impl Default for UndoStack {
+    fn default() -> Self {
+        use std::hash::{BuildHasher, Hasher};
+        UndoStack {
+            entries: Vec::new(),
+            nonce: std::hash::RandomState::new().build_hasher().finish(),
+            epoch: 0,
+            pushed: 0,
+        }
+    }
 }
 
 impl UndoStack {
     pub fn push(&mut self, u: Undoable) {
         self.pushed += 1;
-        self.entries.push((EntryId(self.pushed), u));
+        let id = EntryId {
+            history: self.nonce,
+            n: self.pushed,
+        };
+        self.entries.push((id, u));
         self.trim();
     }
 
     fn trim(&mut self) {
         let over = self.entries.len().saturating_sub(CAP);
         self.entries.drain(..over);
-        self.dropped += over as u64;
     }
 
     /// Drops every entry: an action Undo cannot reverse ran, so Undo must not reach past it.
@@ -403,9 +421,8 @@ impl UndoStack {
             id,
             steps,
             batch,
-            at: self.entries.len(),
+            below: self.entries.iter().map(|(e, _)| *e).collect(),
             epoch: self.epoch,
-            dropped: self.dropped,
         })
     }
 
@@ -418,25 +435,31 @@ impl UndoStack {
     }
 
     /// What `undo` left once its first `done` steps were reversed ([`Undo::left`]), back where
-    /// it was taken from, below the entries pushed since, as far down as the cap left room;
-    /// nothing after a [`UndoStack::clear`], or when the cap drops it.
+    /// it was taken from: above the highest entry that was below it then, under the entries
+    /// pushed since. Nothing after a [`UndoStack::clear`] or once the history started over, or
+    /// when the cap drops it.
     /// What its Recycle Bin refused ([`NoBin`]) goes on top instead, since the question about it
     /// is up now. Returns the entry put back.
     pub fn put_back(
         &mut self,
-        undo: Undo,
+        mut undo: Undo,
         done: usize,
         error: Option<&io::Error>,
     ) -> Option<EntryId> {
-        let (id, at, epoch) = (undo.id, undo.at, undo.epoch);
-        let shifted = usize::try_from(self.dropped - undo.dropped).unwrap_or(usize::MAX);
+        let (id, epoch) = (undo.id, undo.epoch);
+        if (id.history, epoch) != (self.nonce, self.epoch) {
+            return None;
+        }
         let asked = error.and_then(NoBin::of).is_some();
-        let left = undo.left(done, error).filter(|_| epoch == self.epoch)?;
+        let below = std::mem::take(&mut undo.below);
+        let left = undo.left(done, error)?;
         let at = match asked {
             true => self.entries.len(),
-            false => at - shifted.min(at),
+            false => (self.entries.iter())
+                .rposition(|(e, _)| below.contains(e))
+                .map_or(0, |i| i + 1),
         };
-        self.entries.insert(at.min(self.entries.len()), (id, left));
+        self.entries.insert(at, (id, left));
         self.trim();
         self.entries.iter().any(|(e, _)| *e == id).then_some(id)
     }
@@ -956,7 +979,7 @@ mod tests {
             [Undoable::Copied(p, _)] => p.to_string_lossy().into_owned(),
             _ => panic!("one copy"),
         };
-        let ids = |u: &UndoStack| u.entries.iter().map(|(e, _)| e.0).collect::<Vec<_>>();
+        let ids = |u: &UndoStack| u.entries.iter().map(|(e, _)| e.n).collect::<Vec<_>>();
         let mut u = UndoStack::default();
         for n in 1..=CAP + 5 {
             u.push(copied(n));
@@ -973,7 +996,9 @@ mod tests {
         for n in 1..=3 {
             u.push(copied(1000 + n));
         }
-        assert_eq!(u.put_back(next, 0, None), Some(EntryId(104)));
+        let next_id = next.id;
+        assert_eq!(u.put_back(next, 0, None), Some(next_id));
+        assert_eq!(next_id.n, 104);
         let kept = ids(&u);
         assert_eq!(kept.len(), CAP);
         assert_eq!(kept[..2], [8, 9], "a push past the cap dropped 7 too");
@@ -993,6 +1018,29 @@ mod tests {
             "older than every entry the cap kept"
         );
         assert_eq!(u.entries.len(), CAP);
+    }
+
+    #[test]
+    fn what_an_undo_leaves_goes_back_under_the_entries_pushed_since_whatever_left_below_it() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(t.path().join("a.txt"), "a").unwrap();
+        let trashed = trash::trash_in(&t.path().join("Trash"), &t.path().join("a.txt")).unwrap();
+        let mut u = UndoStack::default();
+        u.push(Undoable::Trash(trashed.clone()));
+        for p in ["/b", "/c", "/d"] {
+            u.push(Undoable::Copied(p.into(), None));
+        }
+        let d = u.take().unwrap();
+        u.push(Undoable::New("/e".into(), None));
+        u.forget_gone(&[trashed.files]);
+        u.put_back(d, 0, None);
+        let order: Vec<PathBuf> = std::iter::from_fn(|| u.take())
+            .map(|t| match t.steps() {
+                [Undoable::Copied(p, _) | Undoable::New(p, _)] => p.clone(),
+                s => panic!("one step: {s:?}"),
+            })
+            .collect();
+        assert_eq!(order, ["/e", "/d", "/c", "/b"].map(PathBuf::from));
     }
 
     #[test]
