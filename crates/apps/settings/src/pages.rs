@@ -10,11 +10,11 @@
 use reprisefs::props::short_size;
 use reprisefs::thumbnails::Cleared;
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
+use reprisekit::controls::combo;
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::propsheet::PropSheet;
 use reprisekit::controls::timefield::TimeField;
 use reprisekit::controls::updown::{self, UpDown};
-use reprisekit::controls::{combo, pagelist};
 use reprisekit::raster::Rect;
 use reprisekit::trackbar::{self, TrackBar};
 
@@ -173,9 +173,10 @@ impl Area {
     /// The smallest area, a [`CLIENT`] sized sheet's: the column runs x 20..378.
     pub const MIN: Area = Area { w: 358, dh: 0 };
 
-    /// The area of a list sheet of client `size` (the list included), no smaller than [`Area::MIN`].
-    pub fn of_size(size: (i32, i32)) -> Area {
-        let w = size.0 - pagelist::ADVANCE - (CLIENT.0 - Area::MIN.w);
+    /// The area of a list sheet of client `size` (the list included) whose list takes
+    /// `advance` ([`PropSheet::list_advance`]), no smaller than [`Area::MIN`].
+    pub fn of_size(size: (i32, i32), advance: i32) -> Area {
+        let w = size.0 - advance - (CLIENT.0 - Area::MIN.w);
         Area {
             w: w.max(Area::MIN.w),
             dh: (size.1 - CLIENT.1).max(0),
@@ -183,12 +184,13 @@ impl Area {
     }
 
     pub fn of(sheet: &PropSheet) -> Area {
-        Area::of_size(sheet.size)
+        Area::of_size(sheet.size, sheet.list_advance())
     }
 
-    pub fn sheet_size(self) -> (i32, i32) {
+    /// The list sheet whose pages fill this area beside a list taking `advance`.
+    pub fn sheet_size(self, advance: i32) -> (i32, i32) {
         (
-            self.w + CLIENT.0 - Area::MIN.w + pagelist::ADVANCE,
+            self.w + CLIENT.0 - Area::MIN.w + advance,
             CLIENT.1 + self.dh,
         )
     }

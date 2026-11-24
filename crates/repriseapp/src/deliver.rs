@@ -258,6 +258,16 @@ impl Host {
         if reply.quit {
             self.exit = true;
         }
+        // A resizable program's minimum can change with its text (a list widened for it): the
+        // main window tells the compositor and grows to it.
+        if !self.app.fixed()
+            && self
+                .slots
+                .iter()
+                .any(|s| s.id == MAIN && s.configured && s.declared != self.limits(MAIN))
+        {
+            self.refit(MAIN);
+        }
         // Diffed after every event, not just `win`'s: a dialog's event
         // (Open, Save As) often retitles the main window.
         let title = self.app.title();

@@ -86,6 +86,7 @@ use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::listview::{IconRows, ListView};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::openwith::{self, OpenWith};
+use reprisekit::controls::pagelist;
 use reprisekit::controls::propsheet::PropSheet;
 use reprisekit::icontheme::IconTheme;
 use reprisekit::look::Paint;
@@ -604,7 +605,7 @@ impl SettingsApp {
     /// smaller than the smallest sheet shows it scrolled. True when
     /// anything moved.
     fn fit_window(&mut self, size: (i32, i32)) -> bool {
-        let (u, min) = (self.units, Area::MIN.sheet_size());
+        let (u, min) = (self.units, self.smallest_sheet());
         let shown = (u.within(size.0), u.within(size.1));
         let size = (shown.0.max(min.0), shown.1.max(min.1));
         if size == self.sheet.size {
@@ -661,11 +662,17 @@ impl SettingsApp {
             s: 1,
             ..forms.paint()
         });
+        self.sheet.fit_list(&ctx.text, forms.fonts.size_px);
+    }
+
+    /// The sheet at its smallest, at 100%: the pages at [`Area::MIN`] beside the list.
+    fn smallest_sheet(&self) -> (i32, i32) {
+        Area::MIN.sheet_size(self.sheet.list_advance())
     }
 
     /// The smallest main window: the smallest sheet grown with the text.
     fn min_window(&self) -> (i32, i32) {
-        self.units.size(Area::MIN.sheet_size())
+        self.units.size(self.smallest_sheet())
     }
 
     /// A dialog's forms theme on `base`: the dialog font at the text size.
@@ -895,11 +902,11 @@ impl SettingsApp {
             decoding: None,
             state_path: None,
             kept: winstate::Kept {
-                size: Area::MIN.sheet_size(),
+                size: Area::MIN.sheet_size(pagelist::ADVANCE),
                 text_size: None,
             },
             saved_page: None,
-            window: Area::MIN.sheet_size(),
+            window: Area::MIN.sheet_size(pagelist::ADVANCE),
             window_dirty: false,
             units: TextUnits::ONE,
             text_size: 100,

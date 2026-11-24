@@ -43,16 +43,20 @@ fn every_page_without_tahoma_fits_the_text_it_fits_with_tahoma() {
                 ctx.text = TextRenderer::load(&ctx.theme.fonts).into();
                 if let Some(size) = size {
                     ctx.size = size;
-                    app.event(MAIN, Event::Resized, &mut ctx);
+                } else {
+                    app.follow_text(&ctx);
+                    ctx.size = app.min_window();
                 }
+                app.event(MAIN, Event::Resized, &mut ctx);
                 let (w, h) = app.sheet.size;
+                let at = size.map_or("smallest".into(), |(w, h)| format!("{w}x{h}"));
                 for s in [1, 2] {
                     for p in Page::all() {
                         app.open_page(p, None);
                         let mut c = Canvas::with_scale(w as u32, h as u32, s);
                         ctx.at_scale(s, |ctx| app.paint(MAIN, &mut c, ctx));
                     }
-                    reprisekit::pins::surface_drawn(&format!("{}@{s} {w}x{h}", i.as_str()));
+                    reprisekit::pins::surface_drawn(&format!("{}@{s} {at}", i.as_str()));
                 }
             }
         }

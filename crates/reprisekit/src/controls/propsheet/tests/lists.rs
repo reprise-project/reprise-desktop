@@ -613,3 +613,30 @@ fn a_press_on_the_page_list_only_closes_an_open_combo_list() {
     s.click(Some(Hit::Tab(2)));
     assert_eq!(s.tabs.open, 2, "with the list closed it opens the page");
 }
+
+#[test]
+fn the_list_widens_for_a_row_it_cannot_hold_and_the_pages_move_over() {
+    let text = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let px = theme.fonts.size_px;
+    let mut s = long_list_sheet();
+    s.drawn_with(&theme.paint());
+    assert!(!s.fit_list(&text, px), "every row fits the narrowest list");
+    assert_eq!(s.list_advance(), pagelist::ADVANCE);
+
+    let long = "Notifications & Do Not Disturb";
+    s.tabs.labels[3] = long.into();
+    let (size, check) = (s.size, s.pages[0].items[0].rect);
+    assert!(s.fit_list(&text, px));
+    let dx = s.list_advance() - pagelist::ADVANCE;
+    assert!(dx > 0);
+    assert_eq!(s.size, (size.0 + dx, size.1));
+    assert_eq!(s.pages[0].items[0].rect.x, check.x + dx);
+    let lay = s.layout(&text, px);
+    let list = lay.list.unwrap();
+    assert!(list.scrollbar.is_some());
+    let need = text.measure(long, false, px);
+    assert!(list.rows[4].width - pagelist::PAGE_X >= need);
+    assert_eq!(lay.page.x, list.frame.right() + 6);
+    assert!(!s.fit_list(&text, px), "idempotent");
+}

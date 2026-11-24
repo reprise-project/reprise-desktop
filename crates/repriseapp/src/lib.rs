@@ -164,6 +164,8 @@ struct Slot {
     wanted: (i32, i32),
     /// The size the program last gave the window: its opening size, a `Reply::size` or a refit.
     picked: (i32, i32),
+    /// The min and max size last told the compositor (`declare_limits`).
+    declared: Option<windows::Limits>,
     /// The compositor has the toplevel activated; a flyout goes by the
     /// keyboard. A new toplevel counts as active until a configure after its
     /// first buffer says otherwise: focus is decided after that buffer.

@@ -204,6 +204,7 @@ impl Host {
             bounds: None,
             wanted: size,
             picked: size,
+            declared: None,
             activated: true,
             suspended: false,
             configured: false,
@@ -281,7 +282,7 @@ impl Host {
 
     /// Window `id`'s min and max client size as the program asks for them now: a fixed window
     /// pinned at its size, a resizable one held at its minimum. Both stay inside the bounds.
-    fn limits(&self, id: WinId) -> Option<Limits> {
+    pub(crate) fn limits(&self, id: WinId) -> Option<Limits> {
         let s = self.slots.iter().find(|s| s.id == id)?;
         let (min, max) = if id == MAIN {
             if self.app.fixed() {
@@ -351,7 +352,11 @@ impl Host {
         let Some((min, max)) = self.limits(id) else {
             return;
         };
-        let Some(w) = self.slot_mut(id).and_then(|s| s.window.toplevel()) else {
+        let Some(s) = self.slot_mut(id) else {
+            return;
+        };
+        s.declared = Some((min, max));
+        let Some(w) = s.window.toplevel() else {
             return;
         };
         w.set_min_size(Some((min.0 as u32, min.1 as u32)));
@@ -838,7 +843,7 @@ impl LayerShellHandler for Host {
 }
 
 /// A window's min client size and, for a fixed one, its max.
-type Limits = ((i32, i32), Option<(i32, i32)>);
+pub(crate) type Limits = ((i32, i32), Option<(i32, i32)>);
 
 impl ActivationHandler for Host {
     type RequestUdata = TokenFor;

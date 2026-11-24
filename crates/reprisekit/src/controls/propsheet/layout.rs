@@ -67,6 +67,34 @@ impl PropSheet {
         moved || (dx, dy) != (0, 0)
     }
 
+    /// Widen the page list until every row's text, set by `text` at `px`, fits beside its
+    /// scrollbar at scale 1 and 2, no narrower than [`pagelist::WIDTH`]; the sheet widens
+    /// with it and the pages move over. Run after [`PropSheet::drawn_with`], which gives the
+    /// look's scrollbar. True when the list's width changed.
+    pub fn fit_list(&mut self, text: &TextRenderer, px: u32) -> bool {
+        let Nav::List(list) = &self.nav else {
+            return false;
+        };
+        let cm = self.open().controls();
+        let need = pagelist::fit_width(list, &self.tabs, text.dialog(self.font), px, &cm);
+        let u = self.units();
+        let mut w = u.design(need).max(pagelist::WIDTH);
+        while u.rect(Rect::new(MARGIN, 0, w, 0)).width < need {
+            w += 1;
+        }
+        let dx = w - self.list_w;
+        if dx == 0 {
+            return false;
+        }
+        self.list_w = w;
+        self.size.0 += dx;
+        for page in &mut self.pages {
+            shift(page, dx, 0);
+        }
+        self.sync_view();
+        true
+    }
+
     /// The page's controls' 100% rects that show through the page: inside its bevel and off its
     /// scrollbars, from where the page starts to where it ends now.
     pub(super) fn view(&self) -> form::View {
@@ -82,7 +110,7 @@ impl PropSheet {
     pub(super) fn view_frame(&self) -> Frame {
         let (right, bottom) = self.inside_end();
         let top = self.page_top() + PAGE_EDGE;
-        let x = MARGIN + self.page_dx() + PAGE_EDGE;
+        let x = MARGIN + self.list_advance() + PAGE_EDGE;
         Frame {
             inside: Rect::new(x, top, right - x, bottom - top),
             reach: self.reach(),
@@ -332,7 +360,7 @@ impl PropSheet {
         } else {
             self.strip().1 + PAGE_TOP - STRIP.1 - tabstrip::TAB_H + u.len(tabstrip::TAB_H) * rows
         };
-        let x = ox + u.len(MARGIN + self.page_dx());
+        let x = ox + u.len(MARGIN + self.list_advance());
         let bottom = oy + u.len(h - self.scroll.down.short - PAGE_BOTTOM);
         let right = ox + u.len(w - self.scroll.across.short - MARGIN);
         Rect::new(x, top, right - x, bottom - top)
@@ -388,7 +416,7 @@ impl PropSheet {
             Nav::List(_) => {
                 let (top, bottom) = (u.len(STRIP.1 + 2), u.len(STRIP.1 + 2 + pagelist::ROW_H));
                 let title = Rect::new(page.x, oy + top, page.width, bottom - top);
-                let search = at(Rect::new(MARGIN, STRIP.1, pagelist::WIDTH, SEARCH_H));
+                let search = at(Rect::new(MARGIN, STRIP.1, self.list_w, SEARCH_H));
                 (Vec::new(), Some(search), self.list_layout(), title)
             }
         };
@@ -481,9 +509,7 @@ impl PropSheet {
         let (ox, oy) = self.origin;
         let top = STRIP.1 + SEARCH_H + SEARCH_GAP;
         let h = self.shown().1 - top - PAGE_BOTTOM;
-        let r = self
-            .units()
-            .rect(Rect::new(MARGIN, top, pagelist::WIDTH, h));
+        let r = self.units().rect(Rect::new(MARGIN, top, self.list_w, h));
         let frame = Rect::new(r.x + ox, r.y + oy, r.width, r.height);
         Some(pagelist::layout(rows, frame, &self.open().controls()))
     }
