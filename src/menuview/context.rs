@@ -194,7 +194,7 @@ impl State {
         let (items, commands) = crate::desktopview::desktop_menu(
             self.clip_has_files(),
             self.config.desktop_icons,
-            (self.desktop.as_ref()).and_then(|v| Some((v.undos.label()?, v.undoing.is_none()))),
+            (self.desktop.as_ref()).and_then(|v| Some((v.undos.label()?, !self.desktop_undoing()))),
             self.slideshow_running(),
         );
         self.desktop_menu_at = Some(at);

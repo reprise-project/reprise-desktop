@@ -1,6 +1,7 @@
 //! The desktop's file jobs run in Explorer, each in a `reprise-explorer` process of its own that
 //! asks, shows the progress dialog and says why it stopped: a drop's or paste's put (`--put`), a
-//! delete (`--delete`), Empty Recycle Bin (`--empty-bin`) and Send To's zip (`--zip`).
+//! delete (`--delete`), Empty Recycle Bin (`--empty-bin`), Send To's zip (`--zip`) and an Undo
+//! that is more than a desktop New or rename (`--undo`). Each records its own undo entry.
 //!
 //! The desktop keeps the processes it started. A put onto the desktop names the icons it will
 //! land; when the desktop's scan first finds one, it takes its cell (a put onto a cell) and is
@@ -31,6 +32,7 @@ pub enum What {
     Delete,
     Empty,
     Zip,
+    Undo,
 }
 
 impl What {
@@ -40,6 +42,7 @@ impl What {
             What::Put(op) => op.failure_title(),
             What::Delete | What::Empty => "Error Deleting File or Folder",
             What::Zip => reprisefs::compress::FAILURE_TITLE,
+            What::Undo => "Undo",
         }
     }
 }
@@ -166,6 +169,17 @@ impl State {
         self.file_job(What::Zip, args, Vec::new(), Vec::new());
     }
 
+    /// Undo in Explorer, which shows its progress and can cancel it. Nothing while one runs.
+    pub(crate) fn undo_in_explorer(&mut self) {
+        if !self.undo_job_running() {
+            self.file_job(What::Undo, vec!["--undo".into()], Vec::new(), Vec::new());
+        }
+    }
+
+    pub(crate) fn undo_job_running(&self) -> bool {
+        self.filejobs.running().any(|j| j.what == What::Undo)
+    }
+
     fn file_job(
         &mut self,
         what: What,
@@ -173,10 +187,6 @@ impl State {
         landings: Vec<(String, Option<(i32, i32)>)>,
         moving: Vec<PathBuf>,
     ) {
-        // A put and a delete push their undo from the job's process.
-        if what == What::Zip {
-            self.forget_desktop_undos();
-        }
         let argv: Vec<&std::ffi::OsStr> = std::iter::once(EXPLORER.as_ref())
             .chain(args.iter().map(|a| a.as_os_str()))
             .collect();

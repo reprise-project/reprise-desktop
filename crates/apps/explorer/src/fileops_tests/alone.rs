@@ -305,3 +305,10 @@ fn a_failure_box_with_no_folder_window_has_a_task_button_and_asks_to_come_up() {
     run_out(&mut app, &mut ctx);
     std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).expect("chmod");
 }
+
+#[test]
+fn undo_with_nothing_to_undo_ends_at_once() {
+    let mut ctx = test_ctx();
+    let mut app = started(&["--undo".as_ref()]);
+    run_out(&mut app, &mut ctx);
+}

@@ -167,7 +167,9 @@ shake, the dim, the hidden frame rate and window memory.
   `~/Desktop`, to drag, rename and right-click (`desktop_extensions`).
   New selects what it makes and starts its rename. The desktop and every
   Explorer window share one undo history: Ctrl+Z in any of them undoes the
-  last New, rename, copy, move or delete made in any of them.
+  last New, rename, copy, move or delete made in any of them. On the desktop,
+  undoing anything but a desktop New or rename runs in Explorer, with its
+  progress and Cancel.
 - **Templates.** New on the desktop and in Explorer lists the files in your
   Templates folder (`XDG_TEMPLATES_DIR`, usually `~/Templates`); each row
   makes a copy named after its file.
