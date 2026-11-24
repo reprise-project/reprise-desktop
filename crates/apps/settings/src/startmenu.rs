@@ -12,6 +12,9 @@
 //! folder's top). A change the menu does not show (one that does not read or that Start cannot
 //! build, or one naming a row this build lacks or put inside a folder the written changes hide)
 //! is written back as the file had it, after the rest.
+//!
+//! Each table written goes over the file's table for the same row, so the comments on its lines
+//! stay.
 
 use repriseconf::config::file::FileMenuEntry;
 use repriseconf::{Key, key as k, remove};
@@ -396,10 +399,29 @@ pub fn write(doc: &mut DocumentMut, want: &[Entry], base: &[Entry], have: &[Entr
     }
     let whole = repriseconf::get(doc, &STARTMENU).is_some();
     if whole && plain(want) != plain(&default_menu()) {
-        let old: Vec<Table> = (repriseconf::get(doc, &STARTMENU))
-            .and_then(Item::as_array_of_tables)
-            .map_or_else(Vec::new, |a| a.iter().cloned().collect());
-        set_tables(doc, &STARTMENU, rewritten(&old, want), false);
+        let old = array(doc, &STARTMENU);
+        let mut tables = rewritten(&old, want);
+        let root = doc.as_table_mut();
+        let head = match old.first() {
+            Some(t) => prefix(t.decor()),
+            None => (root.key(STARTMENU.name)).map_or_else(String::new, |k| prefix(k.leaf_decor())),
+        };
+        if tables.is_empty() {
+            // Without the key Start shows the default menu, so an emptied list stays as `[]`.
+            root.insert(STARTMENU.name, toml_edit::value(toml_edit::Array::new()));
+            if let Some(mut key) = root.key_mut(STARTMENU.name) {
+                key.leaf_decor_mut().set_prefix(head);
+            }
+            return;
+        }
+        if old.is_empty() && !head.is_empty() {
+            tables[0].decor_mut().set_prefix(head);
+            // A header prints its key's decor, so the comment would head every table.
+            if let Some(mut key) = doc.as_table_mut().key_mut(STARTMENU.name) {
+                key.leaf_decor_mut().clear();
+            }
+        }
+        set_tables(doc, &STARTMENU, tables);
         return;
     }
     let old = repriseconf::get(doc, &CHANGES);
@@ -419,12 +441,93 @@ pub fn write(doc: &mut DocumentMut, want: &[Entry], base: &[Entry], have: &[Entr
         .filter(|t| t.get("hidden").and_then(Item::as_bool) == Some(true))
         .filter_map(|t| t.get("default")?.as_str().map(str::to_string))
         .collect();
-    let mut tables: Vec<Table> = lone.into_iter().chain(made).collect();
-    if listed {
-        tables.extend(idle_tables(doc, &hidden));
-    }
+    let old = array(doc, &CHANGES);
+    let idle = if listed {
+        idle_tables(doc, &hidden)
+    } else {
+        Vec::new()
+    };
+    let free: Vec<Option<&Table>> = (old.iter().enumerate())
+        .map(|(i, t)| (!idle.iter().any(|(j, _)| *j == i)).then_some(t))
+        .collect();
+    let made_from = paired(&free, &made, 3, |pass, o, n| {
+        o.is_some_and(|o| same_change(pass, o, n))
+    });
+    let from: Vec<Option<usize>> = (lone.iter().map(|_| None))
+        .chain(made_from.iter().copied())
+        .chain(idle.iter().map(|(i, _)| Some(*i)))
+        .collect();
+    let mut tables: Vec<Table> = (lone.into_iter())
+        .chain(made.into_iter().zip(&made_from).map(|(n, f)| match f {
+            Some(j) => merged(&old[*j], n),
+            None => n,
+        }))
+        .chain(idle.into_iter().map(|(_, t)| t))
+        .collect();
+    keep_head(&old, &from, &mut tables);
     remove(doc, &STARTMENU);
-    set_tables(doc, &CHANGES, tables, true);
+    set_tables(doc, &CHANGES, tables);
+}
+
+/// The array of tables `key`, empty when the file has none.
+fn array(doc: &DocumentMut, key: &Key) -> Vec<Table> {
+    (repriseconf::get(doc, key))
+        .and_then(Item::as_array_of_tables)
+        .map_or_else(Vec::new, |a| a.iter().cloned().collect())
+}
+
+fn prefix(d: &toml_edit::Decor) -> String {
+    let p = d.prefix().and_then(|p| p.as_str());
+    p.unwrap_or_default().to_string()
+}
+
+/// For each of `want`, the index of the item in `old` it takes the place of: the first one not
+/// taken that `same` matches in the lowest of `passes` passes.
+fn paired<O, W>(
+    old: &[O],
+    want: &[W],
+    passes: usize,
+    same: impl Fn(usize, &O, &W) -> bool,
+) -> Vec<Option<usize>> {
+    let mut from: Vec<Option<usize>> = vec![None; want.len()];
+    let mut used = vec![false; old.len()];
+    for pass in 0..passes {
+        for (w, f) in want.iter().zip(&mut from).filter(|(_, f)| f.is_none()) {
+            *f = (0..old.len()).find(|&j| !used[j] && same(pass, &old[j], w));
+            if let Some(j) = *f {
+                used[j] = true;
+            }
+        }
+    }
+    from
+}
+
+/// Whether `r` is `w`'s row in `pass`: 0 reads as it, 1 has its label, 2 its command, action or
+/// submenu.
+fn alike(pass: usize, r: &Entry, w: &Entry) -> bool {
+    let target = |e: &Entry| match e {
+        Entry::Item { target, .. } if !matches!(target, Target::Folder(_)) => Some(target.clone()),
+        _ => None,
+    };
+    match pass {
+        0 => r == w,
+        1 => r.label().is_some() && r.label() == w.label(),
+        _ => target(r).is_some() && target(r) == target(w),
+    }
+}
+
+/// Whether the `[[startmenu_changes]]` table `old` is the one `new` rewrites in `pass`: a change to
+/// the same default row, or a row of the user's own in the same folder that is [`alike`].
+fn same_change(pass: usize, old: &Table, new: &Table) -> bool {
+    let text = |t: &Table, k: &str| t.get(k).and_then(Item::as_str).map(str::to_string);
+    match (text(old, "default"), text(new, "default")) {
+        (Some(a), Some(b)) => a == b,
+        (None, None) => {
+            text(old, "folder") == text(new, "folder")
+                && (read_entry(old).zip(read_entry(new))).is_some_and(|(r, w)| alike(pass, &r, &w))
+        }
+        _ => false,
+    }
 }
 
 /// `want` as `[[startmenu]]` tables, each written over the file's table for its row in `old` so
@@ -433,64 +536,56 @@ pub fn write(doc: &mut DocumentMut, want: &[Entry], base: &[Entry], have: &[Entr
 /// the block and stays on top.
 fn rewritten(old: &[Table], want: &[Entry]) -> Vec<Table> {
     let read: Vec<Option<Entry>> = old.iter().map(|t| read_entry(t)).collect();
-    let mut from: Vec<Option<usize>> = vec![None; want.len()];
-    let mut used = vec![false; old.len()];
-    let target = |e: &Entry| match e {
-        Entry::Item { target, .. } if !matches!(target, Target::Folder(_)) => Some(target.clone()),
-        _ => None,
-    };
-    let same = |pass: usize, r: &Entry, w: &Entry| match pass {
-        0 => r == w,
-        1 => r.label().is_some() && r.label() == w.label(),
-        _ => target(r).is_some() && target(r) == target(w),
-    };
-    for pass in 0..3 {
-        for (w, f) in want.iter().zip(&mut from).filter(|(_, f)| f.is_none()) {
-            *f = (0..old.len())
-                .find(|&j| !used[j] && read[j].as_ref().is_some_and(|r| same(pass, r, w)));
-            if let Some(j) = *f {
-                used[j] = true;
-            }
-        }
-    }
+    let from = paired(&read, want, 3, |pass, r, w| {
+        r.as_ref().is_some_and(|r| alike(pass, r, w))
+    });
     let mut out: Vec<Table> = (want.iter().zip(&from))
-        .map(|(w, f)| {
-            let Some(o) = f.map(|j| &old[j]) else {
-                return table(w);
-            };
-            let mut t = merged(o, table(w));
-            let kids = (o.get("items")).and_then(Item::as_array_of_tables);
-            if let (Some(items), Some(kids)) = (w.items().filter(|i| !i.is_empty()), kids) {
-                let kids: Vec<Table> = kids.iter().cloned().collect();
-                t["items"] = Item::ArrayOfTables(rewritten(&kids, items).into_iter().collect());
-            }
-            t
+        .map(|(w, f)| match f {
+            Some(j) => merged(&old[*j], table(w)),
+            None => table(w),
         })
         .collect();
-    let first = from.iter().position(|&f| f == Some(0));
-    if let (Some(o), false) = (old.first(), out.is_empty() || first == Some(0)) {
-        let prefix = |t: &Table| {
-            let p = t.decor().prefix().and_then(|p| p.as_str());
-            p.unwrap_or_default().to_string()
-        };
-        let own = prefix(&out[0]);
-        if let Some(k) = first {
-            let blank: String = (own.split_inclusive('\n'))
-                .filter(|l| !l.trim_start().starts_with('#'))
-                .collect();
-            out[k].decor_mut().set_prefix(blank);
-        }
-        let head = match own.contains('#') {
-            true => prefix(o) + &own,
-            false => prefix(o),
-        };
-        out[0].decor_mut().set_prefix(head);
-    }
+    keep_head(old, &from, &mut out);
     out
 }
 
+/// Keeps the comment above `old`'s first table on top of `out`, the tables written over `old`
+/// (`from` names each one's table in `old`). The old first table, written lower down, takes the
+/// spacing the new first one had.
+fn keep_head(old: &[Table], from: &[Option<usize>], out: &mut [Table]) {
+    let first = from.iter().position(|&f| f == Some(0));
+    let Some(o) = old.first().filter(|_| !out.is_empty() && first != Some(0)) else {
+        return;
+    };
+    let own = out[0].decor().prefix().map(|_| prefix(out[0].decor()));
+    if let Some(k) = first {
+        let d = out[k].decor_mut();
+        match &own {
+            Some(own) => d.set_prefix(
+                (own.split_inclusive('\n'))
+                    .filter(|l| !l.trim_start().starts_with('#'))
+                    .collect::<String>(),
+            ),
+            None => {
+                let suffix = d.suffix().cloned();
+                d.clear();
+                if let Some(s) = suffix {
+                    d.set_suffix(s);
+                }
+            }
+        }
+    }
+    let own = own.unwrap_or_default();
+    let head = match own.contains('#') {
+        true => prefix(o.decor()) + &own,
+        false => prefix(o.decor()),
+    };
+    out[0].decor_mut().set_prefix(head);
+}
+
 /// `new` written over `old`, the table it replaces: keys `new` lacks go, a value `new` changes
-/// keeps the comment beside it, keys `new` adds follow the rest.
+/// keeps the comment beside it, keys `new` adds follow the rest, and a folder's items are
+/// [`rewritten`] over the old ones.
 fn merged(old: &Table, new: Table) -> Table {
     let mut t = old.clone();
     t.set_position(None);
@@ -507,6 +602,11 @@ fn merged(old: &Table, new: Table) -> Table {
                     *n.decor_mut() = o.decor().clone();
                     *o = n;
                 }
+            }
+            (Some(Item::ArrayOfTables(o)), Item::ArrayOfTables(n)) => {
+                let kids: Vec<Table> = o.iter().cloned().collect();
+                let items = read_list(&Item::ArrayOfTables(n)).unwrap_or_default();
+                *o = rewritten(&kids, &items).into_iter().collect();
             }
             (Some(slot), v) => *slot = v,
             (None, v) => {
@@ -531,8 +631,8 @@ fn lone_table(item: &Item) -> Option<Table> {
 }
 
 /// The file's `[[startmenu_changes]]` the menu does not show next to changes hiding the default
-/// rows `hidden`, as the file has them.
-fn idle_tables(doc: &DocumentMut, hidden: &[String]) -> Vec<Table> {
+/// rows `hidden`, as the file has them, with their places in its list.
+fn idle_tables(doc: &DocumentMut, hidden: &[String]) -> Vec<(usize, Table)> {
     let Some(item) = repriseconf::get(doc, &CHANGES) else {
         return Vec::new();
     };
@@ -542,7 +642,7 @@ fn idle_tables(doc: &DocumentMut, hidden: &[String]) -> Vec<Table> {
     let keep: Vec<bool> = (read.iter())
         .map(|c| c.is_none() || idle.next() == Some(true))
         .collect();
-    let mut raw: Vec<Option<Table>> = match (item.as_array_of_tables(), item.as_array()) {
+    let raw: Vec<Option<Table>> = match (item.as_array_of_tables(), item.as_array()) {
         (Some(a), _) => a.iter().cloned().map(Some).collect(),
         (None, Some(a)) => (a.iter())
             .map(|v| {
@@ -553,28 +653,16 @@ fn idle_tables(doc: &DocumentMut, hidden: &[String]) -> Vec<Table> {
             .collect(),
         (None, None) => Vec::new(),
     };
-    if let Some(Some(first)) = raw.first_mut() {
-        // Its comment heads the block, which `set_tables` keeps on the new first table.
-        *first.decor_mut() = Default::default();
-    }
-    (raw.into_iter().zip(keep))
-        .filter_map(|(t, keep)| t.filter(|_| keep))
+    (raw.into_iter().zip(keep).enumerate())
+        .filter_map(|(i, (t, keep))| Some((i, t.filter(|_| keep)?)))
         .collect()
 }
 
-/// `tables` as the array `key`, taken out when empty. With `head`, the comment above the old first
-/// table moves to the new first.
-fn set_tables(doc: &mut DocumentMut, key: &Key, mut tables: Vec<Table>, head: bool) {
-    let old = (repriseconf::get(doc, key).filter(|_| head))
-        .and_then(Item::as_array_of_tables)
-        .and_then(|a| a.get(0))
-        .map(|t| t.decor().clone());
+/// `tables` as the array `key`, taken out when empty.
+fn set_tables(doc: &mut DocumentMut, key: &Key, tables: Vec<Table>) {
     if tables.is_empty() {
         remove(doc, key);
         return;
-    }
-    if let Some(decor) = old {
-        *tables[0].decor_mut() = decor;
     }
     let mut a = ArrayOfTables::new();
     for t in tables {
@@ -1155,6 +1243,34 @@ items = []
         }
     }
 
+    /// `text` with a numbered comment beside every value and above every table that has none.
+    fn commented(text: &str, n: &mut usize) -> String {
+        let mut out = String::new();
+        for line in text.lines() {
+            *n += 1;
+            if line.starts_with("[[") {
+                out += &format!("# h{n}\n{line}\n");
+            } else if line.contains(" = ") && !line.contains('#') {
+                out += &format!("{line} # c{n}\n");
+            } else {
+                out += &format!("{line}\n");
+            }
+        }
+        out
+    }
+
+    fn each_comment_once(text: &str) {
+        let mut seen = Vec::new();
+        for c in text
+            .lines()
+            .filter_map(|l| l.split_once('#'))
+            .map(|(_, c)| c)
+        {
+            assert!(!seen.contains(&c), "#{c} twice in\n{text}");
+            seen.push(c);
+        }
+    }
+
     #[test]
     fn any_run_of_edits_on_a_whole_list_reads_back_as_it_was_saved() {
         let mut seed = 11u32;
@@ -1162,21 +1278,139 @@ items = []
             seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
             (seed >> 16) as usize % n.max(1)
         };
+        let mut n = 0;
         for _ in 0..100 {
-            let mut text = whole(&plain(&default_menu())[1..]);
+            let mut text = commented(&whole(&plain(&default_menu())[1..]), &mut n);
             for _ in 0..4 {
                 let mut again = load(&text);
                 for _ in 0..4 {
                     edit(&mut again, &mut roll);
                 }
-                if again.is_empty() || plain(&again) == plain(&default_menu()) {
+                if roll(6) == 0 {
+                    again.clear();
+                }
+                if plain(&again) == plain(&default_menu()) {
                     break;
                 }
                 let next = saved(&text, &again);
                 assert_eq!(load(&next), again, "saved over:\n{text}\nas\n{next}");
-                text = next;
+                each_comment_once(&next);
+                text = commented(&next, &mut n);
             }
         }
+    }
+
+    #[test]
+    fn any_run_of_edits_on_changes_keeps_their_comments_and_reads_back() {
+        let mut seed = 5u32;
+        let mut roll = |n: usize| {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (seed >> 16) as usize % n.max(1)
+        };
+        let mut n = 0;
+        for _ in 0..100 {
+            let mut m = default_menu();
+            for _ in 0..8 {
+                edit(&mut m, &mut roll);
+            }
+            let mut text = commented(&saved("", &m), &mut n);
+            for _ in 0..4 {
+                let mut again = load(&text);
+                for _ in 0..4 {
+                    edit(&mut again, &mut roll);
+                }
+                let next = saved(&text, &again);
+                assert_eq!(load(&next), again, "saved over:\n{text}\nas\n{next}");
+                each_comment_once(&next);
+                for line in text.lines().filter(|l| l.starts_with("default = ")) {
+                    let (id, c) = line.split_once(" #").unwrap();
+                    if next.contains(&format!("{id} ")) || next.contains(&format!("{id}\n")) {
+                        let kept = next.contains(&format!("#{c}\n"));
+                        assert!(kept, "{line} lost its comment:\n{text}\nas\n{next}");
+                    }
+                }
+                text = commented(&next, &mut n);
+            }
+        }
+    }
+
+    #[test]
+    fn an_emptied_whole_list_stays_an_empty_menu() {
+        let text = "\
+terminal = \"foot\"
+
+# My menu
+[[startmenu]]
+label = \"A\"
+command = \"a\"
+
+[fonts]
+size_px = 12
+";
+        let out = saved(text, &[]);
+        assert_eq!(
+            out,
+            "\
+terminal = \"foot\"
+
+# My menu
+startmenu = []
+
+[fonts]
+size_px = 12
+"
+        );
+        assert_eq!(load(&out), Vec::new());
+        let back = load(text);
+        let again = saved(&out, &back);
+        assert!(again.contains("# My menu\n[[startmenu]]\n"), "{again}");
+        assert_eq!(load(&again), back);
+    }
+
+    #[test]
+    fn a_saved_changes_rows_comments_stay_with_it() {
+        let mut m = default_menu();
+        take(&mut m, &[4]).unwrap();
+        rename(&mut m, &[3, 0], "&Files...");
+        let end = m.len();
+        put(&mut m, &[end], Entry::program("Mine", "", "mine".into())).unwrap();
+        let text = saved("", &m)
+            .replacen("[[", "# My changes\n[[", 1)
+            .replace("\"help\"", "\"help\" # never read")
+            .replace("\"&Files...\"", "\"&Files...\" # shorter")
+            .replace("\"mine\"", "\"mine\" # my tool")
+            .replace(
+                "[[startmenu_changes]]\nafter = \"turnoff\"",
+                "# mine\n[[startmenu_changes]]\nafter = \"turnoff\"",
+            );
+        let mut m = load(&text);
+        take(&mut m, &[1]).unwrap();
+        rename(&mut m, &[2, 0], "&Find...");
+        rename(&mut m, &[7], "Mine 2");
+        let out = saved(&text, &m);
+        assert_eq!(
+            out,
+            r#"# My changes
+[[startmenu_changes]]
+default = "documents"
+hidden = true
+
+[[startmenu_changes]]
+default = "help" # never read
+hidden = true
+
+[[startmenu_changes]]
+default = "search-files"
+label = "&Find..." # shorter
+
+# mine
+[[startmenu_changes]]
+after = "turnoff"
+label = "Mine 2"
+command = "mine" # my tool
+"#
+        );
+        assert_eq!(load(&out), m);
     }
 
     #[test]
