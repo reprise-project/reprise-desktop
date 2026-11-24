@@ -945,6 +945,20 @@ impl TextRenderer {
         text.chars().map(|ch| self.advance(ch, bold, size_px)).sum()
     }
 
+    /// How many px `text`'s first glyph inks left of the pen at scale 1 (DejaVu Sans' J hooks
+    /// left); 0 when its ink starts at the pen or after. At scale 2 [`TextRenderer::draw_run`]
+    /// keeps a glyph's extra overhang inside its line.
+    pub fn ink_before(&self, text: &str, bold: bool, size_px: u32) -> i32 {
+        let Some(first) = text.chars().next() else {
+            return 0;
+        };
+        let left = self
+            .with_glyph(first, bold, size_px, 1, |g| g.ink_span())
+            .flatten()
+            .map_or(0, |(l, _)| l);
+        (-left).max(0)
+    }
+
     /// How far right of the pen `text`'s ink reaches: [`TextRenderer::measure`] less the last
     /// glyph's blank columns after its ink (a space's whole advance).
     pub fn ink_width(&self, text: &str, bold: bool, size_px: u32) -> i32 {
@@ -1214,7 +1228,9 @@ impl TextRenderer {
     }
 
     /// Draw `label` with its access key underlined (`&File` underlines F), the underline `s` px
-    /// under the baseline and `s` px thick.
+    /// under the baseline and `s` px thick. Left-aligned, a first glyph that inks left of the pen
+    /// at scale 1 ([`TextRenderer::ink_before`]) starts that much right while the ink still ends
+    /// in `r`.
     #[expect(clippy::too_many_arguments)]
     pub fn draw_marked(
         &self,
@@ -1228,15 +1244,28 @@ impl TextRenderer {
         s: i32,
     ) {
         let (plain, mnemonic) = split_mnemonic(label);
+        let lead = match align {
+            Align::Left => {
+                let lead = self.ink_before(&plain, bold, px);
+                let fits = self.ink_width(&plain, bold, px) + lead <= r.width;
+                if fits { lead } else { 0 }
+            }
+            Align::Center | Align::Right => 0,
+        };
         let Some(m) = mnemonic else {
-            self.draw(c, r, &plain, bold, color, align, px);
+            if lead == 0 {
+                self.draw(c, r, &plain, bold, color, align, px);
+            } else {
+                let pen = Rect::new(r.x + lead, r.y, r.width - lead, r.height);
+                self.draw_in(c, pen, r, r, &plain, bold, color, px);
+            }
             return;
         };
         let Some(baseline) = self.baseline(r, bold, px) else {
             return;
         };
         let (dx, w, total) = self.span_and_measure(&plain, m, bold, px);
-        let start = align.pen(r, total);
+        let start = align.pen(r, total) + lead;
         self.draw_run(c, start, baseline, r, &plain, bold, color, px);
         let cs = c.scale();
         let nudge = plain

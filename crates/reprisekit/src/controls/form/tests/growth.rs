@@ -533,3 +533,37 @@ fn a_form_fits_its_text_alike_at_scale_1_and_2() {
     assert_ne!(one[2], Some(Rect::new(10, 40, 40, 23)), "the button widens");
     assert_eq!(laid(2), one);
 }
+
+/// A label, a check box's and a radio's label whose first glyph inks left of its pen (DejaVu
+/// Sans' J) move right to keep that ink, drawn at scale 2 by the paint and by the canvas;
+/// Tahoma's J starts at its pen.
+#[test]
+fn a_label_keeps_a_first_glyph_that_hooks_left_of_its_pen() {
+    crate::pins::fonts();
+    assert_eq!(tr().ink_before("Join it", false, 11), 0);
+    let t = TextRenderer::load(&FontConfig {
+        family: vec!["DejaVu Sans".into()],
+        ..FontConfig::default()
+    });
+    assert!(t.ink_before("Join it", false, 11) > 0);
+    let cs = &Theme::default().colors;
+    let f = Form::new(vec![
+        Item::radio("r", 16, 20, "&Join it", "g"),
+        Item::check("c", 16, 40, "Jobs").enabled(false),
+        Item::label_at("l", 16, 60, 60, "Jo Doe"),
+    ]);
+    let mut cut = Vec::new();
+    for s in [1, 2] {
+        let by_paint = (
+            classic_paint(cs, s),
+            Canvas::new(300 * s as u32, 100 * s as u32),
+        );
+        let by_canvas = (classic_paint(cs, 1), Canvas::with_scale(300, 100, s));
+        for (how, (p, mut c)) in [("paint", by_paint), ("canvas", by_canvas)] {
+            let px = 11 * p.s as u32;
+            let ((), cuts) = crate::pins::clipped_ink(|| draw(&mut c, &t, &p, &f, false, px));
+            cut.extend(cuts.into_iter().map(|c| (s, how, c.text, c.cols)));
+        }
+    }
+    assert_eq!(cut, Vec::new(), "(scale, drawn by, label, ink columns cut)");
+}

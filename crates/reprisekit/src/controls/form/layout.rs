@@ -256,6 +256,7 @@ impl Form {
         let text = text.dialog(self.font);
         let (cm, u) = (self.controls(), self.units());
         let measure = |s: &str| text.ink_width(&crate::text::split_mnemonic(s).0, false, px);
+        let lead = |s: &str| text.ink_before(&crate::text::split_mnemonic(s).0, false, px);
         let room = self.choice_room(text, px);
         let (rects, kinds) = (&room.rects, &room.kinds);
         let mut over = Vec::new();
@@ -267,11 +268,11 @@ impl Form {
                 (Control::Combo(_), fit::Kind::Stretch { need }) => need - r.width,
                 (Control::Check { label, .. }, _) => {
                     let lr = check_label_rect(r, it.indent, &cm, measure(label));
-                    lr.right() - room.edge(i, lr.x, self.clip_of(it))
+                    lr.right() + lead(label) - room.edge(i, lr.x, self.clip_of(it))
                 }
                 (Control::Radio { label, .. }, _) => {
                     let lr = radio_label_rect(r, &cm, measure(label));
-                    lr.right() - room.edge(i, lr.x, self.clip_of(it))
+                    lr.right() + lead(label) - room.edge(i, lr.x, self.clip_of(it))
                 }
                 (Control::Lines(lines) | Control::GreyedLines(lines), _) => {
                     let shown = note_lines(text, lines, r.width, px);

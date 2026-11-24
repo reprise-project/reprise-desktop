@@ -1,18 +1,6 @@
-blue@1 1600x1000 cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
-blue@1 smallest cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
 blue@1 smallest ellipsized "Reprise" x4  # a wallpaper's dimmed detail, after its name, in a list at its smallest
-blue@2 1600x1000 cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
-blue@2 smallest cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
 blue@2 smallest ellipsized "Reprise" x4  # a wallpaper's dimmed detail, after its name, in a list at its smallest
-classic@1 1600x1000 cut "Join it" x2  # 1 px of the t's ink runs past the label's room before Replace it
-classic@1 smallest cut "Join it" x2  # 1 px of the t's ink runs past the label's room before Replace it
 classic@1 smallest ellipsized "Reprise" x4  # a wallpaper's dimmed detail, after its name, in a list at its smallest
-classic@2 1600x1000 cut "Join it" x2  # 1 px of the t's ink runs past the label's room before Replace it
-classic@2 smallest cut "Join it" x2  # 1 px of the t's ink runs past the label's room before Replace it
 classic@2 smallest ellipsized "Reprise" x4  # a wallpaper's dimmed detail, after its name, in a list at its smallest
-glass@1 1600x1000 cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
-glass@1 smallest cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
 glass@1 smallest ellipsized "Reprise" x4  # a wallpaper's dimmed detail, after its name, in a list at its smallest
-glass@2 1600x1000 cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
-glass@2 smallest cut "Join it" x1  # 1 px of the t's ink runs past the label's room before Replace it
 glass@2 smallest ellipsized "Reprise" x4  # a wallpaper's dimmed detail, after its name, in a list at its smallest
